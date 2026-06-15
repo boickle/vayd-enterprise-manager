@@ -2,7 +2,11 @@ import type { Appointment } from '../api/roomLoader';
 import type { DayData } from '../pages/MyWeek';
 import { effectiveWindowForScheduledStart } from './appointmentArrivalWindow';
 import { appointmentPracticeDateKey } from './editVisitTimeFields';
-import { fetchSchedulerDriveContextForDate } from './schedulerDriveEta';
+import {
+  fetchSchedulerDoctorDayBundle,
+  fetchSchedulerDriveContextForDate,
+  fetchSchedulerDriveEtasForDayBundle,
+} from './schedulerDriveEta';
 
 export type ArrivalWindowHouseholdContext = {
   windowStartIso?: string | null;
@@ -110,20 +114,94 @@ export function arrivalWindowIsosFromDriveDay(
   });
 }
 
-/** Load doctor-day + `/routing/eta` and return the routed arrival window for one appointment. */
-export async function fetchRoutedArrivalWindowIsosForAppointment(
-  appt: Pick<Appointment, 'id' | 'appointmentStart' | 'effectiveWindow' | 'primaryProvider'>,
+type DoctorDayDoctorRef = {
+  id?: number | string | null;
+  pimsId?: string | null;
+};
+
+/** Doctor ids for GET /appointments/doctor — internal employee id first (Scheduler / Doctor Day parity). */
+export function doctorIdCandidatesForVisitAssignee(
+  assignee?: DoctorDayDoctorRef | null,
+  fallbackAssignee?: DoctorDayDoctorRef | null
+): string[] {
+  const out: string[] = [];
+  const add = (v: unknown) => {
+    const s = v != null ? String(v).trim() : '';
+    if (s && !out.includes(s)) out.push(s);
+  };
+  for (const ref of [assignee, fallbackAssignee]) {
+    if (!ref) continue;
+    add(ref.id);
+    add(ref.pimsId);
+  }
+  return out;
+}
+
+/**
+ * Doctor-day effective window for one appointment (GET /appointments/doctor).
+ * Ignores stored appointment `effectiveWindow` so SMS matches Scheduler doctor-day columns.
+ */
+export async function fetchDoctorDayEffectiveWindowIsosForAppointment(
+  appt: Pick<Appointment, 'id' | 'appointmentStart' | 'primaryProvider'>,
   practiceTz: string,
-  doctorPimsId?: string | null
+  doctorIds?: string | string[] | null,
+  fallbackAssignee?: DoctorDayDoctorRef | null
 ): Promise<{ startIso: string; endIso: string } | null> {
-  const pimsId = doctorPimsId?.trim() || appt.primaryProvider?.pimsId?.trim() || '';
-  if (!pimsId) return null;
+  const candidates = [
+    ...(Array.isArray(doctorIds) ? doctorIds : doctorIds ? [doctorIds] : []),
+    ...doctorIdCandidatesForVisitAssignee(appt.primaryProvider ?? null, fallbackAssignee),
+  ]
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .filter((s, i, arr) => arr.indexOf(s) === i);
+
+  if (!candidates.length) return null;
 
   const dateKey = appointmentPracticeDateKey(appt.appointmentStart, practiceTz);
   if (!dateKey) return null;
 
-  const drive = await fetchSchedulerDriveContextForDate(dateKey, pimsId);
-  if (!drive) return null;
+  const apptKey = String(appt.id);
 
-  return arrivalWindowIsosFromDriveDay(drive.dayData, appt.id, appt.effectiveWindow ?? null);
+  for (const doctorId of candidates) {
+    const { effectiveWindowByApptId, bundle } = await fetchSchedulerDoctorDayBundle(dateKey, doctorId);
+    const fromDoctorDay = effectiveWindowByApptId.get(apptKey);
+    if (fromDoctorDay) return fromDoctorDay;
+
+    if (!bundle?.households?.length) continue;
+
+    const { dayData } = await fetchSchedulerDriveEtasForDayBundle(bundle, doctorId);
+    const fromDrive = arrivalWindowIsosFromDriveDay(dayData, appt.id, null);
+    if (fromDrive) return fromDrive;
+  }
+
+  return null;
+}
+
+/** Load doctor-day + `/routing/eta` and return the routed arrival window for one appointment. */
+export async function fetchRoutedArrivalWindowIsosForAppointment(
+  appt: Pick<Appointment, 'id' | 'appointmentStart' | 'effectiveWindow' | 'primaryProvider'>,
+  practiceTz: string,
+  doctorIds?: string | string[] | null
+): Promise<{ startIso: string; endIso: string } | null> {
+  const candidates = [
+    ...(Array.isArray(doctorIds) ? doctorIds : doctorIds ? [doctorIds] : []),
+    ...doctorIdCandidatesForVisitAssignee(appt.primaryProvider ?? null),
+  ]
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .filter((s, i, arr) => arr.indexOf(s) === i);
+
+  if (!candidates.length) return null;
+
+  const dateKey = appointmentPracticeDateKey(appt.appointmentStart, practiceTz);
+  if (!dateKey) return null;
+
+  for (const doctorId of candidates) {
+    const drive = await fetchSchedulerDriveContextForDate(dateKey, doctorId);
+    if (!drive) continue;
+    const win = arrivalWindowIsosFromDriveDay(drive.dayData, appt.id, appt.effectiveWindow ?? null);
+    if (win) return win;
+  }
+
+  return null;
 }

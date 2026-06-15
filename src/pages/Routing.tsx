@@ -27,6 +27,7 @@ import {
   type AvgMinutesByTypeRow,
 } from '../analytics/appointmentTypeTimeStats';
 import { Field } from '../components/Field';
+import { ForwardBookingWorkspaceContextPanel } from '../components/ForwardBookingWorkspaceContextPanel';
 import RoutingClientPatientsList from '../components/routing/RoutingClientPatientsList';
 import { KeyValue } from '../components/KeyValue';
 import { DateTime } from 'luxon';
@@ -3961,6 +3962,12 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
           <p className="routing-reschedule-mode-summary muted" role="status">
             {rescheduleModeSummary}
           </p>
+        ) : null}
+        {hasActiveForwardBookingWorkspace && activeForwardBookingIntent ? (
+          <ForwardBookingWorkspaceContextPanel
+            intent={activeForwardBookingIntent}
+            practiceTz={DEFAULT_PRACTICE_TIMEZONE}
+          />
         ) : null}
         <form
           onSubmit={onSubmit}

@@ -1,5 +1,6 @@
-import { completeForwardBooking } from '../api/forwardBooking';
+import { completeForwardBooking, type ForwardBookingEntry } from '../api/forwardBooking';
 import type { SchedulerBookPrefill } from '../pages/SchedulerBookModal';
+import { forwardBookingLinkedAppointmentId } from './forwardBookingLinkedVisit';
 
 export type ForwardBookingBookCompleteResult = {
   completed: boolean;
@@ -71,4 +72,20 @@ export async function completeAllForwardBookingVisitsFromBook(
     }
   }
   return { warnings };
+}
+
+/** Persist a locally linked calendar visit on the server before follow-up PATCH complete. */
+export async function ensureForwardBookingServerLink(
+  entry: ForwardBookingEntry
+): Promise<ForwardBookingEntry> {
+  const apptId = forwardBookingLinkedAppointmentId(entry);
+  if (apptId == null) return entry;
+  // Local sessionStorage merge can set bookedAppointment* while server status is still pending.
+  if (entry.status === 'booked' || entry.status === 'complete') {
+    return entry;
+  }
+  return completeForwardBooking(entry.id, {
+    appointmentId: apptId,
+    completedVia: 'manual',
+  });
 }

@@ -286,6 +286,10 @@ import {
 import { FORWARD_BOOKING_LIST_PATH, writeForwardBookingReturnSession } from '../utils/forwardBookingReturnSession';
 import { writeForwardBookingLocalLink } from '../utils/forwardBookingLocalLinks';
 import {
+  buildForwardBookingWorkspaceContext,
+  forwardBookingWorkspaceContextBarLine,
+} from '../utils/forwardBookingRoutingContext';
+import {
   subscribePracticeCalendar,
   type AppointmentCalendarPayload,
 } from '../utils/calendarRealtime';
@@ -3645,15 +3649,11 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     return Boolean(embedInRoutingWorkspace && forwardBookingWorkspaceIsActive());
   }, [embedInRoutingWorkspace, forwardBookingIntentTick]);
 
-  const forwardBookingBarLabel = useMemo(() => {
+  const forwardBookingBarContext = useMemo(() => {
     void forwardBookingIntentTick;
     const intent = readRoutingForwardBookingIntent();
-    if (!intent) return 'Forward booking';
-    const client = intent.clientDisplayLabel?.trim() || 'Client';
-    const due = intent.targetDueDate?.trim()
-      ? ` · due ~${intent.targetDueDate.slice(0, 10)}`
-      : '';
-    return `${client}${due}`;
+    if (!intent) return null;
+    return buildForwardBookingWorkspaceContext(intent, PRACTICE_TZ);
   }, [forwardBookingIntentTick]);
 
   const scheduleCalendarInteractionLock = useMemo(
@@ -7655,7 +7655,11 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             : embedInRoutingWorkspace && rescheduleWorkspaceActive
               ? `Rescheduling: ${embeddedCalendarProviderLabel}`
               : embedInRoutingWorkspace && forwardBookingLockActive
-                ? `Forward booking: ${forwardBookingBarLabel}`
+                ? `Forward booking: ${
+                    forwardBookingBarContext
+                      ? forwardBookingWorkspaceContextBarLine(forwardBookingBarContext)
+                      : 'Forward booking'
+                  }`
                 : undefined
         }
       >
@@ -7689,7 +7693,37 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         {forwardBookingLockActive ? (
           <div className="scheduler-embedded-forward-booking-bar" role="status" aria-live="polite">
             <span className="scheduler-embedded-forward-booking-bar-badge">Forward booking</span>
-            <span className="scheduler-embedded-forward-booking-bar-msg">{forwardBookingBarLabel}</span>
+            <div className="scheduler-embedded-forward-booking-bar-msg">
+              {forwardBookingBarContext ? (
+                <>
+                  <span className="scheduler-embedded-forward-booking-bar-line">
+                    {forwardBookingWorkspaceContextBarLine(forwardBookingBarContext)}
+                  </span>
+                  {forwardBookingBarContext.originalVisitLabel ||
+                  forwardBookingBarContext.providerLabel ? (
+                    <span className="scheduler-embedded-forward-booking-bar-meta">
+                      {forwardBookingBarContext.originalVisitLabel ? (
+                        <>Original visit: {forwardBookingBarContext.originalVisitLabel}</>
+                      ) : null}
+                      {forwardBookingBarContext.originalVisitLabel &&
+                      forwardBookingBarContext.providerLabel ? (
+                        <span aria-hidden> · </span>
+                      ) : null}
+                      {forwardBookingBarContext.providerLabel ? (
+                        <>Provider: {forwardBookingBarContext.providerLabel}</>
+                      ) : null}
+                    </span>
+                  ) : null}
+                  {forwardBookingBarContext.bookingNote ? (
+                    <span className="scheduler-embedded-forward-booking-bar-note">
+                      Forward booking note: {forwardBookingBarContext.bookingNote}
+                    </span>
+                  ) : null}
+                </>
+              ) : (
+                'Forward booking'
+              )}
+            </div>
             <button
               type="button"
               className="btn secondary scheduler-embedded-forward-booking-bar-dismiss"

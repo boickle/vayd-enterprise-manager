@@ -1579,10 +1579,7 @@ export function SchedulerBookModal({
 
       const forwardBookingToken = prefill?.forwardBookingTrackingToken?.trim();
       const forwardBookingEntryId = prefill?.forwardBookingEntryId;
-      /** Stay on Needs booking until Mark complete — link locally; do not POST /complete. */
-      const skipForwardBookingAutoComplete =
-        forwardBookingEntryId != null || (prefill?.forwardBookingVisitCompletes?.length ?? 0) > 0;
-      /** Stay on forward booking list until Mark complete — do not auto-close via tracking token. */
+      /** Stay on forward booking list until Mark complete — do not auto-close via tracking token alone. */
       const forwardBookingCreateExtras =
         forwardBookingToken && forwardBookingEntryId == null
           ? { forwardBookingTrackingToken: forwardBookingToken }
@@ -1667,7 +1664,6 @@ export function SchedulerBookModal({
         }
         if (
           savedAppointmentId != null &&
-          !skipForwardBookingAutoComplete &&
           prefill?.forwardBookingVisitCompletes?.length
         ) {
           const multiComplete = await completeAllForwardBookingVisitsFromBook(
@@ -1718,8 +1714,21 @@ export function SchedulerBookModal({
 
       if (
         savedAppointmentId != null &&
-        !skipForwardBookingAutoComplete &&
+        forwardBookingEntryId != null &&
+        !perVisitRoutingBook &&
+        !forwardBookingWarning &&
+        !prefill?.forwardBookingVisitCompletes?.length
+      ) {
+        const fbComplete = await completeForwardBookingFromBook(savedAppointmentId, prefill);
+        if (!fbComplete.completed && fbComplete.error) {
+          forwardBookingWarning =
+            'Appointment saved, but the forward booking could not be linked. ' +
+            fbComplete.error;
+        }
+      } else if (
+        savedAppointmentId != null &&
         forwardBookingToken &&
+        forwardBookingEntryId == null &&
         !perVisitRoutingBook &&
         !forwardBookingWarning
       ) {
