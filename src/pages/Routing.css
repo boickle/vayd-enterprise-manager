@@ -970,6 +970,17 @@
   line-height: 1.45;
 }
 
+.routing-doctor-select-nearest-zone {
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #fff7ed;
+  border: 1px solid #fdba74;
+  color: #9a3412;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
 .routing-doctor-select-empty {
   margin: 0;
   padding: 28px 0;
