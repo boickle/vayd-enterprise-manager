@@ -3,7 +3,7 @@ import type { ForwardBookingEntry } from '../api/forwardBooking';
 import { fetchAppointmentById } from '../api/appointments';
 import type { AppointmentType } from '../api/appointmentSettings';
 import type { Appointment } from '../api/roomLoader';
-import { fetchRoutedArrivalWindowIsosForAppointment } from './appointmentRoutedArrivalWindow';
+import { fetchDoctorDayEffectiveWindowIsosForAppointment } from './appointmentRoutedArrivalWindow';
 import { isFixedTimeTypeName } from './editVisitTimePreview';
 import { formatForwardBookingIntervalLabel } from './forwardBookingFromAppointment';
 import { forwardBookingLinkedAppointmentId } from './forwardBookingLinkedVisit';
@@ -253,24 +253,20 @@ export async function resolveForwardBookingSmsBookedSlot(
           ? Number(appt.primaryProvider.id)
           : fallbackProviderId;
 
-      const type =
-        appointmentType ??
-        (appt.appointmentType as AppointmentTypeWindowFields | null | undefined) ??
-        null;
+      const bookedType =
+        (appt.appointmentType as AppointmentTypeWindowFields | null | undefined) ?? null;
 
-      const doctorPimsId =
-        appt.primaryProvider?.pimsId?.trim() || entry.primaryProvider?.pimsId?.trim() || null;
-
-      const routedWin = await fetchRoutedArrivalWindowIsosForAppointment(
+      const doctorDayWin = await fetchDoctorDayEffectiveWindowIsosForAppointment(
         appt,
         practiceTz,
-        doctorPimsId
+        null,
+        entry.primaryProvider ?? null
       );
-      if (routedWin) {
+      if (doctorDayWin) {
         return {
           bookedSlot: formatForwardBookingSmsBookedSlot(
-            routedWin.startIso,
-            routedWin.endIso,
+            doctorDayWin.startIso,
+            doctorDayWin.endIso,
             practiceTz,
             appt.appointmentStart
           ),
@@ -278,7 +274,11 @@ export async function resolveForwardBookingSmsBookedSlot(
         };
       }
 
-      const fromAppt = formatForwardBookingSmsBookedSlotFromAppointment(appt, practiceTz, type);
+      const fromAppt = formatForwardBookingSmsBookedSlotFromAppointment(
+        appt,
+        practiceTz,
+        bookedType
+      );
       if (fromAppt) {
         return { bookedSlot: fromAppt, primaryProviderId: bookedProviderId };
       }

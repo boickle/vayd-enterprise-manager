@@ -49,6 +49,10 @@ export type RoutingForwardBookingIntentV1 = {
   monthsOut?: number;
   targetDueDate?: string | null;
   sourceAppointmentId?: number | null;
+  /** Source visit start (ISO) — shown on routing as “Original visit”. */
+  sourceAppointmentStart?: string | null;
+  /** Anchor pet name for routing context display. */
+  patientName?: string | null;
   /** Same-client rows with the same target due date (forward booking list group book). */
   householdEntries?: ForwardBookingHouseholdEntry[];
   /** Required when `householdEntries` has more than one row. */
@@ -276,6 +280,8 @@ export function buildRoutingForwardBookingIntentFromEntry(
     ...(entry.monthsOut != null ? { monthsOut: entry.monthsOut } : {}),
     targetDueDate: entry.targetDueDate ?? null,
     sourceAppointmentId: entry.sourceAppointmentId,
+    sourceAppointmentStart: entry.sourceAppointmentStart ?? null,
+    patientName: pickStr(entry.patient?.name) ?? null,
   };
 }
 

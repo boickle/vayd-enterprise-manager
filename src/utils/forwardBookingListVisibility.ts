@@ -132,11 +132,12 @@ export function forwardBookingListTab(
   if (entry.status === 'removed') return 'removed';
   if (entry.status === 'complete') return 'complete';
   if (forwardBookingIsBookLater(entry, practiceTz)) return 'bookLater';
-  if (entry.status === 'pending') return 'pending';
   if (forwardBookingHasLinkedVisit(entry)) {
     const points = forwardBookingLinkedAppointmentPoints(entry, bookedApptMeta);
     if (points != null && points <= 0) return 'onHold';
-    return 'booked';
+    if (points != null && points > 0) return 'booked';
+    // Linked visit — meta still loading; keep visible on Needs booking briefly.
+    return 'pending';
   }
   return 'pending';
 }
