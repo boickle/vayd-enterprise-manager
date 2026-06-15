@@ -197,11 +197,19 @@ function stripeFlatCatalogItemsToSubscriptionPlanCatalog(rows: unknown[]): Subsc
     else if (/\bdog\b/i.test(nameRaw)) species = 'dog';
     if (!species) continue;
 
+    // Starter wellness was renamed to "Puppy/Kitten"; accept both so the base
+    // ("Only") variation is not clobbered by a starter variation defaulting to base.
+    const isStarter =
+      nameRaw.includes('starter wellness') ||
+      nameRaw.includes('puppy') ||
+      nameRaw.includes('kitten');
+    const isPlus = /\bplus\b/i.test(nameRaw);
+
     let combo: StripeCatalogCombo = 'base';
-    if (nameRaw.includes('starter wellness plus')) combo = 'plusStarter';
-    else if (nameRaw.includes('starter wellness')) combo = 'starter';
-    else if (/\bplus\s*-\s*(cat|dog)/i.test(nameRaw)) combo = 'plus';
-    else if (nameRaw.includes(' only')) combo = 'base';
+    if (isStarter && isPlus) combo = 'plusStarter';
+    else if (isStarter) combo = 'starter';
+    else if (isPlus) combo = 'plus';
+    else combo = 'base';
 
     setSpecies(planKey, species, cadence, combo, productId, priceId);
   }
