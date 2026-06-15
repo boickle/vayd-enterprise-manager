@@ -1924,17 +1924,16 @@ export default function AppointmentRequestForm() {
             }
           }
           
-          // Build address string from client data for veterinarian lookup (only if no lat/lon)
-          if (!clientLat || !clientLon) {
-            const addressParts = [
-              client.address1 || client.address_1,
-              client.city,
-              client.state,
-              client.zip ? String(client.zip) : undefined,
-            ].filter(Boolean);
-            if (addressParts.length >= 3) {
-              clientAddress = addressParts.join(', ');
-            }
+          // Build address string from client data — used as a fallback when the
+          // modal needs a text address and only lat/lon is stored on the client.
+          const addressParts = [
+            client.address1 || client.address_1,
+            client.city,
+            client.state,
+            client.zip ? String(client.zip) : undefined,
+          ].filter(Boolean);
+          if (addressParts.length >= 3) {
+            clientAddress = addressParts.join(', ');
           }
           
           // Extract phone number from various possible fields
@@ -6176,9 +6175,10 @@ export default function AppointmentRequestForm() {
               const addrCity  = addrSource?.city  || '';
               const addrState = addrSource?.state || '';
               const addrZip   = addrSource?.zip   || '';
-              const fullAddress =
-                clientLocationRef.current.address ||
-                (addrSource ? [addrLine1, addrCity, addrState, addrZip].filter(Boolean).join(', ') : '');
+              const builtAddress = addrSource
+                ? [addrLine1, addrCity, addrState, addrZip].filter(Boolean).join(', ')
+                : '';
+              const fullAddress = clientLocationRef.current.address || builtAddress;
 
               // For logged-in clients: their location is ready once clientLocationReady is true
               // (lat/lon loaded) or once their formData address is populated.
@@ -6291,10 +6291,31 @@ export default function AppointmentRequestForm() {
                     <SelfScheduleCalendarModal
                       practiceId={practiceId}
                       address={fullAddress}
-                      lat={lat}
-                      lon={lon}
+                      lat={lat ?? undefined}
+                      lon={lon ?? undefined}
                       serviceMinutes={svcMinutes}
                       isNewClient={!isLoggedIn}
+                      // Pass the already-fetched provider list so the modal doesn't need
+                      // a second API call. Logged-in clients use the authenticated
+                      // /employees/veterinarians endpoint (providers); new clients use
+                      // the public endpoint (publicProviders).
+                      preloadedDoctors={(() => {
+                        const list = isLoggedIn
+                          ? providers
+                          : (publicProviders.length > 0 ? publicProviders : providers);
+                        if (list.length === 0) return undefined; // fall back to modal's own fetch
+                        return list.map(p => ({
+                          id: p.id,
+                          name: p.name,
+                          email: p.email || undefined,
+                          // Prefer the imageUrl stored on the employee record; fall back
+                          // to the dynamic /employees/:id/image endpoint using the DB id.
+                          imageUrl: ('imageUrl' in p && p.imageUrl) ? p.imageUrl : null,
+                          employeeId: typeof p.id === 'number' ? p.id : (
+                            'pimsId' in p && p.pimsId != null ? Number(p.pimsId) : null
+                          ),
+                        }));
+                      })()}
                       onConfirm={(slot) => {
                         updateFormData('selfScheduledSlot', slot);
                         setShowSelfScheduleModal(false);

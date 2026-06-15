@@ -9,6 +9,7 @@ import {
   type MonthAvailabilityCandidate,
   type SelfScheduledSlot,
 } from '../api/publicAppointments';
+import { fetchVeterinarians } from '../api/employee';
 
 // ─── Fallback avatar ─────────────────────────────────────────────────────────
 const FALLBACK_AVATAR =
@@ -27,6 +28,12 @@ interface Props {
   onClose: () => void;
   /** Whether this is a new (unauthenticated) client request */
   isNewClient?: boolean;
+  /**
+   * Pre-loaded doctor list from the form (avoids a second API call).
+   * When provided the modal skips its own fetchPublicVeterinarians call.
+   * Each entry needs at least { id, name }; imageUrl / employeeId are optional.
+   */
+  preloadedDoctors?: PublicProvider[];
 }
 
 // ─── Colour tokens ────────────────────────────────────────────────────────────
@@ -92,9 +99,11 @@ function DoctorAvatar({
   selected: boolean;
   onClick: () => void;
 }) {
-  const imgSrc = doctor.employeeId
-    ? `${apiBaseUrl}/employees/${doctor.employeeId}/image`
-    : doctor.imageUrl || FALLBACK_AVATAR;
+  // Prefer the stored imageUrl (already a full URL), then fall back to the
+  // dynamic endpoint (requires the DB integer id), then the inline SVG fallback.
+  const imgSrc = doctor.imageUrl?.trim()
+    || (doctor.employeeId != null ? `${apiBaseUrl}/employees/${doctor.employeeId}/image` : null)
+    || FALLBACK_AVATAR;
 
   const [failed, setFailed] = useState(false);
   const src = failed ? FALLBACK_AVATAR : imgSrc;
@@ -351,6 +360,7 @@ export function SelfScheduleCalendarModal({
   onConfirm,
   onClose,
   isNewClient = false,
+  preloadedDoctors,
 }: Props) {
   const [doctors, setDoctors] = useState<PublicProvider[]>([]);
   const [loadingDoctors, setLoadingDoctors] = useState(true);
@@ -373,25 +383,59 @@ export function SelfScheduleCalendarModal({
 
   // ── 1. Load doctors ──────────────────────────────────────────────────────
   useEffect(() => {
+    // Use pre-loaded list when provided (avoids a redundant API call).
+    if (preloadedDoctors && preloadedDoctors.length > 0) {
+      setDoctors(preloadedDoctors);
+      setSelectedDoctorId(preloadedDoctors[0].id);
+      setLoadingDoctors(false);
+      return;
+    }
+
     let cancelled = false;
     setLoadingDoctors(true);
     setDoctorError(null);
 
-    fetchPublicVeterinarians(practiceId, address, lat, lon)
-      .then((vets) => {
+    const load = async () => {
+      try {
+        let vets: PublicProvider[];
+
+        if (!isNewClient) {
+          // Existing/logged-in client — use the authenticated endpoint so zone
+          // and scheduling rules match what the rest of the app sees.
+          const result = await fetchVeterinarians(address || undefined, lat, lon);
+          // Only show vets who are actually seeing clients in this zone.
+          const inZone = result.providers.filter(
+            p => p.seeingClientsInClientZone !== false,
+          );
+          // Fall back to all providers if none pass the zone filter (e.g. no
+          // location context was available).
+          const source = inZone.length > 0 ? inZone : result.providers;
+          vets = source.map(p => ({
+            id: p.id,
+            name: p.name,
+            email: p.email || undefined,
+            imageUrl: p.imageUrl ?? null,
+            employeeId: typeof p.id === 'number' ? p.id
+              : p.pimsId != null ? Number(p.pimsId) : null,
+          }));
+        } else {
+          // New client — use the public endpoint with new-patient filtering.
+          vets = await fetchPublicVeterinarians(practiceId, address, lat, lon, true);
+        }
+
         if (cancelled) return;
         setDoctors(vets);
         if (vets.length > 0) setSelectedDoctorId(vets[0].id);
-      })
-      .catch(() => {
+      } catch {
         if (!cancelled) setDoctorError('Unable to load available doctors. Please try again.');
-      })
-      .finally(() => {
+      } finally {
         if (!cancelled) setLoadingDoctors(false);
-      });
+      }
+    };
 
+    load();
     return () => { cancelled = true; };
-  }, [practiceId, address, lat, lon]);
+  }, [practiceId, address, lat, lon, isNewClient, preloadedDoctors]);
 
   // ── 2. Load month availability when doctor or month changes ──────────────
   const loadMonthAvailability = useCallback(async (doctorId: string | number, month: DateTime) => {
@@ -412,7 +456,7 @@ export function SelfScheduleCalendarModal({
         numDays,
         serviceMinutes,
         address,
-        ...(lat != null && lon != null ? { allowOtherDoctors: false } : {}),
+        ...(lat != null && lon != null ? { lat, lon, allowOtherDoctors: false } : {}),
         doctorId,
       });
 

@@ -34,6 +34,10 @@ export type AvailabilityRequest = {
   numDays: number;
   serviceMinutes: number;
   address: string;
+  /** Pre-geocoded latitude — preferred over address for routing accuracy. */
+  lat?: number;
+  /** Pre-geocoded longitude — preferred over address for routing accuracy. */
+  lon?: number;
   allowOtherDoctors?: boolean;
   doctorId?: string | number; // Optional: specific doctor
 };
@@ -93,7 +97,10 @@ export async function fetchPublicVeterinarians(
   practiceId: number = 1, 
   address?: string, 
   lat?: number, 
-  lon?: number
+  lon?: number,
+  /** When true, filter out vets that are not accepting new patients in the client's zone.
+   *  Pass false for existing/returning clients — the new-patient restriction does not apply. */
+  onlyAcceptingNew: boolean = false,
 ): Promise<PublicProvider[]> {
   const params: any = { practiceId };
   if (lat != null && lon != null && Number.isFinite(lat) && Number.isFinite(lon)) {
@@ -106,34 +113,24 @@ export async function fetchPublicVeterinarians(
   const { data } = await http.get('/public/appointments/veterinarians', { params });
   const veterinarians: any[] = Array.isArray(data) ? data : (data?.items ?? data?.veterinarians ?? []);
   
-  // Filter veterinarians based on acceptingNewPatients
-  // For new clients, we should only include veterinarians where acceptingNewPatients is true for the relevant zone
-  // When lat/lon are passed, only one zone will be returned (the one the lat/lon is in)
-  // When address is passed, the backend will return the relevant zone(s)
-  const filteredVeterinarians = veterinarians.filter((v) => {
-    // Check if veterinarian has weeklySchedules with zones
-    if (!v.weeklySchedules || !Array.isArray(v.weeklySchedules)) {
-      // If no schedules/zones data, include the veterinarian (backwards compatibility)
-      return true;
-    }
-    
-    // Check all zones across all schedules
-    // Exclude veterinarian if ANY zone has acceptingNewPatients === false
-    // When lat/lon are passed, only one zone will be returned, so we check that specific zone
-    // When address is passed, the backend should return only relevant zones
-    const hasNonAcceptingZone = v.weeklySchedules.some((schedule: any) => {
-      if (!schedule.zones || !Array.isArray(schedule.zones)) {
-        return false;
-      }
-      
-      // Check if any zone in this schedule has acceptingNewPatients === false
-      return schedule.zones.some((zone: any) => zone.acceptingNewPatients === false);
-    });
-    
-    // Exclude veterinarians that have at least one zone not accepting new patients
-    // Include veterinarians where all zones accept new patients (or don't have the field set)
-    return !hasNonAcceptingZone;
-  });
+  // For existing/returning clients the new-patient restriction does not apply — skip the filter.
+  // For new clients, only include vets where the zone returned by the backend (already filtered
+  // to the client's location) is accepting new patients. We require at least one zone to
+  // explicitly accept new patients; vets with no zone data are included for backwards compat.
+  const filteredVeterinarians = onlyAcceptingNew
+    ? veterinarians.filter((v) => {
+        if (!v.weeklySchedules || !Array.isArray(v.weeklySchedules)) {
+          return true; // no zone data — include (backwards compat)
+        }
+        // Keep the vet only if at least one returned zone has acceptingNewPatients !== false
+        return v.weeklySchedules.some((schedule: any) => {
+          if (!schedule.zones || !Array.isArray(schedule.zones)) {
+            return true; // schedule with no zone data — allow
+          }
+          return schedule.zones.some((zone: any) => zone.acceptingNewPatients !== false);
+        });
+      })
+    : veterinarians;
   
   return filteredVeterinarians.map((v) => {
     const id = v.id ?? v.pimsId ?? v.employeeId;
