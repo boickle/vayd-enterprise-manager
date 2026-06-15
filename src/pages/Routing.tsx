@@ -31,7 +31,8 @@ import RoutingClientPatientsList from '../components/routing/RoutingClientPatien
 import { KeyValue } from '../components/KeyValue';
 import { DateTime } from 'luxon';
 import { validateAddress } from '../api/geo';
-import { fetchPrimaryProviders, fetchVeterinarians } from '../api/employee';
+import { fetchPrimaryProviders } from '../api/employee';
+import { fetchVeterinariansForDoctorSelect } from '../utils/veterinarianZoneLookup';
 import {
   normalizeRoutingV2SlotSearchResponse,
   type RoutingSlotSearchOptionalFlags,
@@ -1753,6 +1754,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
   const [showDoctorSelectionModal, setShowDoctorSelectionModal] = useState(false);
   const [allProviders, setAllProviders] = useState<RoutingDoctorPick[]>([]);
   const [doctorSelectClientZoneLabel, setDoctorSelectClientZoneLabel] = useState<string | null>(null);
+  const [doctorSelectNearestZoneNote, setDoctorSelectNearestZoneNote] = useState<string | null>(null);
   const [selectedDoctorIds, setSelectedDoctorIds] = useState<string[]>([]);
   const [providersLoading, setProvidersLoading] = useState(false);
   const [pendingEndpoint, setPendingEndpoint] = useState<string | null>(null);
@@ -3684,18 +3686,25 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     let alive = true;
     void (async () => {
       setProvidersLoading(true);
+      setDoctorSelectNearestZoneNote(null);
       try {
         const lat = form.newAppt.lat;
         const lon = form.newAppt.lon;
         const address = (form.newAppt.address ?? '').trim();
-        const { providers: veterinarians, clientZoneLabel } = await fetchVeterinarians(
-          address || undefined,
-          typeof lat === 'number' && Number.isFinite(lat) ? lat : undefined,
-          typeof lon === 'number' && Number.isFinite(lon) ? lon : undefined
-        );
+        const { providers: veterinarians, clientZoneLabel, usedNearestZone } =
+          await fetchVeterinariansForDoctorSelect({
+            address,
+            lat: typeof lat === 'number' && Number.isFinite(lat) ? lat : undefined,
+            lon: typeof lon === 'number' && Number.isFinite(lon) ? lon : undefined,
+          });
         if (!alive) return;
 
         setDoctorSelectClientZoneLabel(clientZoneLabel);
+        setDoctorSelectNearestZoneNote(
+          usedNearestZone && clientZoneLabel
+            ? `Out of area — using nearest zone (${clientZoneLabel}) for doctor availability.`
+            : null
+        );
 
         const providersWithPims: RoutingDoctorPick[] = veterinarians.map((v) => {
           const pimsId = v.pimsId ? String(v.pimsId) : String(v.id);
@@ -5383,6 +5392,12 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
             <p className="routing-doctor-select-lead">
               Choose which doctors to include in the search. Your selections are saved for next time.
             </p>
+
+            {doctorSelectNearestZoneNote ? (
+              <p className="routing-doctor-select-nearest-zone" role="status">
+                {doctorSelectNearestZoneNote}
+              </p>
+            ) : null}
 
             {providersLoading ? (
               <p className="routing-doctor-select-empty">Loading doctors…</p>
