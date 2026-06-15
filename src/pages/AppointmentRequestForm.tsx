@@ -36,7 +36,9 @@ import {
   type PublicProvider,
   type AvailabilityResponse,
   type AppointmentType,
+  type SelfScheduledSlot,
 } from '../api/publicAppointments';
+import { SelfScheduleCalendarModal } from '../components/SelfScheduleCalendarModal';
 import { trackEvent } from '../utils/analytics';
 import { useAppointmentFormDraftPersistence } from '../hooks/useAppointmentFormDraftPersistence';
 import type { AppointmentFormDraftSnapshotInput } from '../utils/appointmentFormDraftSnapshot';
@@ -287,6 +289,9 @@ type FormData = {
   selectedDateTimeSlotsVisit?: Record<string, number>; // Map of slot ISO to preference number (1, 2, 3) for visit
   noneOfWorkForMeVisit?: boolean; // For visit
   
+  // Self-scheduling: confirmed slot chosen by the client
+  selfScheduledSlot?: SelfScheduledSlot | null;
+
   // Other Info
   membershipInterest?: 'Pay as you go' | 'Membership' | "I'm not sure yet";
 };
@@ -518,6 +523,7 @@ export default function AppointmentRequestForm() {
   const [recommendedSlots, setRecommendedSlots] = useState<Array<{ date: string; time: string; display: string; iso: string }>>([]);
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [serviceMinutesUsed, setServiceMinutesUsed] = useState<number | null>(null); // Service minutes used for routing request
+  const [showSelfScheduleModal, setShowSelfScheduleModal] = useState(false); // Self-schedule calendar modal
   const [showExistingClientModal, setShowExistingClientModal] = useState(false); // Modal for existing client notification
   const [emailCheckForModal, setEmailCheckForModal] = useState<{ exists: boolean; hasAccount: boolean } | null>(null); // Store email check result for modal
   const [existingClientModalView, setExistingClientModalView] = useState<'message' | 'login'>('message');
@@ -3502,6 +3508,17 @@ export default function AppointmentRequestForm() {
           } : {}),
         } : {}),
         
+        // Self-scheduled slot — when present the backend should create the appointment directly
+        ...(formData.selfScheduledSlot ? {
+          confirmedAppointmentSlot: {
+            doctorId: formData.selfScheduledSlot.doctorId,
+            doctorName: formData.selfScheduledSlot.doctorName,
+            appointmentStart: formData.selfScheduledSlot.appointmentStart,
+            display: formData.selfScheduledSlot.display,
+            serviceMinutes: formData.selfScheduledSlot.serviceMinutes,
+          },
+        } : {}),
+
         // Additional Information
         howSoon: formData.howSoon || undefined,
         schedulingNotes: formData.schedulingNotes?.trim() || undefined,
@@ -3561,6 +3578,7 @@ export default function AppointmentRequestForm() {
         service_area: formData.serviceArea || formData.serviceAreaVisit || undefined,
         has_time_preferences: !!(formData.selectedDateTimeSlots && Object.keys(formData.selectedDateTimeSlots).length > 0) || 
                               !!(formData.selectedDateTimeSlotsVisit && Object.keys(formData.selectedDateTimeSlotsVisit).length > 0),
+        self_scheduled: !!formData.selfScheduledSlot,
         how_soon: formData.howSoon || undefined,
         membership_interest: formData.membershipInterest || undefined,
       });
@@ -4413,6 +4431,22 @@ export default function AppointmentRequestForm() {
                   <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '6px' }}>{errors.newClientPets}</div>
                 )}
               </div>
+
+              {/* How soon — shown in compact new-client-pet-info page */}
+              <div style={{ marginTop: newClientSectionGap, marginBottom: newClientSectionGap }}>
+                <label style={{ display: 'block', marginBottom: newClientLabelMb, fontWeight: 600, color: '#374151', fontSize: petFormTight ? '13px' : undefined }}>
+                  How soon do you need to be seen? <span style={{ color: '#ef4444' }}>*</span>
+                </label>
+                <NewClientHowSoonPicker
+                  value={(formData.howSoon as HowSoonChoiceValue) || ''}
+                  onChange={(option) => updateFormData('howSoon', option)}
+                  error={errors.howSoon}
+                />
+                {renderOtherHowSoonDateTimeField()}
+              </div>
+
+              {/* Scheduling button */}
+              {renderPage({ page: 'request-visit-continued', embedded: true })}
             </div>
           );
         }
@@ -6104,23 +6138,170 @@ export default function AppointmentRequestForm() {
             </div>
             )}
 
-            {/* Scheduling messaging — hidden on existing-client flow */}
+            {/* Self-scheduling + fallback liaison banner */}
             {(() => {
-              if (isExistingClientFlow) return null;
               const isManualScheduling = isManualSchedulingHowSoon(formData.howSoon);
-              const showLiaisonBanner = hasEuthanasiaPet || isManualScheduling || !SHOW_TIME_SLOTS;
-              if (!showLiaisonBanner) return null;
+
+              // Euthanasia or emergency/urgent → always show liaison banner only
+              if (hasEuthanasiaPet || isManualScheduling) {
+                return (
+                  <div style={{
+                    marginBottom: '20px',
+                    padding: '16px',
+                    backgroundColor: '#f0fdf4',
+                    border: '1px solid #10b981',
+                    borderRadius: '8px',
+                    fontSize: '14px',
+                    color: '#065f46',
+                  }}>
+                    Once you submit the form, a Client Liaison will be in touch with you shortly about available times.
+                  </div>
+                );
+              }
+
+              // Non-urgent: offer self-scheduling
+              const confirmedSlot = formData.selfScheduledSlot;
+
+              // Build address string for modal.
+              // For logged-in clients the address comes from clientLocationRef (geocoded lat/lon)
+              // and/or formData.physicalAddress (populated from client record on load).
+              // clientLocationRef.current.address is only set when the client has NO lat/lon
+              // (the API builds the string as a fallback). So prefer formData fields for the
+              // address string and clientLocationRef for lat/lon.
+              const addrFromNewPhysical = isPhysicalAddressComplete(formData.newPhysicalAddress)
+                ? formData.newPhysicalAddress
+                : null;
+              const addrSource = addrFromNewPhysical ?? (isPhysicalAddressComplete(formData.physicalAddress) ? formData.physicalAddress : null);
+              const addrLine1 = addrSource?.line1 || '';
+              const addrCity  = addrSource?.city  || '';
+              const addrState = addrSource?.state || '';
+              const addrZip   = addrSource?.zip   || '';
+              const fullAddress =
+                clientLocationRef.current.address ||
+                (addrSource ? [addrLine1, addrCity, addrState, addrZip].filter(Boolean).join(', ') : '');
+
+              // For logged-in clients: their location is ready once clientLocationReady is true
+              // (lat/lon loaded) or once their formData address is populated.
+              const hasAddress = !!(
+                (isLoggedIn && clientLocationReady) ||
+                clientLocationRef.current.address ||
+                addrSource
+              );
+
+              const lat = clientLocationRef.current.lat ?? ((formData.physicalAddress as any)?.lat as number | undefined);
+              const lon = clientLocationRef.current.lon ?? ((formData.physicalAddress as any)?.lon as number | undefined);
+
+              const numPets = formData.selectedPetIds?.length || formData.newClientPets?.length || 1;
+              const svcMinutes = 40 + Math.max(0, numPets - 1) * 20;
+
               return (
-                <div style={{
-                  marginBottom: '20px',
-                  padding: '16px',
-                  backgroundColor: '#f0fdf4',
-                  border: '1px solid #10b981',
-                  borderRadius: '8px',
-                  fontSize: '14px',
-                  color: '#065f46',
-                }}>
-                  Once you submit the form, a Client Liaison will be in touch with you shortly about available times.
+                <div style={{ marginBottom: '20px' }}>
+                  {confirmedSlot ? (
+                    /* ── Confirmed slot chip ── */
+                    <div style={{
+                      padding: '14px 16px',
+                      backgroundColor: '#f0fdf4',
+                      border: '2px solid #10b981',
+                      borderRadius: '10px',
+                      display: 'flex',
+                      alignItems: 'flex-start',
+                      gap: '12px',
+                    }}>
+                      <span style={{ fontSize: 22, lineHeight: 1 }}>✅</span>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 700, fontSize: '14px', color: '#065f46', marginBottom: '2px' }}>
+                          Appointment Scheduled
+                        </div>
+                        <div style={{ fontSize: '14px', color: '#065f46' }}>
+                          {confirmedSlot.display} with {confirmedSlot.doctorName}
+                        </div>
+                        <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>
+                          We will book this appointment when you submit your request.
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          updateFormData('selfScheduledSlot', null);
+                          setShowSelfScheduleModal(true);
+                        }}
+                        style={{
+                          background: 'none',
+                          border: '1px solid #10b981',
+                          borderRadius: '6px',
+                          padding: '4px 10px',
+                          fontSize: '12px',
+                          color: '#065f46',
+                          cursor: 'pointer',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        Change
+                      </button>
+                    </div>
+                  ) : (
+                    /* ── Pick-a-time CTA ── */
+                    <div>
+                      <button
+                        type="button"
+                        onClick={() => setShowSelfScheduleModal(true)}
+                        disabled={!hasAddress}
+                        style={{
+                          width: '100%',
+                          padding: '14px',
+                          backgroundColor: hasAddress ? '#0d9488' : '#e5e7eb',
+                          color: hasAddress ? '#ffffff' : '#9ca3af',
+                          border: 'none',
+                          borderRadius: '10px',
+                          fontSize: '15px',
+                          fontWeight: 700,
+                          cursor: hasAddress ? 'pointer' : 'not-allowed',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '8px',
+                          transition: 'background-color 0.15s',
+                        }}
+                      >
+                        <span style={{ fontSize: 18 }}>📅</span>
+                        Pick a Date &amp; Time Now
+                      </button>
+                      {!hasAddress && (
+                        <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px', textAlign: 'center' }}>
+                          {isLoggedIn ? 'Loading your address…' : 'Please enter your complete address above to choose a time.'}
+                        </div>
+                      )}
+                      <div style={{
+                        marginTop: '10px',
+                        padding: '12px 14px',
+                        backgroundColor: '#f9fafb',
+                        border: '1px solid #e5e7eb',
+                        borderRadius: '8px',
+                        fontSize: '13px',
+                        color: '#6b7280',
+                        textAlign: 'center',
+                      }}>
+                        Or skip this step — a Client Liaison will contact you after submission.
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Self-schedule modal */}
+                  {showSelfScheduleModal && hasAddress && (
+                    <SelfScheduleCalendarModal
+                      practiceId={practiceId}
+                      address={fullAddress}
+                      lat={lat}
+                      lon={lon}
+                      serviceMinutes={svcMinutes}
+                      isNewClient={!isLoggedIn}
+                      onConfirm={(slot) => {
+                        updateFormData('selfScheduledSlot', slot);
+                        setShowSelfScheduleModal(false);
+                      }}
+                      onClose={() => setShowSelfScheduleModal(false)}
+                    />
+                  )}
                 </div>
               );
             })()}

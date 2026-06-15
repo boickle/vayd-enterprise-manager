@@ -267,6 +267,28 @@ When `appointmentType` is `"regular_visit"`, the payload includes:
 - When `howSoon` is "Emergent – today" or "Urgent – within 24–48 hours", `selectedDateTimePreferences` will be `null` and a message indicates the Client Liaison will contact them.
 - The appointment availability search is automatically triggered when the user reaches the appointment time selection page (no manual urgency question).
 
+## Self-Scheduled Slot (Confirmed Booking)
+
+When the user picks a specific time using the "Pick a Date & Time Now" calendar modal, the payload includes:
+
+```json
+{
+  "confirmedAppointmentSlot": {
+    "doctorId": string | number,     // Provider ID (pimsId or internal id)
+    "doctorName": string,            // Full doctor name (e.g. "Dr. Jane Smith")
+    "appointmentStart": string,      // ISO 8601 start datetime
+    "display": string,               // Human-readable (e.g. "Monday, June 16 at 10:00 AM")
+    "serviceMinutes": number         // Duration in minutes
+  }
+}
+```
+
+**Backend note:** When `confirmedAppointmentSlot` is present, the backend should create an actual `Appointment` record (via the same logic as `POST /appointments`) and link it to the request submission. The slot was routed via `POST /public/appointments/availability` and honours drive time and the employee zones/accepting-new-patients rules.
+
+If `confirmedAppointmentSlot` is absent, the flow falls back to the existing request-only behaviour (Client Liaison follows up).
+
+---
+
 ## DateTime Preference Structure
 
 When the user selects from recommended time slots:

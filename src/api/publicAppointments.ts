@@ -11,6 +11,21 @@ export type PublicProvider = {
   id: string | number;
   name: string;
   email?: string;
+  imageUrl?: string | null;
+  employeeId?: number | null;
+};
+
+/** A confirmed self-scheduled appointment slot chosen by the client. */
+export type SelfScheduledSlot = {
+  /** Doctor/provider ID (pimsId or internal id). */
+  doctorId: string | number;
+  doctorName: string;
+  /** ISO 8601 start datetime. */
+  appointmentStart: string;
+  /** Human-readable display string (e.g. "Monday, June 16 at 10:00 AM"). */
+  display: string;
+  /** Appointment duration in minutes. */
+  serviceMinutes: number;
 };
 
 export type AvailabilityRequest = {
@@ -138,8 +153,56 @@ export async function fetchPublicVeterinarians(
       id: id,
       name: name,
       email: v?.email,
+      imageUrl: v?.imageUrl ?? null,
+      employeeId: typeof id === 'number' ? id : (v.employeeId ?? null),
     };
   });
+}
+
+export type MonthAvailabilityCandidate = {
+  date: string; // YYYY-MM-DD
+  iso: string;  // ISO datetime
+  display: string;
+  doctorId?: string | number;
+  doctorName?: string;
+};
+
+/**
+ * Fetch all available slots for a doctor over a date range (for month calendar view).
+ * Unlike fetchAvailability, this does not cap at 3 results.
+ * POST /public/appointments/availability
+ */
+export async function fetchPublicMonthAvailability(request: AvailabilityRequest): Promise<MonthAvailabilityCandidate[]> {
+  const { data } = await http.post('/public/appointments/availability', request);
+
+  const rawCandidates: any[] = [];
+
+  if (data?.candidates && Array.isArray(data.candidates)) {
+    rawCandidates.push(...data.candidates);
+  } else if (data?.slots && Array.isArray(data.slots)) {
+    rawCandidates.push(...data.slots);
+  } else {
+    if (data?.winner) rawCandidates.push(data.winner);
+    if (Array.isArray(data?.alternates)) rawCandidates.push(...data.alternates);
+  }
+
+  const results: MonthAvailabilityCandidate[] = [];
+  for (const c of rawCandidates) {
+    const dt = c.suggestedStartIso
+      ? DateTime.fromISO(c.suggestedStartIso)
+      : c.iso
+      ? DateTime.fromISO(c.iso)
+      : null;
+    if (!dt || !dt.isValid) continue;
+    results.push({
+      date: dt.toISODate() as string,
+      iso: dt.toISO() as string,
+      display: dt.toFormat("cccc, LLLL d 'at' h:mm a"),
+      doctorId: c.doctorId,
+      doctorName: c.doctorName,
+    });
+  }
+  return results;
 }
 
 /**
