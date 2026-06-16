@@ -112,6 +112,22 @@ function formatSavedTaskDatetime(value: string): string {
   return dt.isValid ? dt.toFormat('MMM d, yyyy h:mm a') : '—';
 }
 
+/** Map a time input to set, clear, or skip — clearing a recorded time sends `{ clear: true }`. */
+function actualTimeFieldPayload(
+  timeLocal: string,
+  existingIso: string | null,
+  dateKey: string,
+  practiceTz: string
+): { at: string } | { clear: true } | null {
+  const trimmed = timeLocal.trim();
+  if (trimmed) {
+    const at = combineDateAndTimeToUtc(dateKey, trimmed, practiceTz);
+    return at ? { at } : null;
+  }
+  if (existingIso) return { clear: true };
+  return null;
+}
+
 type Props = {
   appt: Appointment;
   /** `both` — combined Start / End Visit screen (default from context menu). */
@@ -840,56 +856,68 @@ export function SchedulerActualVisitTimeModal({
       setError('Could not determine visit date.');
       return;
     }
+    const visitTimeChangePending =
+      startTimeLocal.trim() ||
+      endTimeLocal.trim() ||
+      (existingStartIso && !startTimeLocal.trim()) ||
+      (existingEndIso && !endTimeLocal.trim());
     if (
       householdVisits.length > 1 &&
       selectedVisitTimePatientIds.size === 0 &&
-      (startTimeLocal.trim() || endTimeLocal.trim())
+      visitTimeChangePending
     ) {
       setError('Select at least one pet to apply visit times to.');
       return;
     }
     if (isStartOnly) {
-      const at = combineDateAndTimeToUtc(dateKey, startTimeLocal, practiceTz);
-      if (!at) {
+      const startPayload = actualTimeFieldPayload(
+        startTimeLocal,
+        existingStartIso,
+        dateKey,
+        practiceTz
+      );
+      if (!startPayload) {
         setError('Enter a valid start time.');
         return;
       }
-      void postBoth({ start: { at } });
+      void postBoth({ start: startPayload });
       return;
     }
     if (isEndOnly) {
-      const at = combineDateAndTimeToUtc(dateKey, endTimeLocal, practiceTz);
-      if (!at) {
+      const endPayload = actualTimeFieldPayload(endTimeLocal, existingEndIso, dateKey, practiceTz);
+      if (!endPayload) {
         setError('Enter a valid end time.');
         return;
       }
-      if (!validateForwardBooking(true)) return;
-      void postBoth({ end: { at } });
+      const savingEnd = 'at' in endPayload;
+      if (!validateForwardBooking(savingEnd)) return;
+      void postBoth({ end: endPayload });
       return;
     }
-    const startAt = startTimeLocal.trim()
-      ? combineDateAndTimeToUtc(dateKey, startTimeLocal, practiceTz)
-      : null;
-    const endAt = endTimeLocal.trim()
-      ? combineDateAndTimeToUtc(dateKey, endTimeLocal, practiceTz)
-      : null;
-    if (!startAt && !endAt) {
-      setError('Enter at least one time.');
-      return;
-    }
-    if (startTimeLocal.trim() && !startAt) {
+    const startPayload = actualTimeFieldPayload(
+      startTimeLocal,
+      existingStartIso,
+      dateKey,
+      practiceTz
+    );
+    const endPayload = actualTimeFieldPayload(endTimeLocal, existingEndIso, dateKey, practiceTz);
+    if (startTimeLocal.trim() && !startPayload) {
       setError('Enter a valid start time.');
       return;
     }
-    if (endTimeLocal.trim() && !endAt) {
+    if (endTimeLocal.trim() && !endPayload) {
       setError('Enter a valid end time.');
       return;
     }
-    const savingEnd = Boolean(endAt);
+    if (!startPayload && !endPayload) {
+      setError('Enter at least one time.');
+      return;
+    }
+    const savingEnd = Boolean(endPayload && 'at' in endPayload);
     if (!validateForwardBooking(savingEnd)) return;
     void postBoth({
-      ...(startAt ? { start: { at: startAt } } : {}),
-      ...(endAt ? { end: { at: endAt } } : {}),
+      ...(startPayload ? { start: startPayload } : {}),
+      ...(endPayload ? { end: endPayload } : {}),
     });
   };
 
