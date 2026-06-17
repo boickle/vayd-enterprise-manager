@@ -400,6 +400,8 @@ export function buildCreateForwardBookingPayloadFromAppointment(
     /** Fallback when the appointment payload omits nested client/patient. */
     patientId?: number;
     clientId?: number;
+    /** Explicit provider for the follow-up; overrides appointment primary provider. */
+    primaryProviderId?: number | null;
   }
 ): CreateForwardBookingPayload | null {
   if (!appt?.id || typeof appt.id !== 'number') return null;
@@ -429,8 +431,13 @@ export function buildCreateForwardBookingPayloadFromAppointment(
   const appointmentTypeId = resolveForwardBookingAppointmentTypeId(appt, opts?.appointmentTypes);
 
   const pp = appt.primaryProvider;
-  const primaryProviderId =
+  const fromAppt =
     pp?.id != null && Number.isFinite(Number(pp.id)) ? Number(pp.id) : undefined;
+  const fromOverride =
+    opts?.primaryProviderId != null && Number.isFinite(Number(opts.primaryProviderId))
+      ? Number(opts.primaryProviderId)
+      : undefined;
+  const primaryProviderId = fromOverride ?? fromAppt;
 
   const bookingNotesRaw = opts?.bookingNotes?.trim();
   const bookingNotes = bookingNotesRaw ? bookingNotesRaw : null;
@@ -459,6 +466,7 @@ export function buildCreateForwardBookingPayloadFromPatient(
   practiceId: number,
   opts?: {
     bookingNotes?: string | null;
+    primaryProviderId?: number | null;
   }
 ): CreateForwardBookingPayload | null {
   if (!Number.isFinite(patientId) || patientId <= 0) return null;
@@ -466,6 +474,10 @@ export function buildCreateForwardBookingPayloadFromPatient(
 
   const bookingNotesRaw = opts?.bookingNotes?.trim();
   const bookingNotes = bookingNotesRaw ? bookingNotesRaw : null;
+  const primaryProviderId =
+    opts?.primaryProviderId != null && Number.isFinite(Number(opts.primaryProviderId))
+      ? Number(opts.primaryProviderId)
+      : undefined;
 
   return {
     practiceId,
@@ -473,6 +485,7 @@ export function buildCreateForwardBookingPayloadFromPatient(
     patientId,
     intervalAmount: interval.amount,
     intervalUnit: interval.unit,
+    ...(primaryProviderId != null ? { primaryProviderId } : {}),
     ...(bookingNotes != null ? { bookingNotes } : {}),
   };
 }

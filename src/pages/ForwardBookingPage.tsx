@@ -102,6 +102,36 @@ const STATUS_TABS: { key: StatusFilter; label: string }[] = [
   { key: 'removed', label: 'Removed' },
 ];
 
+const FORWARD_BOOKING_TAB_ORDER: ForwardBookingListTab[] = [
+  'pending',
+  'onHold',
+  'bookLater',
+  'booked',
+  'complete',
+  'removed',
+];
+
+function forwardBookingTabLabel(tab: ForwardBookingListTab): string {
+  return STATUS_TABS.find((t) => t.key === tab)?.label ?? tab;
+}
+
+function forwardBookingTabBadgeColors(tab: ForwardBookingListTab): { background: string; color: string } {
+  switch (tab) {
+    case 'onHold':
+      return { background: '#fef3c7', color: '#92400e' };
+    case 'bookLater':
+      return { background: '#e0f2fe', color: '#0369a1' };
+    case 'booked':
+      return { background: '#dcfce7', color: '#166534' };
+    case 'complete':
+      return { background: '#e0e7ff', color: '#3730a3' };
+    case 'removed':
+      return { background: '#f1f5f9', color: '#475569' };
+    default:
+      return { background: '#f1f5f9', color: '#475569' };
+  }
+}
+
 function pickStr(v: unknown): string | null {
   if (v == null) return null;
   const s = String(v).trim();
@@ -225,6 +255,50 @@ function bookingNotesDisplay(entry: ForwardBookingEntry): string | null {
 
 function initialNote(entry: ForwardBookingEntry): string {
   return entry.note ?? '';
+}
+
+function forwardBookingEntrySearchHaystack(
+  entry: ForwardBookingEntry,
+  practiceTz: string,
+  noteText: string
+): string {
+  const c = clientDisplay(entry);
+  const pet = pickStr(entry.patient?.name) ?? '';
+  const prov = providerLabel(entry).toLowerCase();
+  const bookingNote = (bookingNotesDisplay(entry) ?? '').toLowerCase();
+  const bookedBy = employeeLabel(entry.bookedBy).toLowerCase();
+  const sourceVisit = formatSourceVisit(entry, practiceTz);
+  return [
+    c.name,
+    c.phone ?? '',
+    pet,
+    sourceVisit.label,
+    formatForwardBookingIntervalLabel({
+      intervalAmount: entry.intervalAmount,
+      intervalUnit: entry.intervalUnit,
+      monthsOut: entry.monthsOut,
+    }),
+    entry.appointmentTypeName ?? '',
+    formatForwardBookingDate(resolveForwardBookingTargetDueDateIso(entry, practiceTz), practiceTz),
+    formatForwardBookingBookAfterDate(forwardBookingBookAfterDateIso(entry), practiceTz),
+    prov,
+    noteText.toLowerCase(),
+    bookingNote,
+    bookedBy,
+  ]
+    .join(' ')
+    .toLowerCase();
+}
+
+function forwardBookingEntryMatchesSearch(
+  entry: ForwardBookingEntry,
+  query: string,
+  practiceTz: string,
+  noteText: string
+): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  return forwardBookingEntrySearchHaystack(entry, practiceTz, noteText).includes(q);
 }
 
 function noteForPatch(value: string): string | null {
@@ -518,55 +592,53 @@ export default function ForwardBookingPage() {
   }, [visibleRows, practiceTz, bookedApptMeta]);
 
   const filtered = useMemo(() => {
-    let list = visibleRows.filter(
-      (r) => forwardBookingListTab(r, practiceTz, bookedApptMeta) === statusFilter
-    );
-    const q = search.trim().toLowerCase();
-    const sortList = (items: ForwardBookingEntry[]) => {
-      if (statusFilter === 'bookLater') {
+    const searchQuery = search.trim().toLowerCase();
+    const searchActive = searchQuery.length > 0;
+
+    const sortList = (items: ForwardBookingEntry[], tab: ForwardBookingListTab) => {
+      if (tab === 'bookLater') {
         return sortForwardBookingBookLaterListEntries(items, practiceTz, (e) => clientDisplay(e).name);
       }
       return sortForwardBookingListEntries(items, practiceTz, (e) => clientDisplay(e).name);
     };
-    if (!q) return sortList(list);
-    return sortList(
-      list.filter((r) => {
-        const c = clientDisplay(r);
-        const pet = pickStr(r.patient?.name) ?? '';
-        const prov = providerLabel(r).toLowerCase();
-        const notes = (noteDrafts[r.id] ?? initialNote(r)).toLowerCase();
-        const bookingNote = (bookingNotesDisplay(r) ?? '').toLowerCase();
-        const bookedBy = employeeLabel(r.bookedBy).toLowerCase();
-        const sourceVisit = formatSourceVisit(r, practiceTz);
-        const hay = [
-          c.name,
-          c.phone ?? '',
-          pet,
-          sourceVisit.label,
-          formatForwardBookingIntervalLabel({
-            intervalAmount: r.intervalAmount,
-            intervalUnit: r.intervalUnit,
-            monthsOut: r.monthsOut,
-          }),
-          r.appointmentTypeName ?? '',
-          formatForwardBookingDate(resolveForwardBookingTargetDueDateIso(r, practiceTz), practiceTz),
-          formatForwardBookingBookAfterDate(forwardBookingBookAfterDateIso(r), practiceTz),
-          prov,
-          notes,
-          bookingNote,
-          bookedBy,
-        ]
-          .join(' ')
-          .toLowerCase();
-        return hay.includes(q);
-      })
+
+    const matchesSearch = (r: ForwardBookingEntry) =>
+      forwardBookingEntryMatchesSearch(
+        r,
+        searchQuery,
+        practiceTz,
+        noteDrafts[r.id] ?? initialNote(r)
+      );
+
+    if (searchActive) {
+      const matching = visibleRows.filter(matchesSearch);
+      const byTab = new Map<ForwardBookingListTab, ForwardBookingEntry[]>();
+      for (const row of matching) {
+        const tab = forwardBookingListTab(row, practiceTz, bookedApptMeta);
+        const bucket = byTab.get(tab) ?? [];
+        bucket.push(row);
+        byTab.set(tab, bucket);
+      }
+      const list: ForwardBookingEntry[] = [];
+      for (const tab of FORWARD_BOOKING_TAB_ORDER) {
+        const bucket = byTab.get(tab);
+        if (bucket?.length) list.push(...sortList(bucket, tab));
+      }
+      return list;
+    }
+
+    const list = visibleRows.filter(
+      (r) => forwardBookingListTab(r, practiceTz, bookedApptMeta) === statusFilter
     );
+    return sortList(list, statusFilter);
   }, [visibleRows, statusFilter, search, noteDrafts, practiceTz, bookedApptMeta]);
 
   const filteredGroups = useMemo(
     () => groupForwardBookingListByHousehold(filtered),
     [filtered]
   );
+
+  const searchActive = search.trim().length > 0;
 
   useEffect(() => {
     if (highlightEntryId == null || loading) return;
@@ -848,12 +920,20 @@ export default function ForwardBookingPage() {
         <input
           type="search"
           className="settings-input"
-          placeholder="Search client, patient, provider, notes…"
+          placeholder="Search all tabs: client, patient, provider, notes…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          aria-label="Search forward booking list"
+          aria-label="Search forward booking list across all tabs"
           style={{ width: '100%' }}
         />
+        {searchActive ? (
+          <p className="settings-muted" style={{ fontSize: 12, margin: '6px 0 0' }}>
+            Searching across all tabs
+            {filtered.length > 0
+              ? ` · ${filtered.length} result${filtered.length === 1 ? '' : 's'}`
+              : ''}
+          </p>
+        ) : null}
       </div>
 
       {error ? (
@@ -865,7 +945,9 @@ export default function ForwardBookingPage() {
       {loading ? (
         <p className="settings-muted">Loading…</p>
       ) : filteredGroups.length === 0 ? (
-        <p className="settings-muted">No forward bookings in this view.</p>
+        <p className="settings-muted">
+          {searchActive ? 'No forward bookings match your search.' : 'No forward bookings in this view.'}
+        </p>
       ) : (
         <ul className="forward-booking-household-list">
           {filteredGroups.map((group) => {
@@ -926,6 +1008,7 @@ export default function ForwardBookingPage() {
             const isRemoved = entry.status === 'removed';
 
             const isComplete = entry.status === 'complete';
+            const entryListTab = forwardBookingListTab(entry, practiceTz, bookedApptMeta);
             const showBookedFollowUpActions = hasLinked && !isComplete && !isRemoved;
             const showPendingQueueActions = !hasLinked && !isComplete && !isRemoved && !isBookLater;
             const showBookLaterTabActions = isBookLater;
@@ -963,6 +1046,20 @@ export default function ForwardBookingPage() {
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, justifyContent: 'space-between' }}>
                   <div style={{ flex: '1 1 240px', minWidth: 0 }}>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+                      {searchActive ? (
+                        <div
+                          style={{
+                            display: 'inline-block',
+                            padding: '3px 10px',
+                            borderRadius: 6,
+                            fontSize: 12,
+                            fontWeight: 600,
+                            ...forwardBookingTabBadgeColors(entryListTab),
+                          }}
+                        >
+                          {forwardBookingTabLabel(entryListTab)}
+                        </div>
+                      ) : null}
                       {isRemoved ? (
                         <div
                           style={{
@@ -1084,7 +1181,7 @@ export default function ForwardBookingPage() {
                       <span style={overdue && !hasLinked ? { color: 'var(--danger, #c62828)' } : undefined}>
                         {formatForwardBookingDate(resolvedTargetDueDate, practiceTz)}
                       </span>
-                      <span> · Provider: {providerLabel(entry)}</span>
+                      <span> · Forward booking with: {providerLabel(entry)}</span>
                     </div>
                     {bookAfterIso ? (
                       <div className="settings-muted" style={{ fontSize: '0.88rem', marginTop: 4 }}>

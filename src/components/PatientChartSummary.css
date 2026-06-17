@@ -73,6 +73,10 @@
 }
 
 /* Hover card shell (Get Best Route) */
+.routing-patient-hover-popover .routing-patient-hover-card {
+  max-height: none;
+}
+
 .routing-patient-hover-card {
   background: #fff;
   border: 1px solid #dbeafe;

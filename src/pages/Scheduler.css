@@ -3006,6 +3006,29 @@ label.scheduler-go-date-heading {
   color: #94a3b8;
 }
 
+.scheduler-verified-address-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.scheduler-verified-address-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.scheduler-verified-address-ok {
+  flex-shrink: 0;
+  font-size: 14px;
+  line-height: 1;
+  color: #047857;
+  font-weight: 700;
+  padding: 10px 4px 0;
+  min-width: 28px;
+  text-align: center;
+}
+
 .scheduler-book-override-panel {
   margin-top: 4px;
   padding: 12px 14px;
