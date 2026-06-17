@@ -36,6 +36,9 @@ type RawVeterinarian = {
 };
 
 const VETERINARIANS_LOOKUP_TIMEOUT_MS = 30_000;
+const VETERINARIANS_CACHE_MS = 5 * 60 * 1000;
+
+let veterinariansCache: { fetchedAt: number; rows: RawVeterinarian[] } | null = null;
 
 function zoneIdFromScheduleZone(z: VeterinarianWeeklyScheduleZone): number | null {
   const raw = z.zone?.id ?? z.zoneId;
@@ -161,10 +164,93 @@ async function resolveLookupAddress(args: {
   }
 }
 async function fetchAllVeterinariansRaw(): Promise<RawVeterinarian[]> {
+  const now = Date.now();
+  if (veterinariansCache && now - veterinariansCache.fetchedAt < VETERINARIANS_CACHE_MS) {
+    return veterinariansCache.rows;
+  }
   const { data } = await http.get<unknown>('/employees/veterinarians', {
     timeout: VETERINARIANS_LOOKUP_TIMEOUT_MS,
   });
-  return Array.isArray(data) ? (data as RawVeterinarian[]) : [];
+  const rows = Array.isArray(data) ? (data as RawVeterinarian[]) : [];
+  veterinariansCache = { fetchedAt: now, rows };
+  return rows;
+}
+
+function veterinarianMatchesDoctorPimsId(v: RawVeterinarian, pimsId: string): boolean {
+  const target = pimsId.trim();
+  if (!target) return false;
+  if (v.pimsId != null && String(v.pimsId) === target) return true;
+  if (v.id != null && String(v.id) === target) return true;
+  return false;
+}
+
+/** Whether the doctor has Assign Zone (seeing clients) for `zoneId`. `null` when unknown. */
+export async function isDoctorAssignedToClientZone(
+  doctorPimsId: string,
+  zoneId: number
+): Promise<boolean | null> {
+  const target = doctorPimsId.trim();
+  if (!target || !Number.isFinite(zoneId) || zoneId <= 0) return null;
+
+  const veterinarians = await fetchAllVeterinariansRaw();
+  const vet = veterinarians.find((v) => veterinarianMatchesDoctorPimsId(v, target));
+  if (!vet) return null;
+  return deriveVeterinarianZoneFlagsForZoneId(vet, zoneId).seeingClients;
+}
+
+export type RoutingDoctorZoneCheckResult = {
+  zoneLabel: string | null;
+  outOfZoneDoctorPimsIds: string[];
+};
+
+/**
+ * Doctors selected for routing who lack Assign Zone (seeing clients) for the address zone.
+ * Skips the check when the zone cannot be resolved.
+ */
+export async function findDoctorsNotAssignedToClientZone(args: {
+  address: string;
+  lat?: number;
+  lon?: number;
+  doctorPimsIds: string[];
+  /** When already resolved for the address (e.g. routing form zone badge). */
+  zoneId?: number;
+  zoneLabel?: string | null;
+}): Promise<RoutingDoctorZoneCheckResult> {
+  const doctorPimsIds = [...new Set(args.doctorPimsIds.map((id) => id.trim()).filter(Boolean))];
+  if (doctorPimsIds.length === 0) {
+    return { zoneLabel: null, outOfZoneDoctorPimsIds: [] };
+  }
+
+  let zoneId: number | null = null;
+  let zoneLabel: string | null = args.zoneLabel?.trim() || null;
+
+  if (args.zoneId != null && Number.isFinite(args.zoneId) && args.zoneId > 0) {
+    zoneId = args.zoneId;
+  } else {
+    const lookupAddress = await resolveLookupAddress(args);
+    if (!lookupAddress) {
+      return { zoneLabel: null, outOfZoneDoctorPimsIds: [] };
+    }
+
+    const resolved = await resolveZoneForVeterinarianLookup(lookupAddress);
+    if (!resolved) {
+      return { zoneLabel: null, outOfZoneDoctorPimsIds: [] };
+    }
+
+    zoneId = resolved.zone.id;
+    zoneLabel = formatDoctorSelectZoneLabel(resolved.zone.name);
+  }
+  const veterinarians = await fetchAllVeterinariansRaw();
+  const outOfZoneDoctorPimsIds: string[] = [];
+
+  for (const pimsId of doctorPimsIds) {
+    const vet = veterinarians.find((v) => veterinarianMatchesDoctorPimsId(v, pimsId));
+    if (!vet) continue;
+    const flags = deriveVeterinarianZoneFlagsForZoneId(vet, zoneId);
+    if (!flags.seeingClients) outOfZoneDoctorPimsIds.push(pimsId);
+  }
+
+  return { zoneLabel, outOfZoneDoctorPimsIds };
 }
 
 export type VeterinariansForDoctorSelectResult = FetchVeterinariansResult & {
