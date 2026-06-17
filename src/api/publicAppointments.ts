@@ -40,6 +40,8 @@ export type AvailabilityRequest = {
   lon?: number;
   allowOtherDoctors?: boolean;
   doctorId?: string | number; // Optional: specific doctor
+  /** Required for online booking validation on POST /public/appointments/availability */
+  appointmentTypeId?: number;
 };
 
 export type AvailabilitySlot = {

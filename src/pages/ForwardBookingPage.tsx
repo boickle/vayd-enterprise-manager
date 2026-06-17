@@ -17,6 +17,7 @@ import { BookPatientChartButton } from '../components/BookPatientChartButton';
 import { ForwardBookingManualCompleteModal } from '../components/ForwardBookingManualCompleteModal';
 import { ForwardBookingBookLaterModal } from '../components/ForwardBookingBookLaterModal';
 import { CreateForwardBookingModal } from '../components/CreateForwardBookingModal';
+import { ensureForwardBookingServerLink } from '../utils/forwardBookingBookComplete';
 import {
   FORWARD_BOOKING_CREATE_APPOINTMENT_PARAM,
   FORWARD_BOOKING_CREATE_NEW_PARAM,
@@ -256,15 +257,8 @@ export default function ForwardBookingPage() {
 
   const resolveBookedSlotForSms = useCallback(
     async (entry: ForwardBookingEntry) => {
-      const catalog = typeCatalogRef.current;
-      const entryType =
-        entry.appointmentTypeId != null
-          ? catalog?.byId.get(Number(entry.appointmentTypeId))
-          : undefined;
-
       return resolveForwardBookingSmsBookedSlot(entry, practiceTz, {
         practiceId: PRACTICE_ID,
-        appointmentType: entryType ?? null,
       });
     },
     [practiceTz]
@@ -370,7 +364,10 @@ export default function ForwardBookingPage() {
       if (highlightId != null) {
         setHighlightEntryId(highlightId);
         highlightScrollSig.current = `${highlightId}-${Date.now()}`;
-        setStatusFilter('pending');
+        const highlighted = list.find((r) => r.id === highlightId);
+        if (highlighted) {
+          setStatusFilter(forwardBookingListTab(highlighted, practiceTz, metaMap));
+        }
       }
 
       if (openSmsForReturn) {
@@ -757,7 +754,8 @@ export default function ForwardBookingPage() {
     setFollowUpCompleting((s) => ({ ...s, [entry.id]: true }));
     setFollowUpCompleteError((e) => ({ ...e, [entry.id]: null }));
     try {
-      const updated = await finishForwardBookingFollowUp(entry.id, PRACTICE_ID);
+      const linked = await ensureForwardBookingServerLink(entry);
+      const updated = await finishForwardBookingFollowUp(linked.id, PRACTICE_ID);
       clearForwardBookingLocalLink(updated.id);
       setRows((prev) => prev.map((r) => (r.id === entry.id ? { ...r, ...updated } : r)));
       setNotice('Marked complete.');

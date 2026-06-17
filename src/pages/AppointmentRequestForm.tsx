@@ -24,6 +24,12 @@ import {
 } from '../components/PetHandlingNeedsPicker';
 import { getSelectedAppointmentType } from '../utils/petVisitQuestionUtils';
 import { sortAppointmentTypesForPicker } from '../utils/appointmentTypeSettings';
+import {
+  anyDoctorCanBookOnline,
+  canBookOnline,
+  isOnlineBookingUnavailableError,
+  ONLINE_BOOKING_UNAVAILABLE_MESSAGE,
+} from '../utils/onlineBooking';
 import { scrollToFirstAppointmentFormError } from '../utils/appointmentFormScrollToError';
 import { normalizeRoutingV2SlotSearchResponse, type RoutingV2SlotSearchResult } from '../api/routing';
 import { DateTime } from 'luxon';
@@ -162,6 +168,70 @@ function isPhysicalAddressComplete(addr: AddressFields | undefined): boolean {
       addr?.city?.trim() &&
       addr?.state?.trim() &&
       addr?.zip?.trim()
+  );
+}
+
+function resolvePrimaryAppointmentTypeId(
+  formData: Pick<FormData, 'selectedPetIds' | 'newClientPets' | 'existingClientNewPets' | 'petSpecificData'>,
+): number | undefined {
+  const petIds = [
+    ...(formData.selectedPetIds ?? []),
+    ...(formData.newClientPets?.map((p) => p.id) ?? []),
+    ...(formData.existingClientNewPets?.map((p) => p.id) ?? []),
+  ];
+  for (const petId of petIds) {
+    const typeId = formData.petSpecificData?.[petId]?.appointmentTypeId;
+    if (typeId != null && Number.isFinite(typeId)) return typeId;
+  }
+  return undefined;
+}
+
+function resolveProviderFromDoctorName(
+  selectedDoctor: string,
+  providerList: Array<{ id?: string | number; name: string; pimsId?: string | number | null }>,
+) {
+  const doctorName = selectedDoctor.replace(/^Dr\.?\s*/i, '').trim();
+  let doctor = providerList.find(
+    (p) => p.name === doctorName || `Dr. ${p.name}` === selectedDoctor || p.name === selectedDoctor,
+  );
+  if (!doctor) {
+    doctor = providerList.find(
+      (p) =>
+        p.name.toLowerCase().includes(doctorName.toLowerCase()) ||
+        doctorName.toLowerCase().includes(p.name.toLowerCase()),
+    );
+  }
+  return doctor;
+}
+
+function resolveRawVeterinarianById(rawVets: any[], doctorId: string | number | undefined): any | null {
+  if (doctorId == null) return null;
+  return (
+    rawVets.find((v) => String(v.id ?? v.employeeId ?? v.pimsId) === String(doctorId)) ?? null
+  );
+}
+
+function resolveRawVeterinarianByName(rawVets: any[], selectedDoctor: string): any | null {
+  const doctorName = selectedDoctor.replace(/^Dr\.?\s*/i, '').trim();
+  return (
+    rawVets.find((v) => {
+      const parts: string[] = [];
+      if (v.title) parts.push(v.title);
+      if (v.firstName) parts.push(v.firstName);
+      if (v.lastName) parts.push(v.lastName);
+      if (v.designation) parts.push(v.designation);
+      const built =
+        parts.length > 0
+          ? parts.join(' ')
+          : `${v.firstName || ''} ${v.lastName || ''}`.trim() || v.name || '';
+      const normalized = built.replace(/^Dr\.?\s*/i, '').trim();
+      return (
+        built === selectedDoctor ||
+        `Dr. ${built}` === selectedDoctor ||
+        normalized === doctorName ||
+        normalized.toLowerCase() === doctorName.toLowerCase()
+      );
+    }) ?? null
   );
 }
 
@@ -524,6 +594,7 @@ export default function AppointmentRequestForm() {
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [serviceMinutesUsed, setServiceMinutesUsed] = useState<number | null>(null); // Service minutes used for routing request
   const [showSelfScheduleModal, setShowSelfScheduleModal] = useState(false); // Self-schedule calendar modal
+  const [submittedWithOnlineBooking, setSubmittedWithOnlineBooking] = useState(false);
   const [showExistingClientModal, setShowExistingClientModal] = useState(false); // Modal for existing client notification
   const [emailCheckForModal, setEmailCheckForModal] = useState<{ exists: boolean; hasAccount: boolean } | null>(null); // Store email check result for modal
   const [existingClientModalView, setExistingClientModalView] = useState<'message' | 'login'>('message');
@@ -1001,6 +1072,85 @@ export default function AppointmentRequestForm() {
     return out;
   };
 
+  const primaryAppointmentTypeId = useMemo(
+    () => resolvePrimaryAppointmentTypeId(formData),
+    [
+      formData.selectedPetIds,
+      formData.newClientPets,
+      formData.existingClientNewPets,
+      formData.petSpecificData,
+    ],
+  );
+
+  const rawVeterinarianList = isLoggedIn ? rawVeterinarians : rawPublicVeterinarians;
+
+  const onlineBookingOffered = useMemo(
+    () =>
+      primaryAppointmentTypeId != null &&
+      anyDoctorCanBookOnline(rawVeterinarianList, primaryAppointmentTypeId),
+    [primaryAppointmentTypeId, rawVeterinarianList],
+  );
+
+  const resolvedPreferredDoctorId = useMemo(() => {
+    const selectedDoctor = formData.preferredDoctorExisting || formData.preferredDoctor;
+    if (!selectedDoctor || selectedDoctor === 'I have no preference') return undefined;
+
+    const providerList = isLoggedIn
+      ? providers
+      : publicProviders.length > 0
+        ? publicProviders.map((p) => ({
+            id: p.id,
+            name: p.name,
+            pimsId: p.id,
+          }))
+        : providers;
+
+    const doctor = resolveProviderFromDoctorName(selectedDoctor, providerList);
+    if (!doctor) return undefined;
+    const id = doctor.id ?? doctor.pimsId;
+    return id != null ? String(id) : undefined;
+  }, [
+    formData.preferredDoctorExisting,
+    formData.preferredDoctor,
+    isLoggedIn,
+    providers,
+    publicProviders,
+  ]);
+
+  const selectedRawVeterinarian = useMemo(() => {
+    if (resolvedPreferredDoctorId != null) {
+      const byId = resolveRawVeterinarianById(rawVeterinarianList, resolvedPreferredDoctorId);
+      if (byId) return byId;
+    }
+    const selectedDoctor = formData.preferredDoctorExisting || formData.preferredDoctor;
+    if (selectedDoctor && selectedDoctor !== 'I have no preference') {
+      return resolveRawVeterinarianByName(rawVeterinarianList, selectedDoctor);
+    }
+    return null;
+  }, [
+    resolvedPreferredDoctorId,
+    rawVeterinarianList,
+    formData.preferredDoctorExisting,
+    formData.preferredDoctor,
+  ]);
+
+  const onlineBookingEnabled = useMemo(
+    () => canBookOnline(selectedRawVeterinarian, primaryAppointmentTypeId),
+    [selectedRawVeterinarian, primaryAppointmentTypeId],
+  );
+
+  const showDoctorSelectionForScheduling = SHOW_DOCTOR_SELECTION || onlineBookingOffered;
+
+  useEffect(() => {
+    if (!onlineBookingEnabled) {
+      setFormData((prev) => {
+        if (!prev.selfScheduledSlot) return prev;
+        return { ...prev, selfScheduledSlot: null };
+      });
+      setShowSelfScheduleModal(false);
+    }
+  }, [onlineBookingEnabled]);
+
   // Convert raw veterinarian data to PublicProvider format
   const mapRawVeterinarianToPublicProvider = (vet: any): PublicProvider => {
     const id = vet.id ?? vet.pimsId ?? vet.employeeId;
@@ -1063,8 +1213,6 @@ export default function AppointmentRequestForm() {
     }
 
     // Extract doctor ID from provider name
-    const doctorName = selectedDoctor.replace('Dr. ', '').trim();
-    // Use publicProviders for new clients, providers for logged-in clients
     const providerList = isLoggedIn ? providers : (publicProviders.length > 0 ? publicProviders.map(p => ({
       id: p.id,
       name: p.name,
@@ -1072,15 +1220,7 @@ export default function AppointmentRequestForm() {
       pimsId: p.id,
     })) : providers);
     
-    let doctor = providerList.find(p => p.name === doctorName || `Dr. ${p.name}` === selectedDoctor);
-    
-    // Try fuzzy matching if exact match fails
-    if (!doctor) {
-      doctor = providerList.find(p => 
-        p.name.toLowerCase().includes(doctorName.toLowerCase()) ||
-        doctorName.toLowerCase().includes(p.name.toLowerCase())
-      );
-    }
+    const doctor = resolveProviderFromDoctorName(selectedDoctor, providerList);
     
     if (!doctor) {
       console.log('[AppointmentForm] Doctor not found:', selectedDoctor, 'Available providers:', providers.map(p => p.name));
@@ -1088,9 +1228,12 @@ export default function AppointmentRequestForm() {
       return;
     }
 
-    // Use pimsId if available, otherwise use id
-    const doctorId = doctor.pimsId ? String(doctor.pimsId) : String(doctor.id);
-    console.log('[AppointmentForm] Finding slots for doctor:', doctor.name, 'ID:', doctor.id, 'pimsId:', doctor.pimsId, 'using:', doctorId);
+    // Use database employee id when available
+    const doctorId = doctor.id != null ? String(doctor.id) : (doctor.pimsId ? String(doctor.pimsId) : undefined);
+    if (!doctorId) {
+      setRecommendedSlots([]);
+      return;
+    }
 
     setLoadingSlots(true);
     try {
@@ -1224,8 +1367,10 @@ export default function AppointmentRequestForm() {
         
         // Always include doctorId when a doctor is selected (we're already past the check that ensures doctor exists)
         if (doctorId) {
-          // Convert to number if it's a numeric string, otherwise keep as string
           availabilityRequest.doctorId = isNaN(Number(doctorId)) ? doctorId : Number(doctorId);
+        }
+        if (primaryAppointmentTypeId != null) {
+          availabilityRequest.appointmentTypeId = primaryAppointmentTypeId;
         }
 
         console.log('[AppointmentForm] Calling /public/appointments/availability with payload:', availabilityRequest);
@@ -2739,6 +2884,9 @@ export default function AppointmentRequestForm() {
     if (SHOW_DOCTOR_SELECTION && !formData.preferredDoctorExisting && !formData.preferredDoctor) {
       newErrors.preferredDoctorExisting = 'Please select a preferred doctor';
     }
+    if (formData.selfScheduledSlot && !onlineBookingEnabled) {
+      newErrors.selfScheduledSlot = ONLINE_BOOKING_UNAVAILABLE_MESSAGE;
+    }
 
     const isManualScheduling = isManualSchedulingHowSoon(formData.howSoon);
     const isNotUrgentTimeframe = formData.howSoon && !isManualScheduling;
@@ -3425,38 +3573,29 @@ export default function AppointmentRequestForm() {
           return selectedDoctor;
         })(),
         preferredDoctorId: (() => {
+          if (formData.selfScheduledSlot?.doctorId != null) {
+            const slotDoctorId = formData.selfScheduledSlot.doctorId;
+            return isNaN(Number(slotDoctorId)) ? String(slotDoctorId) : String(Number(slotDoctorId));
+          }
+
           const selectedDoctor = formData.preferredDoctorExisting || formData.preferredDoctor;
           if (!selectedDoctor || selectedDoctor === 'I have no preference') {
             return undefined;
           }
           
-          // Extract doctor ID from provider name
-          const doctorName = selectedDoctor.replace('Dr. ', '').trim();
-          // Use publicProviders for new clients, providers for logged-in clients
           const providerList = isLoggedIn ? providers : (publicProviders.length > 0 ? publicProviders.map(p => ({
             id: p.id,
             name: p.name,
             email: p.email || '',
-            pimsId: p.id, // PublicProvider uses id as pimsId
+            pimsId: p.id,
           })) : providers);
           
-          let doctor = providerList.find(p => p.name === doctorName || `Dr. ${p.name}` === selectedDoctor);
-          
-          // Try fuzzy matching if exact match fails
-          if (!doctor) {
-            doctor = providerList.find(p => 
-              p.name.toLowerCase().includes(doctorName.toLowerCase()) ||
-              doctorName.toLowerCase().includes(p.name.toLowerCase())
-            );
-          }
+          const doctor = resolveProviderFromDoctorName(selectedDoctor, providerList);
           
           if (doctor) {
-            // For existing clients: prefer id (database ID) over pimsId
-            // For new clients: publicProviders use id as pimsId, so we use id
             if (doctor.id) {
               return String(doctor.id);
             }
-            // Fallback to pimsId only if id is not available
             return doctor.pimsId ? String(doctor.pimsId) : undefined;
           }
           
@@ -3507,16 +3646,18 @@ export default function AppointmentRequestForm() {
           } : {}),
         } : {}),
         
-        // Self-scheduled slot — when present the backend should create the appointment directly
-        ...(formData.selfScheduledSlot ? {
-          confirmedAppointmentSlot: {
-            doctorId: formData.selfScheduledSlot.doctorId,
-            doctorName: formData.selfScheduledSlot.doctorName,
-            appointmentStart: formData.selfScheduledSlot.appointmentStart,
+        // Online booking — client picked a slot on the appointment request form
+        ...(formData.selfScheduledSlot && onlineBookingEnabled ? {
+          onlineBooking: true,
+          selectedDateTimePreferences: [{
+            preference: 1,
+            dateTime: formData.selfScheduledSlot.appointmentStart,
             display: formData.selfScheduledSlot.display,
-            serviceMinutes: formData.selfScheduledSlot.serviceMinutes,
-          },
-        } : {}),
+          }],
+          serviceMinutes: formData.selfScheduledSlot.serviceMinutes,
+        } : {
+          onlineBooking: false,
+        }),
 
         // Additional Information
         howSoon: formData.howSoon || undefined,
@@ -3570,6 +3711,7 @@ export default function AppointmentRequestForm() {
         : (formData.newClientPets?.length || 0);
       
       markFormCompleted();
+      setSubmittedWithOnlineBooking(!!formData.selfScheduledSlot && onlineBookingEnabled);
       trackFormEvent('appointment_form_submitted', {
         appointment_type: appointmentType,
         pet_count: petCount,
@@ -3578,6 +3720,7 @@ export default function AppointmentRequestForm() {
         has_time_preferences: !!(formData.selectedDateTimeSlots && Object.keys(formData.selectedDateTimeSlots).length > 0) || 
                               !!(formData.selectedDateTimeSlotsVisit && Object.keys(formData.selectedDateTimeSlotsVisit).length > 0),
         self_scheduled: !!formData.selfScheduledSlot,
+        online_booking: !!formData.selfScheduledSlot && onlineBookingEnabled,
         how_soon: formData.howSoon || undefined,
         membership_interest: formData.membershipInterest || undefined,
       });
@@ -3598,6 +3741,9 @@ export default function AppointmentRequestForm() {
         } else {
           setPromoAlreadyUsed(true);
         }
+      } else if (isOnlineBookingUnavailableError(status, error?.response?.data?.message)) {
+        errorMessage = ONLINE_BOOKING_UNAVAILABLE_MESSAGE;
+        updateFormData('selfScheduledSlot', null);
       } else {
         errorMessage = error?.response?.data?.message || 'Failed to submit form. Please try again.';
       }
@@ -6034,11 +6180,12 @@ export default function AppointmentRequestForm() {
             </div>
             )}
 
-            {/* Doctor Selection - at the top of request visit page. Hidden via SHOW_DOCTOR_SELECTION flag. */}
-            {SHOW_DOCTOR_SELECTION && (
+            {/* Doctor selection — shown for legacy flow or when online booking is available for the selected type */}
+            {showDoctorSelectionForScheduling && (
             <div style={{ marginBottom: '32px', padding: '20px', backgroundColor: '#f9fafb', borderRadius: '8px', border: '1px solid #e5e7eb' }}>
               <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151', fontSize: '16px' }}>
-                Select a Doctor <span style={{ color: '#ef4444' }}>*</span>{' '}
+                {onlineBookingOffered && !SHOW_DOCTOR_SELECTION ? 'Select a Doctor to Book Online' : 'Select a Doctor'}{' '}
+                <span style={{ color: '#ef4444' }}>*</span>{' '}
                 <a 
                   href="https://www.vetatyourdoor.com/#team" 
                   target="_blank" 
@@ -6093,14 +6240,22 @@ export default function AppointmentRequestForm() {
                           : 'Select a doctor...'}
                       </option>
                       {!isDisabled && !loadingVeterinarians && (() => {
-                        // Determine which provider list to use
-                        const providerList = (isLoggedIn || formData.haveUsedServicesBefore === 'Yes') 
+                        const baseProviderList = (isLoggedIn || formData.haveUsedServicesBefore === 'Yes') 
                           ? providers 
                           : (publicProviders.length > 0 ? publicProviders : providers);
+
+                        const providerList = onlineBookingOffered && primaryAppointmentTypeId != null
+                          ? baseProviderList.filter((provider) => {
+                              const raw = resolveRawVeterinarianById(rawVeterinarianList, provider.id);
+                              return canBookOnline(raw, primaryAppointmentTypeId);
+                            })
+                          : baseProviderList;
                         
                         return (
                           <>
-                            <option value="I have no preference">I have no preference</option>
+                            {!onlineBookingOffered && (
+                              <option value="I have no preference">I have no preference</option>
+                            )}
                             {providerList.map((provider) => {
                               // Check if name already starts with "Dr." to avoid duplication
                               const providerName = provider.name.startsWith('Dr. ') 
@@ -6112,7 +6267,7 @@ export default function AppointmentRequestForm() {
                                 </option>
                               );
                             })}
-                            {(isLoggedIn || formData.haveUsedServicesBefore === 'Yes') && (
+                            {(isLoggedIn || formData.haveUsedServicesBefore === 'Yes') && !onlineBookingOffered && (
                               <option value="Whomever I saw last time (I don't remember their name)">
                                 Whomever I saw last time (I don't remember their name)
                               </option>
@@ -6158,7 +6313,32 @@ export default function AppointmentRequestForm() {
                 );
               }
 
-              // Non-urgent: offer self-scheduling
+              // Manual request flow when online booking is not available for this doctor + type
+              if (!onlineBookingEnabled) {
+                return (
+                  <div style={{ marginBottom: '20px' }}>
+                    <div style={{
+                      marginBottom: '16px',
+                      padding: '16px',
+                      backgroundColor: '#f0fdf4',
+                      border: '1px solid #10b981',
+                      borderRadius: '8px',
+                      fontSize: '14px',
+                      color: '#065f46',
+                    }}>
+                      We are working on booking your appointment and will be in touch shortly.
+                    </div>
+                    {renderOtherHowSoonDateTimeField()}
+                    {errors.selfScheduledSlot && (
+                      <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                        {errors.selfScheduledSlot}
+                      </div>
+                    )}
+                  </div>
+                );
+              }
+
+              // Online booking: offer self-scheduling
               const confirmedSlot = formData.selfScheduledSlot;
 
               // Build address string for modal.
@@ -6216,7 +6396,7 @@ export default function AppointmentRequestForm() {
                           {confirmedSlot.display} with {confirmedSlot.doctorName}
                         </div>
                         <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>
-                          We will book this appointment when you submit your request.
+                          Your appointment will be booked when you submit this form.
                         </div>
                       </div>
                       <button
@@ -6245,17 +6425,17 @@ export default function AppointmentRequestForm() {
                       <button
                         type="button"
                         onClick={() => setShowSelfScheduleModal(true)}
-                        disabled={!hasAddress}
+                        disabled={!hasAddress || !resolvedPreferredDoctorId}
                         style={{
                           width: '100%',
                           padding: '14px',
-                          backgroundColor: hasAddress ? '#0d9488' : '#e5e7eb',
-                          color: hasAddress ? '#ffffff' : '#9ca3af',
+                          backgroundColor: hasAddress && resolvedPreferredDoctorId ? '#0d9488' : '#e5e7eb',
+                          color: hasAddress && resolvedPreferredDoctorId ? '#ffffff' : '#9ca3af',
                           border: 'none',
                           borderRadius: '10px',
                           fontSize: '15px',
                           fontWeight: 700,
-                          cursor: hasAddress ? 'pointer' : 'not-allowed',
+                          cursor: hasAddress && resolvedPreferredDoctorId ? 'pointer' : 'not-allowed',
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'center',
@@ -6264,8 +6444,13 @@ export default function AppointmentRequestForm() {
                         }}
                       >
                         <span style={{ fontSize: 18 }}>📅</span>
-                        Pick a Date &amp; Time Now
+                        Pick a Date &amp; Time Online
                       </button>
+                      {!resolvedPreferredDoctorId && (
+                        <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px', textAlign: 'center' }}>
+                          Please select a doctor above to see available online booking times.
+                        </div>
+                      )}
                       {!hasAddress && (
                         <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px', textAlign: 'center' }}>
                           {isLoggedIn ? 'Loading your address…' : 'Please enter your complete address above to choose a time.'}
@@ -6281,19 +6466,21 @@ export default function AppointmentRequestForm() {
                         color: '#6b7280',
                         textAlign: 'center',
                       }}>
-                        Or skip this step — a Client Liaison will contact you after submission.
+                        Or skip online booking — we will contact you after submission to schedule.
                       </div>
                     </div>
                   )}
 
                   {/* Self-schedule modal */}
-                  {showSelfScheduleModal && hasAddress && (
+                  {showSelfScheduleModal && hasAddress && primaryAppointmentTypeId != null && (
                     <SelfScheduleCalendarModal
                       practiceId={practiceId}
                       address={fullAddress}
                       lat={lat ?? undefined}
                       lon={lon ?? undefined}
                       serviceMinutes={svcMinutes}
+                      appointmentTypeId={primaryAppointmentTypeId}
+                      initialDoctorId={resolvedPreferredDoctorId}
                       isNewClient={!isLoggedIn}
                       // Pass the already-fetched provider list so the modal doesn't need
                       // a second API call. Logged-in clients use the authenticated
@@ -6303,8 +6490,13 @@ export default function AppointmentRequestForm() {
                         const list = isLoggedIn
                           ? providers
                           : (publicProviders.length > 0 ? publicProviders : providers);
-                        if (list.length === 0) return undefined; // fall back to modal's own fetch
-                        return list.map(p => ({
+                        const filtered = primaryAppointmentTypeId != null
+                          ? list.filter((p) =>
+                              canBookOnline(resolveRawVeterinarianById(rawVeterinarianList, p.id), primaryAppointmentTypeId),
+                            )
+                          : list;
+                        if (filtered.length === 0) return undefined;
+                        return filtered.map(p => ({
                           id: p.id,
                           name: p.name,
                           email: p.email || undefined,
@@ -6317,7 +6509,18 @@ export default function AppointmentRequestForm() {
                         }));
                       })()}
                       onConfirm={(slot) => {
-                        updateFormData('selfScheduledSlot', slot);
+                        const doctorField =
+                          isLoggedIn || formData.haveUsedServicesBefore === 'Yes'
+                            ? 'preferredDoctorExisting'
+                            : 'preferredDoctor';
+                        const doctorLabel = slot.doctorName.startsWith('Dr. ')
+                          ? slot.doctorName
+                          : `Dr. ${slot.doctorName}`;
+                        setFormData((prev) => ({
+                          ...prev,
+                          selfScheduledSlot: slot,
+                          [doctorField]: doctorLabel,
+                        }));
                         setShowSelfScheduleModal(false);
                       }}
                       onClose={() => setShowSelfScheduleModal(false)}
@@ -6866,7 +7069,9 @@ export default function AppointmentRequestForm() {
             Thank You!
           </h1>
           <p style={{ fontSize: '16px', color: '#6b7280', marginBottom: isExploreMembershipsVisible ? '16px' : (isLoggedIn ? '32px' : 0) }}>
-            Your appointment request has been submitted successfully. We'll get back to you shortly!
+            {submittedWithOnlineBooking
+              ? 'Your appointment has been booked successfully. Please check your email for confirmation details.'
+              : 'We are working on booking your appointment and will be in touch shortly.'}
           </p>
           {isExploreMembershipsVisible && (
             <div

@@ -1,6 +1,4 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { useAuth } from '../auth/useAuth';
-import { isEmployeeAnalyticsRestricted, normalizeAuthRoles } from '../utils/analyticsAccess';
 import {
   Box,
   Card,
@@ -385,18 +383,6 @@ function collectBookingDetails(
 }
 
 export default function RoutingAnalyticsPage() {
-  const { userEmail, role, assignedDoctorIds } = useAuth() as {
-    userEmail?: string | null;
-    role?: string[];
-    assignedDoctorIds?: string[];
-  };
-  const normalizedRoles = normalizeAuthRoles(role);
-  const restrictEmployeeAnalytics = isEmployeeAnalyticsRestricted(normalizedRoles);
-  const assignedDoctorIdSet = useMemo(
-    () => new Set((assignedDoctorIds ?? []).map((x) => String(x).trim()).filter(Boolean)),
-    [assignedDoctorIds]
-  );
-
   const [preset, setPreset] = useState<string>('1D');
   const [range, setRange] = useState<{ from: Dayjs; to: Dayjs }>(() => PRESETS['1D']());
   const [selectedOverviewUserEmail, setSelectedOverviewUserEmail] = useState<string>(ALL_USERS);
@@ -629,23 +615,8 @@ export default function RoutingAnalyticsPage() {
       if (u.userEmail && !labels.has(u.userEmail)) labels.set(u.userEmail, displayNameFillDay(u));
     }
     const sorted = [...labels.entries()].sort((a, b) => a[1].localeCompare(b[1]));
-    const full = [{ value: ALL_USERS, label: 'Entire practice' }, ...sorted.map(([value, label]) => ({ value, label }))];
-    if (!restrictEmployeeAnalytics) return full;
-    const selfEmail = userEmail ? String(userEmail).trim().toLowerCase() : '';
-    const selfEntry = selfEmail
-      ? sorted.find(([email]) => String(email).trim().toLowerCase() === selfEmail)
-      : undefined;
-    return [
-      { value: ALL_USERS, label: 'Entire practice' },
-      ...(selfEntry ? [{ value: selfEntry[0], label: selfEntry[1] }] : []),
-    ];
-  }, [bookingsData, data, fillDayData, restrictEmployeeAnalytics, userEmail]);
-
-  useEffect(() => {
-    if (!restrictEmployeeAnalytics) return;
-    const allowed = new Set(overviewUserOptions.map((o) => o.value));
-    if (!allowed.has(selectedOverviewUserEmail)) setSelectedOverviewUserEmail(ALL_USERS);
-  }, [restrictEmployeeAnalytics, overviewUserOptions, selectedOverviewUserEmail]);
+    return [{ value: ALL_USERS, label: 'Entire practice' }, ...sorted.map(([value, label]) => ({ value, label }))];
+  }, [bookingsData, data, fillDayData]);
 
   /** Per-employee routing, schedule loader, and booking counts summed over the selected date range. */
   const employeeBookingTableRows = useMemo(() => {
@@ -782,16 +753,8 @@ export default function RoutingAnalyticsPage() {
       if (prev) prev.count += 1;
       else map.set(key, { label, count: 1, providerKey: key });
     }
-    let rows = [...map.values()].sort((a, b) => b.count - a.count);
-    if (restrictEmployeeAnalytics && assignedDoctorIdSet.size > 0) {
-      rows = rows.filter((row) => {
-        if (!row.providerKey.startsWith('id:')) return false;
-        const id = row.providerKey.slice(3);
-        return assignedDoctorIdSet.has(id);
-      });
-    }
-    return rows;
-  }, [overviewBookingDetails, restrictEmployeeAnalytics, assignedDoctorIdSet]);
+    return [...map.values()].sort((a, b) => b.count - a.count);
+  }, [overviewBookingDetails]);
 
   const appointmentTypeBreakdownRows = useMemo(() => {
     const map = new Map<string, number>();
@@ -893,54 +856,24 @@ export default function RoutingAnalyticsPage() {
     for (const u of data?.users ?? []) {
       if (u.userEmail) list.push({ value: u.userEmail, label: displayName(u) });
     }
-    if (!restrictEmployeeAnalytics) return list;
-    const selfEmail = userEmail ? String(userEmail).trim().toLowerCase() : '';
-    if (!selfEmail) return [list[0]];
-    const self = list.find((o) => String(o.value).trim().toLowerCase() === selfEmail);
-    return [list[0], ...(self ? [self] : [])];
-  }, [data, restrictEmployeeAnalytics, userEmail]);
+    return list;
+  }, [data]);
 
   const fillDayUserOptions = useMemo(() => {
     const list: { value: string; label: string }[] = [{ value: ALL_USERS, label: 'All users' }];
     for (const u of fillDayData?.users ?? []) {
       if (u.userEmail) list.push({ value: u.userEmail, label: displayNameFillDay(u) });
     }
-    if (!restrictEmployeeAnalytics) return list;
-    const selfEmail = userEmail ? String(userEmail).trim().toLowerCase() : '';
-    if (!selfEmail) return [list[0]];
-    const self = list.find((o) => String(o.value).trim().toLowerCase() === selfEmail);
-    return [list[0], ...(self ? [self] : [])];
-  }, [fillDayData, restrictEmployeeAnalytics, userEmail]);
+    return list;
+  }, [fillDayData]);
 
   const careOutreachUserOptions = useMemo(() => {
     const list: { value: string; label: string }[] = [{ value: ALL_USERS, label: 'All users' }];
     for (const u of careOutreachUsageData?.users ?? []) {
       if (u.userEmail) list.push({ value: u.userEmail, label: displayNameFillDay(u) });
     }
-    if (!restrictEmployeeAnalytics) return list;
-    const selfEmail = userEmail ? String(userEmail).trim().toLowerCase() : '';
-    if (!selfEmail) return [list[0]];
-    const self = list.find((o) => String(o.value).trim().toLowerCase() === selfEmail);
-    return [list[0], ...(self ? [self] : [])];
-  }, [careOutreachUsageData, restrictEmployeeAnalytics, userEmail]);
-
-  useEffect(() => {
-    if (!restrictEmployeeAnalytics) return;
-    const allowed = new Set(userOptions.map((o) => o.value));
-    if (!allowed.has(selectedUserEmail)) setSelectedUserEmail(ALL_USERS);
-  }, [restrictEmployeeAnalytics, userOptions, selectedUserEmail]);
-
-  useEffect(() => {
-    if (!restrictEmployeeAnalytics) return;
-    const allowed = new Set(fillDayUserOptions.map((o) => o.value));
-    if (!allowed.has(selectedFillDayUserEmail)) setSelectedFillDayUserEmail(ALL_USERS);
-  }, [restrictEmployeeAnalytics, fillDayUserOptions, selectedFillDayUserEmail]);
-
-  useEffect(() => {
-    if (!restrictEmployeeAnalytics) return;
-    const allowed = new Set(careOutreachUserOptions.map((o) => o.value));
-    if (!allowed.has(selectedCareOutreachUserEmail)) setSelectedCareOutreachUserEmail(ALL_USERS);
-  }, [restrictEmployeeAnalytics, careOutreachUserOptions, selectedCareOutreachUserEmail]);
+    return list;
+  }, [careOutreachUsageData]);
 
   const chartDataWithTrend = useMemo(() => addLinearTrend(chartData), [chartData]);
   const fillDayChartDataWithTrend = useMemo(() => addLinearTrend(fillDayChartData), [fillDayChartData]);

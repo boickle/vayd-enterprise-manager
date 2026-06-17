@@ -1,0 +1,46 @@
+.forward-booking-workspace-context {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid #fdba74;
+  background: #fff7ed;
+  color: #7c2d12;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.forward-booking-workspace-context__headline {
+  font-size: 13px;
+  font-weight: 700;
+  color: #9a3412;
+  margin-bottom: 2px;
+}
+
+.forward-booking-workspace-context__client {
+  color: #7c2d12;
+}
+
+.forward-booking-workspace-context__visit {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.forward-booking-workspace-context__meta {
+  color: #9a3412;
+}
+
+.forward-booking-workspace-context__meta strong {
+  font-weight: 700;
+  color: #7c2d12;
+}
+
+.forward-booking-workspace-context__note {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid color-mix(in srgb, #fdba74 65%, transparent);
+  color: #7c2d12;
+}
+
+.forward-booking-workspace-context__note-label {
+  font-weight: 600;
+}

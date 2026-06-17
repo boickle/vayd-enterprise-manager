@@ -10,6 +10,10 @@ import {
   type SelfScheduledSlot,
 } from '../api/publicAppointments';
 import { fetchVeterinarians } from '../api/employee';
+import {
+  isOnlineBookingUnavailableError,
+  ONLINE_BOOKING_UNAVAILABLE_MESSAGE,
+} from '../utils/onlineBooking';
 
 // ─── Fallback avatar ─────────────────────────────────────────────────────────
 const FALLBACK_AVATAR =
@@ -28,6 +32,10 @@ interface Props {
   onClose: () => void;
   /** Whether this is a new (unauthenticated) client request */
   isNewClient?: boolean;
+  /** Appointment type id — required for online booking availability validation */
+  appointmentTypeId?: number;
+  /** Pre-select doctor from the appointment form (database employee id) */
+  initialDoctorId?: string | number;
   /**
    * Pre-loaded doctor list from the form (avoids a second API call).
    * When provided the modal skips its own fetchPublicVeterinarians call.
@@ -360,11 +368,14 @@ export function SelfScheduleCalendarModal({
   onConfirm,
   onClose,
   isNewClient = false,
+  appointmentTypeId,
+  initialDoctorId,
   preloadedDoctors,
 }: Props) {
   const [doctors, setDoctors] = useState<PublicProvider[]>([]);
   const [loadingDoctors, setLoadingDoctors] = useState(true);
   const [doctorError, setDoctorError] = useState<string | null>(null);
+  const [availabilityError, setAvailabilityError] = useState<string | null>(null);
 
   const [selectedDoctorId, setSelectedDoctorId] = useState<string | number | null>(null);
   const [currentMonth, setCurrentMonth] = useState<DateTime>(DateTime.now().startOf('month'));
@@ -386,7 +397,12 @@ export function SelfScheduleCalendarModal({
     // Use pre-loaded list when provided (avoids a redundant API call).
     if (preloadedDoctors && preloadedDoctors.length > 0) {
       setDoctors(preloadedDoctors);
-      setSelectedDoctorId(preloadedDoctors[0].id);
+      const initial =
+        initialDoctorId != null &&
+        preloadedDoctors.some((d) => String(d.id) === String(initialDoctorId))
+          ? initialDoctorId
+          : preloadedDoctors[0].id;
+      setSelectedDoctorId(initial);
       setLoadingDoctors(false);
       return;
     }
@@ -425,7 +441,13 @@ export function SelfScheduleCalendarModal({
 
         if (cancelled) return;
         setDoctors(vets);
-        if (vets.length > 0) setSelectedDoctorId(vets[0].id);
+        if (vets.length > 0) {
+          const initial =
+            initialDoctorId != null && vets.some((d) => String(d.id) === String(initialDoctorId))
+              ? initialDoctorId
+              : vets[0].id;
+          setSelectedDoctorId(initial);
+        }
       } catch {
         if (!cancelled) setDoctorError('Unable to load available doctors. Please try again.');
       } finally {
@@ -435,12 +457,13 @@ export function SelfScheduleCalendarModal({
 
     load();
     return () => { cancelled = true; };
-  }, [practiceId, address, lat, lon, isNewClient, preloadedDoctors]);
+  }, [practiceId, address, lat, lon, isNewClient, preloadedDoctors, initialDoctorId]);
 
   // ── 2. Load month availability when doctor or month changes ──────────────
   const loadMonthAvailability = useCallback(async (doctorId: string | number, month: DateTime) => {
     const key = ++monthFetchKey.current;
     setLoadingMonth(true);
+    setAvailabilityError(null);
     setSelectedDay(null);
     setDayCandidates([]);
     setSelectedSlotIso(null);
@@ -458,16 +481,25 @@ export function SelfScheduleCalendarModal({
         address,
         ...(lat != null && lon != null ? { lat, lon, allowOtherDoctors: false } : {}),
         doctorId,
+        ...(appointmentTypeId != null ? { appointmentTypeId } : {}),
       });
 
       if (key !== monthFetchKey.current) return;
       setMonthCandidates(candidates);
-    } catch {
-      if (key === monthFetchKey.current) setMonthCandidates([]);
+    } catch (err: unknown) {
+      if (key !== monthFetchKey.current) return;
+      setMonthCandidates([]);
+      const ax = err as { response?: { status?: number; data?: { message?: string } } };
+      const message = ax?.response?.data?.message;
+      if (isOnlineBookingUnavailableError(ax?.response?.status, message)) {
+        setAvailabilityError(ONLINE_BOOKING_UNAVAILABLE_MESSAGE);
+      } else {
+        setAvailabilityError('Unable to load availability. Please try again or submit your preferred times.');
+      }
     } finally {
       if (key === monthFetchKey.current) setLoadingMonth(false);
     }
-  }, [practiceId, address, lat, lon, serviceMinutes]);
+  }, [practiceId, address, lat, lon, serviceMinutes, appointmentTypeId]);
 
   useEffect(() => {
     if (selectedDoctorId == null) return;
@@ -650,6 +682,22 @@ export function SelfScheduleCalendarModal({
               >
                 Showing availability for{' '}
                 <strong>{selectedDoctor.name}</strong> — times are based on drive time to your address.
+              </div>
+            )}
+
+            {availabilityError && (
+              <div
+                style={{
+                  marginBottom: 12,
+                  padding: '10px 12px',
+                  background: '#fef2f2',
+                  border: '1px solid #fecaca',
+                  borderRadius: 8,
+                  fontSize: 13,
+                  color: '#991b1b',
+                }}
+              >
+                {availabilityError}
               </div>
             )}
 

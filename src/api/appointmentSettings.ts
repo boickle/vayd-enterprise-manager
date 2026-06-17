@@ -52,6 +52,8 @@ export type AppointmentType = {
   points?: number | null;
   /** Frontend only: show scheduling-override UI for this type (not enforced on appointment APIs) */
   allowSchedulingOverride?: boolean;
+  /** Employee assignment: allow clients to book this type online via the appointment request form */
+  allowOnlineBooking?: boolean;
   practice?: {
     id: number;
     name: string;
@@ -192,16 +194,21 @@ export type Zone = {
   name: string;
 };
 
+export type EmployeeAppointmentTypeAssignment = {
+  appointmentTypeId: number;
+  allowOnlineBooking?: boolean;
+};
+
 /**
  * Update which appointment types an employee (doctor) can see/handle
  * PUT /employees/:id/appointment-types
  */
 export async function updateEmployeeAppointmentTypes(
   employeeId: number,
-  appointmentTypeIds: number[]
+  appointmentTypes: EmployeeAppointmentTypeAssignment[]
 ): Promise<Employee> {
   const { data } = await http.put(`/employees/${employeeId}/appointment-types`, {
-    appointmentTypeIds,
+    appointmentTypes,
   });
   return data;
 }
