@@ -8,6 +8,14 @@ export type DailyGoalOverride = {
   dailyRevenueGoal?: number;
 };
 
+export type DailyGoalBreakdownItem = {
+  date: string; // YYYY-MM-DD
+  dayOfWeek: number; // 0=Sunday … 6=Saturday
+  isWorkday: boolean;
+  dailyPointGoal: number;
+  dailyRevenueGoal: number;
+};
+
 export type EmployeeGoalsResponseDto = {
   id?: number;
   defaultWorkStartLocal?: string;
@@ -21,6 +29,11 @@ export type EmployeeGoalsResponseDto = {
   dailyPointGoal?: number;
   weeklyPointGoal?: number;
   dailyGoals?: DailyGoalOverride[];
+  goalPeriodStart?: string;
+  goalPeriodEnd?: string;
+  effectiveWeeklyPointGoal?: number;
+  effectiveWeeklyRevenueGoal?: number;
+  dailyGoalBreakdown?: DailyGoalBreakdownItem[];
 };
 
 export type UpdateEmployeeGoalsDto = {
@@ -37,12 +50,20 @@ export type UpdateEmployeeGoalsDto = {
   dailyGoals?: { dayOfWeek: number; dailyPointGoal?: number; dailyRevenueGoal?: number }[];
 };
 
+export type FetchEmployeeGoalsParams = {
+  goalPeriodStart?: string;
+  goalPeriodEnd?: string;
+};
+
 /**
  * Get employee goals (creates with defaults if none exist).
  * GET /employees/:id/goals
  */
-export async function fetchEmployeeGoals(employeeId: number): Promise<EmployeeGoalsResponseDto> {
-  const { data } = await http.get(`/employees/${employeeId}/goals`);
+export async function fetchEmployeeGoals(
+  employeeId: number,
+  params?: FetchEmployeeGoalsParams
+): Promise<EmployeeGoalsResponseDto> {
+  const { data } = await http.get(`/employees/${employeeId}/goals`, { params });
   return data;
 }
 
@@ -56,6 +77,14 @@ export async function updateEmployeeGoals(
 ): Promise<EmployeeGoalsResponseDto> {
   const { data } = await http.put(`/employees/${employeeId}/goals`, body);
   return data;
+}
+
+export function getGoalBreakdownForDate(
+  goals: EmployeeGoalsResponseDto,
+  dateStr: string
+): DailyGoalBreakdownItem | undefined {
+  const key = dateStr.slice(0, 10);
+  return goals.dailyGoalBreakdown?.find((d) => d.date === key);
 }
 
 /**
@@ -73,11 +102,51 @@ export function getGoalForDay(
   };
 }
 
-/** True if the goals record has at least one goal set (for filtering "employees with goals"). */
-export function hasAnyGoal(goals: EmployeeGoalsResponseDto): boolean {
+/**
+ * Resolve goals for a calendar date. Prefers server-computed dailyGoalBreakdown when present.
+ */
+export function getGoalForDate(
+  goals: EmployeeGoalsResponseDto,
+  dateStr: string,
+  dayOfWeek?: number
+): { pointGoal: number; revenueGoal: number; isWorkday?: boolean } {
+  const breakdown = getGoalBreakdownForDate(goals, dateStr);
+  if (breakdown) {
+    return {
+      pointGoal: breakdown.dailyPointGoal ?? 0,
+      revenueGoal: breakdown.dailyRevenueGoal ?? 0,
+      isWorkday: breakdown.isWorkday,
+    };
+  }
+  const dow =
+    dayOfWeek ??
+    (() => {
+      const parsed = new Date(`${dateStr.slice(0, 10)}T12:00:00`);
+      return Number.isFinite(parsed.getTime()) ? parsed.getDay() : 0;
+    })();
+  const legacy = getGoalForDay(goals, dow);
+  return { ...legacy };
+}
+
+/** True when the goals record has configured defaults or per-day overrides. */
+export function hasConfiguredGoalSettings(goals: EmployeeGoalsResponseDto): boolean {
   if (Number(goals.dailyPointGoal) > 0 || Number(goals.dailyRevenueGoal) > 0) return true;
   if (Number(goals.weeklyPointGoal) > 0 || Number(goals.bonusRevenueGoal) > 0) return true;
-  if (goals.dailyGoals?.length) return true;
+  if (goals.dailyGoals?.some((d) => Number(d.dailyPointGoal) > 0 || Number(d.dailyRevenueGoal) > 0)) {
+    return true;
+  }
+  return false;
+}
+
+/** True if the goals record has at least one goal set (for filtering "employees with goals"). */
+export function hasAnyGoal(goals: EmployeeGoalsResponseDto): boolean {
+  if (hasConfiguredGoalSettings(goals)) return true;
+  if (goals.dailyGoalBreakdown?.some((d) => d.dailyPointGoal > 0 || d.dailyRevenueGoal > 0)) {
+    return true;
+  }
+  if (Number(goals.effectiveWeeklyPointGoal) > 0 || Number(goals.effectiveWeeklyRevenueGoal) > 0) {
+    return true;
+  }
   return false;
 }
 

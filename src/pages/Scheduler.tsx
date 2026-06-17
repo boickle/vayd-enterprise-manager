@@ -39,7 +39,7 @@ import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import {
   fetchEmployeeGoals,
   formatPointsAgainstGoal,
-  getGoalForDay,
+  getGoalForDate,
   goalDayOfWeekFromLuxonWeekday,
   schedulerPointsGoalClassName,
   type EmployeeGoalsResponseDto,
@@ -3370,6 +3370,23 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     providers,
   ]);
 
+  const goalFetchPeriod = useMemo(() => {
+    if (!anchorDate) return null;
+    const anchor = DateTime.fromISO(anchorDate, { zone: PRACTICE_TZ }).startOf('day');
+    if (view === 'day') {
+      const d = anchor.toISODate()!;
+      return { goalPeriodStart: d, goalPeriodEnd: d };
+    }
+    if (view === 'week') {
+      const startL = sundayWeekStart(anchor);
+      const endL = startL.plus({ days: 6 });
+      return { goalPeriodStart: startL.toISODate()!, goalPeriodEnd: endL.toISODate()! };
+    }
+    const startL = anchor.startOf('month');
+    const endL = startL.endOf('month');
+    return { goalPeriodStart: startL.toISODate()!, goalPeriodEnd: endL.toISODate()! };
+  }, [anchorDate, view]);
+
   useEffect(() => {
     const id = resolvedPrimaryProviderId.trim();
     if (!id) {
@@ -3384,7 +3401,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       return;
     }
     let cancelled = false;
-    void fetchEmployeeGoals(empId)
+    void fetchEmployeeGoals(empId, goalFetchPeriod ?? undefined)
       .then((goals) => {
         if (!cancelled) setProviderGoals(goals);
       })
@@ -3401,13 +3418,17 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     return () => {
       cancelled = true;
     };
-  }, [resolvedPrimaryProviderId]);
+  }, [resolvedPrimaryProviderId, goalFetchPeriod]);
 
   const pointGoalForDay = useCallback(
     (dayDt: DateTime): number => {
-      const dow = goalDayOfWeekFromLuxonWeekday(dayDt.weekday);
+      const dateStr = dayDt.toISODate()!;
       if (providerGoals) {
-        return getGoalForDay(providerGoals, dow).pointGoal;
+        return getGoalForDate(
+          providerGoals,
+          dateStr,
+          goalDayOfWeekFromLuxonWeekday(dayDt.weekday)
+        ).pointGoal;
       }
       const fallback = selectedPrimaryProvider?.dailyPointGoal;
       if (fallback != null && Number.isFinite(Number(fallback)) && Number(fallback) > 0) {
