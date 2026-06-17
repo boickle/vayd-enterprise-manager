@@ -557,6 +557,17 @@
   padding-right: 4px;
 }
 
+.routing-address-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.routing-address-field:has(.routing-address-zone-line) {
+  margin-bottom: 12px;
+}
+
 .routing-address-row {
   display: flex;
   align-items: center;
@@ -578,6 +589,40 @@
   padding: 8px 4px;
   min-width: 28px;
   text-align: center;
+}
+
+.routing-address-zone-line {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: #0f766e;
+}
+
+.routing-address-zone-line--doctor-mismatch {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid #fcd34d;
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.routing-address-zone-line--doctor-mismatch .routing-address-zone-label {
+  color: #0f766e;
+}
+
+.routing-address-zone-warn {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: #b45309;
+}
+
+.routing-address-zone-line--loading {
+  font-weight: 500;
 }
 
 .routing-client-alert-banner {

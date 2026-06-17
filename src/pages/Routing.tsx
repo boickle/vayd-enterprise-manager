@@ -33,7 +33,12 @@ import { KeyValue } from '../components/KeyValue';
 import { DateTime } from 'luxon';
 import { validateAddress } from '../api/geo';
 import { fetchPrimaryProviders } from '../api/employee';
-import { fetchVeterinariansForDoctorSelect } from '../utils/veterinarianZoneLookup';
+import { lookupClientZoneForAddress, type ClientZoneLookupResult } from '../api/zoneLookup';
+import {
+  fetchVeterinariansForDoctorSelect,
+  findDoctorsNotAssignedToClientZone,
+  isDoctorAssignedToClientZone,
+} from '../utils/veterinarianZoneLookup';
 import {
   normalizeRoutingV2SlotSearchResponse,
   type RoutingSlotSearchOptionalFlags,
@@ -1605,6 +1610,10 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<Result | null>(() => (bootstrap.result as Result | null) ?? null);
   const [addressError, setAddressError] = useState<string | null>(null);
+  const [addressZone, setAddressZone] = useState<ClientZoneLookupResult | null>(null);
+  const [addressZoneLoading, setAddressZoneLoading] = useState(false);
+  const [doctorOutsideAddressZone, setDoctorOutsideAddressZone] = useState(false);
+  const addressZoneRef = useRef<ClientZoneLookupResult | null>(null);
   const [doctorRequiredBeforeApptType, setDoctorRequiredBeforeApptType] = useState(false);
   const [schedulingPrefsOpen, setSchedulingPrefsOpen] = useState(false);
   const [routingMinutesPulse, setRoutingMinutesPulse] = useState(false);
@@ -1732,6 +1741,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     alternateAddress: string;
     clientHomeAddress: string;
   } | null>(null);
+  const [zoneWorkConfirm, setZoneWorkConfirm] = useState<{ proceed: () => void } | null>(null);
 
   // -------- Doctor search --------
   const [doctorQuery, setDoctorQuery] = useState(() => bootstrap.doctorQuery);
@@ -2945,6 +2955,82 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     };
   }, [lockForwardBookingClient, form.newAppt.clientId]);
 
+  const routingAddressVerified =
+    !addressError &&
+    Number.isFinite(form.newAppt.lat as number) &&
+    Number.isFinite(form.newAppt.lon as number) &&
+    (form.newAppt.address ?? '').trim().length > 0;
+
+  // Resolve client zone as soon as the address is verified (client pick or geocode).
+  useEffect(() => {
+    const addr = (form.newAppt.address ?? '').trim();
+    if (!routingAddressVerified || !addr) {
+      setAddressZone(null);
+      addressZoneRef.current = null;
+      setAddressZoneLoading(false);
+      return;
+    }
+
+    let alive = true;
+    const lookupKey = `${addr}|${form.newAppt.lat}|${form.newAppt.lon}`;
+    void (async () => {
+      setAddressZoneLoading(true);
+      try {
+        const resolved = await lookupClientZoneForAddress(addr);
+        if (!alive) return;
+        if (
+          lookupKey !==
+          `${(form.newAppt.address ?? '').trim()}|${form.newAppt.lat}|${form.newAppt.lon}`
+        ) {
+          return;
+        }
+        setAddressZone(resolved);
+        addressZoneRef.current = resolved;
+      } catch {
+        if (!alive) return;
+        setAddressZone(null);
+        addressZoneRef.current = null;
+      } finally {
+        if (alive) setAddressZoneLoading(false);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [routingAddressVerified, form.newAppt.address, form.newAppt.lat, form.newAppt.lon, addressError]);
+
+  const selectedDoctorDisplayName =
+    doctorQuery.trim() ||
+    doctorNames[form.doctorId.trim()] ||
+    (form.doctorId.trim() ? `Doctor ${form.doctorId.trim()}` : '');
+
+  // Warn when this-doctor-only routing uses a doctor not assigned to the address zone.
+  useEffect(() => {
+    const doctorPimsId = form.doctorId.trim();
+    const zoneId = addressZone?.zoneId;
+
+    if (multiDoctor || !doctorPimsId || zoneId == null) {
+      setDoctorOutsideAddressZone(false);
+      return;
+    }
+
+    let alive = true;
+    void (async () => {
+      try {
+        const assigned = await isDoctorAssignedToClientZone(doctorPimsId, zoneId);
+        if (!alive) return;
+        setDoctorOutsideAddressZone(assigned === false);
+      } catch {
+        if (alive) setDoctorOutsideAddressZone(false);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [multiDoctor, form.doctorId, addressZone?.zoneId]);
+
   // Doctor search
   useEffect(() => {
     const q = doctorQuery.trim();
@@ -3400,7 +3486,11 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     return days + 1;
   }
 
-  async function submitRoutingRequest(endpoint: string, doctorIdsArray?: string[]) {
+  async function submitRoutingRequest(
+    endpoint: string,
+    doctorIdsArray?: string[],
+    opts?: { skipZoneConfirm?: boolean }
+  ) {
     setError(null);
     setResult(null);
     setAddressError(null);
@@ -3463,6 +3553,54 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     const routingTypeId = routingRequestAppointmentTypeId();
     if (routingTypeId != null) {
       newApptPayload = { ...newApptPayload, appointmentTypeId: routingTypeId };
+    }
+
+    let cachedZone = addressZoneRef.current;
+    const lookupAddr = (newApptPayload.address ?? '').trim();
+    if (lookupAddr && !cachedZone) {
+      try {
+        cachedZone = await lookupClientZoneForAddress(lookupAddr);
+        addressZoneRef.current = cachedZone;
+        setAddressZone(cachedZone);
+      } catch {
+        /* zone badge is optional */
+      }
+    }
+
+    const doctorPimsIdsForZoneCheck =
+      multiDoctor && doctorIdsArray && doctorIdsArray.length > 0
+        ? doctorIdsArray
+        : form.doctorId.trim()
+          ? [form.doctorId.trim()]
+          : [];
+
+    if (!opts?.skipZoneConfirm && doctorPimsIdsForZoneCheck.length > 0) {
+      try {
+        const zoneCheck = await findDoctorsNotAssignedToClientZone({
+          address: lookupAddr,
+          lat:
+            typeof newApptPayload.lat === 'number' && Number.isFinite(newApptPayload.lat)
+              ? newApptPayload.lat
+              : undefined,
+          lon:
+            typeof newApptPayload.lon === 'number' && Number.isFinite(newApptPayload.lon)
+              ? newApptPayload.lon
+              : undefined,
+          doctorPimsIds: doctorPimsIdsForZoneCheck,
+          zoneId: cachedZone?.zoneId,
+          zoneLabel: cachedZone?.shortLabel,
+        });
+        if (zoneCheck.outOfZoneDoctorPimsIds.length > 0) {
+          setZoneWorkConfirm({
+            proceed: () => {
+              void submitRoutingRequest(endpoint, doctorIdsArray, { skipZoneConfirm: true });
+            },
+          });
+          return;
+        }
+      } catch (zoneErr) {
+        console.warn('Routing zone assignment check failed', zoneErr);
+      }
     }
 
     const isV2 = endpoint.includes('/v2');
@@ -4534,22 +4672,53 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
             ) : null}
 
           <Field label="Address">
-            <div className="routing-address-row">
-              <input
-                className={`input routing-address-input${routingPrefillFlashClass('address')}${routingWorkspaceHighlightClass('address')}`}
-                value={form.newAppt.address ?? ''}
-                onChange={(e) => onNewApptChange('address', e.target.value)}
-                placeholder="Street, city (optional if client has address)"
-                autoComplete="street-address"
-              />
-              {!addressError &&
-                form.newAppt.lat != null &&
-                form.newAppt.lon != null &&
-                (form.newAppt.address ?? '').trim().length > 0 && (
+            <div className="routing-address-field">
+              <div className="routing-address-row">
+                <input
+                  className={`input routing-address-input${routingPrefillFlashClass('address')}${routingWorkspaceHighlightClass('address')}`}
+                  value={form.newAppt.address ?? ''}
+                  onChange={(e) => onNewApptChange('address', e.target.value)}
+                  placeholder="Street, city (optional if client has address)"
+                  autoComplete="street-address"
+                />
+                {routingAddressVerified ? (
                   <span className="routing-address-inline-ok" title="Address verified">
                     ✓
                   </span>
-                )}
+                ) : null}
+              </div>
+              {routingAddressVerified && addressZoneLoading ? (
+                <p className="routing-address-zone-line routing-address-zone-line--loading muted">
+                  Looking up zone…
+                </p>
+              ) : null}
+              {routingAddressVerified && !addressZoneLoading && addressZone ? (
+                <div
+                  className={`routing-address-zone-line${
+                    doctorOutsideAddressZone ? ' routing-address-zone-line--doctor-mismatch' : ''
+                  }`}
+                  title={
+                    doctorOutsideAddressZone
+                      ? `${selectedDoctorDisplayName} is not assigned to this zone in Settings. You can still route — you will be asked to confirm.`
+                      : addressZone.usedNearestZone
+                        ? 'Nearest service zone (address is outside zone polygons)'
+                        : 'Service zone for this address'
+                  }
+                >
+                  <span className="routing-address-zone-label">{addressZone.displayLabel}</span>
+                  {doctorOutsideAddressZone ? (
+                    <span className="routing-address-zone-warn">
+                      {selectedDoctorDisplayName} is not assigned to this zone
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
+              {routingAddressVerified &&
+              !addressZoneLoading &&
+              !addressZone &&
+              !addressError ? (
+                <p className="routing-address-zone-line muted">No zone found for this address.</p>
+              ) : null}
             </div>
             {addressError ? <div className="danger routing-route-hint">{addressError}</div> : null}
           </Field>
@@ -5374,6 +5543,45 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                 }}
               >
                 Use client address
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {zoneWorkConfirm ? (
+        <div
+          className="routing-doctor-select-backdrop"
+          role="presentation"
+          onClick={() => setZoneWorkConfirm(null)}
+        >
+          <div
+            className="routing-client-pick-alternate-modal"
+            role="dialog"
+            aria-modal
+            aria-labelledby="routing-zone-work-confirm-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 id="routing-zone-work-confirm-title" className="routing-doctor-select-title">
+              Zone assignment
+            </h2>
+            <p className="routing-client-pick-alternate-lead">
+              Doctor doesn&apos;t work in this zone. Do you want to proceed?
+            </p>
+            <div className="routing-doctor-select-actions">
+              <button type="button" className="btn secondary" onClick={() => setZoneWorkConfirm(null)}>
+                No
+              </button>
+              <button
+                type="button"
+                className="btn routing-doctor-select-confirm"
+                onClick={() => {
+                  const pending = zoneWorkConfirm;
+                  setZoneWorkConfirm(null);
+                  pending?.proceed();
+                }}
+              >
+                Yes
               </button>
             </div>
           </div>
