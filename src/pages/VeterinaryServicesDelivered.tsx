@@ -46,7 +46,7 @@ import {
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import {
   fetchEmployeeGoals,
-  getGoalForDay,
+  getGoalForDate,
   hasAnyGoal,
   type EmployeeGoalsResponseDto,
 } from '../api/employeeGoals';
@@ -101,6 +101,16 @@ function dateRange(start: Dayjs, end: Dayjs): string[] {
     d = d.add(1, 'day');
   }
   return out;
+}
+
+/** True if provider list row has goal defaults configured. */
+function providerHasConfiguredGoals(p: Provider): boolean {
+  return (
+    Number(p.dailyPointGoal) > 0 ||
+    Number(p.dailyRevenueGoal) > 0 ||
+    Number(p.weeklyPointGoal) > 0 ||
+    Number(p.bonusRevenueGoal) > 0
+  );
 }
 
 /** True if the employee is scheduled to work on the given date (by day of week). */
@@ -390,16 +400,19 @@ export default function VeterinaryServicesDeliveredPage() {
     setGoalsLoading(true);
     (async () => {
       try {
+        const goalPeriod = { goalPeriodStart: startStr, goalPeriodEnd: endStr };
         const results = await Promise.allSettled(
           providersForApi.map(async (p) => {
             const id = String(p.id);
             const empId = Number(p.id);
             if (!Number.isFinite(empId)) return null;
             const [goals, employee] = await Promise.all([
-              fetchEmployeeGoals(empId),
+              fetchEmployeeGoals(empId, goalPeriod),
               fetchEmployee(empId),
             ]);
-            if (!hasAnyGoal(goals)) return null;
+            if (!hasAnyGoal(goals) && !providerHasConfiguredGoals(p)) {
+              return null;
+            }
             return {
               id,
               name: p.name,
@@ -436,7 +449,7 @@ export default function VeterinaryServicesDeliveredPage() {
     return () => {
       alive = false;
     };
-  }, [providersForApi, restrictEmployeeAnalytics, assignedDoctorIdSet]);
+  }, [providersForApi, restrictEmployeeAnalytics, assignedDoctorIdSet, startStr, endStr]);
 
   // Load each doctor's revenue series for the date range, plus "Not Specified" (doctorId null/empty)
   useEffect(() => {
@@ -856,10 +869,14 @@ export default function VeterinaryServicesDeliveredPage() {
     for (const dateStr of dates) {
       const dayOfWeek = dayjs(dateStr).day();
       for (const emp of emps) {
-        if (!isWorkingDay(emp, dateStr)) continue;
-        const { pointGoal, revenueGoal } = getGoalForDay(emp.goals, dayOfWeek);
-        totalPointGoal += pointGoal;
-        totalRevenueGoal += revenueGoal;
+        const resolved = getGoalForDate(emp.goals, dateStr, dayOfWeek);
+        if (resolved.isWorkday != null) {
+          if (!resolved.isWorkday) continue;
+        } else if (!isWorkingDay(emp, dateStr)) {
+          continue;
+        }
+        totalPointGoal += resolved.pointGoal;
+        totalRevenueGoal += resolved.revenueGoal;
       }
     }
     return { totalPointGoal, totalRevenueGoal };

@@ -1,5 +1,6 @@
 // src/api/clientPortal.ts
 import { apiBaseUrl, http } from './http';
+import { pickPracticeMainPhone } from '../utils/practicePhone';
 
 /** ---------- Types ---------- **/
 export type Vaccination = {
@@ -548,6 +549,8 @@ export type PracticeInfo = {
   state?: string;
   zip?: string;
   phone?: string;
+  phone1?: string;
+  phone2?: string;
   email?: string;
   website?: string;
   chatHoursOfOperation?: any;
@@ -558,6 +561,20 @@ export async function fetchPracticeInfo(): Promise<PracticeInfo | null> {
   try {
     const { data } = await http.get('/practice/info');
     return data || null;
+  } catch {
+    return null;
+  }
+}
+
+/** Main practice SMS/call line — from GET /practice/info (not hardcoded). */
+export async function fetchPracticeMainPhone(practiceId?: number): Promise<string | null> {
+  try {
+    const path =
+      practiceId != null && Number.isFinite(practiceId)
+        ? `/practice/info/${practiceId}`
+        : '/practice/info';
+    const { data } = await http.get(path);
+    return pickPracticeMainPhone(data);
   } catch {
     return null;
   }

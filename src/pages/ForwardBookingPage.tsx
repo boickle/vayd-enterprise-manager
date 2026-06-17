@@ -27,6 +27,7 @@ import {
   type CreateForwardBookingPrefill,
 } from '../utils/forwardBookingCreateLink';
 import { sendClientSms } from '../api/clientSms';
+import { fetchPracticeMainPhone } from '../api/clientPortal';
 import {
   buildRoutingForwardBookingIntentFromEntries,
   buildRoutingForwardBookingIntentFromEntry,
@@ -272,7 +273,7 @@ export default function ForwardBookingPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [manualCompleteEntry, setManualCompleteEntry] = useState<ForwardBookingEntry | null>(null);
   const [smsEntry, setSmsEntry] = useState<ForwardBookingEntry | null>(null);
-  const [smsPrimaryProviderId, setSmsPrimaryProviderId] = useState<number | null>(null);
+  const practiceSmsFromRef = useRef<string | null>(null);
   const [smsMessage, setSmsMessage] = useState('');
   const [smsSending, setSmsSending] = useState(false);
   const [smsError, setSmsError] = useState<string | null>(null);
@@ -301,6 +302,12 @@ export default function ForwardBookingPage() {
   const [highlightEntryId, setHighlightEntryId] = useState<number | null>(null);
   const rowRefs = useRef<Map<number, HTMLElement>>(new Map());
   const highlightScrollSig = useRef('');
+
+  useEffect(() => {
+    void fetchPracticeMainPhone(PRACTICE_ID).then((phone) => {
+      if (phone) practiceSmsFromRef.current = phone;
+    });
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -382,7 +389,6 @@ export default function ForwardBookingPage() {
               resolved.bookedSlot ? { bookedSlot: resolved.bookedSlot } : undefined
             )
           );
-          setSmsPrimaryProviderId(resolved.primaryProviderId ?? null);
           setSmsEntry(entry);
         }
       }
@@ -615,13 +621,11 @@ export default function ForwardBookingPage() {
         resolved.bookedSlot ? { bookedSlot: resolved.bookedSlot } : undefined
       )
     );
-    setSmsPrimaryProviderId(resolved.primaryProviderId ?? null);
     setSmsEntry(entry);
   };
 
   const closeSmsModal = () => {
     setSmsEntry(null);
-    setSmsPrimaryProviderId(null);
     setSmsMessage('');
     setSmsError(null);
   };
@@ -637,10 +641,15 @@ export default function ForwardBookingPage() {
     setSmsSending(true);
     setSmsError(null);
     try {
+      let from = practiceSmsFromRef.current;
+      if (!from) {
+        from = await fetchPracticeMainPhone(PRACTICE_ID);
+        if (from) practiceSmsFromRef.current = from;
+      }
       await sendClientSms(smsEntry.clientId, {
         message: smsMessage.trim(),
         ...(opts.overrideNonProd ? { overrideNonProd: true } : {}),
-        ...(smsPrimaryProviderId != null ? { primaryProviderId: smsPrimaryProviderId } : {}),
+        ...(from ? { from } : {}),
       });
       closeSmsModal();
     } catch (e: unknown) {

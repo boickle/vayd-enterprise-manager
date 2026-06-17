@@ -1,9 +1,43 @@
+import { formatDoctorSelectZoneLabel } from './employee';
 import { http } from './http';
 
 export type ResolvedZone = {
   id: number;
   name: string;
 };
+
+export type ClientZoneLookupResult = {
+  zoneId: number;
+  /** Full line for UI, e.g. `Zone 3W (Lewiston)`. */
+  displayLabel: string;
+  /** Short code, e.g. `3W`. */
+  shortLabel: string | null;
+  usedNearestZone: boolean;
+};
+
+function formatClientZoneDisplayLabel(zoneName: string, usedNearestZone: boolean): string {
+  const raw = zoneName.trim();
+  const line = raw.toLowerCase().startsWith('zone ') ? raw : `Zone ${raw}`;
+  return usedNearestZone ? `${line} (nearest)` : line;
+}
+
+/** Quick zone lookup for a street address — one lightweight GET (plus nearest-zone fallback). */
+export async function lookupClientZoneForAddress(
+  address: string
+): Promise<ClientZoneLookupResult | null> {
+  const trimmed = address.trim();
+  if (!trimmed) return null;
+
+  const resolved = await resolveZoneForVeterinarianLookup(trimmed);
+  if (!resolved) return null;
+
+  return {
+    zoneId: resolved.zone.id,
+    displayLabel: formatClientZoneDisplayLabel(resolved.zone.name, resolved.usedNearestZone),
+    shortLabel: formatDoctorSelectZoneLabel(resolved.zone.name),
+    usedNearestZone: resolved.usedNearestZone,
+  };
+}
 
 /** Miles to search for the nearest zone when the address is outside all polygons. */
 export const NEAREST_ZONE_LOOKUP_BUFFER_MILES = 500;
