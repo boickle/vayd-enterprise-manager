@@ -44,7 +44,7 @@ import {
   schedulerPointsGoalClassName,
   type EmployeeGoalsResponseDto,
 } from '../api/employeeGoals';
-import { fetchForwardBookings } from '../api/forwardBooking';
+import { fetchForwardBookingCalendarIndex } from '../api/forwardBooking';
 import {
   fetchAllAppointmentTypes,
   fetchEmployee,
@@ -194,6 +194,7 @@ import type { EditVisitPatientSelection } from '../components/EditVisitAddPatien
 import type { EditVisitLinkSelection } from '../components/EditVisitLinkClientPanel';
 import { editVisitLinkClearsAlternateAddress, visitAddressForLinkMatching } from '../utils/visitAddressMatch';
 import { OnMyWaySmsModal } from '../components/OnMyWaySmsModal';
+import { WorkZonesMapModal } from '../components/WorkZonesMapModal';
 import { etaMinutesAwayFromNow } from '../utils/onMyWaySmsMessage';
 import { SchedulerActualVisitTimeModal } from './SchedulerActualVisitTimeModal';
 import { SchedulerRemoveVisitModal } from './SchedulerRemoveVisitModal';
@@ -274,9 +275,12 @@ import {
   ROUTING_FORWARD_BOOKING_INTENT_UPDATED_EVENT,
 } from '../utils/routingForwardBookingIntent';
 import {
+  forwardBookingEntriesForChipSelection,
+  rescheduleTargetsForChipSelection,
+} from '../utils/routingPatientSelection';
+import {
   appointmentShowsVisitTimesClock,
-  buildForwardBookingSourceAppointmentIdSet,
-  buildForwardBookingSourcePatientIdSet,
+  buildForwardBookingCalendarIndexSets,
 } from '../utils/appointmentVisitTimesBadge';
 import {
   buildForwardBookingBookSuccessToast,
@@ -781,9 +785,9 @@ function SchedulerTypeArchivedPill() {
   return <span className="scheduler-type-archived-pill">Archived</span>;
 }
 
-/** Green check in a white box — timed / all-day chip when visit is marked complete. */
+/** Green check — PIMS/eVet complete (`isComplete === true`); separate from Scout visit-times clock. */
 function SchedulerApptCompleteBadge({ appt }: { appt: Appointment }) {
-  if (!appt.isComplete) return null;
+  if (appt.isComplete !== true) return null;
   return (
     <span className="scheduler-appt-complete-badge" title="Complete" aria-label="Complete">
       <Check size={9} strokeWidth={2.75} className="scheduler-appt-complete-badge__icon" aria-hidden />
@@ -802,7 +806,7 @@ function appointmentActualVisitTimesTitle(appt: Appointment, practiceTz: string)
   return `Visit: ${fmt(startIso)} – ${fmt(endIso)}`;
 }
 
-/** Clock when visit start/end are recorded and a forward-booking list entry exists for this visit. */
+/** Clock when visit start/end are recorded and follow-up disposition is complete (any End Visit option). */
 function SchedulerApptVisitTimesBadge({
   appt,
   forwardBookingSourceAppointmentIds,
@@ -2728,6 +2732,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   const [onMyWaySmsAppt, setOnMyWaySmsAppt] = useState<Appointment | null>(null);
   const [embeddedRoomLoaderId, setEmbeddedRoomLoaderId] = useState<number | null>(null);
   const [roomLoaderPdfModalAppt, setRoomLoaderPdfModalAppt] = useState<Appointment | null>(null);
+  const [workZonesMapOpen, setWorkZonesMapOpen] = useState(false);
   const [roomLoaderOpening, setRoomLoaderOpening] = useState(false);
   /** null = not applicable or loading; true = at least one pet can be added; false = none left */
   const [addAnotherPetMenuReady, setAddAnotherPetMenuReady] = useState<boolean | null>(null);
@@ -2756,6 +2761,10 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   const [doctorDayEffectiveWindowByApptId, setDoctorDayEffectiveWindowByApptId] = useState<
     Map<string, SchedulerDoctorDayEffectiveWindow>
   >(() => new Map());
+  /** From GET /appointments/doctor — range payload often omits `isComplete`. */
+  const [doctorDayIsCompleteByApptId, setDoctorDayIsCompleteByApptId] = useState<Map<string, boolean>>(
+    () => new Map()
+  );
   const [scheduleOverridesByDate, setScheduleOverridesByDate] = useState<
     Map<string, ScheduleOverride>
   >(() => new Map());
@@ -3019,18 +3028,15 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     ReadonlySet<number>
   >(() => new Set());
   const [forwardBookingSavedPatientIds, setForwardBookingSavedPatientIds] = useState<
-    ReadonlySet<string>
+    ReadonlySet<number>
   >(() => new Set());
 
   const refreshForwardBookingSourceIds = useCallback(async () => {
     try {
-      const list = await fetchForwardBookings({
-        practiceId: PRACTICE_ID,
-        limit: 2000,
-        includeRemoved: true,
-      });
-      setForwardBookingSourceAppointmentIds(buildForwardBookingSourceAppointmentIdSet(list));
-      setForwardBookingSavedPatientIds(buildForwardBookingSourcePatientIdSet(list));
+      const index = await fetchForwardBookingCalendarIndex(PRACTICE_ID);
+      const sets = buildForwardBookingCalendarIndexSets(index);
+      setForwardBookingSourceAppointmentIds(sets.sourceAppointmentIds);
+      setForwardBookingSavedPatientIds(sets.patientIds);
     } catch {
       /* keep prior set */
     }
@@ -4038,6 +4044,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       setDoctorDayZonesByApptId(new Map());
       setDoctorDayPatientPcpByApptId(new Map());
       setDoctorDayEffectiveWindowByApptId(new Map());
+      setDoctorDayIsCompleteByApptId(new Map());
       setScheduleOverridesByDate(new Map());
       setDriveEtaLoading(false);
       return;
@@ -4050,6 +4057,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       setDoctorDayZonesByApptId(new Map());
       setDoctorDayPatientPcpByApptId(new Map());
       setDoctorDayEffectiveWindowByApptId(new Map());
+      setDoctorDayIsCompleteByApptId(new Map());
       setScheduleOverridesByDate(new Map());
       setDriveEtaLoading(false);
       return;
@@ -4065,6 +4073,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     setDoctorDayZonesByApptId(new Map());
     setDoctorDayPatientPcpByApptId(new Map());
     setDoctorDayEffectiveWindowByApptId(new Map());
+    setDoctorDayIsCompleteByApptId(new Map());
 
     const softDriveUpdate = driveSoftRefreshRef.current;
     driveSoftRefreshRef.current = false;
@@ -4129,7 +4138,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       await Promise.all(
         dates.map(async (date) => {
           try {
-            const { bundle: rawBundle, membershipByApptId, zonesByApptId, effectiveWindowByApptId, patientPrimaryProviderByApptId } =
+            const { bundle: rawBundle, membershipByApptId, zonesByApptId, effectiveWindowByApptId, patientPrimaryProviderByApptId, isCompleteByApptId } =
               await fetchSchedulerDoctorDayBundle(date, docId, driveRoutingOpts);
             if (cancelled) return;
 
@@ -4162,6 +4171,13 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             setDoctorDayEffectiveWindowByApptId((prev) => {
               const m = new Map(prev);
               for (const [k, v] of effectiveWindowByApptId) {
+                m.set(k, v);
+              }
+              return m;
+            });
+            setDoctorDayIsCompleteByApptId((prev) => {
+              const m = new Map(prev);
+              for (const [k, v] of isCompleteByApptId) {
                 m.set(k, v);
               }
               return m;
@@ -4253,7 +4269,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       doctorDayMembershipByApptId.size === 0 &&
       doctorDayZonesByApptId.size === 0 &&
       doctorDayPatientPcpByApptId.size === 0 &&
-      doctorDayEffectiveWindowByApptId.size === 0
+      doctorDayEffectiveWindowByApptId.size === 0 &&
+      doctorDayIsCompleteByApptId.size === 0
     ) {
       return filtered;
     }
@@ -4286,6 +4303,10 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       if (doctorDayWindow && !next.effectiveWindow?.startIso && !next.effectiveWindow?.endIso) {
         next = { ...next, effectiveWindow: doctorDayWindow };
       }
+      if (doctorDayIsCompleteByApptId.has(String(a.id))) {
+        const doctorComplete = doctorDayIsCompleteByApptId.get(String(a.id)) === true;
+        next = { ...next, isComplete: doctorComplete || next.isComplete === true };
+      }
       return next;
     });
   }, [
@@ -4295,6 +4316,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     doctorDayZonesByApptId,
     doctorDayPatientPcpByApptId,
     doctorDayEffectiveWindowByApptId,
+    doctorDayIsCompleteByApptId,
   ]);
 
   const calendarAppointments = useMemo(() => {
@@ -5338,10 +5360,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       return;
     }
     const clientIdRaw = routingPreview.newApptMeta?.clientId?.trim();
-    const hasLinkedClient =
-      Boolean(clientIdRaw) &&
-      Boolean(routingPreview.clientDisplayLabel?.trim()) &&
-      Number.isFinite(Number(clientIdRaw));
+    const hasLinkedClient = Boolean(clientIdRaw) && Number.isFinite(Number(clientIdRaw));
     if (clientIdRaw && !Number.isFinite(Number(clientIdRaw))) {
       setToast('Invalid client on routing preview.');
       return;
@@ -5358,7 +5377,13 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     const isAdminOrSuper = rolesLower.includes('admin') || rolesLower.includes('superadmin');
     const ri = readRoutingRescheduleIntent();
     const fbi = forwardBookingWorkspaceIsActive() ? readRoutingForwardBookingIntent() : null;
-    const rescheduleTargets = ri ? rescheduleScopeTargets(ri) : null;
+    const previewPatientIds =
+      routingPreview.previewPatients?.map((p) => String(p.id)).filter(Boolean) ?? [];
+    const rescheduleTargets = ri
+      ? previewPatientIds.length > 0
+        ? rescheduleTargetsForChipSelection(ri, previewPatientIds)
+        : rescheduleScopeTargets(ri)
+      : null;
     const rescheduleIds =
       routingPreview.rescheduleAppointmentIds?.filter((id) => Number.isFinite(Number(id))) ??
       (routingPreview.rescheduleAppointmentId != null &&
@@ -5392,11 +5417,13 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         : undefined;
     const rescheduleId = rescheduleIds[0];
     const isReschedule = rescheduleId != null && Number.isFinite(Number(rescheduleId));
-    const fbiTargets = fbi && !isReschedule ? forwardBookingScopeTargets(fbi) : null;
-    const fbiGroupBook =
-      fbiTargets != null &&
-      fbiTargets.entries.length > 1 &&
-      fbi?.householdScope === 'household_same_target';
+    const fbiTargets =
+      fbi && !isReschedule
+        ? previewPatientIds.length > 0
+          ? forwardBookingEntriesForChipSelection(fbi, previewPatientIds)
+          : forwardBookingScopeTargets(fbi)
+        : null;
+    const fbiGroupBook = fbiTargets != null && fbiTargets.entries.length > 1;
     /** Internal id from the chosen routing slot — target doctor when rescheduling cross-doctor. */
     const routingSlotProviderId = String(opt.doctorPimsId ?? '').trim() || undefined;
     const rescheduleSourceAppt = isReschedule
@@ -7790,6 +7817,9 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                   <button type="button" onClick={goToday}>
                     Today
                   </button>
+                  <button type="button" onClick={() => setWorkZonesMapOpen(true)}>
+                    Work Zones Map
+                  </button>
                 </div>
               </div>
             </div>
@@ -8228,6 +8258,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           practiceId={PRACTICE_ID}
           practiceTz={PRACTICE_TZ}
           sameCalendarDayAppointments={rawAppointments}
+          forwardBookingSourceAppointmentIds={forwardBookingSourceAppointmentIds}
           forwardBookingSavedPatientIds={forwardBookingSavedPatientIds}
           accentColor={colorsForAppointment(actualVisitModal, typeList, typeFillMap).fill}
           onClose={() => setActualVisitModal(null)}
@@ -8250,6 +8281,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             document.body
           )
         : null}
+
+      {workZonesMapOpen ? <WorkZonesMapModal onClose={() => setWorkZonesMapOpen(false)} /> : null}
 
       {roomLoaderPdfModalAppt ? (
         <SchedulerRoomLoaderPdfModal

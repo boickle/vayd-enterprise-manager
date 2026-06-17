@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { DateTime } from 'luxon';
 import { fetchAppointmentById } from '../api/appointments';
 import { fetchAllAppointmentTypes } from '../api/appointmentSettings';
+import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import { createForwardBooking, type ForwardBookingEntry } from '../api/forwardBooking';
 import { fetchPatientAppointmentsStaff, clientIdFromAppointment } from '../api/pimsAppointments';
 import { fetchPatientByIdStaff, searchPatientsStaff, type PatientSearchRow } from '../api/patients';
@@ -63,6 +64,21 @@ function formatSourceApptOption(a: Appointment, practiceTz: string): string {
   return [datePart, timePart, typeName, desc].filter(Boolean).join(' · ');
 }
 
+function providerSelectLabel(p: Provider): string {
+  const name =
+    [pickStr(p.firstName), pickStr(p.lastName)].filter(Boolean).join(' ').trim() ||
+    pickStr(p.name) ||
+    `Provider #${p.id}`;
+  const suffix = pickStr(p.designation) ?? pickStr(p.title);
+  return suffix ? `${name}, ${suffix}` : name;
+}
+
+function defaultProviderIdFromAppointment(appt: Appointment | null): string {
+  const id = appt?.primaryProvider?.id;
+  if (id == null || !Number.isFinite(Number(id))) return '';
+  return String(id);
+}
+
 function errMsg(e: unknown): string {
   const ax = e as { response?: { data?: { message?: string | string[] } }; message?: string };
   const m = ax?.response?.data?.message;
@@ -93,6 +109,9 @@ export function CreateForwardBookingModal({
   const [forwardAmount, setForwardAmount] = useState('');
   const [forwardUnit, setForwardUnit] = useState<ForwardBookingIntervalUnit | ''>('');
   const [bookingNotes, setBookingNotes] = useState('');
+  const [forwardBookingProviderId, setForwardBookingProviderId] = useState('');
+  const [providers, setProviders] = useState<Provider[]>([]);
+  const [providersLoading, setProvidersLoading] = useState(false);
   const [appointmentTypes, setAppointmentTypes] = useState<
     Awaited<ReturnType<typeof fetchAllAppointmentTypes>>
   >([]);
@@ -118,6 +137,33 @@ export function CreateForwardBookingModal({
       cancelled = true;
     };
   }, [practiceId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setProvidersLoading(true);
+    void (async () => {
+      try {
+        const rows = await fetchPrimaryProviders();
+        if (!cancelled) setProviders(Array.isArray(rows) ? rows : []);
+      } catch {
+        if (!cancelled) setProviders([]);
+      } finally {
+        if (!cancelled) setProvidersLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (selectedAppointmentId === NO_ASSOCIATED_VISIT || !selectedAppointmentId) {
+      setForwardBookingProviderId('');
+      return;
+    }
+    const appt = appointments.find((a) => String(a.id) === selectedAppointmentId) ?? null;
+    setForwardBookingProviderId(defaultProviderIdFromAppointment(appt));
+  }, [selectedAppointmentId, appointments]);
 
   useEffect(() => {
     function onDoc(e: MouseEvent) {
@@ -284,12 +330,18 @@ export function CreateForwardBookingModal({
           setError('Could not resolve the client for this patient.');
           return;
         }
+        const providerId = Number(forwardBookingProviderId);
         const payload = buildCreateForwardBookingPayloadFromPatient(
           selectedPatient.id,
           clientId,
           { amount, unit: forwardUnit },
           practiceId,
-          { bookingNotes: bookingNotes.trim() || null }
+          {
+            bookingNotes: bookingNotes.trim() || null,
+            ...(Number.isFinite(providerId) && providerId > 0
+              ? { primaryProviderId: providerId }
+              : {}),
+          }
         );
         if (!payload) {
           setError('Could not create forward booking for this patient.');
@@ -317,6 +369,7 @@ export function CreateForwardBookingModal({
         }
       }
 
+      const providerId = Number(forwardBookingProviderId);
       const payload = buildCreateForwardBookingPayloadFromAppointment(
         apptForPayload,
         { amount, unit: forwardUnit },
@@ -326,6 +379,9 @@ export function CreateForwardBookingModal({
           appointmentTypes,
           patientId: selectedPatient.id,
           clientId: Number.isFinite(clientId) ? clientId : undefined,
+          ...(Number.isFinite(providerId) && providerId > 0
+            ? { primaryProviderId: providerId }
+            : {}),
         }
       );
       if (!payload) {
@@ -486,6 +542,25 @@ export function CreateForwardBookingModal({
               </select>
             </label>
           </div>
+
+          <label className="scheduler-edit-field" style={{ display: 'block', marginTop: 10 }}>
+            <span>Forward booking with</span>
+            <select
+              className="settings-input"
+              value={forwardBookingProviderId}
+              onChange={(e) => setForwardBookingProviderId(e.target.value)}
+              disabled={busy || providersLoading}
+              aria-label="Forward booking provider"
+              style={{ width: '100%' }}
+            >
+              <option value="">Select provider…</option>
+              {providers.map((p) => (
+                <option key={String(p.id)} value={String(p.id)}>
+                  {providerSelectLabel(p)}
+                </option>
+              ))}
+            </select>
+          </label>
 
           <label className="scheduler-edit-field" style={{ display: 'block', marginTop: 10 }}>
             <span>Forward booking note</span>

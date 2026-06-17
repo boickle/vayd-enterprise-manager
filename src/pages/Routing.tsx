@@ -27,11 +27,30 @@ import {
   type AvgMinutesByTypeRow,
 } from '../analytics/appointmentTypeTimeStats';
 import { Field } from '../components/Field';
+import { AddressAutocomplete, type AddressFields } from '../components/AddressAutocomplete';
 import { ForwardBookingWorkspaceContextPanel } from '../components/ForwardBookingWorkspaceContextPanel';
 import RoutingClientPatientsList from '../components/routing/RoutingClientPatientsList';
+import {
+  defaultForwardBookingSelectedPatientIds,
+  defaultRescheduleSelectedPatientIds,
+  deriveForwardBookingScopeFromChipSelection,
+  deriveRescheduleScopeFromChipSelection,
+  previewPatientsFromChipSelection,
+  rescheduleTargetsForChipSelection,
+  type RoutingPatientChipRow,
+} from '../utils/routingPatientSelection';
 import { KeyValue } from '../components/KeyValue';
 import { DateTime } from 'luxon';
 import { validateAddress } from '../api/geo';
+import {
+  addressFieldsDisplayText,
+  addressFieldsFromClient,
+  addressFieldsFromFreeText,
+  addressFieldsFromRoutingCoords,
+  EMPTY_ADDRESS_FIELDS,
+  geocodeRoutingAddressText,
+  parseCoordinate,
+} from '../utils/verifiedAddress';
 import { fetchPrimaryProviders } from '../api/employee';
 import { lookupClientZoneForAddress, type ClientZoneLookupResult } from '../api/zoneLookup';
 import {
@@ -79,6 +98,7 @@ import {
   resolveRescheduleIntentDoctorPimsId,
   rescheduleScopeTargets,
   rescheduleIntentUsesAlternateAddress,
+  routingAddressesMatch,
   routingClientPickWouldReplaceAlternate,
   ROUTING_RESCHEDULE_INTENT_UPDATED_EVENT,
   ROUTING_RESCHEDULE_SOURCE_SCORE_UPDATED_EVENT,
@@ -87,7 +107,6 @@ import {
 } from '../utils/routingRescheduleIntent';
 import {
   forwardBookingRequiresScopeChoice,
-  forwardBookingScopePetCount,
   forwardBookingScopeTargets,
   markForwardBookingIntentAppliedToRoutingForm,
   readRoutingForwardBookingIntent,
@@ -1595,6 +1614,8 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
   const lastRoutingClientIdRef = useRef<string | null>(
     bootstrap.form.newAppt.clientId?.trim() || null
   );
+  /** Client home address when a household is linked — used to detect alternate visit stops. */
+  const linkedClientHomeAddressRef = useRef<string | null>(null);
 
   const resetRoutingSchedulePrefs = useCallback(() => {
     setPreferredWeekday([]);
@@ -1610,6 +1631,14 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<Result | null>(() => (bootstrap.result as Result | null) ?? null);
   const [addressError, setAddressError] = useState<string | null>(null);
+  const [routingAddressFields, setRoutingAddressFields] = useState<AddressFields>(() =>
+    addressFieldsFromRoutingCoords(
+      bootstrap.form.newAppt.address?.trim() ?? '',
+      bootstrap.form.newAppt.lat,
+      bootstrap.form.newAppt.lon
+    )
+  );
+  const routingAddressGeocodeKeyRef = useRef<string | null>(null);
   const [addressZone, setAddressZone] = useState<ClientZoneLookupResult | null>(null);
   const [addressZoneLoading, setAddressZoneLoading] = useState(false);
   const [doctorOutsideAddressZone, setDoctorOutsideAddressZone] = useState(false);
@@ -1757,6 +1786,13 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     () => bootstrap.routingApptStatsTypeKey ?? ''
   );
   const [routingPetCount, setRoutingPetCount] = useState(1);
+  const [routingClientPatients, setRoutingClientPatients] = useState<RoutingPatientChipRow[]>([]);
+  const [selectedRoutingPatientIds, setSelectedRoutingPatientIds] = useState<string[]>([]);
+  const routingPatientSelectionClientRef = useRef<string | null>(null);
+  const selectedRoutingPatientIdSet = useMemo(
+    () => new Set(selectedRoutingPatientIds.map(String)),
+    [selectedRoutingPatientIds]
+  );
   const latestDoctorQueryRef = useRef('');
   const [doctorActiveIdx, setDoctorActiveIdx] = useState<number>(-1);
   const [clientActiveIdx, setClientActiveIdx] = useState<number>(-1);
@@ -1879,14 +1915,11 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     if (!rescheduleRequiresScopeChoice(ri)) return 'selected_pet';
     return ri.rescheduleScope ?? '';
   });
-  const [rescheduleScopeError, setRescheduleScopeError] = useState(false);
   const [forwardBookingScope, setForwardBookingScope] = useState<RoutingForwardBookingScope | ''>(() => {
     const intent = readRoutingForwardBookingIntent();
     if (!intent || !forwardBookingRequiresScopeChoice(intent)) return '';
     return intent.householdScope ?? '';
   });
-  const [forwardBookingScopeError, setForwardBookingScopeError] = useState(false);
-
   const activeForwardBookingIntent = useMemo(
     () => (hasActiveForwardBookingWorkspace ? readRoutingForwardBookingIntent() : null),
     [hasActiveForwardBookingWorkspace]
@@ -1898,19 +1931,6 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     () => hasActiveForwardBookingWorkspace && forwardBookingRequiresScopeChoice(activeForwardBookingIntent),
     [hasActiveForwardBookingWorkspace, activeForwardBookingIntent]
   );
-
-  const forwardBookingScopePetLabel = useMemo(() => {
-    const intent = activeForwardBookingIntent;
-    if (!intent) return 'This pet only';
-    const row = intent.householdEntries?.find((e) => e.patientId === intent.patientId);
-    const name = row?.patientName?.trim();
-    return name ? `Only ${name}` : 'This pet only';
-  }, [activeForwardBookingIntent]);
-
-  const forwardBookingHouseholdLabel = useMemo(() => {
-    const count = activeForwardBookingIntent?.householdEntries?.length ?? 0;
-    return count > 1 ? `All pets with same target (${count})` : 'All pets with same target';
-  }, [activeForwardBookingIntent]);
 
   const activeRescheduleIntent = useMemo(
     () => readRoutingRescheduleIntent(),
@@ -1983,29 +2003,9 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     ]
   );
 
-  const rescheduleScopePetLabel = useMemo(() => {
-    const ri = activeRescheduleIntent;
-    if (!ri) return 'This pet only';
-    const visit = ri.sameDayVisits?.find((v) => v.patientId === ri.patientId);
-    const name = visit?.patientName?.trim();
-    return name ? `Only ${name}` : 'This pet only';
-  }, [activeRescheduleIntent]);
-
-  const rescheduleHouseholdLabel = useMemo(() => {
-    const count = activeRescheduleIntent?.sameDayVisits?.length ?? 0;
-    return count > 1 ? `All pets today (${count})` : 'All pets today';
-  }, [activeRescheduleIntent]);
-
-  const onRescheduleScopeChange = useCallback((scope: RoutingRescheduleScope) => {
-    setRescheduleScope(scope);
-    setRescheduleScopeError(false);
-    writeRoutingRescheduleScope(scope);
-  }, []);
-
   const exitRescheduleMode = useCallback(() => {
     clearRoutingRescheduleIntent();
     setRescheduleScope('');
-    setRescheduleScopeError(false);
   }, []);
 
   const resetRoutingFormAfterForwardBookingDismiss = useCallback(() => {
@@ -2040,7 +2040,6 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     setRoutingApptStatsTypeKey('');
     setScheduleBookTypeId(null);
     setRescheduleScope('');
-    setRescheduleScopeError(false);
     setResult(null);
     setFeedbackError(null);
     setFeedbackToast(null);
@@ -2072,6 +2071,13 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     const ri = activeRescheduleIntent;
     if (!ri) return null;
     const client = ri.clientDisplayLabel?.trim() || 'this household';
+    if (selectedRoutingPatientIds.length > 0 && routingClientPatients.length > 0) {
+      const names = routingClientPatients
+        .filter((p) => selectedRoutingPatientIdSet.has(String(p.id)))
+        .map((p) => p.name);
+      if (names.length === 1) return `Moving ${names[0]} (${client})`;
+      if (names.length > 1) return `Moving ${names.join(', ')} (${client})`;
+    }
     if (rescheduleScope === 'household_day') {
       const n = ri.sameDayVisits?.length ?? 0;
       return n > 1
@@ -2083,11 +2089,18 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       const pet = visit?.patientName?.trim();
       return pet ? `Moving ${pet} (${client})` : `Moving one pet at ${client}`;
     }
-    if (showRescheduleScopeField) {
-      return `Moving ${client} — choose which pets to reschedule below`;
+    if (showRescheduleScopeField && selectedRoutingPatientIds.length === 0) {
+      return `Moving ${client} — click the pets to reschedule below`;
     }
     return `Moving a visit for ${client}`;
-  }, [activeRescheduleIntent, rescheduleScope, showRescheduleScopeField]);
+  }, [
+    activeRescheduleIntent,
+    rescheduleScope,
+    showRescheduleScopeField,
+    selectedRoutingPatientIds,
+    selectedRoutingPatientIdSet,
+    routingClientPatients,
+  ]);
 
   useEffect(() => {
     function syncRescheduleIntentFlag() {
@@ -2242,7 +2255,6 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       } else {
         setRescheduleScope(intent.rescheduleScope ?? '');
       }
-      setRescheduleScopeError(false);
 
       setResult(null);
       setFeedbackError(null);
@@ -2617,6 +2629,14 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       );
       return;
     }
+    if (
+      form.newAppt.clientId?.trim() &&
+      routingClientPatients.length > 0 &&
+      selectedRoutingPatientIds.length === 0
+    ) {
+      setFeedbackError('Select at least one patient under Active patients.');
+      return;
+    }
     const appointmentTypeId = resolveScheduleBookTypeId();
     if (appointmentTypeId == null) {
       setFeedbackError(
@@ -2641,6 +2661,12 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     const candidateIndex = resolveRoutingCandidateIndex(opt, topForIndex);
     const rescheduleRow = readRoutingRescheduleIntent();
 
+    const rescheduleUsesAlt =
+      Boolean(rescheduleRow) &&
+      rescheduleIntentUsesAlternateAddress(rescheduleRow) &&
+      (form.newAppt.address ?? '').trim();
+    const linkedClientUsesAlt = routingFormUsesAlternateClientAddress();
+
     const payload: RoutingCalendarPreviewPayloadV1 = {
       version: 1,
       listOptionKey,
@@ -2654,11 +2680,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
         lat: form.newAppt.lat,
         lon: form.newAppt.lon,
       },
-      ...(rescheduleRow &&
-      rescheduleIntentUsesAlternateAddress(rescheduleRow) &&
-      (form.newAppt.address ?? '').trim()
-        ? { routingUsesAlternateAddress: true }
-        : {}),
+      ...(rescheduleUsesAlt || linkedClientUsesAlt ? { routingUsesAlternateAddress: true } : {}),
       appointmentTypeId,
       appointmentTypeChosenInRouting: Boolean(routingApptStatsTypeKey.trim()),
       ...(routingApptStatsTypeKey.trim()
@@ -2670,24 +2692,22 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       candidateId: opt.candidateId,
     };
     if (rescheduleRow) {
-      if (rescheduleRequiresScopeChoice(rescheduleRow) && !rescheduleRow.rescheduleScope) {
-        setRescheduleScopeError(true);
-        setFeedbackError('Choose whether to reschedule only this pet or all pets at this household today.');
-        return;
-      }
-      const targets = rescheduleScopeTargets(rescheduleRow);
+      const targets = rescheduleTargetsForChipSelection(
+        rescheduleRow,
+        selectedRoutingPatientIds
+      );
+      const scope = deriveRescheduleScopeFromChipSelection(
+        rescheduleRow,
+        selectedRoutingPatientIds
+      );
+      writeRoutingRescheduleScope(scope);
+      setRescheduleScope(scope);
       payload.rescheduleAppointmentId = targets.appointmentIds[0];
       payload.rescheduleAppointmentIds =
         targets.appointmentIds.length > 0 ? targets.appointmentIds : [rescheduleRow.appointmentId];
       payload.reschedulePatientId = targets.patientId;
-      const visitsForPreview =
-        rescheduleRow.rescheduleScope === 'household_day'
-          ? targets.visits
-          : targets.visits.length > 0
-            ? [targets.visits[0]!]
-            : [];
-      if (visitsForPreview.length > 0) {
-        payload.previewPatients = visitsForPreview.map((v) => ({
+      if (targets.visits.length > 0) {
+        payload.previewPatients = targets.visits.map((v) => ({
           id: v.patientId,
           name: v.patientName?.trim() || `Pet ${v.patientId}`,
         }));
@@ -2702,6 +2722,14 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       }
       if (sourceSnapshot) {
         payload.rescheduleSourceVisitSnapshot = sourceSnapshot;
+      }
+    } else {
+      const chipPreview = previewPatientsFromChipSelection(
+        selectedRoutingPatientIds,
+        routingClientPatients
+      );
+      if (chipPreview.length > 0) {
+        payload.previewPatients = chipPreview;
       }
     }
     writeRoutingCalendarPreview(payload);
@@ -2872,6 +2900,32 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     });
   }, []);
 
+  /** Restore linked client home on session bootstrap so alternate detection works after refresh. */
+  useEffect(() => {
+    const cid = form.newAppt.clientId?.trim();
+    if (!cid) {
+      linkedClientHomeAddressRef.current = null;
+      return;
+    }
+    let cancelled = false;
+    void fetchClientByIdStaff(cid).then((payload) => {
+      if (cancelled || !payload || typeof payload !== 'object') return;
+      linkedClientHomeAddressRef.current = formatClientAddress(payload as Client);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [form.newAppt.clientId]);
+
+  const routingFormUsesAlternateClientAddress = useCallback((): boolean => {
+    const clientId = form.newAppt.clientId?.trim();
+    const addr = (form.newAppt.address ?? '').trim();
+    if (!clientId || !addr) return false;
+    const home = linkedClientHomeAddressRef.current?.trim();
+    if (!home) return true;
+    return !routingAddressesMatch(addr, home);
+  }, [form.newAppt.clientId, form.newAppt.address]);
+
   /** New client → clear scheduling prefs (not reserve handling); doctor, dates, and calculate-time stay. */
   useEffect(() => {
     const nextId = form.newAppt.clientId?.trim() || null;
@@ -2999,6 +3053,46 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       alive = false;
     };
   }, [routingAddressVerified, form.newAppt.address, form.newAppt.lat, form.newAppt.lon, addressError]);
+
+  // Geocode client-prefilled or restored addresses that lack coordinates.
+  useEffect(() => {
+    const addr = (form.newAppt.address ?? '').trim();
+    const hasCoords =
+      Number.isFinite(form.newAppt.lat as number) &&
+      Number.isFinite(form.newAppt.lon as number);
+    if (!addr || hasCoords) return;
+
+    const key = `${addr}|${form.newAppt.clientId ?? ''}`;
+    if (routingAddressGeocodeKeyRef.current === key) return;
+    routingAddressGeocodeKeyRef.current = key;
+
+    let cancelled = false;
+    void geocodeRoutingAddressText(addr).then((result) => {
+      if (cancelled) return;
+      if (result.ok) {
+        setForm((f) => ({
+          ...f,
+          newAppt: {
+            ...f.newAppt,
+            address: result.address,
+            lat: result.lat,
+            lon: result.lon,
+          },
+        }));
+        setRoutingAddressFields(
+          addressFieldsFromRoutingCoords(result.address, result.lat, result.lon)
+        );
+        setAddressError(null);
+        return;
+      }
+      setAddressError(
+        `${result.message} Select a matching address from the list or enter a complete street address.`
+      );
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [form.newAppt.address, form.newAppt.clientId, form.newAppt.lat, form.newAppt.lon]);
 
   const selectedDoctorDisplayName =
     doctorQuery.trim() ||
@@ -3251,6 +3345,105 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     ]
   );
 
+  const applyRoutingPatientChipSelection = useCallback(
+    (nextIds: readonly string[], opts?: { pulse?: boolean }) => {
+      const count = nextIds.length;
+      if (count > 0) {
+        setRoutingPetCount(count);
+        if (opts?.pulse !== false) {
+          triggerRoutingPrefillFlash(['pets']);
+        }
+        if (routingApptStatsTypeKey.trim()) {
+          applyRoutingServiceMinutes(routingApptStatsTypeKey, count, {
+            pulse: opts?.pulse !== false,
+          });
+        }
+      }
+
+      const ri = readRoutingRescheduleIntent();
+      if (ri && hasActiveRescheduleIntent) {
+        const scope = deriveRescheduleScopeFromChipSelection(ri, nextIds);
+        writeRoutingRescheduleScope(scope);
+        setRescheduleScope(scope);
+      }
+
+      const fbi = readRoutingForwardBookingIntent();
+      if (fbi?.workspaceActive && hasActiveForwardBookingWorkspace) {
+        const scope = deriveForwardBookingScopeFromChipSelection(fbi, nextIds);
+        writeRoutingForwardBookingScope(scope);
+        setForwardBookingScope(scope);
+      }
+    },
+    [
+      hasActiveRescheduleIntent,
+      hasActiveForwardBookingWorkspace,
+      routingApptStatsTypeKey,
+      applyRoutingServiceMinutes,
+      triggerRoutingPrefillFlash,
+    ]
+  );
+
+  const onRoutingClientPatientsLoaded = useCallback(
+    (patients: RoutingPatientChipRow[]) => {
+      setRoutingClientPatients(patients);
+      const clientKey = form.newAppt.clientId?.trim() ?? '';
+      if (!clientKey || routingPatientSelectionClientRef.current === clientKey) return;
+      routingPatientSelectionClientRef.current = clientKey;
+
+      if (patients.length === 0) {
+        setSelectedRoutingPatientIds([]);
+        return;
+      }
+
+      const ri = readRoutingRescheduleIntent();
+      if (ri && hasActiveRescheduleIntent) {
+        const defaults = defaultRescheduleSelectedPatientIds(ri).filter((id) =>
+          patients.some((p) => String(p.id) === String(id))
+        );
+        if (defaults.length > 0) {
+          setSelectedRoutingPatientIds(defaults);
+          applyRoutingPatientChipSelection(defaults, { pulse: true });
+          return;
+        }
+      }
+
+      const fbi = readRoutingForwardBookingIntent();
+      if (fbi?.workspaceActive && hasActiveForwardBookingWorkspace) {
+        const defaults = defaultForwardBookingSelectedPatientIds(fbi).filter((id) =>
+          patients.some((p) => String(p.id) === String(id))
+        );
+        if (defaults.length > 0) {
+          setSelectedRoutingPatientIds(defaults);
+          applyRoutingPatientChipSelection(defaults, { pulse: true });
+          return;
+        }
+      }
+
+      setSelectedRoutingPatientIds([]);
+    },
+    [
+      form.newAppt.clientId,
+      hasActiveRescheduleIntent,
+      hasActiveForwardBookingWorkspace,
+      applyRoutingPatientChipSelection,
+    ]
+  );
+
+  const onToggleRoutingPatientSelect = useCallback(
+    (patient: RoutingPatientChipRow) => {
+      const id = String(patient.id);
+      setSelectedRoutingPatientIds((prev) => {
+        const set = new Set(prev.map(String));
+        if (set.has(id)) set.delete(id);
+        else set.add(id);
+        const next = [...set];
+        applyRoutingPatientChipSelection(next, { pulse: true });
+        return next;
+      });
+    },
+    [applyRoutingPatientChipSelection]
+  );
+
   /** Calendar preview book type — explicit Calculate Time pick, then stored id, then practice default. */
   function resolveScheduleBookTypeId(): number | null {
     const fromStatsKey = routingApptStatsTypeKey.trim();
@@ -3318,39 +3511,20 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     applyRoutingServiceMinutes,
   ]);
 
-  /** Keep Calculate Time pets in sync when forward-booking scope is restored from session. */
   useEffect(() => {
-    if (!hasActiveForwardBookingWorkspace || !showForwardBookingScopeField) return;
-    if (!forwardBookingScope) return;
-    const intent = activeForwardBookingIntent;
-    if (!intent) return;
-    const nextPets = forwardBookingScopePetCount(forwardBookingScope, intent);
-    setRoutingPetCount((prev) => (prev === nextPets ? prev : nextPets));
-  }, [
-    hasActiveForwardBookingWorkspace,
-    showForwardBookingScopeField,
-    forwardBookingScope,
-    activeForwardBookingIntent,
-  ]);
+    const cid = form.newAppt.clientId?.trim() ?? '';
+    if (!cid) {
+      routingPatientSelectionClientRef.current = null;
+      setRoutingClientPatients([]);
+      setSelectedRoutingPatientIds([]);
+    } else if (routingPatientSelectionClientRef.current !== cid) {
+      routingPatientSelectionClientRef.current = null;
+      setRoutingClientPatients([]);
+      setSelectedRoutingPatientIds([]);
+    }
+  }, [form.newAppt.clientId]);
 
-  const onForwardBookingScopeChange = useCallback(
-    (scope: RoutingForwardBookingScope) => {
-      setForwardBookingScope(scope);
-      setForwardBookingScopeError(false);
-      writeRoutingForwardBookingScope(scope);
-
-      const intent = readRoutingForwardBookingIntent();
-      const nextPets = forwardBookingScopePetCount(scope, intent);
-      setRoutingPetCount(nextPets);
-      triggerRoutingPrefillFlash(['pets']);
-      if (routingApptStatsTypeKey.trim()) {
-        applyRoutingServiceMinutes(routingApptStatsTypeKey, nextPets, { pulse: true });
-      }
-    },
-    [routingApptStatsTypeKey, applyRoutingServiceMinutes, triggerRoutingPrefillFlash]
-  );
-
-  // Fetch doctor name if missing
+  /** Calendar preview book type — explicit Calculate Time pick, then stored id, then practice default. */
   useEffect(() => {
     const pid = result?.selectedDoctorPimsId || result?.doctorPimsId;
     if (!pid || doctorNames[pid]) return;
@@ -3385,47 +3559,96 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     key: K,
     value: RouteRequest['newAppt'][K]
   ) {
-    setForm((f) => {
-      if (key === 'address') {
-        setAddressError(null);
-        setSelectedClientAlerts(null);
-        return {
-          ...f,
-          newAppt: {
-            ...f.newAppt,
-            address: (value as string) ?? '',
-            lat: undefined,
-            lon: undefined,
-            clientId: undefined,
-          },
-        };
-      }
-      return { ...f, newAppt: { ...f.newAppt, [key]: value } };
-    });
+    setForm((f) => ({ ...f, newAppt: { ...f.newAppt, [key]: value } }));
+  }
+
+  const onRoutingAddressFieldsChange = useCallback((fields: AddressFields) => {
+    routingAddressGeocodeKeyRef.current = null;
+    setRoutingAddressFields(fields);
+    setAddressError(null);
+    const text = addressFieldsDisplayText(fields) || fields.line1?.trim() || '';
+    setForm((f) => ({
+      ...f,
+      newAppt: {
+        ...f.newAppt,
+        address: text,
+        lat:
+          fields.lat != null && Number.isFinite(fields.lat) ? fields.lat : undefined,
+        lon:
+          fields.lon != null && Number.isFinite(fields.lon) ? fields.lon : undefined,
+      },
+    }));
+  }, []);
+
+  function applyVerifiedRoutingAddress(
+    address: string,
+    lat: number,
+    lon: number,
+    clientId?: string
+  ) {
+    setForm((f) => ({
+      ...f,
+      newAppt: {
+        ...f.newAppt,
+        address,
+        lat,
+        lon,
+        ...(clientId ? { clientId } : {}),
+      },
+    }));
+    setRoutingAddressFields(addressFieldsFromRoutingCoords(address, lat, lon));
+    setAddressError(null);
   }
 
   function applyPickClient(c: Client, opts?: { alternateAddress?: string | null }) {
     const alt = opts?.alternateAddress?.trim();
     const addr = alt || formatClientAddress(c);
-    const latNum = typeof c.lat === 'string' ? parseFloat(c.lat) : c.lat;
-    const lonNum = typeof c.lon === 'string' ? parseFloat(c.lon) : c.lon;
+    linkedClientHomeAddressRef.current = formatClientAddress(c);
+    const latNum = alt ? undefined : parseCoordinate(c.lat);
+    const lonNum = alt ? undefined : parseCoordinate(c.lon);
+    const clientId = String(c.id);
 
-    setForm((f) => ({
-      ...f,
-      newAppt: {
-        ...f.newAppt,
-        clientId: String(c.id),
-        address: addr,
-        lat: alt ? undefined : Number.isFinite(latNum as number) ? (latNum as number) : undefined,
-        lon: alt ? undefined : Number.isFinite(lonNum as number) ? (lonNum as number) : undefined,
-      },
-    }));
-    setAddressError(null);
+    const fields = alt ? addressFieldsFromFreeText(alt) : addressFieldsFromClient(c, addr);
+    setRoutingAddressFields(fields);
 
     setClientQuery(`${c.lastName}, ${c.firstName}`);
     setClientResults([]);
     setShowClientDropdown(false);
     setSelectedClientAlerts((c as any).alerts ?? null);
+
+    if (!addr.trim()) {
+      setForm((f) => ({
+        ...f,
+        newAppt: {
+          ...f.newAppt,
+          clientId,
+          address: '',
+          lat: undefined,
+          lon: undefined,
+        },
+      }));
+      setAddressError(
+        'This client has no address on file. Enter a routable visit address below.'
+      );
+      return;
+    }
+
+    if (!alt && latNum != null && lonNum != null) {
+      applyVerifiedRoutingAddress(addr, latNum, lonNum, clientId);
+      return;
+    }
+
+    setForm((f) => ({
+      ...f,
+      newAppt: {
+        ...f.newAppt,
+        clientId,
+        address: addr,
+        lat: undefined,
+        lon: undefined,
+      },
+    }));
+    setAddressError(null);
   }
 
   function pickClient(
@@ -3764,25 +3987,14 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       return { valid: false, error: 'Please enter a valid service duration.' };
     }
 
-    const ri = readRoutingRescheduleIntent();
-    if (ri && rescheduleRequiresScopeChoice(ri) && !ri.rescheduleScope) {
-      setRescheduleScopeError(true);
-      return {
-        valid: false,
-        error: 'Choose whether to reschedule only this pet or all pets at this household today.',
-      };
-    }
-
-    const fbi = readRoutingForwardBookingIntent();
     if (
-      fbi?.workspaceActive &&
-      forwardBookingRequiresScopeChoice(fbi) &&
-      !fbi.householdScope
+      form.newAppt.clientId?.trim() &&
+      routingClientPatients.length > 0 &&
+      selectedRoutingPatientIds.length === 0
     ) {
-      setForwardBookingScopeError(true);
       return {
         valid: false,
-        error: 'Choose whether to book only this pet or all pets with the same target date.',
+        error: 'Select at least one patient under Active patients.',
       };
     }
 
@@ -4362,25 +4574,40 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                     type="number"
                     min={1}
                     inputMode="numeric"
-                    disabled={Boolean(form.doctorId.trim()) && !routingApptStatsTypeKey.trim()}
-                    title={
-                      !form.doctorId.trim()
-                        ? undefined
-                        : routingApptStatsTypeKey.trim()
-                          ? undefined
-                          : 'Select an appointment type to set the number of pets.'
+                    readOnly={routingClientPatients.length > 0}
+                    disabled={
+                      routingClientPatients.length > 0 ||
+                      (Boolean(form.doctorId.trim()) && !routingApptStatsTypeKey.trim())
                     }
-                    value={routingApptStatsTypeKey.trim() ? routingPetCount : ''}
+                    title={
+                      routingClientPatients.length > 0
+                        ? 'Click patient names above to set how many pets are included.'
+                        : !form.doctorId.trim()
+                          ? undefined
+                          : routingApptStatsTypeKey.trim()
+                            ? undefined
+                            : 'Select an appointment type to set the number of pets.'
+                    }
+                    value={
+                      routingApptStatsTypeKey.trim()
+                        ? routingClientPatients.length > 0
+                          ? selectedRoutingPatientIds.length || ''
+                          : routingPetCount
+                        : ''
+                    }
                     onMouseDown={(e) => {
+                      if (routingClientPatients.length > 0) return;
                       if (!form.doctorId.trim()) {
                         e.preventDefault();
                         promptDoctorBeforeApptType();
                       }
                     }}
                     onFocus={() => {
+                      if (routingClientPatients.length > 0) return;
                       if (!form.doctorId.trim()) promptDoctorBeforeApptType();
                     }}
                     onChange={(e) => {
+                      if (routingClientPatients.length > 0) return;
                       if (!form.doctorId.trim()) {
                         promptDoctorBeforeApptType();
                         return;
@@ -4422,87 +4649,10 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                   onChange={(e) => onNewApptChange('serviceMinutes', Number(e.target.value))}
                 />
               </label>
-              {showRescheduleScopeField ? (
-                <label
-                  className="routing-reschedule-scope-stack"
-                  htmlFor="routing-reschedule-scope"
-                >
-                  <span className="routing-calculate-time-minutes-heading muted">
-                    Reschedule
-                    <span className="routing-required-mark" aria-hidden="true">
-                      {' '}
-                      *
-                    </span>
-                  </span>
-                  <select
-                    id="routing-reschedule-scope"
-                    className={`input routing-input-compact routing-reschedule-scope-select${
-                      rescheduleScopeError ? ' routing-input--error' : ''
-                    }${routingWorkspaceHighlightClass('scope')}`}
-                    required
-                    aria-required
-                    aria-invalid={rescheduleScopeError}
-                    value={rescheduleScope}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      if (v === 'selected_pet' || v === 'household_day') {
-                        onRescheduleScopeChange(v);
-                      }
-                    }}
-                  >
-                    <option value="" disabled>
-                      Choose…
-                    </option>
-                    <option value="selected_pet">{rescheduleScopePetLabel}</option>
-                    <option value="household_day">{rescheduleHouseholdLabel}</option>
-                  </select>
-                </label>
-              ) : null}
-              {showForwardBookingScopeField ? (
-                <label
-                  className="routing-reschedule-scope-stack"
-                  htmlFor="routing-forward-booking-scope"
-                >
-                  <span className="routing-calculate-time-minutes-heading muted">
-                    Forward booking
-                    <span className="routing-required-mark" aria-hidden="true">
-                      {' '}
-                      *
-                    </span>
-                  </span>
-                  <select
-                    id="routing-forward-booking-scope"
-                    className={`input routing-input-compact routing-reschedule-scope-select${
-                      forwardBookingScopeError ? ' routing-input--error' : ''
-                    }${routingWorkspaceHighlightClass('scope')}`}
-                    required
-                    aria-required
-                    aria-invalid={forwardBookingScopeError}
-                    value={forwardBookingScope}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      if (v === 'selected_pet' || v === 'household_same_target') {
-                        onForwardBookingScopeChange(v);
-                      }
-                    }}
-                  >
-                    <option value="" disabled>
-                      Choose…
-                    </option>
-                    <option value="selected_pet">{forwardBookingScopePetLabel}</option>
-                    <option value="household_same_target">{forwardBookingHouseholdLabel}</option>
-                  </select>
-                </label>
-              ) : null}
             </div>
-            {showRescheduleScopeField && rescheduleScopeError ? (
-              <div className="danger routing-route-hint" role="alert">
-                Choose whether to reschedule only this pet or all pets at this household today.
-              </div>
-            ) : null}
-            {showForwardBookingScopeField && forwardBookingScopeError ? (
-              <div className="danger routing-route-hint" role="alert">
-                Choose whether to book only this pet or all pets with the same target date.
+            {routingClientPatients.length > 0 && selectedRoutingPatientIds.length === 0 ? (
+              <div className="muted routing-route-hint routing-client-patients-select-hint">
+                Click patient names above to include them in calculate time and booking.
               </div>
             ) : null}
             {form.doctorId.trim() && routingAppointmentTypes.length === 0 ? (
@@ -4535,6 +4685,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                     setClientActiveIdx(-1);
                     setSelectedClientAlerts(null);
                     if (!next.trim()) {
+                      linkedClientHomeAddressRef.current = null;
                       setForm((f) => ({
                         ...f,
                         newAppt: { ...f.newAppt, clientId: undefined },
@@ -4663,6 +4814,9 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                 clientId={form.newAppt.clientId}
                 practiceId={ROUTING_PRACTICE_ID}
                 practiceTz={DEFAULT_PRACTICE_TIMEZONE}
+                selectedPatientIds={selectedRoutingPatientIdSet}
+                onTogglePatientSelect={onToggleRoutingPatientSelect}
+                onPatientsLoaded={onRoutingClientPatientsLoaded}
               />
             ) : null}
             {routingClientTypeConflictMessage ? (
@@ -4674,19 +4828,30 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
           <Field label="Address">
             <div className="routing-address-field">
               <div className="routing-address-row">
-                <input
-                  className={`input routing-address-input${routingPrefillFlashClass('address')}${routingWorkspaceHighlightClass('address')}`}
-                  value={form.newAppt.address ?? ''}
-                  onChange={(e) => onNewApptChange('address', e.target.value)}
-                  placeholder="Street, city (optional if client has address)"
-                  autoComplete="street-address"
-                />
+                <div
+                  className={`routing-address-autocomplete-wrap${routingPrefillFlashClass('address')}${routingWorkspaceHighlightClass('address')}`}
+                >
+                  <AddressAutocomplete
+                    value={routingAddressFields}
+                    onChange={onRoutingAddressFieldsChange}
+                    error={addressError ?? undefined}
+                    placeholder="Start typing the visit address"
+                    inputClassName="input routing-address-input routing-address-autocomplete-input"
+                    showConfirmedMessage={false}
+                    compact
+                  />
+                </div>
                 {routingAddressVerified ? (
                   <span className="routing-address-inline-ok" title="Address verified">
                     ✓
                   </span>
                 ) : null}
               </div>
+              {!routingAddressVerified && (form.newAppt.address ?? '').trim() ? (
+                <p className="routing-address-zone-line muted">
+                  Pick an address from the list or fix the address so routing can find coordinates.
+                </p>
+              ) : null}
               {routingAddressVerified && addressZoneLoading ? (
                 <p className="routing-address-zone-line routing-address-zone-line--loading muted">
                   Looking up zone…
@@ -5144,13 +5309,13 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                 const viewPlacementDisabled =
                   !hasRoutingPlacementTarget ||
                   !appointmentTypesReady ||
-                  (showRescheduleScopeField && !rescheduleScope);
+                  (routingClientPatients.length > 0 && selectedRoutingPatientIds.length === 0);
                 const viewPlacementTitle = !hasRoutingPlacementTarget
                   ? 'Enter and verify an address, or select a client'
                   : !appointmentTypesReady
                     ? 'Loading appointment types…'
-                    : showRescheduleScopeField && !rescheduleScope
-                      ? 'Choose which pets to reschedule'
+                    : routingClientPatients.length > 0 && selectedRoutingPatientIds.length === 0
+                      ? 'Select at least one patient under Active patients'
                       : hasActiveRescheduleIntent
                         ? 'View placement on the practice calendar to reschedule this visit'
                         : 'View placement on the practice calendar';

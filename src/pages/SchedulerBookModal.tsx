@@ -29,11 +29,19 @@ import {
 } from '../api/appointmentSettings';
 import { useAuth } from '../auth/useAuth';
 import {
+  addressFieldsDisplayText,
+  addressFieldsFromFreeText,
+  EMPTY_ADDRESS_FIELDS,
+  resolveVerifiedAddressText,
+} from '../utils/verifiedAddress';
+import {
   routingAddressesMatch,
   type RescheduleVisitPatch,
 } from '../utils/routingRescheduleIntent';
 import { resolveBookModalDefaultAppointmentTypeId } from '../utils/routingCalculateTimeType';
 import { Field } from '../components/Field';
+import { VerifiedAddressField } from '../components/VerifiedAddressField';
+import type { AddressFields } from '../components/AddressAutocomplete';
 import { BookPatientChartButton } from '../components/BookPatientChartButton';
 import { appendBookedStaffNote } from '../utils/bookedAppointmentDescription';
 import {
@@ -521,6 +529,9 @@ export function SchedulerBookModal({
   const [description, setDescription] = useState('');
   const [instructions, setInstructions] = useState('');
   const [alternateAddressText, setAlternateAddressText] = useState('');
+  const [alternateAddressFields, setAlternateAddressFields] = useState<AddressFields>(() => ({
+    ...EMPTY_ADDRESS_FIELDS,
+  }));
   const [rescheduleVisitEdits, setRescheduleVisitEdits] = useState<RescheduleVisitEdit[]>([]);
   const [routingBookVisitEdits, setRoutingBookVisitEdits] = useState<RoutingBookVisitEdit[]>([]);
 
@@ -610,10 +621,12 @@ export function SchedulerBookModal({
   const hasLinkedClient = Boolean(selectedClientId?.trim());
 
   const routingVisitAddressText = useMemo(() => {
-    const fromState = alternateAddressText.trim();
+    const fromRoutingState = alternateAddressText.trim();
     const fromPrefill = prefill?.routingAlternateAddress?.trim() ?? '';
-    return fromState || fromPrefill;
-  }, [alternateAddressText, prefill?.routingAlternateAddress]);
+    const fromManual = addressFieldsDisplayText(alternateAddressFields);
+    if (fromRoutingState || fromPrefill) return fromRoutingState || fromPrefill;
+    return fromManual;
+  }, [alternateAddressText, alternateAddressFields, prefill?.routingAlternateAddress]);
 
   const hasRoutingAlternateAddressText = Boolean(routingVisitAddressText);
 
@@ -634,12 +647,14 @@ export function SchedulerBookModal({
   /** Include on create/preview when type allows alternate address (blank is OK). */
   const bookAlternateAddressText = useMemo(() => {
     if (routingBookUsesClientHome) return '';
-    const trimmed = alternateAddressText.trim();
     const prefillAlt = prefill?.routingAlternateAddress?.trim();
-    if (prefillAlt) return trimmed || prefillAlt;
-    if (canUseAlternateAddress) return trimmed;
+    const routingAlt = alternateAddressText.trim();
+    const manualAlt = addressFieldsDisplayText(alternateAddressFields);
+    if (prefillAlt || routingAlt) return (routingAlt || prefillAlt || '').trim();
+    if (canUseAlternateAddress) return manualAlt;
     return '';
   }, [
+    alternateAddressFields,
     alternateAddressText,
     canUseAlternateAddress,
     prefill?.routingAlternateAddress,
@@ -863,6 +878,7 @@ export function SchedulerBookModal({
   useEffect(() => {
     if (canUseAlternateAddress || prefill?.routingAlternateAddress?.trim()) return;
     setAlternateAddressText('');
+    setAlternateAddressFields({ ...EMPTY_ADDRESS_FIELDS });
   }, [canUseAlternateAddress, typeId, prefill?.routingAlternateAddress]);
 
   const clientHasNoPetsOnFile =
@@ -1008,6 +1024,9 @@ export function SchedulerBookModal({
     }
     setInstructions(prefill?.defaultInstructions?.trim() ?? '');
     setAlternateAddressText(prefill?.routingAlternateAddress?.trim() ?? '');
+    setAlternateAddressFields(
+      addressFieldsFromFreeText(prefill?.routingAlternateAddress?.trim() ?? '')
+    );
     setIsAllDay(Boolean(prefill?.allDay));
     setAdditionalEmployeeIds(normalizeEmployeeIds(prefill?.additionalEmployeeIds));
     setScheduleOverrideDraft(null);
@@ -1372,7 +1391,21 @@ export function SchedulerBookModal({
     setSelectedClientZip(parts.zip);
   }
 
-  function tryPreviewOnCalendar(): boolean {
+  const resolveSubmitAlternateAddress = useCallback(async (): Promise<
+    { ok: true; text: string } | { ok: false; message: string }
+  > => {
+    const candidate = alternateAddressTextForSubmit.trim();
+    if (!candidate) return { ok: true, text: '' };
+    if (candidate.length > 4000) {
+      return { ok: false, message: 'Alternate address must be 4000 characters or fewer.' };
+    }
+    if (showRoutingAlternateAddress) {
+      return { ok: true, text: candidate };
+    }
+    return resolveVerifiedAddressText(alternateAddressFields);
+  }, [alternateAddressFields, alternateAddressTextForSubmit, showRoutingAlternateAddress]);
+
+  async function tryPreviewOnCalendar(): Promise<boolean> {
     setFormError(null);
     if (!canPreviewOnCalendar || !onPreviewOnCalendar) return false;
     if (!typeId) {
@@ -1393,11 +1426,12 @@ export function SchedulerBookModal({
       setFormError('Invalid start time.');
       return true;
     }
-    const trimmedAlt = alternateAddressTextForSubmit;
-    if (trimmedAlt.length > 4000) {
-      setFormError('Alternate address must be 4000 characters or fewer.');
+    const altResolved = await resolveSubmitAlternateAddress();
+    if (!altResolved.ok) {
+      setFormError(altResolved.message);
       return true;
     }
+    const trimmedAlt = altResolved.text;
     if (requirePatient && !selectedPatientId?.trim()) {
       setFormError('Select a patient — this appointment type requires one.');
       return true;
@@ -1436,7 +1470,7 @@ export function SchedulerBookModal({
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (canPreviewOnCalendar) {
-      tryPreviewOnCalendar();
+      await tryPreviewOnCalendar();
       return;
     }
     setFormError(null);
@@ -1555,12 +1589,13 @@ export function SchedulerBookModal({
                     ? [prefill.rescheduleAppointmentId]
                     : []
               ).filter((id) => Number.isFinite(Number(id)));
-      const trimmedAlt = alternateAddressTextForSubmit;
-      if (trimmedAlt.length > 4000) {
-        setFormError('Alternate address must be 4000 characters or fewer.');
+      const altResolved = await resolveSubmitAlternateAddress();
+      if (!altResolved.ok) {
+        setFormError(altResolved.message);
         setSubmitting(false);
         return;
       }
+      const trimmedAlt = altResolved.text;
 
       async function saveAlternateForAppointment(apptId: number) {
         if (!trimmedAlt) return;
@@ -2126,22 +2161,18 @@ export function SchedulerBookModal({
           ) : null}
 
           {showManualAlternateAddress ? (
-            <label className="scheduler-book-field scheduler-book-field--full">
-              <span className="scheduler-book-field-label">Alternate address</span>
-              <textarea
-                className="scheduler-book-textarea"
-                rows={2}
-                maxLength={4000}
-                value={alternateAddressText}
-                onChange={(e) => setAlternateAddressText(e.target.value)}
-                placeholder="Visit location when different from the client's home address."
-              />
-              <p className="scheduler-book-hint muted">
-                {hasLinkedClient
+            <VerifiedAddressField
+              label="Alternate address"
+              value={alternateAddressFields}
+              onChange={setAlternateAddressFields}
+              error={formError?.toLowerCase().includes('address') ? formError : null}
+              placeholder="Start typing the visit address"
+              hint={
+                hasLinkedClient
                   ? 'Optional. When filled, this address is used for the visit instead of the client\u2019s home address.'
-                  : 'Optional. Overrides the client home address when a client is linked.'}
-              </p>
-            </label>
+                  : 'Optional. Overrides the client home address when a client is linked.'
+              }
+            />
           ) : null}
 
           {!perVisitReschedule && !perVisitRoutingBook && showClientSection ? (

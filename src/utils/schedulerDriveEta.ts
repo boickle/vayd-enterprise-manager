@@ -581,6 +581,19 @@ export type SchedulerDoctorDayEffectiveWindow = {
   endIso: string;
 };
 
+function isCompleteMapFromDoctorDayAppointments(
+  appts: DoctorDayAppt[]
+): Map<string, boolean> {
+  const out = new Map<string, boolean>();
+  for (const a of appts) {
+    if (isBlockEntry(a)) continue;
+    const id = a.id != null ? String(a.id) : '';
+    if (!id) continue;
+    out.set(id, a.isComplete === true);
+  }
+  return out;
+}
+
 function effectiveWindowMapFromDoctorDayAppointments(
   appts: DoctorDayAppt[]
 ): Map<string, SchedulerDoctorDayEffectiveWindow> {
@@ -621,6 +634,8 @@ export type SchedulerDoctorDayBundleFetch = {
   effectiveWindowByApptId: Map<string, SchedulerDoctorDayEffectiveWindow>;
   /** Chart PCP from GET /appointments/doctor (null = explicitly none). */
   patientPrimaryProviderByApptId: Map<string, DoctorDayPatientPrimaryProvider | null>;
+  /** PIMS/eVet complete flag from GET /appointments/doctor. */
+  isCompleteByApptId: Map<string, boolean>;
 };
 
 function patientPrimaryProviderMapFromDoctorDayAppointments(
@@ -710,6 +725,7 @@ export async function fetchSchedulerDoctorDayBundle(
   const emptyZones = (): Map<string, SchedulerDoctorDayAppointmentZones> => new Map();
   const emptyEffectiveWindow = (): Map<string, SchedulerDoctorDayEffectiveWindow> => new Map();
   const emptyPcp = (): Map<string, DoctorDayPatientPrimaryProvider | null> => new Map();
+  const emptyIsComplete = (): Map<string, boolean> => new Map();
   try {
     const resp: DoctorDayResponse = await fetchDoctorDay(date, doctorId);
     let appts: DoctorDayAppt[] = resp?.appointments ?? [];
@@ -717,6 +733,7 @@ export async function fetchSchedulerDoctorDayBundle(
     const zonesByApptId = zonesMapFromDoctorDayAppointments(appts);
     const effectiveWindowByApptId = effectiveWindowMapFromDoctorDayAppointments(appts);
     const patientPrimaryProviderByApptId = patientPrimaryProviderMapFromDoctorDayAppointments(appts);
+    const isCompleteByApptId = isCompleteMapFromDoctorDayAppointments(appts);
 
     if (
       routingPreviewOpts?.editTimePreview &&
@@ -774,6 +791,7 @@ export async function fetchSchedulerDoctorDayBundle(
       zonesByApptId,
       effectiveWindowByApptId,
       patientPrimaryProviderByApptId,
+      isCompleteByApptId,
     };
   } catch {
     return {
@@ -782,6 +800,7 @@ export async function fetchSchedulerDoctorDayBundle(
       zonesByApptId: emptyZones(),
       effectiveWindowByApptId: emptyEffectiveWindow(),
       patientPrimaryProviderByApptId: emptyPcp(),
+      isCompleteByApptId: emptyIsComplete(),
     };
   }
 }

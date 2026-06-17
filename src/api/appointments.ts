@@ -151,6 +151,11 @@ export function truthyApiFlag(v: unknown): boolean {
   return false;
 }
 
+/** PIMS/eVet visit complete — distinct from Scout-recorded actual start/end times. */
+export function appointmentIsPimsComplete(appt: Pick<Appointment, 'isComplete'>): boolean {
+  return appt.isComplete === true;
+}
+
 function alternateAddressTextFromObject(alt: unknown): string | null {
   if (typeof alt === 'string' && alt.trim()) return alt.trim();
   if (!alt || typeof alt !== 'object') return null;
@@ -207,7 +212,7 @@ export function normalizeRangeAppointment(row: Appointment): Appointment {
   const raw = row as Appointment & Record<string, unknown>;
   const text = appointmentAlternateAddressText(raw);
   const hasAlt = appointmentHasAlternateLocation(raw);
-  let out = row;
+  let out: Appointment = { ...row, isComplete: row.isComplete === true };
   if (text || hasAlt) {
     const next = { ...row } as Appointment & Record<string, unknown>;
     if (text) {
@@ -660,6 +665,8 @@ export type DoctorDayAppt = {
 
   /** Chart primary provider for the patient on this visit (GET /appointments/doctor); null if none. */
   patientPrimaryProvider?: DoctorDayPatientPrimaryProvider | null;
+  /** PIMS/eVet visit complete (GET /appointments/doctor; not Scout actual times). */
+  isComplete?: boolean;
   /** Nested patient row when returned by doctor-day API (sex, alerts, etc.). */
   patient?: Record<string, unknown> | null;
   /** Pet-level alerts when returned at appointment root (doctor-day / range). */
@@ -915,6 +922,7 @@ export async function fetchDoctorDay(
       })(),
       patientPrimaryProvider: normalizeDoctorDayPatientPrimaryProvider(a?.patientPrimaryProvider),
       patient: a?.patient && typeof a.patient === 'object' ? a.patient : undefined,
+      isComplete: a?.isComplete === true,
       alternateAddressText: appointmentAlternateAddressText(a) ?? undefined,
       isAlternateStop: appointmentHasAlternateLocation(a) ? true : undefined,
       alternateAddress:
