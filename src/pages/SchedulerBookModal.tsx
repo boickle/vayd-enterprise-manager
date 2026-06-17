@@ -53,7 +53,6 @@ import {
 } from '../utils/scheduleOverrideBook';
 import {
   appointmentFormFlags,
-  appointmentTypeAddressRequired,
   appointmentTypeAllowsAllDay,
   appointmentTypeRequiresPatient,
   normalizeAppointmentTypeFromApi,
@@ -181,7 +180,7 @@ export type SchedulerBookPrefill = {
   modalTitle?: string;
   /** When true with `lockClient` false, show read-only client (routing: admin cannot search-change client here). */
   disableClientSearch?: boolean;
-  /** Employee “add another pet” same-slot flow — copy only. */
+  /** Employee “add another pet” same-slot flow — ignores Role manual booking settings. */
   coVisitAddPet?: boolean;
   /** When true, date / start time / duration cannot be changed (same-slot co-visit). */
   lockSlotTimes?: boolean;
@@ -468,7 +467,7 @@ export function SchedulerBookModal({
   const isRoutingBook = isSchedulerRoutingBookPrefill(prefill);
 
   useEffect(() => {
-    if (!open || isRoutingBook) {
+    if (!open || isRoutingBook || prefill?.coVisitAddPet) {
       setManualBookableTypeIds(null);
       return;
     }
@@ -487,9 +486,9 @@ export function SchedulerBookModal({
     return () => {
       cancelled = true;
     };
-  }, [open, isRoutingBook, isAdminOrSuper, practiceId]);
+  }, [open, isRoutingBook, isAdminOrSuper, practiceId, prefill?.coVisitAddPet]);
 
-  /** Types shown in manual-book dropdowns (role permissions); routing keeps full catalog. */
+  /** Types shown in manual-book dropdowns (Settings → Role manual booking); routing keeps full catalog. */
   const typesForPicker = useMemo(() => {
     let list: AppointmentType[];
     if (isRoutingBook) list = appointmentTypes;
@@ -501,14 +500,13 @@ export function SchedulerBookModal({
     });
   }, [isRoutingBook, isAdminOrSuper, appointmentTypes, manualBookableTypeIds]);
 
-  /** Add another pet: active types where address is required (ignore role manual-book permissions). */
+  /** Add another pet: full active catalog — Role manual booking does not apply. */
   const coVisitAddPetAppointmentTypes = useMemo(
     () =>
       sortAppointmentTypesForPicker(
         appointmentTypes
           .map((t) => normalizeAppointmentTypeFromApi(t))
-          .filter((t) => t.isDeleted !== true && t.isActive !== false)
-          .filter((t) => appointmentTypeAddressRequired(t)),
+          .filter((t) => t.isDeleted !== true && t.isActive !== false),
         { unrankedOrder: 'alphabetical' }
       ),
     [appointmentTypes]
@@ -542,7 +540,7 @@ export function SchedulerBookModal({
 
   /**
    * All-day manual book: types the user may book that also allow all-day.
-   * Add pet uses all address-required types, not role-filtered manual-book permissions.
+   * Add pet uses the full active catalog (Role manual booking ignored).
    */
   const typesForActivePicker = useMemo(() => {
     const base = prefill?.coVisitAddPet ? coVisitAddPetAppointmentTypes : typesForPicker;
@@ -595,6 +593,12 @@ export function SchedulerBookModal({
 
   const isRoutingPreviewBook = Boolean(prefill?.routingPreviewBook && !isRescheduleBook);
   const bookedViaRouting = isSchedulerRoutingBookPrefill(prefill);
+  /**
+   * Skip Settings → Role manual booking on create (same as routing).
+   * Add another pet to an existing household visit always uses this bypass.
+   */
+  const skipManualBookingPermissionGate =
+    bookedViaRouting || Boolean(prefill?.coVisitAddPet);
 
   /** Full catalog for routing/reschedule — not limited to manual-book role permissions. */
   const usesRoutingTypeCatalog = isRoutingBook || isRescheduleBook;
@@ -1622,7 +1626,7 @@ export function SchedulerBookModal({
                 originalStartIso
               ).trim() || null,
             patientId: Number(patientForPatch),
-            ...(bookedViaRouting ? { bookedViaRouting: true } : {}),
+            ...(skipManualBookingPermissionGate ? { bookedViaRouting: true } : {}),
           });
         }
         savedAppointmentId = rescheduleIds[0];
@@ -1649,7 +1653,7 @@ export function SchedulerBookModal({
             ...(bookAllDay ? { allDay: true } : {}),
             description: descriptionForNewBook(visit.description) || undefined,
             instructions: staffNotesForNewBook(visit.instructions) || undefined,
-            ...(bookedViaRouting ? { bookedViaRouting: true } : {}),
+            ...(skipManualBookingPermissionGate ? { bookedViaRouting: true } : {}),
             ...forwardBookingCreateExtras,
           });
           const idRaw = created?.id;
@@ -1690,7 +1694,7 @@ export function SchedulerBookModal({
           ...(bookAllDay ? { allDay: true } : {}),
           description: descriptionForNewBook(description) || undefined,
           instructions: staffNotesForNewBook(instructions) || undefined,
-          ...(bookedViaRouting ? { bookedViaRouting: true } : {}),
+          ...(skipManualBookingPermissionGate ? { bookedViaRouting: true } : {}),
           ...forwardBookingCreateExtras,
         });
         const idRaw = created?.id;
