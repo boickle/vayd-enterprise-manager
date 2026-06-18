@@ -48,9 +48,14 @@ import {
   type AppointmentRequestSubmissionItem,
   type AppointmentRequestSubmissionConversions,
 } from '../api/appointmentRequestSubmissions';
+import { useCommittedDateRange } from '../hooks/useCommittedDateRange';
 
 function toLocalDateStr(d: Dayjs) {
   return d.format('YYYY-MM-DD');
+}
+
+function formatUsd(n: number) {
+  return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(n);
 }
 
 function dateRange(start: Dayjs, end: Dayjs): string[] {
@@ -384,7 +389,8 @@ function collectBookingDetails(
 
 export default function RoutingAnalyticsPage() {
   const [preset, setPreset] = useState<string>('1D');
-  const [range, setRange] = useState<{ from: Dayjs; to: Dayjs }>(() => PRESETS['1D']());
+  const { range, draftRange, applyRange, onCustomFromChange, onCustomToChange } =
+    useCommittedDateRange(PRESETS['1D']());
   const [selectedOverviewUserEmail, setSelectedOverviewUserEmail] = useState<string>(ALL_USERS);
   const [overviewLinesVisible, setOverviewLinesVisible] =
     useState<Record<OverviewLineKey, boolean>>(OVERVIEW_LINE_DEFAULTS);
@@ -423,10 +429,10 @@ export default function RoutingAnalyticsPage() {
   const shiftRange = (direction: -1 | 1) => {
     const days = end.diff(start, 'day') + 1;
     const shift = days * direction;
-    setRange((r) => ({
-      from: r.from.add(shift, 'day'),
-      to: r.to.add(shift, 'day'),
-    }));
+    applyRange({
+      from: range.from.add(shift, 'day'),
+      to: range.to.add(shift, 'day'),
+    });
   };
 
   useEffect(() => {
@@ -632,6 +638,8 @@ export default function RoutingAnalyticsPage() {
       let totalBooked = 0;
       let existingPatientBooked = 0;
       let newPatientBooked = 0;
+      let totalPoints = 0;
+      let totalPotentialRevenue = 0;
       let routingRequests = 0;
       let scheduleLoaderRequests = 0;
       for (const d of bu?.bookingsByDay ?? []) {
@@ -640,6 +648,8 @@ export default function RoutingAnalyticsPage() {
         totalBooked += d.totalBooked ?? 0;
         existingPatientBooked += d.existingPatientBooked ?? 0;
         newPatientBooked += d.newPatientBooked ?? 0;
+        totalPoints += d.totalPoints ?? 0;
+        totalPotentialRevenue += d.totalPotentialRevenue ?? 0;
       }
       for (const d of ru?.requestsByDay ?? []) {
         const date = d?.date?.slice(0, 10);
@@ -664,6 +674,8 @@ export default function RoutingAnalyticsPage() {
         totalBooked,
         existingPatientBooked,
         newPatientBooked,
+        totalPoints,
+        totalPotentialRevenue,
         routingRequests,
         scheduleLoaderRequests,
       };
@@ -707,6 +719,8 @@ export default function RoutingAnalyticsPage() {
           newPatientBooked: acc.newPatientBooked + r.newPatientBooked,
           existingPatientBooked: acc.existingPatientBooked + r.existingPatientBooked,
           totalBooked: acc.totalBooked + r.totalBooked,
+          totalPoints: acc.totalPoints + r.totalPoints,
+          totalPotentialRevenue: acc.totalPotentialRevenue + r.totalPotentialRevenue,
         }),
         {
           routingRequests: 0,
@@ -714,6 +728,8 @@ export default function RoutingAnalyticsPage() {
           newPatientBooked: 0,
           existingPatientBooked: 0,
           totalBooked: 0,
+          totalPoints: 0,
+          totalPotentialRevenue: 0,
         }
       ),
     [employeeBookingTableRows]
@@ -914,7 +930,7 @@ export default function RoutingAnalyticsPage() {
                     type="button"
                     onClick={() => {
                       setPreset(key);
-                      setRange(PRESETS[key]());
+                      applyRange(PRESETS[key]());
                     }}
                     style={{
                       padding: '6px 12px',
@@ -947,7 +963,10 @@ export default function RoutingAnalyticsPage() {
                 aria-label={isSingleDay ? 'Previous day' : 'Previous period'}
                 onClick={() =>
                   isSingleDay
-                    ? setRange((r) => ({ from: r.from.subtract(1, 'day'), to: r.from.subtract(1, 'day') }))
+                    ? applyRange({
+                        from: range.from.subtract(1, 'day'),
+                        to: range.from.subtract(1, 'day'),
+                      })
                     : shiftRange(-1)
                 }
                 size="small"
@@ -963,7 +982,10 @@ export default function RoutingAnalyticsPage() {
                 aria-label={isSingleDay ? 'Next day' : 'Next period'}
                 onClick={() =>
                   isSingleDay
-                    ? setRange((r) => ({ from: r.from.add(1, 'day'), to: r.from.add(1, 'day') }))
+                    ? applyRange({
+                        from: range.from.add(1, 'day'),
+                        to: range.from.add(1, 'day'),
+                      })
                     : shiftRange(1)
                 }
                 size="small"
@@ -974,18 +996,14 @@ export default function RoutingAnalyticsPage() {
                 label="Start date"
                 type="date"
                 size="small"
-                value={startStr}
+                value={toLocalDateStr(draftRange.from.startOf('day'))}
                 onChange={(e) => {
                   const v = e.target.value;
                   if (!v) return;
                   const next = dayjs(v, 'YYYY-MM-DD', true);
                   if (!next.isValid()) return;
                   setPreset('');
-                  setRange((r) => {
-                    const to = r.to.startOf('day');
-                    const from = next.startOf('day');
-                    return { from, to: from.isAfter(to) ? from : to };
-                  });
+                  onCustomFromChange(next);
                 }}
                 InputLabelProps={{ shrink: true }}
                 inputProps={{ 'aria-label': 'Custom range start date' }}
@@ -995,18 +1013,14 @@ export default function RoutingAnalyticsPage() {
                 label="End date"
                 type="date"
                 size="small"
-                value={endStr}
+                value={toLocalDateStr(draftRange.to.startOf('day'))}
                 onChange={(e) => {
                   const v = e.target.value;
                   if (!v) return;
                   const next = dayjs(v, 'YYYY-MM-DD', true);
                   if (!next.isValid()) return;
                   setPreset('');
-                  setRange((r) => {
-                    const from = r.from.startOf('day');
-                    const to = next.startOf('day');
-                    return { from: to.isBefore(from) ? to : from, to };
-                  });
+                  onCustomToChange(next);
                 }}
                 InputLabelProps={{ shrink: true }}
                 inputProps={{ 'aria-label': 'Custom range end date' }}
@@ -1069,12 +1083,14 @@ export default function RoutingAnalyticsPage() {
                         <TableCell align="right">New patient</TableCell>
                         <TableCell align="right">Existing patient</TableCell>
                         <TableCell align="right">Total appointments</TableCell>
+                        <TableCell align="right">Points</TableCell>
+                        <TableCell align="right">Potential revenue</TableCell>
                       </TableRow>
                     </TableHead>
                     <TableBody>
                       {employeeBookingTableRows.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={6} align="center">
+                          <TableCell colSpan={8} align="center">
                             <Typography variant="body2" color="text.secondary">
                               {selectedOverviewUserEmail !== ALL_USERS
                                 ? 'No data for this employee in this date range.'
@@ -1091,6 +1107,10 @@ export default function RoutingAnalyticsPage() {
                             <TableCell align="right">{row.newPatientBooked}</TableCell>
                             <TableCell align="right">{row.existingPatientBooked}</TableCell>
                             <TableCell align="right">{row.totalBooked}</TableCell>
+                            <TableCell align="right">{row.totalPoints}</TableCell>
+                            <TableCell align="right">
+                              {formatUsd(row.totalPotentialRevenue)}
+                            </TableCell>
                           </TableRow>
                         ))
                       )}
@@ -1131,6 +1151,12 @@ export default function RoutingAnalyticsPage() {
                             ) : (
                               employeeBookingTableColumnTotals.totalBooked
                             )}
+                          </TableCell>
+                          <TableCell align="right" sx={{ fontWeight: 600 }}>
+                            {employeeBookingTableColumnTotals.totalPoints}
+                          </TableCell>
+                          <TableCell align="right" sx={{ fontWeight: 600 }}>
+                            {formatUsd(employeeBookingTableColumnTotals.totalPotentialRevenue)}
                           </TableCell>
                         </TableRow>
                       </TableFooter>
