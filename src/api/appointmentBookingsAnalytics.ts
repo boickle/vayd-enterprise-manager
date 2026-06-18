@@ -7,6 +7,9 @@ export type AppointmentBookingDetail = {
   appointmentTypePrettyName?: string;
   primaryProviderId?: number | null;
   primaryProviderName?: string | null;
+  points?: number;
+  potentialRevenue?: number;
+  potentialRevenueSampleSize?: number;
   /** True when this is the first qualifying visit for this pet at this practice (per patientId + practiceId). */
   newPatient?: boolean;
 };
@@ -17,6 +20,8 @@ export type AppointmentBookingsDayRow = {
   totalBooked: number;
   existingPatientBooked: number;
   newPatientBooked: number;
+  totalPoints?: number;
+  totalPotentialRevenue?: number;
   bookings?: AppointmentBookingDetail[];
 };
 
@@ -27,6 +32,8 @@ export type AppointmentBookingsAnalyticsUser = {
   totalBooked?: number;
   totalExistingPatientBooked?: number;
   totalNewPatientBooked?: number;
+  totalPoints?: number;
+  totalPotentialRevenue?: number;
 };
 
 export type AppointmentBookingsAnalyticsResponse = {
