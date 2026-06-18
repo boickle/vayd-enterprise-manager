@@ -186,6 +186,47 @@ export async function fetchForwardBookings(
   return unwrapList(data);
 }
 
+/** Lightweight practice-wide index for Scout calendar badge + Start/End Visit modal. */
+export type ForwardBookingCalendarIndexResponse = {
+  sourceAppointmentIds: number[];
+  patientIds: number[];
+};
+
+function normalizeCalendarIndexIdList(raw: unknown): number[] {
+  if (!Array.isArray(raw)) return [];
+  const ids = new Set<number>();
+  for (const value of raw) {
+    const id = Number(value);
+    if (Number.isFinite(id) && id > 0) ids.add(id);
+  }
+  return [...ids].sort((a, b) => a - b);
+}
+
+function unwrapCalendarIndex(raw: unknown): ForwardBookingCalendarIndexResponse {
+  const o = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+  const payload =
+    o.data && typeof o.data === 'object' && !Array.isArray(o.data)
+      ? (o.data as Record<string, unknown>)
+      : o;
+  return {
+    sourceAppointmentIds: normalizeCalendarIndexIdList(payload.sourceAppointmentIds),
+    patientIds: normalizeCalendarIndexIdList(payload.patientIds),
+  };
+}
+
+/**
+ * GET /forward-bookings/calendar-index — source visit + patient ids for Scout calendar.
+ * Excludes `removed` rows (no includeRemoved flag).
+ */
+export async function fetchForwardBookingCalendarIndex(
+  practiceId: number
+): Promise<ForwardBookingCalendarIndexResponse> {
+  const { data } = await http.get<unknown>('/forward-bookings/calendar-index', {
+    params: { practiceId },
+  });
+  return unwrapCalendarIndex(data);
+}
+
 export type CreateForwardBookingPayload = {
   practiceId: number;
   /** Omit or null when there is no associated source visit. */
