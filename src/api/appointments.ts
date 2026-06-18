@@ -323,18 +323,45 @@ function appointmentCancelBlockedByClientRequirement(message: string): boolean {
   return /requires a client/i.test(message);
 }
 
+function appointmentCancelBlockedByInvalidTimes(message: string): boolean {
+  return /appointmentEnd must be after appointmentStart/i.test(message);
+}
+
+/**
+ * All-day rows sometimes store `appointmentEnd` at the same instant as `appointmentStart`
+ * (single-day span). PATCH cancel re-validates times — send exclusive next-day end.
+ */
+function allDayCancelPayloadExtras(appt: Appointment): Record<string, unknown> {
+  if (!appt.allDay) return {};
+  const extras: Record<string, unknown> = { allDay: true };
+  const startIso = appt.appointmentStart?.trim();
+  const endIso = appt.appointmentEnd?.trim();
+  if (!startIso) return extras;
+  const startMs = Date.parse(startIso);
+  const endMs = endIso ? Date.parse(endIso) : NaN;
+  if (Number.isFinite(startMs) && (!Number.isFinite(endMs) || endMs <= startMs)) {
+    const endFixed = DateTime.fromISO(startIso, { zone: 'utc' }).plus({ days: 1 }).toUTC().toISO();
+    if (endFixed) {
+      extras.appointmentStart = startIso;
+      extras.appointmentEnd = endFixed;
+    }
+  }
+  return extras;
+}
+
 export async function cancelAppointment(
   id: number | string,
   body: CancelAppointmentPatch,
   opts?: { practiceId?: number | string; appt?: Appointment | null }
 ): Promise<Appointment> {
   const trimmedReason = body.cancellationReason?.trim();
+  const appt = opts?.appt ?? null;
   const payload: Record<string, unknown> = {
     cancellationFlag: true,
     confirmStatusName: PRACTICE_CALENDAR_CANCEL_CONFIRM_STATUS,
     ...(trimmedReason ? { cancellationReason: trimmedReason } : {}),
+    ...(appt ? allDayCancelPayloadExtras(appt) : {}),
   };
-  const appt = opts?.appt ?? null;
   const patchOpts = opts?.practiceId != null ? { practiceId: opts.practiceId } : undefined;
   try {
     const data = await patchAppointment(id, payload, patchOpts);
@@ -347,6 +374,15 @@ export async function cancelAppointment(
       appointmentCancelBlockedByClientRequirement(message) &&
       appt != null &&
       (isPracticeCalendarBlockAppointment(appt) || noClientOnRow)
+    ) {
+      await deleteAppointment(id);
+      return appointmentWithCancelledFields(appt, trimmedReason ?? body.cancellationReason ?? null);
+    }
+    if (
+      message &&
+      appointmentCancelBlockedByInvalidTimes(message) &&
+      appt != null &&
+      (appt.allDay || isPracticeCalendarBlockAppointment(appt) || noClientOnRow)
     ) {
       await deleteAppointment(id);
       return appointmentWithCancelledFields(appt, trimmedReason ?? body.cancellationReason ?? null);

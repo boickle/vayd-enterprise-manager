@@ -1168,7 +1168,7 @@ export function SchedulerBookModal({
       return;
     }
     const clientReady = Boolean(selectedClientId?.trim() || prefill?.clientId?.trim());
-    if (!clientReady || loadingClientPets) {
+    if (clientReady && loadingClientPets) {
       setRoutingBookVisitEdits([]);
       return;
     }
@@ -1184,6 +1184,22 @@ export function SchedulerBookModal({
     })();
     const defaultDesc = prefill.defaultDescription?.trim() ?? '';
     const defaultStaffNotes = prefill.defaultInstructions?.trim() ?? '';
+
+    if (!clientReady) {
+      setRoutingBookVisitEdits([
+        {
+          patientId: '',
+          patientName: 'No patient',
+          isNoPatient: true,
+          selected: true,
+          appointmentTypeId: defaultTypeForNoPatient,
+          description: defaultDesc,
+          instructions: defaultStaffNotes,
+        },
+      ]);
+      return;
+    }
+
     const preferredPatientId = prefill.preferredPatientId?.trim() ?? '';
     const preferredPatientIdSet = new Set(
       [
@@ -1682,6 +1698,7 @@ export function SchedulerBookModal({
             ...(!visit.isNoPatient && visit.patientId?.trim()
               ? { patientId: Number(visit.patientId) }
               : {}),
+            ...(trimmedAlt ? { alternateAddressText: trimmedAlt } : {}),
             appointmentTypeId: Number(visit.appointmentTypeId),
             appointmentStart: startIso,
             appointmentEnd: endIso,
