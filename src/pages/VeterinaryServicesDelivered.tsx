@@ -71,6 +71,7 @@ import {
   type AppointmentTypeCatalog,
 } from '../utils/appointmentTypeSettings';
 import { useAuth } from '../auth/useAuth';
+import { useCommittedDateRange } from '../hooks/useCommittedDateRange';
 import { isEmployeeAnalyticsRestricted, normalizeAuthRoles } from '../utils/analyticsAccess';
 
 dayjs.extend(utc);
@@ -300,7 +301,8 @@ const PRESETS: Record<string, () => { from: Dayjs; to: Dayjs }> = {
 const VSD_ESTIMATE_LOOKBACK_DAYS = 30;
 
 export default function VeterinaryServicesDeliveredPage() {
-  const [range, setRange] = useState<{ from: Dayjs; to: Dayjs }>(() => PRESETS['Today']());
+  const { range, draftRange, applyRange, onCustomFromChange, onCustomToChange } =
+    useCommittedDateRange(PRESETS['Today']());
   const [preset, setPreset] = useState<string>('Today');
   const [providers, setProviders] = useState<Provider[]>([]);
   const [doctorResponses, setDoctorResponses] = useState<
@@ -1056,7 +1058,7 @@ export default function VeterinaryServicesDeliveredPage() {
                     type="button"
                     onClick={() => {
                       setPreset(key);
-                      setRange(PRESETS[key]());
+                      applyRange(PRESETS[key]());
                     }}
                     style={{
                       padding: '6px 12px',
@@ -1079,22 +1081,22 @@ export default function VeterinaryServicesDeliveredPage() {
                   aria-label="Previous day"
                   onClick={() => {
                     setPreset('');
-                    setRange((r) => ({
-                      from: r.from.subtract(1, 'day').startOf('day'),
-                      to: r.to.subtract(1, 'day').startOf('day'),
-                    }));
+                    applyRange({
+                      from: range.from.subtract(1, 'day').startOf('day'),
+                      to: range.to.subtract(1, 'day').startOf('day'),
+                    });
                   }}
                 >
                   <ChevronLeft />
                 </IconButton>
                 <DatePicker
                   label="Date"
-                  value={range.from}
+                  value={draftRange.from}
                   onChange={(d) => {
                     if (d) {
                       setPreset('');
                       const day = d.startOf('day');
-                      setRange({ from: day, to: day });
+                      applyRange({ from: day, to: day });
                     }
                   }}
                   slotProps={{ textField: { size: 'small', sx: { minWidth: 160 } } }}
@@ -1105,10 +1107,10 @@ export default function VeterinaryServicesDeliveredPage() {
                   onClick={() => {
                     if (!canGoNext) return;
                     setPreset('');
-                    setRange((r) => ({
-                      from: r.from.add(1, 'day').startOf('day'),
-                      to: r.to.add(1, 'day').startOf('day'),
-                    }));
+                    applyRange({
+                      from: range.from.add(1, 'day').startOf('day'),
+                      to: range.to.add(1, 'day').startOf('day'),
+                    });
                   }}
                 >
                   <ChevronRight />
@@ -1118,14 +1120,24 @@ export default function VeterinaryServicesDeliveredPage() {
               <>
                 <DatePicker
                   label="From"
-                  value={range.from}
-                  onChange={(d) => d && setRange((r) => ({ ...r, from: d.startOf('day') }))}
+                  value={draftRange.from}
+                  onChange={(d) => {
+                    if (d) {
+                      setPreset('');
+                      onCustomFromChange(d);
+                    }
+                  }}
                   slotProps={{ textField: { size: 'small' } }}
                 />
                 <DatePicker
                   label="To"
-                  value={range.to}
-                  onChange={(d) => d && setRange((r) => ({ ...r, to: d.startOf('day') }))}
+                  value={draftRange.to}
+                  onChange={(d) => {
+                    if (d) {
+                      setPreset('');
+                      onCustomToChange(d);
+                    }
+                  }}
                   slotProps={{ textField: { size: 'small' } }}
                 />
               </>

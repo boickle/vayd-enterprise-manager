@@ -26,8 +26,9 @@ export type AdjustedRoutingSlotSearchDates = {
 
 /**
  * For POST `/routing/v2` slot search: when the user picks today or a past start day,
- * bump start to now + 30 minutes in the practice zone (datetime) so same-day results
- * are not in the past. When end is before today, bump end to today (date-only).
+ * send date-only today (`YYYY-MM-DD`) so the API can apply its same-day floor from
+ * practice-local now (not a client-side lead-time buffer). When end is before today,
+ * bump end to today (date-only).
  */
 export function adjustRoutingSlotSearchDates(
   startDate: string,
@@ -35,8 +36,7 @@ export function adjustRoutingSlotSearchDates(
   practiceTz: string
 ): AdjustedRoutingSlotSearchDates {
   const tz = practiceTimeZoneOrDefault(practiceTz);
-  const now = DateTime.now().setZone(tz);
-  const today = now.toISODate()!;
+  const today = DateTime.now().setZone(tz).toISODate()!;
 
   const startCal = routingCalendarDatePart(startDate);
   const endCal = routingCalendarDatePart(endDate);
@@ -45,7 +45,7 @@ export function adjustRoutingSlotSearchDates(
   let adjustedEnd = endDate.trim();
 
   if (startCal <= today) {
-    adjustedStart = now.plus({ minutes: 30 }).toFormat("yyyy-MM-dd'T'HH:mm:ss");
+    adjustedStart = today;
   }
 
   if (endCal < today) {
