@@ -160,11 +160,23 @@ export async function fetchPublicVeterinarians(
 
 export type MonthAvailabilityCandidate = {
   date: string; // YYYY-MM-DD
-  iso: string;  // ISO datetime
+  /** Exact ISO from availability API — use for form submit without reformatting */
+  suggestedStartIso: string;
+  /** Normalized ISO for calendar/time matching fallback */
+  iso: string;
   display: string;
   doctorId?: string | number;
   doctorName?: string;
 };
+
+/** Max routing score for slots shown in the public self-schedule calendar modal. */
+export const SELF_SCHEDULE_MAX_ROUTING_SCORE = 150;
+
+export function isRoutingScoreEligibleForSelfSchedule(score: unknown): boolean {
+  if (score == null) return true;
+  const n = Number(score);
+  return Number.isFinite(n) && n <= SELF_SCHEDULE_MAX_ROUTING_SCORE;
+}
 
 /**
  * Fetch all available slots for a doctor over a date range (for month calendar view).
@@ -187,14 +199,25 @@ export async function fetchPublicMonthAvailability(request: AvailabilityRequest)
 
   const results: MonthAvailabilityCandidate[] = [];
   for (const c of rawCandidates) {
+    if (!isRoutingScoreEligibleForSelfSchedule(c.score)) continue;
+
     const dt = c.suggestedStartIso
       ? DateTime.fromISO(c.suggestedStartIso)
       : c.iso
       ? DateTime.fromISO(c.iso)
       : null;
     if (!dt || !dt.isValid) continue;
+
+    const suggestedStartIso =
+      typeof c.suggestedStartIso === 'string' && c.suggestedStartIso.trim()
+        ? c.suggestedStartIso.trim()
+        : typeof c.iso === 'string' && c.iso.trim()
+          ? c.iso.trim()
+          : (dt.toISO() as string);
+
     results.push({
       date: dt.toISODate() as string,
+      suggestedStartIso,
       iso: dt.toISO() as string,
       display: dt.toFormat("cccc, LLLL d 'at' h:mm a"),
       doctorId: c.doctorId,

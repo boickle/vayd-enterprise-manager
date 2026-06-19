@@ -4,7 +4,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../auth/useAuth';
 import { http } from '../api/http';
 import { fetchClientPets, type Pet, fetchClientInfo, fetchWellnessPlansForPatient } from '../api/clientPortal';
-import { fetchPrimaryProviders, fetchVeterinarians, type Provider } from '../api/employee';
+import { fetchPrimaryProviders, fetchVeterinarians, deriveVeterinarianClientZoneFlags, type Provider } from '../api/employee';
 import { validateAddress } from '../api/geo';
 import { AddressAutocomplete, type AddressFields } from '../components/AddressAutocomplete';
 import { ManualAddressFields } from '../components/ManualAddressFields';
@@ -20,15 +20,24 @@ import { PetSexSelect, spayedNeuteredFromPetSex, type PetSexOption } from '../co
 import {
   PetHandlingNeedsPicker,
   hasHandlingNeedsAnswer,
+  hasSpecialHandlingNeeds,
+  petsAllowOnlineScheduling,
   type PetHandlingFields,
 } from '../components/PetHandlingNeedsPicker';
 import { getSelectedAppointmentType } from '../utils/petVisitQuestionUtils';
 import { sortAppointmentTypesForPicker } from '../utils/appointmentTypeSettings';
 import {
   anyDoctorCanBookOnline,
+  anyDoctorCanBookOnlineForNewPatientRequest,
   canBookOnline,
+  canBookOnlineForNewPatientRequest,
   isOnlineBookingUnavailableError,
   ONLINE_BOOKING_UNAVAILABLE_MESSAGE,
+  SLOT_NO_LONGER_AVAILABLE_MESSAGE,
+  appointmentFormSubmitSuccessKindFromMessage,
+  extractApiResponseMessage,
+  isSlotNoLongerAvailableError,
+  type AppointmentFormSubmitSuccessKind,
 } from '../utils/onlineBooking';
 import { scrollToFirstAppointmentFormError } from '../utils/appointmentFormScrollToError';
 import { normalizeRoutingV2SlotSearchResponse, type RoutingV2SlotSearchResult } from '../api/routing';
@@ -570,7 +579,9 @@ export default function AppointmentRequestForm() {
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [serviceMinutesUsed, setServiceMinutesUsed] = useState<number | null>(null); // Service minutes used for routing request
   const [showSelfScheduleModal, setShowSelfScheduleModal] = useState(false); // Self-schedule calendar modal
-  const [submittedWithOnlineBooking, setSubmittedWithOnlineBooking] = useState(false);
+  const [scheduleModalRefreshKey, setScheduleModalRefreshKey] = useState(0);
+  const [selfScheduleSlotError, setSelfScheduleSlotError] = useState<string | null>(null);
+  const [submitSuccessKind, setSubmitSuccessKind] = useState<AppointmentFormSubmitSuccessKind>('request_received');
   const [showExistingClientModal, setShowExistingClientModal] = useState(false); // Modal for existing client notification
   const [emailCheckForModal, setEmailCheckForModal] = useState<{ exists: boolean; hasAccount: boolean } | null>(null); // Store email check result for modal
   const [existingClientModalView, setExistingClientModalView] = useState<'message' | 'login'>('message');
@@ -1060,18 +1071,48 @@ export default function AppointmentRequestForm() {
 
   const rawVeterinarianList = isLoggedIn ? rawVeterinarians : rawPublicVeterinarians;
 
-  const onlineBookingOffered = useMemo(
-    () =>
-      primaryAppointmentTypeId != null &&
-      anyDoctorCanBookOnline(rawVeterinarianList, primaryAppointmentTypeId),
-    [primaryAppointmentTypeId, rawVeterinarianList],
+  const isNewPatientRequest = !isLoggedIn && formData.haveUsedServicesBefore !== 'Yes';
+
+  const petsInVisitWithHandlingQuestion = useMemo(
+    () => [...(formData.newClientPets ?? []), ...(formData.existingClientNewPets ?? [])],
+    [formData.newClientPets, formData.existingClientNewPets],
   );
+
+  const handlingNeedsAllowOnlineScheduling = useMemo(
+    () => petsAllowOnlineScheduling(petsInVisitWithHandlingQuestion),
+    [petsInVisitWithHandlingQuestion],
+  );
+
+  const onlineBookingOffered = useMemo(() => {
+    if (!handlingNeedsAllowOnlineScheduling) return false;
+    if (primaryAppointmentTypeId == null) return false;
+    if (isNewPatientRequest) {
+      return anyDoctorCanBookOnlineForNewPatientRequest(
+        rawVeterinarianList,
+        primaryAppointmentTypeId,
+      );
+    }
+    return anyDoctorCanBookOnline(rawVeterinarianList, primaryAppointmentTypeId);
+  }, [
+    primaryAppointmentTypeId,
+    rawVeterinarianList,
+    isNewPatientRequest,
+    handlingNeedsAllowOnlineScheduling,
+  ]);
 
   const slotDoctorAllowsOnlineBooking = useMemo(() => {
     if (!formData.selfScheduledSlot || primaryAppointmentTypeId == null) return false;
     const raw = resolveRawVeterinarianById(rawVeterinarianList, formData.selfScheduledSlot.doctorId);
+    if (isNewPatientRequest) {
+      return canBookOnlineForNewPatientRequest(raw, primaryAppointmentTypeId);
+    }
     return canBookOnline(raw, primaryAppointmentTypeId);
-  }, [formData.selfScheduledSlot, primaryAppointmentTypeId, rawVeterinarianList]);
+  }, [
+    formData.selfScheduledSlot,
+    primaryAppointmentTypeId,
+    rawVeterinarianList,
+    isNewPatientRequest,
+  ]);
 
   const isOnlineBookingSubmit = Boolean(formData.selfScheduledSlot && slotDoctorAllowsOnlineBooking);
 
@@ -1585,18 +1626,8 @@ export default function AppointmentRequestForm() {
   );
   // Hide membership CTA when any pet (new or existing-client-new) answered Yes to calming meds or muzzle/special handling
   const shouldHideMembershipForCalmingOrMuzzle =
-    (formData.newClientPets?.some(
-      (p) =>
-        p.needsCalmingMedications === 'Yes' ||
-        p.needsMuzzleOrSpecialHandling === 'Yes' ||
-        p.needsExtraHandling === 'Yes'
-    )) ||
-    (formData.existingClientNewPets?.some(
-      (p) =>
-        p.needsCalmingMedications === 'Yes' ||
-        p.needsMuzzleOrSpecialHandling === 'Yes' ||
-        p.needsExtraHandling === 'Yes'
-    )) ||
+    (formData.newClientPets?.some(hasSpecialHandlingNeeds)) ||
+    (formData.existingClientNewPets?.some(hasSpecialHandlingNeeds)) ||
     false;
   // Membership pitch renders on the post-submit confirmation page (`success`), not on the form steps.
   const isExploreMembershipsVisible =
@@ -1856,18 +1887,13 @@ export default function AppointmentRequestForm() {
             
             if (!alive) return;
             
-            // Filter by acceptingNewPatients first (existing logic)
+            // New clients: only keep vets accepting new patients in the client's zone
             const filteredByNewPatients = rawVeterinarians.filter((v) => {
               if (!v.weeklySchedules || !Array.isArray(v.weeklySchedules)) {
-                return true; // Backwards compatibility
+                return true; // Backwards compatibility when API omits zone data
               }
-              const hasNonAcceptingZone = v.weeklySchedules.some((schedule: any) => {
-                if (!schedule.zones || !Array.isArray(schedule.zones)) {
-                  return false;
-                }
-                return schedule.zones.some((zone: any) => zone.acceptingNewPatients === false);
-              });
-              return !hasNonAcceptingZone;
+              const flags = deriveVeterinarianClientZoneFlags(v);
+              return flags.seeingClients && flags.acceptingNewPatients;
             });
             
             // Store raw data
@@ -3589,6 +3615,7 @@ export default function AppointmentRequestForm() {
             display: formData.selfScheduledSlot!.display,
           }],
           serviceMinutes: formData.selfScheduledSlot!.serviceMinutes,
+          noneOfWorkForMe: false,
         } : {
           onlineBooking: false,
         }),
@@ -3637,7 +3664,8 @@ export default function AppointmentRequestForm() {
       const finalPayload = cleanPayload(submissionData);
       
       // Send to API endpoint
-      await http.post('/public/appointments/form', finalPayload);
+      const { data: submitResponse } = await http.post('/public/appointments/form', finalPayload);
+      const responseMessage = extractApiResponseMessage(submitResponse?.message);
       
       // Track successful form submission
       const petCount = isLoggedIn 
@@ -3645,7 +3673,7 @@ export default function AppointmentRequestForm() {
         : (formData.newClientPets?.length || 0);
       
       markFormCompleted();
-      setSubmittedWithOnlineBooking(isOnlineBookingSubmit);
+      setSubmitSuccessKind(appointmentFormSubmitSuccessKindFromMessage(responseMessage));
       trackFormEvent('appointment_form_submitted', {
         appointment_type: appointmentType,
         pet_count: petCount,
@@ -3675,6 +3703,19 @@ export default function AppointmentRequestForm() {
         } else {
           setPromoAlreadyUsed(true);
         }
+      } else if (isSlotNoLongerAvailableError(status, error?.response?.data?.message)) {
+        errorMessage =
+          extractApiResponseMessage(error?.response?.data?.message) ||
+          SLOT_NO_LONGER_AVAILABLE_MESSAGE;
+        updateFormData('selfScheduledSlot', null);
+        setSelfScheduleSlotError(errorMessage);
+        setScheduleModalRefreshKey((k) => k + 1);
+        setShowSelfScheduleModal(true);
+        trackFormEvent('appointment_form_submit_failed', {
+          error_message: errorMessage,
+          appointment_type: appointmentType,
+        });
+        return;
       } else if (isOnlineBookingUnavailableError(status, error?.response?.data?.message)) {
         errorMessage = ONLINE_BOOKING_UNAVAILABLE_MESSAGE;
         updateFormData('selfScheduledSlot', null);
@@ -4456,8 +4497,9 @@ export default function AppointmentRequestForm() {
                 })}
               </div>
 
-              <div style={{ marginTop: newClientSectionGap }}>
-                <label style={{ display: 'block', marginBottom: newClientLabelMb, fontWeight: 600, color: '#374151', fontSize: '13px' }}>
+              {/* How soon — shown in compact new-client-pet-info page */}
+              <div style={{ marginTop: newClientSectionGap, marginBottom: newClientSectionGap }}>
+                <label style={{ display: 'block', marginBottom: newClientLabelMb, fontWeight: 600, color: '#374151', fontSize: petFormTight ? '13px' : undefined }}>
                   How soon do you need to be seen? <span style={{ color: '#ef4444' }}>*</span>
                 </label>
                 <NewClientHowSoonPicker
@@ -4465,6 +4507,7 @@ export default function AppointmentRequestForm() {
                   onChange={(option) => updateFormData('howSoon', option)}
                   error={errors.howSoon}
                 />
+                {renderOtherHowSoonDateTimeField()}
               </div>
 
               <div style={{ marginTop: newClientSectionGap }}>
@@ -4511,20 +4554,6 @@ export default function AppointmentRequestForm() {
                 )}
               </div>
 
-              {/* How soon — shown in compact new-client-pet-info page */}
-              <div style={{ marginTop: newClientSectionGap, marginBottom: newClientSectionGap }}>
-                <label style={{ display: 'block', marginBottom: newClientLabelMb, fontWeight: 600, color: '#374151', fontSize: petFormTight ? '13px' : undefined }}>
-                  How soon do you need to be seen? <span style={{ color: '#ef4444' }}>*</span>
-                </label>
-                <NewClientHowSoonPicker
-                  value={(formData.howSoon as HowSoonChoiceValue) || ''}
-                  onChange={(option) => updateFormData('howSoon', option)}
-                  error={errors.howSoon}
-                />
-                {renderOtherHowSoonDateTimeField()}
-              </div>
-
-              {/* Scheduling button */}
               {renderPage({ page: 'request-visit-continued', embedded: true })}
             </div>
           );
@@ -6393,6 +6422,7 @@ export default function AppointmentRequestForm() {
                   {/* Self-schedule modal */}
                   {showSelfScheduleModal && hasAddress && primaryAppointmentTypeId != null && (
                     <SelfScheduleCalendarModal
+                      key={scheduleModalRefreshKey}
                       practiceId={practiceId}
                       address={fullAddress}
                       lat={lat ?? undefined}
@@ -6401,6 +6431,9 @@ export default function AppointmentRequestForm() {
                       appointmentTypeId={primaryAppointmentTypeId}
                       initialDoctorId={confirmedSlot?.doctorId}
                       isNewClient={!isLoggedIn}
+                      isNewPatientRequest={isNewPatientRequest}
+                      rawVeterinarians={rawVeterinarianList}
+                      slotPickerError={selfScheduleSlotError}
                       // Pass the already-fetched provider list so the modal doesn't need
                       // a second API call. Logged-in clients use the authenticated
                       // /employees/veterinarians endpoint (providers); new clients use
@@ -6410,9 +6443,12 @@ export default function AppointmentRequestForm() {
                           ? providers
                           : (publicProviders.length > 0 ? publicProviders : providers);
                         const filtered = primaryAppointmentTypeId != null
-                          ? list.filter((p) =>
-                              canBookOnline(resolveRawVeterinarianById(rawVeterinarianList, p.id), primaryAppointmentTypeId),
-                            )
+                          ? list.filter((p) => {
+                              const raw = resolveRawVeterinarianById(rawVeterinarianList, p.id);
+                              return isNewPatientRequest
+                                ? canBookOnlineForNewPatientRequest(raw, primaryAppointmentTypeId)
+                                : canBookOnline(raw, primaryAppointmentTypeId);
+                            })
                           : list;
                         if (filtered.length === 0) return undefined;
                         return filtered.map(p => ({
@@ -6440,9 +6476,13 @@ export default function AppointmentRequestForm() {
                           selfScheduledSlot: slot,
                           [doctorField]: doctorLabel,
                         }));
+                        setSelfScheduleSlotError(null);
                         setShowSelfScheduleModal(false);
                       }}
-                      onClose={() => setShowSelfScheduleModal(false)}
+                      onClose={() => {
+                        setSelfScheduleSlotError(null);
+                        setShowSelfScheduleModal(false);
+                      }}
                     />
                   )}
                 </div>
@@ -6988,7 +7028,7 @@ export default function AppointmentRequestForm() {
             Thank You!
           </h1>
           <p style={{ fontSize: '16px', color: '#6b7280', marginBottom: isExploreMembershipsVisible ? '16px' : (isLoggedIn ? '32px' : 0) }}>
-            {submittedWithOnlineBooking
+            {submitSuccessKind === 'online_confirmed'
               ? 'Your appointment has been booked successfully. Please check your email for confirmation details.'
               : 'We are working on booking your appointment and will be in touch shortly.'}
           </p>

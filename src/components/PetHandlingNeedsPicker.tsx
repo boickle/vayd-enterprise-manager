@@ -82,6 +82,24 @@ export function hasHandlingNeedsAnswer(pet: PetHandlingFields): boolean {
   );
 }
 
+/** True when calming meds, muzzle, or additional handling support is selected. */
+export function hasSpecialHandlingNeeds(pet: PetHandlingFields): boolean {
+  return (
+    pet.needsCalmingMedications === 'Yes' ||
+    pet.needsMuzzleOrSpecialHandling === 'Yes' ||
+    pet.needsExtraHandling === 'Yes'
+  );
+}
+
+/**
+ * Online self-scheduling is only offered when every pet with a handling question
+ * explicitly chose "None" (not unanswered, not calming/muzzle/extra).
+ */
+export function petsAllowOnlineScheduling(pets: PetHandlingFields[]): boolean {
+  if (pets.length === 0) return true;
+  return pets.every((p) => p.handlingNeedsExplicitNone === true);
+}
+
 function HandlingNeedCard({
   label,
   active,

@@ -1,6 +1,7 @@
 import FillDayPage from './pages/FillDay';
 import CareOutreachPage from './pages/CareOutreachPage';
 import ForwardBookingPage from './pages/ForwardBookingPage';
+import AppointmentRequestsPage from './pages/AppointmentRequestsPage';
 
 export type SchedulingToolsTabPage = {
   path: string;
@@ -23,6 +24,11 @@ export const SCHEDULING_TOOLS_TAB_PAGES: SchedulingToolsTabPage[] = [
     path: 'forward-booking',
     label: 'Forward booking',
     element: <ForwardBookingPage />,
+  },
+  {
+    path: 'appointments',
+    label: 'Appointments',
+    element: <AppointmentRequestsPage />,
   },
 ];
 

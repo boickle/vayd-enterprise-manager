@@ -11,8 +11,11 @@ import {
 } from '../api/publicAppointments';
 import { fetchVeterinarians } from '../api/employee';
 import {
+  findVeterinarianById,
+  isDoctorAcceptingNewPatientsOnSlotDate,
   isOnlineBookingUnavailableError,
   ONLINE_BOOKING_UNAVAILABLE_MESSAGE,
+  type VeterinarianWithAppointmentTypes,
 } from '../utils/onlineBooking';
 
 // ─── Fallback avatar ─────────────────────────────────────────────────────────
@@ -32,6 +35,10 @@ interface Props {
   onClose: () => void;
   /** Whether this is a new (unauthenticated) client request */
   isNewClient?: boolean;
+  /** New patient appointment request — filters slots to doctor workdays accepting new patients */
+  isNewPatientRequest?: boolean;
+  /** Raw veterinarian rows (with weeklySchedules) for new-patient day filtering */
+  rawVeterinarians?: VeterinarianWithAppointmentTypes[];
   /** Appointment type id — required for online booking availability validation */
   appointmentTypeId?: number;
   /** Pre-select doctor from the appointment form (database employee id) */
@@ -42,6 +49,8 @@ interface Props {
    * Each entry needs at least { id, name }; imageUrl / employeeId are optional.
    */
   preloadedDoctors?: PublicProvider[];
+  /** Shown when the picked slot was taken during submit — availability will refresh */
+  slotPickerError?: string | null;
 }
 
 // ─── Colour tokens ────────────────────────────────────────────────────────────
@@ -368,9 +377,12 @@ export function SelfScheduleCalendarModal({
   onConfirm,
   onClose,
   isNewClient = false,
+  isNewPatientRequest = false,
+  rawVeterinarians,
   appointmentTypeId,
   initialDoctorId,
   preloadedDoctors,
+  slotPickerError,
 }: Props) {
   const [doctors, setDoctors] = useState<PublicProvider[]>([]);
   const [loadingDoctors, setLoadingDoctors] = useState(true);
@@ -473,7 +485,7 @@ export function SelfScheduleCalendarModal({
       // Fetch the entire month + a few days to cover partial weeks
       const numDays = (month.daysInMonth ?? 31) + 3;
 
-      const candidates = await fetchPublicMonthAvailability({
+      let candidates = await fetchPublicMonthAvailability({
         practiceId,
         startDate,
         numDays,
@@ -483,6 +495,11 @@ export function SelfScheduleCalendarModal({
         doctorId,
         ...(appointmentTypeId != null ? { appointmentTypeId } : {}),
       });
+
+      if (isNewPatientRequest && rawVeterinarians && rawVeterinarians.length > 0) {
+        const vet = findVeterinarianById(rawVeterinarians, doctorId);
+        candidates = candidates.filter((c) => isDoctorAcceptingNewPatientsOnSlotDate(vet, c.iso));
+      }
 
       if (key !== monthFetchKey.current) return;
       setMonthCandidates(candidates);
@@ -499,7 +516,7 @@ export function SelfScheduleCalendarModal({
     } finally {
       if (key === monthFetchKey.current) setLoadingMonth(false);
     }
-  }, [practiceId, address, lat, lon, serviceMinutes, appointmentTypeId]);
+  }, [practiceId, address, lat, lon, serviceMinutes, appointmentTypeId, isNewPatientRequest, rawVeterinarians]);
 
   useEffect(() => {
     if (selectedDoctorId == null) return;
@@ -517,6 +534,9 @@ export function SelfScheduleCalendarModal({
     setDayCandidates(forDay);
     setSelectedSlotIso(null);
   }, [selectedDay, monthCandidates]);
+
+  const slotMatchesSelection = (c: MonthAvailabilityCandidate, selected: string) =>
+    c.suggestedStartIso === selected || c.iso === selected;
 
   // ── Handlers ─────────────────────────────────────────────────────────────
   const handleDoctorSelect = (id: string | number) => {
@@ -537,12 +557,15 @@ export function SelfScheduleCalendarModal({
     if (!selectedSlotIso || !selectedDoctorId) return;
     const doctor = doctors.find((d) => String(d.id) === String(selectedDoctorId));
     if (!doctor) return;
-    const slot = monthCandidates.find((c) => c.iso === selectedSlotIso);
+    const slot =
+      monthCandidates.find((c) => c.suggestedStartIso === selectedSlotIso) ??
+      monthCandidates.find((c) => c.iso === selectedSlotIso);
+    if (!slot) return;
     onConfirm({
       doctorId: selectedDoctorId,
       doctorName: doctor.name,
-      appointmentStart: selectedSlotIso,
-      display: slot?.display ?? DateTime.fromISO(selectedSlotIso).toFormat("cccc, LLLL d 'at' h:mm a"),
+      appointmentStart: slot.suggestedStartIso,
+      display: slot.display,
       serviceMinutes,
     });
   };
@@ -685,7 +708,7 @@ export function SelfScheduleCalendarModal({
               </div>
             )}
 
-            {availabilityError && (
+            {(slotPickerError || availabilityError) && (
               <div
                 style={{
                   marginBottom: 12,
@@ -697,7 +720,7 @@ export function SelfScheduleCalendarModal({
                   color: '#991b1b',
                 }}
               >
-                {availabilityError}
+                {slotPickerError || availabilityError}
               </div>
             )}
 
@@ -738,10 +761,10 @@ export function SelfScheduleCalendarModal({
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                 {dayCandidates.map((c) => (
                   <TimeSlotPill
-                    key={c.iso}
+                    key={c.suggestedStartIso}
                     label={DateTime.fromISO(c.iso).toFormat('h:mm a')}
-                    selected={selectedSlotIso === c.iso}
-                    onClick={() => setSelectedSlotIso(c.iso)}
+                    selected={slotMatchesSelection(c, selectedSlotIso ?? '')}
+                    onClick={() => setSelectedSlotIso(c.suggestedStartIso)}
                   />
                 ))}
               </div>

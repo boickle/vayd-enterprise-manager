@@ -294,6 +294,17 @@ import {
   forwardBookingWorkspaceContextBarLine,
 } from '../utils/forwardBookingRoutingContext';
 import {
+  APPOINTMENT_REQUESTS_LIST_PATH,
+  writeAppointmentRequestReturnSession,
+} from '../utils/appointmentRequestReturnSession';
+import {
+  appointmentRequestWorkspaceIsActive,
+  clearRoutingAppointmentRequestIntent,
+  dismissRoutingAppointmentRequestWorkspace,
+  readRoutingAppointmentRequestIntent,
+  ROUTING_APPOINTMENT_REQUEST_INTENT_UPDATED_EVENT,
+} from '../utils/routingAppointmentRequestIntent';
+import {
   subscribePracticeCalendar,
   type AppointmentCalendarPayload,
 } from '../utils/calendarRealtime';
@@ -3671,10 +3682,23 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     return () => window.removeEventListener(ROUTING_FORWARD_BOOKING_INTENT_UPDATED_EVENT, sync);
   }, []);
 
+  const [appointmentRequestIntentTick, setAppointmentRequestIntentTick] = useState(0);
+  useEffect(() => {
+    const sync = () => setAppointmentRequestIntentTick((n) => n + 1);
+    sync();
+    window.addEventListener(ROUTING_APPOINTMENT_REQUEST_INTENT_UPDATED_EVENT, sync);
+    return () => window.removeEventListener(ROUTING_APPOINTMENT_REQUEST_INTENT_UPDATED_EVENT, sync);
+  }, []);
+
   const forwardBookingLockActive = useMemo(() => {
     void forwardBookingIntentTick;
     return Boolean(embedInRoutingWorkspace && forwardBookingWorkspaceIsActive());
   }, [embedInRoutingWorkspace, forwardBookingIntentTick]);
+
+  const appointmentRequestLockActive = useMemo(() => {
+    void appointmentRequestIntentTick;
+    return Boolean(embedInRoutingWorkspace && appointmentRequestWorkspaceIsActive());
+  }, [embedInRoutingWorkspace, appointmentRequestIntentTick]);
 
   const forwardBookingBarContext = useMemo(() => {
     void forwardBookingIntentTick;
@@ -3683,6 +3707,15 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     return buildForwardBookingWorkspaceContext(intent, PRACTICE_TZ);
   }, [forwardBookingIntentTick]);
 
+  const appointmentRequestBarLabel = useMemo(() => {
+    void appointmentRequestIntentTick;
+    const intent = readRoutingAppointmentRequestIntent();
+    if (!intent) return 'Appointment request';
+    const client = intent.clientDisplayLabel?.trim() || 'Client';
+    const howSoon = intent.howSoon?.trim();
+    return howSoon ? `${client} · ${howSoon}` : client;
+  }, [appointmentRequestIntentTick]);
+
   const scheduleCalendarInteractionLock = useMemo(
     () =>
       Boolean(
@@ -3690,7 +3723,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           editTimePreview ||
           editVisitCalendarLock ||
           rescheduleWorkspaceActive ||
-          forwardBookingLockActive
+          forwardBookingLockActive ||
+          appointmentRequestLockActive
       ),
     [
       routingPreview,
@@ -3698,6 +3732,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       editVisitCalendarLock,
       rescheduleWorkspaceActive,
       forwardBookingLockActive,
+      appointmentRequestLockActive,
     ]
   );
 
@@ -3714,6 +3749,10 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       showCalendarBlockedNotice(FORWARD_BOOKING_CALENDAR_BLOCKED_MESSAGE);
       return;
     }
+    if (appointmentRequestLockActive) {
+      showCalendarBlockedNotice(FORWARD_BOOKING_CALENDAR_BLOCKED_MESSAGE);
+      return;
+    }
     if (editTimePreview) {
       showCalendarBlockedNotice(EDIT_VISIT_TIME_PREVIEW_BLOCKED_MESSAGE);
       return;
@@ -3723,6 +3762,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     editVisitCalendarLock,
     rescheduleWorkspaceActive,
     forwardBookingLockActive,
+    appointmentRequestLockActive,
     editTimePreview,
     notifyEditVisitCalendarLocked,
     showCalendarBlockedNotice,
@@ -5271,6 +5311,16 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     navigate(FORWARD_BOOKING_LIST_PATH);
   }, [navigate]);
 
+  const dismissAppointmentRequestWorkspace = useCallback(() => {
+    dismissRoutingAppointmentRequestWorkspace();
+    setAppointmentRequestIntentTick((n) => n + 1);
+    setBookSlot(null);
+    setBookPrefill(null);
+    driveSoftRefreshRef.current = true;
+    setDriveRefreshNonce((n) => n + 1);
+    navigate(APPOINTMENT_REQUESTS_LIST_PATH);
+  }, [navigate]);
+
   const dismissRescheduleWorkspace = useCallback(() => {
     const intent = readRoutingRescheduleIntent();
     if (intent) {
@@ -5379,6 +5429,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     const fbi = forwardBookingWorkspaceIsActive() ? readRoutingForwardBookingIntent() : null;
     const previewPatientIds =
       routingPreview.previewPatients?.map((p) => String(p.id)).filter(Boolean) ?? [];
+    const ari = appointmentRequestWorkspaceIsActive() ? readRoutingAppointmentRequestIntent() : null;
     const rescheduleTargets = ri
       ? previewPatientIds.length > 0
         ? rescheduleTargetsForChipSelection(ri, previewPatientIds)
@@ -5488,7 +5539,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       rescheduleVisitPatches:
         isReschedule && rescheduleVisitPatches?.length ? rescheduleVisitPatches : undefined,
       preferredPatientId:
-        routingPreview.reschedulePatientId?.trim() || ri?.patientId || fbi?.patientId,
+        routingPreview.reschedulePatientId?.trim() || ri?.patientId || fbi?.patientId || ari?.patientId,
       routingPreviewBook: !isReschedule,
       lockProvider: Boolean(routingSlotProviderId) || !isReschedule,
       lockSlotTimes: !isReschedule,
@@ -5513,6 +5564,11 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                   })),
                 }
               : {}),
+          }
+        : {}),
+      ...(ari && !isReschedule && !fbi
+        ? {
+            appointmentRequestSubmissionId: ari.appointmentRequestSubmissionId,
           }
         : {}),
       ...(routingStatsTypeKey ? { routingStatsTypeKey } : {}),
@@ -5597,6 +5653,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     async (detail?: {
       routingFeedbackWarning?: string;
       forwardBookingWarning?: string;
+      appointmentRequestWarning?: string;
       schedulingOverrideWarning?: string;
       schedulingOverridesApplied?: boolean;
       savedAppointmentId?: number;
@@ -5606,7 +5663,9 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       const prefillAtBook = bookPrefill;
       const wasReschedule = prefillAtBook?.rescheduleAppointmentId != null;
       const wasForwardBooking = prefillAtBook?.forwardBookingTrackingToken != null;
+      const wasAppointmentRequest = prefillAtBook?.appointmentRequestSubmissionId != null;
       const fbiAtBook = wasForwardBooking ? readRoutingForwardBookingIntent() : null;
+      const ariAtBook = wasAppointmentRequest ? readRoutingAppointmentRequestIntent() : null;
       const savedId = detail?.savedAppointmentId;
       const returnToForwardBookingList =
         wasForwardBooking &&
@@ -5671,6 +5730,47 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         return;
       }
 
+      const returnToAppointmentRequestsList =
+        wasAppointmentRequest &&
+        ariAtBook?.returnToListAfterBook !== false &&
+        prefillAtBook?.appointmentRequestSubmissionId != null &&
+        savedId != null &&
+        bookSlot?.start?.isValid;
+
+      if (returnToAppointmentRequestsList) {
+        const startIso = bookSlot!.start.toUTC().toISO();
+        if (startIso) {
+          writeAppointmentRequestReturnSession({
+            appointmentRequestSubmissionId: Number(prefillAtBook!.appointmentRequestSubmissionId),
+            bookedAppointmentId: savedId!,
+            bookedAppointmentStart: startIso,
+            bookedAppointmentEnd: bookSlot!.end?.isValid ? bookSlot!.end.toUTC().toISO() : null,
+          });
+        }
+        if (embedInRoutingWorkspace || routingPreview) {
+          clearRoutingPersistenceAfterSchedulerBook();
+          setRoutingPreview(null);
+        }
+        clearRoutingRescheduleIntent();
+        clearRoutingForwardBookingIntent();
+        clearRoutingAppointmentRequestIntent();
+        clearRoutingCalendarPreview();
+        const warn =
+          detail?.appointmentRequestWarning ??
+          detail?.forwardBookingWarning ??
+          detail?.routingFeedbackWarning ??
+          detail?.schedulingOverrideWarning;
+        if (warn) {
+          try {
+            sessionStorage.setItem('vayd:appointment-request-return-toast', warn);
+          } catch {
+            /* ignore */
+          }
+        }
+        navigate(APPOINTMENT_REQUESTS_LIST_PATH);
+        return;
+      }
+
       if (embedInRoutingWorkspace) {
         clearRoutingPersistenceAfterSchedulerBook();
         setRoutingPreview(null);
@@ -5681,6 +5781,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       }
       clearRoutingRescheduleIntent();
       clearRoutingForwardBookingIntent();
+      clearRoutingAppointmentRequestIntent();
       if (wasReschedule) {
         const focusProviderId =
           detail?.primaryProviderId?.trim() || prefillAtBook?.providerId?.trim() || '';
@@ -5720,6 +5821,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       }
       const warning =
         detail?.schedulingOverrideWarning ??
+        detail?.appointmentRequestWarning ??
         detail?.forwardBookingWarning ??
         detail?.routingFeedbackWarning;
       if (warning) {
@@ -5745,6 +5847,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       bookPrefill?.rescheduleAppointmentId,
       bookPrefill?.forwardBookingTrackingToken,
       bookPrefill?.forwardBookingEntryId,
+      bookPrefill?.appointmentRequestSubmissionId,
       bookPrefill?.forwardBookingVisitCompletes,
       bookPrefill?.clientLabel,
       bookPrefill?.appointmentTypeId,
@@ -7687,13 +7790,14 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             : '',
           rescheduleWorkspaceActive ? 'scheduler-toolbar-calendar-merge--reschedule-halo' : '',
           forwardBookingLockActive ? 'scheduler-toolbar-calendar-merge--forward-booking-halo' : '',
+          appointmentRequestLockActive ? 'scheduler-toolbar-calendar-merge--forward-booking-halo' : '',
           editPlacementMode && !embedInRoutingWorkspace ? 'scheduler-edit-placement-main' : '',
           scheduleCalendarInteractionLock ? 'scheduler-toolbar-calendar-merge--calendar-locked' : '',
         ]
           .filter(Boolean)
           .join(' ')}
         role={
-          embedInRoutingWorkspace && (routingPreview || rescheduleWorkspaceActive || forwardBookingLockActive)
+          embedInRoutingWorkspace && (routingPreview || rescheduleWorkspaceActive || forwardBookingLockActive || appointmentRequestLockActive)
             ? 'region'
             : undefined
         }
@@ -7708,7 +7812,9 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                       ? forwardBookingWorkspaceContextBarLine(forwardBookingBarContext)
                       : 'Forward booking'
                   }`
-                : undefined
+                : embedInRoutingWorkspace && appointmentRequestLockActive
+                  ? `Appointment request: ${appointmentRequestBarLabel}`
+                  : undefined
         }
       >
         {embedInRoutingWorkspace && routingPreview ? (
@@ -7779,6 +7885,20 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               disabled={bookSlot != null}
             >
               Exit forward booking
+            </button>
+          </div>
+        ) : null}
+        {appointmentRequestLockActive ? (
+          <div className="scheduler-embedded-forward-booking-bar" role="status" aria-live="polite">
+            <span className="scheduler-embedded-forward-booking-bar-badge">Appointment request</span>
+            <span className="scheduler-embedded-forward-booking-bar-msg">{appointmentRequestBarLabel}</span>
+            <button
+              type="button"
+              className="btn secondary scheduler-embedded-forward-booking-bar-dismiss"
+              onClick={dismissAppointmentRequestWorkspace}
+              disabled={bookSlot != null}
+            >
+              Exit appointment request
             </button>
           </div>
         ) : null}
