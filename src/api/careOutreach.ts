@@ -1,5 +1,6 @@
 // src/api/careOutreach.ts
 import { http } from './http';
+import { normalizeCareOutreachReminder } from '../utils/careOutreachReminderVisibility';
 
 /** Client row as nested on patient (household) — shape aligns with reminder list payloads. */
 export type CareOutreachClientRef = {
@@ -63,7 +64,8 @@ export async function fetchUnscheduledReminders(
   params: FetchUnscheduledRemindersParams
 ): Promise<UnscheduledReminder[]> {
   const { data } = await http.get<UnscheduledReminder[]>('/reminders/unscheduled', { params });
-  return Array.isArray(data) ? data : [];
+  const rows = Array.isArray(data) ? data : [];
+  return rows.map(normalizeCareOutreachReminder);
 }
 
 /**

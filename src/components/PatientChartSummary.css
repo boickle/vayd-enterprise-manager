@@ -5,11 +5,30 @@
 }
 
 .patient-chart-summary-panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
   font-size: 14px;
   font-weight: 700;
   margin-bottom: 10px;
   padding-bottom: 8px;
   border-bottom: 1px solid #e2e8f0;
+}
+
+.patient-chart-summary-panel-name {
+  flex: 0 1 auto;
+}
+
+.patient-chart-summary-panel-membership {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
 }
 
 .patient-chart-summary-sections {

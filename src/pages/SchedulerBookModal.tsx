@@ -202,6 +202,8 @@ export type SchedulerBookPrefill = {
   preferredPatientId?: string;
   /** Initial selection when booking from routing preview (e.g. preview chip pets). */
   preferredPatientIds?: string[];
+  /** Patient id + name from routing preview (for book rows when slot overlap would hide a pet). */
+  routingPreviewPatients?: Array<{ id: string; name: string }>;
   /** Routing calendar preview — lock slot/provider; multi-pet book at same time. */
   routingPreviewBook?: boolean;
   defaultInstructions?: string;
@@ -810,13 +812,29 @@ export function SchedulerBookModal({
     return [...new Set(o)].sort((a, b) => a - b);
   }, [durationMin]);
 
+  const routingBookKeepPatientIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const id of prefill?.preferredPatientIds ?? []) {
+      const s = String(id).trim();
+      if (s) ids.add(s);
+    }
+    const preferred = prefill?.preferredPatientId?.trim();
+    if (preferred) ids.add(preferred);
+    for (const row of prefill?.routingPreviewPatients ?? []) {
+      const s = String(row.id).trim();
+      if (s) ids.add(s);
+    }
+    return ids;
+  }, [prefill?.preferredPatientId, prefill?.preferredPatientIds, prefill?.routingPreviewPatients]);
+
   const petChoices = useMemo(() => {
     const ex = new Set((prefill?.excludePatientIds ?? []).map((id) => String(id)));
     return clientPets.filter((p) => {
       if (p.isDeleted === true || p.isActive === false) return false;
+      if (routingBookKeepPatientIds.has(String(p.id))) return true;
       return !ex.has(String(p.id));
     });
-  }, [clientPets, prefill?.excludePatientIds]);
+  }, [clientPets, prefill?.excludePatientIds, routingBookKeepPatientIds]);
 
   const patientAlertsById = useMemo(() => {
     const map = new Map<string, string>();
@@ -1208,12 +1226,29 @@ export function SchedulerBookModal({
       ].filter(Boolean)
     );
     const autoSelectPatient = (patientId: string): boolean => {
+      if (prefill?.routingPreviewBook && preferredPatientIdSet.size === 0) return false;
       if (petChoices.length === 1) return true;
       if (preferredPatientIdSet.size > 0) {
         return preferredPatientIdSet.has(patientId);
       }
       return false;
     };
+    const routingPreviewNameById = new Map<string, string>();
+    for (const row of prefill?.routingPreviewPatients ?? []) {
+      const id = String(row.id).trim();
+      const name = row.name?.trim();
+      if (id && name) routingPreviewNameById.set(id, name);
+    }
+    for (const row of prefill?.forwardBookingVisitCompletes ?? []) {
+      const id = String(row.patientId).trim();
+      const name = row.patientName?.trim();
+      if (id && name) routingPreviewNameById.set(id, name);
+    }
+    for (const p of clientPets) {
+      if (p.isDeleted === true || p.isActive === false) continue;
+      routingPreviewNameById.set(String(p.id), p.name);
+    }
+
     const patientRows = petChoices.map((p) => {
       const patientId = String(p.id);
       return {
@@ -1225,11 +1260,24 @@ export function SchedulerBookModal({
         instructions: defaultStaffNotes,
       };
     });
+    for (const patientId of preferredPatientIdSet) {
+      if (patientRows.some((row) => row.patientId === patientId)) continue;
+      patientRows.push({
+        patientId,
+        patientName: routingPreviewNameById.get(patientId) ?? `Patient ${patientId}`,
+        selected: true,
+        appointmentTypeId: defaultType,
+        description: defaultDesc,
+        instructions: defaultStaffNotes,
+      });
+    }
     const noPatientRow: RoutingBookVisitEdit = {
       patientId: '',
       patientName: 'No patient',
       isNoPatient: true,
-      selected: patientRows.length === 0,
+      selected:
+        patientRows.length === 0 ||
+        (prefill?.routingPreviewBook === true && preferredPatientIdSet.size === 0),
       appointmentTypeId: defaultTypeForNoPatient,
       description: defaultDesc,
       instructions: defaultStaffNotes,
@@ -1244,6 +1292,8 @@ export function SchedulerBookModal({
     prefill?.defaultInstructions,
     prefill?.preferredPatientId,
     prefill?.preferredPatientIds,
+    prefill?.routingPreviewPatients,
+    prefill?.forwardBookingVisitCompletes,
     petChoices,
     routingBookFullAppointmentTypes,
     noPatientBookAppointmentTypes,
@@ -1268,6 +1318,51 @@ export function SchedulerBookModal({
       return changed ? next : rows;
     });
   }, [open, prefill?.routingPreviewBook, noPatientBookAppointmentTypes]);
+
+  /** When appointment types load after open, fill invalid routing visit type ids. */
+  useEffect(() => {
+    if (!open || !prefill?.routingPreviewBook) return;
+    if (!routingBookFullAppointmentTypes.length) return;
+    const defaultType = resolveDefaultBookTypeId(routingBookFullAppointmentTypes);
+    if (!defaultType) return;
+    setRoutingBookVisitEdits((rows) => {
+      if (rows.length === 0) return rows;
+      let changed = false;
+      const next = rows.map((row) => {
+        if (!row.selected) return row;
+        const allowed = routingBookTypesForVisit(
+          row,
+          routingBookFullAppointmentTypes,
+          noPatientBookAppointmentTypes
+        );
+        const want = row.isNoPatient
+          ? (() => {
+              if (
+                defaultType &&
+                noPatientBookAppointmentTypes.some((t) => String(t.id) === defaultType)
+              ) {
+                return defaultType;
+              }
+              return resolveDefaultBookTypeId(noPatientBookAppointmentTypes) || defaultType;
+            })()
+          : defaultType;
+        if (!want) return row;
+        if (row.appointmentTypeId && allowed.some((t) => String(t.id) === row.appointmentTypeId)) {
+          return row;
+        }
+        if (row.appointmentTypeId === want) return row;
+        changed = true;
+        return { ...row, appointmentTypeId: want };
+      });
+      return changed ? next : rows;
+    });
+  }, [
+    open,
+    prefill?.routingPreviewBook,
+    routingBookFullAppointmentTypes,
+    noPatientBookAppointmentTypes,
+    resolveDefaultBookTypeId,
+  ]);
 
   useEffect(() => {
     if (prefill?.preserveDurationFromSlot) return;
@@ -1768,31 +1863,22 @@ export function SchedulerBookModal({
         }
       }
 
+      const forwardBookingCompletesAlreadyHandled =
+        perVisitRoutingBook && (prefill?.forwardBookingVisitCompletes?.length ?? 0) > 0;
       if (
         savedAppointmentId != null &&
-        forwardBookingEntryId != null &&
-        !perVisitRoutingBook &&
         !forwardBookingWarning &&
-        !prefill?.forwardBookingVisitCompletes?.length
+        !forwardBookingCompletesAlreadyHandled &&
+        (forwardBookingEntryId != null || forwardBookingToken)
       ) {
         const fbComplete = await completeForwardBookingFromBook(savedAppointmentId, prefill);
         if (!fbComplete.completed && fbComplete.error) {
           forwardBookingWarning =
-            'Appointment saved, but the forward booking could not be linked. ' +
-            fbComplete.error;
-        }
-      } else if (
-        savedAppointmentId != null &&
-        forwardBookingToken &&
-        forwardBookingEntryId == null &&
-        !perVisitRoutingBook &&
-        !forwardBookingWarning
-      ) {
-        const fbComplete = await completeForwardBookingFromBook(savedAppointmentId, prefill);
-        if (!fbComplete.completed && fbComplete.error) {
-          forwardBookingWarning =
-            'Appointment saved, but the forward booking could not be marked complete. ' +
-            fbComplete.error;
+            forwardBookingEntryId != null
+              ? 'Appointment saved, but the forward booking could not be linked. ' +
+                fbComplete.error
+              : 'Appointment saved, but the forward booking could not be marked complete. ' +
+                fbComplete.error;
         }
       }
 

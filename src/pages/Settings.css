@@ -40,6 +40,64 @@
   border-bottom-color: var(--accent-strong);
 }
 
+.scheduling-tools-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin-bottom: 24px;
+  border-bottom: 2px solid var(--border);
+}
+
+.scheduling-tools-nav__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding-bottom: 2px;
+}
+
+.scheduling-tools-nav__row--workflow {
+  padding-top: 10px;
+  padding-bottom: 0;
+  margin-bottom: -2px;
+  border-top: 1px solid var(--border);
+}
+
+.scheduling-tools-nav__label {
+  flex: 0 0 auto;
+  min-width: 72px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.scheduling-tools-nav__tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  flex: 1 1 auto;
+}
+
+.scheduling-tools-nav__tab {
+  margin-bottom: 0;
+  border-bottom-width: 2px;
+}
+
+.scheduling-tools-nav__tab--workflow:not(.active) {
+  color: var(--muted);
+}
+
+.scheduling-tools-nav__on-hold-over24 {
+  color: #991b1b;
+  font-weight: 700;
+}
+
+.settings-tab.active .scheduling-tools-nav__on-hold-over24 {
+  color: #991b1b;
+}
+
 .settings-section {
   margin-top: 24px;
 }

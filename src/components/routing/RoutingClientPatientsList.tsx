@@ -10,22 +10,19 @@ import {
 import { createPortal } from 'react-dom';
 import { PatientChartSummaryPanel } from '../PatientChartSummaryPanel';
 import { fetchClientByIdStaff } from '../../api/clientsStaff';
+import { Heart } from 'lucide-react';
 import {
+  enrichRoutingClientPatientsMembership,
   extractActivePatientsFromClientStaffRecord,
   loadRoutingPatientHoverSummary,
+  type RoutingClientPatientRow,
   type RoutingPatientHoverSummary,
 } from '../../utils/routingPatientHoverData';
 import { computeVisitHighlightsPopoverPosition } from '../../utils/hoverPopoverPosition';
 import '../PatientChartSummary.css';
 
-type PatientRow = {
-  id: string;
-  name: string;
-  alerts?: string | null;
-};
-
 type HoverState = {
-  patient: PatientRow;
+  patient: RoutingClientPatientRow;
   chipEl: HTMLElement;
   x: number;
   y: number;
@@ -36,8 +33,8 @@ type Props = {
   practiceId: number;
   practiceTz: string;
   selectedPatientIds?: ReadonlySet<string>;
-  onTogglePatientSelect?: (patient: PatientRow) => void;
-  onPatientsLoaded?: (patients: PatientRow[]) => void;
+  onTogglePatientSelect?: (patient: RoutingClientPatientRow) => void;
+  onPatientsLoaded?: (patients: RoutingClientPatientRow[]) => void;
 };
 
 export default function RoutingClientPatientsList({
@@ -48,7 +45,7 @@ export default function RoutingClientPatientsList({
   onTogglePatientSelect,
   onPatientsLoaded,
 }: Props) {
-  const [patients, setPatients] = useState<PatientRow[]>([]);
+  const [patients, setPatients] = useState<RoutingClientPatientRow[]>([]);
   const [loadingPatients, setLoadingPatients] = useState(false);
   const [hover, setHover] = useState<HoverState | null>(null);
   const [layout, setLayout] = useState<{
@@ -80,6 +77,12 @@ export default function RoutingClientPatientsList({
         const rows = extractActivePatientsFromClientStaffRecord(raw);
         setPatients(rows);
         onPatientsLoaded?.(rows);
+        return enrichRoutingClientPatientsMembership(rows);
+      })
+      .then((enriched) => {
+        if (cancelled || !enriched) return;
+        setPatients(enriched);
+        onPatientsLoaded?.(enriched);
       })
       .catch(() => {
         if (!cancelled) setPatients([]);
@@ -123,7 +126,7 @@ export default function RoutingClientPatientsList({
   );
 
   const loadSummary = useCallback(
-    async (patient: PatientRow) => {
+    async (patient: RoutingClientPatientRow) => {
       const cached = summaryCacheRef.current.get(patient.id);
       if (cached) {
         setSummary(cached);
@@ -150,7 +153,7 @@ export default function RoutingClientPatientsList({
   );
 
   const showHover = useCallback(
-    (patient: PatientRow, ev: MouseEvent<HTMLElement> | FocusEvent<HTMLElement>) => {
+    (patient: RoutingClientPatientRow, ev: MouseEvent<HTMLElement> | FocusEvent<HTMLElement>) => {
       clearHoverTimers();
       const chipEl = ev.currentTarget;
       const x = 'clientX' in ev ? ev.clientX : 0;
@@ -236,7 +239,9 @@ export default function RoutingClientPatientsList({
   return (
     <div className="routing-client-patients routing-span-full">
       <div className="routing-client-patients-label">
-        {onTogglePatientSelect ? 'Which patients are you booking?' : 'Active patients'}
+        {onTogglePatientSelect
+          ? 'Which patients are you booking? (optional)'
+          : 'Active patients'}
       </div>
       {loadingPatients ? (
         <p className="routing-client-patients-hint">Loading patients…</p>
@@ -268,7 +273,18 @@ export default function RoutingClientPatientsList({
                   onTogglePatientSelect?.(patient);
                 }}
               >
-                {patient.name}
+                <span className="routing-client-patient-chip-label">
+                  {patient.isMember ? (
+                    <span
+                      className="routing-client-patient-member-heart"
+                      title={patient.membershipName?.trim() || 'Member'}
+                      aria-hidden
+                    >
+                      <Heart size={10} fill="#dc2626" color="#dc2626" strokeWidth={1.5} />
+                    </span>
+                  ) : null}
+                  {patient.name}
+                </span>
               </button>
             </div>
             );
@@ -305,6 +321,8 @@ export default function RoutingClientPatientsList({
                   loading={summaryLoading}
                   error={summaryError}
                   showAlerts
+                  isMember={hover.patient.isMember}
+                  membershipName={hover.patient.membershipName}
                 />
               </div>
             </div>,

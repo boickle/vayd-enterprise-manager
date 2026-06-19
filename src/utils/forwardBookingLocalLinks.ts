@@ -7,6 +7,8 @@ export type ForwardBookingLocalLink = {
   bookedAppointmentId: number;
   bookedAppointmentStart: string;
   bookedAppointmentEnd?: string | null;
+  /** Care outreach SMS wording after hold book. */
+  careOutreachAnyPastDue?: boolean;
 };
 
 type Stored = {

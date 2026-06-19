@@ -327,26 +327,32 @@ function appointmentCancelBlockedByInvalidTimes(message: string): boolean {
   return /appointmentEnd must be after appointmentStart/i.test(message);
 }
 
+function appointmentCancelBlockedByAllDayType(message: string): boolean {
+  return /does not allow all-day/i.test(message);
+}
+
 /**
- * All-day rows sometimes store `appointmentEnd` at the same instant as `appointmentStart`
- * (single-day span). PATCH cancel re-validates times — send exclusive next-day end.
+ * All-day rows (often from eVet/PIMS) sometimes store `appointmentEnd` at the same instant as
+ * `appointmentStart`. PATCH cancel re-validates times — bump end without sending `allDay: true`,
+ * which would fail when the type does not allow all-day in Scout settings.
  */
-function allDayCancelPayloadExtras(appt: Appointment): Record<string, unknown> {
+function allDayCancelTimeFixPayload(appt: Appointment): Record<string, unknown> {
   if (!appt.allDay) return {};
-  const extras: Record<string, unknown> = { allDay: true };
   const startIso = appt.appointmentStart?.trim();
   const endIso = appt.appointmentEnd?.trim();
-  if (!startIso) return extras;
+  if (!startIso) return {};
   const startMs = Date.parse(startIso);
   const endMs = endIso ? Date.parse(endIso) : NaN;
-  if (Number.isFinite(startMs) && (!Number.isFinite(endMs) || endMs <= startMs)) {
-    const endFixed = DateTime.fromISO(startIso, { zone: 'utc' }).plus({ days: 1 }).toUTC().toISO();
-    if (endFixed) {
-      extras.appointmentStart = startIso;
-      extras.appointmentEnd = endFixed;
-    }
+  if (!Number.isFinite(startMs) || (Number.isFinite(endMs) && endMs > startMs)) {
+    return {};
   }
-  return extras;
+  const endFixed = DateTime.fromISO(startIso, { zone: 'utc' }).plus({ days: 1 }).toUTC().toISO();
+  if (!endFixed) return {};
+  return { appointmentStart: startIso, appointmentEnd: endFixed };
+}
+
+function cancelRemoveFallbackEligible(appt: Appointment): boolean {
+  return appt.allDay || isPracticeCalendarBlockAppointment(appt) || !appt.client;
 }
 
 export async function cancelAppointment(
@@ -356,39 +362,50 @@ export async function cancelAppointment(
 ): Promise<Appointment> {
   const trimmedReason = body.cancellationReason?.trim();
   const appt = opts?.appt ?? null;
-  const payload: Record<string, unknown> = {
+  const patchOpts = opts?.practiceId != null ? { practiceId: opts.practiceId } : undefined;
+  const basePayload: Record<string, unknown> = {
     cancellationFlag: true,
     confirmStatusName: PRACTICE_CALENDAR_CANCEL_CONFIRM_STATUS,
     ...(trimmedReason ? { cancellationReason: trimmedReason } : {}),
-    ...(appt ? allDayCancelPayloadExtras(appt) : {}),
   };
-  const patchOpts = opts?.practiceId != null ? { practiceId: opts.practiceId } : undefined;
-  try {
-    const data = await patchAppointment(id, payload, patchOpts);
-    return appointmentWithCancelledFields(data, trimmedReason ?? body.cancellationReason ?? null);
-  } catch (e: unknown) {
-    const message = cancelAppointmentApiErrorMessage(e);
-    const noClientOnRow = appt != null && !appt.client;
-    if (
-      message &&
-      appointmentCancelBlockedByClientRequirement(message) &&
-      appt != null &&
-      (isPracticeCalendarBlockAppointment(appt) || noClientOnRow)
-    ) {
-      await deleteAppointment(id);
-      return appointmentWithCancelledFields(appt, trimmedReason ?? body.cancellationReason ?? null);
+
+  const attempts: Record<string, unknown>[] = [
+    basePayload,
+    appt?.allDay ? { ...basePayload, ...allDayCancelTimeFixPayload(appt) } : basePayload,
+  ].filter((payload, idx, arr) => idx === 0 || JSON.stringify(payload) !== JSON.stringify(arr[0]));
+
+  let lastError: unknown;
+  for (const payload of attempts) {
+    try {
+      const data = await patchAppointment(id, payload, patchOpts);
+      return appointmentWithCancelledFields(data, trimmedReason ?? body.cancellationReason ?? null);
+    } catch (e: unknown) {
+      lastError = e;
     }
-    if (
-      message &&
-      appointmentCancelBlockedByInvalidTimes(message) &&
-      appt != null &&
-      (appt.allDay || isPracticeCalendarBlockAppointment(appt) || noClientOnRow)
-    ) {
-      await deleteAppointment(id);
-      return appointmentWithCancelledFields(appt, trimmedReason ?? body.cancellationReason ?? null);
-    }
-    throw e;
   }
+
+  const message = cancelAppointmentApiErrorMessage(lastError);
+  const noClientOnRow = appt != null && !appt.client;
+  if (
+    message &&
+    appointmentCancelBlockedByClientRequirement(message) &&
+    appt != null &&
+    (isPracticeCalendarBlockAppointment(appt) || noClientOnRow)
+  ) {
+    await deleteAppointment(id);
+    return appointmentWithCancelledFields(appt, trimmedReason ?? body.cancellationReason ?? null);
+  }
+  if (
+    message &&
+    appt != null &&
+    cancelRemoveFallbackEligible(appt) &&
+    (appointmentCancelBlockedByInvalidTimes(message) ||
+      appointmentCancelBlockedByAllDayType(message))
+  ) {
+    await deleteAppointment(id);
+    return appointmentWithCancelledFields(appt, trimmedReason ?? body.cancellationReason ?? null);
+  }
+  throw lastError;
 }
 
 /** PUT /appointments/:id/alternate-address — upsert or clear stored alternate (max 4000 chars). */
@@ -1010,7 +1027,12 @@ export type DoctorMonthAppt = {
   id: number | string;
   startIso: string;
   endIso: string;
+  /** Recorded visit start (ISO); when both actual times exist, stats use actual duration. */
+  actualStartIso?: string | null;
+  /** Recorded visit end (ISO). */
+  actualEndIso?: string | null;
   title?: string;
+  /** Scheduled booked minutes from API; used for stats only when actual window is incomplete. */
   serviceMinutes?: number;
   /** Type name for points when id is unavailable. */
   appointmentType?: string;
@@ -1025,20 +1047,41 @@ export type DoctorMonthAppt = {
   effectiveZone?: MiniZone;
 };
 
-/** Booked minutes for doctor-month / appt-length stats; falls back to start/end when serviceMinutes is omitted. */
+function doctorMonthMinutesBetweenIso(startRaw: string | undefined, endRaw: string | undefined): number {
+  const start = startRaw?.trim();
+  const end = endRaw?.trim();
+  if (!start || !end) return 0;
+  const startMs = Date.parse(start);
+  const endMs = Date.parse(end);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return 0;
+  return Math.max(1, Math.round((endMs - startMs) / 60_000));
+}
+
+/**
+ * Minutes for doctor-month / appt-length stats (Routing Calculate Time, Time Spent).
+ * Both actual start and end → actual window; start-only actual → scheduled fallback;
+ * else API serviceMinutes, else scheduled start/end.
+ */
 export function doctorMonthApptBookedMinutes(
-  a: Pick<DoctorMonthAppt, 'serviceMinutes' | 'startIso' | 'endIso'>
+  a: Pick<
+    DoctorMonthAppt,
+    'serviceMinutes' | 'startIso' | 'endIso' | 'actualStartIso' | 'actualEndIso'
+  >
 ): number {
+  const actualStart = a.actualStartIso?.trim();
+  const actualEnd = a.actualEndIso?.trim();
+  if (actualStart && actualEnd) {
+    return doctorMonthMinutesBetweenIso(actualStart, actualEnd);
+  }
   if (typeof a.serviceMinutes === 'number' && Number.isFinite(a.serviceMinutes) && a.serviceMinutes > 0) {
     return a.serviceMinutes;
   }
-  const startRaw = a.startIso?.trim();
-  const endRaw = a.endIso?.trim();
-  if (!startRaw || !endRaw) return 0;
-  const startMs = Date.parse(startRaw);
-  const endMs = Date.parse(endRaw);
-  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return 0;
-  return Math.max(1, Math.round((endMs - startMs) / 60_000));
+  return doctorMonthMinutesBetweenIso(a.startIso, a.endIso);
+}
+
+function pickDoctorMonthIso(v: unknown): string | undefined {
+  if (typeof v !== 'string' || !v.trim()) return undefined;
+  return v.trim();
 }
 
 export type DoctorMonthBlock = {
@@ -1085,10 +1128,24 @@ export async function fetchDoctorMonth(
     appts: (d?.appts ?? []).map((a: any) => {
       const startIso = a?.startIso ?? a?.appointmentStart ?? a?.scheduledStartIso ?? '';
       const endIso = a?.endIso ?? a?.appointmentEnd ?? a?.scheduledEndIso ?? '';
+      const actualStartIso =
+        pickDoctorMonthIso(a?.actualStartIso ?? a?.appointmentStartActual ?? a?.actualStart) ??
+        null;
+      const actualEndIso =
+        pickDoctorMonthIso(a?.actualEndIso ?? a?.appointmentEndActual ?? a?.actualEnd) ?? null;
+      const rawServiceMinutes = a?.serviceMinutes;
+      const scheduledServiceMinutes =
+        typeof rawServiceMinutes === 'number' &&
+        Number.isFinite(rawServiceMinutes) &&
+        rawServiceMinutes > 0
+          ? rawServiceMinutes
+          : undefined;
       const mapped: DoctorMonthAppt = {
         id: a?.id,
         startIso,
         endIso,
+        actualStartIso,
+        actualEndIso,
         title: a?.title,
         appointmentType: a?.appointmentType?.name ?? a?.appointmentType ?? undefined,
         appointmentTypeId:
@@ -1101,6 +1158,7 @@ export async function fetchDoctorMonth(
         clientPimsId: a?.clientPimsId ?? a?.client?.pimsId ?? undefined,
         clientZone: miniZoneFromPayload(a?.clientZone),
         effectiveZone: miniZoneFromPayload(a?.effectiveZone),
+        serviceMinutes: scheduledServiceMinutes,
       };
       mapped.serviceMinutes = doctorMonthApptBookedMinutes(mapped);
       return mapped;

@@ -3,7 +3,11 @@ import { Link, NavLink, useLocation } from 'react-router-dom';
 import { ChevronDown } from 'lucide-react';
 import { useAuth } from '../auth/useAuth';
 import { getVisibleScoutTabs } from '../scout-tabs';
-import { getSchedulingToolsTabPages } from '../scheduling-tools-tabs';
+import { SCHEDULING_TOOL_TABS, SCHEDULING_WORKFLOW_TABS } from '../scheduling-tools-tabs';
+import {
+  isSchedulingToolTabActive,
+  isSchedulingWorkflowTabActive,
+} from '../scheduling-tools-nav';
 import { blockRoutingCalendarPreviewNavigation } from '../utils/routingCalendarPreviewGuard';
 import TasksNavLabel from './TasksNavLabel';
 import { useTaskNavBadges } from '../hooks/useTaskNavBadges';
@@ -38,15 +42,9 @@ const MEASURE_LABEL: Record<SchedNavItemKey, string> = {
 };
 
 function isSchedulingToolsTabActive(pathname: string, tabPath: string): boolean {
-  const base = `/schedule/scheduling-tools/${tabPath}`;
-  if (pathname === base || pathname.startsWith(`${base}/`)) return true;
-  if (
-    tabPath === 'schedule-loader' &&
-    (pathname === '/schedule/scheduling-tools' || pathname === '/schedule/scheduling-tools/')
-  ) {
-    return true;
-  }
-  return false;
+  return (
+    isSchedulingToolTabActive(pathname, tabPath) || isSchedulingWorkflowTabActive(pathname, tabPath)
+  );
 }
 
 function blockScheduleNavLeave(e: { preventDefault: () => void }): boolean {
@@ -59,15 +57,34 @@ function blockScheduleNavLeave(e: { preventDefault: () => void }): boolean {
 
 function SchedulingToolsSubmenuLinks({ onNavigate }: { onNavigate: () => void }) {
   const location = useLocation();
-  const tabs = getSchedulingToolsTabPages();
   return (
     <>
-      {tabs.map((tab) => (
+      <p className="schedule-app__settings-group-label">Fill Schedule</p>
+      {SCHEDULING_TOOL_TABS.map((tab) => (
         <Link
           key={tab.path}
           to={`/schedule/scheduling-tools/${tab.path}`}
           className={`schedule-app__settings-link${
-            isSchedulingToolsTabActive(location.pathname, tab.path)
+            isSchedulingToolTabActive(location.pathname, tab.path)
+              ? ' schedule-app__settings-link--active'
+              : ''
+          }`}
+          role="menuitem"
+          onClick={(e) => {
+            if (blockScheduleNavLeave(e)) return;
+            onNavigate();
+          }}
+        >
+          {tab.label}
+        </Link>
+      ))}
+      <p className="schedule-app__settings-group-label">Follow-up</p>
+      {SCHEDULING_WORKFLOW_TABS.map((tab) => (
+        <Link
+          key={tab.path}
+          to={`/schedule/scheduling-tools/${tab.path}`}
+          className={`schedule-app__settings-link${
+            isSchedulingWorkflowTabActive(location.pathname, tab.path)
               ? ' schedule-app__settings-link--active'
               : ''
           }`}

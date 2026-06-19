@@ -237,6 +237,18 @@ export function excludePatientIdsForAddPet(
   return patientIdsInVisitClump(anchorAppt, allAppointments, practiceTz);
 }
 
+/** Routing-selected pets must remain bookable even when they overlap an existing visit at the slot. */
+export function filterSlotExcludeForRoutingBook(
+  excludeIds: readonly string[] | undefined,
+  keepPatientIds: readonly string[]
+): string[] | undefined {
+  if (!excludeIds?.length) return excludeIds ? [...excludeIds] : undefined;
+  if (!keepPatientIds.length) return [...excludeIds];
+  const keep = new Set(keepPatientIds.map(String));
+  const filtered = excludeIds.filter((id) => !keep.has(String(id)));
+  return filtered.length > 0 ? filtered : undefined;
+}
+
 /** Pets already in a timed visit overlapping this slot (same client) — omit from routing book picker. */
 export function excludePatientIdsAtSlot(
   clientId: string,

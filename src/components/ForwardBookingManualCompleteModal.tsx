@@ -7,6 +7,10 @@ import {
   type ForwardBookingEntry,
   type ForwardBookingFutureAppointment,
 } from '../api/forwardBooking';
+import {
+  pickForwardBookingAutoLinkAppointmentId,
+  scoreForwardBookingFutureAppointmentsByTarget,
+} from '../utils/forwardBookingAutoLinkMatch';
 import { practiceTimeZoneOrDefault } from '../utils/practiceTimezone';
 import '../pages/Scheduler.css';
 
@@ -68,9 +72,17 @@ export function ForwardBookingManualCompleteModal({ entry, onClose, onCompleted 
         practiceId: PRACTICE_ID,
         asOf: new Date().toISOString(),
       });
-      setOptions(list);
-      if (list.length === 1 && list[0]?.id != null) {
-        setSelectedId(String(list[0].id));
+      const scored = scoreForwardBookingFutureAppointmentsByTarget(entry, list, practiceTz);
+      const sorted =
+        scored.length > 0
+          ? scored.map((row) => row.appointment)
+          : list;
+      setOptions(sorted);
+      const suggested = pickForwardBookingAutoLinkAppointmentId(entry, list, practiceTz);
+      if (suggested != null) {
+        setSelectedId(String(suggested));
+      } else if (sorted.length === 1 && sorted[0]?.id != null) {
+        setSelectedId(String(sorted[0].id));
       }
     } catch (e: unknown) {
       const ax = e as { response?: { data?: { message?: string } }; message?: string };

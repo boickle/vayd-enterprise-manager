@@ -1,5 +1,6 @@
 import type { AppointmentType } from '../api/appointmentSettings';
 import { normalizeAppointmentType } from '../analytics/appointmentTypeTimeStats';
+import { sortAppointmentTypesForPicker } from './appointmentTypeSettings';
 
 /** Match Routing → Calculate Time dropdown value to a configured appointment type. */
 export function appointmentTypeForRoutingStatsKey(
@@ -8,16 +9,21 @@ export function appointmentTypeForRoutingStatsKey(
 ): AppointmentType | undefined {
   const key = typeKey.trim();
   if (!key) return undefined;
-  const norm = normalizeAppointmentType(key);
   const lower = key.toLowerCase();
+  const exact = types.find((t) => {
+    const name = String(t.name ?? '').trim();
+    const pretty = String(t.prettyName ?? '').trim();
+    return name.toLowerCase() === lower || pretty.toLowerCase() === lower;
+  });
+  if (exact) return exact;
+
+  const norm = normalizeAppointmentType(key);
   return types.find((t) => {
     const name = String(t.name ?? '').trim();
     const pretty = String(t.prettyName ?? '').trim();
     return (
       normalizeAppointmentType(name) === norm ||
-      normalizeAppointmentType(pretty) === norm ||
-      name.toLowerCase() === lower ||
-      pretty.toLowerCase() === lower
+      normalizeAppointmentType(pretty) === norm
     );
   });
 }
@@ -38,6 +44,20 @@ export function defaultAppointmentTypeIdFromSortedPicker(
   if (first?.id == null) return undefined;
   const id = Number(first.id);
   return Number.isFinite(id) && id > 0 ? id : undefined;
+}
+
+/** Default Calculate Time / book selection: first row in the sorted appointment-type picker. */
+export function defaultRoutingAppointmentTypeSelection(
+  types: readonly AppointmentType[]
+): { id: number; statsTypeKey: string } | null {
+  if (types.length === 0) return null;
+  const sorted = sortAppointmentTypesForPicker([...types], { unrankedOrder: 'alphabetical' });
+  const id = defaultAppointmentTypeIdFromSortedPicker(sorted);
+  if (id == null) return null;
+  const row = sorted.find((t) => Number(t.id) === id);
+  const statsTypeKey = String(row?.name ?? '').trim();
+  if (!statsTypeKey) return null;
+  return { id, statsTypeKey };
 }
 
 /**
