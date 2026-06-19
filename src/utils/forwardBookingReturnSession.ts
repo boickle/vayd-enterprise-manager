@@ -9,6 +9,12 @@ export type ForwardBookingReturnSessionV1 = {
   bookedAppointmentId: number;
   bookedAppointmentStart: string;
   bookedAppointmentEnd?: string | null;
+  /** Use care outreach SMS copy when auto-opening text after a hold book. */
+  smsTemplate?: 'care_outreach' | 'forward_booking';
+  /** Pet names for care outreach SMS when multiple patients were booked together. */
+  careOutreachPetNames?: string[];
+  /** Care outreach SMS uses past-due wording when any booked reminder was overdue. */
+  careOutreachAnyPastDue?: boolean;
 };
 
 export function readForwardBookingReturnSession(): ForwardBookingReturnSessionV1 | null {
@@ -53,3 +59,9 @@ export function clearForwardBookingReturnSession(): void {
 }
 
 export const FORWARD_BOOKING_LIST_PATH = '/schedule/scheduling-tools/forward-booking';
+export const ON_HOLD_LIST_PATH = '/schedule/scheduling-tools/on-hold';
+export const BOOKED_LIST_PATH = '/schedule/scheduling-tools/booked';
+export const COMPLETE_LIST_PATH = '/schedule/scheduling-tools/complete';
+export const CARE_OUTREACH_LIST_PATH = '/schedule/scheduling-tools/care-outreach';
+
+export { schedulingWorkflowListPathAfterBook } from '../scheduling-tools-nav';

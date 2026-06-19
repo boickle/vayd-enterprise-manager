@@ -6,9 +6,11 @@ import {
   forwardBookingHasLinkedVisit,
   forwardBookingLinkedAppointmentId,
 } from './forwardBookingLinkedVisit';
+import { linkedAppointmentBookedAtIso } from './forwardBookingOnHold';
 import {
   buildAppointmentTypeCatalog,
   pointsFromAppointmentRows,
+  pointsPerPatientForType,
   type AppointmentTypeCatalog,
 } from './appointmentTypeSettings';
 import { resolveSchedulerProviderFilterFromAppointment } from './schedulerFocusAppointment';
@@ -58,6 +60,8 @@ export type BookedAppointmentMeta = {
   typeName: string | null;
   /** Primary provider internal id on the booked appointment (for calendar focus). */
   providerInternalId?: string | null;
+  /** When the linked calendar appointment was created / booked (ISO). */
+  appointmentBookedAtIso?: string | null;
 };
 
 export async function buildBookedAppointmentMetaMap(
@@ -82,7 +86,8 @@ export async function buildBookedAppointmentMetaMap(
       const providerInternalId = appt
         ? resolveSchedulerProviderFilterFromAppointment(appt, providers) || null
         : null;
-      map.set(id, { points, typeName, providerInternalId });
+      const appointmentBookedAtIso = appt ? linkedAppointmentBookedAtIso(appt) : null;
+      map.set(id, { points, typeName, providerInternalId, appointmentBookedAtIso });
     })
   );
   return map;
@@ -116,24 +121,43 @@ export type ForwardBookingListTab =
 
 export function forwardBookingLinkedAppointmentPoints(
   entry: ForwardBookingEntry,
-  bookedApptMeta: Map<number, BookedAppointmentMeta> | null | undefined
+  bookedApptMeta: Map<number, BookedAppointmentMeta> | null | undefined,
+  catalog?: AppointmentTypeCatalog | null
 ): number | null {
   const apptId = forwardBookingLinkedAppointmentId(entry);
-  if (apptId == null || bookedApptMeta == null || !bookedApptMeta.has(apptId)) return null;
-  return bookedApptMeta.get(apptId)!.points;
+  if (apptId != null && bookedApptMeta != null && bookedApptMeta.has(apptId)) {
+    return bookedApptMeta.get(apptId)!.points;
+  }
+  if (!forwardBookingHasLinkedVisit(entry) || !catalog) return null;
+  const typeId = entry.appointmentTypeId;
+  const typeName = entry.appointmentTypeName;
+  if (typeId == null && !typeName?.trim()) return null;
+  return pointsPerPatientForType(catalog, { typeId, typeName });
+}
+
+/** Forward booking treats linked visits with 0 ops points as on hold (tab + badge). */
+export function forwardBookingLinkedVisitIsOnHold(
+  entry: ForwardBookingEntry,
+  bookedApptMeta: Map<number, BookedAppointmentMeta> | null | undefined,
+  catalog?: AppointmentTypeCatalog | null
+): boolean {
+  if (!forwardBookingHasLinkedVisit(entry)) return false;
+  const points = forwardBookingLinkedAppointmentPoints(entry, bookedApptMeta, catalog);
+  return points != null && points <= 0;
 }
 
 /** Which filter tab a forward-booking row belongs on (0-point linked visits → On Hold). */
 export function forwardBookingListTab(
   entry: ForwardBookingEntry,
   practiceTz: string,
-  bookedApptMeta?: Map<number, BookedAppointmentMeta> | null
+  bookedApptMeta?: Map<number, BookedAppointmentMeta> | null,
+  catalog?: AppointmentTypeCatalog | null
 ): ForwardBookingListTab {
   if (entry.status === 'removed') return 'removed';
   if (entry.status === 'complete') return 'complete';
   if (forwardBookingIsBookLater(entry, practiceTz)) return 'bookLater';
   if (forwardBookingHasLinkedVisit(entry)) {
-    const points = forwardBookingLinkedAppointmentPoints(entry, bookedApptMeta);
+    const points = forwardBookingLinkedAppointmentPoints(entry, bookedApptMeta, catalog);
     if (points != null && points <= 0) return 'onHold';
     if (points != null && points > 0) return 'booked';
     // Linked visit — meta still loading; keep visible on Needs booking briefly.

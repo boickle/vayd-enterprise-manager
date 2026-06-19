@@ -25,12 +25,22 @@ import {
   writeRoutingCalendarPreview,
   type RoutingCalendarPreviewPayloadV1,
 } from '../utils/routingCalendarPreviewStorage';
+import {
+  readScheduleLoaderReturnSession,
+  clearScheduleLoaderReturnSession,
+} from '../utils/scheduleLoaderReturnSession';
+import {
+  buildScheduleLoaderBookedSmsMessage,
+  resolveScheduleLoaderSmsBookedSlot,
+} from '../utils/scheduleLoaderSmsMessage';
+import { practiceTimeZoneOrDefault } from '../utils/practiceTimezone';
 import { fetchClientMessages, type ClientMessagesResponse } from '../api/clientPortal';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 
 const FILL_DAY_OUTREACH_NOTES_DEBOUNCE_MS = 750;
 const FILL_DAY_PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const FILL_DAY_PRACTICE_TZ = practiceTimeZoneOrDefault(undefined);
 
 /** JSON often sends reminder ids as strings; normalize for state keys and PATCH. */
 function fillDayReminderNumericId(r: FillDayReminder | Record<string, unknown>): number | null {
@@ -284,6 +294,7 @@ export default function FillDayPage() {
   // Track if we've already processed URL params to avoid re-processing
   const hasProcessedUrlParamsRef = useRef(false);
   const didDefaultDoctorFromAuth = useRef(false);
+  const scheduleLoaderReturnHandledRef = useRef(false);
 
   // Load providers
   useEffect(() => {
@@ -523,6 +534,52 @@ export default function FillDayPage() {
 
     return () => window.cancelAnimationFrame(raf);
   }, [searchParams, loading, candidates.length, setSearchParams]);
+
+  // After booking from calendar preview, open the post-book SMS modal.
+  useEffect(() => {
+    const pending = readScheduleLoaderReturnSession();
+    if (!pending?.openSms || scheduleLoaderReturnHandledRef.current) return;
+    if (loading || candidates.length === 0) return;
+
+    const candidate = candidates.find((c) => c.clientId === pending.clientId);
+    if (!candidate) return;
+    scheduleLoaderReturnHandledRef.current = true;
+    clearScheduleLoaderReturnSession();
+
+    if (!fillDayCandidateHasVisibleReminderForSms(candidate)) return;
+
+    void (async () => {
+      try {
+        const petNames =
+          pending.petNames.length > 0
+            ? pending.petNames
+            : fillDayPreviewPatients(candidate).map((p) => p.name);
+        const bookedSlot = await resolveScheduleLoaderSmsBookedSlot(
+          pending.bookedAppointmentId,
+          FILL_DAY_PRACTICE_ID,
+          FILL_DAY_PRACTICE_TZ,
+          {
+            startIso: pending.bookedAppointmentStart,
+            endIso: pending.bookedAppointmentEnd ?? pending.bookedAppointmentStart,
+          }
+        );
+        const message = buildScheduleLoaderBookedSmsMessage({
+          petNames,
+          clientDisplayName: pending.clientDisplayName ?? candidate.clientName,
+          providerLastName: pending.providerLastName,
+          ...(bookedSlot ? { bookedSlot } : {}),
+        });
+        setSmsError((prev) => ({ ...prev, [candidate.clientId]: null }));
+        setSmsMessagePreview(message);
+        setPendingSmsCandidate(candidate);
+        setSendWithOverride(false);
+        setSmsModalOpen(true);
+        setHighlightClientId(candidate.clientId);
+      } catch {
+        setError('Could not prepare text message after booking.');
+      }
+    })();
+  }, [loading, candidates]);
 
   // Default Doctor / One Team to the logged-in user's assigned employee when providers have loaded (no URL params)
   useEffect(() => {
@@ -1941,7 +1998,7 @@ This spot is also being offered to other clients. If you'd like to book it for $
                     opacity: viewPlacementClientId === candidate.clientId ? 0.7 : 1,
                   }}
                 >
-                  {viewPlacementClientId === candidate.clientId ? 'Opening…' : 'View Placement'}
+                  {viewPlacementClientId === candidate.clientId ? 'Booking…' : 'Book'}
                 </button>
               </div>
             </div>

@@ -1737,26 +1737,6 @@ label.scheduler-go-date-heading {
   gap: 8px;
 }
 
-.scheduler-type-complete-pill {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 9px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: #166534;
-  border: 1px solid #4ade80;
-  border-radius: 4px;
-  padding: 2px 7px;
-  background: rgba(255, 255, 255, 0.98);
-  box-shadow:
-    0 0 0 1px rgba(34, 197, 94, 0.35),
-    0 0 10px rgba(34, 197, 94, 0.4);
-  line-height: 1.2;
-  flex-shrink: 0;
-}
-
 .scheduler-type-archived-pill {
   display: inline-flex;
   align-items: center;
@@ -2101,29 +2081,6 @@ label.scheduler-go-date-heading {
 .scheduler-event-time .scheduler-client-zone-badge,
 .scheduler-event-time .scheduler-client-zone-badge--compact {
   margin-left: 0;
-}
-
-.scheduler-appt-complete-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  margin-left: 3px;
-  padding: 0 2px 1px;
-  border-radius: 2px;
-  background: #ffffff;
-  border: 1px solid rgba(15, 23, 42, 0.14);
-  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.06);
-  vertical-align: middle;
-  line-height: 1;
-}
-
-.scheduler-event-title-client-last + .scheduler-appt-complete-badge {
-  margin-left: 2px;
-}
-
-.scheduler-appt-complete-badge__icon {
-  color: #16a34a;
 }
 
 .scheduler-appt-visit-times-badge {
@@ -3532,7 +3489,79 @@ label.scheduler-go-date-heading {
   padding: 8px 10px;
   margin: 0 -10px;
   border-radius: 8px;
+}
+
+label.scheduler-household-pet-row {
   cursor: pointer;
+}
+
+.scheduler-household-pet-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 12px;
+}
+
+.scheduler-household-pet-row-name {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  min-width: 0;
+}
+
+.scheduler-household-pet-row-heart {
+  flex-shrink: 0;
+}
+
+.scheduler-household-pet-row-membership {
+  font-size: 12px;
+  font-weight: 600;
+  color: #64748b;
+}
+
+.scheduler-household-pet-row-scheduled {
+  font-size: 12px;
+}
+
+.scheduler-household-pet-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.scheduler-household-pet-row--reference {
+  background: #fafafa;
+  border: 1px dashed #e2e8f0;
+}
+
+.scheduler-household-other-pets {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fafafa;
+}
+
+.scheduler-household-other-pets > summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  color: #334155;
+}
+
+.scheduler-household-other-pets-lead {
+  margin: 10px 0 8px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.scheduler-household-other-pets-hint {
+  margin: 10px 0 0;
+  font-size: 12px;
 }
 
 .scheduler-household-pet-row--anchor {

@@ -48,6 +48,7 @@ export type RoutingUiSnapshotV1 = {
   edgeFirst: boolean;
   edgeLast: boolean;
   reserveOption: 'reserve-only' | 'reserve-overflow' | null;
+  asapAllDoctorSearch: boolean;
   clientQuery: string;
   doctorQuery: string;
   doctorNames: Record<string, string>;
@@ -70,6 +71,7 @@ export type RoutingUiBootstrap = {
   edgeFirst: boolean;
   edgeLast: boolean;
   reserveOption: 'reserve-only' | 'reserve-overflow' | null;
+  asapAllDoctorSearch: boolean;
   clientQuery: string;
   doctorQuery: string;
   doctorNames: Record<string, string>;
@@ -119,6 +121,7 @@ function emptyBootstrap(): RoutingUiBootstrap {
     edgeFirst: false,
     edgeLast: false,
     reserveOption: null,
+    asapAllDoctorSearch: false,
     clientQuery: '',
     doctorQuery: '',
     doctorNames: {},
@@ -200,6 +203,7 @@ export function readRoutingUiBootstrap(): RoutingUiBootstrap {
               s.reserveOption === 'reserve-only' || s.reserveOption === 'reserve-overflow'
                 ? s.reserveOption
                 : null,
+            asapAllDoctorSearch: !!s.asapAllDoctorSearch,
             clientQuery: typeof s.clientQuery === 'string' ? s.clientQuery : '',
             doctorQuery: typeof s.doctorQuery === 'string' ? s.doctorQuery : '',
             doctorNames:
