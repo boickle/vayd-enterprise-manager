@@ -24,7 +24,6 @@ export type SchedulerContextMenuAction =
   | { kind: 'edit' }
   | { kind: 'visitTimes' }
   | { kind: 'onMyWayText' }
-  | { kind: 'complete' }
   | { kind: 'addCharges' }
   | { kind: 'remove' }
   | { kind: 'viewChart' }
@@ -58,8 +57,6 @@ type Props = {
   showEditAppointment?: boolean;
   visitTimesDisabled?: boolean;
   visitTimesDisabledTitle?: string;
-  completeDisabled?: boolean;
-  completeDisabledTitle?: string;
   /** Progress modal: only "View Chart" (patient EMR in eVet). */
   patientChartOnly?: boolean;
 };
@@ -82,8 +79,6 @@ export function SchedulerAppointmentContextMenu({
   showEditAppointment,
   visitTimesDisabled,
   visitTimesDisabledTitle,
-  completeDisabled: completeDisabledProp,
-  completeDisabledTitle: completeDisabledTitleProp,
   patientChartOnly = false,
 }: Props) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -124,11 +119,6 @@ export function SchedulerAppointmentContextMenu({
 
   const phone1 = pickStr(client?.phone1);
   const phone2 = pickStr(client?.phone2);
-
-  const completeDisabled = completeDisabledProp ?? appt.isComplete;
-  const completeTitle =
-    completeDisabledTitleProp ??
-    (appt.isComplete ? 'This visit is already complete.' : undefined);
 
   const closeScheduling = () => setOpenGroup(null);
   const closeForms = () => setOpenGroup(null);
@@ -219,12 +209,6 @@ export function SchedulerAppointmentContextMenu({
           disabled={!phone1}
           title={!phone1 ? 'Client has no mobile number on file.' : undefined}
           onPick={() => phone1 && onAction({ kind: 'onMyWayText' })}
-        />
-        <CtxSubRow
-          label="Complete"
-          disabled={completeDisabled}
-          title={completeTitle}
-          onPick={() => onAction({ kind: 'complete' })}
         />
         <CtxSubRow label="Add Charges" onPick={() => onAction({ kind: 'addCharges' })} />
       </CtxParentRow>

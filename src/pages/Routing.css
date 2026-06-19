@@ -823,6 +823,35 @@
   color: var(--muted);
 }
 
+.routing-asap-all-doctor-search {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1.35;
+  margin: 0 0 12px;
+  padding: 0;
+}
+
+.routing-asap-all-doctor-search input[type='checkbox'] {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+}
+
+.routing-asap-all-doctor-search span {
+  font-weight: 600;
+  color: var(--text, #1a1a1a);
+}
+
+.routing-asap-results-sort-btn {
+  font-size: 12px;
+  padding: 6px 12px;
+  white-space: nowrap;
+}
+
 .routing-submit-row {
   display: flex;
   flex-wrap: wrap;
@@ -1174,6 +1203,20 @@
   line-height: 1.2;
   cursor: default;
   transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.routing-client-patient-chip-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.routing-client-patient-member-heart {
+  flex-shrink: 0;
+  line-height: 0;
+  display: inline-flex;
+  align-items: center;
+  color: #dc2626;
 }
 
 .routing-client-patient-chip-wrap:hover .routing-client-patient-chip,

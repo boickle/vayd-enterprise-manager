@@ -1,0 +1,101 @@
+.care-outreach-household-details {
+  margin: 4px 16px 12px;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 10px;
+  background: #fafbfc;
+}
+
+.care-outreach-household-details__summary {
+  cursor: pointer;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text, #334155);
+  list-style: none;
+}
+
+.care-outreach-household-details__summary::-webkit-details-marker {
+  display: none;
+}
+
+.care-outreach-household-details__summary::before {
+  content: '▸';
+  display: inline-block;
+  margin-right: 8px;
+  transition: transform 0.15s ease;
+}
+
+.care-outreach-household-details[open] .care-outreach-household-details__summary::before {
+  transform: rotate(90deg);
+}
+
+.care-outreach-household-details__body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 0 12px 12px;
+  border-top: 1px solid var(--border, #e2e8f0);
+}
+
+.care-outreach-household-pet-card {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #fff;
+  border: 1px solid var(--border, #e2e8f0);
+}
+
+.care-outreach-household-pet-card__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-bottom: 8px;
+}
+
+.care-outreach-household-pet-card__include {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text, #334155);
+  margin-right: 4px;
+}
+
+.care-outreach-household-pet-card__include input {
+  margin: 0;
+  cursor: pointer;
+}
+
+.care-outreach-household-pet-card__include-label {
+  white-space: nowrap;
+}
+
+.care-outreach-household-pet-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--accent-strong, #0d9488);
+  text-decoration: none;
+}
+
+.care-outreach-household-pet-name:hover {
+  text-decoration: underline;
+}
+
+.care-outreach-household-pet-card__member {
+  font-size: 13px;
+}
+
+.care-outreach-household-pet-card__summary .patient-chart-summary-sections {
+  gap: 8px;
+}
+
+.care-outreach-household-pet-card__summary .patient-chart-summary-section-title {
+  font-size: 12px;
+}
+
+.care-outreach-household-pet-card__summary .patient-chart-summary-line,
+.care-outreach-household-pet-card__summary .patient-chart-summary-muted {
+  font-size: 12px;
+}

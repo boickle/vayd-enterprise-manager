@@ -1,4 +1,4 @@
-import { AlertTriangle } from 'lucide-react';
+import { AlertTriangle, Heart } from 'lucide-react';
 import type { ReactNode } from 'react';
 import type { RoutingPatientHoverSummary } from '../utils/routingPatientHoverData';
 import './PatientChartSummary.css';
@@ -30,6 +30,8 @@ type Props = {
   loading?: boolean;
   error?: string | null;
   showAlerts?: boolean;
+  isMember?: boolean;
+  membershipName?: string | null;
   /** When false, omit the patient name header (e.g. modal title already shows it). */
   showHeader?: boolean;
   className?: string;
@@ -41,13 +43,24 @@ export function PatientChartSummaryPanel({
   loading = false,
   error = null,
   showAlerts = true,
+  isMember = false,
+  membershipName = null,
   showHeader = true,
   className,
 }: Props) {
+  const membershipLabel = membershipName?.trim() || 'Member';
   return (
     <div className={['patient-chart-summary-panel', className].filter(Boolean).join(' ')}>
       {showHeader ? (
-        <div className="patient-chart-summary-panel-head">{patientName.trim() || 'Patient'}</div>
+        <div className="patient-chart-summary-panel-head">
+          <span className="patient-chart-summary-panel-name">{patientName.trim() || 'Patient'}</span>
+          {isMember ? (
+            <span className="patient-chart-summary-panel-membership">
+              <Heart size={11} fill="#dc2626" color="#dc2626" strokeWidth={1.75} aria-hidden />
+              <span>{membershipLabel}</span>
+            </span>
+          ) : null}
+        </div>
       ) : null}
       {loading ? (
         <p className="patient-chart-summary-muted">Loading…</p>
