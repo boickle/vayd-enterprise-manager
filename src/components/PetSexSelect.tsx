@@ -101,7 +101,7 @@ export function PetSexSelect({
   onChange,
   error,
   labelMb = 4,
-  fontSize = '13px',
+  fontSize = '14px',
   sectionGap = 8,
 }: Props) {
   const [femaleIntact, femaleSpayed, maleIntact, maleNeutered, unknown] = SEX_STATUS_CHOICES;
@@ -113,7 +113,7 @@ export function PetSexSelect({
           display: 'block',
           marginBottom: labelMb,
           fontWeight: 600,
-          color: '#374151',
+          color: '#111827',
           fontSize,
         }}
       >

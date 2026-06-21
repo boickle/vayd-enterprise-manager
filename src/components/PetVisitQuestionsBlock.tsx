@@ -67,9 +67,9 @@ export function PetVisitQuestionsBlock({
   return (
     <div
       data-form-field={`needsToday.${pet.id}`}
-      style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid #f3f4f6' }}
+      style={{ marginTop: 24, paddingTop: 20, borderTop: '1px solid #d1d5db' }}
     >
-      <label style={{ display: 'block', marginBottom: labelMb, fontWeight: 600, color: '#374151', fontSize: '13px' }}>
+      <label style={{ display: 'block', marginBottom: labelMb, fontWeight: 700, color: '#111827', fontSize: '15px' }}>
         How can we help {petDisplayName} today? <span style={{ color: '#ef4444' }}>*</span>
       </label>
       {loadingAppointmentTypes && appointmentOptions.length === 0 ? (

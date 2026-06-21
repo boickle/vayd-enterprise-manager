@@ -74,6 +74,8 @@ export type Employee = {
   isActive?: boolean;
   isDeleted?: boolean;
   imageUrl?: string | null;
+  /** VAYD-managed profile copy (not synced from PIMS). Max 2000 chars. */
+  bio?: string | null;
   /** OpenPhone user id for call attribution / CSR coaching when synced. */
   openPhoneUserId?: string | null;
   appointmentTypes: AppointmentType[];
@@ -456,6 +458,18 @@ export async function updateEmployeeRoles(
   body: UpdateEmployeeRolesRequest
 ): Promise<Employee> {
   const { data } = await http.put(`/employees/${employeeId}/roles`, body);
+  if (Array.isArray(data)) return data[0];
+  return data;
+}
+
+export const EMPLOYEE_BIO_MAX_LENGTH = 2000;
+
+/** PUT /employees/:id/bio — VAYD-managed profile copy (admin only). */
+export async function updateEmployeeBio(
+  employeeId: number,
+  bio: string | null,
+): Promise<Employee> {
+  const { data } = await http.put(`/employees/${employeeId}/bio`, { bio });
   if (Array.isArray(data)) return data[0];
   return data;
 }

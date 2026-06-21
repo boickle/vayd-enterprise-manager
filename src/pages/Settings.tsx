@@ -1262,7 +1262,7 @@ export default function Settings() {
                             onChange={() => toggleAppointmentTypeSelection(type.id)}
                           />
                           <span>
-                            {type.prettyName || type.name}
+                            {type.name}
                             {!type.showInApptRequestForm && (
                               <span className="settings-muted"> (not shown in form)</span>
                             )}
@@ -1292,7 +1292,7 @@ export default function Settings() {
                       <label key={type.id} className="settings-checkbox-item settings-checkbox-item--disabled">
                         <input type="checkbox" checked disabled readOnly />
                         <span>
-                          {type.prettyName || type.name}
+                          {type.name}
                           <span className="settings-appt-type-archived-badge">Archived</span>
                           <span className="settings-muted"> — remove from employee or restore the type</span>
                         </span>
@@ -2501,9 +2501,8 @@ export default function Settings() {
           <div className="settings-section">
             <h2 className="settings-section-title">Employees</h2>
             <p className="settings-section-description">
-              View staff and assign employee roles (for manual booking permissions). Click an employee name to edit roles
-              only. When PIMS editing is enabled (<code>VITE_ENABLE_PIMS_ENTITY_EDIT=true</code>), you can also add, edit,
-              deactivate, or remove employee records.
+              View staff, assign employee roles (for manual booking permissions), and edit VAYD-managed bios.
+              Click an employee name to edit roles, or use <strong>Edit bio</strong> for profile copy.
             </p>
             <SettingsEmployeeDirectory
               onMessage={(msg, kind) => {

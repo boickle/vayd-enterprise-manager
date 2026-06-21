@@ -22,6 +22,8 @@ export type Provider = {
   quoLinePhone?: string | null;
   /** Profile image URL stored on the employee record. */
   imageUrl?: string | null;
+  /** VAYD-managed profile copy (when included on vet payloads). */
+  bio?: string | null;
 };
 
 type VeterinarianWeeklyScheduleZone = {
@@ -187,6 +189,8 @@ export async function fetchVeterinarians(
       weeklyPointGoal: v?.weeklyPointGoal ?? null,
       seeingClientsInClientZone: zoneFlags?.seeingClients,
       acceptingNewPatientsInClientZone: zoneFlags?.acceptingNewPatients,
+      bio:
+        typeof v?.bio === 'string' && v.bio.trim() ? v.bio.trim() : null,
     };
   });
 

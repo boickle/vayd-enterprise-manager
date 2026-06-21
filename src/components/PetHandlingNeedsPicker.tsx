@@ -172,12 +172,12 @@ export function PetHandlingNeedsPicker({
     <div
       data-handling-needs-picker
       style={{
-        marginTop: 10,
-        paddingTop: 10,
-        borderTop: '1px solid #f3f4f6',
+        marginTop: 24,
+        paddingTop: 20,
+        borderTop: '1px solid #d1d5db',
       }}
     >
-      <p style={{ fontSize: '13px', fontWeight: 700, color: '#111827', margin: '0 0 4px' }}>
+      <p style={{ fontSize: '15px', fontWeight: 700, color: '#111827', margin: '0 0 4px' }}>
         Anything we should know to help make the visit as smooth and stress-free as possible for{' '}
         {petName}?
       </p>
@@ -187,9 +187,9 @@ export function PetHandlingNeedsPicker({
 
       <p
         style={{
-          fontSize: '13px',
+          fontSize: '14px',
           fontWeight: 600,
-          color: '#374151',
+          color: '#111827',
           margin: `0 0 ${labelMb}px`,
         }}
       >
