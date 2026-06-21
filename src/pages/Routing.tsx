@@ -4068,16 +4068,22 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
         const lat = form.newAppt.lat;
         const lon = form.newAppt.lon;
         const address = (form.newAppt.address ?? '').trim();
+        const appointmentTypeId = routingRequestAppointmentTypeId();
         const { providers } = await fetchProvidersForAsapAllDoctorSearch({
           address,
           lat: typeof lat === 'number' && Number.isFinite(lat) ? lat : undefined,
           lon: typeof lon === 'number' && Number.isFinite(lon) ? lon : undefined,
+          appointmentTypeId,
         });
         const doctorIds = providers
           .map((p) => (p.pimsId ? String(p.pimsId) : String(p.id)))
           .filter(Boolean);
         if (doctorIds.length === 0) {
-          setError('No doctors found for this zone.');
+          setError(
+            appointmentTypeId != null
+              ? 'No doctors in this zone offer the selected appointment type.'
+              : 'No doctors found for this zone.'
+          );
           return;
         }
         await submitRoutingRequest(endpoint, doctorIds, {
@@ -4457,7 +4463,8 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
               .filter(Boolean)
               .join(' ')}
           >
-          {/* Doctor picker */}
+          {/* Doctor picker — hidden when searching all doctors */}
+          {!asapAllDoctorSearch ? (
           <div className="routing-doctor-row">
             <Field label="Doctor">
               <div style={{ position: 'relative', width: '100%' }}>
@@ -4601,6 +4608,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
               </p>
             ) : null}
           </div>
+          ) : null}
 
           {/* Date range */}
           <Field label="Date">

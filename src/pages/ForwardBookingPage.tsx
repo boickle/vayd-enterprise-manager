@@ -27,6 +27,7 @@ import {
   type CreateForwardBookingPrefill,
 } from '../utils/forwardBookingCreateLink';
 import { sendClientSms } from '../api/clientSms';
+import { fetchClientByIdStaff } from '../api/clientsStaff';
 import { fetchPracticeMainPhone } from '../api/clientPortal';
 import {
   buildRoutingForwardBookingIntentFromEntries,
@@ -42,11 +43,11 @@ import {
 } from '../utils/forwardBookingHousehold';
 import { evetClientLink, evetPatientLink } from '../utils/evet';
 import { buildCareOutreachSmsMessage } from '../utils/careOutreachSmsMessage';
-import { isCareOutreachForwardBookingEntry } from '../utils/forwardBookingEntrySource';
 import {
   forwardBookingEntrySourceChip,
   forwardBookingSourceChipColors,
   forwardBookingSourceChipLabel,
+  parseForwardBookingSourceChipFilter,
   type ForwardBookingSourceChip,
 } from '../utils/forwardBookingEntrySource';
 import {
@@ -66,8 +67,13 @@ import {
 } from '../utils/forwardBookingReconcile';
 import {
   clearForwardBookingReturnSession,
+  forwardBookingEntryForReturnSession,
   readForwardBookingReturnSession,
+  type ForwardBookingReturnSessionV1,
 } from '../utils/forwardBookingReturnSession';
+import {
+  resolveScheduleLoaderSmsBookedSlot,
+} from '../utils/scheduleLoaderSmsMessage';
 import { workflowPathForStatusFilter } from '../scheduling-tools-nav';
 import { notifySchedulingToolsNavCountsRefresh } from '../hooks/useSchedulingToolsNavCounts';
 import {
@@ -137,14 +143,11 @@ const ON_HOLD_SOURCE_SEARCH_PARAM = 'source';
 const ON_HOLD_SOURCE_FILTERS: { key: ForwardBookingSourceChip; label: string }[] = [
   { key: 'care_outreach', label: 'Care Outreach' },
   { key: 'schedule_loader', label: 'Schedule loader' },
-  { key: 'forward_booking', label: 'Forward Booking' },
+  { key: 'end_visit', label: 'Forward Booking' },
 ];
 
 function parseOnHoldSourceFilter(raw: string | null): ForwardBookingSourceChip | null {
-  if (raw === 'care_outreach' || raw === 'schedule_loader' || raw === 'forward_booking') {
-    return raw;
-  }
-  return null;
+  return parseForwardBookingSourceChipFilter(raw);
 }
 
 function onHoldFilterButtonStyle(active: boolean, accent?: { background: string; color: string }) {
@@ -235,6 +238,40 @@ function clientDisplay(entry: ForwardBookingEntry): {
     name: name || 'Unknown client',
     phone: pickStr(c?.phone1),
   };
+}
+
+async function enrichForwardBookingEntryClientPhone(
+  entry: ForwardBookingEntry
+): Promise<ForwardBookingEntry> {
+  if (clientHasSmsPhone(entry)) return entry;
+  const clientId = entry.client?.id ?? entry.clientId;
+  if (clientId == null || !Number.isFinite(Number(clientId))) return entry;
+  try {
+    const payload = await fetchClientByIdStaff(clientId);
+    const c =
+      payload && typeof payload === 'object' && 'client' in payload
+        ? (payload as { client?: Record<string, unknown> }).client
+        : (payload as Record<string, unknown>);
+    if (!c || typeof c !== 'object') return entry;
+    const phone = pickStr(
+      (c as { phone1?: string }).phone1 ??
+        (c as { phone?: string }).phone ??
+        (c as { phoneNumber?: string }).phoneNumber
+    );
+    if (!phone) return entry;
+    return {
+      ...entry,
+      client: {
+        id: Number(clientId),
+        ...(entry.client ?? {}),
+        phone1: phone,
+        firstName: entry.client?.firstName ?? pickStr((c as { firstName?: string }).firstName),
+        lastName: entry.client?.lastName ?? pickStr((c as { lastName?: string }).lastName),
+      },
+    };
+  } catch {
+    return entry;
+  }
 }
 
 function formatForwardBookingDate(iso: string | null | undefined, practiceTz: string): string {
@@ -335,7 +372,8 @@ function forwardBookingEntrySearchHaystack(
   const prov = providerLabel(entry).toLowerCase();
   const bookingNote = (bookingNotesDisplay(entry) ?? '').toLowerCase();
   const bookedBy = employeeLabel(entry.bookedBy).toLowerCase();
-  const source = forwardBookingSourceChipLabel(forwardBookingEntrySourceChip(entry)).toLowerCase();
+  const sourceChip = forwardBookingEntrySourceChip(entry);
+  const source = sourceChip ? forwardBookingSourceChipLabel(sourceChip).toLowerCase() : '';
   return [
     c.name,
     c.phone ?? '',
@@ -476,6 +514,11 @@ export default function ForwardBookingPage({
   const typeCatalogRef = useRef<AppointmentTypeCatalog | null>(null);
   const [listPage, setListPage] = useState(1);
   const [highlightEntryId, setHighlightEntryId] = useState<number | null>(null);
+  /** After book return, show the highlighted row even if On Hold sub-filters would hide it. */
+  const [returnHighlightBypassFilters, setReturnHighlightBypassFilters] = useState(false);
+  const [postBookReturn, setPostBookReturn] = useState<ForwardBookingReturnSessionV1 | null>(null);
+  const postBookReturnHandledRef = useRef(false);
+  const postBookReturnProcessingRef = useRef(false);
   const rowRefs = useRef<Map<number, HTMLElement>>(new Map());
   const highlightScrollSig = useRef('');
 
@@ -516,30 +559,6 @@ export default function ForwardBookingPage({
         await enrichForwardBookingsSourceDates(rawList, PRACTICE_ID)
       );
 
-      const pendingReturn = readForwardBookingReturnSession();
-      let openSmsForReturn: typeof pendingReturn = null;
-      let highlightId: number | null = null;
-      if (pendingReturn) {
-        clearForwardBookingReturnSession();
-        writeForwardBookingLocalLink(pendingReturn.forwardBookingEntryId, {
-          bookedAppointmentId: pendingReturn.bookedAppointmentId,
-          bookedAppointmentStart: pendingReturn.bookedAppointmentStart,
-          bookedAppointmentEnd: pendingReturn.bookedAppointmentEnd,
-          ...(pendingReturn.careOutreachAnyPastDue ? { careOutreachAnyPastDue: true } : {}),
-        });
-        list = list.map((r) =>
-          r.id === pendingReturn.forwardBookingEntryId
-            ? mergeForwardBookingLinkedVisit(r, {
-                bookedAppointmentId: pendingReturn.bookedAppointmentId,
-                bookedAppointmentStart: pendingReturn.bookedAppointmentStart,
-                bookedAppointmentEnd: pendingReturn.bookedAppointmentEnd,
-              })
-            : r
-        );
-        highlightId = pendingReturn.forwardBookingEntryId;
-        openSmsForReturn = pendingReturn;
-      }
-
       list = await persistLocalForwardBookingLinks(list);
       list = await autoLinkUnlinkedForwardBookings(list, PRACTICE_ID, practiceTz);
 
@@ -558,61 +577,6 @@ export default function ForwardBookingPage({
       setNoteDrafts(drafts);
       setNoteSaving({});
       setNoteError({});
-
-      if (highlightId != null) {
-        setHighlightEntryId(highlightId);
-        highlightScrollSig.current = `${highlightId}-${Date.now()}`;
-        const highlighted = list.find((r) => r.id === highlightId);
-        if (highlighted) {
-          const tab = forwardBookingListTab(highlighted, practiceTz, metaMap, catalog);
-          if (WORKFLOW_STATUS_FILTERS.has(tab)) {
-            const path = workflowPathForStatusFilter(
-              tab as Extract<StatusFilter, 'onHold' | 'booked' | 'complete'>
-            );
-            navigate(path, { replace: true });
-          } else {
-            setStatusFilter(tab);
-            if (fixedStatusFilter) {
-              navigate('/schedule/scheduling-tools/forward-booking', { replace: true });
-            }
-          }
-        }
-      }
-
-      if (openSmsForReturn) {
-        const entry = list.find((r) => r.id === openSmsForReturn.forwardBookingEntryId);
-        const points = metaMap.get(openSmsForReturn.bookedAppointmentId)?.points ?? 0;
-        if (entry && points <= 0 && clientHasSmsPhone(entry)) {
-          const resolved = await resolveBookedSlotForSms(entry);
-          setSmsError(null);
-          const petNames =
-            openSmsForReturn.smsTemplate === 'care_outreach' &&
-            openSmsForReturn.careOutreachPetNames?.length
-              ? openSmsForReturn.careOutreachPetNames
-              : entry.patient?.name?.trim()
-                ? [entry.patient.name.trim()]
-                : [];
-          setSmsMessage(
-            openSmsForReturn.smsTemplate === 'care_outreach'
-              ? buildCareOutreachSmsMessage({
-                  clientFirstName: entry.client?.firstName,
-                  clientDisplayName: [entry.client?.firstName, entry.client?.lastName]
-                    .filter(Boolean)
-                    .join(' ')
-                    .trim() || undefined,
-                  petNames,
-                  providerLastName: entry.primaryProvider?.lastName,
-                  anyPastDue: openSmsForReturn.careOutreachAnyPastDue === true,
-                  ...(resolved.bookedSlot ? { bookedSlot: resolved.bookedSlot } : {}),
-                })
-              : buildForwardBookingSmsMessage(
-                  entry,
-                  resolved.bookedSlot ? { bookedSlot: resolved.bookedSlot } : undefined
-                )
-          );
-          setSmsEntry(entry);
-        }
-      }
     } catch (e: unknown) {
       const msg =
         (e as { response?: { data?: { message?: string } } })?.response?.data?.message ??
@@ -624,7 +588,201 @@ export default function ForwardBookingPage({
       setLoading(false);
       notifySchedulingToolsNavCountsRefresh();
     }
-  }, [practiceTz, resolveBookedSlotForSms, navigate, fixedStatusFilter]);
+  }, [practiceTz]);
+
+  useEffect(() => {
+    const pending = readForwardBookingReturnSession();
+    if (!pending) return;
+    postBookReturnHandledRef.current = false;
+    setPostBookReturn(pending);
+    if (fixedStatusFilter) setReturnHighlightBypassFilters(true);
+  }, [fixedStatusFilter]);
+
+  useEffect(() => {
+    if (
+      !postBookReturn ||
+      loading ||
+      postBookReturnHandledRef.current ||
+      postBookReturnProcessingRef.current
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    postBookReturnProcessingRef.current = true;
+
+    void (async () => {
+      if (postBookReturnHandledRef.current) return;
+      const pending = postBookReturn;
+      const mergeListWithReturnLink = (
+        entryRows: ForwardBookingEntry[],
+        entryId: number
+      ): ForwardBookingEntry[] =>
+        entryRows.map((r) =>
+          r.id === entryId
+            ? mergeForwardBookingLinkedVisit(r, {
+                bookedAppointmentId: pending.bookedAppointmentId,
+                bookedAppointmentStart: pending.bookedAppointmentStart,
+                bookedAppointmentEnd: pending.bookedAppointmentEnd,
+              })
+            : r
+        );
+
+      let entry: ForwardBookingEntry | undefined;
+      let nextRows = rows;
+
+      for (let attempt = 0; attempt < 4 && !cancelled; attempt += 1) {
+        entry = forwardBookingEntryForReturnSession(nextRows, pending);
+        if (entry) break;
+        if (attempt === 3) break;
+        await new Promise((resolve) => window.setTimeout(resolve, 350));
+        if (cancelled) return;
+        let refreshed = mergeForwardBookingsWithLocalLinks(
+          await enrichForwardBookingsSourceDates(
+            await fetchForwardBookings({
+              practiceId: PRACTICE_ID,
+              limit: 2000,
+              includeRemoved: true,
+            }),
+            PRACTICE_ID
+          )
+        );
+        refreshed = await persistLocalForwardBookingLinks(refreshed);
+        refreshed = await autoLinkUnlinkedForwardBookings(refreshed, PRACTICE_ID, practiceTz);
+        nextRows = refreshed;
+        entry = forwardBookingEntryForReturnSession(nextRows, pending);
+        if (entry) {
+          setRows(refreshed);
+          break;
+        }
+      }
+
+      if (cancelled || !entry) return;
+
+      const catalog = typeCatalogRef.current;
+      let points =
+        bookedApptMeta?.get(pending.bookedAppointmentId)?.points ??
+        forwardBookingLinkedAppointmentPoints(entry, bookedApptMeta, catalog);
+      if (points == null && pending.bookedAppointmentId) {
+        try {
+          const appt = await fetchAppointmentById(pending.bookedAppointmentId, {
+            practiceId: PRACTICE_ID,
+          });
+          if (appt && catalog) points = opsPointsForAppointment(appt, catalog);
+        } catch {
+          /* optional */
+        }
+      }
+      if (points == null) points = 0;
+
+      const targetTab =
+        pending.targetWorkflowTab ?? (points <= 0 ? 'onHold' : 'booked');
+      if (fixedStatusFilter && fixedStatusFilter !== targetTab) {
+        postBookReturnProcessingRef.current = false;
+        navigate(workflowPathForStatusFilter(targetTab), { replace: true });
+        return;
+      }
+
+      postBookReturnHandledRef.current = true;
+      clearForwardBookingReturnSession();
+      setPostBookReturn(null);
+
+      if (!readForwardBookingLocalLink(entry.id)) {
+        writeForwardBookingLocalLink(entry.id, {
+          bookedAppointmentId: pending.bookedAppointmentId,
+          bookedAppointmentStart: pending.bookedAppointmentStart,
+          bookedAppointmentEnd: pending.bookedAppointmentEnd,
+          ...(pending.careOutreachAnyPastDue ? { careOutreachAnyPastDue: true } : {}),
+        });
+      }
+      setRows((prev) => mergeListWithReturnLink(prev.length ? prev : nextRows, entry!.id));
+
+      setHighlightEntryId(entry.id);
+      highlightScrollSig.current = `${entry.id}-${Date.now()}`;
+
+      if (points > 0) return;
+
+      let smsTarget = await enrichForwardBookingEntryClientPhone(entry);
+      if (!clientHasSmsPhone(smsTarget)) return;
+
+      setSmsError(null);
+      const smsTemplate = pending.smsTemplate ?? 'forward_booking';
+
+      if (smsTemplate === 'schedule_loader') {
+        const bookedSlot = await resolveScheduleLoaderSmsBookedSlot(
+          pending.bookedAppointmentId,
+          PRACTICE_ID,
+          practiceTz,
+          {
+            startIso: pending.bookedAppointmentStart,
+            endIso: pending.bookedAppointmentEnd,
+          }
+        );
+        const petNames =
+          pending.scheduleLoaderPetNames?.length
+            ? pending.scheduleLoaderPetNames
+            : smsTarget.patient?.name?.trim()
+              ? [smsTarget.patient.name.trim()]
+              : [];
+        setSmsMessage(
+          buildCareOutreachSmsMessage({
+            clientFirstName: smsTarget.client?.firstName,
+            clientDisplayName:
+              pending.scheduleLoaderClientDisplayName?.trim() ||
+              [smsTarget.client?.firstName, smsTarget.client?.lastName].filter(Boolean).join(' ').trim() ||
+              undefined,
+            petNames,
+            providerLastName:
+              pending.scheduleLoaderProviderLastName ?? smsTarget.primaryProvider?.lastName,
+            anyPastDue: pending.scheduleLoaderAnyPastDue !== false,
+            ...(bookedSlot ? { bookedSlot } : {}),
+          })
+        );
+      } else {
+        const resolved = await resolveBookedSlotForSms(smsTarget);
+        const petNames =
+          smsTemplate === 'care_outreach' && pending.careOutreachPetNames?.length
+            ? pending.careOutreachPetNames
+            : smsTarget.patient?.name?.trim()
+              ? [smsTarget.patient.name.trim()]
+              : [];
+        setSmsMessage(
+          smsTemplate === 'care_outreach'
+            ? buildCareOutreachSmsMessage({
+                clientFirstName: smsTarget.client?.firstName,
+                clientDisplayName: [smsTarget.client?.firstName, smsTarget.client?.lastName]
+                  .filter(Boolean)
+                  .join(' ')
+                  .trim() || undefined,
+                petNames,
+                providerLastName: smsTarget.primaryProvider?.lastName,
+                anyPastDue: pending.careOutreachAnyPastDue === true,
+                ...(resolved.bookedSlot ? { bookedSlot: resolved.bookedSlot } : {}),
+              })
+            : buildForwardBookingSmsMessage(
+                smsTarget,
+                resolved.bookedSlot ? { bookedSlot: resolved.bookedSlot } : undefined
+              )
+        );
+      }
+      setSmsEntry(smsTarget);
+    })().finally(() => {
+      postBookReturnProcessingRef.current = false;
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    postBookReturn,
+    loading,
+    bookedApptMeta,
+    practiceTz,
+    resolveBookedSlotForSms,
+    rows,
+    fixedStatusFilter,
+    navigate,
+  ]);
 
   useEffect(() => {
     void load();
@@ -756,7 +914,7 @@ export default function ForwardBookingPage({
     const counts: Record<ForwardBookingSourceChip, number> = {
       care_outreach: 0,
       schedule_loader: 0,
-      forward_booking: 0,
+      end_visit: 0,
     };
     for (const row of visibleRows) {
       if (
@@ -764,7 +922,8 @@ export default function ForwardBookingPage({
       ) {
         continue;
       }
-      counts[forwardBookingEntrySourceChip(row)] += 1;
+      const chip = forwardBookingEntrySourceChip(row);
+      if (chip) counts[chip] += 1;
     }
     return counts;
   }, [visibleRows, practiceTz, bookedApptMeta]);
@@ -785,6 +944,7 @@ export default function ForwardBookingPage({
 
     const matchesOnHoldFilters = (r: ForwardBookingEntry) => {
       if (fixedStatusFilter !== 'onHold') return true;
+      if (returnHighlightBypassFilters) return true;
       if (onHoldOver24Only && !forwardBookingOnHoldOver24Hours(r, bookedApptMeta)) return false;
       if (onHoldSourceFilter && forwardBookingEntrySourceChip(r) !== onHoldSourceFilter) {
         return false;
@@ -836,6 +996,7 @@ export default function ForwardBookingPage({
     fixedStatusFilter,
     onHoldOver24Only,
     onHoldSourceFilter,
+    returnHighlightBypassFilters,
   ]);
 
   const useWorkflowListPagination =
@@ -882,15 +1043,51 @@ export default function ForwardBookingPage({
     if (highlightEntryId == null || loading) return;
     if (!highlightScrollSig.current) return;
     const id = highlightEntryId;
-    const scrollT = window.setTimeout(() => {
-      rowRefs.current.get(id)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-    }, 100);
-    const clearT = window.setTimeout(() => setHighlightEntryId(null), 3200);
+
+    if (useWorkflowListPagination) {
+      const idx = filtered.findIndex((entry) => entry.id === id);
+      if (idx < 0) return;
+      const page = Math.floor(idx / WORKFLOW_LIST_PAGE_SIZE) + 1;
+      if (listPage !== page) {
+        setListPage(page);
+        return;
+      }
+    }
+
+    let cancelled = false;
+    let attempts = 0;
+
+    const tryScroll = () => {
+      if (cancelled) return;
+      const el = rowRefs.current.get(id);
+      if (el) {
+        el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        return;
+      }
+      attempts += 1;
+      if (attempts < 40) {
+        window.setTimeout(tryScroll, 50);
+      }
+    };
+
+    const scrollT = window.setTimeout(tryScroll, 150);
+    const clearT = window.setTimeout(() => {
+      setHighlightEntryId(null);
+      setReturnHighlightBypassFilters(false);
+    }, 5000);
     return () => {
+      cancelled = true;
       window.clearTimeout(scrollT);
       window.clearTimeout(clearT);
     };
-  }, [highlightEntryId, loading, filtered]);
+  }, [
+    highlightEntryId,
+    loading,
+    listForDisplay,
+    filtered,
+    listPage,
+    useWorkflowListPagination,
+  ]);
 
   const onBook = (entry: ForwardBookingEntry) => {
     const intent = buildRoutingForwardBookingIntentFromEntry(entry);
@@ -922,31 +1119,34 @@ export default function ForwardBookingPage({
   };
 
   const openSmsModal = async (entry: ForwardBookingEntry) => {
-    if (!clientHasSmsPhone(entry)) return;
+    const enriched = await enrichForwardBookingEntryClientPhone(entry);
+    if (!clientHasSmsPhone(enriched)) return;
     setSmsError(null);
-    const resolved = await resolveBookedSlotForSms(entry);
-    const localLink = readForwardBookingLocalLink(entry.id);
-    const careOutreach = isCareOutreachForwardBookingEntry(entry);
-    const petNames = entry.patient?.name?.trim() ? [entry.patient.name.trim()] : [];
+    const resolved = await resolveBookedSlotForSms(enriched);
+    const localLink = readForwardBookingLocalLink(enriched.id);
+    const sourceChip = forwardBookingEntrySourceChip(enriched);
+    const careOutreach = sourceChip === 'care_outreach';
+    const scheduleLoader = sourceChip === 'schedule_loader';
+    const petNames = enriched.patient?.name?.trim() ? [enriched.patient.name.trim()] : [];
     setSmsMessage(
-      careOutreach
+      careOutreach || scheduleLoader
         ? buildCareOutreachSmsMessage({
-            clientFirstName: entry.client?.firstName,
-            clientDisplayName: [entry.client?.firstName, entry.client?.lastName]
+            clientFirstName: enriched.client?.firstName,
+            clientDisplayName: [enriched.client?.firstName, enriched.client?.lastName]
               .filter(Boolean)
               .join(' ')
               .trim() || undefined,
             petNames,
-            providerLastName: entry.primaryProvider?.lastName,
-            anyPastDue: localLink?.careOutreachAnyPastDue === true,
+            providerLastName: enriched.primaryProvider?.lastName,
+            anyPastDue: scheduleLoader || localLink?.careOutreachAnyPastDue === true,
             ...(resolved.bookedSlot ? { bookedSlot: resolved.bookedSlot } : {}),
           })
         : buildForwardBookingSmsMessage(
-            entry,
+            enriched,
             resolved.bookedSlot ? { bookedSlot: resolved.bookedSlot } : undefined
           )
     );
-    setSmsEntry(entry);
+    setSmsEntry(enriched);
   };
 
   const closeSmsModal = () => {

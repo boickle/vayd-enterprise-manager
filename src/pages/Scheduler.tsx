@@ -288,7 +288,6 @@ import {
   isHoldAppointmentTypeForBook,
 } from '../utils/forwardBookingBookToast';
 import { FORWARD_BOOKING_LIST_PATH, writeForwardBookingReturnSession, CARE_OUTREACH_LIST_PATH, schedulingWorkflowListPathAfterBook } from '../utils/forwardBookingReturnSession';
-import { writeScheduleLoaderReturnSession } from '../utils/scheduleLoaderReturnSession';
 import { providerLastNameFromDisplayName } from '../utils/scheduleLoaderSmsMessage';
 import { writeForwardBookingLocalLink } from '../utils/forwardBookingLocalLinks';
 import {
@@ -5416,7 +5415,13 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     const end = start.plus({ minutes: mins });
     const isAdminOrSuper = rolesLower.includes('admin') || rolesLower.includes('superadmin');
     const ri = readRoutingRescheduleIntent();
-    const fbi = forwardBookingWorkspaceIsActive() ? readRoutingForwardBookingIntent() : null;
+    const storedForwardBookingIntent = readRoutingForwardBookingIntent();
+    const fbi = forwardBookingWorkspaceIsActive()
+      ? storedForwardBookingIntent
+      : isScheduleLoaderCalendarPreview(routingPreview) &&
+          storedForwardBookingIntent?.origin === 'schedule_loader'
+        ? storedForwardBookingIntent
+        : null;
     const previewPatientIds =
       routingPreview.previewPatients?.map((p) => String(p.id)).filter(Boolean) ?? [];
     const rescheduleTargets = ri
@@ -5515,6 +5520,12 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       previewUsesAlternateAddress: routingPreview.routingUsesAlternateAddress,
       sourceAppt: rescheduleSourceAppt,
     });
+    const forwardBookingCreatedVia =
+      fbi?.origin === 'care_outreach'
+        ? ('care_outreach' as const)
+        : routingPreview.previewSource === 'schedule-loader'
+          ? ('schedule_loader' as const)
+          : undefined;
     setBookPrefill({
       ...(hasLinkedClient
         ? {
@@ -5585,6 +5596,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               : {}),
           }
         : {}),
+      ...(forwardBookingCreatedVia ? { forwardBookingCreatedVia } : {}),
       ...(routingStatsTypeKey ? { routingStatsTypeKey } : {}),
     });
     setBookSlot({ start, end });
@@ -5672,13 +5684,17 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       savedAppointmentId?: number;
       primaryProviderId?: string;
       anchorDate?: string;
+      bookedAppointmentTypeId?: number;
     }) => {
       const prefillAtBook = bookPrefill;
       const wasReschedule = prefillAtBook?.rescheduleAppointmentId != null;
-      const wasForwardBooking = prefillAtBook?.forwardBookingTrackingToken != null;
-      const fbiAtBook = wasForwardBooking ? readRoutingForwardBookingIntent() : null;
-      const savedId = detail?.savedAppointmentId;
       const previewAtBook = routingPreview ?? readRoutingCalendarPreview();
+      const wasForwardBooking = prefillAtBook?.forwardBookingTrackingToken != null;
+      const fbiAtBook =
+        wasForwardBooking || isScheduleLoaderCalendarPreview(previewAtBook)
+          ? readRoutingForwardBookingIntent()
+          : null;
+      const savedId = detail?.savedAppointmentId;
       const returnToForwardBookingList =
         wasForwardBooking &&
         fbiAtBook?.returnToListAfterBook !== false &&
@@ -5688,6 +5704,56 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
 
       closeBookModal();
 
+      const scheduleLoaderBookReturn =
+        isScheduleLoaderCalendarPreview(previewAtBook) &&
+        savedId != null &&
+        bookSlot?.start?.isValid &&
+        !wasReschedule;
+
+      if (scheduleLoaderBookReturn) {
+        const startIso = bookSlot!.start.toUTC().toISO();
+        if (startIso) {
+          const petNames =
+            previewAtBook!.previewPatients
+              ?.map((p) => String(p.name ?? '').trim())
+              .filter(Boolean) ?? [];
+          const typeId =
+            detail?.bookedAppointmentTypeId ?? prefillAtBook?.appointmentTypeId;
+          const typeRow =
+            typeId != null ? typeList.find((t) => Number(t.id) === Number(typeId)) : undefined;
+          const typeName =
+            typeRow?.name?.trim() ||
+            typeRow?.prettyName?.trim() ||
+            null;
+          const isHold = isHoldAppointmentTypeForBook(typeCatalog, { typeId, typeName });
+          writeForwardBookingReturnSession({
+            ...(prefillAtBook?.forwardBookingEntryId != null
+              ? { forwardBookingEntryId: Number(prefillAtBook.forwardBookingEntryId) }
+              : fbiAtBook?.forwardBookingId != null
+                ? { forwardBookingEntryId: fbiAtBook.forwardBookingId }
+                : {}),
+            bookedAppointmentId: savedId!,
+            bookedAppointmentStart: startIso,
+            bookedAppointmentEnd: bookSlot!.end?.isValid ? bookSlot!.end.toUTC().toISO() : null,
+            smsTemplate: 'schedule_loader',
+            scheduleLoaderPetNames: petNames,
+            scheduleLoaderClientDisplayName: previewAtBook!.clientDisplayLabel?.trim() || null,
+            scheduleLoaderProviderLastName: providerLastNameFromDisplayName(
+              String(previewAtBook!.option.doctorName ?? '')
+            ),
+            scheduleLoaderAnyPastDue: fbiAtBook?.scheduleLoaderAnyPastDue !== false,
+            targetWorkflowTab: isHold ? 'onHold' : 'booked',
+          });
+          clearRoutingPersistenceAfterSchedulerBook();
+          clearRoutingCalendarPreview();
+          setRoutingPreview(null);
+          clearRoutingRescheduleIntent();
+          clearRoutingForwardBookingIntent();
+          navigate(schedulingWorkflowListPathAfterBook(isHold));
+          return;
+        }
+      }
+
       if (returnToForwardBookingList) {
         const startIso = bookSlot!.start.toUTC().toISO();
         if (startIso) {
@@ -5696,6 +5762,24 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             bookedAppointmentId: savedId!,
             bookedAppointmentStart: startIso,
             bookedAppointmentEnd: bookSlot!.end?.isValid ? bookSlot!.end.toUTC().toISO() : null,
+            targetWorkflowTab: (() => {
+              const bookTypeId =
+                detail?.bookedAppointmentTypeId ?? prefillAtBook?.appointmentTypeId;
+              const bookTypeRow =
+                bookTypeId != null
+                  ? typeList.find((t) => Number(t.id) === Number(bookTypeId))
+                  : undefined;
+              const bookTypeName =
+                bookTypeRow?.name?.trim() ||
+                bookTypeRow?.prettyName?.trim() ||
+                null;
+              return isHoldAppointmentTypeForBook(typeCatalog, {
+                typeId: bookTypeId,
+                typeName: bookTypeName,
+              })
+                ? 'onHold'
+                : 'booked';
+            })(),
             ...(fbiAtBook?.origin === 'care_outreach'
               ? {
                   smsTemplate: 'care_outreach' as const,
@@ -5717,7 +5801,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           detail?.routingFeedbackWarning ??
           detail?.schedulingOverrideWarning;
         let returnNotice = warning ?? null;
-        const typeId = prefillAtBook?.appointmentTypeId;
+        const typeId =
+          detail?.bookedAppointmentTypeId ?? prefillAtBook?.appointmentTypeId;
         const typeRow =
           typeId != null ? typeList.find((t) => Number(t.id) === Number(typeId)) : undefined;
         const typeName =
@@ -5746,42 +5831,6 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           }
         }
         navigate(schedulingWorkflowListPathAfterBook(isHold));
-        return;
-      }
-
-      if (
-        isScheduleLoaderCalendarPreview(previewAtBook) &&
-        previewAtBook?.scheduleLoaderReturn &&
-        savedId != null &&
-        bookSlot?.start?.isValid &&
-        !wasForwardBooking &&
-        !wasReschedule
-      ) {
-        const startIso = bookSlot.start.toUTC().toISO();
-        if (startIso) {
-          const petNames =
-            previewAtBook.previewPatients
-              ?.map((p) => String(p.name ?? '').trim())
-              .filter(Boolean) ?? [];
-          writeScheduleLoaderReturnSession({
-            clientId: previewAtBook.scheduleLoaderReturn.clientId,
-            bookedAppointmentId: savedId,
-            bookedAppointmentStart: startIso,
-            bookedAppointmentEnd: bookSlot.end?.isValid ? bookSlot.end.toUTC().toISO() : null,
-            petNames,
-            clientDisplayName: previewAtBook.clientDisplayLabel?.trim() || null,
-            providerLastName: providerLastNameFromDisplayName(
-              String(previewAtBook.option.doctorName ?? '')
-            ),
-            openSms: true,
-          });
-        }
-        clearRoutingPersistenceAfterSchedulerBook();
-        clearRoutingCalendarPreview();
-        setRoutingPreview(null);
-        clearRoutingRescheduleIntent();
-        clearRoutingForwardBookingIntent();
-        navigate(previewAtBook.scheduleLoaderReturn.returnHref);
         return;
       }
 

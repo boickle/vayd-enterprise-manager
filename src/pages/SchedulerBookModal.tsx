@@ -17,6 +17,7 @@ import {
 } from '../utils/manualBookCalendarPreview';
 import { submitRoutingAcceptedFeedbackFromPreview } from '../utils/routingBookFeedback';
 import { completeAllForwardBookingVisitsFromBook, completeForwardBookingFromBook } from '../utils/forwardBookingBookComplete';
+import type { ForwardBookingCreatedVia } from '../api/forwardBooking';
 import { fetchClientByIdStaff, type ClientSearchRow } from '../api/clientsStaff';
 import {
   searchPimsClientsAndPatients,
@@ -219,6 +220,7 @@ export type SchedulerBookPrefill = {
     patientId: string;
     patientName?: string;
   }>;
+  forwardBookingCreatedVia?: ForwardBookingCreatedVia;
   /** Calculate Time type name from routing (for reschedule book type resolution). */
   routingStatsTypeKey?: string;
 };
@@ -256,9 +258,11 @@ type Props = {
     savedAppointmentId?: number;
     /** Internal provider id used for the saved visit (for calendar focus after cross-doctor reschedule). */
     primaryProviderId?: string;
-    /** Practice-local date (YYYY-MM-DD) of the booked slot. */
-    anchorDate?: string;
-  }) => void;
+  /** Practice-local date (YYYY-MM-DD) of the booked slot. */
+  anchorDate?: string;
+  /** Appointment type id saved on the calendar visit (modal selection, not prefill default). */
+  bookedAppointmentTypeId?: number;
+}) => void;
 };
 
 type PetRow = {
@@ -1730,10 +1734,14 @@ export function SchedulerBookModal({
       const forwardBookingToken = prefill?.forwardBookingTrackingToken?.trim();
       const forwardBookingEntryId = prefill?.forwardBookingEntryId;
       /** Stay on forward booking list until Mark complete — do not auto-close via tracking token alone. */
-      const forwardBookingCreateExtras =
-        forwardBookingToken && forwardBookingEntryId == null
+      const forwardBookingCreateExtras = {
+        ...(forwardBookingToken && forwardBookingEntryId == null
           ? { forwardBookingTrackingToken: forwardBookingToken }
-          : {};
+          : {}),
+        ...(prefill?.forwardBookingCreatedVia
+          ? { forwardBookingCreatedVia: prefill.forwardBookingCreatedVia }
+          : {}),
+      };
 
       let savedAppointmentId: number | undefined;
       let forwardBookingWarning: string | undefined;
@@ -1940,6 +1948,9 @@ export function SchedulerBookModal({
               savedAppointmentId,
               primaryProviderId: providerId.trim() || undefined,
               anchorDate: startLocal?.isValid ? startLocal.toISODate() ?? undefined : undefined,
+              ...(typeId && Number.isFinite(Number(typeId)) && Number(typeId) > 0
+                ? { bookedAppointmentTypeId: Number(typeId) }
+                : {}),
             }
           : bookedDetail
       );

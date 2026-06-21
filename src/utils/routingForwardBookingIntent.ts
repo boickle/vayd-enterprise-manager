@@ -65,11 +65,13 @@ export type RoutingForwardBookingIntentV1 = {
    */
   workspaceActive?: boolean;
   /** When set, return-to-list SMS uses the care outreach template after hold book. */
-  origin?: 'care_outreach';
+  origin?: 'care_outreach' | 'schedule_loader';
   /** Pet names for care outreach SMS (household book from care outreach list). */
   careOutreachPetNames?: string[];
   /** When true, care outreach SMS after hold book uses past-due wording. */
   careOutreachAnyPastDue?: boolean;
+  /** When true, schedule loader post-book SMS uses past-due care outreach wording. */
+  scheduleLoaderAnyPastDue?: boolean;
 };
 
 function pickStr(v: unknown): string | null {

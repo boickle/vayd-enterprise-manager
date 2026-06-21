@@ -26,6 +26,15 @@ import {
   type RoutingCalendarPreviewPayloadV1,
 } from '../utils/routingCalendarPreviewStorage';
 import {
+  buildRoutingForwardBookingIntentFromEntries,
+  buildRoutingForwardBookingIntentFromEntry,
+  writeRoutingForwardBookingIntent,
+} from '../utils/routingForwardBookingIntent';
+import {
+  createForwardBookingsFromScheduleLoader,
+  scheduleLoaderCandidateHasPastDueReminders,
+} from '../utils/scheduleLoaderForwardBooking';
+import {
   readScheduleLoaderReturnSession,
   clearScheduleLoaderReturnSession,
 } from '../utils/scheduleLoaderReturnSession';
@@ -33,6 +42,10 @@ import {
   buildScheduleLoaderBookedSmsMessage,
   resolveScheduleLoaderSmsBookedSlot,
 } from '../utils/scheduleLoaderSmsMessage';
+import {
+  readAuthDoctorCache,
+  writeAuthDoctorCache,
+} from '../utils/routingUiSnapshot';
 import { practiceTimeZoneOrDefault } from '../utils/practiceTimezone';
 import { fetchClientMessages, type ClientMessagesResponse } from '../api/clientPortal';
 import jsPDF from 'jspdf';
@@ -147,6 +160,36 @@ function fillDoctorIdForProvider(provider: Provider): string {
   return provider.pimsId ? String(provider.pimsId) : String(provider.id);
 }
 
+function fillDayCacheUserId(userId: string | null | undefined): string | null {
+  const uid = userId?.trim();
+  if (uid) return uid;
+  if (typeof localStorage === 'undefined') return null;
+  try {
+    const id = localStorage.getItem('vayd_clientId');
+    return id?.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+function persistFillDayDoctorCache(provider: Provider, userId: string | null | undefined): void {
+  const cacheUserId = fillDayCacheUserId(userId);
+  if (!cacheUserId) return;
+  writeAuthDoctorCache(cacheUserId, fillDoctorIdForProvider(provider), provider.name);
+}
+
+function applyFillDayDoctorSelection(
+  provider: Provider,
+  cachedQuery?: string | null,
+): { doctorId: string; name: string; query: string } {
+  const doctorId = fillDoctorIdForProvider(provider);
+  return {
+    doctorId,
+    name: provider.name,
+    query: cachedQuery?.trim() || provider.name,
+  };
+}
+
 function resolveFillDayPreviewAppointmentTypeId(
   types: AppointmentType[],
   candidate: FillDayCandidate,
@@ -192,7 +235,11 @@ function fillDayPreviewPatients(candidate: FillDayCandidate): { id: number; name
 }
 
 export default function FillDayPage() {
-  const { userEmail, doctorId: userDoctorId } = useAuth() as { userEmail?: string; doctorId?: string | null };
+  const { userEmail, userId, doctorId: userDoctorId } = useAuth() as {
+    userEmail?: string;
+    userId?: string | null;
+    doctorId?: string | null;
+  };
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -241,6 +288,7 @@ export default function FillDayPage() {
   const [pendingSmsCandidate, setPendingSmsCandidate] = useState<FillDayCandidate | null>(null);
   const [smsMessagePreview, setSmsMessagePreview] = useState<string>('');
   const [sendWithOverride, setSendWithOverride] = useState(false);
+  const [scheduleLoaderPostBookSms, setScheduleLoaderPostBookSms] = useState(false);
 
   // Check if we're in production
   // Vite provides:
@@ -535,7 +583,7 @@ export default function FillDayPage() {
     return () => window.cancelAnimationFrame(raf);
   }, [searchParams, loading, candidates.length, setSearchParams]);
 
-  // After booking from calendar preview, open the post-book SMS modal.
+  // After booking from calendar preview, open the post-book SMS modal (past-due wording).
   useEffect(() => {
     const pending = readScheduleLoaderReturnSession();
     if (!pending?.openSms || scheduleLoaderReturnHandledRef.current) return;
@@ -543,10 +591,9 @@ export default function FillDayPage() {
 
     const candidate = candidates.find((c) => c.clientId === pending.clientId);
     if (!candidate) return;
+
     scheduleLoaderReturnHandledRef.current = true;
     clearScheduleLoaderReturnSession();
-
-    if (!fillDayCandidateHasVisibleReminderForSms(candidate)) return;
 
     void (async () => {
       try {
@@ -573,19 +620,34 @@ export default function FillDayPage() {
         setSmsMessagePreview(message);
         setPendingSmsCandidate(candidate);
         setSendWithOverride(false);
+        setScheduleLoaderPostBookSms(true);
         setSmsModalOpen(true);
         setHighlightClientId(candidate.clientId);
       } catch {
+        scheduleLoaderReturnHandledRef.current = false;
         setError('Could not prepare text message after booking.');
       }
     })();
-  }, [loading, candidates]);
+  }, [loading, candidates, searchParams]);
 
-  // Default Doctor / One Team to the logged-in user's assigned employee when providers have loaded (no URL params)
+  // Default Doctor / One Team: last selection (cached), else logged-in user's assigned employee
   useEffect(() => {
     if (didDefaultDoctorFromAuth.current || allProviders.length === 0) return;
     if (selectedDoctorId !== '') return;
     if (hasFillDayDeepLinkParams(searchParams) || hasProcessedUrlParamsRef.current) return;
+
+    const cached = readAuthDoctorCache();
+    if (cached) {
+      const match = findProviderForFillDoctorId(allProviders, cached.pimsId);
+      if (match) {
+        const applied = applyFillDayDoctorSelection(match, cached.doctorQuery);
+        setSelectedDoctorId(applied.doctorId);
+        setSelectedDoctorName(applied.name);
+        setDoctorQuery(applied.query);
+        didDefaultDoctorFromAuth.current = true;
+        return;
+      }
+    }
 
     const uid = userDoctorId != null ? String(userDoctorId).trim() : '';
     const matchByAuth =
@@ -877,6 +939,7 @@ This spot is also being offered to other clients. If you'd like to book it for $
     setPendingSmsCandidate(null);
     setSmsMessagePreview('');
     setSendWithOverride(false);
+    setScheduleLoaderPostBookSms(false);
   }
 
   // Handle sending SMS to client (after approval)
@@ -1044,6 +1107,41 @@ This spot is also being offered to other clients. If you'd like to book it for $
       return;
     }
 
+    let forwardBookingEntries;
+    try {
+      forwardBookingEntries = await createForwardBookingsFromScheduleLoader(
+        candidate,
+        FILL_DAY_PRACTICE_ID,
+        { primaryProviderId: Number(internalId) }
+      );
+    } catch (e: unknown) {
+      const msg =
+        (e as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+        (e as Error)?.message ??
+        'Could not create forward booking rows for this client.';
+      setError(String(msg));
+      return;
+    }
+    const anchor = forwardBookingEntries[0];
+    if (!anchor) {
+      setError('Could not create forward booking rows for this client.');
+      return;
+    }
+    const forwardBookingIntent =
+      forwardBookingEntries.length > 1
+        ? buildRoutingForwardBookingIntentFromEntries(anchor, forwardBookingEntries)
+        : buildRoutingForwardBookingIntentFromEntry(anchor);
+    if (!forwardBookingIntent) {
+      setError('This client is missing data needed for booking.');
+      return;
+    }
+    writeRoutingForwardBookingIntent({
+      ...forwardBookingIntent,
+      returnToListAfterBook: true,
+      origin: 'schedule_loader',
+      scheduleLoaderAnyPastDue: scheduleLoaderCandidateHasPastDueReminders(candidate),
+    });
+
     const previewPatients = fillDayPreviewPatients(candidate);
     const option = {
       date: normalizedDate,
@@ -1135,7 +1233,7 @@ This spot is also being offered to other clients. If you'd like to book it for $
 
   const canSendPendingSms =
     pendingSmsCandidate != null &&
-    fillDayCandidateHasVisibleReminderForSms(pendingSmsCandidate);
+    (scheduleLoaderPostBookSms || fillDayCandidateHasVisibleReminderForSms(pendingSmsCandidate));
 
   // Handle PDF export
   async function handleExportToPDF() {
@@ -1297,6 +1395,7 @@ This spot is also being offered to other clients. If you'd like to book it for $
                             setSelectedDoctorId(doctorPimsId);
                             setSelectedDoctorName(d.name);
                             setDoctorQuery(d.name);
+                            persistFillDayDoctorCache(d, userId);
                             setShowDoctorDropdown(false);
                           }}
                           style={{
