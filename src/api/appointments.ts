@@ -2,6 +2,7 @@
 import { DateTime } from 'luxon';
 import { http } from './http';
 import type { Appointment } from './roomLoader';
+import type { ForwardBookingCreatedVia } from './forwardBooking';
 import { mergeForwardBookingDispositionOntoAppointment } from '../utils/forwardBookingDisposition';
 import { practiceTimeZoneOrDefault } from '../utils/practiceTimezone';
 
@@ -109,6 +110,8 @@ export type CreateAppointmentPayload = {
   bookedViaRouting?: boolean;
   /** Forward booking tracking token — server marks the forward booking complete when present. */
   forwardBookingTrackingToken?: string;
+  /** When the server creates/links a forward-booking row from this book (Fill Day, care outreach routing). */
+  forwardBookingCreatedVia?: ForwardBookingCreatedVia;
 };
 
 export type UpdateAppointmentPayload = Record<string, unknown> & {

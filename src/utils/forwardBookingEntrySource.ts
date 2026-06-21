@@ -1,35 +1,27 @@
-import type { ForwardBookingEntry } from '../api/forwardBooking';
-import { CARE_OUTREACH_BOOKING_NOTES_PREFIX } from './careOutreachForwardBooking';
+import type { ForwardBookingEntry, ForwardBookingCreatedVia } from '../api/forwardBooking';
+import { normalizeForwardBookingCreatedVia } from '../api/forwardBooking';
 
-export const SCHEDULE_LOADER_BOOKING_NOTES_PREFIX = 'Schedule loader follow-up';
+/** Chips shown on On Hold rows — subset of {@link ForwardBookingCreatedVia}. */
+export type ForwardBookingSourceChip = Extract<
+  ForwardBookingCreatedVia,
+  'care_outreach' | 'schedule_loader' | 'end_visit'
+>;
 
-export type ForwardBookingSourceChip = 'care_outreach' | 'schedule_loader' | 'forward_booking';
-
-export function isCareOutreachForwardBookingEntry(
-  entry: Pick<ForwardBookingEntry, 'bookingNotes'>
+export function isForwardBookingCareOutreachEntry(
+  entry: Pick<ForwardBookingEntry, 'createdVia'>
 ): boolean {
-  return (entry.bookingNotes?.trim() ?? '').startsWith(CARE_OUTREACH_BOOKING_NOTES_PREFIX);
+  return normalizeForwardBookingCreatedVia(entry.createdVia) === 'care_outreach';
 }
 
-export function isScheduleLoaderForwardBookingEntry(
-  entry: Pick<ForwardBookingEntry, 'bookingNotes' | 'sourceAppointmentId'>
-): boolean {
-  const notes = entry.bookingNotes?.trim() ?? '';
-  if (notes.toLowerCase().startsWith(SCHEDULE_LOADER_BOOKING_NOTES_PREFIX.toLowerCase())) {
-    return true;
-  }
-  const sid = entry.sourceAppointmentId;
-  if (sid != null && sid > 0) return false;
-  return !isCareOutreachForwardBookingEntry(entry);
-}
-
+/** Source chip from API `createdVia`; hidden for `unknown`, `manual`, and unset legacy rows. */
 export function forwardBookingEntrySourceChip(
-  entry: Pick<ForwardBookingEntry, 'bookingNotes' | 'sourceAppointmentId'>
-): ForwardBookingSourceChip {
-  if (isCareOutreachForwardBookingEntry(entry)) return 'care_outreach';
-  const sid = entry.sourceAppointmentId;
-  if (sid != null && sid > 0) return 'forward_booking';
-  return 'schedule_loader';
+  entry: Pick<ForwardBookingEntry, 'createdVia'>
+): ForwardBookingSourceChip | null {
+  const via = normalizeForwardBookingCreatedVia(entry.createdVia);
+  if (!via || via === 'unknown' || via === 'manual' || via === 'appointment_request') {
+    return null;
+  }
+  return via;
 }
 
 export function forwardBookingSourceChipLabel(chip: ForwardBookingSourceChip): string {
@@ -55,4 +47,15 @@ export function forwardBookingSourceChipColors(chip: ForwardBookingSourceChip): 
     default:
       return { background: '#eff6ff', color: '#1d4ed8' };
   }
+}
+
+/** URL / filter param — accepts legacy `forward_booking` alias. */
+export function parseForwardBookingSourceChipFilter(
+  raw: string | null
+): ForwardBookingSourceChip | null {
+  if (raw === 'forward_booking') return 'end_visit';
+  if (raw === 'care_outreach' || raw === 'schedule_loader' || raw === 'end_visit') {
+    return raw;
+  }
+  return null;
 }

@@ -494,7 +494,7 @@ export function buildCreateForwardBookingPayloadFromAppointment(
     /** Explicit provider for the follow-up; overrides appointment primary provider. */
     primaryProviderId?: number | null;
   }
-): CreateForwardBookingPayload | null {
+): Omit<CreateForwardBookingPayload, 'createdVia'> | null {
   if (!appt?.id || typeof appt.id !== 'number') return null;
 
   const patientIdRaw =
@@ -559,7 +559,7 @@ export function buildCreateForwardBookingPayloadFromPatient(
     bookingNotes?: string | null;
     primaryProviderId?: number | null;
   }
-): CreateForwardBookingPayload | null {
+): Omit<CreateForwardBookingPayload, 'createdVia'> | null {
   if (!Number.isFinite(patientId) || patientId <= 0) return null;
   if (!Number.isFinite(clientId) || clientId <= 0) return null;
 

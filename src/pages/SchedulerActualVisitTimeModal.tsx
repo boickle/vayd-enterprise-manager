@@ -863,7 +863,10 @@ export function SchedulerActualVisitTimeModal({
         );
       }
       try {
-        await createForwardBooking(payload);
+        await createForwardBooking({
+          ...payload,
+          createdVia: 'end_visit',
+        });
       } catch (e: unknown) {
         if (!isActiveForwardBookingExistsError(e)) throw e;
       }

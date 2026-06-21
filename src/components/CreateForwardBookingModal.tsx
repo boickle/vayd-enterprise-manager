@@ -347,7 +347,10 @@ export function CreateForwardBookingModal({
           setError('Could not create forward booking for this patient.');
           return;
         }
-        const created = await createForwardBooking(payload);
+        const created = await createForwardBooking({
+          ...payload,
+          createdVia: 'manual',
+        });
         onCreated(created);
         onClose();
         return;
@@ -388,7 +391,10 @@ export function CreateForwardBookingModal({
         setError('This visit cannot create a forward booking (needs client and patient).');
         return;
       }
-      const created = await createForwardBooking(payload);
+      const created = await createForwardBooking({
+        ...payload,
+        createdVia: 'end_visit',
+      });
       onCreated(created);
       onClose();
     } catch (e: unknown) {

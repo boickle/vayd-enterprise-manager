@@ -187,7 +187,12 @@ export async function createForwardBookingsFromCareOutreach(
     if (!payload) {
       throw new Error(`Could not create forward booking for ${patient.patientName}.`);
     }
-    created.push(await createForwardBooking(payload));
+    created.push(
+      await createForwardBooking({
+        ...payload,
+        createdVia: 'care_outreach',
+      })
+    );
   }
   return created;
 }

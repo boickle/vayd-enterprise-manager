@@ -262,6 +262,40 @@ async function loadEmployeeForDoctorPimsId(pimsId: string): Promise<Employee | n
   return loadEmployeeById(employeeId);
 }
 
+/** Settings → employee appointment type checkboxes. */
+export function employeeAcceptsAppointmentType(
+  employee: Employee,
+  appointmentTypeId: number
+): boolean {
+  const target = Number(appointmentTypeId);
+  if (!Number.isFinite(target) || target <= 0) return true;
+  const types = employee.appointmentTypes ?? [];
+  return types.some((at) => at?.id != null && Number(at.id) === target);
+}
+
+async function filterProvidersByEmployeeAppointmentType(
+  providers: Provider[],
+  appointmentTypeId: number | undefined
+): Promise<Provider[]> {
+  if (
+    appointmentTypeId == null ||
+    !Number.isFinite(Number(appointmentTypeId)) ||
+    Number(appointmentTypeId) <= 0
+  ) {
+    return providers;
+  }
+  const typeId = Number(appointmentTypeId);
+  const filtered = await Promise.all(
+    providers.map(async (provider): Promise<Provider | null> => {
+      const pimsId = provider.pimsId ? String(provider.pimsId) : String(provider.id);
+      const employee = await loadEmployeeForDoctorPimsId(pimsId);
+      if (!employee || !employeeAcceptsAppointmentType(employee, typeId)) return null;
+      return provider;
+    })
+  );
+  return filtered.filter((p): p is Provider => p != null);
+}
+
 /** Distinct `dayOfWeek` values (0=Sun … 6=Sat) covered by an inclusive date range. */
 export function distinctDaysOfWeekInDateRange(
   startDate: string,
@@ -551,7 +585,15 @@ export async function fetchProvidersForAsapAllDoctorSearch(args: {
   address: string;
   lat?: number;
   lon?: number;
+  /** When set, only doctors with this type enabled in employee settings are included. */
+  appointmentTypeId?: number;
 }): Promise<VeterinariansForDoctorSelectResult> {
+  const appointmentTypeId =
+    args.appointmentTypeId != null &&
+    Number.isFinite(Number(args.appointmentTypeId)) &&
+    Number(args.appointmentTypeId) > 0
+      ? Number(args.appointmentTypeId)
+      : undefined;
   const lookupAddress = await resolveLookupAddress(args);
 
   if (lookupAddress) {
@@ -567,6 +609,12 @@ export async function fetchProvidersForAsapAllDoctorSearch(args: {
             if (employeeId == null) return null;
             const employee = await loadEmployeeById(employeeId);
             if (!employee) return null;
+            if (
+              appointmentTypeId != null &&
+              !employeeAcceptsAppointmentType(employee, appointmentTypeId)
+            ) {
+              return null;
+            }
             if (!isEmployeeAssignedToZoneId(employee, resolved.zone.id, null, zoneLabel)) {
               return null;
             }
@@ -596,5 +644,11 @@ export async function fetchProvidersForAsapAllDoctorSearch(args: {
     }
   }
 
-  return { ...(await fetchAllProvidersForDoctorSelect()), usedNearestZone: false };
+  const fallback = await fetchAllProvidersForDoctorSelect();
+  if (!appointmentTypeId) return { ...fallback, usedNearestZone: false };
+  return {
+    ...fallback,
+    providers: await filterProvidersByEmployeeAppointmentType(fallback.providers, appointmentTypeId),
+    usedNearestZone: false,
+  };
 }

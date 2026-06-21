@@ -6,6 +6,34 @@ export type ForwardBookingIntervalUnit = 'days' | 'weeks' | 'months';
 
 export type ForwardBookingStatus = 'pending' | 'booked' | 'complete' | 'removed';
 
+/** Immutable source captured at POST /forward-bookings (or server-set on POST /appointments). */
+export type ForwardBookingCreatedVia =
+  | 'care_outreach'
+  | 'schedule_loader'
+  | 'end_visit'
+  | 'manual'
+  | 'appointment_request'
+  | 'unknown';
+
+const FORWARD_BOOKING_CREATED_VIA_VALUES = new Set<string>([
+  'care_outreach',
+  'schedule_loader',
+  'end_visit',
+  'manual',
+  'appointment_request',
+  'unknown',
+]);
+
+export function normalizeForwardBookingCreatedVia(
+  raw: unknown
+): ForwardBookingCreatedVia | null {
+  if (raw == null) return null;
+  const s = String(raw).trim().toLowerCase();
+  if (s === 'forward_booking') return 'end_visit';
+  if (FORWARD_BOOKING_CREATED_VIA_VALUES.has(s)) return s as ForwardBookingCreatedVia;
+  return null;
+}
+
 export type ForwardBookingClientRef = {
   id: number;
   pimsId?: string | null;
@@ -93,6 +121,8 @@ export type ForwardBookingEntry = {
    * until that date (practice TZ). Cleared or ≤ today → Needs booking.
    */
   bookAfterDate?: string | null;
+  /** Where the queue row was created — do not infer from bookingNotes. */
+  createdVia?: ForwardBookingCreatedVia | null;
   createdAt?: string | null;
   updatedAt?: string | null;
 };
@@ -136,6 +166,8 @@ export function normalizeForwardBookingEntry(raw: unknown): ForwardBookingEntry 
     row.bookAfterDate =
       pickIso(o.bookAfterDate) ?? pickIso(o.book_after_date) ?? row.bookAfterDate ?? null;
   }
+  const createdVia = normalizeForwardBookingCreatedVia(o.createdVia ?? o.created_via);
+  if (createdVia) row.createdVia = createdVia;
   const booked = o.bookedAppointment;
   if (booked && typeof booked === 'object') {
     const b = booked as Record<string, unknown>;
@@ -242,6 +274,7 @@ export type CreateForwardBookingPayload = {
   serviceMinutes?: number;
   note?: string | null;
   bookingNotes?: string | null;
+  createdVia: ForwardBookingCreatedVia;
 };
 
 /**
