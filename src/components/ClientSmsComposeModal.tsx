@@ -13,6 +13,11 @@ type Props = {
   sendError?: string | null;
   title?: string;
   subtitle?: string;
+  /** When false, hide “Send to actual client” (non-prod only). Default true. */
+  showProductionOverride?: boolean;
+  primarySendLabel?: string;
+  /** Shown under the title — e.g. the Quo line this thread uses. */
+  fromLineLabel?: string | null;
 };
 
 export function ClientSmsComposeModal({
@@ -27,8 +32,11 @@ export function ClientSmsComposeModal({
   sendError,
   title = 'Text client',
   subtitle,
+  showProductionOverride = true,
+  primarySendLabel = 'Send message',
+  fromLineLabel,
 }: Props) {
-  const allowOverride = smsAllowsProductionOverride();
+  const allowOverride = showProductionOverride && smsAllowsProductionOverride();
 
   if (!open || typeof document === 'undefined') return null;
 
@@ -77,6 +85,11 @@ export function ClientSmsComposeModal({
             <p style={{ margin: 0, color: '#6b7280', fontSize: 14 }}>
               {subtitle ?? `Review and edit the message before sending to ${clientLabel}.`}
             </p>
+            {fromLineLabel?.trim() ? (
+              <p style={{ margin: '6px 0 0', color: '#6b7280', fontSize: 13 }}>
+                From {fromLineLabel.trim()}
+              </p>
+            ) : null}
           </div>
           <button
             type="button"
@@ -148,7 +161,7 @@ export function ClientSmsComposeModal({
             disabled={sending || !message.trim()}
             onClick={() => onSend({ overrideNonProd: false })}
           >
-            {sending ? 'Sending…' : 'Send message'}
+            {sending ? 'Sending…' : primarySendLabel}
           </button>
         </div>
       </div>

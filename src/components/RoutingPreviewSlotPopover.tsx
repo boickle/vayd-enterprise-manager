@@ -24,6 +24,8 @@ type Props = {
   /** Client phone + visit doctor Quo line for call/text while reviewing a reschedule slot. */
   clientContact?: RoutingPreviewClientContact | null;
   bookDisabled?: boolean;
+  /** Override primary action label (e.g. care outreach → "Next"). */
+  confirmLabel?: string;
   onBook: () => void;
   onDismiss: () => void;
 };
@@ -73,6 +75,7 @@ export function RoutingPreviewSlotPopover({
   originalAppointmentEnd,
   clientContact,
   bookDisabled,
+  confirmLabel,
   onBook,
   onDismiss,
 }: Props) {
@@ -190,7 +193,7 @@ export function RoutingPreviewSlotPopover({
           disabled={bookDisabled}
           onClick={onBook}
         >
-          {isReschedule ? 'Reschedule' : 'Book'}
+          {confirmLabel ?? (isReschedule ? 'Reschedule' : 'Book')}
         </button>
       </div>
     </div>

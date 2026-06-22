@@ -289,6 +289,8 @@ import {
 } from '../utils/forwardBookingBookToast';
 import { FORWARD_BOOKING_LIST_PATH, writeForwardBookingReturnSession, CARE_OUTREACH_LIST_PATH, schedulingWorkflowListPathAfterBook } from '../utils/forwardBookingReturnSession';
 import { providerLastNameFromDisplayName } from '../utils/scheduleLoaderSmsMessage';
+import { slotOfferFlowActive } from '../utils/slotOfferFromRouting';
+import { notifySchedulingToolsNavCountsRefresh } from '../hooks/useSchedulingToolsNavCounts';
 import { writeForwardBookingLocalLink } from '../utils/forwardBookingLocalLinks';
 import {
   buildForwardBookingWorkspaceContext,
@@ -3798,6 +3800,23 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     [routingPreview],
   );
 
+  const routingPreviewSlotOfferFlow = useMemo(() => {
+    if (!routingPreview || routingPreviewIsReschedule || routingPreviewIsManualBook) return false;
+    const fbi = readRoutingForwardBookingIntent();
+    return slotOfferFlowActive(
+      {
+        routingPreviewBook: true,
+        forwardBookingCreatedVia:
+          fbi?.origin === 'care_outreach'
+            ? 'care_outreach'
+            : fbi?.origin === 'schedule_loader'
+              ? 'schedule_loader'
+              : undefined,
+      },
+      routingPreview
+    );
+  }, [routingPreview, routingPreviewIsReschedule, routingPreviewIsManualBook, forwardBookingIntentTick]);
+
   const [manualBookPreviewCommitting, setManualBookPreviewCommitting] = useState(false);
 
   const reschedulePreviewSourceVisit = useMemo(() => {
@@ -5398,7 +5417,13 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       setToast('Missing address for this routing preview.');
       return;
     }
-    const clientIdRaw = routingPreview.newApptMeta?.clientId?.trim();
+    const storedForwardBookingIntent = readRoutingForwardBookingIntent();
+    const clientIdRaw =
+      routingPreview.newApptMeta?.clientId?.trim() ||
+      storedForwardBookingIntent?.clientId?.trim() ||
+      (routingPreview.scheduleLoaderReturn?.clientId != null
+        ? String(routingPreview.scheduleLoaderReturn.clientId)
+        : '');
     const hasLinkedClient = Boolean(clientIdRaw) && Number.isFinite(Number(clientIdRaw));
     if (clientIdRaw && !Number.isFinite(Number(clientIdRaw))) {
       setToast('Invalid client on routing preview.');
@@ -5415,7 +5440,6 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     const end = start.plus({ minutes: mins });
     const isAdminOrSuper = rolesLower.includes('admin') || rolesLower.includes('superadmin');
     const ri = readRoutingRescheduleIntent();
-    const storedForwardBookingIntent = readRoutingForwardBookingIntent();
     const fbi = forwardBookingWorkspaceIsActive()
       ? storedForwardBookingIntent
       : isScheduleLoaderCalendarPreview(routingPreview) &&
@@ -5530,7 +5554,10 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       ...(hasLinkedClient
         ? {
             clientId: clientIdRaw,
-            clientLabel: routingPreview.clientDisplayLabel,
+            clientLabel:
+              routingPreview.clientDisplayLabel?.trim() ||
+              fbi?.clientDisplayLabel?.trim() ||
+              undefined,
             lockClient: !isAdminOrSuper,
             disableClientSearch: true,
             excludePatientIds: !isReschedule ? slotExclude : undefined,
@@ -5606,6 +5633,36 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     setBookSlot(null);
     setBookPrefill(null);
   }, []);
+
+  const handleSlotOfferSent = useCallback(
+    (detail?: { outreachNotesWarning?: string }) => {
+    const fbi = readRoutingForwardBookingIntent();
+    const previewAtSend = routingPreview ?? readRoutingCalendarPreview();
+    closeBookModal();
+    clearRoutingPersistenceAfterSchedulerBook();
+    clearRoutingCalendarPreview();
+    setRoutingPreview(null);
+    clearRoutingForwardBookingIntent();
+    const toastBase = 'Text offer sent to client.';
+    setToast(
+      detail?.outreachNotesWarning ? `${toastBase} ${detail.outreachNotesWarning}` : toastBase
+    );
+    notifySchedulingToolsNavCountsRefresh();
+    const returnToScheduleLoader = scheduleLoaderReturnHref(previewAtSend);
+    if (returnToScheduleLoader) {
+      navigate(returnToScheduleLoader);
+      return;
+    }
+    if (fbi?.origin === 'care_outreach') {
+      navigate(CARE_OUTREACH_LIST_PATH);
+      return;
+    }
+    if (!embedInRoutingWorkspace) {
+      navigate(FORWARD_BOOKING_LIST_PATH);
+    }
+  },
+    [closeBookModal, routingPreview, navigate, embedInRoutingWorkspace]
+  );
 
   const clearEditVisitHighlightTimer = useCallback(() => {
     if (editVisitHighlightTimerRef.current != null) {
@@ -5934,7 +5991,6 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     if (providersLoadState !== 'resolved') return;
 
     const apptId = pendingFocusApptId;
-    setPendingFocusApptId(null);
     calendarFocusActiveRef.current = true;
     let cancelled = false;
 
@@ -5944,6 +6000,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       if (!appt) {
         calendarFocusActiveRef.current = false;
         clearSchedulerFocusSession();
+        setPendingFocusApptId(null);
         showToast('Could not find that appointment on the calendar.');
         return;
       }
@@ -5971,6 +6028,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       pendingFocusDateHintRef.current = null;
       if (!cancelled) {
         setPendingFocusHighlightApptId(apptId);
+        setPendingFocusApptId(null);
       }
     })();
 
@@ -5981,22 +6039,25 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
 
   /** After focus navigation, wait until the appointment is on the loaded calendar before pulsing. */
   useEffect(() => {
-    if (pendingFocusHighlightApptId == null || loading || driveEtaLoading || !showTimeGrid) return;
-    const inRange = rawAppointments.some((a) =>
-      schedulerAppointmentIdsEqual(a.id, pendingFocusHighlightApptId)
+    if (pendingFocusHighlightApptId == null || loading || !showTimeGrid) return;
+    const targetId = pendingFocusHighlightApptId;
+    const inLoadedRange = rawAppointments.some((a) =>
+      schedulerAppointmentIdsEqual(a.id, targetId)
     );
-    if (!inRange) return;
-    const apptId = pendingFocusHighlightApptId;
+    const inRenderedRange = calendarAppointments.some((a) =>
+      schedulerAppointmentIdsEqual(a.id, targetId)
+    );
+    if (!inLoadedRange && !inRenderedRange) return;
     setPendingFocusHighlightApptId(null);
     calendarFocusActiveRef.current = false;
     clearSchedulerFocusSession();
-    pulseEditVisitHighlight(apptId, 6000);
+    pulseEditVisitHighlight(targetId, 6000);
   }, [
     pendingFocusHighlightApptId,
     loading,
-    driveEtaLoading,
     showTimeGrid,
     rawAppointments,
+    calendarAppointments,
     anchorDate,
     providerFilter,
     pulseEditVisitHighlight,
@@ -6370,14 +6431,14 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       editVisitPostBookScrollSigRef.current = '';
       return;
     }
-    if (loading || driveEtaLoading || !showTimeGrid) return;
+    if (!showTimeGrid) return;
 
     const sig = String(editVisitHighlightId);
     if (editVisitPostBookScrollSigRef.current === sig) return;
 
     let cancelled = false;
     let attempts = 0;
-    const maxAttempts = 36;
+    const maxAttempts = 240;
 
     const tryScroll = () => {
       if (cancelled) return;
@@ -6385,7 +6446,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       const el = document.querySelector(`[data-appt-id="${CSS.escape(sig)}"]`);
       if (!(el instanceof HTMLElement)) {
         if (attempts < maxAttempts) {
-          requestAnimationFrame(tryScroll);
+          window.setTimeout(tryScroll, 33);
         }
         return;
       }
@@ -6405,9 +6466,9 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   }, [
     editVisitHighlightId,
     loading,
-    driveEtaLoading,
     showTimeGrid,
     filteredAppointments,
+    calendarAppointments,
     allDaySpanLayout.bars.length,
     startEditVisitHighlightClearTimer,
   ]);
@@ -8186,6 +8247,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               originalAppointmentEnd={reschedulePreviewOriginalTimes.end}
               clientContact={routingPreviewClientContact}
               bookDisabled={bookSlot != null || manualBookPreviewCommitting}
+              confirmLabel={routingPreviewSlotOfferFlow ? 'Next' : undefined}
               onBook={() => {
                 if (routingPreviewIsManualBook) {
                   void confirmManualBookFromPreview();
@@ -8329,6 +8391,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             : undefined
         }
         onClose={closeBookModal}
+        onSlotOfferSent={handleSlotOfferSent}
         onBooked={handleSchedulerBooked}
       />
 

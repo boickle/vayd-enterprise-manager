@@ -64,16 +64,23 @@ export function careOutreachForwardBookingIntervalForDueDate(
   };
 }
 
-/** Care outreach book → routing defaults to today through 21 calendar days out (practice TZ). */
+/** Calendar days after today for care-outreach routing search (inclusive window = this + 1). */
+export const CARE_OUTREACH_ROUTING_SEARCH_EXTRA_DAYS = 14;
+
+/** Care outreach Route → routing: today through today + 14 days (15 days inclusive, practice TZ). */
 export function careOutreachRoutingSearchDateRange(practiceTz?: string): {
   startDate: string;
   endDate: string;
+  numDays: number;
 } {
   const tz = practiceTimeZoneOrDefault(practiceTz);
   const today = DateTime.now().setZone(tz).startOf('day');
+  const startDate = today.toFormat('yyyy-MM-dd');
+  const endDate = today.plus({ days: CARE_OUTREACH_ROUTING_SEARCH_EXTRA_DAYS }).toFormat('yyyy-MM-dd');
   return {
-    startDate: today.toFormat('yyyy-MM-dd'),
-    endDate: today.plus({ days: 21 }).toFormat('yyyy-MM-dd'),
+    startDate,
+    endDate,
+    numDays: CARE_OUTREACH_ROUTING_SEARCH_EXTRA_DAYS + 1,
   };
 }
 

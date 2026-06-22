@@ -3,11 +3,8 @@ import { Link, NavLink, useLocation } from 'react-router-dom';
 import { ChevronDown } from 'lucide-react';
 import { useAuth } from '../auth/useAuth';
 import { getVisibleScoutTabs } from '../scout-tabs';
-import { SCHEDULING_TOOL_TABS, SCHEDULING_WORKFLOW_TABS } from '../scheduling-tools-tabs';
-import {
-  isSchedulingToolTabActive,
-  isSchedulingWorkflowTabActive,
-} from '../scheduling-tools-nav';
+import { SCHEDULING_TOOL_TABS } from '../scheduling-tools-tabs';
+import { isSchedulingToolTabActive } from '../scheduling-tools-nav';
 import { blockRoutingCalendarPreviewNavigation } from '../utils/routingCalendarPreviewGuard';
 import TasksNavLabel from './TasksNavLabel';
 import { useTaskNavBadges } from '../hooks/useTaskNavBadges';
@@ -41,12 +38,6 @@ const MEASURE_LABEL: Record<SchedNavItemKey, string> = {
   admin: 'Admin',
 };
 
-function isSchedulingToolsTabActive(pathname: string, tabPath: string): boolean {
-  return (
-    isSchedulingToolTabActive(pathname, tabPath) || isSchedulingWorkflowTabActive(pathname, tabPath)
-  );
-}
-
 function blockScheduleNavLeave(e: { preventDefault: () => void }): boolean {
   if (blockRoutingCalendarPreviewNavigation()) {
     e.preventDefault();
@@ -59,32 +50,12 @@ function SchedulingToolsSubmenuLinks({ onNavigate }: { onNavigate: () => void })
   const location = useLocation();
   return (
     <>
-      <p className="schedule-app__settings-group-label">Fill Schedule</p>
       {SCHEDULING_TOOL_TABS.map((tab) => (
         <Link
           key={tab.path}
           to={`/schedule/scheduling-tools/${tab.path}`}
           className={`schedule-app__settings-link${
             isSchedulingToolTabActive(location.pathname, tab.path)
-              ? ' schedule-app__settings-link--active'
-              : ''
-          }`}
-          role="menuitem"
-          onClick={(e) => {
-            if (blockScheduleNavLeave(e)) return;
-            onNavigate();
-          }}
-        >
-          {tab.label}
-        </Link>
-      ))}
-      <p className="schedule-app__settings-group-label">Follow-up</p>
-      {SCHEDULING_WORKFLOW_TABS.map((tab) => (
-        <Link
-          key={tab.path}
-          to={`/schedule/scheduling-tools/${tab.path}`}
-          className={`schedule-app__settings-link${
-            isSchedulingWorkflowTabActive(location.pathname, tab.path)
               ? ' schedule-app__settings-link--active'
               : ''
           }`}

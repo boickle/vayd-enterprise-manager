@@ -41,10 +41,26 @@ import {
 } from '../utils/routingRescheduleIntent';
 import { resolveBookModalDefaultAppointmentTypeId } from '../utils/routingCalculateTimeType';
 import { Field } from '../components/Field';
+import { ClientSmsComposeModal } from '../components/ClientSmsComposeModal';
 import { VerifiedAddressField } from '../components/VerifiedAddressField';
 import type { AddressFields } from '../components/AddressAutocomplete';
 import { BookPatientChartButton } from '../components/BookPatientChartButton';
 import { appendBookedStaffNote } from '../utils/bookedAppointmentDescription';
+import { formatSendSlotOfferError, fetchPendingSlotOfferForClient, sendSlotOffer } from '../api/slotOffers';
+import { lookupClientZoneForAddress } from '../api/zoneLookup';
+import {
+  buildSendSlotOfferPayload,
+  clFirstNameFromStaffEmail,
+  resolveSlotOfferClientId,
+  resolveSlotOfferPetIds,
+  resolveSlotOfferBookNotes,
+  routingPreviewServiceMinutes,
+  slotOfferFlowActive,
+} from '../utils/slotOfferFromRouting';
+import { buildSlotOfferSmsMessage } from '../utils/slotOfferSmsMessage';
+import { readRoutingForwardBookingIntent } from '../utils/routingForwardBookingIntent';
+import { applySlotOfferOutreachNotes } from '../utils/slotOfferOutreachNote';
+import type { SendSlotOfferPayload } from '../api/slotOffers';
 import {
   appendRescheduledByStaffNote,
   resolveAppointmentChangeActorFromAuth,
@@ -250,6 +266,8 @@ type Props = {
   /** Timed manual book — preview on calendar before saving (all-day books save directly). */
   onPreviewOnCalendar?: (draft: ManualBookPreviewDraft) => void;
   onClose: () => void;
+  /** After a successful POST /slot-offers/send from care outreach or schedule loader routing. */
+  onSlotOfferSent?: (detail?: { outreachNotesWarning?: string }) => void;
   onBooked: (detail?: {
     routingFeedbackWarning?: string;
     forwardBookingWarning?: string;
@@ -424,6 +442,12 @@ function extractClientAddressFromPayload(payload: unknown): string | null {
   return clientAddressFromRecord(payload as Record<string, unknown>);
 }
 
+function extractClientFirstNameFromPayload(payload: unknown): string | null {
+  if (!payload || typeof payload !== 'object') return null;
+  const fn = pickStr((payload as Record<string, unknown>).firstName);
+  return fn || null;
+}
+
 const DURATION_OPTIONS = [15, 20, 30, 45, 60, 90, 120];
 
 export function SchedulerBookModal({
@@ -438,6 +462,7 @@ export function SchedulerBookModal({
   routingLinkPreview,
   onPreviewOnCalendar,
   onClose,
+  onSlotOfferSent,
   onBooked,
 }: Props) {
   const [combinedQuery, setCombinedQuery] = useState('');
@@ -450,6 +475,7 @@ export function SchedulerBookModal({
 
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
   const [selectedClientLabel, setSelectedClientLabel] = useState('');
+  const [selectedClientFirstName, setSelectedClientFirstName] = useState<string | null>(null);
   const [selectedClientAddress, setSelectedClientAddress] = useState<string | null>(null);
   const [selectedClientLat, setSelectedClientLat] = useState<number | undefined>(undefined);
   const [selectedClientLon, setSelectedClientLon] = useState<number | undefined>(undefined);
@@ -542,6 +568,16 @@ export function SchedulerBookModal({
   const [routingBookVisitEdits, setRoutingBookVisitEdits] = useState<RoutingBookVisitEdit[]>([]);
 
   const [submitting, setSubmitting] = useState(false);
+  const [sendingOffer, setSendingOffer] = useState(false);
+  const [slotOfferComposeOpen, setSlotOfferComposeOpen] = useState(false);
+  const [slotOfferComposeMessage, setSlotOfferComposeMessage] = useState('');
+  const [slotOfferComposeError, setSlotOfferComposeError] = useState<string | null>(null);
+  const [slotOfferOverwriteOpen, setSlotOfferOverwriteOpen] = useState(false);
+  const slotOfferPendingPayloadRef = useRef<SendSlotOfferPayload | null>(null);
+  const slotOfferComposeDraftRef = useRef<{ payload: SendSlotOfferPayload; message: string } | null>(
+    null
+  );
+  const slotOfferConfirmOverwriteRef = useRef(false);
   const [formError, setFormError] = useState<string | null>(null);
 
   const [scheduleOverrideDraft, setScheduleOverrideDraft] = useState<ScheduleOverrideDraft | null>(
@@ -609,6 +645,12 @@ export function SchedulerBookModal({
   const isRescheduleBook = prefill?.rescheduleAppointmentId != null;
 
   const isRoutingPreviewBook = Boolean(prefill?.routingPreviewBook && !isRescheduleBook);
+  const showSlotOfferActions = slotOfferFlowActive(prefill, routingLinkPreview);
+
+  useEffect(() => {
+    if (!open || !showSlotOfferActions || !routingLinkPreview) return;
+    setDurationMin(routingPreviewServiceMinutes(routingLinkPreview));
+  }, [open, showSlotOfferActions, routingLinkPreview]);
   const bookedViaRouting = isSchedulerRoutingBookPrefill(prefill);
   /**
    * Skip Settings → Role manual booking on create (same as routing).
@@ -887,6 +929,7 @@ export function SchedulerBookModal({
     if (showClient) return;
     setSelectedClientId(null);
     setSelectedClientLabel('');
+    setSelectedClientFirstName(null);
     setSelectedClientAddress(null);
     setSelectedClientAlerts(null);
     setClientPets([]);
@@ -995,6 +1038,7 @@ export function SchedulerBookModal({
     setCombinedPatientResults([]);
     setSelectedClientId(null);
     setSelectedClientLabel('');
+    setSelectedClientFirstName(null);
     setSelectedClientAddress(null);
     setSelectedClientAlerts(null);
     setClientPets([]);
@@ -1421,6 +1465,7 @@ export function SchedulerBookModal({
     const id = String(c.id);
     setSelectedClientId(id);
     setSelectedClientLabel(clientDisplayName(c));
+    setSelectedClientFirstName(pickStr(c.firstName));
     setSelectedClientAddress(clientAddressLine(c));
     setCombinedQuery('');
     setCombinedClientResults([]);
@@ -1468,6 +1513,7 @@ export function SchedulerBookModal({
     } else {
       setSelectedClientId(null);
       setSelectedClientLabel('');
+      setSelectedClientFirstName(null);
       setSelectedClientAddress(null);
       setSelectedClientAlerts(null);
       setClientPets([]);
@@ -1477,6 +1523,7 @@ export function SchedulerBookModal({
   const clearSelectedClient = useCallback(() => {
     setSelectedClientId(null);
     setSelectedClientLabel('');
+    setSelectedClientFirstName(null);
     setSelectedClientAddress(null);
     setSelectedClientLat(undefined);
     setSelectedClientLon(undefined);
@@ -1494,6 +1541,7 @@ export function SchedulerBookModal({
   }, []);
 
   function applyClientPayloadDetails(payload: unknown, fallbackAddress?: string | null) {
+    setSelectedClientFirstName(extractClientFirstNameFromPayload(payload));
     setSelectedClientAddress(extractClientAddressFromPayload(payload) ?? fallbackAddress ?? null);
     setClientPets(extractPatientsFromClientPayload(payload));
     setSelectedClientAlerts(extractClientAlertsFromPayload(payload));
@@ -1962,7 +2010,317 @@ export function SchedulerBookModal({
     }
   }
 
-  if (!open || !slot || !startLocal) return null;
+  async function resolveSlotOfferPayload(): Promise<
+    { payload: SendSlotOfferPayload; petNames: string[] } | { error: string }
+  > {
+    if (!routingLinkPreview || !showSlotOfferActions) {
+      return { error: 'Routing preview is not available for this offer.' };
+    }
+    const fbi = readRoutingForwardBookingIntent();
+    const clientId = resolveSlotOfferClientId({
+      selectedClientId,
+      prefillClientId: prefill?.clientId,
+      preview: routingLinkPreview,
+      forwardBookingClientId: fbi?.clientId,
+    });
+    const petIds = resolveSlotOfferPetIds({
+      perVisitRoutingBook,
+      routingBookVisitEdits,
+      selectedPatientId,
+      preferredPatientIds: prefill?.preferredPatientIds,
+      previewPatients: routingLinkPreview.previewPatients,
+      forwardBookingPatientId: fbi?.patientId,
+    });
+    if (perVisitRoutingBook) {
+      const selected = routingBookVisitEdits.filter((v) => v.selected && !v.isNoPatient);
+      if (selected.some((v) => !v.appointmentTypeId.trim())) {
+        return { error: 'Select an appointment type for each selected visit.' };
+      }
+    }
+    const petNames = perVisitRoutingBook
+      ? routingBookVisitEdits
+          .filter((v) => v.selected && !v.isNoPatient)
+          .map((v) => v.patientName.trim())
+          .filter(Boolean)
+      : selectedPatientLabel.trim()
+        ? [selectedPatientLabel.trim()]
+        : (routingLinkPreview.previewPatients ?? [])
+            .filter((p) => petIds.includes(Number(p.id)))
+            .map((p) => String(p.name ?? '').trim())
+            .filter(Boolean);
+    let zoneId: number | null = null;
+    const opt = routingLinkPreview.option as {
+      effectiveZone?: { id?: number | string } | null;
+      clientZone?: { id?: number | string } | null;
+    };
+    for (const z of [opt.effectiveZone, opt.clientZone]) {
+      if (z?.id != null && Number.isFinite(Number(z.id)) && Number(z.id) > 0) {
+        zoneId = Number(z.id);
+        break;
+      }
+    }
+    if (zoneId == null) {
+      const address =
+        routingLinkPreview.newApptMeta?.address?.trim() ||
+        bookAlternateAddressText?.trim() ||
+        selectedClientAddress?.trim() ||
+        '';
+      if (address) {
+        const lookedUp = await lookupClientZoneForAddress(address);
+        if (lookedUp?.zoneId != null) zoneId = lookedUp.zoneId;
+      }
+    }
+    const built = buildSendSlotOfferPayload({
+      practiceId,
+      preview: routingLinkPreview,
+      practiceTz,
+      clientId: clientId ?? 0,
+      petIds,
+      doctorId: Number(providerId),
+      appointmentTypeId: Number(typeId),
+      clFirstName: clFirstNameFromStaffEmail(userEmail),
+      zoneId,
+    });
+    if ('error' in built) return { error: built.error };
+    const bookNotes = resolveSlotOfferBookNotes({
+      perVisitRoutingBook,
+      routingBookVisitEdits,
+      description,
+      instructions,
+    });
+    const appointmentTypeId =
+      bookNotes.appointmentTypeId != null &&
+      Number.isFinite(bookNotes.appointmentTypeId) &&
+      bookNotes.appointmentTypeId > 0
+        ? bookNotes.appointmentTypeId
+        : built.appointmentTypeId;
+    const createdVia =
+      prefill?.forwardBookingCreatedVia === 'care_outreach' ||
+      prefill?.forwardBookingCreatedVia === 'schedule_loader'
+        ? prefill.forwardBookingCreatedVia
+        : fbi?.origin === 'care_outreach' || fbi?.origin === 'schedule_loader'
+          ? fbi.origin
+          : undefined;
+    return {
+      payload: {
+        ...built,
+        appointmentTypeId,
+        ...bookNotes,
+        ...(createdVia ? { createdVia } : {}),
+      },
+      petNames,
+    };
+  }
+
+  function openSlotOfferComposeModal(
+    draft: { payload: SendSlotOfferPayload; message: string },
+    confirmOverwrite: boolean
+  ) {
+    slotOfferConfirmOverwriteRef.current = confirmOverwrite;
+    slotOfferPendingPayloadRef.current = draft.payload;
+    setSlotOfferComposeMessage(draft.message);
+    setSlotOfferComposeOpen(true);
+  }
+
+  async function openSlotOfferCompose() {
+    if (!routingLinkPreview || !showSlotOfferActions) return;
+    setFormError(null);
+    setSlotOfferComposeError(null);
+    setSendingOffer(true);
+    try {
+      const resolved = await resolveSlotOfferPayload();
+      if ('error' in resolved) {
+        setFormError(resolved.error);
+        return;
+      }
+      const opt = routingLinkPreview.option as {
+        doctorName?: string;
+        date?: string;
+        arrivalWindow?: {
+          windowStartIso?: string;
+          windowEndIso?: string;
+        };
+      };
+      const aw = opt.arrivalWindow;
+      const arrivalWindowStartIso = aw?.windowStartIso?.trim();
+      const arrivalWindowEndIso = aw?.windowEndIso?.trim();
+      if (!arrivalWindowStartIso || !arrivalWindowEndIso) {
+        setFormError('This routing slot is missing an arrival window.');
+        return;
+      }
+      const providerName =
+        providers.find((p) => String(p.id) === String(providerId))?.name?.trim() ||
+        String(opt.doctorName ?? '').trim() ||
+        null;
+      const clientLabel = selectedClientLabel.trim() || prefill?.clientLabel?.trim() || 'Client';
+      const fbi = readRoutingForwardBookingIntent();
+      const anyPastDue =
+        fbi?.origin === 'care_outreach'
+          ? fbi.careOutreachAnyPastDue === true
+          : fbi?.origin === 'schedule_loader'
+            ? fbi.scheduleLoaderAnyPastDue !== false
+            : false;
+      const message = buildSlotOfferSmsMessage({
+        clientFirstName: selectedClientFirstName,
+        clientDisplayName: clientLabel,
+        petNames: resolved.petNames,
+        providerDisplayName: providerName,
+        arrivalWindowStartIso,
+        arrivalWindowEndIso,
+        slotDateIso: String(opt.date ?? '').trim() || null,
+        anyPastDue,
+        practiceTz,
+      });
+      const draft = { payload: resolved.payload, message };
+      const pending = await fetchPendingSlotOfferForClient({
+        practiceId: resolved.payload.practiceId,
+        clientId: resolved.payload.clientId,
+      });
+      if (pending.hasPending) {
+        slotOfferComposeDraftRef.current = draft;
+        setSlotOfferOverwriteOpen(true);
+        return;
+      }
+      openSlotOfferComposeModal(draft, false);
+    } finally {
+      setSendingOffer(false);
+    }
+  }
+
+  function confirmSlotOfferOverwrite() {
+    const draft = slotOfferComposeDraftRef.current;
+    if (!draft) {
+      setSlotOfferOverwriteOpen(false);
+      return;
+    }
+    slotOfferComposeDraftRef.current = null;
+    setSlotOfferOverwriteOpen(false);
+    openSlotOfferComposeModal(draft, true);
+  }
+
+  function cancelSlotOfferOverwrite() {
+    slotOfferComposeDraftRef.current = null;
+    setSlotOfferOverwriteOpen(false);
+  }
+
+  async function confirmSlotOfferSend() {
+    const base = slotOfferPendingPayloadRef.current;
+    if (!base) {
+      setSlotOfferComposeError('Offer details expired — close and try again.');
+      return;
+    }
+    const trimmed = slotOfferComposeMessage.trim();
+    if (!trimmed) {
+      setSlotOfferComposeError('Enter a message before sending.');
+      return;
+    }
+    setSlotOfferComposeError(null);
+    setSendingOffer(true);
+    try {
+      await sendSlotOffer({
+        ...base,
+        smsBody: trimmed,
+        confirmOverwrite: slotOfferConfirmOverwriteRef.current || undefined,
+      });
+      const notesResult = await applySlotOfferOutreachNotes({
+        payload: base,
+        practiceTz,
+        token,
+        userEmail,
+        doctorId,
+        providers,
+      });
+      setSlotOfferComposeOpen(false);
+      slotOfferPendingPayloadRef.current = null;
+      slotOfferConfirmOverwriteRef.current = false;
+      onSlotOfferSent?.(
+        notesResult.warning ? { outreachNotesWarning: notesResult.warning } : undefined
+      );
+      onClose();
+    } catch (err) {
+      setSlotOfferComposeError(formatSendSlotOfferError(err));
+    } finally {
+      setSendingOffer(false);
+    }
+  }
+
+  function closeSlotOfferCompose() {
+    if (sendingOffer) return;
+    setSlotOfferComposeOpen(false);
+    setSlotOfferComposeError(null);
+    slotOfferPendingPayloadRef.current = null;
+    slotOfferConfirmOverwriteRef.current = false;
+  }
+
+  if (!open || !slot || !startLocal) {
+    return slotOfferComposeOpen || slotOfferOverwriteOpen ? (
+      <>
+        <ClientSmsComposeModal
+          open={slotOfferComposeOpen}
+          clientLabel={selectedClientLabel.trim() || prefill?.clientLabel?.trim() || 'Client'}
+          message={slotOfferComposeMessage}
+          onMessageChange={setSlotOfferComposeMessage}
+          onClose={closeSlotOfferCompose}
+          onSend={() => void confirmSlotOfferSend()}
+          onOpenMessagesHistory={() => {}}
+          sending={sendingOffer}
+          sendError={slotOfferComposeError}
+          title="Text offer"
+          subtitle="Review the message before sending. The confirmation link is added automatically."
+          showProductionOverride={false}
+          primarySendLabel="Send offer"
+        />
+        {slotOfferOverwriteOpen && typeof document !== 'undefined'
+          ? createPortal(
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="slot-offer-overwrite-title"
+                onClick={cancelSlotOfferOverwrite}
+                style={{
+                  position: 'fixed',
+                  inset: 0,
+                  background: 'rgba(0,0,0,0.45)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  zIndex: 10000,
+                  padding: 16,
+                }}
+              >
+                <div
+                  className="card"
+                  onClick={(e) => e.stopPropagation()}
+                  style={{
+                    width: 'min(480px, 90vw)',
+                    padding: 24,
+                    borderRadius: 12,
+                    background: '#fff',
+                  }}
+                >
+                  <h3 id="slot-offer-overwrite-title" style={{ margin: '0 0 12px', fontSize: 20, fontWeight: 600 }}>
+                    Replace existing texted offer?
+                  </h3>
+                  <p style={{ margin: '0 0 20px', lineHeight: 1.5, color: '#374151' }}>
+                    You have already submitted a texted offer for this patient. Do you want to overwrite your last
+                    one? The previous link will expire and this new offer will be sent instead.
+                  </p>
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+                    <button type="button" className="btn secondary" onClick={cancelSlotOfferOverwrite}>
+                      Cancel
+                    </button>
+                    <button type="button" className="btn primary" onClick={confirmSlotOfferOverwrite}>
+                      Overwrite and send
+                    </button>
+                  </div>
+                </div>
+              </div>,
+              document.body
+            )
+          : null}
+      </>
+    ) : null;
+  }
 
   const timeInputValue = startLocal.toFormat('HH:mm');
   const endTimeInputValue = endLocal?.isValid ? endLocal.toFormat('HH:mm') : '';
@@ -1980,7 +2338,9 @@ export function SchedulerBookModal({
       })()
     : `${startLocal.setZone(practiceTz).toFormat('EEEE, MMM d, yyyy')} · ${startLocal.toFormat('h:mm a')} – ${endLocal?.toFormat('h:mm a')}`;
 
-  return createPortal(
+  return (
+    <>
+      {createPortal(
     <div className="scheduler-modal-backdrop" role="presentation" onMouseDown={onClose}>
       <div
         className="scheduler-book-modal"
@@ -2887,16 +3247,41 @@ export function SchedulerBookModal({
               Review placement on the calendar first — the visit is not saved until you click Book on the red
               preview slot.
             </p>
+          ) : showSlotOfferActions ? (
+            <p className="scheduler-book-hint muted">
+              Book to place the visit on the calendar, or Text offer to send the client an SMS link to confirm
+              this window (slot is not held until they confirm).
+            </p>
           ) : null}
 
           <div className="scheduler-book-actions">
-            <button type="button" className="scheduler-book-btn secondary" onClick={onClose} disabled={submitting}>
+            <button
+              type="button"
+              className="scheduler-book-btn secondary"
+              onClick={onClose}
+              disabled={submitting || sendingOffer}
+            >
               Cancel
             </button>
+            {showSlotOfferActions ? (
+              <button
+                type="button"
+                className="scheduler-book-btn secondary"
+                disabled={submitting || sendingOffer || patientRequiredButMissing}
+                onClick={() => void openSlotOfferCompose()}
+                title={
+                  patientRequiredButMissing
+                    ? 'Select a patient — this appointment type requires one.'
+                    : undefined
+                }
+              >
+                {sendingOffer ? 'Sending…' : 'Text offer'}
+              </button>
+            ) : null}
             <button
               type="submit"
               className="scheduler-book-btn primary"
-              disabled={submitting || patientRequiredButMissing}
+              disabled={submitting || sendingOffer || patientRequiredButMissing}
               title={
                 patientRequiredButMissing
                   ? 'Select a patient — this appointment type requires one.'
@@ -2920,5 +3305,70 @@ export function SchedulerBookModal({
       </div>
     </div>,
     document.body
+      )}
+      <ClientSmsComposeModal
+        open={slotOfferComposeOpen}
+        clientLabel={selectedClientLabel.trim() || prefill?.clientLabel?.trim() || 'Client'}
+        message={slotOfferComposeMessage}
+        onMessageChange={setSlotOfferComposeMessage}
+        onClose={closeSlotOfferCompose}
+        onSend={() => void confirmSlotOfferSend()}
+        onOpenMessagesHistory={() => {}}
+        sending={sendingOffer}
+        sendError={slotOfferComposeError}
+        title="Text offer"
+        subtitle="Review the message before sending. The confirmation link is added automatically."
+        showProductionOverride={false}
+        primarySendLabel="Send offer"
+      />
+      {slotOfferOverwriteOpen && typeof document !== 'undefined'
+        ? createPortal(
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="slot-offer-overwrite-title"
+              onClick={cancelSlotOfferOverwrite}
+              style={{
+                position: 'fixed',
+                inset: 0,
+                background: 'rgba(0,0,0,0.45)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                zIndex: 10000,
+                padding: 16,
+              }}
+            >
+              <div
+                className="card"
+                onClick={(e) => e.stopPropagation()}
+                style={{
+                  width: 'min(480px, 90vw)',
+                  padding: 24,
+                  borderRadius: 12,
+                  background: '#fff',
+                }}
+              >
+                <h3 id="slot-offer-overwrite-title" style={{ margin: '0 0 12px', fontSize: 20, fontWeight: 600 }}>
+                  Replace existing texted offer?
+                </h3>
+                <p style={{ margin: '0 0 20px', lineHeight: 1.5, color: '#374151' }}>
+                  You have already submitted a texted offer for this patient. Do you want to overwrite your last
+                  one? The previous link will expire and this new offer will be sent instead.
+                </p>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+                  <button type="button" className="btn secondary" onClick={cancelSlotOfferOverwrite}>
+                    Cancel
+                  </button>
+                  <button type="button" className="btn primary" onClick={confirmSlotOfferOverwrite}>
+                    Overwrite and send
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
+    </>
   );
 }

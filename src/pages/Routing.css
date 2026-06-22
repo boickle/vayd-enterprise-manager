@@ -47,9 +47,24 @@
   overflow: hidden;
 }
 
+.routing-page-root--calendar-workspace .routing-route-form-card {
+  flex: 1 1 0;
+  min-height: 0;
+}
+
 .routing-page-root--calendar-workspace .routing-route-form-header,
-.routing-page-root--calendar-workspace .routing-reschedule-mode-summary {
+.routing-page-root--calendar-workspace .routing-reschedule-mode-summary,
+.routing-page-root--calendar-workspace .routing-route-form-card > .routing-asap-all-doctor-search,
+.routing-page-root--calendar-workspace .routing-route-form-card > .forward-booking-workspace-context {
   flex-shrink: 0;
+}
+
+.routing-page-root--calendar-workspace .routing-route-form-card > form {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .routing-page-root--calendar-workspace .routing-results-card {
@@ -89,6 +104,12 @@
   padding-bottom: 4px;
 }
 
+.routing-route-form-stack--workspace .routing-form-body {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+}
+
 .routing-form-body--inline {
   display: contents;
 }
@@ -97,7 +118,9 @@
   flex-shrink: 0;
   margin-top: 0;
   padding-top: 10px;
+  padding-bottom: 2px;
   border-top: 1px solid var(--border);
+  background: var(--card, #fff);
 }
 
 /* Side-by-side: form left, results right (both columns always reserved). */

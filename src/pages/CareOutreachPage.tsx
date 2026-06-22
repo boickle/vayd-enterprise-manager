@@ -9,11 +9,6 @@ import {
   type CareOutreachPatientRef,
   type UnscheduledReminder,
 } from '../api/careOutreach';
-import { fetchForwardBookings, type ForwardBookingEntry } from '../api/forwardBooking';
-import { sendClientSms } from '../api/clientSms';
-import { fetchPracticeMainPhone } from '../api/clientPortal';
-import { ClientMessagesHistoryModal } from '../components/ClientMessagesHistoryModal';
-import { ClientSmsComposeModal } from '../components/ClientSmsComposeModal';
 import {
   CareOutreachHouseholdProvider,
   CareOutreachOtherHouseholdPets,
@@ -31,17 +26,12 @@ import {
 } from '../utils/routingForwardBookingIntent';
 import {
   careOutreachClientBookTargetFromBucket,
-  createForwardBookingsFromCareOutreach,
   careOutreachClientBookTargetWithAdditionalPatients,
+  careOutreachRoutingSearchDateRange,
+  createForwardBookingsFromCareOutreach,
   careOutreachTargetHasPastDueReminders,
   petNamesFromCareOutreachTarget,
 } from '../utils/careOutreachForwardBooking';
-import {
-  buildCareOutreachSmsMessage,
-  careOutreachClientHasSmsPhone,
-} from '../utils/careOutreachSmsMessage';
-import { forwardBookingHasLinkedVisit } from '../utils/forwardBookingLinkedVisit';
-import { resolveForwardBookingSmsBookedSlot } from '../utils/forwardBookingSmsMessage';
 import {
   calendarDayDiffFromToday,
   careOutreachChipCountFetchRange,
@@ -52,13 +42,14 @@ import {
   type CareOutreachPriorityChipCounts,
 } from '../utils/careOutreachPriorityFilters';
 import { careOutreachReminderIsHidden } from '../utils/careOutreachReminderVisibility';
-import { notifySchedulingToolsNavCountsRefresh } from '../hooks/useSchedulingToolsNavCounts';
+import { notifySchedulingToolsNavCountsRefresh, SCHEDULING_TOOLS_PAGE_REFRESH_EVENT } from '../hooks/useSchedulingToolsNavCounts';
 import { evetClientLink, evetPatientLink } from '../utils/evet';
 import { buildPhoneDialHref, resolveQuoFromLine } from '../utils/quoContact';
 import { practiceTimeZoneOrDefault } from '../utils/practiceTimezone';
 import './Settings.css';
 
 const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_TZ = practiceTimeZoneOrDefault(undefined);
 
 const NOTES_DEBOUNCE_MS = 750;
 
@@ -281,18 +272,6 @@ function clientBucketPrimaryProviderId(client: CareOutreachClientBucket): number
   return undefined;
 }
 
-function clientBucketProviderLastName(client: CareOutreachClientBucket): string | null {
-  for (const pg of client.patients.values()) {
-    for (const r of pg.reminders) {
-      if (reminderIsHidden(r)) continue;
-      const provider = reminderAssignedProvider(r);
-      const ln = provider?.lastName?.trim();
-      if (ln) return ln;
-    }
-  }
-  return null;
-}
-
 function clientBucketQuoFromLine(client: CareOutreachClientBucket): string | null {
   for (const pg of client.patients.values()) {
     for (const r of pg.reminders) {
@@ -490,38 +469,13 @@ export default function CareOutreachPage() {
   const [reminderHiddenError, setReminderHiddenError] = useState<Record<number, string | null>>({});
   const [actionError, setActionError] = useState<string | null>(null);
   const [bookingClientKey, setBookingClientKey] = useState<string | null>(null);
-  const [smsClientId, setSmsClientId] = useState<number | null>(null);
-  const [smsClientLabel, setSmsClientLabel] = useState('');
-  const [smsMessage, setSmsMessage] = useState('');
-  const [smsSending, setSmsSending] = useState(false);
-  const [smsError, setSmsError] = useState<string | null>(null);
-  const [messagesClientId, setMessagesClientId] = useState<number | null>(null);
-  const [messagesClientLabel, setMessagesClientLabel] = useState('');
-  const practiceSmsFromRef = useRef<string | null>(null);
 
+  /** API fetch window. Priority tabs filter client-side; use the same wide span as chip counts so list and badges stay aligned. */
   const effectiveDueRange = useMemo(() => {
-    const today = dayjs().startOf('day');
-    if (priority === 'overdue_today') {
-      const yesterday = today.subtract(1, 'day');
-      const iso = yesterday.format('YYYY-MM-DD');
-      return { from: iso, to: iso };
+    if (priority === 'range') {
+      return { from: dueDateFrom, to: dueDateTo };
     }
-    if (priority === 'past_due_30') {
-      return {
-        from: today.subtract(30, 'day').format('YYYY-MM-DD'),
-        to: today.subtract(1, 'day').format('YYYY-MM-DD'),
-      };
-    }
-    if (priority === 'due_21') {
-      const allowed = [...dayDiffsForDueIn21DayBucket(today)];
-      const min = Math.min(...allowed);
-      const max = Math.max(...allowed);
-      return {
-        from: today.add(min, 'day').format('YYYY-MM-DD'),
-        to: today.add(max, 'day').format('YYYY-MM-DD'),
-      };
-    }
-    return { from: dueDateFrom, to: dueDateTo };
+    return careOutreachChipCountFetchRange();
   }, [priority, dueDateFrom, dueDateTo]);
 
   const load = useCallback(async () => {
@@ -529,20 +483,21 @@ export default function CareOutreachPage() {
     setError(null);
     try {
       const chipCountRange = careOutreachChipCountFetchRange();
-      const [list, chipCountList] = await Promise.all([
-        fetchUnscheduledReminders({
-          dueDateFrom: effectiveDueRange.from,
-          dueDateTo: effectiveDueRange.to,
-          practiceId: PRACTICE_ID,
-          limit: 2000,
-        }),
-        fetchUnscheduledReminders({
-          dueDateFrom: chipCountRange.from,
-          dueDateTo: chipCountRange.to,
-          practiceId: PRACTICE_ID,
-          limit: 2000,
-        }),
-      ]);
+      const list = await fetchUnscheduledReminders({
+        dueDateFrom: effectiveDueRange.from,
+        dueDateTo: effectiveDueRange.to,
+        practiceId: PRACTICE_ID,
+        limit: 2000,
+      });
+      const chipCountList =
+        priority === 'range'
+          ? await fetchUnscheduledReminders({
+              dueDateFrom: chipCountRange.from,
+              dueDateTo: chipCountRange.to,
+              practiceId: PRACTICE_ID,
+              limit: 2000,
+            })
+          : list;
       setRows(list);
       setPriorityChipCounts(countCareOutreachPriorityChipClients(chipCountList));
       const drafts: Record<number, string> = {};
@@ -565,10 +520,18 @@ export default function CareOutreachPage() {
       clearCareOutreachHouseholdCache();
       notifySchedulingToolsNavCountsRefresh();
     }
-  }, [effectiveDueRange.from, effectiveDueRange.to]);
+  }, [effectiveDueRange.from, effectiveDueRange.to, priority]);
 
   useEffect(() => {
     void load();
+  }, [load]);
+
+  useEffect(() => {
+    const onPageRefresh = () => {
+      void load();
+    };
+    window.addEventListener(SCHEDULING_TOOLS_PAGE_REFRESH_EVENT, onPageRefresh);
+    return () => window.removeEventListener(SCHEDULING_TOOLS_PAGE_REFRESH_EVENT, onPageRefresh);
   }, [load]);
 
   const filteredByPriority = useMemo(() => {
@@ -891,29 +854,12 @@ export default function CareOutreachPage() {
     [bookIncludeOtherPets]
   );
 
-  const findLinkedForwardBookingForClient = useCallback(
-    async (clientId: number, patientIds: readonly number[]): Promise<ForwardBookingEntry | null> => {
-      const want = new Set(patientIds.map(Number));
-      const list = await fetchForwardBookings({ practiceId: PRACTICE_ID, limit: 2000 });
-      const matches = list.filter(
-        (entry) =>
-          Number(entry.clientId) === Number(clientId) &&
-          want.has(Number(entry.patientId)) &&
-          entry.sourceAppointmentId == null &&
-          forwardBookingHasLinkedVisit(entry)
-      );
-      if (matches.length === 0) return null;
-      return matches.sort((a, b) => Number(b.id) - Number(a.id))[0] ?? null;
-    },
-    []
-  );
-
   const onBookClient = useCallback(
     async (client: CareOutreachClientBucket) => {
       setActionError(null);
       const target = bookTargetForClient(client);
       if (!target) {
-        setActionError('No pets selected to book for this client.');
+        setActionError('No pets selected to route for this client.');
         return;
       }
       setBookingClientKey(client.clientKey);
@@ -927,6 +873,7 @@ export default function CareOutreachPage() {
             ? buildRoutingForwardBookingIntentFromEntries(anchor, entries)
             : buildRoutingForwardBookingIntentFromEntry(anchor);
         if (!intent) throw new Error('This client is missing data needed for routing.');
+        const routingSearch = careOutreachRoutingSearchDateRange(PRACTICE_TZ);
         writeRoutingForwardBookingIntent({
           ...intent,
           returnToListAfterBook: true,
@@ -934,92 +881,20 @@ export default function CareOutreachPage() {
           origin: 'care_outreach',
           careOutreachPetNames: petNames,
           careOutreachAnyPastDue: careOutreachTargetHasPastDueReminders(target),
+          routingSearch,
         });
         navigate('/schedule/routing');
       } catch (e: unknown) {
         const msg =
           (e as { response?: { data?: { message?: string } } })?.response?.data?.message ??
           (e as Error)?.message ??
-          'Could not start booking.';
+          'Could not start routing.';
         setActionError(String(msg));
       } finally {
         setBookingClientKey(null);
       }
     },
     [bookTargetForClient, navigate]
-  );
-
-  const openSmsForClient = useCallback(
-    async (client: CareOutreachClientBucket) => {
-      setActionError(null);
-      const target = bookTargetForClient(client);
-      if (!target || !careOutreachClientHasSmsPhone(client.phone)) return;
-      setSmsError(null);
-      try {
-        const patientIds = target.patients.map((p) => p.patientId);
-        const linked = await findLinkedForwardBookingForClient(target.clientId, patientIds);
-        let bookedSlot;
-        if (linked) {
-          const resolved = await resolveForwardBookingSmsBookedSlot(linked, practiceTz, {
-            practiceId: PRACTICE_ID,
-          });
-          bookedSlot = resolved.bookedSlot;
-        }
-        setSmsMessage(
-          buildCareOutreachSmsMessage({
-            clientFirstName: client.clientFirstName,
-            clientDisplayName: client.displayName,
-            petNames: petNamesFromCareOutreachTarget(target),
-            providerLastName: clientBucketProviderLastName(client),
-            anyPastDue: careOutreachTargetHasPastDueReminders(target),
-            ...(bookedSlot ? { bookedSlot } : {}),
-          })
-        );
-        setSmsClientId(target.clientId);
-        setSmsClientLabel(target.displayName);
-      } catch (e: unknown) {
-        const msg =
-          (e as { response?: { data?: { message?: string } } })?.response?.data?.message ??
-          (e as Error)?.message ??
-          'Could not prepare text message.';
-        setActionError(String(msg));
-      }
-    },
-    [bookTargetForClient, findLinkedForwardBookingForClient, practiceTz]
-  );
-
-  const closeSmsModal = useCallback(() => {
-    setSmsClientId(null);
-    setSmsClientLabel('');
-    setSmsMessage('');
-    setSmsError(null);
-  }, []);
-
-  const handleSendSms = useCallback(
-    async (opts: { overrideNonProd: boolean }) => {
-      if (smsClientId == null || !smsMessage.trim()) return;
-      setSmsSending(true);
-      setSmsError(null);
-      try {
-        let from = practiceSmsFromRef.current;
-        if (!from) {
-          from = await fetchPracticeMainPhone(PRACTICE_ID);
-          if (from) practiceSmsFromRef.current = from;
-        }
-        await sendClientSms(smsClientId, {
-          message: smsMessage.trim(),
-          ...(opts.overrideNonProd ? { overrideNonProd: true } : {}),
-          ...(from ? { from } : {}),
-        });
-        closeSmsModal();
-      } catch (e: unknown) {
-        const ax = e as { response?: { data?: { message?: string } }; message?: string };
-        setSmsError(ax?.response?.data?.message ?? ax?.message ?? 'Failed to send text message.');
-      } finally {
-        setSmsSending(false);
-      }
-    },
-    [closeSmsModal, smsClientId, smsMessage]
   );
 
   return (
@@ -1030,8 +905,7 @@ export default function CareOutreachPage() {
       <p className="settings-muted" style={{ marginBottom: 16, maxWidth: 800 }}>
         Clients and patients who still need preventive or recommended care scheduled with their
         assigned provider. Reminders disappear from this list once a future appointment exists with
-        that provider. Use Book to route a visit (hold or booked) into forward booking; text the
-        client once a hold slot is placed.
+        that provider. Use Route to send a visit (hold or booked) into forward booking.
       </p>
 
       {actionError ? (
@@ -1252,29 +1126,11 @@ export default function CareOutreachPage() {
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                   <button
                     type="button"
-                    className="btn"
-                    disabled={
-                      !careOutreachClientHasSmsPhone(client.phone) ||
-                      !bookTargetForClient(client)
-                    }
-                    title={
-                      !careOutreachClientHasSmsPhone(client.phone)
-                        ? 'Client needs a phone number on file'
-                        : !bookTargetForClient(client)
-                          ? 'No visible reminders to text about'
-                          : undefined
-                    }
-                    onClick={() => void openSmsForClient(client)}
-                  >
-                    Text client
-                  </button>
-                  <button
-                    type="button"
                     className="btn primary"
                     disabled={bookingClientKey === client.clientKey || !bookTargetForClient(client)}
                     onClick={() => void onBookClient(client)}
                   >
-                    {bookingClientKey === client.clientKey ? 'Starting…' : 'Book'}
+                    {bookingClientKey === client.clientKey ? 'Routing…' : 'Route'}
                   </button>
                 </div>
               </header>
@@ -1468,33 +1324,6 @@ export default function CareOutreachPage() {
           {pastDuePaginationBar}
         </div>
       )}
-
-      <ClientSmsComposeModal
-        open={smsClientId != null}
-        clientLabel={smsClientLabel}
-        message={smsMessage}
-        onMessageChange={setSmsMessage}
-        onClose={closeSmsModal}
-        onSend={handleSendSms}
-        onOpenMessagesHistory={() => {
-          if (smsClientId == null) return;
-          setMessagesClientId(smsClientId);
-          setMessagesClientLabel(smsClientLabel);
-        }}
-        sending={smsSending}
-        sendError={smsError}
-        subtitle="Review and edit the outreach message before sending."
-      />
-
-      <ClientMessagesHistoryModal
-        open={messagesClientId != null}
-        clientId={messagesClientId ?? 0}
-        clientLabel={messagesClientLabel}
-        onClose={() => {
-          setMessagesClientId(null);
-          setMessagesClientLabel('');
-        }}
-      />
     </div>
   );
 }
