@@ -15,16 +15,7 @@ import {
 import { patchReminder } from '../api/careOutreach';
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import { useAuth } from '../auth/useAuth';
-import { fetchAllAppointmentTypes, type AppointmentType } from '../api/appointmentSettings';
 import { evetClientLink, evetPatientLink } from '../utils/evet';
-import {
-  appointmentTypeIncludedInRouting,
-  normalizeAppointmentTypeFromApi,
-} from '../utils/appointmentTypeSettings';
-import {
-  writeRoutingCalendarPreview,
-  type RoutingCalendarPreviewPayloadV1,
-} from '../utils/routingCalendarPreviewStorage';
 import {
   buildRoutingForwardBookingIntentFromEntries,
   buildRoutingForwardBookingIntentFromEntry,
@@ -33,6 +24,7 @@ import {
 import {
   createForwardBookingsFromScheduleLoader,
   scheduleLoaderCandidateHasPastDueReminders,
+  scheduleLoaderRoutingSearchDateRange,
 } from '../utils/scheduleLoaderForwardBooking';
 import {
   readScheduleLoaderReturnSession,
@@ -48,6 +40,8 @@ import {
 } from '../utils/routingUiSnapshot';
 import { practiceTimeZoneOrDefault } from '../utils/practiceTimezone';
 import { fetchClientMessages, type ClientMessagesResponse } from '../api/clientPortal';
+import { BookPatientChartButton } from '../components/BookPatientChartButton';
+import { SCHEDULING_TOOLS_PAGE_REFRESH_EVENT } from '../hooks/useSchedulingToolsNavCounts';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 
@@ -76,33 +70,15 @@ function fillDayReminderIsHidden(r: FillDayReminder | Record<string, unknown>): 
   return (r as FillDayReminder).isHidden === true;
 }
 
-/** True if at least one reminder would appear in the schedule-loader SMS (non-hidden), matching formatSmsMessage. */
-function fillDayCandidateHasVisibleReminderForSms(candidate: FillDayCandidate): boolean {
-  if (candidate.patients && candidate.patients.length > 0) {
-    for (const patient of candidate.patients) {
-      for (const r of patient.reminders ?? []) {
-        if (!fillDayReminderIsHidden(r)) return true;
-      }
-    }
-    return false;
-  }
-  const patientNames = candidate.patientNames ?? [];
-  for (const reminder of candidate.reminders ?? []) {
-    if (fillDayReminderIsHidden(reminder)) continue;
-    const reminderIdx = candidate.reminderIds.findIndex((id) => Number(id) === Number(reminder.id));
-    if (reminderIdx >= 0 && reminderIdx < candidate.patientIds.length) {
-      return true;
-    }
-    if (patientNames.length > 0) return true;
-  }
-  return false;
-}
-
 function reminderPatchIsHidden(u: { isHidden?: boolean | null; [key: string]: unknown }): boolean | undefined {
   const any = u as Record<string, unknown>;
   if (typeof any.is_hidden === 'boolean') return any.is_hidden;
   if (typeof u.isHidden === 'boolean') return u.isHidden;
   return undefined;
+}
+
+function hasFillDayDeepLinkParams(searchParams: URLSearchParams): boolean {
+  return Boolean(searchParams.get('doctorId')?.trim() && searchParams.get('targetDate')?.trim());
 }
 
 function mergeReminderFieldsIntoCandidates(
@@ -141,10 +117,6 @@ function findFillDayReminderInCandidates(
     }
   }
   return undefined;
-}
-
-function hasFillDayDeepLinkParams(searchParams: URLSearchParams): boolean {
-  return Boolean(searchParams.get('doctorId')?.trim() && searchParams.get('targetDate')?.trim());
 }
 
 function findProviderForFillDoctorId(
@@ -188,29 +160,6 @@ function applyFillDayDoctorSelection(
     name: provider.name,
     query: cachedQuery?.trim() || provider.name,
   };
-}
-
-function resolveFillDayPreviewAppointmentTypeId(
-  types: AppointmentType[],
-  candidate: FillDayCandidate,
-): number | null {
-  const lastSeen =
-    candidate.patients?.find((p) => p.lastSeenAppointmentType?.trim())?.lastSeenAppointmentType?.trim() ??
-    '';
-  if (lastSeen) {
-    const key = lastSeen.toLowerCase();
-    const matched = types.find((t) => {
-      const pretty = String(t.prettyName || t.name || '').toLowerCase();
-      const name = String(t.name || '').toLowerCase();
-      return pretty === key || name === key || pretty.includes(key) || key.includes(pretty);
-    });
-    if (matched?.id != null) return Number(matched.id);
-  }
-  const prefer =
-    types.find((t) =>
-      /wellness|standard|check-up|checkup|office/i.test(String(t.prettyName || t.name || '')),
-    ) ?? types[0];
-  return prefer?.id != null ? Number(prefer.id) : null;
 }
 
 function fillDayPreviewPatients(candidate: FillDayCandidate): { id: number; name: string }[] {
@@ -288,7 +237,6 @@ export default function FillDayPage() {
   const [pendingSmsCandidate, setPendingSmsCandidate] = useState<FillDayCandidate | null>(null);
   const [smsMessagePreview, setSmsMessagePreview] = useState<string>('');
   const [sendWithOverride, setSendWithOverride] = useState(false);
-  const [scheduleLoaderPostBookSms, setScheduleLoaderPostBookSms] = useState(false);
 
   // Check if we're in production
   // Vite provides:
@@ -321,8 +269,6 @@ export default function FillDayPage() {
     finalIsProd: isProd,
   });
 
-  const [doctorIdByPims, setDoctorIdByPims] = useState<Record<string, string>>({});
-  const [appointmentTypes, setAppointmentTypes] = useState<AppointmentType[]>([]);
   const [viewPlacementClientId, setViewPlacementClientId] = useState<number | null>(null);
   const [highlightClientId, setHighlightClientId] = useState<number | null>(null);
 
@@ -364,23 +310,6 @@ export default function FillDayPage() {
       alive = false;
     };
   }, [userEmail]);
-
-  useEffect(() => {
-    let cancelled = false;
-    fetchAllAppointmentTypes(FILL_DAY_PRACTICE_ID, { activeOnly: true })
-      .then((rows) => {
-        if (cancelled) return;
-        setAppointmentTypes(
-          rows
-            .map((t) => normalizeAppointmentTypeFromApi(t))
-            .filter((t) => appointmentTypeIncludedInRouting(t)),
-        );
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   const flushOutreachNotesSave = useCallback(async (reminderId: number, value: string) => {
     setOutreachNoteSaving((s) => ({ ...s, [reminderId]: true }));
@@ -583,7 +512,7 @@ export default function FillDayPage() {
     return () => window.cancelAnimationFrame(raf);
   }, [searchParams, loading, candidates.length, setSearchParams]);
 
-  // After booking from calendar preview, open the post-book SMS modal (past-due wording).
+  // After booking from calendar preview, open text modal with care outreach wording.
   useEffect(() => {
     const pending = readScheduleLoaderReturnSession();
     if (!pending?.openSms || scheduleLoaderReturnHandledRef.current) return;
@@ -620,7 +549,6 @@ export default function FillDayPage() {
         setSmsMessagePreview(message);
         setPendingSmsCandidate(candidate);
         setSendWithOverride(false);
-        setScheduleLoaderPostBookSms(true);
         setSmsModalOpen(true);
         setHighlightClientId(candidate.clientId);
       } catch {
@@ -784,6 +712,16 @@ export default function FillDayPage() {
     }
   }
 
+  useEffect(() => {
+    const onPageRefresh = () => {
+      if (!selectedDoctorId || !targetDate) return;
+      if (candidates.length === 0 && stats === null) return;
+      void handleFetchCandidates();
+    };
+    window.addEventListener(SCHEDULING_TOOLS_PAGE_REFRESH_EVENT, onPageRefresh);
+    return () => window.removeEventListener(SCHEDULING_TOOLS_PAGE_REFRESH_EVENT, onPageRefresh);
+  }, [selectedDoctorId, targetDate, candidates.length, stats]);
+
   // Format time
   function formatTime(iso: string): string {
     return DateTime.fromISO(iso).toLocaleString(DateTime.TIME_SIMPLE);
@@ -835,102 +773,11 @@ export default function FillDayPage() {
     return parts.join(' ');
   }
 
-  // Format SMS message
-  function formatSmsMessage(candidate: FillDayCandidate): string {
-    const proposedTime = formatTime(candidate.proposedStartIso);
-    const proposedDate = formatDate(candidate.proposedStartIso);
-    const arrivalWindowStart = formatTime(candidate.arrivalWindow.start);
-    const arrivalWindowEnd = formatTime(candidate.arrivalWindow.end);
-    
-    // Group reminders by pet name using nested reminders structure
-    const remindersByPet = new Map<string, string[]>();
-    
-    // Use the new structure: each patient has its own reminders array
-    if (candidate.patients && candidate.patients.length > 0) {
-      candidate.patients.forEach((patient) => {
-        const petName = patient.name;
-        if (patient.reminders && patient.reminders.length > 0) {
-          const visible = patient.reminders.filter((r) => !fillDayReminderIsHidden(r));
-          if (visible.length > 0) {
-            remindersByPet.set(
-              petName,
-              visible.map((r) => r.description)
-            );
-          }
-        }
-      });
-    } else {
-      // Fallback to old structure if patients array not available
-      candidate.patientNames.forEach((petName) => {
-        if (!remindersByPet.has(petName)) {
-          remindersByPet.set(petName, []);
-        }
-      });
-      
-      // Match reminders to pets using old logic
-      candidate.reminders.forEach((reminder) => {
-        if (fillDayReminderIsHidden(reminder)) return;
-        const reminderIdx = candidate.reminderIds.findIndex(
-          (id) => Number(id) === Number(reminder.id)
-        );
-        
-        if (reminderIdx >= 0 && reminderIdx < candidate.patientIds.length) {
-          const petName = candidate.patientNames[reminderIdx] || candidate.patientName;
-          if (remindersByPet.has(petName)) {
-            remindersByPet.get(petName)!.push(reminder.description);
-          }
-        } else if (candidate.patientNames.length > 0) {
-          const firstPetName = candidate.patientNames[0] || candidate.patientName;
-          if (remindersByPet.has(firstPetName)) {
-            remindersByPet.get(firstPetName)!.push(reminder.description);
-          }
-        }
-      });
-    }
-    
-    // Build consolidated reminders list: "Pet:\n- reminder1\n- reminder2"
-    const remindersList = Array.from(remindersByPet.entries())
-      .filter(([_, reminders]) => reminders.length > 0) // Only include pets with reminders
-      .map(([petName, reminders]) => {
-        const reminderLines = reminders.map(reminder => `- ${reminder}`).join('\n');
-        return `${petName}:\n${reminderLines}`;
-      })
-      .join('\n\n');
-
-    // Use first pet name for the booking reference
-    const firstPetName = candidate.patientNames[0] || candidate.patientName;
-
-    return `Hi ${candidate.clientName.split(' ')[0]},
-
-We have availability to see your pet for their overdue reminders:
-
-${remindersList}
-
-We would arrive on
-
-${proposedDate} at ${proposedTime} with an arrival window between ${arrivalWindowStart} - ${arrivalWindowEnd}.
-
-This spot is also being offered to other clients. If you'd like to book it for ${firstPetName}, please let us know as soon as possible by texting us or call us back here. Thanks, Vet At Your Door`;
-  }
-
-  // Handle opening SMS confirmation modal
   function handleOpenSmsModal(candidate: FillDayCandidate, withOverride: boolean = false) {
-    if (!fillDayCandidateHasVisibleReminderForSms(candidate)) {
-      return;
-    }
-    try {
-      console.log('Opening SMS modal for candidate:', candidate);
-      const message = formatSmsMessage(candidate);
-      console.log('Formatted message:', message);
-      setSmsMessagePreview(message);
-      setPendingSmsCandidate(candidate);
-      setSendWithOverride(withOverride);
-      setSmsModalOpen(true);
-      console.log('Modal state set to open, smsModalOpen should be true');
-    } catch (error) {
-      console.error('Error opening SMS modal:', error);
-      setError('Failed to open SMS modal: ' + (error instanceof Error ? error.message : String(error)));
-    }
+    setSmsMessagePreview('');
+    setPendingSmsCandidate(candidate);
+    setSendWithOverride(withOverride);
+    setSmsModalOpen(true);
   }
 
   // Handle closing SMS confirmation modal
@@ -939,20 +786,25 @@ This spot is also being offered to other clients. If you'd like to book it for $
     setPendingSmsCandidate(null);
     setSmsMessagePreview('');
     setSendWithOverride(false);
-    setScheduleLoaderPostBookSms(false);
   }
 
   // Handle sending SMS to client (after approval)
-  async function handleSendSms(candidate: FillDayCandidate, overrideNonProd: boolean = false, customMessage?: string) {
+  async function handleSendSms(
+    candidate: FillDayCandidate,
+    overrideNonProd: boolean = false,
+    customMessage?: string
+  ) {
     const clientId = candidate.clientId;
+    const smsMessage = customMessage?.trim();
+    if (!smsMessage) {
+      setSmsError((prev) => ({ ...prev, [clientId]: 'Enter a message before sending.' }));
+      return;
+    }
     setSendingSms((prev) => ({ ...prev, [clientId]: true }));
     setSmsError((prev) => ({ ...prev, [clientId]: null }));
     setSmsSuccess((prev) => ({ ...prev, [clientId]: false }));
 
     try {
-      // Use custom message if provided (from modal), otherwise use formatted message
-      const smsMessage = customMessage || formatSmsMessage(candidate);
-
       const payload: { message: string; overrideNonProd?: boolean } = {
         message: smsMessage,
       };
@@ -989,207 +841,77 @@ This spot is also being offered to other clients. If you'd like to book it for $
   // Handle approve and send
   function handleApproveAndSend() {
     if (pendingSmsCandidate) {
-      if (!fillDayCandidateHasVisibleReminderForSms(pendingSmsCandidate)) {
-        return;
-      }
-      // Use the current message preview (which may have been edited)
       handleSendSms(pendingSmsCandidate, sendWithOverride, smsMessagePreview);
     }
   }
 
   async function handleViewPlacement(candidate: FillDayCandidate) {
-    // Extract date from proposedStartIso (more reliable than parsing URL)
-    const proposedDate = DateTime.fromISO(candidate.proposedStartIso);
-    if (!proposedDate.isValid) {
-      setError('Invalid proposed start time');
-      return;
-    }
-    const dateStr = proposedDate.toISODate();
-    if (!dateStr) {
-      setError('Could not extract date from proposed start time');
+    if (!selectedDoctorId?.trim() || !targetDate?.trim()) {
+      setError('Select a doctor and target date first.');
       return;
     }
 
-    // Parse the myDayPreviewLink to extract doctor ID
-    // Format: /appointments/doctor/7840?date=2025-12-10
-    const linkMatch = candidate.myDayPreviewLink.match(/\/appointments\/doctor\/(\d+)/);
-    if (!linkMatch) {
-      setError('Could not parse doctor ID from preview link');
-      return;
-    }
+    const provider = findProviderForFillDoctorId(allProviders, selectedDoctorId);
+    const internalProviderId =
+      provider?.id != null && Number.isFinite(Number(provider.id)) ? Number(provider.id) : undefined;
+    const doctorPimsId = provider ? fillDoctorIdForProvider(provider) : selectedDoctorId.trim();
 
-    const doctorPimsId = linkMatch[1];
-
-    // Resolve internal doctor ID from pimsId
-    let internalId: string | undefined = doctorIdByPims[doctorPimsId];
-
-    if (!internalId) {
-      try {
-        const { data } = await http.get(`/employees/pims/${encodeURIComponent(doctorPimsId)}`);
-        const emp = Array.isArray(data) ? data[0] : data;
-        const resolvedId =
-          (emp?.id != null ? String(emp.id) : undefined) ??
-          (emp?.employee?.id != null ? String(emp.employee.id) : undefined);
-
-        if (resolvedId) {
-          internalId = resolvedId;
-          setDoctorIdByPims((m) => ({ ...m, [doctorPimsId]: resolvedId }));
-        }
-      } catch (e: any) {
-        setError('Could not resolve doctor ID: ' + (e?.message || 'Unknown error'));
-        return;
-      }
-    }
-
-    if (!internalId) {
-      setError('Could not resolve doctor ID');
-      return;
-    }
-
-    // Find doctor name from selected doctor or providers list
-    const doctor = allProviders.find((p) => {
-      const pimsId = p.pimsId ? String(p.pimsId) : String(p.id);
-      return pimsId === doctorPimsId;
-    });
-    const doctorName = doctor?.name || selectedDoctorName || 'Doctor';
-    const serviceMinutes = Math.max(1, Math.round(candidate.requiredDuration / 60));
-    const insertionIndex = candidate.holeIndex != null ? Math.max(0, candidate.holeIndex - 1) : 0;
-    const normalizedDate = proposedDate.toISODate() || dateStr.split('T')[0];
-
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(normalizedDate)) {
-      setError('Invalid date format: ' + normalizedDate);
-      return;
-    }
-
-    const lat =
-      candidate.client?.lat != null && Number.isFinite(candidate.client.lat)
-        ? candidate.client.lat
-        : candidate.address?.lat;
-    const lon =
-      candidate.client?.lon != null && Number.isFinite(candidate.client.lon)
-        ? candidate.client.lon
-        : candidate.address?.lon;
-    const address =
-      candidate.address?.fullAddress ||
-      [
-        candidate.address?.address1,
-        candidate.address?.city,
-        candidate.address?.state,
-        candidate.address?.zipcode,
-      ]
-        .filter(Boolean)
-        .join(', ');
-    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-      setError(
-        address.trim()
-          ? 'This client address is missing coordinates needed for calendar preview.'
-          : 'Missing address for calendar preview.',
-      );
-      return;
-    }
-
-    let types = appointmentTypes;
-    if (types.length === 0) {
-      try {
-        const rows = await fetchAllAppointmentTypes(FILL_DAY_PRACTICE_ID, { activeOnly: true });
-        types = rows
-          .map((t) => normalizeAppointmentTypeFromApi(t))
-          .filter((t) => appointmentTypeIncludedInRouting(t));
-        setAppointmentTypes(types);
-      } catch {
-        setError('Appointment types are still loading. Try again in a moment.');
-        return;
-      }
-    }
-    const appointmentTypeId = resolveFillDayPreviewAppointmentTypeId(types, candidate);
-    if (appointmentTypeId == null) {
-      setError('Could not determine an appointment type for calendar preview.');
-      return;
-    }
-
-    let forwardBookingEntries;
+    setError(null);
     try {
-      forwardBookingEntries = await createForwardBookingsFromScheduleLoader(
+      const forwardBookingEntries = await createForwardBookingsFromScheduleLoader(
         candidate,
         FILL_DAY_PRACTICE_ID,
-        { primaryProviderId: Number(internalId) }
+        { primaryProviderId: internalProviderId ?? null }
       );
+      const anchor = forwardBookingEntries[0];
+      if (!anchor) {
+        setError('Could not create forward booking rows for this client.');
+        return;
+      }
+      const baseIntent =
+        forwardBookingEntries.length > 1
+          ? buildRoutingForwardBookingIntentFromEntries(anchor, forwardBookingEntries)
+          : buildRoutingForwardBookingIntentFromEntry(anchor);
+      if (!baseIntent) {
+        setError('This client is missing data needed for routing.');
+        return;
+      }
+
+      const searchDate = targetDate.trim();
+      const returnHref =
+        `/schedule/scheduling-tools/schedule-loader?targetDate=${encodeURIComponent(searchDate)}` +
+        (internalProviderId != null
+          ? `&doctorId=${encodeURIComponent(String(internalProviderId))}`
+          : '') +
+        `&scrollClientId=${encodeURIComponent(String(candidate.clientId))}`;
+
+      writeRoutingForwardBookingIntent({
+        ...baseIntent,
+        returnToListAfterBook: true,
+        workspaceActive: true,
+        origin: 'schedule_loader',
+        scheduleLoaderAnyPastDue: scheduleLoaderCandidateHasPastDueReminders(candidate),
+        serviceMinutes: Math.max(1, Math.round(candidate.requiredDuration / 60)),
+        ...(internalProviderId != null
+          ? { primaryProviderInternalId: String(internalProviderId) }
+          : {}),
+        primaryDoctorPimsId: doctorPimsId,
+        primaryDoctorDisplayName: selectedDoctorName?.trim() || provider?.name,
+        routingSearch: scheduleLoaderRoutingSearchDateRange(searchDate),
+        reserveOption: ignoreEmergencyBlocks ? 'reserve-only' : null,
+        scheduleLoaderReturn: {
+          clientId: candidate.clientId,
+          returnHref,
+        },
+      });
+      navigate('/schedule/routing');
     } catch (e: unknown) {
       const msg =
         (e as { response?: { data?: { message?: string } } })?.response?.data?.message ??
         (e as Error)?.message ??
-        'Could not create forward booking rows for this client.';
+        'Could not start routing.';
       setError(String(msg));
-      return;
     }
-    const anchor = forwardBookingEntries[0];
-    if (!anchor) {
-      setError('Could not create forward booking rows for this client.');
-      return;
-    }
-    const forwardBookingIntent =
-      forwardBookingEntries.length > 1
-        ? buildRoutingForwardBookingIntentFromEntries(anchor, forwardBookingEntries)
-        : buildRoutingForwardBookingIntentFromEntry(anchor);
-    if (!forwardBookingIntent) {
-      setError('This client is missing data needed for booking.');
-      return;
-    }
-    writeRoutingForwardBookingIntent({
-      ...forwardBookingIntent,
-      returnToListAfterBook: true,
-      origin: 'schedule_loader',
-      scheduleLoaderAnyPastDue: scheduleLoaderCandidateHasPastDueReminders(candidate),
-    });
-
-    const previewPatients = fillDayPreviewPatients(candidate);
-    const option = {
-      date: normalizedDate,
-      insertionIndex,
-      suggestedStartIso: candidate.proposedStartIso,
-      doctorPimsId: internalId,
-      doctorName,
-      projectedDriveSeconds: candidate.addedDriveSeconds,
-      currentDriveSeconds: candidate.addedDriveSeconds,
-      clientName: candidate.clientName,
-      arrivalWindow: candidate.arrivalWindow
-        ? {
-            windowStartIso: candidate.arrivalWindow.start,
-            windowEndIso: candidate.arrivalWindow.end,
-          }
-        : undefined,
-    };
-
-    const returnHref =
-      `/schedule/scheduling-tools/schedule-loader?targetDate=${encodeURIComponent(targetDate)}` +
-      `&doctorId=${encodeURIComponent(internalId)}` +
-      `&scrollClientId=${encodeURIComponent(String(candidate.clientId))}`;
-
-    const payload: RoutingCalendarPreviewPayloadV1 = {
-      version: 1,
-      previewSource: 'schedule-loader',
-      scheduleLoaderReturn: {
-        clientId: candidate.clientId,
-        returnHref,
-      },
-      option,
-      serviceMinutes,
-      newApptMeta: {
-        clientId: String(candidate.clientId),
-        address,
-        city: candidate.address?.city,
-        state: candidate.address?.state,
-        zip: candidate.address?.zipcode,
-        lat,
-        lon,
-      },
-      appointmentTypeId,
-      clientDisplayLabel: candidate.clientName?.trim() || undefined,
-      ...(previewPatients.length > 0 ? { previewPatients } : {}),
-    };
-
-    writeRoutingCalendarPreview(payload);
-    navigate('/schedule/scheduler?routingPreview=1');
   }
 
   // Handle opening Messages History modal
@@ -1224,16 +946,8 @@ This spot is also being offered to other clients. If you'd like to book it for $
     setMessagesError(null);
   }
 
-  // Debug: Log modal state changes
-  useEffect(() => {
-    if (import.meta.env.DEV) {
-      console.log('SMS Modal State:', { smsModalOpen, hasCandidate: !!pendingSmsCandidate });
-    }
-  }, [smsModalOpen, pendingSmsCandidate]);
-
   const canSendPendingSms =
-    pendingSmsCandidate != null &&
-    (scheduleLoaderPostBookSms || fillDayCandidateHasVisibleReminderForSms(pendingSmsCandidate));
+    pendingSmsCandidate != null && smsMessagePreview.trim().length > 0;
 
   // Handle PDF export
   async function handleExportToPDF() {
@@ -1563,7 +1277,6 @@ This spot is also being offered to other clients. If you'd like to book it for $
       {candidates.length > 0 && (
         <div style={{ display: 'grid', gap: '24px' }}>
           {candidates.map((candidate, idx) => {
-            const canSendScheduleLoaderSms = fillDayCandidateHasVisibleReminderForSms(candidate);
             return (
             <div
               id={`fill-day-client-${candidate.clientId}`}
@@ -1738,11 +1451,33 @@ This spot is also being offered to other clients. If you'd like to book it for $
                                 </div>
                               );
                             })()}
-                            {patient && formatPatientInfo(patient) && (
-                              <div style={{ fontSize: '14px', color: '#6b7280' }}>
-                                {formatPatientInfo(patient)}
+                            {(patient && formatPatientInfo(patient)) ||
+                            (patientId != null && Number.isFinite(Number(patientId))) ? (
+                              <div
+                                style={{
+                                  fontSize: '14px',
+                                  color: '#6b7280',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '8px',
+                                  flexWrap: 'wrap',
+                                }}
+                              >
+                                {patient && formatPatientInfo(patient) ? (
+                                  <span>{formatPatientInfo(patient)}</span>
+                                ) : null}
+                                {patientId != null && Number.isFinite(Number(patientId)) ? (
+                                  <BookPatientChartButton
+                                    patientId={String(patientId)}
+                                    patientName={petName}
+                                    practiceId={FILL_DAY_PRACTICE_ID}
+                                    practiceTz={FILL_DAY_PRACTICE_TZ}
+                                    label="View details"
+                                    showAlerts
+                                  />
+                                ) : null}
                               </div>
-                            )}
+                            ) : null}
                           </div>
                           
                           {/* Patient Alerts */}
@@ -2020,66 +1755,6 @@ This spot is also being offered to other clients. If you'd like to book it for $
               <div style={{ display: 'flex', gap: '12px', marginTop: '16px', flexWrap: 'wrap' }}>
                 <button
                   type="button"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    console.log('Button clicked for candidate:', candidate.clientId);
-                    handleOpenSmsModal(candidate, false);
-                  }}
-                  disabled={sendingSms[candidate.clientId] || !canSendScheduleLoaderSms}
-                  title={
-                    !canSendScheduleLoaderSms
-                      ? 'All reminders for these pets are hidden. Unhide at least one reminder to send a text.'
-                      : undefined
-                  }
-                  style={{
-                    padding: '10px 20px',
-                    background:
-                      sendingSms[candidate.clientId] || !canSendScheduleLoaderSms ? '#ccc' : '#4FB128',
-                    color: '#fff',
-                    border: 'none',
-                    borderRadius: '8px',
-                    fontSize: '14px',
-                    fontWeight: 600,
-                    cursor:
-                      sendingSms[candidate.clientId] || !canSendScheduleLoaderSms ? 'not-allowed' : 'pointer',
-                  }}
-                >
-                  {sendingSms[candidate.clientId] ? 'Sending...' : 'Send Text To Client'}
-                </button>
-                {!isProd && (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      console.log('Button clicked for candidate (override):', candidate.clientId);
-                      handleOpenSmsModal(candidate, true);
-                    }}
-                    disabled={sendingSms[candidate.clientId] || !canSendScheduleLoaderSms}
-                    title={
-                      !canSendScheduleLoaderSms
-                        ? 'All reminders for these pets are hidden. Unhide at least one reminder to send a text.'
-                        : undefined
-                    }
-                    style={{
-                      padding: '10px 20px',
-                      background:
-                        sendingSms[candidate.clientId] || !canSendScheduleLoaderSms ? '#ccc' : '#f59e0b',
-                      color: '#fff',
-                      border: 'none',
-                      borderRadius: '8px',
-                      fontSize: '14px',
-                      fontWeight: 600,
-                      cursor:
-                        sendingSms[candidate.clientId] || !canSendScheduleLoaderSms ? 'not-allowed' : 'pointer',
-                    }}
-                  >
-                    {sendingSms[candidate.clientId] ? 'Sending...' : 'Send to Actual Client'}
-                  </button>
-                )}
-                <button
-                  type="button"
                   onClick={() => {
                     setViewPlacementClientId(candidate.clientId);
                     void handleViewPlacement(candidate).finally(() => setViewPlacementClientId(null));
@@ -2097,8 +1772,52 @@ This spot is also being offered to other clients. If you'd like to book it for $
                     opacity: viewPlacementClientId === candidate.clientId ? 0.7 : 1,
                   }}
                 >
-                  {viewPlacementClientId === candidate.clientId ? 'Booking…' : 'Book'}
+                  {viewPlacementClientId === candidate.clientId ? 'Routing…' : 'Route'}
                 </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    handleOpenSmsModal(candidate, false);
+                  }}
+                  disabled={Boolean(sendingSms[candidate.clientId])}
+                  style={{
+                    padding: '10px 20px',
+                    background: sendingSms[candidate.clientId] ? '#ccc' : '#4FB128',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: '8px',
+                    fontSize: '14px',
+                    fontWeight: 600,
+                    cursor: sendingSms[candidate.clientId] ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  {sendingSms[candidate.clientId] ? 'Sending…' : 'Text client'}
+                </button>
+                {!isProd && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      handleOpenSmsModal(candidate, true);
+                    }}
+                    disabled={Boolean(sendingSms[candidate.clientId])}
+                    style={{
+                      padding: '10px 20px',
+                      background: sendingSms[candidate.clientId] ? '#ccc' : '#f59e0b',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: '8px',
+                      fontSize: '14px',
+                      fontWeight: 600,
+                      cursor: sendingSms[candidate.clientId] ? 'not-allowed' : 'pointer',
+                    }}
+                  >
+                    {sendingSms[candidate.clientId] ? 'Sending…' : 'Send to actual client'}
+                  </button>
+                )}
               </div>
             </div>
             );
@@ -2141,10 +1860,10 @@ This spot is also being offered to other clients. If you'd like to book it for $
           >
             <div style={{ marginBottom: '20px' }}>
               <h3 style={{ margin: '0 0 8px', fontSize: '20px', fontWeight: 600 }}>
-                Confirm Send Text Message
+                Text client
               </h3>
               <p style={{ margin: 0, color: '#6b7280', fontSize: '14px' }}>
-                Review the message before sending to {pendingSmsCandidate.clientName}
+                {pendingSmsCandidate.clientName}
               </p>
               {sendWithOverride && (
                 <p style={{ margin: '8px 0 0', color: '#f59e0b', fontSize: '14px', fontWeight: 600 }}>
@@ -2174,7 +1893,7 @@ This spot is also being offered to other clients. If you'd like to book it for $
                   resize: 'vertical',
                   whiteSpace: 'pre-wrap',
                 }}
-                placeholder="Enter your message here..."
+                placeholder="Write your message…"
               />
             </div>
 
@@ -2213,7 +1932,7 @@ This spot is also being offered to other clients. If you'd like to book it for $
                       : 'pointer',
                 }}
               >
-                {sendingSms[pendingSmsCandidate.clientId] ? 'Sending...' : 'Send Message'}
+                {sendingSms[pendingSmsCandidate.clientId] ? 'Sending…' : 'Send message'}
               </button>
             </div>
           </div>

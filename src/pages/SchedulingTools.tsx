@@ -1,40 +1,22 @@
+import { useState } from 'react';
 import { NavLink, Outlet, useLocation, useOutletContext } from 'react-router-dom';
+import { SCHEDULING_TOOL_TABS, isSchedulingToolTabActive } from '../scheduling-tools-nav';
 import {
-  SCHEDULING_TOOL_TABS,
-  SCHEDULING_WORKFLOW_TABS,
-  isSchedulingToolTabActive,
-  isSchedulingWorkflowTabActive,
-} from '../scheduling-tools-nav';
-import { useSchedulingToolsNavCounts } from '../hooks/useSchedulingToolsNavCounts';
+  notifySchedulingToolsPageRefresh,
+  useSchedulingToolsNavCounts,
+} from '../hooks/useSchedulingToolsNavCounts';
 import './Settings.css';
 
 type SchedulingToolsOutletContext = {
   schedulingToolsLinkPrefix?: string;
 };
 
-function navTabCount(count: number | undefined, loading: boolean): string {
-  if (loading || count == null) return '';
-  return ` (${count})`;
-}
-
-function OnHoldNavTabLabel({
-  total,
-  over24,
-  loading,
-}: {
-  total: number;
-  over24: number;
-  loading: boolean;
-}) {
-  if (loading) return null;
+function TabCount({ count, loading }: { count: number | undefined; loading: boolean }) {
+  if (loading || !count) return null;
   return (
-    <>
-      {' ('}
-      {total}
-      {', '}
-      <span className="scheduling-tools-nav__on-hold-over24">{over24} &gt; 24 hours</span>
-      {')'}
-    </>
+    <span className="scheduling-tools-nav__count" aria-hidden>
+      {count}
+    </span>
   );
 }
 
@@ -42,7 +24,32 @@ export default function SchedulingTools() {
   const location = useLocation();
   const ctx = useOutletContext<SchedulingToolsOutletContext | undefined>();
   const base = (ctx?.schedulingToolsLinkPrefix ?? '/scheduling-tools').replace(/\/$/, '');
-  const { counts, loading: countsLoading } = useSchedulingToolsNavCounts(true, location.pathname);
+  const { counts, loading: countsLoading, refresh } = useSchedulingToolsNavCounts(true, location.pathname);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const handleRefresh = async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      await refresh();
+      notifySchedulingToolsPageRefresh();
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const countForTab = (path: string): number | undefined => {
+    switch (path) {
+      case 'care-outreach':
+        return counts.careOutreachPriority;
+      case 'forward-booking':
+        return counts.forwardBookingPending;
+      case 'texted-offers':
+        return counts.textedOffersActive;
+      default:
+        return undefined;
+    }
+  };
 
   return (
     <div className="container">
@@ -53,71 +60,75 @@ export default function SchedulingTools() {
         </p>
 
         <nav className="scheduling-tools-nav" aria-label="Scheduling tools">
-          <div className="scheduling-tools-nav__row">
-            <span className="scheduling-tools-nav__label" id="scheduling-tools-fill-schedule-label">
-              Fill Schedule
-            </span>
-            <div className="scheduling-tools-nav__tabs" role="tablist" aria-labelledby="scheduling-tools-fill-schedule-label">
-              {SCHEDULING_TOOL_TABS.map((tab) => {
-                const countSuffix =
-                  tab.path === 'forward-booking'
-                    ? navTabCount(counts.forwardBookingPending, countsLoading)
-                    : tab.path === 'care-outreach'
-                      ? navTabCount(counts.careOutreachPriority, countsLoading)
-                      : '';
-                return (
-                  <NavLink
-                    key={tab.path}
-                    to={`${base}/${tab.path}`}
-                    end={false}
-                    className={({ isActive }) =>
-                      `settings-tab scheduling-tools-nav__tab${
-                        isActive || isSchedulingToolTabActive(location.pathname, tab.path) ? ' active' : ''
-                      }`
-                    }
-                  >
-                    {tab.label}
-                    {countSuffix}
-                  </NavLink>
-                );
-              })}
-            </div>
+          <div className="scheduling-tools-nav__tabs" role="tablist">
+            {SCHEDULING_TOOL_TABS.map((tab) => {
+              const showOver24 =
+                tab.path === 'forward-booking' && !countsLoading && counts.onHoldOver24 > 0;
+              const showTextedOffersFollowUp =
+                tab.path === 'texted-offers' &&
+                !countsLoading &&
+                counts.textedOffersNeedsFollowUp > 0;
+              const showTextedOffersToConfirm =
+                tab.path === 'texted-offers' &&
+                !countsLoading &&
+                counts.textedOffersToConfirm > 0;
+              return (
+                <NavLink
+                  key={tab.path}
+                  to={`${base}/${tab.path}`}
+                  end={false}
+                  className={({ isActive }) =>
+                    `settings-tab scheduling-tools-nav__tab${
+                      isActive || isSchedulingToolTabActive(location.pathname, tab.path)
+                        ? ' active'
+                        : ''
+                    }`
+                  }
+                >
+                  <span>{tab.label}</span>
+                  <TabCount count={countForTab(tab.path)} loading={countsLoading} />
+                  {showOver24 ? (
+                    <span
+                      className="scheduling-tools-nav__alert"
+                      title={`${counts.onHoldOver24} on hold over 24 hours`}
+                    >
+                      {counts.onHoldOver24} &gt; 24h
+                    </span>
+                  ) : null}
+                  {tab.path === 'texted-offers' &&
+                  (showTextedOffersFollowUp || showTextedOffersToConfirm) ? (
+                    <span className="scheduling-tools-nav__alerts-stack">
+                      {showTextedOffersFollowUp ? (
+                        <span
+                          className="scheduling-tools-nav__alert scheduling-tools-nav__alert--follow-up"
+                          title={`${counts.textedOffersNeedsFollowUp} need follow-up`}
+                        >
+                          {counts.textedOffersNeedsFollowUp} follow-up
+                        </span>
+                      ) : null}
+                      {showTextedOffersToConfirm ? (
+                        <span
+                          className="scheduling-tools-nav__alert scheduling-tools-nav__alert--to-confirm"
+                          title={`${counts.textedOffersToConfirm} waiting for staff review`}
+                        >
+                          {counts.textedOffersToConfirm} to review
+                        </span>
+                      ) : null}
+                    </span>
+                  ) : null}
+                </NavLink>
+              );
+            })}
           </div>
-
-          <div className="scheduling-tools-nav__row scheduling-tools-nav__row--workflow">
-            <span className="scheduling-tools-nav__label" id="scheduling-tools-follow-up-label">
-              Follow-up
-            </span>
-            <div
-              className="scheduling-tools-nav__tabs"
-              role="tablist"
-              aria-labelledby="scheduling-tools-follow-up-label"
-            >
-              {SCHEDULING_WORKFLOW_TABS.map((tab) => (
-                  <NavLink
-                    key={tab.path}
-                    to={`${base}/${tab.path}`}
-                    end={false}
-                    className={({ isActive }) =>
-                      `settings-tab scheduling-tools-nav__tab scheduling-tools-nav__tab--workflow${
-                        isActive || isSchedulingWorkflowTabActive(location.pathname, tab.path)
-                          ? ' active'
-                          : ''
-                      }`
-                    }
-                  >
-                    {tab.label}
-                    {tab.path === 'on-hold' ? (
-                      <OnHoldNavTabLabel
-                        total={counts.onHold}
-                        over24={counts.onHoldOver24}
-                        loading={countsLoading}
-                      />
-                    ) : null}
-                  </NavLink>
-                ))}
-            </div>
-          </div>
+          <button
+            type="button"
+            className="btn secondary scheduling-tools-nav__refresh"
+            disabled={refreshing || countsLoading}
+            onClick={() => void handleRefresh()}
+            title="Refresh tab counts and reload the current list"
+          >
+            {refreshing ? 'Refreshing…' : 'Refresh'}
+          </button>
         </nav>
 
         <Outlet />

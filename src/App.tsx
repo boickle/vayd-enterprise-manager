@@ -41,10 +41,12 @@ import Scheduler from './pages/Scheduler';
 import Analytics from './pages/Analytics';
 import PostAppointmentSurvey from './pages/PostAppointmentSurvey';
 import PublicReferAFriend from './pages/PublicReferAFriend';
+import SlotOfferConfirmPage from './pages/SlotOfferConfirmPage';
 import ErrorPage from './pages/ErrorPage';
 import { usePageTracking } from './hooks/usePageTracking';
 import { isCreateClientEnabled, isProduction } from './utils/env';
 import { savePostLoginRedirect } from './utils/postLoginRedirect';
+import { isPublicClientLinkPath } from './utils/publicClientLinkPaths';
 import { blockRoutingCalendarPreviewNavigation } from './utils/routingCalendarPreviewGuard';
 import { markSchedulerHandoffPreferRoutingDoctor } from './utils/schedulerCalendarHandoff';
 
@@ -94,6 +96,15 @@ function RouteGuard() {
 
   const isClient = roles.includes('client');
   const path = location.pathname; // pathname doesn't include query params, which is what we want
+
+  // Magic-link client pages (confirm offer, survey, room loader, etc.) — never behind login
+  if (isPublicClientLinkPath(path)) {
+    return (
+      <div className="container">
+        <p>Not found</p>
+      </div>
+    );
+  }
 
   // Not logged in - redirect to login
   if (!token) {
@@ -312,9 +323,7 @@ export default function App() {
         location.pathname !== '/create-client' &&
         location.pathname !== '/reset-password' &&
         location.pathname !== '/request-reset' &&
-        !location.pathname.startsWith('/public/room-loader') &&
-        !location.pathname.startsWith('/survey/') &&
-        !location.pathname.startsWith('/refer-a-friend') && (
+        !isPublicClientLinkPath(location.pathname) && (
           <header
             className={`navbar${
               token && !isClient && location.pathname.startsWith('/schedule') ? ' navbar--schedule-shell' : ''
@@ -441,6 +450,8 @@ export default function App() {
           <Route path="/survey/:surveySlug" element={<PostAppointmentSurvey />} />
           <Route path="/survey/:surveySlug/*" element={<PostAppointmentSurvey />} />
           <Route path="/refer-a-friend" element={<PublicReferAFriend />} />
+          {/* Slot offer confirm — same host as portal, e.g. /confirm/:token from SMS */}
+          <Route path="/confirm/:token" element={<SlotOfferConfirmPage />} />
           {/* Public room loader form (no authentication required) */}
           <Route path="/public/room-loader/form" element={<PublicRoomLoaderForm />} />
 

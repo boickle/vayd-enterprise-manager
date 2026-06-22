@@ -2334,14 +2334,19 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
         resolvedDoctor?.displayName?.trim() || intent.primaryDoctorDisplayName?.trim() || '';
 
       const routingDates =
-        intent.origin === 'care_outreach'
-          ? careOutreachRoutingSearchDateRange(DEFAULT_PRACTICE_TIMEZONE)
-          : forwardBookingRoutingSearchDateRange({
-              intervalAmount: intent.intervalAmount,
-              intervalUnit: intent.intervalUnit,
-              targetDueDateIso: intent.targetDueDate,
-              practiceTz: DEFAULT_PRACTICE_TIMEZONE,
-            });
+        intent.routingSearch?.startDate?.trim() && intent.routingSearch?.endDate?.trim()
+          ? {
+              startDate: intent.routingSearch.startDate.trim(),
+              endDate: intent.routingSearch.endDate.trim(),
+            }
+          : intent.origin === 'care_outreach'
+            ? careOutreachRoutingSearchDateRange(DEFAULT_PRACTICE_TIMEZONE)
+            : forwardBookingRoutingSearchDateRange({
+                intervalAmount: intent.intervalAmount,
+                intervalUnit: intent.intervalUnit,
+                targetDueDateIso: intent.targetDueDate,
+                practiceTz: DEFAULT_PRACTICE_TIMEZONE,
+              });
 
       setForm((f) => ({
         ...f,
@@ -2394,6 +2399,10 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
 
       if (pimsDoc) {
         setDoctorQuery(doctorDisplayName || `Doctor ${pimsDoc}`);
+      }
+
+      if (intent.reserveOption !== undefined) {
+        setReserveOption(intent.reserveOption);
       }
 
       const flashFields: RoutingPrefillFlashField[] = [];
@@ -2749,6 +2758,16 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
         payload.previewPatients = chipPreview;
       }
     }
+
+    const forwardBookingIntent = readRoutingForwardBookingIntent();
+    if (
+      forwardBookingIntent?.origin === 'schedule_loader' &&
+      forwardBookingIntent.scheduleLoaderReturn
+    ) {
+      payload.previewSource = 'schedule-loader';
+      payload.scheduleLoaderReturn = forwardBookingIntent.scheduleLoaderReturn;
+    }
+
     writeRoutingCalendarPreview(payload);
     if (calendarWorkspaceMode) {
       setCalendarPreviewTick((n) => n + 1);

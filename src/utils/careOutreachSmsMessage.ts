@@ -1,5 +1,14 @@
 import type { ForwardBookingSmsBookedSlot } from './forwardBookingSmsMessage';
 
+/** Appended to client-facing care outreach SMS (hold follow-up and text offers). */
+export const CARE_OUTREACH_SMS_SUFFIX = '-- neighborhood slots go fast.';
+
+export function appendCareOutreachSmsSuffix(message: string): string {
+  const trimmed = message.trimEnd();
+  if (trimmed.includes(CARE_OUTREACH_SMS_SUFFIX)) return trimmed;
+  return `${trimmed} ${CARE_OUTREACH_SMS_SUFFIX}`;
+}
+
 function formatPetNamesPhrase(names: readonly string[]): { phrase: string; count: number } {
   const cleaned = names.map((n) => n.trim()).filter(Boolean);
   if (cleaned.length === 0) return { phrase: 'your pet', count: 1 };
@@ -51,9 +60,13 @@ export function buildCareOutreachSmsMessage(opts: {
   const windowEnd = opts.bookedSlot?.windowEnd?.trim() || 'xxxx';
   const doctorLastName = opts.providerLastName?.trim() || 'xxxxx';
   if (opts.anyPastDue) {
-    return `Hi ${firstName}, it's Dr. ${doctorLastName}'s team at Vet At Your Door! It looks like ${pets} ${haveVerb} a few things past due, and Dr. ${doctorLastName} is going to be in your neighborhood on ${datePart} between ${windowStart} and ${windowEnd}. Would it be a good time for the team to stop by then to get ${pets} all up to date?`;
+    return appendCareOutreachSmsSuffix(
+      `Hi ${firstName}, it's Dr. ${doctorLastName}'s team at Vet At Your Door! It looks like ${pets} ${haveVerb} a few things past due, and Dr. ${doctorLastName} is going to be in your neighborhood on ${datePart} between ${windowStart} and ${windowEnd}. Would it be a good time for the team to stop by then to get ${pets} all up to date?`
+    );
   }
-  return `Hi ${firstName}, it's Dr. ${doctorLastName}'s team at Vet At Your Door! It looks like ${pets} ${haveVerb} a few things coming due, and Dr. ${doctorLastName} is already going to be in your neighborhood on ${datePart} between ${windowStart} and ${windowEnd}. Would it be a good time for the team to stop by then?`;
+  return appendCareOutreachSmsSuffix(
+    `Hi ${firstName}, it's Dr. ${doctorLastName}'s team at Vet At Your Door! It looks like ${pets} ${haveVerb} a few things coming due, and Dr. ${doctorLastName} is already going to be in your neighborhood on ${datePart} between ${windowStart} and ${windowEnd}. Would it be a good time for the team to stop by then?`
+  );
 }
 
 export function careOutreachClientHasSmsPhone(phone: string | null | undefined): boolean {

@@ -72,6 +72,22 @@ export type RoutingForwardBookingIntentV1 = {
   careOutreachAnyPastDue?: boolean;
   /** When true, schedule loader post-book SMS uses past-due care outreach wording. */
   scheduleLoaderAnyPastDue?: boolean;
+  /**
+   * Optional slot-search window when entering routing from a list (e.g. care outreach Route).
+   * Routing applies these to the form; POST /routing uses startDate, endDate, and derived numDays.
+   */
+  routingSearch?: {
+    startDate: string;
+    endDate: string;
+    numDays?: number;
+  };
+  /** When set, Routing pre-selects reserve handling (e.g. schedule loader Ignore Reserve Blocks → use reserve). */
+  reserveOption?: 'reserve-only' | 'reserve-overflow' | null;
+  /** Return navigation when dismissing calendar preview from schedule loader → routing. */
+  scheduleLoaderReturn?: {
+    clientId: number;
+    returnHref: string;
+  };
 };
 
 function pickStr(v: unknown): string | null {

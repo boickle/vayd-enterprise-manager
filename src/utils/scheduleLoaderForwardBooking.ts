@@ -124,6 +124,16 @@ async function findPendingScheduleLoaderForwardBooking(
   return matches.sort((a, b) => Number(b.id) - Number(a.id))[0] ?? null;
 }
 
+/** Schedule loader Route → routing: single target day only (inclusive). */
+export function scheduleLoaderRoutingSearchDateRange(targetDateYmd: string): {
+  startDate: string;
+  endDate: string;
+  numDays: number;
+} {
+  const searchDate = targetDateYmd.trim();
+  return { startDate: searchDate, endDate: searchDate, numDays: 1 };
+}
+
 /** Create or reuse forward-booking queue rows before schedule-loader calendar book. */
 export async function createForwardBookingsFromScheduleLoader(
   candidate: FillDayCandidate,

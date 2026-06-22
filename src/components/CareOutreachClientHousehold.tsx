@@ -283,7 +283,7 @@ export function CareOutreachOtherHouseholdPets({
                       onToggleIncludeInBook(pet.patientId, pet.name, e.target.checked)
                     }
                   />
-                  <span className="care-outreach-household-pet-card__include-label">Include in book</span>
+                  <span className="care-outreach-household-pet-card__include-label">Include in route</span>
                 </label>
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                   <EvetPatientName name={pet.name} pimsId={pet.pimsId} />

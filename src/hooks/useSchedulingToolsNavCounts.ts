@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { fetchUnscheduledReminders } from '../api/careOutreach';
 import { fetchForwardBookings } from '../api/forwardBooking';
+import { fetchSlotOffers } from '../api/slotOffers';
 import { fetchAllAppointmentTypes } from '../api/appointmentSettings';
 import {
   buildAppointmentTypeCatalogFromTypes,
@@ -18,12 +19,16 @@ import { practiceTimeZoneOrDefault } from '../utils/practiceTimezone';
 const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
 
 export const SCHEDULING_TOOLS_COUNTS_REFRESH_EVENT = 'vayd:scheduling-tools-counts-refresh';
+export const SCHEDULING_TOOLS_PAGE_REFRESH_EVENT = 'vayd:scheduling-tools-page-refresh';
 
 export type SchedulingToolsNavCounts = {
   forwardBookingPending: number;
   onHold: number;
   onHoldOver24: number;
   careOutreachPriority: number;
+  textedOffersActive: number;
+  textedOffersNeedsFollowUp: number;
+  textedOffersToConfirm: number;
 };
 
 const EMPTY_COUNTS: SchedulingToolsNavCounts = {
@@ -31,6 +36,9 @@ const EMPTY_COUNTS: SchedulingToolsNavCounts = {
   onHold: 0,
   onHoldOver24: 0,
   careOutreachPriority: 0,
+  textedOffersActive: 0,
+  textedOffersNeedsFollowUp: 0,
+  textedOffersToConfirm: 0,
 };
 
 export function useSchedulingToolsNavCounts(enabled = true, refreshKey?: string) {
@@ -42,7 +50,7 @@ export function useSchedulingToolsNavCounts(enabled = true, refreshKey?: string)
     setLoading(true);
     try {
       const careRange = careOutreachPriorityNavCountFetchRange();
-      const [types, forwardBookings, careReminders] = await Promise.all([
+      const [types, forwardBookings, careReminders, activeOffers, toConfirmOffers] = await Promise.all([
         fetchAllAppointmentTypes(PRACTICE_ID, { activeOnly: false }),
         fetchForwardBookings({ practiceId: PRACTICE_ID, limit: 2000, includeRemoved: true }),
         fetchUnscheduledReminders({
@@ -51,6 +59,8 @@ export function useSchedulingToolsNavCounts(enabled = true, refreshKey?: string)
           dueDateTo: careRange.to,
           limit: 2000,
         }),
+        fetchSlotOffers({ practiceId: PRACTICE_ID, tab: 'active' }).catch(() => []),
+        fetchSlotOffers({ practiceId: PRACTICE_ID, tab: 'to_confirm' }).catch(() => []),
       ]);
 
       const catalog = buildAppointmentTypeCatalogFromTypes(types);
@@ -75,6 +85,11 @@ export function useSchedulingToolsNavCounts(enabled = true, refreshKey?: string)
         onHold,
         onHoldOver24,
         careOutreachPriority: countCareOutreachPriorityClients(careReminders),
+        textedOffersActive: activeOffers.length,
+        textedOffersNeedsFollowUp: activeOffers.filter(
+          (row) => row.status === 'manual_review' && row.resolved !== true
+        ).length,
+        textedOffersToConfirm: toConfirmOffers.length,
       });
     } catch {
       setCounts(EMPTY_COUNTS);
@@ -101,4 +116,8 @@ export function useSchedulingToolsNavCounts(enabled = true, refreshKey?: string)
 
 export function notifySchedulingToolsNavCountsRefresh(): void {
   window.dispatchEvent(new Event(SCHEDULING_TOOLS_COUNTS_REFRESH_EVENT));
+}
+
+export function notifySchedulingToolsPageRefresh(): void {
+  window.dispatchEvent(new Event(SCHEDULING_TOOLS_PAGE_REFRESH_EVENT));
 }

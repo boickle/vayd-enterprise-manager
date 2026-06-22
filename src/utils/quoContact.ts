@@ -89,6 +89,17 @@ function pickQuoLinePhone(raw: unknown): string | null {
   return trimmed || null;
 }
 
+/** True when two phone strings refer to the same line (NANP 10-digit or exact match). */
+export function phonesMatchForQuo(a: string | null | undefined, b: string | null | undefined): boolean {
+  const aa = a?.trim();
+  const bb = b?.trim();
+  if (!aa || !bb) return false;
+  const da = phoneToQuoDialDigits(aa);
+  const db = phoneToQuoDialDigits(bb);
+  if (da && db) return da === db;
+  return aa === bb;
+}
+
 /** Resolve the visit assignee's Quo line for outbound call/text. */
 export function resolveQuoFromLine(args: {
   appointmentPrimaryProvider?: {
