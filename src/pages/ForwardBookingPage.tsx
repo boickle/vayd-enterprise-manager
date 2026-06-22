@@ -505,7 +505,7 @@ export default function ForwardBookingPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [manualCompleteEntry, setManualCompleteEntry] = useState<ForwardBookingEntry | null>(null);
   const [smsEntry, setSmsEntry] = useState<ForwardBookingEntry | null>(null);
-  const practiceSmsFromRef = useRef<string | null>(null);
+  const [smsFromLine, setSmsFromLine] = useState<string | null>(null);
   const [smsMessage, setSmsMessage] = useState('');
   const [smsSending, setSmsSending] = useState(false);
   const [smsError, setSmsError] = useState<string | null>(null);
@@ -547,7 +547,7 @@ export default function ForwardBookingPage() {
 
   useEffect(() => {
     void fetchSchedulingOutreachSmsFrom().then((phone) => {
-      if (phone) practiceSmsFromRef.current = phone;
+      if (phone) setSmsFromLine(phone);
     });
   }, []);
 
@@ -1185,16 +1185,10 @@ export default function ForwardBookingPage() {
     setSmsSending(true);
     setSmsError(null);
     try {
-      let from = practiceSmsFromRef.current;
-      if (!from) {
-        from = await fetchSchedulingOutreachSmsFrom();
-        if (from) practiceSmsFromRef.current = from;
-      }
       await sendClientSms(smsEntry.clientId, {
         message: smsMessage.trim(),
         useRemindersFrom: true,
         ...(opts.overrideNonProd ? { overrideNonProd: true } : {}),
-        ...(from ? { from } : {}),
       });
       closeSmsModal();
     } catch (e: unknown) {
@@ -2191,6 +2185,7 @@ export default function ForwardBookingPage() {
           onOpenMessagesHistory={() => openMessagesHistory(smsEntry)}
           sending={smsSending}
           sendError={smsError}
+          fromLineLabel={smsFromLine}
         />
       ) : null}
 

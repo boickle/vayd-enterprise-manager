@@ -7,7 +7,7 @@ export type SendClientSmsPayload = {
   from?: string;
   /** Send from the visit assignee provider's Quo/OpenPhone line (`quoLinePhone`). */
   primaryProviderId?: number;
-  /** Use server `SMS_REMINDERS_FROM` (scheduling tools outreach). */
+  /** Use server `SMS_REMINDERS_FROM` (scheduling tools outreach). Do not pass `from` with this — the API picks the line. */
   useRemindersFrom?: boolean;
 };
 
