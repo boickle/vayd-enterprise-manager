@@ -1,3 +1,4 @@
+import { Heart } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { PatientChartSummaryPanel } from './PatientChartSummaryPanel';
@@ -14,6 +15,8 @@ type Props = {
   practiceTz: string;
   /** Omit alerts when they are already visible elsewhere (book modal). */
   showAlerts?: boolean;
+  isMember?: boolean;
+  membershipName?: string | null;
   /** Exclude this visit from last/next appointment lines (edit visit). */
   excludeAppointmentId?: string | number | null;
   className?: string;
@@ -26,6 +29,8 @@ export function BookPatientChartButton({
   practiceId,
   practiceTz,
   showAlerts = false,
+  isMember = false,
+  membershipName = null,
   excludeAppointmentId = null,
   className,
   label = 'Patient details',
@@ -104,7 +109,18 @@ export function BookPatientChartButton({
               >
                 <div className="scheduler-book-patient-details-head">
                   <h3 id="scheduler-book-patient-details-title">
-                    {patientName.trim() || 'Patient'}
+                    <span className="scheduler-book-patient-details-title-row">
+                      <span>{patientName.trim() || 'Patient'}</span>
+                      {isMember ? (
+                        <span
+                          className="scheduler-book-patient-details-membership"
+                          title={membershipName?.trim() || 'Member'}
+                        >
+                          <Heart size={11} fill="#dc2626" color="#dc2626" strokeWidth={1.75} aria-hidden />
+                          <span>{membershipName?.trim() || 'Member'}</span>
+                        </span>
+                      ) : null}
+                    </span>
                   </h3>
                   <button
                     type="button"

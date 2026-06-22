@@ -3,7 +3,8 @@ import { Link, NavLink, useLocation } from 'react-router-dom';
 import { ChevronDown } from 'lucide-react';
 import { useAuth } from '../auth/useAuth';
 import { getVisibleScoutTabs } from '../scout-tabs';
-import { getSchedulingToolsTabPages } from '../scheduling-tools-tabs';
+import { SCHEDULING_TOOL_TABS } from '../scheduling-tools-tabs';
+import { isSchedulingToolTabActive } from '../scheduling-tools-nav';
 import { blockRoutingCalendarPreviewNavigation } from '../utils/routingCalendarPreviewGuard';
 import TasksNavLabel from './TasksNavLabel';
 import { useTaskNavBadges } from '../hooks/useTaskNavBadges';
@@ -37,18 +38,6 @@ const MEASURE_LABEL: Record<SchedNavItemKey, string> = {
   admin: 'Admin',
 };
 
-function isSchedulingToolsTabActive(pathname: string, tabPath: string): boolean {
-  const base = `/schedule/scheduling-tools/${tabPath}`;
-  if (pathname === base || pathname.startsWith(`${base}/`)) return true;
-  if (
-    tabPath === 'schedule-loader' &&
-    (pathname === '/schedule/scheduling-tools' || pathname === '/schedule/scheduling-tools/')
-  ) {
-    return true;
-  }
-  return false;
-}
-
 function blockScheduleNavLeave(e: { preventDefault: () => void }): boolean {
   if (blockRoutingCalendarPreviewNavigation()) {
     e.preventDefault();
@@ -59,15 +48,14 @@ function blockScheduleNavLeave(e: { preventDefault: () => void }): boolean {
 
 function SchedulingToolsSubmenuLinks({ onNavigate }: { onNavigate: () => void }) {
   const location = useLocation();
-  const tabs = getSchedulingToolsTabPages();
   return (
     <>
-      {tabs.map((tab) => (
+      {SCHEDULING_TOOL_TABS.map((tab) => (
         <Link
           key={tab.path}
           to={`/schedule/scheduling-tools/${tab.path}`}
           className={`schedule-app__settings-link${
-            isSchedulingToolsTabActive(location.pathname, tab.path)
+            isSchedulingToolTabActive(location.pathname, tab.path)
               ? ' schedule-app__settings-link--active'
               : ''
           }`}

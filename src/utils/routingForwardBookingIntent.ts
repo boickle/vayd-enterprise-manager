@@ -64,6 +64,30 @@ export type RoutingForwardBookingIntentV1 = {
    * Prevents stale sessionStorage from hijacking unrelated routing books.
    */
   workspaceActive?: boolean;
+  /** When set, return-to-list SMS uses the care outreach template after hold book. */
+  origin?: 'care_outreach' | 'schedule_loader';
+  /** Pet names for care outreach SMS (household book from care outreach list). */
+  careOutreachPetNames?: string[];
+  /** When true, care outreach SMS after hold book uses past-due wording. */
+  careOutreachAnyPastDue?: boolean;
+  /** When true, schedule loader post-book SMS uses past-due care outreach wording. */
+  scheduleLoaderAnyPastDue?: boolean;
+  /**
+   * Optional slot-search window when entering routing from a list (e.g. care outreach Route).
+   * Routing applies these to the form; POST /routing uses startDate, endDate, and derived numDays.
+   */
+  routingSearch?: {
+    startDate: string;
+    endDate: string;
+    numDays?: number;
+  };
+  /** When set, Routing pre-selects reserve handling (e.g. schedule loader Ignore Reserve Blocks → use reserve). */
+  reserveOption?: 'reserve-only' | 'reserve-overflow' | null;
+  /** Return navigation when dismissing calendar preview from schedule loader → routing. */
+  scheduleLoaderReturn?: {
+    clientId: number;
+    returnHref: string;
+  };
 };
 
 function pickStr(v: unknown): string | null {
@@ -87,7 +111,19 @@ export function readRoutingForwardBookingIntent(): RoutingForwardBookingIntentV1
     ) {
       return null;
     }
-    return o;
+    // Booking always picks Calculate Time from the type picker — not the source visit type stored on the row.
+    const { appointmentTypeId: _omitId, appointmentTypeName: _omitName, householdEntries, ...rest } = o;
+    const intent: RoutingForwardBookingIntentV1 = {
+      ...rest,
+      ...(householdEntries?.length
+        ? {
+            householdEntries: householdEntries.map(
+              ({ appointmentTypeId: _id, appointmentTypeName: _name, ...row }) => row
+            ),
+          }
+        : {}),
+    };
+    return intent;
   } catch {
     return null;
   }
@@ -214,15 +250,11 @@ export function forwardBookingScopeTargets(intent: RoutingForwardBookingIntentV1
 
 function householdEntryFromForwardBookingRow(entry: ForwardBookingEntry): ForwardBookingHouseholdEntry | null {
   if (!entry?.id || !entry.trackingToken?.trim() || entry.patientId == null) return null;
-  const typeId = entry.appointmentTypeId;
   return {
     forwardBookingId: entry.id,
     trackingToken: entry.trackingToken.trim(),
     patientId: String(entry.patientId),
     patientName: pickStr(entry.patient?.name) ?? undefined,
-    appointmentTypeId:
-      typeId != null && Number.isFinite(Number(typeId)) ? Number(typeId) : undefined,
-    appointmentTypeName: entry.appointmentTypeName?.trim() || undefined,
     targetDueDate: entry.targetDueDate ?? null,
   };
 }
@@ -249,10 +281,6 @@ export function buildRoutingForwardBookingIntentFromEntry(
     pickStr(pp?.name) ??
     ([pickStr(pp?.firstName), pickStr(pp?.lastName)].filter(Boolean).join(' ').trim() || undefined);
 
-  const typeId = entry.appointmentTypeId;
-  const appointmentTypeId =
-    typeId != null && Number.isFinite(Number(typeId)) ? Number(typeId) : undefined;
-
   const mins =
     entry.serviceMinutes != null && Number.isFinite(Number(entry.serviceMinutes))
       ? Math.max(15, Math.round(Number(entry.serviceMinutes)))
@@ -264,8 +292,6 @@ export function buildRoutingForwardBookingIntentFromEntry(
     trackingToken: entry.trackingToken.trim(),
     clientId: String(c.id),
     patientId: String(entry.patientId),
-    appointmentTypeId,
-    appointmentTypeName: entry.appointmentTypeName?.trim() || undefined,
     primaryProviderInternalId,
     primaryDoctorPimsId,
     primaryDoctorDisplayName,

@@ -4,6 +4,7 @@ import { forwardBookingLinkedAppointmentId } from './forwardBookingLinkedVisit';
 
 export type ForwardBookingBookCompleteResult = {
   completed: boolean;
+  entryId?: number;
   error?: string;
 };
 
@@ -36,7 +37,7 @@ export async function completeForwardBookingFromBook(
       appointmentId,
       completedVia: 'routing',
     });
-    return { completed: true };
+    return { completed: true, entryId: Number(entryId) };
   } catch (e: unknown) {
     const ax = e as { response?: { data?: { message?: string } }; message?: string };
     const msg = ax?.response?.data?.message ?? ax?.message ?? 'Could not mark forward booking complete.';

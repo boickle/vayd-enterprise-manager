@@ -17,6 +17,7 @@ export type Provider = {
   /** Set when lat/lon or address filters `/employees/veterinarians` to the client's zone. */
   seeingClientsInClientZone?: boolean;
   acceptingNewPatientsInClientZone?: boolean;
+  transitioningOutOfClientZone?: boolean;
   /** Doctor Quo/OpenPhone inbox line for outbound call/text (`from` deep link param). */
   quoLinePhone?: string | null;
   /** Profile image URL stored on the employee record. */

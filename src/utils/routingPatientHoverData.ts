@@ -1,4 +1,5 @@
 import { DateTime } from 'luxon';
+import { truthyApiFlag } from '../api/appointments';
 import type { Appointment } from '../api/roomLoader';
 import { fetchPatientAppointmentsStaff } from '../api/pimsAppointments';
 import { fetchPatientMedicalRecordStaff, fetchPatientProfileForRow } from '../api/patients';
@@ -65,7 +66,36 @@ export type RoutingClientPatientRow = {
   id: string;
   name: string;
   alerts?: string | null;
+  isMember?: boolean;
+  membershipName?: string | null;
 };
+
+export function patientMembershipFromRecord(raw: unknown): {
+  isMember: boolean;
+  membershipName: string | null;
+} {
+  if (!raw || typeof raw !== 'object') return { isMember: false, membershipName: null };
+  const o = raw as Record<string, unknown>;
+  const nested =
+    o.patient && typeof o.patient === 'object' && !Array.isArray(o.patient)
+      ? (o.patient as Record<string, unknown>)
+      : null;
+
+  let isMember = false;
+  let membershipName: string | null = null;
+  const consider = (flag: unknown, rawName: unknown) => {
+    if (truthyApiFlag(flag)) isMember = true;
+    const name = pickStr(rawName);
+    if (name) {
+      isMember = true;
+      if (!membershipName) membershipName = name;
+    }
+  };
+
+  consider(o.isMember, o.membershipName);
+  if (nested) consider(nested.isMember, nested.membershipName);
+  return { isMember, membershipName };
+}
 
 export function extractActivePatientsFromClientStaffRecord(raw: unknown): RoutingClientPatientRow[] {
   if (!raw || typeof raw !== 'object') return [];
@@ -88,13 +118,41 @@ export function extractActivePatientsFromClientStaffRecord(raw: unknown): Routin
     if (isDeleted || !isActive) continue;
     const joined = [pickStr(o.firstName), pickStr(o.lastName)].filter(Boolean).join(' ').trim();
     const name = pickStr(o.name) ?? (joined || 'Patient');
+    const membership = patientMembershipFromRecord(o);
     out.push({
       id: String(idRaw),
       name,
       alerts: patientAlertsFromRecord(o),
+      isMember: membership.isMember,
+      membershipName: membership.membershipName,
     });
   }
   return out.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+}
+
+/** Client staff payloads often omit membership; load from GET /patients/:id when needed. */
+export async function enrichRoutingClientPatientsMembership(
+  rows: readonly RoutingClientPatientRow[]
+): Promise<RoutingClientPatientRow[]> {
+  if (rows.length === 0) return [];
+
+  return Promise.all(
+    rows.map(async (row) => {
+      if (row.isMember) return row;
+      try {
+        const profile = await fetchPatientProfileForRow({ id: row.id });
+        const membership = patientMembershipFromRecord(profile);
+        if (!membership.isMember) return row;
+        return {
+          ...row,
+          isMember: true,
+          membershipName: membership.membershipName,
+        };
+      } catch {
+        return row;
+      }
+    })
+  );
 }
 
 export type RoutingPatientHoverSummary = {

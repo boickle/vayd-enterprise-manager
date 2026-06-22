@@ -39,9 +39,13 @@ export function buildForwardBookingWorkspaceContext(
     intervalUnit: intent.intervalUnit,
     monthsOut: intent.monthsOut,
   });
-  const typeName = intent.appointmentTypeName?.trim() || 'Visit';
+  const typeName = intent.appointmentTypeName?.trim();
   const visitLine =
-    intervalLabel !== '—' ? `${typeName} · ${intervalLabel}` : typeName;
+    intervalLabel !== '—'
+      ? typeName
+        ? `${typeName} · ${intervalLabel}`
+        : intervalLabel
+      : typeName || 'Follow-up';
 
   const householdNames = (intent.householdEntries ?? [])
     .map((e) => pickStr(e.patientName))

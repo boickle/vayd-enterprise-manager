@@ -1,14 +1,32 @@
 /**
  * After booking from forward booking → routing, return to the list with optional SMS prompt.
  */
+import type { ForwardBookingEntry } from '../api/forwardBooking';
+import { forwardBookingLinkedAppointmentId } from './forwardBookingLinkedVisit';
+
 export const FORWARD_BOOKING_RETURN_SESSION_KEY = 'vayd:forward-booking-return-v1';
 
 export type ForwardBookingReturnSessionV1 = {
   v: 1;
-  forwardBookingEntryId: number;
+  /** When omitted, the list resolves the row by `bookedAppointmentId` after refresh. */
+  forwardBookingEntryId?: number;
   bookedAppointmentId: number;
   bookedAppointmentStart: string;
   bookedAppointmentEnd?: string | null;
+  /** SMS template when auto-opening text after a routing book. */
+  smsTemplate?: 'care_outreach' | 'forward_booking' | 'schedule_loader';
+  /** Pet names for care outreach SMS when multiple patients were booked together. */
+  careOutreachPetNames?: string[];
+  /** Care outreach SMS uses past-due wording when any booked reminder was overdue. */
+  careOutreachAnyPastDue?: boolean;
+  /** Schedule loader post-book SMS (past-due wording). */
+  scheduleLoaderPetNames?: string[];
+  scheduleLoaderProviderLastName?: string | null;
+  scheduleLoaderClientDisplayName?: string | null;
+  /** Schedule loader SMS uses past-due care outreach wording when true (default for holds). */
+  scheduleLoaderAnyPastDue?: boolean;
+  /** Workflow list tab to open after book (from saved appointment type). */
+  targetWorkflowTab?: 'onHold' | 'booked';
 };
 
 export function readForwardBookingReturnSession(): ForwardBookingReturnSessionV1 | null {
@@ -19,9 +37,14 @@ export function readForwardBookingReturnSession(): ForwardBookingReturnSessionV1
     const o = JSON.parse(raw) as ForwardBookingReturnSessionV1;
     if (
       o?.v !== 1 ||
-      typeof o.forwardBookingEntryId !== 'number' ||
       typeof o.bookedAppointmentId !== 'number' ||
       !o.bookedAppointmentStart?.trim()
+    ) {
+      return null;
+    }
+    if (
+      o.forwardBookingEntryId != null &&
+      (!Number.isFinite(Number(o.forwardBookingEntryId)) || Number(o.forwardBookingEntryId) <= 0)
     ) {
       return null;
     }
@@ -52,4 +75,29 @@ export function clearForwardBookingReturnSession(): void {
   }
 }
 
+/** Match a return-session row after refresh — by entry id or linked appointment id. */
+export function forwardBookingEntryForReturnSession(
+  list: readonly ForwardBookingEntry[],
+  pending: Pick<ForwardBookingReturnSessionV1, 'forwardBookingEntryId' | 'bookedAppointmentId'>
+): ForwardBookingEntry | undefined {
+  const entryId = pending.forwardBookingEntryId;
+  if (entryId != null && Number.isFinite(Number(entryId)) && Number(entryId) > 0) {
+    const byId = list.find((r) => r.id === Number(entryId));
+    if (byId) return byId;
+  }
+  const apptId = pending.bookedAppointmentId;
+  if (!Number.isFinite(Number(apptId)) || Number(apptId) <= 0) return undefined;
+  return list.find(
+    (r) =>
+      forwardBookingLinkedAppointmentId(r) === Number(apptId) ||
+      r.bookedAppointmentId === Number(apptId)
+  );
+}
+
 export const FORWARD_BOOKING_LIST_PATH = '/schedule/scheduling-tools/forward-booking';
+export const ON_HOLD_LIST_PATH = '/schedule/scheduling-tools/on-hold';
+export const BOOKED_LIST_PATH = '/schedule/scheduling-tools/booked';
+export const COMPLETE_LIST_PATH = '/schedule/scheduling-tools/complete';
+export const CARE_OUTREACH_LIST_PATH = '/schedule/scheduling-tools/care-outreach';
+
+export { schedulingWorkflowListPathAfterBook } from '../scheduling-tools-nav';

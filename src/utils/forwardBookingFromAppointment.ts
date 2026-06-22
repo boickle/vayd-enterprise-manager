@@ -8,6 +8,10 @@ import type {
   ForwardBookingIntervalUnit,
 } from '../api/forwardBooking';
 import { practiceTimeZoneOrDefault } from './practiceTimezone';
+import {
+  normalizeAppointmentTypeName,
+  type AppointmentTypeCatalog,
+} from './appointmentTypeSettings';
 
 export type { ForwardBookingIntervalUnit };
 
@@ -340,6 +344,93 @@ export function formatForwardBookingIntervalLabel(opts: {
   return '—';
 }
 
+function formatForwardBookingListDate(
+  iso: string | null | undefined,
+  practiceTz: string
+): string {
+  if (!iso?.trim()) return '—';
+  const dt = DateTime.fromISO(iso, { zone: 'utc' }).setZone(practiceTimeZoneOrDefault(practiceTz));
+  return dt.isValid ? dt.toFormat('EEE, MMM d, yyyy') : '—';
+}
+
+/** Internal appointment type `name` for the source visit (not prettyName). */
+export function resolveForwardBookingSourceVisitTypeName(
+  entry: ForwardBookingEntry,
+  catalog?: AppointmentTypeCatalog | null
+): string | null {
+  const typeId = entry.appointmentTypeId;
+  if (typeId != null && catalog?.byId) {
+    const row = catalog.byId.get(Number(typeId));
+    const name = row?.name?.trim();
+    if (name) return name;
+  }
+  const label = entry.appointmentTypeName?.trim();
+  if (!label) return null;
+  if (catalog?.byName) {
+    const byName = catalog.byName.get(normalizeAppointmentTypeName(label));
+    if (byName?.name?.trim()) return byName.name.trim();
+    const lower = label.toLowerCase();
+    for (const row of catalog.byId.values()) {
+      const pretty = String(row.prettyName ?? '').trim().toLowerCase();
+      if (pretty === lower && row.name?.trim()) return row.name.trim();
+    }
+  }
+  return label;
+}
+
+/** List row: `Original Visit: {type} - {date} Target: {date}` */
+export function formatForwardBookingOriginalVisitTargetLine(
+  entry: ForwardBookingEntry,
+  practiceTz: string,
+  catalog?: AppointmentTypeCatalog | null
+): string {
+  const parts = forwardBookingOriginalVisitTargetParts(entry, practiceTz, catalog);
+  if (!parts.hasSource) {
+    return `Original Visit: No associated visit Target: ${parts.targetDateLabel}`;
+  }
+  const originalPart = parts.typeName
+    ? `${parts.typeName} - ${parts.sourceDateLabel}`
+    : parts.sourceDateLabel;
+  return `Original Visit: ${originalPart} Target: ${parts.targetDateLabel}`;
+}
+
+export type ForwardBookingOriginalVisitTargetParts = {
+  hasSource: boolean;
+  typeName: string | null;
+  sourceDateLabel: string;
+  targetDateLabel: string;
+};
+
+export function forwardBookingOriginalVisitTargetParts(
+  entry: ForwardBookingEntry,
+  practiceTz: string,
+  catalog?: AppointmentTypeCatalog | null
+): ForwardBookingOriginalVisitTargetParts {
+  const targetDateLabel = formatForwardBookingListDate(
+    resolveForwardBookingTargetDueDateIso(entry, practiceTz),
+    practiceTz
+  );
+  const hasSource =
+    entry.sourceAppointmentId != null && Number(entry.sourceAppointmentId) > 0;
+  if (!hasSource) {
+    return {
+      hasSource: false,
+      typeName: null,
+      sourceDateLabel: '—',
+      targetDateLabel,
+    };
+  }
+  return {
+    hasSource: true,
+    typeName: resolveForwardBookingSourceVisitTypeName(entry, catalog),
+    sourceDateLabel: formatForwardBookingListDate(
+      resolveForwardBookingSourceStartIso(entry, practiceTz),
+      practiceTz
+    ),
+    targetDateLabel,
+  };
+}
+
 function pickStr(v: unknown): string | null {
   if (v == null) return null;
   const s = String(v).trim();
@@ -403,7 +494,7 @@ export function buildCreateForwardBookingPayloadFromAppointment(
     /** Explicit provider for the follow-up; overrides appointment primary provider. */
     primaryProviderId?: number | null;
   }
-): CreateForwardBookingPayload | null {
+): Omit<CreateForwardBookingPayload, 'createdVia'> | null {
   if (!appt?.id || typeof appt.id !== 'number') return null;
 
   const patientIdRaw =
@@ -468,7 +559,7 @@ export function buildCreateForwardBookingPayloadFromPatient(
     bookingNotes?: string | null;
     primaryProviderId?: number | null;
   }
-): CreateForwardBookingPayload | null {
+): Omit<CreateForwardBookingPayload, 'createdVia'> | null {
   if (!Number.isFinite(patientId) || patientId <= 0) return null;
   if (!Number.isFinite(clientId) || clientId <= 0) return null;
 

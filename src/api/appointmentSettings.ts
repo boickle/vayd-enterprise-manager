@@ -104,6 +104,8 @@ export type EmployeeWeeklyScheduleZone = {
   zoneId: number;
   zone?: Zone;
   acceptingNewPatients: boolean;
+  /** Doctor is winding down in this zone but still assigned. */
+  transitioningOutOfZone?: boolean;
 };
 
 /** Schedule override for a specific calendar date (used by routing instead of weekly schedule) */
@@ -219,7 +221,11 @@ export async function updateEmployeeAppointmentTypes(
  */
 export async function updateEmployeeScheduleZones(
   scheduleId: number,
-  zones: Array<{ zoneId: number; acceptingNewPatients: boolean }>
+  zones: Array<{
+    zoneId: number;
+    acceptingNewPatients: boolean;
+    transitioningOutOfZone?: boolean;
+  }>
 ): Promise<{ success: boolean }> {
   const { data } = await http.put(`/employees/schedules/${scheduleId}/zones`, {
     scheduleId,

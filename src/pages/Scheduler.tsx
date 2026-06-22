@@ -14,7 +14,7 @@ import {
 import { createPortal } from 'react-dom';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { DateTime } from 'luxon';
-import { AlertTriangle, Cat, Check, Dog, Heart, Printer, X } from 'lucide-react';
+import { AlertTriangle, Cat, Dog, Heart, Printer, X } from 'lucide-react';
 import {
   appointmentZoneFullName,
   appointmentZoneShortLabel,
@@ -28,7 +28,6 @@ import {
   isAppointmentNoLocation,
   isFlexBlockItem,
   isPracticeCalendarBlockAppointment,
-  patchAppointment,
   truthyApiFlag,
   previewRoutingAppointmentLabel,
   type DoctorDayPatientPrimaryProvider,
@@ -239,6 +238,7 @@ import {
   addPetMenuTitle,
   appointmentSupportsAddPet,
   excludePatientIdsAtSlot,
+  filterSlotExcludeForRoutingBook,
   excludePatientIdsForAddPet,
   hasAddPetChoices,
   appointmentHasNoPatient,
@@ -287,7 +287,10 @@ import {
   forwardBookingBookedPatientNames,
   isHoldAppointmentTypeForBook,
 } from '../utils/forwardBookingBookToast';
-import { FORWARD_BOOKING_LIST_PATH, writeForwardBookingReturnSession } from '../utils/forwardBookingReturnSession';
+import { FORWARD_BOOKING_LIST_PATH, writeForwardBookingReturnSession, CARE_OUTREACH_LIST_PATH, schedulingWorkflowListPathAfterBook } from '../utils/forwardBookingReturnSession';
+import { providerLastNameFromDisplayName } from '../utils/scheduleLoaderSmsMessage';
+import { slotOfferFlowActive } from '../utils/slotOfferFromRouting';
+import { notifySchedulingToolsNavCountsRefresh } from '../hooks/useSchedulingToolsNavCounts';
 import { writeForwardBookingLocalLink } from '../utils/forwardBookingLocalLinks';
 import {
   buildForwardBookingWorkspaceContext,
@@ -323,11 +326,14 @@ import {
 } from '../utils/schedulerCalendarHandoff';
 import {
   buildSchedulerFocusAppointmentUrl,
+  clearSchedulerFocusSession,
+  readSchedulerFocusRequest,
   SCHEDULER_FOCUS_APPOINTMENT_PARAM,
   SCHEDULER_FOCUS_DATE_PARAM,
   SCHEDULER_FOCUS_PROVIDER_PARAM,
   schedulerAppointmentIdsEqual,
   schedulerCalendarFocusFromAppointment,
+  type SchedulerFocusRequest,
 } from '../utils/schedulerFocusAppointment';
 import {
   buildMyDayVisualPdfExportPayloadFromDayData,
@@ -371,6 +377,22 @@ function scrollTimedGridElementIntoView(el: HTMLElement, behavior: ScrollBehavio
     return;
   }
   el.scrollIntoView({ block: 'center', behavior, inline: 'nearest' });
+}
+
+/** Scroll the timed grid and practice-calendar outlet so a visit is centered. */
+function scrollAppointmentElementIntoView(el: HTMLElement, behavior: ScrollBehavior = 'smooth') {
+  scrollTimedGridElementIntoView(el, behavior);
+  const outlet = el.closest('.schedule-app__outlet--flush-scroll-y');
+  if (outlet instanceof HTMLElement) {
+    const outletRect = outlet.getBoundingClientRect();
+    const elRect = el.getBoundingClientRect();
+    if (elRect.top < outletRect.top + 72 || elRect.bottom > outletRect.bottom - 24) {
+      outlet.scrollTo({
+        top: outlet.scrollTop + elRect.top - outletRect.top - 72,
+        behavior,
+      });
+    }
+  }
 }
 
 function refreshRoutingPreviewAnchorAfterScroll(
@@ -782,11 +804,6 @@ function schedulerEventAppointmentTitle(appt: Appointment): string {
   return out || 'Appointment';
 }
 
-/** "Complete" label beside appointment type (hover + modal) — green border + glow. */
-function SchedulerTypeCompletePill() {
-  return <span className="scheduler-type-complete-pill">Complete</span>;
-}
-
 function appointmentTypeIsArchived(appt: Appointment): boolean {
   const at = appt.appointmentType;
   return at?.isDeleted === true;
@@ -794,16 +811,6 @@ function appointmentTypeIsArchived(appt: Appointment): boolean {
 
 function SchedulerTypeArchivedPill() {
   return <span className="scheduler-type-archived-pill">Archived</span>;
-}
-
-/** Green check — PIMS/eVet complete (`isComplete === true`); separate from Scout visit-times clock. */
-function SchedulerApptCompleteBadge({ appt }: { appt: Appointment }) {
-  if (appt.isComplete !== true) return null;
-  return (
-    <span className="scheduler-appt-complete-badge" title="Complete" aria-label="Complete">
-      <Check size={9} strokeWidth={2.75} className="scheduler-appt-complete-badge__icon" aria-hidden />
-    </span>
-  );
 }
 
 function appointmentActualVisitTimesTitle(appt: Appointment, practiceTz: string): string | null {
@@ -959,7 +966,6 @@ function SchedulerEventTitleBlock({
         {member.isMember ? <SchedulerMemberHeartInline membershipName={member.membershipName} /> : null}
         <span className="scheduler-event-title-fallback">{desc}</span>
         {zoneInTitle && zone ? <SchedulerZoneBadgeInline zoneShort={zone} title={zoneTitle} compact /> : null}
-        <SchedulerApptCompleteBadge appt={appt} />
         {visitTimesBadge}
       </Shell>
     );
@@ -973,7 +979,6 @@ function SchedulerEventTitleBlock({
         {member.isMember ? <SchedulerMemberHeartInline membershipName={member.membershipName} /> : null}
         <span className="scheduler-event-title-fallback">{fallback}</span>
         {zoneInTitle && zone ? <SchedulerZoneBadgeInline zoneShort={zone} title={zoneTitle} compact /> : null}
-        <SchedulerApptCompleteBadge appt={appt} />
         {visitTimesBadge}
       </Shell>
     );
@@ -995,14 +1000,10 @@ function SchedulerEventTitleBlock({
       {clientLast ? (
         <>
           <span className="scheduler-event-title-client-last"> {clientLast}</span>
-          <SchedulerApptCompleteBadge appt={appt} />
           {visitTimesBadge}
         </>
       ) : (
-        <>
-          <SchedulerApptCompleteBadge appt={appt} />
-          {visitTimesBadge}
-        </>
+        visitTimesBadge
       )}
     </Shell>
   );
@@ -1766,11 +1767,10 @@ export function SchedulerHoverContent({
       <div className="scheduler-tooltip-vh-header">Visit Highlights</div>
       <div className="scheduler-tooltip-vh-body">
         <div className="scheduler-tooltip-vh-preamble">
-          {typeRaw || appt.isComplete || appointmentTypeIsArchived(appt) || showVisitTimesClock ? (
+          {typeRaw || appointmentTypeIsArchived(appt) || showVisitTimesClock ? (
             <div className="scheduler-tooltip-vh-type-row">
               {typeRaw ? <div className="scheduler-tooltip-vh-type">{typeRaw}</div> : null}
               {appointmentTypeIsArchived(appt) ? <SchedulerTypeArchivedPill /> : null}
-              {appt.isComplete ? <SchedulerTypeCompletePill /> : null}
               {showVisitTimesClock ? (
                 <SchedulerApptVisitTimesBadge
                   appt={appt}
@@ -2051,7 +2051,6 @@ function SchedulerAppointmentModal({
             <p className="scheduler-modal-eyebrow">
               <span className="scheduler-modal-eyebrow-type">{typeName}</span>
               {appointmentTypeIsArchived(appt) ? <SchedulerTypeArchivedPill /> : null}
-              {appt.isComplete ? <SchedulerTypeCompletePill /> : null}
             </p>
             <h2 id="scheduler-modal-title" className="scheduler-modal-title-h">
               <span className="scheduler-modal-title-client">{fullClientHouseholdName(c)}</span>
@@ -2241,11 +2240,6 @@ function appointmentIsFutureVisit(appt: Appointment, practiceTz: string): boolea
   if (!apptDay.isValid) return false;
   const today = DateTime.now().setZone(practiceTz).startOf('day');
   return apptDay.toMillis() > today.toMillis();
-}
-
-/** Visit is today or on a prior calendar day — Complete is available. */
-function appointmentIsTodayOrPast(appt: Appointment, practiceTz: string): boolean {
-  return !appointmentIsFutureVisit(appt, practiceTz);
 }
 
 /** Visits being rescheduled (routing workspace, before a purple preview slot is chosen). */
@@ -2672,13 +2666,43 @@ function initialSchedulerCalendarState(embedInRoutingWorkspace: boolean): {
   return { anchorDate: today, view: 'week', providerFilter: '' };
 }
 
+type SchedulerMountState = {
+  anchorDate: string;
+  view: ViewMode;
+  providerFilter: string;
+  focusRequest: SchedulerFocusRequest | null;
+};
+
+function readSchedulerMountState(embedInRoutingWorkspace: boolean): SchedulerMountState {
+  const today = DateTime.now().setZone(PRACTICE_TZ).toISODate()!;
+  if (embedInRoutingWorkspace) {
+    const base = initialSchedulerCalendarState(true);
+    return { ...base, focusRequest: null };
+  }
+  const search = typeof window !== 'undefined' ? window.location.search : '';
+  const focusRequest = readSchedulerFocusRequest(search, PRACTICE_TZ);
+  if (focusRequest) {
+    return {
+      anchorDate: focusRequest.dateHint ?? today,
+      view: 'week',
+      providerFilter: focusRequest.providerHint ?? '',
+      focusRequest,
+    };
+  }
+  const base = initialSchedulerCalendarState(false);
+  return { ...base, focusRequest: null };
+}
+
 export default function Scheduler({ embedInRoutingWorkspace = false }: SchedulerProps) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const initialCalendar = initialSchedulerCalendarState(embedInRoutingWorkspace);
-  const [view, setView] = useState<ViewMode>(() => initialCalendar.view);
-  const [anchorDate, setAnchorDate] = useState(() => initialCalendar.anchorDate);
-  const [providerFilter, setProviderFilter] = useState<string>(() => initialCalendar.providerFilter);
+  const mountState = useMemo(
+    () => readSchedulerMountState(embedInRoutingWorkspace),
+    [embedInRoutingWorkspace]
+  );
+  const [view, setView] = useState<ViewMode>(() => mountState.view);
+  const [anchorDate, setAnchorDate] = useState(() => mountState.anchorDate);
+  const [providerFilter, setProviderFilter] = useState<string>(() => mountState.providerFilter);
   const [typeFilter, setTypeFilter] = useState<string>('');
 
   const [providers, setProviders] = useState<Provider[]>([]);
@@ -2718,10 +2742,17 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   const [editPreviewScoreError, setEditPreviewScoreError] = useState<string | null>(null);
   const [editPreviewConfirming, setEditPreviewConfirming] = useState(false);
   const [editVisitHighlightId, setEditVisitHighlightId] = useState<number | null>(null);
-  const [pendingFocusApptId, setPendingFocusApptId] = useState<number | null>(null);
-  const pendingFocusHighlightApptIdRef = useRef<number | null>(null);
-  const pendingFocusDateHintRef = useRef<string | null>(null);
-  const pendingFocusProviderHintRef = useRef<string | null>(null);
+  const [pendingFocusApptId, setPendingFocusApptId] = useState<number | null>(
+    () => mountState.focusRequest?.appointmentId ?? null
+  );
+  const [pendingFocusHighlightApptId, setPendingFocusHighlightApptId] = useState<number | null>(
+    null
+  );
+  const calendarFocusActiveRef = useRef(Boolean(mountState.focusRequest));
+  const pendingFocusDateHintRef = useRef<string | null>(mountState.focusRequest?.dateHint ?? null);
+  const pendingFocusProviderHintRef = useRef<string | null>(
+    mountState.focusRequest?.providerHint ?? null
+  );
   const editVisitHighlightTimerRef = useRef<number | null>(null);
   const editVisitHighlightDurationMsRef = useRef(2600);
   const editVisitPostBookScrollSigRef = useRef<string>('');
@@ -3258,6 +3289,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     const apptId = Number(focusRaw);
     if (!Number.isFinite(apptId) || apptId <= 0) return;
 
+    calendarFocusActiveRef.current = true;
+
     const dateQ = searchParams.get(SCHEDULER_FOCUS_DATE_PARAM);
     pendingFocusDateHintRef.current =
       dateQ && DateTime.fromISO(dateQ, { zone: PRACTICE_TZ }).isValid
@@ -3272,7 +3305,6 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     pendingFocusProviderHintRef.current = providerQ || null;
     if (providerQ && providers.some((p) => String(p.id) === providerQ)) {
       setProviderFilter(providerQ);
-      pendingFocusProviderHintRef.current = null;
     }
 
     const next = new URLSearchParams(searchParams);
@@ -3308,6 +3340,12 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         ) {
           return focus.providerFilter;
         }
+      }
+
+      if (calendarFocusActiveRef.current) {
+        if (t && providers.some((p) => String(p.id) === t)) return current;
+        const hint = pendingFocusProviderHintRef.current;
+        if (hint && providers.some((p) => String(p.id) === hint)) return hint;
       }
 
       if (t && providers.some((p) => String(p.id) === t)) return current;
@@ -3801,6 +3839,23 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     () => isManualBookCalendarPreview(routingPreview),
     [routingPreview],
   );
+
+  const routingPreviewSlotOfferFlow = useMemo(() => {
+    if (!routingPreview || routingPreviewIsReschedule || routingPreviewIsManualBook) return false;
+    const fbi = readRoutingForwardBookingIntent();
+    return slotOfferFlowActive(
+      {
+        routingPreviewBook: true,
+        forwardBookingCreatedVia:
+          fbi?.origin === 'care_outreach'
+            ? 'care_outreach'
+            : fbi?.origin === 'schedule_loader'
+              ? 'schedule_loader'
+              : undefined,
+      },
+      routingPreview
+    );
+  }, [routingPreview, routingPreviewIsReschedule, routingPreviewIsManualBook, forwardBookingIntentTick]);
 
   const [manualBookPreviewCommitting, setManualBookPreviewCommitting] = useState(false);
 
@@ -5302,13 +5357,16 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   );
 
   const dismissForwardBookingWorkspace = useCallback(() => {
+    const intent = readRoutingForwardBookingIntent();
+    const returnPath =
+      intent?.origin === 'care_outreach' ? CARE_OUTREACH_LIST_PATH : FORWARD_BOOKING_LIST_PATH;
     dismissRoutingForwardBookingWorkspace();
     setForwardBookingIntentTick((n) => n + 1);
     setBookSlot(null);
     setBookPrefill(null);
     driveSoftRefreshRef.current = true;
     setDriveRefreshNonce((n) => n + 1);
-    navigate(FORWARD_BOOKING_LIST_PATH);
+    navigate(returnPath);
   }, [navigate]);
 
   const dismissAppointmentRequestWorkspace = useCallback(() => {
@@ -5409,7 +5467,13 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       setToast('Missing address for this routing preview.');
       return;
     }
-    const clientIdRaw = routingPreview.newApptMeta?.clientId?.trim();
+    const storedForwardBookingIntent = readRoutingForwardBookingIntent();
+    const clientIdRaw =
+      routingPreview.newApptMeta?.clientId?.trim() ||
+      storedForwardBookingIntent?.clientId?.trim() ||
+      (routingPreview.scheduleLoaderReturn?.clientId != null
+        ? String(routingPreview.scheduleLoaderReturn.clientId)
+        : '');
     const hasLinkedClient = Boolean(clientIdRaw) && Number.isFinite(Number(clientIdRaw));
     if (clientIdRaw && !Number.isFinite(Number(clientIdRaw))) {
       setToast('Invalid client on routing preview.');
@@ -5426,7 +5490,12 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     const end = start.plus({ minutes: mins });
     const isAdminOrSuper = rolesLower.includes('admin') || rolesLower.includes('superadmin');
     const ri = readRoutingRescheduleIntent();
-    const fbi = forwardBookingWorkspaceIsActive() ? readRoutingForwardBookingIntent() : null;
+    const fbi = forwardBookingWorkspaceIsActive()
+      ? storedForwardBookingIntent
+      : isScheduleLoaderCalendarPreview(routingPreview) &&
+          storedForwardBookingIntent?.origin === 'schedule_loader'
+        ? storedForwardBookingIntent
+        : null;
     const previewPatientIds =
       routingPreview.previewPatients?.map((p) => String(p.id)).filter(Boolean) ?? [];
     const ari = appointmentRequestWorkspaceIsActive() ? readRoutingAppointmentRequestIntent() : null;
@@ -5480,13 +5549,44 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     const rescheduleSourceAppt = isReschedule
       ? rawAppointments.find((a) => a.id === Number(rescheduleId))
       : undefined;
+    const routingBookKeepPatientIds = [
+      ...previewPatientIds,
+      ...(fbiTargets?.entries.map((row) => String(row.patientId)) ?? []),
+      ...(fbi?.patientId ? [String(fbi.patientId)] : []),
+      ...(ri?.patientId ? [String(ri.patientId)] : []),
+    ].filter(Boolean);
     const slotExclude = hasLinkedClient
-      ? excludePatientIdsAtSlot(
-          clientIdRaw!,
-          start.toMillis(),
-          end.toMillis(),
-          rawAppointments
+      ? filterSlotExcludeForRoutingBook(
+          excludePatientIdsAtSlot(
+            clientIdRaw!,
+            start.toMillis(),
+            end.toMillis(),
+            rawAppointments
+          ),
+          routingBookKeepPatientIds
         )
+      : undefined;
+    const routingPreviewPatientRows =
+      routingPreview.previewPatients?.map((p) => ({
+        id: String(p.id),
+        name: String(p.name ?? '').trim() || `Patient ${p.id}`,
+      })) ??
+      (fbi?.patientId
+        ? [
+            {
+              id: String(fbi.patientId),
+              name: fbi.patientName?.trim() || `Patient ${fbi.patientId}`,
+            },
+          ]
+        : undefined);
+    const preferredPatientIdsForBook = !isReschedule
+      ? fbiGroupBook
+        ? fbiTargets!.entries.map((row) => row.patientId)
+        : previewPatientIds.length > 0
+          ? previewPatientIds
+          : fbi?.patientId
+            ? [String(fbi.patientId)]
+            : undefined
       : undefined;
     const routingAlternateForBook = resolveRoutingBookAlternateAddress({
       hasLinkedClient,
@@ -5495,19 +5595,27 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       previewUsesAlternateAddress: routingPreview.routingUsesAlternateAddress,
       sourceAppt: rescheduleSourceAppt,
     });
+    const forwardBookingCreatedVia =
+      fbi?.origin === 'care_outreach'
+        ? ('care_outreach' as const)
+        : routingPreview.previewSource === 'schedule-loader'
+          ? ('schedule_loader' as const)
+          : undefined;
     setBookPrefill({
       ...(hasLinkedClient
         ? {
             clientId: clientIdRaw,
-            clientLabel: routingPreview.clientDisplayLabel,
+            clientLabel:
+              routingPreview.clientDisplayLabel?.trim() ||
+              fbi?.clientDisplayLabel?.trim() ||
+              undefined,
             lockClient: !isAdminOrSuper,
             disableClientSearch: true,
             excludePatientIds: !isReschedule ? slotExclude : undefined,
-            preferredPatientIds: !isReschedule
-              ? fbiGroupBook
-                ? fbiTargets!.entries.map((row) => row.patientId)
-                : routingPreview.previewPatients?.map((p) => String(p.id))
-              : undefined,
+            preferredPatientIds: preferredPatientIdsForBook,
+            ...(routingPreviewPatientRows?.length
+              ? { routingPreviewPatients: routingPreviewPatientRows }
+              : {}),
           }
         : {
             disableClientSearch: false,
@@ -5571,6 +5679,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             appointmentRequestSubmissionId: ari.appointmentRequestSubmissionId,
           }
         : {}),
+      ...(forwardBookingCreatedVia ? { forwardBookingCreatedVia } : {}),
       ...(routingStatsTypeKey ? { routingStatsTypeKey } : {}),
     });
     setBookSlot({ start, end });
@@ -5580,6 +5689,36 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     setBookSlot(null);
     setBookPrefill(null);
   }, []);
+
+  const handleSlotOfferSent = useCallback(
+    (detail?: { outreachNotesWarning?: string }) => {
+    const fbi = readRoutingForwardBookingIntent();
+    const previewAtSend = routingPreview ?? readRoutingCalendarPreview();
+    closeBookModal();
+    clearRoutingPersistenceAfterSchedulerBook();
+    clearRoutingCalendarPreview();
+    setRoutingPreview(null);
+    clearRoutingForwardBookingIntent();
+    const toastBase = 'Text offer sent to client.';
+    setToast(
+      detail?.outreachNotesWarning ? `${toastBase} ${detail.outreachNotesWarning}` : toastBase
+    );
+    notifySchedulingToolsNavCountsRefresh();
+    const returnToScheduleLoader = scheduleLoaderReturnHref(previewAtSend);
+    if (returnToScheduleLoader) {
+      navigate(returnToScheduleLoader);
+      return;
+    }
+    if (fbi?.origin === 'care_outreach') {
+      navigate(CARE_OUTREACH_LIST_PATH);
+      return;
+    }
+    if (!embedInRoutingWorkspace) {
+      navigate(FORWARD_BOOKING_LIST_PATH);
+    }
+  },
+    [closeBookModal, routingPreview, navigate, embedInRoutingWorkspace]
+  );
 
   const clearEditVisitHighlightTimer = useCallback(() => {
     if (editVisitHighlightTimerRef.current != null) {
@@ -5659,12 +5798,17 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       savedAppointmentId?: number;
       primaryProviderId?: string;
       anchorDate?: string;
+      bookedAppointmentTypeId?: number;
     }) => {
       const prefillAtBook = bookPrefill;
       const wasReschedule = prefillAtBook?.rescheduleAppointmentId != null;
+      const previewAtBook = routingPreview ?? readRoutingCalendarPreview();
       const wasForwardBooking = prefillAtBook?.forwardBookingTrackingToken != null;
       const wasAppointmentRequest = prefillAtBook?.appointmentRequestSubmissionId != null;
-      const fbiAtBook = wasForwardBooking ? readRoutingForwardBookingIntent() : null;
+      const fbiAtBook =
+        wasForwardBooking || isScheduleLoaderCalendarPreview(previewAtBook)
+          ? readRoutingForwardBookingIntent()
+          : null;
       const ariAtBook = wasAppointmentRequest ? readRoutingAppointmentRequestIntent() : null;
       const savedId = detail?.savedAppointmentId;
       const returnToForwardBookingList =
@@ -5676,6 +5820,56 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
 
       closeBookModal();
 
+      const scheduleLoaderBookReturn =
+        isScheduleLoaderCalendarPreview(previewAtBook) &&
+        savedId != null &&
+        bookSlot?.start?.isValid &&
+        !wasReschedule;
+
+      if (scheduleLoaderBookReturn) {
+        const startIso = bookSlot!.start.toUTC().toISO();
+        if (startIso) {
+          const petNames =
+            previewAtBook!.previewPatients
+              ?.map((p) => String(p.name ?? '').trim())
+              .filter(Boolean) ?? [];
+          const typeId =
+            detail?.bookedAppointmentTypeId ?? prefillAtBook?.appointmentTypeId;
+          const typeRow =
+            typeId != null ? typeList.find((t) => Number(t.id) === Number(typeId)) : undefined;
+          const typeName =
+            typeRow?.name?.trim() ||
+            typeRow?.prettyName?.trim() ||
+            null;
+          const isHold = isHoldAppointmentTypeForBook(typeCatalog, { typeId, typeName });
+          writeForwardBookingReturnSession({
+            ...(prefillAtBook?.forwardBookingEntryId != null
+              ? { forwardBookingEntryId: Number(prefillAtBook.forwardBookingEntryId) }
+              : fbiAtBook?.forwardBookingId != null
+                ? { forwardBookingEntryId: fbiAtBook.forwardBookingId }
+                : {}),
+            bookedAppointmentId: savedId!,
+            bookedAppointmentStart: startIso,
+            bookedAppointmentEnd: bookSlot!.end?.isValid ? bookSlot!.end.toUTC().toISO() : null,
+            smsTemplate: 'schedule_loader',
+            scheduleLoaderPetNames: petNames,
+            scheduleLoaderClientDisplayName: previewAtBook!.clientDisplayLabel?.trim() || null,
+            scheduleLoaderProviderLastName: providerLastNameFromDisplayName(
+              String(previewAtBook!.option.doctorName ?? '')
+            ),
+            scheduleLoaderAnyPastDue: fbiAtBook?.scheduleLoaderAnyPastDue !== false,
+            targetWorkflowTab: isHold ? 'onHold' : 'booked',
+          });
+          clearRoutingPersistenceAfterSchedulerBook();
+          clearRoutingCalendarPreview();
+          setRoutingPreview(null);
+          clearRoutingRescheduleIntent();
+          clearRoutingForwardBookingIntent();
+          navigate(schedulingWorkflowListPathAfterBook(isHold));
+          return;
+        }
+      }
+
       if (returnToForwardBookingList) {
         const startIso = bookSlot!.start.toUTC().toISO();
         if (startIso) {
@@ -5684,6 +5878,31 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             bookedAppointmentId: savedId!,
             bookedAppointmentStart: startIso,
             bookedAppointmentEnd: bookSlot!.end?.isValid ? bookSlot!.end.toUTC().toISO() : null,
+            targetWorkflowTab: (() => {
+              const bookTypeId =
+                detail?.bookedAppointmentTypeId ?? prefillAtBook?.appointmentTypeId;
+              const bookTypeRow =
+                bookTypeId != null
+                  ? typeList.find((t) => Number(t.id) === Number(bookTypeId))
+                  : undefined;
+              const bookTypeName =
+                bookTypeRow?.name?.trim() ||
+                bookTypeRow?.prettyName?.trim() ||
+                null;
+              return isHoldAppointmentTypeForBook(typeCatalog, {
+                typeId: bookTypeId,
+                typeName: bookTypeName,
+              })
+                ? 'onHold'
+                : 'booked';
+            })(),
+            ...(fbiAtBook?.origin === 'care_outreach'
+              ? {
+                  smsTemplate: 'care_outreach' as const,
+                  careOutreachPetNames: fbiAtBook.careOutreachPetNames,
+                  ...(fbiAtBook.careOutreachAnyPastDue ? { careOutreachAnyPastDue: true } : {}),
+                }
+              : {}),
           });
         }
         if (embedInRoutingWorkspace || routingPreview) {
@@ -5698,6 +5917,16 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           detail?.routingFeedbackWarning ??
           detail?.schedulingOverrideWarning;
         let returnNotice = warning ?? null;
+        const typeId =
+          detail?.bookedAppointmentTypeId ?? prefillAtBook?.appointmentTypeId;
+        const typeRow =
+          typeId != null ? typeList.find((t) => Number(t.id) === Number(typeId)) : undefined;
+        const typeName =
+          typeRow?.name?.trim() ||
+          typeRow?.prettyName?.trim() ||
+          fbiAtBook?.appointmentTypeName?.trim() ||
+          null;
+        const isHold = isHoldAppointmentTypeForBook(typeCatalog, { typeId, typeName });
         if (!returnNotice) {
           const patientNames = forwardBookingBookedPatientNames({
             forwardBookingVisitCompletes: prefillAtBook?.forwardBookingVisitCompletes,
@@ -5708,15 +5937,6 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             fbiAtBook?.clientDisplayLabel?.trim() ||
             routingPreview?.clientDisplayLabel?.trim() ||
             '';
-          const typeId = prefillAtBook?.appointmentTypeId;
-          const typeRow =
-            typeId != null ? typeList.find((t) => Number(t.id) === Number(typeId)) : undefined;
-          const typeName =
-            typeRow?.name?.trim() ||
-            typeRow?.prettyName?.trim() ||
-            fbiAtBook?.appointmentTypeName?.trim() ||
-            null;
-          const isHold = isHoldAppointmentTypeForBook(typeCatalog, { typeId, typeName });
           returnNotice = buildForwardBookingBookSuccessToast({ patientNames, clientName, isHold });
         }
         if (returnNotice) {
@@ -5726,7 +5946,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             /* ignore */
           }
         }
-        navigate(FORWARD_BOOKING_LIST_PATH);
+        navigate(schedulingWorkflowListPathAfterBook(isHold));
         return;
       }
 
@@ -5874,13 +6094,16 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     if (providersLoadState !== 'resolved') return;
 
     const apptId = pendingFocusApptId;
-    setPendingFocusApptId(null);
+    calendarFocusActiveRef.current = true;
     let cancelled = false;
 
     void (async () => {
       const appt = await fetchAppointmentById(apptId, { practiceId: PRACTICE_ID });
       if (cancelled) return;
       if (!appt) {
+        calendarFocusActiveRef.current = false;
+        clearSchedulerFocusSession();
+        setPendingFocusApptId(null);
         showToast('Could not find that appointment on the calendar.');
         return;
       }
@@ -5894,6 +6117,11 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           pendingFocusProviderHintRef.current = null;
         }
       } else {
+        const dateHint = pendingFocusDateHintRef.current;
+        if (dateHint) {
+          setAnchorDate(dateHint);
+          setView('week');
+        }
         const providerQ = pendingFocusProviderHintRef.current;
         if (providerQ && providers.some((p) => String(p.id) === providerQ)) {
           setProviderFilter(providerQ);
@@ -5901,8 +6129,10 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         }
       }
       pendingFocusDateHintRef.current = null;
-
-      pendingFocusHighlightApptIdRef.current = apptId;
+      if (!cancelled) {
+        setPendingFocusHighlightApptId(apptId);
+        setPendingFocusApptId(null);
+      }
     })();
 
     return () => {
@@ -5912,18 +6142,25 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
 
   /** After focus navigation, wait until the appointment is on the loaded calendar before pulsing. */
   useEffect(() => {
-    const apptId = pendingFocusHighlightApptIdRef.current;
-    if (apptId == null || loading || !showTimeGrid) return;
-    const inRange = filteredAppointments.some((a) =>
-      schedulerAppointmentIdsEqual(a.id, apptId)
+    if (pendingFocusHighlightApptId == null || loading || !showTimeGrid) return;
+    const targetId = pendingFocusHighlightApptId;
+    const inLoadedRange = rawAppointments.some((a) =>
+      schedulerAppointmentIdsEqual(a.id, targetId)
     );
-    if (!inRange) return;
-    pendingFocusHighlightApptIdRef.current = null;
-    pulseEditVisitHighlight(apptId, 6000);
+    const inRenderedRange = calendarAppointments.some((a) =>
+      schedulerAppointmentIdsEqual(a.id, targetId)
+    );
+    if (!inLoadedRange && !inRenderedRange) return;
+    setPendingFocusHighlightApptId(null);
+    calendarFocusActiveRef.current = false;
+    clearSchedulerFocusSession();
+    pulseEditVisitHighlight(targetId, 6000);
   }, [
+    pendingFocusHighlightApptId,
     loading,
     showTimeGrid,
-    filteredAppointments,
+    rawAppointments,
+    calendarAppointments,
     anchorDate,
     providerFilter,
     pulseEditVisitHighlight,
@@ -6293,28 +6530,48 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   ]);
 
   useLayoutEffect(() => {
-    if (editVisitHighlightId == null) return;
-    if (loading || !showTimeGrid) return;
-    const sig = String(editVisitHighlightId);
-    const el = document.querySelector(`[data-appt-id="${CSS.escape(sig)}"]`);
-    if (!(el instanceof HTMLElement)) return;
-
-    if (editVisitHighlightTimerRef.current == null) {
-      startEditVisitHighlightClearTimer(editVisitHighlightDurationMsRef.current);
+    if (editVisitHighlightId == null) {
+      editVisitPostBookScrollSigRef.current = '';
+      return;
     }
+    if (!showTimeGrid) return;
 
+    const sig = String(editVisitHighlightId);
     if (editVisitPostBookScrollSigRef.current === sig) return;
-    editVisitPostBookScrollSigRef.current = sig;
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        el.scrollIntoView({ block: 'center', behavior: 'smooth', inline: 'center' });
-      });
-    });
+
+    let cancelled = false;
+    let attempts = 0;
+    const maxAttempts = 240;
+
+    const tryScroll = () => {
+      if (cancelled) return;
+      attempts += 1;
+      const el = document.querySelector(`[data-appt-id="${CSS.escape(sig)}"]`);
+      if (!(el instanceof HTMLElement)) {
+        if (attempts < maxAttempts) {
+          window.setTimeout(tryScroll, 33);
+        }
+        return;
+      }
+
+      if (editVisitHighlightTimerRef.current == null) {
+        startEditVisitHighlightClearTimer(editVisitHighlightDurationMsRef.current);
+      }
+
+      scrollAppointmentElementIntoView(el, 'smooth');
+      editVisitPostBookScrollSigRef.current = sig;
+    };
+
+    tryScroll();
+    return () => {
+      cancelled = true;
+    };
   }, [
     editVisitHighlightId,
     loading,
     showTimeGrid,
     filteredAppointments,
+    calendarAppointments,
     allDaySpanLayout.bars.length,
     startEditVisitHighlightClearTimer,
   ]);
@@ -6388,6 +6645,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               fail('Start / End Visit is not available for future visits.');
               return;
             }
+            void refreshForwardBookingSourceIds();
             setActualVisitModal(appt);
             return;
           case 'onMyWayText': {
@@ -6400,32 +6658,6 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               return;
             }
             setOnMyWaySmsAppt(appt);
-            return;
-          }
-          case 'complete': {
-            if (appt.isComplete) {
-              fail('This visit is already complete.');
-              return;
-            }
-            if (!appointmentIsTodayOrPast(appt, PRACTICE_TZ)) {
-              fail('Complete is only available for visits today or in the past.');
-              return;
-            }
-            if (isAppointmentCancelledOnPracticeCalendar(appt)) {
-              fail('Cannot complete a cancelled visit.');
-              return;
-            }
-            if (isPracticeCalendarBlockAppointment(appt)) {
-              fail('Blocks cannot be marked complete.');
-              return;
-            }
-            const updated = await patchAppointment(
-              appt.id,
-              { isComplete: true },
-              { practiceId: PRACTICE_ID }
-            );
-            if (editAppt?.id === updated.id) setEditAppt(updated);
-            await applyActualVisitTimeUpdate(updated, 'Visit marked complete.');
             return;
           }
           case 'remove': {
@@ -6673,6 +6905,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       embedInRoutingWorkspace,
       applyActualVisitTimeUpdate,
       applyRescheduleCalendarFocusFromIntent,
+      refreshForwardBookingSourceIds,
       editAppt?.id,
       providers,
       resolvedPrimaryProviderId,
@@ -8134,6 +8367,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               originalAppointmentEnd={reschedulePreviewOriginalTimes.end}
               clientContact={routingPreviewClientContact}
               bookDisabled={bookSlot != null || manualBookPreviewCommitting}
+              confirmLabel={routingPreviewSlotOfferFlow ? 'Next' : undefined}
               onBook={() => {
                 if (routingPreviewIsManualBook) {
                   void confirmManualBookFromPreview();
@@ -8277,6 +8511,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             : undefined
         }
         onClose={closeBookModal}
+        onSlotOfferSent={handleSlotOfferSent}
         onBooked={handleSchedulerBooked}
       />
 
@@ -8308,23 +8543,6 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             appointmentIsFutureVisit(contextMenu.appt, PRACTICE_TZ)
               ? 'Start / End Visit is not available for future visits.'
               : undefined
-          }
-          completeDisabled={
-            contextMenu.appt.isComplete ||
-            isAppointmentCancelledOnPracticeCalendar(contextMenu.appt) ||
-            isPracticeCalendarBlockAppointment(contextMenu.appt) ||
-            !appointmentIsTodayOrPast(contextMenu.appt, PRACTICE_TZ)
-          }
-          completeDisabledTitle={
-            contextMenu.appt.isComplete
-              ? 'This visit is already complete.'
-              : isAppointmentCancelledOnPracticeCalendar(contextMenu.appt)
-                ? 'Cannot complete a cancelled visit.'
-                : isPracticeCalendarBlockAppointment(contextMenu.appt)
-                  ? 'Blocks cannot be marked complete.'
-                  : !appointmentIsTodayOrPast(contextMenu.appt, PRACTICE_TZ)
-                    ? 'Complete is only available for visits today or in the past.'
-                    : undefined
           }
         />
       ) : null}
@@ -8382,9 +8600,16 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           forwardBookingSavedPatientIds={forwardBookingSavedPatientIds}
           accentColor={colorsForAppointment(actualVisitModal, typeList, typeFillMap).fill}
           onClose={() => setActualVisitModal(null)}
-          onSaved={(updated) => {
-            void applyActualVisitTimeUpdate(updated, 'Visit times saved.');
-            setActualVisitModal(null);
+          onSaved={(updated, options) => {
+            void applyActualVisitTimeUpdate(
+              updated,
+              options?.closeModal === false ? 'Visit times updated.' : 'Visit times saved.'
+            );
+            if (options?.closeModal !== false) {
+              setActualVisitModal(null);
+            } else {
+              setActualVisitModal(updated);
+            }
           }}
         />
       ) : null}

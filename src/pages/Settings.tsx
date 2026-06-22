@@ -18,6 +18,7 @@ import {
   type EmployeeWeeklySchedule,
   type Zone,
 } from '../api/appointmentSettings';
+import { clearVeterinariansZoneLookupCache } from '../utils/veterinarianZoneLookup';
 import {
   getPracticeSettings,
   updatePracticeSettings,
@@ -96,6 +97,39 @@ function formatEmployeeName(emp: Employee): string {
     : `${emp.firstName || ''} ${emp.lastName || ''}`.trim() || `Employee ${emp.id}`;
 }
 
+type EmployeeZoneEditorRow = {
+  zoneId: number;
+  isAssigned: boolean;
+  acceptingNewPatients: boolean;
+  transitioningOutOfZone: boolean;
+};
+
+function zoneEditorRowsFromSchedule(
+  allZones: Zone[],
+  scheduleZones?: EmployeeWeeklySchedule['zones']
+): EmployeeZoneEditorRow[] {
+  const assignedByZoneId = new Map<
+    number,
+    { acceptingNewPatients: boolean; transitioningOutOfZone: boolean }
+  >();
+  for (const z of scheduleZones ?? []) {
+    assignedByZoneId.set(z.zoneId, {
+      acceptingNewPatients: z.acceptingNewPatients === true,
+      transitioningOutOfZone: z.transitioningOutOfZone === true,
+    });
+  }
+  return allZones.map((zone) => {
+    const assigned = assignedByZoneId.get(zone.id);
+    const isAssigned = assigned != null;
+    return {
+      zoneId: zone.id,
+      isAssigned,
+      acceptingNewPatients: isAssigned ? assigned.acceptingNewPatients : false,
+      transitioningOutOfZone: isAssigned ? assigned.transitioningOutOfZone : false,
+    };
+  });
+}
+
 export default function Settings() {
   const { role } = useAuth() as any;
   const [searchParams, setSearchParams] = useSearchParams();
@@ -142,7 +176,7 @@ export default function Settings() {
   const [allZones, setAllZones] = useState<Zone[]>([]);
   const [selectedEmployeeForZones, setSelectedEmployeeForZones] = useState<Employee | null>(null);
   const [selectedSchedule, setSelectedSchedule] = useState<EmployeeWeeklySchedule | null>(null);
-  const [zoneUpdates, setZoneUpdates] = useState<Array<{ zoneId: number; isAssigned: boolean; acceptingNewPatients: boolean }>>([]);
+  const [zoneUpdates, setZoneUpdates] = useState<EmployeeZoneEditorRow[]>([]);
 
   // Employee Schedule state
   const [selectedEmployeeForSchedule, setSelectedEmployeeForSchedule] = useState<Employee | null>(null);
@@ -299,36 +333,12 @@ export default function Settings() {
         const firstSchedule = employee.weeklySchedules.find((s) => s.isWorkday) || employee.weeklySchedules[0];
         setSelectedSchedule(firstSchedule);
         
-        // Create a map of employee's current zones
-        const employeeZonesMap = new Map<number, boolean>();
-        if (firstSchedule.zones) {
-          firstSchedule.zones.forEach((z) => {
-            employeeZonesMap.set(z.zoneId, z.acceptingNewPatients);
-          });
-        }
-        
         // Merge all zones with employee's zones
-        // isAssigned: true if employee has this zone, false otherwise
-        // acceptingNewPatients: employee's setting if assigned, false otherwise
-        const allZoneUpdates = allZones.map((zone) => {
-          const isAssigned = employeeZonesMap.has(zone.id);
-          return {
-            zoneId: zone.id,
-            isAssigned,
-            acceptingNewPatients: isAssigned ? (employeeZonesMap.get(zone.id) ?? false) : false,
-          };
-        });
-        
-        setZoneUpdates(allZoneUpdates);
+        setZoneUpdates(zoneEditorRowsFromSchedule(allZones, firstSchedule.zones));
       } else {
         // No schedules - show all zones as unassigned
-        const allZoneUpdates = allZones.map((zone) => ({
-          zoneId: zone.id,
-          isAssigned: false,
-          acceptingNewPatients: false,
-        }));
+        setZoneUpdates(zoneEditorRowsFromSchedule(allZones));
         setSelectedSchedule(null);
-        setZoneUpdates(allZoneUpdates);
       }
     } catch (err: any) {
       setError(err?.response?.data?.message || err?.message || 'Failed to load employee');
@@ -458,8 +468,10 @@ export default function Settings() {
         .map((z) => ({
           zoneId: z.zoneId,
           acceptingNewPatients: z.acceptingNewPatients,
+          transitioningOutOfZone: z.transitioningOutOfZone,
         }));
       await updateEmployeeScheduleZones(selectedSchedule.id, zonesToSave);
+      clearVeterinariansZoneLookupCache();
       setSuccess('Employee zones updated successfully');
       setTimeout(() => setSuccess(null), 3000);
       
@@ -475,33 +487,10 @@ export default function Settings() {
             || employee.weeklySchedules[0];
           setSelectedSchedule(scheduleToSelect);
           
-          // Create a map of employee's current zones for the selected schedule
-          const employeeZonesMap = new Map<number, boolean>();
-          if (scheduleToSelect.zones) {
-            scheduleToSelect.zones.forEach((z) => {
-              employeeZonesMap.set(z.zoneId, z.acceptingNewPatients);
-            });
-          }
-          
-          // Merge all zones with employee's zones
-          const allZoneUpdates = allZones.map((zone) => {
-            const isAssigned = employeeZonesMap.has(zone.id);
-            return {
-              zoneId: zone.id,
-              isAssigned,
-              acceptingNewPatients: isAssigned ? (employeeZonesMap.get(zone.id) ?? false) : false,
-            };
-          });
-          
-          setZoneUpdates(allZoneUpdates);
+          setZoneUpdates(zoneEditorRowsFromSchedule(allZones, scheduleToSelect.zones));
         } else {
           setSelectedSchedule(null);
-          const allZoneUpdates = allZones.map((zone) => ({
-            zoneId: zone.id,
-            isAssigned: false,
-            acceptingNewPatients: false,
-          }));
-          setZoneUpdates(allZoneUpdates);
+          setZoneUpdates(zoneEditorRowsFromSchedule(allZones));
         }
       } catch (err: any) {
         setError(err?.response?.data?.message || err?.message || 'Failed to reload employee');
@@ -704,11 +693,19 @@ export default function Settings() {
       if (existing) {
         return prev.map((z) => 
           z.zoneId === zoneId 
-            ? { ...z, isAssigned, acceptingNewPatients: isAssigned ? z.acceptingNewPatients : false }
+            ? {
+                ...z,
+                isAssigned,
+                acceptingNewPatients: isAssigned ? z.acceptingNewPatients : false,
+                transitioningOutOfZone: isAssigned ? z.transitioningOutOfZone : false,
+              }
             : z
         );
       } else {
-        return [...prev, { zoneId, isAssigned, acceptingNewPatients: false }];
+        return [
+          ...prev,
+          { zoneId, isAssigned, acceptingNewPatients: false, transitioningOutOfZone: false },
+        ];
       }
     });
   };
@@ -719,7 +716,31 @@ export default function Settings() {
       if (existing) {
         return prev.map((z) => (z.zoneId === zoneId ? { ...z, acceptingNewPatients: accepting } : z));
       } else {
-        return [...prev, { zoneId, isAssigned: true, acceptingNewPatients: accepting }];
+        return [
+          ...prev,
+          { zoneId, isAssigned: true, acceptingNewPatients: accepting, transitioningOutOfZone: false },
+        ];
+      }
+    });
+  };
+
+  const updateZoneTransitioningOut = (zoneId: number, transitioning: boolean) => {
+    setZoneUpdates((prev) => {
+      const existing = prev.find((z) => z.zoneId === zoneId);
+      if (existing) {
+        return prev.map((z) =>
+          z.zoneId === zoneId ? { ...z, transitioningOutOfZone: transitioning } : z
+        );
+      } else {
+        return [
+          ...prev,
+          {
+            zoneId,
+            isAssigned: true,
+            acceptingNewPatients: false,
+            transitioningOutOfZone: transitioning,
+          },
+        ];
       }
     });
   };
@@ -1341,28 +1362,7 @@ export default function Settings() {
                         );
                         if (schedule) {
                           setSelectedSchedule(schedule);
-                          
-                          // Create a map of employee's current zones for this schedule
-                          const employeeZonesMap = new Map<number, boolean>();
-                          if (schedule.zones) {
-                            schedule.zones.forEach((z) => {
-                              employeeZonesMap.set(z.zoneId, z.acceptingNewPatients);
-                            });
-                          }
-                          
-                          // Merge all zones with employee's zones
-                          // isAssigned: true if employee has this zone, false otherwise
-                          // acceptingNewPatients: employee's setting if assigned, false otherwise
-                          const allZoneUpdates = allZones.map((zone) => {
-                            const isAssigned = employeeZonesMap.has(zone.id);
-                            return {
-                              zoneId: zone.id,
-                              isAssigned,
-                              acceptingNewPatients: isAssigned ? (employeeZonesMap.get(zone.id) ?? false) : false,
-                            };
-                          });
-                          
-                          setZoneUpdates(allZoneUpdates);
+                          setZoneUpdates(zoneEditorRowsFromSchedule(allZones, schedule.zones));
                         }
                       }}
                     >
@@ -1390,8 +1390,7 @@ export default function Settings() {
                           return (
                             <div key={zoneUpdate.zoneId} className="settings-zone-item">
                               <div className="settings-zone-info">
-                                <strong>Zone {zoneUpdate.zoneId}</strong>
-                                {zone?.name && <span className="settings-muted"> - {zone.name}</span>}
+                                <strong>{zone?.name?.trim() || 'Unknown zone'}</strong>
                               </div>
                               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                                 <label className="settings-checkbox-item">
@@ -1414,6 +1413,20 @@ export default function Settings() {
                                     }
                                   />
                                   <span>Accepting New Patients</span>
+                                </label>
+                                <label
+                                  className="settings-checkbox-item"
+                                  style={{ opacity: zoneUpdate.isAssigned ? 1 : 0.5 }}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={zoneUpdate.transitioningOutOfZone}
+                                    disabled={!zoneUpdate.isAssigned}
+                                    onChange={(e) =>
+                                      updateZoneTransitioningOut(zoneUpdate.zoneId, e.target.checked)
+                                    }
+                                  />
+                                  <span>Transitioning Out of Zone</span>
                                 </label>
                               </div>
                             </div>
@@ -1452,8 +1465,7 @@ export default function Settings() {
                           return (
                             <div key={zoneUpdate.zoneId} className="settings-zone-item">
                               <div className="settings-zone-info">
-                                <strong>Zone {zoneUpdate.zoneId}</strong>
-                                {zone?.name && <span className="settings-muted"> - {zone.name}</span>}
+                                <strong>{zone?.name?.trim() || 'Unknown zone'}</strong>
                               </div>
                               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                                 <label className="settings-checkbox-item" style={{ opacity: 0.5, cursor: 'not-allowed' }}>
@@ -1471,6 +1483,14 @@ export default function Settings() {
                                     disabled={true}
                                   />
                                   <span>Accepting New Patients</span>
+                                </label>
+                                <label className="settings-checkbox-item" style={{ opacity: 0.5, cursor: 'not-allowed' }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={zoneUpdate.transitioningOutOfZone}
+                                    disabled={true}
+                                  />
+                                  <span>Transitioning Out of Zone</span>
                                 </label>
                               </div>
                             </div>

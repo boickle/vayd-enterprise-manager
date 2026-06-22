@@ -27,6 +27,7 @@ import {
   type CreateForwardBookingPrefill,
 } from '../utils/forwardBookingCreateLink';
 import { sendClientSms } from '../api/clientSms';
+import { fetchClientByIdStaff } from '../api/clientsStaff';
 import { fetchPracticeMainPhone } from '../api/clientPortal';
 import {
   buildRoutingForwardBookingIntentFromEntries,
@@ -41,6 +42,14 @@ import {
   groupForwardBookingHouseholdEntriesByTargetDate,
 } from '../utils/forwardBookingHousehold';
 import { evetClientLink, evetPatientLink } from '../utils/evet';
+import { buildCareOutreachSmsMessage } from '../utils/careOutreachSmsMessage';
+import {
+  forwardBookingEntrySourceChip,
+  forwardBookingSourceChipColors,
+  forwardBookingSourceChipLabel,
+  parseForwardBookingSourceChipFilter,
+  type ForwardBookingSourceChip,
+} from '../utils/forwardBookingEntrySource';
 import {
   buildForwardBookingSmsMessage,
   clientHasSmsPhone,
@@ -49,16 +58,31 @@ import {
 import {
   clearForwardBookingLocalLink,
   mergeForwardBookingsWithLocalLinks,
+  readForwardBookingLocalLink,
   writeForwardBookingLocalLink,
 } from '../utils/forwardBookingLocalLinks';
 import {
+  autoLinkUnlinkedForwardBookings,
+  persistLocalForwardBookingLinks,
+} from '../utils/forwardBookingReconcile';
+import {
   clearForwardBookingReturnSession,
+  forwardBookingEntryForReturnSession,
   readForwardBookingReturnSession,
+  type ForwardBookingReturnSessionV1,
 } from '../utils/forwardBookingReturnSession';
 import {
+  resolveScheduleLoaderSmsBookedSlot,
+} from '../utils/scheduleLoaderSmsMessage';
+import { FORWARD_BOOKING_STATUS_PARAM, workflowPathForStatusFilter } from '../scheduling-tools-nav';
+import { notifySchedulingToolsNavCountsRefresh, SCHEDULING_TOOLS_PAGE_REFRESH_EVENT } from '../hooks/useSchedulingToolsNavCounts';
+import {
   formatForwardBookingIntervalLabel,
+  formatForwardBookingOriginalVisitTargetLine,
   forwardBookingIsHighPriority,
+  forwardBookingOriginalVisitTargetParts,
   groupForwardBookingListByHousehold,
+  resolveForwardBookingSourceVisitTypeName,
   sortForwardBookingListEntries,
   resolveForwardBookingSourceStartIso,
   resolveForwardBookingTargetDueDateIso,
@@ -67,6 +91,8 @@ import {
   buildAppointmentTypeCatalogFromTypes,
   buildBookedAppointmentMetaMap,
   forwardBookingEntryVisibleOnList,
+  forwardBookingLinkedAppointmentPoints,
+  forwardBookingLinkedVisitIsOnHold,
   forwardBookingListTab,
   opsPointsForAppointment,
   type BookedAppointmentMeta,
@@ -80,12 +106,20 @@ import {
   sortForwardBookingBookLaterListEntries,
 } from '../utils/forwardBookingBookLater';
 import {
+  forwardBookingOnHoldOver24Hours,
+  forwardBookingOnHoldOver24ChipColors,
+  forwardBookingOnHoldSinceIso,
+  formatForwardBookingOnHoldBookedAt,
+  formatForwardBookingOnHoldElapsedSince,
+  sortForwardBookingOnHoldListEntries,
+} from '../utils/forwardBookingOnHold';
+import {
   forwardBookingHasLinkedVisit,
   forwardBookingLinkedAppointmentId,
   mergeForwardBookingLinkedVisit,
 } from '../utils/forwardBookingLinkedVisit';
 import { practiceTimeZoneOrDefault } from '../utils/practiceTimezone';
-import { buildSchedulerFocusAppointmentUrl } from '../utils/schedulerFocusAppointment';
+import { buildSchedulerFocusAppointmentUrl, writeSchedulerFocusSession } from '../utils/schedulerFocusAppointment';
 import { DateTime } from 'luxon';
 import './Settings.css';
 
@@ -95,12 +129,59 @@ type StatusFilter = ForwardBookingListTab;
 
 const STATUS_TABS: { key: StatusFilter; label: string }[] = [
   { key: 'pending', label: 'Needs booking' },
-  { key: 'onHold', label: 'On Hold' },
-  { key: 'bookLater', label: 'Book later' },
+  { key: 'onHold', label: 'On hold' },
   { key: 'booked', label: 'Booked' },
   { key: 'complete', label: 'Complete' },
+  { key: 'bookLater', label: 'Book later' },
   { key: 'removed', label: 'Removed' },
 ];
+
+const ALL_STATUS_FILTERS: StatusFilter[] = [
+  'pending',
+  'onHold',
+  'bookLater',
+  'booked',
+  'complete',
+  'removed',
+];
+
+function parseStatusFilterParam(raw: string | null): StatusFilter {
+  return raw && (ALL_STATUS_FILTERS as string[]).includes(raw) ? (raw as StatusFilter) : 'pending';
+}
+
+const WORKFLOW_STATUS_FILTERS = new Set<StatusFilter>(['onHold', 'booked', 'complete']);
+
+const WORKFLOW_LIST_PAGE_SIZE = 25;
+
+const ON_HOLD_OVER24_SEARCH_PARAM = 'over24';
+const ON_HOLD_SOURCE_SEARCH_PARAM = 'source';
+
+const ON_HOLD_SOURCE_FILTERS: { key: ForwardBookingSourceChip; label: string }[] = [
+  { key: 'care_outreach', label: 'Care Outreach' },
+  { key: 'schedule_loader', label: 'Schedule loader' },
+  { key: 'end_visit', label: 'Forward Booking' },
+];
+
+function parseOnHoldSourceFilter(raw: string | null): ForwardBookingSourceChip | null {
+  return parseForwardBookingSourceChipFilter(raw);
+}
+
+function onHoldFilterButtonStyle(active: boolean, accent?: { background: string; color: string }) {
+  return {
+    marginBottom: 0,
+    border: active
+      ? `2px solid ${accent?.color ?? 'var(--accent-strong, #4FB128)'}`
+      : '1px solid var(--border)',
+    borderRadius: 8,
+    padding: '8px 14px',
+    display: 'inline-flex' as const,
+    alignItems: 'center' as const,
+    gap: 6,
+    background: active ? accent?.background ?? '#ecfdf5' : '#fff',
+    color: active ? accent?.color ?? 'var(--accent-strong, #4FB128)' : 'var(--muted)',
+  };
+}
+
 
 const FORWARD_BOOKING_TAB_ORDER: ForwardBookingListTab[] = [
   'pending',
@@ -112,7 +193,18 @@ const FORWARD_BOOKING_TAB_ORDER: ForwardBookingListTab[] = [
 ];
 
 function forwardBookingTabLabel(tab: ForwardBookingListTab): string {
-  return STATUS_TABS.find((t) => t.key === tab)?.label ?? tab;
+  const local = STATUS_TABS.find((t) => t.key === tab)?.label;
+  if (local) return local;
+  switch (tab) {
+    case 'onHold':
+      return 'On Hold';
+    case 'booked':
+      return 'Booked';
+    case 'complete':
+      return 'Complete';
+    default:
+      return tab;
+  }
 }
 
 function forwardBookingTabBadgeColors(tab: ForwardBookingListTab): { background: string; color: string } {
@@ -159,22 +251,45 @@ function clientDisplay(entry: ForwardBookingEntry): {
   };
 }
 
+async function enrichForwardBookingEntryClientPhone(
+  entry: ForwardBookingEntry
+): Promise<ForwardBookingEntry> {
+  if (clientHasSmsPhone(entry)) return entry;
+  const clientId = entry.client?.id ?? entry.clientId;
+  if (clientId == null || !Number.isFinite(Number(clientId))) return entry;
+  try {
+    const payload = await fetchClientByIdStaff(clientId);
+    const c =
+      payload && typeof payload === 'object' && 'client' in payload
+        ? (payload as { client?: Record<string, unknown> }).client
+        : (payload as Record<string, unknown>);
+    if (!c || typeof c !== 'object') return entry;
+    const phone = pickStr(
+      (c as { phone1?: string }).phone1 ??
+        (c as { phone?: string }).phone ??
+        (c as { phoneNumber?: string }).phoneNumber
+    );
+    if (!phone) return entry;
+    return {
+      ...entry,
+      client: {
+        id: Number(clientId),
+        ...(entry.client ?? {}),
+        phone1: phone,
+        firstName: entry.client?.firstName ?? pickStr((c as { firstName?: string }).firstName),
+        lastName: entry.client?.lastName ?? pickStr((c as { lastName?: string }).lastName),
+      },
+    };
+  } catch {
+    return entry;
+  }
+}
+
 function formatForwardBookingDate(iso: string | null | undefined, practiceTz: string): string {
   if (!iso) return '—';
   const dt = DateTime.fromISO(iso, { zone: 'utc' }).setZone(practiceTz);
   if (!dt.isValid) return '—';
   return dt.toFormat('EEE, MMM d, yyyy');
-}
-
-function formatSourceVisit(
-  entry: ForwardBookingEntry,
-  practiceTz: string
-): { label: string; iso: string | null } {
-  if (entry.sourceAppointmentId == null || entry.sourceAppointmentId <= 0) {
-    return { iso: null, label: 'No associated visit' };
-  }
-  const iso = resolveForwardBookingSourceStartIso(entry, practiceTz);
-  return { iso, label: formatForwardBookingDate(iso, practiceTz) };
 }
 
 async function enrichForwardBookingsSourceDates(
@@ -260,31 +375,35 @@ function initialNote(entry: ForwardBookingEntry): string {
 function forwardBookingEntrySearchHaystack(
   entry: ForwardBookingEntry,
   practiceTz: string,
-  noteText: string
+  noteText: string,
+  catalog?: AppointmentTypeCatalog | null
 ): string {
   const c = clientDisplay(entry);
   const pet = pickStr(entry.patient?.name) ?? '';
   const prov = providerLabel(entry).toLowerCase();
   const bookingNote = (bookingNotesDisplay(entry) ?? '').toLowerCase();
   const bookedBy = employeeLabel(entry.bookedBy).toLowerCase();
-  const sourceVisit = formatSourceVisit(entry, practiceTz);
+  const sourceChip = forwardBookingEntrySourceChip(entry);
+  const source = sourceChip ? forwardBookingSourceChipLabel(sourceChip).toLowerCase() : '';
   return [
     c.name,
     c.phone ?? '',
     pet,
-    sourceVisit.label,
+    formatForwardBookingOriginalVisitTargetLine(entry, practiceTz, catalog),
+    resolveForwardBookingSourceVisitTypeName(entry, catalog) ?? '',
+    entry.appointmentTypeName ?? '',
     formatForwardBookingIntervalLabel({
       intervalAmount: entry.intervalAmount,
       intervalUnit: entry.intervalUnit,
       monthsOut: entry.monthsOut,
     }),
-    entry.appointmentTypeName ?? '',
     formatForwardBookingDate(resolveForwardBookingTargetDueDateIso(entry, practiceTz), practiceTz),
     formatForwardBookingBookAfterDate(forwardBookingBookAfterDateIso(entry), practiceTz),
     prov,
     noteText.toLowerCase(),
     bookingNote,
     bookedBy,
+    source,
   ]
     .join(' ')
     .toLowerCase();
@@ -294,11 +413,12 @@ function forwardBookingEntryMatchesSearch(
   entry: ForwardBookingEntry,
   query: string,
   practiceTz: string,
-  noteText: string
+  noteText: string,
+  catalog?: AppointmentTypeCatalog | null
 ): boolean {
   const q = query.trim().toLowerCase();
   if (!q) return true;
-  return forwardBookingEntrySearchHaystack(entry, practiceTz, noteText).includes(q);
+  return forwardBookingEntrySearchHaystack(entry, practiceTz, noteText, catalog).includes(q);
 }
 
 function noteForPatch(value: string): string | null {
@@ -309,18 +429,21 @@ function noteForPatch(value: string): string | null {
 function linkedVisitStatusLine(
   entry: ForwardBookingEntry,
   meta: BookedAppointmentMeta | undefined,
-  practiceTz: string
+  practiceTz: string,
+  catalog?: AppointmentTypeCatalog | null,
+  bookedApptMeta?: Map<number, BookedAppointmentMeta> | null
 ): string | null {
   if (!forwardBookingHasLinkedVisit(entry)) return null;
   const start = entry.bookedAppointmentStart?.trim();
   if (!start) return 'On calendar — use View appointment for details';
   const visit = formatBookedVisit(start, entry.bookedAppointmentEnd, practiceTz);
-  const points = meta?.points ?? 0;
-  const typeName = meta?.typeName?.trim();
+  const points =
+    forwardBookingLinkedAppointmentPoints(entry, bookedApptMeta ?? null, catalog) ??
+    meta?.points ??
+    1;
+  const typeName = meta?.typeName?.trim() || entry.appointmentTypeName?.trim() || null;
   if (points <= 0) {
-    const holdLabel =
-      typeName && /\bhold\b/i.test(typeName) ? typeName : typeName || 'Hold';
-    return `${holdLabel} placed: ${visit}`;
+    return typeName ? `On hold — ${typeName}: ${visit}` : `On hold: ${visit}`;
   }
   return `Booked: ${visit}`;
 }
@@ -339,7 +462,43 @@ export default function ForwardBookingPage() {
     [practiceTz]
   );
 
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('pending');
+  const statusFilter = parseStatusFilterParam(searchParams.get(FORWARD_BOOKING_STATUS_PARAM));
+  const setStatusFilter = useCallback(
+    (next: StatusFilter) => {
+      const params = new URLSearchParams(searchParams);
+      if (next === 'pending') params.delete(FORWARD_BOOKING_STATUS_PARAM);
+      else params.set(FORWARD_BOOKING_STATUS_PARAM, next);
+      if (next !== 'onHold') {
+        params.delete(ON_HOLD_OVER24_SEARCH_PARAM);
+        params.delete(ON_HOLD_SOURCE_SEARCH_PARAM);
+      }
+      setSearchParams(params);
+    },
+    [searchParams, setSearchParams]
+  );
+  const onHoldOver24Only =
+    statusFilter === 'onHold' && searchParams.get(ON_HOLD_OVER24_SEARCH_PARAM) === '1';
+  const onHoldSourceFilter =
+    statusFilter === 'onHold'
+      ? parseOnHoldSourceFilter(searchParams.get(ON_HOLD_SOURCE_SEARCH_PARAM))
+      : null;
+  const toggleOnHoldOver24Filter = useCallback(() => {
+    if (statusFilter !== 'onHold') return;
+    const next = new URLSearchParams(searchParams);
+    if (onHoldOver24Only) next.delete(ON_HOLD_OVER24_SEARCH_PARAM);
+    else next.set(ON_HOLD_OVER24_SEARCH_PARAM, '1');
+    setSearchParams(next, { replace: true });
+  }, [statusFilter, onHoldOver24Only, searchParams, setSearchParams]);
+  const toggleOnHoldSourceFilter = useCallback(
+    (source: ForwardBookingSourceChip) => {
+      if (statusFilter !== 'onHold') return;
+      const next = new URLSearchParams(searchParams);
+      if (onHoldSourceFilter === source) next.delete(ON_HOLD_SOURCE_SEARCH_PARAM);
+      else next.set(ON_HOLD_SOURCE_SEARCH_PARAM, source);
+      setSearchParams(next, { replace: true });
+    },
+    [statusFilter, onHoldSourceFilter, searchParams, setSearchParams]
+  );
   const [search, setSearch] = useState('');
   const [rows, setRows] = useState<ForwardBookingEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -373,9 +532,19 @@ export default function ForwardBookingPage() {
     null
   );
   const typeCatalogRef = useRef<AppointmentTypeCatalog | null>(null);
+  const [listPage, setListPage] = useState(1);
   const [highlightEntryId, setHighlightEntryId] = useState<number | null>(null);
+  /** After book return, show the highlighted row even if On Hold sub-filters would hide it. */
+  const [returnHighlightBypassFilters, setReturnHighlightBypassFilters] = useState(false);
+  const [postBookReturn, setPostBookReturn] = useState<ForwardBookingReturnSessionV1 | null>(null);
+  const postBookReturnHandledRef = useRef(false);
+  const postBookReturnProcessingRef = useRef(false);
   const rowRefs = useRef<Map<number, HTMLElement>>(new Map());
   const highlightScrollSig = useRef('');
+
+  const listTitle = 'Forward booking';
+  const listDescription =
+    'Visits routed from care outreach, schedule loader, and end-of-visit follow-ups. Use the status filters to move each visit from needs booking → on hold → booked → complete.';
 
   useEffect(() => {
     void fetchPracticeMainPhone(PRACTICE_ID).then((phone) => {
@@ -403,28 +572,8 @@ export default function ForwardBookingPage() {
         await enrichForwardBookingsSourceDates(rawList, PRACTICE_ID)
       );
 
-      const pendingReturn = readForwardBookingReturnSession();
-      let openSmsForReturn: typeof pendingReturn = null;
-      let highlightId: number | null = null;
-      if (pendingReturn) {
-        clearForwardBookingReturnSession();
-        writeForwardBookingLocalLink(pendingReturn.forwardBookingEntryId, {
-          bookedAppointmentId: pendingReturn.bookedAppointmentId,
-          bookedAppointmentStart: pendingReturn.bookedAppointmentStart,
-          bookedAppointmentEnd: pendingReturn.bookedAppointmentEnd,
-        });
-        list = list.map((r) =>
-          r.id === pendingReturn.forwardBookingEntryId
-            ? mergeForwardBookingLinkedVisit(r, {
-                bookedAppointmentId: pendingReturn.bookedAppointmentId,
-                bookedAppointmentStart: pendingReturn.bookedAppointmentStart,
-                bookedAppointmentEnd: pendingReturn.bookedAppointmentEnd,
-              })
-            : r
-        );
-        highlightId = pendingReturn.forwardBookingEntryId;
-        openSmsForReturn = pendingReturn;
-      }
+      list = await persistLocalForwardBookingLinks(list);
+      list = await autoLinkUnlinkedForwardBookings(list, PRACTICE_ID, practiceTz);
 
       const metaMap = await buildBookedAppointmentMetaMap(list, PRACTICE_ID, catalog);
       const pointsMap = new Map<number, number>();
@@ -441,31 +590,6 @@ export default function ForwardBookingPage() {
       setNoteDrafts(drafts);
       setNoteSaving({});
       setNoteError({});
-
-      if (highlightId != null) {
-        setHighlightEntryId(highlightId);
-        highlightScrollSig.current = `${highlightId}-${Date.now()}`;
-        const highlighted = list.find((r) => r.id === highlightId);
-        if (highlighted) {
-          setStatusFilter(forwardBookingListTab(highlighted, practiceTz, metaMap));
-        }
-      }
-
-      if (openSmsForReturn) {
-        const entry = list.find((r) => r.id === openSmsForReturn.forwardBookingEntryId);
-        const points = metaMap.get(openSmsForReturn.bookedAppointmentId)?.points ?? 0;
-        if (entry && points <= 0 && clientHasSmsPhone(entry)) {
-          const resolved = await resolveBookedSlotForSms(entry);
-          setSmsError(null);
-          setSmsMessage(
-            buildForwardBookingSmsMessage(
-              entry,
-              resolved.bookedSlot ? { bookedSlot: resolved.bookedSlot } : undefined
-            )
-          );
-          setSmsEntry(entry);
-        }
-      }
     } catch (e: unknown) {
       const msg =
         (e as { response?: { data?: { message?: string } } })?.response?.data?.message ??
@@ -475,11 +599,214 @@ export default function ForwardBookingPage() {
       setRows([]);
     } finally {
       setLoading(false);
+      notifySchedulingToolsNavCountsRefresh();
     }
-  }, [practiceTz, resolveBookedSlotForSms]);
+  }, [practiceTz]);
+
+  useEffect(() => {
+    const pending = readForwardBookingReturnSession();
+    if (!pending) return;
+    postBookReturnHandledRef.current = false;
+    setPostBookReturn(pending);
+    setReturnHighlightBypassFilters(true);
+  }, []);
+
+  useEffect(() => {
+    if (
+      !postBookReturn ||
+      loading ||
+      postBookReturnHandledRef.current ||
+      postBookReturnProcessingRef.current
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    postBookReturnProcessingRef.current = true;
+
+    void (async () => {
+      if (postBookReturnHandledRef.current) return;
+      const pending = postBookReturn;
+      const mergeListWithReturnLink = (
+        entryRows: ForwardBookingEntry[],
+        entryId: number
+      ): ForwardBookingEntry[] =>
+        entryRows.map((r) =>
+          r.id === entryId
+            ? mergeForwardBookingLinkedVisit(r, {
+                bookedAppointmentId: pending.bookedAppointmentId,
+                bookedAppointmentStart: pending.bookedAppointmentStart,
+                bookedAppointmentEnd: pending.bookedAppointmentEnd,
+              })
+            : r
+        );
+
+      let entry: ForwardBookingEntry | undefined;
+      let nextRows = rows;
+
+      for (let attempt = 0; attempt < 4 && !cancelled; attempt += 1) {
+        entry = forwardBookingEntryForReturnSession(nextRows, pending);
+        if (entry) break;
+        if (attempt === 3) break;
+        await new Promise((resolve) => window.setTimeout(resolve, 350));
+        if (cancelled) return;
+        let refreshed = mergeForwardBookingsWithLocalLinks(
+          await enrichForwardBookingsSourceDates(
+            await fetchForwardBookings({
+              practiceId: PRACTICE_ID,
+              limit: 2000,
+              includeRemoved: true,
+            }),
+            PRACTICE_ID
+          )
+        );
+        refreshed = await persistLocalForwardBookingLinks(refreshed);
+        refreshed = await autoLinkUnlinkedForwardBookings(refreshed, PRACTICE_ID, practiceTz);
+        nextRows = refreshed;
+        entry = forwardBookingEntryForReturnSession(nextRows, pending);
+        if (entry) {
+          setRows(refreshed);
+          break;
+        }
+      }
+
+      if (cancelled || !entry) return;
+
+      const catalog = typeCatalogRef.current;
+      let points =
+        bookedApptMeta?.get(pending.bookedAppointmentId)?.points ??
+        forwardBookingLinkedAppointmentPoints(entry, bookedApptMeta, catalog);
+      if (points == null && pending.bookedAppointmentId) {
+        try {
+          const appt = await fetchAppointmentById(pending.bookedAppointmentId, {
+            practiceId: PRACTICE_ID,
+          });
+          if (appt && catalog) points = opsPointsForAppointment(appt, catalog);
+        } catch {
+          /* optional */
+        }
+      }
+      if (points == null) points = 0;
+
+      const targetTab =
+        pending.targetWorkflowTab ?? (points <= 0 ? 'onHold' : 'booked');
+      if (statusFilter !== targetTab) {
+        postBookReturnProcessingRef.current = false;
+        navigate(workflowPathForStatusFilter(targetTab), { replace: true });
+        return;
+      }
+
+      postBookReturnHandledRef.current = true;
+      clearForwardBookingReturnSession();
+      setPostBookReturn(null);
+
+      if (!readForwardBookingLocalLink(entry.id)) {
+        writeForwardBookingLocalLink(entry.id, {
+          bookedAppointmentId: pending.bookedAppointmentId,
+          bookedAppointmentStart: pending.bookedAppointmentStart,
+          bookedAppointmentEnd: pending.bookedAppointmentEnd,
+          ...(pending.careOutreachAnyPastDue ? { careOutreachAnyPastDue: true } : {}),
+        });
+      }
+      setRows((prev) => mergeListWithReturnLink(prev.length ? prev : nextRows, entry!.id));
+
+      setHighlightEntryId(entry.id);
+      highlightScrollSig.current = `${entry.id}-${Date.now()}`;
+
+      if (points > 0) return;
+
+      let smsTarget = await enrichForwardBookingEntryClientPhone(entry);
+      if (!clientHasSmsPhone(smsTarget)) return;
+
+      setSmsError(null);
+      const smsTemplate = pending.smsTemplate ?? 'forward_booking';
+
+      if (smsTemplate === 'schedule_loader') {
+        const bookedSlot = await resolveScheduleLoaderSmsBookedSlot(
+          pending.bookedAppointmentId,
+          PRACTICE_ID,
+          practiceTz,
+          {
+            startIso: pending.bookedAppointmentStart,
+            endIso: pending.bookedAppointmentEnd,
+          }
+        );
+        const petNames =
+          pending.scheduleLoaderPetNames?.length
+            ? pending.scheduleLoaderPetNames
+            : smsTarget.patient?.name?.trim()
+              ? [smsTarget.patient.name.trim()]
+              : [];
+        setSmsMessage(
+          buildCareOutreachSmsMessage({
+            clientFirstName: smsTarget.client?.firstName,
+            clientDisplayName:
+              pending.scheduleLoaderClientDisplayName?.trim() ||
+              [smsTarget.client?.firstName, smsTarget.client?.lastName].filter(Boolean).join(' ').trim() ||
+              undefined,
+            petNames,
+            providerLastName:
+              pending.scheduleLoaderProviderLastName ?? smsTarget.primaryProvider?.lastName,
+            anyPastDue: pending.scheduleLoaderAnyPastDue !== false,
+            ...(bookedSlot ? { bookedSlot } : {}),
+          })
+        );
+      } else {
+        const resolved = await resolveBookedSlotForSms(smsTarget);
+        const petNames =
+          smsTemplate === 'care_outreach' && pending.careOutreachPetNames?.length
+            ? pending.careOutreachPetNames
+            : smsTarget.patient?.name?.trim()
+              ? [smsTarget.patient.name.trim()]
+              : [];
+        setSmsMessage(
+          smsTemplate === 'care_outreach'
+            ? buildCareOutreachSmsMessage({
+                clientFirstName: smsTarget.client?.firstName,
+                clientDisplayName: [smsTarget.client?.firstName, smsTarget.client?.lastName]
+                  .filter(Boolean)
+                  .join(' ')
+                  .trim() || undefined,
+                petNames,
+                providerLastName: smsTarget.primaryProvider?.lastName,
+                anyPastDue: pending.careOutreachAnyPastDue === true,
+                ...(resolved.bookedSlot ? { bookedSlot: resolved.bookedSlot } : {}),
+              })
+            : buildForwardBookingSmsMessage(
+                smsTarget,
+                resolved.bookedSlot ? { bookedSlot: resolved.bookedSlot } : undefined
+              )
+        );
+      }
+      setSmsEntry(smsTarget);
+    })().finally(() => {
+      postBookReturnProcessingRef.current = false;
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    postBookReturn,
+    loading,
+    bookedApptMeta,
+    practiceTz,
+    resolveBookedSlotForSms,
+    rows,
+    statusFilter,
+    navigate,
+  ]);
 
   useEffect(() => {
     void load();
+  }, [load]);
+
+  useEffect(() => {
+    const onPageRefresh = () => {
+      void load();
+    };
+    window.addEventListener(SCHEDULING_TOOLS_PAGE_REFRESH_EVENT, onPageRefresh);
+    return () => window.removeEventListener(SCHEDULING_TOOLS_PAGE_REFRESH_EVENT, onPageRefresh);
   }, [load]);
 
   useEffect(() => {
@@ -586,7 +913,38 @@ export default function ForwardBookingPage() {
       removed: 0,
     };
     for (const row of visibleRows) {
-      counts[forwardBookingListTab(row, practiceTz, bookedApptMeta)] += 1;
+      counts[forwardBookingListTab(row, practiceTz, bookedApptMeta, typeCatalogRef.current)] += 1;
+    }
+    return counts;
+  }, [visibleRows, practiceTz, bookedApptMeta]);
+
+  const onHoldOver24Count = useMemo(() => {
+    let count = 0;
+    for (const row of visibleRows) {
+      if (
+        forwardBookingListTab(row, practiceTz, bookedApptMeta, typeCatalogRef.current) !== 'onHold'
+      ) {
+        continue;
+      }
+      if (forwardBookingOnHoldOver24Hours(row, bookedApptMeta)) count += 1;
+    }
+    return count;
+  }, [visibleRows, practiceTz, bookedApptMeta]);
+
+  const onHoldSourceCounts = useMemo(() => {
+    const counts: Record<ForwardBookingSourceChip, number> = {
+      care_outreach: 0,
+      schedule_loader: 0,
+      end_visit: 0,
+    };
+    for (const row of visibleRows) {
+      if (
+        forwardBookingListTab(row, practiceTz, bookedApptMeta, typeCatalogRef.current) !== 'onHold'
+      ) {
+        continue;
+      }
+      const chip = forwardBookingEntrySourceChip(row);
+      if (chip) counts[chip] += 1;
     }
     return counts;
   }, [visibleRows, practiceTz, bookedApptMeta]);
@@ -599,7 +957,20 @@ export default function ForwardBookingPage() {
       if (tab === 'bookLater') {
         return sortForwardBookingBookLaterListEntries(items, practiceTz, (e) => clientDisplay(e).name);
       }
+      if (tab === 'onHold') {
+        return sortForwardBookingOnHoldListEntries(items, (e) => clientDisplay(e).name);
+      }
       return sortForwardBookingListEntries(items, practiceTz, (e) => clientDisplay(e).name);
+    };
+
+    const matchesOnHoldFilters = (r: ForwardBookingEntry) => {
+      if (statusFilter !== 'onHold') return true;
+      if (returnHighlightBypassFilters) return true;
+      if (onHoldOver24Only && !forwardBookingOnHoldOver24Hours(r, bookedApptMeta)) return false;
+      if (onHoldSourceFilter && forwardBookingEntrySourceChip(r) !== onHoldSourceFilter) {
+        return false;
+      }
+      return true;
     };
 
     const matchesSearch = (r: ForwardBookingEntry) =>
@@ -607,14 +978,17 @@ export default function ForwardBookingPage() {
         r,
         searchQuery,
         practiceTz,
-        noteDrafts[r.id] ?? initialNote(r)
+        noteDrafts[r.id] ?? initialNote(r),
+        typeCatalogRef.current
       );
 
     if (searchActive) {
-      const matching = visibleRows.filter(matchesSearch);
+      const matching = visibleRows.filter(
+        (r) => matchesSearch(r) && matchesOnHoldFilters(r)
+      );
       const byTab = new Map<ForwardBookingListTab, ForwardBookingEntry[]>();
       for (const row of matching) {
-        const tab = forwardBookingListTab(row, practiceTz, bookedApptMeta);
+        const tab = forwardBookingListTab(row, practiceTz, bookedApptMeta, typeCatalogRef.current);
         const bucket = byTab.get(tab) ?? [];
         bucket.push(row);
         byTab.set(tab, bucket);
@@ -628,31 +1002,112 @@ export default function ForwardBookingPage() {
     }
 
     const list = visibleRows.filter(
-      (r) => forwardBookingListTab(r, practiceTz, bookedApptMeta) === statusFilter
+      (r) =>
+        forwardBookingListTab(r, practiceTz, bookedApptMeta, typeCatalogRef.current) ===
+          statusFilter && matchesOnHoldFilters(r)
     );
     return sortList(list, statusFilter);
-  }, [visibleRows, statusFilter, search, noteDrafts, practiceTz, bookedApptMeta]);
+  }, [
+    visibleRows,
+    statusFilter,
+    search,
+    noteDrafts,
+    practiceTz,
+    bookedApptMeta,
+    onHoldOver24Only,
+    onHoldSourceFilter,
+    returnHighlightBypassFilters,
+  ]);
+
+  const useWorkflowListPagination =
+    statusFilter === 'booked' || statusFilter === 'complete';
+
+  const workflowListTotalPages = useMemo(() => {
+    if (!useWorkflowListPagination) return 1;
+    return Math.max(1, Math.ceil(filtered.length / WORKFLOW_LIST_PAGE_SIZE));
+  }, [filtered.length, useWorkflowListPagination]);
+
+  const listForDisplay = useMemo(() => {
+    if (!useWorkflowListPagination) return filtered;
+    const start = (listPage - 1) * WORKFLOW_LIST_PAGE_SIZE;
+    return filtered.slice(start, start + WORKFLOW_LIST_PAGE_SIZE);
+  }, [filtered, listPage, useWorkflowListPagination]);
 
   const filteredGroups = useMemo(
-    () => groupForwardBookingListByHousehold(filtered),
-    [filtered]
+    () => groupForwardBookingListByHousehold(listForDisplay),
+    [listForDisplay]
   );
 
   const searchActive = search.trim().length > 0;
 
   useEffect(() => {
+    setListPage(1);
+  }, [search, statusFilter]);
+
+  useEffect(() => {
+    if (!useWorkflowListPagination) return;
+    if (listPage > workflowListTotalPages) {
+      setListPage(workflowListTotalPages);
+    }
+  }, [listPage, useWorkflowListPagination, workflowListTotalPages]);
+
+  useEffect(() => {
+    if (!useWorkflowListPagination || highlightEntryId == null || loading) return;
+    const idx = filtered.findIndex((entry) => entry.id === highlightEntryId);
+    if (idx < 0) return;
+    const page = Math.floor(idx / WORKFLOW_LIST_PAGE_SIZE) + 1;
+    setListPage(page);
+  }, [highlightEntryId, filtered, loading, useWorkflowListPagination]);
+
+  useEffect(() => {
     if (highlightEntryId == null || loading) return;
     if (!highlightScrollSig.current) return;
     const id = highlightEntryId;
-    const scrollT = window.setTimeout(() => {
-      rowRefs.current.get(id)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-    }, 100);
-    const clearT = window.setTimeout(() => setHighlightEntryId(null), 3200);
+
+    if (useWorkflowListPagination) {
+      const idx = filtered.findIndex((entry) => entry.id === id);
+      if (idx < 0) return;
+      const page = Math.floor(idx / WORKFLOW_LIST_PAGE_SIZE) + 1;
+      if (listPage !== page) {
+        setListPage(page);
+        return;
+      }
+    }
+
+    let cancelled = false;
+    let attempts = 0;
+
+    const tryScroll = () => {
+      if (cancelled) return;
+      const el = rowRefs.current.get(id);
+      if (el) {
+        el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        return;
+      }
+      attempts += 1;
+      if (attempts < 40) {
+        window.setTimeout(tryScroll, 50);
+      }
+    };
+
+    const scrollT = window.setTimeout(tryScroll, 150);
+    const clearT = window.setTimeout(() => {
+      setHighlightEntryId(null);
+      setReturnHighlightBypassFilters(false);
+    }, 5000);
     return () => {
+      cancelled = true;
       window.clearTimeout(scrollT);
       window.clearTimeout(clearT);
     };
-  }, [highlightEntryId, loading, filtered]);
+  }, [
+    highlightEntryId,
+    loading,
+    listForDisplay,
+    filtered,
+    listPage,
+    useWorkflowListPagination,
+  ]);
 
   const onBook = (entry: ForwardBookingEntry) => {
     const intent = buildRoutingForwardBookingIntentFromEntry(entry);
@@ -684,16 +1139,34 @@ export default function ForwardBookingPage() {
   };
 
   const openSmsModal = async (entry: ForwardBookingEntry) => {
-    if (!clientHasSmsPhone(entry)) return;
+    const enriched = await enrichForwardBookingEntryClientPhone(entry);
+    if (!clientHasSmsPhone(enriched)) return;
     setSmsError(null);
-    const resolved = await resolveBookedSlotForSms(entry);
+    const resolved = await resolveBookedSlotForSms(enriched);
+    const localLink = readForwardBookingLocalLink(enriched.id);
+    const sourceChip = forwardBookingEntrySourceChip(enriched);
+    const careOutreach = sourceChip === 'care_outreach';
+    const scheduleLoader = sourceChip === 'schedule_loader';
+    const petNames = enriched.patient?.name?.trim() ? [enriched.patient.name.trim()] : [];
     setSmsMessage(
-      buildForwardBookingSmsMessage(
-        entry,
-        resolved.bookedSlot ? { bookedSlot: resolved.bookedSlot } : undefined
-      )
+      careOutreach || scheduleLoader
+        ? buildCareOutreachSmsMessage({
+            clientFirstName: enriched.client?.firstName,
+            clientDisplayName: [enriched.client?.firstName, enriched.client?.lastName]
+              .filter(Boolean)
+              .join(' ')
+              .trim() || undefined,
+            petNames,
+            providerLastName: enriched.primaryProvider?.lastName,
+            anyPastDue: scheduleLoader || localLink?.careOutreachAnyPastDue === true,
+            ...(resolved.bookedSlot ? { bookedSlot: resolved.bookedSlot } : {}),
+          })
+        : buildForwardBookingSmsMessage(
+            enriched,
+            resolved.bookedSlot ? { bookedSlot: resolved.bookedSlot } : undefined
+          )
     );
-    setSmsEntry(entry);
+    setSmsEntry(enriched);
   };
 
   const closeSmsModal = () => {
@@ -741,10 +1214,18 @@ export default function ForwardBookingPage() {
 
     if (apptId != null) {
       const meta = bookedApptMeta?.get(apptId);
+      const providerId =
+        meta?.providerInternalId ??
+        (entry.primaryProvider?.id != null ? String(entry.primaryProvider.id) : undefined);
+      writeSchedulerFocusSession({
+        appointmentId: apptId,
+        dateHint: dateKey,
+        providerHint: providerId ?? null,
+      });
       navigate(
         buildSchedulerFocusAppointmentUrl(apptId, {
           date: dateKey ?? undefined,
-          providerId: meta?.providerInternalId ?? undefined,
+          providerId,
         })
       );
       return;
@@ -775,7 +1256,7 @@ export default function ForwardBookingPage() {
             const next = new Map(prev ?? []);
             next.set(apptId, meta);
             if (updated.status === 'booked' || forwardBookingHasLinkedVisit(updated)) {
-              setStatusFilter(forwardBookingListTab(updated, practiceTz, next));
+              setStatusFilter(forwardBookingListTab(updated, practiceTz, next, catalog));
             }
             return next;
           });
@@ -786,7 +1267,9 @@ export default function ForwardBookingPage() {
           });
         });
       } else if (updated.status === 'booked' || forwardBookingHasLinkedVisit(updated)) {
-        setStatusFilter(forwardBookingListTab(updated, practiceTz, bookedApptMeta));
+        setStatusFilter(
+          forwardBookingListTab(updated, practiceTz, bookedApptMeta, typeCatalogRef.current)
+        );
       }
     },
     [practiceTz, bookedApptMeta]
@@ -853,9 +1336,14 @@ export default function ForwardBookingPage() {
 
   return (
     <div>
-      <h2 className="settings-title" style={{ fontSize: '1.25rem', marginTop: 8, marginBottom: 16 }}>
-        Forward booking
+      <h2 className="settings-title" style={{ fontSize: '1.25rem', marginTop: 8, marginBottom: listDescription ? 8 : 16 }}>
+        {listTitle}
       </h2>
+      {listDescription ? (
+        <p className="settings-section-description" style={{ marginTop: 0, marginBottom: 16 }}>
+          {listDescription}
+        </p>
+      ) : null}
 
       {notice ? (
         <div
@@ -885,35 +1373,98 @@ export default function ForwardBookingPage() {
             onClick={() => setStatusFilter(key)}
           >
             <span>{label}</span>
-            {key === 'pending' ||
-            key === 'onHold' ||
-            key === 'bookLater' ||
-            key === 'removed' ? (
+            <span
+              className="settings-muted"
+              style={{
+                fontSize: 12,
+                fontWeight: 600,
+                lineHeight: 1,
+                opacity: statusFilter === key ? 1 : 0.85,
+              }}
+              aria-hidden
+            >
+              ({tabCounts[key]})
+            </span>
+            {key === 'onHold' && onHoldOver24Count > 0 ? (
               <span
-                className="settings-muted"
                 style={{
-                  fontSize: 12,
-                  fontWeight: 600,
+                  fontSize: 11,
+                  fontWeight: 700,
                   lineHeight: 1,
-                  opacity: statusFilter === key ? 1 : 0.85,
+                  color: '#991b1b',
+                  background: '#fee2e2',
+                  borderRadius: 999,
+                  padding: '2px 6px',
                 }}
-                aria-hidden
+                title={`${onHoldOver24Count} on hold over 24 hours`}
               >
-                ({tabCounts[key]})
+                {onHoldOver24Count} &gt; 24h
               </span>
             ) : null}
           </button>
         ))}
-        <button type="button" className="btn primary" onClick={() => void load()} disabled={loading}>
-          Refresh
-        </button>
-        <button type="button" className="btn" onClick={() => {
-          setCreatePrefill(null);
-          setCreateReturnTo(null);
-          setCreateOpen(true);
-        }}>
-          + Forward booking
-        </button>
+        {statusFilter === 'onHold' ? (
+          <button
+            type="button"
+            className={`settings-tab${onHoldOver24Only ? ' active' : ''}`}
+            aria-pressed={onHoldOver24Only}
+            title={
+              onHoldOver24Only
+                ? 'Showing on hold over 24 hours only — click to show all on hold'
+                : 'Show only on hold over 24 hours'
+            }
+            style={onHoldFilterButtonStyle(onHoldOver24Only)}
+            onClick={toggleOnHoldOver24Filter}
+          >
+            <span>On hold &gt; 24 hours</span>
+            <span
+              className="settings-muted"
+              style={{
+                fontSize: 12,
+                fontWeight: 600,
+                lineHeight: 1,
+                opacity: onHoldOver24Only ? 1 : 0.85,
+              }}
+              aria-hidden
+            >
+              ({onHoldOver24Count})
+            </span>
+          </button>
+        ) : null}
+        {statusFilter === 'onHold'
+          ? ON_HOLD_SOURCE_FILTERS.map(({ key, label }) => {
+              const active = onHoldSourceFilter === key;
+              const chipColors = forwardBookingSourceChipColors(key);
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  className={`settings-tab${active ? ' active' : ''}`}
+                  aria-pressed={active}
+                  title={
+                    active
+                      ? `Showing ${label} only — click to show all on hold`
+                      : `Show only ${label}`
+                  }
+                  style={onHoldFilterButtonStyle(active, chipColors)}
+                  onClick={() => toggleOnHoldSourceFilter(key)}
+                >
+                  <span>{label}</span>
+                  <span
+                    style={{
+                      fontSize: 12,
+                      fontWeight: 600,
+                      lineHeight: 1,
+                      opacity: active ? 1 : 0.85,
+                    }}
+                    aria-hidden
+                  >
+                    ({onHoldSourceCounts[key]})
+                  </span>
+                </button>
+              );
+            })
+          : null}
       </div>
 
       <div style={{ marginBottom: 16, maxWidth: 420 }}>
@@ -944,11 +1495,12 @@ export default function ForwardBookingPage() {
 
       {loading ? (
         <p className="settings-muted">Loading…</p>
-      ) : filteredGroups.length === 0 ? (
+      ) : filtered.length === 0 ? (
         <p className="settings-muted">
           {searchActive ? 'No forward bookings match your search.' : 'No forward bookings in this view.'}
         </p>
       ) : (
+        <>
         <ul className="forward-booking-household-list">
           {filteredGroups.map((group) => {
             const householdClient = clientDisplay(group.entries[0]);
@@ -991,9 +1543,25 @@ export default function ForwardBookingPage() {
             const linkedApptId = forwardBookingLinkedAppointmentId(entry);
             const linkedMeta =
               linkedApptId != null ? bookedApptMeta?.get(linkedApptId) : undefined;
-            const linkedPoints = linkedMeta?.points ?? bookedApptPoints?.get(linkedApptId ?? -1) ?? 0;
-            const isHoldOnCalendar = hasLinked && linkedPoints <= 0;
-            const linkedStatusLine = linkedVisitStatusLine(entry, linkedMeta, practiceTz);
+            const isOnHold =
+              forwardBookingLinkedVisitIsOnHold(entry, bookedApptMeta, typeCatalogRef.current);
+            const onHoldOver24 = isOnHold && forwardBookingOnHoldOver24Hours(entry, bookedApptMeta);
+            const linkedStatusLine = linkedVisitStatusLine(
+              entry,
+              linkedMeta,
+              practiceTz,
+              typeCatalogRef.current,
+              bookedApptMeta
+            );
+            const onHoldSinceIso = isOnHold
+              ? forwardBookingOnHoldSinceIso(entry, bookedApptMeta)
+              : null;
+            const onHoldBookedAtLabel = isOnHold
+              ? formatForwardBookingOnHoldBookedAt(onHoldSinceIso, practiceTz)
+              : null;
+            const onHoldElapsedLabel = isOnHold
+              ? formatForwardBookingOnHoldElapsedSince(onHoldSinceIso)
+              : null;
             const patientName = pickStr(entry.patient?.name) ?? `Patient #${entry.patientId}`;
             const patientPimsId = pickStr(entry.patient?.pimsId);
             const resolvedTargetDueDate = resolveForwardBookingTargetDueDateIso(entry, practiceTz);
@@ -1006,9 +1574,15 @@ export default function ForwardBookingPage() {
               forwardBookingIsHighPriority(entry, practiceTz) &&
               entry.status !== 'removed';
             const isRemoved = entry.status === 'removed';
+            const sourceChip = !isRemoved ? forwardBookingEntrySourceChip(entry) : null;
 
             const isComplete = entry.status === 'complete';
-            const entryListTab = forwardBookingListTab(entry, practiceTz, bookedApptMeta);
+            const entryListTab = forwardBookingListTab(
+              entry,
+              practiceTz,
+              bookedApptMeta,
+              typeCatalogRef.current
+            );
             const showBookedFollowUpActions = hasLinked && !isComplete && !isRemoved;
             const showPendingQueueActions = !hasLinked && !isComplete && !isRemoved && !isBookLater;
             const showBookLaterTabActions = isBookLater;
@@ -1106,6 +1680,35 @@ export default function ForwardBookingPage() {
                           HIGH PRIORITY
                         </div>
                       ) : null}
+                      {onHoldOver24 ? (
+                        <div
+                          style={{
+                            display: 'inline-block',
+                            padding: '3px 10px',
+                            borderRadius: 6,
+                            fontSize: 12,
+                            fontWeight: 700,
+                            letterSpacing: '0.02em',
+                            ...forwardBookingOnHoldOver24ChipColors(),
+                          }}
+                        >
+                          ON HOLD &gt; 24 HOURS
+                        </div>
+                      ) : null}
+                      {sourceChip ? (
+                        <div
+                          style={{
+                            display: 'inline-block',
+                            padding: '3px 10px',
+                            borderRadius: 6,
+                            fontSize: 12,
+                            fontWeight: 600,
+                            ...forwardBookingSourceChipColors(sourceChip),
+                          }}
+                        >
+                          {forwardBookingSourceChipLabel(sourceChip)}
+                        </div>
+                      ) : null}
                       {isComplete ? (
                         <div
                           style={{
@@ -1129,13 +1732,11 @@ export default function ForwardBookingPage() {
                           borderRadius: 6,
                           fontSize: 12,
                           fontWeight: 600,
-                          background: isHoldOnCalendar ? '#fef3c7' : '#dcfce7',
-                          color: isHoldOnCalendar ? '#92400e' : '#166534',
+                          background: isOnHold ? '#fef3c7' : '#dcfce7',
+                          color: isOnHold ? '#92400e' : '#166534',
                         }}
                       >
-                        {isHoldOnCalendar
-                          ? `${linkedMeta?.typeName?.trim() || 'Hold'} on calendar`
-                          : 'Visit booked'}
+                        {isOnHold ? 'On hold' : 'Visit booked'}
                       </div>
                       ) : null}
                     </div>
@@ -1168,20 +1769,46 @@ export default function ForwardBookingPage() {
                           />
                         ) : null}
                       </span>
-                      <span aria-hidden>·</span>
-                      <span>
-                        {entry.appointmentTypeName?.trim() || 'Visit'}
-                        <span> · </span>
-                        {formatForwardBookingIntervalLabel(entry)}
-                      </span>
                     </div>
-                    <div className="settings-muted" style={{ fontSize: '0.88rem', marginTop: 6 }}>
-                      Original visit: {formatSourceVisit(entry, practiceTz).label}
-                      <span> · Target: </span>
-                      <span style={overdue && !hasLinked ? { color: 'var(--danger, #c62828)' } : undefined}>
-                        {formatForwardBookingDate(resolvedTargetDueDate, practiceTz)}
-                      </span>
-                      <span> · Forward booking with: {providerLabel(entry)}</span>
+                    <div
+                      className="settings-muted"
+                      style={{ fontSize: '0.88rem', marginTop: 6, lineHeight: 1.45 }}
+                    >
+                      {(() => {
+                        const visit = forwardBookingOriginalVisitTargetParts(
+                          entry,
+                          practiceTz,
+                          typeCatalogRef.current
+                        );
+                        const targetStyle =
+                          overdue && !hasLinked
+                            ? { color: 'var(--danger, #c62828)' }
+                            : undefined;
+                        if (!visit.hasSource) {
+                          return (
+                            <>
+                              <div>Original Visit: No associated visit</div>
+                              <div>
+                                Target:{' '}
+                                <span style={targetStyle}>{visit.targetDateLabel}</span>
+                              </div>
+                            </>
+                          );
+                        }
+                        const originalPart = visit.typeName
+                          ? `${visit.typeName} - ${visit.sourceDateLabel}`
+                          : visit.sourceDateLabel;
+                        return (
+                          <>
+                            <div>Original Visit: {originalPart}</div>
+                            <div>
+                              Target:{' '}
+                              <span style={targetStyle}>{visit.targetDateLabel}</span>
+                            </div>
+                          </>
+                        );
+                      })()}
+                      <div>Forward booking with: {providerLabel(entry)}</div>
                     </div>
                     {bookAfterIso ? (
                       <div className="settings-muted" style={{ fontSize: '0.88rem', marginTop: 4 }}>
@@ -1202,7 +1829,7 @@ export default function ForwardBookingPage() {
                           fontSize: '0.88rem',
                           marginTop: 4,
                           fontWeight: 600,
-                          color: isHoldOnCalendar ? '#92400e' : 'var(--text, #1e293b)',
+                          color: isOnHold ? '#92400e' : 'var(--text, #1e293b)',
                         }}
                       >
                         {linkedStatusLine}
@@ -1211,6 +1838,26 @@ export default function ForwardBookingPage() {
                             {' '}
                             · {employeeLabel(entry.bookedBy)}
                           </span>
+                        ) : null}
+                      </div>
+                    ) : null}
+                    {isOnHold && onHoldBookedAtLabel ? (
+                      <div
+                        className="settings-muted"
+                        style={{ fontSize: '0.88rem', marginTop: 4, lineHeight: 1.45 }}
+                      >
+                        Hold placed:{' '}
+                        <span style={{ fontWeight: 600, color: 'var(--text, #1e293b)' }}>
+                          {onHoldBookedAtLabel}
+                        </span>
+                        {onHoldElapsedLabel ? (
+                          <>
+                            {' '}
+                            ·{' '}
+                            <span style={{ fontWeight: 600, color: 'var(--text, #1e293b)' }}>
+                              {onHoldElapsedLabel} ago
+                            </span>
+                          </>
                         ) : null}
                       </div>
                     ) : null}
@@ -1338,7 +1985,7 @@ export default function ForwardBookingPage() {
                         {clientHasSmsPhone(entry) ? (
                           <button
                             type="button"
-                            className={isHoldOnCalendar && !isComplete ? 'btn primary' : 'btn secondary'}
+                            className={isOnHold && !isComplete ? 'btn primary' : 'btn secondary'}
                             onClick={() => openSmsModal(entry)}
                           >
                             Text Client
@@ -1452,6 +2099,51 @@ export default function ForwardBookingPage() {
             );
           })}
         </ul>
+        {useWorkflowListPagination && filtered.length > WORKFLOW_LIST_PAGE_SIZE ? (
+          <div
+            style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: 12,
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              marginTop: 16,
+            }}
+          >
+            <p className="settings-muted" style={{ margin: 0 }}>
+              Showing {(listPage - 1) * WORKFLOW_LIST_PAGE_SIZE + 1}–
+              {Math.min(listPage * WORKFLOW_LIST_PAGE_SIZE, filtered.length)} of {filtered.length}
+            </p>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <button
+                type="button"
+                className="btn secondary"
+                disabled={listPage <= 1}
+                onClick={() => {
+                  setListPage((page) => page - 1);
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+              >
+                Previous
+              </button>
+              <span className="settings-muted" style={{ fontSize: 14 }}>
+                Page {listPage} of {workflowListTotalPages}
+              </span>
+              <button
+                type="button"
+                className="btn secondary"
+                disabled={listPage >= workflowListTotalPages}
+                onClick={() => {
+                  setListPage((page) => page + 1);
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        ) : null}
+        </>
       )}
 
       {createOpen ? (

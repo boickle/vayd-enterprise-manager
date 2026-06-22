@@ -1,16 +1,40 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { DateTime } from 'luxon';
-import { fetchClientMessages, type ClientMessagesResponse } from '../api/clientPortal';
+import { fetchClientMessages, type ClientMessagesResponse, type Message } from '../api/clientPortal';
+import { phonesMatchForQuo } from '../utils/quoContact';
 
 type Props = {
   open: boolean;
   clientId: number | null;
   clientLabel?: string;
+  /** When set, only show messages on this OpenPhone / Quo line. */
+  openPhoneLine?: string | null;
   onClose: () => void;
 };
 
-export function ClientMessagesHistoryModal({ open, clientId, clientLabel, onClose }: Props) {
+function messageOnOpenPhoneLine(message: Message, line: string): boolean {
+  const incoming = message.direction === 'incoming';
+  if (incoming) {
+    const to = Array.isArray(message.to) ? message.to.join(', ') : message.to;
+    return phonesMatchForQuo(to, line);
+  }
+  return phonesMatchForQuo(message.from, line);
+}
+
+function filterMessagesForLine(messages: Message[], line: string | null | undefined): Message[] {
+  const trimmed = line?.trim();
+  if (!trimmed) return messages;
+  return messages.filter((msg) => messageOnOpenPhoneLine(msg, trimmed));
+}
+
+export function ClientMessagesHistoryModal({
+  open,
+  clientId,
+  clientLabel,
+  openPhoneLine,
+  onClose,
+}: Props) {
   const [data, setData] = useState<ClientMessagesResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -30,9 +54,11 @@ export function ClientMessagesHistoryModal({ open, clientId, clientLabel, onClos
       try {
         const res = await fetchClientMessages(clientId);
         if (cancelled) return;
+        const filtered = filterMessagesForLine(res.messages, openPhoneLine);
         setData({
           ...res,
-          messages: res.messages.slice(0, 50),
+          messages: filtered.slice(0, 50),
+          totalMessages: filtered.length,
         });
       } catch (e: unknown) {
         if (cancelled) return;
@@ -45,7 +71,7 @@ export function ClientMessagesHistoryModal({ open, clientId, clientLabel, onClos
     return () => {
       cancelled = true;
     };
-  }, [open, clientId]);
+  }, [open, clientId, openPhoneLine]);
 
   if (!open || typeof document === 'undefined') return null;
 
@@ -93,6 +119,11 @@ export function ClientMessagesHistoryModal({ open, clientId, clientLabel, onClos
             </h3>
             {clientLabel ? (
               <p style={{ margin: '0 0 4px', color: '#6b7280', fontSize: 14 }}>{clientLabel}</p>
+            ) : null}
+            {openPhoneLine?.trim() ? (
+              <p style={{ margin: '0 0 4px', color: '#6b7280', fontSize: 14 }}>
+                Line {openPhoneLine.trim()}
+              </p>
             ) : null}
             {data ? (
               <p style={{ margin: 0, color: '#6b7280', fontSize: 14 }}>
