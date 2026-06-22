@@ -85,6 +85,19 @@ function petNamesPhrase(entry: ForwardBookingEntry): string {
   return 'your pet';
 }
 
+/** Parse a calendar date or instant for SMS/table labels in practice local time. */
+function practiceLocalDateForLabel(
+  dateSource: string,
+  practiceTz: string
+): DateTime {
+  const raw = dateSource.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    return DateTime.fromISO(raw, { zone: practiceTz });
+  }
+  const dt = DateTime.fromISO(raw, { zone: 'utc' }).setZone(practiceTz);
+  return dt.isValid ? dt : DateTime.fromISO(raw, { zone: practiceTz });
+}
+
 export function formatForwardBookingSmsBookedSlot(
   startIso: string,
   endIso: string | null | undefined,
@@ -93,7 +106,7 @@ export function formatForwardBookingSmsBookedSlot(
 ): ForwardBookingSmsBookedSlot {
   const start = DateTime.fromISO(startIso, { zone: 'utc' }).setZone(practiceTz);
   const dateSource = dateIsoForLabel ?? startIso;
-  const dateDt = DateTime.fromISO(dateSource, { zone: 'utc' }).setZone(practiceTz);
+  const dateDt = practiceLocalDateForLabel(dateSource, practiceTz);
   if (!start.isValid) {
     return { dateLabel: 'xxxxx', windowStart: 'xxxx', windowEnd: 'xxxx' };
   }

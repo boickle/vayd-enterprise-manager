@@ -12,8 +12,7 @@ import {
   type SlotOfferListTab,
   type SlotOfferStatus,
 } from '../api/slotOffers';
-import { sendClientSms } from '../api/clientSms';
-import { fetchPracticeMainPhone } from '../api/clientPortal';
+import { sendClientSms, fetchSchedulingOutreachSmsFrom } from '../api/clientSms';
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import { ClientMessagesHistoryModal } from '../components/ClientMessagesHistoryModal';
 import { ClientSmsComposeModal } from '../components/ClientSmsComposeModal';
@@ -177,7 +176,7 @@ function formatOfferSlot(
       start,
       end,
       practiceTz,
-      row.slotDate?.trim() || row.offeredSlotDatetime?.trim() || start
+      row.slotDate?.trim() || undefined
     );
     return `${window.dateLabel} · ${window.windowStart} – ${window.windowEnd}`;
   }
@@ -340,6 +339,7 @@ function resolveSlotOfferSmsFromLine(
 ): string | null {
   const fromApi = detail.smsFrom?.trim();
   if (fromApi) return fromApi;
+  if (practiceMainPhone?.trim()) return practiceMainPhone.trim();
   const doctorId = detail.doctorId;
   if (doctorId != null && Number.isFinite(Number(doctorId))) {
     const fromDoctor = resolveQuoFromLine({
@@ -348,7 +348,7 @@ function resolveSlotOfferSmsFromLine(
     });
     if (fromDoctor) return fromDoctor;
   }
-  return practiceMainPhone?.trim() || null;
+  return null;
 }
 
 function textedOfferProviderFilterId(row: SlotOfferListItem): string | null {
@@ -408,11 +408,14 @@ function slotOfferAppointmentDateHint(
   >,
   practiceTz: string
 ): string | null {
-  for (const raw of [detail.arrivalWindowStart, detail.offeredSlotDatetime, detail.slotDate]) {
+  for (const raw of [detail.slotDate, detail.offeredSlotDatetime, detail.arrivalWindowStart]) {
     if (!raw?.trim()) continue;
-    const dt = raw.includes('T')
-      ? DateTime.fromISO(raw, { zone: 'utc' }).setZone(practiceTz)
-      : DateTime.fromISO(raw, { zone: practiceTz });
+    const trimmed = raw.trim();
+    const dt = /^\d{4}-\d{2}-\d{2}$/.test(trimmed)
+      ? DateTime.fromISO(trimmed, { zone: practiceTz })
+      : trimmed.includes('T')
+        ? DateTime.fromISO(trimmed, { zone: 'utc' }).setZone(practiceTz)
+        : DateTime.fromISO(trimmed, { zone: practiceTz });
     if (dt.isValid) return dt.toISODate();
   }
   return null;
@@ -755,7 +758,7 @@ export default function TextedOffersPage() {
   );
 
   useEffect(() => {
-    void fetchPracticeMainPhone(PRACTICE_ID).then((phone) => {
+    void fetchSchedulingOutreachSmsFrom().then((phone) => {
       if (phone) setPracticeMainPhone(phone);
     });
     void fetchPrimaryProviders()
@@ -790,11 +793,12 @@ export default function TextedOffersPage() {
       try {
         let from = smsTarget.fromLine?.trim() || practiceMainPhone;
         if (!from) {
-          from = await fetchPracticeMainPhone(PRACTICE_ID);
+          from = await fetchSchedulingOutreachSmsFrom();
           if (from) setPracticeMainPhone(from);
         }
         await sendClientSms(smsTarget.clientId, {
           message: smsMessage.trim(),
+          useRemindersFrom: true,
           ...(opts.overrideNonProd ? { overrideNonProd: true } : {}),
           ...(from ? { from } : {}),
         });

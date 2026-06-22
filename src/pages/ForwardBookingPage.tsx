@@ -26,9 +26,8 @@ import {
   sanitizeForwardBookingReturnTo,
   type CreateForwardBookingPrefill,
 } from '../utils/forwardBookingCreateLink';
-import { sendClientSms } from '../api/clientSms';
+import { sendClientSms, fetchSchedulingOutreachSmsFrom } from '../api/clientSms';
 import { fetchClientByIdStaff } from '../api/clientsStaff';
-import { fetchPracticeMainPhone } from '../api/clientPortal';
 import {
   buildRoutingForwardBookingIntentFromEntries,
   buildRoutingForwardBookingIntentFromEntry,
@@ -547,7 +546,7 @@ export default function ForwardBookingPage() {
     'Visits routed from care outreach, schedule loader, and end-of-visit follow-ups. Use the status filters to move each visit from needs booking → on hold → booked → complete.';
 
   useEffect(() => {
-    void fetchPracticeMainPhone(PRACTICE_ID).then((phone) => {
+    void fetchSchedulingOutreachSmsFrom().then((phone) => {
       if (phone) practiceSmsFromRef.current = phone;
     });
   }, []);
@@ -1188,11 +1187,12 @@ export default function ForwardBookingPage() {
     try {
       let from = practiceSmsFromRef.current;
       if (!from) {
-        from = await fetchPracticeMainPhone(PRACTICE_ID);
+        from = await fetchSchedulingOutreachSmsFrom();
         if (from) practiceSmsFromRef.current = from;
       }
       await sendClientSms(smsEntry.clientId, {
         message: smsMessage.trim(),
+        useRemindersFrom: true,
         ...(opts.overrideNonProd ? { overrideNonProd: true } : {}),
         ...(from ? { from } : {}),
       });
