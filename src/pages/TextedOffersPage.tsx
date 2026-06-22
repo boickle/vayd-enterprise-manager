@@ -791,16 +791,10 @@ export default function TextedOffersPage() {
       setSmsSending(true);
       setSmsError(null);
       try {
-        let from = smsTarget.fromLine?.trim() || practiceMainPhone;
-        if (!from) {
-          from = await fetchSchedulingOutreachSmsFrom();
-          if (from) setPracticeMainPhone(from);
-        }
         await sendClientSms(smsTarget.clientId, {
           message: smsMessage.trim(),
           useRemindersFrom: true,
           ...(opts.overrideNonProd ? { overrideNonProd: true } : {}),
-          ...(from ? { from } : {}),
         });
         closeSmsModal();
       } catch (e: unknown) {
@@ -810,7 +804,7 @@ export default function TextedOffersPage() {
         setSmsSending(false);
       }
     },
-    [closeSmsModal, practiceMainPhone, smsMessage, smsTarget]
+    [closeSmsModal, smsMessage, smsTarget]
   );
 
   const onMarkBooked = useCallback(
