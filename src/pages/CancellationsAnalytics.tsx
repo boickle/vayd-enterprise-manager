@@ -158,11 +158,18 @@ function parseToMs(iso: string | null | undefined): number | null {
   return d.isValid() ? d.valueOf() : null;
 }
 
-function appointmentLocalDate(appt: CancelledAppointmentAnalyticsRow): string | null {
-  const iso = getAppointmentStartIso(appt);
+/** Calendar day the cancellation was recorded (lastTouchedAt, externalUpdated, etc.). */
+function cancellationLocalDate(appt: CancelledAppointmentAnalyticsRow): string | null {
+  const iso = getCancellationSortTimeIso(appt);
   if (!iso) return null;
   const d = dayjs(iso);
   return d.isValid() ? d.format('YYYY-MM-DD') : null;
+}
+
+function formatTableDateTime(iso: string | null): string {
+  if (!iso) return '—';
+  const d = dayjs(iso);
+  return d.isValid() ? d.format('YYYY-MM-DD h:mm A') : iso;
 }
 
 function primaryProviderLabel(appt: CancelledAppointmentAnalyticsRow): string {
@@ -261,6 +268,12 @@ function clientLabel(appt: CancelledAppointmentAnalyticsRow): string {
   }
   const n = appt.clientName;
   if (typeof n === 'string' && n.trim()) return n.trim();
+  return '—';
+}
+
+function cancellationReasonLabel(appt: CancelledAppointmentAnalyticsRow): string {
+  const reason = appt.cancellationReason;
+  if (typeof reason === 'string' && reason.trim()) return reason.trim();
   return '—';
 }
 
@@ -402,7 +415,7 @@ export default function CancellationsAnalytics() {
     const to = endStr;
     return raw.filter((appt) => {
       if (!isCancelledStatus(appt.confirmStatusName)) return false;
-      const d = appointmentLocalDate(appt);
+      const d = cancellationLocalDate(appt);
       if (!d) return false;
       return d >= from && d <= to;
     });
@@ -417,7 +430,7 @@ export default function CancellationsAnalytics() {
     const byDate = new Map<string, number>();
     for (const d of dates) byDate.set(d, 0);
     for (const appt of filtered) {
-      const d = appointmentLocalDate(appt);
+      const d = cancellationLocalDate(appt);
       if (!d || !byDate.has(d)) continue;
       byDate.set(d, (byDate.get(d) ?? 0) + 1);
     }
@@ -479,8 +492,10 @@ export default function CancellationsAnalytics() {
           Cancellations
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          Counts include appointments whose scheduled start falls in the range below, with{' '}
-          <code>confirmStatusName</code> of &quot;Canceled Appointment&quot; or &quot;Canceled&quot;.
+          Counts and the list below use the day the cancellation was recorded (
+          <code>lastTouchedAt</code> / <code>externalUpdated</code>), not the scheduled appointment start.
+          Only rows with <code>confirmStatusName</code> of &quot;Canceled Appointment&quot; or &quot;Canceled&quot; are
+          included.
         </Typography>
 
         {providersError && (
@@ -574,7 +589,10 @@ export default function CancellationsAnalytics() {
         ) : (
           <>
             <Card sx={{ mb: 3 }}>
-              <CardHeader title="Cancelled appointments over time" />
+              <CardHeader
+                title="Cancellations over time"
+                subheader="Daily count by cancellation date (when the cancel was recorded)."
+              />
               <CardContent sx={{ height: 360 }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={chartDataWithTrend} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
@@ -614,8 +632,8 @@ export default function CancellationsAnalytics() {
 
             <Card>
               <CardHeader
-                title="Appointments in range"
-                subheader={`${sortedList.length} cancelled appointment${sortedList.length === 1 ? '' : 's'}`}
+                title="Cancellations in range"
+                subheader={`${sortedList.length} cancelled appointment${sortedList.length === 1 ? '' : 's'} (newest cancellation first)`}
               />
               <CardContent sx={{ pt: 0 }}>
                 {sortedList.length === 0 ? (
@@ -625,16 +643,19 @@ export default function CancellationsAnalytics() {
                     <Table size="small" stickyHeader>
                       <TableHead>
                         <TableRow>
+                          <TableCell>Cancelled on</TableCell>
                           <TableCell>Scheduled start</TableCell>
                           <TableCell>Patient</TableCell>
                           <TableCell>Client</TableCell>
                           <TableCell>Primary provider</TableCell>
+                          <TableCell>Cancellation reason</TableCell>
                           <TableCell>Status</TableCell>
                         </TableRow>
                       </TableHead>
                       <TableBody>
                         {sortedList.map((appt, index) => {
                           const startIso = getAppointmentStartIso(appt);
+                          const cancelledIso = getCancellationSortTimeIso(appt);
                           const status =
                             typeof appt.confirmStatusName === 'string'
                               ? appt.confirmStatusName
@@ -646,13 +667,8 @@ export default function CancellationsAnalytics() {
                               sx={{ cursor: 'pointer' }}
                               onClick={() => setDetailRow(appt)}
                             >
-                              <TableCell>
-                                {startIso
-                                  ? dayjs(startIso).isValid()
-                                    ? dayjs(startIso).format('YYYY-MM-DD h:mm A')
-                                    : startIso
-                                  : '—'}
-                              </TableCell>
+                              <TableCell>{formatTableDateTime(cancelledIso)}</TableCell>
+                              <TableCell>{formatTableDateTime(startIso)}</TableCell>
                               <TableCell>{patientLabel(appt)}</TableCell>
                               <TableCell>{clientLabel(appt)}</TableCell>
                               <TableCell>
@@ -661,6 +677,9 @@ export default function CancellationsAnalytics() {
                                   assignedDoctorIds: Array.from(assignedDoctorIdSet),
                                   selectedProviderId,
                                 })}
+                              </TableCell>
+                              <TableCell sx={{ maxWidth: 280, wordBreak: 'break-word' }}>
+                                {cancellationReasonLabel(appt)}
                               </TableCell>
                               <TableCell>{status}</TableCell>
                             </TableRow>

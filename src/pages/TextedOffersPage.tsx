@@ -12,9 +12,9 @@ import {
   type SlotOfferListTab,
   type SlotOfferStatus,
 } from '../api/slotOffers';
-import { sendClientSms } from '../api/clientSms';
-import { fetchPracticeMainPhone } from '../api/clientPortal';
+import { sendClientSms, fetchSchedulingOutreachSmsFrom } from '../api/clientSms';
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
+import { CareOutreachPetDetailsButton } from '../components/CareOutreachPetDetailsButton';
 import { ClientMessagesHistoryModal } from '../components/ClientMessagesHistoryModal';
 import { ClientSmsComposeModal } from '../components/ClientSmsComposeModal';
 import { notifySchedulingToolsNavCountsRefresh, SCHEDULING_TOOLS_PAGE_REFRESH_EVENT, useSchedulingToolsNavCounts } from '../hooks/useSchedulingToolsNavCounts';
@@ -177,7 +177,7 @@ function formatOfferSlot(
       start,
       end,
       practiceTz,
-      row.slotDate?.trim() || row.offeredSlotDatetime?.trim() || start
+      row.slotDate?.trim() || undefined
     );
     return `${window.dateLabel} · ${window.windowStart} – ${window.windowEnd}`;
   }
@@ -237,7 +237,13 @@ function resolveOfferBookVisits(detail: SlotOfferDetail): SlotOfferDetail['bookV
   }));
 }
 
-function OfferBookingDetails({ detail }: { detail: SlotOfferDetail }) {
+function OfferBookingDetails({
+  detail,
+  practiceTz,
+}: {
+  detail: SlotOfferDetail;
+  practiceTz: string;
+}) {
   const visits = resolveOfferBookVisits(detail) ?? [];
   const totalSlot = detail.serviceMinutes;
   const hasContent =
@@ -275,7 +281,24 @@ function OfferBookingDetails({ detail }: { detail: SlotOfferDetail }) {
                 borderRadius: 8,
               }}
             >
-              <div style={{ fontWeight: 600 }}>{visit.petName}</div>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 8,
+                  flexWrap: 'wrap',
+                }}
+              >
+                <div style={{ fontWeight: 600 }}>{visit.petName}</div>
+                {Number.isFinite(visit.patientId) && visit.patientId > 0 ? (
+                  <CareOutreachPetDetailsButton
+                    patientId={visit.patientId}
+                    patientName={visit.petName}
+                    practiceTz={practiceTz}
+                  />
+                ) : null}
+              </div>
               <div style={{ marginTop: 4, display: 'grid', gap: 4, fontSize: 13 }}>
                 {visit.appointmentTypeName ? (
                   <div>
@@ -340,6 +363,7 @@ function resolveSlotOfferSmsFromLine(
 ): string | null {
   const fromApi = detail.smsFrom?.trim();
   if (fromApi) return fromApi;
+  if (practiceMainPhone?.trim()) return practiceMainPhone.trim();
   const doctorId = detail.doctorId;
   if (doctorId != null && Number.isFinite(Number(doctorId))) {
     const fromDoctor = resolveQuoFromLine({
@@ -348,7 +372,7 @@ function resolveSlotOfferSmsFromLine(
     });
     if (fromDoctor) return fromDoctor;
   }
-  return practiceMainPhone?.trim() || null;
+  return null;
 }
 
 function textedOfferProviderFilterId(row: SlotOfferListItem): string | null {
@@ -408,11 +432,14 @@ function slotOfferAppointmentDateHint(
   >,
   practiceTz: string
 ): string | null {
-  for (const raw of [detail.arrivalWindowStart, detail.offeredSlotDatetime, detail.slotDate]) {
+  for (const raw of [detail.slotDate, detail.offeredSlotDatetime, detail.arrivalWindowStart]) {
     if (!raw?.trim()) continue;
-    const dt = raw.includes('T')
-      ? DateTime.fromISO(raw, { zone: 'utc' }).setZone(practiceTz)
-      : DateTime.fromISO(raw, { zone: practiceTz });
+    const trimmed = raw.trim();
+    const dt = /^\d{4}-\d{2}-\d{2}$/.test(trimmed)
+      ? DateTime.fromISO(trimmed, { zone: practiceTz })
+      : trimmed.includes('T')
+        ? DateTime.fromISO(trimmed, { zone: 'utc' }).setZone(practiceTz)
+        : DateTime.fromISO(trimmed, { zone: practiceTz });
     if (dt.isValid) return dt.toISODate();
   }
   return null;
@@ -486,7 +513,7 @@ function OfferDetailPanel({
             </div>
           </div>
         ) : null}
-        <OfferBookingDetails detail={detail} />
+        <OfferBookingDetails detail={detail} practiceTz={practiceTz} />
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px 24px' }}>
           {detail.offeredSlotScore != null ? (
             <span>
@@ -755,7 +782,7 @@ export default function TextedOffersPage() {
   );
 
   useEffect(() => {
-    void fetchPracticeMainPhone(PRACTICE_ID).then((phone) => {
+    void fetchSchedulingOutreachSmsFrom().then((phone) => {
       if (phone) setPracticeMainPhone(phone);
     });
     void fetchPrimaryProviders()
@@ -788,15 +815,10 @@ export default function TextedOffersPage() {
       setSmsSending(true);
       setSmsError(null);
       try {
-        let from = smsTarget.fromLine?.trim() || practiceMainPhone;
-        if (!from) {
-          from = await fetchPracticeMainPhone(PRACTICE_ID);
-          if (from) setPracticeMainPhone(from);
-        }
         await sendClientSms(smsTarget.clientId, {
           message: smsMessage.trim(),
+          useRemindersFrom: true,
           ...(opts.overrideNonProd ? { overrideNonProd: true } : {}),
-          ...(from ? { from } : {}),
         });
         closeSmsModal();
       } catch (e: unknown) {
@@ -806,7 +828,7 @@ export default function TextedOffersPage() {
         setSmsSending(false);
       }
     },
-    [closeSmsModal, practiceMainPhone, smsMessage, smsTarget]
+    [closeSmsModal, smsMessage, smsTarget]
   );
 
   const onMarkBooked = useCallback(

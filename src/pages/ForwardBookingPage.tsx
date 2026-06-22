@@ -26,9 +26,8 @@ import {
   sanitizeForwardBookingReturnTo,
   type CreateForwardBookingPrefill,
 } from '../utils/forwardBookingCreateLink';
-import { sendClientSms } from '../api/clientSms';
+import { sendClientSms, fetchSchedulingOutreachSmsFrom } from '../api/clientSms';
 import { fetchClientByIdStaff } from '../api/clientsStaff';
-import { fetchPracticeMainPhone } from '../api/clientPortal';
 import {
   buildRoutingForwardBookingIntentFromEntries,
   buildRoutingForwardBookingIntentFromEntry,
@@ -506,7 +505,7 @@ export default function ForwardBookingPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [manualCompleteEntry, setManualCompleteEntry] = useState<ForwardBookingEntry | null>(null);
   const [smsEntry, setSmsEntry] = useState<ForwardBookingEntry | null>(null);
-  const practiceSmsFromRef = useRef<string | null>(null);
+  const [smsFromLine, setSmsFromLine] = useState<string | null>(null);
   const [smsMessage, setSmsMessage] = useState('');
   const [smsSending, setSmsSending] = useState(false);
   const [smsError, setSmsError] = useState<string | null>(null);
@@ -547,8 +546,8 @@ export default function ForwardBookingPage() {
     'Visits routed from care outreach, schedule loader, and end-of-visit follow-ups. Use the status filters to move each visit from needs booking → on hold → booked → complete.';
 
   useEffect(() => {
-    void fetchPracticeMainPhone(PRACTICE_ID).then((phone) => {
-      if (phone) practiceSmsFromRef.current = phone;
+    void fetchSchedulingOutreachSmsFrom().then((phone) => {
+      if (phone) setSmsFromLine(phone);
     });
   }, []);
 
@@ -1186,15 +1185,10 @@ export default function ForwardBookingPage() {
     setSmsSending(true);
     setSmsError(null);
     try {
-      let from = practiceSmsFromRef.current;
-      if (!from) {
-        from = await fetchPracticeMainPhone(PRACTICE_ID);
-        if (from) practiceSmsFromRef.current = from;
-      }
       await sendClientSms(smsEntry.clientId, {
         message: smsMessage.trim(),
+        useRemindersFrom: true,
         ...(opts.overrideNonProd ? { overrideNonProd: true } : {}),
-        ...(from ? { from } : {}),
       });
       closeSmsModal();
     } catch (e: unknown) {
@@ -2191,6 +2185,7 @@ export default function ForwardBookingPage() {
           onOpenMessagesHistory={() => openMessagesHistory(smsEntry)}
           sending={smsSending}
           sendError={smsError}
+          fromLineLabel={smsFromLine}
         />
       ) : null}
 

@@ -34,6 +34,20 @@ export function normalizeForwardBookingCreatedVia(
   return null;
 }
 
+/** Values accepted by POST /forward-bookings (not `unknown` / `appointment_request`). */
+export type CreatableForwardBookingCreatedVia =
+  | 'care_outreach'
+  | 'end_visit'
+  | 'manual'
+  | 'schedule_loader';
+
+const CREATABLE_FORWARD_BOOKING_CREATED_VIA = new Set<CreatableForwardBookingCreatedVia>([
+  'care_outreach',
+  'end_visit',
+  'manual',
+  'schedule_loader',
+]);
+
 export type ForwardBookingClientRef = {
   id: number;
   pimsId?: string | null;
@@ -274,8 +288,24 @@ export type CreateForwardBookingPayload = {
   serviceMinutes?: number;
   note?: string | null;
   bookingNotes?: string | null;
-  createdVia: ForwardBookingCreatedVia;
+  /** Omit to infer `end_visit` when `sourceAppointmentId` is set, else `manual`. */
+  createdVia?: CreatableForwardBookingCreatedVia;
 };
+
+/** POST /forward-bookings — explicit `createdVia`, else infer from source visit. */
+export function resolveCreatableForwardBookingCreatedVia(
+  body: Pick<CreateForwardBookingPayload, 'createdVia' | 'sourceAppointmentId'>
+): CreatableForwardBookingCreatedVia {
+  const normalized = normalizeForwardBookingCreatedVia(body.createdVia);
+  if (normalized && CREATABLE_FORWARD_BOOKING_CREATED_VIA.has(normalized as CreatableForwardBookingCreatedVia)) {
+    return normalized as CreatableForwardBookingCreatedVia;
+  }
+  const sourceId = body.sourceAppointmentId;
+  if (sourceId != null && Number.isFinite(Number(sourceId)) && Number(sourceId) > 0) {
+    return 'end_visit';
+  }
+  return 'manual';
+}
 
 /**
  * POST /forward-bookings — create when staff ends a visit and selects a forward-book interval.
@@ -283,7 +313,11 @@ export type CreateForwardBookingPayload = {
 export async function createForwardBooking(
   body: CreateForwardBookingPayload
 ): Promise<ForwardBookingEntry> {
-  const { data } = await http.post<unknown>('/forward-bookings', body);
+  const createdVia = resolveCreatableForwardBookingCreatedVia(body);
+  const { data } = await http.post<unknown>('/forward-bookings', {
+    ...body,
+    createdVia,
+  });
   return unwrapEntry(data);
 }
 

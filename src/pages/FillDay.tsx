@@ -805,8 +805,9 @@ export default function FillDayPage() {
     setSmsSuccess((prev) => ({ ...prev, [clientId]: false }));
 
     try {
-      const payload: { message: string; overrideNonProd?: boolean } = {
+      const payload: { message: string; overrideNonProd?: boolean; useRemindersFrom?: boolean } = {
         message: smsMessage,
+        useRemindersFrom: true,
       };
 
       if (overrideNonProd) {
