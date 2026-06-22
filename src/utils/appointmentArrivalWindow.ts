@@ -1,5 +1,8 @@
 import { DateTime } from 'luxon';
-import { practiceTimeZoneOrDefault } from './practiceTimezone';
+import {
+  formatIsoInPracticeZone,
+  practiceTimeZoneOrDefault,
+} from './practiceTimezone';
 
 export type AppointmentTypeWindowSource = {
   name: string;
@@ -47,4 +50,47 @@ export function arrivalWindowFromScheduledStart(
   const ew = effectiveWindowForScheduledStart(appointmentStartIso, appointmentType, practiceTz, opts);
   if (!ew) return undefined;
   return { windowStartIso: ew.startIso, windowEndIso: ew.endIso };
+}
+
+/** Client-facing copy for a scheduled arrival window. */
+export function formatClientArrivalWindowMessage(
+  windowStartIso: string,
+  windowEndIso: string,
+  practiceTz: string,
+): string {
+  const start = formatIsoInPracticeZone(windowStartIso, practiceTz);
+  const end = formatIsoInPracticeZone(windowEndIso, practiceTz);
+  if (!start || !end) return '';
+  if (start === end) return `We will come at ${start}`;
+  return `We will come between ${start} and ${end}`;
+}
+
+export function resolveClientArrivalWindowForScheduledStart(
+  appointmentStartIso: string,
+  appointmentType: AppointmentTypeWindowSource | undefined,
+  practiceTz: string,
+  opts?: { appointmentEndIso?: string },
+): {
+  windowStartIso: string;
+  windowEndIso: string;
+  windowDisplay: string;
+} | undefined {
+  const window = arrivalWindowFromScheduledStart(
+    appointmentStartIso,
+    appointmentType,
+    practiceTz,
+    opts,
+  );
+  if (!window) return undefined;
+  const windowDisplay = formatClientArrivalWindowMessage(
+    window.windowStartIso,
+    window.windowEndIso,
+    practiceTz,
+  );
+  if (!windowDisplay) return undefined;
+  return {
+    windowStartIso: window.windowStartIso,
+    windowEndIso: window.windowEndIso,
+    windowDisplay,
+  };
 }

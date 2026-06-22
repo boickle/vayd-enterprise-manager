@@ -26,11 +26,19 @@ import {
 } from '../components/PetHandlingNeedsPicker';
 import { getSelectedAppointmentType } from '../utils/petVisitQuestionUtils';
 import { sortAppointmentTypesForPicker } from '../utils/appointmentTypeSettings';
+import { resolveClientArrivalWindowForScheduledStart } from '../utils/appointmentArrivalWindow';
+import { DEFAULT_PRACTICE_TIMEZONE } from '../utils/practiceTimezone';
+import { appointmentTypeForRoutingStatsKey } from '../utils/routingCalculateTimeType';
+import {
+  appointmentTypeNameForRoutingStats,
+  estimateRoutingServiceMinutesForSelection,
+} from '../utils/routingServiceMinutes';
 import {
   anyDoctorCanBookOnline,
   anyDoctorCanBookOnlineForNewPatientRequest,
   canBookOnline,
   canBookOnlineForNewPatientRequest,
+  isVeterinarianAcceptingNewPatientsInClientZone,
   isOnlineBookingUnavailableError,
   ONLINE_BOOKING_UNAVAILABLE_MESSAGE,
   SLOT_NO_LONGER_AVAILABLE_MESSAGE,
@@ -218,6 +226,25 @@ function resolveRawVeterinarianById(rawVets: any[], doctorId: string | number | 
   return (
     rawVets.find((v) => String(v.id ?? v.employeeId ?? v.pimsId) === String(doctorId)) ?? null
   );
+}
+
+function mapDoctorForSelfScheduleModal(
+  p: { id: string | number; name: string; email?: string; imageUrl?: unknown; pimsId?: string | number },
+  rawVeterinarianList: any[],
+) {
+  const raw = resolveRawVeterinarianById(rawVeterinarianList, p.id);
+  const bio =
+    typeof raw?.bio === 'string' && raw.bio.trim() ? raw.bio.trim() : null;
+  return {
+    id: p.id,
+    name: p.name,
+    email: p.email || undefined,
+    imageUrl: ('imageUrl' in p && p.imageUrl) ? (p.imageUrl as string | null) : null,
+    employeeId: typeof p.id === 'number' ? p.id : (
+      p.pimsId != null ? Number(p.pimsId) : null
+    ),
+    bio,
+  };
 }
 
 type FormData = {
@@ -524,9 +551,11 @@ export default function AppointmentRequestForm() {
   const [rawPublicVeterinarians, setRawPublicVeterinarians] = useState<any[]>([]);
   const [loadingClientData, setLoadingClientData] = useState(false);
   const [loadingVeterinarians, setLoadingVeterinarians] = useState(false); // Always false initially - never blocks render
+  const [veterinariansFetchResolved, setVeterinariansFetchResolved] = useState(false);
   const [appointmentTypes, setAppointmentTypes] = useState<AppointmentType[]>([]);
   const [loadingAppointmentTypes, setLoadingAppointmentTypes] = useState(false);
   const [primaryProviderName, setPrimaryProviderName] = useState<string | null>(null);
+  const [primaryProviderId, setPrimaryProviderId] = useState<string | number | null>(null);
   const [originalAddress, setOriginalAddress] = useState<FormData['physicalAddress'] | null>(null);
   const [emailCheckResult, setEmailCheckResult] = useState<{ exists: boolean; hasAccount: boolean } | null>(null);
   const [checkingEmail, setCheckingEmail] = useState(false);
@@ -581,6 +610,9 @@ export default function AppointmentRequestForm() {
   const [showSelfScheduleModal, setShowSelfScheduleModal] = useState(false); // Self-schedule calendar modal
   const [scheduleModalRefreshKey, setScheduleModalRefreshKey] = useState(0);
   const [selfScheduleSlotError, setSelfScheduleSlotError] = useState<string | null>(null);
+  const [highlightSchedulingNotes, setHighlightSchedulingNotes] = useState(false); // Briefly glow the preferences box
+  const schedulingNotesRef = useRef<HTMLTextAreaElement>(null);
+  const highlightTimerRef = useRef<number | null>(null);
   const [submitSuccessKind, setSubmitSuccessKind] = useState<AppointmentFormSubmitSuccessKind>('request_received');
   const [showExistingClientModal, setShowExistingClientModal] = useState(false); // Modal for existing client notification
   const [emailCheckForModal, setEmailCheckForModal] = useState<{ exists: boolean; hasAccount: boolean } | null>(null); // Store email check result for modal
@@ -1069,6 +1101,11 @@ export default function AppointmentRequestForm() {
     ],
   );
 
+  const primaryAppointmentType = useMemo(
+    () => appointmentTypes.find((type) => type.id === primaryAppointmentTypeId),
+    [appointmentTypes, primaryAppointmentTypeId],
+  );
+
   const rawVeterinarianList = isLoggedIn ? rawVeterinarians : rawPublicVeterinarians;
 
   const isNewPatientRequest = !isLoggedIn && formData.haveUsedServicesBefore !== 'Yes';
@@ -1098,6 +1135,149 @@ export default function AppointmentRequestForm() {
     rawVeterinarianList,
     isNewPatientRequest,
     handlingNeedsAllowOnlineScheduling,
+  ]);
+
+  /**
+   * Resolve the patient's primary provider to a doctor id in the loaded provider list.
+   * Uses the selected pet(s) for this visit when available.
+   */
+  const visitPrimaryProvider = useMemo(() => {
+    if (isLoggedIn && formData.selectedPetIds.length > 0) {
+      const selected = pets.filter((p) => formData.selectedPetIds.includes(p.id));
+      const pet =
+        selected.find((p) => p.primaryProviderId != null || p.primaryProviderName) ??
+        selected[0];
+      if (pet) {
+        return {
+          name: pet.primaryProviderName ?? null,
+          id: pet.primaryProviderId ?? null,
+        };
+      }
+    }
+    return { name: primaryProviderName, id: primaryProviderId };
+  }, [
+    isLoggedIn,
+    pets,
+    formData.selectedPetIds,
+    primaryProviderName,
+    primaryProviderId,
+  ]);
+
+  const primaryProviderDoctorId = useMemo<string | number | undefined>(() => {
+    const { name: providerName, id: providerId } = visitPrimaryProvider;
+    const list = isLoggedIn
+      ? providers
+      : (publicProviders.length > 0 ? publicProviders : providers);
+    if (list.length === 0 && rawVeterinarianList.length === 0) return undefined;
+
+    const coreName = (s: string) =>
+      s
+        .replace(/^dr\.?\s*/i, '')
+        .toLowerCase()
+        .replace(/[^a-z\s]/g, '')
+        .replace(/\b(dvm|vmd|dabvp|ms|phd)\b/g, '')
+        .trim()
+        .replace(/\s+/g, ' ');
+
+    const resolveRawId = (raw: any): string | number | undefined =>
+      raw?.id ?? raw?.employeeId ?? raw?.pimsId ?? undefined;
+
+    const providerPimsId = (p: (typeof list)[number]) =>
+      'pimsId' in p && p.pimsId != null ? String(p.pimsId) : null;
+
+    // 1) Match by id (direct list, raw vet aliases, pimsId crosswalk).
+    if (providerId != null) {
+      const target = String(providerId);
+      const direct = list.find(
+        (p) => String(p.id) === target || providerPimsId(p) === target,
+      );
+      if (direct) return direct.id;
+
+      const rawMatch = rawVeterinarianList.find((v) =>
+        [v?.id, v?.pimsId, v?.employeeId, v?.pimsUserId].some(
+          (x) => x != null && String(x) === target,
+        ),
+      );
+      if (rawMatch) {
+        const rid = resolveRawId(rawMatch);
+        if (rid != null) {
+          const viaRaw = list.find(
+            (p) => String(p.id) === String(rid) || providerPimsId(p) === String(rid),
+          );
+          if (viaRaw) return viaRaw.id;
+          return rid;
+        }
+      }
+    }
+
+    // 2) Lenient name match against provider list.
+    if (providerName) {
+      const target = coreName(providerName);
+      if (target) {
+        const match = list.find((p) => {
+          const name = coreName(p.name);
+          return name === target || name.startsWith(target) || target.startsWith(name);
+        });
+        if (match) return match.id;
+      }
+
+      // 3) Match raw veterinarian rows by first/last name (covers request-only doctors).
+      const rawByName = rawVeterinarianList.find((v) => {
+        const built = coreName(
+          [v.firstName, v.lastName].filter(Boolean).join(' ') || String(v.name ?? ''),
+        );
+        const target = coreName(providerName);
+        return built && target && (built === target || built.startsWith(target) || target.startsWith(built));
+      });
+      if (rawByName) {
+        const rid = resolveRawId(rawByName);
+        if (rid != null) {
+          const viaRaw = list.find(
+            (p) => String(p.id) === String(rid) || providerPimsId(p) === String(rid),
+          );
+          if (viaRaw) return viaRaw.id;
+          return rid;
+        }
+      }
+    }
+
+    return undefined;
+  }, [
+    isLoggedIn,
+    providers,
+    publicProviders,
+    visitPrimaryProvider,
+    rawVeterinarianList,
+  ]);
+
+  /** True while vet list is still loading — avoids flashing the manual-scheduling banner. */
+  const onlineBookingAvailabilityPending = useMemo(() => {
+    if (!handlingNeedsAllowOnlineScheduling || primaryAppointmentTypeId == null) return false;
+    if (errors.zoneNotServiced) return false;
+    if (loadingVeterinarians) return true;
+
+    if (isLoggedIn) {
+      if (formData.isThisTheAddressWhereWeWillCome === 'No') {
+        if (!isPhysicalAddressComplete(formData.newPhysicalAddress)) return false;
+      } else if (!clientLocationReady) {
+        return true;
+      }
+    } else if (!isPhysicalAddressComplete(formData.physicalAddress)) {
+      return false;
+    }
+
+    return !veterinariansFetchResolved;
+  }, [
+    handlingNeedsAllowOnlineScheduling,
+    primaryAppointmentTypeId,
+    errors.zoneNotServiced,
+    loadingVeterinarians,
+    isLoggedIn,
+    formData.isThisTheAddressWhereWeWillCome,
+    formData.newPhysicalAddress,
+    formData.physicalAddress,
+    clientLocationReady,
+    veterinariansFetchResolved,
   ]);
 
   const slotDoctorAllowsOnlineBooking = useMemo(() => {
@@ -1289,21 +1469,27 @@ export default function AppointmentRequestForm() {
         return;
       }
 
-      // Calculate service minutes based on number of selected pets
-      // First pet: 40 minutes, each additional pet: +20 minutes
-      const numPets = isLoggedIn && formData.selectedPetIds.length > 0 
-        ? formData.selectedPetIds.length 
-        : (formData.newClientPets && formData.newClientPets.length > 0 
-          ? formData.newClientPets.length 
-          : 1); // Default to 1 pet if not logged in or no pets selected
-      const serviceMinutes = 40 + (Math.max(0, numPets - 1) * 20);
-      
+      // Doctor-specific service minutes (same logic as Routing workspace)
+      const numPets = isLoggedIn && formData.selectedPetIds.length > 0
+        ? formData.selectedPetIds.length
+        : (formData.newClientPets && formData.newClientPets.length > 0
+          ? formData.newClientPets.length
+          : 1);
+      const typeKey = appointmentTypeNameForRoutingStats(primaryAppointmentType);
+      const serviceMinutes = estimateRoutingServiceMinutesForSelection(
+        typeKey,
+        numPets,
+        [],
+        (key) => appointmentTypeForRoutingStatsKey(key, appointmentTypes),
+      );
+
       // Store the service minutes used for routing request
       setServiceMinutesUsed(serviceMinutes);
-      
+
       console.log('[AppointmentForm] Calculating service minutes:', {
         numPets,
         serviceMinutes,
+        typeKey,
         selectedPetIds: formData.selectedPetIds,
         isLoggedIn,
       });
@@ -1794,6 +1980,7 @@ export default function AppointmentRequestForm() {
         setProviders([]);
         setRawPublicVeterinarians([]);
         setLoadingVeterinarians(false);
+        setVeterinariansFetchResolved(false);
         setErrors(prev => {
           const next = { ...prev };
           delete next.zoneNotServiced;
@@ -1835,6 +2022,7 @@ export default function AppointmentRequestForm() {
           }
 
           setLoadingVeterinarians(true);
+          setVeterinariansFetchResolved(false);
           try {
             // Check zone before fetching veterinarians
             try {
@@ -1862,6 +2050,7 @@ export default function AppointmentRequestForm() {
                   setProviders([]);
                   setRawPublicVeterinarians([]);
                   setLoadingVeterinarians(false);
+                  setVeterinariansFetchResolved(true);
                   lastCheckedAddressRef.current = currentAddress;
                 }
                 return;
@@ -1924,6 +2113,7 @@ export default function AppointmentRequestForm() {
           } finally {
             if (alive) {
               setLoadingVeterinarians(false);
+              setVeterinariansFetchResolved(true);
             }
           }
         })();
@@ -1979,9 +2169,12 @@ export default function AppointmentRequestForm() {
         setPetAlerts(alertsMap);
 
         // Extract client info from pets/appointments
-        // Try to get primary provider from pets
-        const primaryProvider = petsData.find(p => p.primaryProviderName)?.primaryProviderName || null;
-        setPrimaryProviderName(primaryProvider);
+        // Try to get primary provider from pets (prefer one with an id we can match on).
+        const providerPet =
+          petsData.find(p => p.primaryProviderId != null) ??
+          petsData.find(p => p.primaryProviderName);
+        setPrimaryProviderName(providerPet?.primaryProviderName || null);
+        setPrimaryProviderId(providerPet?.primaryProviderId ?? null);
 
         // Pre-populate form with user email
         if (userEmail) {
@@ -2178,6 +2371,7 @@ export default function AppointmentRequestForm() {
       setProviders([]);
       setRawVeterinarians([]);
       setLoadingVeterinarians(false);
+      setVeterinariansFetchResolved(false);
       setErrors(prev => {
         const next = { ...prev };
         delete next.zoneNotServiced;
@@ -2220,6 +2414,7 @@ export default function AppointmentRequestForm() {
         }
 
         setLoadingVeterinarians(true);
+        setVeterinariansFetchResolved(false);
         try {
           // Check zone before fetching veterinarians
           try {
@@ -2245,6 +2440,7 @@ export default function AppointmentRequestForm() {
                 setErrors(prev => ({ ...prev, zoneNotServiced: "We're sorry—we don't currently serve your area. Please check back periodically at www.vetatyourdoor.com/service-area to see if our coverage has expanded. You can also call or text us at (207) 536-8387, and we'll take a look to see if your location may still be within reach." }));
                 setProviders([]);
                 setLoadingVeterinarians(false);
+                setVeterinariansFetchResolved(true);
                 lastCheckedAddressRef.current = currentAddress; // Update last checked address even on error
               }
               return;
@@ -2283,12 +2479,14 @@ export default function AppointmentRequestForm() {
           
           setProviders(providersData);
           setLoadingVeterinarians(false);
+          setVeterinariansFetchResolved(true);
           } catch (err) {
             console.error('Failed to fetch veterinarians:', err);
             if (alive) {
               setProviders([]);
               setRawVeterinarians([]);
               setLoadingVeterinarians(false);
+              setVeterinariansFetchResolved(true);
             }
           }
       })();
@@ -2328,14 +2526,15 @@ export default function AppointmentRequestForm() {
     const { lat, lon, address } = clientLocationRef.current;
     // Don't fetch if no location available
     if (!lat && !lon && !address) return;
-    
-    // Defer execution to ensure it doesn't block render - use longer delay to ensure everything is loaded first
+
+    setLoadingVeterinarians(true);
+    setVeterinariansFetchResolved(false);
+
     let alive = true;
     const timeoutId = setTimeout(() => {
       // Fire and forget - completely async, non-blocking
       (async () => {
         try {
-          setLoadingVeterinarians(true);
           // Clear any zone error when using address on file
           setErrors(prev => {
             const next = { ...prev };
@@ -2375,16 +2574,18 @@ export default function AppointmentRequestForm() {
           
           setProviders(providersData);
           setLoadingVeterinarians(false);
+          setVeterinariansFetchResolved(true);
         } catch (err) {
           console.error('Failed to fetch veterinarians:', err);
           if (alive) {
             setProviders([]);
             setRawVeterinarians([]);
             setLoadingVeterinarians(false);
+            setVeterinariansFetchResolved(true);
           }
         }
       })();
-    }, 300); // Delay to ensure client data loading and page navigation complete first
+    }, 0);
 
     return () => {
       alive = false;
@@ -2721,6 +2922,9 @@ export default function AppointmentRequestForm() {
           if (!pet.speciesChoice) {
             newErrors[`newClientPet.${pet.id}.species`] = 'Species is required';
           }
+          if (!pet.breed?.trim()) {
+            newErrors[`newClientPet.${pet.id}.breed`] = 'Breed is required';
+          }
           if (!pet.sex?.trim()) {
             newErrors[`newClientPet.${pet.id}.sex`] = 'Sex is required';
           }
@@ -2803,6 +3007,9 @@ export default function AppointmentRequestForm() {
         }
         if (!pet.speciesChoice) {
           newErrors[`existingClientNewPet.${pet.id}.species`] = 'Species is required';
+        }
+        if (!pet.breed?.trim()) {
+          newErrors[`existingClientNewPet.${pet.id}.breed`] = 'Breed is required';
         }
         if (!pet.sex?.trim()) {
           newErrors[`existingClientNewPet.${pet.id}.sex`] = 'Sex is required';
@@ -3737,7 +3944,7 @@ export default function AppointmentRequestForm() {
   const isLoggedInIntroLoading = isLoggedIn && currentPage === 'intro';
   const isNewClientPetStep = !isLoggedIn && currentPage === 'new-client-pet-info';
   const newClientCompactForm = isNewClientIntroStep || isNewClientPetStep;
-  const newClientSectionGap = newClientCompactForm ? 10 : 20;
+  const newClientSectionGap = newClientCompactForm ? 16 : 20;
   const newClientLabelMb = newClientCompactForm ? 4 : 8;
   const newClientInputPadding = newClientCompactForm ? '8px 10px' : '12px';
   const newClientInputRadius = newClientCompactForm ? '6px' : '8px';
@@ -3960,6 +4167,196 @@ export default function AppointmentRequestForm() {
     );
   };
 
+  // "None of these work" in the calendar modal → close it and pull the user's
+  // attention to the scheduling-preferences field so they can tell us their times.
+  const focusSchedulingNotes = useCallback(() => {
+    setSelfScheduleSlotError(null);
+    setShowSelfScheduleModal(false);
+    setHighlightSchedulingNotes(true);
+    window.setTimeout(() => {
+      const el = schedulingNotesRef.current;
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.focus({ preventScroll: true });
+      }
+    }, 60);
+    if (highlightTimerRef.current) window.clearTimeout(highlightTimerRef.current);
+    highlightTimerRef.current = window.setTimeout(() => setHighlightSchedulingNotes(false), 2800);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (highlightTimerRef.current) window.clearTimeout(highlightTimerRef.current);
+    };
+  }, []);
+
+  const renderSchedulingNotesField = (style?: {
+    labelFontSize?: string;
+    labelMb?: string | number;
+    inputPadding?: string;
+    inputRadius?: string;
+    label?: string;
+    showLabel?: boolean;
+  }) => {
+    const labelFontSize = style?.labelFontSize ?? '14px';
+    const labelMb = style?.labelMb ?? '8px';
+    const inputPadding = style?.inputPadding ?? '12px';
+    const inputRadius = style?.inputRadius ?? '8px';
+    const label =
+      style?.label ?? 'Preferred days/times or anything we should know about scheduling';
+    const showLabel = style?.showLabel ?? true;
+    return (
+      <div>
+        {showLabel ? (
+          <label style={{ display: 'block', marginBottom: labelMb, fontWeight: 600, color: '#374151', fontSize: labelFontSize }}>
+            {label}
+          </label>
+        ) : null}
+        <textarea
+          ref={schedulingNotesRef}
+          value={formData.schedulingNotes || ''}
+          onChange={(e) => updateFormData('schedulingNotes', e.target.value)}
+          placeholder="For example: mornings are best, avoid Tuesdays, flexible, etc."
+          rows={3}
+          style={{
+            width: '100%',
+            padding: inputPadding,
+            border: highlightSchedulingNotes ? '2px solid #10b981' : '1px solid #d1d5db',
+            borderRadius: inputRadius,
+            fontSize: '16px',
+            fontFamily: 'inherit',
+            resize: 'vertical',
+            backgroundColor: '#fff',
+            boxShadow: highlightSchedulingNotes ? '0 0 0 4px rgba(16,185,129,0.22)' : 'none',
+            transition: 'border-color 0.2s ease, box-shadow 0.2s ease',
+          }}
+        />
+      </div>
+    );
+  };
+
+  const renderSchedulingLoadingSpinner = () => (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: '12px',
+        padding: '28px 16px',
+        marginBottom: '16px',
+        backgroundColor: '#f9fafb',
+        border: '1px solid #e5e7eb',
+        borderRadius: '10px',
+        fontSize: '14px',
+        color: '#6b7280',
+      }}
+    >
+      <div
+        style={{
+          width: 22,
+          height: 22,
+          border: '3px solid #0d948833',
+          borderTop: '3px solid #0d9488',
+          borderRadius: '50%',
+          animation: 'appt-form-spin 0.8s linear infinite',
+          flexShrink: 0,
+        }}
+      />
+      <span>Checking online scheduling options…</span>
+      <style>{`@keyframes appt-form-spin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}`}</style>
+    </div>
+  );
+
+  const renderManualSchedulingLiaisonBanner = () => (
+    <div
+      style={{
+        marginBottom: '16px',
+        padding: '16px',
+        backgroundColor: '#f0fdf4',
+        border: '1px solid #10b981',
+        borderRadius: '8px',
+        fontSize: '14px',
+        color: '#065f46',
+        lineHeight: 1.6,
+      }}
+    >
+      <strong>We&apos;ll handle scheduling for you.</strong> Online self-booking isn&apos;t available for this visit. A Client Liaison will reach out after you submit to work on scheduling with you.
+    </div>
+  );
+
+  const renderSchedulingOrDivider = (text = 'or tell us your preferences') => (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: '12px',
+        margin: '16px 0',
+      }}
+      aria-hidden
+    >
+      <div style={{ flex: 1, height: '1px', backgroundColor: '#e5e7eb' }} />
+      <span style={{ fontSize: '13px', fontWeight: 500, color: '#6b7280', whiteSpace: 'nowrap' }}>
+        {text}
+      </span>
+      <div style={{ flex: 1, height: '1px', backgroundColor: '#e5e7eb' }} />
+    </div>
+  );
+
+  const renderSelfScheduleOrPreferencesBlock = (options: {
+    hasAddress: boolean;
+    onPickDate: () => void;
+    schedulingNotesStyle?: {
+      labelFontSize?: string;
+      labelMb?: string | number;
+      inputPadding?: string;
+      inputRadius?: string;
+    };
+  }) => (
+    <div
+      style={{
+        padding: '16px',
+        backgroundColor: '#f9fafb',
+        border: '1px solid #e5e7eb',
+        borderRadius: '10px',
+      }}
+    >
+      <button
+        type="button"
+        onClick={options.onPickDate}
+        disabled={!options.hasAddress}
+        style={{
+          width: '100%',
+          padding: '14px',
+          backgroundColor: options.hasAddress ? '#0d9488' : '#e5e7eb',
+          color: options.hasAddress ? '#ffffff' : '#9ca3af',
+          border: 'none',
+          borderRadius: '10px',
+          fontSize: '15px',
+          fontWeight: 700,
+          cursor: options.hasAddress ? 'pointer' : 'not-allowed',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: '8px',
+          transition: 'background-color 0.15s',
+        }}
+      >
+        <span style={{ fontSize: 18 }}>📅</span>
+        Pick a Date &amp; Time Now
+      </button>
+      {!options.hasAddress && (
+        <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '6px', textAlign: 'center' }}>
+          {isLoggedIn ? 'Loading your address…' : 'Please enter your complete address above to choose a time.'}
+        </div>
+      )}
+      {renderSchedulingOrDivider()}
+      {renderSchedulingNotesField({
+        ...options.schedulingNotesStyle,
+        label: 'Tell us your preferred times',
+      })}
+    </div>
+  );
+
   const renderPage = (override?: { page?: Page; embedded?: boolean }) => {
     const pageToRender = override?.page ?? currentPage;
     const embedded = override?.embedded ?? false;
@@ -3986,7 +4383,7 @@ export default function AppointmentRequestForm() {
                 }}
               >
                 <div data-form-field="email">
-                  <label style={{ display: 'block', marginBottom: newClientLabelMb, fontWeight: 600, color: '#374151', fontSize: newClientCompactForm ? '13px' : undefined }}>
+                  <label style={{ display: 'block', marginBottom: newClientLabelMb, fontWeight: 600, color: '#111827', fontSize: '14px' }}>
                     Email <span style={{ color: '#ef4444' }}>*</span>
                   </label>
                   <input
@@ -4087,7 +4484,7 @@ export default function AppointmentRequestForm() {
                   )}
                 </div>
                 <div data-form-field="phoneNumbers">
-                  <label style={{ display: 'block', marginBottom: newClientLabelMb, fontWeight: 600, color: '#374151', fontSize: newClientCompactForm ? '13px' : undefined }}>
+                  <label style={{ display: 'block', marginBottom: newClientLabelMb, fontWeight: 600, color: '#111827', fontSize: '14px' }}>
                     Phone Number <span style={{ color: '#ef4444' }}>*</span>
                   </label>
                   <input
@@ -4113,7 +4510,7 @@ export default function AppointmentRequestForm() {
             </div>
 
             <div style={{ marginBottom: newClientSectionGap }}>
-              <label style={{ display: 'block', marginBottom: newClientLabelMb, fontWeight: 600, color: '#374151', fontSize: newClientCompactForm ? '13px' : undefined }}>
+              <label style={{ display: 'block', marginBottom: newClientLabelMb, fontWeight: 600, color: '#111827', fontSize: '14px' }}>
                 Full name <span style={{ color: '#ef4444' }}>*</span>
               </label>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: newClientCompactForm ? 8 : 12 }}>
@@ -4152,8 +4549,16 @@ export default function AppointmentRequestForm() {
               </div>
             </div>
 
-            <div style={{ marginBottom: newClientSectionGap }} data-form-field="physicalAddress.line1">
-              <label style={{ display: 'block', marginBottom: newClientLabelMb, fontWeight: 600, color: '#374151', fontSize: newClientCompactForm ? '13px' : undefined }}>
+            <div
+              style={{
+                marginTop: 8,
+                marginBottom: newClientSectionGap,
+                paddingTop: 20,
+                borderTop: '1px solid #d1d5db',
+              }}
+              data-form-field="physicalAddress.line1"
+            >
+              <label style={{ display: 'block', marginBottom: newClientLabelMb, fontWeight: 600, color: '#111827', fontSize: '14px' }}>
                 Home address (where we would show up) <span style={{ color: '#ef4444' }}>*</span>
               </label>
               <AddressAutocomplete
@@ -4173,8 +4578,15 @@ export default function AppointmentRequestForm() {
               )}
             </div>
 
-            <div style={{ marginBottom: isNewClientIntroStep ? 0 : 20 }}>
-              <label style={{ display: 'block', marginBottom: newClientLabelMb, fontWeight: 600, color: '#374151', fontSize: newClientCompactForm ? '13px' : undefined }}>
+            <div
+              style={{
+                marginTop: 8,
+                marginBottom: isNewClientIntroStep ? 0 : 20,
+                paddingTop: 20,
+                borderTop: '1px solid #d1d5db',
+              }}
+            >
+              <label style={{ display: 'block', marginBottom: newClientLabelMb, fontWeight: 600, color: '#111827', fontSize: '14px' }}>
                 What veterinary practice(s), including specialists, have you used previously for your pet(s)?
               </label>
               <textarea
@@ -4206,7 +4618,7 @@ export default function AppointmentRequestForm() {
         if (isLoggedIn) return null;
 
         const petFormTight = !embedded && newClientCompactForm;
-        const petFieldMb = petFormTight ? 10 : 16;
+        const petFieldMb = petFormTight ? 12 : 16;
         const petCardPad = petFormTight ? 12 : 16;
         const petLabelSize = petFormTight ? '13px' : '14px';
         const petInputPad = petFormTight ? newClientInputPadding : '8px';
@@ -4368,7 +4780,7 @@ export default function AppointmentRequestForm() {
                       </div>
 
                       <div style={{ marginBottom: petFieldMb }} data-form-field={`newClientPet.${pet.id}.name`}>
-                        <label style={{ display: 'block', marginBottom: newClientLabelMb, fontWeight: 600, color: '#374151', fontSize: '13px' }}>
+                        <label style={{ display: 'block', marginBottom: newClientLabelMb, fontWeight: 600, color: '#111827', fontSize: '14px' }}>
                           Pet Name <span style={{ color: '#ef4444' }}>*</span>
                         </label>
                         <input
@@ -4390,7 +4802,7 @@ export default function AppointmentRequestForm() {
                       </div>
 
                       <div style={{ marginBottom: petFieldMb }} data-form-field={`newClientPet.${pet.id}.species`}>
-                        <label style={{ display: 'block', marginBottom: newClientLabelMb, fontWeight: 600, color: '#374151', fontSize: '13px' }}>
+                        <label style={{ display: 'block', marginBottom: newClientLabelMb, fontWeight: 600, color: '#111827', fontSize: '14px' }}>
                           Species <span style={{ color: '#ef4444' }}>*</span>
                         </label>
                         <NewClientSpeciesPicker
@@ -4414,9 +4826,9 @@ export default function AppointmentRequestForm() {
                           marginBottom: petFieldMb,
                         }}
                       >
-                        <div style={{ minWidth: 0 }}>
-                          <label style={{ display: 'block', marginBottom: newClientLabelMb, fontWeight: 600, color: '#374151', fontSize: '13px' }}>
-                            Breed
+                        <div style={{ minWidth: 0 }} data-form-field={`newClientPet.${pet.id}.breed`}>
+                          <label style={{ display: 'block', marginBottom: newClientLabelMb, fontWeight: 600, color: '#111827', fontSize: '14px' }}>
+                            Breed <span style={{ color: '#ef4444' }}>*</span>
                           </label>
                           <BreedCombobox
                             speciesId={pet.speciesId}
@@ -4427,13 +4839,19 @@ export default function AppointmentRequestForm() {
                             placeholder="Start typing breed"
                             inputPadding={newClientInputPadding}
                             inputRadius={newClientInputRadius}
+                            error={errors[`newClientPet.${pet.id}.breed`]}
                             onChange={(breed, breedId) =>
                               updateNewClientPet(pet.id, 'breedSelection', { breed, breedId })
                             }
                           />
+                          {errors[`newClientPet.${pet.id}.breed`] && (
+                            <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                              {errors[`newClientPet.${pet.id}.breed`]}
+                            </div>
+                          )}
                         </div>
                         <div style={{ minWidth: 0 }} data-form-field={`newClientPet.${pet.id}.age`}>
-                          <label style={{ display: 'block', marginBottom: newClientLabelMb, fontWeight: 600, color: '#374151', fontSize: '13px' }}>
+                          <label style={{ display: 'block', marginBottom: newClientLabelMb, fontWeight: 600, color: '#111827', fontSize: '14px' }}>
                             Age <span style={{ color: '#ef4444' }}>*</span>
                           </label>
                           <input
@@ -4466,7 +4884,7 @@ export default function AppointmentRequestForm() {
                         />
                       </div>
 
-                      <div style={{ marginTop: 4, paddingTop: petFieldMb, borderTop: '1px solid #f3f4f6' }}>
+                      <div>
                         <PetVisitQuestionsBlock
                           pet={pet}
                           petData={petData}
@@ -4497,41 +4915,7 @@ export default function AppointmentRequestForm() {
                 })}
               </div>
 
-              {/* How soon — shown in compact new-client-pet-info page */}
-              <div style={{ marginTop: newClientSectionGap, marginBottom: newClientSectionGap }}>
-                <label style={{ display: 'block', marginBottom: newClientLabelMb, fontWeight: 600, color: '#374151', fontSize: petFormTight ? '13px' : undefined }}>
-                  How soon do you need to be seen? <span style={{ color: '#ef4444' }}>*</span>
-                </label>
-                <NewClientHowSoonPicker
-                  value={(formData.howSoon as HowSoonChoiceValue) || ''}
-                  onChange={(option) => updateFormData('howSoon', option)}
-                  error={errors.howSoon}
-                />
-                {renderOtherHowSoonDateTimeField()}
-              </div>
-
-              <div style={{ marginTop: newClientSectionGap }}>
-                <label style={{ display: 'block', marginBottom: newClientLabelMb, fontWeight: 600, color: '#374151', fontSize: '13px' }}>
-                  Preferred days/times or anything we should know about scheduling
-                </label>
-                <textarea
-                  value={formData.schedulingNotes || ''}
-                  onChange={(e) => updateFormData('schedulingNotes', e.target.value)}
-                  placeholder="For example: mornings are best, avoid Tuesdays, flexible, etc."
-                  rows={3}
-                  style={{
-                    width: '100%',
-                    padding: newClientInputPadding,
-                    border: '1px solid #d1d5db',
-                    borderRadius: newClientInputRadius,
-                    fontSize: '14px',
-                    fontFamily: 'inherit',
-                    resize: 'vertical',
-                  }}
-                />
-              </div>
-
-              <div style={{ marginTop: newClientSectionGap }}>
+              <div style={{ marginTop: 24, marginBottom: newClientSectionGap, paddingTop: 20, borderTop: '1px solid #d1d5db' }}>
                 <button
                   type="button"
                   onClick={addNewClientPet}
@@ -4552,6 +4936,26 @@ export default function AppointmentRequestForm() {
                 {errors.newClientPets && (
                   <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '6px' }}>{errors.newClientPets}</div>
                 )}
+              </div>
+
+              {/* How soon — shown in compact new-client-pet-info page */}
+              <div
+                style={{
+                  marginTop: newClientSectionGap,
+                  marginBottom: newClientSectionGap,
+                  paddingTop: 20,
+                  borderTop: '1px solid #d1d5db',
+                }}
+              >
+                <label style={{ display: 'block', marginBottom: newClientLabelMb, fontWeight: 600, color: '#111827', fontSize: '14px' }}>
+                  How soon do you need to be seen? <span style={{ color: '#ef4444' }}>*</span>
+                </label>
+                <NewClientHowSoonPicker
+                  value={(formData.howSoon as HowSoonChoiceValue) || ''}
+                  onChange={(option) => updateFormData('howSoon', option)}
+                  error={errors.howSoon}
+                />
+                {renderOtherHowSoonDateTimeField()}
               </div>
 
               {renderPage({ page: 'request-visit-continued', embedded: true })}
@@ -5670,8 +6074,8 @@ export default function AppointmentRequestForm() {
                               display: 'block',
                               marginBottom: ecLabelMb,
                               fontWeight: 600,
-                              color: '#374151',
-                              fontSize: '13px',
+                              color: '#111827',
+                              fontSize: '14px',
                             }}
                           >
                             Pet Name <span style={{ color: '#ef4444' }}>*</span>
@@ -5702,8 +6106,8 @@ export default function AppointmentRequestForm() {
                               display: 'block',
                               marginBottom: ecLabelMb,
                               fontWeight: 600,
-                              color: '#374151',
-                              fontSize: '13px',
+                              color: '#111827',
+                              fontSize: '14px',
                             }}
                           >
                             Species <span style={{ color: '#ef4444' }}>*</span>
@@ -5722,17 +6126,17 @@ export default function AppointmentRequestForm() {
                             gap: 6,
                           }}
                         >
-                          <div style={{ minWidth: 0 }}>
+                          <div style={{ minWidth: 0 }} data-form-field={`existingClientNewPet.${pet.id}.breed`}>
                             <label
                               style={{
                                 display: 'block',
                                 marginBottom: ecLabelMb,
                                 fontWeight: 600,
-                                color: '#374151',
-                                fontSize: '13px',
+                                color: '#111827',
+                                fontSize: '14px',
                               }}
                             >
-                              Breed
+                              Breed <span style={{ color: '#ef4444' }}>*</span>
                             </label>
                             <BreedCombobox
                               speciesId={pet.speciesId}
@@ -5743,10 +6147,16 @@ export default function AppointmentRequestForm() {
                               placeholder="Start typing breed"
                               inputPadding={ecInputPadding}
                               inputRadius={ecInputRadius}
+                              error={errors[`existingClientNewPet.${pet.id}.breed`]}
                               onChange={(breed, breedId) =>
                                 updateExistingClientNewPet(pet.id, 'breedSelection', { breed, breedId })
                               }
                             />
+                            {errors[`existingClientNewPet.${pet.id}.breed`] && (
+                              <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
+                                {errors[`existingClientNewPet.${pet.id}.breed`]}
+                              </div>
+                            )}
                           </div>
                           <div style={{ minWidth: 0 }} data-form-field={`existingClientNewPet.${pet.id}.age`}>
                             <label
@@ -5754,8 +6164,8 @@ export default function AppointmentRequestForm() {
                                 display: 'block',
                                 marginBottom: ecLabelMb,
                                 fontWeight: 600,
-                                color: '#374151',
-                                fontSize: '13px',
+                                color: '#111827',
+                                fontSize: '14px',
                               }}
                             >
                               Age <span style={{ color: '#ef4444' }}>*</span>
@@ -5792,7 +6202,7 @@ export default function AppointmentRequestForm() {
                           />
                         </div>
 
-                        <div style={{ marginTop: 4, paddingTop: ecFieldMb, borderTop: '1px solid #f3f4f6' }}>
+                        <div>
                           <PetVisitQuestionsBlock
                             pet={{ id: pet.id, name: pet.name }}
                             petData={petData}
@@ -5839,27 +6249,6 @@ export default function AppointmentRequestForm() {
                 error={errors.howSoon}
               />
               {renderOtherHowSoonDateTimeField()}
-            </div>
-
-            <div style={{ marginBottom: '20px' }}>
-              <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#374151', fontSize: '16px' }}>
-                Preferred days/times or anything we should know about scheduling
-              </label>
-              <textarea
-                value={formData.schedulingNotes || ''}
-                onChange={(e) => updateFormData('schedulingNotes', e.target.value)}
-                placeholder="For example: mornings are best, avoid Tuesdays, flexible, etc."
-                rows={3}
-                style={{
-                  width: '100%',
-                  padding: '12px',
-                  border: '1px solid #d1d5db',
-                  borderRadius: '8px',
-                  fontSize: '14px',
-                  fontFamily: 'inherit',
-                  resize: 'vertical',
-                }}
-              />
             </div>
           </div>
         );
@@ -6134,7 +6523,7 @@ export default function AppointmentRequestForm() {
           }) || false);
 
         return (
-          <div>
+          <div style={embedded ? { marginTop: '16px' } : undefined}>
             {!embedded && (
             <div style={{ textAlign: 'center', marginBottom: '32px' }}>
               <h1 style={{ fontSize: '24px', fontWeight: 700, color: '#111827', marginBottom: '8px' }}>
@@ -6247,46 +6636,54 @@ export default function AppointmentRequestForm() {
 
             {/* Self-scheduling + fallback liaison banner */}
             {(() => {
+              if (!formData.howSoon) return null;
+
+              const schedulingNotesStyle = embedded && newClientCompactForm
+                ? {
+                    labelFontSize: '13px',
+                    labelMb: newClientLabelMb,
+                    inputPadding: newClientInputPadding,
+                    inputRadius: newClientInputRadius,
+                  }
+                : embedded
+                  ? { labelFontSize: '16px', labelMb: '6px' }
+                  : undefined;
+
               const isManualScheduling = isManualSchedulingHowSoon(formData.howSoon);
 
               // Euthanasia or emergency/urgent → always show liaison banner only
               if (hasEuthanasiaPet || isManualScheduling) {
                 return (
-                  <div style={{
-                    marginBottom: '20px',
-                    padding: '16px',
-                    backgroundColor: '#f0fdf4',
-                    border: '1px solid #10b981',
-                    borderRadius: '8px',
-                    fontSize: '14px',
-                    color: '#065f46',
-                  }}>
-                    Once you submit the form, a Client Liaison will be in touch with you shortly about available times.
+                  <div style={{ marginBottom: '20px' }}>
+                    {renderManualSchedulingLiaisonBanner()}
+                    {renderSchedulingNotesField(schedulingNotesStyle)}
                   </div>
                 );
               }
 
-              // Manual request flow when online booking is not available for this appointment type
+              // Still loading doctors — show spinner instead of the liaison fallback
+              if (onlineBookingAvailabilityPending) {
+                return (
+                  <div style={{ marginBottom: '20px' }}>
+                    {renderSchedulingLoadingSpinner()}
+                  </div>
+                );
+              }
+
+              // Manual request flow when online self-booking is not offered
               if (!onlineBookingOffered) {
                 return (
                   <div style={{ marginBottom: '20px' }}>
-                    <div style={{
-                      marginBottom: '16px',
-                      padding: '16px',
-                      backgroundColor: '#f0fdf4',
-                      border: '1px solid #10b981',
-                      borderRadius: '8px',
-                      fontSize: '14px',
-                      color: '#065f46',
-                    }}>
-                      We are working on booking your appointment and will be in touch shortly.
-                    </div>
+                    {renderManualSchedulingLiaisonBanner()}
                     {renderOtherHowSoonDateTimeField()}
                     {errors.selfScheduledSlot && (
                       <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
                         {errors.selfScheduledSlot}
                       </div>
                     )}
+                    <div style={{ marginTop: '16px' }}>
+                      {renderSchedulingNotesField(schedulingNotesStyle)}
+                    </div>
                   </div>
                 );
               }
@@ -6294,16 +6691,34 @@ export default function AppointmentRequestForm() {
               // Online booking: offer self-scheduling
               const confirmedSlot = formData.selfScheduledSlot;
 
+              const confirmedSlotWindowDisplay =
+                confirmedSlot?.windowDisplay ??
+                (confirmedSlot
+                  ? resolveClientArrivalWindowForScheduledStart(
+                      confirmedSlot.appointmentStart,
+                      primaryAppointmentType,
+                      DEFAULT_PRACTICE_TIMEZONE,
+                      {
+                        appointmentEndIso:
+                          DateTime.fromISO(confirmedSlot.appointmentStart)
+                            .plus({ minutes: confirmedSlot.serviceMinutes })
+                            .toISO() ?? undefined,
+                      },
+                    )?.windowDisplay
+                  : undefined);
+
               // Build address string for modal.
-              // For logged-in clients the address comes from clientLocationRef (geocoded lat/lon)
-              // and/or formData.physicalAddress (populated from client record on load).
-              // clientLocationRef.current.address is only set when the client has NO lat/lon
-              // (the API builds the string as a fallback). So prefer formData fields for the
-              // address string and clientLocationRef for lat/lon.
-              const addrFromNewPhysical = isPhysicalAddressComplete(formData.newPhysicalAddress)
-                ? formData.newPhysicalAddress
-                : null;
-              const addrSource = addrFromNewPhysical ?? (isPhysicalAddressComplete(formData.physicalAddress) ? formData.physicalAddress : null);
+              // When the client entered a new visit address, prefer that over the
+              // lat/lon stored on their account (clientLocationRef).
+              const useNewVisitAddress =
+                isLoggedIn &&
+                formData.isThisTheAddressWhereWeWillCome === 'No' &&
+                isPhysicalAddressComplete(formData.newPhysicalAddress);
+              const addrSource = useNewVisitAddress
+                ? formData.newPhysicalAddress!
+                : isPhysicalAddressComplete(formData.physicalAddress)
+                  ? formData.physicalAddress
+                  : null;
               const addrLine1 = addrSource?.line1 || '';
               const addrCity  = addrSource?.city  || '';
               const addrState = addrSource?.state || '';
@@ -6311,26 +6726,32 @@ export default function AppointmentRequestForm() {
               const builtAddress = addrSource
                 ? [addrLine1, addrCity, addrState, addrZip].filter(Boolean).join(', ')
                 : '';
-              const fullAddress = clientLocationRef.current.address || builtAddress;
+              const fullAddress = builtAddress || clientLocationRef.current.address || '';
 
-              // For logged-in clients: their location is ready once clientLocationReady is true
-              // (lat/lon loaded) or once their formData address is populated.
+              // For logged-in clients: location is ready once client record loaded or a
+              // complete visit address is on the form (including a new address).
               const hasAddress = !!(
-                (isLoggedIn && clientLocationReady) ||
+                (isLoggedIn && (clientLocationReady || useNewVisitAddress)) ||
                 clientLocationRef.current.address ||
                 addrSource
               );
 
-              const lat = clientLocationRef.current.lat ?? ((formData.physicalAddress as any)?.lat as number | undefined);
-              const lon = clientLocationRef.current.lon ?? ((formData.physicalAddress as any)?.lon as number | undefined);
+              const lat = useNewVisitAddress
+                ? (formData.newPhysicalAddress as AddressFields & { lat?: number })?.lat
+                : clientLocationRef.current.lat ??
+                  ((formData.physicalAddress as AddressFields & { lat?: number })?.lat);
+              const lon = useNewVisitAddress
+                ? (formData.newPhysicalAddress as AddressFields & { lon?: number })?.lon
+                : clientLocationRef.current.lon ??
+                  ((formData.physicalAddress as AddressFields & { lon?: number })?.lon);
 
               const numPets = formData.selectedPetIds?.length || formData.newClientPets?.length || 1;
-              const svcMinutes = 40 + Math.max(0, numPets - 1) * 20;
 
               return (
                 <div style={{ marginBottom: '20px' }}>
                   {confirmedSlot ? (
                     /* ── Confirmed slot chip ── */
+                    <>
                     <div style={{
                       padding: '14px 16px',
                       backgroundColor: '#f0fdf4',
@@ -6346,8 +6767,14 @@ export default function AppointmentRequestForm() {
                           Appointment Scheduled
                         </div>
                         <div style={{ fontSize: '14px', color: '#065f46' }}>
-                          {confirmedSlot.display} with {confirmedSlot.doctorName}
+                          {DateTime.fromISO(confirmedSlot.appointmentStart).toFormat('cccc, LLLL d')} with{' '}
+                          {confirmedSlot.doctorName}
                         </div>
+                        {confirmedSlotWindowDisplay && (
+                          <div style={{ fontSize: '13px', color: '#047857', marginTop: '4px' }}>
+                            {confirmedSlotWindowDisplay}
+                          </div>
+                        )}
                         <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>
                           Your appointment will be booked when you submit this form.
                         </div>
@@ -6372,64 +6799,29 @@ export default function AppointmentRequestForm() {
                         Change
                       </button>
                     </div>
+                    </>
                   ) : (
-                    /* ── Pick-a-time CTA ── */
-                    <div>
-                      <button
-                        type="button"
-                        onClick={() => setShowSelfScheduleModal(true)}
-                        disabled={!hasAddress}
-                        style={{
-                          width: '100%',
-                          padding: '14px',
-                          backgroundColor: hasAddress ? '#0d9488' : '#e5e7eb',
-                          color: hasAddress ? '#ffffff' : '#9ca3af',
-                          border: 'none',
-                          borderRadius: '10px',
-                          fontSize: '15px',
-                          fontWeight: 700,
-                          cursor: hasAddress ? 'pointer' : 'not-allowed',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          gap: '8px',
-                          transition: 'background-color 0.15s',
-                        }}
-                      >
-                        <span style={{ fontSize: 18 }}>📅</span>
-                        Pick a Date &amp; Time Now
-                      </button>
-                      {!hasAddress && (
-                        <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px', textAlign: 'center' }}>
-                          {isLoggedIn ? 'Loading your address…' : 'Please enter your complete address above to choose a time.'}
-                        </div>
-                      )}
-                      <div style={{
-                        marginTop: '10px',
-                        padding: '12px 14px',
-                        backgroundColor: '#f9fafb',
-                        border: '1px solid #e5e7eb',
-                        borderRadius: '8px',
-                        fontSize: '13px',
-                        color: '#6b7280',
-                        textAlign: 'center',
-                      }}>
-                        Or skip this step — a Client Liaison will contact you after submission.
-                      </div>
-                    </div>
+                    renderSelfScheduleOrPreferencesBlock({
+                      hasAddress,
+                      schedulingNotesStyle,
+                      onPickDate: () => setShowSelfScheduleModal(true),
+                    })
                   )}
 
                   {/* Self-schedule modal */}
                   {showSelfScheduleModal && hasAddress && primaryAppointmentTypeId != null && (
                     <SelfScheduleCalendarModal
-                      key={scheduleModalRefreshKey}
+                      key={`${scheduleModalRefreshKey}-${lat ?? ''}-${lon ?? ''}-${builtAddress}-${primaryProviderDoctorId ?? ''}`}
                       practiceId={practiceId}
                       address={fullAddress}
                       lat={lat ?? undefined}
                       lon={lon ?? undefined}
-                      serviceMinutes={svcMinutes}
+                      numPets={numPets}
+                      appointmentTypes={appointmentTypes}
                       appointmentTypeId={primaryAppointmentTypeId}
-                      initialDoctorId={confirmedSlot?.doctorId}
+                      appointmentType={primaryAppointmentType}
+                      preferredDoctorId={primaryProviderDoctorId}
+                      initialDoctorId={confirmedSlot?.doctorId ?? primaryProviderDoctorId}
                       isNewClient={!isLoggedIn}
                       isNewPatientRequest={isNewPatientRequest}
                       rawVeterinarians={rawVeterinarianList}
@@ -6451,18 +6843,60 @@ export default function AppointmentRequestForm() {
                             })
                           : list;
                         if (filtered.length === 0) return undefined;
-                        return filtered.map(p => ({
-                          id: p.id,
-                          name: p.name,
-                          email: p.email || undefined,
-                          // Prefer the imageUrl stored on the employee record; fall back
-                          // to the dynamic /employees/:id/image endpoint using the DB id.
-                          imageUrl: ('imageUrl' in p && p.imageUrl) ? p.imageUrl : null,
-                          employeeId: typeof p.id === 'number' ? p.id : (
-                            'pimsId' in p && p.pimsId != null ? Number(p.pimsId) : null
-                          ),
-                        }));
+                        return filtered.map((p) =>
+                          mapDoctorForSelfScheduleModal(p, rawVeterinarianList),
+                        );
                       })()}
+                      // In-zone doctors who can't be booked online for this visit type —
+                      // shown greyed so the client can still request them.
+                      requestOnlyDoctors={(() => {
+                        if (primaryAppointmentTypeId == null) return undefined;
+                        const list = isLoggedIn
+                          ? providers
+                          : (publicProviders.length > 0 ? publicProviders : providers);
+                        const reqOnly = list.filter((p) => {
+                          const raw = resolveRawVeterinarianById(rawVeterinarianList, p.id);
+                          const bookable = isNewPatientRequest
+                            ? canBookOnlineForNewPatientRequest(raw, primaryAppointmentTypeId)
+                            : canBookOnline(raw, primaryAppointmentTypeId);
+                          if (bookable) return false;
+                          // For new-patient requests, only surface vets actually accepting
+                          // new patients in this zone.
+                          if (isNewPatientRequest && !isVeterinarianAcceptingNewPatientsInClientZone(raw)) {
+                            return false;
+                          }
+                          return true;
+                        });
+                        if (reqOnly.length === 0) return undefined;
+                        return reqOnly.map((p) =>
+                          mapDoctorForSelfScheduleModal(p, rawVeterinarianList),
+                        );
+                      })()}
+                      onRequestDoctor={({ doctorName, preferredTimes }) => {
+                        const doctorField =
+                          isLoggedIn || formData.haveUsedServicesBefore === 'Yes'
+                            ? 'preferredDoctorExisting'
+                            : 'preferredDoctor';
+                        const doctorLabel = doctorName.startsWith('Dr. ')
+                          ? doctorName
+                          : `Dr. ${doctorName}`;
+                        setFormData((prev) => {
+                          const requestLine = preferredTimes
+                            ? `Requested ${doctorLabel} — preferred times: ${preferredTimes}`
+                            : `Requested ${doctorLabel}`;
+                          const existingNotes = prev.schedulingNotes?.trim();
+                          const mergedNotes = existingNotes
+                            ? `${existingNotes}\n${requestLine}`
+                            : requestLine;
+                          return {
+                            ...prev,
+                            selfScheduledSlot: null,
+                            [doctorField]: doctorLabel,
+                            schedulingNotes: mergedNotes,
+                          };
+                        });
+                        focusSchedulingNotes();
+                      }}
                       onConfirm={(slot) => {
                         const doctorField =
                           isLoggedIn || formData.haveUsedServicesBefore === 'Yes'
@@ -6483,6 +6917,7 @@ export default function AppointmentRequestForm() {
                         setSelfScheduleSlotError(null);
                         setShowSelfScheduleModal(false);
                       }}
+                      onRequestPreferences={focusSchedulingNotes}
                     />
                   )}
                 </div>
@@ -6644,18 +7079,7 @@ export default function AppointmentRequestForm() {
                 !loadingSlots &&
                 recommendedSlots.length === 0 &&
                 (formData.preferredDoctorExisting || formData.preferredDoctor) && (
-                <div style={{
-                  marginBottom: '20px',
-                  padding: '12px',
-                  backgroundColor: '#d1fae5',
-                  border: '1px solid #10b981',
-                  borderRadius: '8px',
-                  fontSize: '14px',
-                  color: '#065f46',
-                  fontWeight: 500,
-                }}>
-                  Once you submit the form, a Client Liaison will be in touch with you shortly about available times.
-                </div>
+                renderManualSchedulingLiaisonBanner()
               )}
             </div>
             )}

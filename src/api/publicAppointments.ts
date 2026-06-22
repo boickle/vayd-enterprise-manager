@@ -13,6 +13,8 @@ export type PublicProvider = {
   email?: string;
   imageUrl?: string | null;
   employeeId?: number | null;
+  /** VAYD-managed profile copy from GET /employees (when included on vet payloads). */
+  bio?: string | null;
 };
 
 /** A confirmed self-scheduled appointment slot chosen by the client. */
@@ -26,6 +28,12 @@ export type SelfScheduledSlot = {
   display: string;
   /** Appointment duration in minutes. */
   serviceMinutes: number;
+  /** Customer arrival window start (ISO). */
+  windowStartIso?: string;
+  /** Customer arrival window end (ISO). */
+  windowEndIso?: string;
+  /** Client-facing window copy (e.g. "We will come between 10:00 AM and 12:00 PM"). */
+  windowDisplay?: string;
 };
 
 export type AvailabilityRequest = {
@@ -154,6 +162,7 @@ export async function fetchPublicVeterinarians(
       email: v?.email,
       imageUrl: v?.imageUrl ?? null,
       employeeId: typeof id === 'number' ? id : (v.employeeId ?? null),
+      bio: typeof v?.bio === 'string' && v.bio.trim() ? v.bio.trim() : null,
     };
   });
 }
@@ -167,6 +176,8 @@ export type MonthAvailabilityCandidate = {
   display: string;
   doctorId?: string | number;
   doctorName?: string;
+  windowStartIso?: string;
+  windowEndIso?: string;
 };
 
 /** Max routing score for slots shown in the public self-schedule calendar modal. */
@@ -215,6 +226,20 @@ export async function fetchPublicMonthAvailability(request: AvailabilityRequest)
           ? c.iso.trim()
           : (dt.toISO() as string);
 
+    const arrivalWindow = c.arrivalWindow ?? c.effectiveWindow;
+    const windowStartIso =
+      typeof arrivalWindow?.windowStartIso === 'string'
+        ? arrivalWindow.windowStartIso.trim()
+        : typeof arrivalWindow?.startIso === 'string'
+          ? arrivalWindow.startIso.trim()
+          : undefined;
+    const windowEndIso =
+      typeof arrivalWindow?.windowEndIso === 'string'
+        ? arrivalWindow.windowEndIso.trim()
+        : typeof arrivalWindow?.endIso === 'string'
+          ? arrivalWindow.endIso.trim()
+          : undefined;
+
     results.push({
       date: dt.toISODate() as string,
       suggestedStartIso,
@@ -222,6 +247,8 @@ export async function fetchPublicMonthAvailability(request: AvailabilityRequest)
       display: dt.toFormat("cccc, LLLL d 'at' h:mm a"),
       doctorId: c.doctorId,
       doctorName: c.doctorName,
+      windowStartIso,
+      windowEndIso,
     });
   }
   return results;
@@ -309,6 +336,8 @@ export type AppointmentType = {
   showInApptRequestForm: boolean;
   newPatientAllowed: boolean;
   formListOrder?: number | null;
+  windowBeforeMinutes?: number | null;
+  windowAfterMinutes?: number | null;
   practice?: {
     id: number;
     isActive: boolean;
@@ -362,6 +391,8 @@ export async function fetchAppointmentTypes(
     showInApptRequestForm: type.showInApptRequestForm || false,
     newPatientAllowed: type.newPatientAllowed || false,
     formListOrder: type.formListOrder ?? null,
+    windowBeforeMinutes: type.windowBeforeMinutes ?? type.window_before_minutes ?? null,
+    windowAfterMinutes: type.windowAfterMinutes ?? type.window_after_minutes ?? null,
     practice: type.practice,
   }));
 }
