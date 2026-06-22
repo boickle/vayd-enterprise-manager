@@ -14,6 +14,7 @@ import {
 } from '../api/slotOffers';
 import { sendClientSms, fetchSchedulingOutreachSmsFrom } from '../api/clientSms';
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
+import { CareOutreachPetDetailsButton } from '../components/CareOutreachPetDetailsButton';
 import { ClientMessagesHistoryModal } from '../components/ClientMessagesHistoryModal';
 import { ClientSmsComposeModal } from '../components/ClientSmsComposeModal';
 import { notifySchedulingToolsNavCountsRefresh, SCHEDULING_TOOLS_PAGE_REFRESH_EVENT, useSchedulingToolsNavCounts } from '../hooks/useSchedulingToolsNavCounts';
@@ -236,7 +237,13 @@ function resolveOfferBookVisits(detail: SlotOfferDetail): SlotOfferDetail['bookV
   }));
 }
 
-function OfferBookingDetails({ detail }: { detail: SlotOfferDetail }) {
+function OfferBookingDetails({
+  detail,
+  practiceTz,
+}: {
+  detail: SlotOfferDetail;
+  practiceTz: string;
+}) {
   const visits = resolveOfferBookVisits(detail) ?? [];
   const totalSlot = detail.serviceMinutes;
   const hasContent =
@@ -274,7 +281,24 @@ function OfferBookingDetails({ detail }: { detail: SlotOfferDetail }) {
                 borderRadius: 8,
               }}
             >
-              <div style={{ fontWeight: 600 }}>{visit.petName}</div>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 8,
+                  flexWrap: 'wrap',
+                }}
+              >
+                <div style={{ fontWeight: 600 }}>{visit.petName}</div>
+                {Number.isFinite(visit.patientId) && visit.patientId > 0 ? (
+                  <CareOutreachPetDetailsButton
+                    patientId={visit.patientId}
+                    patientName={visit.petName}
+                    practiceTz={practiceTz}
+                  />
+                ) : null}
+              </div>
               <div style={{ marginTop: 4, display: 'grid', gap: 4, fontSize: 13 }}>
                 {visit.appointmentTypeName ? (
                   <div>
@@ -489,7 +513,7 @@ function OfferDetailPanel({
             </div>
           </div>
         ) : null}
-        <OfferBookingDetails detail={detail} />
+        <OfferBookingDetails detail={detail} practiceTz={practiceTz} />
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px 24px' }}>
           {detail.offeredSlotScore != null ? (
             <span>
