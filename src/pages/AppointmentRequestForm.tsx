@@ -3480,6 +3480,7 @@ export default function AppointmentRequestForm() {
         // Client Information
         clientType: isExistingClient ? 'existing' : 'new',
         isLoggedIn: isLoggedIn,
+        ...(isLoggedIn && userId ? { clientId: String(userId), userId: String(userId) } : {}),
         email: formData.email || userEmail || '',
         fullName: {
           first: formData.fullName?.first || '',
@@ -3823,6 +3824,18 @@ export default function AppointmentRequestForm() {
           }],
           serviceMinutes: formData.selfScheduledSlot!.serviceMinutes,
           noneOfWorkForMe: false,
+          // Persist the reserved slot (doctor + arrival window) so staff follow-up
+          // messaging can reference the held appointment.
+          selfScheduledSlot: {
+            doctorId: formData.selfScheduledSlot!.doctorId,
+            doctorName: formData.selfScheduledSlot!.doctorName,
+            appointmentStart: formData.selfScheduledSlot!.appointmentStart,
+            display: formData.selfScheduledSlot!.display,
+            serviceMinutes: formData.selfScheduledSlot!.serviceMinutes,
+            windowStartIso: formData.selfScheduledSlot!.windowStartIso,
+            windowEndIso: formData.selfScheduledSlot!.windowEndIso,
+            windowDisplay: formData.selfScheduledSlot!.windowDisplay,
+          },
         } : {
           onlineBooking: false,
         }),

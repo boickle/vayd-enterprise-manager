@@ -22,6 +22,7 @@ import {
 } from '../components/AppointmentRequestManualBookModal';
 import {
   clientDisplayNameFromRequestData,
+  doctorLastNameFromLabel,
   formatRequestDataAddress,
   isEuthanasiaRequestData,
   requestDataAnythingElse,
@@ -31,6 +32,7 @@ import {
   requestDataPetSummary,
   requestDataPhone,
   requestDataPreferredDoctor,
+  requestDataSelfScheduledSlot,
 } from '../utils/appointmentRequestDisplay';
 import {
   buildRoutingAppointmentRequestIntentFromSubmission,
@@ -84,6 +86,50 @@ function noteForPatch(value: string): string | null {
   return t === '' ? null : t;
 }
 
+function statusTabLabel(status: AppointmentRequestSubmissionStatus): string {
+  return STATUS_TABS.find((tab) => tab.key === status)?.label ?? status;
+}
+
+function submissionSearchHaystack(
+  item: AppointmentRequestSubmissionItem,
+  noteDrafts: Record<number, string>,
+): string {
+  const rd = item.requestData ?? {};
+  const notes = (noteDrafts[item.id] ?? initialNotes(item)).toLowerCase();
+  return [
+    clientDisplayNameFromRequestData(rd),
+    requestDataPhone(rd) ?? '',
+    requestDataPetSummary(rd),
+    requestDataPreferredDoctor(rd) ?? '',
+    requestDataHowSoon(rd) ?? '',
+    formatRequestDataAddress(rd) ?? '',
+    requestDataAnythingElse(rd) ?? '',
+    rd.email,
+    notes,
+    statusTabLabel(submissionStatus(item)),
+  ]
+    .join(' ')
+    .toLowerCase();
+}
+
+function abandonedSearchHaystack(item: AppointmentRequestSubmissionItem): string {
+  const rd = item.requestData ?? {};
+  return [
+    clientDisplayNameFromRequestData(rd),
+    requestDataPhone(rd) ?? '',
+    requestDataPetSummary(rd),
+    item.currentStepName ?? '',
+    item.abandonReason ?? '',
+    'incomplete',
+  ]
+    .join(' ')
+    .toLowerCase();
+}
+
+function matchesSearchQuery(haystack: string, query: string): boolean {
+  return haystack.includes(query);
+}
+
 function formatSubmittedAt(iso: string, practiceTz: string): string {
   if (!iso) return '—';
   const dt = DateTime.fromISO(iso, { zone: 'utc' }).setZone(practiceTz);
@@ -105,8 +151,51 @@ function formatBookedVisit(
   return `${datePart} · ${start.toFormat('h:mm a')}`;
 }
 
-function defaultSmsMessage(item: AppointmentRequestSubmissionItem): string {
-  const name = clientDisplayNameFromRequestData(item.requestData ?? {}).split(' ')[0] || 'there';
+function formatSlotWindowForSms(
+  slot: { windowStartIso: string | null; windowEndIso: string | null; windowDisplay: string | null },
+  practiceTz: string
+): string | null {
+  if (slot.windowStartIso && slot.windowEndIso) {
+    const start = DateTime.fromISO(slot.windowStartIso, { zone: 'utc' }).setZone(practiceTz);
+    const end = DateTime.fromISO(slot.windowEndIso, { zone: 'utc' }).setZone(practiceTz);
+    if (start.isValid && end.isValid) {
+      return `${start.toFormat('h:mm a')}–${end.toFormat('h:mm a')}`;
+    }
+  }
+  // Fall back to the client-facing copy captured at booking time (strip leading lead-in).
+  if (slot.windowDisplay) {
+    return slot.windowDisplay.replace(/^we will come\s*/i, '').trim() || null;
+  }
+  return null;
+}
+
+function defaultSmsMessage(
+  item: AppointmentRequestSubmissionItem,
+  practiceTz: string
+): string {
+  const rd = item.requestData ?? {};
+  const name = clientDisplayNameFromRequestData(rd).split(' ')[0] || 'there';
+
+  const slot = requestDataSelfScheduledSlot(rd);
+  const doctorLast = doctorLastNameFromLabel(
+    slot?.doctorName ?? requestDataPreferredDoctor(rd)
+  );
+  const dateStr = slot?.appointmentStart
+    ? (() => {
+        const dt = DateTime.fromISO(slot.appointmentStart!, { zone: 'utc' }).setZone(practiceTz);
+        return dt.isValid ? dt.toFormat('EEEE, MMMM d') : null;
+      })()
+    : null;
+  const windowStr = slot ? formatSlotWindowForSms(slot, practiceTz) : null;
+
+  if (doctorLast && dateStr && windowStr) {
+    return (
+      `Hi ${name}! We got your appointment request and reserved a spot with Dr. ${doctorLast} ` +
+      `on ${dateStr}, arrival window ${windowStr}. Reply to confirm within two hours and it's yours ` +
+      `— or let us know if you need a different time and we'll find another option.`
+    );
+  }
+
   return `Hi ${name}, this is Vet At Your Door. We received your appointment request and will follow up shortly.`;
 }
 
@@ -140,8 +229,11 @@ export default function AppointmentRequestsPage() {
   >(new Map());
 
   const [highlightEntryId, setHighlightEntryId] = useState<number | null>(null);
+  const [exitingRows, setExitingRows] = useState<Map<number, 'booked' | 'dismissed'>>(() => new Map());
+  const [pendingBookedExitId, setPendingBookedExitId] = useState<number | null>(null);
   const rowRefs = useRef<Map<number, HTMLLIElement>>(new Map());
   const highlightScrollSig = useRef('');
+  const exitRowTimers = useRef<Map<number, number>>(new Map());
 
   const [draftDetailOpen, setDraftDetailOpen] = useState(false);
   const [draftDetailLoading, setDraftDetailLoading] = useState(false);
@@ -165,7 +257,7 @@ export default function AppointmentRequestsPage() {
       if (pendingReturn) {
         clearAppointmentRequestReturnSession();
         highlightId = pendingReturn.appointmentRequestSubmissionId;
-        setStatusFilter('booked');
+        setPendingBookedExitId(highlightId);
         const startMap = new Map<number, { start: string; end?: string | null }>();
         startMap.set(pendingReturn.bookedAppointmentId, {
           start: pendingReturn.bookedAppointmentStart,
@@ -198,7 +290,7 @@ export default function AppointmentRequestsPage() {
         const entry = items.find((r) => r.id === highlightId);
         if (entry && appointmentRequestHasSmsPhone(entry)) {
           setSmsError(null);
-          setSmsMessage(defaultSmsMessage(entry));
+          setSmsMessage(defaultSmsMessage(entry, practiceTz));
           setSmsItem(entry);
         }
       }
@@ -262,6 +354,7 @@ export default function AppointmentRequestsPage() {
 
   const submissions = useMemo(() => rows.filter(isCompletedSubmission), [rows]);
   const abandoned = useMemo(() => rows.filter(isAbandonedItem), [rows]);
+  const isSearchActive = search.trim().length > 0;
 
   const tabCounts = useMemo(() => {
     const counts: Record<StatusFilter, number> = {
@@ -278,52 +371,31 @@ export default function AppointmentRequestsPage() {
   }, [submissions, abandoned.length]);
 
   const filtered = useMemo(() => {
-    if (statusFilter === 'incomplete') {
-      const q = search.trim().toLowerCase();
-      let list = [...abandoned].sort(
-        (a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime()
+    const q = search.trim().toLowerCase();
+    const sortNewestFirst = (a: AppointmentRequestSubmissionItem, b: AppointmentRequestSubmissionItem) =>
+      new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime();
+
+    if (q) {
+      const submissionMatches = submissions.filter((item) =>
+        matchesSearchQuery(submissionSearchHaystack(item, noteDrafts), q),
       );
-      if (!q) return list;
-      return list.filter((r) => {
-        const rd = r.requestData ?? {};
-        const hay = [
-          clientDisplayNameFromRequestData(rd),
-          requestDataPhone(rd) ?? '',
-          requestDataPetSummary(rd),
-          r.currentStepName ?? '',
-          r.abandonReason ?? '',
-        ]
-          .join(' ')
-          .toLowerCase();
-        return hay.includes(q);
-      });
+      const abandonedMatches = abandoned.filter((item) =>
+        matchesSearchQuery(abandonedSearchHaystack(item), q),
+      );
+      return [...submissionMatches, ...abandonedMatches].sort(sortNewestFirst);
     }
 
-    let list = submissions.filter((r) => submissionStatus(r) === statusFilter);
-    const q = search.trim().toLowerCase();
-    list = [...list].sort(
-      (a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime()
-    );
-    if (!q) return list;
-    return list.filter((r) => {
-      const rd = r.requestData ?? {};
-      const notes = (noteDrafts[r.id] ?? initialNotes(r)).toLowerCase();
-      const hay = [
-        clientDisplayNameFromRequestData(rd),
-        requestDataPhone(rd) ?? '',
-        requestDataPetSummary(rd),
-        requestDataPreferredDoctor(rd) ?? '',
-        requestDataHowSoon(rd) ?? '',
-        formatRequestDataAddress(rd) ?? '',
-        requestDataAnythingElse(rd) ?? '',
-        rd.email,
-        notes,
-      ]
-        .join(' ')
-        .toLowerCase();
-      return hay.includes(q);
-    });
-  }, [statusFilter, submissions, abandoned, search, noteDrafts]);
+    if (statusFilter === 'incomplete') {
+      return [...abandoned].sort(sortNewestFirst);
+    }
+
+    return submissions
+      .filter(
+        (item) =>
+          submissionStatus(item) === statusFilter || exitingRows.has(item.id),
+      )
+      .sort(sortNewestFirst);
+  }, [statusFilter, submissions, abandoned, search, noteDrafts, exitingRows]);
 
   useEffect(() => {
     if (highlightEntryId == null || loading) return;
@@ -339,11 +411,49 @@ export default function AppointmentRequestsPage() {
     };
   }, [highlightEntryId, loading, filtered]);
 
+  useEffect(() => {
+    return () => {
+      for (const t of exitRowTimers.current.values()) window.clearTimeout(t);
+      exitRowTimers.current.clear();
+    };
+  }, []);
+
+  const beginRowExit = useCallback((entryId: number, kind: 'booked' | 'dismissed') => {
+    setExitingRows((prev) => new Map(prev).set(entryId, kind));
+    setHighlightEntryId(entryId);
+    const existing = exitRowTimers.current.get(entryId);
+    if (existing) window.clearTimeout(existing);
+    const timer = window.setTimeout(() => {
+      exitRowTimers.current.delete(entryId);
+      setExitingRows((prev) => {
+        const next = new Map(prev);
+        next.delete(entryId);
+        return next;
+      });
+      setHighlightEntryId((cur) => (cur === entryId ? null : cur));
+    }, 1100);
+    exitRowTimers.current.set(entryId, timer);
+  }, []);
+
+  useEffect(() => {
+    if (pendingBookedExitId == null) return;
+    const id = pendingBookedExitId;
+    setPendingBookedExitId(null);
+    beginRowExit(id, 'booked');
+  }, [pendingBookedExitId, beginRowExit]);
+
   const mergeSubmission = useCallback((updated: AppointmentRequestSubmissionItem) => {
     setRows((prev) => prev.map((r) => (r.id === updated.id ? { ...r, ...updated } : r)));
     setNoteDrafts((d) => ({ ...d, [updated.id]: initialNotes(updated) }));
-    if (updated.status === 'booked') setStatusFilter('booked');
   }, []);
+
+  const handleLinkedAppointment = useCallback(
+    (updated: AppointmentRequestSubmissionItem) => {
+      mergeSubmission({ ...updated, kind: 'submission' });
+      beginRowExit(updated.id, 'booked');
+    },
+    [mergeSubmission, beginRowExit],
+  );
 
   const flushNoteSave = useCallback(async (entryId: number, value: string) => {
     setNoteSaving((s) => ({ ...s, [entryId]: true }));
@@ -369,7 +479,13 @@ export default function AppointmentRequestsPage() {
       try {
         const updated = await patchAppointmentRequestSubmission(item.id, { status });
         mergeSubmission({ ...updated, kind: 'submission' });
-        if (status !== submissionStatus(item)) setStatusFilter(status);
+        if (status === 'dismissed') {
+          beginRowExit(item.id, 'dismissed');
+        } else if (status === 'booked') {
+          beginRowExit(item.id, 'booked');
+        } else if (status !== submissionStatus(item)) {
+          setStatusFilter(status);
+        }
       } catch (e: unknown) {
         const msg =
           (e as { response?: { data?: { message?: string } } })?.response?.data?.message ??
@@ -380,7 +496,7 @@ export default function AppointmentRequestsPage() {
         setStatusUpdating((s) => ({ ...s, [item.id]: false }));
       }
     },
-    [mergeSubmission]
+    [mergeSubmission, beginRowExit]
   );
 
   function onNoteChange(entryId: number, value: string) {
@@ -411,7 +527,7 @@ export default function AppointmentRequestsPage() {
   const openSmsModal = (item: AppointmentRequestSubmissionItem) => {
     if (!appointmentRequestHasSmsPhone(item)) return;
     setSmsError(null);
-    setSmsMessage(defaultSmsMessage(item));
+    setSmsMessage(defaultSmsMessage(item, practiceTz));
     setSmsItem(item);
   };
 
@@ -559,6 +675,11 @@ export default function AppointmentRequestsPage() {
           aria-label="Search appointment requests"
           style={{ width: '100%' }}
         />
+        {isSearchActive ? (
+          <p className="settings-muted" style={{ marginTop: 6, marginBottom: 0, fontSize: '0.88rem' }}>
+            Searching all tabs ({filtered.length} match{filtered.length === 1 ? '' : 'es'})
+          </p>
+        ) : null}
       </div>
 
       {error ? (
@@ -570,67 +691,85 @@ export default function AppointmentRequestsPage() {
       {loading ? (
         <p className="settings-muted">Loading…</p>
       ) : filtered.length === 0 ? (
-        <p className="settings-muted">No appointment requests in this view.</p>
-      ) : statusFilter === 'incomplete' ? (
-        <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {filtered.map((item) => {
-            const rd = item.requestData ?? {};
-            const name = clientDisplayNameFromRequestData(rd);
-            const phone = requestDataPhone(rd);
-            return (
-              <li
-                key={`abandoned-${item.id}`}
-                style={{
-                  border: '1px solid var(--border)',
-                  borderRadius: 10,
-                  padding: '14px 16px',
-                }}
-              >
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, justifyContent: 'space-between' }}>
-                  <div style={{ flex: '1 1 240px', minWidth: 0 }}>
-                    <div
-                      style={{
-                        display: 'inline-block',
-                        marginBottom: 8,
-                        padding: '3px 10px',
-                        borderRadius: 6,
-                        fontSize: 12,
-                        fontWeight: 600,
-                        background: '#fef3c7',
-                        color: '#92400e',
-                      }}
-                    >
-                      Incomplete form
-                    </div>
-                    <div style={{ fontWeight: 600, marginBottom: 4 }}>
-                      {name}
-                      {phone ? (
-                        <span className="settings-muted" style={{ fontWeight: 400, marginLeft: 8 }}>
-                          {phone}
-                        </span>
-                      ) : null}
-                    </div>
-                    <div className="settings-muted" style={{ fontSize: '0.92rem' }}>
-                      {requestDataPetSummary(rd)} · Left at: {item.currentStepName ?? item.currentStep ?? '—'}
-                    </div>
-                    <div className="settings-muted" style={{ fontSize: '0.88rem', marginTop: 6 }}>
-                      Abandoned {formatSubmittedAt(item.submittedAt, practiceTz)}
-                      {item.abandonReason ? ` · ${item.abandonReason}` : ''}
-                    </div>
-                  </div>
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-                    <button type="button" className="btn secondary" onClick={() => void openAbandonedDetail(item)}>
-                      Follow up…
-                    </button>
-                  </div>
-                </div>
-              </li>
-            );
-          })}
-        </ul>
+        <p className="settings-muted">
+          {isSearchActive
+            ? 'No appointment requests match your search.'
+            : 'No appointment requests in this view.'}
+        </p>
       ) : (
         <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
           {filtered.map((item) => {
+            if (isAbandonedItem(item)) {
+              const rd = item.requestData ?? {};
+              const name = clientDisplayNameFromRequestData(rd);
+              const phone = requestDataPhone(rd);
+              return (
+                <li
+                  key={`abandoned-${item.id}`}
+                  style={{
+                    border: '1px solid var(--border)',
+                    borderRadius: 10,
+                    padding: '14px 16px',
+                  }}
+                >
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, justifyContent: 'space-between' }}>
+                    <div style={{ flex: '1 1 240px', minWidth: 0 }}>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+                        {isSearchActive ? (
+                          <div
+                            style={{
+                              display: 'inline-block',
+                              padding: '3px 10px',
+                              borderRadius: 6,
+                              fontSize: 12,
+                              fontWeight: 600,
+                              background: '#f1f5f9',
+                              color: '#475569',
+                            }}
+                          >
+                            Incomplete
+                          </div>
+                        ) : null}
+                        <div
+                          style={{
+                            display: 'inline-block',
+                            padding: '3px 10px',
+                            borderRadius: 6,
+                            fontSize: 12,
+                            fontWeight: 600,
+                            background: '#fef3c7',
+                            color: '#92400e',
+                          }}
+                        >
+                          Incomplete form
+                        </div>
+                      </div>
+                      <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                        {name}
+                        {phone ? (
+                          <span className="settings-muted" style={{ fontWeight: 400, marginLeft: 8 }}>
+                            {phone}
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="settings-muted" style={{ fontSize: '0.92rem' }}>
+                        {requestDataPetSummary(rd)} · Left at: {item.currentStepName ?? item.currentStep ?? '—'}
+                      </div>
+                      <div className="settings-muted" style={{ fontSize: '0.88rem', marginTop: 6 }}>
+                        Abandoned {formatSubmittedAt(item.submittedAt, practiceTz)}
+                        {item.abandonReason ? ` · ${item.abandonReason}` : ''}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                      <button type="button" className="btn secondary" onClick={() => void openAbandonedDetail(item)}>
+                        Follow up…
+                      </button>
+                    </div>
+                  </div>
+                </li>
+              );
+            }
+
             const rd = item.requestData ?? {};
             const name = clientDisplayNameFromRequestData(rd);
             const phone = requestDataPhone(rd);
@@ -647,6 +786,8 @@ export default function AppointmentRequestsPage() {
               bookedApptId != null ? bookedApptStarts.get(Number(bookedApptId)) : undefined;
             const canText = requestDataCanText(rd);
             const rowHighlighted = highlightEntryId === item.id;
+            const exitKind = exitingRows.get(item.id);
+            const rowExiting = exitKind != null;
 
             return (
               <li
@@ -655,22 +796,64 @@ export default function AppointmentRequestsPage() {
                   if (el) rowRefs.current.set(item.id, el);
                   else rowRefs.current.delete(item.id);
                 }}
+                className={
+                  rowExiting
+                    ? `appt-request-row--exiting appt-request-row--exiting-${exitKind}`
+                    : undefined
+                }
                 style={{
-                  border: rowHighlighted ? '2px solid #f97316' : '1px solid var(--border)',
+                  position: 'relative',
+                  border: rowHighlighted
+                    ? exitKind === 'booked'
+                      ? '2px solid #10b981'
+                      : exitKind === 'dismissed'
+                        ? '2px solid #9ca3af'
+                        : '2px solid #f97316'
+                    : '1px solid var(--border)',
                   borderRadius: 10,
                   padding: '14px 16px',
-                  opacity: isBooked ? 0.92 : 1,
+                  opacity: isBooked && !rowExiting ? 0.92 : 1,
                   background: rowHighlighted
-                    ? '#fff7ed'
-                    : isBooked
+                    ? exitKind === 'booked'
+                      ? '#ecfdf5'
+                      : exitKind === 'dismissed'
+                        ? '#f3f4f6'
+                        : '#fff7ed'
+                    : isBooked && !rowExiting
                       ? 'var(--surface-muted, #f8f9fa)'
                       : undefined,
-                  boxShadow: rowHighlighted ? '0 0 0 2px rgba(249, 115, 22, 0.25)' : undefined,
+                  boxShadow: rowHighlighted
+                    ? exitKind === 'booked'
+                      ? '0 0 0 2px rgba(16, 185, 129, 0.3)'
+                      : exitKind === 'dismissed'
+                        ? '0 0 0 2px rgba(156, 163, 175, 0.35)'
+                        : '0 0 0 2px rgba(249, 115, 22, 0.25)'
+                    : undefined,
                 }}
               >
+                {rowExiting ? (
+                  <div className="appt-request-row-exit-badge" aria-live="polite">
+                    Moved to {exitKind === 'booked' ? 'Booked' : 'Dismissed'}
+                  </div>
+                ) : null}
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, justifyContent: 'space-between' }}>
                   <div style={{ flex: '1 1 240px', minWidth: 0 }}>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+                      {isSearchActive ? (
+                        <div
+                          style={{
+                            display: 'inline-block',
+                            padding: '3px 10px',
+                            borderRadius: 6,
+                            fontSize: 12,
+                            fontWeight: 600,
+                            background: '#f1f5f9',
+                            color: '#475569',
+                          }}
+                        >
+                          {statusTabLabel(status)}
+                        </div>
+                      ) : null}
                       {clientType !== 'unknown' ? (
                         <div
                           style={{
@@ -954,7 +1137,7 @@ export default function AppointmentRequestsPage() {
         <AppointmentRequestManualBookModal
           item={manualBookItem}
           onClose={() => setManualBookItem(null)}
-          onLinked={mergeSubmission}
+          onLinked={handleLinkedAppointment}
         />
       ) : null}
 

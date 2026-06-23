@@ -28,6 +28,9 @@ function elementForTab(path: string): JSX.Element {
     case 'appointments':
       return <AppointmentRequestsPage />;
     case 'forward-booking':
+      return <ForwardBookingPage />;
+    case 'on-hold':
+      return <ForwardBookingPage variant="onHold" />;
     default:
       return <ForwardBookingPage />;
   }
@@ -39,7 +42,7 @@ export const SCHEDULING_TOOLS_TAB_PAGES: SchedulingToolsTabPage[] = [
     label: tab.label,
     element: elementForTab(tab.path),
   })),
-  // Legacy On Hold / Booked / Complete routes now live inside Forward booking.
+  // Legacy Booked / Complete routes redirect into Forward booking.
   ...Object.entries(LEGACY_WORKFLOW_STATUS_BY_PATH).map(([path, status]) => ({
     path,
     label: status,

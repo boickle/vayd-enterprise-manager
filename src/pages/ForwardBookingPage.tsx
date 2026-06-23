@@ -73,7 +73,7 @@ import {
 import {
   resolveScheduleLoaderSmsBookedSlot,
 } from '../utils/scheduleLoaderSmsMessage';
-import { FORWARD_BOOKING_STATUS_PARAM, workflowPathForStatusFilter } from '../scheduling-tools-nav';
+import { FORWARD_BOOKING_STATUS_PARAM, onHoldListPath, workflowPathForStatusFilter } from '../scheduling-tools-nav';
 import { notifySchedulingToolsNavCountsRefresh, SCHEDULING_TOOLS_PAGE_REFRESH_EVENT } from '../hooks/useSchedulingToolsNavCounts';
 import {
   formatForwardBookingIntervalLabel,
@@ -156,9 +156,10 @@ const ON_HOLD_OVER24_SEARCH_PARAM = 'over24';
 const ON_HOLD_SOURCE_SEARCH_PARAM = 'source';
 
 const ON_HOLD_SOURCE_FILTERS: { key: ForwardBookingSourceChip; label: string }[] = [
-  { key: 'care_outreach', label: 'Care Outreach' },
+  { key: 'care_outreach', label: 'Care outreach' },
   { key: 'schedule_loader', label: 'Schedule loader' },
-  { key: 'end_visit', label: 'Forward Booking' },
+  { key: 'end_visit', label: 'Forward booking' },
+  { key: 'appointment_request', label: 'Appointments' },
 ];
 
 function parseOnHoldSourceFilter(raw: string | null): ForwardBookingSourceChip | null {
@@ -447,10 +448,11 @@ function linkedVisitStatusLine(
   return `Booked: ${visit}`;
 }
 
-export default function ForwardBookingPage() {
+export default function ForwardBookingPage({ variant = 'default' }: { variant?: 'default' | 'onHold' }) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const practiceTz = practiceTimeZoneOrDefault(undefined);
+  const isOnHoldView = variant === 'onHold';
 
   const resolveBookedSlotForSms = useCallback(
     async (entry: ForwardBookingEntry) => {
@@ -461,9 +463,12 @@ export default function ForwardBookingPage() {
     [practiceTz]
   );
 
-  const statusFilter = parseStatusFilterParam(searchParams.get(FORWARD_BOOKING_STATUS_PARAM));
+  const statusFilter: StatusFilter = isOnHoldView
+    ? 'onHold'
+    : parseStatusFilterParam(searchParams.get(FORWARD_BOOKING_STATUS_PARAM));
   const setStatusFilter = useCallback(
     (next: StatusFilter) => {
+      if (isOnHoldView) return;
       const params = new URLSearchParams(searchParams);
       if (next === 'pending') params.delete(FORWARD_BOOKING_STATUS_PARAM);
       else params.set(FORWARD_BOOKING_STATUS_PARAM, next);
@@ -473,8 +478,16 @@ export default function ForwardBookingPage() {
       }
       setSearchParams(params);
     },
-    [searchParams, setSearchParams]
+    [isOnHoldView, searchParams, setSearchParams]
   );
+
+  useEffect(() => {
+    if (isOnHoldView || statusFilter !== 'onHold') return;
+    const params = new URLSearchParams(searchParams);
+    params.delete(FORWARD_BOOKING_STATUS_PARAM);
+    const qs = params.toString();
+    navigate(qs ? `${onHoldListPath()}?${qs}` : onHoldListPath(), { replace: true });
+  }, [isOnHoldView, navigate, searchParams, statusFilter]);
   const onHoldOver24Only =
     statusFilter === 'onHold' && searchParams.get(ON_HOLD_OVER24_SEARCH_PARAM) === '1';
   const onHoldSourceFilter =
@@ -541,9 +554,10 @@ export default function ForwardBookingPage() {
   const rowRefs = useRef<Map<number, HTMLElement>>(new Map());
   const highlightScrollSig = useRef('');
 
-  const listTitle = 'Forward booking';
-  const listDescription =
-    'Visits routed from care outreach, schedule loader, and end-of-visit follow-ups. Use the status filters to move each visit from needs booking → on hold → booked → complete.';
+  const listTitle = isOnHoldView ? 'On hold' : 'Forward booking';
+  const listDescription = isOnHoldView
+    ? 'Calendar holds from care outreach, schedule loader, forward booking, and appointment requests. Convert holds to booked visits when ready.'
+    : 'Visits routed from care outreach, schedule loader, and end-of-visit follow-ups. Use the status filters to move each visit from needs booking → booked → complete.';
 
   useEffect(() => {
     void fetchSchedulingOutreachSmsFrom().then((phone) => {
@@ -935,6 +949,7 @@ export default function ForwardBookingPage() {
       care_outreach: 0,
       schedule_loader: 0,
       end_visit: 0,
+      appointment_request: 0,
     };
     for (const row of visibleRows) {
       if (
@@ -1350,53 +1365,47 @@ export default function ForwardBookingPage() {
       ) : null}
 
       <div style={{ marginBottom: 14, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
-        {STATUS_TABS.map(({ key, label }) => (
-          <button
-            key={key}
-            type="button"
-            className={`settings-tab${statusFilter === key ? ' active' : ''}`}
-            style={{
-              marginBottom: 0,
-              border: '1px solid var(--border)',
-              borderRadius: 8,
-              padding: '8px 14px',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 6,
-            }}
-            onClick={() => setStatusFilter(key)}
-          >
-            <span>{label}</span>
-            <span
-              className="settings-muted"
-              style={{
-                fontSize: 12,
-                fontWeight: 600,
-                lineHeight: 1,
-                opacity: statusFilter === key ? 1 : 0.85,
-              }}
-              aria-hidden
-            >
-              ({tabCounts[key]})
-            </span>
-            {key === 'onHold' && onHoldOver24Count > 0 ? (
-              <span
+        {!isOnHoldView
+          ? STATUS_TABS.filter(({ key }) => key !== 'onHold').map(({ key, label }) => (
+              <button
+                key={key}
+                type="button"
+                className={`settings-tab${statusFilter === key ? ' active' : ''}`}
                 style={{
-                  fontSize: 11,
-                  fontWeight: 700,
-                  lineHeight: 1,
-                  color: '#991b1b',
-                  background: '#fee2e2',
-                  borderRadius: 999,
-                  padding: '2px 6px',
+                  marginBottom: 0,
+                  border: '1px solid var(--border)',
+                  borderRadius: 8,
+                  padding: '8px 14px',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
                 }}
-                title={`${onHoldOver24Count} on hold over 24 hours`}
+                onClick={() => setStatusFilter(key)}
               >
-                {onHoldOver24Count} &gt; 24h
-              </span>
-            ) : null}
-          </button>
-        ))}
+                <span>{label}</span>
+                <span
+                  className="settings-muted"
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 600,
+                    lineHeight: 1,
+                    opacity: statusFilter === key ? 1 : 0.85,
+                  }}
+                  aria-hidden
+                >
+                  ({tabCounts[key]})
+                </span>
+              </button>
+            ))
+          : null}
+        {isOnHoldView ? (
+          <span
+            className="settings-muted"
+            style={{ fontSize: 13, fontWeight: 600, marginRight: 4 }}
+          >
+            All holds ({tabCounts.onHold})
+          </span>
+        ) : null}
         {statusFilter === 'onHold' ? (
           <button
             type="button"

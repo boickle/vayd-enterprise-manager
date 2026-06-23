@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { Children, Fragment, isValidElement, useState, type ReactNode } from 'react';
 import { NavLink, Outlet, useLocation, useOutletContext } from 'react-router-dom';
 import { SCHEDULING_TOOL_TABS, isSchedulingToolTabActive } from '../scheduling-tools-nav';
 import {
@@ -11,13 +11,45 @@ type SchedulingToolsOutletContext = {
   schedulingToolsLinkPrefix?: string;
 };
 
-function TabCount({ count, loading }: { count: number | undefined; loading: boolean }) {
-  if (loading || !count) return null;
+type TabBadgeVariant = 'default' | 'hold' | 'urgent' | 'follow-up' | 'review';
+
+function TabBadge({
+  count,
+  variant = 'default',
+  title,
+}: {
+  count: number;
+  variant?: TabBadgeVariant;
+  title: string;
+}) {
+  if (count <= 0) return null;
   return (
-    <span className="scheduling-tools-nav__count" aria-hidden>
+    <span
+      className={`scheduling-tools-nav__badge scheduling-tools-nav__badge--${variant}`}
+      title={title}
+      aria-label={title}
+    >
       {count}
     </span>
   );
+}
+
+function hasVisibleBadges(children: ReactNode): boolean {
+  let found = false;
+  Children.forEach(children, (child) => {
+    if (found || child == null || child === false) return;
+    if (isValidElement(child) && child.type === Fragment) {
+      if (hasVisibleBadges(child.props.children)) found = true;
+    } else {
+      found = true;
+    }
+  });
+  return found;
+}
+
+function TabBadges({ children }: { children: ReactNode }) {
+  if (!hasVisibleBadges(children)) return null;
+  return <span className="scheduling-tools-nav__badges">{children}</span>;
 }
 
 export default function SchedulingTools() {
@@ -44,8 +76,8 @@ export default function SchedulingTools() {
         return counts.careOutreachPriority;
       case 'forward-booking':
         return counts.forwardBookingPending;
-      case 'texted-offers':
-        return counts.textedOffersActive;
+      case 'on-hold':
+        return counts.onHold;
       default:
         return undefined;
     }
@@ -62,16 +94,8 @@ export default function SchedulingTools() {
         <nav className="scheduling-tools-nav" aria-label="Scheduling tools">
           <div className="scheduling-tools-nav__tabs" role="tablist">
             {SCHEDULING_TOOL_TABS.map((tab) => {
-              const showOver24 =
-                tab.path === 'forward-booking' && !countsLoading && counts.onHoldOver24 > 0;
-              const showTextedOffersFollowUp =
-                tab.path === 'texted-offers' &&
-                !countsLoading &&
-                counts.textedOffersNeedsFollowUp > 0;
-              const showTextedOffersToConfirm =
-                tab.path === 'texted-offers' &&
-                !countsLoading &&
-                counts.textedOffersToConfirm > 0;
+              const primaryCount = countForTab(tab.path);
+              const showBadges = !countsLoading;
               return (
                 <NavLink
                   key={tab.path}
@@ -79,42 +103,59 @@ export default function SchedulingTools() {
                   end={false}
                   className={({ isActive }) =>
                     `settings-tab scheduling-tools-nav__tab${
-                      isActive || isSchedulingToolTabActive(location.pathname, tab.path)
+                      isActive || isSchedulingToolTabActive(location.pathname, tab.path, location.search)
                         ? ' active'
                         : ''
                     }`
                   }
                 >
                   <span>{tab.label}</span>
-                  <TabCount count={countForTab(tab.path)} loading={countsLoading} />
-                  {showOver24 ? (
-                    <span
-                      className="scheduling-tools-nav__alert"
-                      title={`${counts.onHoldOver24} on hold over 24 hours`}
-                    >
-                      {counts.onHoldOver24} &gt; 24h
-                    </span>
-                  ) : null}
-                  {tab.path === 'texted-offers' &&
-                  (showTextedOffersFollowUp || showTextedOffersToConfirm) ? (
-                    <span className="scheduling-tools-nav__alerts-stack">
-                      {showTextedOffersFollowUp ? (
-                        <span
-                          className="scheduling-tools-nav__alert scheduling-tools-nav__alert--follow-up"
-                          title={`${counts.textedOffersNeedsFollowUp} need follow-up`}
-                        >
-                          {counts.textedOffersNeedsFollowUp} follow-up
-                        </span>
+                  {showBadges ? (
+                    <TabBadges>
+                      {tab.path === 'on-hold' ? (
+                        <>
+                          {counts.onHoldOver24 > 0 && counts.onHoldOver24 < counts.onHold ? (
+                            <TabBadge
+                              count={counts.onHold - counts.onHoldOver24}
+                              variant="hold"
+                              title={`${counts.onHold - counts.onHoldOver24} on hold under 24 hours`}
+                            />
+                          ) : null}
+                          {counts.onHoldOver24 > 0 ? (
+                            <TabBadge
+                              count={counts.onHoldOver24}
+                              variant="urgent"
+                              title={`${counts.onHoldOver24} on hold over 24 hours`}
+                            />
+                          ) : (
+                            <TabBadge
+                              count={counts.onHold}
+                              variant="hold"
+                              title={`${counts.onHold} on hold`}
+                            />
+                          )}
+                        </>
+                      ) : tab.path === 'texted-offers' ? (
+                        <>
+                          <TabBadge
+                            count={counts.textedOffersNeedsFollowUp}
+                            variant="follow-up"
+                            title={`${counts.textedOffersNeedsFollowUp} need follow-up`}
+                          />
+                          <TabBadge
+                            count={counts.textedOffersToConfirm}
+                            variant="review"
+                            title={`${counts.textedOffersToConfirm} waiting for staff review`}
+                          />
+                        </>
+                      ) : primaryCount ? (
+                        <TabBadge
+                          count={primaryCount}
+                          variant="default"
+                          title={`${primaryCount} in queue`}
+                        />
                       ) : null}
-                      {showTextedOffersToConfirm ? (
-                        <span
-                          className="scheduling-tools-nav__alert scheduling-tools-nav__alert--to-confirm"
-                          title={`${counts.textedOffersToConfirm} waiting for staff review`}
-                        >
-                          {counts.textedOffersToConfirm} to review
-                        </span>
-                      ) : null}
-                    </span>
+                    </TabBadges>
                   ) : null}
                 </NavLink>
               );

@@ -52,13 +52,18 @@
 .scheduling-tools-nav__refresh {
   flex-shrink: 0;
   margin-bottom: 6px;
+  padding: 8px 12px;
+  font-size: 13px;
 }
 
 .scheduling-tools-nav__tabs {
   display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
+  flex-wrap: nowrap;
+  gap: 2px;
   flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
 }
 
 .scheduling-tools-nav__tab {
@@ -66,59 +71,61 @@
   border-bottom-width: 2px;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 5px;
+  padding: 10px 12px;
+  font-size: 13px;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
-.scheduling-tools-nav__alerts-stack {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
+.scheduling-tools-nav__badges {
+  display: inline-flex;
+  align-items: center;
   gap: 4px;
 }
 
-.scheduling-tools-nav__count {
+.scheduling-tools-nav__badge {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 20px;
-  height: 20px;
-  padding: 0 6px;
-  border-radius: 999px;
-  background: var(--border);
-  color: var(--text);
-  font-size: 12px;
-  font-weight: 600;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
   line-height: 1;
+  flex-shrink: 0;
 }
 
-.settings-tab.active .scheduling-tools-nav__count {
+.scheduling-tools-nav__badge--default {
+  background: #e2e8f0;
+  color: #334155;
+}
+
+.settings-tab.active .scheduling-tools-nav__badge--default {
   background: var(--accent-strong, #4fb128);
   color: #fff;
 }
 
-.scheduling-tools-nav__alert {
-  display: inline-flex;
-  align-items: center;
-  height: 20px;
-  padding: 0 7px;
-  border-radius: 999px;
-  background: #fee2e2;
-  color: #991b1b;
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 1;
+.scheduling-tools-nav__badge--hold {
+  background: #fef3c7;
+  color: #92400e;
 }
 
-.scheduling-tools-nav__alert--follow-up {
+.scheduling-tools-nav__badge--urgent {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.scheduling-tools-nav__badge--follow-up {
   background: #fef9c3;
   color: #854d0e;
-  border: 1px solid #fde047;
 }
 
-.scheduling-tools-nav__alert--to-confirm {
-  background: #fee2e2;
-  color: #991b1b;
-  border: 1px solid #fecaca;
+.scheduling-tools-nav__badge--review {
+  background: #fce7f3;
+  color: #9d174d;
 }
 
 .settings-section {
@@ -1374,5 +1381,59 @@
   border: 2px solid #f97316;
   background: #fff7ed;
   box-shadow: 0 0 0 2px rgba(249, 115, 22, 0.25);
+}
+
+@keyframes appt-request-row-exit-out {
+  0% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  55% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.985);
+  }
+}
+
+.appt-request-row--exiting {
+  animation: appt-request-row-exit-out 1.1s ease forwards;
+  pointer-events: none;
+}
+
+.appt-request-row-exit-badge {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 2;
+  padding: 10px 18px;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  pointer-events: none;
+}
+
+.appt-request-row--exiting-booked .appt-request-row-exit-badge {
+  background: #10b981;
+  color: #fff;
+}
+
+.appt-request-row--exiting-dismissed .appt-request-row-exit-badge {
+  background: #6b7280;
+  color: #fff;
+}
+
+.appt-request-row--exiting-booked > div:not(.appt-request-row-exit-badge) {
+  opacity: 0.45;
+}
+
+.appt-request-row--exiting-dismissed > div:not(.appt-request-row-exit-badge) {
+  opacity: 0.45;
 }
 

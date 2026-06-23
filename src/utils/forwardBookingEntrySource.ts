@@ -4,7 +4,7 @@ import { normalizeForwardBookingCreatedVia } from '../api/forwardBooking';
 /** Chips shown on On Hold rows — subset of {@link ForwardBookingCreatedVia}. */
 export type ForwardBookingSourceChip = Extract<
   ForwardBookingCreatedVia,
-  'care_outreach' | 'schedule_loader' | 'end_visit'
+  'care_outreach' | 'schedule_loader' | 'end_visit' | 'appointment_request'
 >;
 
 export function isForwardBookingCareOutreachEntry(
@@ -18,7 +18,7 @@ export function forwardBookingEntrySourceChip(
   entry: Pick<ForwardBookingEntry, 'createdVia'>
 ): ForwardBookingSourceChip | null {
   const via = normalizeForwardBookingCreatedVia(entry.createdVia);
-  if (!via || via === 'unknown' || via === 'manual' || via === 'appointment_request') {
+  if (!via || via === 'unknown' || via === 'manual') {
     return null;
   }
   return via;
@@ -30,6 +30,8 @@ export function forwardBookingSourceChipLabel(chip: ForwardBookingSourceChip): s
       return 'Care Outreach';
     case 'schedule_loader':
       return 'Schedule loader';
+    case 'appointment_request':
+      return 'Appointments';
     default:
       return 'Forward Booking';
   }
@@ -44,6 +46,8 @@ export function forwardBookingSourceChipColors(chip: ForwardBookingSourceChip): 
       return { background: '#f5f3ff', color: '#6d28d9' };
     case 'schedule_loader':
       return { background: '#ecfdf5', color: '#047857' };
+    case 'appointment_request':
+      return { background: '#fce7f3', color: '#9d174d' };
     default:
       return { background: '#eff6ff', color: '#1d4ed8' };
   }
@@ -54,7 +58,13 @@ export function parseForwardBookingSourceChipFilter(
   raw: string | null
 ): ForwardBookingSourceChip | null {
   if (raw === 'forward_booking') return 'end_visit';
-  if (raw === 'care_outreach' || raw === 'schedule_loader' || raw === 'end_visit') {
+  if (raw === 'appointments') return 'appointment_request';
+  if (
+    raw === 'care_outreach' ||
+    raw === 'schedule_loader' ||
+    raw === 'end_visit' ||
+    raw === 'appointment_request'
+  ) {
     return raw;
   }
   return null;

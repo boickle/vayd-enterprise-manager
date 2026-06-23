@@ -1,5 +1,7 @@
 /** Helpers for reading persisted public appointment request form payloads. */
 
+import { DateTime } from 'luxon';
+
 function pickStr(v: unknown): string | null {
   if (v == null) return null;
   const s = String(v).trim();
@@ -108,6 +110,93 @@ export function requestDataHowSoon(requestData: Record<string, unknown>): string
 
 export function requestDataPreferredDoctor(requestData: Record<string, unknown>): string | null {
   return pickStr(requestData.preferredDoctor) ?? pickStr(requestData.preferredDoctorExisting);
+}
+
+export type RequestDataSelfScheduledSlot = {
+  doctorName: string | null;
+  appointmentStart: string | null;
+  windowStartIso: string | null;
+  windowEndIso: string | null;
+  windowDisplay: string | null;
+};
+
+/** The reserved slot (doctor + arrival window) persisted from an online-booking submission. */
+export function requestDataSelfScheduledSlot(
+  requestData: Record<string, unknown>
+): RequestDataSelfScheduledSlot | null {
+  const raw = requestData.selfScheduledSlot;
+  if (!raw || typeof raw !== 'object') return null;
+  const s = raw as Record<string, unknown>;
+  const appointmentStart = pickStr(s.appointmentStart);
+  if (!appointmentStart) return null;
+  return {
+    doctorName: pickStr(s.doctorName),
+    appointmentStart,
+    windowStartIso: pickStr(s.windowStartIso),
+    windowEndIso: pickStr(s.windowEndIso),
+    windowDisplay: pickStr(s.windowDisplay),
+  };
+}
+
+/** Best-effort client id from a persisted request payload. */
+export function requestDataClientId(requestData: Record<string, unknown>): string | null {
+  const direct = pickStr(requestData.clientId) ?? pickStr(requestData.client_id);
+  if (direct) return direct;
+
+  const resolved = resolveClientPatientFromRequestData(requestData);
+  if (resolved?.clientId) return resolved.clientId;
+
+  for (const key of ['pets', 'allPets'] as const) {
+    const arr = requestData[key];
+    if (!Array.isArray(arr)) continue;
+    for (const p of arr) {
+      if (!p || typeof p !== 'object') continue;
+      const row = p as Record<string, unknown>;
+      const cid = pickStr(row.clientId) ?? pickStr(row.client_id);
+      if (cid) return cid;
+    }
+  }
+
+  const loggedInId =
+    pickStr(requestData.userId) ?? pickStr(requestData.loggedInClientId);
+  if (loggedInId) return loggedInId;
+
+  return null;
+}
+
+/** Earliest requested appointment instant from self-schedule or time preferences. */
+export function requestDataRequestedStartIso(requestData: Record<string, unknown>): string | null {
+  const slot = requestDataSelfScheduledSlot(requestData);
+  if (slot?.appointmentStart) return slot.appointmentStart;
+
+  const prefs = requestData.selectedDateTimePreferences;
+  if (Array.isArray(prefs) && prefs.length > 0) {
+    const sorted = [...prefs].sort((a, b) => {
+      const pa = Number((a as { preference?: unknown })?.preference) || 999;
+      const pb = Number((b as { preference?: unknown })?.preference) || 999;
+      return pa - pb;
+    });
+    for (const pref of sorted) {
+      if (!pref || typeof pref !== 'object') continue;
+      const dt = pickStr((pref as Record<string, unknown>).dateTime);
+      if (dt && DateTime.fromISO(dt).isValid) return dt;
+    }
+  }
+
+  return pickStr(requestData.submittedAt);
+}
+
+/** Last name from a doctor label like "Dr. Heather Crispell D.V.M." → "Crispell". */
+export function doctorLastNameFromLabel(label: string | null | undefined): string | null {
+  const cleaned = pickStr(label);
+  if (!cleaned) return null;
+  const withoutPrefix = cleaned.replace(/^dr\.?\s*/i, '').trim();
+  const withoutCreds = withoutPrefix
+    .replace(/,?\s*(d\.?v\.?m\.?|v\.?m\.?d\.?|d\.?a\.?b\.?v\.?p\.?|ms|m\.?s\.?|phd|ph\.?d\.?)\b\.?/gi, '')
+    .replace(/[.,]+$/g, '')
+    .trim();
+  const parts = withoutCreds.split(/\s+/).filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : null;
 }
 
 export function requestDataAnythingElse(requestData: Record<string, unknown>): string | null {
