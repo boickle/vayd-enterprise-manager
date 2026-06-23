@@ -233,7 +233,7 @@ export default function AppointmentRequestsPage() {
   const [pendingBookedExitId, setPendingBookedExitId] = useState<number | null>(null);
   const rowRefs = useRef<Map<number, HTMLLIElement>>(new Map());
   const highlightScrollSig = useRef('');
-  const exitRowTimers = useRef<Map<number, number>>(new Map());
+  const exitRowTimers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
 
   const [draftDetailOpen, setDraftDetailOpen] = useState(false);
   const [draftDetailLoading, setDraftDetailLoading] = useState(false);
@@ -423,7 +423,7 @@ export default function AppointmentRequestsPage() {
     setHighlightEntryId(entryId);
     const existing = exitRowTimers.current.get(entryId);
     if (existing) window.clearTimeout(existing);
-    const timer = window.setTimeout(() => {
+    const timer = setTimeout(() => {
       exitRowTimers.current.delete(entryId);
       setExitingRows((prev) => {
         const next = new Map(prev);
