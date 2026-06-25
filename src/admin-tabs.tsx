@@ -5,7 +5,6 @@ import AppointmentRequestPromotionsPage from './pages/AppointmentRequestPromotio
 import OpenPhoneCoaching from './pages/OpenPhoneCoaching';
 import SurveyResults from './pages/SurveyResults';
 import { getFrontendPaymentProvider } from './config/paymentProvider';
-import { isProduction } from './utils/env';
 
 export type AdminTabPage = {
   path: string;
@@ -42,11 +41,9 @@ export const ADMIN_TAB_PAGES: AdminTabPage[] = [
   },
 ];
 
-/** Admin tabs visible to the current environment. Create User is hidden in non-production. */
+/** Admin tabs visible to the current environment. */
 export function getAdminTabPages(): AdminTabPage[] {
   const stripeOnlyPaths = new Set(['membership-promotions']);
   const useStripe = getFrontendPaymentProvider() === 'stripe';
-  let tabs = ADMIN_TAB_PAGES.filter((tab) => useStripe || !stripeOnlyPaths.has(tab.path));
-  if (isProduction()) return tabs;
-  return tabs.filter((tab) => tab.path !== 'users/create');
+  return ADMIN_TAB_PAGES.filter((tab) => useStripe || !stripeOnlyPaths.has(tab.path));
 }
