@@ -1,6 +1,8 @@
 // Sub-routes under /tools (mirrors admin-tabs pattern).
 import ExitSurveyPage from './pages/ExitSurveyPage';
 
+export const EXIT_SURVEY_PATH = '/schedule/exit-survey';
+
 export type ToolsTabPage = {
   path: string;
   label: string;

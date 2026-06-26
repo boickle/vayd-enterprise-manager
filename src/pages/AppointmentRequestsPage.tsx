@@ -225,6 +225,8 @@ function statusTabLabel(
   status: AppointmentRequestSubmissionStatus,
   opts?: { isOnHold?: boolean },
 ): string {
+  const needsAutoBooked = appointmentRequestNeedsStaffConfirmation(item);
+  if (opts?.isOnHold && needsAutoBooked) return 'Auto-Booked · On hold';
   if (opts?.isOnHold) return 'On hold';
   const linkedPoints = item.linkedVisitPoints;
   if (
@@ -233,9 +235,9 @@ function statusTabLabel(
     Number.isFinite(linkedPoints) &&
     linkedPoints <= 0
   ) {
-    return 'On hold';
+    return needsAutoBooked ? 'Auto-Booked · On hold' : 'On hold';
   }
-  if (appointmentRequestNeedsStaffConfirmation(item)) return 'Auto-Booked';
+  if (needsAutoBooked) return 'Auto-Booked';
   const tab = STATUS_TABS.find((t) => t.key === status);
   return tab?.label ?? status;
 }
@@ -987,13 +989,11 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
     };
     for (const row of submissions) {
       const status = submissionStatus(row);
-      if (appointmentRequestSubmissionIsOnHold(row, bookedApptMeta, typeCatalog)) {
-        counts.on_hold += 1;
-        if (submissionNeedsRecords(row)) counts.need_records += 1;
-        continue;
-      }
-      if (appointmentRequestNeedsStaffConfirmation(row)) {
-        counts.to_confirm += 1;
+      const isOnHold = appointmentRequestSubmissionIsOnHold(row, bookedApptMeta, typeCatalog);
+      const needsAutoBooked = appointmentRequestNeedsStaffConfirmation(row);
+      if (isOnHold) counts.on_hold += 1;
+      if (needsAutoBooked) counts.to_confirm += 1;
+      if (isOnHold || needsAutoBooked) {
         if (submissionNeedsRecords(row)) counts.need_records += 1;
         continue;
       }
@@ -1060,9 +1060,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
       return submissions
         .filter(
           (item) =>
-            exitingRows.has(item.id) ||
-            (appointmentRequestNeedsStaffConfirmation(item) &&
-              !appointmentRequestSubmissionIsOnHold(item, bookedApptMeta, typeCatalog)),
+            exitingRows.has(item.id) || appointmentRequestNeedsStaffConfirmation(item),
         )
         .sort(sortNewestFirst);
     }
@@ -1720,8 +1718,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
             // Only true when the client self-scheduled a slot and it was auto-booked online —
             // not for ordinary appointment requests that staff book later.
             const autoBookedOnline = appointmentRequestAutoBookedOnline(item);
-            const needsStaffConfirmation =
-              appointmentRequestNeedsStaffConfirmation(item) && !isOnHoldVisit;
+            const needsStaffConfirmation = appointmentRequestNeedsStaffConfirmation(item);
             const needsManualBook = !isDismissed && !isBooked && !hasLinkedAppointment;
             const bookedSummary =
               bookedApptId != null ? bookedApptMeta.get(Number(bookedApptId)) : undefined;
@@ -1883,7 +1880,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                           No text consent
                         </div>
                       ) : null}
-                      {autoBookedOnline && !isOnHoldVisit ? (
+                      {autoBookedOnline ? (
                         <div
                           style={{
                             display: 'inline-block',
@@ -1913,7 +1910,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                           On hold
                         </div>
                       ) : null}
-                      {isBooked && clientType === 'new' && hasLinkedAppointment ? (
+                      {clientType === 'new' && hasLinkedAppointment && (isBooked || isOnHoldVisit) ? (
                         <div
                           style={{
                             display: 'inline-block',

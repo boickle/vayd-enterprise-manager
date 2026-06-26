@@ -5,6 +5,7 @@ import { useAuth } from '../auth/useAuth';
 import { getVisibleScoutTabs } from '../scout-tabs';
 import { SCHEDULING_TOOLS_PATH_PREFIX } from '../scheduling-tools-nav';
 import { APPOINTMENTS_PATH_PREFIX } from '../appointments-nav';
+import { EXIT_SURVEY_PATH } from '../tools-tabs';
 import { blockRoutingCalendarPreviewNavigation } from '../utils/routingCalendarPreviewGuard';
 import TasksNavLabel from './TasksNavLabel';
 import { useTaskNavBadges } from '../hooks/useTaskNavBadges';
@@ -50,6 +51,7 @@ function SchedulingSubmenuLinks({ onNavigate }: { onNavigate: () => void }) {
   const location = useLocation();
   const schedulingToolsActive = location.pathname.startsWith(SCHEDULING_TOOLS_PATH_PREFIX);
   const appointmentsActive = location.pathname.startsWith(APPOINTMENTS_PATH_PREFIX);
+  const exitSurveyActive = location.pathname.startsWith(EXIT_SURVEY_PATH);
   return (
     <>
       <Link
@@ -77,6 +79,19 @@ function SchedulingSubmenuLinks({ onNavigate }: { onNavigate: () => void }) {
         }}
       >
         Appointments
+      </Link>
+      <Link
+        to={EXIT_SURVEY_PATH}
+        className={`schedule-app__settings-link${
+          exitSurveyActive ? ' schedule-app__settings-link--active' : ''
+        }`}
+        role="menuitem"
+        onClick={(e) => {
+          if (blockScheduleNavLeave(e)) return;
+          onNavigate();
+        }}
+      >
+        Exit Survey
       </Link>
     </>
   );
@@ -296,7 +311,8 @@ export default function NavbarScheduleHorizontalNav() {
   const moreSummaryActive =
     (overflowKeys.includes('scheduling') &&
       (location.pathname.startsWith(SCHEDULING_TOOLS_PATH_PREFIX) ||
-        location.pathname.startsWith(APPOINTMENTS_PATH_PREFIX))) ||
+        location.pathname.startsWith(APPOINTMENTS_PATH_PREFIX) ||
+        location.pathname.startsWith(EXIT_SURVEY_PATH))) ||
     (overflowKeys.includes('settings') && location.pathname.startsWith('/schedule/settings')) ||
     (overflowKeys.includes('admin') && location.pathname.startsWith('/schedule/admin'));
 
@@ -365,7 +381,8 @@ export default function NavbarScheduleHorizontalNav() {
             <summary
               className={`schedule-app__tab schedule-app__settings-summary${
                 location.pathname.startsWith(SCHEDULING_TOOLS_PATH_PREFIX) ||
-                location.pathname.startsWith(APPOINTMENTS_PATH_PREFIX)
+                location.pathname.startsWith(APPOINTMENTS_PATH_PREFIX) ||
+                location.pathname.startsWith(EXIT_SURVEY_PATH)
                   ? ' schedule-app__tab--active'
                   : ''
               }`}
