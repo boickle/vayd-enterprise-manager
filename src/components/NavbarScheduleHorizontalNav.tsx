@@ -23,6 +23,7 @@ type SchedNavItemKey =
   | 'clients'
   | 'patients'
   | 'scheduling'
+  | 'visits'
   | 'inventory'
   | 'tasks'
   | 'settings'
@@ -33,6 +34,7 @@ const MEASURE_LABEL: Record<SchedNavItemKey, string> = {
   clients: 'Clients',
   patients: 'Patients',
   scheduling: 'Scheduling',
+  visits: 'Visits',
   inventory: 'Inventory',
   tasks: 'Tasks',
   settings: 'Settings',
@@ -197,7 +199,7 @@ export default function NavbarScheduleHorizontalNav() {
   const itemKeys = useMemo((): SchedNavItemKey[] => {
     const keys: SchedNavItemKey[] = [];
     if (homeTab) keys.push('home');
-    keys.push('clients', 'patients', 'scheduling');
+    keys.push('clients', 'patients', 'scheduling', 'visits');
     if (SHOW_NAV_INVENTORY) keys.push('inventory');
     keys.push('tasks');
     if (showAdminTab) keys.push('settings', 'admin');
@@ -353,6 +355,16 @@ export default function NavbarScheduleHorizontalNav() {
             className={({ isActive }) => `schedule-app__tab${isActive ? ' schedule-app__tab--active' : ''}`}
           >
             Patients
+          </NavLink>
+        );
+      case 'visits':
+        return (
+          <NavLink
+            key="visits"
+            to="/schedule/soap"
+            className={({ isActive }) => `schedule-app__tab${isActive ? ' schedule-app__tab--active' : ''}`}
+          >
+            Visits
           </NavLink>
         );
       case 'inventory':

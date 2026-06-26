@@ -23,6 +23,7 @@ export type SchedulerContextMenuAction =
   | { kind: 'view' }
   | { kind: 'edit' }
   | { kind: 'visitTimes' }
+  | { kind: 'openSoap' }
   | { kind: 'onMyWayText' }
   | { kind: 'addCharges' }
   | { kind: 'remove' }
@@ -204,6 +205,7 @@ export function SchedulerAppointmentContextMenu({
           title={visitTimesDisabled ? visitTimesDisabledTitle : undefined}
           onPick={() => onAction({ kind: 'visitTimes' })}
         />
+        <CtxSubRow label="Open Visit (SOAP)" onPick={() => onAction({ kind: 'openSoap' })} />
         <CtxSubRow
           label="Send On My Way Text"
           disabled={!phone1}
