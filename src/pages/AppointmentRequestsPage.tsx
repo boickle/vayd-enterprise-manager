@@ -21,6 +21,7 @@ import {
 } from '../api/appointmentFormDrafts';
 import { ClientSmsComposeModal } from '../components/ClientSmsComposeModal';
 import { AppointmentRequestDetailPanel } from '../components/AppointmentRequestDetailPanel';
+import { AppointmentRequestPdfDownloadLink } from '../components/AppointmentRequestPdfDownloadLink';
 import { AppointmentRequestPetSummaryList } from '../components/AppointmentRequestPetSummaryList';
 import {
   AppointmentRequestManualBookModal,
@@ -1994,6 +1995,14 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                         <div className="appt-request-meta-line">
                           <dt className="appt-request-meta-label">May ask for records</dt>
                           <dd className="appt-request-meta-value">{mayWeAskForRecords}</dd>
+                        </div>
+                      ) : null}
+                      {isCompletedSubmission(item) ? (
+                        <div className="appt-request-meta-line">
+                          <dt className="appt-request-meta-label">Request PDF</dt>
+                          <dd className="appt-request-meta-value">
+                            <AppointmentRequestPdfDownloadLink submissionId={item.id} clientLabel={name} />
+                          </dd>
                         </div>
                       ) : null}
                     </dl>

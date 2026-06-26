@@ -14,6 +14,7 @@ import { resolveRequestDataClientIdStaff } from './resolveRequestDataClientId';
 
 function linkableAppointment(a: Appointment): boolean {
   if (a.isDeleted) return false;
+  if (a.isActive === false) return false;
   if (isAppointmentCancelledOnPracticeCalendar(a)) return false;
   return Boolean(a.appointmentStart?.trim());
 }
@@ -36,7 +37,7 @@ export async function fetchAppointmentRequestLinkCandidates(args: {
 }): Promise<{ appointments: Appointment[]; clientResolved: boolean }> {
   const { requestData, practiceId, practiceTz } = args;
 
-  const clientId = await resolveRequestDataClientIdStaff(requestData);
+  const clientId = await resolveRequestDataClientIdStaff(requestData, practiceId);
   const clientResolved = Boolean(clientId);
 
   const requestedStartIso = requestDataRequestedStartIso(requestData);

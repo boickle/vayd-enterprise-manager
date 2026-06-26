@@ -43,7 +43,8 @@ function formatLinkAppointmentOption(a: Appointment, practiceTz: string): string
   const datePart = start.isValid ? start.toFormat('EEE, MMM d, yyyy') : '—';
   const timePart = start.isValid ? start.toFormat('h:mm a') : '';
   const typeName = appointmentTypeLabel(a);
-  return [datePart, timePart, typeName].filter(Boolean).join(' · ');
+  const idPart = a.id != null ? `#${a.id}` : null;
+  return [idPart, datePart, timePart, typeName].filter(Boolean).join(' · ');
 }
 
 function formatRequestedDateHint(iso: string | null, practiceTz: string): string | null {
@@ -161,12 +162,12 @@ export function AppointmentRequestManualBookModal({
 
   const emptyHint = useMemo(() => {
     if (clientResolved === false) {
-      return 'Could not match this request to a client record by email or name. Enter the appointment ID manually after booking.';
+      return 'Could not match this request to a client record by email, name, or address. Enter the appointment ID manually after booking.';
     }
     if (requestedDateHint) {
       return `No appointments found on or after ${requestedDateHint}. Create one through the normal booking flow first, then link it here — or enter the appointment ID below.`;
     }
-    return 'No upcoming appointments found for this client (including inactive pets). Create one through the normal booking flow first, then link it here — or enter the appointment ID below.';
+    return 'No active upcoming appointments found for this client. Create one through the normal booking flow first, then link it here — or enter the appointment ID below.';
   }, [clientResolved, requestedDateHint]);
 
   const modal = (
@@ -203,8 +204,7 @@ export function AppointmentRequestManualBookModal({
             {isRelink
               ? 'Choose the correct calendar appointment for this request if the wrong visit was linked.'
               : 'Create the appointment through the normal booking flow first, then select it here to mark this request as booked.'}{' '}
-            Appointments for inactive or deceased pets are included when the server supports that
-            lookup.
+            Only active, scheduled appointments are listed. Inactive or removed visits are excluded.
             {requestedDateHint ? (
               <>
                 {' '}
