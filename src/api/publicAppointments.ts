@@ -1,5 +1,15 @@
 import { http } from './http';
 import { DateTime } from 'luxon';
+import { isRoutingScoreOfferable } from '../utils/routingOfferableScore';
+
+export {
+  ROUTING_OFFERABLE_MAX_SCORE,
+  isRoutingScoreOfferable,
+  /** @deprecated Use {@link ROUTING_OFFERABLE_MAX_SCORE}. */
+  SELF_SCHEDULE_MAX_ROUTING_SCORE,
+  /** @deprecated Use {@link isRoutingScoreOfferable}. */
+  isRoutingScoreEligibleForSelfSchedule,
+} from '../utils/routingOfferableScore';
 
 export type EmailCheckResult = {
   exists: boolean;
@@ -40,7 +50,8 @@ export type AvailabilityRequest = {
   practiceId: number;
   startDate: string; // YYYY-MM-DD
   numDays: number;
-  serviceMinutes: number;
+  /** Legacy — omit when visitPets + doctorId are sent; server computes duration. */
+  serviceMinutes?: number;
   address: string;
   /** Pre-geocoded latitude — preferred over address for routing accuracy. */
   lat?: number;
@@ -50,7 +61,35 @@ export type AvailabilityRequest = {
   doctorId?: string | number; // Optional: specific doctor
   /** Required for online booking validation on POST /public/appointments/availability */
   appointmentTypeId?: number;
+  /** Per-pet types for server-side routing duration (preferred over serviceMinutes). */
+  visitPets?: RoutingVisitPetInput[];
 };
+
+export type RoutingVisitPetInput = {
+  appointmentTypeId: number;
+  isNewPatient?: boolean;
+};
+
+export type RoutingServiceMinutesResponse = {
+  serviceMinutes: number;
+  baseMinutes: number;
+  newPatientBufferMinutes: number;
+  householdBufferMinutes: number;
+  source: 'stats' | 'default' | 'fallback' | 'mixed';
+};
+
+/**
+ * Resolve routing service minutes for a household visit (doctor stats + buffers).
+ * POST /public/appointments/routing-service-minutes
+ */
+export async function fetchRoutingServiceMinutes(request: {
+  practiceId: number;
+  doctorId: string | number;
+  visitPets: RoutingVisitPetInput[];
+}): Promise<RoutingServiceMinutesResponse> {
+  const { data } = await http.post('/public/appointments/routing-service-minutes', request);
+  return data as RoutingServiceMinutesResponse;
+}
 
 export type AvailabilitySlot = {
   date: string; // YYYY-MM-DD
@@ -180,15 +219,6 @@ export type MonthAvailabilityCandidate = {
   windowEndIso?: string;
 };
 
-/** Max routing score for slots shown in the public self-schedule calendar modal. */
-export const SELF_SCHEDULE_MAX_ROUTING_SCORE = 150;
-
-export function isRoutingScoreEligibleForSelfSchedule(score: unknown): boolean {
-  if (score == null) return true;
-  const n = Number(score);
-  return Number.isFinite(n) && n <= SELF_SCHEDULE_MAX_ROUTING_SCORE;
-}
-
 /**
  * Fetch all available slots for a doctor over a date range (for month calendar view).
  * Unlike fetchAvailability, this does not cap at 3 results.
@@ -210,7 +240,7 @@ export async function fetchPublicMonthAvailability(request: AvailabilityRequest)
 
   const results: MonthAvailabilityCandidate[] = [];
   for (const c of rawCandidates) {
-    if (!isRoutingScoreEligibleForSelfSchedule(c.score)) continue;
+    if (!isRoutingScoreOfferable(c.score)) continue;
 
     const dt = c.suggestedStartIso
       ? DateTime.fromISO(c.suggestedStartIso)

@@ -69,3 +69,52 @@ export function parseForwardBookingSourceChipFilter(
   }
   return null;
 }
+
+/** Appointment-request holds are triaged under /schedule/appointments/on-hold. */
+export function forwardBookingOnHoldBelongsInSchedulingTools(
+  entry: Pick<ForwardBookingEntry, 'createdVia'>
+): boolean {
+  return forwardBookingEntrySourceChip(entry) !== 'appointment_request';
+}
+
+/** Care outreach and schedule loader rows are triaged on their own tabs, not Forward booking. */
+export function forwardBookingEntryBelongsOnForwardBookingPage(
+  entry: Pick<ForwardBookingEntry, 'createdVia'>
+): boolean {
+  const via = normalizeForwardBookingCreatedVia(entry.createdVia);
+  return via !== 'care_outreach' && via !== 'schedule_loader';
+}
+
+export function forwardBookingSourceBookingNotesLabel(
+  entry: Pick<ForwardBookingEntry, 'createdVia'>
+): string {
+  const chip = forwardBookingEntrySourceChip(entry);
+  switch (chip) {
+    case 'care_outreach':
+      return 'Care outreach note';
+    case 'schedule_loader':
+      return 'Schedule loader note';
+    case 'appointment_request':
+      return 'Appointment note';
+    default:
+      return 'Forward booking note';
+  }
+}
+
+/** Staff working note on the queue entry (Forward booking Notes / outreach notes on hold). */
+export function forwardBookingListNoteText(
+  entry: Pick<ForwardBookingEntry, 'note' | 'createdVia' | 'patientId'>,
+  opts?: { reminderOutreachNotesByPatientId?: ReadonlyMap<number, string> },
+): string {
+  const staffNote = entry.note?.trim();
+  if (staffNote) return staffNote;
+  const chip = forwardBookingEntrySourceChip(entry);
+  if (
+    opts?.reminderOutreachNotesByPatientId &&
+    entry.patientId != null &&
+    (chip === 'care_outreach' || chip === 'schedule_loader')
+  ) {
+    return opts.reminderOutreachNotesByPatientId.get(entry.patientId)?.trim() ?? '';
+  }
+  return '';
+}

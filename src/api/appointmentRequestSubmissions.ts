@@ -21,6 +21,12 @@ export type AppointmentRequestSubmissionItem = {
   followUpAt?: string | null;
   bookedAppointmentId?: number | null;
   bookedAt?: string | null;
+  /** Present when status is dismissed (shown as "Not booked" in the UI). */
+  notBookedReason?: string | null;
+  /** Independent flag — can coexist with booked / contacted / etc. */
+  needsRecords?: boolean;
+  /** Set when staff confirms an auto-booked online request. */
+  staffConfirmedAt?: string | null;
   /** Abandoned drafts only */
   formSessionId?: string;
   currentStep?: string;
@@ -57,6 +63,11 @@ export type PatchAppointmentRequestSubmissionBody = {
   status?: AppointmentRequestSubmissionStatus;
   /** Send `null` or `""` to clear. */
   notes?: string | null;
+  /** Required when setting status to `dismissed`. */
+  notBookedReason?: string | null;
+  needsRecords?: boolean;
+  /** Marks an auto-booked online request as staff-confirmed. */
+  confirm?: boolean;
 };
 
 export type BookAppointmentRequestSubmissionBody = {

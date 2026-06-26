@@ -215,6 +215,116 @@ export function appointmentsInClientVisitClump(
   return list.filter((a) => cluster.has(a.id));
 }
 
+function appointmentDescriptionHaystack(a: Appointment): string {
+  return [a.description, a.instructions].filter(Boolean).join(' ');
+}
+
+function descriptionIncludesClientLabel(a: Appointment, clientLabel: string): boolean {
+  const label = clientLabel.trim().toLowerCase();
+  if (!label) return true;
+  return appointmentDescriptionHaystack(a).toLowerCase().includes(label);
+}
+
+/**
+ * Multi-pet online holds often share one start/end with no linked client yet — same slot, same
+ * client name in the calendar description (e.g. two "Hold for Client" rows side by side).
+ */
+export function appointmentsInSameCalendarSlot(
+  anchor: Appointment,
+  allAppointments: Appointment[],
+  practiceTz: string,
+  opts?: { descriptionMustInclude?: string | null },
+): Appointment[] {
+  const anchorStart = anchor.appointmentStart;
+  const anchorEnd = anchor.appointmentEnd;
+  if (!anchorStart?.trim() || !anchorEnd?.trim()) return [anchor];
+
+  const clientFilter = opts?.descriptionMustInclude?.trim() ?? null;
+  const matches = allAppointments.filter((a) => {
+    if (!isAppointmentVisible(a)) return false;
+    if (a.allDay) return false;
+    if (!samePracticeDay(a.appointmentStart, anchorStart, practiceTz)) return false;
+    if (a.appointmentStart !== anchorStart || a.appointmentEnd !== anchorEnd) return false;
+    if (clientFilter && !descriptionIncludesClientLabel(a, clientFilter)) return false;
+    return true;
+  });
+
+  const anchorInList = matches.some((a) => a.id === anchor.id);
+  const list = anchorInList ? matches : [...matches, anchor];
+  return list.length > 0 ? list : [anchor];
+}
+
+/** Client-linked clump first; fall back to same-slot holds for new-client online booking. */
+export function resolveHouseholdVisitAppointments(
+  anchor: Appointment,
+  allAppointments: Appointment[],
+  practiceTz: string,
+  opts?: { clientLabel?: string | null },
+): Appointment[] {
+  const byClient = appointmentsInClientVisitClump(anchor, allAppointments, practiceTz);
+  if (byClient.length > 1) return byClient;
+
+  const bySlot = appointmentsInSameCalendarSlot(anchor, allAppointments, practiceTz, {
+    descriptionMustInclude: opts?.clientLabel,
+  });
+  if (bySlot.length > 1) return bySlot;
+
+  return byClient.length > 0 ? byClient : [anchor];
+}
+
+/** Label for multi-pet edit picker — patient chart name, else pet name from hold description. */
+export function petEditChoiceLabelForAppointment(appt: Appointment): string {
+  const fromPatients = patientsForAppointment(appt)
+    .map((p) => pickStr(p.name))
+    .filter(Boolean)
+    .join(', ');
+  if (fromPatients) return fromPatients;
+
+  const hay = appointmentDescriptionHaystack(appt);
+
+  // "Online Booking - Client Name. PetName:" or ". PetName."
+  const onlineBookingPet = hay.match(
+    /Online Booking\s*-\s*[^.]+\.\s*([A-Za-z0-9][A-Za-z0-9' -]{0,30}?)(?:\s*:|\.(?:\s|$))/i,
+  );
+  if (onlineBookingPet?.[1]?.trim()) {
+    const name = onlineBookingPet[1].trim();
+    if (!looksLikeHoldDescriptionPhrase(name)) return name;
+  }
+
+  return 'Pet';
+}
+
+function looksLikeHoldDescriptionPhrase(text: string): boolean {
+  const lower = text.trim().toLowerCase();
+  if (!lower) return true;
+  const blocked = [
+    'what is going on',
+    'aftercare',
+    'been to the vet',
+    'wellness',
+    'euthanasia',
+    'quality of life',
+    'online booking',
+  ];
+  return blocked.some((phrase) => lower.includes(phrase));
+}
+
+/** Calendar appointment ids for the anchor’s household visit clump (multi-pet same slot). */
+export function householdAppointmentIdsInVisitClump(
+  anchor: Appointment | null | undefined,
+  allAppointments: Appointment[],
+  practiceTz: string,
+): number[] {
+  if (!anchor || anchor.id == null) return [];
+  const clump = appointmentsInClientVisitClump(anchor, allAppointments, practiceTz);
+  const ids = clump
+    .map((a) => Number(a.id))
+    .filter((id) => Number.isFinite(id) && id > 0);
+  if (ids.length > 0) return ids;
+  const anchorId = Number(anchor.id);
+  return Number.isFinite(anchorId) && anchorId > 0 ? [anchorId] : [];
+}
+
 export function patientIdsInVisitClump(
   anchor: Appointment,
   allAppointments: Appointment[],

@@ -89,6 +89,14 @@ export function canBookOnline(
   );
 }
 
+export function canBookOnlineForVisitTypes(
+  doctor: VeterinarianWithAppointmentTypes | null | undefined,
+  appointmentTypeIds: readonly number[],
+): boolean {
+  if (appointmentTypeIds.length === 0) return false;
+  return appointmentTypeIds.every((typeId) => canBookOnline(doctor, typeId));
+}
+
 export function canBookOnlineForNewPatientRequest(
   doctor: VeterinarianWithAppointmentTypes | null | undefined,
   appointmentTypeId: number | null | undefined,
@@ -96,6 +104,16 @@ export function canBookOnlineForNewPatientRequest(
   return (
     canBookOnline(doctor, appointmentTypeId) &&
     isVeterinarianAcceptingNewPatientsInClientZone(doctor)
+  );
+}
+
+export function canBookOnlineForNewPatientRequestForVisitTypes(
+  doctor: VeterinarianWithAppointmentTypes | null | undefined,
+  appointmentTypeIds: readonly number[],
+): boolean {
+  if (appointmentTypeIds.length === 0) return false;
+  return appointmentTypeIds.every((typeId) =>
+    canBookOnlineForNewPatientRequest(doctor, typeId),
   );
 }
 
@@ -107,12 +125,30 @@ export function anyDoctorCanBookOnline(
   return doctors.some((d) => canBookOnline(d, appointmentTypeId));
 }
 
+export function anyDoctorCanBookOnlineForVisitTypes(
+  doctors: VeterinarianWithAppointmentTypes[],
+  appointmentTypeIds: readonly number[],
+): boolean {
+  if (appointmentTypeIds.length === 0) return false;
+  return doctors.some((d) => canBookOnlineForVisitTypes(d, appointmentTypeIds));
+}
+
 export function anyDoctorCanBookOnlineForNewPatientRequest(
   doctors: VeterinarianWithAppointmentTypes[],
   appointmentTypeId: number | null | undefined,
 ): boolean {
   if (appointmentTypeId == null || !Number.isFinite(appointmentTypeId)) return false;
   return doctors.some((d) => canBookOnlineForNewPatientRequest(d, appointmentTypeId));
+}
+
+export function anyDoctorCanBookOnlineForNewPatientRequestForVisitTypes(
+  doctors: VeterinarianWithAppointmentTypes[],
+  appointmentTypeIds: readonly number[],
+): boolean {
+  if (appointmentTypeIds.length === 0) return false;
+  return doctors.some((d) =>
+    canBookOnlineForNewPatientRequestForVisitTypes(d, appointmentTypeIds),
+  );
 }
 
 export function isOnlineBookingUnavailableError(

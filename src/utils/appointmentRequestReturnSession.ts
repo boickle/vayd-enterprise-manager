@@ -1,7 +1,7 @@
 /** After booking from appointment request → routing, return to the list with optional SMS prompt. */
 export const APPOINTMENT_REQUEST_RETURN_SESSION_KEY = 'vayd:appointment-request-return-v1';
 
-export const APPOINTMENT_REQUESTS_LIST_PATH = '/schedule/scheduling-tools/appointments';
+export { APPOINTMENT_REQUESTS_LIST_PATH } from '../appointments-nav';
 
 export type AppointmentRequestReturnSessionV1 = {
   v: 1;

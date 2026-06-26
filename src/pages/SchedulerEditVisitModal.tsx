@@ -90,6 +90,8 @@ function allDayInclusiveEndDate(appointmentEnd: string, practiceTz: string): Dat
 
 export type SchedulerEditVisitModalHandle = {
   save: () => Promise<void>;
+  /** Validate, flush form snapshot, then run parent preview confirm (Book / Adjust time). */
+  confirmPreview: () => void;
 };
 
 type Props = {
@@ -119,6 +121,8 @@ type Props = {
   /** Parent-owned link selection (survives portal remount during preview). */
   linkSelection?: EditVisitLinkSelection | null;
   onLinkSelectionChange?: (selection: EditVisitLinkSelection | null) => void;
+  /** When linking client, prefer this pet name from the online request (case-insensitive). */
+  linkPreferredPatientName?: string | null;
   /** Patient to attach when visit has a client but no patient. */
   patientSelection?: EditVisitPatientSelection | null;
   onPatientSelectionChange?: (selection: EditVisitPatientSelection | null) => void;
@@ -131,6 +135,8 @@ type Props = {
   onPreviewSchedule?: (startUtc: string, endUtc: string, appointmentTypeId: number) => void;
   /** Book / Adjust time while placement preview is on the calendar. */
   onConfirmPreview?: () => void | Promise<void>;
+  /** Surface preview validation blocks outside the modal (e.g. calendar popover Book). */
+  onPreviewBlock?: (message: string) => void;
   /** While placement preview is on the calendar, keep drive/calendar in sync. */
   onPlacementTimesChange?: (
     startUtc: string,
@@ -143,6 +149,11 @@ type Props = {
   typeScoreError?: string | null;
   /** Shown after Book from type preview (split view stays open). */
   bookedSummary?: string | null;
+  /** When false, Save calls onSaved but leaves the form open (embedded confirm flow). */
+  closeAfterSave?: boolean;
+  /** Hide View Placement / Preview schedule (embedded confirm review). */
+  hideRescheduleActions?: boolean;
+  cancelLabel?: string;
 };
 
 export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle, Props>(
@@ -166,6 +177,7 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       initialFormSnapshot = null,
       linkSelection = null,
       onLinkSelectionChange,
+      linkPreferredPatientName = null,
       patientSelection = null,
       onPatientSelectionChange,
       practiceAppointments = [],
@@ -174,11 +186,15 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       onViewPlacement,
       onPreviewSchedule,
       onConfirmPreview,
+      onPreviewBlock,
       onPlacementTimesChange,
       typeScoreCompare = null,
       typeScoreLoading = false,
       typeScoreError = null,
       bookedSummary = null,
+      closeAfterSave = true,
+      hideRescheduleActions = false,
+      cancelLabel = 'Cancel',
     },
     ref
   ) {
@@ -388,6 +404,21 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       },
       [onLinkSelectionChange]
     );
+
+    useEffect(() => {
+      if (!linkSelection?.clientId?.trim()) return;
+      setError((cur) => {
+        if (!cur) return cur;
+        if (
+          cur.includes('home address does not match') ||
+          cur.includes('Keep as alternate address') ||
+          cur.includes('Choose a patient for this client')
+        ) {
+          return null;
+        }
+        return cur;
+      });
+    }, [linkSelection]);
     const handlePatientSelectionChange = useCallback(
       (selection: EditVisitPatientSelection | null) => {
         onPatientSelectionChange?.(selection);
@@ -741,7 +772,9 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
           }
         }
         onSaved(updated, routingFeedbackWarning ? { routingFeedbackWarning } : undefined);
-        onClose();
+        if (closeAfterSave) {
+          onClose();
+        }
       } catch (e: unknown) {
         setError(formatSchedulerBookingApiError(e));
       } finally {
@@ -773,10 +806,9 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       practiceAppointments,
       onSaved,
       onClose,
+      closeAfterSave,
       flushFormSnapshot,
     ]);
-
-    useImperativeHandle(ref, () => ({ save: handleSave }), [handleSave]);
 
     function handleCancel() {
       onClose();
@@ -827,21 +859,41 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       onPreviewSchedule?.(times.startUtc, times.endUtc, tid);
     }
 
-    const canViewPlacement = Boolean(!appt.allDay && onViewPlacement && timesDirty && !placementPreviewActive);
-    const canPreviewSchedule = Boolean(!appt.allDay && onPreviewSchedule && typeDirty && !placementPreviewActive);
+    const canViewPlacement = Boolean(
+      !hideRescheduleActions && !appt.allDay && onViewPlacement && timesDirty && !placementPreviewActive,
+    );
+    const canPreviewSchedule = Boolean(
+      !hideRescheduleActions && !appt.allDay && onPreviewSchedule && typeDirty && !placementPreviewActive,
+    );
     const previewConfirmLabel =
       placementPreviewKind === 'type' ? (saving ? 'Booking…' : 'Book') : saving ? 'Saving…' : 'Adjust time';
 
     const handleConfirmPreviewClick = useCallback(() => {
       if (!onConfirmPreview) return;
+      const blockPreview = (message: string) => {
+        setError(message);
+        onPreviewBlock?.(message);
+      };
       flushFormSnapshot();
+      const linkingClient = Boolean(linkSelection?.clientId?.trim());
+      if (editTypeFormFlags.requirePatient) {
+        const hasPatient =
+          !appointmentHasNoPatient(appt) ||
+          Boolean(patientSelection?.patientId?.trim()) ||
+          (linkingClient && linkSelection?.patientId?.trim());
+        const needsPatient = resolvedClientId != null || linkingClient;
+        if (needsPatient && !hasPatient) {
+          blockPreview('This appointment type requires a patient on the visit.');
+          return;
+        }
+      }
       const linkValidationError = validateEditVisitLinkSelection({
         linkSelection,
         visitAddress: visitAddressForLink,
         requirePatient: editTypeFormFlags.requirePatient,
       });
       if (linkValidationError) {
-        setError(linkValidationError);
+        blockPreview(linkValidationError);
         return;
       }
       if (
@@ -849,7 +901,7 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
         showPatientPickerPanel &&
         !patientSelection?.patientId?.trim()
       ) {
-        setError('Choose a patient for this visit before booking.');
+        blockPreview('Choose a patient for this visit before booking.');
         return;
       }
       const previewTimes = buildStartEndUtc();
@@ -862,29 +914,36 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
           allAppointments: practiceAppointments,
         });
         if (patientValidationError) {
-          setError(patientValidationError);
+          blockPreview(patientValidationError);
           return;
         }
       }
       setSaving(true);
       void Promise.resolve(onConfirmPreview())
         .catch((e: unknown) => {
-          setError(formatSchedulerBookingApiError(e));
+          blockPreview(formatSchedulerBookingApiError(e));
         })
         .finally(() => {
           setSaving(false);
         });
     }, [
       onConfirmPreview,
+      onPreviewBlock,
       flushFormSnapshot,
       linkSelection,
       visitAddressForLink,
       editTypeFormFlags.requirePatient,
+      resolvedClientId,
+      appt,
       showPatientPickerPanel,
       patientSelection,
-      appt,
       practiceAppointments,
       buildStartEndUtc,
+    ]);
+
+    useImperativeHandle(ref, () => ({ save: handleSave, confirmPreview: handleConfirmPreviewClick }), [
+      handleSave,
+      handleConfirmPreviewClick,
     ]);
 
     const modalPanel = (
@@ -993,7 +1052,7 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
         </div>
 
         <div className="scheduler-modal-body scheduler-modal-body--edit">
-          {error ? <p className="scheduler-edit-error">{error}</p> : null}
+          {error && !inlinePaneMode ? <p className="scheduler-edit-error">{error}</p> : null}
 
           {placementPreviewActive ? (
             <div
@@ -1233,7 +1292,9 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
                   </div>
                   <p className="scheduler-edit-alternate-callout-lead">
                     {showLinkClientPanel
-                      ? 'This is the visit address used for routing. Link a client below whose home matches this address.'
+                      ? linkSelection?.keepAlternateAddress
+                        ? 'Alternate visit address stays on this appointment. Link the client and patient below.'
+                        : 'This is the visit address used for routing. Link a client whose home matches, or check “Keep as alternate address” below if they visit elsewhere.'
                       : 'The visit address cannot be changed here. Reschedule the visit to change it.'}
                   </p>
                   <p className="scheduler-edit-alternate-callout-address">{alternateAddressDisplay}</p>
@@ -1260,6 +1321,7 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
                   requiresPatient={editTypeFormFlags.requirePatient}
                   hasAlternateAddress={hasAlternateRoutingAddress}
                   persistedSelection={linkSelection}
+                  preferredPatientName={linkPreferredPatientName}
                   onSelectionChange={handleLinkSelectionChange}
                   hideVisitAddress={hasAlternateRoutingAddress}
                 />
@@ -1292,8 +1354,14 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
         </div>
 
         <div className="scheduler-edit-footer">
+          {error ? (
+            <p className="scheduler-edit-error scheduler-edit-footer-error" role="alert">
+              {error}
+            </p>
+          ) : null}
+          <div className="scheduler-edit-footer-actions">
           <button type="button" className="btn secondary" onClick={handleCancel} disabled={saving}>
-            Cancel
+            {cancelLabel}
           </button>
           {canViewPlacement ? (
             <button
@@ -1327,6 +1395,7 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
               {saving ? 'Saving…' : 'Save'}
             </button>
           )}
+          </div>
         </div>
       </div>
     );

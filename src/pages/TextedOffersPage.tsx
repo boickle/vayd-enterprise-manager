@@ -18,6 +18,10 @@ import { CareOutreachPetDetailsButton } from '../components/CareOutreachPetDetai
 import { ClientMessagesHistoryModal } from '../components/ClientMessagesHistoryModal';
 import { ClientSmsComposeModal } from '../components/ClientSmsComposeModal';
 import { notifySchedulingToolsNavCountsRefresh, SCHEDULING_TOOLS_PAGE_REFRESH_EVENT, useSchedulingToolsNavCounts } from '../hooks/useSchedulingToolsNavCounts';
+import SchedulingToolsListPagination, {
+  paginateSchedulingToolsList,
+  schedulingToolsListTotalPages,
+} from '../components/SchedulingToolsListPagination';
 import { formatForwardBookingSmsBookedSlot } from '../utils/forwardBookingSmsMessage';
 import { practiceTimeZoneOrDefault } from '../utils/practiceTimezone';
 import { resolveQuoFromLine } from '../utils/quoContact';
@@ -525,6 +529,14 @@ function OfferDetailPanel({
               <strong>Tap score:</strong> {detail.tapScore}
             </span>
           ) : null}
+          {detail.respondedAt ? (
+            <span>
+              <strong>Link opened:</strong>{' '}
+              {DateTime.fromISO(detail.respondedAt, { zone: 'utc' })
+                .setZone(practiceTz)
+                .toFormat('MMM d, yyyy · h:mm a')}
+            </span>
+          ) : null}
           {detail.attemptNumber != null ? (
             <span>
               <strong>Attempt:</strong> {detail.attemptNumber}
@@ -674,6 +686,7 @@ export default function TextedOffersPage() {
   const [removing, setRemoving] = useState<Record<string, boolean>>({});
   const [removeError, setRemoveError] = useState<Record<string, string | null>>({});
   const [search, setSearch] = useState('');
+  const [listPage, setListPage] = useState(1);
   const [providerFilterId, setProviderFilterId] = useState<string>('all');
   const [smsTarget, setSmsTarget] = useState<{
     clientId: number;
@@ -746,6 +759,25 @@ export default function TextedOffersPage() {
       tab
     );
   }, [rows, search, providerFilterId, tab]);
+
+  const rowsForDisplay = useMemo(
+    () => paginateSchedulingToolsList(filteredRows, listPage),
+    [filteredRows, listPage],
+  );
+
+  useEffect(() => {
+    setListPage(1);
+  }, [search, providerFilterId, tab]);
+
+  useEffect(() => {
+    const totalPages = schedulingToolsListTotalPages(filteredRows.length);
+    if (listPage > totalPages) setListPage(totalPages);
+  }, [listPage, filteredRows.length]);
+
+  const changeListPage = useCallback((page: number) => {
+    setListPage(page);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, []);
 
   useEffect(() => {
     setExpandedId(null);
@@ -1031,6 +1063,13 @@ export default function TextedOffersPage() {
             : 'No texted offers match the current filters.'}
         </p>
       ) : (
+        <>
+          <SchedulingToolsListPagination
+            listPage={listPage}
+            totalItems={filteredRows.length}
+            onPageChange={changeListPage}
+            itemLabel="offers"
+          />
         <div className="settings-table-container">
           <table className="settings-table">
             <thead>
@@ -1047,7 +1086,7 @@ export default function TextedOffersPage() {
               </tr>
             </thead>
             <tbody>
-              {filteredRows.map((row) => {
+              {rowsForDisplay.map((row) => {
                 const expanded = expandedId === row.id;
                 const highlight = needsFollowUp(row);
                 const toConfirm = isToConfirmOffer(row);
@@ -1154,6 +1193,13 @@ export default function TextedOffersPage() {
             </tbody>
           </table>
         </div>
+          <SchedulingToolsListPagination
+            listPage={listPage}
+            totalItems={filteredRows.length}
+            onPageChange={changeListPage}
+            itemLabel="offers"
+          />
+        </>
       )}
 
       {smsTarget ? (

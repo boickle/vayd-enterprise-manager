@@ -1,0 +1,53 @@
+.appt-request-routing-summary {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid #fdba74;
+  background: #fff7ed;
+  color: #7c2d12;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.appt-request-routing-summary__lead {
+  margin: 0 0 6px;
+  color: #9a3412;
+}
+
+.appt-request-routing-summary__client {
+  font-weight: 700;
+  color: #7c2d12;
+}
+
+.appt-request-routing-summary__alt {
+  margin: 0 0 8px;
+  font-weight: 700;
+  color: #c2410c;
+}
+
+.appt-request-routing-summary__pets {
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+  font-weight: 600;
+  color: #7c2d12;
+}
+
+.appt-request-routing-summary__pet-name {
+  font-weight: 800;
+  color: #9a3412;
+}
+
+.appt-request-routing-summary__urgency {
+  margin: 0;
+  color: #9a3412;
+}
+
+.appt-request-routing-summary__urgency strong {
+  font-weight: 700;
+  color: #7c2d12;
+}
+
+.appt-request-routing-summary .evet-name-link:hover {
+  color: #c2410c;
+}

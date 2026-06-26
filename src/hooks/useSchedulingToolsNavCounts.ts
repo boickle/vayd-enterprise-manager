@@ -13,7 +13,15 @@ import {
   careOutreachPriorityNavCountFetchRange,
   countCareOutreachPriorityClients,
 } from '../utils/careOutreachPriorityFilters';
+import {
+  filterCareOutreachRemindersForForwardBooking,
+  forwardBookingPatientIdsActiveInQueue,
+} from '../utils/careOutreachForwardBookingExclude';
 import { forwardBookingOnHoldOver24Hours } from '../utils/forwardBookingOnHold';
+import {
+  forwardBookingEntryBelongsOnForwardBookingPage,
+  forwardBookingOnHoldBelongsInSchedulingTools,
+} from '../utils/forwardBookingEntrySource';
 import { practiceTimeZoneOrDefault } from '../utils/practiceTimezone';
 
 const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
@@ -23,6 +31,7 @@ export const SCHEDULING_TOOLS_PAGE_REFRESH_EVENT = 'vayd:scheduling-tools-page-r
 
 export type SchedulingToolsNavCounts = {
   forwardBookingPending: number;
+  booked: number;
   onHold: number;
   onHoldOver24: number;
   careOutreachPriority: number;
@@ -33,6 +42,7 @@ export type SchedulingToolsNavCounts = {
 
 const EMPTY_COUNTS: SchedulingToolsNavCounts = {
   forwardBookingPending: 0,
+  booked: 0,
   onHold: 0,
   onHoldOver24: 0,
   careOutreachPriority: 0,
@@ -69,22 +79,39 @@ export function useSchedulingToolsNavCounts(enabled = true, refreshKey?: string)
       const metaMap = await buildBookedAppointmentMetaMap(visible, PRACTICE_ID, catalog);
 
       let forwardBookingPending = 0;
+      let booked = 0;
       let onHold = 0;
       let onHoldOver24 = 0;
       for (const row of visible) {
         const tab = forwardBookingListTab(row, practiceTz, metaMap, catalog);
-        if (tab === 'pending') forwardBookingPending += 1;
-        else if (tab === 'onHold') {
+        if (tab === 'pending' && forwardBookingEntryBelongsOnForwardBookingPage(row)) {
+          forwardBookingPending += 1;
+        } else if (tab === 'booked') {
+          booked += 1;
+        } else if (tab === 'onHold') {
+          if (!forwardBookingOnHoldBelongsInSchedulingTools(row)) continue;
           onHold += 1;
           if (forwardBookingOnHoldOver24Hours(row, metaMap)) onHoldOver24 += 1;
         }
       }
 
+      const blockedPatientIds = forwardBookingPatientIdsActiveInQueue(
+        visible,
+        practiceTz,
+        metaMap,
+        catalog,
+      );
+      const careOutreachForCount = filterCareOutreachRemindersForForwardBooking(
+        careReminders,
+        blockedPatientIds,
+      );
+
       setCounts({
         forwardBookingPending,
+        booked,
         onHold,
         onHoldOver24,
-        careOutreachPriority: countCareOutreachPriorityClients(careReminders),
+        careOutreachPriority: countCareOutreachPriorityClients(careOutreachForCount),
         textedOffersActive: activeOffers.length,
         textedOffersNeedsFollowUp: activeOffers.filter(
           (row) => row.status === 'manual_review' && row.resolved !== true

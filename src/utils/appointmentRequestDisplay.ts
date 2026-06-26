@@ -1,6 +1,8 @@
 /** Helpers for reading persisted public appointment request form payloads. */
 
 import { DateTime } from 'luxon';
+import { fetchClientByIdStaff } from '../api/clientsStaff';
+import { practiceTimeZoneOrDefault } from './practiceTimezone';
 
 function pickStr(v: unknown): string | null {
   if (v == null) return null;
@@ -22,6 +24,52 @@ export function requestDataCanText(requestData: Record<string, unknown>): 'Yes' 
   const v = pickStr(requestData.canWeText);
   if (v === 'Yes' || v === 'No') return v;
   return null;
+}
+
+function pickYesNo(v: unknown): 'Yes' | 'No' | null {
+  const s = pickStr(v);
+  if (s === 'Yes' || s === 'No') return s;
+  return null;
+}
+
+/** Existing client — veterinary care at another hospital since our last visit. */
+export function requestDataHadVetCareElsewhere(
+  requestData: Record<string, unknown>,
+): 'Yes' | 'No' | null {
+  return pickYesNo(requestData.hadVetCareElsewhere);
+}
+
+/** Client consent to request records from other hospitals (existing clients). */
+export function requestDataMayWeAskForRecords(
+  requestData: Record<string, unknown>,
+): 'Yes' | 'No' | null {
+  return pickYesNo(requestData.mayWeAskForRecords);
+}
+
+/** Prior vet practices the client listed (new clients, or existing-client flow). */
+export function requestDataPreviousVeterinaryPractices(
+  requestData: Record<string, unknown>,
+): string | null {
+  return (
+    pickStr(requestData.previousVeterinaryPractices) ??
+    pickStr(requestData.previousVeterinaryPracticesExisting)
+  );
+}
+
+/** Other hospitals visited since last visit (existing clients). */
+export function requestDataPreviousVeterinaryHospitals(
+  requestData: Record<string, unknown>,
+): string | null {
+  return pickStr(requestData.previousVeterinaryHospitals);
+}
+
+export function requestDataOkayToContactPreviousVets(
+  requestData: Record<string, unknown>,
+): 'Yes' | 'No' | null {
+  return (
+    pickYesNo(requestData.okayToContactPreviousVets) ??
+    pickYesNo(requestData.okayToContactPreviousVetsExisting)
+  );
 }
 
 export function requestDataClientType(
@@ -87,6 +135,43 @@ export function requestDataPetSummary(requestData: Record<string, unknown>): str
   return names.length ? names.join(', ') : '—';
 }
 
+/** Comma-separated primary providers for pets in the request (chart vet, not preferred doctor). */
+export function requestDataPrimaryProviderSummary(requestData: Record<string, unknown>): string | null {
+  const names = new Set<string>();
+
+  const addFromPet = (p: unknown) => {
+    if (!p || typeof p !== 'object') return;
+    const pet = p as Record<string, unknown>;
+    const name =
+      pickStr(pet.primaryProviderName) ??
+      (() => {
+        const pp = pet.primaryProvider;
+        if (!pp || typeof pp !== 'object') return null;
+        const o = pp as Record<string, unknown>;
+        const parts = [pickStr(o.title), pickStr(o.firstName), pickStr(o.lastName)].filter(Boolean);
+        return parts.length ? parts.join(' ') : pickStr(o.name) ?? pickStr(o.fullName);
+      })();
+    if (name) names.add(name);
+  };
+
+  const pets = requestData.pets;
+  if (Array.isArray(pets)) {
+    for (const p of pets) addFromPet(p);
+  }
+  if (names.size === 0) {
+    const allPets = requestData.allPets;
+    if (Array.isArray(allPets)) {
+      for (const p of allPets) {
+        if (p && typeof p === 'object' && (p as { isSelected?: unknown }).isSelected === false) continue;
+        addFromPet(p);
+      }
+    }
+  }
+
+  if (names.size === 0) return null;
+  return [...names].join(', ');
+}
+
 export function formatRequestDataAddress(requestData: Record<string, unknown>): string | null {
   const addr = requestData.physicalAddress;
   if (!addr || typeof addr !== 'object') return null;
@@ -100,6 +185,14 @@ export function formatRequestDataAddress(requestData: Record<string, unknown>): 
   return parts.length ? parts.join(' · ') : null;
 }
 
+/** Existing client chose a different visit location (answered "No" to home-address question). */
+export function requestDataUsesAlternateVisitAddress(
+  requestData: Record<string, unknown>,
+): boolean {
+  if (requestData.addressChanged === true) return true;
+  return pickStr(requestData.isThisTheAddressWhereWeWillCome) === 'No';
+}
+
 export function requestDataHowSoon(requestData: Record<string, unknown>): string | null {
   return (
     pickStr(requestData.howSoon) ??
@@ -108,8 +201,96 @@ export function requestDataHowSoon(requestData: Record<string, unknown>): string
   );
 }
 
+export type RequestDataHowSoonUrgency = 'emergent' | 'urgent';
+
+/** Emergent / urgent classification from how-soon selection (or legacy urgent flag). */
+export function requestDataHowSoonUrgency(
+  requestData: Record<string, unknown>,
+): RequestDataHowSoonUrgency | null {
+  const howSoon =
+    pickStr(requestData.howSoon) ??
+    pickStr(requestData.urgency);
+
+  if (howSoon) {
+    const normalized = howSoon.toLowerCase().replace(/[–—]/g, '-').replace(/\s+/g, ' ').trim();
+    if (normalized.includes('emergent') || normalized.includes('emergency')) return 'emergent';
+    if (normalized.includes('urgent')) return 'urgent';
+  }
+
+  if (pickStr(requestData.needsUrgentScheduling) === 'Yes') return 'urgent';
+
+  return null;
+}
+
+/** Day offset from today for routing end date, based on appointment-request urgency. */
+export function appointmentRequestHowSoonEndOffsetDays(howSoon: string | null | undefined): number {
+  const raw = howSoon?.trim();
+  if (!raw) return 14;
+  const n = raw.toLowerCase().replace(/[–—]/g, '-').replace(/\s+/g, ' ');
+  if (n.includes('emergent') || n.includes('emergency')) return 2;
+  if (n.includes('urgent') || raw === 'Yes') return 3;
+  if (n.startsWith('soon') || n.includes('this week') || n.includes('next few days')) return 10;
+  if (n.includes('flexible') || n.includes('routine') || n.includes('not sure')) return 14;
+  return 14;
+}
+
+/** Routing search window for an appointment request: today through today + offset (practice TZ). */
+export function appointmentRequestRoutingSearchDateRange(
+  howSoon: string | null | undefined,
+  practiceTz?: string,
+): { startDate: string; endDate: string } {
+  const tz = practiceTimeZoneOrDefault(practiceTz);
+  const today = DateTime.now().setZone(tz).startOf('day');
+  const endOffsetDays = appointmentRequestHowSoonEndOffsetDays(howSoon);
+  return {
+    startDate: today.toFormat('yyyy-MM-dd'),
+    endDate: today.plus({ days: endOffsetDays }).toFormat('yyyy-MM-dd'),
+  };
+}
+
 export function requestDataPreferredDoctor(requestData: Record<string, unknown>): string | null {
   return pickStr(requestData.preferredDoctor) ?? pickStr(requestData.preferredDoctorExisting);
+}
+
+export function requestDataAppointmentTypeLabel(
+  requestData: Record<string, unknown>,
+): string | null {
+  return pickStr(requestData.appointmentType);
+}
+
+export type RequestDataAppointmentTypeForRouting = {
+  label: string | null;
+  typeId: number | null;
+};
+
+/** Appointment type from request payload — prettyName/label + id when saved per pet. */
+export function requestDataAppointmentTypeForRouting(
+  requestData: Record<string, unknown>,
+): RequestDataAppointmentTypeForRouting {
+  const psd = requestData.petSpecificData;
+  if (psd && typeof psd === 'object') {
+    for (const v of Object.values(psd as Record<string, unknown>)) {
+      if (!v || typeof v !== 'object') continue;
+      const row = v as Record<string, unknown>;
+      const label =
+        pickStr(row.needsToday) ??
+        pickStr(row.appointmentTypeName) ??
+        pickStr(row.appointmentType);
+      const rawId = row.appointmentTypeId;
+      const typeId =
+        rawId != null && Number.isFinite(Number(rawId)) && Number(rawId) > 0
+          ? Number(rawId)
+          : null;
+      if (label || typeId != null) {
+        return { label, typeId };
+      }
+    }
+  }
+
+  return {
+    label: requestDataAppointmentTypeLabel(requestData),
+    typeId: null,
+  };
 }
 
 export type RequestDataSelfScheduledSlot = {
@@ -118,6 +299,7 @@ export type RequestDataSelfScheduledSlot = {
   windowStartIso: string | null;
   windowEndIso: string | null;
   windowDisplay: string | null;
+  display?: string | null;
 };
 
 /** The reserved slot (doctor + arrival window) persisted from an online-booking submission. */
@@ -134,7 +316,8 @@ export function requestDataSelfScheduledSlot(
     appointmentStart,
     windowStartIso: pickStr(s.windowStartIso),
     windowEndIso: pickStr(s.windowEndIso),
-    windowDisplay: pickStr(s.windowDisplay),
+    windowDisplay: pickStr(s.windowDisplay) ?? pickStr(s.display),
+    display: pickStr(s.display),
   };
 }
 
@@ -162,6 +345,108 @@ export function requestDataClientId(requestData: Record<string, unknown>): strin
   if (loggedInId) return loggedInId;
 
   return null;
+}
+
+/** PIMS id for eVet client deep link when stored on the submission payload. */
+export function requestDataClientPimsId(requestData: Record<string, unknown>): string | null {
+  const direct = pickStr(requestData.clientPimsId) ?? pickStr(requestData.pimsId);
+  if (direct) return direct;
+
+  const client = requestData.client;
+  if (client && typeof client === 'object') {
+    const pimsId = pickStr((client as Record<string, unknown>).pimsId);
+    if (pimsId) return pimsId;
+  }
+
+  return null;
+}
+
+/** PIMS patient id for eVet deep link (`pet.id` from client portal submissions). */
+export function isFormGeneratedPetId(id: string | null | undefined): boolean {
+  if (!id) return false;
+  const s = id.trim();
+  return /^new-pet-/i.test(s) || /^existing-new-pet-/i.test(s);
+}
+
+export function looksLikeEvetPimsId(id: string | null | undefined): boolean {
+  if (!id) return false;
+  return /^\d+$/.test(id.trim());
+}
+
+/** Pet on the request form that is not yet linked to an eVet patient record. */
+export function requestPetIsUnlinkedInEvet(pet: Record<string, unknown>): boolean {
+  const explicit =
+    pickStr(pet.pimsId) ?? pickStr(pet.patientPimsId) ?? pickStr(pet.patient_pims_id);
+  if (explicit && looksLikeEvetPimsId(explicit)) return false;
+  if (pet.new === true) return true;
+  const id = pickStr(pet.id);
+  if (id && isFormGeneratedPetId(id)) return true;
+  if (id && looksLikeEvetPimsId(id)) return false;
+  return true;
+}
+
+export function patientPimsIdFromRequestPet(pet: Record<string, unknown>): string | null {
+  const explicit =
+    pickStr(pet.pimsId) ?? pickStr(pet.patientPimsId) ?? pickStr(pet.patient_pims_id);
+  if (explicit && looksLikeEvetPimsId(explicit)) return explicit;
+
+  if (requestPetIsUnlinkedInEvet(pet)) return null;
+
+  const id = pickStr(pet.id);
+  if (id && looksLikeEvetPimsId(id)) return id;
+  return null;
+}
+
+/** Internal patient id for in-app chart modal — only when a real record exists. */
+export function requestPetChartPatientId(pet: Record<string, unknown>): string | null {
+  const dbId = pickStr(pet.dbId);
+  if (dbId) return dbId;
+  if (requestPetIsUnlinkedInEvet(pet)) return null;
+  const id = pickStr(pet.id);
+  if (id && looksLikeEvetPimsId(id)) return id;
+  return null;
+}
+
+export function resolveClientPimsIdForRequest(
+  requestData: Record<string, unknown>,
+  fetchedByInternalId: ReadonlyMap<string, string>,
+): string | null {
+  const direct = requestDataClientPimsId(requestData);
+  if (direct && looksLikeEvetPimsId(direct)) return direct;
+
+  if (requestDataClientType(requestData) !== 'existing') return null;
+  const internal = requestDataClientId(requestData);
+  if (!internal) return null;
+  const resolved = fetchedByInternalId.get(internal) ?? internal;
+  return looksLikeEvetPimsId(resolved) ? resolved : null;
+}
+
+/** Resolve client PIMS ids for existing-client requests missing `clientPimsId` on payload. */
+export async function fetchClientPimsIdLookup(
+  requestDataList: Record<string, unknown>[],
+): Promise<Map<string, string>> {
+  const lookup = new Map<string, string>();
+  const toFetch = new Set<string>();
+
+  for (const rd of requestDataList) {
+    if (requestDataClientType(rd) !== 'existing') continue;
+    if (requestDataClientPimsId(rd)) continue;
+    const id = requestDataClientId(rd);
+    if (id) toFetch.add(id);
+  }
+
+  await Promise.all(
+    [...toFetch].map(async (id) => {
+      try {
+        const raw = (await fetchClientByIdStaff(id)) as Record<string, unknown>;
+        lookup.set(id, pickStr(raw.pimsId) ?? id);
+      } catch {
+        lookup.set(id, id);
+      }
+    }),
+  );
+
+  return lookup;
 }
 
 /** Earliest requested appointment instant from self-schedule or time preferences. */
@@ -235,6 +520,38 @@ export type ResolvedRequestClientPatient = {
   patientId: string;
   preferredPatientIds?: string[];
 };
+
+function preferredPatientIdsFromPetList(pets: unknown[]): string[] {
+  return pets
+    .map((p) => {
+      if (!p || typeof p !== 'object') return null;
+      const row = p as Record<string, unknown>;
+      const pid = row.dbId ?? row.id;
+      return pid != null ? String(pid) : null;
+    })
+    .filter((id): id is string => Boolean(id));
+}
+
+/** Patient ids from the pets the client selected on the request form. */
+export function requestDataPreferredPatientIds(requestData: Record<string, unknown>): string[] {
+  const resolved = resolveClientPatientFromRequestData(requestData);
+  if (resolved?.preferredPatientIds?.length) return resolved.preferredPatientIds;
+
+  const pets = requestData.pets;
+  if (Array.isArray(pets) && pets.length > 0) {
+    return preferredPatientIdsFromPetList(pets);
+  }
+
+  const allPets = requestData.allPets;
+  if (Array.isArray(allPets)) {
+    const selected = allPets.filter(
+      (p) => p && typeof p === 'object' && (p as PetLike).isSelected !== false
+    );
+    if (selected.length > 0) return preferredPatientIdsFromPetList(selected);
+  }
+
+  return [];
+}
 
 /** Best-effort client + patient ids for routing prefill (existing clients with known pets). */
 export function resolveClientPatientFromRequestData(

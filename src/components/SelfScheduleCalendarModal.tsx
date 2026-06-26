@@ -5,9 +5,11 @@ import { apiBaseUrl } from '../api/http';
 import {
   fetchPublicVeterinarians,
   fetchPublicMonthAvailability,
+  fetchRoutingServiceMinutes,
   type PublicProvider,
   type MonthAvailabilityCandidate,
   type SelfScheduledSlot,
+  type RoutingVisitPetInput,
 } from '../api/publicAppointments';
 import { fetchVeterinarians } from '../api/employee';
 import {
@@ -25,8 +27,7 @@ import {
 import { DEFAULT_PRACTICE_TIMEZONE } from '../utils/practiceTimezone';
 import { appointmentTypeForRoutingStatsKey } from '../utils/routingCalculateTimeType';
 import {
-  appointmentTypeNameForRoutingStats,
-  estimateRoutingServiceMinutesForSelection,
+  estimateRoutingServiceMinutesForVisit,
   type RoutingServiceMinutesTypeSource,
 } from '../utils/routingServiceMinutes';
 import type { AppointmentType } from '../api/appointmentSettings';
@@ -57,6 +58,8 @@ interface Props {
   onRequestPreferences?: () => void;
   /** Whether this is a new (unauthenticated) client request */
   isNewClient?: boolean;
+  /** Count of new-to-practice patients — adds tiered duration buffer to service minutes */
+  newPatientCount?: number;
   /** New patient appointment request — filters slots to doctor workdays accepting new patients */
   isNewPatientRequest?: boolean;
   /** Raw veterinarian rows (with weeklySchedules) for new-patient day filtering */
@@ -70,10 +73,13 @@ interface Props {
   /** Pre-select doctor from the appointment form (database employee id) */
   initialDoctorId?: string | number;
   /**
-   * Patient's chart primary provider — used for default selection and doctor-row ordering
-   * even when they are request-only (not online-bookable).
+   * First online-bookable chart primary among selected pets — default calendar selection.
    */
   preferredDoctorId?: string | number;
+  /**
+   * Chart primary provider for the visit (bookable or request-only) — badge + leftmost card.
+   */
+  chartPrimaryProviderId?: string | number;
   /**
    * Pre-loaded doctor list from the form (avoids a second API call).
    * When provided the modal skips its own fetchPublicVeterinarians call.
@@ -96,6 +102,8 @@ interface Props {
   }) => void;
   /** Shown when the picked slot was taken during submit — availability will refresh */
   slotPickerError?: string | null;
+  /** Per-pet appointment types — server resolves doctor-specific duration. */
+  visitPets?: RoutingVisitPetInput[];
 }
 
 // ─── Colour tokens ────────────────────────────────────────────────────────────
@@ -163,6 +171,111 @@ function slotsToAvailableDays(candidates: MonthAvailabilityCandidate[]): Set<str
   return s;
 }
 
+function futureMonthCandidates(
+  candidates: MonthAvailabilityCandidate[],
+): MonthAvailabilityCandidate[] {
+  const today = DateTime.now().startOf('day').toISODate() as string;
+  return candidates.filter((c) => c.date >= today);
+}
+
+/** Only dates that belong on the calendar grid for this month. */
+function candidatesInCalendarMonth(
+  candidates: MonthAvailabilityCandidate[],
+  month: DateTime,
+): MonthAvailabilityCandidate[] {
+  const monthKey = month.toFormat('yyyy-MM');
+  return futureMonthCandidates(candidates).filter((c) => c.date.startsWith(monthKey));
+}
+
+function monthHasBookableCandidates(
+  candidates: MonthAvailabilityCandidate[],
+  month: DateTime,
+): boolean {
+  return candidatesInCalendarMonth(candidates, month).length > 0;
+}
+
+const MAX_AUTO_ADVANCE_MONTHS = 12;
+
+async function fetchMonthCandidatesForDoctor(
+  month: DateTime,
+  args: {
+    practiceId: number;
+    address: string;
+    lat?: number;
+    lon?: number;
+    serviceMinutes?: number;
+    visitPets?: RoutingVisitPetInput[];
+    doctorId: string | number;
+    appointmentTypeId?: number;
+    isNewPatientRequest: boolean;
+    rawVeterinarians?: VeterinarianWithAppointmentTypes[];
+  },
+): Promise<MonthAvailabilityCandidate[]> {
+  const today = DateTime.now().startOf('day');
+  const monthStart = month.startOf('month');
+  const rangeStart = today > monthStart ? today : monthStart;
+  const startDate = rangeStart.toISODate() as string;
+  const monthEnd = month.endOf('month');
+  const numDays = Math.max(1, Math.ceil(monthEnd.diff(rangeStart, 'days').days) + 1);
+
+  let candidates = await fetchPublicMonthAvailability({
+    practiceId: args.practiceId,
+    startDate,
+    numDays,
+    address: args.address,
+    ...(args.visitPets?.length
+      ? { visitPets: args.visitPets, doctorId: args.doctorId }
+      : { serviceMinutes: args.serviceMinutes ?? 45, doctorId: args.doctorId }),
+    ...(args.lat != null && args.lon != null
+      ? { lat: args.lat, lon: args.lon, allowOtherDoctors: false }
+      : {}),
+    ...(args.appointmentTypeId != null ? { appointmentTypeId: args.appointmentTypeId } : {}),
+  });
+
+  if (args.isNewPatientRequest && args.rawVeterinarians && args.rawVeterinarians.length > 0) {
+    const vet = findVeterinarianById(args.rawVeterinarians, args.doctorId);
+    candidates = candidates.filter((c) => isDoctorAcceptingNewPatientsOnSlotDate(vet, c.iso));
+  }
+
+  return candidates;
+}
+
+/** Default to chart primary when bookable; otherwise first online-bookable doctor. */
+function pickDefaultDoctorId(
+  bookableDoctors: PublicProvider[],
+  requestOnlyDoctors: PublicProvider[],
+  prioritizedDoctorId: string | number | null | undefined,
+): string | number | null {
+  if (bookableDoctors.length > 0) {
+    if (prioritizedDoctorId != null) {
+      const preferred = bookableDoctors.find(
+        (d) => String(d.id) === String(prioritizedDoctorId),
+      );
+      if (preferred?.id != null) return preferred.id;
+    }
+    return bookableDoctors[0]?.id ?? null;
+  }
+  if (prioritizedDoctorId != null) {
+    const preferred = requestOnlyDoctors.find(
+      (d) => String(d.id) === String(prioritizedDoctorId),
+    );
+    if (preferred?.id != null) return preferred.id;
+  }
+  return requestOnlyDoctors[0]?.id ?? null;
+}
+
+function sortDoctorsWithPriority<T extends { doctor: PublicProvider }>(
+  items: T[],
+  prioritizedDoctorId: string | number | null | undefined,
+): T[] {
+  if (prioritizedDoctorId == null || items.length <= 1) return items;
+  return [...items].sort((a, b) => {
+    const aFirst = String(a.doctor.id) === String(prioritizedDoctorId) ? 0 : 1;
+    const bFirst = String(b.doctor.id) === String(prioritizedDoctorId) ? 0 : 1;
+    return aFirst - bFirst;
+  });
+}
+
 // ─── Spinner ──────────────────────────────────────────────────────────────────
 function Spinner({ size = 20, color = teal }: { size?: number; color?: string }) {
   return (
@@ -198,6 +311,7 @@ function DoctorAvatar({
   doctor,
   selected,
   requestOnly = false,
+  isPrimaryProvider = false,
   onClick,
   bioOpen = false,
   onBioToggle,
@@ -205,6 +319,8 @@ function DoctorAvatar({
   doctor: PublicProvider;
   selected: boolean;
   requestOnly?: boolean;
+  /** Pet's chart primary provider — shown when the client can choose among doctors. */
+  isPrimaryProvider?: boolean;
   onClick: () => void;
   bioOpen?: boolean;
   onBioToggle?: () => void;
@@ -222,7 +338,20 @@ function DoctorAvatar({
     const stripped = doctor.name.replace(/^Dr\.?\s*/i, '').trim();
     return stripped ? `Dr. ${stripped}` : doctor.name;
   })();
-  const borderColor = selected ? teal : grey200;
+  const borderColor = selected
+    ? requestOnly
+      ? amber
+      : teal
+    : isPrimaryProvider
+      ? teal
+      : grey200;
+  const cardBackground = selected
+    ? requestOnly
+      ? amberLight
+      : tealLight
+    : isPrimaryProvider
+      ? '#ecfdf5'
+      : white;
   const hasBio = Boolean(doctor.bio?.trim());
 
   return (
@@ -236,14 +365,15 @@ function DoctorAvatar({
           alignItems: 'center',
           gap: 6,
           padding: '10px 12px',
-          border: `2px solid ${selected ? (requestOnly ? amber : teal) : grey200}`,
+          border: `2px solid ${borderColor}`,
           borderRadius: 12,
-          background: selected ? (requestOnly ? amberLight : tealLight) : white,
+          background: cardBackground,
           cursor: 'pointer',
           transition: 'all 0.15s',
           outline: 'none',
           minWidth: 88,
           maxWidth: 120,
+          boxShadow: isPrimaryProvider && !selected ? '0 0 0 1px rgba(13, 148, 136, 0.25)' : undefined,
         }}
       >
       <div
@@ -252,7 +382,7 @@ function DoctorAvatar({
           height: 56,
           borderRadius: '50%',
           overflow: 'hidden',
-          border: `3px solid ${selected ? (requestOnly ? amber : teal) : borderColor}`,
+          border: `3px solid ${borderColor}`,
           flexShrink: 0,
           backgroundColor: grey100,
         }}
@@ -273,8 +403,14 @@ function DoctorAvatar({
       <span
         style={{
           fontSize: 12,
-          fontWeight: selected ? 700 : 500,
-          color: selected ? (requestOnly ? amberDark : tealDark) : grey700,
+          fontWeight: selected || isPrimaryProvider ? 700 : 500,
+          color: selected
+            ? requestOnly
+              ? amberDark
+              : tealDark
+            : isPrimaryProvider
+              ? tealDark
+              : grey700,
           textAlign: 'center',
           lineHeight: 1.2,
           maxWidth: 108,
@@ -283,7 +419,23 @@ function DoctorAvatar({
       >
         {displayLabel}
       </span>
-      {requestOnly && (
+      {isPrimaryProvider && (
+        <span
+          style={{
+            fontSize: 9,
+            fontWeight: 700,
+            color: tealDark,
+            textAlign: 'center',
+            lineHeight: 1.15,
+            maxWidth: 108,
+            letterSpacing: '0.02em',
+            textTransform: 'uppercase',
+          }}
+        >
+          Primary provider
+        </span>
+      )}
+      {requestOnly ? (
         <span
           style={{
             fontSize: 10,
@@ -296,46 +448,52 @@ function DoctorAvatar({
         >
           Online Booking Not Yet Available
         </span>
+      ) : (
+        <span
+          style={{
+            fontSize: 10,
+            fontWeight: 600,
+            color: tealDark,
+            textAlign: 'center',
+            lineHeight: 1.15,
+            maxWidth: 108,
+          }}
+        >
+          Book Online
+        </span>
       )}
       </button>
       {hasBio && onBioToggle && (
-        <>
-          <button
-            type="button"
-            aria-label={`About ${displayLabel}`}
-            aria-expanded={bioOpen}
-            title="About this doctor"
-            data-doctor-bio-trigger
-            onClick={(e) => {
-              e.stopPropagation();
-              onBioToggle();
-            }}
-            style={{
-              position: 'absolute',
-              top: 6,
-              right: 6,
-              width: 20,
-              height: 20,
-              borderRadius: '50%',
-              border: `1px solid ${grey200}`,
-              background: white,
-              fontSize: 11,
-              fontWeight: 700,
-              fontStyle: 'italic',
-              fontFamily: 'Georgia, "Times New Roman", serif',
-              color: grey700,
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              lineHeight: 1,
-              padding: 0,
-              boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
-            }}
-          >
-            i
-          </button>
-        </>
+        <button
+          type="button"
+          aria-label={`Read bio for ${displayLabel}`}
+          aria-expanded={bioOpen}
+          title="Read doctor bio"
+          data-doctor-bio-trigger
+          onClick={(e) => {
+            e.stopPropagation();
+            onBioToggle();
+          }}
+          style={{
+            position: 'absolute',
+            top: 4,
+            right: 4,
+            padding: '2px 6px',
+            borderRadius: 999,
+            border: `1px solid ${bioOpen ? teal : grey200}`,
+            background: bioOpen ? tealLight : white,
+            fontSize: 10,
+            fontWeight: 700,
+            fontStyle: 'normal',
+            fontFamily: 'inherit',
+            color: bioOpen ? tealDark : grey700,
+            cursor: 'pointer',
+            lineHeight: 1.2,
+            boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
+          }}
+        >
+          Bio
+        </button>
       )}
     </div>
   );
@@ -495,6 +653,28 @@ function MonthCalendar({
   );
 }
 
+// ─── Address-matched times notice ─────────────────────────────────────────────
+function AddressMatchedTimesNotice() {
+  return (
+    <div
+      style={{
+        marginTop: 12,
+        padding: '10px 12px',
+        background: tealLight,
+        border: '1px solid #6ee7b7',
+        borderRadius: 8,
+        fontSize: 12,
+        color: tealDark,
+        lineHeight: 1.45,
+      }}
+    >
+      <strong>These times are matched to your address.</strong> Don&apos;t see one that works? Tap
+      &lsquo;None of these work&rsquo; below, share your scheduling preferences on the form, and our
+      team will reach out with more options.
+    </div>
+  );
+}
+
 // ─── Time slot pill ───────────────────────────────────────────────────────────
 function TimeSlotPill({
   label,
@@ -539,6 +719,7 @@ export function SelfScheduleCalendarModal({
   onClose,
   onRequestPreferences,
   isNewClient = false,
+  newPatientCount = 0,
   isNewPatientRequest = false,
   rawVeterinarians,
   appointmentTypeId,
@@ -546,10 +727,12 @@ export function SelfScheduleCalendarModal({
   practiceTz = DEFAULT_PRACTICE_TIMEZONE,
   initialDoctorId,
   preferredDoctorId,
+  chartPrimaryProviderId,
   preloadedDoctors,
   requestOnlyDoctors,
   onRequestDoctor,
   slotPickerError,
+  visitPets,
 }: Props) {
   const [isNarrow, setIsNarrow] = useState(
     typeof window !== 'undefined' ? window.innerWidth <= 600 : false,
@@ -587,8 +770,12 @@ export function SelfScheduleCalendarModal({
 
   // Track in-flight month fetch so we can cancel stale results
   const monthFetchKey = useRef(0);
+  /** Skip one availability reload when we programmatically change the displayed month. */
+  const skipMonthEffectRef = useRef(false);
+  /** User clicked prev/next — do not auto-advance to a later month. */
+  const manualMonthNavRef = useRef(false);
 
-  const routingTypeKey = appointmentTypeNameForRoutingStats(appointmentType as RoutingServiceMinutesTypeSource);
+  const [soonestAvailabilityNote, setSoonestAvailabilityNote] = useState<string | null>(null);
 
   const resolveRoutingAppointmentType = useCallback(
     (key: string) => {
@@ -605,20 +792,69 @@ export function SelfScheduleCalendarModal({
     [appointmentTypes, appointmentType],
   );
 
-  // Public/client booking cannot call staff-only /appointments/doctor/month; use type defaults.
-  const serviceMinutes = useMemo(
-    () =>
-      estimateRoutingServiceMinutesForSelection(
-        routingTypeKey,
-        numPets,
-        [],
-        resolveRoutingAppointmentType,
-      ),
-    [routingTypeKey, numPets, resolveRoutingAppointmentType],
+  const resolveRoutingAppointmentTypeById = useCallback(
+    (appointmentTypeId: number) =>
+      appointmentTypes?.find((type) => Number(type.id) === Number(appointmentTypeId)),
+    [appointmentTypes],
   );
 
-  // Doctor to prioritize for ordering + default selection (primary provider).
+  const fallbackServiceMinutes = useMemo(() => {
+    const pets =
+      visitPets ??
+      (appointmentTypeId != null
+        ? [{ appointmentTypeId, isNewPatient: newPatientCount > 0 }]
+        : []);
+    if (pets.length === 0) return 45;
+    return estimateRoutingServiceMinutesForVisit(
+      pets,
+      [],
+      (id) => resolveRoutingAppointmentTypeById(id),
+      (key) => resolveRoutingAppointmentType(key),
+      { newPatientCount, numPets },
+    ).serviceMinutes;
+  }, [
+    visitPets,
+    appointmentTypeId,
+    newPatientCount,
+    numPets,
+    resolveRoutingAppointmentType,
+    resolveRoutingAppointmentTypeById,
+  ]);
+
+  const [serviceMinutes, setServiceMinutes] = useState<number>(fallbackServiceMinutes);
+  const [loadingServiceMinutes, setLoadingServiceMinutes] = useState(false);
+
+  useEffect(() => {
+    if (selectedDoctorId == null || !visitPets?.length) {
+      setServiceMinutes(fallbackServiceMinutes);
+      return;
+    }
+
+    let cancelled = false;
+    setLoadingServiceMinutes(true);
+    void fetchRoutingServiceMinutes({
+      practiceId,
+      doctorId: selectedDoctorId,
+      visitPets,
+    })
+      .then((result) => {
+        if (!cancelled) setServiceMinutes(result.serviceMinutes);
+      })
+      .catch(() => {
+        if (!cancelled) setServiceMinutes(fallbackServiceMinutes);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingServiceMinutes(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [practiceId, selectedDoctorId, visitPets, fallbackServiceMinutes]);
+
+  // Doctor to prioritize for default calendar selection (first bookable chart primary).
   const prioritizedDoctorId = preferredDoctorId ?? initialDoctorId;
+  const leadDoctorId = chartPrimaryProviderId ?? prioritizedDoctorId;
 
   // ── 1. Load doctors ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -628,16 +864,9 @@ export function SelfScheduleCalendarModal({
       requestDoctors.length > 0
     ) {
       setDoctors(preloadedDoctors ?? []);
-      const matchesPreferred = (d: PublicProvider) =>
-        prioritizedDoctorId != null && String(d.id) === String(prioritizedDoctorId);
-      const initial =
-        requestDoctors.find(matchesPreferred)?.id ??
-        (preloadedDoctors ?? []).find(matchesPreferred)?.id ??
-        prioritizedDoctorId ??
-        requestDoctors[0]?.id ??
-        preloadedDoctors?.[0]?.id ??
-        null;
-      setSelectedDoctorId(initial);
+      setSelectedDoctorId(
+        pickDefaultDoctorId(preloadedDoctors ?? [], requestDoctors, prioritizedDoctorId),
+      );
       setLoadingDoctors(false);
       return;
     }
@@ -678,11 +907,9 @@ export function SelfScheduleCalendarModal({
         if (cancelled) return;
         setDoctors(vets);
         if (vets.length > 0) {
-          const initial =
-            initialDoctorId != null && vets.some((d) => String(d.id) === String(initialDoctorId))
-              ? initialDoctorId
-              : vets[0].id;
-          setSelectedDoctorId(initial);
+          setSelectedDoctorId(
+            pickDefaultDoctorId(vets, [], prioritizedDoctorId),
+          );
         }
       } catch {
         if (!cancelled) setDoctorError('Unable to load available doctors. Please try again.');
@@ -695,75 +922,123 @@ export function SelfScheduleCalendarModal({
     return () => { cancelled = true; };
   }, [practiceId, address, lat, lon, isNewClient, preloadedDoctors, requestDoctors, prioritizedDoctorId, initialDoctorId, rawVeterinarians]);
 
-  // Keep selection in sync when the preferred doctor resolves after providers load.
+  // Prefer chart primary provider when they are online-bookable; never override
+  // with a request-only doctor while bookable options exist.
   useEffect(() => {
     if (prioritizedDoctorId == null) return;
-    const inRequest = requestDoctors.some(
-      (d) => String(d.id) === String(prioritizedDoctorId),
-    );
     const inBookable = doctors.some((d) => String(d.id) === String(prioritizedDoctorId));
-    if (inRequest || inBookable) {
+    if (inBookable) {
       setSelectedDoctorId(prioritizedDoctorId);
+      return;
+    }
+    if (doctors.length === 0) {
+      const inRequest = requestDoctors.some(
+        (d) => String(d.id) === String(prioritizedDoctorId),
+      );
+      if (inRequest) setSelectedDoctorId(prioritizedDoctorId);
     }
   }, [prioritizedDoctorId, requestDoctors, doctors]);
 
   // ── 2. Load month availability when doctor or month changes ──────────────
-  const loadMonthAvailability = useCallback(async (doctorId: string | number, month: DateTime) => {
-    const key = ++monthFetchKey.current;
-    setLoadingMonth(true);
-    setAvailabilityError(null);
-    setSelectedDay(null);
-    setDayCandidates([]);
-    setSelectedSlotIso(null);
+  const loadMonthAvailability = useCallback(
+    async (
+      doctorId: string | number,
+      month: DateTime,
+      opts?: { autoAdvance?: boolean },
+    ) => {
+      const key = ++monthFetchKey.current;
+      setLoadingMonth(true);
+      setAvailabilityError(null);
+      setSelectedDay(null);
+      setDayCandidates([]);
+      setSelectedSlotIso(null);
+      setSoonestAvailabilityNote(null);
 
-    try {
-      const today = DateTime.now().startOf('day');
-      const monthStart = month.startOf('month');
-      const rangeStart = today > monthStart ? today : monthStart;
-      const startDate = rangeStart.toISODate() as string;
-      const monthEnd = month.endOf('month');
-      const numDays = Math.max(1, Math.ceil(monthEnd.diff(rangeStart, 'days').days) + 1);
-
-      let candidates = await fetchPublicMonthAvailability({
+      const fetchArgs = {
         practiceId,
-        startDate,
-        numDays,
-        serviceMinutes,
         address,
-        ...(lat != null && lon != null ? { lat, lon, allowOtherDoctors: false } : {}),
+        lat,
+        lon,
+        serviceMinutes,
+        visitPets,
         doctorId,
-        ...(appointmentTypeId != null ? { appointmentTypeId } : {}),
-      });
+        appointmentTypeId,
+        isNewPatientRequest,
+        rawVeterinarians,
+      };
 
-      if (isNewPatientRequest && rawVeterinarians && rawVeterinarians.length > 0) {
-        const vet = findVeterinarianById(rawVeterinarians, doctorId);
-        candidates = candidates.filter((c) => isDoctorAcceptingNewPatientsOnSlotDate(vet, c.iso));
-      }
+      try {
+        let scanMonth = month.startOf('month');
+        const startMonth = scanMonth;
+        let candidates: MonthAvailabilityCandidate[] = [];
 
-      if (key !== monthFetchKey.current) return;
-      setMonthCandidates(candidates);
-    } catch (err: unknown) {
-      if (key !== monthFetchKey.current) return;
-      setMonthCandidates([]);
-      const ax = err as { response?: { status?: number; data?: { message?: string } } };
-      const message = ax?.response?.data?.message;
-      if (isOnlineBookingUnavailableError(ax?.response?.status, message)) {
-        setAvailabilityError(ONLINE_BOOKING_UNAVAILABLE_MESSAGE);
-      } else {
-        setAvailabilityError('Unable to load availability. Please try again or submit your preferred times.');
+        for (let attempt = 0; attempt < MAX_AUTO_ADVANCE_MONTHS; attempt++) {
+          candidates = await fetchMonthCandidatesForDoctor(scanMonth, fetchArgs);
+          if (key !== monthFetchKey.current) return;
+          if (monthHasBookableCandidates(candidates, scanMonth) || !opts?.autoAdvance) break;
+          scanMonth = scanMonth.plus({ months: 1 });
+        }
+
+        if (key !== monthFetchKey.current) return;
+
+        candidates = candidatesInCalendarMonth(candidates, scanMonth);
+
+        if (opts?.autoAdvance && candidates.length > 0 && !scanMonth.hasSame(startMonth, 'month')) {
+          setSoonestAvailabilityNote(
+            `Earliest open times are in ${scanMonth.toFormat('MMMM yyyy')}.`,
+          );
+        }
+
+        if (!scanMonth.hasSame(month, 'month')) {
+          skipMonthEffectRef.current = true;
+          setCurrentMonth(scanMonth);
+        }
+
+        setMonthCandidates(candidates);
+      } catch (err: unknown) {
+        if (key !== monthFetchKey.current) return;
+        setMonthCandidates([]);
+        const ax = err as { response?: { status?: number; data?: { message?: string } } };
+        const message = ax?.response?.data?.message;
+        if (isOnlineBookingUnavailableError(ax?.response?.status, message)) {
+          setAvailabilityError(ONLINE_BOOKING_UNAVAILABLE_MESSAGE);
+        } else {
+          setAvailabilityError(
+            'Unable to load availability. Please try again or submit your preferred times.',
+          );
+        }
+      } finally {
+        if (key === monthFetchKey.current) setLoadingMonth(false);
       }
-    } finally {
-      if (key === monthFetchKey.current) setLoadingMonth(false);
-    }
-  }, [practiceId, address, lat, lon, serviceMinutes, appointmentTypeId, isNewPatientRequest, rawVeterinarians, numPets]);
+    },
+    [
+      practiceId,
+      address,
+      lat,
+      lon,
+      serviceMinutes,
+      visitPets,
+      appointmentTypeId,
+      isNewPatientRequest,
+      rawVeterinarians,
+      numPets,
+    ],
+  );
 
   useEffect(() => {
     if (selectedDoctorId == null) return;
+    if (loadingServiceMinutes) return;
+    if (skipMonthEffectRef.current) {
+      skipMonthEffectRef.current = false;
+      return;
+    }
     // Skip availability lookups for request-only doctors (no online booking).
     const isBookable = doctors.some((d) => String(d.id) === String(selectedDoctorId));
     if (!isBookable) return;
-    loadMonthAvailability(selectedDoctorId, currentMonth);
-  }, [selectedDoctorId, currentMonth, loadMonthAvailability, doctors]);
+    const autoAdvance = !manualMonthNavRef.current;
+    manualMonthNavRef.current = false;
+    loadMonthAvailability(selectedDoctorId, currentMonth, { autoAdvance });
+  }, [selectedDoctorId, currentMonth, loadMonthAvailability, doctors, loadingServiceMinutes]);
 
   // ── 3. Derive day slots ──────────────────────────────────────────────────
   useEffect(() => {
@@ -790,15 +1065,24 @@ export function SelfScheduleCalendarModal({
   const handleDoctorSelect = (id: string | number) => {
     setBioPopoverDoctorId(null);
     setSelectedDoctorId(id);
+    setAvailabilityError(null);
+    setRequestPreferredTimes('');
+    setSoonestAvailabilityNote(null);
+    manualMonthNavRef.current = false;
+    setCurrentMonth(DateTime.now().startOf('month'));
   };
 
   const handlePrevMonth = () => {
+    manualMonthNavRef.current = true;
+    setSoonestAvailabilityNote(null);
     const prev = currentMonth.minus({ months: 1 });
     const today = DateTime.now().startOf('month');
     if (prev >= today) setCurrentMonth(prev);
   };
 
   const handleNextMonth = () => {
+    manualMonthNavRef.current = true;
+    setSoonestAvailabilityNote(null);
     setCurrentMonth(currentMonth.plus({ months: 1 }));
   };
 
@@ -839,6 +1123,10 @@ export function SelfScheduleCalendarModal({
   );
   const selectedDoctor = selectedBookableDoctor ?? selectedRequestDoctor;
   const isRequestOnlySelected = !selectedBookableDoctor && !!selectedRequestDoctor;
+  const onlineBookingBlocked =
+    availabilityError === ONLINE_BOOKING_UNAVAILABLE_MESSAGE;
+  /** Doctor/type can't be booked online — collect preferred times instead of a calendar. */
+  const showPreferencesPanel = isRequestOnlySelected || onlineBookingBlocked;
   const canConfirm = !!selectedSlotIso;
 
   const handleRequestDoctor = () => {
@@ -850,21 +1138,16 @@ export function SelfScheduleCalendarModal({
     });
   };
 
-  // Combined doctor row, primary/preferred provider first (bookable or request-only).
+  // Chart primary leftmost; bookable cards before request-only when no primary match.
   const displayDoctors = useMemo(() => {
-    const combined = [
-      ...doctors.map((d) => ({ doctor: d, requestOnly: false })),
-      ...requestDoctors.map((d) => ({ doctor: d, requestOnly: true })),
-    ];
-    if (prioritizedDoctorId != null) {
-      combined.sort((a, b) => {
-        const aFirst = String(a.doctor.id) === String(prioritizedDoctorId) ? 0 : 1;
-        const bFirst = String(b.doctor.id) === String(prioritizedDoctorId) ? 0 : 1;
-        return aFirst - bFirst;
-      });
-    }
-    return combined;
-  }, [doctors, requestDoctors, prioritizedDoctorId]);
+    const bookable = doctors.map((d) => ({ doctor: d, requestOnly: false }));
+    const requestOnly = requestDoctors.map((d) => ({ doctor: d, requestOnly: true }));
+    const combined = [...bookable, ...requestOnly];
+    return sortDoctorsWithPriority(combined, leadDoctorId);
+  }, [doctors, requestDoctors, leadDoctorId]);
+
+  const showPrimaryProviderBadge =
+    chartPrimaryProviderId != null && displayDoctors.length > 1;
 
   const isPrevDisabled = currentMonth <= DateTime.now().startOf('month');
 
@@ -932,7 +1215,9 @@ export function SelfScheduleCalendarModal({
           Pick a Date &amp; Time
         </h2>
         <p style={{ fontSize: 13, color: grey400, margin: '0 0 16px' }}>
-          Select a doctor, then choose a day and time that works for you.
+          {showPreferencesPanel
+            ? 'Select a doctor, then share your preferred days and times below.'
+            : 'Select a doctor, then choose a day and time that works for you.'}
         </p>
 
         {/* ── Doctor row ─────────────────────────────────────────────────── */}
@@ -973,6 +1258,11 @@ export function SelfScheduleCalendarModal({
                   key={doc.id}
                   doctor={doc}
                   requestOnly={requestOnly}
+                  isPrimaryProvider={
+                    showPrimaryProviderBadge &&
+                    chartPrimaryProviderId != null &&
+                    String(doc.id) === String(chartPrimaryProviderId)
+                  }
                   selected={String(doc.id) === String(selectedDoctorId)}
                   onClick={() => handleDoctorSelect(doc.id)}
                   bioOpen={String(doc.id) === String(bioPopoverDoctorId)}
@@ -1048,8 +1338,8 @@ export function SelfScheduleCalendarModal({
           );
         })()}
 
-        {/* ── Request-only doctor panel ─────────────────────────────────── */}
-        {!loadingDoctors && isRequestOnlySelected && selectedDoctor && (
+        {/* ── Preferred-times panel (request-only doctor or online booking off) ── */}
+        {!loadingDoctors && showPreferencesPanel && selectedDoctor && (
           <div style={{ marginBottom: 4 }}>
             <div
               style={{
@@ -1063,14 +1353,37 @@ export function SelfScheduleCalendarModal({
                 marginBottom: 14,
               }}
             >
-              <strong>
-                Dr. {selectedDoctor.name.replace(/^Dr\.?\s*/i, '').trim()}
-              </strong>{' '}
-              isn&apos;t available for online booking yet. Share your
-              preferred days and times below and our team will reach out to schedule with you.
+              {isRequestOnlySelected ? (
+                <>
+                  <strong>
+                    Dr. {selectedDoctor.name.replace(/^Dr\.?\s*/i, '').trim()}
+                  </strong>{' '}
+                  isn&apos;t available for online booking yet. Share your
+                  preferred days and times below and our team will reach out to schedule with you.
+                </>
+              ) : (
+                ONLINE_BOOKING_UNAVAILABLE_MESSAGE
+              )}
             </div>
 
+            {slotPickerError && (
+              <div
+                style={{
+                  marginBottom: 12,
+                  padding: '10px 12px',
+                  background: '#fef2f2',
+                  border: '1px solid #fecaca',
+                  borderRadius: 8,
+                  fontSize: 13,
+                  color: '#991b1b',
+                }}
+              >
+                {slotPickerError}
+              </div>
+            )}
+
             <label
+              htmlFor="self-schedule-preferred-times"
               style={{
                 display: 'block',
                 fontSize: 13,
@@ -1079,9 +1392,10 @@ export function SelfScheduleCalendarModal({
                 marginBottom: 6,
               }}
             >
-              Your scheduling preferences
+              Your preferred days and times
             </label>
             <textarea
+              id="self-schedule-preferred-times"
               value={requestPreferredTimes}
               onChange={(e) => setRequestPreferredTimes(e.target.value)}
               rows={3}
@@ -1101,7 +1415,7 @@ export function SelfScheduleCalendarModal({
         )}
 
         {/* ── Calendar ───────────────────────────────────────────────────── */}
-        {!loadingDoctors && !isRequestOnlySelected && doctors.length > 0 && (
+        {!loadingDoctors && !showPreferencesPanel && doctors.length > 0 && (
           <>
             {selectedDoctor && (
               <div
@@ -1179,6 +1493,14 @@ export function SelfScheduleCalendarModal({
               loading={loadingMonth}
             />
 
+            {soonestAvailabilityNote && !loadingMonth ? (
+              <div style={{ fontSize: 12, color: tealDark, textAlign: 'center', marginTop: 8 }}>
+                {soonestAvailabilityNote}
+              </div>
+            ) : null}
+
+            {!loadingMonth && <AddressMatchedTimesNotice />}
+
             {/* Disabled prev-month hint */}
             {isPrevDisabled && currentMonth <= DateTime.now().startOf('month') && (
               <div style={{ fontSize: 11, color: grey400, textAlign: 'center', marginTop: 6 }}>
@@ -1189,7 +1511,7 @@ export function SelfScheduleCalendarModal({
         )}
 
         {/* ── Time slots ─────────────────────────────────────────────────── */}
-        {selectedDay && (
+        {!showPreferencesPanel && selectedDay && (
           <div style={{ marginTop: 14 }}>
             <div style={{ fontSize: 13, fontWeight: 600, color: grey700, marginBottom: 8 }}>
               Available times on{' '}
@@ -1226,41 +1548,21 @@ export function SelfScheduleCalendarModal({
                   />
                 ))}
               </div>
-              {!loadingDoctors && doctors.length > 0 && (
-                <>
-                  {selectedSlotWindow?.windowDisplay && (
-                    <div
-                      style={{
-                        marginTop: 10,
-                        padding: '10px 12px',
-                        background: tealLight,
-                        border: `1px solid ${teal}`,
-                        borderRadius: 8,
-                        fontSize: 13,
-                        color: tealDark,
-                        lineHeight: 1.5,
-                      }}
-                    >
-                      {selectedSlotWindow.windowDisplay}
-                    </div>
-                  )}
-                  <div
-                    style={{
-                      marginTop: selectedSlotWindow?.windowDisplay ? 8 : 10,
-                      padding: '10px 12px',
-                      background: tealLight,
-                      border: '1px solid #6ee7b7',
-                      borderRadius: 8,
-                      fontSize: 12,
-                      color: tealDark,
-                      lineHeight: 1.45,
-                    }}
-                  >
-                    <strong>These times are matched to your address.</strong> Don&apos;t see one that
-                    works? Tap &lsquo;None of these work&rsquo; below, share your scheduling
-                    preferences on the form, and our team will reach out with more options.
-                  </div>
-                </>
+              {!loadingDoctors && doctors.length > 0 && selectedSlotWindow?.windowDisplay && (
+                <div
+                  style={{
+                    marginTop: 10,
+                    padding: '10px 12px',
+                    background: tealLight,
+                    border: `1px solid ${teal}`,
+                    borderRadius: 8,
+                    fontSize: 13,
+                    color: tealDark,
+                    lineHeight: 1.5,
+                  }}
+                >
+                  {selectedSlotWindow.windowDisplay}
+                </div>
               )}
               </>
             )}
@@ -1274,65 +1576,88 @@ export function SelfScheduleCalendarModal({
             display: 'flex',
             flexDirection: isNarrow ? 'column-reverse' : 'row',
             gap: 12,
-            justifyContent: 'flex-end',
+            justifyContent: showPreferencesPanel ? 'space-between' : 'flex-end',
           }}
         >
-          <button
-            type="button"
-            onClick={onRequestPreferences ?? onClose}
-            style={{
-              padding: isNarrow ? '14px 20px' : '10px 20px',
-              width: isNarrow ? '100%' : undefined,
-              borderRadius: 8,
-              border: `1px solid ${grey200}`,
-              background: white,
-              color: grey700,
-              fontSize: 14,
-              fontWeight: 500,
-              cursor: 'pointer',
-            }}
-          >
-            None of these work
-          </button>
-          {isRequestOnlySelected ? (
-            <button
-              type="button"
-              onClick={handleRequestDoctor}
-              style={{
-                padding: isNarrow ? '14px 24px' : '10px 24px',
-                width: isNarrow ? '100%' : undefined,
-                borderRadius: 8,
-                border: 'none',
-                background: amber,
-                color: white,
-                fontSize: 14,
-                fontWeight: 700,
-                cursor: 'pointer',
-                transition: 'all 0.12s',
-              }}
-            >
-              Request {selectedDoctor ? `Dr. ${selectedDoctor.name.replace(/^Dr\.?\s*/i, '').split(' ')[0]}` : 'This Doctor'}
-            </button>
+          {showPreferencesPanel ? (
+            <>
+              <button
+                type="button"
+                onClick={onClose}
+                style={{
+                  padding: isNarrow ? '14px 20px' : '10px 20px',
+                  width: isNarrow ? '100%' : undefined,
+                  borderRadius: 8,
+                  border: `1px solid ${grey200}`,
+                  background: white,
+                  color: grey700,
+                  fontSize: 14,
+                  fontWeight: 500,
+                  cursor: 'pointer',
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleRequestDoctor}
+                style={{
+                  padding: isNarrow ? '14px 24px' : '10px 24px',
+                  width: isNarrow ? '100%' : undefined,
+                  borderRadius: 8,
+                  border: 'none',
+                  background: amber,
+                  color: white,
+                  fontSize: 14,
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  transition: 'all 0.12s',
+                }}
+              >
+                {isRequestOnlySelected
+                  ? `Request ${selectedDoctor ? `Dr. ${selectedDoctor.name.replace(/^Dr\.?\s*/i, '').split(' ')[0]}` : 'This Doctor'}`
+                  : 'Save preferred times'}
+              </button>
+            </>
           ) : (
-            <button
-              type="button"
-              onClick={handleConfirm}
-              disabled={!canConfirm}
-              style={{
-                padding: isNarrow ? '14px 24px' : '10px 24px',
-                width: isNarrow ? '100%' : undefined,
-                borderRadius: 8,
-                border: 'none',
-                background: canConfirm ? teal : grey200,
-                color: canConfirm ? white : grey400,
-                fontSize: 14,
-                fontWeight: 700,
-                cursor: canConfirm ? 'pointer' : 'not-allowed',
-                transition: 'all 0.12s',
-              }}
-            >
-              Confirm This Time
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={onRequestPreferences ?? onClose}
+                style={{
+                  padding: isNarrow ? '14px 20px' : '10px 20px',
+                  width: isNarrow ? '100%' : undefined,
+                  borderRadius: 8,
+                  border: `1px solid ${grey200}`,
+                  background: white,
+                  color: grey700,
+                  fontSize: 14,
+                  fontWeight: 500,
+                  cursor: 'pointer',
+                }}
+              >
+                None of these work
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirm}
+                disabled={!canConfirm}
+                style={{
+                  padding: isNarrow ? '14px 24px' : '10px 24px',
+                  width: isNarrow ? '100%' : undefined,
+                  borderRadius: 8,
+                  border: 'none',
+                  background: canConfirm ? teal : grey200,
+                  color: canConfirm ? white : grey400,
+                  fontSize: 14,
+                  fontWeight: 700,
+                  cursor: canConfirm ? 'pointer' : 'not-allowed',
+                  transition: 'all 0.12s',
+                }}
+              >
+                Confirm This Time
+              </button>
+            </>
           )}
         </div>
       </div>

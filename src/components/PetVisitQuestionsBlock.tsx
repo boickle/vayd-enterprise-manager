@@ -5,6 +5,8 @@ import {
 } from './NewClientAppointmentTypePicker';
 import {
   appointmentTypeMatchesPatterns,
+  EUTHANASIA_AFTERCARE_LABEL,
+  EUTHANASIA_AFTERCARE_OPTIONS,
   isEuthanasiaTypeOption,
 } from '../utils/petVisitQuestionUtils';
 
@@ -28,6 +30,7 @@ export type PetVisitPetData = {
   needsTodayDetails?: string;
   euthanasiaReason?: string;
   interestedInOtherOptions?: string;
+  aftercarePreference?: string;
   appointmentTypeId?: number;
   appointmentTypeName?: string;
 };
@@ -154,6 +157,43 @@ export function PetVisitQuestionsBlock({
                 {errors[`interestedInOtherOptions.${pet.id}`] && (
                   <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '6px' }}>
                     {errors[`interestedInOtherOptions.${pet.id}`]}
+                  </div>
+                )}
+              </div>
+              <div data-form-field={`aftercarePreference.${pet.id}`}>
+                <label style={{ display: 'block', marginBottom: labelMb, fontWeight: 600, color: '#374151', fontSize: '13px' }}>
+                  {EUTHANASIA_AFTERCARE_LABEL} <span style={{ color: '#ef4444' }}>*</span>
+                </label>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {EUTHANASIA_AFTERCARE_OPTIONS.map((opt) => (
+                    <label
+                      key={opt}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'flex-start',
+                        gap: '10px',
+                        cursor: 'pointer',
+                        padding: '10px 12px',
+                        border: `2px solid ${petData.aftercarePreference === opt ? '#10b981' : '#e5e7eb'}`,
+                        borderRadius: '8px',
+                        backgroundColor: petData.aftercarePreference === opt ? '#f0fdf4' : '#fff',
+                      }}
+                    >
+                      <input
+                        type="radio"
+                        name={`aftercarePreference-${pet.id}`}
+                        value={opt}
+                        checked={petData.aftercarePreference === opt}
+                        onChange={(e) => onUpdatePetData(pet.id, 'aftercarePreference', e.target.value)}
+                        style={{ marginTop: '3px', flexShrink: 0, width: '18px', height: '18px', accentColor: '#10b981' }}
+                      />
+                      <span style={{ fontSize: '13px', lineHeight: 1.45, color: '#374151' }}>{opt}</span>
+                    </label>
+                  ))}
+                </div>
+                {errors[`aftercarePreference.${pet.id}`] && (
+                  <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '6px' }}>
+                    {errors[`aftercarePreference.${pet.id}`]}
                   </div>
                 )}
               </div>

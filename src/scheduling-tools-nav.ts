@@ -7,19 +7,29 @@ export type SchedulingToolTab = {
 
 export const SCHEDULING_TOOLS_PATH_PREFIX = '/schedule/scheduling-tools';
 
-/** Top-level Scheduling Tools tabs. On hold aggregates holds from all booking sources. */
-export const SCHEDULING_TOOL_TABS: SchedulingToolTab[] = [
-  { path: 'schedule-loader', label: 'Schedule loader' },
+/** Outreach queues — care outreach through texted offers. */
+export const SCHEDULING_TOOL_OUTREACH_TABS: SchedulingToolTab[] = [
   { path: 'care-outreach', label: 'Care outreach' },
+  { path: 'schedule-loader', label: 'Schedule loader' },
   { path: 'forward-booking', label: 'Forward booking' },
-  { path: 'on-hold', label: 'On hold' },
   { path: 'texted-offers', label: 'Texted offers' },
-  { path: 'appointments', label: 'Appointments' },
+];
+
+/** Workflow views after outreach — calendar holds and booked visits. */
+export const SCHEDULING_TOOL_WORKFLOW_TABS: SchedulingToolTab[] = [
+  { path: 'on-hold', label: 'On hold' },
+  { path: 'booked', label: 'Booked' },
+];
+
+/** Scheduling Tools tabs (appointment-request holds live under /schedule/appointments/on-hold). */
+export const SCHEDULING_TOOL_TABS: SchedulingToolTab[] = [
+  ...SCHEDULING_TOOL_OUTREACH_TABS,
+  ...SCHEDULING_TOOL_WORKFLOW_TABS,
 ];
 
 export const FORWARD_BOOKING_STATUS_PARAM = 'status';
 
-/** Legacy Booked / Complete paths fold into Forward booking via ?status=. */
+/** Legacy Booked / Complete paths fold into top-level Booked / Forward booking. */
 export const LEGACY_WORKFLOW_STATUS_BY_PATH: Record<
   string,
   Extract<ForwardBookingListTab, 'booked' | 'complete'>
@@ -27,6 +37,11 @@ export const LEGACY_WORKFLOW_STATUS_BY_PATH: Record<
   booked: 'booked',
   complete: 'complete',
 };
+
+export function bookedListPath(search = ''): string {
+  const base = `${SCHEDULING_TOOLS_PATH_PREFIX}/booked`;
+  return search ? `${base}${search.startsWith('?') ? search : `?${search}`}` : base;
+}
 
 export function onHoldListPath(search = ''): string {
   const base = `${SCHEDULING_TOOLS_PATH_PREFIX}/on-hold`;
@@ -36,6 +51,7 @@ export function onHoldListPath(search = ''): string {
 /** URL for a Forward booking status view (pending uses the bare path). */
 export function forwardBookingStatusListPath(status: ForwardBookingListTab): string {
   if (status === 'onHold') return onHoldListPath();
+  if (status === 'booked') return bookedListPath();
   const base = `${SCHEDULING_TOOLS_PATH_PREFIX}/forward-booking`;
   return status === 'pending' ? base : `${base}?${FORWARD_BOOKING_STATUS_PARAM}=${status}`;
 }
@@ -57,9 +73,22 @@ export function isSchedulingToolTabActive(
   ) {
     return true;
   }
-  // Legacy Booked / Complete paths are part of Forward booking now.
+  // Legacy Booked / Complete paths map to top-level Booked or forward-booking query.
+  if (tabPath === 'booked') {
+    for (const legacy of Object.keys(LEGACY_WORKFLOW_STATUS_BY_PATH)) {
+      const legacyPath = `${SCHEDULING_TOOLS_PATH_PREFIX}/${legacy}`;
+      if (pathname === legacyPath || pathname.startsWith(`${legacyPath}/`)) {
+        return legacy === 'booked';
+      }
+    }
+    const forwardBookingBooked =
+      pathname === `${SCHEDULING_TOOLS_PATH_PREFIX}/forward-booking` &&
+      new URLSearchParams(search).get(FORWARD_BOOKING_STATUS_PARAM) === 'booked';
+    if (forwardBookingBooked) return true;
+  }
   if (tabPath === 'forward-booking') {
     for (const legacy of Object.keys(LEGACY_WORKFLOW_STATUS_BY_PATH)) {
+      if (legacy === 'booked') continue;
       const legacyPath = `${SCHEDULING_TOOLS_PATH_PREFIX}/${legacy}`;
       if (pathname === legacyPath || pathname.startsWith(`${legacyPath}/`)) return true;
     }

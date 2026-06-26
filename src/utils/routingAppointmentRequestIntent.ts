@@ -3,16 +3,23 @@
  */
 import { clearRoutingCalendarPreview } from './routingCalendarPreviewStorage';
 import { ROUTING_DISMISS_FORWARD_BOOKING_EVENT } from './routingUiSnapshot';
+import type { AppointmentRequestListTab } from '../appointments-nav';
 import type { AppointmentRequestSubmissionItem } from '../api/appointmentRequestSubmissions';
 import {
   clientDisplayNameFromRequestData,
   formatRequestDataAddress,
   requestDataAnythingElse,
+  requestDataAppointmentTypeForRouting,
   requestDataHowSoon,
   requestDataPreferredDoctor,
   requestDataServiceMinutes,
+  requestDataUsesAlternateVisitAddress,
+  requestDataClientId,
+  requestDataPreferredPatientIds,
   resolveClientPatientFromRequestData,
+  requestDataClientPimsId,
 } from './appointmentRequestDisplay';
+import { requestDataPetRowSummaries } from './appointmentRequestDetailDisplay';
 
 export const ROUTING_APPOINTMENT_REQUEST_INTENT_STORAGE_KEY =
   'vayd:routing-appointment-request-intent-v1';
@@ -31,13 +38,28 @@ export type RoutingAppointmentRequestIntentV1 = {
   clientDisplayLabel?: string;
   serviceMinutes: number;
   address?: string;
+  /** Visit at alternate location — route without linking client (same as scheduler alternate stop). */
+  isAlternateStop?: boolean;
+  alternateAddressText?: string;
   preferredDoctorId?: string;
   preferredDoctorDisplayName?: string;
   appointmentTypeName?: string;
+  appointmentTypeId?: number;
   howSoon?: string;
   description?: string | null;
+  clientPimsId?: string;
+  pets?: Array<{
+    name: string;
+    appointmentType: string | null;
+    appointmentTypeId?: number | null;
+    patientId?: string | null;
+    patientPimsId: string | null;
+    clientDetails?: string | null;
+  }>;
   /** When true, successful book navigates back to the appointment requests list. */
   returnToListAfterBook?: boolean;
+  /** Tab to restore when leaving routing / scheduler back to the list. */
+  returnListTab?: AppointmentRequestListTab;
   workspaceActive?: boolean;
 };
 
@@ -121,26 +143,63 @@ export function buildRoutingAppointmentRequestIntentFromSubmission(
 ): Omit<RoutingAppointmentRequestIntentV1, 'v' | 'appliedToRoutingForm'> {
   const rd = item.requestData ?? {};
   const resolved = resolveClientPatientFromRequestData(rd);
+  const clientId = requestDataClientId(rd);
+  const preferredPatientIds = requestDataPreferredPatientIds(rd);
   const mins = requestDataServiceMinutes(rd) ?? 45;
   const doctorId = pickStr(rd.preferredDoctorId);
+  const alternateAddress = formatRequestDataAddress(rd);
+  const usesAlternateVisitAddress = requestDataUsesAlternateVisitAddress(rd);
+  const apptType = requestDataAppointmentTypeForRouting(rd);
+  const petSummaries = requestDataPetRowSummaries(rd);
+  const usesPerPetTypes = petSummaries.length > 0;
 
   return {
     appointmentRequestSubmissionId: item.id,
-    ...(resolved
+    ...(!usesAlternateVisitAddress && clientId
       ? {
-          clientId: resolved.clientId,
-          patientId: resolved.patientId,
-          preferredPatientIds: resolved.preferredPatientIds,
+          clientId,
+          ...(preferredPatientIds.length > 0
+            ? {
+                patientId: resolved?.patientId ?? preferredPatientIds[0],
+                preferredPatientIds,
+              }
+            : resolved
+              ? {
+                  patientId: resolved.patientId,
+                  preferredPatientIds: resolved.preferredPatientIds,
+                }
+              : {}),
         }
       : {}),
     clientDisplayLabel: clientDisplayNameFromRequestData(rd),
     serviceMinutes: mins,
-    address: formatRequestDataAddress(rd) ?? undefined,
+    ...(usesAlternateVisitAddress && alternateAddress
+      ? {
+          isAlternateStop: true,
+          alternateAddressText: alternateAddress,
+          address: alternateAddress,
+        }
+      : alternateAddress
+        ? { address: alternateAddress }
+        : {}),
     preferredDoctorId: doctorId ?? undefined,
     preferredDoctorDisplayName: requestDataPreferredDoctor(rd) ?? undefined,
-    appointmentTypeName:
-      typeof rd.appointmentType === 'string' ? rd.appointmentType.trim() || undefined : undefined,
+    ...(!usesPerPetTypes
+      ? {
+          appointmentTypeName: apptType.label ?? undefined,
+          ...(apptType.typeId != null ? { appointmentTypeId: apptType.typeId } : {}),
+        }
+      : {}),
     howSoon: requestDataHowSoon(rd) ?? undefined,
     description: requestDataAnythingElse(rd),
+    clientPimsId: requestDataClientPimsId(rd) ?? undefined,
+    pets: petSummaries.map((pet) => ({
+      name: pet.name,
+      appointmentType: pet.appointmentType,
+      ...(pet.appointmentTypeId != null ? { appointmentTypeId: pet.appointmentTypeId } : {}),
+      ...(pet.patientId ? { patientId: pet.patientId } : {}),
+      patientPimsId: pet.patientPimsId,
+      ...(pet.clientDetails ? { clientDetails: pet.clientDetails } : {}),
+    })),
   };
 }

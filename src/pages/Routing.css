@@ -54,7 +54,6 @@
 
 .routing-page-root--calendar-workspace .routing-route-form-header,
 .routing-page-root--calendar-workspace .routing-reschedule-mode-summary,
-.routing-page-root--calendar-workspace .routing-route-form-card > .routing-asap-all-doctor-search,
 .routing-page-root--calendar-workspace .routing-route-form-card > .forward-booking-workspace-context {
   flex-shrink: 0;
 }

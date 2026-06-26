@@ -11,6 +11,276 @@ import { normalizeAppointmentType } from '../analytics/appointmentTypeTimeStats'
 export const ROUTING_FALLBACK_SERVICE_MINUTES = 45;
 const ROUTING_MIN_APPT_TYPE_INSTANCES_FOR_STATS = 5;
 
+function parseEnvNonNegativeInt(raw: unknown, fallback: number): number {
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.round(parsed) : fallback;
+}
+
+/** Extra minutes for the first new patient in a visit (default 15). */
+export const ROUTING_FIRST_NEW_PATIENT_DURATION_BUFFER_MINUTES = parseEnvNonNegativeInt(
+  import.meta.env.VITE_ROUTING_FIRST_NEW_PATIENT_DURATION_BUFFER_MINUTES ??
+    import.meta.env.VITE_ROUTING_NEW_PATIENT_DURATION_BUFFER_MINUTES,
+  15,
+);
+
+/** Extra minutes for each additional new patient beyond the first (default 10). */
+export const ROUTING_ADDITIONAL_NEW_PATIENT_DURATION_BUFFER_MINUTES = parseEnvNonNegativeInt(
+  import.meta.env.VITE_ROUTING_ADDITIONAL_NEW_PATIENT_DURATION_BUFFER_MINUTES,
+  10,
+);
+
+/** @deprecated Use {@link ROUTING_FIRST_NEW_PATIENT_DURATION_BUFFER_MINUTES} */
+export const ROUTING_NEW_PATIENT_CLIENT_DURATION_BUFFER_MINUTES =
+  ROUTING_FIRST_NEW_PATIENT_DURATION_BUFFER_MINUTES;
+
+/** Extra minutes when the visit has more than {@link ROUTING_HOUSEHOLD_PET_COUNT_THRESHOLD} pets (default 20). */
+export const ROUTING_HOUSEHOLD_DURATION_BUFFER_MINUTES = parseEnvNonNegativeInt(
+  import.meta.env.VITE_ROUTING_HOUSEHOLD_DURATION_BUFFER_MINUTES,
+  20,
+);
+
+/** Household buffer applies when pet count exceeds this value (default 2 → 3+ pets). */
+export const ROUTING_HOUSEHOLD_PET_COUNT_THRESHOLD = parseEnvNonNegativeInt(
+  import.meta.env.VITE_ROUTING_HOUSEHOLD_PET_COUNT_THRESHOLD,
+  2,
+);
+
+export type RoutingServiceMinutesBufferOptions = {
+  /** Count of new-to-practice patients in this visit (drives tiered new-patient buffer). */
+  newPatientCount?: number;
+  numPets?: number;
+};
+
+export function newPatientDurationBufferMinutes(newPatientCount: number): number {
+  const n = Math.floor(Number(newPatientCount));
+  if (!Number.isFinite(n) || n < 1) return 0;
+  return (
+    ROUTING_FIRST_NEW_PATIENT_DURATION_BUFFER_MINUTES +
+    (n - 1) * ROUTING_ADDITIONAL_NEW_PATIENT_DURATION_BUFFER_MINUTES
+  );
+}
+
+export function applyRoutingServiceMinuteBuffers(
+  baseMinutes: number,
+  opts?: RoutingServiceMinutesBufferOptions,
+): number {
+  let mins = Math.max(1, Math.round(baseMinutes));
+  mins += newPatientDurationBufferMinutes(opts?.newPatientCount ?? 0);
+  return mins;
+}
+
+export function routingVisitNewPatientCount(input: {
+  isNewPatientRequest?: boolean;
+  selectedPetIds?: readonly string[];
+  newClientPets?: readonly unknown[];
+  existingClientNewPets?: readonly unknown[];
+}): number {
+  if (input.isNewPatientRequest) {
+    return routingVisitPetCount(input);
+  }
+  const newClient = input.newClientPets?.length ?? 0;
+  const existingNew = input.existingClientNewPets?.length ?? 0;
+  return newClient + existingNew;
+}
+
+/** @deprecated Prefer {@link routingVisitNewPatientCount} > 0 */
+export function routingVisitIncludesNewPatients(opts: {
+  isNewPatientRequest?: boolean;
+  existingClientNewPetCount?: number;
+}): boolean {
+  if (opts.isNewPatientRequest) return true;
+  return (opts.existingClientNewPetCount ?? 0) > 0;
+}
+
+export function routingVisitPetCount(input: {
+  selectedPetIds?: readonly string[];
+  newClientPets?: readonly unknown[];
+  existingClientNewPets?: readonly unknown[];
+}): number {
+  const selected = input.selectedPetIds?.length ?? 0;
+  const newClient = input.newClientPets?.length ?? 0;
+  const existingNew = input.existingClientNewPets?.length ?? 0;
+  if (selected > 0) return selected + existingNew;
+  return Math.max(1, newClient + existingNew);
+}
+
+export type RoutingVisitPetInput = {
+  appointmentTypeId: number;
+  isNewPatient?: boolean;
+};
+
+export function buildRoutingVisitPetsFromFormData(
+  formData: {
+    selectedPetIds?: readonly string[];
+    newClientPets?: readonly { id?: string }[];
+    existingClientNewPets?: readonly { id?: string }[];
+    petSpecificData?: Record<string, { appointmentTypeId?: number } | undefined>;
+  },
+  opts: {
+    isNewPatientRequest: boolean;
+    primaryAppointmentTypeId?: number;
+  },
+): RoutingVisitPetInput[] {
+  const petIds = [
+    ...(formData.selectedPetIds ?? []),
+    ...(formData.newClientPets?.map((p) => p.id).filter(Boolean) as string[]),
+    ...(formData.existingClientNewPets?.map((p) => p.id).filter(Boolean) as string[]),
+  ];
+
+  const newPetIdSet = new Set<string>([
+    ...(formData.newClientPets?.map((p) => String(p.id ?? '').trim()).filter(Boolean) ?? []),
+    ...(formData.existingClientNewPets?.map((p) => String(p.id ?? '').trim()).filter(Boolean) ?? []),
+  ]);
+
+  const visitPets: RoutingVisitPetInput[] = [];
+  for (const petId of petIds) {
+    const typeId =
+      formData.petSpecificData?.[petId]?.appointmentTypeId ??
+      opts.primaryAppointmentTypeId;
+    if (typeId == null || !Number.isFinite(typeId) || typeId <= 0) continue;
+    visitPets.push({
+      appointmentTypeId: typeId,
+      isNewPatient: opts.isNewPatientRequest || newPetIdSet.has(petId),
+    });
+  }
+
+  if (visitPets.length === 0 && opts.primaryAppointmentTypeId != null) {
+    visitPets.push({
+      appointmentTypeId: opts.primaryAppointmentTypeId,
+      isNewPatient: opts.isNewPatientRequest,
+    });
+  }
+
+  return visitPets;
+}
+
+/** Unique appointment type ids for all pets in the visit (mixed-type households). */
+export function resolveVisitAppointmentTypeIdsFromFormData(
+  formData: {
+    selectedPetIds?: readonly string[];
+    newClientPets?: readonly { id?: string }[];
+    existingClientNewPets?: readonly { id?: string }[];
+    petSpecificData?: Record<string, { appointmentTypeId?: number } | undefined>;
+  },
+): number[] {
+  const petIds = [
+    ...(formData.selectedPetIds ?? []),
+    ...(formData.newClientPets?.map((p) => p.id).filter(Boolean) as string[]),
+    ...(formData.existingClientNewPets?.map((p) => p.id).filter(Boolean) as string[]),
+  ];
+  const ids = new Set<number>();
+  for (const petId of petIds) {
+    const typeId = formData.petSpecificData?.[petId]?.appointmentTypeId;
+    if (typeId != null && Number.isFinite(typeId) && typeId > 0) ids.add(typeId);
+  }
+  return [...ids];
+}
+
+export function resolveVisitAppointmentTypeIdsFromVisitPets(
+  visitPets: readonly RoutingVisitPetInput[],
+): number[] {
+  const ids = new Set<number>();
+  for (const pet of visitPets) {
+    if (Number.isFinite(pet.appointmentTypeId) && pet.appointmentTypeId > 0) {
+      ids.add(pet.appointmentTypeId);
+    }
+  }
+  return [...ids];
+}
+
+export type RoutingServiceMinutesEstimateSource = 'stats' | 'default' | 'fallback' | 'mixed';
+
+export type RoutingServiceMinutesEstimate = {
+  serviceMinutes: number;
+  baseMinutes: number;
+  source: RoutingServiceMinutesEstimateSource;
+};
+
+/** Sum per-pet base minutes; same-type groups use multipet-aware stats. */
+export function estimateRoutingServiceMinutesForVisit(
+  visitPets: RoutingVisitPetInput[],
+  apptLengthsRows: AvgMinutesByTypeRow[],
+  resolveTypeById: (appointmentTypeId: number) => RoutingServiceMinutesTypeSource | undefined,
+  resolveTypeByKey: (key: string) => RoutingServiceMinutesTypeSource | undefined,
+  bufferOptions?: RoutingServiceMinutesBufferOptions,
+): RoutingServiceMinutesEstimate {
+  const pets = visitPets.filter(
+    (p) => Number.isFinite(p.appointmentTypeId) && p.appointmentTypeId > 0,
+  );
+  const numPets = Math.max(1, pets.length);
+  const newPatientCount =
+    bufferOptions?.newPatientCount ??
+    pets.filter((p) => p.isNewPatient).length;
+
+  const estimateSingleTypeBase = (
+    typeKey: string,
+    count: number,
+  ): { minutes: number; source: RoutingServiceMinutesEstimateSource } => {
+    const matched = resolveTypeByKey(typeKey);
+    const row = resolveRoutingApptStatsRow(typeKey, apptLengthsRows, matched);
+    let mins: number | null = null;
+    let source: RoutingServiceMinutesEstimateSource = 'fallback';
+    if (row && routingApptTypeStatsMeetMinInstances(row)) {
+      mins = estimatedServiceMinutesFromStatsRow(row, count);
+      if (mins != null && mins >= 1) source = 'stats';
+    }
+    if (mins == null || mins < 1) {
+      mins = defaultDurationMinutesForRoutingTypeSelection(matched, count);
+      if (mins != null && mins >= 1) source = 'default';
+    }
+    if (mins == null || mins < 1) {
+      mins = ROUTING_FALLBACK_SERVICE_MINUTES;
+      source = 'fallback';
+    }
+    return { minutes: mins, source };
+  };
+
+  if (pets.length === 0) {
+    const total = applyRoutingServiceMinuteBuffers(ROUTING_FALLBACK_SERVICE_MINUTES, {
+      ...bufferOptions,
+      newPatientCount,
+      numPets: 1,
+    });
+    return {
+      serviceMinutes: total,
+      baseMinutes: ROUTING_FALLBACK_SERVICE_MINUTES,
+      source: 'fallback',
+    };
+  }
+
+  const typeIds = pets.map((p) => p.appointmentTypeId);
+  const allSameType = typeIds.every((id) => id === typeIds[0]);
+
+  let baseMinutes = 0;
+  let source: RoutingServiceMinutesEstimateSource = 'fallback';
+
+  if (allSameType) {
+    const type = resolveTypeById(typeIds[0]!);
+    const typeKey = appointmentTypeNameForRoutingStats(type);
+    const result = estimateSingleTypeBase(typeKey, pets.length);
+    baseMinutes = result.minutes;
+    source = result.source;
+  } else {
+    let usedStats = false;
+    for (const pet of pets) {
+      const type = resolveTypeById(pet.appointmentTypeId);
+      const typeKey = appointmentTypeNameForRoutingStats(type);
+      const result = estimateSingleTypeBase(typeKey, 1);
+      baseMinutes += result.minutes;
+      if (result.source === 'stats') usedStats = true;
+    }
+    source = usedStats ? 'stats' : 'mixed';
+  }
+
+  const serviceMinutes = applyRoutingServiceMinuteBuffers(baseMinutes, {
+    ...bufferOptions,
+    newPatientCount,
+    numPets,
+  });
+
+  return { serviceMinutes, baseMinutes, source };
+}
+
 export type RoutingServiceMinutesTypeSource = Pick<
   AppointmentType,
   'id' | 'name' | 'prettyName' | 'defaultDuration'
@@ -82,9 +352,15 @@ export function estimateRoutingServiceMinutesForSelection(
   pets: number,
   apptLengthsRows: AvgMinutesByTypeRow[],
   resolveType: (key: string) => RoutingServiceMinutesTypeSource | undefined,
+  bufferOptions?: RoutingServiceMinutesBufferOptions,
 ): number {
   const key = typeKey.trim();
-  if (!key) return ROUTING_FALLBACK_SERVICE_MINUTES;
+  if (!key) {
+    return applyRoutingServiceMinuteBuffers(ROUTING_FALLBACK_SERVICE_MINUTES, {
+      ...bufferOptions,
+      numPets: bufferOptions?.numPets ?? pets,
+    });
+  }
   const matched = resolveType(key);
   const row = resolveRoutingApptStatsRow(key, apptLengthsRows, matched);
   let mins: number | null = null;
@@ -97,7 +373,10 @@ export function estimateRoutingServiceMinutesForSelection(
   if (mins == null || mins < 1) {
     mins = ROUTING_FALLBACK_SERVICE_MINUTES;
   }
-  return mins;
+  return applyRoutingServiceMinuteBuffers(mins, {
+    ...bufferOptions,
+    numPets: bufferOptions?.numPets ?? pets,
+  });
 }
 
 export function appointmentTypeNameForRoutingStats(

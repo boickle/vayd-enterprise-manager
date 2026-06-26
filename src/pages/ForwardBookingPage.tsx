@@ -42,8 +42,15 @@ import {
 } from '../utils/forwardBookingHousehold';
 import { evetClientLink, evetPatientLink } from '../utils/evet';
 import { buildCareOutreachSmsMessage } from '../utils/careOutreachSmsMessage';
+import { fetchUnscheduledReminders } from '../api/careOutreach';
+import { careOutreachChipCountFetchRange } from '../utils/careOutreachPriorityFilters';
+import { buildReminderOutreachNotesByPatientId } from '../utils/reminderWorkingNotes';
 import {
   forwardBookingEntrySourceChip,
+  forwardBookingEntryBelongsOnForwardBookingPage,
+  forwardBookingListNoteText,
+  forwardBookingOnHoldBelongsInSchedulingTools,
+  forwardBookingSourceBookingNotesLabel,
   forwardBookingSourceChipColors,
   forwardBookingSourceChipLabel,
   parseForwardBookingSourceChipFilter,
@@ -67,14 +74,25 @@ import {
 import {
   clearForwardBookingReturnSession,
   forwardBookingEntryForReturnSession,
+  ON_HOLD_LIST_PATH,
   readForwardBookingReturnSession,
   type ForwardBookingReturnSessionV1,
 } from '../utils/forwardBookingReturnSession';
 import {
+  clearOnHoldVisitEditReturnSession,
+  readOnHoldVisitEditReturnSession,
+  writeOnHoldVisitEditSession,
+  type OnHoldVisitEditReturnV1,
+} from '../utils/onHoldVisitEditSession';
+import {
   resolveScheduleLoaderSmsBookedSlot,
 } from '../utils/scheduleLoaderSmsMessage';
-import { FORWARD_BOOKING_STATUS_PARAM, onHoldListPath, workflowPathForStatusFilter } from '../scheduling-tools-nav';
-import { notifySchedulingToolsNavCountsRefresh, SCHEDULING_TOOLS_PAGE_REFRESH_EVENT } from '../hooks/useSchedulingToolsNavCounts';
+import { FORWARD_BOOKING_STATUS_PARAM, bookedListPath, onHoldListPath, workflowPathForStatusFilter } from '../scheduling-tools-nav';
+import {
+  notifySchedulingToolsNavCountsRefresh,
+  SCHEDULING_TOOLS_PAGE_REFRESH_EVENT,
+} from '../hooks/useSchedulingToolsNavCounts';
+import { useBackgroundRefresh } from '../hooks/useBackgroundRefresh';
 import {
   formatForwardBookingIntervalLabel,
   formatForwardBookingOriginalVisitTargetLine,
@@ -159,7 +177,6 @@ const ON_HOLD_SOURCE_FILTERS: { key: ForwardBookingSourceChip; label: string }[]
   { key: 'care_outreach', label: 'Care outreach' },
   { key: 'schedule_loader', label: 'Schedule loader' },
   { key: 'end_visit', label: 'Forward booking' },
-  { key: 'appointment_request', label: 'Appointments' },
 ];
 
 function parseOnHoldSourceFilter(raw: string | null): ForwardBookingSourceChip | null {
@@ -368,10 +385,6 @@ function bookingNotesDisplay(entry: ForwardBookingEntry): string | null {
   return t;
 }
 
-function initialNote(entry: ForwardBookingEntry): string {
-  return entry.note ?? '';
-}
-
 function forwardBookingEntrySearchHaystack(
   entry: ForwardBookingEntry,
   practiceTz: string,
@@ -448,11 +461,12 @@ function linkedVisitStatusLine(
   return `Booked: ${visit}`;
 }
 
-export default function ForwardBookingPage({ variant = 'default' }: { variant?: 'default' | 'onHold' }) {
+export default function ForwardBookingPage({ variant = 'default' }: { variant?: 'default' | 'onHold' | 'booked' }) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const practiceTz = practiceTimeZoneOrDefault(undefined);
   const isOnHoldView = variant === 'onHold';
+  const isBookedView = variant === 'booked';
 
   const resolveBookedSlotForSms = useCallback(
     async (entry: ForwardBookingEntry) => {
@@ -465,10 +479,12 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
 
   const statusFilter: StatusFilter = isOnHoldView
     ? 'onHold'
-    : parseStatusFilterParam(searchParams.get(FORWARD_BOOKING_STATUS_PARAM));
+    : isBookedView
+      ? 'booked'
+      : parseStatusFilterParam(searchParams.get(FORWARD_BOOKING_STATUS_PARAM));
   const setStatusFilter = useCallback(
     (next: StatusFilter) => {
-      if (isOnHoldView) return;
+      if (isOnHoldView || isBookedView) return;
       const params = new URLSearchParams(searchParams);
       if (next === 'pending') params.delete(FORWARD_BOOKING_STATUS_PARAM);
       else params.set(FORWARD_BOOKING_STATUS_PARAM, next);
@@ -478,8 +494,16 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
       }
       setSearchParams(params);
     },
-    [isOnHoldView, searchParams, setSearchParams]
+    [isOnHoldView, isBookedView, searchParams, setSearchParams]
   );
+
+  useEffect(() => {
+    if (isOnHoldView) return;
+    if (searchParams.get(FORWARD_BOOKING_STATUS_PARAM) !== 'complete') return;
+    const params = new URLSearchParams(searchParams);
+    params.delete(FORWARD_BOOKING_STATUS_PARAM);
+    setSearchParams(params, { replace: true });
+  }, [isOnHoldView, searchParams, setSearchParams]);
 
   useEffect(() => {
     if (isOnHoldView || statusFilter !== 'onHold') return;
@@ -488,6 +512,14 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
     const qs = params.toString();
     navigate(qs ? `${onHoldListPath()}?${qs}` : onHoldListPath(), { replace: true });
   }, [isOnHoldView, navigate, searchParams, statusFilter]);
+
+  useEffect(() => {
+    if (isBookedView || statusFilter !== 'booked') return;
+    const params = new URLSearchParams(searchParams);
+    params.delete(FORWARD_BOOKING_STATUS_PARAM);
+    const qs = params.toString();
+    navigate(qs ? `${bookedListPath()}?${qs}` : bookedListPath(), { replace: true });
+  }, [isBookedView, navigate, searchParams, statusFilter]);
   const onHoldOver24Only =
     statusFilter === 'onHold' && searchParams.get(ON_HOLD_OVER24_SEARCH_PARAM) === '1';
   const onHoldSourceFilter =
@@ -546,6 +578,11 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
   const typeCatalogRef = useRef<AppointmentTypeCatalog | null>(null);
   const [listPage, setListPage] = useState(1);
   const [highlightEntryId, setHighlightEntryId] = useState<number | null>(null);
+  const [exitingRows, setExitingRows] = useState<Map<number, 'booked' | 'removed'>>(() => new Map());
+  const [pendingOnHoldExit, setPendingOnHoldExit] = useState<{
+    entryId: number;
+    kind: 'booked' | 'removed';
+  } | null>(null);
   /** After book return, show the highlighted row even if On Hold sub-filters would hide it. */
   const [returnHighlightBypassFilters, setReturnHighlightBypassFilters] = useState(false);
   const [postBookReturn, setPostBookReturn] = useState<ForwardBookingReturnSessionV1 | null>(null);
@@ -553,11 +590,41 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
   const postBookReturnProcessingRef = useRef(false);
   const rowRefs = useRef<Map<number, HTMLElement>>(new Map());
   const highlightScrollSig = useRef('');
+  const exitRowTimers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
+  const pendingOnHoldEditReturnRef = useRef<OnHoldVisitEditReturnV1 | null>(null);
 
-  const listTitle = isOnHoldView ? 'On hold' : 'Forward booking';
+  const [reminderOutreachNotesByPatientId, setReminderOutreachNotesByPatientId] = useState<
+    Map<number, string>
+  >(() => new Map());
+
+  const resolveListNote = useCallback(
+    (entry: ForwardBookingEntry) =>
+      forwardBookingListNoteText(entry, { reminderOutreachNotesByPatientId }),
+    [reminderOutreachNotesByPatientId],
+  );
+
+  const listTitle = isOnHoldView ? 'On hold' : isBookedView ? 'Booked' : 'Forward booking';
   const listDescription = isOnHoldView
-    ? 'Calendar holds from care outreach, schedule loader, forward booking, and appointment requests. Convert holds to booked visits when ready.'
-    : 'Visits routed from care outreach, schedule loader, and end-of-visit follow-ups. Use the status filters to move each visit from needs booking → booked → complete.';
+    ? 'Calendar holds from care outreach, schedule loader, and forward booking. Convert holds to booked visits when ready.'
+    : isBookedView
+      ? 'Visits booked from forward booking workflows. Cancel or remove on the calendar to drop off this list.'
+      : 'End-of-visit forward bookings and manual entries. Use the status filters to move each visit from needs booking → booked.';
+
+  const searchPlaceholder = isBookedView
+    ? 'Search booked visits: client, patient, provider, notes…'
+    : isOnHoldView
+      ? 'Search on hold: client, patient, provider, notes…'
+      : 'Search all tabs: client, patient, provider, notes…';
+  const searchAriaLabel = isBookedView
+    ? 'Search booked visits'
+    : isOnHoldView
+      ? 'Search on hold visits'
+      : 'Search forward booking list across all tabs';
+  const searchActiveHint = isBookedView
+    ? 'Searching booked visits'
+    : isOnHoldView
+      ? 'Searching on hold'
+      : 'Searching across all tabs';
 
   useEffect(() => {
     void fetchSchedulingOutreachSmsFrom().then((phone) => {
@@ -565,20 +632,46 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
     });
   }, []);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    setBookedApptPoints(null);
-    setBookedApptMeta(null);
+  const loadInFlightRef = useRef(false);
+
+  const load = useCallback(async (opts?: { silent?: boolean }) => {
+    const silent = opts?.silent ?? false;
+    if (loadInFlightRef.current) return;
+    loadInFlightRef.current = true;
+
+    if (isOnHoldView && !silent) {
+      const pendingOnHoldReturn = readOnHoldVisitEditReturnSession();
+      if (pendingOnHoldReturn?.listKind === 'forward_booking') {
+        clearOnHoldVisitEditReturnSession();
+        pendingOnHoldEditReturnRef.current = pendingOnHoldReturn;
+      }
+    }
+    if (!silent) {
+      setLoading(true);
+      setError(null);
+      setBookedApptPoints(null);
+      setBookedApptMeta(null);
+    }
     try {
-      const [types, rawList] = await Promise.all([
+      const careOutreachRange = isOnHoldView ? careOutreachChipCountFetchRange() : null;
+      const [types, rawList, unscheduledReminders] = await Promise.all([
         fetchAllAppointmentTypes(PRACTICE_ID, { activeOnly: false }),
         fetchForwardBookings({
           practiceId: PRACTICE_ID,
           limit: 2000,
           includeRemoved: true,
         }),
+        careOutreachRange
+          ? fetchUnscheduledReminders({
+              practiceId: PRACTICE_ID,
+              dueDateFrom: careOutreachRange.from,
+              dueDateTo: careOutreachRange.to,
+              limit: 2000,
+            }).catch(() => [])
+          : Promise.resolve([]),
       ]);
+      const outreachByPatient = buildReminderOutreachNotesByPatientId(unscheduledReminders);
+      setReminderOutreachNotesByPatientId(outreachByPatient);
       const catalog = buildAppointmentTypeCatalogFromTypes(types);
       typeCatalogRef.current = catalog;
       let list = mergeForwardBookingsWithLocalLinks(
@@ -596,25 +689,64 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
       setBookedApptMeta(metaMap);
       setBookedApptPoints(pointsMap);
       setRows(list);
-      const drafts: Record<number, string> = {};
-      for (const r of list) {
-        drafts[r.id] = initialNote(r);
+      if (silent) {
+        setNoteDrafts((drafts) => {
+          const next = { ...drafts };
+          for (const r of list) {
+            if (next[r.id] == null) {
+              next[r.id] = forwardBookingListNoteText(r, {
+                reminderOutreachNotesByPatientId: outreachByPatient,
+              });
+            }
+          }
+          return next;
+        });
+      } else {
+        const drafts: Record<number, string> = {};
+        for (const r of list) {
+          drafts[r.id] = forwardBookingListNoteText(r, {
+            reminderOutreachNotesByPatientId: outreachByPatient,
+          });
+        }
+        setNoteDrafts(drafts);
+        setNoteSaving({});
+        setNoteError({});
       }
-      setNoteDrafts(drafts);
-      setNoteSaving({});
-      setNoteError({});
+
+      if (!silent) {
+        const pendingOnHoldReturn = pendingOnHoldEditReturnRef.current;
+        if (pendingOnHoldReturn) {
+          pendingOnHoldEditReturnRef.current = null;
+          if (
+            pendingOnHoldReturn.exitKind === 'booked' ||
+            pendingOnHoldReturn.exitKind === 'removed'
+          ) {
+            setPendingOnHoldExit({
+              entryId: pendingOnHoldReturn.listEntryId,
+              kind: pendingOnHoldReturn.exitKind,
+            });
+          } else {
+            setHighlightEntryId(pendingOnHoldReturn.listEntryId);
+            setReturnHighlightBypassFilters(true);
+            highlightScrollSig.current = `${pendingOnHoldReturn.listEntryId}-${Date.now()}`;
+          }
+        }
+      }
     } catch (e: unknown) {
-      const msg =
-        (e as { response?: { data?: { message?: string } } })?.response?.data?.message ??
-        (e as Error)?.message ??
-        'Failed to load forward bookings';
-      setError(String(msg));
-      setRows([]);
+      if (!silent) {
+        const msg =
+          (e as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+          (e as Error)?.message ??
+          'Failed to load forward bookings';
+        setError(String(msg));
+        setRows([]);
+      }
     } finally {
-      setLoading(false);
+      loadInFlightRef.current = false;
+      if (!silent) setLoading(false);
       notifySchedulingToolsNavCountsRefresh();
     }
-  }, [practiceTz]);
+  }, [practiceTz, isOnHoldView]);
 
   useEffect(() => {
     const pending = readForwardBookingReturnSession();
@@ -822,6 +954,36 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
     return () => window.removeEventListener(SCHEDULING_TOOLS_PAGE_REFRESH_EVENT, onPageRefresh);
   }, [load]);
 
+  const refreshSilently = useCallback(() => load({ silent: true }), [load]);
+
+  const isRefreshBusy = useCallback(() => {
+    if (loading) return true;
+    if (smsEntry) return true;
+    if (manualCompleteEntry) return true;
+    if (bookLaterEntry) return true;
+    if (createOpen) return true;
+    if (Object.values(noteSaving).some(Boolean)) return true;
+    if (Object.values(followUpCompleting).some(Boolean)) return true;
+    if (Object.values(removing).some(Boolean)) return true;
+    if (Object.values(bookLaterUpdating).some(Boolean)) return true;
+    return false;
+  }, [
+    loading,
+    smsEntry,
+    manualCompleteEntry,
+    bookLaterEntry,
+    createOpen,
+    noteSaving,
+    followUpCompleting,
+    removing,
+    bookLaterUpdating,
+  ]);
+
+  useBackgroundRefresh(refreshSilently, {
+    enabled: isOnHoldView || isBookedView,
+    isBusy: isRefreshBusy,
+  });
+
   useEffect(() => {
     if (searchParams.get(FORWARD_BOOKING_CREATE_NEW_PARAM) !== '1') return;
     const patientId = Number(searchParams.get(FORWARD_BOOKING_CREATE_PATIENT_PARAM));
@@ -887,7 +1049,7 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
         note: noteForPatch(value),
       });
       setRows((prev) => prev.map((r) => (r.id === entryId ? { ...r, ...updated } : r)));
-      setNoteDrafts((d) => ({ ...d, [entryId]: initialNote(updated) }));
+      setNoteDrafts((d) => ({ ...d, [entryId]: resolveListNote(updated) }));
     } catch (e: unknown) {
       const msg =
         (e as { response?: { data?: { message?: string } } })?.response?.data?.message ??
@@ -897,7 +1059,7 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
     } finally {
       setNoteSaving((s) => ({ ...s, [entryId]: false }));
     }
-  }, []);
+  }, [resolveListNote]);
 
   function onNoteChange(entryId: number, value: string) {
     setNoteDrafts((d) => ({ ...d, [entryId]: value }));
@@ -905,16 +1067,20 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
   }
 
   function noteIsDirty(entry: ForwardBookingEntry): boolean {
-    const draft = noteDrafts[entry.id] ?? initialNote(entry);
-    return noteForPatch(draft) !== noteForPatch(initialNote(entry));
+    const draft = noteDrafts[entry.id] ?? resolveListNote(entry);
+    return noteForPatch(draft) !== noteForPatch(resolveListNote(entry));
   }
 
   function saveNote(entry: ForwardBookingEntry) {
-    const value = noteDrafts[entry.id] ?? initialNote(entry);
+    const value = noteDrafts[entry.id] ?? resolveListNote(entry);
     void flushNoteSave(entry.id, value);
   }
 
-  const visibleRows = useMemo(() => rows.filter((r) => forwardBookingEntryVisibleOnList(r)), [rows]);
+  const visibleRows = useMemo(() => {
+    const list = rows.filter((r) => forwardBookingEntryVisibleOnList(r));
+    if (isOnHoldView || isBookedView) return list;
+    return list.filter((r) => forwardBookingEntryBelongsOnForwardBookingPage(r));
+  }, [rows, isOnHoldView, isBookedView]);
 
   const tabCounts = useMemo(() => {
     const counts: Record<StatusFilter, number> = {
@@ -926,7 +1092,9 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
       removed: 0,
     };
     for (const row of visibleRows) {
-      counts[forwardBookingListTab(row, practiceTz, bookedApptMeta, typeCatalogRef.current)] += 1;
+      const tab = forwardBookingListTab(row, practiceTz, bookedApptMeta, typeCatalogRef.current);
+      if (tab === 'onHold' && !forwardBookingOnHoldBelongsInSchedulingTools(row)) continue;
+      counts[tab] += 1;
     }
     return counts;
   }, [visibleRows, practiceTz, bookedApptMeta]);
@@ -939,6 +1107,7 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
       ) {
         continue;
       }
+      if (!forwardBookingOnHoldBelongsInSchedulingTools(row)) continue;
       if (forwardBookingOnHoldOver24Hours(row, bookedApptMeta)) count += 1;
     }
     return count;
@@ -957,6 +1126,7 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
       ) {
         continue;
       }
+      if (!forwardBookingOnHoldBelongsInSchedulingTools(row)) continue;
       const chip = forwardBookingEntrySourceChip(row);
       if (chip) counts[chip] += 1;
     }
@@ -979,6 +1149,8 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
 
     const matchesOnHoldFilters = (r: ForwardBookingEntry) => {
       if (statusFilter !== 'onHold') return true;
+      if (exitingRows.has(r.id)) return true;
+      if (!forwardBookingOnHoldBelongsInSchedulingTools(r)) return false;
       if (returnHighlightBypassFilters) return true;
       if (onHoldOver24Only && !forwardBookingOnHoldOver24Hours(r, bookedApptMeta)) return false;
       if (onHoldSourceFilter && forwardBookingEntrySourceChip(r) !== onHoldSourceFilter) {
@@ -992,13 +1164,26 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
         r,
         searchQuery,
         practiceTz,
-        noteDrafts[r.id] ?? initialNote(r),
+        noteDrafts[r.id] ?? resolveListNote(r),
         typeCatalogRef.current
       );
 
     if (searchActive) {
+      if (isBookedView || isOnHoldView) {
+        const scopedTab: ForwardBookingListTab = isBookedView ? 'booked' : 'onHold';
+        const matching = visibleRows.filter(
+          (r) =>
+            exitingRows.has(r.id) ||
+            (matchesSearch(r) &&
+              matchesOnHoldFilters(r) &&
+              forwardBookingListTab(r, practiceTz, bookedApptMeta, typeCatalogRef.current) ===
+                scopedTab)
+        );
+        return sortList(matching, scopedTab);
+      }
+
       const matching = visibleRows.filter(
-        (r) => matchesSearch(r) && matchesOnHoldFilters(r)
+        (r) => exitingRows.has(r.id) || (matchesSearch(r) && matchesOnHoldFilters(r))
       );
       const byTab = new Map<ForwardBookingListTab, ForwardBookingEntry[]>();
       for (const row of matching) {
@@ -1017,8 +1202,10 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
 
     const list = visibleRows.filter(
       (r) =>
-        forwardBookingListTab(r, practiceTz, bookedApptMeta, typeCatalogRef.current) ===
-          statusFilter && matchesOnHoldFilters(r)
+        exitingRows.has(r.id) ||
+        (forwardBookingListTab(r, practiceTz, bookedApptMeta, typeCatalogRef.current) ===
+          statusFilter &&
+          matchesOnHoldFilters(r))
     );
     return sortList(list, statusFilter);
   }, [
@@ -1031,10 +1218,12 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
     onHoldOver24Only,
     onHoldSourceFilter,
     returnHighlightBypassFilters,
+    exitingRows,
+    isBookedView,
+    isOnHoldView,
   ]);
 
-  const useWorkflowListPagination =
-    statusFilter === 'booked' || statusFilter === 'complete';
+  const useWorkflowListPagination = filtered.length > WORKFLOW_LIST_PAGE_SIZE;
 
   const workflowListTotalPages = useMemo(() => {
     if (!useWorkflowListPagination) return 1;
@@ -1122,6 +1311,39 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
     listPage,
     useWorkflowListPagination,
   ]);
+
+  useEffect(() => {
+    return () => {
+      for (const t of exitRowTimers.current.values()) window.clearTimeout(t);
+      exitRowTimers.current.clear();
+    };
+  }, []);
+
+  const beginRowExit = useCallback((entryId: number, kind: 'booked' | 'removed') => {
+    setExitingRows((prev) => new Map(prev).set(entryId, kind));
+    setHighlightEntryId(entryId);
+    setReturnHighlightBypassFilters(true);
+    const existing = exitRowTimers.current.get(entryId);
+    if (existing) window.clearTimeout(existing);
+    const timer = setTimeout(() => {
+      exitRowTimers.current.delete(entryId);
+      setExitingRows((prev) => {
+        const next = new Map(prev);
+        next.delete(entryId);
+        return next;
+      });
+      setHighlightEntryId((cur) => (cur === entryId ? null : cur));
+      setReturnHighlightBypassFilters(false);
+    }, 1100);
+    exitRowTimers.current.set(entryId, timer);
+  }, []);
+
+  useEffect(() => {
+    if (!pendingOnHoldExit) return;
+    const { entryId, kind } = pendingOnHoldExit;
+    setPendingOnHoldExit(null);
+    beginRowExit(entryId, kind);
+  }, [pendingOnHoldExit, beginRowExit]);
 
   const onBook = (entry: ForwardBookingEntry) => {
     const intent = buildRoutingForwardBookingIntentFromEntry(entry);
@@ -1226,6 +1448,17 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
       const providerId =
         meta?.providerInternalId ??
         (entry.primaryProvider?.id != null ? String(entry.primaryProvider.id) : undefined);
+
+      if (isOnHoldView) {
+        writeOnHoldVisitEditSession({
+          listEntryId: entry.id,
+          listKind: 'forward_booking',
+          bookedAppointmentId: apptId,
+          clientLabel: clientDisplay(entry).name,
+          returnPath: ON_HOLD_LIST_PATH,
+        });
+      }
+
       writeSchedulerFocusSession({
         appointmentId: apptId,
         dateHint: dateKey,
@@ -1249,7 +1482,7 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
     (updated: ForwardBookingEntry) => {
       clearForwardBookingLocalLink(updated.id);
       setRows((prev) => prev.map((r) => (r.id === updated.id ? { ...r, ...updated } : r)));
-      setNoteDrafts((d) => ({ ...d, [updated.id]: initialNote(updated) }));
+      setNoteDrafts((d) => ({ ...d, [updated.id]: resolveListNote(updated) }));
       const apptId = forwardBookingLinkedAppointmentId(updated);
       const catalog = typeCatalogRef.current;
       if (apptId != null && catalog) {
@@ -1365,8 +1598,10 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
       ) : null}
 
       <div style={{ marginBottom: 14, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
-        {!isOnHoldView
-          ? STATUS_TABS.filter(({ key }) => key !== 'onHold').map(({ key, label }) => (
+        {!isOnHoldView && !isBookedView
+          ? STATUS_TABS.filter(
+              ({ key }) => key !== 'onHold' && key !== 'booked' && key !== 'complete',
+            ).map(({ key, label }) => (
               <button
                 key={key}
                 type="button"
@@ -1398,6 +1633,14 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
               </button>
             ))
           : null}
+        {isBookedView ? (
+          <span
+            className="settings-muted"
+            style={{ fontSize: 13, fontWeight: 600, marginRight: 4 }}
+          >
+            All booked ({tabCounts.booked})
+          </span>
+        ) : null}
         {isOnHoldView ? (
           <span
             className="settings-muted"
@@ -1474,15 +1717,15 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
         <input
           type="search"
           className="settings-input"
-          placeholder="Search all tabs: client, patient, provider, notes…"
+          placeholder={searchPlaceholder}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          aria-label="Search forward booking list across all tabs"
+          aria-label={searchAriaLabel}
           style={{ width: '100%' }}
         />
         {searchActive ? (
           <p className="settings-muted" style={{ fontSize: 12, margin: '6px 0 0' }}>
-            Searching across all tabs
+            {searchActiveHint}
             {filtered.length > 0
               ? ` · ${filtered.length} result${filtered.length === 1 ? '' : 's'}`
               : ''}
@@ -1573,9 +1816,6 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
               dayjs(resolvedTargetDueDate).startOf('day').isBefore(dayjs().startOf('day'));
             const isBookLater = forwardBookingIsBookLater(entry, practiceTz);
             const bookAfterIso = forwardBookingBookAfterDateIso(entry);
-            const highPriority =
-              forwardBookingIsHighPriority(entry, practiceTz) &&
-              entry.status !== 'removed';
             const isRemoved = entry.status === 'removed';
             const sourceChip = !isRemoved ? forwardBookingEntrySourceChip(entry) : null;
 
@@ -1586,6 +1826,10 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
               bookedApptMeta,
               typeCatalogRef.current
             );
+            const highPriority =
+              forwardBookingIsHighPriority(entry, practiceTz) &&
+              entry.status !== 'removed' &&
+              entryListTab !== 'booked';
             const showBookedFollowUpActions = hasLinked && !isComplete && !isRemoved;
             const showPendingQueueActions = !hasLinked && !isComplete && !isRemoved && !isBookLater;
             const showBookLaterTabActions = isBookLater;
@@ -1604,6 +1848,8 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
             const showSingleBook = showPendingQueueActions && sameTargetPeers.length === 1;
 
             const rowHighlighted = highlightEntryId === entry.id;
+            const exitKind = exitingRows.get(entry.id);
+            const rowExiting = exitKind != null;
 
             return (
               <div
@@ -1614,16 +1860,25 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
                 }}
                 className={[
                   'forward-booking-household-entry',
-                  hasLinked && !rowHighlighted ? 'forward-booking-household-entry--booked' : '',
-                  rowHighlighted ? 'forward-booking-household-entry--highlighted' : '',
+                  hasLinked && !rowHighlighted && !rowExiting
+                    ? 'forward-booking-household-entry--booked'
+                    : '',
+                  rowHighlighted && !rowExiting ? 'forward-booking-household-entry--highlighted' : '',
+                  rowExiting ? `appt-request-row--exiting appt-request-row--exiting-${exitKind}` : '',
                 ]
                   .filter(Boolean)
                   .join(' ')}
+                style={rowExiting ? { position: 'relative' } : undefined}
               >
+                {rowExiting ? (
+                  <div className="appt-request-row-exit-badge" aria-live="polite">
+                    {exitKind === 'booked' ? 'Visit booked' : 'Removed'}
+                  </div>
+                ) : null}
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, justifyContent: 'space-between' }}>
                   <div style={{ flex: '1 1 240px', minWidth: 0 }}>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
-                      {searchActive ? (
+                      {searchActive && !isBookedView && !isOnHoldView ? (
                         <div
                           style={{
                             display: 'inline-block',
@@ -1712,7 +1967,7 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
                           {forwardBookingSourceChipLabel(sourceChip)}
                         </div>
                       ) : null}
-                      {isComplete ? (
+                      {isComplete && !isBookedView ? (
                         <div
                           style={{
                             display: 'inline-block',
@@ -1823,7 +2078,7 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
                     ) : null}
                     {bookingNotesDisplay(entry) ? (
                       <div className="settings-muted" style={{ fontSize: '0.88rem', marginTop: 4 }}>
-                        Forward booking note: {bookingNotesDisplay(entry)}
+                        {forwardBookingSourceBookingNotesLabel(entry)}: {bookingNotesDisplay(entry)}
                       </div>
                     ) : null}
                     {linkedStatusLine ? (
@@ -1910,7 +2165,7 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
                           fontFamily: 'inherit',
                           fontSize: 13,
                         }}
-                        value={noteDrafts[entry.id] ?? initialNote(entry)}
+                        value={noteDrafts[entry.id] ?? resolveListNote(entry)}
                         onChange={(e) => onNoteChange(entry.id, e.target.value)}
                         placeholder="e.g. Call client in March"
                         aria-label={`Notes for ${c.name}, ${patientName}`}
@@ -1974,14 +2229,16 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
                         >
                           Change date
                         </button>
-                        <button
-                          type="button"
-                          className="btn secondary"
-                          disabled={Boolean(removing[entry.id])}
-                          onClick={() => void markForwardBookingRemoved(entry)}
-                        >
-                          {removing[entry.id] ? 'Removing…' : 'Remove'}
-                        </button>
+                        {!isOnHoldView && !isBookedView ? (
+                          <button
+                            type="button"
+                            className="btn secondary"
+                            disabled={Boolean(removing[entry.id])}
+                            onClick={() => void markForwardBookingRemoved(entry)}
+                          >
+                            {removing[entry.id] ? 'Removing…' : 'Remove'}
+                          </button>
+                        ) : null}
                       </>
                     ) : hasLinked || isComplete ? (
                       <>
@@ -2003,28 +2260,20 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
                           View appointment
                         </button>
                         {showBookedFollowUpActions ? (
-                          <>
-                            <button type="button" className="btn secondary" onClick={() => onBook(entry)}>
-                              Reschedule
-                            </button>
-                            <button
-                              type="button"
-                              className="btn primary"
-                              disabled={Boolean(followUpCompleting[entry.id])}
-                              onClick={() => void markFollowUpComplete(entry)}
-                            >
-                              {followUpCompleting[entry.id] ? 'Saving…' : 'Mark Complete'}
-                            </button>
-                          </>
+                          <button type="button" className="btn secondary" onClick={() => onBook(entry)}>
+                            Reschedule
+                          </button>
                         ) : null}
-                        <button
-                          type="button"
-                          className="btn secondary"
-                          disabled={Boolean(removing[entry.id])}
-                          onClick={() => void markForwardBookingRemoved(entry)}
-                        >
-                          {removing[entry.id] ? 'Removing…' : 'Remove'}
-                        </button>
+                        {!isOnHoldView && !isBookedView ? (
+                          <button
+                            type="button"
+                            className="btn secondary"
+                            disabled={Boolean(removing[entry.id])}
+                            onClick={() => void markForwardBookingRemoved(entry)}
+                          >
+                            {removing[entry.id] ? 'Removing…' : 'Remove'}
+                          </button>
+                        ) : null}
                       </>
                     ) : showPendingQueueActions ? (
                       <>
@@ -2065,14 +2314,16 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
                         >
                           Mark complete…
                         </button>
-                        <button
-                          type="button"
-                          className="btn secondary"
-                          disabled={Boolean(removing[entry.id])}
-                          onClick={() => void markForwardBookingRemoved(entry)}
-                        >
-                          {removing[entry.id] ? 'Removing…' : 'Remove'}
-                        </button>
+                        {!isOnHoldView && !isBookedView ? (
+                          <button
+                            type="button"
+                            className="btn secondary"
+                            disabled={Boolean(removing[entry.id])}
+                            onClick={() => void markForwardBookingRemoved(entry)}
+                          >
+                            {removing[entry.id] ? 'Removing…' : 'Remove'}
+                          </button>
+                        ) : null}
                       </>
                     ) : null}
                     {bookLaterError[entry.id] ? (
