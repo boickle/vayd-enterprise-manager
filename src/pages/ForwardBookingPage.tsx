@@ -578,7 +578,7 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
   const typeCatalogRef = useRef<AppointmentTypeCatalog | null>(null);
   const [listPage, setListPage] = useState(1);
   const [highlightEntryId, setHighlightEntryId] = useState<number | null>(null);
-  const [exitingRows, setExitingRows] = useState<Map<number, 'booked' | 'removed'>>(() => new Map());
+  const [exitingRows, setExitingRows] = useState<Map<number, 'booked' | 'removed' | 'onHold'>>(() => new Map());
   const [pendingOnHoldExit, setPendingOnHoldExit] = useState<{
     entryId: number;
     kind: 'booked' | 'removed';
@@ -748,9 +748,28 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
     }
   }, [practiceTz, isOnHoldView]);
 
+  const beginRowExit = useCallback((entryId: number, kind: 'booked' | 'removed' | 'onHold') => {
+    setExitingRows((prev) => new Map(prev).set(entryId, kind));
+    setHighlightEntryId(entryId);
+    setReturnHighlightBypassFilters(true);
+    const existing = exitRowTimers.current.get(entryId);
+    if (existing) window.clearTimeout(existing);
+    const timer = setTimeout(() => {
+      exitRowTimers.current.delete(entryId);
+      setExitingRows((prev) => {
+        const next = new Map(prev);
+        next.delete(entryId);
+        return next;
+      });
+      setHighlightEntryId((cur) => (cur === entryId ? null : cur));
+      setReturnHighlightBypassFilters(false);
+    }, 1100);
+    exitRowTimers.current.set(entryId, timer);
+  }, []);
+
   useEffect(() => {
     const pending = readForwardBookingReturnSession();
-    if (!pending) return;
+    if (!pending || pending.returnOrigin === 'care_outreach') return;
     postBookReturnHandledRef.current = false;
     setPostBookReturn(pending);
     setReturnHighlightBypassFilters(true);
@@ -833,11 +852,18 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
       }
       if (points == null) points = 0;
 
+      const isHoldBook = points <= 0;
       const targetTab =
-        pending.targetWorkflowTab ?? (points <= 0 ? 'onHold' : 'booked');
-      if (statusFilter !== targetTab) {
+        pending.targetWorkflowTab ?? (isHoldBook ? 'onHold' : 'booked');
+
+      if (!isHoldBook && statusFilter !== targetTab) {
         postBookReturnProcessingRef.current = false;
         navigate(workflowPathForStatusFilter(targetTab), { replace: true });
+        return;
+      }
+
+      if (pending.returnOrigin === 'care_outreach') {
+        postBookReturnProcessingRef.current = false;
         return;
       }
 
@@ -855,10 +881,17 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
       }
       setRows((prev) => mergeListWithReturnLink(prev.length ? prev : nextRows, entry!.id));
 
-      setHighlightEntryId(entry.id);
-      highlightScrollSig.current = `${entry.id}-${Date.now()}`;
+      if (isHoldBook) {
+        beginRowExit(entry.id, 'onHold');
+      } else {
+        setHighlightEntryId(entry.id);
+        highlightScrollSig.current = `${entry.id}-${Date.now()}`;
+      }
 
-      if (points > 0) return;
+      if (!isHoldBook) {
+        postBookReturnProcessingRef.current = false;
+        return;
+      }
 
       let smsTarget = await enrichForwardBookingEntryClientPhone(entry);
       if (!clientHasSmsPhone(smsTarget)) return;
@@ -940,6 +973,7 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
     rows,
     statusFilter,
     navigate,
+    beginRowExit,
   ]);
 
   useEffect(() => {
@@ -1317,25 +1351,6 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
       for (const t of exitRowTimers.current.values()) window.clearTimeout(t);
       exitRowTimers.current.clear();
     };
-  }, []);
-
-  const beginRowExit = useCallback((entryId: number, kind: 'booked' | 'removed') => {
-    setExitingRows((prev) => new Map(prev).set(entryId, kind));
-    setHighlightEntryId(entryId);
-    setReturnHighlightBypassFilters(true);
-    const existing = exitRowTimers.current.get(entryId);
-    if (existing) window.clearTimeout(existing);
-    const timer = setTimeout(() => {
-      exitRowTimers.current.delete(entryId);
-      setExitingRows((prev) => {
-        const next = new Map(prev);
-        next.delete(entryId);
-        return next;
-      });
-      setHighlightEntryId((cur) => (cur === entryId ? null : cur));
-      setReturnHighlightBypassFilters(false);
-    }, 1100);
-    exitRowTimers.current.set(entryId, timer);
   }, []);
 
   useEffect(() => {
@@ -1872,7 +1887,11 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
               >
                 {rowExiting ? (
                   <div className="appt-request-row-exit-badge" aria-live="polite">
-                    {exitKind === 'booked' ? 'Visit booked' : 'Removed'}
+                    {exitKind === 'onHold'
+                      ? 'Moved to hold'
+                      : exitKind === 'booked'
+                        ? 'Visit booked'
+                        : 'Removed'}
                   </div>
                 ) : null}
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, justifyContent: 'space-between' }}>

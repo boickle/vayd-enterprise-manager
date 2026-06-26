@@ -157,7 +157,7 @@ export default function SchedulingTools() {
   const location = useLocation();
   const ctx = useOutletContext<SchedulingToolsOutletContext | undefined>();
   const base = (ctx?.schedulingToolsLinkPrefix ?? '/scheduling-tools').replace(/\/$/, '');
-  const { counts, loading: countsLoading, refresh } = useSchedulingToolsNavCounts(true, location.pathname);
+  const { counts, loading: countsLoading, refresh } = useSchedulingToolsNavCounts(true);
   const [refreshing, setRefreshing] = useState(false);
 
   const handleRefresh = async () => {

@@ -27,6 +27,15 @@ export type ForwardBookingReturnSessionV1 = {
   scheduleLoaderAnyPastDue?: boolean;
   /** Workflow list tab to open after book (from saved appointment type). */
   targetWorkflowTab?: 'onHold' | 'booked';
+  /** List the user came from — hold books return here instead of the On hold tab. */
+  returnOrigin?: 'forward_booking' | 'care_outreach' | 'schedule_loader';
+  /** Care outreach client row key for exit animation after hold book. */
+  careOutreachClientKey?: string;
+  careOutreachClientDisplayName?: string | null;
+  careOutreachClientId?: number | null;
+  careOutreachClientPhone?: string | null;
+  careOutreachClientFirstName?: string | null;
+  careOutreachProviderLastName?: string | null;
 };
 
 export function readForwardBookingReturnSession(): ForwardBookingReturnSessionV1 | null {
@@ -100,4 +109,4 @@ export const BOOKED_LIST_PATH = '/schedule/scheduling-tools/booked';
 export const COMPLETE_LIST_PATH = '/schedule/scheduling-tools/complete';
 export const CARE_OUTREACH_LIST_PATH = '/schedule/scheduling-tools/care-outreach';
 
-export { schedulingWorkflowListPathAfterBook } from '../scheduling-tools-nav';
+export { schedulingWorkflowListPathAfterBook, schedulingReturnPathAfterBook } from '../scheduling-tools-nav';
