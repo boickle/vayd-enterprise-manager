@@ -10,6 +10,11 @@ import { linkedAppointmentEvetIdsFromRecord } from './appointmentRequestLinkedEv
 import { appointmentLinkedClientLabel } from './schedulerVisitDisplay';
 import { isAppointmentCancelledOnPracticeCalendar } from '../api/appointments';
 import type { Appointment } from '../api/roomLoader';
+import { requestDataAppointmentTypeForRouting } from './appointmentRequestDisplay';
+import {
+  pointsPerPatientForType,
+  type AppointmentTypeCatalog,
+} from './appointmentTypeSettings';
 
 export type AppointmentRequestBookedApptSummary = {
   start: string;
@@ -141,20 +146,47 @@ export function appointmentRequestBookedSummaryFromAppointment(
   };
 }
 
+export function appointmentRequestSubmissionLinkedPoints(
+  item: AppointmentRequestSubmissionItem,
+  bookedApptMeta: ReadonlyMap<number, AppointmentRequestBookedApptSummary>,
+  catalog?: AppointmentTypeCatalog | null,
+): number | null {
+  const apptId = item.bookedAppointmentId;
+  if (apptId == null) return null;
+  const summary = bookedApptMeta.get(Number(apptId));
+  if (summary != null) {
+    if (summary.appointmentCancelled) return null;
+    return summary.points;
+  }
+  if (!catalog) return null;
+  const { label, typeId } = requestDataAppointmentTypeForRouting(item.requestData ?? {});
+  if (typeId == null && !label?.trim()) return null;
+  return pointsPerPatientForType(catalog, { typeId, typeName: label });
+}
+
+/** On hold when the linked calendar appointment has 0 ops points (same rule as forward booking). */
 export function appointmentRequestSubmissionIsOnHold(
   item: AppointmentRequestSubmissionItem,
   bookedApptMeta: ReadonlyMap<number, AppointmentRequestBookedApptSummary>,
-  householdClumpByBookedApptId?: ReadonlyMap<number, number[]>,
+  catalog?: AppointmentTypeCatalog | null,
 ): boolean {
-  const apptId = item.bookedAppointmentId;
-  if (apptId == null) return false;
-  const anchorId = Number(apptId);
-  const clumpIds = householdClumpByBookedApptId?.get(anchorId) ?? [anchorId];
-  for (const id of clumpIds) {
-    const summary = bookedApptMeta.get(id);
-    if (appointmentRequestLinkedVisitIsOnHold(summary)) return true;
+  if (item.bookedAppointmentId == null) return false;
+  const linkedPoints = item.linkedVisitPoints;
+  if (linkedPoints != null && Number.isFinite(linkedPoints)) {
+    return linkedPoints <= 0;
   }
-  return false;
+  const points = appointmentRequestSubmissionLinkedPoints(item, bookedApptMeta, catalog);
+  return points != null && points <= 0;
+}
+
+/** Booked tab / booked styling — not when the linked visit is on hold (0 points). */
+export function appointmentRequestSubmissionCountsAsBooked(
+  item: AppointmentRequestSubmissionItem,
+  bookedApptMeta: ReadonlyMap<number, AppointmentRequestBookedApptSummary>,
+  catalog?: AppointmentTypeCatalog | null,
+): boolean {
+  if ((item.status ?? 'new') !== 'booked') return false;
+  return !appointmentRequestSubmissionIsOnHold(item, bookedApptMeta, catalog);
 }
 
 export {
