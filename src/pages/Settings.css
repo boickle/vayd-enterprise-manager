@@ -1442,6 +1442,11 @@
   color: #fff;
 }
 
+.appt-request-row--exiting-onHold .appt-request-row-exit-badge {
+  background: #fef3c7;
+  color: #92400e;
+}
+
 .appt-request-row--exiting-booked > div:not(.appt-request-row-exit-badge) {
   opacity: 0.45;
 }
@@ -1451,6 +1456,10 @@
 }
 
 .appt-request-row--exiting-contacted > div:not(.appt-request-row-exit-badge) {
+  opacity: 0.45;
+}
+
+.appt-request-row--exiting-onHold > :not(.appt-request-row-exit-badge) {
   opacity: 0.45;
 }
 

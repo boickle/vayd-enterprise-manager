@@ -294,7 +294,7 @@ import {
   forwardBookingBookedPatientNames,
   isHoldAppointmentTypeForBook,
 } from '../utils/forwardBookingBookToast';
-import { FORWARD_BOOKING_LIST_PATH, writeForwardBookingReturnSession, CARE_OUTREACH_LIST_PATH, schedulingWorkflowListPathAfterBook } from '../utils/forwardBookingReturnSession';
+import { FORWARD_BOOKING_LIST_PATH, writeForwardBookingReturnSession, CARE_OUTREACH_LIST_PATH, schedulingReturnPathAfterBook } from '../utils/forwardBookingReturnSession';
 import { providerLastNameFromDisplayName } from '../utils/scheduleLoaderSmsMessage';
 import { slotOfferFlowActive } from '../utils/slotOfferFromRouting';
 import { notifySchedulingToolsNavCountsRefresh } from '../hooks/useSchedulingToolsNavCounts';
@@ -6392,48 +6392,76 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             ),
             scheduleLoaderAnyPastDue: fbiAtBook?.scheduleLoaderAnyPastDue !== false,
             targetWorkflowTab: isHold ? 'onHold' : 'booked',
+            returnOrigin: 'schedule_loader',
           });
           clearRoutingPersistenceAfterSchedulerBook();
           clearRoutingCalendarPreview();
           setRoutingPreview(null);
           clearRoutingRescheduleIntent();
           clearRoutingForwardBookingIntent();
-          navigate(schedulingWorkflowListPathAfterBook(isHold));
+          navigate(
+            schedulingReturnPathAfterBook({
+              isHold,
+              origin: 'schedule_loader',
+              scheduleLoaderReturnHref: scheduleLoaderReturnHref(previewAtBook),
+            }),
+          );
           return;
         }
       }
 
       if (returnToForwardBookingList) {
         const startIso = bookSlot!.start.toUTC().toISO();
+        const bookTypeId = detail?.bookedAppointmentTypeId ?? prefillAtBook?.appointmentTypeId;
+        const bookTypeRow =
+          bookTypeId != null
+            ? typeList.find((t) => Number(t.id) === Number(bookTypeId))
+            : undefined;
+        const bookTypeName =
+          bookTypeRow?.name?.trim() ||
+          bookTypeRow?.prettyName?.trim() ||
+          fbiAtBook?.appointmentTypeName?.trim() ||
+          null;
+        const isHold = isHoldAppointmentTypeForBook(typeCatalog, {
+          typeId: bookTypeId,
+          typeName: bookTypeName,
+        });
         if (startIso) {
           writeForwardBookingReturnSession({
             forwardBookingEntryId: Number(prefillAtBook!.forwardBookingEntryId),
             bookedAppointmentId: savedId!,
             bookedAppointmentStart: startIso,
             bookedAppointmentEnd: bookSlot!.end?.isValid ? bookSlot!.end.toUTC().toISO() : null,
-            targetWorkflowTab: (() => {
-              const bookTypeId =
-                detail?.bookedAppointmentTypeId ?? prefillAtBook?.appointmentTypeId;
-              const bookTypeRow =
-                bookTypeId != null
-                  ? typeList.find((t) => Number(t.id) === Number(bookTypeId))
-                  : undefined;
-              const bookTypeName =
-                bookTypeRow?.name?.trim() ||
-                bookTypeRow?.prettyName?.trim() ||
-                null;
-              return isHoldAppointmentTypeForBook(typeCatalog, {
-                typeId: bookTypeId,
-                typeName: bookTypeName,
-              })
-                ? 'onHold'
-                : 'booked';
-            })(),
+            targetWorkflowTab: isHold ? 'onHold' : 'booked',
+            returnOrigin:
+              fbiAtBook?.origin === 'care_outreach' ? 'care_outreach' : 'forward_booking',
             ...(fbiAtBook?.origin === 'care_outreach'
               ? {
                   smsTemplate: 'care_outreach' as const,
                   careOutreachPetNames: fbiAtBook.careOutreachPetNames,
                   ...(fbiAtBook.careOutreachAnyPastDue ? { careOutreachAnyPastDue: true } : {}),
+                  ...(fbiAtBook.careOutreachClientKey
+                    ? { careOutreachClientKey: fbiAtBook.careOutreachClientKey }
+                    : {}),
+                  ...(fbiAtBook.careOutreachClientDisplayName
+                    ? { careOutreachClientDisplayName: fbiAtBook.careOutreachClientDisplayName }
+                    : {}),
+                  ...(fbiAtBook.careOutreachClientId != null
+                    ? { careOutreachClientId: fbiAtBook.careOutreachClientId }
+                    : {}),
+                  ...(fbiAtBook.careOutreachClientPhone
+                    ? { careOutreachClientPhone: fbiAtBook.careOutreachClientPhone }
+                    : {}),
+                  ...(fbiAtBook.careOutreachClientFirstName
+                    ? { careOutreachClientFirstName: fbiAtBook.careOutreachClientFirstName }
+                    : {}),
+                  ...(providerLastNameFromDisplayName(fbiAtBook.primaryDoctorDisplayName)
+                    ? {
+                        careOutreachProviderLastName: providerLastNameFromDisplayName(
+                          fbiAtBook.primaryDoctorDisplayName,
+                        ),
+                      }
+                    : {}),
                 }
               : {}),
           });
@@ -6450,16 +6478,6 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           detail?.routingFeedbackWarning ??
           detail?.schedulingOverrideWarning;
         let returnNotice = warning ?? null;
-        const typeId =
-          detail?.bookedAppointmentTypeId ?? prefillAtBook?.appointmentTypeId;
-        const typeRow =
-          typeId != null ? typeList.find((t) => Number(t.id) === Number(typeId)) : undefined;
-        const typeName =
-          typeRow?.name?.trim() ||
-          typeRow?.prettyName?.trim() ||
-          fbiAtBook?.appointmentTypeName?.trim() ||
-          null;
-        const isHold = isHoldAppointmentTypeForBook(typeCatalog, { typeId, typeName });
         if (!returnNotice) {
           const patientNames = forwardBookingBookedPatientNames({
             forwardBookingVisitCompletes: prefillAtBook?.forwardBookingVisitCompletes,
@@ -6479,7 +6497,12 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             /* ignore */
           }
         }
-        navigate(schedulingWorkflowListPathAfterBook(isHold));
+        navigate(
+          schedulingReturnPathAfterBook({
+            isHold,
+            origin: fbiAtBook?.origin === 'care_outreach' ? 'care_outreach' : 'forward_booking',
+          }),
+        );
         return;
       }
 

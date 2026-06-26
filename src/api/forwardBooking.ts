@@ -124,6 +124,12 @@ export type ForwardBookingEntry = {
   bookedAppointmentId?: number | null;
   bookedAppointmentStart?: string | null;
   bookedAppointmentEnd?: string | null;
+  /** Ops points on the linked calendar visit (from server when `bookedAppointmentId` is set). */
+  linkedVisitPoints?: number | null;
+  /** True when the linked calendar visit was cancelled. */
+  linkedVisitCancelled?: boolean;
+  /** When the linked visit was placed on the calendar (ISO UTC). */
+  linkedVisitBookedAtIso?: string | null;
   /** Staff note on the queue entry (editable on forward booking list). */
   note?: string | null;
   /** Notes for the follow-up booking — set when ending the source visit. */
@@ -182,6 +188,18 @@ export function normalizeForwardBookingEntry(raw: unknown): ForwardBookingEntry 
   }
   const createdVia = normalizeForwardBookingCreatedVia(o.createdVia ?? o.created_via);
   if (createdVia) row.createdVia = createdVia;
+  const linkedVisitPoints = o.linkedVisitPoints ?? o.linked_visit_points;
+  if (linkedVisitPoints != null && linkedVisitPoints !== '') {
+    const n = Number(linkedVisitPoints);
+    if (Number.isFinite(n)) row.linkedVisitPoints = n;
+  }
+  const linkedVisitCancelled = o.linkedVisitCancelled ?? o.linked_visit_cancelled;
+  if (typeof linkedVisitCancelled === 'boolean') {
+    row.linkedVisitCancelled = linkedVisitCancelled;
+  }
+  const linkedVisitBookedAtIso =
+    pickIso(o.linkedVisitBookedAtIso) ?? pickIso(o.linked_visit_booked_at_iso);
+  if (linkedVisitBookedAtIso) row.linkedVisitBookedAtIso = linkedVisitBookedAtIso;
   const booked = o.bookedAppointment;
   if (booked && typeof booked === 'object') {
     const b = booked as Record<string, unknown>;

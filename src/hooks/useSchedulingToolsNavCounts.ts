@@ -5,7 +5,6 @@ import { fetchSlotOffers } from '../api/slotOffers';
 import { fetchAllAppointmentTypes } from '../api/appointmentSettings';
 import {
   buildAppointmentTypeCatalogFromTypes,
-  buildBookedAppointmentMetaMap,
   forwardBookingEntryVisibleOnList,
   forwardBookingListTab,
 } from '../utils/forwardBookingListVisibility';
@@ -51,7 +50,7 @@ const EMPTY_COUNTS: SchedulingToolsNavCounts = {
   textedOffersToConfirm: 0,
 };
 
-export function useSchedulingToolsNavCounts(enabled = true, refreshKey?: string) {
+export function useSchedulingToolsNavCounts(enabled = true) {
   const [counts, setCounts] = useState<SchedulingToolsNavCounts>(EMPTY_COUNTS);
   const [loading, setLoading] = useState(true);
 
@@ -76,14 +75,13 @@ export function useSchedulingToolsNavCounts(enabled = true, refreshKey?: string)
       const catalog = buildAppointmentTypeCatalogFromTypes(types);
       const practiceTz = practiceTimeZoneOrDefault(undefined);
       const visible = forwardBookings.filter((r) => forwardBookingEntryVisibleOnList(r));
-      const metaMap = await buildBookedAppointmentMetaMap(visible, PRACTICE_ID, catalog);
 
       let forwardBookingPending = 0;
       let booked = 0;
       let onHold = 0;
       let onHoldOver24 = 0;
       for (const row of visible) {
-        const tab = forwardBookingListTab(row, practiceTz, metaMap, catalog);
+        const tab = forwardBookingListTab(row, practiceTz, null, catalog);
         if (tab === 'pending' && forwardBookingEntryBelongsOnForwardBookingPage(row)) {
           forwardBookingPending += 1;
         } else if (tab === 'booked') {
@@ -91,14 +89,14 @@ export function useSchedulingToolsNavCounts(enabled = true, refreshKey?: string)
         } else if (tab === 'onHold') {
           if (!forwardBookingOnHoldBelongsInSchedulingTools(row)) continue;
           onHold += 1;
-          if (forwardBookingOnHoldOver24Hours(row, metaMap)) onHoldOver24 += 1;
+          if (forwardBookingOnHoldOver24Hours(row, null)) onHoldOver24 += 1;
         }
       }
 
       const blockedPatientIds = forwardBookingPatientIdsActiveInQueue(
         visible,
         practiceTz,
-        metaMap,
+        null,
         catalog,
       );
       const careOutreachForCount = filterCareOutreachRemindersForForwardBooking(
@@ -127,7 +125,7 @@ export function useSchedulingToolsNavCounts(enabled = true, refreshKey?: string)
 
   useEffect(() => {
     void refresh();
-  }, [refresh, refreshKey]);
+  }, [refresh]);
 
   useEffect(() => {
     if (!enabled) return;

@@ -111,3 +111,23 @@ export function workflowPathForStatusFilter(
 export function schedulingWorkflowListPathAfterBook(isHold: boolean): string {
   return workflowPathForStatusFilter(isHold ? 'onHold' : 'booked');
 }
+
+/** After book, return to the outreach list the user came from (hold) or the Booked tab (real visit). */
+export function schedulingReturnPathAfterBook(args: {
+  isHold: boolean;
+  origin?: 'care_outreach' | 'schedule_loader' | 'forward_booking';
+  scheduleLoaderReturnHref?: string | null;
+}): string {
+  if (args.isHold) {
+    if (args.origin === 'care_outreach') {
+      return `${SCHEDULING_TOOLS_PATH_PREFIX}/care-outreach`;
+    }
+    if (args.origin === 'schedule_loader') {
+      const href = args.scheduleLoaderReturnHref?.trim();
+      if (href) return href;
+      return `${SCHEDULING_TOOLS_PATH_PREFIX}/schedule-loader`;
+    }
+    return `${SCHEDULING_TOOLS_PATH_PREFIX}/forward-booking`;
+  }
+  return schedulingWorkflowListPathAfterBook(false);
+}
