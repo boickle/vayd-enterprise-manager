@@ -20,6 +20,15 @@ export function requestDataPhone(requestData: Record<string, unknown>): string |
   return pickStr(requestData.phoneNumber) ?? pickStr(requestData.bestPhoneNumber) ?? pickStr(requestData.phoneNumbers);
 }
 
+/** Best-effort email from a persisted request payload. */
+export function requestDataEmail(requestData: Record<string, unknown>): string | null {
+  return (
+    pickStr(requestData.email) ??
+    pickStr(requestData.userEmail) ??
+    pickStr(requestData.contactEmail)
+  );
+}
+
 export function requestDataCanText(requestData: Record<string, unknown>): 'Yes' | 'No' | null {
   const v = pickStr(requestData.canWeText);
   if (v === 'Yes' || v === 'No') return v;

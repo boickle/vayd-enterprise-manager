@@ -5487,6 +5487,16 @@ label.scheduler-household-pet-row {
   overscroll-behavior: contain;
 }
 
+/* Header + scrollable body + pinned footer (e.g. Add forward booking). Without this, a tall
+   form pushes the primary footer action below max-height and overflow:hidden clips it. */
+.scheduler-modal--edit > .scheduler-modal-body.scheduler-modal-body--edit {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
 .scheduler-modal-scroll--edit {
   flex: 1;
   min-height: 0;
