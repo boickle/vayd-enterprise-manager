@@ -4,8 +4,12 @@ import { DateTime } from 'luxon';
 import { fetchAllAppointmentTypes } from '../api/appointmentSettings';
 import {
   fetchAllAppointmentRequestSubmissions,
+  fetchAppointmentRequestSubmission,
+  fetchAppointmentRequestSubmissionsPage,
+  fetchRemainingAppointmentRequestSubmissionPages,
   patchAppointmentRequestSubmission,
   sendAppointmentRequestSubmissionSms,
+  type AppointmentRequestSubmission,
   type AppointmentRequestSubmissionItem,
   type AppointmentRequestSubmissionStatus,
 } from '../api/appointmentRequestSubmissions';
@@ -40,6 +44,7 @@ import {
   requestDataPreviousVeterinaryHospitals,
   requestDataPreviousVeterinaryPractices,
   requestDataPrimaryProviderSummary,
+  requestDataSelfScheduledSlot,
   requestDataUsesAlternateVisitAddress,
   fetchClientPimsIdLookup,
   resolveClientPimsIdForRequest,
@@ -69,8 +74,12 @@ import {
   buildSchedulerFocusAppointmentUrl,
   writeSchedulerFocusSession,
 } from '../utils/schedulerFocusAppointment';
-import { useBackgroundRefresh } from '../hooks/useBackgroundRefresh';
 import { notifySchedulingToolsNavCountsRefresh } from '../hooks/useSchedulingToolsNavCounts';
+import {
+  subscribePracticeCalendar,
+  type AppointmentCalendarPayload,
+  type AppointmentRequestSubmissionPayload,
+} from '../utils/calendarRealtime';
 import {
   initialNotesFromItem,
   isNoteDraftDirty,
@@ -78,16 +87,17 @@ import {
   noteForPatch,
 } from '../utils/appointmentRequestNoteDrafts';
 import {
-  appointmentRequestLinkedVisitIsOnHold,
   appointmentRequestSubmissionIsOnHold,
+  appointmentRequestSubmissionCountsAsBooked,
+  appointmentRequestOnHoldOver24Hours,
   formatAppointmentRequestOnHoldBookedAt,
   formatAppointmentRequestOnHoldElapsedSince,
   type AppointmentRequestBookedApptSummary,
 } from '../utils/appointmentRequestOnHold';
 import {
-  appointmentRequestHouseholdAnyOver24Hours,
-  appointmentRequestHouseholdClumpIds,
-  buildAppointmentRequestHouseholdHoldIndex,
+  buildAppointmentRequestBookedMetaByAppointmentIds,
+  calendarChangeAffectsAppointmentRequestHolds,
+  patchBookedApptMetaForAppointmentIds,
 } from '../utils/appointmentRequestHouseholdHold';
 import {
   appointmentRequestAutoBookedOnline,
@@ -171,6 +181,24 @@ const FOLLOW_UP_OPTIONS: { value: AppointmentFormDraftFollowUpStatus; label: str
   { value: 'dismissed', label: 'Dismissed' },
 ];
 
+function applyLinkedVisitPointsFromMeta(
+  row: AppointmentRequestSubmissionItem,
+  meta: ReadonlyMap<number, AppointmentRequestBookedApptSummary>,
+): AppointmentRequestSubmissionItem {
+  const apptId = row.bookedAppointmentId;
+  if (apptId == null) return row;
+  if (row.linkedVisitPoints != null && Number.isFinite(row.linkedVisitPoints)) {
+    return row;
+  }
+  const summary = meta.get(Number(apptId));
+  if (!summary || summary.appointmentCancelled) return row;
+  return { ...row, linkedVisitPoints: summary.points };
+}
+
+function submissionDetailToListItem(row: AppointmentRequestSubmission): AppointmentRequestSubmissionItem {
+  return { ...row, kind: 'submission' };
+}
+
 function isCompletedSubmission(item: AppointmentRequestSubmissionItem): boolean {
   return item.kind == null || item.kind === 'submission';
 }
@@ -194,7 +222,18 @@ function initialNotes(item: AppointmentRequestSubmissionItem): string {
 function statusTabLabel(
   item: AppointmentRequestSubmissionItem,
   status: AppointmentRequestSubmissionStatus,
+  opts?: { isOnHold?: boolean },
 ): string {
+  if (opts?.isOnHold) return 'On hold';
+  const linkedPoints = item.linkedVisitPoints;
+  if (
+    item.bookedAppointmentId != null &&
+    linkedPoints != null &&
+    Number.isFinite(linkedPoints) &&
+    linkedPoints <= 0
+  ) {
+    return 'On hold';
+  }
   if (appointmentRequestNeedsStaffConfirmation(item)) return 'Auto-Booked';
   const tab = STATUS_TABS.find((t) => t.key === status);
   return tab?.label ?? status;
@@ -271,6 +310,25 @@ function formatSubmittedAt(iso: string, practiceTz: string): string {
   const dt = DateTime.fromISO(iso, { zone: 'utc' }).setZone(practiceTz);
   if (!dt.isValid) return '—';
   return dt.toFormat('EEE, MMM d, yyyy · h:mm a');
+}
+
+function appointmentRequestViewHints(
+  item: AppointmentRequestSubmissionItem,
+  bookedApptMeta: ReadonlyMap<number, AppointmentRequestBookedApptSummary>,
+  practiceTz: string,
+): { dateKey: string | null; providerId: string | undefined } {
+  const apptId = item.bookedAppointmentId;
+  const cached = apptId != null ? bookedApptMeta.get(Number(apptId)) : undefined;
+  const rd = item.requestData ?? {};
+  const start =
+    cached?.start?.trim() ||
+    requestDataSelfScheduledSlot(rd)?.appointmentStart?.trim() ||
+    null;
+  const dateKey = start
+    ? DateTime.fromISO(start, { zone: 'utc' }).setZone(practiceTz).toISODate()
+    : null;
+  const providerId = cached?.providerInternalId?.trim() || undefined;
+  return { dateKey, providerId };
 }
 
 function formatBookedVisit(
@@ -389,9 +447,6 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
   const [notBookedSaving, setNotBookedSaving] = useState(false);
   const [notBookedError, setNotBookedError] = useState<string | null>(null);
   const [bookedApptMeta, setBookedApptMeta] = useState<Map<number, BookedApptSummary>>(new Map());
-  const [householdHoldClumpByBookedApptId, setHouseholdHoldClumpByBookedApptId] = useState<
-    Map<number, number[]>
-  >(() => new Map());
   const [clientPimsIdByInternalId, setClientPimsIdByInternalId] = useState<Map<string, string>>(
     () => new Map(),
   );
@@ -419,8 +474,17 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
   noteDraftsRef.current = noteDrafts;
   const bookedApptMetaRef = useRef(bookedApptMeta);
   bookedApptMetaRef.current = bookedApptMeta;
+  const typeCatalogRef = useRef<ReturnType<typeof buildAppointmentTypeCatalogFromTypes> | null>(null);
+  const [typeCatalog, setTypeCatalog] = useState<ReturnType<
+    typeof buildAppointmentTypeCatalogFromTypes
+  > | null>(null);
+  const deferredRealtimeRefreshRef = useRef(false);
   const loadInFlightRef = useRef(false);
   const knownSubmissionIdsRef = useRef<Set<number>>(new Set());
+  const statusFilterRef = useRef(statusFilter);
+  statusFilterRef.current = statusFilter;
+  const hydrateGenerationRef = useRef(0);
+  const submissionBackfillGenRef = useRef(0);
 
   const toggleRowExpanded = (id: number) => {
     setExpandedRowIds((prev) => {
@@ -452,33 +516,41 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
       if (uniqueBooked.length === 0) {
         if (!opts?.merge) {
           setBookedApptMeta(new Map());
-          setHouseholdHoldClumpByBookedApptId(new Map());
         }
-        return;
+        return new Map();
       }
 
-      const { meta, clumpByBookedApptId } = await buildAppointmentRequestHouseholdHoldIndex({
-        items,
-        typeCatalog,
+      const generation = ++hydrateGenerationRef.current;
+
+      const meta = await buildAppointmentRequestBookedMetaByAppointmentIds({
+        appointmentIds: uniqueBooked,
         practiceId: PRACTICE_ID,
-        practiceTz,
-        seedMeta: opts?.merge
-          ? new Map(bookedApptMetaRef.current)
-          : opts?.seedMeta,
+        typeCatalog,
+        seedMeta: opts?.seedMeta,
       });
 
-      setBookedApptMeta(meta);
-      setHouseholdHoldClumpByBookedApptId(clumpByBookedApptId);
+      if (generation !== hydrateGenerationRef.current) return new Map();
+
+      setBookedApptMeta((prev) => {
+        if (meta.size === 0 && prev.size > 0) return prev;
+        const next = new Map(meta);
+        for (const [id, summary] of prev) {
+          if (!next.has(id)) next.set(id, summary);
+        }
+        return next;
+      });
+      return meta;
     },
     [practiceTz],
   );
 
-  const load = useCallback(async (opts?: { silent?: boolean }) => {
+  const load = useCallback(async (opts?: { silent?: boolean; awaitHydration?: boolean }) => {
     const silent = opts?.silent ?? false;
+    const awaitHydration = opts?.awaitHydration ?? false;
     if (loadInFlightRef.current) return;
     loadInFlightRef.current = true;
 
-    const isOnHoldTab = statusFilter === 'on_hold';
+    const isOnHoldTab = statusFilterRef.current === 'on_hold';
     if (isOnHoldTab && !silent) {
       const pendingOnHoldReturn = readOnHoldVisitEditReturnSession();
       if (pendingOnHoldReturn?.listKind === 'appointment_request') {
@@ -490,18 +562,10 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
     if (!silent) {
       setLoading(true);
       setError(null);
-      setBookedApptMeta(new Map());
-      setHouseholdHoldClumpByBookedApptId(new Map());
       setClientPimsIdByInternalId(new Map());
     }
 
     try {
-      const [{ items, conversions }, types] = await Promise.all([
-        fetchAllAppointmentRequestSubmissions({ practiceId: PRACTICE_ID }),
-        fetchAllAppointmentTypes(PRACTICE_ID, { activeOnly: false }),
-      ]);
-      const typeCatalog = buildAppointmentTypeCatalogFromTypes(types);
-
       const pendingReturn = silent ? null : readAppointmentRequestReturnSession();
       const pendingStaffConfirmReturn = silent
         ? null
@@ -517,55 +581,6 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
         clearAppointmentRequestStaffConfirmReturnSession();
         highlightId = pendingStaffConfirmReturn.submissionId;
         setPendingBookedExitId(highlightId);
-      }
-
-      const previousRows = rowsRef.current;
-      const previousIds = knownSubmissionIdsRef.current;
-      const newSubmissionCount = silent
-        ? items.filter((r) => isCompletedSubmission(r) && !previousIds.has(r.id)).length
-        : 0;
-
-      setRows(items);
-      setNoteDrafts((drafts) =>
-        silent
-          ? mergeNoteDraftsAfterListRefresh(drafts, previousRows, items, isCompletedSubmission)
-          : (() => {
-              const next: Record<number, string> = {};
-              for (const r of items) {
-                if (isCompletedSubmission(r)) next[r.id] = initialNotes(r);
-              }
-              return next;
-            })(),
-      );
-      if (!silent) {
-        setNoteSaving({});
-        setNoteError({});
-      }
-
-      knownSubmissionIdsRef.current = new Set(items.map((r) => r.id));
-
-      if (conversions && conversions.totalRequests > 0) {
-        const rate = ((conversions.converted / conversions.totalRequests) * 100).toFixed(1);
-        setConversionsBanner(
-          `${conversions.converted} of ${conversions.totalRequests} requests converted to appointments (${rate}%).`
-        );
-      } else if (!silent) {
-        setConversionsBanner(null);
-      }
-
-      if (highlightId != null) {
-        setHighlightEntryId(highlightId);
-        highlightScrollSig.current = `${highlightId}-${Date.now()}`;
-        const entry = items.find((r) => r.id === highlightId);
-        if (openSmsOnHighlight && entry && appointmentRequestHasSmsPhone(entry)) {
-          setSmsError(null);
-          setSmsItem(entry);
-          setSmsMessage('');
-          setSmsMessageLoading(true);
-          void resolveAppointmentRequestSmsMessage(entry, practiceTz, { practiceId: PRACTICE_ID })
-            .then(setSmsMessage)
-            .finally(() => setSmsMessageLoading(false));
-        }
       }
 
       const seedMeta =
@@ -587,41 +602,162 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
             ])
           : undefined;
 
-      await hydrateBookedApptMeta(items, typeCatalog, {
-        seedMeta,
-        merge: silent,
-      });
+      const applySubmissionRows = (
+        items: AppointmentRequestSubmissionItem[],
+        conversions: { converted: number; totalRequests: number } | null,
+        opts: { isPartialBackfill?: boolean },
+      ) => {
+        const previousRows = rowsRef.current;
+        const previousIds = knownSubmissionIdsRef.current;
+        const newSubmissionCount = silent
+          ? items.filter((r) => isCompletedSubmission(r) && !previousIds.has(r.id)).length
+          : 0;
 
-      void fetchClientPimsIdLookup(items.map((r) => r.requestData ?? {})).then((lookup) => {
-        setClientPimsIdByInternalId((prev) => (silent ? new Map([...prev, ...lookup]) : lookup));
-      });
-
-      if (silent && newSubmissionCount > 0) {
-        setNotice(
-          newSubmissionCount === 1
-            ? '1 new appointment request arrived.'
-            : `${newSubmissionCount} new appointment requests arrived.`,
+        setRows(items);
+        setNoteDrafts((drafts) =>
+          silent || opts.isPartialBackfill
+            ? mergeNoteDraftsAfterListRefresh(drafts, previousRows, items, isCompletedSubmission)
+            : (() => {
+                const next: Record<number, string> = {};
+                for (const r of items) {
+                  if (isCompletedSubmission(r)) next[r.id] = initialNotes(r);
+                }
+                return next;
+              })(),
         );
-      }
+        if (!silent && !opts.isPartialBackfill) {
+          setNoteSaving({});
+          setNoteError({});
+        }
 
-      if (!silent) {
-        const pendingOnHoldReturn = pendingOnHoldEditReturnRef.current;
-        if (pendingOnHoldReturn) {
-          pendingOnHoldEditReturnRef.current = null;
-          if (
-            pendingOnHoldReturn.exitKind === 'booked' ||
-            pendingOnHoldReturn.exitKind === 'removed'
-          ) {
-            setPendingOnHoldExit({
-              entryId: pendingOnHoldReturn.listEntryId,
-              kind: pendingOnHoldReturn.exitKind === 'booked' ? 'booked' : 'dismissed',
-            });
-          } else {
-            setHighlightEntryId(pendingOnHoldReturn.listEntryId);
-            highlightScrollSig.current = `${pendingOnHoldReturn.listEntryId}-${Date.now()}`;
+        knownSubmissionIdsRef.current = new Set(items.map((r) => r.id));
+
+        if (conversions && conversions.totalRequests > 0) {
+          const rate = ((conversions.converted / conversions.totalRequests) * 100).toFixed(1);
+          setConversionsBanner(
+            `${conversions.converted} of ${conversions.totalRequests} requests converted to appointments (${rate}%).`,
+          );
+        } else if (!silent && !opts.isPartialBackfill) {
+          setConversionsBanner(null);
+        }
+
+        if (highlightId != null) {
+          const entry = items.find((r) => r.id === highlightId);
+          if (entry) {
+            setHighlightEntryId(highlightId);
+            highlightScrollSig.current = `${highlightId}-${Date.now()}`;
+            if (openSmsOnHighlight && appointmentRequestHasSmsPhone(entry)) {
+              setSmsError(null);
+              setSmsItem(entry);
+              setSmsMessage('');
+              setSmsMessageLoading(true);
+              void resolveAppointmentRequestSmsMessage(entry, practiceTz, { practiceId: PRACTICE_ID })
+                .then(setSmsMessage)
+                .finally(() => setSmsMessageLoading(false));
+            }
           }
         }
+
+        if (silent && newSubmissionCount > 0) {
+          setNotice(
+            newSubmissionCount === 1
+              ? '1 new appointment request arrived.'
+              : `${newSubmissionCount} new appointment requests arrived.`,
+          );
+        }
+      };
+
+      const finishInitialLoadUi = () => {
+        if (!silent) {
+          const pendingOnHoldReturn = pendingOnHoldEditReturnRef.current;
+          if (pendingOnHoldReturn) {
+            pendingOnHoldEditReturnRef.current = null;
+            if (
+              pendingOnHoldReturn.exitKind === 'booked' ||
+              pendingOnHoldReturn.exitKind === 'removed'
+            ) {
+              setPendingOnHoldExit({
+                entryId: pendingOnHoldReturn.listEntryId,
+                kind: pendingOnHoldReturn.exitKind === 'booked' ? 'booked' : 'dismissed',
+              });
+            } else {
+              setHighlightEntryId(pendingOnHoldReturn.listEntryId);
+              highlightScrollSig.current = `${pendingOnHoldReturn.listEntryId}-${Date.now()}`;
+            }
+          }
+        }
+      };
+
+      const runHouseholdHydration = async (items: AppointmentRequestSubmissionItem[]) => {
+        const meta = await hydrateBookedApptMeta(items, typeCatalog, {
+          seedMeta,
+          merge: silent,
+        });
+        if (meta && meta.size > 0) {
+          setRows((prev) => prev.map((row) => applyLinkedVisitPointsFromMeta(row, meta)));
+        }
+        void fetchClientPimsIdLookup(items.map((r) => r.requestData ?? {})).then((lookup) => {
+          setClientPimsIdByInternalId((prev) => (silent ? new Map([...prev, ...lookup]) : lookup));
+        });
+      };
+
+      if (!silent) {
+        const [types, firstPage] = await Promise.all([
+          fetchAllAppointmentTypes(PRACTICE_ID, { activeOnly: false }),
+          fetchAppointmentRequestSubmissionsPage({
+            practiceId: PRACTICE_ID,
+            page: 1,
+            limit: 200,
+          }),
+        ]);
+        const typeCatalog = buildAppointmentTypeCatalogFromTypes(types);
+        typeCatalogRef.current = typeCatalog;
+        setTypeCatalog(typeCatalog);
+
+        const initialItems = firstPage.items ?? [];
+        applySubmissionRows(initialItems, firstPage.conversions ?? null, {});
+        finishInitialLoadUi();
+
+        const runBackfillAndHydrate = async (backfillGen: number) => {
+          const allItems = await fetchRemainingAppointmentRequestSubmissionPages(
+            { practiceId: PRACTICE_ID },
+            firstPage,
+          );
+          if (backfillGen !== submissionBackfillGenRef.current) return;
+          if (allItems.length !== initialItems.length) {
+            applySubmissionRows(allItems, firstPage.conversions ?? null, {
+              isPartialBackfill: true,
+            });
+          }
+          await runHouseholdHydration(allItems);
+        };
+
+        if (awaitHydration) {
+          await runBackfillAndHydrate(++submissionBackfillGenRef.current);
+          return;
+        }
+
+        const backfillGen = ++submissionBackfillGenRef.current;
+        void (async () => {
+          try {
+            await runBackfillAndHydrate(backfillGen);
+          } catch (e) {
+            console.error('appointment request household hydrate failed', e);
+          }
+        })();
+        return;
       }
+
+      const [{ items, conversions }, types] = await Promise.all([
+        fetchAllAppointmentRequestSubmissions({ practiceId: PRACTICE_ID }),
+        fetchAllAppointmentTypes(PRACTICE_ID, { activeOnly: false }),
+      ]);
+      const typeCatalog = buildAppointmentTypeCatalogFromTypes(types);
+      typeCatalogRef.current = typeCatalog;
+      setTypeCatalog(typeCatalog);
+      applySubmissionRows(items, conversions, {});
+      await runHouseholdHydration(items);
+      finishInitialLoadUi();
     } catch (e: unknown) {
       if (!silent) {
         const msg =
@@ -635,13 +771,11 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
       loadInFlightRef.current = false;
       if (!silent) setLoading(false);
     }
-  }, [hydrateBookedApptMeta, practiceTz, statusFilter]);
+  }, [hydrateBookedApptMeta, practiceTz]);
 
   useEffect(() => {
     void load();
   }, [load]);
-
-  const refreshSilently = useCallback(() => load({ silent: true }), [load]);
 
   const isRefreshBusy = useCallback(() => {
     if (loading) return true;
@@ -670,7 +804,157 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
     needsRecordsUpdating,
   ]);
 
-  useBackgroundRefresh(refreshSilently, { isBusy: isRefreshBusy });
+  const isRefreshBusyRef = useRef(isRefreshBusy);
+  isRefreshBusyRef.current = isRefreshBusy;
+
+  const flushDeferredRealtimeRefresh = useCallback(() => {
+    if (!deferredRealtimeRefreshRef.current) return;
+    if (isRefreshBusyRef.current()) return;
+    deferredRealtimeRefreshRef.current = false;
+    void load({ silent: true });
+  }, [load]);
+
+  const applySubmissionRealtimeBatch = useCallback(
+    async (payloads: AppointmentRequestSubmissionPayload[]) => {
+      if (isRefreshBusyRef.current()) {
+        deferredRealtimeRefreshRef.current = true;
+        return;
+      }
+      const catalog = typeCatalogRef.current;
+      if (!catalog) {
+        deferredRealtimeRefreshRef.current = true;
+        return;
+      }
+
+      const previousIds = knownSubmissionIdsRef.current;
+      const ids = [...new Set(payloads.map((p) => p.submissionId))];
+      const fetched = await Promise.all(
+        ids.map((id) => fetchAppointmentRequestSubmission(id).catch(() => null)),
+      );
+
+      let mergedRows = rowsRef.current;
+      let newCount = 0;
+      for (const row of fetched) {
+        if (!row) continue;
+        const item = submissionDetailToListItem(row);
+        const idx = mergedRows.findIndex((r) => r.id === row.id);
+        if (idx >= 0) {
+          mergedRows = [...mergedRows];
+          mergedRows[idx] = { ...mergedRows[idx], ...item };
+        } else {
+          mergedRows = [item, ...mergedRows];
+          if (!previousIds.has(row.id)) newCount += 1;
+        }
+        knownSubmissionIdsRef.current.add(row.id);
+      }
+
+      setRows(mergedRows);
+      setNoteDrafts((drafts) => {
+        const next = { ...drafts };
+        for (const row of fetched) {
+          if (!row) continue;
+          if (!(row.id in next)) next[row.id] = initialNotes(submissionDetailToListItem(row));
+        }
+        return next;
+      });
+
+      if (newCount > 0) {
+        setNotice(
+          newCount === 1
+            ? '1 new appointment request arrived.'
+            : `${newCount} new appointment requests arrived.`,
+        );
+      }
+
+      await hydrateBookedApptMeta(mergedRows, catalog, { seedMeta: undefined });
+    },
+    [hydrateBookedApptMeta],
+  );
+
+  const applyCalendarRealtimeBatch = useCallback(
+    async (payloads: AppointmentCalendarPayload[]) => {
+      if (isRefreshBusyRef.current()) {
+        deferredRealtimeRefreshRef.current = true;
+        return;
+      }
+      const catalog = typeCatalogRef.current;
+      if (!catalog) return;
+
+      const changedApptIds = new Set(payloads.map((p) => p.appointmentId));
+      const currentRows = rowsRef.current;
+      if (
+        !calendarChangeAffectsAppointmentRequestHolds(
+          changedApptIds,
+          currentRows,
+          bookedApptMetaRef.current,
+        )
+      ) {
+        return;
+      }
+
+      const patches = await patchBookedApptMetaForAppointmentIds({
+        appointmentIds: [...changedApptIds],
+        practiceId: PRACTICE_ID,
+        typeCatalog: catalog,
+      });
+      if (patches.size > 0) {
+        setBookedApptMeta((prev) => {
+          const next = new Map(prev);
+          for (const [id, summary] of patches) next.set(id, summary);
+          return next;
+        });
+        setRows((prev) =>
+          prev.map((row) => {
+            const apptId = row.bookedAppointmentId;
+            if (apptId == null) return row;
+            const patch = patches.get(Number(apptId));
+            if (!patch || patch.appointmentCancelled) return row;
+            return { ...row, linkedVisitPoints: patch.points };
+          }),
+        );
+      }
+
+      void hydrateBookedApptMeta(currentRows, catalog);
+    },
+    [hydrateBookedApptMeta],
+  );
+
+  useEffect(() => {
+    return subscribePracticeCalendar({
+      practiceId: PRACTICE_ID,
+      visibleProviderId: '',
+      onBatch: (payloads) => {
+        void applyCalendarRealtimeBatch(payloads).finally(flushDeferredRealtimeRefresh);
+      },
+      onRequestSubmissionBatch: (payloads) => {
+        void applySubmissionRealtimeBatch(payloads).finally(flushDeferredRealtimeRefresh);
+      },
+      onReconnect: () => {
+        if (isRefreshBusyRef.current()) {
+          deferredRealtimeRefreshRef.current = true;
+          return;
+        }
+        void load({ silent: true });
+      },
+    });
+  }, [applyCalendarRealtimeBatch, applySubmissionRealtimeBatch, flushDeferredRealtimeRefresh, load]);
+
+  useEffect(() => {
+    flushDeferredRealtimeRefresh();
+  }, [
+    flushDeferredRealtimeRefresh,
+    loading,
+    smsItem,
+    manualBookItem,
+    notBookedItem,
+    draftDetailOpen,
+    notBookedSaving,
+    smsSending,
+    draftSaving,
+    noteSaving,
+    statusUpdating,
+    needsRecordsUpdating,
+  ]);
 
   useEffect(() => {
     try {
@@ -699,9 +983,10 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
     };
     for (const row of submissions) {
       const status = submissionStatus(row);
-      if (appointmentRequestSubmissionIsOnHold(row, bookedApptMeta, householdHoldClumpByBookedApptId)) {
+      if (appointmentRequestSubmissionIsOnHold(row, bookedApptMeta, typeCatalog)) {
         counts.on_hold += 1;
-        if (status === 'booked') continue;
+        if (submissionNeedsRecords(row)) counts.need_records += 1;
+        continue;
       }
       if (appointmentRequestNeedsStaffConfirmation(row)) {
         counts.to_confirm += 1;
@@ -712,20 +997,20 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
       if (submissionNeedsRecords(row)) counts.need_records += 1;
     }
     return counts;
-  }, [submissions, bookedApptMeta, householdHoldClumpByBookedApptId]);
+  }, [submissions, bookedApptMeta, typeCatalog]);
 
   const onHoldOver24Count = useMemo(() => {
     let count = 0;
     for (const row of submissions) {
-      if (!appointmentRequestSubmissionIsOnHold(row, bookedApptMeta, householdHoldClumpByBookedApptId)) continue;
-      const clumpIds = appointmentRequestHouseholdClumpIds(
-        row.bookedAppointmentId,
-        householdHoldClumpByBookedApptId,
-      );
-      if (appointmentRequestHouseholdAnyOver24Hours(clumpIds, bookedApptMeta)) count += 1;
+      if (!appointmentRequestSubmissionIsOnHold(row, bookedApptMeta, typeCatalog)) continue;
+      const summary =
+        row.bookedAppointmentId != null
+          ? bookedApptMeta.get(Number(row.bookedAppointmentId))
+          : undefined;
+      if (appointmentRequestOnHoldOver24Hours(summary)) count += 1;
     }
     return count;
-  }, [submissions, bookedApptMeta, householdHoldClumpByBookedApptId]);
+  }, [submissions, bookedApptMeta, typeCatalog]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -736,14 +1021,14 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
       return submissions
         .filter((item) => {
           if (exitingRows.has(item.id)) return true;
-          if (!appointmentRequestSubmissionIsOnHold(item, bookedApptMeta, householdHoldClumpByBookedApptId))
+          if (!appointmentRequestSubmissionIsOnHold(item, bookedApptMeta, typeCatalog))
             return false;
           if (onHoldOver24Only) {
-            const clumpIds = appointmentRequestHouseholdClumpIds(
-              item.bookedAppointmentId,
-              householdHoldClumpByBookedApptId,
-            );
-            return appointmentRequestHouseholdAnyOver24Hours(clumpIds, bookedApptMeta);
+            const summary =
+              item.bookedAppointmentId != null
+                ? bookedApptMeta.get(Number(item.bookedAppointmentId))
+                : undefined;
+            return appointmentRequestOnHoldOver24Hours(summary);
           }
           return true;
         })
@@ -771,7 +1056,9 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
       return submissions
         .filter(
           (item) =>
-            exitingRows.has(item.id) || appointmentRequestNeedsStaffConfirmation(item),
+            exitingRows.has(item.id) ||
+            (appointmentRequestNeedsStaffConfirmation(item) &&
+              !appointmentRequestSubmissionIsOnHold(item, bookedApptMeta, typeCatalog)),
         )
         .sort(sortNewestFirst);
     }
@@ -780,10 +1067,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
       .filter((item) => {
         if (exitingRows.has(item.id)) return true;
         if (submissionStatus(item) !== statusFilter) return false;
-        if (
-          statusFilter === 'booked' &&
-          appointmentRequestSubmissionIsOnHold(item, bookedApptMeta, householdHoldClumpByBookedApptId)
-        ) {
+        if (appointmentRequestSubmissionIsOnHold(item, bookedApptMeta, typeCatalog)) {
           return false;
         }
         if (
@@ -804,7 +1088,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
     noteDrafts,
     exitingRows,
     bookedApptMeta,
-    householdHoldClumpByBookedApptId,
+    typeCatalog,
   ]);
 
   const useArchiveListPagination =
@@ -981,12 +1265,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
     const apptId = item.bookedAppointmentId;
     if (apptId == null) return;
     setStatusError((e) => ({ ...e, [item.id]: null }));
-    const cached = bookedApptMeta.get(Number(apptId));
-    const start = cached?.start;
-    const dateKey = start
-      ? DateTime.fromISO(start, { zone: 'utc' }).setZone(practiceTz).toISODate()
-      : null;
-    const providerId = cached?.providerInternalId?.trim() || undefined;
+    const { dateKey, providerId } = appointmentRequestViewHints(item, bookedApptMeta, practiceTz);
 
     writeAppointmentRequestListReturnTab(statusFilter);
     writeAppointmentRequestStaffConfirmSession({
@@ -1144,12 +1423,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
   const onViewAppointment = (item: AppointmentRequestSubmissionItem) => {
     const apptId = item.bookedAppointmentId;
     if (apptId == null) return;
-    const cached = bookedApptMeta.get(Number(apptId));
-    const start = cached?.start;
-    const dateKey = start
-      ? DateTime.fromISO(start, { zone: 'utc' }).setZone(practiceTz).toISODate()
-      : null;
-    const providerId = cached?.providerInternalId?.trim() || undefined;
+    const { dateKey, providerId } = appointmentRequestViewHints(item, bookedApptMeta, practiceTz);
 
     if (statusFilter === 'on_hold') {
       writeOnHoldVisitEditSession({
@@ -1268,7 +1542,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
             </button>
           );
         })}
-        <button type="button" className="btn primary appt-request-status-tabs-refresh" onClick={() => void load()} disabled={loading}>
+        <button type="button" className="btn primary appt-request-status-tabs-refresh" onClick={() => void load({ awaitHydration: true })} disabled={loading}>
           Refresh
         </button>
       </div>
@@ -1416,27 +1690,23 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
             const isEuth = isEuthanasiaRequestData(rd);
             const status = submissionStatus(item);
             const isDismissed = status === 'dismissed';
-            const isBooked = status === 'booked';
+            const isOnHoldVisit = appointmentRequestSubmissionIsOnHold(item, bookedApptMeta, typeCatalog);
+            const isBooked = appointmentRequestSubmissionCountsAsBooked(
+              item,
+              bookedApptMeta,
+              typeCatalog,
+            );
             const bookedApptId = item.bookedAppointmentId;
             const hasLinkedAppointment = bookedApptId != null;
             // Only true when the client self-scheduled a slot and it was auto-booked online —
             // not for ordinary appointment requests that staff book later.
             const autoBookedOnline = appointmentRequestAutoBookedOnline(item);
-            const needsStaffConfirmation = appointmentRequestNeedsStaffConfirmation(item);
+            const needsStaffConfirmation =
+              appointmentRequestNeedsStaffConfirmation(item) && !isOnHoldVisit;
             const needsManualBook = !isDismissed && !isBooked && !hasLinkedAppointment;
             const bookedSummary =
               bookedApptId != null ? bookedApptMeta.get(Number(bookedApptId)) : undefined;
             const linkedAppointment = linkedEvetIdsFromBookedApptSummary(bookedSummary);
-            const householdClumpIds = appointmentRequestHouseholdClumpIds(
-              bookedApptId,
-              householdHoldClumpByBookedApptId,
-            );
-            const isOnHoldVisit =
-              householdClumpIds.length > 0
-                ? householdClumpIds.some((id) =>
-                    appointmentRequestLinkedVisitIsOnHold(bookedApptMeta.get(id)),
-                  )
-                : appointmentRequestLinkedVisitIsOnHold(bookedSummary);
             const requestTypeName = requestDataAppointmentTypeLabel(rd);
             const linkedVisitLine =
               bookedSummary != null
@@ -1446,8 +1716,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
             const onHoldBookedAtLabel = formatAppointmentRequestOnHoldBookedAt(onHoldSinceIso, practiceTz);
             const onHoldElapsedLabel = formatAppointmentRequestOnHoldElapsedSince(onHoldSinceIso);
             const onHoldOver24 =
-              isOnHoldVisit &&
-              appointmentRequestHouseholdAnyOver24Hours(householdClumpIds, bookedApptMeta);
+              isOnHoldVisit && appointmentRequestOnHoldOver24Hours(bookedSummary);
             const clientNote = requestDataAnythingElse(rd);
             const canText = requestDataCanText(rd);
             const howSoon = requestDataHowSoon(rd);
@@ -1509,7 +1778,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                             color: '#475569',
                           }}
                         >
-                          {statusTabLabel(item, status)}
+                          {statusTabLabel(item, status, { isOnHold: isOnHoldVisit })}
                         </div>
                       ) : null}
                       {howSoonUrgency === 'emergent' ? (
@@ -1595,7 +1864,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                           No text consent
                         </div>
                       ) : null}
-                      {autoBookedOnline ? (
+                      {autoBookedOnline && !isOnHoldVisit ? (
                         <div
                           style={{
                             display: 'inline-block',
@@ -1817,6 +2086,39 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                           {statusUpdating[item.id] ? 'Saving…' : 'Not booked'}
                         </button>
                       </>
+                    ) : isOnHoldVisit ? (
+                      <>
+                        {needsStaffConfirmation ? (
+                          <button
+                            type="button"
+                            className="btn primary"
+                            disabled={Boolean(statusUpdating[item.id])}
+                            onClick={() => openConfirmPreview(item)}
+                          >
+                            {statusUpdating[item.id] ? 'Saving…' : 'Confirm'}
+                          </button>
+                        ) : null}
+                        {appointmentRequestHasSmsPhone(item) ? (
+                          <button type="button" className="btn secondary" onClick={() => openSmsModal(item)}>
+                            Text client
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          className="btn secondary"
+                          onClick={() => onViewAppointment(item)}
+                        >
+                          View appointment
+                        </button>
+                        <button
+                          type="button"
+                          className="btn secondary"
+                          disabled={Boolean(statusUpdating[item.id])}
+                          onClick={() => openNotBookedModal(item)}
+                        >
+                          Not booked
+                        </button>
+                      </>
                     ) : isBooked || hasLinkedAppointment ? (
                       <>
                         {needsStaffConfirmation ? (
@@ -1838,7 +2140,6 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                           type="button"
                           className="btn secondary"
                           onClick={() => onViewAppointment(item)}
-                          disabled={!bookedSummary?.start}
                         >
                           View appointment
                         </button>

@@ -1,6 +1,7 @@
 /**
  * Practice calendar realtime: Socket.IO namespace `/calendar` on the REST API origin.
- * @see API docs — event `appointment.calendar`, emit `calendar.joinPractice` / `calendar.leavePractice`.
+ * @see API docs — events `appointment.calendar`, `appointment.request-submission`;
+ * emit `calendar.joinPractice` / `calendar.leavePractice`.
  */
 import { io, type Socket } from 'socket.io-client';
 import { apiBaseUrl, getToken } from '../api/http';
@@ -14,27 +15,76 @@ export type AppointmentCalendarPayload = {
   primaryProviderId?: number | null;
 };
 
+export type AppointmentRequestSubmissionPayload = {
+  action: 'created' | 'updated';
+  submissionId: number;
+  practiceId: number;
+  bookedAppointmentId?: number | null;
+};
+
 const APPOINTMENT_CALENDAR_EVENT = 'appointment.calendar';
+const APPOINTMENT_REQUEST_SUBMISSION_EVENT = 'appointment.request-submission';
 
 function normalizeApiOrigin(): string {
   return apiBaseUrl.replace(/\/+$/, '');
 }
 
+type DebouncedBatchOpts<T> = {
+  debounceMs: number;
+  onBatch: (payloads: T[]) => void;
+};
+
+function createDebouncedBatchHandler<T>(opts: DebouncedBatchOpts<T>) {
+  let pending: T[] = [];
+  let flushTimer: number | null = null;
+
+  const flush = () => {
+    flushTimer = null;
+    if (pending.length === 0) return;
+    const raw = pending;
+    pending = [];
+    opts.onBatch(raw);
+  };
+
+  const push = (payload: T) => {
+    pending.push(payload);
+    if (flushTimer != null) window.clearTimeout(flushTimer);
+    flushTimer = window.setTimeout(flush, opts.debounceMs);
+  };
+
+  const dispose = () => {
+    if (flushTimer != null) {
+      window.clearTimeout(flushTimer);
+      flushTimer = null;
+    }
+    pending = [];
+  };
+
+  return { push, dispose };
+}
+
 /**
- * Subscribe to appointment changes for the visible practice. Ensures the socket joins
- * `practice:{practiceId}` for this UI (e.g. admin viewing env practice).
+ * Subscribe to appointment + appointment-request changes for the visible practice.
  *
- * @param visibleProviderId — internal provider id string when the calendar is filtered to one doctor; empty refetches for any provider on that practice.
+ * @param visibleProviderId — internal provider id when scoped to one doctor; empty = entire practice.
  * @param debounceMs — coalesce bursts (imports, bulk edits).
- * @param onBatch — receives dedupe window batch (last event per appointment id wins).
  */
 export function subscribePracticeCalendar(opts: {
   practiceId: number;
   visibleProviderId: string;
   onBatch: (payloads: AppointmentCalendarPayload[]) => void;
+  onRequestSubmissionBatch?: (payloads: AppointmentRequestSubmissionPayload[]) => void;
+  onReconnect?: () => void;
   debounceMs?: number;
 }): () => void {
-  const { practiceId, visibleProviderId, onBatch, debounceMs = 300 } = opts;
+  const {
+    practiceId,
+    visibleProviderId,
+    onBatch,
+    onRequestSubmissionBatch,
+    onReconnect,
+    debounceMs = 300,
+  } = opts;
 
   const token = getToken();
   if (!token?.trim() || typeof window === 'undefined') {
@@ -51,25 +101,24 @@ export function subscribePracticeCalendar(opts: {
     reconnectionDelayMax: 10_000,
   });
 
-  let pending: AppointmentCalendarPayload[] = [];
-  let flushTimer: number | null = null;
+  const calendarBatch = createDebouncedBatchHandler<AppointmentCalendarPayload>({
+    debounceMs,
+    onBatch: (raw) => {
+      const byId = new Map<number, AppointmentCalendarPayload>();
+      for (const p of raw) byId.set(p.appointmentId, p);
+      onBatch([...byId.values()]);
+    },
+  });
 
-  const flush = () => {
-    flushTimer = null;
-    if (pending.length === 0) return;
-    const raw = pending;
-    pending = [];
-    const byId = new Map<number, AppointmentCalendarPayload>();
-    for (const p of raw) {
-      byId.set(p.appointmentId, p);
-    }
-    onBatch([...byId.values()]);
-  };
-
-  const scheduleFlush = () => {
-    if (flushTimer != null) window.clearTimeout(flushTimer);
-    flushTimer = window.setTimeout(flush, debounceMs);
-  };
+  const submissionBatch = createDebouncedBatchHandler<AppointmentRequestSubmissionPayload>({
+    debounceMs,
+    onBatch: (raw) => {
+      if (!onRequestSubmissionBatch) return;
+      const byId = new Map<number, AppointmentRequestSubmissionPayload>();
+      for (const p of raw) byId.set(p.submissionId, p);
+      onRequestSubmissionBatch([...byId.values()]);
+    },
+  });
 
   const joinPractice = () => {
     socket.emit('calendar.joinPractice', { practiceId }, (ack: { ok: boolean; error?: string } | undefined) => {
@@ -79,7 +128,12 @@ export function subscribePracticeCalendar(opts: {
     });
   };
 
-  socket.on('connect', joinPractice);
+  let hasConnected = false;
+  socket.on('connect', () => {
+    joinPractice();
+    if (hasConnected) onReconnect?.();
+    hasConnected = true;
+  });
 
   socket.on(APPOINTMENT_CALENDAR_EVENT, (payload: AppointmentCalendarPayload) => {
     if (!payload || typeof payload.practiceId !== 'number') return;
@@ -90,8 +144,14 @@ export function subscribePracticeCalendar(opts: {
       if (String(payload.primaryProviderId) !== vid) return;
     }
 
-    pending.push(payload);
-    scheduleFlush();
+    calendarBatch.push(payload);
+  });
+
+  socket.on(APPOINTMENT_REQUEST_SUBMISSION_EVENT, (payload: AppointmentRequestSubmissionPayload) => {
+    if (!payload || typeof payload.practiceId !== 'number') return;
+    if (payload.practiceId !== practiceId) return;
+    if (!onRequestSubmissionBatch) return;
+    submissionBatch.push(payload);
   });
 
   socket.on('connect_error', (err: unknown) => {
@@ -101,11 +161,8 @@ export function subscribePracticeCalendar(opts: {
   });
 
   return () => {
-    if (flushTimer != null) {
-      window.clearTimeout(flushTimer);
-      flushTimer = null;
-    }
-    pending = [];
+    calendarBatch.dispose();
+    submissionBatch.dispose();
     try {
       socket.emit('calendar.leavePractice', { practiceId });
     } catch {

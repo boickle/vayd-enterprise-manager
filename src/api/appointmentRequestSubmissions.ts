@@ -27,6 +27,8 @@ export type AppointmentRequestSubmissionItem = {
   needsRecords?: boolean;
   /** Set when staff confirms an auto-booked online request. */
   staffConfirmedAt?: string | null;
+  /** Ops points on the linked calendar visit when `bookedAppointmentId` is set (from server). */
+  linkedVisitPoints?: number | null;
   /** Abandoned drafts only */
   formSessionId?: string;
   currentStep?: string;
@@ -170,18 +172,34 @@ export async function fetchAllAppointmentRequestSubmissions(params: {
   to?: string;
 }): Promise<AllAppointmentRequestSubmissionsResult> {
   const limit = 200;
-  let page = 1;
-  const out: AppointmentRequestSubmissionItem[] = [];
-  let conversions: AppointmentRequestSubmissionConversions | null = null;
-  let total = 0;
+  const first = await fetchAppointmentRequestSubmissionsPage({ ...params, page: 1, limit });
+  const items = await fetchRemainingAppointmentRequestSubmissionPages(params, first, limit);
+  return {
+    items,
+    conversions: first.conversions ?? null,
+  };
+}
+
+/** Pages after the first — used to show page 1 quickly, then backfill the rest. */
+export async function fetchRemainingAppointmentRequestSubmissionPages(
+  params: { practiceId: number; from?: string; to?: string },
+  firstPage: AppointmentRequestSubmissionsListResponse,
+  limit = 200,
+): Promise<AppointmentRequestSubmissionItem[]> {
+  const total =
+    typeof firstPage.total === 'number'
+      ? firstPage.total
+      : (firstPage.items?.length ?? 0);
+  const out: AppointmentRequestSubmissionItem[] = [...(firstPage.items ?? [])];
+  if (out.length >= total) return out;
+
+  let page = 2;
   for (;;) {
     const res = await fetchAppointmentRequestSubmissionsPage({ ...params, page, limit });
-    if (conversions == null && res.conversions != null) conversions = res.conversions;
-    total = typeof res.total === 'number' ? res.total : out.length + (res.items?.length ?? 0);
     const batch = res.items ?? [];
     out.push(...batch);
     if (out.length >= total || batch.length === 0) break;
     page += 1;
   }
-  return { items: out, conversions };
+  return out;
 }
