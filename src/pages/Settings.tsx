@@ -14,6 +14,7 @@ import {
   uploadEmployeeImage,
   type AppointmentType,
   type Employee,
+  type EmployeeAppointmentTypeAssignment,
   type EmployeeWeeklySchedule,
   type Zone,
 } from '../api/appointmentSettings';
@@ -167,7 +168,9 @@ export default function Settings() {
   // Employee Appointment Types state
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
-  const [selectedAppointmentTypeIds, setSelectedAppointmentTypeIds] = useState<number[]>([]);
+  const [employeeApptTypeAssignments, setEmployeeApptTypeAssignments] = useState<
+    EmployeeAppointmentTypeAssignment[]
+  >([]);
 
   // Employee Zones state
   const [allZones, setAllZones] = useState<Zone[]>([]);
@@ -304,9 +307,12 @@ export default function Settings() {
     try {
       const employee = await fetchEmployee(employeeId);
       setSelectedEmployee(employee);
-      setSelectedAppointmentTypeIds(
+      setEmployeeApptTypeAssignments(
         employee.appointmentTypes && Array.isArray(employee.appointmentTypes)
-          ? employee.appointmentTypes.map((at) => at.id)
+          ? employee.appointmentTypes.map((at) => ({
+              appointmentTypeId: at.id,
+              allowOnlineBooking: at.allowOnlineBooking === true,
+            }))
           : []
       );
     } catch (err: any) {
@@ -399,7 +405,7 @@ export default function Settings() {
     setError(null);
     setSuccess(null);
     try {
-      await updateEmployeeAppointmentTypes(selectedEmployee.id, selectedAppointmentTypeIds);
+      await updateEmployeeAppointmentTypes(selectedEmployee.id, employeeApptTypeAssignments);
       setSuccess('Employee appointment types updated successfully');
       setTimeout(() => setSuccess(null), 3000);
       // Reload employee data
@@ -645,20 +651,40 @@ export default function Settings() {
     }
   };
 
+  const isEmployeeAppointmentTypeAssigned = (typeId: number) =>
+    employeeApptTypeAssignments.some((a) => a.appointmentTypeId === typeId);
+
   const toggleAppointmentTypeSelection = (typeId: number) => {
-    setSelectedAppointmentTypeIds((prev) =>
-      prev.includes(typeId) ? prev.filter((id) => id !== typeId) : [...prev, typeId]
+    setEmployeeApptTypeAssignments((prev) => {
+      if (prev.some((a) => a.appointmentTypeId === typeId)) {
+        return prev.filter((a) => a.appointmentTypeId !== typeId);
+      }
+      return [...prev, { appointmentTypeId: typeId, allowOnlineBooking: false }];
+    });
+  };
+
+  const toggleEmployeeAppointmentTypeOnlineBooking = (typeId: number, allowOnlineBooking: boolean) => {
+    setEmployeeApptTypeAssignments((prev) =>
+      prev.map((a) =>
+        a.appointmentTypeId === typeId ? { ...a, allowOnlineBooking } : a
+      )
     );
   };
 
   const selectAllEmployeeAppointmentTypes = () => {
     const activeIds = activeAppointmentTypes.map((t) => t.id);
-    const archivedKept = selectedAppointmentTypeIds.filter((id) => !activeIds.includes(id));
-    setSelectedAppointmentTypeIds([...activeIds, ...archivedKept]);
+    const archivedKept = employeeApptTypeAssignments.filter(
+      (a) => !activeIds.includes(a.appointmentTypeId)
+    );
+    const activeAssignments = activeIds.map((id) => {
+      const existing = employeeApptTypeAssignments.find((a) => a.appointmentTypeId === id);
+      return existing ?? { appointmentTypeId: id, allowOnlineBooking: false };
+    });
+    setEmployeeApptTypeAssignments([...activeAssignments, ...archivedKept]);
   };
 
   const unselectAllEmployeeAppointmentTypes = () => {
-    setSelectedAppointmentTypeIds([]);
+    setEmployeeApptTypeAssignments([]);
   };
 
   const toggleZoneAssignment = (zoneId: number, isAssigned: boolean) => {
@@ -1161,7 +1187,8 @@ export default function Settings() {
           <div className="settings-section">
             <h2 className="settings-section-title">Employee Appointment Types</h2>
             <p className="settings-section-description">
-              Configure which appointment types each employee can see and handle.
+              Configure which appointment types each employee can see and handle, and whether clients may
+              book each type online through the appointment request form.
             </p>
 
             <div className="settings-form-group">
@@ -1175,7 +1202,7 @@ export default function Settings() {
                     handleLoadEmployee(empId);
                   } else {
                     setSelectedEmployee(null);
-                    setSelectedAppointmentTypeIds([]);
+                    setEmployeeApptTypeAssignments([]);
                   }
                 }}
               >
@@ -1193,7 +1220,10 @@ export default function Settings() {
                 <h3 className="settings-card-title">
                   {formatEmployeeName(selectedEmployee)}
                 </h3>
-                <p className="settings-card-subtitle">Select appointment types this employee can handle:</p>
+                <p className="settings-card-subtitle">
+                  Select appointment types this employee can handle. When enabled, online booking lets
+                  clients pick an available slot on the appointment request form for that doctor and type.
+                </p>
 
                 {activeAppointmentTypes.length > 0 ? (
                   <div className="settings-checkbox-bulk-actions">
@@ -1218,28 +1248,51 @@ export default function Settings() {
                 ) : null}
 
                 <div className="settings-checkbox-list">
-                  {activeAppointmentTypes.map((type) => (
-                    <label key={type.id} className="settings-checkbox-item">
-                      <input
-                        type="checkbox"
-                        checked={selectedAppointmentTypeIds.includes(type.id)}
-                        onChange={() => toggleAppointmentTypeSelection(type.id)}
-                      />
-                      <span>
-                        {type.prettyName || type.name}
-                        {!type.showInApptRequestForm && (
-                          <span className="settings-muted"> (not shown in form)</span>
+                  {activeAppointmentTypes.map((type) => {
+                    const assigned = isEmployeeAppointmentTypeAssigned(type.id);
+                    const allowOnline =
+                      employeeApptTypeAssignments.find((a) => a.appointmentTypeId === type.id)
+                        ?.allowOnlineBooking === true;
+                    return (
+                      <div key={type.id} className="settings-checkbox-item settings-checkbox-item--stacked">
+                        <label className="settings-checkbox-item">
+                          <input
+                            type="checkbox"
+                            checked={assigned}
+                            onChange={() => toggleAppointmentTypeSelection(type.id)}
+                          />
+                          <span>
+                            {type.name}
+                            {!type.showInApptRequestForm && (
+                              <span className="settings-muted"> (not shown in form)</span>
+                            )}
+                          </span>
+                        </label>
+                        {assigned && (
+                          <label
+                            className="settings-checkbox-item settings-checkbox-item--nested"
+                            style={{ marginLeft: '1.75rem', marginTop: '4px' }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={allowOnline}
+                              onChange={(e) =>
+                                toggleEmployeeAppointmentTypeOnlineBooking(type.id, e.target.checked)
+                              }
+                            />
+                            <span>Allow online booking on appointment request form</span>
+                          </label>
                         )}
-                      </span>
-                    </label>
-                  ))}
+                      </div>
+                    );
+                  })}
                   {appointmentTypes
-                    .filter((t) => appointmentTypeIsArchived(t) && selectedAppointmentTypeIds.includes(t.id))
+                    .filter((t) => appointmentTypeIsArchived(t) && isEmployeeAppointmentTypeAssigned(t.id))
                     .map((type) => (
                       <label key={type.id} className="settings-checkbox-item settings-checkbox-item--disabled">
                         <input type="checkbox" checked disabled readOnly />
                         <span>
-                          {type.prettyName || type.name}
+                          {type.name}
                           <span className="settings-appt-type-archived-badge">Archived</span>
                           <span className="settings-muted"> — remove from employee or restore the type</span>
                         </span>
@@ -2448,9 +2501,8 @@ export default function Settings() {
           <div className="settings-section">
             <h2 className="settings-section-title">Employees</h2>
             <p className="settings-section-description">
-              View staff and assign employee roles (for manual booking permissions). Click an employee name to edit roles
-              only. When PIMS editing is enabled (<code>VITE_ENABLE_PIMS_ENTITY_EDIT=true</code>), you can also add, edit,
-              deactivate, or remove employee records.
+              View staff, assign employee roles (for manual booking permissions), and edit VAYD-managed bios.
+              Click an employee name to edit roles, or use <strong>Edit bio</strong> for profile copy.
             </p>
             <SettingsEmployeeDirectory
               onMessage={(msg, kind) => {

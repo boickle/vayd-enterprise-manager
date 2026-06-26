@@ -21,6 +21,7 @@ export const SCHEDULE_OUTLET_EXTRA_SEGMENTS: string[] = [
   'settings',
   'admin',
   'analytics',
+  'appointments',
 ];
 
 export const SCOUT_TABS: ScoutTabConfig[] = [

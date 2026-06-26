@@ -1,5 +1,9 @@
 import type { Appointment } from '../api/roomLoader';
-import { fetchAppointmentById, isPracticeCalendarBlockAppointment } from '../api/appointments';
+import {
+  fetchAppointmentById,
+  isAppointmentCancelledOnPracticeCalendar,
+  isPracticeCalendarBlockAppointment,
+} from '../api/appointments';
 import type { ForwardBookingEntry } from '../api/forwardBooking';
 import { forwardBookingIsBookLater } from './forwardBookingBookLater';
 import {
@@ -62,6 +66,8 @@ export type BookedAppointmentMeta = {
   providerInternalId?: string | null;
   /** When the linked calendar appointment was created / booked (ISO). */
   appointmentBookedAtIso?: string | null;
+  /** True when the linked visit was cancelled / removed on the practice calendar. */
+  appointmentCancelled?: boolean;
 };
 
 export async function buildBookedAppointmentMetaMap(
@@ -87,7 +93,10 @@ export async function buildBookedAppointmentMetaMap(
         ? resolveSchedulerProviderFilterFromAppointment(appt, providers) || null
         : null;
       const appointmentBookedAtIso = appt ? linkedAppointmentBookedAtIso(appt) : null;
-      map.set(id, { points, typeName, providerInternalId, appointmentBookedAtIso });
+      const appointmentCancelled = appt
+        ? isAppointmentCancelledOnPracticeCalendar(appt)
+        : false;
+      map.set(id, { points, typeName, providerInternalId, appointmentBookedAtIso, appointmentCancelled });
     })
   );
   return map;
@@ -135,6 +144,18 @@ export function forwardBookingLinkedAppointmentPoints(
   return pointsPerPatientForType(catalog, { typeId, typeName });
 }
 
+/** Linked calendar hold was cancelled — treat like a removed queue row for list tabs. */
+export function forwardBookingLinkedAppointmentCancelled(
+  entry: ForwardBookingEntry,
+  bookedApptMeta: Map<number, BookedAppointmentMeta> | null | undefined,
+): boolean {
+  const apptId = forwardBookingLinkedAppointmentId(entry);
+  if (apptId == null || bookedApptMeta == null || !bookedApptMeta.has(apptId)) {
+    return false;
+  }
+  return bookedApptMeta.get(apptId)!.appointmentCancelled === true;
+}
+
 /** Forward booking treats linked visits with 0 ops points as on hold (tab + badge). */
 export function forwardBookingLinkedVisitIsOnHold(
   entry: ForwardBookingEntry,
@@ -142,6 +163,7 @@ export function forwardBookingLinkedVisitIsOnHold(
   catalog?: AppointmentTypeCatalog | null
 ): boolean {
   if (!forwardBookingHasLinkedVisit(entry)) return false;
+  if (forwardBookingLinkedAppointmentCancelled(entry, bookedApptMeta)) return false;
   const points = forwardBookingLinkedAppointmentPoints(entry, bookedApptMeta, catalog);
   return points != null && points <= 0;
 }
@@ -157,6 +179,9 @@ export function forwardBookingListTab(
   if (entry.status === 'complete') return 'complete';
   if (forwardBookingIsBookLater(entry, practiceTz)) return 'bookLater';
   if (forwardBookingHasLinkedVisit(entry)) {
+    if (forwardBookingLinkedAppointmentCancelled(entry, bookedApptMeta)) {
+      return 'removed';
+    }
     const points = forwardBookingLinkedAppointmentPoints(entry, bookedApptMeta, catalog);
     if (points != null && points <= 0) return 'onHold';
     if (points != null && points > 0) return 'booked';

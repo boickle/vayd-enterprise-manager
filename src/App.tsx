@@ -27,6 +27,7 @@ import RoutingCalendarWorkspace from './pages/RoutingCalendarWorkspace';
 import MyDayToggle from './pages/MyDayToggle';
 import MyWeek from './pages/MyWeek';
 import SchedulingTools from './pages/SchedulingTools';
+import AppointmentRequestsPage from './pages/AppointmentRequestsPage';
 import RoomLoaderPage from './pages/RoomLoader';
 import { ScheduleIndexRedirect } from './pages/ScheduleLayout';
 import ScheduleHomePage from './pages/ScheduleHomePage';
@@ -511,7 +512,17 @@ export default function App() {
                       {getSchedulingToolsTabPages().map((tab) => (
                         <Route key={tab.path} path={tab.path} element={tab.element} />
                       ))}
+                      <Route
+                        path="appointments/*"
+                        element={<Navigate to="/schedule/appointments" replace />}
+                      />
                     </Route>
+                    <Route path="appointments" element={<AppointmentRequestsPage />} />
+                    <Route
+                      path="appointments/requests"
+                      element={<Navigate to="/schedule/appointments" replace />}
+                    />
+                    <Route path="appointments/on-hold" element={<AppointmentRequestsPage initialTab="on_hold" />} />
                     <Route path="room-loader" element={<RoomLoaderPage />} />
                     <Route path="scheduler" element={<Scheduler />} />
                     <Route path="inventory" element={<InventoryManagement />} />

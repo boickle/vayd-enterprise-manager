@@ -1,0 +1,117 @@
+import type { NavigateFunction } from 'react-router-dom';
+import {
+  APPOINTMENT_REQUESTS_LIST_PATH,
+  APPOINTMENTS_PATH_PREFIX,
+  appointmentRequestsPathForTab,
+  parseAppointmentRequestsTabFromLocation,
+  parseAppointmentRequestsTabParam,
+  type AppointmentRequestListTab,
+} from '../appointments-nav';
+
+export const APPOINTMENT_REQUEST_LIST_RETURN_TAB_KEY =
+  'vayd:appointment-request-list-return-tab-v1';
+
+export type AppointmentsListLocationState = {
+  /** In-page tab switch (same session); avoids resetting to New on route remount. */
+  appointmentsTab?: AppointmentRequestListTab;
+};
+
+export function appointmentsTabFromLocationState(
+  state: unknown,
+): AppointmentRequestListTab | null {
+  if (!state || typeof state !== 'object') return null;
+  return parseAppointmentRequestsTabParam(
+    (state as AppointmentsListLocationState).appointmentsTab,
+  );
+}
+
+export function writeAppointmentRequestListReturnTab(tab: AppointmentRequestListTab): void {
+  if (typeof sessionStorage === 'undefined') return;
+  try {
+    sessionStorage.setItem(APPOINTMENT_REQUEST_LIST_RETURN_TAB_KEY, tab);
+  } catch {
+    /* quota */
+  }
+}
+
+export function readAppointmentRequestListReturnTab(): AppointmentRequestListTab | null {
+  if (typeof sessionStorage === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(APPOINTMENT_REQUEST_LIST_RETURN_TAB_KEY);
+    return parseAppointmentRequestsTabParam(raw);
+  } catch {
+    return null;
+  }
+}
+
+export function clearAppointmentRequestListReturnTab(): void {
+  if (typeof sessionStorage === 'undefined') return;
+  try {
+    sessionStorage.removeItem(APPOINTMENT_REQUEST_LIST_RETURN_TAB_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Navigate back to the appointments list and restore the given tab on load. */
+export function returnToAppointmentRequestsList(
+  navigate: NavigateFunction,
+  tab: AppointmentRequestListTab,
+  opts?: { replace?: boolean; onHoldOver24Only?: boolean },
+): void {
+  writeAppointmentRequestListReturnTab(tab);
+  navigate(
+    appointmentRequestsPathForTab(tab, {
+      onHoldOver24Only: opts?.onHoldOver24Only,
+    }),
+    { replace: opts?.replace, state: { appointmentsTab: tab } satisfies AppointmentsListLocationState },
+  );
+}
+
+export function appointmentRequestsListPathMatches(
+  pathname: string,
+  search: string,
+  tab: AppointmentRequestListTab,
+  opts?: { onHoldOver24Only?: boolean },
+): boolean {
+  const target = appointmentRequestsPathForTab(tab, opts);
+  const q = target.indexOf('?');
+  const targetPath = q === -1 ? target : target.slice(0, q);
+  const targetSearch = q === -1 ? '' : target.slice(q);
+  return pathname === targetPath && search === targetSearch;
+}
+
+/** Default to New on fresh entry; restore tab when returning from a sub-flow or in-page switch. */
+export function resolveAppointmentsListEntryTab(
+  pathname: string,
+  search: string,
+  locationState: unknown,
+): AppointmentRequestListTab | 'default_new' | null {
+  const stateTab = appointmentsTabFromLocationState(locationState);
+  if (stateTab) {
+    clearAppointmentRequestListReturnTab();
+    return stateTab;
+  }
+
+  const restoreTab = readAppointmentRequestListReturnTab();
+  if (restoreTab) {
+    clearAppointmentRequestListReturnTab();
+    return restoreTab;
+  }
+
+  // Path-based on-hold URL is canonical — no session/state required (e.g. Back from calendar preview).
+  if (
+    pathname === `${APPOINTMENTS_PATH_PREFIX}/on-hold` ||
+    pathname.startsWith(`${APPOINTMENTS_PATH_PREFIX}/on-hold/`)
+  ) {
+    return null;
+  }
+
+  if (parseAppointmentRequestsTabFromLocation(pathname, search) !== 'new') {
+    return 'default_new';
+  }
+
+  return null;
+}
+
+export { APPOINTMENT_REQUESTS_LIST_PATH };

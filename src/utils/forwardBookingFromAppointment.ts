@@ -557,6 +557,7 @@ export function buildCreateForwardBookingPayloadFromPatient(
   practiceId: number,
   opts?: {
     bookingNotes?: string | null;
+    note?: string | null;
     primaryProviderId?: number | null;
   }
 ): Omit<CreateForwardBookingPayload, 'createdVia'> | null {
@@ -565,6 +566,8 @@ export function buildCreateForwardBookingPayloadFromPatient(
 
   const bookingNotesRaw = opts?.bookingNotes?.trim();
   const bookingNotes = bookingNotesRaw ? bookingNotesRaw : null;
+  const noteRaw = opts?.note?.trim();
+  const note = noteRaw ? noteRaw : null;
   const primaryProviderId =
     opts?.primaryProviderId != null && Number.isFinite(Number(opts.primaryProviderId))
       ? Number(opts.primaryProviderId)
@@ -578,5 +581,6 @@ export function buildCreateForwardBookingPayloadFromPatient(
     intervalUnit: interval.unit,
     ...(primaryProviderId != null ? { primaryProviderId } : {}),
     ...(bookingNotes != null ? { bookingNotes } : {}),
+    ...(note != null ? { note } : {}),
   };
 }

@@ -1,5 +1,5 @@
 // src/pages/FillDay.tsx
-import React, { useCallback, useEffect, useState, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { DateTime } from 'luxon';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -42,6 +42,10 @@ import { practiceTimeZoneOrDefault } from '../utils/practiceTimezone';
 import { fetchClientMessages, type ClientMessagesResponse } from '../api/clientPortal';
 import { BookPatientChartButton } from '../components/BookPatientChartButton';
 import { SCHEDULING_TOOLS_PAGE_REFRESH_EVENT } from '../hooks/useSchedulingToolsNavCounts';
+import SchedulingToolsListPagination, {
+  paginateSchedulingToolsList,
+  schedulingToolsListTotalPages,
+} from '../components/SchedulingToolsListPagination';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 
@@ -216,6 +220,7 @@ export default function FillDayPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [candidates, setCandidates] = useState<FillDayCandidate[]>([]);
+  const [listPage, setListPage] = useState(1);
   const [stats, setStats] = useState<FillDayStats | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -721,6 +726,25 @@ export default function FillDayPage() {
     window.addEventListener(SCHEDULING_TOOLS_PAGE_REFRESH_EVENT, onPageRefresh);
     return () => window.removeEventListener(SCHEDULING_TOOLS_PAGE_REFRESH_EVENT, onPageRefresh);
   }, [selectedDoctorId, targetDate, candidates.length, stats]);
+
+  const candidatesForDisplay = useMemo(
+    () => paginateSchedulingToolsList(candidates, listPage),
+    [candidates, listPage],
+  );
+
+  useEffect(() => {
+    setListPage(1);
+  }, [selectedDoctorId, targetDate]);
+
+  useEffect(() => {
+    const totalPages = schedulingToolsListTotalPages(candidates.length);
+    if (listPage > totalPages) setListPage(totalPages);
+  }, [listPage, candidates.length]);
+
+  const changeCandidatePage = useCallback((page: number) => {
+    setListPage(page);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, []);
 
   // Format time
   function formatTime(iso: string): string {
@@ -1277,7 +1301,13 @@ export default function FillDayPage() {
 
       {candidates.length > 0 && (
         <div style={{ display: 'grid', gap: '24px' }}>
-          {candidates.map((candidate, idx) => {
+          <SchedulingToolsListPagination
+            listPage={listPage}
+            totalItems={candidates.length}
+            onPageChange={changeCandidatePage}
+            itemLabel="candidates"
+          />
+          {candidatesForDisplay.map((candidate, idx) => {
             return (
             <div
               id={`fill-day-client-${candidate.clientId}`}
@@ -1823,6 +1853,12 @@ export default function FillDayPage() {
             </div>
             );
           })}
+          <SchedulingToolsListPagination
+            listPage={listPage}
+            totalItems={candidates.length}
+            onPageChange={changeCandidatePage}
+            itemLabel="candidates"
+          />
         </div>
       )}
       </div>

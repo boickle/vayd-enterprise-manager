@@ -42,6 +42,21 @@ import {
   type CareOutreachPriorityChipCounts,
 } from '../utils/careOutreachPriorityFilters';
 import { careOutreachReminderIsHidden } from '../utils/careOutreachReminderVisibility';
+import { fetchForwardBookings } from '../api/forwardBooking';
+import { fetchAllAppointmentTypes } from '../api/appointmentSettings';
+import SchedulingToolsListPagination, {
+  paginateSchedulingToolsList,
+  schedulingToolsListTotalPages,
+} from '../components/SchedulingToolsListPagination';
+import {
+  filterCareOutreachRemindersForForwardBooking,
+  forwardBookingPatientIdsActiveInQueue,
+} from '../utils/careOutreachForwardBookingExclude';
+import {
+  buildAppointmentTypeCatalogFromTypes,
+  buildBookedAppointmentMetaMap,
+  forwardBookingEntryVisibleOnList,
+} from '../utils/forwardBookingListVisibility';
 import { notifySchedulingToolsNavCountsRefresh, SCHEDULING_TOOLS_PAGE_REFRESH_EVENT } from '../hooks/useSchedulingToolsNavCounts';
 import { evetClientLink, evetPatientLink } from '../utils/evet';
 import { buildPhoneDialHref, resolveQuoFromLine } from '../utils/quoContact';
@@ -52,8 +67,6 @@ const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
 const PRACTICE_TZ = practiceTimeZoneOrDefault(undefined);
 
 const NOTES_DEBOUNCE_MS = 750;
-
-const PAST_DUE_LIST_PAGE_SIZE = 25;
 
 type PriorityFilter = 'range' | 'overdue_today' | 'past_due_30' | 'due_21';
 
@@ -389,56 +402,6 @@ function mergeReminderAfterPatch(
   return merged;
 }
 
-function CareOutreachPastDuePaginationBar({
-  listPage,
-  totalClients,
-  totalPages,
-  onPageChange,
-}: {
-  listPage: number;
-  totalClients: number;
-  totalPages: number;
-  onPageChange: (page: number) => void;
-}) {
-  return (
-    <div
-      style={{
-        display: 'flex',
-        flexWrap: 'wrap',
-        gap: 12,
-        alignItems: 'center',
-        justifyContent: 'space-between',
-      }}
-    >
-      <p className="settings-muted" style={{ margin: 0 }}>
-        Showing {(listPage - 1) * PAST_DUE_LIST_PAGE_SIZE + 1}–
-        {Math.min(listPage * PAST_DUE_LIST_PAGE_SIZE, totalClients)} of {totalClients} clients
-      </p>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        <button
-          type="button"
-          className="btn secondary"
-          disabled={listPage <= 1}
-          onClick={() => onPageChange(listPage - 1)}
-        >
-          Previous
-        </button>
-        <span className="settings-muted" style={{ fontSize: 14 }}>
-          Page {listPage} of {totalPages}
-        </span>
-        <button
-          type="button"
-          className="btn secondary"
-          disabled={listPage >= totalPages}
-          onClick={() => onPageChange(listPage + 1)}
-        >
-          Next
-        </button>
-      </div>
-    </div>
-  );
-}
-
 export default function CareOutreachPage() {
   const navigate = useNavigate();
   const practiceTz = practiceTimeZoneOrDefault(undefined);
@@ -483,23 +446,39 @@ export default function CareOutreachPage() {
     setError(null);
     try {
       const chipCountRange = careOutreachChipCountFetchRange();
-      const list = await fetchUnscheduledReminders({
-        dueDateFrom: effectiveDueRange.from,
-        dueDateTo: effectiveDueRange.to,
-        practiceId: PRACTICE_ID,
-        limit: 2000,
-      });
-      const chipCountList =
+      const [types, forwardBookings, rawList, chipCountRawList] = await Promise.all([
+        fetchAllAppointmentTypes(PRACTICE_ID, { activeOnly: false }),
+        fetchForwardBookings({ practiceId: PRACTICE_ID, limit: 2000, includeRemoved: true }),
+        fetchUnscheduledReminders({
+          dueDateFrom: effectiveDueRange.from,
+          dueDateTo: effectiveDueRange.to,
+          practiceId: PRACTICE_ID,
+          limit: 2000,
+        }),
         priority === 'range'
-          ? await fetchUnscheduledReminders({
+          ? fetchUnscheduledReminders({
               dueDateFrom: chipCountRange.from,
               dueDateTo: chipCountRange.to,
               practiceId: PRACTICE_ID,
               limit: 2000,
             })
-          : list;
+          : Promise.resolve(null),
+      ]);
+      const catalog = buildAppointmentTypeCatalogFromTypes(types);
+      const visibleForwardBookings = forwardBookings.filter((r) => forwardBookingEntryVisibleOnList(r));
+      const metaMap = await buildBookedAppointmentMetaMap(visibleForwardBookings, PRACTICE_ID, catalog);
+      const blockedPatientIds = forwardBookingPatientIdsActiveInQueue(
+        visibleForwardBookings,
+        practiceTz,
+        metaMap,
+        catalog,
+      );
+      const list = filterCareOutreachRemindersForForwardBooking(rawList, blockedPatientIds);
+      const chipCountSource = chipCountRawList
+        ? filterCareOutreachRemindersForForwardBooking(chipCountRawList, blockedPatientIds)
+        : list;
       setRows(list);
-      setPriorityChipCounts(countCareOutreachPriorityChipClients(chipCountList));
+      setPriorityChipCounts(countCareOutreachPriorityChipClients(chipCountSource));
       const drafts: Record<number, string> = {};
       for (const r of list) {
         drafts[r.id] = initialNotes(r);
@@ -520,7 +499,7 @@ export default function CareOutreachPage() {
       clearCareOutreachHouseholdCache();
       notifySchedulingToolsNavCountsRefresh();
     }
-  }, [effectiveDueRange.from, effectiveDueRange.to, priority]);
+  }, [effectiveDueRange.from, effectiveDueRange.to, priority, practiceTz]);
 
   useEffect(() => {
     void load();
@@ -666,44 +645,39 @@ export default function CareOutreachPage() {
     return list;
   }, [sortedForDisplay]);
 
-  const usePastDueListPagination = priority === 'past_due_30';
+  const listTotalPages = useMemo(
+    () => schedulingToolsListTotalPages(grouped.length),
+    [grouped.length],
+  );
 
-  const pastDueListTotalPages = useMemo(() => {
-    if (!usePastDueListPagination) return 1;
-    return Math.max(1, Math.ceil(grouped.length / PAST_DUE_LIST_PAGE_SIZE));
-  }, [grouped.length, usePastDueListPagination]);
-
-  const groupedForDisplay = useMemo(() => {
-    if (!usePastDueListPagination) return grouped;
-    const start = (listPage - 1) * PAST_DUE_LIST_PAGE_SIZE;
-    return grouped.slice(start, start + PAST_DUE_LIST_PAGE_SIZE);
-  }, [grouped, listPage, usePastDueListPagination]);
+  const groupedForDisplay = useMemo(
+    () => paginateSchedulingToolsList(grouped, listPage),
+    [grouped, listPage],
+  );
 
   useEffect(() => {
     setListPage(1);
   }, [search, providerFilterId, priority]);
 
   useEffect(() => {
-    if (!usePastDueListPagination) return;
-    if (listPage > pastDueListTotalPages) {
-      setListPage(pastDueListTotalPages);
+    if (listPage > listTotalPages) {
+      setListPage(listTotalPages);
     }
-  }, [listPage, pastDueListTotalPages, usePastDueListPagination]);
+  }, [listPage, listTotalPages]);
 
-  const changePastDueListPage = useCallback((page: number) => {
+  const changeListPage = useCallback((page: number) => {
     setListPage(page);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, []);
 
-  const pastDuePaginationBar =
-    usePastDueListPagination && grouped.length > PAST_DUE_LIST_PAGE_SIZE ? (
-      <CareOutreachPastDuePaginationBar
-        listPage={listPage}
-        totalClients={grouped.length}
-        totalPages={pastDueListTotalPages}
-        onPageChange={changePastDueListPage}
-      />
-    ) : null;
+  const listPaginationBar = (
+    <SchedulingToolsListPagination
+      listPage={listPage}
+      totalItems={grouped.length}
+      onPageChange={changeListPage}
+      itemLabel="clients"
+    />
+  );
 
   const flushSave = useCallback(async (reminderId: number, value: string) => {
     setNoteSaving((s) => ({ ...s, [reminderId]: true }));
@@ -1072,7 +1046,7 @@ export default function CareOutreachPage() {
         <p className="settings-muted">No reminders match the current filters.</p>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-          {pastDuePaginationBar}
+          {listPaginationBar}
           {groupedForDisplay.map((client) => (
             <CareOutreachHouseholdProvider
               key={client.clientKey}
@@ -1321,7 +1295,7 @@ export default function CareOutreachPage() {
             </section>
             </CareOutreachHouseholdProvider>
           ))}
-          {pastDuePaginationBar}
+          {listPaginationBar}
         </div>
       )}
     </div>
