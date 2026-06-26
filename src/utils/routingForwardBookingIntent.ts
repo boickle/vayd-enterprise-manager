@@ -72,6 +72,12 @@ export type RoutingForwardBookingIntentV1 = {
   careOutreachAnyPastDue?: boolean;
   /** When true, schedule loader post-book SMS uses past-due care outreach wording. */
   scheduleLoaderAnyPastDue?: boolean;
+  /** Care outreach list row key — for return animation after hold book. */
+  careOutreachClientKey?: string;
+  careOutreachClientDisplayName?: string | null;
+  careOutreachClientId?: number | null;
+  careOutreachClientPhone?: string | null;
+  careOutreachClientFirstName?: string | null;
   /**
    * Optional slot-search window when entering routing from a list (e.g. care outreach Route).
    * Routing applies these to the form; POST /routing uses startDate, endDate, and derived numDays.

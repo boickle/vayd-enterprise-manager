@@ -20,6 +20,10 @@ export type Provider = {
   transitioningOutOfClientZone?: boolean;
   /** Doctor Quo/OpenPhone inbox line for outbound call/text (`from` deep link param). */
   quoLinePhone?: string | null;
+  /** Profile image URL stored on the employee record. */
+  imageUrl?: string | null;
+  /** VAYD-managed profile copy (when included on vet payloads). */
+  bio?: string | null;
 };
 
 type VeterinarianWeeklyScheduleZone = {
@@ -178,12 +182,15 @@ export async function fetchVeterinarians(
       pimsId: pimsId || String(id), // Use pimsId if available, otherwise use id
       email: v?.email || '',
       name: buildProviderName(v),
+      imageUrl: v?.imageUrl ?? null,
       dailyRevenueGoal: v?.dailyRevenueGoal ?? null,
       bonusRevenueGoal: v?.bonusRevenueGoal ?? null,
       dailyPointGoal: v?.dailyPointGoal ?? null,
       weeklyPointGoal: v?.weeklyPointGoal ?? null,
       seeingClientsInClientZone: zoneFlags?.seeingClients,
       acceptingNewPatientsInClientZone: zoneFlags?.acceptingNewPatients,
+      bio:
+        typeof v?.bio === 'string' && v.bio.trim() ? v.bio.trim() : null,
     };
   });
 

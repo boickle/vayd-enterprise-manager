@@ -5,6 +5,7 @@ import type { Appointment } from './roomLoader';
 import type { ForwardBookingCreatedVia } from './forwardBooking';
 import { mergeForwardBookingDispositionOntoAppointment } from '../utils/forwardBookingDisposition';
 import { practiceTimeZoneOrDefault } from '../utils/practiceTimezone';
+import { dedupeInFlight } from '../utils/inFlightDedupe';
 
 export type RangeAppointment = Appointment;
 
@@ -53,17 +54,22 @@ export async function fetchAppointmentsRange(params: {
   end: string;
   primaryProviderId?: number | string;
 }): Promise<Appointment[]> {
-  const query: Record<string, string> = {
-    practiceId: String(params.practiceId),
-    start: params.start,
-    end: params.end,
-  };
-  if (params.primaryProviderId != null && String(params.primaryProviderId).trim() !== '') {
-    query.primaryProviderId = String(params.primaryProviderId);
-  }
-  const { data } = await http.get('/appointments/range', { params: query });
-  const rows: Appointment[] = Array.isArray(data) ? data : (data?.items ?? []);
-  return rows.map(normalizeRangeAppointment);
+  const providerKey =
+    params.primaryProviderId != null && String(params.primaryProviderId).trim() !== ''
+      ? String(params.primaryProviderId)
+      : '';
+  const dedupeKey = `range:${params.practiceId}:${params.start}:${params.end}:${providerKey}`;
+  return dedupeInFlight(dedupeKey, async () => {
+    const query: Record<string, string> = {
+      practiceId: String(params.practiceId),
+      start: params.start,
+      end: params.end,
+    };
+    if (providerKey) query.primaryProviderId = providerKey;
+    const { data } = await http.get('/appointments/range', { params: query });
+    const rows: Appointment[] = Array.isArray(data) ? data : (data?.items ?? []);
+    return rows.map(normalizeRangeAppointment);
+  });
 }
 
 /**
@@ -74,16 +80,19 @@ export async function fetchAppointmentById(
   id: number | string,
   opts?: { practiceId?: number | string }
 ): Promise<Appointment | null> {
-  try {
-    const params =
-      opts?.practiceId != null ? { practiceId: String(opts.practiceId) } : undefined;
-    const { data } = await http.get<Appointment>(`/appointments/${encodeURIComponent(String(id))}`, {
-      params,
-    });
-    return data ? normalizeRangeAppointment(data) : null;
-  } catch {
-    return null;
-  }
+  const dedupeKey = `appt:${opts?.practiceId ?? ''}:${id}`;
+  return dedupeInFlight(dedupeKey, async () => {
+    try {
+      const params =
+        opts?.practiceId != null ? { practiceId: String(opts.practiceId) } : undefined;
+      const { data } = await http.get<Appointment>(`/appointments/${encodeURIComponent(String(id))}`, {
+        params,
+      });
+      return data ? normalizeRangeAppointment(data) : null;
+    } catch {
+      return null;
+    }
+  });
 }
 
 /** POST /appointments — Vayd-native appointment (pimsType VAYD on server) */

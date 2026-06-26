@@ -56,6 +56,15 @@ type LinkClientPetRow = {
   isDeleted?: boolean;
 };
 
+function linkClientPetLabel(p: LinkClientPetRow): string {
+  if (p.isActive === false) return `${p.name} (inactive)`;
+  return p.name;
+}
+
+function isLinkableClientPet(p: LinkClientPetRow): boolean {
+  return p.isDeleted !== true;
+}
+
 type Props = {
   practiceId: number;
   visitAddress: string | null;
@@ -65,6 +74,8 @@ type Props = {
   hasAlternateAddress?: boolean;
   /** Parent-owned selection — survives edit modal remount during preview. */
   persistedSelection?: EditVisitLinkSelection | null;
+  /** Prefer this pet when the client's patient list loads (online request pet name). */
+  preferredPatientName?: string | null;
   onSelectionChange: (selection: EditVisitLinkSelection | null) => void;
 };
 
@@ -75,6 +86,7 @@ export function EditVisitLinkClientPanel({
   hideVisitAddress = false,
   hasAlternateAddress = false,
   persistedSelection = null,
+  preferredPatientName = null,
   onSelectionChange,
 }: Props) {
   const [combinedQuery, setCombinedQuery] = useState('');
@@ -98,6 +110,42 @@ export function EditVisitLinkClientPanel({
 
   const trimmedVisitAddress = visitAddress?.trim() || null;
   const hydratedSelectionKeyRef = useRef<string | null>(null);
+  const clientPetsFetchGenRef = useRef(0);
+  const loadedPetsForClientRef = useRef<string | null>(null);
+
+  const applyClientPayload = useCallback((payload: unknown, clientId: string) => {
+    if (payload && typeof payload === 'object') {
+      const row = payload as ClientSearchRow;
+      setSelectedClientLabel(clientDisplayName(row));
+      const fromPayload = clientSearchRowHomeAddress(row);
+      if (fromPayload) setSelectedClientHome(fromPayload);
+    }
+    setClientPets(extractPatientsFromClientPayload(payload));
+    setSelectedClientAlerts(extractClientAlertsFromPayload(payload));
+    loadedPetsForClientRef.current = clientId;
+  }, []);
+
+  const fetchClientPetsById = useCallback(
+    async (clientId: string) => {
+      const gen = ++clientPetsFetchGenRef.current;
+      setLoadingClientPets(true);
+      try {
+        const payload = await fetchClientByIdStaff(clientId);
+        if (clientPetsFetchGenRef.current !== gen) return;
+        applyClientPayload(payload, clientId);
+      } catch {
+        if (clientPetsFetchGenRef.current !== gen) return;
+        setClientPets([]);
+        setSelectedClientAlerts(null);
+        loadedPetsForClientRef.current = null;
+      } finally {
+        if (clientPetsFetchGenRef.current === gen) {
+          setLoadingClientPets(false);
+        }
+      }
+    },
+    [applyClientPayload],
+  );
 
   useEffect(() => {
     setKeepAlternateAddress(false);
@@ -105,48 +153,38 @@ export function EditVisitLinkClientPanel({
 
   useEffect(() => {
     if (!persistedSelection?.clientId?.trim()) return;
+    const clientId = persistedSelection.clientId.trim();
     const hydrateKey = [
-      persistedSelection.clientId,
+      clientId,
       persistedSelection.patientId ?? '',
       persistedSelection.keepAlternateAddress ? '1' : '0',
     ].join(':');
-    if (hydratedSelectionKeyRef.current === hydrateKey) return;
+    if (hydratedSelectionKeyRef.current === hydrateKey) {
+      setLoadingClientPets(false);
+      return;
+    }
+
+    const prevClientId = hydratedSelectionKeyRef.current?.split(':')[0] ?? null;
     hydratedSelectionKeyRef.current = hydrateKey;
 
-    setSelectedClientId(persistedSelection.clientId);
+    setSelectedClientId(clientId);
     setSelectedClientLabel(persistedSelection.clientLabel);
     setSelectedClientHome(persistedSelection.clientHomeAddress);
     setSelectedPatientId(persistedSelection.patientId);
     setSelectedPatientLabel(persistedSelection.patientLabel ?? '');
     setKeepAlternateAddress(Boolean(persistedSelection.keepAlternateAddress));
 
-    let cancelled = false;
-    setLoadingClientPets(true);
-    void fetchClientByIdStaff(persistedSelection.clientId)
-      .then((payload) => {
-        if (cancelled) return;
-        if (payload && typeof payload === 'object') {
-          const row = payload as ClientSearchRow;
-          setSelectedClientLabel(clientDisplayName(row));
-          const fromPayload = clientSearchRowHomeAddress(row);
-          if (fromPayload) setSelectedClientHome(fromPayload);
-        }
-        setClientPets(extractPatientsFromClientPayload(payload));
-        setSelectedClientAlerts(extractClientAlertsFromPayload(payload));
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setClientPets([]);
-        setSelectedClientAlerts(null);
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingClientPets(false);
-      });
+    if (loadedPetsForClientRef.current === clientId) {
+      setLoadingClientPets(false);
+      return;
+    }
 
-    return () => {
-      cancelled = true;
-    };
-  }, [persistedSelection]);
+    if (prevClientId === clientId) {
+      return;
+    }
+
+    void fetchClientPetsById(clientId);
+  }, [persistedSelection, fetchClientPetsById]);
 
   useEffect(() => {
     const q = combinedQuery.trim();
@@ -198,6 +236,7 @@ export function EditVisitLinkClientPanel({
   const loadClientDetails = useCallback(async (c: ClientSearchRow, homeOverride?: string | null) => {
     const id = clientRowId(c);
     if (!id) return;
+    loadedPetsForClientRef.current = null;
     setSelectedClientId(id);
     setSelectedClientLabel(clientDisplayName(c));
     setSelectedClientHome(homeOverride ?? clientAddressDisplay(c));
@@ -210,24 +249,8 @@ export function EditVisitLinkClientPanel({
     setKeepAlternateAddress(false);
     setClientPets([]);
     setSelectedClientAlerts(null);
-    setLoadingClientPets(true);
-    try {
-      const payload = await fetchClientByIdStaff(id);
-      if (payload && typeof payload === 'object') {
-        const row = payload as ClientSearchRow;
-        setSelectedClientLabel(clientDisplayName(row));
-        const fromPayload = clientSearchRowHomeAddress(row);
-        if (fromPayload) setSelectedClientHome(fromPayload);
-      }
-      setClientPets(extractPatientsFromClientPayload(payload));
-      setSelectedClientAlerts(extractClientAlertsFromPayload(payload));
-    } catch {
-      setClientPets([]);
-      setSelectedClientAlerts(null);
-    } finally {
-      setLoadingClientPets(false);
-    }
-  }, []);
+    await fetchClientPetsById(id);
+  }, [fetchClientPetsById]);
 
   const pickPatientFromSearch = useCallback(
     (p: PimsPatientSearchHit) => {
@@ -258,6 +281,9 @@ export function EditVisitLinkClientPanel({
 
   const clearSelectedClient = useCallback(() => {
     hydratedSelectionKeyRef.current = null;
+    loadedPetsForClientRef.current = null;
+    clientPetsFetchGenRef.current += 1;
+    setLoadingClientPets(false);
     setSelectedClientId(null);
     setSelectedClientLabel('');
     setSelectedClientHome(null);
@@ -274,34 +300,60 @@ export function EditVisitLinkClientPanel({
     return compareVisitAddressToClientHome(trimmedVisitAddress, selectedClientHome);
   }, [selectedClientId, trimmedVisitAddress, selectedClientHome]);
 
-  useEffect(() => {
-    if (!selectedClientId) return;
-    onSelectionChange({
-      clientId: selectedClientId,
-      clientLabel: selectedClientLabel,
-      clientHomeAddress: selectedClientHome,
-      patientId: selectedPatientId,
-      patientLabel: selectedPatientLabel,
-      keepAlternateAddress: keepAlternateAddress || undefined,
-    });
-  }, [
-    selectedClientId,
-    selectedClientLabel,
-    selectedClientHome,
-    selectedPatientId,
-    selectedPatientLabel,
-    keepAlternateAddress,
-    onSelectionChange,
-  ]);
+  const pushSelection = useCallback(
+    (overrides?: {
+      keepAlternateAddress?: boolean;
+      patientId?: string | null;
+      patientLabel?: string | null;
+    }) => {
+      if (!selectedClientId) return;
+      const keepAlt = overrides?.keepAlternateAddress ?? keepAlternateAddress;
+      const patientId =
+        overrides?.patientId !== undefined ? overrides.patientId : selectedPatientId;
+      const patientLabel =
+        overrides?.patientLabel !== undefined ? overrides.patientLabel : selectedPatientLabel;
+      onSelectionChange({
+        clientId: selectedClientId,
+        clientLabel: selectedClientLabel,
+        clientHomeAddress: selectedClientHome,
+        patientId,
+        patientLabel,
+        ...(keepAlt ? { keepAlternateAddress: true as const } : {}),
+      });
+    },
+    [
+      selectedClientId,
+      selectedClientLabel,
+      selectedClientHome,
+      selectedPatientId,
+      selectedPatientLabel,
+      keepAlternateAddress,
+      onSelectionChange,
+    ],
+  );
 
-  const activePetChoices = useMemo(
-    () =>
-      clientPets.filter((p) => {
-        if (p.isDeleted === true) return false;
-        if (p.isActive === false) return false;
-        return true;
-      }),
-    [clientPets]
+  useEffect(() => {
+    pushSelection();
+  }, [pushSelection]);
+
+  useEffect(() => {
+    const preferred = preferredPatientName?.trim();
+    if (!preferred || !selectedClientId || selectedPatientId) return;
+    const target = preferred.toLowerCase();
+    const match = clientPets.find((p) => {
+      if (!isLinkableClientPet(p)) return false;
+      return p.name.trim().toLowerCase() === target;
+    });
+    if (!match) return;
+    const id = String(match.id);
+    setSelectedPatientId(id);
+    setSelectedPatientLabel(linkClientPetLabel(match));
+    pushSelection({ patientId: id, patientLabel: linkClientPetLabel(match) });
+  }, [preferredPatientName, selectedClientId, selectedPatientId, clientPets, pushSelection]);
+
+  const linkablePetChoices = useMemo(
+    () => clientPets.filter(isLinkableClientPet),
+    [clientPets],
   );
 
   const matchMismatch =
@@ -334,7 +386,11 @@ export function EditVisitLinkClientPanel({
           <input
             type="checkbox"
             checked={keepAlternateAddress}
-            onChange={(e) => setKeepAlternateAddress(e.target.checked)}
+            onChange={(e) => {
+              const next = e.target.checked;
+              setKeepAlternateAddress(next);
+              pushSelection({ keepAlternateAddress: next });
+            }}
           />
           <span>
             Keep as alternate address, but link this client
@@ -461,7 +517,7 @@ export function EditVisitLinkClientPanel({
           {requiresPatient ? (
             loadingClientPets ? (
               <p className="scheduler-edit-hint">Loading patients…</p>
-            ) : activePetChoices.length > 0 ? (
+            ) : linkablePetChoices.length > 0 ? (
               <label className="scheduler-edit-field scheduler-edit-field--full">
                 <span>Patient *</span>
                 <select
@@ -471,25 +527,28 @@ export function EditVisitLinkClientPanel({
                     if (!id) {
                       setSelectedPatientId(null);
                       setSelectedPatientLabel('');
+                      pushSelection({ patientId: null, patientLabel: null });
                       return;
                     }
-                    const pet = activePetChoices.find((p) => String(p.id) === id);
+                    const pet = linkablePetChoices.find((p) => String(p.id) === id);
+                    const label = pet ? linkClientPetLabel(pet) : 'Patient';
                     setSelectedPatientId(id);
-                    setSelectedPatientLabel(pet?.name ?? 'Patient');
+                    setSelectedPatientLabel(label);
+                    pushSelection({ patientId: id, patientLabel: label });
                   }}
                 >
                   <option value="">—</option>
-                  {activePetChoices.map((p) => (
+                  {linkablePetChoices.map((p) => (
                     <option key={String(p.id)} value={String(p.id)}>
-                      {p.name}
+                      {linkClientPetLabel(p)}
                     </option>
                   ))}
                 </select>
               </label>
             ) : (
-              <p className="scheduler-edit-hint">No active patients on file for this client.</p>
+              <p className="scheduler-edit-hint">No patients on file for this client.</p>
             )
-          ) : activePetChoices.length > 0 ? (
+          ) : linkablePetChoices.length > 0 ? (
             <label className="scheduler-edit-field scheduler-edit-field--full">
               <span>Patient (optional)</span>
               <select
@@ -499,17 +558,20 @@ export function EditVisitLinkClientPanel({
                   if (!id) {
                     setSelectedPatientId(null);
                     setSelectedPatientLabel('');
+                    pushSelection({ patientId: null, patientLabel: null });
                     return;
                   }
-                  const pet = activePetChoices.find((p) => String(p.id) === id);
+                  const pet = linkablePetChoices.find((p) => String(p.id) === id);
+                  const label = pet ? linkClientPetLabel(pet) : 'Patient';
                   setSelectedPatientId(id);
-                  setSelectedPatientLabel(pet?.name ?? 'Patient');
+                  setSelectedPatientLabel(label);
+                  pushSelection({ patientId: id, patientLabel: label });
                 }}
               >
                 <option value="">—</option>
-                {activePetChoices.map((p) => (
+                {linkablePetChoices.map((p) => (
                   <option key={String(p.id)} value={String(p.id)}>
-                    {p.name}
+                    {linkClientPetLabel(p)}
                   </option>
                 ))}
               </select>

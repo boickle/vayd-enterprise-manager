@@ -32,6 +32,8 @@ type Props = {
   clientId: string | null | undefined;
   practiceId: number;
   practiceTz: string;
+  /** When set, skip client fetch and show these chips (e.g. appointment request alternate address). */
+  staticPatients?: RoutingClientPatientRow[];
   selectedPatientIds?: ReadonlySet<string>;
   onTogglePatientSelect?: (patient: RoutingClientPatientRow) => void;
   onPatientsLoaded?: (patients: RoutingClientPatientRow[]) => void;
@@ -41,6 +43,7 @@ export default function RoutingClientPatientsList({
   clientId,
   practiceId,
   practiceTz,
+  staticPatients,
   selectedPatientIds,
   onTogglePatientSelect,
   onPatientsLoaded,
@@ -62,6 +65,13 @@ export default function RoutingClientPatientsList({
   const popoverRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    if (staticPatients != null) {
+      setPatients(staticPatients);
+      setLoadingPatients(false);
+      onPatientsLoaded?.(staticPatients);
+      return;
+    }
+
     const id = clientId?.trim();
     if (!id) {
       setPatients([]);
@@ -76,7 +86,6 @@ export default function RoutingClientPatientsList({
         if (cancelled) return;
         const rows = extractActivePatientsFromClientStaffRecord(raw);
         setPatients(rows);
-        onPatientsLoaded?.(rows);
         return enrichRoutingClientPatientsMembership(rows);
       })
       .then((enriched) => {
@@ -94,7 +103,7 @@ export default function RoutingClientPatientsList({
     return () => {
       cancelled = true;
     };
-  }, [clientId, onPatientsLoaded]);
+  }, [clientId, staticPatients, onPatientsLoaded]);
 
   const clearHoverTimers = useCallback(() => {
     if (hoverTimerRef.current != null) {
@@ -234,7 +243,7 @@ export default function RoutingClientPatientsList({
     };
   }, [hover, layout?.ready, computeLayout]);
 
-  if (!clientId?.trim()) return null;
+  if (!staticPatients?.length && !clientId?.trim()) return null;
 
   return (
     <div className="routing-client-patients routing-span-full">

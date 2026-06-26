@@ -3,7 +3,9 @@ import {
   fetchAllEmployees,
   fetchEmployee,
   fetchEmployeeRoles,
+  updateEmployeeBio,
   updateEmployeeRoles,
+  EMPLOYEE_BIO_MAX_LENGTH,
   type Employee,
   type EmployeeRole,
 } from '../../api/appointmentSettings';
@@ -57,7 +59,7 @@ function blankToNull(s: string): string | null {
   return t === '' ? null : t;
 }
 
-type ModalMode = 'add' | 'edit' | 'roles' | null;
+type ModalMode = 'add' | 'edit' | 'roles' | 'bio' | null;
 
 function employeeRoleIds(e: Employee): number[] {
   const r = e as Record<string, unknown>;
@@ -93,6 +95,16 @@ function roleLabelsForEmployee(emp: Employee, catalog: EmployeeRole[]): string[]
     .map((role) => humanizeEmployeeRoleName(role.name))
     .filter(Boolean);
   return [...new Set(names)];
+}
+
+function truncateBio(bio: string | null | undefined, max = 72): string {
+  const t = bio?.trim();
+  if (!t) return '—';
+  return t.length > max ? `${t.slice(0, max)}…` : t;
+}
+
+function empBio(e: Employee): string | null | undefined {
+  return e.bio ?? (e as Record<string, unknown>).bio as string | null | undefined;
 }
 
 type Props = {
@@ -131,6 +143,8 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
   const [roleIdsSelected, setRoleIdsSelected] = useState<number[]>([]);
   const [rolesCatalog, setRolesCatalog] = useState<EmployeeRole[]>([]);
   const [rolesEditEmployee, setRolesEditEmployee] = useState<Employee | null>(null);
+  const [bioEditEmployee, setBioEditEmployee] = useState<Employee | null>(null);
+  const [bioText, setBioText] = useState('');
 
   const practice = useMemo(() => ({ id: DEFAULT_PRACTICE_ID }), []);
 
@@ -226,6 +240,20 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
     setRoleIdsSelected(employeeRoleIds(full));
   };
 
+  const openEditBio = async (id: number) => {
+    setSaving(false);
+    setModalMode(null);
+    try {
+      const full = await fetchEmployee(id);
+      setEditingId(id);
+      setBioEditEmployee(full);
+      setBioText(full.bio ?? '');
+      setModalMode('bio');
+    } catch (e) {
+      onMessage?.(extractErr(e), 'error');
+    }
+  };
+
   const openEditRoles = async (id: number) => {
     setSaving(false);
     setModalMode(null);
@@ -264,6 +292,29 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
     if (!saving) {
       setModalMode(null);
       setRolesEditEmployee(null);
+      setBioEditEmployee(null);
+    }
+  };
+
+  const submitBioModal = async (e: FormEvent) => {
+    e.preventDefault();
+    if (editingId == null) return;
+    const trimmed = bioText.trim();
+    if (trimmed.length > EMPLOYEE_BIO_MAX_LENGTH) {
+      onMessage?.(`Bio must be ${EMPLOYEE_BIO_MAX_LENGTH} characters or fewer.`, 'error');
+      return;
+    }
+    setSaving(true);
+    try {
+      await updateEmployeeBio(editingId, trimmed === '' ? null : trimmed);
+      onMessage?.('Employee bio updated.', 'success');
+      setModalMode(null);
+      setBioEditEmployee(null);
+      await load();
+    } catch (err) {
+      onMessage?.(extractErr(err), 'error');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -444,9 +495,11 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
           </>
         ) : (
           <>
-            Employee PIMS fields are <strong>read-only</strong>. Click an employee name to edit which{' '}
-            <strong>employee roles</strong> are assigned (<code>PUT /employees/:id/roles</code>). To enable full add/edit,
-            set <code>VITE_ENABLE_PIMS_ENTITY_EDIT=true</code> in <code>.env</code> and rebuild.
+            Employee PIMS fields are <strong>read-only</strong>. Click an employee name to edit{' '}
+            <strong>employee roles</strong> (<code>PUT /employees/:id/roles</code>) or use{' '}
+            <strong>Edit bio</strong> for VAYD-managed profile copy (
+            <code>PUT /employees/:id/bio</code>). To enable full add/edit of PIMS records, set{' '}
+            <code>VITE_ENABLE_PIMS_ENTITY_EDIT=true</code> in <code>.env</code> and rebuild.
           </>
         )}
       </p>
@@ -481,6 +534,7 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
                 <th>PIMS ID</th>
                 <th>PIMS user</th>
                 <th>Provider</th>
+                <th>Bio</th>
                 <th>Roles</th>
                 <th>Status</th>
                 <th>Actions</th>
@@ -505,6 +559,12 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
                     <td>{empPimsId(emp)}</td>
                     <td>{empPimsUserId(emp)}</td>
                     <td>{emp.isProvider ? 'Yes' : 'No'}</td>
+                    <td
+                      className="settings-employee-directory__bio-cell"
+                      title={empBio(emp)?.trim() || undefined}
+                    >
+                      {truncateBio(empBio(emp))}
+                    </td>
                     <td>
                       {roleLabels.length > 0 ? (
                         <div className="settings-employee-directory__role-tags">
@@ -526,6 +586,14 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
                         onClick={() => void openEditRoles(emp.id)}
                       >
                         Edit roles
+                      </button>
+                      <button
+                        type="button"
+                        className="btn secondary"
+                        style={{ marginLeft: 6 }}
+                        onClick={() => void openEditBio(emp.id)}
+                      >
+                        Edit bio
                       </button>
                       {PIMS_ENTITY_EDIT_ENABLED ? (
                         <>
@@ -624,6 +692,55 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
                 </button>
                 <button type="submit" className="btn" disabled={saving}>
                   {saving ? 'Saving…' : 'Save roles'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
+      {modalMode === 'bio' && bioEditEmployee ? (
+        <div className="settings-employee-modal-root" role="presentation">
+          <button type="button" className="settings-employee-modal-backdrop" aria-label="Close" onClick={closeModal} />
+          <div className="settings-employee-modal" role="dialog" aria-modal="true" aria-labelledby="employee-bio-title">
+            <div className="settings-employee-modal__head">
+              <h3 id="employee-bio-title">Employee bio</h3>
+              <button type="button" className="settings-close" onClick={closeModal} aria-label="Close">
+                ×
+              </button>
+            </div>
+            <form onSubmit={submitBioModal} className="settings-employee-modal__form">
+              <p className="muted" style={{ margin: '0 0 12px' }}>
+                <strong>{employeeDisplayName(bioEditEmployee)}</strong>
+                <span className="muted"> · ID {bioEditEmployee.id}</span>
+              </p>
+              <p className="muted" style={{ margin: '0 0 12px', fontSize: 13 }}>
+                Profile copy for VAYD (not synced from PIMS). Plain text only.
+              </p>
+              <label className="settings-employee-modal__full">
+                <span className="label">Bio</span>
+                <textarea
+                  className="input"
+                  value={bioText}
+                  onChange={(e) => setBioText(e.target.value)}
+                  rows={8}
+                  maxLength={EMPLOYEE_BIO_MAX_LENGTH}
+                  placeholder="Short profile for booking, team pages, etc."
+                  style={{ resize: 'vertical', width: '100%', boxSizing: 'border-box' }}
+                />
+                <span
+                  className="muted"
+                  style={{ display: 'block', marginTop: 6, fontSize: 12, textAlign: 'right' }}
+                >
+                  {bioText.length} / {EMPLOYEE_BIO_MAX_LENGTH}
+                </span>
+              </label>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>
+                <button type="button" className="btn secondary" onClick={closeModal} disabled={saving}>
+                  Cancel
+                </button>
+                <button type="submit" className="btn" disabled={saving}>
+                  {saving ? 'Saving…' : 'Save bio'}
                 </button>
               </div>
             </form>

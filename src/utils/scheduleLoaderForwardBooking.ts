@@ -2,6 +2,7 @@ import {
   createForwardBooking,
   fetchForwardBookings,
   normalizeForwardBookingCreatedVia,
+  patchForwardBooking,
   type ForwardBookingEntry,
 } from '../api/forwardBooking';
 import type { FillDayCandidate, FillDayReminder } from '../api/routing';
@@ -10,6 +11,7 @@ import {
 } from './careOutreachForwardBooking';
 import { buildCreateForwardBookingPayloadFromPatient } from './forwardBookingFromAppointment';
 import { forwardBookingHasLinkedVisit } from './forwardBookingLinkedVisit';
+import { workingNotesFromReminders } from './reminderWorkingNotes';
 
 export const SCHEDULE_LOADER_BOOKING_NOTES_PREFIX = 'Schedule loader follow-up';
 
@@ -163,7 +165,17 @@ export async function createForwardBookingsFromScheduleLoader(
       practiceId
     );
     if (existing) {
-      created.push(existing);
+      const workingNote = workingNotesFromReminders(patient.reminders);
+      if (workingNote && workingNote !== (existing.note?.trim() ?? '')) {
+        created.push(
+          await patchForwardBooking(existing.id, {
+            practiceId,
+            note: workingNote,
+          })
+        );
+      } else {
+        created.push(existing);
+      }
       continue;
     }
 
@@ -177,6 +189,7 @@ export async function createForwardBookingsFromScheduleLoader(
       practiceId,
       {
         bookingNotes: bookingNotesForReminders(patient.reminders),
+        note: workingNotesFromReminders(patient.reminders),
         primaryProviderId: primaryProviderId ?? null,
       }
     );

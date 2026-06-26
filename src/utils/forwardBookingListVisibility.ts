@@ -1,5 +1,9 @@
 import type { Appointment } from '../api/roomLoader';
-import { fetchAppointmentById, isPracticeCalendarBlockAppointment } from '../api/appointments';
+import {
+  fetchAppointmentById,
+  isAppointmentCancelledOnPracticeCalendar,
+  isPracticeCalendarBlockAppointment,
+} from '../api/appointments';
 import type { ForwardBookingEntry } from '../api/forwardBooking';
 import { forwardBookingIsBookLater } from './forwardBookingBookLater';
 import {
@@ -15,6 +19,8 @@ import {
 } from './appointmentTypeSettings';
 import { resolveSchedulerProviderFilterFromAppointment } from './schedulerFocusAppointment';
 import type { AppointmentType } from '../api/appointmentSettings';
+
+const BOOKED_APPT_META_FETCH_CONCURRENCY = 8;
 
 function appointmentTypeName(appt: Appointment): string | null {
   const at = appt.appointmentType;
@@ -62,6 +68,8 @@ export type BookedAppointmentMeta = {
   providerInternalId?: string | null;
   /** When the linked calendar appointment was created / booked (ISO). */
   appointmentBookedAtIso?: string | null;
+  /** True when the linked visit was cancelled / removed on the practice calendar. */
+  appointmentCancelled?: boolean;
 };
 
 export async function buildBookedAppointmentMetaMap(
@@ -70,16 +78,40 @@ export async function buildBookedAppointmentMetaMap(
   catalog: AppointmentTypeCatalog,
   providers: ReadonlyArray<{ id: number | string; pimsId?: string | number | null | undefined }> = []
 ): Promise<Map<number, BookedAppointmentMeta>> {
-  const ids = [
-    ...new Set(
-      entries
-        .map((e) => forwardBookingLinkedAppointmentId(e))
-        .filter((id): id is number => id != null)
-    ),
-  ];
   const map = new Map<number, BookedAppointmentMeta>();
-  await Promise.all(
-    ids.map(async (id) => {
+  const idsToFetch = new Set<number>();
+
+  for (const entry of entries) {
+    const apptId = forwardBookingLinkedAppointmentId(entry);
+    if (apptId == null) continue;
+
+    const hasServerPoints =
+      entry.linkedVisitPoints != null && Number.isFinite(Number(entry.linkedVisitPoints));
+    const cancelled = entry.linkedVisitCancelled === true;
+    const bookedAtIso = entry.linkedVisitBookedAtIso?.trim() || null;
+
+    if (hasServerPoints || cancelled) {
+      map.set(apptId, {
+        points: hasServerPoints ? Number(entry.linkedVisitPoints) : 0,
+        typeName: entry.appointmentTypeName?.trim() || null,
+        providerInternalId: null,
+        appointmentBookedAtIso: bookedAtIso,
+        appointmentCancelled: cancelled,
+      });
+      if (!cancelled && (entry.linkedVisitPoints == null || !bookedAtIso)) {
+        idsToFetch.add(apptId);
+      }
+      continue;
+    }
+
+    idsToFetch.add(apptId);
+  }
+
+  const ids = [...idsToFetch];
+  let cursor = 0;
+  async function worker(): Promise<void> {
+    while (cursor < ids.length) {
+      const id = ids[cursor++]!;
       const appt = await fetchAppointmentById(id, { practiceId });
       const points = appt ? opsPointsForAppointment(appt, catalog) : 0;
       const typeName = appt ? appointmentTypeName(appt) : null;
@@ -87,9 +119,28 @@ export async function buildBookedAppointmentMetaMap(
         ? resolveSchedulerProviderFilterFromAppointment(appt, providers) || null
         : null;
       const appointmentBookedAtIso = appt ? linkedAppointmentBookedAtIso(appt) : null;
-      map.set(id, { points, typeName, providerInternalId, appointmentBookedAtIso });
-    })
-  );
+      const appointmentCancelled = appt
+        ? isAppointmentCancelledOnPracticeCalendar(appt)
+        : false;
+      map.set(id, {
+        points,
+        typeName,
+        providerInternalId,
+        appointmentBookedAtIso,
+        appointmentCancelled,
+      });
+    }
+  }
+
+  if (ids.length > 0) {
+    await Promise.all(
+      Array.from(
+        { length: Math.min(BOOKED_APPT_META_FETCH_CONCURRENCY, ids.length) },
+        () => worker(),
+      ),
+    );
+  }
+
   return map;
 }
 
@@ -124,6 +175,9 @@ export function forwardBookingLinkedAppointmentPoints(
   bookedApptMeta: Map<number, BookedAppointmentMeta> | null | undefined,
   catalog?: AppointmentTypeCatalog | null
 ): number | null {
+  if (entry.linkedVisitPoints != null && Number.isFinite(Number(entry.linkedVisitPoints))) {
+    return Number(entry.linkedVisitPoints);
+  }
   const apptId = forwardBookingLinkedAppointmentId(entry);
   if (apptId != null && bookedApptMeta != null && bookedApptMeta.has(apptId)) {
     return bookedApptMeta.get(apptId)!.points;
@@ -135,6 +189,19 @@ export function forwardBookingLinkedAppointmentPoints(
   return pointsPerPatientForType(catalog, { typeId, typeName });
 }
 
+/** Linked calendar hold was cancelled — treat like a removed queue row for list tabs. */
+export function forwardBookingLinkedAppointmentCancelled(
+  entry: ForwardBookingEntry,
+  bookedApptMeta: Map<number, BookedAppointmentMeta> | null | undefined,
+): boolean {
+  if (entry.linkedVisitCancelled === true) return true;
+  const apptId = forwardBookingLinkedAppointmentId(entry);
+  if (apptId == null || bookedApptMeta == null || !bookedApptMeta.has(apptId)) {
+    return false;
+  }
+  return bookedApptMeta.get(apptId)!.appointmentCancelled === true;
+}
+
 /** Forward booking treats linked visits with 0 ops points as on hold (tab + badge). */
 export function forwardBookingLinkedVisitIsOnHold(
   entry: ForwardBookingEntry,
@@ -142,6 +209,7 @@ export function forwardBookingLinkedVisitIsOnHold(
   catalog?: AppointmentTypeCatalog | null
 ): boolean {
   if (!forwardBookingHasLinkedVisit(entry)) return false;
+  if (forwardBookingLinkedAppointmentCancelled(entry, bookedApptMeta)) return false;
   const points = forwardBookingLinkedAppointmentPoints(entry, bookedApptMeta, catalog);
   return points != null && points <= 0;
 }
@@ -157,6 +225,9 @@ export function forwardBookingListTab(
   if (entry.status === 'complete') return 'complete';
   if (forwardBookingIsBookLater(entry, practiceTz)) return 'bookLater';
   if (forwardBookingHasLinkedVisit(entry)) {
+    if (forwardBookingLinkedAppointmentCancelled(entry, bookedApptMeta)) {
+      return 'removed';
+    }
     const points = forwardBookingLinkedAppointmentPoints(entry, bookedApptMeta, catalog);
     if (points != null && points <= 0) return 'onHold';
     if (points != null && points > 0) return 'booked';

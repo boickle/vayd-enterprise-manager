@@ -11,6 +11,7 @@ import {
   type ForwardBookingInterval,
 } from './forwardBookingFromAppointment';
 import { practiceTimeZoneOrDefault } from './practiceTimezone';
+import { workingNotesFromReminders } from './reminderWorkingNotes';
 
 export const CARE_OUTREACH_BOOKING_NOTES_PREFIX = 'Care outreach follow-up';
 
@@ -188,6 +189,7 @@ export async function createForwardBookingsFromCareOutreach(
       practiceId,
       {
         bookingNotes: bookingNotesForPatient(patient.reminders),
+        note: workingNotesFromReminders(patient.reminders),
         primaryProviderId: target.primaryProviderId ?? null,
       }
     );

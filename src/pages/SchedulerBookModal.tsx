@@ -16,7 +16,12 @@ import {
   coordsFromClientPayload,
 } from '../utils/manualBookCalendarPreview';
 import { submitRoutingAcceptedFeedbackFromPreview } from '../utils/routingBookFeedback';
-import { completeAllForwardBookingVisitsFromBook, completeForwardBookingFromBook } from '../utils/forwardBookingBookComplete';
+import {
+  completeAllForwardBookingVisitsFromBook,
+  completeForwardBookingFromBook,
+} from '../utils/forwardBookingBookComplete';
+import { completeAppointmentRequestFromBook } from '../utils/appointmentRequestBookComplete';
+import type { AppointmentRequestBookVisitPatch } from '../utils/routingAppointmentRequestVisitPets';
 import type { ForwardBookingCreatedVia } from '../api/forwardBooking';
 import { fetchClientByIdStaff, type ClientSearchRow } from '../api/clientsStaff';
 import {
@@ -229,6 +234,10 @@ export type SchedulerBookPrefill = {
   /** Forward booking list → routing book — server + POST …/complete attribution. */
   forwardBookingTrackingToken?: string;
   forwardBookingEntryId?: number;
+  /** Appointment request list → routing book — POST …/request-submissions/:id/book after create. */
+  appointmentRequestSubmissionId?: number;
+  /** Per-pet type + notes when booking an appointment request from routing. */
+  appointmentRequestVisitPatches?: AppointmentRequestBookVisitPatch[];
   /** Group forward booking — one row per pet to mark complete after routing book. */
   forwardBookingVisitCompletes?: Array<{
     forwardBookingEntryId: number;
@@ -271,6 +280,7 @@ type Props = {
   onBooked: (detail?: {
     routingFeedbackWarning?: string;
     forwardBookingWarning?: string;
+    appointmentRequestWarning?: string;
     schedulingOverrideWarning?: string;
     schedulingOverridesApplied?: boolean;
     savedAppointmentId?: number;
@@ -1319,13 +1329,43 @@ export function SchedulerBookModal({
         instructions: defaultStaffNotes,
       });
     }
+
+    const arPatches = prefill?.appointmentRequestVisitPatches ?? [];
+    if (arPatches.length > 0) {
+      for (const patch of arPatches) {
+        const nameKey = patch.patientName.trim().toLowerCase();
+        const existing = patientRows.find(
+          (row) =>
+            row.patientId === patch.patientId ||
+            row.patientName.trim().toLowerCase() === nameKey,
+        );
+        if (existing) {
+          existing.selected = true;
+          existing.appointmentTypeId = String(patch.appointmentTypeId);
+          existing.description = patch.description;
+          existing.instructions = patch.instructions;
+        } else {
+          patientRows.push({
+            patientId: patch.patientId,
+            patientName: patch.patientName,
+            selected: true,
+            appointmentTypeId: String(patch.appointmentTypeId),
+            description: patch.description,
+            instructions: patch.instructions,
+          });
+        }
+      }
+    }
+
     const noPatientRow: RoutingBookVisitEdit = {
       patientId: '',
       patientName: 'No patient',
       isNoPatient: true,
       selected:
         patientRows.length === 0 ||
-        (prefill?.routingPreviewBook === true && preferredPatientIdSet.size === 0),
+        (prefill?.routingPreviewBook === true &&
+          preferredPatientIdSet.size === 0 &&
+          arPatches.length === 0),
       appointmentTypeId: defaultTypeForNoPatient,
       description: defaultDesc,
       instructions: defaultStaffNotes,
@@ -1342,6 +1382,7 @@ export function SchedulerBookModal({
     prefill?.preferredPatientIds,
     prefill?.routingPreviewPatients,
     prefill?.forwardBookingVisitCompletes,
+    prefill?.appointmentRequestVisitPatches,
     petChoices,
     routingBookFullAppointmentTypes,
     noPatientBookAppointmentTypes,
@@ -1370,6 +1411,7 @@ export function SchedulerBookModal({
   /** When appointment types load after open, fill invalid routing visit type ids. */
   useEffect(() => {
     if (!open || !prefill?.routingPreviewBook) return;
+    if ((prefill?.appointmentRequestVisitPatches?.length ?? 0) > 0) return;
     if (!routingBookFullAppointmentTypes.length) return;
     const defaultType = resolveDefaultBookTypeId(routingBookFullAppointmentTypes);
     if (!defaultType) return;
@@ -1411,6 +1453,35 @@ export function SchedulerBookModal({
     noPatientBookAppointmentTypes,
     resolveDefaultBookTypeId,
   ]);
+
+  /** Match appointment-request pets to chart ids after client is linked in the book dialog. */
+  useEffect(() => {
+    if (!open || !prefill?.appointmentRequestVisitPatches?.length) return;
+    if (!clientPets.length) return;
+    const patches = prefill.appointmentRequestVisitPatches;
+    setRoutingBookVisitEdits((rows) => {
+      let changed = false;
+      const next = rows.map((row) => {
+        if (row.isNoPatient) return row;
+        if (/^\d+$/.test(row.patientId)) return row;
+        const patch =
+          patches.find((p) => p.patientId === row.patientId) ??
+          patches.find(
+            (p) => p.patientName.trim().toLowerCase() === row.patientName.trim().toLowerCase(),
+          );
+        if (!patch) return row;
+        const match = clientPets.find(
+          (p) => p.name.trim().toLowerCase() === patch.patientName.trim().toLowerCase(),
+        );
+        if (!match) return row;
+        const newId = String(match.id);
+        if (row.patientId === newId) return row;
+        changed = true;
+        return { ...row, patientId: newId };
+      });
+      return changed ? next : rows;
+    });
+  }, [open, prefill?.appointmentRequestVisitPatches, clientPets]);
 
   useEffect(() => {
     if (prefill?.preserveDurationFromSlot) return;
@@ -1938,6 +2009,16 @@ export function SchedulerBookModal({
         }
       }
 
+      let appointmentRequestWarning: string | undefined;
+      const appointmentRequestSubmissionId = prefill?.appointmentRequestSubmissionId;
+      if (savedAppointmentId != null && appointmentRequestSubmissionId != null) {
+        const arComplete = await completeAppointmentRequestFromBook(savedAppointmentId, prefill);
+        if (!arComplete.completed && arComplete.error) {
+          appointmentRequestWarning =
+            'Appointment saved, but the request could not be marked booked. ' + arComplete.error;
+        }
+      }
+
       let schedulingOverrideWarning: string | undefined;
       let schedulingOverridesApplied = false;
       const markRoutingDayOff = scheduleOverrideDayOffRef.current || scheduleOverrideDayOff;
@@ -1980,11 +2061,13 @@ export function SchedulerBookModal({
       const bookedDetail =
         routingFeedbackWarning ||
         forwardBookingWarning ||
+        appointmentRequestWarning ||
         schedulingOverrideWarning ||
         schedulingOverridesApplied
           ? {
               routingFeedbackWarning,
               forwardBookingWarning,
+              appointmentRequestWarning,
               schedulingOverrideWarning,
               schedulingOverridesApplied,
             }

@@ -14,7 +14,7 @@ import { getAccessiblePages } from './app-pages';
 import Admin from './pages/Admin';
 import { getAdminTabPages } from './admin-tabs';
 import { getAnalyticsTabPages } from './analytics-tabs';
-import { getToolsTabPages } from './tools-tabs';
+import { getToolsTabPages, EXIT_SURVEY_PATH } from './tools-tabs';
 import { getSchedulingToolsTabPages } from './scheduling-tools-tabs';
 import CreateClientUser from './pages/CreateClientUser';
 import ClientPortal from './pages/ClientPortal';
@@ -27,6 +27,8 @@ import RoutingCalendarWorkspace from './pages/RoutingCalendarWorkspace';
 import MyDayToggle from './pages/MyDayToggle';
 import MyWeek from './pages/MyWeek';
 import SchedulingTools from './pages/SchedulingTools';
+import AppointmentRequestsPage from './pages/AppointmentRequestsPage';
+import ExitSurveyPage from './pages/ExitSurveyPage';
 import RoomLoaderPage from './pages/RoomLoader';
 import { ScheduleIndexRedirect } from './pages/ScheduleLayout';
 import ScheduleHomePage from './pages/ScheduleHomePage';
@@ -512,7 +514,18 @@ export default function App() {
                       {getSchedulingToolsTabPages().map((tab) => (
                         <Route key={tab.path} path={tab.path} element={tab.element} />
                       ))}
+                      <Route
+                        path="appointments/*"
+                        element={<Navigate to="/schedule/appointments" replace />}
+                      />
                     </Route>
+                    <Route path="appointments" element={<AppointmentRequestsPage />} />
+                    <Route
+                      path="appointments/requests"
+                      element={<Navigate to="/schedule/appointments" replace />}
+                    />
+                    <Route path="appointments/on-hold" element={<AppointmentRequestsPage initialTab="on_hold" />} />
+                    <Route path="exit-survey" element={<ExitSurveyPage />} />
                     <Route path="room-loader" element={<RoomLoaderPage />} />
                     <Route path="scheduler" element={<Scheduler />} />
                     <Route path="inventory" element={<InventoryManagement />} />
@@ -576,9 +589,13 @@ export default function App() {
                       element={<Navigate to="/schedule/scheduling-tools/care-outreach" replace />}
                     />
                     <Route path="inventory" element={<Navigate to="/pims/inventory" replace />} />
-                    <Route index element={<Navigate to="/tools/exit-survey" replace />} />
+                    <Route index element={<Navigate to={EXIT_SURVEY_PATH} replace />} />
                     {getToolsTabPages().map((tab) => (
-                      <Route key={tab.path} path={tab.path} element={tab.element} />
+                      <Route
+                        key={tab.path}
+                        path={tab.path}
+                        element={<Navigate to={EXIT_SURVEY_PATH} replace />}
+                      />
                     ))}
                   </Route>
                 ) : (

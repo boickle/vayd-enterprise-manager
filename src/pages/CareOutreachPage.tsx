@@ -14,6 +14,9 @@ import {
   CareOutreachOtherHouseholdPets,
   clearCareOutreachHouseholdCache,
 } from '../components/CareOutreachClientHousehold';
+import { ClientSmsComposeModal } from '../components/ClientSmsComposeModal';
+import { ClientMessagesHistoryModal } from '../components/ClientMessagesHistoryModal';
+import { sendClientSms, fetchSchedulingOutreachSmsFrom } from '../api/clientSms';
 import {
   CareOutreachPetDetailsButton,
   PatientMembershipHeart,
@@ -42,18 +45,41 @@ import {
   type CareOutreachPriorityChipCounts,
 } from '../utils/careOutreachPriorityFilters';
 import { careOutreachReminderIsHidden } from '../utils/careOutreachReminderVisibility';
+import { fetchForwardBookings } from '../api/forwardBooking';
+import { fetchAllAppointmentTypes } from '../api/appointmentSettings';
+import SchedulingToolsListPagination, {
+  paginateSchedulingToolsList,
+  schedulingToolsListTotalPages,
+} from '../components/SchedulingToolsListPagination';
+import {
+  filterCareOutreachRemindersForForwardBooking,
+  forwardBookingPatientIdsActiveInQueue,
+} from '../utils/careOutreachForwardBookingExclude';
+import {
+  buildAppointmentTypeCatalogFromTypes,
+  buildBookedAppointmentMetaMap,
+  forwardBookingEntryVisibleOnList,
+} from '../utils/forwardBookingListVisibility';
 import { notifySchedulingToolsNavCountsRefresh, SCHEDULING_TOOLS_PAGE_REFRESH_EVENT } from '../hooks/useSchedulingToolsNavCounts';
+import {
+  clearForwardBookingReturnSession,
+  readForwardBookingReturnSession,
+  type ForwardBookingReturnSessionV1,
+} from '../utils/forwardBookingReturnSession';
 import { evetClientLink, evetPatientLink } from '../utils/evet';
 import { buildPhoneDialHref, resolveQuoFromLine } from '../utils/quoContact';
 import { practiceTimeZoneOrDefault } from '../utils/practiceTimezone';
+import {
+  buildCareOutreachSmsMessage,
+  careOutreachClientHasSmsPhone,
+} from '../utils/careOutreachSmsMessage';
+import { resolveScheduleLoaderSmsBookedSlot } from '../utils/scheduleLoaderSmsMessage';
 import './Settings.css';
 
 const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
 const PRACTICE_TZ = practiceTimeZoneOrDefault(undefined);
 
 const NOTES_DEBOUNCE_MS = 750;
-
-const PAST_DUE_LIST_PAGE_SIZE = 25;
 
 type PriorityFilter = 'range' | 'overdue_today' | 'past_due_30' | 'due_21';
 
@@ -389,56 +415,6 @@ function mergeReminderAfterPatch(
   return merged;
 }
 
-function CareOutreachPastDuePaginationBar({
-  listPage,
-  totalClients,
-  totalPages,
-  onPageChange,
-}: {
-  listPage: number;
-  totalClients: number;
-  totalPages: number;
-  onPageChange: (page: number) => void;
-}) {
-  return (
-    <div
-      style={{
-        display: 'flex',
-        flexWrap: 'wrap',
-        gap: 12,
-        alignItems: 'center',
-        justifyContent: 'space-between',
-      }}
-    >
-      <p className="settings-muted" style={{ margin: 0 }}>
-        Showing {(listPage - 1) * PAST_DUE_LIST_PAGE_SIZE + 1}–
-        {Math.min(listPage * PAST_DUE_LIST_PAGE_SIZE, totalClients)} of {totalClients} clients
-      </p>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        <button
-          type="button"
-          className="btn secondary"
-          disabled={listPage <= 1}
-          onClick={() => onPageChange(listPage - 1)}
-        >
-          Previous
-        </button>
-        <span className="settings-muted" style={{ fontSize: 14 }}>
-          Page {listPage} of {totalPages}
-        </span>
-        <button
-          type="button"
-          className="btn secondary"
-          disabled={listPage >= totalPages}
-          onClick={() => onPageChange(listPage + 1)}
-        >
-          Next
-        </button>
-      </div>
-    </div>
-  );
-}
-
 export default function CareOutreachPage() {
   const navigate = useNavigate();
   const practiceTz = practiceTimeZoneOrDefault(undefined);
@@ -469,6 +445,19 @@ export default function CareOutreachPage() {
   const [reminderHiddenError, setReminderHiddenError] = useState<Record<number, string | null>>({});
   const [actionError, setActionError] = useState<string | null>(null);
   const [bookingClientKey, setBookingClientKey] = useState<string | null>(null);
+  const [postHoldReturn, setPostHoldReturn] = useState<ForwardBookingReturnSessionV1 | null>(null);
+  const postHoldReturnHandledRef = useRef(false);
+  const [exitingClientKeys, setExitingClientKeys] = useState<Set<string>>(() => new Set());
+  const [holdExitSnapshot, setHoldExitSnapshot] = useState<CareOutreachClientBucket | null>(null);
+  const exitClientTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const [smsClientId, setSmsClientId] = useState<number | null>(null);
+  const [smsClientLabel, setSmsClientLabel] = useState('');
+  const [smsMessage, setSmsMessage] = useState('');
+  const [smsSending, setSmsSending] = useState(false);
+  const [smsError, setSmsError] = useState<string | null>(null);
+  const [smsFromLine, setSmsFromLine] = useState<string | null>(null);
+  const [messagesClientId, setMessagesClientId] = useState<number | null>(null);
+  const [messagesClientLabel, setMessagesClientLabel] = useState('');
 
   /** API fetch window. Priority tabs filter client-side; use the same wide span as chip counts so list and badges stay aligned. */
   const effectiveDueRange = useMemo(() => {
@@ -483,23 +472,39 @@ export default function CareOutreachPage() {
     setError(null);
     try {
       const chipCountRange = careOutreachChipCountFetchRange();
-      const list = await fetchUnscheduledReminders({
-        dueDateFrom: effectiveDueRange.from,
-        dueDateTo: effectiveDueRange.to,
-        practiceId: PRACTICE_ID,
-        limit: 2000,
-      });
-      const chipCountList =
+      const [types, forwardBookings, rawList, chipCountRawList] = await Promise.all([
+        fetchAllAppointmentTypes(PRACTICE_ID, { activeOnly: false }),
+        fetchForwardBookings({ practiceId: PRACTICE_ID, limit: 2000, includeRemoved: true }),
+        fetchUnscheduledReminders({
+          dueDateFrom: effectiveDueRange.from,
+          dueDateTo: effectiveDueRange.to,
+          practiceId: PRACTICE_ID,
+          limit: 2000,
+        }),
         priority === 'range'
-          ? await fetchUnscheduledReminders({
+          ? fetchUnscheduledReminders({
               dueDateFrom: chipCountRange.from,
               dueDateTo: chipCountRange.to,
               practiceId: PRACTICE_ID,
               limit: 2000,
             })
-          : list;
+          : Promise.resolve(null),
+      ]);
+      const catalog = buildAppointmentTypeCatalogFromTypes(types);
+      const visibleForwardBookings = forwardBookings.filter((r) => forwardBookingEntryVisibleOnList(r));
+      const metaMap = await buildBookedAppointmentMetaMap(visibleForwardBookings, PRACTICE_ID, catalog);
+      const blockedPatientIds = forwardBookingPatientIdsActiveInQueue(
+        visibleForwardBookings,
+        practiceTz,
+        metaMap,
+        catalog,
+      );
+      const list = filterCareOutreachRemindersForForwardBooking(rawList, blockedPatientIds);
+      const chipCountSource = chipCountRawList
+        ? filterCareOutreachRemindersForForwardBooking(chipCountRawList, blockedPatientIds)
+        : list;
       setRows(list);
-      setPriorityChipCounts(countCareOutreachPriorityChipClients(chipCountList));
+      setPriorityChipCounts(countCareOutreachPriorityChipClients(chipCountSource));
       const drafts: Record<number, string> = {};
       for (const r of list) {
         drafts[r.id] = initialNotes(r);
@@ -520,7 +525,43 @@ export default function CareOutreachPage() {
       clearCareOutreachHouseholdCache();
       notifySchedulingToolsNavCountsRefresh();
     }
-  }, [effectiveDueRange.from, effectiveDueRange.to, priority]);
+  }, [effectiveDueRange.from, effectiveDueRange.to, priority, practiceTz]);
+
+  useEffect(() => {
+    void fetchSchedulingOutreachSmsFrom().then((phone) => {
+      if (phone) setSmsFromLine(phone);
+    });
+  }, []);
+
+  const beginClientExit = useCallback((clientKey: string) => {
+    setExitingClientKeys((prev) => new Set(prev).add(clientKey));
+    const existing = exitClientTimers.current.get(clientKey);
+    if (existing) window.clearTimeout(existing);
+    const timer = setTimeout(() => {
+      exitClientTimers.current.delete(clientKey);
+      setExitingClientKeys((prev) => {
+        const next = new Set(prev);
+        next.delete(clientKey);
+        return next;
+      });
+      setHoldExitSnapshot((snap) => (snap?.clientKey === clientKey ? null : snap));
+    }, 1100);
+    exitClientTimers.current.set(clientKey, timer);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      for (const t of exitClientTimers.current.values()) window.clearTimeout(t);
+      exitClientTimers.current.clear();
+    };
+  }, []);
+
+  useEffect(() => {
+    const pending = readForwardBookingReturnSession();
+    if (!pending || pending.returnOrigin !== 'care_outreach') return;
+    postHoldReturnHandledRef.current = false;
+    setPostHoldReturn(pending);
+  }, []);
 
   useEffect(() => {
     void load();
@@ -663,47 +704,143 @@ export default function CareOutreachPage() {
       );
       b.patients = new Map(parr);
     }
+    if (
+      holdExitSnapshot &&
+      exitingClientKeys.has(holdExitSnapshot.clientKey) &&
+      !clients.has(holdExitSnapshot.clientKey)
+    ) {
+      list.push(holdExitSnapshot);
+      list.sort((a, b) =>
+        a.displayName.localeCompare(b.displayName, undefined, { sensitivity: 'base' })
+      );
+    }
     return list;
-  }, [sortedForDisplay]);
+  }, [sortedForDisplay, holdExitSnapshot, exitingClientKeys]);
 
-  const usePastDueListPagination = priority === 'past_due_30';
+  useEffect(() => {
+    if (!postHoldReturn || loading || postHoldReturnHandledRef.current) return;
 
-  const pastDueListTotalPages = useMemo(() => {
-    if (!usePastDueListPagination) return 1;
-    return Math.max(1, Math.ceil(grouped.length / PAST_DUE_LIST_PAGE_SIZE));
-  }, [grouped.length, usePastDueListPagination]);
+    const pending = postHoldReturn;
+    const clientKey = pending.careOutreachClientKey?.trim();
+    const isHold = pending.targetWorkflowTab === 'onHold';
 
-  const groupedForDisplay = useMemo(() => {
-    if (!usePastDueListPagination) return grouped;
-    const start = (listPage - 1) * PAST_DUE_LIST_PAGE_SIZE;
-    return grouped.slice(start, start + PAST_DUE_LIST_PAGE_SIZE);
-  }, [grouped, listPage, usePastDueListPagination]);
+    postHoldReturnHandledRef.current = true;
+    clearForwardBookingReturnSession();
+    setPostHoldReturn(null);
+
+    if (!clientKey || !isHold) return;
+
+    if (pending.careOutreachClientDisplayName?.trim()) {
+      setHoldExitSnapshot({
+        clientKey,
+        clientId: pending.careOutreachClientId ?? null,
+        clientPimsId: null,
+        displayName: pending.careOutreachClientDisplayName.trim(),
+        clientFirstName: null,
+        phone: null,
+        isMember: false,
+        patients: new Map(),
+      });
+    }
+
+    beginClientExit(clientKey);
+
+    void (async () => {
+      const clientId = pending.careOutreachClientId;
+      const phone = pending.careOutreachClientPhone;
+      if (clientId == null || !careOutreachClientHasSmsPhone(phone)) return;
+
+      const bookedSlot = await resolveScheduleLoaderSmsBookedSlot(
+        pending.bookedAppointmentId,
+        PRACTICE_ID,
+        practiceTz,
+        {
+          startIso: pending.bookedAppointmentStart,
+          endIso: pending.bookedAppointmentEnd ?? pending.bookedAppointmentStart,
+        },
+      );
+
+      const petNames =
+        pending.careOutreachPetNames?.map((name) => name.trim()).filter(Boolean) ?? [];
+
+      setSmsError(null);
+      setSmsMessage(
+        buildCareOutreachSmsMessage({
+          clientFirstName: pending.careOutreachClientFirstName,
+          clientDisplayName: pending.careOutreachClientDisplayName,
+          petNames,
+          providerLastName: pending.careOutreachProviderLastName,
+          anyPastDue: pending.careOutreachAnyPastDue === true,
+          ...(bookedSlot ? { bookedSlot } : {}),
+        }),
+      );
+      setSmsClientId(clientId);
+      setSmsClientLabel(pending.careOutreachClientDisplayName?.trim() || 'Client');
+    })();
+  }, [postHoldReturn, loading, beginClientExit, practiceTz]);
+
+  const listTotalPages = useMemo(
+    () => schedulingToolsListTotalPages(grouped.length),
+    [grouped.length],
+  );
+
+  const groupedForDisplay = useMemo(
+    () => paginateSchedulingToolsList(grouped, listPage),
+    [grouped, listPage],
+  );
 
   useEffect(() => {
     setListPage(1);
   }, [search, providerFilterId, priority]);
 
   useEffect(() => {
-    if (!usePastDueListPagination) return;
-    if (listPage > pastDueListTotalPages) {
-      setListPage(pastDueListTotalPages);
+    if (listPage > listTotalPages) {
+      setListPage(listTotalPages);
     }
-  }, [listPage, pastDueListTotalPages, usePastDueListPagination]);
+  }, [listPage, listTotalPages]);
 
-  const changePastDueListPage = useCallback((page: number) => {
+  const changeListPage = useCallback((page: number) => {
     setListPage(page);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, []);
 
-  const pastDuePaginationBar =
-    usePastDueListPagination && grouped.length > PAST_DUE_LIST_PAGE_SIZE ? (
-      <CareOutreachPastDuePaginationBar
-        listPage={listPage}
-        totalClients={grouped.length}
-        totalPages={pastDueListTotalPages}
-        onPageChange={changePastDueListPage}
-      />
-    ) : null;
+  const closeSmsModal = useCallback(() => {
+    setSmsClientId(null);
+    setSmsClientLabel('');
+    setSmsMessage('');
+    setSmsError(null);
+  }, []);
+
+  const handleSendSms = useCallback(
+    async (opts: { overrideNonProd: boolean }) => {
+      if (smsClientId == null || !smsMessage.trim()) return;
+      setSmsSending(true);
+      setSmsError(null);
+      try {
+        await sendClientSms(smsClientId, {
+          message: smsMessage.trim(),
+          useRemindersFrom: true,
+          ...(opts.overrideNonProd ? { overrideNonProd: true } : {}),
+        });
+        closeSmsModal();
+      } catch (e: unknown) {
+        const ax = e as { response?: { data?: { message?: string } }; message?: string };
+        setSmsError(ax?.response?.data?.message ?? ax?.message ?? 'Failed to send text message.');
+      } finally {
+        setSmsSending(false);
+      }
+    },
+    [smsClientId, smsMessage, closeSmsModal],
+  );
+
+  const listPaginationBar = (
+    <SchedulingToolsListPagination
+      listPage={listPage}
+      totalItems={grouped.length}
+      onPageChange={changeListPage}
+      itemLabel="clients"
+    />
+  );
 
   const flushSave = useCallback(async (reminderId: number, value: string) => {
     setNoteSaving((s) => ({ ...s, [reminderId]: true }));
@@ -881,6 +1018,11 @@ export default function CareOutreachPage() {
           origin: 'care_outreach',
           careOutreachPetNames: petNames,
           careOutreachAnyPastDue: careOutreachTargetHasPastDueReminders(target),
+          careOutreachClientKey: client.clientKey,
+          careOutreachClientDisplayName: client.displayName,
+          careOutreachClientId: client.clientId ?? null,
+          careOutreachClientPhone: client.phone,
+          careOutreachClientFirstName: client.clientFirstName,
           routingSearch,
         });
         navigate('/schedule/routing');
@@ -1072,8 +1214,10 @@ export default function CareOutreachPage() {
         <p className="settings-muted">No reminders match the current filters.</p>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-          {pastDuePaginationBar}
-          {groupedForDisplay.map((client) => (
+          {listPaginationBar}
+          {groupedForDisplay.map((client) => {
+            const rowExiting = exitingClientKeys.has(client.clientKey);
+            return (
             <CareOutreachHouseholdProvider
               key={client.clientKey}
               clientId={client.clientId}
@@ -1081,13 +1225,24 @@ export default function CareOutreachPage() {
               outreachPatientIds={Array.from(client.patients.keys())}
             >
             <section
+              className={
+                rowExiting
+                  ? 'appt-request-row--exiting appt-request-row--exiting-onHold'
+                  : undefined
+              }
               style={{
                 border: '1px solid var(--border)',
                 borderRadius: 12,
                 overflow: 'hidden',
                 background: 'var(--panel, #fff)',
+                position: rowExiting ? 'relative' : undefined,
               }}
             >
+              {rowExiting ? (
+                <div className="appt-request-row-exit-badge" aria-live="polite">
+                  Moved to hold
+                </div>
+              ) : null}
               <header
                 style={{
                   padding: '12px 16px',
@@ -1320,10 +1475,39 @@ export default function CareOutreachPage() {
               </div>
             </section>
             </CareOutreachHouseholdProvider>
-          ))}
-          {pastDuePaginationBar}
+          );
+          })}
+          {listPaginationBar}
         </div>
       )}
+
+      {smsClientId != null ? (
+        <ClientSmsComposeModal
+          open
+          clientLabel={smsClientLabel}
+          message={smsMessage}
+          onMessageChange={setSmsMessage}
+          onClose={closeSmsModal}
+          onSend={(opts) => void handleSendSms(opts)}
+          onOpenMessagesHistory={() => {
+            setMessagesClientId(smsClientId);
+            setMessagesClientLabel(smsClientLabel);
+          }}
+          sending={smsSending}
+          sendError={smsError}
+          fromLineLabel={smsFromLine}
+        />
+      ) : null}
+
+      <ClientMessagesHistoryModal
+        open={messagesClientId != null}
+        clientId={messagesClientId}
+        clientLabel={messagesClientLabel}
+        onClose={() => {
+          setMessagesClientId(null);
+          setMessagesClientLabel('');
+        }}
+      />
     </div>
   );
 }

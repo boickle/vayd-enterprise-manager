@@ -61,6 +61,8 @@ export function forwardBookingOnHoldSinceIso(
   entry: ForwardBookingEntry,
   bookedApptMeta?: Map<number, BookedAppointmentMeta> | null
 ): string | null {
+  const fromEntry = entry.linkedVisitBookedAtIso?.trim();
+  if (fromEntry) return fromEntry;
   const apptId = forwardBookingLinkedAppointmentId(entry);
   if (apptId != null && bookedApptMeta?.has(apptId)) {
     const fromAppt = bookedApptMeta.get(apptId)?.appointmentBookedAtIso;

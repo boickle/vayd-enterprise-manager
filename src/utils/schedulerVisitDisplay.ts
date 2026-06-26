@@ -24,6 +24,35 @@ export function fullClientHouseholdName(c: Client | undefined): string {
   return primary || second || '—';
 }
 
+/** Client / household label from a booked appointment (after linking in scheduler). */
+export function appointmentLinkedClientLabel(appt: Appointment | null | undefined): string | null {
+  if (!appt) return null;
+  const household = fullClientHouseholdName(appt.client);
+  if (household && household !== '—') return household;
+  const pats = patientsForAppointment(appt);
+  const petNames = pats.map((p) => pickStr(p.name)).filter((s): s is string => Boolean(s));
+  if (petNames.length === 0) return null;
+  if (petNames.length === 1) return petNames[0];
+  if (petNames.length === 2) return `${petNames[0]} · ${petNames[1]}`;
+  return `${petNames[0]} +${petNames.length - 1}`;
+}
+
+function normalizeClientLabelKey(label: string): string {
+  return label.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+/** When a HOLD was linked to a different client than the original request name. */
+export function staffConfirmClientNameChange(
+  requestClientLabel: string | null | undefined,
+  linkedClientLabel: string | null | undefined,
+): { previous: string; current: string } | null {
+  const previous = pickStr(requestClientLabel);
+  const current = pickStr(linkedClientLabel);
+  if (!previous || !current) return null;
+  if (normalizeClientLabelKey(previous) === normalizeClientLabelKey(current)) return null;
+  return { previous, current };
+}
+
 export function providerLabel(p: Appointment['primaryProvider']): string {
   if (!p) return '—';
   const fromParts = [p.firstName, p.lastName].filter(Boolean).join(' ').trim();

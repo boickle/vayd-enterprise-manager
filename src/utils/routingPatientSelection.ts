@@ -1,3 +1,4 @@
+import type { RoutingAppointmentRequestIntentV1 } from './routingAppointmentRequestIntent';
 import type { RoutingForwardBookingScope } from './routingForwardBookingIntent';
 import {
   forwardBookingScopeTargets,
@@ -36,6 +37,34 @@ export function defaultRescheduleSelectedPatientIds(
     return sameDay.map((v) => String(v.patientId));
   }
   return [String(intent.patientId)];
+}
+
+/** Match request pets to routing chips by internal id, then by name. */
+export function defaultAppointmentRequestSelectedPatientIds(
+  intent: RoutingAppointmentRequestIntentV1,
+  roster: readonly RoutingPatientChipRow[]
+): string[] {
+  const wantIds = new Set<string>();
+  for (const id of intent.preferredPatientIds ?? []) {
+    const s = String(id).trim();
+    if (s) wantIds.add(s);
+  }
+  const primary = intent.patientId?.trim();
+  if (primary) wantIds.add(primary);
+
+  const byId = roster.filter((p) => wantIds.has(String(p.id)));
+  if (byId.length > 0) return byId.map((p) => String(p.id));
+
+  const wantNames = new Set(
+    (intent.pets ?? [])
+      .map((p) => p.name.trim().toLowerCase())
+      .filter(Boolean)
+  );
+  if (wantNames.size === 0) return [];
+
+  return roster
+    .filter((p) => wantNames.has(p.name.trim().toLowerCase()))
+    .map((p) => String(p.id));
 }
 
 export function defaultForwardBookingSelectedPatientIds(

@@ -4839,12 +4839,24 @@ label.scheduler-household-pet-row {
 
 .scheduler-edit-footer {
   display: flex;
-  justify-content: flex-end;
+  flex-direction: column;
+  align-items: stretch;
   gap: 10px;
   padding: 14px 18px 18px;
   border-top: 1px solid #e2e8f0;
   flex-shrink: 0;
   background: #fafbfc;
+}
+
+.scheduler-edit-footer-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.scheduler-edit-footer-error {
+  margin: 0;
 }
 
 .scheduler-edit-preview-hint {
@@ -4930,6 +4942,133 @@ label.scheduler-household-pet-row {
   pointer-events: none;
 }
 
+.scheduler-staff-confirm-popover-shell {
+  pointer-events: none;
+  max-width: min(380px, calc(100vw - 24px));
+}
+
+.scheduler-staff-confirm-popover-shell--editing {
+  max-width: min(720px, calc(100vw - 24px));
+}
+
+.scheduler-staff-confirm-popover-shell .scheduler-staff-confirm-edit-pane,
+.scheduler-staff-confirm-popover-shell .scheduler-edit-preview-popover {
+  pointer-events: auto;
+}
+
+.scheduler-staff-confirm-popover-shell--editing {
+  width: min(720px, calc(100vw - 32px)) !important;
+  max-width: min(720px, calc(100vw - 32px));
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.scheduler-staff-confirm-popover-shell--editing .scheduler-staff-confirm-edit-pane {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.scheduler-staff-confirm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2060;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(15, 23, 42, 0.38);
+  pointer-events: auto;
+}
+
+.scheduler-staff-confirm-overlay-card {
+  pointer-events: auto;
+  width: min(380px, calc(100vw - 32px));
+  max-height: min(85vh, calc(100vh - 32px));
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.scheduler-staff-confirm-overlay-card.scheduler-edit-preview-popover-shell:not(
+    .scheduler-staff-confirm-overlay-card--editing
+  ) {
+  width: min(380px, calc(100vw - 32px));
+  max-width: min(380px, calc(100vw - 32px));
+}
+
+.scheduler-staff-confirm-overlay-card--editing {
+  width: min(720px, calc(100vw - 32px));
+  max-width: min(720px, calc(100vw - 32px));
+  max-height: min(90vh, calc(100vh - 32px));
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.scheduler-staff-confirm-overlay-card--editing.scheduler-edit-preview-popover-shell {
+  width: min(720px, calc(100vw - 32px));
+  max-width: min(720px, calc(100vw - 32px));
+}
+
+.scheduler-staff-confirm-edit-pane {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.scheduler-staff-confirm-edit-pane .scheduler-edit-inline-pane {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+}
+
+.scheduler-staff-confirm-edit-pane .scheduler-modal--edit-inline {
+  width: 100%;
+  max-width: none;
+  flex: 1;
+  min-height: 0;
+  max-height: 100%;
+  height: auto;
+  border-radius: 10px;
+}
+
+.scheduler-staff-confirm-edit-pane .scheduler-modal-scroll--edit {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+.scheduler-staff-confirm-edit-pane .scheduler-edit-footer {
+  flex-shrink: 0;
+}
+
+.scheduler-staff-confirm-edit-pane .scheduler-modal--edit {
+  max-width: none;
+  width: 100%;
+}
+
+.scheduler-edit-preview-popover-actions--confirm {
+  display: flex;
+  gap: 8px;
+  justify-content: stretch;
+}
+
+.scheduler-edit-preview-popover-actions--confirm .btn {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
 .scheduler-edit-preview-popover {
   pointer-events: auto;
   max-height: min(420px, calc(100vh - 24px));
@@ -4942,6 +5081,43 @@ label.scheduler-household-pet-row {
     0 14px 36px rgba(91, 33, 182, 0.22),
     0 0 0 1px rgba(255, 255, 255, 0.85) inset;
   overflow: hidden;
+}
+
+.scheduler-edit-preview-popover--staff-confirm {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-height: min(85vh, calc(100vh - 32px));
+  min-height: 0;
+}
+
+.scheduler-edit-preview-popover-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.scheduler-staff-confirm-pet-pick-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.scheduler-staff-confirm-pet-pick-btn {
+  width: 100%;
+  justify-content: flex-start;
+  text-align: left;
+}
+
+.scheduler-edit-preview-popover--staff-confirm .scheduler-edit-preview-popover-actions {
+  flex-shrink: 0;
+}
+
+.scheduler-edit-preview-popover-client .appt-request-client-name-change {
+  display: flex;
 }
 
 .scheduler-edit-preview-popover-head {
@@ -4986,6 +5162,10 @@ label.scheduler-household-pet-row {
   font-weight: 600;
   color: #6b21a8;
   line-height: 1.4;
+}
+
+.scheduler-edit-preview-popover-client {
+  padding: 8px 12px 0;
 }
 
 .scheduler-edit-preview-popover-contact {
@@ -5300,6 +5480,16 @@ label.scheduler-household-pet-row {
 }
 
 .scheduler-modal--edit > .scheduler-modal-body:not(.scheduler-modal-body--edit) {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+/* Header + scrollable body + pinned footer (e.g. Add forward booking). Without this, a tall
+   form pushes the primary footer action below max-height and overflow:hidden clips it. */
+.scheduler-modal--edit > .scheduler-modal-body.scheduler-modal-body--edit {
   flex: 1;
   min-height: 0;
   overflow-y: auto;

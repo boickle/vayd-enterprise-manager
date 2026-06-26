@@ -157,7 +157,7 @@ export function validateEditVisitLinkSelection(input: {
   const { linkSelection, visitAddress, requirePatient } = input;
   if (!linkSelection?.clientId?.trim()) return null;
 
-  if (visitAddress?.trim() && !linkSelection.keepAlternateAddress) {
+  if (visitAddress?.trim() && linkSelection.keepAlternateAddress !== true) {
     const quality = compareVisitAddressToClientHome(visitAddress, linkSelection.clientHomeAddress);
     if (!addressMatchAllowsLink(quality)) {
       return (
@@ -204,7 +204,7 @@ export async function commitEditVisit(input: CommitEditVisitInput): Promise<Appo
     if (link.patientId != null && (!Number.isFinite(link.patientId) || link.patientId <= 0)) {
       throw new Error('Choose a valid patient to link.');
     }
-    if (!link.skipAddressMatch && !link.keepAlternateAddress && link.visitAddress?.trim()) {
+    if (!link.skipAddressMatch && link.keepAlternateAddress !== true && link.visitAddress?.trim()) {
       const quality = compareVisitAddressToClientHome(link.visitAddress, link.clientHomeAddress);
       if (!addressMatchAllowsLink(quality)) {
         throw new Error(
@@ -259,7 +259,7 @@ export async function commitEditVisit(input: CommitEditVisitInput): Promise<Appo
   if (
     link?.visitAddress?.trim() &&
     link.clientHomeAddress?.trim() &&
-    !link.keepAlternateAddress
+    link.keepAlternateAddress !== true
   ) {
     const quality = compareVisitAddressToClientHome(link.visitAddress, link.clientHomeAddress);
     if (addressMatchAllowsLink(quality)) {

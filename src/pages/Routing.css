@@ -37,6 +37,12 @@
   min-height: 0;
   overflow: hidden;
   align-items: stretch;
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.routing-page-root--calendar-workspace:not(.routing-page-root--stack-columns) .routing-route-form-card,
+.routing-page-root--calendar-workspace:not(.routing-page-root--stack-columns) .routing-results-card {
+  max-height: 100%;
 }
 
 .routing-page-root--calendar-workspace .routing-route-form-card,
@@ -50,12 +56,13 @@
 .routing-page-root--calendar-workspace .routing-route-form-card {
   flex: 1 1 0;
   min-height: 0;
+  max-height: 100%;
 }
 
 .routing-page-root--calendar-workspace .routing-route-form-header,
 .routing-page-root--calendar-workspace .routing-reschedule-mode-summary,
-.routing-page-root--calendar-workspace .routing-route-form-card > .routing-asap-all-doctor-search,
-.routing-page-root--calendar-workspace .routing-route-form-card > .forward-booking-workspace-context {
+.routing-page-root--calendar-workspace .routing-route-form-card > .forward-booking-workspace-context,
+.routing-page-root--calendar-workspace .routing-route-form-card > .routing-forward-booking-mode-summary {
   flex-shrink: 0;
 }
 
@@ -74,6 +81,7 @@
 
 .routing-page-root--calendar-workspace.routing-page-root--stack-columns {
   overflow: hidden;
+  min-height: 0;
 }
 
 .routing-page-root--calendar-workspace.routing-page-root--stack-columns .routing-route-form-card {
@@ -118,7 +126,7 @@
   flex-shrink: 0;
   margin-top: 0;
   padding-top: 10px;
-  padding-bottom: 2px;
+  padding-bottom: 10px;
   border-top: 1px solid var(--border);
   background: var(--card, #fff);
 }

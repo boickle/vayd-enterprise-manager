@@ -226,7 +226,7 @@ export function editVisitLinkClearsAlternateAddress(
     | null
     | undefined
 ): boolean {
-  if (!linkSelection?.clientId?.trim() || linkSelection.keepAlternateAddress) return false;
+  if (!linkSelection?.clientId?.trim() || linkSelection.keepAlternateAddress === true) return false;
   const visitAddress = visitAddressForLinkMatching(appt);
   if (!visitAddress?.trim()) return false;
   return addressMatchAllowsLink(
