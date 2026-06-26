@@ -2,6 +2,7 @@ import { searchClientsStaff, type ClientSearchRow } from '../api/clientsStaff';
 import {
   clientDisplayNameFromRequestData,
   requestDataClientId,
+  requestDataEmail,
 } from './appointmentRequestDisplay';
 
 function pickStr(v: unknown): string | null {
@@ -38,7 +39,7 @@ export async function resolveRequestDataClientIdStaff(
     pickStr(requestData.loggedInClientId);
   if (loggedInId) return loggedInId;
 
-  const email = pickStr(requestData.email);
+  const email = requestDataEmail(requestData);
   if (email) {
     try {
       const rows = await searchClientsStaff(email, { includeInactive: true });

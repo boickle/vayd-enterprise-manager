@@ -56,6 +56,15 @@ type LinkClientPetRow = {
   isDeleted?: boolean;
 };
 
+function linkClientPetLabel(p: LinkClientPetRow): string {
+  if (p.isActive === false) return `${p.name} (inactive)`;
+  return p.name;
+}
+
+function isLinkableClientPet(p: LinkClientPetRow): boolean {
+  return p.isDeleted !== true;
+}
+
 type Props = {
   practiceId: number;
   visitAddress: string | null;
@@ -332,24 +341,19 @@ export function EditVisitLinkClientPanel({
     if (!preferred || !selectedClientId || selectedPatientId) return;
     const target = preferred.toLowerCase();
     const match = clientPets.find((p) => {
-      if (p.isDeleted === true || p.isActive === false) return false;
+      if (!isLinkableClientPet(p)) return false;
       return p.name.trim().toLowerCase() === target;
     });
     if (!match) return;
     const id = String(match.id);
     setSelectedPatientId(id);
-    setSelectedPatientLabel(match.name);
-    pushSelection({ patientId: id, patientLabel: match.name });
+    setSelectedPatientLabel(linkClientPetLabel(match));
+    pushSelection({ patientId: id, patientLabel: linkClientPetLabel(match) });
   }, [preferredPatientName, selectedClientId, selectedPatientId, clientPets, pushSelection]);
 
-  const activePetChoices = useMemo(
-    () =>
-      clientPets.filter((p) => {
-        if (p.isDeleted === true) return false;
-        if (p.isActive === false) return false;
-        return true;
-      }),
-    [clientPets]
+  const linkablePetChoices = useMemo(
+    () => clientPets.filter(isLinkableClientPet),
+    [clientPets],
   );
 
   const matchMismatch =
@@ -513,7 +517,7 @@ export function EditVisitLinkClientPanel({
           {requiresPatient ? (
             loadingClientPets ? (
               <p className="scheduler-edit-hint">Loading patients…</p>
-            ) : activePetChoices.length > 0 ? (
+            ) : linkablePetChoices.length > 0 ? (
               <label className="scheduler-edit-field scheduler-edit-field--full">
                 <span>Patient *</span>
                 <select
@@ -526,25 +530,25 @@ export function EditVisitLinkClientPanel({
                       pushSelection({ patientId: null, patientLabel: null });
                       return;
                     }
-                    const pet = activePetChoices.find((p) => String(p.id) === id);
-                    const label = pet?.name ?? 'Patient';
+                    const pet = linkablePetChoices.find((p) => String(p.id) === id);
+                    const label = pet ? linkClientPetLabel(pet) : 'Patient';
                     setSelectedPatientId(id);
                     setSelectedPatientLabel(label);
                     pushSelection({ patientId: id, patientLabel: label });
                   }}
                 >
                   <option value="">—</option>
-                  {activePetChoices.map((p) => (
+                  {linkablePetChoices.map((p) => (
                     <option key={String(p.id)} value={String(p.id)}>
-                      {p.name}
+                      {linkClientPetLabel(p)}
                     </option>
                   ))}
                 </select>
               </label>
             ) : (
-              <p className="scheduler-edit-hint">No active patients on file for this client.</p>
+              <p className="scheduler-edit-hint">No patients on file for this client.</p>
             )
-          ) : activePetChoices.length > 0 ? (
+          ) : linkablePetChoices.length > 0 ? (
             <label className="scheduler-edit-field scheduler-edit-field--full">
               <span>Patient (optional)</span>
               <select
@@ -557,17 +561,17 @@ export function EditVisitLinkClientPanel({
                     pushSelection({ patientId: null, patientLabel: null });
                     return;
                   }
-                  const pet = activePetChoices.find((p) => String(p.id) === id);
-                  const label = pet?.name ?? 'Patient';
+                  const pet = linkablePetChoices.find((p) => String(p.id) === id);
+                  const label = pet ? linkClientPetLabel(pet) : 'Patient';
                   setSelectedPatientId(id);
                   setSelectedPatientLabel(label);
                   pushSelection({ patientId: id, patientLabel: label });
                 }}
               >
                 <option value="">—</option>
-                {activePetChoices.map((p) => (
+                {linkablePetChoices.map((p) => (
                   <option key={String(p.id)} value={String(p.id)}>
-                    {p.name}
+                    {linkClientPetLabel(p)}
                   </option>
                 ))}
               </select>

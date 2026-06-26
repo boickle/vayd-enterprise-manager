@@ -3,13 +3,13 @@ import { createPortal } from 'react-dom';
 import { DateTime } from 'luxon';
 import { bookAppointmentRequestSubmission } from '../api/appointmentRequestSubmissions';
 import type { AppointmentRequestSubmissionItem } from '../api/appointmentRequestSubmissions';
+import { fetchAppointmentById } from '../api/appointments';
 import type { Appointment } from '../api/roomLoader';
-import { fetchClientAppointmentsStaff } from '../api/pimsAppointments';
 import {
   clientDisplayNameFromRequestData,
   requestDataRequestedStartIso,
 } from '../utils/appointmentRequestDisplay';
-import { resolveRequestDataClientIdStaff } from '../utils/resolveRequestDataClientId';
+import { fetchAppointmentRequestLinkCandidates } from '../utils/appointmentRequestLinkCandidates';
 import { practiceTimeZoneOrDefault } from '../utils/practiceTimezone';
 import '../pages/Scheduler.css';
 
@@ -17,6 +17,8 @@ const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
 
 type Props = {
   item: AppointmentRequestSubmissionItem;
+  /** Initial link vs correcting an existing linked appointment. */
+  mode?: 'link' | 'relink';
   onClose: () => void;
   onLinked: (updated: AppointmentRequestSubmissionItem) => void;
 };
@@ -51,7 +53,13 @@ function formatRequestedDateHint(iso: string | null, practiceTz: string): string
   return dt.toFormat('EEEE, MMMM d, yyyy');
 }
 
-export function AppointmentRequestManualBookModal({ item, onClose, onLinked }: Props) {
+export function AppointmentRequestManualBookModal({
+  item,
+  mode = 'link',
+  onClose,
+  onLinked,
+}: Props) {
+  const isRelink = mode === 'relink';
   const practiceTz = practiceTimeZoneOrDefault(undefined);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -72,52 +80,50 @@ export function AppointmentRequestManualBookModal({ item, onClose, onLinked }: P
     setError(null);
     setShowManualId(false);
 
-    const clientId = await resolveRequestDataClientIdStaff(rd);
-    setClientResolved(Boolean(clientId));
-    if (!clientId) {
-      setOptions([]);
-      setShowManualId(true);
-      setLoading(false);
-      return;
-    }
-
-    const cutoff = requestedStartIso
-      ? DateTime.fromISO(requestedStartIso, { zone: 'utc' }).setZone(practiceTz).startOf('day')
-      : DateTime.now().setZone(practiceTz).startOf('day');
-    const rangeStart = cutoff.isValid ? cutoff.toUTC().toISO()! : new Date().toISOString();
-    const rangeEnd = cutoff.plus({ years: 1 }).toUTC().toISO()!;
-
     try {
-      const rows = await fetchClientAppointmentsStaff(clientId, {
-        practiceId: PRACTICE_ID,
-        start: rangeStart,
-        end: rangeEnd,
-      });
-      const filtered = rows
-        .filter((a) => !a.isDeleted && a.isActive !== false)
-        .filter((a) => {
-          const startMs = Date.parse(a.appointmentStart);
-          const cutoffMs = Date.parse(rangeStart);
-          return Number.isFinite(startMs) && Number.isFinite(cutoffMs) && startMs >= cutoffMs;
-        })
-        .sort((a, b) => Date.parse(a.appointmentStart) - Date.parse(b.appointmentStart));
+      const { appointments: filtered, clientResolved: resolved } =
+        await fetchAppointmentRequestLinkCandidates({
+          requestData: item.requestData ?? {},
+          practiceId: PRACTICE_ID,
+          practiceTz,
+        });
+      setClientResolved(resolved);
 
-      setOptions(filtered);
-      if (filtered.length === 1 && filtered[0]?.id != null) {
-        setSelectedId(String(filtered[0].id));
+      let options = filtered;
+      const currentLinkedId =
+        isRelink && item.bookedAppointmentId != null ? Number(item.bookedAppointmentId) : null;
+      if (currentLinkedId != null && Number.isFinite(currentLinkedId) && currentLinkedId > 0) {
+        if (!options.some((a) => Number(a.id) === currentLinkedId)) {
+          try {
+            const current = await fetchAppointmentById(currentLinkedId, { practiceId: PRACTICE_ID });
+            if (current?.appointmentStart) {
+              options = [current, ...options].sort(
+                (a, b) => Date.parse(a.appointmentStart) - Date.parse(b.appointmentStart),
+              );
+            }
+          } catch {
+            /* keep list without current row */
+          }
+        }
+        setSelectedId(String(currentLinkedId));
+      } else if (options.length === 1 && options[0]?.id != null) {
+        setSelectedId(String(options[0].id));
       } else {
         setSelectedId('');
       }
-      if (filtered.length === 0) setShowManualId(true);
+
+      setOptions(options);
+      if (options.length === 0) setShowManualId(true);
     } catch (e: unknown) {
       const ax = e as { response?: { data?: { message?: string } }; message?: string };
       setError(ax?.response?.data?.message ?? ax?.message ?? 'Could not load appointments.');
       setOptions([]);
+      setClientResolved(false);
       setShowManualId(true);
     } finally {
       setLoading(false);
     }
-  }, [item.id, requestedStartIso, practiceTz]);
+  }, [item.id, item.requestData, item.bookedAppointmentId, isRelink, practiceTz]);
 
   useEffect(() => {
     void load();
@@ -155,12 +161,12 @@ export function AppointmentRequestManualBookModal({ item, onClose, onLinked }: P
 
   const emptyHint = useMemo(() => {
     if (clientResolved === false) {
-      return 'Could not match this request to a client record. Enter the appointment ID manually after booking.';
+      return 'Could not match this request to a client record by email or name. Enter the appointment ID manually after booking.';
     }
     if (requestedDateHint) {
       return `No appointments found on or after ${requestedDateHint}. Create one through the normal booking flow first, then link it here — or enter the appointment ID below.`;
     }
-    return 'No upcoming appointments found for this client. Create one through the normal booking flow first, then link it here — or enter the appointment ID below.';
+    return 'No upcoming appointments found for this client (including inactive pets). Create one through the normal booking flow first, then link it here — or enter the appointment ID below.';
   }, [clientResolved, requestedDateHint]);
 
   const modal = (
@@ -181,7 +187,9 @@ export function AppointmentRequestManualBookModal({ item, onClose, onLinked }: P
         <div className="scheduler-modal-header">
           <div className="scheduler-modal-header-text">
             <p className="scheduler-modal-eyebrow">Appointment request</p>
-            <h2 id="appt-request-manual-book-title">Link booked appointment</h2>
+            <h2 id="appt-request-manual-book-title">
+              {isRelink ? 'Re-link appointment' : 'Link booked appointment'}
+            </h2>
             <p className="scheduler-modal-subtitle">{clientLabel}</p>
           </div>
           <button type="button" className="scheduler-modal-close" aria-label="Close" onClick={onClose}>
@@ -192,8 +200,11 @@ export function AppointmentRequestManualBookModal({ item, onClose, onLinked }: P
         <div className="scheduler-modal-body scheduler-modal-body--edit">
           {error ? <p className="scheduler-edit-error">{error}</p> : null}
           <p className="settings-muted" style={{ margin: 0 }}>
-            Create the appointment through the normal booking flow first, then select it here to mark
-            this request as booked.
+            {isRelink
+              ? 'Choose the correct calendar appointment for this request if the wrong visit was linked.'
+              : 'Create the appointment through the normal booking flow first, then select it here to mark this request as booked.'}{' '}
+            Appointments for inactive or deceased pets are included when the server supports that
+            lookup.
             {requestedDateHint ? (
               <>
                 {' '}
@@ -258,7 +269,7 @@ export function AppointmentRequestManualBookModal({ item, onClose, onLinked }: P
             onClick={() => void handleSave()}
             disabled={saving || loading || (!selectedId && !manualId.trim())}
           >
-            {saving ? 'Linking…' : 'Link appointment'}
+            {saving ? (isRelink ? 'Updating…' : 'Linking…') : isRelink ? 'Update link' : 'Link appointment'}
           </button>
         </div>
       </div>

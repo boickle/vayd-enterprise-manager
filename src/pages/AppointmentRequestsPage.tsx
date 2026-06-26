@@ -440,7 +440,10 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
   const [smsSending, setSmsSending] = useState(false);
   const [smsError, setSmsError] = useState<string | null>(null);
 
-  const [manualBookItem, setManualBookItem] = useState<AppointmentRequestSubmissionItem | null>(null);
+  const [manualBookModal, setManualBookModal] = useState<{
+    item: AppointmentRequestSubmissionItem;
+    relink: boolean;
+  } | null>(null);
   const [notBookedItem, setNotBookedItem] = useState<AppointmentRequestSubmissionItem | null>(null);
   const [notBookedReasonChoice, setNotBookedReasonChoice] = useState('');
   const [notBookedReasonOther, setNotBookedReasonOther] = useState('');
@@ -780,7 +783,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
   const isRefreshBusy = useCallback(() => {
     if (loading) return true;
     if (smsItem) return true;
-    if (manualBookItem) return true;
+    if (manualBookModal) return true;
     if (notBookedItem) return true;
     if (draftDetailOpen) return true;
     if (notBookedSaving) return true;
@@ -793,7 +796,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
   }, [
     loading,
     smsItem,
-    manualBookItem,
+    manualBookModal,
     notBookedItem,
     draftDetailOpen,
     notBookedSaving,
@@ -945,7 +948,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
     flushDeferredRealtimeRefresh,
     loading,
     smsItem,
-    manualBookItem,
+    manualBookModal,
     notBookedItem,
     draftDetailOpen,
     notBookedSaving,
@@ -1203,6 +1206,21 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
       notifySchedulingToolsNavCountsRefresh();
     },
     [mergeSubmission, beginRowExit],
+  );
+
+  const handleRelinkedAppointment = useCallback(
+    (updated: AppointmentRequestSubmissionItem) => {
+      mergeSubmission({ ...updated, kind: 'submission' });
+      setNotice('Linked appointment updated.');
+      setHighlightEntryId(updated.id);
+      highlightScrollSig.current = `${updated.id}-${Date.now()}`;
+      notifySchedulingToolsNavCountsRefresh();
+      const catalog = typeCatalogRef.current;
+      if (catalog) {
+        void hydrateBookedApptMeta([updated], catalog, { merge: true });
+      }
+    },
+    [mergeSubmission, hydrateBookedApptMeta],
   );
 
   const flushNoteSave = useCallback(async (entryId: number, value: string) => {
@@ -2073,7 +2091,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                         <button
                           type="button"
                           className="btn secondary"
-                          onClick={() => setManualBookItem(item)}
+                          onClick={() => setManualBookModal({ item, relink: false })}
                         >
                           Link appointment…
                         </button>
@@ -2146,6 +2164,15 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                         {isBooked ? (
                           <button type="button" className="btn secondary" onClick={() => onBook(item)}>
                             Reschedule
+                          </button>
+                        ) : null}
+                        {statusFilter === 'booked' && isBooked && hasLinkedAppointment ? (
+                          <button
+                            type="button"
+                            className="btn secondary"
+                            onClick={() => setManualBookModal({ item, relink: true })}
+                          >
+                            Re-link appointment…
                           </button>
                         ) : null}
                         <button
@@ -2290,11 +2317,14 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
         </div>
       )}
 
-      {manualBookItem ? (
+      {manualBookModal ? (
         <AppointmentRequestManualBookModal
-          item={manualBookItem}
-          onClose={() => setManualBookItem(null)}
-          onLinked={handleLinkedAppointment}
+          item={manualBookModal.item}
+          mode={manualBookModal.relink ? 'relink' : 'link'}
+          onClose={() => setManualBookModal(null)}
+          onLinked={
+            manualBookModal.relink ? handleRelinkedAppointment : handleLinkedAppointment
+          }
         />
       ) : null}
 
