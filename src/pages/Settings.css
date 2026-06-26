@@ -1933,6 +1933,41 @@
   white-space: pre-wrap;
 }
 
+.appt-request-pdf-download-wrap {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.appt-request-pdf-download {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  color: #0f766e;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.appt-request-pdf-download:hover:not(:disabled) {
+  color: #115e59;
+}
+
+.appt-request-pdf-download:disabled {
+  cursor: default;
+  opacity: 0.7;
+  text-decoration: none;
+}
+
+.appt-request-pdf-download-error {
+  font-size: 12px;
+  font-weight: 500;
+  color: #b91c1c;
+}
+
 .appt-request-expand-btn {
   display: inline-flex;
   align-items: center;

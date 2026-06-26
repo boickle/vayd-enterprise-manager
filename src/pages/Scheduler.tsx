@@ -2118,6 +2118,10 @@ function SchedulerAppointmentModal({
             <h3 className="scheduler-modal-h3">Visit details</h3>
             <div className="scheduler-modal-kv-grid">
               <SchedulerModalKvCondensed
+                label="Appointment ID"
+                value={appt.id != null ? String(appt.id) : null}
+              />
+              <SchedulerModalKvCondensed
                 label="Appointment provider"
                 value={providerLabel(appt.primaryProvider)}
               />

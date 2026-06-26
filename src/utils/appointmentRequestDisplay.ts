@@ -194,6 +194,23 @@ export function formatRequestDataAddress(requestData: Record<string, unknown>): 
   return parts.length ? parts.join(' · ') : null;
 }
 
+/** Comma-separated home address for staff client / by-address search (not display formatting). */
+export function requestDataPhysicalAddressForSearch(
+  requestData: Record<string, unknown>,
+): string | null {
+  const addr = requestData.physicalAddress;
+  if (!addr || typeof addr !== 'object') return null;
+  const a = addr as Record<string, unknown>;
+  const parts = [
+    pickStr(a.line1),
+    pickStr(a.line2),
+    [pickStr(a.city), pickStr(a.state)].filter(Boolean).join(', '),
+    pickStr(a.zip),
+  ].filter(Boolean);
+  if (parts.length >= 2) return parts.join(', ');
+  return parts[0] ?? null;
+}
+
 /** Existing client chose a different visit location (answered "No" to home-address question). */
 export function requestDataUsesAlternateVisitAddress(
   requestData: Record<string, unknown>,

@@ -203,3 +203,61 @@ export async function fetchRemainingAppointmentRequestSubmissionPages(
   }
   return out;
 }
+
+/** GET /appointments/request-submissions/:id/pdf — staff PDF of the submitted form. */
+async function assertPdfBlob(blob: Blob): Promise<Blob> {
+  const header = await blob.slice(0, 5).text();
+  if (header.startsWith('%PDF')) return blob;
+
+  let message = 'Server did not return a valid PDF.';
+  try {
+    const text = await blob.text();
+    const json = JSON.parse(text) as { message?: string | string[] };
+    if (typeof json.message === 'string' && json.message.trim()) {
+      message = json.message;
+    } else if (Array.isArray(json.message) && json.message.length > 0) {
+      message = json.message.join(', ');
+    }
+  } catch {
+    /* ignore parse errors */
+  }
+  throw new Error(message);
+}
+
+export async function fetchAppointmentRequestSubmissionPdf(id: number): Promise<Blob> {
+  const { data } = await http.get(
+    `/appointments/request-submissions/${encodeURIComponent(String(id))}/pdf`,
+    { responseType: 'blob' },
+  );
+  const blob = data instanceof Blob ? data : new Blob([data]);
+  return assertPdfBlob(blob);
+}
+
+export function appointmentRequestSubmissionPdfFilename(
+  submissionId: number,
+  clientLabel?: string | null,
+): string {
+  const slug = (clientLabel ?? '')
+    .trim()
+    .replace(/[^\w.-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40);
+  return slug
+    ? `appointment-request-${submissionId}-${slug}.pdf`
+    : `appointment-request-${submissionId}.pdf`;
+}
+
+export async function downloadAppointmentRequestSubmissionPdf(
+  submissionId: number,
+  clientLabel?: string | null,
+): Promise<void> {
+  const blob = await fetchAppointmentRequestSubmissionPdf(submissionId);
+  const objectUrl = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = objectUrl;
+  a.download = appointmentRequestSubmissionPdfFilename(submissionId, clientLabel);
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(objectUrl);
+}
