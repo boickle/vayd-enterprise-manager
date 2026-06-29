@@ -62,16 +62,21 @@ export default function ForwardBookingGate({
 
   const complete = useMemo(() => forwardBookingFormStateIsComplete(form), [form]);
   const savedMode = value?.mode ?? null;
+  const isSaved = savedMode === form.mode;
 
   const set = (patch: Partial<ForwardBookingDispositionFormState>) =>
     setForm((f) => ({ ...f, ...patch }));
 
-  const save = async () => {
-    if (!complete || saving) return;
+  /**
+   * Persist a disposition. "Forward book" also creates a queue entry, so it must
+   * be triggered explicitly; the other modes auto-save on selection.
+   */
+  const persist = async (state: ForwardBookingDispositionFormState) => {
+    if (saving) return;
     setSaving(true);
     setError(null);
     try {
-      const disposition = buildForwardBookingDispositionPayload(form);
+      const disposition = buildForwardBookingDispositionPayload(state);
       let entryId: number | null = null;
 
       if (
@@ -104,6 +109,13 @@ export default function ForwardBookingGate({
     }
   };
 
+  /** Selecting a non-"forward book" mode satisfies the gate immediately. */
+  const selectMode = (mode: ForwardBookingDispositionMode) => {
+    const next = { ...form, mode };
+    setForm(next);
+    if (mode !== 'forward_book_fields') void persist(next);
+  };
+
   return (
     <div className="soap-fb">
       <div className="soap-fb-modes">
@@ -113,7 +125,7 @@ export default function ForwardBookingGate({
             type="button"
             disabled={disabled}
             className={`soap-fb-mode${form.mode === mode ? ' active' : ''}`}
-            onClick={() => set({ mode })}
+            onClick={() => selectMode(mode)}
           >
             {savedMode === mode && <Check size={13} />} {label}
           </button>
@@ -172,6 +184,9 @@ export default function ForwardBookingGate({
             disabled={disabled}
             placeholder="Why is follow-up not appropriate?"
             onChange={(e) => set({ bookingNotes: e.target.value })}
+            onBlur={() => {
+              if (form.mode === 'not_appropriate') void persist(form);
+            }}
           />
         </label>
       )}
@@ -185,15 +200,21 @@ export default function ForwardBookingGate({
 
       {error && <div className="soap-error">{error}</div>}
 
-      {!disabled && (
+      {!disabled && form.mode === 'forward_book_fields' && (
         <button
           type="button"
           className="soap-btn"
-          onClick={save}
+          onClick={() => void persist(form)}
           disabled={!complete || saving}
         >
-          <CalendarClock size={14} /> {saving ? 'Saving…' : 'Save disposition'}
+          <CalendarClock size={14} /> {saving ? 'Saving…' : 'Save forward booking'}
         </button>
+      )}
+
+      {!disabled && isSaved && form.mode !== 'forward_book_fields' && (
+        <div className="soap-fb-saved">
+          <Check size={14} /> {saving ? 'Saving…' : 'Disposition saved'}
+        </div>
       )}
     </div>
   );

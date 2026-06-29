@@ -560,6 +560,98 @@
   background: #f0fdf4;
   color: #15803d;
 }
+.soap-tag.type-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: #fef9c3;
+  color: #854d0e;
+}
+
+/* Pinned "Add as note" option */
+.soap-plan-result-note {
+  border-top: 1px solid var(--soap-border);
+  border-radius: 0 0 8px 8px;
+}
+
+/* Quantity stepper on catalog rows */
+.soap-qty-stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  border: 1px solid var(--soap-border);
+  border-radius: 8px;
+  padding: 1px;
+}
+.soap-qty-stepper .soap-icon-btn {
+  padding: 2px;
+}
+.soap-qty-input {
+  width: 38px;
+  border: none;
+  text-align: center;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  padding: 2px 0;
+  background: transparent;
+  -moz-appearance: textfield;
+}
+.soap-qty-input::-webkit-outer-spin-button,
+.soap-qty-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.soap-qty-input:focus {
+  outline: none;
+}
+
+/* Note row */
+.soap-order.note {
+  align-items: flex-start;
+  background: #fffdf5;
+  border-color: #fde68a;
+}
+.soap-order-note-icon {
+  color: #b45309;
+  margin-top: 4px;
+}
+.soap-note-text {
+  flex: 1;
+  border: 1px solid var(--soap-border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 13.5px;
+  font-family: inherit;
+  resize: vertical;
+  min-height: 32px;
+  box-sizing: border-box;
+}
+.soap-note-text:focus {
+  outline: none;
+  border-color: var(--soap-accent);
+}
+.soap-note-price-wrap {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--soap-border);
+  border-radius: 6px;
+  padding: 0 6px;
+}
+.soap-note-price-dollar {
+  color: var(--soap-muted);
+  font-size: 13px;
+}
+.soap-note-price {
+  width: 60px;
+  border: none;
+  padding: 6px 2px;
+  font-size: 13px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.soap-note-price:focus {
+  outline: none;
+}
 
 /* Forward booking gate */
 .soap-fb-modes {
@@ -606,6 +698,14 @@
 .soap-fb-fields .soap-fb-notes {
   flex: 1;
   min-width: 180px;
+}
+.soap-fb-saved {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #047857;
+  font-weight: 600;
+  font-size: 13px;
 }
 .soap-fb-note-hint {
   background: #fff;

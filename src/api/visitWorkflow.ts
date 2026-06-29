@@ -21,7 +21,8 @@ export type EncounterOrderKind =
   | 'diagnostic'
   | 'treatment'
   | 'med'
-  | 'client_ed';
+  | 'client_ed'
+  | 'note';
 export type EncounterOrderState = 'proposed' | 'accepted' | 'declined';
 export type EncounterOrderCatalogType =
   | 'inventory'
@@ -76,6 +77,7 @@ export type EncounterOrder = {
   catalogItemType: EncounterOrderCatalogType | null;
   kind: EncounterOrderKind;
   name: string;
+  note: string | null;
   qty: number;
   unitPrice: number;
   state: EncounterOrderState;
@@ -223,10 +225,31 @@ export async function createOrder(
     state?: EncounterOrderState;
     medLabel?: Record<string, unknown>;
     dischargeInstruction?: string;
+    note?: string;
   }
 ): Promise<EncounterOrder> {
   const { data } = await http.post<EncounterOrder>(
     `/soap-encounters/${encodeURIComponent(encounterId)}/orders`,
+    { practiceId: pid(), ...body }
+  );
+  return data;
+}
+
+export async function updateOrder(
+  encounterId: string,
+  orderId: string,
+  body: {
+    name?: string;
+    note?: string | null;
+    qty?: number;
+    unitPrice?: number;
+    isCovered?: boolean;
+  }
+): Promise<EncounterOrder> {
+  const { data } = await http.patch<EncounterOrder>(
+    `/soap-encounters/${encodeURIComponent(encounterId)}/orders/${encodeURIComponent(
+      orderId
+    )}`,
     { practiceId: pid(), ...body }
   );
   return data;

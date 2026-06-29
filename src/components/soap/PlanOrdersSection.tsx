@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, Pill, Search, Trash2, X } from 'lucide-react';
+import { Check, Minus, Pill, Plus, Search, StickyNote, Trash2, X } from 'lucide-react';
 import {
   createOrder,
   deleteOrder,
   setOrderState,
+  updateOrder,
   type EncounterOrder,
   type EncounterOrderCatalogType,
   type EncounterOrderKind,
@@ -163,6 +164,38 @@ export default function PlanOrdersSection({
     }
   };
 
+  const addNote = async (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed || adding) return;
+    setAdding(true);
+    try {
+      const created = await createOrder(encounterId, {
+        name: trimmed,
+        note: trimmed,
+        kind: 'note',
+        catalogItemType: 'custom',
+        unitPrice: 0,
+        state: 'accepted',
+      });
+      onChange([...orders, created]);
+      onInvoiceShouldRefresh();
+      setQuery('');
+      setResults([]);
+      setOpen(false);
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const patch = async (
+    order: EncounterOrder,
+    body: { name?: string; note?: string | null; qty?: number; unitPrice?: number }
+  ) => {
+    const updated = await updateOrder(encounterId, order.id, body);
+    onChange(orders.map((o) => (o.id === order.id ? updated : o)));
+    onInvoiceShouldRefresh();
+  };
+
   const changeState = async (
     order: EncounterOrder,
     state: 'accepted' | 'declined'
@@ -219,48 +252,26 @@ export default function PlanOrdersSection({
         {active.length === 0 ? (
           <div className="soap-empty">No orders placed. Each order becomes a charge.</div>
         ) : (
-          active.map((o) => (
-            <div key={o.id} className={`soap-order ${o.state}`}>
-              <span className="soap-order-name">
-                {o.kind === 'med' && <Pill size={13} />} {o.name}
-                {o.state === 'declined' && <span className="soap-tag declined">declined</span>}
-                {o.isCovered && <span className="soap-tag covered">covered</span>}
-              </span>
-              <span className="soap-order-qty">×{o.qty}</span>
-              <span className="soap-order-price">
-                {o.isCovered ? '—' : money(o.qty * o.unitPrice)}
-              </span>
-              {!disabled && (
-                <div className="soap-order-actions">
-                  {o.state === 'declined' ? (
-                    <button
-                      type="button"
-                      className="soap-btn small ok"
-                      onClick={() => changeState(o, 'accepted')}
-                    >
-                      Re-add
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      className="soap-btn small danger"
-                      onClick={() => changeState(o, 'declined')}
-                    >
-                      <X size={13} /> Decline
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    className="soap-icon-btn"
-                    title="Remove"
-                    onClick={() => remove(o)}
-                  >
-                    <Trash2 size={13} />
-                  </button>
-                </div>
-              )}
-            </div>
-          ))
+          active.map((o) =>
+            o.kind === 'note' ? (
+              <NoteRow
+                key={o.id}
+                order={o}
+                disabled={disabled}
+                onPatch={patch}
+                onRemove={remove}
+              />
+            ) : (
+              <CatalogRow
+                key={o.id}
+                order={o}
+                disabled={disabled}
+                onPatch={patch}
+                onChangeState={changeState}
+                onRemove={remove}
+              />
+            )
+          )
         )}
       </div>
 
@@ -270,22 +281,28 @@ export default function PlanOrdersSection({
             <Search size={15} className="soap-plan-search-icon" />
             <input
               className="soap-input"
-              placeholder="Search inventory, procedures, and labs to order…"
+              placeholder="Search to order, or type a note…"
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                if (e.target.value.trim().length >= 1) setOpen(true);
+              }}
               onFocus={() => {
-                if (results.length > 0) setOpen(true);
+                if (query.trim().length >= 1) setOpen(true);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && results.length === 0) {
+                  e.preventDefault();
+                  void addNote(query);
+                }
               }}
             />
           </div>
-          {open && (
+          {open && query.trim().length >= 1 && (
             <div className="soap-plan-results" role="listbox">
               {searching && <div className="soap-plan-result-empty">Searching…</div>}
               {!searching && searchError && (
                 <div className="soap-plan-result-empty error">{searchError}</div>
-              )}
-              {!searching && !searchError && results.length === 0 && query.trim().length >= 2 && (
-                <div className="soap-plan-result-empty">No matching items.</div>
               )}
               {!searching &&
                 results.map((item, idx) => {
@@ -320,13 +337,205 @@ export default function PlanOrdersSection({
                     </button>
                   );
                 })}
+              {/* Pinned: always available so typing never dead-ends. */}
+              <button
+                type="button"
+                role="option"
+                aria-selected={false}
+                className="soap-plan-result soap-plan-result-note"
+                disabled={adding}
+                onClick={() => void addNote(query)}
+              >
+                <span className="soap-tag type-note">
+                  <StickyNote size={11} /> Note
+                </span>
+                <span className="soap-plan-result-name">
+                  Add as note: <strong>{query.trim()}</strong>
+                </span>
+              </button>
             </div>
           )}
           <p className="soap-hint">
-            Items come from the practice catalog (inventory, procedures, labs). Selecting
-            one creates the treatment item and the charge.
+            Catalog items (inventory, procedures, labs) become a charge. “Add as note”
+            creates a text line you can edit and optionally price.
           </p>
         </div>
+      )}
+    </div>
+  );
+}
+
+/** Catalog/charge order row with an inline quantity stepper. */
+function CatalogRow({
+  order: o,
+  disabled,
+  onPatch,
+  onChangeState,
+  onRemove,
+}: {
+  order: EncounterOrder;
+  disabled?: boolean;
+  onPatch: (
+    order: EncounterOrder,
+    body: { qty?: number; unitPrice?: number }
+  ) => Promise<void>;
+  onChangeState: (order: EncounterOrder, state: 'accepted' | 'declined') => void;
+  onRemove: (order: EncounterOrder) => void;
+}) {
+  const qty = Number(o.qty) || 1;
+  const editable = !disabled && o.state !== 'declined';
+  const setQty = (next: number) => {
+    const q = Math.max(1, Math.round(next));
+    if (q !== qty) void onPatch(o, { qty: q });
+  };
+
+  return (
+    <div className={`soap-order ${o.state}`}>
+      <span className="soap-order-name">
+        {o.kind === 'med' && <Pill size={13} />} {o.name}
+        {o.state === 'declined' && <span className="soap-tag declined">declined</span>}
+        {o.isCovered && <span className="soap-tag covered">covered</span>}
+      </span>
+      {editable ? (
+        <span className="soap-qty-stepper">
+          <button
+            type="button"
+            className="soap-icon-btn"
+            title="Decrease"
+            disabled={qty <= 1}
+            onClick={() => setQty(qty - 1)}
+          >
+            <Minus size={13} />
+          </button>
+          <input
+            className="soap-qty-input"
+            type="number"
+            min={1}
+            value={qty}
+            onChange={(e) => setQty(Number(e.target.value))}
+          />
+          <button
+            type="button"
+            className="soap-icon-btn"
+            title="Increase"
+            onClick={() => setQty(qty + 1)}
+          >
+            <Plus size={13} />
+          </button>
+        </span>
+      ) : (
+        <span className="soap-order-qty">×{qty}</span>
+      )}
+      <span className="soap-order-price">
+        {o.isCovered ? '—' : money(qty * Number(o.unitPrice))}
+      </span>
+      {!disabled && (
+        <div className="soap-order-actions">
+          {o.state === 'declined' ? (
+            <button
+              type="button"
+              className="soap-btn small ok"
+              onClick={() => onChangeState(o, 'accepted')}
+            >
+              Re-add
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="soap-btn small danger"
+              onClick={() => onChangeState(o, 'declined')}
+            >
+              <X size={13} /> Decline
+            </button>
+          )}
+          <button
+            type="button"
+            className="soap-icon-btn"
+            title="Remove"
+            onClick={() => onRemove(o)}
+          >
+            <Trash2 size={13} />
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Free-form note row: editable text + optional manual charge. */
+function NoteRow({
+  order: o,
+  disabled,
+  onPatch,
+  onRemove,
+}: {
+  order: EncounterOrder;
+  disabled?: boolean;
+  onPatch: (
+    order: EncounterOrder,
+    body: { name?: string; note?: string | null; unitPrice?: number }
+  ) => Promise<void>;
+  onRemove: (order: EncounterOrder) => void;
+}) {
+  const [text, setText] = useState(o.note ?? o.name ?? '');
+  const [price, setPrice] = useState(
+    Number(o.unitPrice) > 0 ? String(Number(o.unitPrice)) : ''
+  );
+
+  const commitText = () => {
+    const next = text.trim();
+    if (next && next !== (o.note ?? o.name)) {
+      void onPatch(o, { name: next.slice(0, 200), note: next });
+    }
+  };
+  const commitPrice = () => {
+    const next = Number(price) || 0;
+    if (next !== Number(o.unitPrice)) void onPatch(o, { unitPrice: next });
+  };
+
+  return (
+    <div className="soap-order note">
+      <span className="soap-order-note-icon">
+        <StickyNote size={14} />
+      </span>
+      {disabled ? (
+        <span className="soap-order-name">{o.note ?? o.name}</span>
+      ) : (
+        <textarea
+          className="soap-note-text"
+          rows={1}
+          value={text}
+          placeholder="Note…"
+          onChange={(e) => setText(e.target.value)}
+          onBlur={commitText}
+        />
+      )}
+      {disabled ? (
+        Number(o.unitPrice) > 0 ? (
+          <span className="soap-order-price">{money(Number(o.unitPrice))}</span>
+        ) : null
+      ) : (
+        <span className="soap-note-price-wrap">
+          <span className="soap-note-price-dollar">$</span>
+          <input
+            className="soap-note-price"
+            inputMode="decimal"
+            placeholder="0.00"
+            value={price}
+            onChange={(e) => setPrice(e.target.value)}
+            onBlur={commitPrice}
+          />
+        </span>
+      )}
+      {!disabled && (
+        <button
+          type="button"
+          className="soap-icon-btn"
+          title="Remove"
+          onClick={() => onRemove(o)}
+        >
+          <Trash2 size={13} />
+        </button>
       )}
     </div>
   );
