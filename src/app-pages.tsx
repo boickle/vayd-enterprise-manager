@@ -1,5 +1,4 @@
 // src/app-pages.ts
-import { isProduction } from './utils/env';
 import CreateUser from './pages/CreateUser';
 import Admin from './pages/Admin';
 import Analytics from './pages/Analytics';
@@ -100,9 +99,5 @@ export function getAccessiblePages(abilities?: string[], roles?: string[]): AppP
     !perm || (Array.isArray(abilities) ? abilities.includes(perm) : true);
 
   const filtered = all.filter((p) => permissionOk(p.permission) && matchesRole(p.role, roles));
-  // Hide Create User page in non-production
-  if (!isProduction()) {
-    return filtered.filter((p) => p.path !== '/users/create');
-  }
   return filtered;
 }

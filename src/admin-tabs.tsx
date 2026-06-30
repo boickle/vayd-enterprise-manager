@@ -1,11 +1,11 @@
 // Admin sub-tabs: path is relative to /admin. Kept in a separate file to avoid circular import (Admin.tsx imports this; app-pages imports Admin).
 import CreateUser from './pages/CreateUser';
+import CreateEmployee from './pages/CreateEmployee';
 import MembershipPromotionsPage from './pages/MembershipPromotions';
 import AppointmentRequestPromotionsPage from './pages/AppointmentRequestPromotions';
 import OpenPhoneCoaching from './pages/OpenPhoneCoaching';
 import SurveyResults from './pages/SurveyResults';
 import { getFrontendPaymentProvider } from './config/paymentProvider';
-import { isProduction } from './utils/env';
 
 export type AdminTabPage = {
   path: string;
@@ -29,6 +29,12 @@ export const ADMIN_TAB_PAGES: AdminTabPage[] = [
   },
   { path: 'users/create', label: 'Create User', element: <CreateUser />, role: 'superadmin' },
   {
+    path: 'users/create-employee',
+    label: 'Create Employee',
+    element: <CreateEmployee />,
+    role: 'superadmin',
+  },
+  {
     path: 'membership-promotions',
     label: 'Promotions',
     element: <MembershipPromotionsPage />,
@@ -42,11 +48,9 @@ export const ADMIN_TAB_PAGES: AdminTabPage[] = [
   },
 ];
 
-/** Admin tabs visible to the current environment. Create User is hidden in non-production. */
+/** Admin tabs visible to the current environment. */
 export function getAdminTabPages(): AdminTabPage[] {
   const stripeOnlyPaths = new Set(['membership-promotions']);
   const useStripe = getFrontendPaymentProvider() === 'stripe';
-  let tabs = ADMIN_TAB_PAGES.filter((tab) => useStripe || !stripeOnlyPaths.has(tab.path));
-  if (isProduction()) return tabs;
-  return tabs.filter((tab) => tab.path !== 'users/create');
+  return ADMIN_TAB_PAGES.filter((tab) => useStripe || !stripeOnlyPaths.has(tab.path));
 }
