@@ -16,6 +16,17 @@ export async function createUser(email: string, password?: string) {
   return http.post('/users/create', { email, password });
 }
 
+export async function createEmployeeUser(
+  email: string,
+  doctorId?: number,
+  password?: string,
+) {
+  const body: { email: string; password?: string; doctorId?: number } = { email };
+  if (doctorId != null) body.doctorId = doctorId;
+  if (password) body.password = password;
+  return http.post('/users/create-employee', body);
+}
+
 // ✅ New: Client self-serve create user
 // This endpoint will only succeed if the email is in the clients table
 export async function createClientUser(email: string, password?: string) {
