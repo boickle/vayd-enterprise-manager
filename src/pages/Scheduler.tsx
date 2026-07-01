@@ -274,6 +274,7 @@ import {
   fetchAndCacheRescheduleSourcePlacementSnapshot,
 } from '../utils/routingRescheduleScoreCompare';
 import {
+  abandonListOriginatedForwardBookingWorkspace,
   clearRoutingForwardBookingIntent,
   dismissRoutingForwardBookingWorkspace,
   forwardBookingScopeTargets,
@@ -5854,14 +5855,27 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   const dismissForwardBookingWorkspace = useCallback(() => {
     const intent = readRoutingForwardBookingIntent();
     const returnPath =
-      intent?.origin === 'care_outreach' ? CARE_OUTREACH_LIST_PATH : FORWARD_BOOKING_LIST_PATH;
-    dismissRoutingForwardBookingWorkspace();
-    setForwardBookingIntentTick((n) => n + 1);
-    setBookSlot(null);
-    setBookPrefill(null);
-    driveSoftRefreshRef.current = true;
-    setDriveRefreshNonce((n) => n + 1);
-    navigate(returnPath);
+      intent?.origin === 'care_outreach'
+        ? CARE_OUTREACH_LIST_PATH
+        : intent?.origin === 'schedule_loader'
+          ? intent.scheduleLoaderReturn?.returnHref?.trim() ||
+            '/schedule/scheduling-tools/schedule-loader'
+          : FORWARD_BOOKING_LIST_PATH;
+    const finishDismiss = () => {
+      dismissRoutingForwardBookingWorkspace();
+      setForwardBookingIntentTick((n) => n + 1);
+      setBookSlot(null);
+      setBookPrefill(null);
+      driveSoftRefreshRef.current = true;
+      setDriveRefreshNonce((n) => n + 1);
+      navigate(returnPath);
+      notifySchedulingToolsNavCountsRefresh();
+    };
+    if (intent?.workspaceActive) {
+      void abandonListOriginatedForwardBookingWorkspace(intent, PRACTICE_ID).finally(finishDismiss);
+      return;
+    }
+    finishDismiss();
   }, [navigate]);
 
   const dismissAppointmentRequestWorkspace = useCallback(() => {

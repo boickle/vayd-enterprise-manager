@@ -25,6 +25,8 @@ import {
 import {
   buildRoutingForwardBookingIntentFromEntries,
   buildRoutingForwardBookingIntentFromEntry,
+  forwardBookingIdsFromRoutingIntent,
+  readRoutingForwardBookingIntent,
   writeRoutingForwardBookingIntent,
 } from '../utils/routingForwardBookingIntent';
 import {
@@ -53,6 +55,7 @@ import SchedulingToolsListPagination, {
 } from '../components/SchedulingToolsListPagination';
 import {
   filterCareOutreachRemindersForForwardBooking,
+  cleanupOrphanedListOriginatedForwardBookings,
   forwardBookingPatientIdsActiveInQueue,
 } from '../utils/careOutreachForwardBookingExclude';
 import {
@@ -492,12 +495,24 @@ export default function CareOutreachPage() {
       ]);
       const catalog = buildAppointmentTypeCatalogFromTypes(types);
       const visibleForwardBookings = forwardBookings.filter((r) => forwardBookingEntryVisibleOnList(r));
+      const routingIntent = readRoutingForwardBookingIntent();
+      const activeRoutingForwardBookingIds =
+        routingIntent?.workspaceActive &&
+        (routingIntent.origin === 'care_outreach' || routingIntent.origin === 'schedule_loader')
+          ? new Set(forwardBookingIdsFromRoutingIntent(routingIntent))
+          : undefined;
+      void cleanupOrphanedListOriginatedForwardBookings(
+        visibleForwardBookings,
+        PRACTICE_ID,
+        activeRoutingForwardBookingIds,
+      );
       const metaMap = await buildBookedAppointmentMetaMap(visibleForwardBookings, PRACTICE_ID, catalog);
       const blockedPatientIds = forwardBookingPatientIdsActiveInQueue(
         visibleForwardBookings,
         practiceTz,
         metaMap,
         catalog,
+        { activeRoutingForwardBookingIds },
       );
       const list = filterCareOutreachRemindersForForwardBooking(rawList, blockedPatientIds);
       const chipCountSource = chipCountRawList
