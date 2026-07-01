@@ -29,6 +29,10 @@ export type AppointmentRequestSubmissionItem = {
   staffConfirmedAt?: string | null;
   /** Ops points on the linked calendar visit when `bookedAppointmentId` is set (from server). */
   linkedVisitPoints?: number | null;
+  /** Linked liaison Gmail thread when resolved. */
+  gmailThreadId?: string | null;
+  gmailMailbox?: string | null;
+  gmailLinkedAt?: string | null;
   /** Abandoned drafts only */
   formSessionId?: string;
   currentStep?: string;
@@ -87,6 +91,13 @@ export type SendAppointmentRequestSubmissionSmsResponse = {
   messageId?: string;
   to?: string;
   from?: string;
+};
+
+export type AppointmentRequestGmailLink = {
+  threadId: string | null;
+  mailbox: string | null;
+  linkedAt: string | null;
+  subject: string | null;
 };
 
 /**
@@ -156,6 +167,16 @@ export async function sendAppointmentRequestSubmissionSms(
   const { data } = await http.post<SendAppointmentRequestSubmissionSmsResponse>(
     `/appointments/request-submissions/${encodeURIComponent(String(id))}/sms`,
     body
+  );
+  return data;
+}
+
+/** GET /appointments/request-submissions/:id/gmail-link — liaison Gmail thread. */
+export async function fetchAppointmentRequestGmailLink(
+  id: number,
+): Promise<AppointmentRequestGmailLink> {
+  const { data } = await http.get<AppointmentRequestGmailLink>(
+    `/appointments/request-submissions/${encodeURIComponent(String(id))}/gmail-link`,
   );
   return data;
 }

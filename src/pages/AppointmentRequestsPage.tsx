@@ -20,6 +20,7 @@ import {
   type AppointmentFormDraftFollowUpStatus,
 } from '../api/appointmentFormDrafts';
 import { ClientSmsComposeModal } from '../components/ClientSmsComposeModal';
+import { AppointmentRequestEmailModal } from '../components/AppointmentRequestEmailModal';
 import { AppointmentRequestDetailPanel } from '../components/AppointmentRequestDetailPanel';
 import { AppointmentRequestPdfDownloadLink } from '../components/AppointmentRequestPdfDownloadLink';
 import { AppointmentRequestPetSummaryList } from '../components/AppointmentRequestPetSummaryList';
@@ -76,6 +77,7 @@ import {
   writeSchedulerFocusSession,
 } from '../utils/schedulerFocusAppointment';
 import { notifySchedulingToolsNavCountsRefresh } from '../hooks/useSchedulingToolsNavCounts';
+import { useGmailInboxAccess } from '../hooks/useGmailInboxAccess';
 import {
   subscribePracticeCalendar,
   type AppointmentCalendarPayload,
@@ -372,6 +374,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
   const navigate = useNavigate();
   const location = useLocation();
   const practiceTz = practiceTimeZoneOrDefault(undefined);
+  const { allowed: canAccessGmailInbox } = useGmailInboxAccess();
 
   const statusFilter = useMemo(
     () => parseAppointmentRequestsTabFromLocation(location.pathname, location.search),
@@ -442,6 +445,9 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
   const [smsMessageLoading, setSmsMessageLoading] = useState(false);
   const [smsSending, setSmsSending] = useState(false);
   const [smsError, setSmsError] = useState<string | null>(null);
+
+  const [emailItem, setEmailItem] = useState<AppointmentRequestSubmissionItem | null>(null);
+  const [emailSentToast, setEmailSentToast] = useState(false);
 
   const [manualBookModal, setManualBookModal] = useState<{
     item: AppointmentRequestSubmissionItem;
@@ -1418,6 +1424,25 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
     setSmsError(null);
   };
 
+  const openEmailClient = (item: AppointmentRequestSubmissionItem) => {
+    setEmailItem(item);
+  };
+
+  const closeEmailModal = () => {
+    setEmailItem(null);
+  };
+
+  const renderEmailClientButton = (item: AppointmentRequestSubmissionItem) =>
+    canAccessGmailInbox ? (
+      <button
+        type="button"
+        className="btn secondary"
+        onClick={() => openEmailClient(item)}
+      >
+        Email client
+      </button>
+    ) : null;
+
   const handleSendSms = async (opts: { overrideNonProd: boolean }) => {
     if (!smsItem || !smsMessage.trim()) return;
     setSmsSending(true);
@@ -2081,6 +2106,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                             Text client
                           </button>
                         ) : null}
+                        {renderEmailClientButton(item)}
                         <button type="button" className="btn primary" onClick={() => onBook(item)}>
                           Book
                         </button>
@@ -2127,6 +2153,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                             Text client
                           </button>
                         ) : null}
+                        {renderEmailClientButton(item)}
                         <button
                           type="button"
                           className="btn secondary"
@@ -2160,6 +2187,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                             Text client
                           </button>
                         ) : null}
+                        {renderEmailClientButton(item)}
                         <button
                           type="button"
                           className="btn secondary"
@@ -2197,6 +2225,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                             Text client
                           </button>
                         ) : null}
+                        {renderEmailClientButton(item)}
                         <button
                           type="button"
                           className="btn secondary"
@@ -2347,6 +2376,50 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
           sendError={smsError}
           title="Text requester"
           subtitle={`Message goes to the phone on the request${requestDataCanText(smsItem.requestData ?? {}) === 'Yes' ? ' (client consented to texts)' : ''}.`}
+        />
+      ) : null}
+
+      {emailSentToast ? (
+        <div
+          role="status"
+          aria-live="polite"
+          style={{
+            position: 'fixed',
+            bottom: 24,
+            right: 24,
+            zIndex: 11000,
+            background: '#065f46',
+            color: '#fff',
+            padding: '12px 18px',
+            borderRadius: 10,
+            boxShadow: '0 10px 30px rgba(0,0,0,0.2)',
+            fontSize: 14,
+            fontWeight: 600,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+          }}
+        >
+          <span aria-hidden style={{ fontSize: 16 }}>✓</span>
+          Email sent
+        </div>
+      ) : null}
+
+      {emailItem ? (
+        <AppointmentRequestEmailModal
+          item={emailItem}
+          practiceId={PRACTICE_ID}
+          practiceTz={practiceTz}
+          onClose={closeEmailModal}
+          onSent={() => {
+            setEmailSentToast(true);
+            window.setTimeout(() => setEmailSentToast(false), 3500);
+          }}
+          onGmailLinked={(patch) => {
+            setRows((prev) =>
+              prev.map((row) => (row.id === emailItem.id ? { ...row, ...patch } : row)),
+            );
+          }}
         />
       ) : null}
 

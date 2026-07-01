@@ -1,21 +1,30 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useSearchParams } from 'react-router-dom';
 import {
-  Archive,
+  ChevronLeft,
+  ChevronRight,
+  FileText,
+  Image as ImageIcon,
   Mail,
   PenSquare,
   RefreshCw,
-  Reply,
-  ReplyAll,
   Star,
-  Trash2,
 } from 'lucide-react';
+import GmailBulkToolbar from '../components/gmail/GmailBulkToolbar';
 import GmailComposeModal from '../components/gmail/GmailComposeModal';
+import GmailMessageView from '../components/gmail/GmailMessageView';
+import GmailSearchBar from '../components/gmail/GmailSearchBar';
+import {
+  buildGmailSearchQuery,
+  EMPTY_GMAIL_SEARCH_FILTER,
+  searchLabelIdForScope,
+  type GmailSearchFilterFields,
+} from '../components/gmail/gmailSearch';
 import type { ComposeContext } from '../components/gmail/gmailCompose';
 import '../components/gmail/GmailComposeModal.css';
 import GmailLabelTree from '../components/gmail/GmailLabelTree';
+import GmailScheduledSendIcon from '../components/gmail/GmailScheduledSendIcon';
 import {
-  archiveGmailMessage,
   disconnectGmail,
   fetchGmailLabels,
   fetchGmailMailboxes,
@@ -23,16 +32,28 @@ import {
   fetchGmailOAuthConnectUrl,
   fetchGmailThread,
   flattenUserLabels,
-  formatGmailAddress,
+  GMAIL_MESSAGES_PAGE_SIZE,
+  GMAIL_INBOX_POLL_MS,
+  getMessageUserLabels,
+  GMAIL_CATEGORIES_GROUP_ID,
+  labelChipStyle,
+  mergeGmailMessagesByDate,
+  patchInboxUnreadCount,
+  prepareSidebarLabels,
+  resolveGmailMessageListParams,
+  isMoreNavLabel,
+  GMAIL_MORE_GROUP_ID,
   gmailErrorMessage,
   labelDisplayName,
   mailboxShortLabel,
   mailboxDisplayLabel,
   markGmailMessageRead,
-  markGmailMessageUnread,
-  modifyGmailMessage,
+  openGmailAttachment,
   starGmailMessage,
-  trashGmailMessage,
+  truncateAttachmentFilename,
+  decodeGmailSnippet,
+  hasScheduledSend,
+  type GmailAttachmentSummary,
   type GmailLabelNode,
   type GmailMailboxStatus,
   type GmailMessageSummary,
@@ -58,51 +79,164 @@ function formatMessageDate(iso: string): string {
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
+function attachmentUsesImageIcon(mimeType: string): boolean {
+  return mimeType.startsWith('image/');
+}
+
+function threadMessageToSummary(msg: GmailThreadMessage): GmailMessageSummary {
+  return {
+    id: msg.id,
+    threadId: msg.threadId,
+    snippet: msg.snippet,
+    from: msg.from,
+    to: msg.to,
+    subject: msg.subject,
+    date: msg.date,
+    isUnread: msg.isUnread,
+    isStarred: msg.isStarred,
+    labelIds: msg.labelIds,
+    hasAttachments: msg.hasAttachments,
+    attachments: msg.attachments,
+    scheduledSendAt: msg.scheduledSendAt,
+  };
+}
+
 function MessageListSection({
-  title,
   messages,
   selectedId,
+  checkedIds,
+  labelById,
   onSelect,
+  onToggleCheck,
+  onToggleStar,
+  onOpenAttachment,
 }: {
-  title?: string;
   messages: GmailMessageSummary[];
   selectedId: string | null;
+  checkedIds: Set<string>;
+  labelById: Map<string, GmailLabelNode>;
   onSelect: (msg: GmailMessageSummary) => void;
+  onToggleCheck: (msg: GmailMessageSummary) => void;
+  onToggleStar: (msg: GmailMessageSummary) => void;
+  onOpenAttachment: (attachment: GmailAttachmentSummary) => void;
 }) {
   if (messages.length === 0) return null;
   return (
-    <div className="gmail-msg-section">
-      {title ? <div className="gmail-msg-section__title">{title}</div> : null}
-      <ul className="gmail-msg-list">
-        {messages.map((msg) => (
-          <li
-            key={msg.id}
-            className={[
-              'gmail-msg-item',
-              msg.isUnread ? 'gmail-msg-item--unread' : '',
-              selectedId === msg.id ? 'gmail-msg-item--selected' : '',
-            ]
-              .filter(Boolean)
-              .join(' ')}
-          >
-            <button type="button" className="gmail-msg-item__btn" onClick={() => onSelect(msg)}>
-              <div className="gmail-msg-item__top">
-                <span className="gmail-msg-item__from">
-                  {msg.from.name?.trim() || msg.from.email}
-                </span>
-                <span className="gmail-msg-item__date">{formatMessageDate(msg.date)}</span>
-              </div>
-              <div className="gmail-msg-item__subject">{msg.subject}</div>
-              <div className="gmail-msg-item__snippet">{msg.snippet}</div>
-              <div className="gmail-msg-item__meta">
-                {msg.isStarred ? <Star size={12} fill="#eab308" color="#eab308" aria-hidden /> : null}
-                {msg.hasAttachments ? <span>Attachment</span> : null}
-              </div>
-            </button>
-          </li>
-        ))}
+    <ul className="gmail-msg-list">
+        {messages.map((msg) => {
+          const userLabels = getMessageUserLabels(msg.labelIds, labelById);
+          return (
+            <li
+              key={msg.threadId}
+              className={[
+                'gmail-msg-item',
+                msg.isUnread ? 'gmail-msg-item--unread' : '',
+                selectedId === msg.id || selectedId === msg.threadId
+                  ? 'gmail-msg-item--selected'
+                  : '',
+                checkedIds.has(msg.id) ? 'gmail-msg-item--checked' : '',
+              ]
+                .filter(Boolean)
+                .join(' ')}
+            >
+              <input
+                type="checkbox"
+                className="gmail-msg-item__check"
+                checked={checkedIds.has(msg.id)}
+                aria-label={`Select message from ${msg.from.name?.trim() || msg.from.email}`}
+                onChange={() => onToggleCheck(msg)}
+                onClick={(e) => e.stopPropagation()}
+              />
+              <button
+                type="button"
+                className={`gmail-msg-item__star${msg.isStarred ? ' gmail-msg-item__star--on' : ''}`}
+                aria-label={msg.isStarred ? 'Unstar message' : 'Star message'}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onToggleStar(msg);
+                }}
+              >
+                <Star size={18} strokeWidth={1.5} aria-hidden />
+              </button>
+              <button type="button" className="gmail-msg-item__btn" onClick={() => onSelect(msg)}>
+                <div className="gmail-msg-item__main">
+                  <span className="gmail-msg-item__from">
+                    <span className="gmail-msg-item__participants">
+                      {msg.participants?.trim() ||
+                        msg.from.name?.trim() ||
+                        msg.from.email}
+                    </span>
+                    {(msg.threadMessageCount ?? 1) > 1 ? (
+                      <span className="gmail-msg-item__thread-count">
+                        {msg.threadMessageCount}
+                      </span>
+                    ) : null}
+                  </span>
+                  <div className="gmail-msg-item__content">
+                    <div className="gmail-msg-item__headline">
+                      {userLabels.length > 0 ? (
+                        <span className="gmail-msg-item__labels">
+                          {userLabels.map((label) => (
+                            <span
+                              key={label.id}
+                              className="gmail-msg-item__label"
+                              style={labelChipStyle(label)}
+                              title={label.name}
+                            >
+                              {labelDisplayName(label)}
+                            </span>
+                          ))}
+                        </span>
+                      ) : null}
+                      <span className="gmail-msg-item__subject-line">
+                        <span className="gmail-msg-item__subject">{msg.subject || '(no subject)'}</span>
+                        {msg.snippet?.trim() ? (
+                          <>
+                            <span className="gmail-msg-item__subject-sep"> — </span>
+                            <span className="gmail-msg-item__snippet">
+                              {decodeGmailSnippet(msg.snippet)}
+                            </span>
+                          </>
+                        ) : null}
+                      </span>
+                    </div>
+                    {msg.attachments && msg.attachments.length > 0 ? (
+                      <div className="gmail-msg-item__attachments">
+                        {msg.attachments.map((attachment) => {
+                          const Icon = attachmentUsesImageIcon(attachment.mimeType)
+                            ? ImageIcon
+                            : FileText;
+                          return (
+                            <button
+                              key={`${attachment.messageId}:${attachment.attachmentId}`}
+                              type="button"
+                              className="gmail-msg-item__attachment"
+                              title={attachment.filename}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onOpenAttachment(attachment);
+                              }}
+                            >
+                              <Icon size={14} strokeWidth={1.75} aria-hidden />
+                              {truncateAttachmentFilename(attachment.filename, 20)}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : null}
+                  </div>
+                  <span className="gmail-msg-item__date">
+                    {hasScheduledSend(msg) ? (
+                      <GmailScheduledSendIcon scheduledSendAt={msg.scheduledSendAt} />
+                    ) : null}
+                    {formatMessageDate(msg.date)}
+                  </span>
+                </div>
+              </button>
+            </li>
+          );
+        })}
       </ul>
-    </div>
   );
 }
 
@@ -113,23 +247,58 @@ export default function GmailInbox() {
   const [mailboxes, setMailboxes] = useState<GmailMailboxStatus[]>([]);
   const [defaultMailbox, setDefaultMailbox] = useState<string | null>(null);
   const [selectedMailbox, setSelectedMailbox] = useState<string | null>(null);
-  const [labels, setLabels] = useState<GmailLabelNode[]>([]);
+  const [navigationLabels, setNavigationLabels] = useState<GmailLabelNode[]>([]);
+  const [sidebarUserLabels, setSidebarUserLabels] = useState<GmailLabelNode[]>([]);
   const [selectedLabelId, setSelectedLabelId] = useState('INBOX');
-  const [expandedLabels, setExpandedLabels] = useState<Set<string>>(() => new Set(['INBOX']));
+  const [expandedLabels, setExpandedLabels] = useState<Set<string>>(() => new Set());
   const [messages, setMessages] = useState<GmailMessageSummary[]>([]);
-  const [untaggedQueue, setUntaggedQueue] = useState<GmailMessageSummary[]>([]);
-  const [nextPageToken, setNextPageToken] = useState<string | null>(null);
+  const [pageIndex, setPageIndex] = useState(0);
+  const [pageTokens, setPageTokens] = useState<(string | null)[]>([null]);
+  const [hasNextPage, setHasNextPage] = useState(false);
+  const [resultSizeEstimate, setResultSizeEstimate] = useState<number | null>(null);
+  const pageTokensRef = useRef<(string | null)[]>([null]);
+  const pageIndexRef = useRef(0);
+  pageTokensRef.current = pageTokens;
+  pageIndexRef.current = pageIndex;
   const [selectedMessage, setSelectedMessage] = useState<GmailMessageSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
-  const [labelPicker, setLabelPicker] = useState('');
   const [threadMessages, setThreadMessages] = useState<GmailThreadMessage[]>([]);
   const [threadLoading, setThreadLoading] = useState(false);
   const [composeOpen, setComposeOpen] = useState(false);
   const [composeContext, setComposeContext] = useState<ComposeContext>({ mode: 'new' });
+  const [mailSearchInput, setMailSearchInput] = useState('');
+  const [debouncedSearchText, setDebouncedSearchText] = useState('');
+  const [searchFilterDraft, setSearchFilterDraft] = useState<GmailSearchFilterFields>(
+    () => ({ ...EMPTY_GMAIL_SEARCH_FILTER }),
+  );
+  const [appliedSearchFilter, setAppliedSearchFilter] = useState<GmailSearchFilterFields>(
+    () => ({ ...EMPTY_GMAIL_SEARCH_FILTER }),
+  );
+  const [searchFilterOpen, setSearchFilterOpen] = useState(false);
+  const [checkedMessageIds, setCheckedMessageIds] = useState<Set<string>>(() => new Set());
+  const [mailboxUnreadCounts, setMailboxUnreadCounts] = useState<Record<string, number>>({});
+  const deepLinkHandledRef = useRef<string | null>(null);
+
+  const deepLinkThreadId = searchParams.get('thread')?.trim() ?? null;
+
+  const mailSearch = useMemo(
+    () => buildGmailSearchQuery(appliedSearchFilter, debouncedSearchText),
+    [appliedSearchFilter, debouncedSearchText],
+  );
+
+  const searchLabelId = useMemo(
+    () => searchLabelIdForScope(appliedSearchFilter.scope, selectedLabelId),
+    [appliedSearchFilter.scope, selectedLabelId],
+  );
+
+  const messageListParams = useMemo(
+    () => resolveGmailMessageListParams(selectedLabelId, mailSearch, searchLabelId),
+    [selectedLabelId, mailSearch, searchLabelId],
+  );
 
   const activeMailbox = useMemo(() => {
     if (selectedMailbox) return selectedMailbox;
@@ -148,7 +317,7 @@ export default function GmailInbox() {
   const oauthErrorParam = searchParams.get('error');
   const oauthMailboxParam = searchParams.get('mailbox')?.trim().toLowerCase() ?? null;
 
-  const userLabels = useMemo(() => flattenUserLabels(labels), [labels]);
+  const userLabels = useMemo(() => flattenUserLabels(sidebarUserLabels), [sidebarUserLabels]);
   const labelById = useMemo(() => {
     const map = new Map<string, GmailLabelNode>();
     const walk = (nodes: GmailLabelNode[]) => {
@@ -157,9 +326,10 @@ export default function GmailInbox() {
         if (n.children.length) walk(n.children);
       }
     };
-    walk(labels);
+    walk(navigationLabels);
+    walk(sidebarUserLabels);
     return map;
-  }, [labels]);
+  }, [navigationLabels, sidebarUserLabels]);
 
   const clearOAuthParams = useCallback(() => {
     if (!oauthConnectedParam && !oauthErrorParam) return;
@@ -181,6 +351,53 @@ export default function GmailInbox() {
     }
   }, [oauthConnectedParam, oauthErrorParam, oauthMailboxParam, clearOAuthParams]);
 
+  useEffect(() => {
+    if (!connected || !activeMailbox || !deepLinkThreadId || !canAccessGmailInbox) return;
+    const key = `${activeMailbox}:${deepLinkThreadId}`;
+    if (deepLinkHandledRef.current === key) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const thread = await fetchGmailThread(activeMailbox, deepLinkThreadId);
+        if (cancelled || thread.messages.length === 0) return;
+        const latest = thread.messages[thread.messages.length - 1];
+        deepLinkHandledRef.current = key;
+        setSelectedLabelId('INBOX');
+        setSelectedMessage(threadMessageToSummary(latest));
+        setThreadMessages(thread.messages);
+        const next = new URLSearchParams(searchParams);
+        next.delete('thread');
+        setSearchParams(next, { replace: true });
+      } catch (e) {
+        if (!cancelled) setError(gmailErrorMessage(e));
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    connected,
+    activeMailbox,
+    deepLinkThreadId,
+    canAccessGmailInbox,
+    searchParams,
+    setSearchParams,
+  ]);
+
+  const handleSelectLabel = useCallback((labelId: string) => {
+    setSelectedMessage(null);
+    setSelectedLabelId(labelId);
+    if (isMoreNavLabel(labelId)) {
+      setExpandedLabels((prev) => {
+        const next = new Set(prev);
+        next.add(GMAIL_MORE_GROUP_ID);
+        return next;
+      });
+    }
+  }, []);
+
   const loadMailboxes = useCallback(async () => {
     const res = await fetchGmailMailboxes();
     setMailboxes(res.mailboxes);
@@ -193,32 +410,81 @@ export default function GmailInbox() {
 
   const loadLabels = useCallback(async () => {
     if (!activeMailbox) return;
-    const tree = await fetchGmailLabels(activeMailbox);
-    setLabels(tree);
+    const { labels, inboxUnreadCount } = await fetchGmailLabels(activeMailbox);
+    const { navigation, userLabels: userLabelTree } = prepareSidebarLabels(labels);
+    setNavigationLabels(patchInboxUnreadCount(navigation, inboxUnreadCount));
+    setSidebarUserLabels(userLabelTree);
     setExpandedLabels((prev) => {
       const next = new Set(prev);
-      for (const n of tree) {
-        if (n.type === 'user' && n.children.length) next.add(n.id);
+      for (const n of userLabelTree) {
+        if (n.children.length) next.add(n.id);
+      }
+      if (navigation.some((n) => n.id === GMAIL_CATEGORIES_GROUP_ID)) {
+        next.add(GMAIL_CATEGORIES_GROUP_ID);
       }
       return next;
     });
   }, [activeMailbox]);
 
-  const loadMessages = useCallback(
-    async (opts?: { pageToken?: string; append?: boolean }) => {
-      if (!activeMailbox) return;
-      const res = await fetchGmailMessages(activeMailbox, {
-        labelId: selectedLabelId,
-        pageToken: opts?.pageToken,
-      });
-      setUntaggedQueue(res.untaggedQueue ?? []);
-      setMessages((prev) =>
-        opts?.append ? [...prev, ...(res.threads ?? [])] : (res.threads ?? []),
+  const connectedMailboxKey = mailboxes
+    .filter((m) => m.connected)
+    .map((m) => m.email)
+    .join(',');
+
+  useEffect(() => {
+    const emails = connectedMailboxKey.split(',').filter(Boolean);
+    if (emails.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      const entries = await Promise.all(
+        emails.map(async (email) => {
+          try {
+            const { inboxUnreadCount } = await fetchGmailLabels(email);
+            return [email, inboxUnreadCount ?? 0] as const;
+          } catch {
+            return [email, 0] as const;
+          }
+        }),
       );
-      setNextPageToken(res.nextPageToken ?? null);
+      if (cancelled) return;
+      setMailboxUnreadCounts((prev) => {
+        const next = { ...prev };
+        for (const [email, count] of entries) next[email] = count;
+        return next;
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [connectedMailboxKey]);
+
+  const loadPage = useCallback(
+    async (page: number) => {
+      if (!activeMailbox) return;
+      const pageToken = pageTokensRef.current[page] ?? undefined;
+      const res = await fetchGmailMessages(activeMailbox, {
+        ...messageListParams,
+        pageToken,
+        maxResults: GMAIL_MESSAGES_PAGE_SIZE,
+      });
+      const incoming = mergeGmailMessagesByDate(res.threads ?? [], res.untaggedQueue ?? []);
+      setMessages(incoming);
+      if (typeof res.inboxUnreadCount === 'number') {
+        setNavigationLabels((prev) => patchInboxUnreadCount(prev, res.inboxUnreadCount));
+      }
+      setHasNextPage(!!res.nextPageToken);
+      setResultSizeEstimate(res.resultSizeEstimate ?? null);
+
+      if (res.nextPageToken && pageTokensRef.current.length === page + 1) {
+        const nextTokens = [...pageTokensRef.current, res.nextPageToken];
+        pageTokensRef.current = nextTokens;
+        setPageTokens(nextTokens);
+      }
+
+      setCheckedMessageIds(new Set());
       return res;
     },
-    [activeMailbox, selectedLabelId],
+    [activeMailbox, messageListParams],
   );
 
   const refreshAll = useCallback(async () => {
@@ -227,19 +493,19 @@ export default function GmailInbox() {
     try {
       await loadMailboxes();
       if (!activeMailbox || !activeMailboxStatus?.connected) {
-        setLabels([]);
+        setNavigationLabels([]);
+        setSidebarUserLabels([]);
         setMessages([]);
-        setUntaggedQueue([]);
         setSelectedMessage(null);
         return;
       }
-      await Promise.all([loadLabels(), loadMessages()]);
+      await Promise.all([loadLabels(), loadPage(pageIndexRef.current)]);
     } catch (e) {
       setError(gmailErrorMessage(e));
     } finally {
       setRefreshing(false);
     }
-  }, [loadMailboxes, activeMailbox, activeMailboxStatus?.connected, loadLabels, loadMessages]);
+  }, [loadMailboxes, activeMailbox, activeMailboxStatus?.connected, loadLabels, loadPage]);
 
   useEffect(() => {
     let cancelled = false;
@@ -262,9 +528,9 @@ export default function GmailInbox() {
 
   useEffect(() => {
     if (!activeMailbox || !activeMailboxStatus?.connected) {
-      setLabels([]);
+      setNavigationLabels([]);
+      setSidebarUserLabels([]);
       setMessages([]);
-      setUntaggedQueue([]);
       setSelectedMessage(null);
       return;
     }
@@ -272,8 +538,13 @@ export default function GmailInbox() {
     (async () => {
       setError(null);
       setSelectedLabelId('INBOX');
+      setMailSearchInput('');
+      setDebouncedSearchText('');
+      setAppliedSearchFilter({ ...EMPTY_GMAIL_SEARCH_FILTER });
+      setSearchFilterDraft({ ...EMPTY_GMAIL_SEARCH_FILTER });
+      setSearchFilterOpen(false);
       try {
-        await Promise.all([loadLabels(), loadMessages()]);
+        await loadLabels();
         if (!cancelled) setSelectedMessage(null);
       } catch (e) {
         if (!cancelled) setError(gmailErrorMessage(e));
@@ -282,16 +553,45 @@ export default function GmailInbox() {
     return () => {
       cancelled = true;
     };
-  }, [activeMailbox, activeMailboxStatus?.connected, loadLabels, loadMessages]);
+  }, [activeMailbox, activeMailboxStatus?.connected, loadLabels]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedSearchText(mailSearchInput.trim()), 350);
+    return () => window.clearTimeout(timer);
+  }, [mailSearchInput]);
+
+  const listFilterRef = useRef({
+    activeMailbox: activeMailbox ?? null,
+    messageListParams,
+  });
 
   useEffect(() => {
     if (!connected || !activeMailbox) return;
+
+    const prev = listFilterRef.current;
+    const filtersChanged =
+      prev.activeMailbox !== activeMailbox ||
+      prev.messageListParams.labelId !== messageListParams.labelId ||
+      prev.messageListParams.q !== messageListParams.q;
+
+    if (filtersChanged) {
+      listFilterRef.current = { activeMailbox, messageListParams };
+      pageTokensRef.current = [null];
+      setPageTokens([null]);
+      setHasNextPage(false);
+      setResultSizeEstimate(null);
+      setSelectedMessage(null);
+      if (pageIndex !== 0) {
+        setPageIndex(0);
+        return;
+      }
+    }
+
     let cancelled = false;
     (async () => {
       setError(null);
       try {
-        await loadMessages();
-        if (!cancelled) setSelectedMessage(null);
+        await loadPage(pageIndex);
       } catch (e) {
         if (!cancelled) setError(gmailErrorMessage(e));
       }
@@ -299,22 +599,52 @@ export default function GmailInbox() {
     return () => {
       cancelled = true;
     };
-  }, [connected, activeMailbox, selectedLabelId, loadMessages]);
+  }, [connected, activeMailbox, messageListParams, pageIndex, loadPage]);
+
+  useEffect(() => {
+    setSelectedMessage((prev) => {
+      if (!prev) return null;
+      return (
+        messages.find((m) => m.id === prev.id || m.threadId === prev.threadId) ?? null
+      );
+    });
+  }, [messages]);
 
   useEffect(() => {
     if (!connected || !activeMailbox || !canAccessGmailInbox) return;
 
     const practiceId = resolvePracticeIdFromToken(token ?? localStorage.getItem('accessToken'));
-    return subscribeGmailInbox({
+
+    const refreshFromGmail = () => {
+      void loadPage(pageIndexRef.current).catch(() => {
+        /* non-blocking */
+      });
+      void loadLabels().catch(() => {
+        /* non-blocking */
+      });
+    };
+
+    const unsubscribe = subscribeGmailInbox({
       practiceId,
       mailboxEmail: activeMailbox,
-      onInboxChange: () => {
-        void loadMessages().catch(() => {
-          /* non-blocking */
-        });
-      },
+      onInboxChange: refreshFromGmail,
     });
-  }, [connected, activeMailbox, canAccessGmailInbox, token, loadMessages]);
+
+    const poll = () => {
+      if (document.visibilityState !== 'visible') return;
+      refreshFromGmail();
+    };
+
+    const intervalId = window.setInterval(poll, GMAIL_INBOX_POLL_MS);
+    const onFocus = () => poll();
+    window.addEventListener('focus', onFocus);
+
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener('focus', onFocus);
+      unsubscribe();
+    };
+  }, [connected, activeMailbox, canAccessGmailInbox, token, loadPage, loadLabels]);
 
   const handleConnect = async (mailbox: string) => {
     try {
@@ -329,9 +659,9 @@ export default function GmailInbox() {
     try {
       await disconnectGmail(mailbox);
       await loadMailboxes();
-      setLabels([]);
+      setNavigationLabels([]);
+      setSidebarUserLabels([]);
       setMessages([]);
-      setUntaggedQueue([]);
       setSelectedMessage(null);
     } catch (e) {
       setError(gmailErrorMessage(e));
@@ -340,41 +670,74 @@ export default function GmailInbox() {
 
   const selectMailbox = (email: string) => {
     setSelectedMailbox(email);
+    setMailSearchInput('');
+    setDebouncedSearchText('');
+    setAppliedSearchFilter({ ...EMPTY_GMAIL_SEARCH_FILTER });
+    setSearchFilterDraft({ ...EMPTY_GMAIL_SEARCH_FILTER });
+    setSearchFilterOpen(false);
     const next = new URLSearchParams(searchParams);
     next.set('mailbox', email);
     setSearchParams(next, { replace: true });
   };
 
   const applyLocalMessageUpdate = (id: string, patch: Partial<GmailMessageSummary>) => {
-    const updater = (list: GmailMessageSummary[]) =>
-      list.map((m) => (m.id === id ? { ...m, ...patch } : m));
-    setMessages((prev) => updater(prev));
-    setUntaggedQueue((prev) => updater(prev));
-    setSelectedMessage((prev) => (prev?.id === id ? { ...prev, ...patch } : prev));
+    let threadIdForSync: string | undefined;
+    let threadWasUnread = false;
+    setMessages((prev) => {
+      const target = prev.find((m) => m.id === id);
+      threadIdForSync = target?.threadId;
+      if (target) {
+        threadWasUnread = prev.some(
+          (m) => m.threadId === target.threadId && m.isUnread,
+        );
+      }
+      return prev.map((m) => {
+        if (m.id === id) return { ...m, ...patch };
+        if (threadIdForSync && m.threadId === threadIdForSync && patch.isUnread === false) {
+          return { ...m, isUnread: false };
+        }
+        return m;
+      });
+    });
+    if (typeof patch.isUnread === 'boolean') {
+      if (patch.isUnread === false && threadWasUnread) {
+        setNavigationLabels((prev) =>
+          prev.map((label) => {
+            if (label.id !== 'INBOX') return label;
+            const base = label.threadsUnread ?? label.messagesUnread ?? 0;
+            const next = Math.max(0, base - 1);
+            return { ...label, threadsUnread: next, messagesUnread: next };
+          }),
+        );
+      } else if (patch.isUnread === true && !threadWasUnread) {
+        setNavigationLabels((prev) =>
+          prev.map((label) => {
+            if (label.id !== 'INBOX') return label;
+            const base = label.threadsUnread ?? label.messagesUnread ?? 0;
+            return { ...label, threadsUnread: base + 1, messagesUnread: base + 1 };
+          }),
+        );
+      }
+    }
+    setSelectedMessage((prev) => {
+      if (!prev) return null;
+      if (prev.id === id || (threadIdForSync && prev.threadId === threadIdForSync)) {
+        return { ...prev, ...patch };
+      }
+      return prev;
+    });
   };
 
   const removeMessageFromLists = (id: string) => {
-    setMessages((prev) => prev.filter((m) => m.id !== id));
-    setUntaggedQueue((prev) => prev.filter((m) => m.id !== id));
-    setSelectedMessage((prev) => (prev?.id === id ? null : prev));
-  };
-
-  const runAction = async (fn: () => Promise<{ labelIds: string[] }>) => {
-    if (!selectedMessage) return;
-    setActionBusy(true);
-    setError(null);
-    try {
-      const result = await fn();
-      applyLocalMessageUpdate(selectedMessage.id, {
-        labelIds: result.labelIds,
-        isUnread: result.labelIds.includes('UNREAD'),
-        isStarred: result.labelIds.includes('STARRED'),
-      });
-    } catch (e) {
-      setError(gmailErrorMessage(e));
-    } finally {
-      setActionBusy(false);
-    }
+    setMessages((prev) => {
+      const threadId = prev.find((m) => m.id === id)?.threadId;
+      setSelectedMessage((selected) =>
+        selected && (selected.id === id || (threadId && selected.threadId === threadId))
+          ? null
+          : selected,
+      );
+      return prev.filter((m) => m.id !== id && (!threadId || m.threadId !== threadId));
+    });
   };
 
   const openCompose = (context: ComposeContext) => {
@@ -413,50 +776,109 @@ export default function GmailInbox() {
     setSelectedMessage(msg);
     if (!activeMailbox || !msg.isUnread) return;
     try {
-      const result = await markGmailMessageRead(activeMailbox, msg.id);
-        applyLocalMessageUpdate(msg.id, {
-          isUnread: false,
-          labelIds: result.labelIds,
-        });
-      } catch {
-        /* non-blocking */
+      const result = await markGmailMessageRead(activeMailbox, msg.id, msg.threadId);
+      applyLocalMessageUpdate(msg.id, {
+        isUnread: false,
+        labelIds: result.labelIds,
+      });
+      void loadLabels();
+    } catch {
+      /* non-blocking */
+    }
+  };
+
+  const handleToggleStar = async (msg: GmailMessageSummary) => {
+    if (!activeMailbox) return;
+    try {
+      const result = await starGmailMessage(activeMailbox, msg.id, !msg.isStarred, msg.threadId);
+      applyLocalMessageUpdate(msg.id, {
+        labelIds: result.labelIds,
+        isStarred: result.labelIds.includes('STARRED'),
+      });
+    } catch (e) {
+      setError(gmailErrorMessage(e));
+    }
+  };
+
+  const handleOpenAttachment = useCallback(
+    async (attachment: GmailAttachmentSummary) => {
+      if (!activeMailbox) return;
+      try {
+        await openGmailAttachment(activeMailbox, attachment);
+      } catch (e) {
+        setError(gmailErrorMessage(e));
       }
+    },
+    [activeMailbox],
+  );
+
+  const visibleMessages = messages;
+
+  const allVisibleChecked =
+    visibleMessages.length > 0 && visibleMessages.every((m) => checkedMessageIds.has(m.id));
+
+  const checkedVisibleCount = visibleMessages.filter((m) =>
+    checkedMessageIds.has(m.id),
+  ).length;
+  const someVisibleChecked =
+    checkedVisibleCount > 0 && checkedVisibleCount < visibleMessages.length;
+
+  const activeInboxUnread = useMemo(() => {
+    const inbox = navigationLabels.find((l) => l.id === 'INBOX');
+    if (!inbox) return undefined;
+    return inbox.threadsUnread ?? inbox.messagesUnread ?? 0;
+  }, [navigationLabels]);
+
+  const mailboxTabUnread = (email: string): number => {
+    if (email === activeMailbox && activeInboxUnread != null) return activeInboxUnread;
+    return mailboxUnreadCounts[email] ?? 0;
   };
 
-  const handleAddLabel = async () => {
-    if (!selectedMessage || !labelPicker) return;
-    setActionBusy(true);
-    try {
-      const result = await modifyGmailMessage(activeMailbox!, selectedMessage.id, {
-        addLabelIds: [labelPicker],
-      });
-      applyLocalMessageUpdate(selectedMessage.id, { labelIds: result.labelIds });
-      setLabelPicker('');
-      await loadMessages();
-    } catch (e) {
-      setError(gmailErrorMessage(e));
-    } finally {
-      setActionBusy(false);
+  const handleToggleCheck = (msg: GmailMessageSummary) => {
+    setCheckedMessageIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(msg.id)) next.delete(msg.id);
+      else next.add(msg.id);
+      return next;
+    });
+  };
+
+  const handleToggleCheckAll = () => {
+    if (allVisibleChecked) {
+      setCheckedMessageIds(new Set());
+      return;
     }
+    setCheckedMessageIds(new Set(visibleMessages.map((m) => m.id)));
   };
 
-  const handleRemoveLabel = async (labelId: string) => {
-    if (!selectedMessage) return;
-    setActionBusy(true);
-    try {
-      const result = await modifyGmailMessage(activeMailbox!, selectedMessage.id, {
-        removeLabelIds: [labelId],
-      });
-      applyLocalMessageUpdate(selectedMessage.id, { labelIds: result.labelIds });
-      await loadMessages();
-    } catch (e) {
-      setError(gmailErrorMessage(e));
-    } finally {
-      setActionBusy(false);
-    }
+  const hasCheckedMessages = checkedMessageIds.size > 0;
+
+  const handleBulkComplete = () => {
+    setCheckedMessageIds(new Set());
+    setSelectedMessage(null);
+    void Promise.all([loadPage(pageIndexRef.current), loadLabels()]);
   };
 
-  const showUntagged = selectedLabelId === 'INBOX';
+  const paginationRangeStart =
+    messages.length === 0 ? 0 : pageIndex * GMAIL_MESSAGES_PAGE_SIZE + 1;
+  const paginationRangeEnd = pageIndex * GMAIL_MESSAGES_PAGE_SIZE + messages.length;
+  const paginationTotal =
+    resultSizeEstimate ??
+    (hasNextPage ? null : messages.length === 0 ? 0 : paginationRangeEnd);
+
+  const selectedMessageIndex = selectedMessage
+    ? visibleMessages.findIndex(
+        (m) =>
+          m.id === selectedMessage.id || m.threadId === selectedMessage.threadId,
+      )
+    : -1;
+
+  const messagePositionLabel =
+    selectedMessageIndex >= 0
+      ? paginationTotal != null
+        ? `${paginationRangeStart + selectedMessageIndex} of ${paginationTotal}`
+        : `${paginationRangeStart + selectedMessageIndex} of ${paginationRangeEnd}`
+      : '';
 
   if (gmailAccessLoading) {
     return (
@@ -520,7 +942,6 @@ export default function GmailInbox() {
 
       <header className="gmail-inbox__header">
         <div>
-          <h1 className="gmail-inbox__title">Email</h1>
           {mailboxes.length > 0 ? (
             <div className="gmail-inbox__mailbox-tabs" role="tablist" aria-label="Gmail accounts">
               {mailboxes.map((mb) => (
@@ -535,34 +956,18 @@ export default function GmailInbox() {
                   onClick={() => selectMailbox(mb.email)}
                 >
                   {mailboxDisplayLabel(mb)}
+                  {mb.connected && mailboxTabUnread(mb.email) > 0 ? (
+                    <sup className="gmail-inbox__mailbox-tab-badge">
+                      {mailboxTabUnread(mb.email)}
+                    </sup>
+                  ) : null}
                   {!mb.connected ? ' · not connected' : ''}
                 </button>
               ))}
             </div>
           ) : null}
-          <p className="gmail-inbox__subtitle">
-            {activeMailbox ? `Viewing ${activeMailbox}` : 'Practice inboxes'}
-            {activeMailboxStatus?.displayLabel
-              ? ` · ${activeMailboxStatus.displayLabel}`
-              : activeMailbox
-                ? ` · ${mailboxDisplayLabel({ email: activeMailbox, displayLabel: undefined, kind: undefined })}`
-                : ''}
-            {activeMailboxStatus?.grantedEmail
-              ? ` · Connected as ${activeMailboxStatus.grantedEmail}`
-              : ''}
-          </p>
         </div>
         <div className="gmail-inbox__toolbar">
-          {connected && activeMailbox ? (
-            <button
-              type="button"
-              className="gmail-btn gmail-btn--primary"
-              onClick={() => openCompose({ mode: 'new' })}
-            >
-              <PenSquare size={14} style={{ verticalAlign: -2, marginRight: 4 }} aria-hidden />
-              Compose
-            </button>
-          ) : null}
           <button
             type="button"
             className="gmail-btn"
@@ -623,13 +1028,22 @@ export default function GmailInbox() {
         </div>
       ) : (
         <div className="gmail-inbox__body">
-          <section className="gmail-inbox__panel gmail-inbox__panel--labels" aria-label="Labels">
-            <div className="gmail-inbox__panel-head">Labels</div>
+          <section className="gmail-inbox__panel gmail-inbox__panel--labels" aria-label="Mail folders">
             <div className="gmail-inbox__panel-scroll">
+              {connected && activeMailbox ? (
+                <button
+                  type="button"
+                  className="gmail-sidebar__compose"
+                  onClick={() => openCompose({ mode: 'new' })}
+                >
+                  <PenSquare size={18} strokeWidth={1.75} aria-hidden />
+                  Compose
+                </button>
+              ) : null}
               <GmailLabelTree
-                labels={labels}
+                labels={navigationLabels}
                 selectedId={selectedLabelId}
-                onSelect={setSelectedLabelId}
+                onSelect={handleSelectLabel}
                 expanded={expandedLabels}
                 onToggleExpand={(id) =>
                   setExpandedLabels((prev) => {
@@ -640,269 +1054,166 @@ export default function GmailInbox() {
                   })
                 }
               />
-            </div>
-          </section>
-
-          <section className="gmail-inbox__panel gmail-inbox__panel--list" aria-label="Messages">
-            <div className="gmail-inbox__panel-head">
-              {labelById.get(selectedLabelId)
-                ? labelDisplayName(labelById.get(selectedLabelId)!)
-                : 'Messages'}
-            </div>
-            <div className="gmail-inbox__panel-scroll">
-              {showUntagged ? (
-                <MessageListSection
-                  title="Unclaimed"
-                  messages={untaggedQueue}
-                  selectedId={selectedMessage?.id ?? null}
-                  onSelect={handleSelectMessage}
+              <div className="gmail-sidebar__section-head">
+                <span>Labels</span>
+              </div>
+              {sidebarUserLabels.length > 0 ? (
+                <GmailLabelTree
+                  labels={sidebarUserLabels}
+                  selectedId={selectedLabelId}
+                  onSelect={handleSelectLabel}
+                  expanded={expandedLabels}
+                  onToggleExpand={(id) =>
+                    setExpandedLabels((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(id)) next.delete(id);
+                      else next.add(id);
+                      return next;
+                    })
+                  }
                 />
               ) : null}
-              <MessageListSection
-                title={showUntagged && untaggedQueue.length > 0 ? 'Tagged' : undefined}
-                messages={messages}
-                selectedId={selectedMessage?.id ?? null}
-                onSelect={handleSelectMessage}
+            </div>
+          </section>
+
+          {selectedMessage && activeMailbox ? (
+            <section className="gmail-inbox__panel gmail-inbox__panel--message" aria-label="Message">
+              <GmailMessageView
+                mailbox={activeMailbox}
+                message={selectedMessage}
+                threadMessages={threadMessages}
+                threadLoading={threadLoading}
+                labelById={labelById}
+                userLabels={userLabels}
+                currentLabelId={selectedLabelId}
+                listMessages={visibleMessages}
+                messagePositionLabel={messagePositionLabel}
+                actionBusy={actionBusy || refreshing}
+                latestThreadMessage={latestThreadMessage}
+                onBack={() => setSelectedMessage(null)}
+                onPrev={() => {
+                  if (selectedMessageIndex > 0) {
+                    setSelectedMessage(visibleMessages[selectedMessageIndex - 1]!);
+                  }
+                }}
+                onNext={() => {
+                  if (
+                    selectedMessageIndex >= 0 &&
+                    selectedMessageIndex < visibleMessages.length - 1
+                  ) {
+                    setSelectedMessage(visibleMessages[selectedMessageIndex + 1]!);
+                  }
+                }}
+                canPrev={selectedMessageIndex > 0}
+                canNext={
+                  selectedMessageIndex >= 0 &&
+                  selectedMessageIndex < visibleMessages.length - 1
+                }
+                onToolbarComplete={handleBulkComplete}
+                onToolbarError={(msg) => setError(msg)}
+                onCompose={openCompose}
+                onOpenAttachment={handleOpenAttachment}
               />
-              {messages.length === 0 && untaggedQueue.length === 0 ? (
-                <div className="gmail-inbox__state">No messages in this label.</div>
-              ) : null}
-              {nextPageToken ? (
-                <div style={{ padding: 12, textAlign: 'center' }}>
+            </section>
+          ) : (
+            <section className="gmail-inbox__panel gmail-inbox__panel--list" aria-label="Messages">
+              <div className="gmail-inbox__list-toolbar">
+                <input
+                  type="checkbox"
+                  className="gmail-msg-item__check"
+                  ref={(el) => {
+                    if (el) el.indeterminate = someVisibleChecked;
+                  }}
+                  checked={allVisibleChecked}
+                  aria-label="Select all messages"
+                  onChange={handleToggleCheckAll}
+                  disabled={visibleMessages.length === 0}
+                />
+                {hasCheckedMessages ? (
+                  <GmailBulkToolbar
+                    mailbox={activeMailbox!}
+                    targetMessages={visibleMessages.filter((m) =>
+                      checkedMessageIds.has(m.id),
+                    )}
+                    currentLabelId={selectedLabelId}
+                    userLabels={userLabels}
+                    labelById={labelById}
+                    disabled={actionBusy || refreshing}
+                    onComplete={handleBulkComplete}
+                    onError={(msg) => setError(msg)}
+                  />
+                ) : (
                   <button
                     type="button"
-                    className="gmail-btn"
+                    className="gmail-inbox__list-toolbar-btn"
+                    aria-label="Refresh messages"
                     disabled={refreshing}
-                    onClick={async () => {
-                      setRefreshing(true);
-                      try {
-                        await loadMessages({ pageToken: nextPageToken, append: true });
-                      } catch (e) {
-                        setError(gmailErrorMessage(e));
-                      } finally {
-                        setRefreshing(false);
-                      }
-                    }}
+                    onClick={() => refreshAll()}
                   >
-                    Load more
+                    <RefreshCw size={18} strokeWidth={1.75} aria-hidden />
                   </button>
-                </div>
-              ) : null}
-            </div>
-          </section>
-
-          <section className="gmail-inbox__panel" aria-label="Message detail">
-            <div className="gmail-inbox__panel-head">Message</div>
-            <div className="gmail-inbox__panel-scroll">
-              {!selectedMessage ? (
-                <div className="gmail-detail__empty">Select a message to read.</div>
-              ) : (
-                <div className="gmail-detail">
-                  <h2 className="gmail-detail__subject">{selectedMessage.subject}</h2>
-                  <div className="gmail-detail__meta">
-                    <div>
-                      <strong>From:</strong> {formatGmailAddress(selectedMessage.from)}
-                    </div>
-                    {selectedMessage.to.length > 0 ? (
-                      <div>
-                        <strong>To:</strong>{' '}
-                        {selectedMessage.to.map((t) => formatGmailAddress(t)).join(', ')}
-                      </div>
-                    ) : null}
-                    <div>
-                      <strong>Date:</strong> {new Date(selectedMessage.date).toLocaleString()}
-                    </div>
-                  </div>
-
-                  <div className="gmail-detail__actions">
+                )}
+                <GmailSearchBar
+                  value={mailSearchInput}
+                  onChange={setMailSearchInput}
+                  filterOpen={searchFilterOpen}
+                  onFilterOpenChange={setSearchFilterOpen}
+                  filterDraft={searchFilterDraft}
+                  onFilterDraftChange={setSearchFilterDraft}
+                  appliedFilter={appliedSearchFilter}
+                  onApplyFilter={() => {
+                    setAppliedSearchFilter({ ...searchFilterDraft });
+                    setDebouncedSearchText(mailSearchInput.trim());
+                  }}
+                  onSubmit={() => setDebouncedSearchText(mailSearchInput.trim())}
+                />
+                {(messages.length > 0 || pageIndex > 0) && (
+                  <div className="gmail-inbox__pagination">
+                    <span className="gmail-inbox__pagination-range">
+                      {paginationRangeStart === 0
+                        ? '0'
+                        : paginationTotal != null
+                          ? `${paginationRangeStart}–${paginationRangeEnd} of ${paginationTotal}`
+                          : `${paginationRangeStart}–${paginationRangeEnd}`}
+                    </span>
                     <button
                       type="button"
-                      className="gmail-btn"
-                      disabled={actionBusy || threadLoading || !latestThreadMessage}
-                      onClick={() =>
-                        openCompose({
-                          mode: 'reply',
-                          threadId: selectedMessage.threadId,
-                          replyTo: latestThreadMessage ?? undefined,
-                        })
-                      }
+                      className="gmail-inbox__list-toolbar-btn"
+                      aria-label="Previous page"
+                      disabled={pageIndex === 0 || refreshing}
+                      onClick={() => setPageIndex((i) => Math.max(0, i - 1))}
                     >
-                      <Reply size={14} style={{ verticalAlign: -2, marginRight: 4 }} aria-hidden />
-                      Reply
+                      <ChevronLeft size={18} strokeWidth={1.75} aria-hidden />
                     </button>
                     <button
                       type="button"
-                      className="gmail-btn"
-                      disabled={actionBusy || threadLoading || !latestThreadMessage}
-                      onClick={() =>
-                        openCompose({
-                          mode: 'replyAll',
-                          threadId: selectedMessage.threadId,
-                          replyTo: latestThreadMessage ?? undefined,
-                        })
-                      }
+                      className="gmail-inbox__list-toolbar-btn"
+                      aria-label="Next page"
+                      disabled={!hasNextPage || refreshing}
+                      onClick={() => setPageIndex((i) => i + 1)}
                     >
-                      <ReplyAll size={14} style={{ verticalAlign: -2, marginRight: 4 }} aria-hidden />
-                      Reply all
-                    </button>
-                    <button
-                      type="button"
-                      className="gmail-btn"
-                      disabled={actionBusy}
-                      onClick={() =>
-                        runAction(() =>
-                          selectedMessage.isStarred
-                            ? starGmailMessage(activeMailbox!, selectedMessage.id, false)
-                            : starGmailMessage(activeMailbox!, selectedMessage.id, true),
-                        )
-                      }
-                    >
-                      <Star size={14} style={{ verticalAlign: -2, marginRight: 4 }} aria-hidden />
-                      {selectedMessage.isStarred ? 'Unstar' : 'Star'}
-                    </button>
-                    <button
-                      type="button"
-                      className="gmail-btn"
-                      disabled={actionBusy}
-                      onClick={() =>
-                        runAction(() =>
-                          selectedMessage.isUnread
-                            ? markGmailMessageRead(activeMailbox!, selectedMessage.id)
-                            : markGmailMessageUnread(activeMailbox!, selectedMessage.id),
-                        )
-                      }
-                    >
-                      {selectedMessage.isUnread ? 'Mark read' : 'Mark unread'}
-                    </button>
-                    <button
-                      type="button"
-                      className="gmail-btn"
-                      disabled={actionBusy}
-                      onClick={async () => {
-                        setActionBusy(true);
-                        try {
-                          await archiveGmailMessage(activeMailbox!, selectedMessage.id);
-                          removeMessageFromLists(selectedMessage.id);
-                        } catch (e) {
-                          setError(gmailErrorMessage(e));
-                        } finally {
-                          setActionBusy(false);
-                        }
-                      }}
-                    >
-                      <Archive size={14} style={{ verticalAlign: -2, marginRight: 4 }} aria-hidden />
-                      Archive
-                    </button>
-                    <button
-                      type="button"
-                      className="gmail-btn gmail-btn--danger"
-                      disabled={actionBusy}
-                      onClick={async () => {
-                        if (!window.confirm('Move this message to trash?')) return;
-                        setActionBusy(true);
-                        try {
-                          await trashGmailMessage(activeMailbox!, selectedMessage.id);
-                          removeMessageFromLists(selectedMessage.id);
-                        } catch (e) {
-                          setError(gmailErrorMessage(e));
-                        } finally {
-                          setActionBusy(false);
-                        }
-                      }}
-                    >
-                      <Trash2 size={14} style={{ verticalAlign: -2, marginRight: 4 }} aria-hidden />
-                      Trash
+                      <ChevronRight size={18} strokeWidth={1.75} aria-hidden />
                     </button>
                   </div>
-
-                  {selectedMessage.labelIds.length > 0 ? (
-                    <div className="gmail-detail__labels">
-                      {selectedMessage.labelIds
-                        .filter((id) => labelById.has(id))
-                        .map((id) => {
-                          const label = labelById.get(id)!;
-                          if (label.type !== 'user') return null;
-                          return (
-                            <span key={id} className="gmail-chip">
-                              {labelDisplayName(label)}
-                              <button
-                                type="button"
-                                aria-label={`Remove label ${labelDisplayName(label)}`}
-                                onClick={() => handleRemoveLabel(id)}
-                                disabled={actionBusy}
-                                style={{
-                                  border: 'none',
-                                  background: 'transparent',
-                                  cursor: 'pointer',
-                                  padding: 0,
-                                  lineHeight: 1,
-                                }}
-                              >
-                                ×
-                              </button>
-                            </span>
-                          );
-                        })}
-                    </div>
-                  ) : null}
-
-                  <div className="gmail-label-picker">
-                    <label htmlFor="gmail-add-label">Add label</label>
-                    <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
-                      <select
-                        id="gmail-add-label"
-                        value={labelPicker}
-                        onChange={(e) => setLabelPicker(e.target.value)}
-                      >
-                        <option value="">Select label…</option>
-                        {userLabels.map((l) => (
-                          <option key={l.id} value={l.id}>
-                            {l.name}
-                          </option>
-                        ))}
-                      </select>
-                      <button
-                        type="button"
-                        className="gmail-btn"
-                        disabled={!labelPicker || actionBusy}
-                        onClick={handleAddLabel}
-                      >
-                        Apply
-                      </button>
-                    </div>
-                  </div>
-
-                  {threadLoading ? (
-                    <div className="gmail-inbox__state">Loading thread…</div>
-                  ) : threadMessages.length > 0 ? (
-                    <div className="gmail-detail__thread">
-                      {threadMessages.map((msg) => (
-                        <article key={msg.id} className="gmail-thread-message">
-                          <div className="gmail-thread-message__meta">
-                            <strong>{formatGmailAddress(msg.from)}</strong>
-                            {' · '}
-                            {new Date(msg.date).toLocaleString()}
-                          </div>
-                          {msg.body.html ? (
-                            <div
-                              className="gmail-thread-message__body gmail-thread-message__body--html"
-                              dangerouslySetInnerHTML={{ __html: msg.body.html }}
-                            />
-                          ) : (
-                            <div className="gmail-thread-message__body">
-                              {msg.body.text ?? msg.snippet}
-                            </div>
-                          )}
-                        </article>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="gmail-detail__snippet">{selectedMessage.snippet}</div>
-                  )}
-                </div>
-              )}
-            </div>
-          </section>
+                )}
+              </div>
+              <div className="gmail-inbox__panel-scroll">
+                <MessageListSection
+                  messages={messages}
+                  selectedId={null}
+                  checkedIds={checkedMessageIds}
+                  labelById={labelById}
+                  onSelect={handleSelectMessage}
+                  onToggleCheck={handleToggleCheck}
+                  onToggleStar={handleToggleStar}
+                  onOpenAttachment={handleOpenAttachment}
+                />
+                {messages.length === 0 ? (
+                  <div className="gmail-inbox__state">No messages in this label.</div>
+                ) : null}
+              </div>
+            </section>
+          )}
         </div>
       )}
 

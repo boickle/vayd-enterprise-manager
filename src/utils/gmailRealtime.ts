@@ -1,6 +1,7 @@
 /**
  * Gmail inbox realtime: Socket.IO namespace `/gmail` on the REST API origin.
- * Backend polls Gmail history on GMAIL_POLL_INTERVAL_MS (default 60s) and emits `gmail.inbox`.
+ * Backend polls Gmail history (default every 30–60s) and emits `gmail.inbox`.
+ * The inbox page also refetches on a timer as a fallback when push/webhooks fail.
  */
 import { io, type Socket } from 'socket.io-client';
 import { apiBaseUrl, getToken } from '../api/http';

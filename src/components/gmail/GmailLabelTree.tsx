@@ -1,4 +1,59 @@
-import { GmailLabelNode, labelDisplayName } from '../../api/gmail';
+import {
+  AlertOctagon,
+  Bookmark,
+  ChevronDown,
+  ChevronUp,
+  Clock,
+  FileText,
+  FolderOpen,
+  Inbox,
+  Mails,
+  Send,
+  Star,
+  Tag,
+  Trash2,
+  type LucideIcon,
+} from 'lucide-react';
+import {
+  GMAIL_MORE_GROUP_ID,
+  GMAIL_ALL_MAIL_ID,
+  GMAIL_SCHEDULED_ID,
+  GMAIL_SNOOZED_ID,
+  GmailLabelNode,
+  isGmailLabelGroup,
+  labelDisplayName,
+  labelSidebarCount,
+} from '../../api/gmail';
+
+const SYSTEM_LABEL_ICONS: Record<string, LucideIcon> = {
+  INBOX: Inbox,
+  STARRED: Star,
+  [GMAIL_SNOOZED_ID]: Clock,
+  SENT: Send,
+  DRAFT: FileText,
+  IMPORTANT: Bookmark,
+  [GMAIL_SCHEDULED_ID]: Clock,
+  [GMAIL_ALL_MAIL_ID]: Mails,
+  SPAM: AlertOctagon,
+  TRASH: Trash2,
+};
+
+function LabelIcon({ label }: { label: GmailLabelNode }) {
+  if (label.id === GMAIL_MORE_GROUP_ID) {
+    return null;
+  }
+  if (isGmailLabelGroup(label)) {
+    return <Tag size={16} strokeWidth={1.75} aria-hidden />;
+  }
+  const Icon = SYSTEM_LABEL_ICONS[label.id];
+  if (Icon) {
+    return <Icon size={16} strokeWidth={1.75} aria-hidden />;
+  }
+  if (label.type === 'user') {
+    return <FolderOpen size={16} strokeWidth={1.75} aria-hidden />;
+  }
+  return null;
+}
 
 type Props = {
   labels: GmailLabelNode[];
@@ -19,11 +74,13 @@ function LabelRow({
   label: GmailLabelNode;
   depth: number;
 } & Props) {
+  const isMoreGroup = label.id === GMAIL_MORE_GROUP_ID;
+  const isGroup = isGmailLabelGroup(label);
   const hasChildren = label.children.length > 0;
   const isExpanded = expanded.has(label.id);
-  const isSelected = selectedId === label.id;
-  const unread = label.messagesUnread ?? label.threadsUnread ?? 0;
-  const display = labelDisplayName(label);
+  const isSelected = !isGroup && selectedId === label.id;
+  const count = labelSidebarCount(label);
+  const display = isMoreGroup ? (isExpanded ? 'Less' : 'More') : labelDisplayName(label);
 
   return (
     <>
@@ -31,7 +88,7 @@ function LabelRow({
         className={`gmail-label-row${isSelected ? ' gmail-label-row--selected' : ''}`}
         style={{ paddingLeft: `${8 + depth * 14}px` }}
       >
-        {hasChildren ? (
+        {hasChildren && !isMoreGroup ? (
           <button
             type="button"
             className="gmail-label-row__expand"
@@ -49,18 +106,32 @@ function LabelRow({
         <button
           type="button"
           className="gmail-label-row__btn"
-          onClick={() => onSelect(label.id)}
+          onClick={() => (isGroup ? onToggleExpand(label.id) : onSelect(label.id))}
           title={label.name}
         >
-          {label.color ? (
-            <span
-              className="gmail-label-row__swatch"
-              style={{ backgroundColor: label.color.backgroundColor }}
-              aria-hidden
-            />
+          <span className="gmail-label-row__icon">
+            {isMoreGroup ? (
+              isExpanded ? (
+                <ChevronUp size={16} strokeWidth={1.75} aria-hidden />
+              ) : (
+                <ChevronDown size={16} strokeWidth={1.75} aria-hidden />
+              )
+            ) : label.color ? (
+              <span
+                className="gmail-label-row__swatch"
+                style={{ backgroundColor: label.color.backgroundColor }}
+                aria-hidden
+              />
+            ) : (
+              <LabelIcon label={label} />
+            )}
+          </span>
+          <span className={`gmail-label-row__name${label.id === 'DRAFT' || label.id === 'SPAM' || (label.id === 'INBOX' && count != null) ? ' gmail-label-row__name--bold' : ''}`}>
+            {display}
+          </span>
+          {count != null ? (
+            <span className="gmail-label-row__unread">{count.toLocaleString()}</span>
           ) : null}
-          <span className="gmail-label-row__name">{display}</span>
-          {unread > 0 ? <span className="gmail-label-row__unread">{unread}</span> : null}
         </button>
       </div>
       {hasChildren && isExpanded
@@ -68,7 +139,7 @@ function LabelRow({
             <LabelRow
               key={child.id}
               label={child}
-              depth={depth + 1}
+              depth={isMoreGroup ? 0 : depth + 1}
               labels={[]}
               selectedId={selectedId}
               onSelect={onSelect}

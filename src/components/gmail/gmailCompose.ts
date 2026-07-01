@@ -6,7 +6,7 @@ import {
   type GmailThreadMessage,
 } from '../../api/gmail';
 
-export type ComposeMode = 'new' | 'reply' | 'replyAll';
+export type ComposeMode = 'new' | 'reply' | 'replyAll' | 'forward';
 
 export type ComposeContext = {
   mode: ComposeMode;
@@ -59,6 +59,18 @@ export function buildComposeDraft(ctx: ComposeContext): {
     return { to: '', cc: '', subject: '', bodyText: '' };
   }
 
+  if (ctx.mode === 'forward') {
+    const subj = replyTo.subject.trim();
+    const subject = /^fwd:/i.test(subj) ? subj : `Fwd: ${subj || '(no subject)'}`;
+    const body = replyTo.body.text ?? replyTo.snippet;
+    return {
+      to: '',
+      cc: '',
+      subject,
+      bodyText: `\n\n---------- Forwarded message ---------\nFrom: ${replyTo.headers.from}\nDate: ${new Date(replyTo.date).toLocaleString()}\nSubject: ${replyTo.subject}\nTo: ${replyTo.headers.to}\n\n${body}`,
+    };
+  }
+
   const fromEmail = extractEmail(replyTo.headers.from);
   const toLine =
     ctx.mode === 'replyAll'
@@ -108,6 +120,7 @@ export async function submitCompose(opts: {
   cc: string;
   subject: string;
   bodyText: string;
+  bodyHtml?: string;
   threadId?: string;
   inReplyTo?: string;
   references?: string;
@@ -127,6 +140,7 @@ export async function submitCompose(opts: {
     cc: cc.length ? cc : undefined,
     subject: opts.subject,
     bodyText: opts.bodyText,
+    bodyHtml: opts.bodyHtml,
     threadId: opts.threadId,
     inReplyTo: opts.inReplyTo,
     references: opts.references,

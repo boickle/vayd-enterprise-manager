@@ -64,6 +64,7 @@ export default function GmailComposeModal({
     new: 'New message',
     reply: 'Reply',
     replyAll: 'Reply all',
+    forward: 'Forward',
   };
 
   const handleSend = async () => {
