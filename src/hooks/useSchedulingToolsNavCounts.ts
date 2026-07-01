@@ -16,6 +16,10 @@ import {
   filterCareOutreachRemindersForForwardBooking,
   forwardBookingPatientIdsActiveInQueue,
 } from '../utils/careOutreachForwardBookingExclude';
+import {
+  forwardBookingIdsFromRoutingIntent,
+  readRoutingForwardBookingIntent,
+} from '../utils/routingForwardBookingIntent';
 import { forwardBookingOnHoldOver24Hours } from '../utils/forwardBookingOnHold';
 import {
   forwardBookingEntryBelongsOnForwardBookingPage,
@@ -93,11 +97,18 @@ export function useSchedulingToolsNavCounts(enabled = true) {
         }
       }
 
+      const routingIntent = readRoutingForwardBookingIntent();
+      const activeRoutingForwardBookingIds =
+        routingIntent?.workspaceActive &&
+        (routingIntent.origin === 'care_outreach' || routingIntent.origin === 'schedule_loader')
+          ? new Set(forwardBookingIdsFromRoutingIntent(routingIntent))
+          : undefined;
       const blockedPatientIds = forwardBookingPatientIdsActiveInQueue(
         visible,
         practiceTz,
         null,
         catalog,
+        { activeRoutingForwardBookingIds },
       );
       const careOutreachForCount = filterCareOutreachRemindersForForwardBooking(
         careReminders,
