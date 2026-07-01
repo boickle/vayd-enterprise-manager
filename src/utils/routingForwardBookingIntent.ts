@@ -1,7 +1,11 @@
 /**
  * Forward booking list → Routing prefill (same sessionStorage + event pattern as reschedule intent).
  */
-import type { ForwardBookingEntry, ForwardBookingIntervalUnit } from '../api/forwardBooking';
+import {
+  removeForwardBooking,
+  type ForwardBookingEntry,
+  type ForwardBookingIntervalUnit,
+} from '../api/forwardBooking';
 import { resolveForwardBookingIntervalFromEntry } from './forwardBookingFromAppointment';
 import { clearRoutingCalendarPreview } from './routingCalendarPreviewStorage';
 import { ROUTING_DISMISS_FORWARD_BOOKING_EVENT } from './routingUiSnapshot';
@@ -195,6 +199,40 @@ export function dismissRoutingForwardBookingWorkspace(): void {
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new Event(ROUTING_DISMISS_FORWARD_BOOKING_EVENT));
   }
+}
+
+export function forwardBookingIdsFromRoutingIntent(
+  intent: RoutingForwardBookingIntentV1
+): number[] {
+  const ids = new Set<number>();
+  if (Number.isFinite(intent.forwardBookingId) && intent.forwardBookingId > 0) {
+    ids.add(intent.forwardBookingId);
+  }
+  for (const row of intent.householdEntries ?? []) {
+    if (Number.isFinite(row.forwardBookingId) && row.forwardBookingId > 0) {
+      ids.add(row.forwardBookingId);
+    }
+  }
+  return [...ids];
+}
+
+/**
+ * Care outreach / schedule loader create forward-booking rows when Route starts.
+ * Remove them when staff exits routing without booking so the client returns to the list.
+ */
+export async function abandonListOriginatedForwardBookingWorkspace(
+  intent: RoutingForwardBookingIntentV1,
+  practiceId: number
+): Promise<void> {
+  if (intent.origin !== 'care_outreach' && intent.origin !== 'schedule_loader') return;
+  const ids = forwardBookingIdsFromRoutingIntent(intent);
+  await Promise.all(
+    ids.map((id) =>
+      removeForwardBooking(id, practiceId).catch((err) => {
+        console.warn('[routing] could not remove abandoned forward booking', id, err);
+      })
+    )
+  );
 }
 
 export function forwardBookingRequiresScopeChoice(
