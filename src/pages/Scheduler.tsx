@@ -132,6 +132,7 @@ import {
 } from '../components/SchedulerVisitPatientContext';
 import type { HoverAnchorRect } from '../utils/hoverPopoverPosition';
 import {
+  normalizeScheduleOverrideLocalTime,
   scheduleOverrideIsOff,
   type ScheduleOverride,
 } from '../api/appointmentSettings';
@@ -485,9 +486,53 @@ const SCHEDULER_EVENT_COMPACT_MAX_MINUTES = 22;
 const SCHEDULER_DAY_HEADER_STACK_PX = 96;
 const SLOT_MINUTES = 15;
 const DEFAULT_GRID_START = 7 * 60;
-const DEFAULT_GRID_END = 17 * 60;
+/** Match My Week — practice calendar shows through a typical field day even without routed ETAs. */
+const DEFAULT_GRID_END = 19 * 60 + 30;
 /** Minutes of grid past depot and past first/last timed item (same as My Week depot lead-in). */
 const SCHEDULER_GRID_EDGE_BUFFER_MIN = 30;
+
+/** Workday start/end for grid bounds — independent of routed-timeline visit placement. */
+function schedulerWorkDayMinutesForDate(
+  dayKey: string,
+  driveDayByDate: Map<string, DayData> | null | undefined,
+  scheduleOverridesByDate: Map<string, ScheduleOverride>,
+  providerWeeklySchedules: EmployeeWeeklySchedule[] | null
+): { startMin: number | null; endMin: number | null } {
+  let startMin: number | null = null;
+  let endMin: number | null = null;
+
+  const considerStart = (timeStr: string | null | undefined) => {
+    const s = typeof timeStr === 'string' ? timeStr.trim() : '';
+    if (!s) return;
+    const m = timeStrToMinutesFromMidnight(s);
+    startMin = startMin === null ? m : Math.min(startMin, m);
+  };
+  const considerEnd = (timeStr: string | null | undefined) => {
+    const s = typeof timeStr === 'string' ? timeStr.trim() : '';
+    if (!s) return;
+    const m = timeStrToMinutesFromMidnight(s);
+    endMin = endMin === null ? m : Math.max(endMin, m);
+  };
+
+  const row = driveDayByDate?.get(dayKey);
+  considerStart(row?.startDepotTime);
+  considerEnd(row?.endDepotTime);
+
+  const override = scheduleOverridesByDate.get(dayKey);
+  if (override && !scheduleOverrideIsOff(override)) {
+    considerStart(normalizeScheduleOverrideLocalTime(override.workStartLocal));
+    considerEnd(normalizeScheduleOverrideLocalTime(override.workEndLocal));
+  } else if (providerWeeklySchedules?.length) {
+    const dow = goalDayOfWeekFromLuxonWeekday(
+      DateTime.fromISO(dayKey, { zone: PRACTICE_TZ }).weekday
+    );
+    const schedule = providerWeeklySchedules.find((s) => s.dayOfWeek === dow);
+    considerStart(schedule?.workStartLocal);
+    considerEnd(schedule?.workEndLocal);
+  }
+
+  return { startMin, endMin };
+}
 
 /**
  * Practice calendar "off" day: explicit schedule override (Settings → Override), not a weekly
@@ -4240,7 +4285,6 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         setDriveEtaLoading(true);
       } else {
         setDriveIsoByApptId(null);
-        setDriveDayByDate(null);
         setDriveEtaLoading(false);
       }
     } else if (canDrive) {
@@ -4610,22 +4654,23 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
 
     let fromDepot: number | null = null;
     let toDepot: number | null = null;
-    if (showByDriveTime && driveDayByDate && resolvedPrimaryProviderId.trim()) {
+    if (resolvedPrimaryProviderId.trim()) {
       for (const dayDt of dayColumnDates) {
         const key = dayDt.toISODate()!;
-        const row = driveDayByDate.get(key);
-        const sdt = row?.startDepotTime?.trim();
-        if (sdt) {
-          const depotMin = timeStrToMinutesFromMidnight(sdt);
-          const candidate = Math.max(0, Math.floor(depotMin / SLOT_MINUTES) * SLOT_MINUTES - buf);
+        const { startMin, endMin } = schedulerWorkDayMinutesForDate(
+          key,
+          driveDayByDate,
+          scheduleOverridesByDate,
+          providerWeeklySchedules
+        );
+        if (startMin != null) {
+          const candidate = Math.max(0, Math.floor(startMin / SLOT_MINUTES) * SLOT_MINUTES - buf);
           fromDepot = fromDepot === null ? candidate : Math.min(fromDepot, candidate);
         }
-        const edt = row?.endDepotTime?.trim();
-        if (edt) {
-          const depotEndMin = timeStrToMinutesFromMidnight(edt);
+        if (endMin != null) {
           const candidate = Math.min(
             24 * 60,
-            Math.ceil(depotEndMin / SLOT_MINUTES) * SLOT_MINUTES + buf
+            Math.ceil(endMin / SLOT_MINUTES) * SLOT_MINUTES + buf
           );
           toDepot = toDepot === null ? candidate : Math.max(toDepot, candidate);
         }
@@ -4651,9 +4696,10 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   }, [
     calendarAppointments,
     displayRangeForAppt,
-    showByDriveTime,
     driveDayByDate,
     resolvedPrimaryProviderId,
+    scheduleOverridesByDate,
+    providerWeeklySchedules,
     editTimePreview,
     dayColumnDates,
     routingPreview,
@@ -6032,9 +6078,10 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       previewTypeId: routingPreview.appointmentTypeId,
       previewTypeChosenInRouting: routingPreview.appointmentTypeChosenInRouting,
     });
-    const rescheduleTypeOverride = routingStatsTypeKey.trim()
-      ? chosenRoutingTypeId
-      : undefined;
+    const rescheduleTypeOverride =
+      routingStatsTypeKey.trim() && (rescheduleTargets?.visits.length ?? 0) <= 1
+        ? chosenRoutingTypeId
+        : undefined;
     const rescheduleVisitPatches =
       rescheduleTargets && rescheduleTargets.visits.length > 0
         ? buildRescheduleVisitPatches(
@@ -7738,6 +7785,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             const fn = pickStr(c.firstName) ?? '';
             const ln = pickStr(c.lastName) ?? '';
             const clientLabel = [fn, ln].filter(Boolean).join(' ').trim() || undefined;
+            const anchorAlternateAddress = appointmentAlternateAddressText(appt);
             setBookPrefill({
               clientId: String(c.id),
               clientLabel,
@@ -7747,6 +7795,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               lockSlotTimes: true,
               preserveDurationFromSlot: true,
               coVisitAddPet: true,
+              ...(anchorAlternateAddress ? { coVisitAlternateAddress: anchorAlternateAddress } : {}),
               providerId: provId || undefined,
               excludePatientIds: exclude,
               modalTitle: 'Add another pet to this visit',

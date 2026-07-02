@@ -10,7 +10,10 @@ import {
   type Employee,
   type EmployeeWeeklyScheduleZone,
 } from '../api/appointmentSettings';
-import { resolveZoneForVeterinarianLookup } from '../api/zoneLookup';
+import {
+  OUT_OF_SERVICE_AREA_SHORT_LABEL,
+  resolveInPolygonZoneForAddress,
+} from '../api/zoneLookup';
 import { DateTime } from 'luxon';
 import { practiceTimeZoneOrDefault } from './practiceTimezone';
 
@@ -514,13 +517,13 @@ export async function findDoctorsNotAssignedToClientZone(args: {
       return { zoneLabel: null, outOfZoneDoctorPimsIds: [], issues: [] };
     }
 
-    const resolved = await resolveZoneForVeterinarianLookup(lookupAddress);
-    if (!resolved) {
+    const inPolygon = await resolveInPolygonZoneForAddress(lookupAddress);
+    if (!inPolygon) {
       return { zoneLabel: null, outOfZoneDoctorPimsIds: [], issues: [] };
     }
 
-    zoneId = resolved.zone.id;
-    zoneLabel = formatDoctorSelectZoneLabel(resolved.zone.name);
+    zoneId = inPolygon.id;
+    zoneLabel = formatDoctorSelectZoneLabel(inPolygon.name);
   }
   const daysOfWeek =
     args.startDate?.trim() && args.endDate?.trim()
@@ -551,11 +554,21 @@ export async function findDoctorsNotAssignedToClientZone(args: {
 
 export type VeterinariansForDoctorSelectResult = FetchVeterinariansResult & {
   usedNearestZone: boolean;
+  isOutOfServiceArea: boolean;
 };
+
+function outOfServiceAreaVeterinariansResult(): VeterinariansForDoctorSelectResult {
+  return {
+    providers: [],
+    clientZoneLabel: OUT_OF_SERVICE_AREA_SHORT_LABEL,
+    usedNearestZone: true,
+    isOutOfServiceArea: true,
+  };
+}
 
 /**
  * Load veterinarians for routing's multi-doctor picker.
- * Resolves the client's zone (or nearest zone when out of area), then filters using employee schedules.
+ * Uses in-polygon zone only; OOSA addresses return no doctors.
  */
 export async function fetchVeterinariansForDoctorSelect(args: {
   address: string;
@@ -565,15 +578,22 @@ export async function fetchVeterinariansForDoctorSelect(args: {
   const lookupAddress = await resolveLookupAddress(args);
 
   if (lookupAddress) {
-    const resolved = await resolveZoneForVeterinarianLookup(lookupAddress);
-    if (resolved) {
-      const result = await fetchProvidersByZoneId(resolved.zone);
-      return { ...result, usedNearestZone: resolved.usedNearestZone };
+    const inPolygon = await resolveInPolygonZoneForAddress(lookupAddress);
+    if (!inPolygon) {
+      const fallback = await fetchAllProvidersForDoctorSelect();
+      return {
+        ...fallback,
+        clientZoneLabel: OUT_OF_SERVICE_AREA_SHORT_LABEL,
+        usedNearestZone: true,
+        isOutOfServiceArea: true,
+      };
     }
-    return { ...(await fetchAllProvidersForDoctorSelect()), usedNearestZone: false };
+    const result = await fetchProvidersByZoneId(inPolygon);
+    return { ...result, usedNearestZone: false, isOutOfServiceArea: false };
   }
 
-  return { ...(await fetchAllProvidersForDoctorSelect()), usedNearestZone: false };
+  const fallback = await fetchAllProvidersForDoctorSelect();
+  return { ...fallback, usedNearestZone: false, isOutOfServiceArea: false };
 }
 
 /**
@@ -597,58 +617,62 @@ export async function fetchProvidersForAsapAllDoctorSearch(args: {
   const lookupAddress = await resolveLookupAddress(args);
 
   if (lookupAddress) {
-    const resolved = await resolveZoneForVeterinarianLookup(lookupAddress);
-    if (resolved) {
-      const zoneLabel = formatDoctorSelectZoneLabel(resolved.zone.name);
-      const allProviders = await fetchPrimaryProvidersCached();
-      const inZone = (
-        await Promise.all(
-          allProviders.map(async (provider): Promise<Provider | null> => {
-            const pimsId = provider.pimsId ? String(provider.pimsId) : String(provider.id);
-            const employeeId = await resolveEmployeeIdForDoctorPimsId(pimsId);
-            if (employeeId == null) return null;
-            const employee = await loadEmployeeById(employeeId);
-            if (!employee) return null;
-            if (
-              appointmentTypeId != null &&
-              !employeeAcceptsAppointmentType(employee, appointmentTypeId)
-            ) {
-              return null;
-            }
-            if (!isEmployeeAssignedToZoneId(employee, resolved.zone.id, null, zoneLabel)) {
-              return null;
-            }
-            const flags = deriveEmployeeZoneFlagsForZoneId(
-              employee,
-              resolved.zone.id,
-              null,
-              zoneLabel
-            );
-            return {
-              ...provider,
-              seeingClientsInClientZone: flags.seeingClients,
-              acceptingNewPatientsInClientZone: flags.acceptingNewPatients,
-              transitioningOutOfClientZone: flags.transitioningOut,
-            };
-          })
-        )
-      ).filter((p): p is Provider => p != null);
+    const inPolygon = await resolveInPolygonZoneForAddress(lookupAddress);
+    if (!inPolygon) return outOfServiceAreaVeterinariansResult();
 
-      if (inZone.length > 0) {
-        return {
-          providers: inZone,
-          clientZoneLabel: zoneLabel,
-          usedNearestZone: resolved.usedNearestZone,
-        };
-      }
+    const zoneLabel = formatDoctorSelectZoneLabel(inPolygon.name);
+    const allProviders = await fetchPrimaryProvidersCached();
+    const inZone = (
+      await Promise.all(
+        allProviders.map(async (provider): Promise<Provider | null> => {
+          const pimsId = provider.pimsId ? String(provider.pimsId) : String(provider.id);
+          const employeeId = await resolveEmployeeIdForDoctorPimsId(pimsId);
+          if (employeeId == null) return null;
+          const employee = await loadEmployeeById(employeeId);
+          if (!employee) return null;
+          if (
+            appointmentTypeId != null &&
+            !employeeAcceptsAppointmentType(employee, appointmentTypeId)
+          ) {
+            return null;
+          }
+          if (!isEmployeeAssignedToZoneId(employee, inPolygon.id, null, zoneLabel)) {
+            return null;
+          }
+          const flags = deriveEmployeeZoneFlagsForZoneId(
+            employee,
+            inPolygon.id,
+            null,
+            zoneLabel
+          );
+          return {
+            ...provider,
+            seeingClientsInClientZone: flags.seeingClients,
+            acceptingNewPatientsInClientZone: flags.acceptingNewPatients,
+            transitioningOutOfClientZone: flags.transitioningOut,
+          };
+        })
+      )
+    ).filter((p): p is Provider => p != null);
+
+    if (inZone.length > 0) {
+      return {
+        providers: inZone,
+        clientZoneLabel: zoneLabel,
+        usedNearestZone: false,
+        isOutOfServiceArea: false,
+      };
     }
   }
 
   const fallback = await fetchAllProvidersForDoctorSelect();
-  if (!appointmentTypeId) return { ...fallback, usedNearestZone: false };
+  if (!appointmentTypeId) {
+    return { ...fallback, usedNearestZone: false, isOutOfServiceArea: false };
+  }
   return {
     ...fallback,
     providers: await filterProvidersByEmployeeAppointmentType(fallback.providers, appointmentTypeId),
     usedNearestZone: false,
+    isOutOfServiceArea: false,
   };
 }

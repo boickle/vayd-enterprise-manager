@@ -28,6 +28,7 @@ import { getSelectedAppointmentType, EUTHANASIA_AFTERCARE_LABEL, EUTHANASIA_AFTE
 import { sortAppointmentTypesForPicker } from '../utils/appointmentTypeSettings';
 import { resolveClientArrivalWindowForScheduledStart } from '../utils/appointmentArrivalWindow';
 import { DEFAULT_PRACTICE_TIMEZONE } from '../utils/practiceTimezone';
+import { formatAutobookDateTimePreferenceDisplay } from '../utils/appointmentRequestDisplay';
 import { appointmentTypeForRoutingStatsKey } from '../utils/routingCalculateTimeType';
 import {
   buildRoutingVisitPetsFromFormData,
@@ -44,6 +45,8 @@ import {
   isVeterinarianAcceptingNewPatientsInClientZone,
   isOnlineBookingUnavailableError,
   ONLINE_BOOKING_UNAVAILABLE_MESSAGE,
+  ONLINE_BOOKING_OTHER_SPECIES_MESSAGE,
+  petsSpeciesAllowOnlineScheduling,
   SLOT_NO_LONGER_AVAILABLE_MESSAGE,
   appointmentFormSubmitSuccessKindFromMessage,
   extractApiResponseMessage,
@@ -1225,8 +1228,14 @@ export default function AppointmentRequestForm() {
     [petsInVisitWithHandlingQuestion],
   );
 
+  const speciesAllowOnlineScheduling = useMemo(
+    () => petsSpeciesAllowOnlineScheduling(petsInVisitWithHandlingQuestion),
+    [petsInVisitWithHandlingQuestion],
+  );
+
   const onlineBookingOffered = useMemo(() => {
     if (!handlingNeedsAllowOnlineScheduling) return false;
+    if (!speciesAllowOnlineScheduling) return false;
     if (visitAppointmentTypeIds.length === 0) return false;
     if (isNewPatientRequest) {
       return anyDoctorCanBookOnlineForNewPatientRequestForVisitTypes(
@@ -1240,6 +1249,7 @@ export default function AppointmentRequestForm() {
     rawVeterinarianList,
     isNewPatientRequest,
     handlingNeedsAllowOnlineScheduling,
+    speciesAllowOnlineScheduling,
   ]);
 
   const bookableProvidersForScheduling = useMemo(() => {
@@ -1466,7 +1476,11 @@ export default function AppointmentRequestForm() {
     isNewPatientRequest,
   ]);
 
-  const isOnlineBookingSubmit = Boolean(formData.selfScheduledSlot && slotDoctorAllowsOnlineBooking);
+  const isOnlineBookingSubmit = Boolean(
+    formData.selfScheduledSlot &&
+      slotDoctorAllowsOnlineBooking &&
+      speciesAllowOnlineScheduling,
+  );
 
   const selfScheduleExpectedServiceMinutes = resolvedServiceMinutes;
 
@@ -3313,6 +3327,9 @@ export default function AppointmentRequestForm() {
     if (formData.selfScheduledSlot && !slotDoctorAllowsOnlineBooking) {
       newErrors.selfScheduledSlot = ONLINE_BOOKING_UNAVAILABLE_MESSAGE;
     }
+    if (formData.selfScheduledSlot && !speciesAllowOnlineScheduling) {
+      newErrors.selfScheduledSlot = ONLINE_BOOKING_OTHER_SPECIES_MESSAGE;
+    }
     if (
       onlineBookingOffered &&
       !isManualSchedulingHowSoon(formData.howSoon) &&
@@ -4089,11 +4106,13 @@ export default function AppointmentRequestForm() {
           selectedDateTimePreferences: [{
             preference: 1,
             dateTime: formData.selfScheduledSlot!.appointmentStart,
-            display: [
-              formData.selfScheduledSlot!.doctorName,
-              formData.selfScheduledSlot!.windowDisplay ??
-                formData.selfScheduledSlot!.display,
-            ].filter(Boolean).join(' — '),
+            display: formatAutobookDateTimePreferenceDisplay({
+              doctorName: formData.selfScheduledSlot!.doctorName,
+              appointmentStart: formData.selfScheduledSlot!.appointmentStart,
+              windowDisplay: formData.selfScheduledSlot!.windowDisplay,
+              display: formData.selfScheduledSlot!.display,
+              practiceTz: DEFAULT_PRACTICE_TIMEZONE,
+            }),
           }],
           serviceMinutes: formData.selfScheduledSlot!.serviceMinutes,
           noneOfWorkForMe: false,
