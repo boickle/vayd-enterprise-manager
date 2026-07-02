@@ -390,6 +390,12 @@ export type RoomLoader = {
    */
   linkedPriorRoomLoaderId?: number | null;
   linkedRoomLoaderId?: number | null;
+  /** Present when the client has submitted the form (sentStatus completed). */
+  responseFromClient?: {
+    summaryForPdf?: SummaryForPdf;
+    formAnswersForPdf?: Record<string, unknown>;
+    [key: string]: unknown;
+  } | null;
   created?: string;
   updated?: string;
 };
@@ -686,7 +692,7 @@ export async function submitReminderFeedback(request: ReminderMappingFeedbackReq
 export type CheckItemPricingRequest = {
   patientId: number;
   practiceId: number;
-  clientId: number;
+  clientId?: number;
   /** Patient species label (e.g. Canine, Feline) for membership / species-specific pricing rules. */
   species?: string;
   itemType: 'lab' | 'procedure' | 'inventory' | string;

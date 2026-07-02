@@ -37,6 +37,11 @@ import PlanOrdersSection from '../components/soap/PlanOrdersSection';
 import ForwardBookingGate from '../components/soap/ForwardBookingGate';
 import VisitCheckoutPanel from '../components/soap/VisitCheckoutPanel';
 import EuthanasiaPrepayModal from '../components/soap/EuthanasiaPrepayModal';
+import {
+  appointmentReasonFromSentToClient,
+  buildSubjectiveTextFromRoomLoaderResponse,
+  findSubmittedRoomLoaderForAppointment,
+} from '../utils/roomLoaderSubjectiveText';
 
 type Vitals = {
   tempF: string;
@@ -46,6 +51,21 @@ type Vitals = {
   bcs: string;
   painScore: string;
 };
+
+type SoapTabId = 'subjective' | 'objective' | 'assessment' | 'plan' | 'followup';
+
+const SOAP_TABS: {
+  id: SoapTabId;
+  label: string;
+  short: string;
+  icon: typeof ClipboardList;
+}[] = [
+  { id: 'subjective', label: 'Subjective', short: 'S', icon: ClipboardList },
+  { id: 'objective', label: 'Objective', short: 'O', icon: Activity },
+  { id: 'assessment', label: 'Assessment', short: 'A', icon: ListChecks },
+  { id: 'plan', label: 'Plan', short: 'P', icon: ClipboardList },
+  { id: 'followup', label: 'Follow-up', short: 'FB', icon: CheckCircle2 },
+];
 
 function vitalsFromValue(v: unknown): Vitals {
   const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>;
@@ -83,6 +103,7 @@ export default function SoapEncounterPage() {
   const [reasoning, setReasoning] = useState('');
   const [linkedProblemIds, setLinkedProblemIds] = useState<string[]>([]);
   const [visitCompleted, setVisitCompleted] = useState(false);
+  const [activeTab, setActiveTab] = useState<SoapTabId>('subjective');
 
   const locked = encounter?.status === 'completed';
   const mode: SoapEncounterMode = encounter?.mode ?? 'comprehensive';
@@ -112,10 +133,38 @@ export default function SoapEncounterPage() {
           });
         }
         if (canceled) return;
+
+        let subjectiveHistory =
+          typeof enc.subjective?.history === 'string' ? enc.subjective.history : '';
+        if (!subjectiveHistory.trim()) {
+          try {
+            const roomLoader = await findSubmittedRoomLoaderForAppointment(appointmentId);
+            const response = roomLoader?.responseFromClient;
+            if (response) {
+              const prefilled = buildSubjectiveTextFromRoomLoaderResponse(
+                response,
+                patientId,
+                {
+                  appointmentReason: appointmentReasonFromSentToClient(
+                    roomLoader.sentToClient,
+                    patientId
+                  ),
+                }
+              );
+              if (prefilled.trim()) {
+                subjectiveHistory = prefilled;
+                enc = await updateEncounter(enc.id, {
+                  subjective: { history: prefilled },
+                });
+              }
+            }
+          } catch {
+            /* Room Loader preload is best-effort */
+          }
+        }
+
         setEncounter(enc);
-        setSubjective(
-          typeof enc.subjective?.history === 'string' ? enc.subjective.history : ''
-        );
+        setSubjective(subjectiveHistory);
         setVitals(vitalsFromValue(enc.objectiveVitals));
         setExam(peExamFromValue(enc.objectiveExam));
         setReasoning(enc.assessmentReasoning ?? '');
@@ -272,150 +321,176 @@ export default function SoapEncounterPage() {
 
       <div className="soap-body">
         <main className="soap-main">
-          {/* S */}
-          <section className="soap-section">
-            <h2>
-              <ClipboardList size={16} /> Subjective
-            </h2>
-            <p className="soap-section-hint">
-              History from intake / Room Loader. Confirm or edit — don't re-key what
-              the client already provided.
-            </p>
-            <textarea
-              className="soap-textarea"
-              rows={4}
-              placeholder="Presenting history, owner concerns…"
-              value={subjective}
-              disabled={locked}
-              onChange={(e) => setSubjective(e.target.value)}
-              onBlur={() => save({ subjective: { history: subjective } })}
-            />
-          </section>
+          <div className="soap-tabs" role="tablist" aria-label="SOAP sections">
+            {SOAP_TABS.map(({ id, label, short, icon: Icon }) => (
+              <button
+                key={id}
+                type="button"
+                role="tab"
+                aria-selected={activeTab === id}
+                className={`soap-tab${activeTab === id ? ' active' : ''}${
+                  id === 'followup' && !gateSatisfied && !locked ? ' needs-attention' : ''
+                }`}
+                onClick={() => setActiveTab(id)}
+              >
+                <Icon size={15} aria-hidden />
+                <span className="soap-tab-label">{label}</span>
+                <span className="soap-tab-short">{short}</span>
+              </button>
+            ))}
+          </div>
 
-          {/* O */}
-          <section className="soap-section">
-            <h2>
-              <Activity size={16} /> Objective
-            </h2>
-            <div className="soap-subhead">Vitals (TPR, weight, BCS)</div>
-            <div className="soap-vitals">
-              {(
-                [
-                  ['tempF', 'Temp °F'],
-                  ['hr', 'HR (bpm)'],
-                  ['rr', 'RR (rpm)'],
-                  ['weight', 'Weight (lb)'],
-                  ['bcs', 'BCS /9'],
-                  ['painScore', 'Pain /5'],
-                ] as [keyof Vitals, string][]
-              ).map(([key, label]) => (
-                <label key={key} className="soap-vital">
-                  <span>{label}</span>
-                  <input
-                    className="soap-input"
-                    inputMode="decimal"
-                    value={vitals[key]}
-                    disabled={locked}
-                    onChange={(e) =>
-                      setVitals((v) => ({ ...v, [key]: e.target.value }))
-                    }
-                    onBlur={() => save({ objectiveVitals: { ...vitals } })}
-                  />
-                </label>
-              ))}
-            </div>
-
-            {mode === 'comprehensive' && (
-              <>
-                <div className="soap-subhead">
-                  Physical exam — normal by default, tap a system to flag abnormal
-                </div>
-                <PhysicalExamSection
-                  value={exam}
+          <div className="soap-tab-panel">
+            {activeTab === 'subjective' && (
+              <section className="soap-section">
+                <h2>
+                  <ClipboardList size={16} /> Subjective
+                </h2>
+                <p className="soap-section-hint">
+                  History from intake / Room Loader. Confirm or edit — don't re-key what
+                  the client already provided.
+                </p>
+                <textarea
+                  className="soap-textarea"
+                  rows={4}
+                  placeholder="Presenting history, owner concerns…"
+                  value={subjective}
                   disabled={locked}
-                  onChange={(next) => {
-                    setExam(next);
-                    void save({ objectiveExam: next });
-                  }}
+                  onChange={(e) => setSubjective(e.target.value)}
+                  onBlur={() => save({ subjective: { history: subjective } })}
                 />
-              </>
+              </section>
             )}
-          </section>
 
-          {/* A */}
-          <section className="soap-section">
-            <h2>
-              <ListChecks size={16} /> Assessment
-            </h2>
-            <div className="soap-subhead">Master Problem List</div>
-            {encounter && (
-              <MasterProblemListSection
-                patientId={patientId}
-                encounterId={encounter.id}
-                problems={problems}
-                linkedProblemIds={linkedProblemIds}
-                disabled={locked}
-                onChange={setProblems}
-                onToggleLink={toggleProblemLink}
-              />
-            )}
-            <div className="soap-subhead">Clinical reasoning</div>
-            <textarea
-              className="soap-textarea"
-              rows={3}
-              placeholder="Assessment and clinical reasoning…"
-              value={reasoning}
-              disabled={locked}
-              onChange={(e) => setReasoning(e.target.value)}
-              onBlur={() => save({ assessmentReasoning: reasoning })}
-            />
-          </section>
+            {activeTab === 'objective' && (
+              <section className="soap-section">
+                <h2>
+                  <Activity size={16} /> Objective
+                </h2>
+                <div className="soap-subhead">Vitals (TPR, weight, BCS)</div>
+                <div className="soap-vitals">
+                  {(
+                    [
+                      ['tempF', 'Temp °F'],
+                      ['hr', 'HR (bpm)'],
+                      ['rr', 'RR (rpm)'],
+                      ['weight', 'Weight (lb)'],
+                      ['bcs', 'BCS /9'],
+                      ['painScore', 'Pain /5'],
+                    ] as [keyof Vitals, string][]
+                  ).map(([key, label]) => (
+                    <label key={key} className="soap-vital">
+                      <span>{label}</span>
+                      <input
+                        className="soap-input"
+                        inputMode="decimal"
+                        value={vitals[key]}
+                        disabled={locked}
+                        onChange={(e) =>
+                          setVitals((v) => ({ ...v, [key]: e.target.value }))
+                        }
+                        onBlur={() => save({ objectiveVitals: { ...vitals } })}
+                      />
+                    </label>
+                  ))}
+                </div>
 
-          {/* P */}
-          <section className="soap-section">
-            <h2>
-              <ClipboardList size={16} /> Plan
-            </h2>
-            <p className="soap-section-hint">
-              Every order is both a record entry and an invoice line. Meds also
-              generate a label and discharge instruction.
-            </p>
-            {encounter && (
-              <PlanOrdersSection
-                encounterId={encounter.id}
-                orders={orders}
-                disabled={locked}
-                patientId={patientId}
-                clientId={clientIdParam ? Number(clientIdParam) : undefined}
-                practiceId={VISIT_WORKFLOW_PRACTICE_ID}
-                onChange={setOrders}
-                onInvoiceShouldRefresh={() => void refreshInvoice()}
-              />
+                {mode === 'comprehensive' && (
+                  <>
+                    <div className="soap-subhead">
+                      Physical exam — normal by default, tap a system to flag abnormal
+                    </div>
+                    <PhysicalExamSection
+                      value={exam}
+                      disabled={locked}
+                      onChange={(next) => {
+                        setExam(next);
+                        void save({ objectiveExam: next });
+                      }}
+                    />
+                  </>
+                )}
+              </section>
             )}
-          </section>
 
-          {/* Forward booking gate */}
-          <section className="soap-section soap-gate">
-            <h2>
-              <CheckCircle2 size={16} /> Forward booking (required to complete)
-            </h2>
-            {encounter && (
-              <ForwardBookingGate
-                appointmentId={appointmentId}
-                patientId={patientId}
-                clientId={encounter.clientId}
-                disabled={locked}
-                value={dispositionValue}
-                onSave={async (disposition, entryId) => {
-                  await save({
-                    forwardBookingDisposition:
-                      disposition as unknown as Record<string, unknown>,
-                    forwardBookingEntryId: entryId ?? undefined,
-                  });
-                }}
-              />
+            {activeTab === 'assessment' && (
+              <section className="soap-section">
+                <h2>
+                  <ListChecks size={16} /> Assessment
+                </h2>
+                <div className="soap-subhead">Master Problem List</div>
+                {encounter && (
+                  <MasterProblemListSection
+                    patientId={patientId}
+                    encounterId={encounter.id}
+                    problems={problems}
+                    linkedProblemIds={linkedProblemIds}
+                    disabled={locked}
+                    onChange={setProblems}
+                    onToggleLink={toggleProblemLink}
+                  />
+                )}
+                <div className="soap-subhead">Clinical reasoning</div>
+                <textarea
+                  className="soap-textarea"
+                  rows={3}
+                  placeholder="Assessment and clinical reasoning…"
+                  value={reasoning}
+                  disabled={locked}
+                  onChange={(e) => setReasoning(e.target.value)}
+                  onBlur={() => save({ assessmentReasoning: reasoning })}
+                />
+              </section>
             )}
-          </section>
+
+            {activeTab === 'plan' && (
+              <section className="soap-section">
+                <h2>
+                  <ClipboardList size={16} /> Plan
+                </h2>
+                <p className="soap-section-hint">
+                  Every order is both a record entry and an invoice line. Meds also
+                  generate a label and discharge instruction.
+                </p>
+                {encounter && (
+                  <PlanOrdersSection
+                    encounterId={encounter.id}
+                    orders={orders}
+                    disabled={locked}
+                    patientId={patientId}
+                    clientId={clientIdParam ? Number(clientIdParam) : undefined}
+                    practiceId={VISIT_WORKFLOW_PRACTICE_ID}
+                    onChange={setOrders}
+                    onInvoiceShouldRefresh={() => void refreshInvoice()}
+                  />
+                )}
+              </section>
+            )}
+
+            {activeTab === 'followup' && (
+              <section className="soap-section soap-gate">
+                <h2>
+                  <CheckCircle2 size={16} /> Forward booking (required to complete)
+                </h2>
+                {encounter && (
+                  <ForwardBookingGate
+                    appointmentId={appointmentId}
+                    patientId={patientId}
+                    clientId={encounter.clientId}
+                    disabled={locked}
+                    value={dispositionValue}
+                    onSave={async (disposition, entryId) => {
+                      await save({
+                        forwardBookingDisposition:
+                          disposition as unknown as Record<string, unknown>,
+                        forwardBookingEntryId: entryId ?? undefined,
+                      });
+                    }}
+                  />
+                )}
+              </section>
+            )}
+          </div>
         </main>
 
         <aside className="soap-aside">

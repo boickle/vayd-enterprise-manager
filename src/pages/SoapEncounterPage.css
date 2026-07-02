@@ -92,7 +92,74 @@
 .soap-main {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 0;
+  min-width: 0;
+}
+
+/* SOAP section tabs */
+.soap-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px;
+  background: #fff;
+  border: 1px solid var(--soap-border);
+  border-radius: 12px 12px 0 0;
+  border-bottom: none;
+}
+.soap-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--soap-muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.soap-tab:hover:not(.active) {
+  background: var(--soap-bg);
+  color: #111827;
+}
+.soap-tab.active {
+  background: var(--soap-accent);
+  color: #fff;
+}
+.soap-tab.needs-attention:not(.active) {
+  color: #b45309;
+  box-shadow: inset 0 0 0 1px #fcd34d;
+}
+.soap-tab-short {
+  display: none;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+@media (max-width: 720px) {
+  .soap-tab-label {
+    display: none;
+  }
+  .soap-tab-short {
+    display: inline;
+  }
+}
+.soap-tab-panel {
+  background: #fff;
+  border: 1px solid var(--soap-border);
+  border-radius: 0 0 12px 12px;
+  min-height: 280px;
+}
+.soap-tab-panel .soap-section {
+  border: none;
+  border-radius: 0;
+  margin: 0;
+}
+.soap-tab-panel .soap-section:last-child {
+  border-radius: 0 0 12px 12px;
 }
 .soap-aside {
   position: sticky;

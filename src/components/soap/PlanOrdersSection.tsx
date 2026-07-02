@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Check, Minus, Pill, Plus, Search, StickyNote, Trash2, X } from 'lucide-react';
 import {
   createOrder,
@@ -9,7 +9,18 @@ import {
   type EncounterOrderCatalogType,
   type EncounterOrderKind,
 } from '../../api/visitWorkflow';
-import { searchItems, type SearchableItem } from '../../api/roomLoader';
+import {
+  checkItemPricing,
+  searchItems,
+  type SearchableItem,
+} from '../../api/roomLoader';
+import {
+  buildCheckItemPayloadFromSearch,
+  fetchCatalogPricingForOrder,
+  getCatalogLinePrice,
+  pricingItemFromSearchAndCheck,
+  type CatalogPricingItem,
+} from '../../utils/catalogItemPricing';
 
 type Props = {
   encounterId: string;
@@ -19,7 +30,6 @@ type Props = {
   clientId?: number;
   practiceId: number;
   onChange: (orders: EncounterOrder[]) => void;
-  /** Called after any order mutation so the invoice can be refreshed. */
   onInvoiceShouldRefresh: () => void;
 };
 
@@ -27,7 +37,6 @@ function money(n: number): string {
   return `$${(Number(n) || 0).toFixed(2)}`;
 }
 
-/** Catalog type → order kind. Inventory medications produce med labels. */
 function kindForItem(item: SearchableItem): EncounterOrderKind {
   if (item.itemType === 'lab') return 'diagnostic';
   if (item.itemType === 'procedure') return 'treatment';
@@ -48,24 +57,17 @@ function catalogIdForItem(item: SearchableItem): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
-function effectivePrice(item: SearchableItem): number {
-  const adj = item.adjustedPrice;
-  if (adj != null && Number.isFinite(Number(adj))) return Number(adj);
-  return Number(item.price) || 0;
-}
-
 const TYPE_LABEL: Record<string, string> = {
   lab: 'Lab',
   procedure: 'Procedure',
   inventory: 'Inventory',
 };
 
-/**
- * Plan = orders. Placing an order creates a record entry AND an invoice line in
- * one action (spec §5.4). Pre-staged proposals are accepted/declined; declining
- * removes both the record entry and the charge. Meds also generate a label and
- * discharge instruction on the backend.
- */
+/** Search row display price at qty 1 (tiers + discounts when metadata present). */
+function displayPriceForSearchItem(item: SearchableItem): number {
+  return getCatalogLinePrice(item as CatalogPricingItem, 1).unitFinal;
+}
+
 export default function PlanOrdersSection({
   encounterId,
   orders,
@@ -82,9 +84,43 @@ export default function PlanOrdersSection({
   const [searchError, setSearchError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [adding, setAdding] = useState(false);
+  const [pricingByOrderId, setPricingByOrderId] = useState<
+    Record<string, CatalogPricingItem>
+  >({});
   const boxRef = useRef<HTMLDivElement>(null);
 
-  // Debounced catalog search across labs, procedures, and inventory items.
+  const canPrice = patientId != null && Number.isFinite(patientId);
+
+  const storePricing = useCallback((orderId: string, item: CatalogPricingItem) => {
+    setPricingByOrderId((prev) => ({ ...prev, [orderId]: item }));
+  }, []);
+
+  const dropPricing = useCallback((orderId: string) => {
+    setPricingByOrderId((prev) => {
+      if (!(orderId in prev)) return prev;
+      const next = { ...prev };
+      delete next[orderId];
+      return next;
+    });
+  }, []);
+
+  const ensurePricingSnapshot = useCallback(
+    async (order: EncounterOrder): Promise<CatalogPricingItem | null> => {
+      const cached = pricingByOrderId[order.id];
+      if (cached) return cached;
+      if (!canPrice) return null;
+      const item = await fetchCatalogPricingForOrder({
+        order,
+        patientId: patientId!,
+        practiceId,
+        clientId,
+      });
+      if (item) storePricing(order.id, item);
+      return item;
+    },
+    [pricingByOrderId, canPrice, patientId, practiceId, clientId, storePricing]
+  );
+
   useEffect(() => {
     const q = query.trim();
     if (q.length < 2) {
@@ -135,25 +171,72 @@ export default function PlanOrdersSection({
     return () => document.removeEventListener('mousedown', onDown);
   }, []);
 
+  const patch = async (
+    order: EncounterOrder,
+    body: {
+      name?: string;
+      note?: string | null;
+      qty?: number;
+      unitPrice?: number;
+      isCovered?: boolean;
+    }
+  ) => {
+    const updated = await updateOrder(encounterId, order.id, body);
+    onChange(orders.map((o) => (o.id === order.id ? updated : o)));
+    onInvoiceShouldRefresh();
+  };
+
+  const repriceAndPatch = async (order: EncounterOrder, qty: number) => {
+    const q = Math.max(1, Math.round(qty));
+    if (q === Number(order.qty) && order.catalogItemId == null) {
+      await patch(order, { qty: q });
+      return;
+    }
+
+    const snapshot = await ensurePricingSnapshot(order);
+    if (!snapshot) {
+      await patch(order, { qty: q });
+      return;
+    }
+
+    const { unitFinal, isCovered } = getCatalogLinePrice(snapshot, q);
+    await patch(order, { qty: q, unitPrice: unitFinal, isCovered });
+  };
+
   const addItem = async (item: SearchableItem) => {
     if (adding) return;
     setAdding(true);
     try {
       const catalogItemType = item.itemType as EncounterOrderCatalogType;
-      const covered = Boolean(
-        item.wellnessPlanPricing?.hasCoverage &&
-          item.wellnessPlanPricing?.isWithinLimit &&
-          effectivePrice(item) === 0
-      );
+      let pricingItem: CatalogPricingItem = item as CatalogPricingItem;
+      let unitPrice = displayPriceForSearchItem(item);
+      let isCovered = false;
+
+      if (canPrice) {
+        const pricingResponse = await checkItemPricing({
+          patientId: patientId!,
+          practiceId,
+          clientId,
+          itemType: item.itemType,
+          item: buildCheckItemPayloadFromSearch(item),
+        });
+        pricingItem = pricingItemFromSearchAndCheck(item, pricingResponse);
+        const line = getCatalogLinePrice(pricingItem, 1);
+        unitPrice = line.unitFinal;
+        isCovered = line.isCovered;
+      }
+
       const created = await createOrder(encounterId, {
         name: item.name,
         kind: kindForItem(item),
         catalogItemId: catalogIdForItem(item),
         catalogItemType,
-        unitPrice: effectivePrice(item),
-        isCovered: covered,
+        unitPrice,
+        isCovered,
+        qty: 1,
         state: 'accepted',
       });
+      storePricing(created.id, pricingItem);
       onChange([...orders, created]);
       onInvoiceShouldRefresh();
       setQuery('');
@@ -187,26 +270,36 @@ export default function PlanOrdersSection({
     }
   };
 
-  const patch = async (
-    order: EncounterOrder,
-    body: { name?: string; note?: string | null; qty?: number; unitPrice?: number }
-  ) => {
-    const updated = await updateOrder(encounterId, order.id, body);
-    onChange(orders.map((o) => (o.id === order.id ? updated : o)));
-    onInvoiceShouldRefresh();
-  };
-
   const changeState = async (
     order: EncounterOrder,
     state: 'accepted' | 'declined'
   ) => {
-    const updated = await setOrderState(encounterId, order.id, state);
+    let updated = await setOrderState(encounterId, order.id, state);
+
+    if (state === 'accepted' && order.catalogItemId != null && canPrice) {
+      const snapshot = await ensurePricingSnapshot(updated);
+      if (snapshot) {
+        const qty = Number(updated.qty) || 1;
+        const { unitFinal, isCovered } = getCatalogLinePrice(snapshot, qty);
+        if (
+          unitFinal !== Number(updated.unitPrice) ||
+          isCovered !== updated.isCovered
+        ) {
+          updated = await updateOrder(encounterId, updated.id, {
+            unitPrice: unitFinal,
+            isCovered,
+          });
+        }
+      }
+    }
+
     onChange(orders.map((o) => (o.id === order.id ? updated : o)));
     onInvoiceShouldRefresh();
   };
 
   const remove = async (order: EncounterOrder) => {
     await deleteOrder(encounterId, order.id);
+    dropPricing(order.id);
     onChange(orders.filter((o) => o.id !== order.id));
     onInvoiceShouldRefresh();
   };
@@ -223,14 +316,19 @@ export default function PlanOrdersSection({
             <div key={o.id} className="soap-order proposed">
               <span className="soap-order-name">
                 {o.kind === 'med' && <Pill size={13} />} {o.name}
+                {Number(o.qty) > 1 && (
+                  <span className="soap-order-qty"> ×{Number(o.qty)}</span>
+                )}
               </span>
-              <span className="soap-order-price">{money(o.qty * o.unitPrice)}</span>
+              <span className="soap-order-price">
+                {o.isCovered ? '—' : money(Number(o.qty) * Number(o.unitPrice))}
+              </span>
               <div className="soap-order-actions">
                 <button
                   type="button"
                   className="soap-btn small ok"
                   disabled={disabled}
-                  onClick={() => changeState(o, 'accepted')}
+                  onClick={() => void changeState(o, 'accepted')}
                 >
                   <Check size={13} /> Accept
                 </button>
@@ -238,7 +336,7 @@ export default function PlanOrdersSection({
                   type="button"
                   className="soap-btn small danger"
                   disabled={disabled}
-                  onClick={() => changeState(o, 'declined')}
+                  onClick={() => void changeState(o, 'declined')}
                 >
                   <X size={13} /> Decline
                 </button>
@@ -266,7 +364,7 @@ export default function PlanOrdersSection({
                 key={o.id}
                 order={o}
                 disabled={disabled}
-                onPatch={patch}
+                onQtyChange={repriceAndPatch}
                 onChangeState={changeState}
                 onRemove={remove}
               />
@@ -306,7 +404,7 @@ export default function PlanOrdersSection({
               )}
               {!searching &&
                 results.map((item, idx) => {
-                  const eff = effectivePrice(item);
+                  const eff = displayPriceForSearchItem(item);
                   const original = Number(item.price) || 0;
                   const discounted = eff !== original;
                   return (
@@ -317,7 +415,7 @@ export default function PlanOrdersSection({
                       key={`${item.itemType}-${catalogIdForItem(item) ?? idx}`}
                       className="soap-plan-result"
                       disabled={adding}
-                      onClick={() => addItem(item)}
+                      onClick={() => void addItem(item)}
                     >
                       <span className={`soap-tag type-${item.itemType}`}>
                         {TYPE_LABEL[item.itemType] ?? item.itemType}
@@ -337,7 +435,6 @@ export default function PlanOrdersSection({
                     </button>
                   );
                 })}
-              {/* Pinned: always available so typing never dead-ends. */}
               <button
                 type="button"
                 role="option"
@@ -356,8 +453,8 @@ export default function PlanOrdersSection({
             </div>
           )}
           <p className="soap-hint">
-            Catalog items (inventory, procedures, labs) become a charge. “Add as note”
-            creates a text line you can edit and optionally price.
+            Catalog prices use quantity tiers and membership/client discounts (same as Room
+            Loader). “Add as note” creates a text line you can edit and optionally price.
           </p>
         </div>
       )}
@@ -365,28 +462,28 @@ export default function PlanOrdersSection({
   );
 }
 
-/** Catalog/charge order row with an inline quantity stepper. */
 function CatalogRow({
   order: o,
   disabled,
-  onPatch,
+  onQtyChange,
   onChangeState,
   onRemove,
 }: {
   order: EncounterOrder;
   disabled?: boolean;
-  onPatch: (
-    order: EncounterOrder,
-    body: { qty?: number; unitPrice?: number }
-  ) => Promise<void>;
+  onQtyChange: (order: EncounterOrder, qty: number) => Promise<void>;
   onChangeState: (order: EncounterOrder, state: 'accepted' | 'declined') => void;
   onRemove: (order: EncounterOrder) => void;
 }) {
   const qty = Number(o.qty) || 1;
   const editable = !disabled && o.state !== 'declined';
+  const [repricing, setRepricing] = useState(false);
+
   const setQty = (next: number) => {
     const q = Math.max(1, Math.round(next));
-    if (q !== qty) void onPatch(o, { qty: q });
+    if (q === qty || repricing) return;
+    setRepricing(true);
+    void onQtyChange(o, q).finally(() => setRepricing(false));
   };
 
   return (
@@ -402,7 +499,7 @@ function CatalogRow({
             type="button"
             className="soap-icon-btn"
             title="Decrease"
-            disabled={qty <= 1}
+            disabled={qty <= 1 || repricing}
             onClick={() => setQty(qty - 1)}
           >
             <Minus size={13} />
@@ -412,12 +509,14 @@ function CatalogRow({
             type="number"
             min={1}
             value={qty}
+            disabled={repricing}
             onChange={(e) => setQty(Number(e.target.value))}
           />
           <button
             type="button"
             className="soap-icon-btn"
             title="Increase"
+            disabled={repricing}
             onClick={() => setQty(qty + 1)}
           >
             <Plus size={13} />
@@ -435,7 +534,7 @@ function CatalogRow({
             <button
               type="button"
               className="soap-btn small ok"
-              onClick={() => onChangeState(o, 'accepted')}
+              onClick={() => void onChangeState(o, 'accepted')}
             >
               Re-add
             </button>
@@ -443,7 +542,7 @@ function CatalogRow({
             <button
               type="button"
               className="soap-btn small danger"
-              onClick={() => onChangeState(o, 'declined')}
+              onClick={() => void onChangeState(o, 'declined')}
             >
               <X size={13} /> Decline
             </button>
@@ -462,7 +561,6 @@ function CatalogRow({
   );
 }
 
-/** Free-form note row: editable text + optional manual charge. */
 function NoteRow({
   order: o,
   disabled,
