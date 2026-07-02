@@ -55,7 +55,7 @@ import {
   parseCoordinate,
 } from '../utils/verifiedAddress';
 import { fetchPrimaryProviders } from '../api/employee';
-import { lookupClientZoneForAddress, type ClientZoneLookupResult } from '../api/zoneLookup';
+import { lookupClientZoneForAddress, clientZoneLookupIsOutOfServiceArea, type ClientZoneLookupResult } from '../api/zoneLookup';
 import {
   fetchVeterinariansForDoctorSelect,
   fetchProvidersForAsapAllDoctorSearch,
@@ -617,6 +617,9 @@ type Doctor = {
 // =========================
 
 const DOCTORS_SEARCH_URL = '/employees/search';
+
+const ROUTING_ASAP_OOSA_TOOLTIP =
+  'Unavailable for out-of-service-area (OOSA) addresses. ASAP searches doctors assigned to the address zone—use Best fit across doctors under Scheduling Preferences instead.';
 
 function buildDoctorName(emp: any, fallback?: string): string {
   const parts: string[] = [];
@@ -3427,6 +3430,12 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     };
   }, [routingAddressVerified, form.newAppt.address, form.newAppt.lat, form.newAppt.lon, addressError]);
 
+  useEffect(() => {
+    if (clientZoneLookupIsOutOfServiceArea(addressZone) && asapAllDoctorSearch) {
+      setAsapAllDoctorSearch(false);
+    }
+  }, [addressZone, asapAllDoctorSearch]);
+
   // Geocode client-prefilled or restored addresses that lack coordinates.
   useEffect(() => {
     const addr = (form.newAppt.address ?? '').trim();
@@ -4336,7 +4345,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
               ? newApptPayload.lon
               : undefined,
           doctorPimsIds: doctorPimsIdsForZoneCheck,
-          zoneId: cachedZone?.zoneId,
+          zoneId: cachedZone?.zoneId ?? undefined,
           zoneLabel: cachedZone?.shortLabel,
           startDate: form.startDate,
           endDate: form.endDate,
@@ -4543,17 +4552,23 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     const endpoint = '/routing/v2';
 
     if (asapAllDoctorSearch) {
+      if (clientZoneLookupIsOutOfServiceArea(addressZoneRef.current)) {
+        return;
+      }
       try {
         const lat = form.newAppt.lat;
         const lon = form.newAppt.lon;
         const address = (form.newAppt.address ?? '').trim();
         const appointmentTypeId = routingRequestAppointmentTypeId();
-        const { providers } = await fetchProvidersForAsapAllDoctorSearch({
+        const { providers, isOutOfServiceArea } = await fetchProvidersForAsapAllDoctorSearch({
           address,
           lat: typeof lat === 'number' && Number.isFinite(lat) ? lat : undefined,
           lon: typeof lon === 'number' && Number.isFinite(lon) ? lon : undefined,
           appointmentTypeId,
         });
+        if (isOutOfServiceArea) {
+          return;
+        }
         const doctorIds = providers
           .map((p) => (p.pimsId ? String(p.pimsId) : String(p.id)))
           .filter(Boolean);
@@ -4594,7 +4609,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
         const lat = form.newAppt.lat;
         const lon = form.newAppt.lon;
         const address = (form.newAppt.address ?? '').trim();
-        const { providers: veterinarians, clientZoneLabel, usedNearestZone } =
+        const { providers: veterinarians, clientZoneLabel } =
           await fetchVeterinariansForDoctorSelect({
             address,
             lat: typeof lat === 'number' && Number.isFinite(lat) ? lat : undefined,
@@ -4603,11 +4618,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
         if (!alive) return;
 
         setDoctorSelectClientZoneLabel(clientZoneLabel);
-        setDoctorSelectNearestZoneNote(
-          usedNearestZone && clientZoneLabel
-            ? `Out of area — using nearest zone (${clientZoneLabel}) for doctor availability.`
-            : null
-        );
+        setDoctorSelectNearestZoneNote(null);
 
         const providersWithPims: RoutingDoctorPick[] = veterinarians.map((v) => {
           const pimsId = v.pimsId ? String(v.pimsId) : String(v.id);
@@ -4946,17 +4957,30 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
               .filter(Boolean)
               .join(' ')}
           >
-          <label className="routing-asap-all-doctor-search">
+          <label
+            className={[
+              'routing-asap-all-doctor-search',
+              clientZoneLookupIsOutOfServiceArea(addressZone)
+                ? 'routing-asap-all-doctor-search--unavailable'
+                : '',
+            ]
+              .filter(Boolean)
+              .join(' ')}
+            title={
+              clientZoneLookupIsOutOfServiceArea(addressZone) ? ROUTING_ASAP_OOSA_TOOLTIP : undefined
+            }
+          >
             <input
               type="checkbox"
               checked={asapAllDoctorSearch}
+              disabled={clientZoneLookupIsOutOfServiceArea(addressZone)}
               onChange={(e) => {
                 const checked = e.target.checked;
                 setAsapAllDoctorSearch(checked);
                 if (checked) setReserveOption('reserve-only');
               }}
             />
-            <span>ASAP All Doctor Search</span>
+            <span>ASAP All Doctors In Zone Search</span>
           </label>
           {/* Doctor picker — hidden when searching all doctors */}
           {!asapAllDoctorSearch ? (
@@ -5508,21 +5532,25 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
               ) : null}
               {routingAddressVerified && !addressZoneLoading && addressZone ? (
                 <div
-                  className={`routing-address-zone-line${
-                    doctorZoneWarning ? ' routing-address-zone-line--doctor-mismatch' : ''
-                  }`}
+                  className={[
+                    'routing-address-zone-line',
+                    addressZone.isOutOfServiceArea ? 'routing-address-zone-line--oosa' : '',
+                    doctorZoneWarning ? 'routing-address-zone-line--doctor-mismatch' : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' ')}
                   title={
-                    doctorZoneWarning
-                      ? doctorZoneWarning.status === 'transitioning_out'
-                        ? `${doctorZoneWarningMessage} You can still route — you will be asked to confirm.`
-                        : `${selectedDoctorDisplayName} is not assigned to this zone in Settings. You can still route — you will be asked to confirm.`
-                      : addressZone.usedNearestZone
-                        ? 'Nearest service zone (address is outside zone polygons)'
+                    addressZone.isOutOfServiceArea
+                      ? 'Out of service area — choose doctors manually via Best fit across doctors'
+                      : doctorZoneWarning
+                        ? doctorZoneWarning.status === 'transitioning_out'
+                          ? `${doctorZoneWarningMessage} You can still route — you will be asked to confirm.`
+                          : `${selectedDoctorDisplayName} is not assigned to this zone in Settings. You can still route — you will be asked to confirm.`
                         : 'Service zone for this address'
                   }
                 >
                   <span className="routing-address-zone-label">{addressZone.displayLabel}</span>
-                  {doctorZoneWarning ? (
+                  {!addressZone.isOutOfServiceArea && doctorZoneWarning ? (
                     <span className="routing-address-zone-warn">{doctorZoneWarningMessage}</span>
                   ) : null}
                 </div>
@@ -6367,7 +6395,9 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
             {providersLoading ? (
               <p className="routing-doctor-select-empty">Loading doctors…</p>
             ) : allProviders.length === 0 ? (
-              <p className="routing-doctor-select-empty">No doctors found.</p>
+              <p className="routing-doctor-select-empty">
+                {doctorSelectNearestZoneNote ?? 'No doctors found.'}
+              </p>
             ) : (
               <div className="routing-doctor-select-list">
                 {allProviders.map((provider) => {

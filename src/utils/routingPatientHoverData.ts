@@ -9,6 +9,7 @@ import {
   appointmentTypeDisplayName,
   formatVisitHighlightsNextAppointmentLine,
 } from './nextScheduledAppointmentForVisit';
+import { primaryProviderFromPatientRecord } from './schedulerVisitDisplay';
 
 function pickStr(v: unknown): string | null {
   if (v == null) return null;
@@ -157,6 +158,7 @@ export async function enrichRoutingClientPatientsMembership(
 
 export type RoutingPatientHoverSummary = {
   alerts: string | null;
+  primaryProviderName: string | null;
   lastAppointmentLine: string | null;
   nextAppointmentLine: string | null;
   activeReminders: RoutingPatientReminderLine[];
@@ -304,6 +306,7 @@ export async function loadRoutingPatientHoverSummary(
   ]);
 
   const alerts = opts?.alerts?.trim() || patientAlertsFromRecord(patientProfile) || null;
+  const primaryProviderName = primaryProviderFromPatientRecord(patientProfile);
 
   const past = appointments
     .filter(
@@ -325,6 +328,7 @@ export async function loadRoutingPatientHoverSummary(
 
   return {
     alerts,
+    primaryProviderName,
     lastAppointmentLine: past ? formatPastAppointmentLine(past, practiceTz) : null,
     nextAppointmentLine: future
       ? formatVisitHighlightsNextAppointmentLine(future, practiceTz, providerLabelFromAppointment(future))

@@ -163,6 +163,16 @@ export function isOnlineBookingUnavailableError(
 export const ONLINE_BOOKING_UNAVAILABLE_MESSAGE =
   'Online booking is not available for this doctor and appointment type. Please enter your preferred times and a Client Liaison will contact you.';
 
+export const ONLINE_BOOKING_OTHER_SPECIES_MESSAGE =
+  'Online booking is not available when a pet species is listed as Other. Please enter your preferred times and a Client Liaison will contact you.';
+
+/** Self-scheduling only when every new pet on the form is Dog or Cat (not Other). */
+export function petsSpeciesAllowOnlineScheduling(
+  pets: ReadonlyArray<{ speciesChoice?: string | null }>,
+): boolean {
+  return !pets.some((p) => p.speciesChoice === 'Other');
+}
+
 export const SLOT_NO_LONGER_AVAILABLE_MESSAGE =
   'The selected time is no longer available. Please choose another time.';
 

@@ -88,9 +88,6 @@ function humanDueLine(iso: string | null): string {
   endToday.setDate(endToday.getDate() + 1);
   if (d < startToday) return 'Overdue';
   if (d < endToday) return 'Due today';
-  const weekEnd = new Date(startToday);
-  weekEnd.setDate(weekEnd.getDate() + 7);
-  if (d < weekEnd) return 'Due this week';
   return `Due ${d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}`;
 }
 
