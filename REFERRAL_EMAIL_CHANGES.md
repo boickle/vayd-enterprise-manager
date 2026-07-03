@@ -25,7 +25,7 @@ Hi {{referral name}},
 
 {{referrer name}} thought you might be interested in learning more about Vet At Your Door and asked us to reach out.
 
-Vet At Your Door is a house call veterinary practice that brings comprehensive medical care directly to your home. Our dedicated One Team model means you have a consistent veterinarian, technician, and client liaison caring for your pet in a proactive, personal, and continuous way. We provide wellness care, sick visits, diagnostics, end-of-life care, and more, all in the comfort of your home.
+Vet At Your Door is a house call veterinary practice that brings comprehensive medical care directly to your home. Our One Team model means your pet is supported by a dedicated veterinarian and veterinary technician — a small team that stays with you over time — so care stays proactive, personal, and continuous. We provide wellness care, sick visits, diagnostics, end-of-life care, and more, all in the comfort of your home.
 
 You can learn more about our approach here:
 https://www.vetatyourdoor.com

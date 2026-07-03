@@ -212,6 +212,8 @@ export type SchedulerBookPrefill = {
   disableClientSearch?: boolean;
   /** Employee “add another pet” same-slot flow — ignores Role manual booking settings. */
   coVisitAddPet?: boolean;
+  /** Visit alternate address from the anchor appointment when adding another pet. */
+  coVisitAlternateAddress?: string;
   /** When true, date / start time / duration cannot be changed (same-slot co-visit). */
   lockSlotTimes?: boolean;
   /** When set with routing preview — PATCH existing visit instead of POST create. */
@@ -705,6 +707,8 @@ export function SchedulerBookModal({
   /** Include on create/preview when type allows alternate address (blank is OK). */
   const bookAlternateAddressText = useMemo(() => {
     if (routingBookUsesClientHome) return '';
+    const coVisitAlt = prefill?.coVisitAlternateAddress?.trim();
+    if (prefill?.coVisitAddPet && coVisitAlt) return coVisitAlt;
     const prefillAlt = prefill?.routingAlternateAddress?.trim();
     const routingAlt = alternateAddressText.trim();
     const manualAlt = addressFieldsDisplayText(alternateAddressFields);
@@ -715,6 +719,8 @@ export function SchedulerBookModal({
     alternateAddressFields,
     alternateAddressText,
     canUseAlternateAddress,
+    prefill?.coVisitAddPet,
+    prefill?.coVisitAlternateAddress,
     prefill?.routingAlternateAddress,
     routingBookUsesClientHome,
   ]);
@@ -775,8 +781,11 @@ export function SchedulerBookModal({
     canUseAlternateAddress &&
       !showRoutingAlternateAddress &&
       !routingBookUsesClientHome &&
-      !bookedViaRouting
+      !bookedViaRouting &&
+      !prefill?.coVisitAddPet
   );
+
+  const coVisitAlternateAddress = prefill?.coVisitAlternateAddress?.trim() || null;
 
   const showClientSection =
     Boolean(prefill?.lockClient && prefill?.clientId?.trim()) ||
@@ -999,6 +1008,7 @@ export function SchedulerBookModal({
       prefill?.modalTitle ?? '',
       String(prefill?.disableClientSearch ?? false),
       String(prefill?.coVisitAddPet ?? false),
+      prefill?.coVisitAlternateAddress ?? '',
       String(prefill?.lockSlotTimes ?? false),
       String(prefill?.rescheduleAppointmentId ?? ''),
       prefill?.preferredPatientId ?? '',
@@ -1027,6 +1037,7 @@ export function SchedulerBookModal({
     prefill?.modalTitle,
     prefill?.disableClientSearch,
     prefill?.coVisitAddPet,
+    prefill?.coVisitAlternateAddress,
     prefill?.lockSlotTimes,
     prefill?.rescheduleAppointmentId,
     prefill?.preferredPatientId,
@@ -1059,13 +1070,15 @@ export function SchedulerBookModal({
     );
     if (patches?.length) {
       const statsKey = prefill?.routingStatsTypeKey?.trim();
-      const calcTimeTypeId = statsKey
-        ? resolveBookModalDefaultAppointmentTypeId({
-            sortedPickerTypes: routingBookFullAppointmentTypes,
-            allTypes: appointmentTypes,
-            routingStatsTypeKey: statsKey,
-          })
-        : undefined;
+      const singleVisitReschedule = patches.length === 1;
+      const calcTimeTypeId =
+        singleVisitReschedule && statsKey
+          ? resolveBookModalDefaultAppointmentTypeId({
+              sortedPickerTypes: routingBookFullAppointmentTypes,
+              allTypes: appointmentTypes,
+              routingStatsTypeKey: statsKey,
+            })
+          : undefined;
       const calcTimeRow =
         calcTimeTypeId != null
           ? appointmentTypes.find((t) => Number(t.id) === calcTimeTypeId)
@@ -1082,9 +1095,10 @@ export function SchedulerBookModal({
             appointmentId: Number(p.appointmentId),
             patientId: String(p.patientId).trim(),
             patientName: p.patientName?.trim() || `Pet ${p.patientId}`,
-            appointmentTypeId: calcTimeTypeId ?? tid,
-            appointmentTypeLabel:
-              (calcTimeLabel ?? p.appointmentTypeLabel?.trim()) || '—',
+            appointmentTypeId: singleVisitReschedule ? calcTimeTypeId ?? tid : tid,
+            appointmentTypeLabel: singleVisitReschedule
+              ? (calcTimeLabel ?? p.appointmentTypeLabel?.trim()) || '—'
+              : p.appointmentTypeLabel?.trim() || '—',
             scheduledTimeLabel: p.scheduledTimeLabel?.trim() || '—',
             originalAppointmentStartIso: p.originalAppointmentStartIso?.trim() || undefined,
             description: p.description?.trim() ?? '',
@@ -1884,12 +1898,13 @@ export function SchedulerBookModal({
             visitPatch?.originalAppointmentStartIso?.trim() ||
             edit?.originalAppointmentStartIso?.trim() ||
             undefined;
+          const resolvedAppointmentTypeId = perVisitReschedule
+            ? edit?.appointmentTypeId
+            : (typeId && Number.isFinite(Number(typeId)) ? Number(typeId) : undefined) ??
+              edit?.appointmentTypeId;
           await patchAppointment(rescheduleId, {
             ...patchBody,
-            appointmentTypeId: Number(
-              (typeId && Number.isFinite(Number(typeId)) ? Number(typeId) : undefined) ??
-                edit?.appointmentTypeId
-            ),
+            appointmentTypeId: Number(resolvedAppointmentTypeId),
             description: rawDescription || null,
             instructions:
               appendRescheduledByStaffNote(
@@ -2605,9 +2620,17 @@ export function SchedulerBookModal({
                 prefill?.clientLabel?.trim() ||
                 (prefill?.clientId ? `Client #${prefill.clientId}` : '…')
               }
-              address={rescheduleAlternateVisitAddress ? null : selectedClientAddress}
-              visitAddress={rescheduleAlternateVisitAddress}
-              homeAddress={rescheduleAlternateVisitAddress ? selectedClientAddress : null}
+              address={
+                coVisitAlternateAddress || rescheduleAlternateVisitAddress
+                  ? null
+                  : selectedClientAddress
+              }
+              visitAddress={coVisitAlternateAddress || rescheduleAlternateVisitAddress}
+              homeAddress={
+                coVisitAlternateAddress || rescheduleAlternateVisitAddress
+                  ? selectedClientAddress
+                  : null
+              }
               alerts={selectedClientAlerts}
               hint={
                 prefill?.coVisitAddPet ? (

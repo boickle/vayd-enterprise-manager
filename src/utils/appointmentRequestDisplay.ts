@@ -347,6 +347,60 @@ export function requestDataSelfScheduledSlot(
   };
 }
 
+/** Gmail notification copy for auto-booked selectedDateTimePreferences.display */
+export function formatAutobookDateTimePreferenceDisplay(args: {
+  doctorName?: string | null;
+  appointmentStart: string;
+  windowDisplay?: string | null;
+  display?: string | null;
+  practiceTz?: string;
+}): string {
+  const tz = practiceTimeZoneOrDefault(args.practiceTz);
+  const doctor = args.doctorName?.trim();
+  const window = args.windowDisplay?.trim();
+  const slotDisplay = args.display?.trim();
+
+  const start = DateTime.fromISO(args.appointmentStart, { zone: 'utc' }).setZone(tz);
+  const dateLabel = start.isValid ? start.toFormat('EEEE, MMMM d, yyyy') : null;
+
+  let timing: string;
+  if (window && dateLabel) {
+    timing = `${dateLabel} — ${window}`;
+  } else if (window) {
+    timing = window;
+  } else if (slotDisplay) {
+    timing = slotDisplay;
+  } else if (dateLabel && start.isValid) {
+    timing = start.toFormat('EEEE, MMMM d, yyyy · h:mm a');
+  } else {
+    timing = args.appointmentStart;
+  }
+
+  return [doctor, timing].filter(Boolean).join(' — ');
+}
+
+/** Add visit date to legacy preference lines that only show doctor + arrival window. */
+export function enrichDateTimePreferenceDisplay(
+  display: string,
+  dateTimeIso: string | null | undefined,
+  practiceTz?: string,
+): string {
+  const dt = dateTimeIso?.trim();
+  if (!dt || !display.includes('We will come')) return display;
+  const tz = practiceTimeZoneOrDefault(practiceTz);
+  const parsed = DateTime.fromISO(dt, { zone: 'utc' }).setZone(tz);
+  if (!parsed.isValid) return display;
+  const dateLabel = parsed.toFormat('EEEE, MMMM d, yyyy');
+  if (display.includes(dateLabel)) return display;
+  const sep = ' — ';
+  const parts = display.split(sep);
+  if (parts.length >= 2 && parts[parts.length - 1].includes('We will come')) {
+    const prefix = parts.slice(0, -1).join(sep);
+    return `${prefix}${sep}${dateLabel}${sep}${parts[parts.length - 1]}`;
+  }
+  return `${dateLabel} — ${display}`;
+}
+
 /** Best-effort client id from a persisted request payload. */
 export function requestDataClientId(requestData: Record<string, unknown>): string | null {
   const direct = pickStr(requestData.clientId) ?? pickStr(requestData.client_id);

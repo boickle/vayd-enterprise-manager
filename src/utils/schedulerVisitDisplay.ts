@@ -385,7 +385,7 @@ function providerNameWithSignatorySuffix(args: {
   return suffix ? `${name}, ${suffix}` : name;
 }
 
-function primaryProviderFromPatientRecord(p: unknown): string | null {
+export function primaryProviderFromPatientRecord(p: unknown): string | null {
   if (!p || typeof p !== 'object') return null;
   const o = p as Record<string, unknown>;
   const flat =

@@ -421,7 +421,9 @@ export function buildRescheduleVisitPatches(
   appointmentTypesForLabel?: readonly AppointmentType[]
 ): RescheduleVisitPatch[] {
   const overrideTypeId =
-    overrideAppointmentTypeId != null && Number.isFinite(Number(overrideAppointmentTypeId))
+    overrideAppointmentTypeId != null &&
+    Number.isFinite(Number(overrideAppointmentTypeId)) &&
+    visits.length <= 1
       ? Number(overrideAppointmentTypeId)
       : undefined;
   const overrideTypeLabel =

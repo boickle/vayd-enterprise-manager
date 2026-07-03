@@ -6,36 +6,66 @@ export type ResolvedZone = {
   name: string;
 };
 
+export const OUT_OF_SERVICE_AREA_DISPLAY_LABEL = 'OOSA — Out of service area';
+export const OUT_OF_SERVICE_AREA_SHORT_LABEL = 'OOSA';
+
 export type ClientZoneLookupResult = {
-  zoneId: number;
-  /** Full line for UI, e.g. `Zone 3W (Lewiston)`. */
+  zoneId: number | null;
+  /** Full line for UI, e.g. `Zone 3W (Lewiston)` or {@link OUT_OF_SERVICE_AREA_DISPLAY_LABEL}. */
   displayLabel: string;
-  /** Short code, e.g. `3W`. */
+  /** Short code, e.g. `3W` or `OOSA`. */
   shortLabel: string | null;
+  /** True when address is outside service polygons (legacy name — prefer {@link isOutOfServiceArea}). */
   usedNearestZone: boolean;
+  isOutOfServiceArea: boolean;
 };
 
-function formatClientZoneDisplayLabel(zoneName: string, usedNearestZone: boolean): string {
-  const raw = zoneName.trim();
-  const line = raw.toLowerCase().startsWith('zone ') ? raw : `Zone ${raw}`;
-  return usedNearestZone ? `${line} (nearest)` : line;
+export function clientZoneLookupIsOutOfServiceArea(
+  result: ClientZoneLookupResult | null | undefined
+): boolean {
+  return result?.isOutOfServiceArea === true;
 }
 
-/** Quick zone lookup for a street address — one lightweight GET (plus nearest-zone fallback). */
+function formatClientZoneDisplayLabel(zoneName: string): string {
+  const raw = zoneName.trim();
+  return raw.toLowerCase().startsWith('zone ') ? raw : `Zone ${raw}`;
+}
+
+function outOfServiceAreaLookupResult(): ClientZoneLookupResult {
+  return {
+    zoneId: null,
+    displayLabel: OUT_OF_SERVICE_AREA_DISPLAY_LABEL,
+    shortLabel: OUT_OF_SERVICE_AREA_SHORT_LABEL,
+    usedNearestZone: true,
+    isOutOfServiceArea: true,
+  };
+}
+
+/** In-polygon zone only — no nearest-zone fallback. */
+export async function resolveInPolygonZoneForAddress(
+  address: string
+): Promise<ResolvedZone | null> {
+  const trimmed = address.trim();
+  if (!trimmed) return null;
+  return findZoneByAddress(trimmed);
+}
+
+/** Quick zone lookup for a street address — in-polygon only; OOSA when outside service area. */
 export async function lookupClientZoneForAddress(
   address: string
 ): Promise<ClientZoneLookupResult | null> {
   const trimmed = address.trim();
   if (!trimmed) return null;
 
-  const resolved = await resolveZoneForVeterinarianLookup(trimmed);
-  if (!resolved) return null;
+  const inPolygon = await resolveInPolygonZoneForAddress(trimmed);
+  if (!inPolygon) return outOfServiceAreaLookupResult();
 
   return {
-    zoneId: resolved.zone.id,
-    displayLabel: formatClientZoneDisplayLabel(resolved.zone.name, resolved.usedNearestZone),
-    shortLabel: formatDoctorSelectZoneLabel(resolved.zone.name),
-    usedNearestZone: resolved.usedNearestZone,
+    zoneId: inPolygon.id,
+    displayLabel: formatClientZoneDisplayLabel(inPolygon.name),
+    shortLabel: formatDoctorSelectZoneLabel(inPolygon.name),
+    usedNearestZone: false,
+    isOutOfServiceArea: false,
   };
 }
 
@@ -77,6 +107,8 @@ export async function findZoneByAddress(
 /**
  * In-polygon zone first; for out-of-area addresses, nearest zone within
  * {@link NEAREST_ZONE_LOOKUP_BUFFER_MILES}.
+ *
+ * Prefer {@link resolveInPolygonZoneForAddress} / {@link lookupClientZoneForAddress} for routing UI.
  */
 export async function resolveZoneForVeterinarianLookup(
   address: string

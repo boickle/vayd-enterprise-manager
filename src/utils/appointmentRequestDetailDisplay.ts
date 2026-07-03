@@ -3,6 +3,7 @@
 import { DateTime } from 'luxon';
 import {
   formatRequestDataAddress,
+  enrichDateTimePreferenceDisplay,
   patientPimsIdFromRequestPet,
   requestDataAnythingElse,
   requestDataCanText,
@@ -365,7 +366,8 @@ function formatTimePreferences(
     const dt = pickStr(o.dateTime);
     const rank = pickStr(o.preference) ?? '';
     if (display) {
-      lines.push(rank ? `${rank}. ${display}` : display);
+      const enriched = enrichDateTimePreferenceDisplay(display, dt, practiceTz);
+      lines.push(rank ? `${rank}. ${enriched}` : enriched);
       continue;
     }
     if (dt) {

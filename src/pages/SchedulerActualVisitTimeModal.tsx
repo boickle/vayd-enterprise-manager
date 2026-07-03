@@ -1042,7 +1042,7 @@ export function SchedulerActualVisitTimeModal({
 
         const closeModal =
           saveOptions?.closeModal ??
-          (isEndOnly || isStartOnly || (isBoth && savingEnd));
+          (isEndOnly || isStartOnly || (isBoth && (savingEnd || savingStart)));
 
         onSaved(updated, { closeModal });
         if (closeModal) onClose();
@@ -1200,7 +1200,7 @@ export function SchedulerActualVisitTimeModal({
     if (savingStart && !savingEnd) {
       void postBoth(
         { start: startPayload! },
-        { closeModal: false, saveFollowUp: false }
+        { closeModal: true, saveFollowUp: false }
       );
       return;
     }
