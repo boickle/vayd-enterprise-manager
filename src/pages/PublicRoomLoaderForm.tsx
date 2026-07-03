@@ -130,12 +130,78 @@ function getAgeYears(patient: { dob?: string | null }): number | null {
   }
 }
 
+const TECH_VISIT_PROCEDURE_CODE = 'TECHSERVICES';
+
+function roomLoaderLineNameCodeLooksLikeTechVisit(name: string, code: string): boolean {
+  const c = (code ?? '').trim().toUpperCase();
+  if (c === TECH_VISIT_PROCEDURE_CODE) return true;
+  const n = (name ?? '').toLowerCase();
+  if (/\btech(nician)?\s*(visit|appointment|appt)\b/.test(n)) return true;
+  if (/quick\s*\(\s*tech\s*\)/.test(n)) return true;
+  return false;
+}
+
+function roomLoaderAppointmentIsTechVisit(appt: any | undefined): boolean {
+  const t = (appt?.appointmentType?.prettyName ?? appt?.appointmentType?.name ?? '').toString().toLowerCase();
+  if (!t.trim()) return false;
+  return /\btech(nician)?\s*(visit|appointment)\b/.test(t) || t.includes('tech appointment');
+}
+
+function patientCarePlanHasTechVisitLine(patient: any): boolean {
+  for (const r of patient?.reminders ?? []) {
+    const { name, code } = getPublicFormLineNameCode(r?.item ?? r);
+    if (roomLoaderLineNameCodeLooksLikeTechVisit(name, code)) return true;
+  }
+  for (const item of patient?.addedItems ?? []) {
+    const { name, code } = getPublicFormLineNameCode(item);
+    if (roomLoaderLineNameCodeLooksLikeTechVisit(name, code)) return true;
+  }
+  return false;
+}
+
+function lineNameCodeLooksLikeWellnessVisitType(name: string, code: string): boolean {
+  const c = (code ?? '').trim().toUpperCase();
+  if (c === 'WELLNESS') return true;
+  const blob = `${name ?? ''} ${code ?? ''}`.toLowerCase();
+  if (!blob.includes('wellness')) return false;
+  return blob.includes('visit') || blob.includes('consult') || blob.includes('exam');
+}
+
+/** Wellness visit-type line on the care plan (not tech visit, pedicure, or lab-only rows). */
+function carePlanHasWellnessVisitTypeLine(patient: any, roomLoaderRootReminders?: any[] | null): boolean {
+  for (const item of patient?.addedItems ?? []) {
+    const { name, code } = getPublicFormLineNameCode(item);
+    if (roomLoaderLineNameCodeLooksLikeTechVisit(name, code)) continue;
+    if (lineNameCodeLooksLikeWellnessVisitType(name, code)) return true;
+  }
+  const rows = roomLoaderReminderRowsForPatient(patient, roomLoaderRootReminders);
+  for (const r of rows) {
+    const { name, code } = getRoomLoaderReminderLineNameCode(r);
+    if (roomLoaderLineNameCodeLooksLikeTechVisit(name, code)) continue;
+    if (lineNameCodeLooksLikeWellnessVisitType(name, code)) return true;
+    const rt = String(r?.reminderType ?? r?.reminder?.reminderType ?? '').toLowerCase();
+    if (rt !== 'wellness') continue;
+    const blob = [
+      name,
+      code,
+      r?.reminderText,
+      r?.description,
+      r?.reminder?.description,
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+    if (blob.includes('visit') || blob.includes('consult') || blob.includes('exam')) return true;
+  }
+  return false;
+}
+
 /**
- * True when this visit is treated as routine wellness for lab recommendations.
+ * Any wellness signal on the visit list (including reminderType Wellness on labs/vaccines without "wellness" in the item name).
  * PIMS often tags reminders with `reminderType: "Wellness"` without the word "wellness" in the inventory/lab name
  * (e.g. F4DX + vaccines only on the packaged care plan).
  */
-function isWellnessVisit(patient: any, roomLoaderRootReminders?: any[] | null): boolean {
+function carePlanHasAnyWellnessSignal(patient: any, roomLoaderRootReminders?: any[] | null): boolean {
   const rows = roomLoaderReminderRowsForPatient(patient, roomLoaderRootReminders);
   for (const r of rows) {
     const rt = String(r?.reminderType ?? r?.reminder?.reminderType ?? '').toLowerCase();
@@ -162,6 +228,24 @@ function isWellnessVisit(patient: any, roomLoaderRootReminders?: any[] | null): 
     if (String(item?.code ?? '').trim().toUpperCase() === 'WELLNESS') return true;
   }
   return false;
+}
+
+/**
+ * True when this visit is treated as routine wellness for age-based lab recommendations.
+ * Quick (Tech) Visit / technician appointments require an explicit wellness visit line on the care plan;
+ * otherwise only staff "medical concern → lab work = Yes" should surface Senior Screen.
+ */
+function isWellnessVisit(
+  patient: any,
+  roomLoaderRootReminders?: any[] | null,
+  appt?: any
+): boolean {
+  const techOnPlan = patientCarePlanHasTechVisitLine(patient);
+  const techAppt = roomLoaderAppointmentIsTechVisit(appt);
+  if (techOnPlan || techAppt) {
+    return carePlanHasWellnessVisitTypeLine(patient, roomLoaderRootReminders);
+  }
+  return carePlanHasAnyWellnessSignal(patient, roomLoaderRootReminders);
 }
 
 function getLineItemNames(patient: any): string {
@@ -674,7 +758,8 @@ function getRoomLoaderMembershipDetailText(p: any, appointments: any[] | undefin
 }
 
 /**
- * Foundations wellness members (not on Golden) — used where plan tier affects pricing copy (e.g. catalog footnotes).
+ * Foundations wellness members (not on Golden): routine senior-age labs use Early Detection unless staff
+ * answered Yes to “medical concern / lab work” (then the Senior Screen path via 8659999 applies).
  */
 function roomLoaderPatientMembershipIsFoundationsNotGolden(p: any, appointments: any[] | undefined): boolean {
   const detail = getRoomLoaderMembershipDetailText(p, appointments);
@@ -3873,7 +3958,7 @@ export default function PublicRoomLoaderForm() {
     enrollmentOrder: number[];
     multiPetCreditPatientIds: Record<number, true>;
   }>({ enrollmentOrder: [], multiPetCreditPatientIds: {} });
-  /** Collapsible "See how a membership could change your bill" section on summary (only for non-members). */
+  /** Collapsible "Expand to see how membership could change your bill" section on summary (only for non-members). */
   const [membershipBillSectionExpanded, setMembershipBillSectionExpanded] = useState(false);
   /** Public membership enrollment modal (same flow as appointment request form). */
   const [showMembershipEnrollmentModal, setShowMembershipEnrollmentModal] = useState(false);
@@ -3949,7 +4034,6 @@ export default function PublicRoomLoaderForm() {
             initialFormData[`${petKey}_preMedsMailOrPickup`] = '';
           });
           initialFormData['anythingElseNotes'] = '';
-          initialFormData['ongoingCareInterest'] = '';
           if (savedForm && typeof savedForm === 'object') {
             const {
               optedInVaccineItems: _ovi,
@@ -6207,22 +6291,6 @@ export default function PublicRoomLoaderForm() {
       if (questions.length > 0) {
         labSectionsForThisPet.push({ sectionLabel: petName, patientId, patientName: petName, questions });
       }
-      const isLastLabPetPdf = idx === patientsData.length - 1;
-      if (isLastLabPetPdf && patientsData.length > 0) {
-        const og = formData['ongoingCareInterest'];
-        const ogLabel =
-          og === 'yes' ? 'Yes, I would like that.' : og === 'no' ? 'No, thank you.' : og === 'unsure' ? 'I am not sure.' : null;
-        labSectionsForThisPet.push({
-          sectionLabel: 'Dedicated veterinary team',
-          questions: [
-            {
-              question: 'Are you looking for ongoing care with a consistent, dedicated veterinary team?',
-              answer: og ?? null,
-              answerLabel: ogLabel,
-            },
-          ],
-        });
-      }
       if (labSectionsForThisPet.length > 0) {
         const labPageNum = 2 * nPdfPets + 1 + idx;
         formAnswersPages.push({
@@ -6630,11 +6698,6 @@ export default function PublicRoomLoaderForm() {
         }
       });
     });
-    const ongoing = formData['ongoingCareInterest'];
-    if (ongoing !== 'yes' && ongoing !== 'no' && ongoing !== 'unsure') {
-      errors['ongoingCareInterest'] =
-        "Please answer whether you're interested in ongoing care with a dedicated veterinary team.";
-    }
 
     if (Object.keys(errors).length > 0) {
       return { valid: false, message: Object.values(errors)[0], errors };
@@ -6642,10 +6705,9 @@ export default function PublicRoomLoaderForm() {
     return { valid: true };
   }
 
-  /** Validate required fields when leaving a Labs page for one pet; ongoing-care question only when `requireOngoing` (last pet’s labs page). */
+  /** Validate required fields when leaving a Labs page for one pet. */
   function validateRequiredForLabsPetPage(
-    labsPetIndex: number,
-    requireOngoing: boolean
+    labsPetIndex: number
   ): { valid: boolean; message?: string; errors?: Record<string, string> } {
     const errors: Record<string, string> = {};
     const labRecs = labRecommendationsByPet ?? [];
@@ -6721,13 +6783,6 @@ export default function PublicRoomLoaderForm() {
           }
         }
       });
-    }
-    if (requireOngoing) {
-      const ongoingLabs = formData['ongoingCareInterest'];
-      if (ongoingLabs !== 'yes' && ongoingLabs !== 'no' && ongoingLabs !== 'unsure') {
-        errors['ongoingCareInterest'] =
-          "Please answer whether you're interested in ongoing care with a dedicated veterinary team.";
-      }
     }
     if (Object.keys(errors).length > 0) {
       return { valid: false, message: Object.values(errors)[0], errors };
@@ -6932,7 +6987,6 @@ export default function PublicRoomLoaderForm() {
       const N = (data?.patients ?? []).length;
       const firstCarePlanPage = N > 0 ? N + 1 : 1;
       const firstLabPage = N > 0 ? 2 * N + 1 : 1;
-      const lastLabPage = N > 0 ? 3 * N : 1;
       if (firstErrorKey.startsWith('lab_')) {
         const m = firstErrorKey.match(/_(\d+)$/);
         const idStr = m?.[1];
@@ -6942,8 +6996,6 @@ export default function PublicRoomLoaderForm() {
           if (ix >= 0) labIdx = ix;
         }
         setCurrentPage(N > 0 ? firstLabPage + labIdx : 1);
-      } else if (firstErrorKey.includes('ongoingCareInterest')) {
-        setCurrentPage(N > 0 ? lastLabPage : 1);
       } else if (firstErrorKey.startsWith('pet')) {
         const petNum = firstErrorKey.match(/pet(\d+)/)?.[1];
         const piRaw = petNum != null ? Number(petNum) : 0;
@@ -7006,9 +7058,9 @@ export default function PublicRoomLoaderForm() {
   const labRecommendationsByPet = useMemo(() => {
     const result: { patientId: number | undefined; patientName: string; recommendations: LabRec[] }[] = [];
     patients.forEach((patient: any, idx: number) => {
-      const patientId = patient.patientId ?? patient.patient?.id;
-      const history = patientId != null ? treatmentHistoryByPatientId[patientId] ?? [] : [];
       const appt = getAppointmentForRoomLoaderPet(appointments, patient, idx);
+      const patientId = patient.patientId ?? patient.patient?.id ?? patient.id;
+      const history = patientId != null ? treatmentHistoryByPatientId[patientId] ?? [] : [];
       const petKey = `pet${idx}`;
       const labWorkYes = publicFormPetLabWorkConcernYes(formData, petKey, patient);
       const isQOLExam = publicRoomLoaderAppointmentIsQOLExam(appt);
@@ -7062,7 +7114,7 @@ export default function PublicRoomLoaderForm() {
       const isDog = isDogSpeciesTokens(speciesLower);
       const dob = patient?.dob ?? patient?.patient?.dob ?? appt?.patient?.dob;
       const age = dob != null ? getAgeYears({ dob }) : null;
-      const standard = isWellnessVisit(patient, data?.reminders);
+      const standard = isWellnessVisit(patient, data?.reminders, appt);
       const listHasSenior = listContains(patient, 'senior screen');
       /**
        * For senior-age pets, only count species-matching FIL481/FIL487 as “early on visit” — staff sometimes schedules
@@ -7096,8 +7148,10 @@ export default function PublicRoomLoaderForm() {
       const treatAsNewWhenNoReminders = patient.isNewPatient !== false && appt?.isNewPatient !== false;
       const isNewPatient = !explicitlyNotNew && (markedNewByApi || (!hasReminders && treatAsNewWhenNoReminders));
 
-      /** Senior Screen age-based recs always use the same path (Foundations seniors get Senior Screen on Labs, not catalog Early Detection). */
-      const ageBasedSeniorScreenForMember = true;
+      const foundationsNotGoldenMember = roomLoaderPatientMembershipIsFoundationsNotGolden(patient, appointments);
+      /** Age-based Senior Screen recs: skip for Foundations when staff did not flag lab work (Early Detection is offered instead). */
+      const ageBasedSeniorScreenForMember =
+        !(foundationsNotGoldenMember && !labWorkYes);
 
       if (labWorkYes) {
         recs.push({
@@ -7153,6 +7207,40 @@ export default function PublicRoomLoaderForm() {
             message: 'We recommend our Senior Screen Canine or Senior Screen for your senior dog.',
           });
         }
+      }
+
+      // Foundations (non-Golden) members at senior age: routine care → Early Detection, unless staff flagged lab work (8659999 above).
+      if (
+        foundationsNotGoldenMember &&
+        !labWorkYes &&
+        age != null &&
+        isCat &&
+        standard &&
+        shouldRecommendYoungOrEarly &&
+        !hadYoungEarly8Mo &&
+        age > 1 &&
+        age >= MEMBERSHIP_GOLDEN_MIN_AGE_YEARS
+      ) {
+        const msg = listHasFIVOrFecal
+          ? "We recommend our Early Detection Panel - Feline (Chem 10, lytes, CBC, Fecal Dx, FeLV/FIV/HWT). Since you already have FIV or fecal on the list, it isn't much more to add on a lot more info."
+          : 'We recommend our Early Detection Panel - Feline (Chem 10, lytes, CBC, Fecal Dx, FeLV/FIV/HWT).';
+        recs.push({ code: 'FIL48119999', title: 'Early Detection Panel - Feline', message: msg });
+      }
+      if (
+        foundationsNotGoldenMember &&
+        !labWorkYes &&
+        age != null &&
+        isDog &&
+        standard &&
+        shouldRecommendYoungOrEarly &&
+        !hadYoungEarly8Mo &&
+        age > 1 &&
+        age >= MEMBERSHIP_GOLDEN_MIN_AGE_YEARS
+      ) {
+        const msg = listHas4dxOrFecal
+          ? "We recommend our Early Detection Panel - Canine (Chem 10, lytes, CBC, Fecal Dx, 4Dx). Since you already have 4Dx or fecal on the list, it isn't much more to add on a lot more info."
+          : 'We recommend our Early Detection Panel - Canine (Chem 10, lytes, CBC, Fecal Dx, 4Dx).';
+        recs.push({ code: 'FIL48719999', title: 'Early Detection Panel - Canine', message: msg });
       }
 
       // Staff room loader: Senior Screen (FIL8659999 / 8659999) plus 4Dx, triple (IL3755), or fecal → recommend bundled senior panel
@@ -9357,10 +9445,7 @@ export default function PublicRoomLoaderForm() {
               {buildLabsWeRecommendIntro(formData, patients)}
             </p>
           </div>
-          {Object.keys(fieldValidationErrors).some(
-            (k) =>
-              k.startsWith('lab_') || (isLastLabsPet && k === 'ongoingCareInterest')
-          ) && (
+          {Object.keys(fieldValidationErrors).some((k) => k.startsWith('lab_')) && (
             <p style={{ marginBottom: '10px', padding: '12px', backgroundColor: '#f8d7da', border: '1px solid #f5c6cb', borderRadius: '6px', color: '#721c24', fontSize: '14px' }}>
               Please complete all required lab questions below before continuing.
             </p>
@@ -10422,94 +10507,6 @@ export default function PublicRoomLoaderForm() {
             );
           })()}
 
-          {isLastLabsPet && (
-          <div
-            style={{
-              marginTop: '18px',
-              padding: '16px',
-              backgroundColor: '#f9f9f9',
-              border: '1px solid #ddd',
-              borderRadius: '8px',
-            }}
-          >
-            <p style={{ fontSize: '16px', fontWeight: 600, color: '#111827', marginBottom: '12px' }}>
-              Are you looking for ongoing care with a consistent, dedicated veterinary team?{' '}
-              <span style={{ color: '#ef4444' }} aria-hidden>*</span>
-            </p>
-            <div
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '8px',
-                padding: fieldValidationErrors.ongoingCareInterest ? '12px' : undefined,
-                borderRadius: '8px',
-                border: fieldValidationErrors.ongoingCareInterest ? '1px solid #ef4444' : undefined,
-                backgroundColor: fieldValidationErrors.ongoingCareInterest ? '#fef2f2' : undefined,
-              }}
-            >
-              <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: readOnly ? 'default' : 'pointer', fontSize: '15px' }}>
-                <input
-                  type="radio"
-                  name="ongoingCareInterest"
-                  checked={formData.ongoingCareInterest === 'yes'}
-                  onChange={() => {
-                    handleInputChange('ongoingCareInterest', 'yes');
-                    setFieldValidationErrors((prev) => {
-                      const next = { ...prev };
-                      delete next.ongoingCareInterest;
-                      return next;
-                    });
-                  }}
-                  disabled={readOnly}
-                  style={{ width: '18px', height: '18px', accentColor: '#0f766e' }}
-                />
-                Yes, I would like that.
-              </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: readOnly ? 'default' : 'pointer', fontSize: '15px' }}>
-                <input
-                  type="radio"
-                  name="ongoingCareInterest"
-                  checked={formData.ongoingCareInterest === 'no'}
-                  onChange={() => {
-                    handleInputChange('ongoingCareInterest', 'no');
-                    setFieldValidationErrors((prev) => {
-                      const next = { ...prev };
-                      delete next.ongoingCareInterest;
-                      return next;
-                    });
-                  }}
-                  disabled={readOnly}
-                  style={{ width: '18px', height: '18px', accentColor: '#0f766e' }}
-                />
-                No, thank you.
-              </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: readOnly ? 'default' : 'pointer', fontSize: '15px' }}>
-                <input
-                  type="radio"
-                  name="ongoingCareInterest"
-                  checked={formData.ongoingCareInterest === 'unsure'}
-                  onChange={() => {
-                    handleInputChange('ongoingCareInterest', 'unsure');
-                    setFieldValidationErrors((prev) => {
-                      const next = { ...prev };
-                      delete next.ongoingCareInterest;
-                      return next;
-                    });
-                  }}
-                  disabled={readOnly}
-                  style={{ width: '18px', height: '18px', accentColor: '#0f766e' }}
-                />
-                I am not sure.
-              </label>
-            </div>
-            {fieldValidationErrors.ongoingCareInterest && (
-              <div style={{ fontSize: '14px', color: '#ef4444', marginTop: '8px' }} role="alert">
-                {fieldValidationErrors.ongoingCareInterest}
-              </div>
-            )}
-          </div>
-          )}
-
           <div className="public-room-loader-nav-buttons">
             <button
               type="button"
@@ -10528,7 +10525,7 @@ export default function PublicRoomLoaderForm() {
               type="button"
               className="public-room-loader-btn"
               onClick={() => {
-                const v = validateRequiredForLabsPetPage(labsPetIndex, isLastLabsPet);
+                const v = validateRequiredForLabsPetPage(labsPetIndex);
                 if (!v.valid) {
                   setFieldValidationErrors(v.errors || {});
                   return;
@@ -12061,11 +12058,11 @@ export default function PublicRoomLoaderForm() {
                     }
                     style={{
                       padding: '10px 16px',
-                      fontSize: '14px',
-                      fontWeight: 600,
-                      color: '#084298',
-                      backgroundColor: '#f0f7ff',
-                      border: '1px solid #b6d4fe',
+                      fontSize: '15px',
+                      fontWeight: 700,
+                      color: '#166534',
+                      backgroundColor: '#ecfdf5',
+                      border: '2px solid #166534',
                       borderRadius: '8px',
                       cursor: 'pointer',
                       display: 'inline-flex',
@@ -12077,7 +12074,9 @@ export default function PublicRoomLoaderForm() {
                     <span aria-hidden style={{ fontSize: '12px', width: '1em', flexShrink: 0 }}>
                       {membershipBillSectionExpanded ? '▼' : '▶'}
                     </span>
-                    See how a membership could change your bill
+                    {membershipBillSectionExpanded
+                      ? 'Hide membership bill comparison'
+                      : 'Expand to see how membership could change your bill'}
                   </button>
                 </div>
               )}
