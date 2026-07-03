@@ -912,3 +912,211 @@
   gap: 8px;
   margin-top: 8px;
 }
+
+/* AI scribe */
+.soap-scribe-panel {
+  border: 1px solid var(--soap-border);
+  background: #fafaff;
+  border-radius: 10px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+}
+.soap-scribe-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.soap-scribe-record-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--soap-accent);
+  color: var(--soap-accent);
+  background: #fff;
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.soap-scribe-record-btn:hover:not(:disabled) {
+  background: #eef2ff;
+}
+.soap-scribe-record-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.soap-scribe-record-btn.recording {
+  background: #fef2f2;
+  border-color: #ef4444;
+  color: #b91c1c;
+}
+.soap-scribe-live-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #ef4444;
+  animation: soap-scribe-pulse 1.4s ease-in-out infinite;
+}
+@keyframes soap-scribe-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.75); }
+}
+.soap-scribe-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: #ede9fe;
+  color: #6d28d9;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.soap-scribe-transcript-toggle {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: none;
+  background: transparent;
+  color: var(--soap-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+.soap-scribe-paste-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px dashed var(--soap-border);
+  color: var(--soap-muted);
+  background: transparent;
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.soap-scribe-paste-toggle:hover:not(:disabled) {
+  background: #f3f4f6;
+  color: #374151;
+}
+.soap-scribe-paste-toggle:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.soap-scribe-paste-toggle.active {
+  border-style: solid;
+  border-color: var(--soap-accent);
+  color: var(--soap-accent);
+  background: #eef2ff;
+}
+.soap-scribe-paste {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.soap-scribe-paste-textarea {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid var(--soap-border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  font-family: inherit;
+  color: #374151;
+}
+.soap-scribe-paste-textarea:disabled {
+  opacity: 0.6;
+}
+.soap-scribe-paste-actions {
+  display: flex;
+  gap: 8px;
+}
+.soap-scribe-error {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #b91c1c;
+  font-size: 12.5px;
+  margin-top: 8px;
+}
+.soap-scribe-transcript {
+  margin-top: 8px;
+  max-height: 120px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid var(--soap-border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #374151;
+}
+.soap-scribe-interim {
+  color: var(--soap-muted);
+  font-style: italic;
+}
+.soap-scribe-suggestions {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 10px;
+}
+.soap-scribe-card {
+  background: #fff;
+  border: 1px solid #ddd6fe;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 13px;
+}
+.soap-scribe-card-head {
+  font-weight: 700;
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: #6d28d9;
+  margin-bottom: 6px;
+}
+.soap-scribe-card p {
+  margin: 0 0 8px;
+  line-height: 1.4;
+  color: #111827;
+}
+.soap-scribe-card-hint {
+  color: var(--soap-muted) !important;
+  font-size: 11.5px !important;
+}
+.soap-scribe-list {
+  margin: 0 0 8px;
+  padding-left: 16px;
+  font-size: 12.5px;
+}
+.soap-scribe-tag {
+  display: inline-block;
+  background: #f3f4f6;
+  color: var(--soap-muted);
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 11px;
+  margin-left: 4px;
+  text-transform: capitalize;
+}
+.soap-scribe-card-actions {
+  display: flex;
+  gap: 6px;
+}
+.soap-scribe-consent-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.4;
+  margin-bottom: 4px;
+}
+.soap-scribe-consent-check input {
+  margin-top: 3px;
+}

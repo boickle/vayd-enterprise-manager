@@ -26,6 +26,8 @@ interface ImportMetaEnv {
   readonly VITE_APPOINTMENT_FORM_DRAFTS_ENABLED?: string;
   /** Minutes of inactivity before idle_timeout abandon (default 15; 0 disables). */
   readonly VITE_APPOINTMENT_FORM_ABANDON_IDLE_MINUTES?: string;
+  /** Set to 'true' to show the AI visit scribe panel on the SOAP encounter page (docs/ai-scribe.md). Pilot rollout flag. */
+  readonly VITE_ENABLE_SCRIBE?: string;
 }
 
 interface ImportMeta {

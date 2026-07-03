@@ -37,13 +37,15 @@ import PlanOrdersSection from '../components/soap/PlanOrdersSection';
 import ForwardBookingGate from '../components/soap/ForwardBookingGate';
 import VisitCheckoutPanel from '../components/soap/VisitCheckoutPanel';
 import EuthanasiaPrepayModal from '../components/soap/EuthanasiaPrepayModal';
+import ScribePanel from '../components/soap/ScribePanel';
+import type { PeSystemFinding } from '../components/soap/peTemplate';
 import {
   appointmentReasonFromSentToClient,
   buildSubjectiveTextFromRoomLoaderResponse,
   findSubmittedRoomLoaderForAppointment,
 } from '../utils/roomLoaderSubjectiveText';
 
-type Vitals = {
+export type Vitals = {
   tempF: string;
   weight: string;
   hr: string;
@@ -221,6 +223,46 @@ export default function SoapEncounterPage() {
     [encounter, locked]
   );
 
+  const scribeEnabled = String(import.meta.env.VITE_ENABLE_SCRIBE ?? '').toLowerCase() === 'true';
+
+  const applyScribeSubjective = useCallback(
+    (text: string) => {
+      setSubjective(text);
+      void save({ subjective: { history: text } });
+    },
+    [save]
+  );
+
+  const applyScribeVitals = useCallback(
+    (patch: Partial<Vitals>) => {
+      setVitals((prev) => {
+        const next = { ...prev, ...patch };
+        void save({ objectiveVitals: { ...next } });
+        return next;
+      });
+    },
+    [save]
+  );
+
+  const applyScribeExam = useCallback(
+    (patch: Record<string, PeSystemFinding>) => {
+      setExam((prev) => {
+        const next = { ...prev, ...patch };
+        void save({ objectiveExam: next });
+        return next;
+      });
+    },
+    [save]
+  );
+
+  const applyScribeReasoning = useCallback(
+    (text: string) => {
+      setReasoning(text);
+      void save({ assessmentReasoning: text });
+    },
+    [save]
+  );
+
   const dispositionValue = useMemo<ForwardBookingDisposition | null>(() => {
     const d = encounter?.forwardBookingDisposition;
     if (d && typeof d === 'object' && typeof (d as { mode?: unknown }).mode === 'string') {
@@ -255,6 +297,15 @@ export default function SoapEncounterPage() {
       void save({ assessmentProblemIds: next });
       return next;
     });
+  };
+
+  const onScribeProblemCreated = (problem: PatientProblem) => {
+    setProblems((prev) => [...prev, problem]);
+    toggleProblemLink(problem.id, true);
+  };
+
+  const onScribeOrderCreated = (order: EncounterOrder) => {
+    setOrders((prev) => [...prev, order]);
   };
 
   if (loading) {
@@ -318,6 +369,27 @@ export default function SoapEncounterPage() {
       </header>
 
       {error && <div className="soap-error soap-error-banner">{error}</div>}
+
+      {scribeEnabled && encounter && (
+        <ScribePanel
+          soapEncounterId={encounter.id}
+          patientId={patientId}
+          disabled={locked}
+          examEnabled={mode === 'comprehensive'}
+          currentSubjective={subjective}
+          currentVitals={vitals}
+          currentExam={exam}
+          currentReasoning={reasoning}
+          problems={problems}
+          orders={orders}
+          onApplySubjective={applyScribeSubjective}
+          onApplyVitals={applyScribeVitals}
+          onApplyExam={applyScribeExam}
+          onApplyReasoning={applyScribeReasoning}
+          onProblemCreated={onScribeProblemCreated}
+          onOrderCreated={onScribeOrderCreated}
+        />
+      )}
 
       <div className="soap-body">
         <main className="soap-main">
