@@ -4585,7 +4585,7 @@ export default function AppointmentRequestForm() {
         lineHeight: 1.6,
       }}
     >
-      <strong>We&apos;ll handle scheduling for you.</strong> Online self-booking isn&apos;t available for this visit. A Client Liaison will reach out after you submit to work on scheduling with you.
+      <strong>We&apos;ll handle scheduling for you.</strong> Online self-booking isn&apos;t available for this visit. After you submit, our team will reach out to work on scheduling with you.
     </div>
   );
 

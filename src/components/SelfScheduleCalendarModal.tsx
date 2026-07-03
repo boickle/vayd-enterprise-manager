@@ -1239,7 +1239,7 @@ export function SelfScheduleCalendarModal({
               marginBottom: 20,
             }}
           >
-            No doctors are currently available in your area. A Client Liaison will reach out after you submit your request.
+            No doctors are currently available in your area. After you submit your request, our team will reach out to help with scheduling.
           </div>
         ) : (
           <div style={{ marginBottom: 14 }}>
@@ -1533,7 +1533,7 @@ export function SelfScheduleCalendarModal({
                 }}
               >
                 No pre-approved times are showing for this day, but there may still be
-                availability. Submit your request and a Client Liaison will reach out to
+                availability. Submit your request and our team will reach out to
                 confirm a time with you.
               </div>
             ) : (
