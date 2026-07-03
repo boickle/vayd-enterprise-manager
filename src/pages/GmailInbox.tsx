@@ -7,8 +7,10 @@ import {
   Image as ImageIcon,
   Mail,
   PenSquare,
+  Plus,
   RefreshCw,
   Star,
+  X,
 } from 'lucide-react';
 import GmailBulkToolbar from '../components/gmail/GmailBulkToolbar';
 import GmailComposeModal from '../components/gmail/GmailComposeModal';
@@ -81,6 +83,47 @@ function formatMessageDate(iso: string): string {
 
 function attachmentUsesImageIcon(mimeType: string): boolean {
   return mimeType.startsWith('image/');
+}
+
+const MAILBOX_DOMAIN = 'vetatyourdoor.com';
+const CUSTOM_MAILBOXES_STORAGE_KEY = 'gmailInbox.customMailboxes';
+
+function loadCustomMailboxes(): string[] {
+  try {
+    const raw = window.localStorage.getItem(CUSTOM_MAILBOXES_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((v): v is string => typeof v === 'string');
+  } catch {
+    return [];
+  }
+}
+
+function saveCustomMailboxes(emails: string[]): void {
+  try {
+    window.localStorage.setItem(CUSTOM_MAILBOXES_STORAGE_KEY, JSON.stringify(emails));
+  } catch {
+    /* ignore storage errors (private browsing, quota, etc.) */
+  }
+}
+
+/** Normalize free-typed mailbox input into a full `@vetatyourdoor.com` address, or an error message. */
+function normalizeMailboxInput(raw: string): { email: string } | { error: string } {
+  const trimmed = raw.trim().toLowerCase();
+  if (!trimmed) return { error: 'Enter an email address.' };
+
+  const [localPart, domain, ...rest] = trimmed.split('@');
+  if (rest.length > 0 || !localPart) {
+    return { error: 'Enter a valid email address.' };
+  }
+  if (domain && domain !== MAILBOX_DOMAIN) {
+    return { error: `Only @${MAILBOX_DOMAIN} addresses are supported.` };
+  }
+  if (!/^[a-z0-9._+-]+$/.test(localPart)) {
+    return { error: 'Enter a valid email address.' };
+  }
+  return { email: `${localPart}@${MAILBOX_DOMAIN}` };
 }
 
 function threadMessageToSummary(msg: GmailThreadMessage): GmailMessageSummary {
@@ -245,7 +288,6 @@ export default function GmailInbox() {
   const { token } = useAuth() as { token?: string | null };
   const [searchParams, setSearchParams] = useSearchParams();
   const [mailboxes, setMailboxes] = useState<GmailMailboxStatus[]>([]);
-  const [defaultMailbox, setDefaultMailbox] = useState<string | null>(null);
   const [selectedMailbox, setSelectedMailbox] = useState<string | null>(null);
   const [navigationLabels, setNavigationLabels] = useState<GmailLabelNode[]>([]);
   const [sidebarUserLabels, setSidebarUserLabels] = useState<GmailLabelNode[]>([]);
@@ -281,6 +323,11 @@ export default function GmailInbox() {
   const [searchFilterOpen, setSearchFilterOpen] = useState(false);
   const [checkedMessageIds, setCheckedMessageIds] = useState<Set<string>>(() => new Set());
   const [mailboxUnreadCounts, setMailboxUnreadCounts] = useState<Record<string, number>>({});
+  const [customMailboxes, setCustomMailboxes] = useState<string[]>(() => loadCustomMailboxes());
+  const [showAddMailbox, setShowAddMailbox] = useState(false);
+  const [newMailboxValue, setNewMailboxValue] = useState('');
+  const [addMailboxError, setAddMailboxError] = useState<string | null>(null);
+  const addMailboxInputRef = useRef<HTMLInputElement | null>(null);
   const deepLinkHandledRef = useRef<string | null>(null);
 
   const deepLinkThreadId = searchParams.get('thread')?.trim() ?? null;
@@ -304,13 +351,22 @@ export default function GmailInbox() {
     if (selectedMailbox) return selectedMailbox;
     const fromUrl = searchParams.get('mailbox')?.trim().toLowerCase();
     if (fromUrl) return fromUrl;
-    return defaultMailbox;
-  }, [selectedMailbox, searchParams, defaultMailbox]);
+    return customMailboxes[0] ?? null;
+  }, [selectedMailbox, searchParams, customMailboxes]);
 
   const activeMailboxStatus = useMemo(
     () => mailboxes.find((m) => m.email === activeMailbox) ?? null,
     [mailboxes, activeMailbox],
   );
+
+  /** Tabs are entirely staff-added addresses; pull connection status from the API when known. */
+  const displayMailboxes = useMemo<GmailMailboxStatus[]>(() => {
+    const byEmail = new Map(mailboxes.map((m) => [m.email, m]));
+    return customMailboxes.map(
+      (email): GmailMailboxStatus =>
+        byEmail.get(email) ?? { email, kind: 'personal', connected: false },
+    );
+  }, [mailboxes, customMailboxes]);
 
   const connected = activeMailboxStatus?.connected === true;
   const oauthConnectedParam = searchParams.get('connected') === '1';
@@ -401,12 +457,11 @@ export default function GmailInbox() {
   const loadMailboxes = useCallback(async () => {
     const res = await fetchGmailMailboxes();
     setMailboxes(res.mailboxes);
-    setDefaultMailbox(res.defaultMailbox);
     if (!selectedMailbox && !searchParams.get('mailbox')) {
-      setSelectedMailbox(res.defaultMailbox);
+      setSelectedMailbox(customMailboxes[0] ?? null);
     }
     return res;
-  }, [selectedMailbox, searchParams]);
+  }, [selectedMailbox, searchParams, customMailboxes]);
 
   const loadLabels = useCallback(async () => {
     if (!activeMailbox) return;
@@ -426,7 +481,7 @@ export default function GmailInbox() {
     });
   }, [activeMailbox]);
 
-  const connectedMailboxKey = mailboxes
+  const connectedMailboxKey = displayMailboxes
     .filter((m) => m.connected)
     .map((m) => m.email)
     .join(',');
@@ -560,6 +615,10 @@ export default function GmailInbox() {
     return () => window.clearTimeout(timer);
   }, [mailSearchInput]);
 
+  useEffect(() => {
+    if (showAddMailbox) addMailboxInputRef.current?.focus();
+  }, [showAddMailbox]);
+
   const listFilterRef = useRef({
     activeMailbox: activeMailbox ?? null,
     messageListParams,
@@ -665,6 +724,46 @@ export default function GmailInbox() {
       setSelectedMessage(null);
     } catch (e) {
       setError(gmailErrorMessage(e));
+    }
+  };
+
+  const handleAddMailbox = () => {
+    const result = normalizeMailboxInput(newMailboxValue);
+    if ('error' in result) {
+      setAddMailboxError(result.error);
+      return;
+    }
+    const { email } = result;
+    setCustomMailboxes((prev) => {
+      if (prev.includes(email)) return prev;
+      const next = [...prev, email];
+      saveCustomMailboxes(next);
+      return next;
+    });
+    setNewMailboxValue('');
+    setAddMailboxError(null);
+    setShowAddMailbox(false);
+    selectMailbox(email);
+    void handleConnect(email);
+  };
+
+  const handleRemoveCustomMailbox = async (email: string) => {
+    const status = mailboxes.find((m) => m.email === email);
+    if (status?.connected) {
+      try {
+        await handleDisconnect(email);
+      } catch {
+        /* handleDisconnect already surfaces the error */
+      }
+    }
+    const remaining = customMailboxes.filter((e) => e !== email);
+    setCustomMailboxes(remaining);
+    saveCustomMailboxes(remaining);
+    if (activeMailbox === email) {
+      setSelectedMailbox(remaining[0] ?? null);
+      const next = new URLSearchParams(searchParams);
+      next.delete('mailbox');
+      setSearchParams(next, { replace: true });
     }
   };
 
@@ -941,31 +1040,91 @@ export default function GmailInbox() {
       ) : null}
 
       <header className="gmail-inbox__header">
-        <div>
-          {mailboxes.length > 0 ? (
-            <div className="gmail-inbox__mailbox-tabs" role="tablist" aria-label="Gmail accounts">
-              {mailboxes.map((mb) => (
-                <button
-                  key={mb.email}
-                  type="button"
-                  role="tab"
-                  aria-selected={mb.email === activeMailbox}
-                  className={`gmail-inbox__mailbox-tab${
-                    mb.email === activeMailbox ? ' gmail-inbox__mailbox-tab--active' : ''
-                  }${!mb.connected ? ' gmail-inbox__mailbox-tab--disconnected' : ''}`}
-                  onClick={() => selectMailbox(mb.email)}
-                >
-                  {mailboxDisplayLabel(mb)}
-                  {mb.connected && mailboxTabUnread(mb.email) > 0 ? (
-                    <sup className="gmail-inbox__mailbox-tab-badge">
-                      {mailboxTabUnread(mb.email)}
-                    </sup>
-                  ) : null}
-                  {!mb.connected ? ' · not connected' : ''}
-                </button>
-              ))}
-            </div>
-          ) : null}
+        <div className="gmail-inbox__mailbox-tabs" role="tablist" aria-label="Gmail accounts">
+          {displayMailboxes.map((mb) => (
+            <span key={mb.email} className="gmail-inbox__mailbox-tab-wrap gmail-inbox__mailbox-tab-wrap--custom">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={mb.email === activeMailbox}
+                className={`gmail-inbox__mailbox-tab${
+                  mb.email === activeMailbox ? ' gmail-inbox__mailbox-tab--active' : ''
+                }${!mb.connected ? ' gmail-inbox__mailbox-tab--disconnected' : ''}`}
+                onClick={() => selectMailbox(mb.email)}
+              >
+                {mailboxDisplayLabel(mb)}
+                {mb.connected && mailboxTabUnread(mb.email) > 0 ? (
+                  <sup className="gmail-inbox__mailbox-tab-badge">
+                    {mailboxTabUnread(mb.email)}
+                  </sup>
+                ) : null}
+                {!mb.connected ? ' · not connected' : ''}
+              </button>
+              <button
+                type="button"
+                className="gmail-inbox__mailbox-tab-remove"
+                aria-label={`Remove ${mb.email}`}
+                title={`Remove ${mb.email}`}
+                onClick={() => void handleRemoveCustomMailbox(mb.email)}
+              >
+                <X size={12} strokeWidth={2.5} aria-hidden />
+              </button>
+            </span>
+          ))}
+
+          {showAddMailbox ? (
+            <span className="gmail-inbox__add-mailbox-form">
+              <input
+                ref={addMailboxInputRef}
+                type="text"
+                className="gmail-inbox__add-mailbox-input"
+                placeholder={`name@${MAILBOX_DOMAIN}`}
+                value={newMailboxValue}
+                onChange={(e) => {
+                  setNewMailboxValue(e.target.value);
+                  if (addMailboxError) setAddMailboxError(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleAddMailbox();
+                  } else if (e.key === 'Escape') {
+                    setShowAddMailbox(false);
+                    setNewMailboxValue('');
+                    setAddMailboxError(null);
+                  }
+                }}
+              />
+              <button type="button" className="gmail-btn gmail-btn--primary" onClick={handleAddMailbox}>
+                Add
+              </button>
+              <button
+                type="button"
+                className="gmail-btn"
+                onClick={() => {
+                  setShowAddMailbox(false);
+                  setNewMailboxValue('');
+                  setAddMailboxError(null);
+                }}
+              >
+                Cancel
+              </button>
+              {addMailboxError ? (
+                <span className="gmail-inbox__add-mailbox-error" role="alert">
+                  {addMailboxError}
+                </span>
+              ) : null}
+            </span>
+          ) : (
+            <button
+              type="button"
+              className="gmail-inbox__mailbox-tab gmail-inbox__mailbox-tab--add"
+              onClick={() => setShowAddMailbox(true)}
+            >
+              <Plus size={14} strokeWidth={2.5} aria-hidden style={{ verticalAlign: -2, marginRight: 2 }} />
+              Add email
+            </button>
+          )}
         </div>
         <div className="gmail-inbox__toolbar">
           <button
@@ -1004,10 +1163,10 @@ export default function GmailInbox() {
 
       {loading ? (
         <div className="gmail-inbox__state">Loading inboxes…</div>
-      ) : mailboxes.length === 0 ? (
+      ) : displayMailboxes.length === 0 ? (
         <div className="gmail-inbox__state">
           <Mail size={32} strokeWidth={1.5} color="#94a3b8" aria-hidden />
-          <p>No practice Gmail mailboxes are available for your account.</p>
+          <p>No Gmail mailboxes yet. Use &ldquo;Add email&rdquo; above to connect one.</p>
         </div>
       ) : !connected ? (
         <div className="gmail-inbox__state">
