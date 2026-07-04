@@ -33,6 +33,7 @@ import {
   type TaskSummaryResponse,
 } from '../api/tasks';
 import { resolvePracticeIdFromToken } from '../utils/practiceIdFromToken';
+import { subscribePracticeTasks } from '../utils/taskRealtime';
 import {
   filterMyOpenTasksByAssignedTab,
   filterVisibleWatchingTasks,
@@ -475,8 +476,17 @@ export default function PimsTasksPage() {
       if (isBucketTab(tab)) void loadAssignedOpenTasks();
     };
     window.addEventListener(VAYD_TASKS_CHANGED, onChanged);
-    return () => window.removeEventListener(VAYD_TASKS_CHANGED, onChanged);
-  }, [tab, loadTaskSummary, loadAssignedOpenTasks, loadWatchingOpenTasks]);
+    // Cross-user/cross-tab updates arrive over the `/tasks` websocket instead of polling.
+    const unsubscribeTasks = subscribePracticeTasks({
+      practiceId,
+      onChange: onChanged,
+      onReconnect: onChanged,
+    });
+    return () => {
+      window.removeEventListener(VAYD_TASKS_CHANGED, onChanged);
+      unsubscribeTasks();
+    };
+  }, [tab, practiceId, loadTaskSummary, loadAssignedOpenTasks, loadWatchingOpenTasks]);
 
   useEffect(() => {
     if (tab === 'watching') {
