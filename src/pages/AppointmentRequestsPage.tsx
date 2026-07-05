@@ -216,8 +216,36 @@ function submissionStatus(item: AppointmentRequestSubmissionItem): AppointmentRe
   return item.status ?? 'new';
 }
 
+/** Outreach done, not yet categorized booked or not booked — cleared when status becomes either. */
+function submissionShowsContactedChip(item: AppointmentRequestSubmissionItem): boolean {
+  return submissionStatus(item) === 'contacted';
+}
+
 function submissionNeedsRecords(item: AppointmentRequestSubmissionItem): boolean {
   return item.needsRecords === true;
+}
+
+function submissionRecordsReceived(item: AppointmentRequestSubmissionItem): boolean {
+  return item.needsRecords === false;
+}
+
+function ApptRequestStatusChip({
+  variant,
+  children,
+}: {
+  variant:
+    | 'booked'
+    | 'not-booked'
+    | 'contacted'
+    | 'need-records'
+    | 'records-received';
+  children: React.ReactNode;
+}) {
+  return (
+    <span className={`appt-request-status-chip appt-request-status-chip--${variant}`}>
+      {children}
+    </span>
+  );
 }
 
 function initialNotes(item: AppointmentRequestSubmissionItem): string {
@@ -1001,12 +1029,11 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
       const needsAutoBooked = appointmentRequestNeedsStaffConfirmation(row);
       if (isOnHold) counts.on_hold += 1;
       if (needsAutoBooked) counts.to_confirm += 1;
-      if (isOnHold || needsAutoBooked) {
-        if (submissionNeedsRecords(row)) counts.need_records += 1;
-        continue;
-      }
-      counts[status] += 1;
+      if (submissionShowsContactedChip(row)) counts.contacted += 1;
       if (submissionNeedsRecords(row)) counts.need_records += 1;
+      if (status === 'contacted') continue;
+      if (isOnHold || needsAutoBooked) continue;
+      counts[status] += 1;
     }
     return counts;
   }, [submissions, bookedApptMeta, typeCatalog]);
@@ -1077,7 +1104,10 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
       .filter((item) => {
         if (exitingRows.has(item.id)) return true;
         if (submissionStatus(item) !== statusFilter) return false;
-        if (appointmentRequestSubmissionIsOnHold(item, bookedApptMeta, typeCatalog)) {
+        if (
+          statusFilter !== 'contacted' &&
+          appointmentRequestSubmissionIsOnHold(item, bookedApptMeta, typeCatalog)
+        ) {
           return false;
         }
         if (
@@ -1430,6 +1460,18 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
     setEmailItem(item);
   };
 
+  const markContactedAfterSuccessfulOutreach = useCallback(
+    async (item: AppointmentRequestSubmissionItem) => {
+      if (submissionStatus(item) !== 'new') return;
+      try {
+        await updateStatus(item, 'contacted');
+      } catch {
+        /* updateStatus surfaces errors on the row */
+      }
+    },
+    [updateStatus],
+  );
+
   const closeEmailModal = () => {
     setEmailItem(null);
   };
@@ -1447,15 +1489,17 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
 
   const handleSendSms = async (opts: { overrideNonProd: boolean }) => {
     if (!smsItem || !smsMessage.trim()) return;
+    const outreachItem = smsItem;
     setSmsSending(true);
     setSmsError(null);
     try {
-      await sendAppointmentRequestSubmissionSms(smsItem.id, {
+      await sendAppointmentRequestSubmissionSms(outreachItem.id, {
         message: smsMessage.trim(),
         ...(opts.overrideNonProd ? { overrideNonProd: true } : {}),
       });
       closeSmsModal();
       setNotice('Text message sent.');
+      void markContactedAfterSuccessfulOutreach(outreachItem);
     } catch (e: unknown) {
       const ax = e as { response?: { data?: { message?: string } }; message?: string };
       setSmsError(ax?.response?.data?.message ?? ax?.message ?? 'Failed to send text message.');
@@ -1766,6 +1810,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                     requestData: rd,
                     bookedSummary: displayBookedSummary,
                     practiceTz,
+                    typeCatalog,
                   })
                 : { bookedLabel: null, providerLabel: null };
             const onHoldSinceIso = isOnHoldVisit ? bookedSummary?.appointmentBookedAtIso : null;
@@ -1837,6 +1882,19 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                           {statusTabLabel(item, status, { isOnHold: isOnHoldVisit })}
                         </div>
                       ) : null}
+                      {isBooked ? <ApptRequestStatusChip variant="booked">Booked</ApptRequestStatusChip> : null}
+                      {status === 'dismissed' ? (
+                        <ApptRequestStatusChip variant="not-booked">Not booked</ApptRequestStatusChip>
+                      ) : null}
+                      {submissionShowsContactedChip(item) ? (
+                        <ApptRequestStatusChip variant="contacted">Contacted</ApptRequestStatusChip>
+                      ) : null}
+                      {submissionNeedsRecords(item) ? (
+                        <ApptRequestStatusChip variant="need-records">Need records</ApptRequestStatusChip>
+                      ) : null}
+                      {submissionRecordsReceived(item) ? (
+                        <ApptRequestStatusChip variant="records-received">Records received</ApptRequestStatusChip>
+                      ) : null}
                       {howSoonUrgency === 'emergent' ? (
                         <span className="appt-request-urgency-chip appt-request-urgency-chip--emergent">
                           Emergent
@@ -1845,21 +1903,6 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                         <span className="appt-request-urgency-chip appt-request-urgency-chip--urgent">
                           Urgent
                         </span>
-                      ) : null}
-                      {submissionNeedsRecords(item) ? (
-                        <div
-                          style={{
-                            display: 'inline-block',
-                            padding: '3px 10px',
-                            borderRadius: 6,
-                            fontSize: 12,
-                            fontWeight: 600,
-                            background: '#fef3c7',
-                            color: '#92400e',
-                          }}
-                        >
-                          Need records
-                        </div>
                       ) : null}
                       {clientType !== 'unknown' ? (
                         <div
@@ -1950,7 +1993,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                           On hold
                         </div>
                       ) : null}
-                      {clientType === 'new' && hasLinkedAppointment && (isBooked || isOnHoldVisit) ? (
+                      {clientType === 'new' && hasLinkedAppointment && isOnHoldVisit ? (
                         <div
                           style={{
                             display: 'inline-block',
@@ -2441,6 +2484,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
           onSent={() => {
             setEmailSentToast(true);
             window.setTimeout(() => setEmailSentToast(false), 3500);
+            void markContactedAfterSuccessfulOutreach(emailItem);
           }}
           onGmailLinked={(patch) => {
             setRows((prev) =>

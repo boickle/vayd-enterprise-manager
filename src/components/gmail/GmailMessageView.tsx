@@ -1,11 +1,12 @@
-import { ArrowLeft, ChevronLeft, ChevronRight, FileText, Forward, Image as ImageIcon, Reply } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, ChevronRight, Forward, Reply, X } from 'lucide-react';
+import GmailAttachmentIcon from './GmailAttachmentIcon';
 import type { ComposeContext } from './gmailCompose';
-import GmailBulkToolbar from './GmailBulkToolbar';
+import GmailBulkToolbar, { type GmailLabelApplyUpdate } from './GmailBulkToolbar';
 import GmailScheduledSendIcon from './GmailScheduledSendIcon';
 import {
   formatGmailAddress,
   decodeGmailSnippet,
-  getMessageUserLabels,
+  getMessageRemovableHeaderLabels,
   hasScheduledSend,
   labelChipStyle,
   labelDisplayName,
@@ -34,14 +35,12 @@ type Props = {
   canNext: boolean;
   onToolbarComplete: () => void;
   onToolbarError: (message: string) => void;
+  onLabelsApplied: (updates: GmailLabelApplyUpdate[]) => void;
   onCompose: (context: ComposeContext) => void;
   onOpenAttachment: (attachment: GmailAttachmentSummary) => void;
+  onRemoveLabel: (labelId: string) => Promise<void>;
   latestThreadMessage: GmailThreadMessage | null;
 };
-
-function attachmentUsesImageIcon(mimeType: string): boolean {
-  return mimeType.startsWith('image/');
-}
 
 function senderInitial(from: GmailMessageSummary['from']): string {
   const name = from.name?.trim();
@@ -66,11 +65,13 @@ export default function GmailMessageView({
   canNext,
   onToolbarComplete,
   onToolbarError,
+  onLabelsApplied,
   onCompose,
   onOpenAttachment,
+  onRemoveLabel,
   latestThreadMessage,
 }: Props) {
-  const userLabelsOnMessage = getMessageUserLabels(message.labelIds, labelById);
+  const removableLabels = getMessageRemovableHeaderLabels(message.labelIds, labelById);
 
   return (
     <div className="gmail-message-view">
@@ -91,6 +92,7 @@ export default function GmailMessageView({
           labelById={labelById}
           disabled={actionBusy}
           onComplete={onToolbarComplete}
+          onLabelsApplied={onLabelsApplied}
           onError={onToolbarError}
         />
         <div className="gmail-message-view__toolbar-spacer" />
@@ -151,15 +153,27 @@ export default function GmailMessageView({
       <div className="gmail-message-view__scroll">
         <div className="gmail-message-view__head">
           <h1 className="gmail-message-view__subject">{message.subject || '(no subject)'}</h1>
-          {userLabelsOnMessage.length > 0 ? (
+          {removableLabels.length > 0 ? (
             <div className="gmail-message-view__labels">
-              {userLabelsOnMessage.map((label) => (
+              {removableLabels.map((label) => (
                 <span
                   key={label.id}
-                  className="gmail-msg-item__label"
+                  className="gmail-msg-item__label gmail-message-view__label"
                   style={labelChipStyle(label)}
                 >
-                  {labelDisplayName(label)}
+                  <span className="gmail-message-view__label-name" title={label.name}>
+                    {labelDisplayName(label)}
+                  </span>
+                  <button
+                    type="button"
+                    className="gmail-message-view__label-remove"
+                    aria-label={`Remove label ${labelDisplayName(label)}`}
+                    title={`Remove label ${labelDisplayName(label)}`}
+                    disabled={actionBusy}
+                    onClick={() => void onRemoveLabel(label.id)}
+                  >
+                    <X size={12} strokeWidth={2.25} aria-hidden />
+                  </button>
                 </span>
               ))}
             </div>
@@ -223,23 +237,21 @@ export default function GmailMessageView({
                         : `${msg.attachments.length} attachments`}
                     </div>
                     <div className="gmail-thread-message__attachments-list">
-                      {msg.attachments.map((attachment) => {
-                        const Icon = attachmentUsesImageIcon(attachment.mimeType)
-                          ? ImageIcon
-                          : FileText;
-                        return (
-                          <button
-                            key={`${attachment.messageId}:${attachment.attachmentId}`}
-                            type="button"
-                            className="gmail-msg-item__attachment gmail-thread-message__attachment"
-                            title={attachment.filename}
-                            onClick={() => onOpenAttachment(attachment)}
-                          >
-                            <Icon size={14} strokeWidth={1.75} aria-hidden />
-                            {truncateAttachmentFilename(attachment.filename, 24)}
-                          </button>
-                        );
-                      })}
+                      {msg.attachments.map((attachment) => (
+                        <button
+                          key={`${attachment.messageId}:${attachment.attachmentId}`}
+                          type="button"
+                          className="gmail-msg-item__attachment gmail-thread-message__attachment"
+                          title={attachment.filename}
+                          onClick={() => onOpenAttachment(attachment)}
+                        >
+                          <GmailAttachmentIcon
+                            mimeType={attachment.mimeType}
+                            filename={attachment.filename}
+                          />
+                          {truncateAttachmentFilename(attachment.filename, 24)}
+                        </button>
+                      ))}
                     </div>
                   </div>
                 ) : null}

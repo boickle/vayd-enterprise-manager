@@ -3,8 +3,6 @@ import { Navigate, useSearchParams } from 'react-router-dom';
 import {
   ChevronLeft,
   ChevronRight,
-  FileText,
-  Image as ImageIcon,
   Mail,
   PenSquare,
   Plus,
@@ -12,7 +10,8 @@ import {
   Star,
   X,
 } from 'lucide-react';
-import GmailBulkToolbar from '../components/gmail/GmailBulkToolbar';
+import GmailAttachmentIcon from '../components/gmail/GmailAttachmentIcon';
+import GmailBulkToolbar, { type GmailLabelApplyUpdate } from '../components/gmail/GmailBulkToolbar';
 import GmailComposeModal from '../components/gmail/GmailComposeModal';
 import GmailMessageView from '../components/gmail/GmailMessageView';
 import GmailSearchBar from '../components/gmail/GmailSearchBar';
@@ -50,6 +49,7 @@ import {
   mailboxShortLabel,
   mailboxDisplayLabel,
   markGmailMessageRead,
+  modifyGmailMessage,
   openGmailAttachment,
   starGmailMessage,
   truncateAttachmentFilename,
@@ -81,9 +81,7 @@ function formatMessageDate(iso: string): string {
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
-function attachmentUsesImageIcon(mimeType: string): boolean {
-  return mimeType.startsWith('image/');
-}
+const INBOX_ATTACHMENT_PREVIEW_LIMIT = 3;
 
 const MAILBOX_DOMAIN = 'vetatyourdoor.com';
 const CUSTOM_MAILBOXES_STORAGE_KEY = 'gmailInbox.customMailboxes';
@@ -245,11 +243,9 @@ function MessageListSection({
                     </div>
                     {msg.attachments && msg.attachments.length > 0 ? (
                       <div className="gmail-msg-item__attachments">
-                        {msg.attachments.map((attachment) => {
-                          const Icon = attachmentUsesImageIcon(attachment.mimeType)
-                            ? ImageIcon
-                            : FileText;
-                          return (
+                        {msg.attachments
+                          .slice(0, INBOX_ATTACHMENT_PREVIEW_LIMIT)
+                          .map((attachment) => (
                             <button
                               key={`${attachment.messageId}:${attachment.attachmentId}`}
                               type="button"
@@ -260,11 +256,21 @@ function MessageListSection({
                                 onOpenAttachment(attachment);
                               }}
                             >
-                              <Icon size={14} strokeWidth={1.75} aria-hidden />
+                              <GmailAttachmentIcon
+                                mimeType={attachment.mimeType}
+                                filename={attachment.filename}
+                              />
                               {truncateAttachmentFilename(attachment.filename, 20)}
                             </button>
-                          );
-                        })}
+                          ))}
+                        {msg.attachments.length > INBOX_ATTACHMENT_PREVIEW_LIMIT ? (
+                          <span
+                            className="gmail-msg-item__attachment-more"
+                            title={`${msg.attachments.length - INBOX_ATTACHMENT_PREVIEW_LIMIT} more attachments`}
+                          >
+                            +{msg.attachments.length - INBOX_ATTACHMENT_PREVIEW_LIMIT}
+                          </span>
+                        ) : null}
                       </div>
                     ) : null}
                   </div>
@@ -952,6 +958,62 @@ export default function GmailInbox() {
 
   const hasCheckedMessages = checkedMessageIds.size > 0;
 
+  const applyLabelUpdates = useCallback(
+    (updates: GmailLabelApplyUpdate[]) => {
+      if (updates.length === 0) return;
+      const updateByMessageId = new Map(updates.map((u) => [u.messageId, u]));
+      const updateByThreadId = new Map(updates.map((u) => [u.threadId, u]));
+      setMessages((prev) =>
+        prev.map((m) => {
+          const update =
+            updateByMessageId.get(m.id) ?? updateByThreadId.get(m.threadId);
+          return update ? { ...m, labelIds: update.labelIds } : m;
+        }),
+      );
+      setSelectedMessage((prev) => {
+        if (!prev) return null;
+        const update =
+          updateByMessageId.get(prev.id) ?? updateByThreadId.get(prev.threadId);
+        return update ? { ...prev, labelIds: update.labelIds } : prev;
+      });
+      void loadLabels();
+    },
+    [loadLabels],
+  );
+
+  const handleRemoveMessageLabel = useCallback(
+    async (labelId: string) => {
+      if (!selectedMessage || !activeMailbox) return;
+      setActionBusy(true);
+      try {
+        const result = await modifyGmailMessage(
+          activeMailbox,
+          selectedMessage.id,
+          { removeLabelIds: [labelId] },
+          selectedMessage.threadId,
+        );
+        const threadId = selectedMessage.threadId;
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === selectedMessage.id || m.threadId === threadId
+              ? { ...m, labelIds: result.labelIds }
+              : m,
+          ),
+        );
+        setSelectedMessage((prev) =>
+          prev ? { ...prev, labelIds: result.labelIds } : null,
+        );
+        void loadLabels();
+      } catch (e) {
+        setError(gmailErrorMessage(e));
+        throw e;
+      } finally {
+        setActionBusy(false);
+      }
+    },
+    [selectedMessage, activeMailbox, loadLabels],
+  );
+
   const handleBulkComplete = () => {
     setCheckedMessageIds(new Set());
     setSelectedMessage(null);
@@ -1270,8 +1332,10 @@ export default function GmailInbox() {
                 }
                 onToolbarComplete={handleBulkComplete}
                 onToolbarError={(msg) => setError(msg)}
+                onLabelsApplied={applyLabelUpdates}
                 onCompose={openCompose}
                 onOpenAttachment={handleOpenAttachment}
+                onRemoveLabel={handleRemoveMessageLabel}
               />
             </section>
           ) : (
@@ -1299,6 +1363,7 @@ export default function GmailInbox() {
                     labelById={labelById}
                     disabled={actionBusy || refreshing}
                     onComplete={handleBulkComplete}
+                    onLabelsApplied={applyLabelUpdates}
                     onError={(msg) => setError(msg)}
                   />
                 ) : (

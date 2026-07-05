@@ -10,7 +10,16 @@ import {
   type GmailLabelNode,
   type GmailMessageSummary,
 } from '../../api/gmail';
-import GmailLabelPicker, { type GmailLabelCheckState } from './GmailLabelPicker';
+import GmailLabelPicker, {
+  type GmailLabelCheckState,
+  type GmailLabelDraftState,
+} from './GmailLabelPicker';
+
+export type GmailLabelApplyUpdate = {
+  messageId: string;
+  threadId: string;
+  labelIds: string[];
+};
 
 /** Gmail-style archive: a box with a downward arrow (matches lucide outline style). */
 function ArchiveDownIcon({ size = 18 }: { size?: number }) {
@@ -42,6 +51,7 @@ type Props = {
   labelById: Map<string, GmailLabelNode>;
   disabled?: boolean;
   onComplete: () => void;
+  onLabelsApplied: (updates: GmailLabelApplyUpdate[]) => void;
   onError: (message: string) => void;
 };
 
@@ -55,9 +65,11 @@ export default function GmailBulkToolbar({
   labelById,
   disabled,
   onComplete,
+  onLabelsApplied,
   onError,
 }: Props) {
   const [busy, setBusy] = useState(false);
+  const [labelApplying, setLabelApplying] = useState(false);
   const [openMenu, setOpenMenu] = useState<'move' | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -129,23 +141,50 @@ export default function GmailBulkToolbar({
     return 'some';
   };
 
-  const handleToggleLabel = (labelId: string) => {
-    const state = labelState(labelId);
-    const snapshot = targetMessages;
-    void runOnChecked((m) => {
-      const msg = snapshot.find((row) => row.id === m.id);
-      if (!msg) return Promise.resolve();
-      if (state === 'all') {
-        return modifyGmailMessage(mailbox, m.id, { removeLabelIds: [labelId] }, m.threadId);
-      }
-      if (!msg.labelIds.includes(labelId)) {
-        return modifyGmailMessage(mailbox, m.id, { addLabelIds: [labelId] }, m.threadId);
-      }
-      return Promise.resolve();
-    });
+  const handleApplyLabels = async (draft: Map<string, GmailLabelDraftState>) => {
+    if (targetMessages.length === 0) return;
+    setLabelApplying(true);
+    try {
+      const updates = await Promise.all(
+        targetMessages.map(async (m) => {
+          const addLabelIds: string[] = [];
+          const removeLabelIds: string[] = [];
+          for (const label of userLabels) {
+            const draftState = draft.get(label.id);
+            const has = m.labelIds.includes(label.id);
+            if (draftState === true && !has) addLabelIds.push(label.id);
+            if (draftState === false && has) removeLabelIds.push(label.id);
+          }
+          if (addLabelIds.length === 0 && removeLabelIds.length === 0) {
+            return {
+              messageId: m.id,
+              threadId: m.threadId,
+              labelIds: m.labelIds,
+            };
+          }
+          const result = await modifyGmailMessage(
+            mailbox,
+            m.id,
+            { addLabelIds, removeLabelIds },
+            m.threadId,
+          );
+          return {
+            messageId: result.id,
+            threadId: m.threadId,
+            labelIds: result.labelIds,
+          };
+        }),
+      );
+      onLabelsApplied(updates);
+    } catch (e) {
+      onError(e instanceof Error ? e.message : 'Failed to update labels.');
+      throw e;
+    } finally {
+      setLabelApplying(false);
+    }
   };
 
-  const isDisabled = disabled || busy || targetMessages.length === 0;
+  const isDisabled = disabled || busy || labelApplying || targetMessages.length === 0;
 
   return (
     <div className="gmail-bulk-toolbar" ref={rootRef}>
@@ -221,8 +260,9 @@ export default function GmailBulkToolbar({
       <GmailLabelPicker
         userLabels={userLabels}
         labelState={labelState}
-        onToggleLabel={handleToggleLabel}
+        onApply={handleApplyLabels}
         disabled={isDisabled}
+        applying={labelApplying}
         trigger="toolbar-icon"
       />
     </div>

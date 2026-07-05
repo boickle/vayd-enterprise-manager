@@ -238,6 +238,46 @@
   gap: 6px;
 }
 
+.gmail-message-view__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  max-width: none;
+  padding: 2px 4px 2px 8px;
+}
+
+.gmail-message-view__label-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gmail-message-view__label-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  opacity: 0.75;
+  cursor: pointer;
+}
+
+.gmail-message-view__label-remove:hover:not(:disabled) {
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.08);
+}
+
+.gmail-message-view__label-remove:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 .gmail-message-view__thread {
   display: grid;
   gap: 24px;
@@ -634,6 +674,33 @@
   padding: 12px 14px;
   font-size: 13px;
   color: #94a3b8;
+}
+
+.gmail-bulk-menu__footer {
+  display: flex;
+  justify-content: flex-end;
+  padding: 8px 12px 4px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.gmail-bulk-menu__apply {
+  border: none;
+  background: transparent;
+  padding: 6px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #2563eb;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.gmail-bulk-menu__apply:hover:not(:disabled) {
+  background: #eff6ff;
+}
+
+.gmail-bulk-menu__apply:disabled {
+  color: #94a3b8;
+  cursor: not-allowed;
 }
 
 .gmail-inbox__search-wrap {
@@ -1065,9 +1132,33 @@
   border-color: #cbd5e1;
 }
 
-.gmail-msg-item__attachment svg {
+.gmail-attachment-icon {
+  display: inline-flex;
   flex-shrink: 0;
-  color: #dc2626;
+  align-items: center;
+  justify-content: center;
+}
+
+.gmail-attachment-icon svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.gmail-msg-item__attachment-more {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 6px;
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  background: #fff;
+  font-size: 12px;
+  font-weight: 500;
+  color: #64748b;
+  flex-shrink: 0;
 }
 
 .gmail-thread-message__attachments {

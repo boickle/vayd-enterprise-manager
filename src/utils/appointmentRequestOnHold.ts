@@ -12,6 +12,7 @@ import { isAppointmentCancelledOnPracticeCalendar } from '../api/appointments';
 import type { Appointment } from '../api/roomLoader';
 import { requestDataAppointmentTypeForRouting, requestDataSelfScheduledSlot } from './appointmentRequestDisplay';
 import {
+  normalizeAppointmentTypeName,
   pointsPerPatientForType,
   type AppointmentTypeCatalog,
 } from './appointmentTypeSettings';
@@ -224,13 +225,18 @@ export function appointmentRequestBookedVisitLabels(args: {
   requestData: Record<string, unknown>;
   bookedSummary?: AppointmentRequestBookedApptSummary | null;
   practiceTz: string;
-}): { bookedLabel: string | null; providerLabel: string | null } {
-  const { requestData, bookedSummary, practiceTz } = args;
+  typeCatalog?: AppointmentTypeCatalog | null;
+}): {
+  bookedLabel: string | null;
+  providerLabel: string | null;
+} {
+  const { requestData, bookedSummary, practiceTz, typeCatalog } = args;
   const slot = requestDataSelfScheduledSlot(requestData);
   const start = bookedSummary?.start?.trim() || slot?.appointmentStart?.trim() || null;
   const end = bookedSummary?.end?.trim() || slot?.windowEndIso?.trim() || null;
   const provider =
     bookedSummary?.providerName?.trim() || slot?.doctorName?.trim() || null;
+  const typeName = resolveBookedVisitInternalTypeName(requestData, bookedSummary, typeCatalog);
 
   if (!start) {
     return { bookedLabel: null, providerLabel: provider };
@@ -241,21 +247,78 @@ export function appointmentRequestBookedVisitLabels(args: {
     return { bookedLabel: null, providerLabel: provider };
   }
 
-  const windowDisplay = slot?.windowDisplay?.trim();
+  const isOnHold = (bookedSummary?.points ?? 0) <= 0;
+  const leadPrefix = isOnHold ? 'On hold. ' : '';
+  const datePart = startDt.toFormat('EEE, MMMM d yyyy');
+  const typePart = typeName ? `${typeName} - ` : '';
+  const arrivalWindow = formatBookedVisitArrivalWindow(slot, start, end, practiceTz);
+
   let bookedLabel: string;
-  if (windowDisplay) {
-    bookedLabel = `${startDt.toFormat('EEE, MMM d, yyyy')} · ${windowDisplay}`;
+  if (arrivalWindow) {
+    bookedLabel = `${leadPrefix}${typePart}${datePart}. Arrival window: ${arrivalWindow}`;
   } else {
     const endDt = end ? DateTime.fromISO(end, { zone: 'utc' }).setZone(practiceTz) : null;
-    const datePart = startDt.toFormat('EEE, MMM d, yyyy');
     if (endDt?.isValid) {
-      bookedLabel = `${datePart} · ${startDt.toFormat('h:mm a')} – ${endDt.toFormat('h:mm a')}`;
+      bookedLabel = `${leadPrefix}${typePart}${datePart}. ${startDt.toFormat('h:mm a')} – ${endDt.toFormat('h:mm a')}`;
     } else {
-      bookedLabel = `${datePart} · ${startDt.toFormat('h:mm a')}`;
+      bookedLabel = `${leadPrefix}${typePart}${datePart}. ${startDt.toFormat('h:mm a')}`;
     }
   }
 
   return { bookedLabel, providerLabel: provider };
+}
+
+function resolveBookedVisitInternalTypeName(
+  requestData: Record<string, unknown>,
+  bookedSummary: AppointmentRequestBookedApptSummary | null | undefined,
+  catalog?: AppointmentTypeCatalog | null,
+): string | null {
+  const summaryName = bookedSummary?.typeName?.trim();
+  if (summaryName) {
+    if (catalog) {
+      const row = catalog.byName.get(normalizeAppointmentTypeName(summaryName));
+      const name = row?.name?.trim();
+      if (name) return name;
+    }
+    return summaryName;
+  }
+
+  const { typeId } = requestDataAppointmentTypeForRouting(requestData);
+  if (typeId != null && catalog?.byId.has(typeId)) {
+    const row = catalog.byId.get(typeId);
+    const name = row?.name?.trim();
+    if (name) return name;
+  }
+
+  return null;
+}
+
+function formatBookedVisitArrivalWindow(
+  slot: ReturnType<typeof requestDataSelfScheduledSlot>,
+  start: string,
+  end: string | null | undefined,
+  practiceTz: string,
+): string | null {
+  const windowDisplay = slot?.windowDisplay?.trim();
+  if (windowDisplay) {
+    const betweenMatch = windowDisplay.match(/between\s+(.+?)\s+and\s+(.+)$/i);
+    if (betweenMatch) {
+      return `${betweenMatch[1].trim()} and ${betweenMatch[2].trim()}`;
+    }
+    return windowDisplay;
+  }
+
+  const windowStart = slot?.windowStartIso?.trim() || start;
+  const windowEnd = slot?.windowEndIso?.trim() || end?.trim() || null;
+  const startDt = DateTime.fromISO(windowStart, { zone: 'utc' }).setZone(practiceTz);
+  if (!startDt.isValid) return null;
+  const endDt = windowEnd
+    ? DateTime.fromISO(windowEnd, { zone: 'utc' }).setZone(practiceTz)
+    : null;
+  if (endDt?.isValid) {
+    return `${startDt.toFormat('h:mm a')} and ${endDt.toFormat('h:mm a')}`;
+  }
+  return null;
 }
 
 export {

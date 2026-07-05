@@ -1,30 +1,60 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Search, Tag } from 'lucide-react';
 import { labelDisplayName, type GmailLabelNode } from '../../api/gmail';
 
 export type GmailLabelCheckState = 'none' | 'some' | 'all';
+export type GmailLabelDraftState = boolean | 'some';
 
 type Props = {
   userLabels: GmailLabelNode[];
   labelState: (labelId: string) => GmailLabelCheckState;
-  onToggleLabel: (labelId: string) => void;
+  onApply: (draft: Map<string, GmailLabelDraftState>) => Promise<void>;
   disabled?: boolean;
+  applying?: boolean;
   trigger?: 'toolbar-icon' | 'detail-button';
 };
+
+function initialDraftState(state: GmailLabelCheckState): GmailLabelDraftState {
+  if (state === 'all') return true;
+  if (state === 'some') return 'some';
+  return false;
+}
+
+function draftHasChanges(
+  userLabels: GmailLabelNode[],
+  draft: Map<string, GmailLabelDraftState>,
+  labelState: (labelId: string) => GmailLabelCheckState,
+): boolean {
+  for (const label of userLabels) {
+    const next = draft.get(label.id);
+    const initial = labelState(label.id);
+    if (next === 'some') continue;
+    if (initial === 'all' && next === false) return true;
+    if (initial === 'none' && next === true) return true;
+    if (initial === 'some' && (next === true || next === false)) return true;
+  }
+  return false;
+}
 
 export default function GmailLabelPicker({
   userLabels,
   labelState,
-  onToggleLabel,
+  onApply,
   disabled,
+  applying = false,
   trigger = 'detail-button',
 }: Props) {
   const [open, setOpen] = useState(false);
   const [labelFilter, setLabelFilter] = useState('');
   const [orderTick, setOrderTick] = useState(0);
+  const [draft, setDraft] = useState<Map<string, GmailLabelDraftState>>(() => new Map());
   const rootRef = useRef<HTMLDivElement>(null);
-  // Checked-first order snapshotted when the menu opens, so rows don't jump while toggling.
   const orderSnapshotRef = useRef<Map<string, number>>(new Map());
+
+  const closeMenu = useCallback(() => {
+    setOpen(false);
+    setLabelFilter('');
+  }, []);
 
   const filteredUserLabels = useMemo(() => {
     const q = labelFilter.trim().toLowerCase();
@@ -48,10 +78,14 @@ export default function GmailLabelPicker({
     if (!open) return;
     const checked: string[] = [];
     const unchecked: string[] = [];
+    const nextDraft = new Map<string, GmailLabelDraftState>();
     for (const l of userLabels) {
-      if (labelState(l.id) !== 'none') checked.push(l.id);
+      const state = labelState(l.id);
+      nextDraft.set(l.id, initialDraftState(state));
+      if (state !== 'none') checked.push(l.id);
       else unchecked.push(l.id);
     }
+    setDraft(nextDraft);
     const order = [...checked, ...unchecked];
     orderSnapshotRef.current = new Map(order.map((id, i) => [id, i]));
     setOrderTick((t) => t + 1);
@@ -62,13 +96,33 @@ export default function GmailLabelPicker({
     if (!open) return;
     const onDocClick = (e: MouseEvent) => {
       if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
-        setOpen(false);
-        setLabelFilter('');
+        closeMenu();
       }
     };
     document.addEventListener('mousedown', onDocClick);
     return () => document.removeEventListener('mousedown', onDocClick);
-  }, [open]);
+  }, [open, closeMenu]);
+
+  const hasChanges = draftHasChanges(userLabels, draft, labelState);
+
+  const toggleDraftLabel = (labelId: string) => {
+    setDraft((prev) => {
+      const next = new Map(prev);
+      const current = next.get(labelId) ?? false;
+      next.set(labelId, current === true ? false : true);
+      return next;
+    });
+  };
+
+  const handleApply = async () => {
+    if (!hasChanges || applying) return;
+    try {
+      await onApply(draft);
+      closeMenu();
+    } catch {
+      /* parent surfaces errors */
+    }
+  };
 
   return (
     <div
@@ -85,7 +139,7 @@ export default function GmailLabelPicker({
         aria-label="Label message"
         aria-expanded={open}
         title="Label"
-        disabled={disabled}
+        disabled={disabled || applying}
         onClick={() => setOpen((v) => !v)}
       >
         <Tag
@@ -115,17 +169,17 @@ export default function GmailLabelPicker({
               <li className="gmail-bulk-menu__empty">No labels found</li>
             ) : (
               filteredUserLabels.map((label) => {
-                const state = labelState(label.id);
+                const state = draft.get(label.id) ?? false;
                 return (
                   <li key={label.id}>
                     <label className="gmail-bulk-menu__check-item">
                       <input
                         type="checkbox"
-                        checked={state === 'all'}
+                        checked={state === true}
                         ref={(el) => {
                           if (el) el.indeterminate = state === 'some';
                         }}
-                        onChange={() => onToggleLabel(label.id)}
+                        onChange={() => toggleDraftLabel(label.id)}
                       />
                       <span>{labelDisplayName(label)}</span>
                     </label>
@@ -134,6 +188,16 @@ export default function GmailLabelPicker({
               })
             )}
           </ul>
+          <div className="gmail-bulk-menu__footer">
+            <button
+              type="button"
+              className="gmail-bulk-menu__apply"
+              disabled={!hasChanges || applying}
+              onClick={() => void handleApply()}
+            >
+              Apply
+            </button>
+          </div>
         </div>
       ) : null}
     </div>

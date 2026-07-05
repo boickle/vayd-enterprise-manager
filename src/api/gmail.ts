@@ -122,6 +122,37 @@ function dedupeAttachmentsNewestFirst(
   return out;
 }
 
+/** Newest message first; within a message, later MIME parts are treated as more recent. */
+function collectThreadAttachmentsNewestFirst(
+  messages: GmailMessageSummary[],
+): GmailAttachmentSummary[] {
+  const ranked: Array<{
+    att: GmailAttachmentSummary;
+    messageTs: number;
+    withinMessageRank: number;
+  }> = [];
+
+  for (const m of messages) {
+    const messageTs = messageTimestamp(m.date);
+    const msgAttachments = m.attachments ?? [];
+    for (let i = 0; i < msgAttachments.length; i++) {
+      ranked.push({
+        att: msgAttachments[i]!,
+        messageTs,
+        withinMessageRank: msgAttachments.length - 1 - i,
+      });
+    }
+  }
+
+  ranked.sort((a, b) => {
+    const tsDiff = b.messageTs - a.messageTs;
+    if (tsDiff !== 0) return tsDiff;
+    return b.withinMessageRank - a.withinMessageRank;
+  });
+
+  return dedupeAttachmentsNewestFirst(ranked.map((entry) => entry.att));
+}
+
 /** Collapse individual messages into one row per thread (newest message wins). */
 export function groupGmailMessagesByThread(
   messages: GmailMessageSummary[],
@@ -143,15 +174,11 @@ export function groupGmailMessagesByThread(
     const labelIds = new Set<string>();
     let maxCount = 1;
     const participantParts: string[] = [];
-    const attachmentMap = new Map<string, GmailAttachmentSummary>();
     let scheduledSendAt: string | null | undefined;
     for (const m of sorted) {
       for (const id of m.labelIds) labelIds.add(id);
       maxCount = Math.max(maxCount, m.threadMessageCount ?? 1);
       if (m.participants?.trim()) participantParts.push(m.participants.trim());
-      for (const att of m.attachments ?? []) {
-        attachmentMap.set(`${att.messageId}:${att.attachmentId}`, att);
-      }
       if (m.scheduledSendAt) {
         if (
           !scheduledSendAt ||
@@ -161,7 +188,7 @@ export function groupGmailMessagesByThread(
         }
       }
     }
-    const attachments = dedupeAttachmentsNewestFirst([...attachmentMap.values()]);
+    const attachments = collectThreadAttachmentsNewestFirst(sorted);
     grouped.push({
       ...latest,
       threadId: threadKey(latest),
@@ -729,6 +756,22 @@ export function getMessageUserLabels(
   return labelIds
     .map((id) => labelById.get(id))
     .filter((label): label is GmailLabelNode => label?.type === 'user');
+}
+
+const REMOVABLE_HEADER_SYSTEM_LABEL_IDS = new Set(['INBOX']);
+
+/** User labels and removable system labels (e.g. Inbox) shown under the message subject. */
+export function getMessageRemovableHeaderLabels(
+  labelIds: string[],
+  labelById: Map<string, GmailLabelNode>,
+): GmailLabelNode[] {
+  return labelIds
+    .map((id) => labelById.get(id))
+    .filter((label): label is GmailLabelNode => {
+      if (!label) return false;
+      if (label.type === 'user') return true;
+      return REMOVABLE_HEADER_SYSTEM_LABEL_IDS.has(label.id);
+    });
 }
 
 export function labelChipStyle(label: GmailLabelNode): {

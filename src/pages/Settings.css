@@ -2026,6 +2026,39 @@
   border: 1px solid #fed7aa;
 }
 
+.appt-request-status-chip {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.appt-request-status-chip--booked {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.appt-request-status-chip--not-booked {
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.appt-request-status-chip--contacted {
+  background: #e0e7ff;
+  color: #3730a3;
+}
+
+.appt-request-status-chip--need-records {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.appt-request-status-chip--records-received {
+  background: #ecfdf5;
+  color: #047857;
+}
+
 .appt-request-detail-panel {
   width: 100%;
   box-sizing: border-box;
