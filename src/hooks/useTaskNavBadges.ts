@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import { fetchTasksSummary, listTasks } from '../api/tasks';
+import { useAuth } from '../auth/useAuth';
+import { resolvePracticeIdFromToken } from '../utils/practiceIdFromToken';
+import { subscribePracticeTasks } from '../utils/taskRealtime';
 import {
-  filterVisibleWatchingTasks,
   navAssignedBadgeCountFromSummary,
   navWatchingBadgeCountFromTasks,
   VAYD_TASKS_CHANGED,
@@ -9,8 +11,12 @@ import {
 
 const WATCHING_NAV_COUNT_CAP = 200;
 
-/** Red + purple task counts for nav badges (GET /tasks/summary + watching list). */
+/**
+ * Red + purple task counts for nav badges (GET /tasks/summary + watching list).
+ * Kept fresh via the `/tasks` websocket (see `taskRealtime.ts`) instead of interval polling.
+ */
 export function useTaskNavBadges(enabled: boolean) {
+  const { token } = useAuth();
   const [assignedCount, setAssignedCount] = useState(0);
   const [watchingCount, setWatchingCount] = useState(0);
 
@@ -45,15 +51,22 @@ export function useTaskNavBadges(enabled: boolean) {
       if (document.visibilityState === 'visible') void load();
     };
     document.addEventListener('visibilitychange', onVisible);
-    const interval = window.setInterval(() => void load(), 45_000);
+
+    const practiceId = resolvePracticeIdFromToken(token);
+    const unsubscribeTasks = subscribePracticeTasks({
+      practiceId,
+      onChange: onRefresh,
+      onReconnect: onRefresh,
+    });
+
     return () => {
       cancelled = true;
       window.removeEventListener('focus', onRefresh);
       window.removeEventListener(VAYD_TASKS_CHANGED, onRefresh);
       document.removeEventListener('visibilitychange', onVisible);
-      clearInterval(interval);
+      unsubscribeTasks();
     };
-  }, [enabled]);
+  }, [enabled, token]);
 
   return { assignedCount, watchingCount };
 }
