@@ -68,6 +68,14 @@ export function PatientChartSummaryPanel({
         <p className="patient-chart-summary-error">{error}</p>
       ) : summary ? (
         <div className="patient-chart-summary-sections">
+          <SummarySection title="Primary provider">
+            {summary.primaryProviderName ? (
+              <p className="patient-chart-summary-line">{summary.primaryProviderName}</p>
+            ) : (
+              <p className="patient-chart-summary-muted">Not assigned</p>
+            )}
+          </SummarySection>
+
           {showAlerts && summary.alerts ? (
             <SummarySection title="Patient alerts">
               <p className="patient-chart-summary-alert-line">

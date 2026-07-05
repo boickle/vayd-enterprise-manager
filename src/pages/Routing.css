@@ -656,6 +656,28 @@
   color: #0f766e;
 }
 
+.routing-address-zone-line--oosa {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid #c4b5fd;
+  background: #f5f3ff;
+  color: #5b21b6;
+}
+
+.routing-address-zone-line--oosa .routing-address-zone-label {
+  display: block;
+  color: #6d28d9;
+}
+
+.routing-address-zone-line--oosa .routing-address-zone-warn {
+  display: block;
+  color: #7c3aed;
+  font-weight: 500;
+}
+
 .routing-address-zone-warn {
   font-size: 12px;
   font-weight: 600;
@@ -875,6 +897,16 @@
 .routing-asap-all-doctor-search span {
   font-weight: 600;
   color: var(--text, #1a1a1a);
+}
+
+.routing-asap-all-doctor-search--unavailable {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.routing-asap-all-doctor-search--unavailable span {
+  text-decoration: line-through;
+  color: var(--muted, #64748b);
 }
 
 .routing-asap-results-sort-btn {

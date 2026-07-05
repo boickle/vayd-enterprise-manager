@@ -10,7 +10,7 @@ import { linkedAppointmentEvetIdsFromRecord } from './appointmentRequestLinkedEv
 import { appointmentLinkedClientLabel } from './schedulerVisitDisplay';
 import { isAppointmentCancelledOnPracticeCalendar } from '../api/appointments';
 import type { Appointment } from '../api/roomLoader';
-import { requestDataAppointmentTypeForRouting } from './appointmentRequestDisplay';
+import { requestDataAppointmentTypeForRouting, requestDataSelfScheduledSlot } from './appointmentRequestDisplay';
 import {
   pointsPerPatientForType,
   type AppointmentTypeCatalog,
@@ -187,6 +187,75 @@ export function appointmentRequestSubmissionCountsAsBooked(
 ): boolean {
   if ((item.status ?? 'new') !== 'booked') return false;
   return !appointmentRequestSubmissionIsOnHold(item, bookedApptMeta, catalog);
+}
+
+/** Calendar summary when hydrated, else the client’s self-scheduled slot from the request payload. */
+export function resolveAppointmentRequestBookedVisitSummary(
+  item: AppointmentRequestSubmissionItem,
+  bookedSummary: AppointmentRequestBookedApptSummary | undefined,
+  catalog?: AppointmentTypeCatalog | null,
+): AppointmentRequestBookedApptSummary | null {
+  if (bookedSummary?.start?.trim()) return bookedSummary;
+  const slot = requestDataSelfScheduledSlot(item.requestData ?? {});
+  if (!slot?.appointmentStart?.trim()) return bookedSummary ?? null;
+
+  const points =
+    item.linkedVisitPoints ??
+    (() => {
+      if (!catalog) return 0;
+      const { label, typeId } = requestDataAppointmentTypeForRouting(item.requestData ?? {});
+      return pointsPerPatientForType(catalog, { typeId, typeName: label });
+    })();
+
+  const { label } = requestDataAppointmentTypeForRouting(item.requestData ?? {});
+  return {
+    start: slot.appointmentStart.trim(),
+    end: slot.windowEndIso,
+    typeName: label?.trim() || null,
+    providerName: slot.doctorName,
+    providerInternalId: null,
+    points: points ?? 0,
+    description: null,
+    instructions: null,
+  };
+}
+
+export function appointmentRequestBookedVisitLabels(args: {
+  requestData: Record<string, unknown>;
+  bookedSummary?: AppointmentRequestBookedApptSummary | null;
+  practiceTz: string;
+}): { bookedLabel: string | null; providerLabel: string | null } {
+  const { requestData, bookedSummary, practiceTz } = args;
+  const slot = requestDataSelfScheduledSlot(requestData);
+  const start = bookedSummary?.start?.trim() || slot?.appointmentStart?.trim() || null;
+  const end = bookedSummary?.end?.trim() || slot?.windowEndIso?.trim() || null;
+  const provider =
+    bookedSummary?.providerName?.trim() || slot?.doctorName?.trim() || null;
+
+  if (!start) {
+    return { bookedLabel: null, providerLabel: provider };
+  }
+
+  const startDt = DateTime.fromISO(start, { zone: 'utc' }).setZone(practiceTz);
+  if (!startDt.isValid) {
+    return { bookedLabel: null, providerLabel: provider };
+  }
+
+  const windowDisplay = slot?.windowDisplay?.trim();
+  let bookedLabel: string;
+  if (windowDisplay) {
+    bookedLabel = `${startDt.toFormat('EEE, MMM d, yyyy')} · ${windowDisplay}`;
+  } else {
+    const endDt = end ? DateTime.fromISO(end, { zone: 'utc' }).setZone(practiceTz) : null;
+    const datePart = startDt.toFormat('EEE, MMM d, yyyy');
+    if (endDt?.isValid) {
+      bookedLabel = `${datePart} · ${startDt.toFormat('h:mm a')} – ${endDt.toFormat('h:mm a')}`;
+    } else {
+      bookedLabel = `${datePart} · ${startDt.toFormat('h:mm a')}`;
+    }
+  }
+
+  return { bookedLabel, providerLabel: provider };
 }
 
 export {

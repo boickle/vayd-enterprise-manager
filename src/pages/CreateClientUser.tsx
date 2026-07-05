@@ -504,7 +504,7 @@ export default function CreateClientUser() {
         >
           <div className="member-branding-title" style={{ fontWeight: 700, color: '#0f172a', marginBottom: 6 }}>One-Team Membership</div>
           <div className="member-branding-desc" style={{ fontSize: 15, lineHeight: 1.5, color: '#334155' }}>
-            Relationship-based veterinary care from a dedicated veterinarian, technician, and client liaison who know your pet over time.
+            Relationship-based veterinary care from a dedicated veterinarian and veterinary technician — a small team that knows you and your pet over time.
           </div>
         </div>
       </header>

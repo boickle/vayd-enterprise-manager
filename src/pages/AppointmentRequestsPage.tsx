@@ -91,8 +91,10 @@ import {
   appointmentRequestSubmissionIsOnHold,
   appointmentRequestSubmissionCountsAsBooked,
   appointmentRequestOnHoldOver24Hours,
+  appointmentRequestBookedVisitLabels,
   formatAppointmentRequestOnHoldBookedAt,
   formatAppointmentRequestOnHoldElapsedSince,
+  resolveAppointmentRequestBookedVisitSummary,
   type AppointmentRequestBookedApptSummary,
 } from '../utils/appointmentRequestOnHold';
 import {
@@ -1722,12 +1724,25 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
             const needsManualBook = !isDismissed && !isBooked && !hasLinkedAppointment;
             const bookedSummary =
               bookedApptId != null ? bookedApptMeta.get(Number(bookedApptId)) : undefined;
+            const displayBookedSummary = resolveAppointmentRequestBookedVisitSummary(
+              item,
+              bookedSummary,
+              typeCatalog,
+            );
             const linkedAppointment = linkedEvetIdsFromBookedApptSummary(bookedSummary);
             const requestTypeName = requestDataAppointmentTypeLabel(rd);
             const linkedVisitLine =
-              bookedSummary != null
-                ? formatLinkedVisitLine(bookedSummary, practiceTz, requestTypeName)
+              displayBookedSummary != null && !autoBookedOnline
+                ? formatLinkedVisitLine(displayBookedSummary, practiceTz, requestTypeName)
                 : null;
+            const autoBookedVisit =
+              autoBookedOnline
+                ? appointmentRequestBookedVisitLabels({
+                    requestData: rd,
+                    bookedSummary: displayBookedSummary,
+                    practiceTz,
+                  })
+                : { bookedLabel: null, providerLabel: null };
             const onHoldSinceIso = isOnHoldVisit ? bookedSummary?.appointmentBookedAtIso : null;
             const onHoldBookedAtLabel = formatAppointmentRequestOnHoldBookedAt(onHoldSinceIso, practiceTz);
             const onHoldElapsedLabel = formatAppointmentRequestOnHoldElapsedSince(onHoldSinceIso);
@@ -1970,6 +1985,18 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                           {formatSubmittedAt(item.submittedAt, practiceTz)}
                         </dd>
                       </div>
+                      {autoBookedOnline && autoBookedVisit.bookedLabel ? (
+                        <div className="appt-request-meta-line">
+                          <dt className="appt-request-meta-label">Booked</dt>
+                          <dd className="appt-request-meta-value">{autoBookedVisit.bookedLabel}</dd>
+                        </div>
+                      ) : null}
+                      {autoBookedOnline && autoBookedVisit.providerLabel ? (
+                        <div className="appt-request-meta-line">
+                          <dt className="appt-request-meta-label">With</dt>
+                          <dd className="appt-request-meta-value">{autoBookedVisit.providerLabel}</dd>
+                        </div>
+                      ) : null}
                       {howSoon ? (
                         <div className="appt-request-meta-line">
                           <dt className="appt-request-meta-label">Timing</dt>
