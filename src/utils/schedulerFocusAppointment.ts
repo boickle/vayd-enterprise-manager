@@ -1,6 +1,8 @@
 import { DateTime } from 'luxon';
+import type { NavigateFunction } from 'react-router-dom';
 import type { Appointment } from '../api/roomLoader';
 import { appointmentPracticeDateKey } from './editVisitTimeFields';
+import { buildGmailInboxReturnPath } from './routingAppointmentRequestIntent';
 
 /** Query param on `/schedule/scheduler` — jump to the appointment date, provider, and highlight. */
 export const SCHEDULER_FOCUS_APPOINTMENT_PARAM = 'focusAppt';
@@ -10,6 +12,13 @@ export const SCHEDULER_FOCUS_DATE_PARAM = 'focusDate';
 export const SCHEDULER_FOCUS_PROVIDER_PARAM = 'focusProvider';
 
 export const SCHEDULER_FOCUS_SESSION_KEY = 'vayd:scheduler-focus-appt-v1';
+/** Gmail thread to restore when leaving scheduler after View appointment from email. */
+export const SCHEDULER_FOCUS_RETURN_SESSION_KEY = 'vayd:scheduler-focus-return-v1';
+
+export type SchedulerFocusReturnSessionV1 = {
+  v: 1;
+  returnToGmail: { mailbox: string; threadId: string };
+};
 
 export type SchedulerFocusAppointmentHints = {
   date?: string | null;
@@ -91,6 +100,62 @@ export function clearSchedulerFocusSession(): void {
   } catch {
     /* ignore */
   }
+}
+
+export function writeSchedulerFocusReturnSession(mailbox: string, threadId: string): void {
+  if (typeof sessionStorage === 'undefined') return;
+  const m = mailbox.trim();
+  const t = threadId.trim();
+  if (!m || !t) return;
+  try {
+    sessionStorage.setItem(
+      SCHEDULER_FOCUS_RETURN_SESSION_KEY,
+      JSON.stringify({ v: 1, returnToGmail: { mailbox: m, threadId: t } }),
+    );
+  } catch {
+    /* quota / private mode */
+  }
+}
+
+export function readSchedulerFocusReturnSession(): SchedulerFocusReturnSessionV1 | null {
+  if (typeof sessionStorage === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(SCHEDULER_FOCUS_RETURN_SESSION_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as SchedulerFocusReturnSessionV1;
+    const gmail = parsed?.returnToGmail;
+    if (parsed?.v !== 1 || !gmail?.mailbox?.trim() || !gmail.threadId?.trim()) return null;
+    return {
+      v: 1,
+      returnToGmail: { mailbox: gmail.mailbox.trim(), threadId: gmail.threadId.trim() },
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function clearSchedulerFocusReturnSession(): void {
+  if (typeof sessionStorage === 'undefined') return;
+  try {
+    sessionStorage.removeItem(SCHEDULER_FOCUS_RETURN_SESSION_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Return to the Gmail thread that opened this scheduler focus view. */
+export function returnFromSchedulerFocusToGmail(
+  navigate: NavigateFunction,
+  opts?: { replace?: boolean },
+): boolean {
+  const session = readSchedulerFocusReturnSession();
+  const gmail = session?.returnToGmail;
+  if (!gmail?.mailbox || !gmail.threadId) return false;
+  clearSchedulerFocusReturnSession();
+  navigate(buildGmailInboxReturnPath(gmail.mailbox, gmail.threadId), {
+    replace: opts?.replace,
+  });
+  return true;
 }
 
 export function parseSchedulerFocusFromSearch(

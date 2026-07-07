@@ -1,5 +1,7 @@
 import { patchAppointment, putAppointmentAlternateAddress } from '../api/appointments';
+import type { AppointmentType } from '../api/appointmentSettings';
 import type { Appointment } from '../api/roomLoader';
+import { appointmentTypeAllowsClient } from './appointmentTypeSettings';
 import { DateTime } from 'luxon';
 import {
   appendEditedByStaffNote,
@@ -147,6 +149,19 @@ export function commitLinkClientFromEditVisitSelection(
     keepAlternateAddress: selection.keepAlternateAddress,
     linkAudit,
   };
+}
+
+/** Selected type forbids a client but the visit already has (or is linking) one. */
+export function validateEditVisitAppointmentTypeClientConflict(input: {
+  appointmentType: AppointmentType | undefined;
+  hasLinkedClient: boolean;
+}): string | null {
+  if (!input.appointmentType || !input.hasLinkedClient) return null;
+  if (appointmentTypeAllowsClient(input.appointmentType)) return null;
+  const label = String(
+    input.appointmentType.prettyName || input.appointmentType.name || 'This appointment type',
+  ).trim();
+  return `${label} does not allow a client. Choose a different appointment type or unlink the client first.`;
 }
 
 export function validateEditVisitLinkSelection(input: {

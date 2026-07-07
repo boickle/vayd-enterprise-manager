@@ -1,0 +1,227 @@
+.gmail-compose-panel {
+  border: 1px solid #cbd5e1;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08);
+  margin-top: 16px;
+  overflow: hidden;
+}
+
+.gmail-compose-panel--float {
+  position: fixed;
+  right: 24px;
+  bottom: 0;
+  z-index: 1100;
+  width: min(560px, calc(100vw - 48px));
+  max-height: min(80vh, 720px);
+  display: flex;
+  flex-direction: column;
+  margin-top: 0;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+  box-shadow: 0 8px 32px rgba(15, 23, 42, 0.18);
+}
+
+.gmail-compose-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid #e2e8f0;
+  background: #f8fafc;
+}
+
+.gmail-compose-panel__header-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+  font-size: 14px;
+  color: #0f172a;
+}
+
+.gmail-compose-panel__from-select,
+.gmail-compose-panel__from-static {
+  min-width: 0;
+  font-size: 13px;
+  color: #475569;
+}
+
+.gmail-compose-panel__from-select {
+  max-width: 100%;
+  border: none;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.gmail-compose-panel__draft-status {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: #64748b;
+}
+
+.gmail-compose-panel__header-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.gmail-compose-panel__error {
+  margin: 8px 12px 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #fef2f2;
+  color: #991b1b;
+  font-size: 13px;
+}
+
+.gmail-compose-panel__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.gmail-compose-panel__row-label {
+  flex-shrink: 0;
+  width: 52px;
+  font-size: 13px;
+  color: #64748b;
+}
+
+.gmail-compose-panel__input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  color: #0f172a;
+  outline: none;
+}
+
+.gmail-compose-panel__cc-toggle {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: #64748b;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.gmail-compose-panel__cc-toggle:hover:not(:disabled) {
+  color: #334155;
+}
+
+.gmail-compose-panel__body {
+  width: 100%;
+  box-sizing: border-box;
+  border: none;
+  padding: 8px 12px 0;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #334155;
+  resize: vertical;
+  min-height: 0;
+  outline: none;
+}
+
+.gmail-compose-panel__compose-body {
+  display: flex;
+  flex-direction: column;
+}
+
+.gmail-compose-panel__signature {
+  padding: 0 12px 8px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #334155;
+}
+
+.gmail-compose-panel__signature :first-child {
+  margin-top: 0;
+}
+
+.gmail-compose-panel__signature p {
+  margin: 0 0 0.35em;
+}
+
+.gmail-compose-panel__signature a {
+  color: #2563eb;
+}
+
+.gmail-compose-panel__signature img {
+  max-width: 100%;
+  height: auto;
+}
+
+.gmail-compose-panel__quote {
+  margin: 0;
+  padding: 10px 12px 12px;
+  border-top: 1px solid #e2e8f0;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #64748b;
+  white-space: pre-wrap;
+  max-height: 220px;
+  overflow-y: auto;
+  background: #f8fafc;
+}
+
+.gmail-compose-panel--float .gmail-compose-panel__body {
+  flex: 1;
+  min-height: 120px;
+}
+
+.gmail-compose-panel__footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid #e2e8f0;
+  background: #fff;
+}
+
+/* Legacy modal styles kept for thread message body helpers in this file. */
+.gmail-compose-backdrop {
+  display: none;
+}
+
+.gmail-compose-modal {
+  display: none;
+}
+
+.gmail-thread-message {
+  border-top: 1px solid #e2e8f0;
+  padding: 14px 0;
+}
+
+.gmail-thread-message:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.gmail-thread-message__meta {
+  font-size: 12px;
+  color: #64748b;
+  margin-bottom: 8px;
+}
+
+.gmail-thread-message__body {
+  font-size: 14px;
+  line-height: 1.5;
+  color: #334155;
+  white-space: pre-wrap;
+}
+
+.gmail-thread-message__body--html {
+  white-space: normal;
+}

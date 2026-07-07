@@ -98,6 +98,5 @@ export function getAccessiblePages(abilities?: string[], roles?: string[]): AppP
   const permissionOk = (perm?: string) =>
     !perm || (Array.isArray(abilities) ? abilities.includes(perm) : true);
 
-  const filtered = all.filter((p) => permissionOk(p.permission) && matchesRole(p.role, roles));
-  return filtered;
+  return all.filter((p) => permissionOk(p.permission) && matchesRole(p.role, roles));
 }

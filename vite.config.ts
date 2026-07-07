@@ -32,6 +32,7 @@ export default defineConfig({
       },
       '/appointments': { target: apiTarget, changeOrigin: true },
       '/auth': { target: apiTarget, changeOrigin: true },
+      '/gmail': { target: apiTarget, changeOrigin: true },
     },
   },
 });

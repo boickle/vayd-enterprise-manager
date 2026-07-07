@@ -1,9 +1,11 @@
 /**
  * Appointment request list → Routing prefill (same sessionStorage + event pattern as forward booking).
  */
+import type { NavigateFunction } from 'react-router-dom';
 import { clearRoutingCalendarPreview } from './routingCalendarPreviewStorage';
 import { ROUTING_DISMISS_FORWARD_BOOKING_EVENT } from './routingUiSnapshot';
 import type { AppointmentRequestListTab } from '../appointments-nav';
+import { returnToAppointmentRequestsList } from './appointmentRequestListReturnTab';
 import type { AppointmentRequestSubmissionItem } from '../api/appointmentRequestSubmissions';
 import {
   clientDisplayNameFromRequestData,
@@ -60,6 +62,11 @@ export type RoutingAppointmentRequestIntentV1 = {
   returnToListAfterBook?: boolean;
   /** Tab to restore when leaving routing / scheduler back to the list. */
   returnListTab?: AppointmentRequestListTab;
+  /** When set, exit / post-book navigates back to this Gmail thread instead of the Scout list. */
+  returnToGmail?: {
+    mailbox: string;
+    threadId: string;
+  };
   workspaceActive?: boolean;
 };
 
@@ -136,6 +143,33 @@ export function dismissRoutingAppointmentRequestWorkspace(): void {
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new Event(ROUTING_DISMISS_APPOINTMENT_REQUEST_EVENT));
   }
+}
+
+export const GMAIL_INBOX_PATH = '/schedule/email';
+
+export function buildGmailInboxReturnPath(mailbox: string, threadId: string): string {
+  const params = new URLSearchParams();
+  params.set('mailbox', mailbox.trim());
+  params.set('thread', threadId.trim());
+  return `${GMAIL_INBOX_PATH}?${params.toString()}`;
+}
+
+/** Leave appointment-request routing / scheduler workspace — Gmail thread or Scout list. */
+export function returnFromAppointmentRequestWorkspace(
+  navigate: NavigateFunction,
+  intent: RoutingAppointmentRequestIntentV1 | null | undefined,
+  opts?: { replace?: boolean },
+): void {
+  const gmail = intent?.returnToGmail;
+  if (gmail?.mailbox?.trim() && gmail.threadId?.trim()) {
+    navigate(buildGmailInboxReturnPath(gmail.mailbox, gmail.threadId), {
+      replace: opts?.replace,
+    });
+    return;
+  }
+  returnToAppointmentRequestsList(navigate, intent?.returnListTab ?? 'new', {
+    replace: opts?.replace,
+  });
 }
 
 export function buildRoutingAppointmentRequestIntentFromSubmission(

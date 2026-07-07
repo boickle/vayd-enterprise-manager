@@ -1,9 +1,10 @@
 import type { NavigateFunction } from 'react-router-dom';
 import {
+  APPOINTMENT_REQUESTS_HIGHLIGHT_PARAM,
   APPOINTMENT_REQUESTS_LIST_PATH,
+  APPOINTMENT_REQUESTS_TAB_PARAM,
   APPOINTMENTS_PATH_PREFIX,
   appointmentRequestsPathForTab,
-  parseAppointmentRequestsTabFromLocation,
   parseAppointmentRequestsTabParam,
   type AppointmentRequestListTab,
 } from '../appointments-nav';
@@ -78,15 +79,21 @@ export function appointmentRequestsListPathMatches(
   const q = target.indexOf('?');
   const targetPath = q === -1 ? target : target.slice(0, q);
   const targetSearch = q === -1 ? '' : target.slice(q);
-  return pathname === targetPath && search === targetSearch;
+
+  const currentParams = new URLSearchParams(search);
+  currentParams.delete(APPOINTMENT_REQUESTS_HIGHLIGHT_PARAM);
+  const currentSearch = currentParams.toString();
+  const normalizedCurrent = currentSearch ? `?${currentSearch}` : '';
+
+  return pathname === targetPath && normalizedCurrent === targetSearch;
 }
 
-/** Default to New on fresh entry; restore tab when returning from a sub-flow or in-page switch. */
+/** Restore tab from return flows; honor explicit ?tab= deep links (e.g. Open in Scout from Gmail). */
 export function resolveAppointmentsListEntryTab(
   pathname: string,
   search: string,
   locationState: unknown,
-): AppointmentRequestListTab | 'default_new' | null {
+): AppointmentRequestListTab | null {
   const stateTab = appointmentsTabFromLocationState(locationState);
   if (stateTab) {
     clearAppointmentRequestListReturnTab();
@@ -99,7 +106,6 @@ export function resolveAppointmentsListEntryTab(
     return restoreTab;
   }
 
-  // Path-based on-hold URL is canonical — no session/state required (e.g. Back from calendar preview).
   if (
     pathname === `${APPOINTMENTS_PATH_PREFIX}/on-hold` ||
     pathname.startsWith(`${APPOINTMENTS_PATH_PREFIX}/on-hold/`)
@@ -107,8 +113,8 @@ export function resolveAppointmentsListEntryTab(
     return null;
   }
 
-  if (parseAppointmentRequestsTabFromLocation(pathname, search) !== 'new') {
-    return 'default_new';
+  if (new URLSearchParams(search).has(APPOINTMENT_REQUESTS_TAB_PARAM)) {
+    return null;
   }
 
   return null;

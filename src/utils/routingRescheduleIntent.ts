@@ -3,9 +3,11 @@
  * metadata here so Routing can pre-fill the form and `/appointments/:id` is PATCHed after a new slot is chosen.
  */
 import { DateTime } from 'luxon';
+import type { NavigateFunction } from 'react-router-dom';
 import type { RescheduleOriginalVisitSnapshot } from '../api/routing';
 import type { Appointment, Client, Patient } from '../api/roomLoader';
 import type { AppointmentType } from '../api/appointmentSettings';
+import { buildGmailInboxReturnPath } from './routingAppointmentRequestIntent';
 import {
   appointmentAlternateAddressText,
   appointmentHasAlternateLocation,
@@ -134,6 +136,11 @@ export type RoutingRescheduleIntentV1 = {
   sameDayVisits?: RescheduleSameDayVisit[];
   /** Required on routing form when `sameDayVisits` has more than one patient. */
   rescheduleScope?: RoutingRescheduleScope;
+  /** When set, exit navigates back to this Gmail thread instead of staying in routing. */
+  returnToGmail?: {
+    mailbox: string;
+    threadId: string;
+  };
 };
 
 function pickStr(v: unknown): string | null {
@@ -336,6 +343,21 @@ export function dismissRoutingRescheduleWorkspace(): void {
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new Event(ROUTING_DISMISS_RESCHEDULE_EVENT));
   }
+}
+
+export function returnFromRescheduleWorkspace(
+  navigate: NavigateFunction,
+  intent: RoutingRescheduleIntentV1 | null | undefined,
+  opts?: { replace?: boolean },
+): void {
+  const gmail = intent?.returnToGmail;
+  if (gmail?.mailbox?.trim() && gmail.threadId?.trim()) {
+    navigate(buildGmailInboxReturnPath(gmail.mailbox, gmail.threadId), {
+      replace: opts?.replace,
+    });
+    return;
+  }
+  navigate('/schedule/routing', { replace: opts?.replace });
 }
 
 function patientsForAppointment(a: Appointment): Patient[] {
