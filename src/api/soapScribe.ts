@@ -1,8 +1,11 @@
 // src/api/soapScribe.ts
 // AI visit scribe: REST audit endpoints + the /scribe Socket.io transport
 // (mirrors src/utils/calendarRealtime.ts for the connection pattern).
-// The AI never writes to the encounter directly — it only emits suggestions
-// here; the doctor applies them through the existing updateEncounter() path.
+// The socket is transcription-only — it streams interim/final text as the doctor talks but never
+// runs AI structuring itself. Structuring is always a single, explicit, on-demand call via
+// `structureTranscript()` below (whether the transcript came from recording or was pasted/typed);
+// suggestions are then written through the existing updateEncounter() path (same as a manual
+// edit) — see docs/ai-scribe.md.
 import { io, type Socket } from 'socket.io-client';
 import { http } from './http';
 import { apiBaseUrl, getToken } from './http';
@@ -30,6 +33,43 @@ export type ScribeSuggestion = {
   assessmentReasoning: string | null;
   problems: { label: string; kind: PatientProblemKind }[];
   planItems: { name: string; kind: EncounterOrderKind; note: string | null }[];
+  /** Freeform Objective/Plan for the Document view — only populated on a final pass (paste, or
+   * recording stop). Subjective/Assessment don't need an equivalent since they auto-apply into
+   * `subjectiveHistory`/`assessmentReasoning` above on every cycle. */
+  narrativeObjective: string | null;
+  narrativePlan: string | null;
+  clientEmailSubject: string | null;
+  clientEmailBody: string | null;
+};
+
+/** Roster entry sent to the backend for a multi-pet structuring pass (docs/ai-scribe.md
+ * "Multi-pet visits") — mirrors `HouseholdRosterEntry` but only the fields the LLM prompt needs. */
+export type TranscriptPatientRosterEntry = {
+  patientId: number;
+  name: string;
+  species?: string | null;
+  soapEncounterId: string;
+};
+
+/** Per-patient slice of a multi-pet structuring pass — same extraction fields as
+ * `ScribeSuggestion` minus the (shared) client email, plus the Objective/Plan narrative text. */
+export type MultiPatientSuggestionEntry = {
+  patientId: number;
+  subjectiveHistory: string | null;
+  vitals: ScribeSuggestion['vitals'];
+  exam: ScribeSuggestion['exam'];
+  assessmentReasoning: string | null;
+  problems: ScribeSuggestion['problems'];
+  planItems: ScribeSuggestion['planItems'];
+  objectiveNotes: string;
+  planNotes: string;
+};
+
+export type MultiPatientScribeSuggestion = {
+  multiPatient: true;
+  patients: MultiPatientSuggestionEntry[];
+  clientEmailSubject: string | null;
+  clientEmailBody: string | null;
 };
 
 export type ScribeSession = {
@@ -66,14 +106,23 @@ export async function getScribeSession(
   return data;
 }
 
-/** Manual alternative to live recording: structure a pasted transcript in one request. */
+/**
+ * Manual alternative to live recording: structure a pasted transcript in one request. Passing 2+
+ * `patients` (docs/ai-scribe.md "Multi-pet visits") switches the response to a per-patient
+ * breakdown for review instead of a single suggestion.
+ */
 export async function structureTranscript(
   soapEncounterId: string,
-  transcript: string
-): Promise<ScribeSuggestion> {
-  const { data } = await http.post<ScribeSuggestion>(
+  transcript: string,
+  patients?: TranscriptPatientRosterEntry[]
+): Promise<ScribeSuggestion | MultiPatientScribeSuggestion> {
+  const { data } = await http.post<ScribeSuggestion | MultiPatientScribeSuggestion>(
     `/soap-encounters/${encodeURIComponent(soapEncounterId)}/scribe/structure`,
-    { practiceId: VISIT_WORKFLOW_PRACTICE_ID, transcript }
+    {
+      practiceId: VISIT_WORKFLOW_PRACTICE_ID,
+      transcript,
+      ...(patients && patients.length > 1 ? { patients } : {}),
+    }
   );
   return data;
 }
@@ -82,7 +131,6 @@ export type ScribeSocketStatus = 'idle' | 'connecting' | 'recording' | 'stopping
 
 export type ScribeSocketHandlers = {
   onTranscript?: (evt: { text: string; isFinal: boolean }) => void;
-  onSuggestion?: (evt: { suggestion: ScribeSuggestion }) => void;
   onError?: (message: string) => void;
   onStatusChange?: (status: ScribeSocketStatus) => void;
 };
@@ -91,7 +139,8 @@ export type ScribeSocketHandle = {
   /** Starts (or restarts) a recording session; resolves once the server confirms. */
   start: (soapEncounterId: string) => Promise<string>;
   sendAudio: (base64Pcm16: string) => void;
-  stop: () => Promise<void>;
+  /** Stops recording; resolves with the full final transcript captured server-side. */
+  stop: () => Promise<string>;
   dispose: () => void;
 };
 
@@ -121,13 +170,6 @@ export function createScribeSocket(handlers: ScribeSocketHandlers): ScribeSocket
       (payload: { sessionId: string; text: string; isFinal: boolean }) => {
         if (payload.sessionId !== sessionId) return;
         handlers.onTranscript?.({ text: payload.text, isFinal: payload.isFinal });
-      }
-    );
-    socket.on(
-      'scribe.suggestion',
-      (payload: { sessionId: string; suggestion: ScribeSuggestion }) => {
-        if (payload.sessionId !== sessionId) return;
-        handlers.onSuggestion?.({ suggestion: payload.suggestion });
       }
     );
     socket.on('scribe.error', (payload: { sessionId?: string; message: string }) => {
@@ -183,19 +225,23 @@ export function createScribeSocket(handlers: ScribeSocketHandlers): ScribeSocket
     },
 
     stop: () =>
-      new Promise<void>((resolve) => {
+      new Promise<string>((resolve) => {
         if (!socket?.connected || !sessionId) {
-          resolve();
+          resolve('');
           return;
         }
         setStatus('stopping');
         const id = sessionId;
-        socket.emit('scribe.stop', { sessionId: id }, () => {
-          setStatus('idle');
-          resolve();
-        });
+        socket.emit(
+          'scribe.stop',
+          { sessionId: id },
+          (ack?: { ok: boolean; transcript?: string }) => {
+            setStatus('idle');
+            resolve(ack?.transcript ?? '');
+          }
+        );
         // Safety net in case the ack never arrives (server crash, etc.)
-        setTimeout(resolve, 5000);
+        setTimeout(() => resolve(''), 5000);
       }),
 
     dispose: () => {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useParams, useSearchParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   ClipboardList,
   Lock,
@@ -7,17 +7,20 @@ import {
   Activity,
   ListChecks,
   CheckCircle2,
+  PawPrint,
 } from 'lucide-react';
 import './SoapEncounterPage.css';
 import {
   completeEncounter,
   createEncounter,
+  getHouseholdRoster,
   getInvoiceByAppointment,
   listEncounters,
   listOrders,
   listProblems,
   updateEncounter,
   type EncounterOrder,
+  type HouseholdRosterEntry,
   type PatientProblem,
   type SoapEncounter,
   type SoapEncounterMode,
@@ -36,8 +39,13 @@ import MasterProblemListSection from '../components/soap/MasterProblemListSectio
 import PlanOrdersSection from '../components/soap/PlanOrdersSection';
 import ForwardBookingGate from '../components/soap/ForwardBookingGate';
 import VisitCheckoutPanel from '../components/soap/VisitCheckoutPanel';
+import HouseholdInvoiceSummary from '../components/soap/HouseholdInvoiceSummary';
 import EuthanasiaPrepayModal from '../components/soap/EuthanasiaPrepayModal';
 import ScribePanel from '../components/soap/ScribePanel';
+import ScribeDocumentView from '../components/soap/ScribeDocumentView';
+import ScribeSuggestedPlanItems, {
+  type SuggestedPlanItem,
+} from '../components/soap/ScribeSuggestedPlanItems';
 import type { PeSystemFinding } from '../components/soap/peTemplate';
 import {
   appointmentReasonFromSentToClient,
@@ -69,7 +77,7 @@ const SOAP_TABS: {
   { id: 'followup', label: 'Follow-up', short: 'FB', icon: CheckCircle2 },
 ];
 
-function vitalsFromValue(v: unknown): Vitals {
+export function vitalsFromValue(v: unknown): Vitals {
   const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>;
   const s = (k: string) => (o[k] == null ? '' : String(o[k]));
   return {
@@ -85,6 +93,7 @@ function vitalsFromValue(v: unknown): Vitals {
 export default function SoapEncounterPage() {
   const params = useParams();
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
   const appointmentId = Number(params.appointmentId);
   const patientId = Number(params.patientId);
   const clientIdParam = searchParams.get('clientId');
@@ -102,10 +111,20 @@ export default function SoapEncounterPage() {
   const [subjective, setSubjective] = useState('');
   const [vitals, setVitals] = useState<Vitals>(vitalsFromValue(null));
   const [exam, setExam] = useState<PeExamState>(defaultPeExamState());
+  const [objectiveNotes, setObjectiveNotes] = useState('');
   const [reasoning, setReasoning] = useState('');
+  const [planNotes, setPlanNotes] = useState('');
   const [linkedProblemIds, setLinkedProblemIds] = useState<string[]>([]);
   const [visitCompleted, setVisitCompleted] = useState(false);
   const [activeTab, setActiveTab] = useState<SoapTabId>('subjective');
+  const [entryMode, setEntryMode] = useState<'manual' | 'scribe'>('manual');
+  const [emailDraft, setEmailDraft] = useState<{
+    subject: string | null;
+    body: string | null;
+  }>({ subject: null, body: null });
+  const [scribePlanItems, setScribePlanItems] = useState<SuggestedPlanItem[]>([]);
+  const [roster, setRoster] = useState<HouseholdRosterEntry[]>([]);
+  const [householdRefreshTick, setHouseholdRefreshTick] = useState(0);
 
   const locked = encounter?.status === 'completed';
   const mode: SoapEncounterMode = encounter?.mode ?? 'comprehensive';
@@ -117,13 +136,54 @@ export default function SoapEncounterPage() {
     } catch {
       /* invoice may not exist yet */
     }
+    setHouseholdRefreshTick((t) => t + 1);
   }, [appointmentId]);
+
+  // Other pets from the same household visit (docs/ai-scribe.md "Multi-pet visits") — drives the
+  // pet-switcher tabs below the header and the combined checkout summary in the aside. Keyed off
+  // `encounter?.id` (stable across in-place saves) rather than the whole `encounter` object, and
+  // independent of ScribePanel's own roster fetch so tabs show up even before AI Scribe is used.
+  useEffect(() => {
+    if (!encounter) {
+      setRoster([]);
+      return;
+    }
+    let canceled = false;
+    getHouseholdRoster(encounter.id)
+      .then((entries) => {
+        if (!canceled) setRoster(entries);
+      })
+      .catch(() => {
+        if (!canceled) setRoster([]);
+      });
+    return () => {
+      canceled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [encounter?.id]);
+
+  const switchToPet = useCallback(
+    (entry: HouseholdRosterEntry) => {
+      if (entry.isCurrent) return;
+      const qs = clientIdParam ? `?clientId=${encodeURIComponent(clientIdParam)}` : '';
+      navigate(`/schedule/soap/${entry.appointmentId}/${entry.patientId}${qs}`);
+    },
+    [navigate, clientIdParam]
+  );
 
   useEffect(() => {
     let canceled = false;
     (async () => {
       setLoading(true);
       setError(null);
+      // Switching pet tabs navigates within the same page instance (no remount), so transient
+      // scribe UI state from the previous pet needs an explicit reset here — everything else
+      // (subjective/vitals/orders/invoice/etc.) is already fully re-derived from the freshly
+      // loaded encounter below.
+      setEmailDraft({ subject: null, body: null });
+      setScribePlanItems([]);
+      setVisitCompleted(false);
+      setShowEuthanasia(false);
       try {
         const existing = await listEncounters({ appointmentId, patientId });
         let enc = existing[0] ?? null;
@@ -143,16 +203,12 @@ export default function SoapEncounterPage() {
             const roomLoader = await findSubmittedRoomLoaderForAppointment(appointmentId);
             const response = roomLoader?.responseFromClient;
             if (response) {
-              const prefilled = buildSubjectiveTextFromRoomLoaderResponse(
-                response,
-                patientId,
-                {
-                  appointmentReason: appointmentReasonFromSentToClient(
-                    roomLoader.sentToClient,
-                    patientId
-                  ),
-                }
-              );
+              const prefilled = buildSubjectiveTextFromRoomLoaderResponse(response, patientId, {
+                appointmentReason: appointmentReasonFromSentToClient(
+                  roomLoader.sentToClient,
+                  patientId
+                ),
+              });
               if (prefilled.trim()) {
                 subjectiveHistory = prefilled;
                 enc = await updateEncounter(enc.id, {
@@ -169,7 +225,9 @@ export default function SoapEncounterPage() {
         setSubjective(subjectiveHistory);
         setVitals(vitalsFromValue(enc.objectiveVitals));
         setExam(peExamFromValue(enc.objectiveExam));
+        setObjectiveNotes(enc.objectiveNotes ?? '');
         setReasoning(enc.assessmentReasoning ?? '');
+        setPlanNotes(enc.planNotes ?? '');
         setLinkedProblemIds(enc.assessmentProblemIds ?? []);
 
         const [probs] = await Promise.all([
@@ -178,8 +236,7 @@ export default function SoapEncounterPage() {
             try {
               const profile = await fetchPatientProfileForRow({ id: String(patientId) });
               if (!canceled) {
-                const name =
-                  (profile as { name?: string } | null)?.name ?? `Patient #${patientId}`;
+                const name = (profile as { name?: string } | null)?.name ?? `Patient #${patientId}`;
                 setPatientName(name);
               }
             } catch {
@@ -224,6 +281,7 @@ export default function SoapEncounterPage() {
   );
 
   const scribeEnabled = String(import.meta.env.VITE_ENABLE_SCRIBE ?? '').toLowerCase() === 'true';
+  const effectiveEntryMode = scribeEnabled ? entryMode : 'manual';
 
   const applyScribeSubjective = useCallback(
     (text: string) => {
@@ -263,6 +321,22 @@ export default function SoapEncounterPage() {
     [save]
   );
 
+  const applyScribeObjectiveNotes = useCallback(
+    (text: string) => {
+      setObjectiveNotes(text);
+      void save({ objectiveNotes: text });
+    },
+    [save]
+  );
+
+  const applyScribePlanNotes = useCallback(
+    (text: string) => {
+      setPlanNotes(text);
+      void save({ planNotes: text });
+    },
+    [save]
+  );
+
   const dispositionValue = useMemo<ForwardBookingDisposition | null>(() => {
     const d = encounter?.forwardBookingDisposition;
     if (d && typeof d === 'object' && typeof (d as { mode?: unknown }).mode === 'string') {
@@ -281,9 +355,7 @@ export default function SoapEncounterPage() {
       const updated = await completeEncounter(encounter.id);
       setEncounter(updated);
     } catch (e) {
-      setError(
-        e instanceof Error ? e.message : 'Could not complete the encounter'
-      );
+      setError(e instanceof Error ? e.message : 'Could not complete the encounter');
     } finally {
       setCompleting(false);
     }
@@ -328,21 +400,21 @@ export default function SoapEncounterPage() {
           </div>
         </div>
         <div className="soap-header-actions">
-          {!locked && (
+          {!locked && scribeEnabled && (
             <div className="soap-mode-switch">
               <button
                 type="button"
-                className={mode === 'comprehensive' ? 'active' : ''}
-                onClick={() => save({ mode: 'comprehensive' })}
+                className={effectiveEntryMode === 'manual' ? 'active' : ''}
+                onClick={() => setEntryMode('manual')}
               >
-                Comprehensive
+                Manual
               </button>
               <button
                 type="button"
-                className={mode === 'quick' ? 'active' : ''}
-                onClick={() => save({ mode: 'quick' })}
+                className={effectiveEntryMode === 'scribe' ? 'active' : ''}
+                onClick={() => setEntryMode('scribe')}
               >
-                Quick
+                AI Scribe
               </button>
             </div>
           )}
@@ -370,8 +442,30 @@ export default function SoapEncounterPage() {
 
       {error && <div className="soap-error soap-error-banner">{error}</div>}
 
-      {scribeEnabled && encounter && (
+      {roster.length > 1 && (
+        <div className="soap-pet-tabs" role="tablist" aria-label="Pets at this visit">
+          {roster.map((r) => (
+            <button
+              key={r.patientId}
+              type="button"
+              role="tab"
+              aria-selected={r.isCurrent}
+              className={`soap-pet-tab${r.isCurrent ? ' active' : ''}`}
+              onClick={() => switchToPet(r)}
+            >
+              <PawPrint size={13} /> {r.patientName}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {effectiveEntryMode === 'scribe' && encounter && (
         <ScribePanel
+          // Switching pet tabs navigates within this same page instance rather than remounting it
+          // (docs/ai-scribe.md "Multi-pet visits") — keying on the encounter forces a fresh
+          // ScribePanel per pet so a leftover transcript/suggestion review from the previous pet
+          // never bleeds into the next one's chart.
+          key={encounter.id}
           soapEncounterId={encounter.id}
           patientId={patientId}
           disabled={locked}
@@ -379,193 +473,287 @@ export default function SoapEncounterPage() {
           currentSubjective={subjective}
           currentVitals={vitals}
           currentExam={exam}
+          currentObjectiveNotes={objectiveNotes}
           currentReasoning={reasoning}
+          currentPlanNotes={planNotes}
           problems={problems}
           orders={orders}
           onApplySubjective={applyScribeSubjective}
           onApplyVitals={applyScribeVitals}
           onApplyExam={applyScribeExam}
+          onApplyObjectiveNotes={applyScribeObjectiveNotes}
           onApplyReasoning={applyScribeReasoning}
+          onApplyPlanNotes={applyScribePlanNotes}
           onProblemCreated={onScribeProblemCreated}
           onOrderCreated={onScribeOrderCreated}
+          onNarrativeUpdate={(n) => setEmailDraft({ subject: n.emailSubject, body: n.emailBody })}
+          onPlanItemsChange={setScribePlanItems}
+          onHouseholdOrdersChanged={() => setHouseholdRefreshTick((t) => t + 1)}
         />
       )}
 
       <div className="soap-body">
         <main className="soap-main">
-          <div className="soap-tabs" role="tablist" aria-label="SOAP sections">
-            {SOAP_TABS.map(({ id, label, short, icon: Icon }) => (
-              <button
-                key={id}
-                type="button"
-                role="tab"
-                aria-selected={activeTab === id}
-                className={`soap-tab${activeTab === id ? ' active' : ''}${
-                  id === 'followup' && !gateSatisfied && !locked ? ' needs-attention' : ''
-                }`}
-                onClick={() => setActiveTab(id)}
-              >
-                <Icon size={15} aria-hidden />
-                <span className="soap-tab-label">{label}</span>
-                <span className="soap-tab-short">{short}</span>
-              </button>
-            ))}
-          </div>
-
-          <div className="soap-tab-panel">
-            {activeTab === 'subjective' && (
-              <section className="soap-section">
-                <h2>
-                  <ClipboardList size={16} /> Subjective
-                </h2>
-                <p className="soap-section-hint">
-                  History from intake / Room Loader. Confirm or edit — don't re-key what
-                  the client already provided.
-                </p>
-                <textarea
-                  className="soap-textarea"
-                  rows={4}
-                  placeholder="Presenting history, owner concerns…"
-                  value={subjective}
-                  disabled={locked}
-                  onChange={(e) => setSubjective(e.target.value)}
-                  onBlur={() => save({ subjective: { history: subjective } })}
-                />
-              </section>
-            )}
-
-            {activeTab === 'objective' && (
-              <section className="soap-section">
-                <h2>
-                  <Activity size={16} /> Objective
-                </h2>
-                <div className="soap-subhead">Vitals (TPR, weight, BCS)</div>
-                <div className="soap-vitals">
-                  {(
-                    [
-                      ['tempF', 'Temp °F'],
-                      ['hr', 'HR (bpm)'],
-                      ['rr', 'RR (rpm)'],
-                      ['weight', 'Weight (lb)'],
-                      ['bcs', 'BCS /9'],
-                      ['painScore', 'Pain /5'],
-                    ] as [keyof Vitals, string][]
-                  ).map(([key, label]) => (
-                    <label key={key} className="soap-vital">
-                      <span>{label}</span>
-                      <input
-                        className="soap-input"
-                        inputMode="decimal"
-                        value={vitals[key]}
-                        disabled={locked}
-                        onChange={(e) =>
-                          setVitals((v) => ({ ...v, [key]: e.target.value }))
-                        }
-                        onBlur={() => save({ objectiveVitals: { ...vitals } })}
-                      />
-                    </label>
-                  ))}
-                </div>
-
-                {mode === 'comprehensive' && (
+          {effectiveEntryMode === 'scribe' ? (
+            <ScribeDocumentView
+              patientName={patientName || `Patient #${patientId}`}
+              visitDate={
+                encounter?.created
+                  ? new Date(encounter.created).toLocaleDateString()
+                  : new Date().toLocaleDateString()
+              }
+              disabled={locked}
+              subjective={subjective}
+              onSubjectiveChange={setSubjective}
+              onSubjectiveBlur={() => save({ subjective: { history: subjective } })}
+              objectiveNotes={objectiveNotes}
+              onObjectiveNotesChange={setObjectiveNotes}
+              onObjectiveNotesBlur={() => save({ objectiveNotes })}
+              assessment={reasoning}
+              onAssessmentChange={setReasoning}
+              onAssessmentBlur={() => save({ assessmentReasoning: reasoning })}
+              planNotes={planNotes}
+              onPlanNotesChange={setPlanNotes}
+              onPlanNotesBlur={() => save({ planNotes })}
+              planItemsSlot={
+                encounter && (
                   <>
-                    <div className="soap-subhead">
-                      Physical exam — normal by default, tap a system to flag abnormal
-                    </div>
-                    <PhysicalExamSection
-                      value={exam}
+                    <ScribeSuggestedPlanItems
+                      key={`plan-items-${encounter.id}`}
+                      encounterId={encounter.id}
+                      suggestions={scribePlanItems}
+                      planNotes={planNotes}
+                      orders={orders}
                       disabled={locked}
-                      onChange={(next) => {
-                        setExam(next);
-                        void save({ objectiveExam: next });
-                      }}
+                      patientId={patientId}
+                      clientId={clientIdParam ? Number(clientIdParam) : undefined}
+                      practiceId={VISIT_WORKFLOW_PRACTICE_ID}
+                      onOrderAdded={onScribeOrderCreated}
+                      onInvoiceShouldRefresh={() => void refreshInvoice()}
+                    />
+                    <PlanOrdersSection
+                      key={`plan-orders-${encounter.id}`}
+                      encounterId={encounter.id}
+                      orders={orders}
+                      disabled={locked}
+                      patientId={patientId}
+                      clientId={clientIdParam ? Number(clientIdParam) : undefined}
+                      practiceId={VISIT_WORKFLOW_PRACTICE_ID}
+                      onChange={setOrders}
+                      onInvoiceShouldRefresh={() => void refreshInvoice()}
                     />
                   </>
-                )}
-              </section>
-            )}
+                )
+              }
+              emailSubject={emailDraft.subject}
+              emailBody={emailDraft.body}
+            />
+          ) : (
+            <>
+              <div className="soap-tabs" role="tablist" aria-label="SOAP sections">
+                {SOAP_TABS.map(({ id, label, short, icon: Icon }) => (
+                  <button
+                    key={id}
+                    type="button"
+                    role="tab"
+                    aria-selected={activeTab === id}
+                    className={`soap-tab${activeTab === id ? ' active' : ''}${
+                      id === 'followup' && !gateSatisfied && !locked ? ' needs-attention' : ''
+                    }`}
+                    onClick={() => setActiveTab(id)}
+                  >
+                    <Icon size={15} aria-hidden />
+                    <span className="soap-tab-label">{label}</span>
+                    <span className="soap-tab-short">{short}</span>
+                  </button>
+                ))}
+              </div>
 
-            {activeTab === 'assessment' && (
-              <section className="soap-section">
-                <h2>
-                  <ListChecks size={16} /> Assessment
-                </h2>
-                <div className="soap-subhead">Master Problem List</div>
-                {encounter && (
-                  <MasterProblemListSection
-                    patientId={patientId}
-                    encounterId={encounter.id}
-                    problems={problems}
-                    linkedProblemIds={linkedProblemIds}
-                    disabled={locked}
-                    onChange={setProblems}
-                    onToggleLink={toggleProblemLink}
-                  />
+              <div className="soap-tab-panel">
+                {activeTab === 'subjective' && (
+                  <section className="soap-section">
+                    <h2>
+                      <ClipboardList size={16} /> Subjective
+                    </h2>
+                    <p className="soap-section-hint">
+                      History from intake / Room Loader. Confirm or edit — don't re-key what the
+                      client already provided.
+                    </p>
+                    <textarea
+                      className="soap-textarea"
+                      rows={4}
+                      placeholder="Presenting history, owner concerns…"
+                      value={subjective}
+                      disabled={locked}
+                      onChange={(e) => setSubjective(e.target.value)}
+                      onBlur={() => save({ subjective: { history: subjective } })}
+                    />
+                  </section>
                 )}
-                <div className="soap-subhead">Clinical reasoning</div>
-                <textarea
-                  className="soap-textarea"
-                  rows={3}
-                  placeholder="Assessment and clinical reasoning…"
-                  value={reasoning}
-                  disabled={locked}
-                  onChange={(e) => setReasoning(e.target.value)}
-                  onBlur={() => save({ assessmentReasoning: reasoning })}
-                />
-              </section>
-            )}
 
-            {activeTab === 'plan' && (
-              <section className="soap-section">
-                <h2>
-                  <ClipboardList size={16} /> Plan
-                </h2>
-                <p className="soap-section-hint">
-                  Every order is both a record entry and an invoice line. Meds also
-                  generate a label and discharge instruction.
-                </p>
-                {encounter && (
-                  <PlanOrdersSection
-                    encounterId={encounter.id}
-                    orders={orders}
-                    disabled={locked}
-                    patientId={patientId}
-                    clientId={clientIdParam ? Number(clientIdParam) : undefined}
-                    practiceId={VISIT_WORKFLOW_PRACTICE_ID}
-                    onChange={setOrders}
-                    onInvoiceShouldRefresh={() => void refreshInvoice()}
-                  />
-                )}
-              </section>
-            )}
+                {activeTab === 'objective' && (
+                  <section className="soap-section">
+                    <h2>
+                      <Activity size={16} /> Objective
+                    </h2>
+                    <div className="soap-subhead">Vitals (TPR, weight, BCS)</div>
+                    <div className="soap-vitals">
+                      {(
+                        [
+                          ['tempF', 'Temp °F'],
+                          ['hr', 'HR (bpm)'],
+                          ['rr', 'RR (rpm)'],
+                          ['weight', 'Weight (lb)'],
+                          ['bcs', 'BCS /9'],
+                          ['painScore', 'Pain /5'],
+                        ] as [keyof Vitals, string][]
+                      ).map(([key, label]) => (
+                        <label key={key} className="soap-vital">
+                          <span>{label}</span>
+                          <input
+                            className="soap-input"
+                            inputMode="decimal"
+                            value={vitals[key]}
+                            disabled={locked}
+                            onChange={(e) => setVitals((v) => ({ ...v, [key]: e.target.value }))}
+                            onBlur={() => save({ objectiveVitals: { ...vitals } })}
+                          />
+                        </label>
+                      ))}
+                    </div>
 
-            {activeTab === 'followup' && (
-              <section className="soap-section soap-gate">
-                <h2>
-                  <CheckCircle2 size={16} /> Forward booking (required to complete)
-                </h2>
-                {encounter && (
-                  <ForwardBookingGate
-                    appointmentId={appointmentId}
-                    patientId={patientId}
-                    clientId={encounter.clientId}
-                    disabled={locked}
-                    value={dispositionValue}
-                    onSave={async (disposition, entryId) => {
-                      await save({
-                        forwardBookingDisposition:
-                          disposition as unknown as Record<string, unknown>,
-                        forwardBookingEntryId: entryId ?? undefined,
-                      });
-                    }}
-                  />
+                    {mode === 'comprehensive' && (
+                      <>
+                        <div className="soap-subhead">
+                          Physical exam — normal by default, tap a system to flag abnormal
+                        </div>
+                        <PhysicalExamSection
+                          value={exam}
+                          disabled={locked}
+                          onChange={(next) => {
+                            setExam(next);
+                            void save({ objectiveExam: next });
+                          }}
+                        />
+                      </>
+                    )}
+
+                    <div className="soap-subhead">Notes (also shown in Document view)</div>
+                    <textarea
+                      className="soap-textarea"
+                      rows={4}
+                      placeholder="Additional objective observations…"
+                      value={objectiveNotes}
+                      disabled={locked}
+                      onChange={(e) => setObjectiveNotes(e.target.value)}
+                      onBlur={() => save({ objectiveNotes })}
+                    />
+                  </section>
                 )}
-              </section>
-            )}
-          </div>
+
+                {activeTab === 'assessment' && (
+                  <section className="soap-section">
+                    <h2>
+                      <ListChecks size={16} /> Assessment
+                    </h2>
+                    <div className="soap-subhead">Master Problem List</div>
+                    {encounter && (
+                      <MasterProblemListSection
+                        patientId={patientId}
+                        encounterId={encounter.id}
+                        problems={problems}
+                        linkedProblemIds={linkedProblemIds}
+                        disabled={locked}
+                        onChange={setProblems}
+                        onToggleLink={toggleProblemLink}
+                      />
+                    )}
+                    <div className="soap-subhead">Clinical reasoning</div>
+                    <textarea
+                      className="soap-textarea"
+                      rows={3}
+                      placeholder="Assessment and clinical reasoning…"
+                      value={reasoning}
+                      disabled={locked}
+                      onChange={(e) => setReasoning(e.target.value)}
+                      onBlur={() => save({ assessmentReasoning: reasoning })}
+                    />
+                  </section>
+                )}
+
+                {activeTab === 'plan' && (
+                  <section className="soap-section">
+                    <h2>
+                      <ClipboardList size={16} /> Plan
+                    </h2>
+                    <p className="soap-section-hint">
+                      Every order is both a record entry and an invoice line. Meds also generate a
+                      label and discharge instruction.
+                    </p>
+                    {encounter && (
+                      <PlanOrdersSection
+                        key={`plan-orders-manual-${encounter.id}`}
+                        encounterId={encounter.id}
+                        orders={orders}
+                        disabled={locked}
+                        patientId={patientId}
+                        clientId={clientIdParam ? Number(clientIdParam) : undefined}
+                        practiceId={VISIT_WORKFLOW_PRACTICE_ID}
+                        onChange={setOrders}
+                        onInvoiceShouldRefresh={() => void refreshInvoice()}
+                      />
+                    )}
+
+                    <div className="soap-subhead">Notes (also shown in Document view)</div>
+                    <textarea
+                      className="soap-textarea"
+                      rows={4}
+                      placeholder="Diagnostics, treatment plan, client communication…"
+                      value={planNotes}
+                      disabled={locked}
+                      onChange={(e) => setPlanNotes(e.target.value)}
+                      onBlur={() => save({ planNotes })}
+                    />
+                  </section>
+                )}
+
+                {activeTab === 'followup' && (
+                  <section className="soap-section soap-gate">
+                    <h2>
+                      <CheckCircle2 size={16} /> Forward booking (required to complete)
+                    </h2>
+                    {encounter && (
+                      <ForwardBookingGate
+                        appointmentId={appointmentId}
+                        patientId={patientId}
+                        clientId={encounter.clientId}
+                        disabled={locked}
+                        value={dispositionValue}
+                        onSave={async (disposition, entryId) => {
+                          await save({
+                            forwardBookingDisposition: disposition as unknown as Record<
+                              string,
+                              unknown
+                            >,
+                            forwardBookingEntryId: entryId ?? undefined,
+                          });
+                        }}
+                      />
+                    )}
+                  </section>
+                )}
+              </div>
+            </>
+          )}
         </main>
 
         <aside className="soap-aside">
+          <HouseholdInvoiceSummary
+            roster={roster}
+            currentInvoice={invoice}
+            refreshSignal={householdRefreshTick}
+            onSwitchPet={switchToPet}
+          />
           <VisitCheckoutPanel
             appointmentId={appointmentId}
             invoice={invoice}

@@ -10,25 +10,12 @@ export const VISIT_WORKFLOW_PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_I
 export type SoapEncounterMode = 'quick' | 'comprehensive';
 export type SoapEncounterStatus = 'draft' | 'completed';
 
-export type PatientProblemKind =
-  | 'presenting_complaint'
-  | 'rule_out'
-  | 'diagnosis';
+export type PatientProblemKind = 'presenting_complaint' | 'rule_out' | 'diagnosis';
 export type PatientProblemStatus = 'open' | 'active' | 'resolved';
 
-export type EncounterOrderKind =
-  | 'exam'
-  | 'diagnostic'
-  | 'treatment'
-  | 'med'
-  | 'client_ed'
-  | 'note';
+export type EncounterOrderKind = 'exam' | 'diagnostic' | 'treatment' | 'med' | 'client_ed' | 'note';
 export type EncounterOrderState = 'proposed' | 'accepted' | 'declined';
-export type EncounterOrderCatalogType =
-  | 'inventory'
-  | 'lab'
-  | 'procedure'
-  | 'custom';
+export type EncounterOrderCatalogType = 'inventory' | 'lab' | 'procedure' | 'custom';
 
 export type VisitInvoiceStatus = 'open' | 'finalized' | 'paid' | 'void';
 
@@ -43,8 +30,10 @@ export type SoapEncounter = {
   subjective: Record<string, unknown> | null;
   objectiveVitals: Record<string, unknown> | null;
   objectiveExam: Record<string, unknown> | null;
+  objectiveNotes: string | null;
   assessmentProblemIds: string[] | null;
   assessmentReasoning: string | null;
+  planNotes: string | null;
   forwardBookingDisposition: Record<string, unknown> | null;
   forwardBookingEntryId: number | null;
   forwardBookingTaskId: number | null;
@@ -163,8 +152,30 @@ export async function createEncounter(body: {
 }
 
 export async function getEncounter(id: string): Promise<SoapEncounter> {
-  const { data } = await http.get<SoapEncounter>(
-    `/soap-encounters/${encodeURIComponent(id)}`,
+  const { data } = await http.get<SoapEncounter>(`/soap-encounters/${encodeURIComponent(id)}`, {
+    params: { practiceId: pid() },
+  });
+  return data;
+}
+
+/** One candidate patient for a multi-pet household visit (docs/ai-scribe.md "Multi-pet visits"). */
+export type HouseholdRosterEntry = {
+  patientId: number;
+  patientName: string;
+  species: string | null;
+  appointmentId: number;
+  soapEncounterId: string;
+  isCurrent: boolean;
+};
+
+/**
+ * Other patients from the same client seen around the same time as this encounter's appointment
+ * (docs/ai-scribe.md "Multi-pet visits"), always including the current patient. A length-1 result
+ * means no siblings were found — the paste-transcript flow stays single-patient in that case.
+ */
+export async function getHouseholdRoster(encounterId: string): Promise<HouseholdRosterEntry[]> {
+  const { data } = await http.get<HouseholdRosterEntry[]>(
+    `/soap-encounters/${encodeURIComponent(encounterId)}/household-roster`,
     { params: { practiceId: pid() } }
   );
   return data;
@@ -179,18 +190,20 @@ export async function updateEncounter(
       | 'subjective'
       | 'objectiveVitals'
       | 'objectiveExam'
+      | 'objectiveNotes'
       | 'assessmentProblemIds'
       | 'assessmentReasoning'
+      | 'planNotes'
       | 'forwardBookingDisposition'
       | 'forwardBookingEntryId'
       | 'forwardBookingTaskId'
     >
   >
 ): Promise<SoapEncounter> {
-  const { data } = await http.patch<SoapEncounter>(
-    `/soap-encounters/${encodeURIComponent(id)}`,
-    { practiceId: pid(), ...body }
-  );
+  const { data } = await http.patch<SoapEncounter>(`/soap-encounters/${encodeURIComponent(id)}`, {
+    practiceId: pid(),
+    ...body,
+  });
   return data;
 }
 
@@ -247,9 +260,7 @@ export async function updateOrder(
   }
 ): Promise<EncounterOrder> {
   const { data } = await http.patch<EncounterOrder>(
-    `/soap-encounters/${encodeURIComponent(encounterId)}/orders/${encodeURIComponent(
-      orderId
-    )}`,
+    `/soap-encounters/${encodeURIComponent(encounterId)}/orders/${encodeURIComponent(orderId)}`,
     { practiceId: pid(), ...body }
   );
   return data;
@@ -269,14 +280,9 @@ export async function setOrderState(
   return data;
 }
 
-export async function deleteOrder(
-  encounterId: string,
-  orderId: string
-): Promise<void> {
+export async function deleteOrder(encounterId: string, orderId: string): Promise<void> {
   await http.delete(
-    `/soap-encounters/${encodeURIComponent(encounterId)}/orders/${encodeURIComponent(
-      orderId
-    )}`,
+    `/soap-encounters/${encodeURIComponent(encounterId)}/orders/${encodeURIComponent(orderId)}`,
     { params: { practiceId: pid() } }
   );
 }
@@ -312,10 +318,10 @@ export async function updateProblem(
   id: string,
   body: Partial<Pick<PatientProblem, 'label' | 'kind' | 'status' | 'note'>>
 ): Promise<PatientProblem> {
-  const { data } = await http.patch<PatientProblem>(
-    `/patient-problems/${encodeURIComponent(id)}`,
-    { practiceId: pid(), ...body }
-  );
+  const { data } = await http.patch<PatientProblem>(`/patient-problems/${encodeURIComponent(id)}`, {
+    practiceId: pid(),
+    ...body,
+  });
   return data;
 }
 
@@ -327,9 +333,7 @@ export async function deleteProblem(id: string): Promise<void> {
 
 // --- Visit invoice / checkout ---
 
-export async function getInvoiceByAppointment(
-  appointmentId: number
-): Promise<VisitInvoice | null> {
+export async function getInvoiceByAppointment(appointmentId: number): Promise<VisitInvoice | null> {
   const { data } = await http.get<VisitInvoice | null>(
     `/visit-invoices/by-appointment/${appointmentId}`,
     { params: { practiceId: pid() } }
@@ -350,10 +354,9 @@ export async function createInvoice(body: {
 }
 
 export async function getInvoice(id: string): Promise<VisitInvoice> {
-  const { data } = await http.get<VisitInvoice>(
-    `/visit-invoices/${encodeURIComponent(id)}`,
-    { params: { practiceId: pid() } }
-  );
+  const { data } = await http.get<VisitInvoice>(`/visit-invoices/${encodeURIComponent(id)}`, {
+    params: { practiceId: pid() },
+  });
   return data;
 }
 
@@ -366,10 +369,9 @@ export async function finalizeInvoice(id: string): Promise<VisitInvoice> {
 }
 
 export async function voidInvoice(id: string): Promise<VisitInvoice> {
-  const { data } = await http.post<VisitInvoice>(
-    `/visit-invoices/${encodeURIComponent(id)}/void`,
-    { practiceId: pid() }
-  );
+  const { data } = await http.post<VisitInvoice>(`/visit-invoices/${encodeURIComponent(id)}/void`, {
+    practiceId: pid(),
+  });
   return data;
 }
 
@@ -441,12 +443,9 @@ export async function confirmTerminalPayment(
 
 // --- Visit lifecycle (VisitCompleted hub event) ---
 
-export async function markVisitCompleted(
-  appointmentId: number
-): Promise<VisitCompletedResult> {
-  const { data } = await http.post<VisitCompletedResult>(
-    `/visits/${appointmentId}/completed`,
-    { practiceId: pid() }
-  );
+export async function markVisitCompleted(appointmentId: number): Promise<VisitCompletedResult> {
+  const { data } = await http.post<VisitCompletedResult>(`/visits/${appointmentId}/completed`, {
+    practiceId: pid(),
+  });
   return data;
 }

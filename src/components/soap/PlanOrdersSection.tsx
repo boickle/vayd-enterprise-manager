@@ -1,24 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Check, Minus, Pill, Plus, Search, StickyNote, Trash2, X } from 'lucide-react';
 import {
-  createOrder,
   deleteOrder,
   setOrderState,
   updateOrder,
   type EncounterOrder,
-  type EncounterOrderCatalogType,
-  type EncounterOrderKind,
 } from '../../api/visitWorkflow';
+import { searchItems, type SearchableItem } from '../../api/roomLoader';
 import {
-  checkItemPricing,
-  searchItems,
-  type SearchableItem,
-} from '../../api/roomLoader';
-import {
-  buildCheckItemPayloadFromSearch,
+  catalogIdForSearchItem,
+  createNoteOrder,
+  createOrderFromSearchItem,
   fetchCatalogPricingForOrder,
   getCatalogLinePrice,
-  pricingItemFromSearchAndCheck,
   type CatalogPricingItem,
 } from '../../utils/catalogItemPricing';
 
@@ -35,26 +29,6 @@ type Props = {
 
 function money(n: number): string {
   return `$${(Number(n) || 0).toFixed(2)}`;
-}
-
-function kindForItem(item: SearchableItem): EncounterOrderKind {
-  if (item.itemType === 'lab') return 'diagnostic';
-  if (item.itemType === 'procedure') return 'treatment';
-  if (item.itemType === 'inventory') {
-    return item.inventoryItem?.isMedication ? 'med' : 'treatment';
-  }
-  return 'treatment';
-}
-
-function catalogIdForItem(item: SearchableItem): number | undefined {
-  const raw =
-    item.itemType === 'lab'
-      ? item.lab?.id
-      : item.itemType === 'procedure'
-        ? item.procedure?.id
-        : item.inventoryItem?.id;
-  const n = Number(raw);
-  return Number.isFinite(n) ? n : undefined;
 }
 
 const TYPE_LABEL: Record<string, string> = {
@@ -84,9 +58,7 @@ export default function PlanOrdersSection({
   const [searchError, setSearchError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [adding, setAdding] = useState(false);
-  const [pricingByOrderId, setPricingByOrderId] = useState<
-    Record<string, CatalogPricingItem>
-  >({});
+  const [pricingByOrderId, setPricingByOrderId] = useState<Record<string, CatalogPricingItem>>({});
   const boxRef = useRef<HTMLDivElement>(null);
 
   const canPrice = patientId != null && Number.isFinite(patientId);
@@ -207,37 +179,15 @@ export default function PlanOrdersSection({
     if (adding) return;
     setAdding(true);
     try {
-      const catalogItemType = item.itemType as EncounterOrderCatalogType;
-      let pricingItem: CatalogPricingItem = item as CatalogPricingItem;
-      let unitPrice = displayPriceForSearchItem(item);
-      let isCovered = false;
-
-      if (canPrice) {
-        const pricingResponse = await checkItemPricing({
-          patientId: patientId!,
-          practiceId,
-          clientId,
-          itemType: item.itemType,
-          item: buildCheckItemPayloadFromSearch(item),
-        });
-        pricingItem = pricingItemFromSearchAndCheck(item, pricingResponse);
-        const line = getCatalogLinePrice(pricingItem, 1);
-        unitPrice = line.unitFinal;
-        isCovered = line.isCovered;
-      }
-
-      const created = await createOrder(encounterId, {
-        name: item.name,
-        kind: kindForItem(item),
-        catalogItemId: catalogIdForItem(item),
-        catalogItemType,
-        unitPrice,
-        isCovered,
-        qty: 1,
-        state: 'accepted',
+      const { order, pricingItem } = await createOrderFromSearchItem({
+        encounterId,
+        item,
+        patientId: canPrice ? patientId : undefined,
+        practiceId,
+        clientId,
       });
-      storePricing(created.id, pricingItem);
-      onChange([...orders, created]);
+      storePricing(order.id, pricingItem);
+      onChange([...orders, order]);
       onInvoiceShouldRefresh();
       setQuery('');
       setResults([]);
@@ -252,14 +202,7 @@ export default function PlanOrdersSection({
     if (!trimmed || adding) return;
     setAdding(true);
     try {
-      const created = await createOrder(encounterId, {
-        name: trimmed,
-        note: trimmed,
-        kind: 'note',
-        catalogItemType: 'custom',
-        unitPrice: 0,
-        state: 'accepted',
-      });
+      const created = await createNoteOrder(encounterId, trimmed);
       onChange([...orders, created]);
       onInvoiceShouldRefresh();
       setQuery('');
@@ -270,10 +213,7 @@ export default function PlanOrdersSection({
     }
   };
 
-  const changeState = async (
-    order: EncounterOrder,
-    state: 'accepted' | 'declined'
-  ) => {
+  const changeState = async (order: EncounterOrder, state: 'accepted' | 'declined') => {
     let updated = await setOrderState(encounterId, order.id, state);
 
     if (state === 'accepted' && order.catalogItemId != null && canPrice) {
@@ -281,10 +221,7 @@ export default function PlanOrdersSection({
       if (snapshot) {
         const qty = Number(updated.qty) || 1;
         const { unitFinal, isCovered } = getCatalogLinePrice(snapshot, qty);
-        if (
-          unitFinal !== Number(updated.unitPrice) ||
-          isCovered !== updated.isCovered
-        ) {
+        if (unitFinal !== Number(updated.unitPrice) || isCovered !== updated.isCovered) {
           updated = await updateOrder(encounterId, updated.id, {
             unitPrice: unitFinal,
             isCovered,
@@ -316,9 +253,7 @@ export default function PlanOrdersSection({
             <div key={o.id} className="soap-order proposed">
               <span className="soap-order-name">
                 {o.kind === 'med' && <Pill size={13} />} {o.name}
-                {Number(o.qty) > 1 && (
-                  <span className="soap-order-qty"> ×{Number(o.qty)}</span>
-                )}
+                {Number(o.qty) > 1 && <span className="soap-order-qty"> ×{Number(o.qty)}</span>}
               </span>
               <span className="soap-order-price">
                 {o.isCovered ? '—' : money(Number(o.qty) * Number(o.unitPrice))}
@@ -352,13 +287,7 @@ export default function PlanOrdersSection({
         ) : (
           active.map((o) =>
             o.kind === 'note' ? (
-              <NoteRow
-                key={o.id}
-                order={o}
-                disabled={disabled}
-                onPatch={patch}
-                onRemove={remove}
-              />
+              <NoteRow key={o.id} order={o} disabled={disabled} onPatch={patch} onRemove={remove} />
             ) : (
               <CatalogRow
                 key={o.id}
@@ -412,7 +341,7 @@ export default function PlanOrdersSection({
                       type="button"
                       role="option"
                       aria-selected={false}
-                      key={`${item.itemType}-${catalogIdForItem(item) ?? idx}`}
+                      key={`${item.itemType}-${catalogIdForSearchItem(item) ?? idx}`}
                       className="soap-plan-result"
                       disabled={adding}
                       onClick={() => void addItem(item)}
@@ -453,8 +382,8 @@ export default function PlanOrdersSection({
             </div>
           )}
           <p className="soap-hint">
-            Catalog prices use quantity tiers and membership/client discounts (same as Room
-            Loader). “Add as note” creates a text line you can edit and optionally price.
+            Catalog prices use quantity tiers and membership/client discounts (same as Room Loader).
+            “Add as note” creates a text line you can edit and optionally price.
           </p>
         </div>
       )}
@@ -576,9 +505,7 @@ function NoteRow({
   onRemove: (order: EncounterOrder) => void;
 }) {
   const [text, setText] = useState(o.note ?? o.name ?? '');
-  const [price, setPrice] = useState(
-    Number(o.unitPrice) > 0 ? String(Number(o.unitPrice)) : ''
-  );
+  const [price, setPrice] = useState(Number(o.unitPrice) > 0 ? String(Number(o.unitPrice)) : '');
 
   const commitText = () => {
     const next = text.trim();
@@ -626,12 +553,7 @@ function NoteRow({
         </span>
       )}
       {!disabled && (
-        <button
-          type="button"
-          className="soap-icon-btn"
-          title="Remove"
-          onClick={() => onRemove(o)}
-        >
+        <button type="button" className="soap-icon-btn" title="Remove" onClick={() => onRemove(o)}>
           <Trash2 size={13} />
         </button>
       )}

@@ -64,6 +64,36 @@
   background: var(--soap-accent);
   color: #fff;
 }
+
+/* Multi-pet visit tab bar (household visits — docs/ai-scribe.md "Multi-pet visits") */
+.soap-pet-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: -4px 0 14px;
+}
+.soap-pet-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--soap-border);
+  background: #fff;
+  color: var(--soap-muted);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.soap-pet-tab:hover {
+  border-color: var(--soap-accent);
+}
+.soap-pet-tab.active {
+  background: var(--soap-accent);
+  border-color: var(--soap-accent);
+  color: #fff;
+  cursor: default;
+}
 .soap-locked-badge {
   display: inline-flex;
   align-items: center;
@@ -164,6 +194,9 @@
 .soap-aside {
   position: sticky;
   top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
 }
 
 /* Sections */
@@ -785,6 +818,94 @@
 }
 
 /* Checkout */
+/* Household checkout summary — read-only rollup of every pet's invoice on a multi-pet visit
+   (HouseholdInvoiceSummary.tsx). VisitCheckoutPanel below it is unchanged and always acts on
+   whichever pet's tab is currently open. */
+.soap-household-checkout {
+  background: #fff;
+  border: 1px solid var(--soap-border);
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+.soap-household-checkout-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  font-size: 13.5px;
+  margin-bottom: 10px;
+  color: #374151;
+}
+.soap-household-pets {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.soap-household-pet {
+  border: 1px solid var(--soap-border);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.soap-household-pet.current {
+  border-color: var(--soap-accent);
+  background: #f5f8ff;
+}
+.soap-household-pet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.soap-household-pet-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.soap-household-pet-total {
+  font-variant-numeric: tabular-nums;
+}
+.soap-household-pet-lines {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.soap-household-pet-line {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--soap-muted);
+}
+.soap-household-pet-empty {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--soap-muted);
+}
+.soap-household-pet-switch {
+  margin-top: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: none;
+  background: none;
+  color: var(--soap-accent);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+}
+.soap-household-checkout-total {
+  display: flex;
+  justify-content: space-between;
+  border-top: 1px solid var(--soap-border);
+  margin-top: 10px;
+  padding-top: 10px;
+  font-weight: 700;
+  font-size: 14px;
+}
+
 .soap-checkout {
   background: #fff;
   border: 1px solid var(--soap-border);
@@ -1119,4 +1240,309 @@
 }
 .soap-scribe-consent-check input {
   margin-top: 3px;
+}
+.soap-scribe-paste-hint {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--soap-muted);
+}
+.soap-scribe-autolog {
+  margin-top: 8px;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+.soap-scribe-autolog-hint {
+  margin: 0 0 6px;
+  font-size: 11.5px;
+  color: var(--soap-muted);
+}
+.soap-scribe-autolog ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.soap-scribe-autolog li {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 12.5px;
+  color: #166534;
+}
+
+.soap-scribe-roster {
+  background: #f8fafc;
+  border: 1px solid var(--soap-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.soap-scribe-roster-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  font-size: 12.5px;
+  color: #374151;
+  margin-bottom: 8px;
+}
+.soap-scribe-roster-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+}
+.soap-scribe-roster-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: #374151;
+  cursor: pointer;
+}
+.soap-scribe-roster-item input {
+  margin: 0;
+}
+.soap-scribe-roster-hint {
+  margin: 6px 0 0;
+  font-size: 11.5px;
+  color: var(--soap-muted);
+}
+
+.soap-scribe-multi {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.soap-scribe-multi-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 13px;
+  color: #374151;
+}
+.soap-scribe-multi-head > span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.soap-scribe-multi-card {
+  background: #fff;
+  border: 1px solid #ddd6fe;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 12.5px;
+}
+.soap-scribe-multi-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #111827;
+  margin-bottom: 8px;
+}
+.soap-scribe-multi-block {
+  margin-bottom: 8px;
+  line-height: 1.5;
+  color: #374151;
+}
+.soap-scribe-multi-label {
+  display: inline-block;
+  font-weight: 700;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: #6d28d9;
+  margin-right: 6px;
+}
+.soap-scribe-multi-pre {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+  font-family: inherit;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #374151;
+}
+.soap-scribe-multi-empty {
+  margin: 0 0 8px;
+  color: var(--soap-muted);
+  font-style: italic;
+}
+.soap-scribe-multi-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+}
+.soap-scribe-multi-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--soap-accent);
+  text-decoration: none;
+}
+.soap-scribe-multi-link:hover {
+  text-decoration: underline;
+}
+
+.soap-doc-view {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.soap-doc-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--soap-border);
+  padding-bottom: 10px;
+}
+.soap-doc-patient {
+  font-size: 16px;
+  font-weight: 700;
+  color: #111827;
+}
+.soap-doc-date {
+  margin-top: 2px;
+  font-size: 12.5px;
+  color: var(--soap-muted);
+}
+.soap-doc-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.soap-doc-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.soap-doc-section-head h3 {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #111827;
+}
+.soap-doc-letter {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: var(--soap-accent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+}
+.soap-doc-textarea {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid var(--soap-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.55;
+  font-family: inherit;
+  color: #374151;
+}
+.soap-doc-textarea:disabled {
+  opacity: 0.6;
+  background: var(--soap-bg);
+}
+.soap-doc-email-subject {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 4px;
+}
+.soap-doc-text {
+  margin: 0;
+  white-space: pre-wrap;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #374151;
+  background: var(--soap-bg);
+  border: 1px solid var(--soap-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+/* AI Scribe — itemized "match to catalog" plan items, below the Plan text box
+   (ScribeSuggestedPlanItems.tsx) */
+.soap-scribe-planitems {
+  margin: -8px 0 16px;
+  padding: 12px 14px;
+  background: #fafaf9;
+  border: 1px dashed var(--soap-border);
+  border-radius: 10px;
+}
+.soap-scribe-planitems-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #374151;
+}
+.soap-scribe-planitems-hint {
+  margin: 4px 0 10px;
+  font-size: 11.5px;
+  color: var(--soap-muted);
+}
+.soap-scribe-planitems-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.soap-scribe-planitem-row {
+  position: relative;
+  background: #fff;
+  border: 1px solid var(--soap-border);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.soap-scribe-planitem-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.soap-scribe-planitem-search-icon {
+  position: absolute;
+  left: 10px;
+  color: var(--soap-muted);
+  pointer-events: none;
+}
+.soap-scribe-planitem-search .soap-input {
+  flex: 1;
+  padding-left: 30px;
+}
+.soap-scribe-planitem-note {
+  margin: 6px 0 0;
+  font-size: 11.5px;
+  font-style: italic;
+  color: var(--soap-muted);
+}
+.soap-scribe-planitem-results {
+  position: relative;
+  z-index: 20;
+  margin-top: 6px;
+  background: #fff;
+  border: 1px solid var(--soap-border);
+  border-radius: 8px;
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 4px;
 }

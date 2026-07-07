@@ -3,7 +3,12 @@ import {
   type CheckItemPricingResponse,
   type SearchableItem,
 } from '../api/roomLoader';
-import type { EncounterOrder, EncounterOrderCatalogType } from '../api/visitWorkflow';
+import {
+  createOrder,
+  type EncounterOrder,
+  type EncounterOrderCatalogType,
+  type EncounterOrderKind,
+} from '../api/visitWorkflow';
 
 /** Item shape used for tier + discount pricing (matches Room Loader). */
 export type CatalogPricingItem = {
@@ -79,9 +84,7 @@ export function getTieredUnitPrice(
 
   const activeBreaks = tieredPricing.priceBreaks.filter((pb) => pb.isActive);
   if (activeBreaks.length > 0) {
-    const minLow = Math.min(
-      ...activeBreaks.map((pb) => parseInt(String(pb.lowQuantity), 10))
-    );
+    const minLow = Math.min(...activeBreaks.map((pb) => parseInt(String(pb.lowQuantity), 10)));
     if (qty < minLow) return baseUnitPrice;
     const highestTier = activeBreaks.reduce((max, pb) => {
       const maxHighQ = parseInt(String(max.highQuantity), 10);
@@ -95,10 +98,7 @@ export function getTieredUnitPrice(
 }
 
 /** Total pre-discount for quantity (tiers + service-fee rules). */
-export function getTotalPreDiscountForQuantity(
-  item: CatalogPricingItem,
-  quantity: number
-): number {
+export function getTotalPreDiscountForQuantity(item: CatalogPricingItem, quantity: number): number {
   const q = Math.max(0, Number(quantity) || 0);
   const preDiscount1 = getPreDiscountForOneUnit(item);
 
@@ -134,10 +134,7 @@ export function getTotalPreDiscountForQuantity(
 }
 
 /** Final unit/total after membership + client discount ratio (Room Loader parity). */
-export function getCatalogLinePrice(
-  item: CatalogPricingItem,
-  quantity: number
-): CatalogLinePrice {
+export function getCatalogLinePrice(item: CatalogPricingItem, quantity: number): CatalogLinePrice {
   const preDiscount1 = getPreDiscountForOneUnit(item);
   const totalPreDiscount = getTotalPreDiscountForQuantity(item, quantity);
   const q = Math.max(1, Number(quantity) || 1);
@@ -153,8 +150,8 @@ export function getCatalogLinePrice(
 
   const isCovered = Boolean(
     item.wellnessPlanPricing?.hasCoverage &&
-      item.wellnessPlanPricing?.isWithinLimit &&
-      unitFinal === 0
+    item.wellnessPlanPricing?.isWithinLimit &&
+    unitFinal === 0
   );
 
   return { unitFinal, totalFinal, isCovered };
@@ -190,6 +187,21 @@ function catalogIdFromSearchItem(item: SearchableItem): number | undefined {
         : item.inventoryItem?.id;
   const n = Number(raw);
   return Number.isFinite(n) ? n : undefined;
+}
+
+/** Same catalog-id lookup as above, exported for callers building an order directly from search
+ * results (e.g. `PlanOrdersSection`, `ScribeSuggestedPlanItems`). */
+export const catalogIdForSearchItem = catalogIdFromSearchItem;
+
+/** Maps a catalog search result to the order "kind" used for labels/discharge instructions —
+ * shared by every place that turns a search pick into a real order. */
+export function kindForCatalogSearchItem(item: SearchableItem): EncounterOrderKind {
+  if (item.itemType === 'lab') return 'diagnostic';
+  if (item.itemType === 'procedure') return 'treatment';
+  if (item.itemType === 'inventory') {
+    return item.inventoryItem?.isMedication ? 'med' : 'treatment';
+  }
+  return 'treatment';
 }
 
 export function pricingItemFromSearchAndCheck(
@@ -262,5 +274,64 @@ export async function fetchCatalogPricingForOrder(args: {
     clientId,
     itemType: order.catalogItemType,
     item: buildCheckItemPayload(order.catalogItemType, order.catalogItemId),
+  });
+}
+
+/**
+ * Turns a catalog search result into a real, priced, `accepted` order — the same "pick from
+ * search" path used by `PlanOrdersSection` (manual mode) and `ScribeSuggestedPlanItems` (AI
+ * Scribe mode), so both entry points create identical, checkout/invoice-ready orders.
+ */
+export async function createOrderFromSearchItem(args: {
+  encounterId: string;
+  item: SearchableItem;
+  patientId?: number;
+  practiceId: number;
+  clientId?: number;
+  state?: 'accepted' | 'proposed';
+}): Promise<{ order: EncounterOrder; pricingItem: CatalogPricingItem }> {
+  const { encounterId, item, patientId, practiceId, clientId, state = 'accepted' } = args;
+  const catalogItemType = item.itemType as EncounterOrderCatalogType;
+  let pricingItem: CatalogPricingItem = item as CatalogPricingItem;
+  let unitPrice = getCatalogLinePrice(pricingItem, 1).unitFinal;
+  let isCovered = false;
+
+  if (patientId != null && Number.isFinite(patientId)) {
+    const pricingResponse = await checkItemPricing({
+      patientId,
+      practiceId,
+      clientId,
+      itemType: item.itemType,
+      item: buildCheckItemPayloadFromSearch(item),
+    });
+    pricingItem = pricingItemFromSearchAndCheck(item, pricingResponse);
+    const line = getCatalogLinePrice(pricingItem, 1);
+    unitPrice = line.unitFinal;
+    isCovered = line.isCovered;
+  }
+
+  const order = await createOrder(encounterId, {
+    name: item.name,
+    kind: kindForCatalogSearchItem(item),
+    catalogItemId: catalogIdForSearchItem(item),
+    catalogItemType,
+    unitPrice,
+    isCovered,
+    qty: 1,
+    state,
+  });
+  return { order, pricingItem };
+}
+
+/** Freeform "add as note" fallback when nothing in the catalog matches — same as manual mode's
+ * search box (`PlanOrdersSection.addNote`). */
+export async function createNoteOrder(encounterId: string, text: string): Promise<EncounterOrder> {
+  return createOrder(encounterId, {
+    name: text,
+    note: text,
+    kind: 'note',
+    catalogItemType: 'custom',
+    unitPrice: 0,
+    state: 'accepted',
   });
 }
