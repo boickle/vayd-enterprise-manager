@@ -514,7 +514,7 @@ export async function fetchGmailMessages(
   return data;
 }
 
-/** Label ids for a thread — Gmail applies labels to the conversation, not per message. */
+/** Label ids on the newest message in a thread (Scout's write/modify target). */
 export function threadLabelIds(
   messages: ReadonlyArray<{ labelIds: readonly string[]; date?: string }>,
 ): string[] {
@@ -529,6 +529,21 @@ export function threadLabelIds(
     }
   }
   return [...latest.labelIds];
+}
+
+/**
+ * Union of label ids across every message in a thread. Gmail stores labels per
+ * message, so the conversation-level chips shown in the Gmail UI are this union
+ * (e.g. a label applied to the original request that a later reply didn't inherit).
+ */
+export function threadLabelIdsUnion(
+  messages: ReadonlyArray<{ labelIds: readonly string[] }>,
+): string[] {
+  const out = new Set<string>();
+  for (const m of messages) {
+    for (const id of m.labelIds) out.add(id);
+  }
+  return [...out];
 }
 
 export async function modifyGmailMessage(

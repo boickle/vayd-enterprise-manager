@@ -7,6 +7,7 @@ import {
   getMessageLabelsForAppointmentList,
   prepareSidebarLabels,
   threadLabelIds,
+  threadLabelIdsUnion,
   type GmailLabelNode,
   type GmailThreadMessage,
 } from '../api/gmail';
@@ -16,6 +17,7 @@ import {
 } from '../api/appointmentRequestSubmissions';
 import {
   APPOINTMENT_REQUEST_MAILBOX,
+  resolveApptRequestLabelIds,
   syncManagedApptRequestGmailLabels,
 } from '../utils/gmailAppointmentRequestLabels';
 import type {
@@ -103,6 +105,37 @@ function latestThreadMessage(messages: readonly GmailThreadMessage[]): GmailThre
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+/** The Scout-managed outcome/hold label ids (BOOKED / NOT BOOKED / Contacted / ON HOLD). */
+function managedLabelIdSet(userLabels: GmailLabelNode[]): Set<string> {
+  const ids = resolveApptRequestLabelIds(userLabels);
+  return new Set(
+    [ids.booked, ids.notBooked, ids.contacted, ids.onHold].filter(
+      (id): id is string => Boolean(id),
+    ),
+  );
+}
+
+/**
+ * Labels to show on the Scout card: non-managed labels come from the whole
+ * conversation (union across messages), while managed outcome/hold labels follow
+ * the newest message so ON HOLD / NOT BOOKED stay accurate instead of showing a
+ * stale copy left on an older message.
+ */
+function buildDisplayLabelIds(
+  nonManagedSourceIds: readonly string[],
+  latestLabelIds: readonly string[],
+  managedIds: ReadonlySet<string>,
+): string[] {
+  const out = new Set<string>();
+  for (const id of nonManagedSourceIds) {
+    if (!managedIds.has(id)) out.add(id);
+  }
+  for (const id of latestLabelIds) {
+    if (managedIds.has(id)) out.add(id);
+  }
+  return [...out];
 }
 
 async function resolveGmailLinkWithRetry(
@@ -291,6 +324,7 @@ export function useAppointmentRequestGmailThreadLabels(
           if (cancelled) return;
           const messages = thread.messages ?? [];
           let labelIds = threadLabelIds(messages);
+          const unionLabelIds = threadLabelIdsUnion(messages);
           const latest = latestThreadMessage(messages);
           const messageId = latest?.id ?? '';
 
@@ -299,7 +333,12 @@ export function useAppointmentRequestGmailThreadLabels(
           }
 
           if (cancelled) return;
-          const labels = getMessageLabelsForAppointmentList(labelIds, labelById);
+          const displayLabelIds = buildDisplayLabelIds(
+            unionLabelIds,
+            labelIds,
+            managedLabelIdSet(userLabels),
+          );
+          const labels = getMessageLabelsForAppointmentList(displayLabelIds, labelById);
           commit(
             submissionId,
             {
@@ -325,7 +364,7 @@ export function useAppointmentRequestGmailThreadLabels(
     return () => {
       cancelled = true;
     };
-  }, [enabled, catalogReady, itemKeys, fetchItems, commit, applyManagedLabels]);
+  }, [enabled, catalogReady, itemKeys, fetchItems, commit, applyManagedLabels, userLabels]);
 
   /** Re-apply managed labels when hold metadata hydrates after the thread was first linked. */
   useEffect(() => {
@@ -349,7 +388,11 @@ export function useAppointmentRequestGmailThreadLabels(
         if (cancelled) return;
         if (labelIds.join(',') === cached.labelIds.join(',')) return;
 
-        const labels = getMessageLabelsForAppointmentList(labelIds, labelById);
+        const managedIds = managedLabelIdSet(userLabels);
+        // Keep the conversation's non-managed chips that were already resolved.
+        const priorNonManaged = cached.labels.map((label) => label.id);
+        const displayLabelIds = buildDisplayLabelIds(priorNonManaged, labelIds, managedIds);
+        const labels = getMessageLabelsForAppointmentList(displayLabelIds, labelById);
         const syncKey =
           syncKeyRef.current.get(item.id) ??
           `${cached.threadId}:${item.updated ?? ''}:${item.linkedVisitPoints ?? ''}`;
@@ -368,7 +411,15 @@ export function useAppointmentRequestGmailThreadLabels(
     return () => {
       cancelled = true;
     };
-  }, [enabled, catalogReady, managedLabelContextKey, fetchItems, commit, applyManagedLabels]);
+  }, [
+    enabled,
+    catalogReady,
+    managedLabelContextKey,
+    fetchItems,
+    commit,
+    applyManagedLabels,
+    userLabels,
+  ]);
 
   const labelById = useMemo(() => new Map(labelByIdRef.current), [catalogReady, userLabels]);
 
