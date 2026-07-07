@@ -21,11 +21,16 @@ export type AppointmentRequestSmsBookingContext = {
   windowEnd: string;
 };
 
-const FALLBACK_SMS_PREFIX = 'Hi there, this is Vet At Your Door. We received your appointment request and will follow up shortly.';
+const FALLBACK_BODY =
+  'This is Vet At Your Door. We received your appointment request and will follow up shortly.';
 
-function fallbackSmsMessage(requestData: Record<string, unknown>): string {
-  const name = clientDisplayNameFromRequestData(requestData).split(' ')[0] || 'there';
-  return FALLBACK_SMS_PREFIX.replace('Hi there', `Hi ${name}`);
+function firstNameFromRequestData(requestData: Record<string, unknown>): string {
+  return clientDisplayNameFromRequestData(requestData).split(' ')[0] || 'there';
+}
+
+/** Prepend the "Hi {First Name}," greeting. SMS keeps it inline; email breaks to a new line. */
+function withGreeting(firstName: string, body: string, separator: string): string {
+  return `Hi ${firstName},${separator}${body}`;
 }
 
 function pickStr(v: unknown): string | null {
@@ -155,11 +160,15 @@ export function buildAppointmentRequestSmsMessage(
 export async function resolveAppointmentRequestSmsMessage(
   item: AppointmentRequestSubmissionItem,
   practiceTz: string,
-  opts?: { practiceId?: number },
+  opts?: { practiceId?: number; greeting?: 'sms' | 'email' },
 ): Promise<string> {
   const rd = item.requestData ?? {};
+  const firstName = firstNameFromRequestData(rd);
+  const separator = opts?.greeting === 'email' ? '\n\n' : ' ';
+  const greet = (body: string) => withGreeting(firstName, body, separator);
+
   const fromSlot = bookingContextFromSelfScheduledSlot(rd, practiceTz);
-  if (fromSlot) return buildAppointmentRequestSmsMessage(fromSlot);
+  if (fromSlot) return greet(buildAppointmentRequestSmsMessage(fromSlot));
 
   const apptId = item.bookedAppointmentId;
   if (apptId != null && Number.isFinite(Number(apptId))) {
@@ -169,12 +178,12 @@ export async function resolveAppointmentRequestSmsMessage(
       });
       if (appt) {
         const fromAppt = bookingContextFromAppointment(appt, practiceTz);
-        if (fromAppt) return buildAppointmentRequestSmsMessage(fromAppt);
+        if (fromAppt) return greet(buildAppointmentRequestSmsMessage(fromAppt));
       }
     } catch {
       /* fall through */
     }
   }
 
-  return fallbackSmsMessage(rd);
+  return greet(FALLBACK_BODY);
 }

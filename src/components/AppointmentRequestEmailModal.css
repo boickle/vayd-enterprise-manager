@@ -1,0 +1,154 @@
+.appt-request-email-modal__backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+  padding: 16px;
+}
+
+.appt-request-email-modal {
+  width: min(860px, 96vw);
+  max-height: 92vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.2);
+}
+
+.appt-request-email-modal__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px 24px 12px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.appt-request-email-modal__header h2 {
+  margin: 0 0 4px;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.appt-request-email-modal__subtitle {
+  margin: 0;
+  color: #6b7280;
+  font-size: 14px;
+}
+
+.appt-request-email-modal__loading {
+  padding: 24px;
+  margin: 0;
+}
+
+.appt-request-email-modal__error {
+  margin: 0 24px 12px;
+  color: #b91c1c;
+  font-size: 14px;
+}
+
+.appt-request-email-modal__thread-section,
+.appt-request-email-modal__compose {
+  padding: 0 24px 16px;
+  overflow: auto;
+}
+
+.appt-request-email-modal__thread-section {
+  flex: 0 1 42%;
+  min-height: 120px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.appt-request-email-modal__compose {
+  flex: 1 1 auto;
+}
+
+.appt-request-email-modal__section-title {
+  margin: 12px 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #6b7280;
+}
+
+.appt-request-email-modal__thread-scroll {
+  max-height: 280px;
+  overflow: auto;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: #f9fafb;
+}
+
+.appt-request-email-modal__thread-missing {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+
+.appt-request-email-modal__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.appt-request-email-modal__field label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.appt-request-email-modal__field input,
+.appt-request-email-modal__field select,
+.appt-request-email-modal__field textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  font-size: 14px;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+
+.appt-request-email-modal__field--body textarea {
+  min-height: 140px;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.appt-request-email-modal__quote-preview {
+  margin-bottom: 12px;
+}
+
+.appt-request-email-modal__quote-attribution {
+  font-size: 12px;
+  color: #6b7280;
+  margin-bottom: 4px;
+}
+
+.appt-request-email-modal__quote-block {
+  margin: 0;
+  padding: 8px 0 8px 12px;
+  border-left: 2px solid #d1d5db;
+  color: #4b5563;
+  font-size: 13px;
+  max-height: 200px;
+  overflow: auto;
+}
+
+.appt-request-email-modal__quote-block .gmail-thread-message__body--html {
+  zoom: 0.85;
+}
+
+.appt-request-email-modal__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 16px 24px;
+  border-top: 1px solid #e5e7eb;
+}

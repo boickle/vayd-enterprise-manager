@@ -14,6 +14,7 @@ import {
   commitEditVisit,
   commitLinkClientFromEditVisitSelection,
   resolveEditVisitAssignPatient,
+  validateEditVisitAppointmentTypeClientConflict,
   validateEditVisitLinkSelection,
   validateEditVisitPatientSelection,
   type EditVisitFormSnapshot,
@@ -546,6 +547,15 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       () => appointmentFormFlags(selectedEditType),
       [selectedEditType]
     );
+    const linkingClientSelected = Boolean(linkSelection?.clientId?.trim());
+    const typeClientConflictMessage = useMemo(
+      () =>
+        validateEditVisitAppointmentTypeClientConflict({
+          appointmentType: selectedEditType,
+          hasLinkedClient: resolvedClientId != null || linkingClientSelected,
+        }),
+      [selectedEditType, resolvedClientId, linkingClientSelected]
+    );
 
     const effectiveAppointmentTypeId = useMemo(() => {
       if (
@@ -686,6 +696,14 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       });
       if (linkValidationError) {
         setError(linkValidationError);
+        return;
+      }
+      const typeClientConflict = validateEditVisitAppointmentTypeClientConflict({
+        appointmentType: appointmentTypes.find((t) => Number(t.id) === tid),
+        hasLinkedClient: resolvedClientId != null || linkingClient,
+      });
+      if (typeClientConflict) {
+        setError(typeClientConflict);
         return;
       }
       if (!Number.isFinite(pid) || pid <= 0) {
@@ -856,6 +874,14 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
         setError(linkValidationError);
         return;
       }
+      const typeClientConflict = validateEditVisitAppointmentTypeClientConflict({
+        appointmentType: appointmentTypes.find((t) => Number(t.id) === tid),
+        hasLinkedClient: resolvedClientId != null || Boolean(linkSelection?.clientId?.trim()),
+      });
+      if (typeClientConflict) {
+        setError(typeClientConflict);
+        return;
+      }
       onPreviewSchedule?.(times.startUtc, times.endUtc, tid);
     }
 
@@ -894,6 +920,20 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       });
       if (linkValidationError) {
         blockPreview(linkValidationError);
+        return;
+      }
+      const previewTypeId =
+        placementPreviewKind === 'type' &&
+        draftPreviewAppointmentTypeId != null &&
+        Number.isFinite(Number(draftPreviewAppointmentTypeId))
+          ? Number(draftPreviewAppointmentTypeId)
+          : Number(appointmentTypeId);
+      const typeClientConflict = validateEditVisitAppointmentTypeClientConflict({
+        appointmentType: appointmentTypes.find((t) => Number(t.id) === previewTypeId),
+        hasLinkedClient: resolvedClientId != null || linkingClient,
+      });
+      if (typeClientConflict) {
+        blockPreview(typeClientConflict);
         return;
       }
       if (
@@ -1052,7 +1092,7 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
         </div>
 
         <div className="scheduler-modal-body scheduler-modal-body--edit">
-          {error && !inlinePaneMode ? <p className="scheduler-edit-error">{error}</p> : null}
+          {error ? <p className="scheduler-edit-error">{error}</p> : null}
 
           {placementPreviewActive ? (
             <div
@@ -1130,6 +1170,11 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
                   </select>
                   {editTypeFormFlags.showNotRoutedHint ? (
                     <p className="scheduler-edit-hint">Not routed — excluded from drive routing.</p>
+                  ) : null}
+                  {typeClientConflictMessage ? (
+                    <p className="scheduler-edit-error" role="alert">
+                      {typeClientConflictMessage}
+                    </p>
                   ) : null}
                 </label>
 

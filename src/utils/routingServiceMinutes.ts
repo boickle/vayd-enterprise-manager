@@ -121,15 +121,27 @@ export function buildRoutingVisitPetsFromFormData(
     primaryAppointmentTypeId?: number;
   },
 ): RoutingVisitPetInput[] {
+  const selectedIds = Array.isArray(formData.selectedPetIds) ? formData.selectedPetIds : [];
+  const newClientPetIds = Array.isArray(formData.newClientPets)
+    ? formData.newClientPets.map((p) => p.id).filter(Boolean)
+    : [];
+  const existingNewPetIds = Array.isArray(formData.existingClientNewPets)
+    ? formData.existingClientNewPets.map((p) => p.id).filter(Boolean)
+    : [];
+
   const petIds = [
-    ...(formData.selectedPetIds ?? []),
-    ...(formData.newClientPets?.map((p) => p.id).filter(Boolean) as string[]),
-    ...(formData.existingClientNewPets?.map((p) => p.id).filter(Boolean) as string[]),
+    ...selectedIds,
+    ...(newClientPetIds as string[]),
+    ...(existingNewPetIds as string[]),
   ];
 
   const newPetIdSet = new Set<string>([
-    ...(formData.newClientPets?.map((p) => String(p.id ?? '').trim()).filter(Boolean) ?? []),
-    ...(formData.existingClientNewPets?.map((p) => String(p.id ?? '').trim()).filter(Boolean) ?? []),
+    ...(Array.isArray(formData.newClientPets)
+      ? formData.newClientPets.map((p) => String(p.id ?? '').trim()).filter(Boolean)
+      : []),
+    ...(Array.isArray(formData.existingClientNewPets)
+      ? formData.existingClientNewPets.map((p) => String(p.id ?? '').trim()).filter(Boolean)
+      : []),
   ]);
 
   const visitPets: RoutingVisitPetInput[] = [];
@@ -163,10 +175,17 @@ export function resolveVisitAppointmentTypeIdsFromFormData(
     petSpecificData?: Record<string, { appointmentTypeId?: number } | undefined>;
   },
 ): number[] {
+  const selectedIds = Array.isArray(formData.selectedPetIds) ? formData.selectedPetIds : [];
+  const newClientPetIds = Array.isArray(formData.newClientPets)
+    ? formData.newClientPets.map((p) => p.id).filter(Boolean)
+    : [];
+  const existingNewPetIds = Array.isArray(formData.existingClientNewPets)
+    ? formData.existingClientNewPets.map((p) => p.id).filter(Boolean)
+    : [];
   const petIds = [
-    ...(formData.selectedPetIds ?? []),
-    ...(formData.newClientPets?.map((p) => p.id).filter(Boolean) as string[]),
-    ...(formData.existingClientNewPets?.map((p) => p.id).filter(Boolean) as string[]),
+    ...selectedIds,
+    ...(newClientPetIds as string[]),
+    ...(existingNewPetIds as string[]),
   ];
   const ids = new Set<number>();
   for (const petId of petIds) {

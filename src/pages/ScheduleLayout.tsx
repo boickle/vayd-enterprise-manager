@@ -9,6 +9,7 @@ import {
   FlaskConical,
   LineChart,
   ListChecks,
+  Mail,
   Package,
   PackageSearch,
   PanelLeft,
@@ -39,6 +40,7 @@ import {
 } from '../utils/forwardBookingWorkspaceGuard';
 import { markSchedulerHandoffPreferRoutingDoctor } from '../utils/schedulerCalendarHandoff';
 import { evetCreateClientLink } from '../utils/evet';
+import { useGmailInboxAccess } from '../hooks/useGmailInboxAccess';
 import './ScheduleLayout.css';
 
 const SCHEDULE_RAIL_COLLAPSED_KEY = 'vayd-schedule-rail-collapsed';
@@ -93,6 +95,8 @@ export default function ScheduleLayout() {
     () => isAnalyticsAdmin(roles) || isEmployeeAnalyticsRestricted(roles),
     [roles],
   );
+
+  const { allowed: canAccessGmailInbox } = useGmailInboxAccess();
 
   const [railWideEnough, setRailWideEnough] = useState(() =>
     typeof window !== 'undefined' ? window.matchMedia('(min-width: 901px)').matches : true
@@ -157,6 +161,7 @@ export default function ScheduleLayout() {
   const outletFlush = useMemo(
     () =>
       location.pathname === '/schedule/home' ||
+      location.pathname === '/schedule/email' ||
       location.pathname === '/schedule/scheduler' ||
       location.pathname.startsWith('/schedule/scheduler/') ||
       location.pathname === '/schedule/routing',
@@ -306,6 +311,20 @@ export default function ScheduleLayout() {
                   <LineChart size={18} strokeWidth={1.75} />
                 </span>
                 <span className="schedule-app__quick-link-label">Analytics</span>
+              </NavLink>
+            ) : null}
+            {canAccessGmailInbox ? (
+              <NavLink
+                to="/schedule/email"
+                className={({ isActive }) =>
+                  `schedule-app__quick-link${isActive ? ' schedule-app__quick-link--active' : ''}`
+                }
+                title={railCollapsedEffective ? 'Email' : undefined}
+              >
+                <span className="schedule-app__quick-link-icon" aria-hidden>
+                  <Mail size={18} strokeWidth={1.75} />
+                </span>
+                <span className="schedule-app__quick-link-label">Email</span>
               </NavLink>
             ) : null}
           </nav>

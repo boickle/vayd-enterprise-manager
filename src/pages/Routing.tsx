@@ -128,7 +128,7 @@ import {
   forwardBookingRoutingSearchDateRange,
 } from '../utils/forwardBookingFromAppointment';
 import { careOutreachRoutingSearchDateRange } from '../utils/careOutreachForwardBooking';
-import { returnToAppointmentRequestsList } from '../utils/appointmentRequestListReturnTab';
+import { returnFromAppointmentRequestWorkspace } from '../utils/routingAppointmentRequestIntent';
 import {
   appointmentRequestRoutingSearchDateRange,
 } from '../utils/appointmentRequestDisplay';
@@ -2078,7 +2078,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
   const exitAppointmentRequestWorkspace = useCallback(() => {
     const intent = readRoutingAppointmentRequestIntent();
     dismissRoutingAppointmentRequestWorkspace();
-    returnToAppointmentRequestsList(navigate, intent?.returnListTab ?? 'new');
+    returnFromAppointmentRequestWorkspace(navigate, intent);
   }, [navigate]);
 
   const resetRoutingFormAfterRescheduleDismiss = useCallback(() => {
