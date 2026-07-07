@@ -518,6 +518,7 @@ export default function RoutingAnalyticsPage() {
       practiceId: APPOINTMENT_REQUEST_PRACTICE_ID,
       from: fromIso,
       to: toIso,
+      includeConversions: true,
     })
       .then((res) => {
         if (!alive) return;

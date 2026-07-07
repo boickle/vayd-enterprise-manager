@@ -114,6 +114,8 @@ export async function fetchAppointmentRequestSubmissionsPage(params: {
   to?: string;
   page?: number;
   limit?: number;
+  /** When true, server scans appointments to populate `conversions` (requires from/to for large sets). */
+  includeConversions?: boolean;
 }): Promise<AppointmentRequestSubmissionsListResponse> {
   const { data } = await http.get<AppointmentRequestSubmissionsListResponse>(
     '/appointments/request-submissions',
@@ -124,6 +126,7 @@ export async function fetchAppointmentRequestSubmissionsPage(params: {
         ...(params.to != null && params.to !== '' ? { to: params.to } : {}),
         page: params.page ?? 1,
         limit: params.limit ?? 50,
+        ...(params.includeConversions ? { includeConversions: 'true' } : {}),
       },
     }
   );
@@ -202,6 +205,7 @@ export async function fetchAllAppointmentRequestSubmissions(params: {
   practiceId: number;
   from?: string;
   to?: string;
+  includeConversions?: boolean;
 }): Promise<AllAppointmentRequestSubmissionsResult> {
   const limit = 200;
   const first = await fetchAppointmentRequestSubmissionsPage({ ...params, page: 1, limit });
