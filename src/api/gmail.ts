@@ -76,6 +76,10 @@ export type GmailMessageSummary = {
   attachments?: GmailAttachmentSummary[];
   /** When set, a message in this thread is scheduled to send at this time. */
   scheduledSendAt?: string | null;
+  /** Thread has an unsent draft (reply or new message). */
+  hasDraft?: boolean;
+  /** Gmail draft message id when known. */
+  draftId?: string;
 };
 
 export type GmailMessagesResponse = {
@@ -171,12 +175,10 @@ export function groupGmailMessagesByThread(
       (a, b) => messageTimestamp(b.date) - messageTimestamp(a.date),
     );
     const latest = sorted[0]!;
-    const labelIds = new Set<string>();
     let maxCount = 1;
     const participantParts: string[] = [];
     let scheduledSendAt: string | null | undefined;
     for (const m of sorted) {
-      for (const id of m.labelIds) labelIds.add(id);
       maxCount = Math.max(maxCount, m.threadMessageCount ?? 1);
       if (m.participants?.trim()) participantParts.push(m.participants.trim());
       if (m.scheduledSendAt) {
@@ -189,10 +191,14 @@ export function groupGmailMessagesByThread(
       }
     }
     const attachments = collectThreadAttachmentsNewestFirst(sorted);
+    const draftRow =
+      sorted.find((m) => m.hasDraft || m.labelIds.includes('DRAFT')) ?? null;
+    const hasDraft = Boolean(draftRow);
     grouped.push({
       ...latest,
       threadId: threadKey(latest),
-      labelIds: [...labelIds],
+      // Gmail labels are conversation-scoped — use the latest message, not a union.
+      labelIds: [...latest.labelIds],
       isUnread: sorted.some((m) => m.isUnread),
       isStarred: sorted.some((m) => m.isStarred),
       hasAttachments: attachments.length > 0 || sorted.some((m) => m.hasAttachments),
@@ -200,6 +206,9 @@ export function groupGmailMessagesByThread(
       threadMessageCount: Math.max(maxCount, sorted.length),
       participants: mergeParticipantLists(participantParts) ?? latest.participants,
       scheduledSendAt: scheduledSendAt ?? latest.scheduledSendAt ?? null,
+      hasDraft,
+      draftId: draftRow?.draftId ?? (hasDraft ? draftRow?.id : undefined),
+      snippet: hasDraft && draftRow?.snippet?.trim() ? draftRow.snippet : latest.snippet,
     });
   }
 
@@ -302,6 +311,18 @@ export async function fetchGmailSendAs(mailbox: string): Promise<{ aliases: Gmai
   return data;
 }
 
+/** Full send-as alias including signature (Gmail settings). */
+export async function fetchGmailSendAsAlias(
+  mailbox: string,
+  sendAsEmail: string,
+): Promise<GmailSendAsAlias> {
+  const { data } = await http.get<GmailSendAsAlias>(
+    `/gmail/send-as/${encodeURIComponent(sendAsEmail)}`,
+    { params: mailboxParams(mailbox) },
+  );
+  return data;
+}
+
 export type GmailThreadMessage = {
   id: string;
   threadId: string;
@@ -316,6 +337,8 @@ export type GmailThreadMessage = {
   hasAttachments: boolean;
   attachments?: GmailAttachmentSummary[];
   scheduledSendAt?: string | null;
+  /** Gmail draft resource id when distinct from message id. */
+  draftId?: string;
   headers: {
     from: string;
     to: string;
@@ -324,6 +347,8 @@ export type GmailThreadMessage = {
     messageId: string;
     references: string;
     inReplyTo: string;
+    /** Reply-To header when set on the message (e.g. client email on liaison notifications). */
+    replyTo?: string;
   };
   body: { html: string | null; text: string | null };
 };
@@ -339,27 +364,109 @@ export type GmailSendAsAlias = {
   isDefault: boolean;
   isPrimary: boolean;
   treatAsAlias: boolean;
+  /** HTML signature from Gmail send-as settings, when returned by the API. */
+  signature?: string | null;
 };
 
-export async function sendGmailMessage(
-  mailbox: string,
-  body: {
-    from: string;
-    to: string[];
-    cc?: string[];
-    bcc?: string[];
-    subject: string;
-    bodyText?: string;
-    bodyHtml?: string;
-    threadId?: string;
-    inReplyTo?: string;
-    references?: string;
-  },
-) {
+export type GmailComposePayload = {
+  from: string;
+  to: string[];
+  cc?: string[];
+  bcc?: string[];
+  subject: string;
+  bodyText?: string;
+  bodyHtml?: string;
+  threadId?: string;
+  inReplyTo?: string;
+  references?: string;
+  /** When true, do not add INBOX to the thread (reply to archived / labeled mail). */
+  keepOutOfInbox?: boolean;
+};
+
+export type GmailDraftResponse = {
+  id: string;
+  threadId: string;
+  labelIds?: string[];
+};
+
+export async function sendGmailMessage(mailbox: string, body: GmailComposePayload) {
   const { data } = await http.post('/gmail/messages/send', body, {
     params: mailboxParams(mailbox),
   });
   return data;
+}
+
+export async function createGmailDraft(
+  mailbox: string,
+  body: GmailComposePayload,
+): Promise<GmailDraftResponse> {
+  const { data } = await http.post<GmailDraftResponse>('/gmail/drafts', body, {
+    params: mailboxParams(mailbox, body.threadId),
+  });
+  return data;
+}
+
+export async function updateGmailDraft(
+  mailbox: string,
+  draftId: string,
+  body: GmailComposePayload,
+): Promise<GmailDraftResponse> {
+  const { data } = await http.put<GmailDraftResponse>(
+    `/gmail/drafts/${encodeURIComponent(draftId)}`,
+    body,
+    { params: mailboxParams(mailbox, body.threadId) },
+  );
+  return data;
+}
+
+export async function deleteGmailDraft(mailbox: string, draftId: string): Promise<void> {
+  await http.delete(`/gmail/drafts/${encodeURIComponent(draftId)}`, {
+    params: mailboxParams(mailbox),
+  });
+}
+
+export function messageHasDraft(
+  msg: Pick<GmailMessageSummary, 'hasDraft' | 'labelIds'>,
+): boolean {
+  return Boolean(msg.hasDraft) || msg.labelIds.includes('DRAFT');
+}
+
+export function findThreadDraftMessage(
+  messages: ReadonlyArray<Pick<GmailThreadMessage, 'id' | 'labelIds'>>,
+): GmailThreadMessage | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]!;
+    if (m.labelIds.includes('DRAFT')) return m as GmailThreadMessage;
+  }
+  return null;
+}
+
+export function findAllThreadDraftMessages(
+  messages: ReadonlyArray<Pick<GmailThreadMessage, 'id' | 'labelIds' | 'draftId'>>,
+): GmailThreadMessage[] {
+  return messages.filter((m) => m.labelIds.includes('DRAFT')) as GmailThreadMessage[];
+}
+
+/** Prefer Gmail draft resource id; fall back to message id for delete. */
+export function threadDraftDeleteIds(
+  draft: Pick<GmailThreadMessage, 'id' | 'draftId'>,
+): string[] {
+  const ids: string[] = [];
+  const resourceId = draft.draftId?.trim();
+  if (resourceId) ids.push(resourceId);
+  const messageId = draft.id?.trim();
+  if (messageId && messageId !== resourceId) ids.push(messageId);
+  return ids;
+}
+
+export function latestNonDraftThreadMessage(
+  messages: GmailThreadMessage[],
+): GmailThreadMessage | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]!;
+    if (!m.labelIds.includes('DRAFT')) return m;
+  }
+  return null;
 }
 
 export function replySubject(subject: string): string {
@@ -405,6 +512,23 @@ export async function fetchGmailMessages(
     params: { ...mailboxParams(mailbox), ...params },
   });
   return data;
+}
+
+/** Label ids for a thread — Gmail applies labels to the conversation, not per message. */
+export function threadLabelIds(
+  messages: ReadonlyArray<{ labelIds: readonly string[]; date?: string }>,
+): string[] {
+  if (messages.length === 0) return [];
+  let latest = messages[0]!;
+  let latestTs = messageTimestamp(latest.date ?? '');
+  for (const m of messages) {
+    const ts = messageTimestamp(m.date ?? '');
+    if (ts >= latestTs) {
+      latest = m;
+      latestTs = ts;
+    }
+  }
+  return [...latest.labelIds];
 }
 
 export async function modifyGmailMessage(
@@ -725,9 +849,13 @@ export function resolveGmailMessageListParams(
   if (virtualBase) {
     return { q: trimmed ? `${virtualBase} ${trimmed}` : virtualBase };
   }
+  // Gmail ANDs labelIds with q — an active search must be query-only to reach all mail.
+  if (trimmed) {
+    return { q: trimmed };
+  }
   return {
     labelId: scopedLabelId,
-    q: trimmed || undefined,
+    q: undefined,
   };
 }
 
@@ -756,6 +884,31 @@ export function getMessageUserLabels(
   return labelIds
     .map((id) => labelById.get(id))
     .filter((label): label is GmailLabelNode => label?.type === 'user');
+}
+
+/** User labels plus Inbox — Scout appointment-request list only (not Scout Gmail). */
+export function getMessageLabelsForAppointmentList(
+  labelIds: string[],
+  labelById: Map<string, GmailLabelNode>,
+): GmailLabelNode[] {
+  return labelIds
+    .map((id) => labelById.get(id))
+    .filter((label): label is GmailLabelNode => {
+      if (!label) return false;
+      if (label.type === 'user') return true;
+      return label.id === 'INBOX';
+    });
+}
+
+/** Picker labels for the appointment-request list — user labels with Inbox first when available. */
+export function appointmentListGmailPickerLabels(
+  userLabels: GmailLabelNode[],
+  labelById: Map<string, GmailLabelNode>,
+): GmailLabelNode[] {
+  const inbox = labelById.get('INBOX');
+  if (!inbox) return userLabels;
+  if (userLabels.some((l) => l.id === 'INBOX')) return userLabels;
+  return [inbox, ...userLabels];
 }
 
 const REMOVABLE_HEADER_SYSTEM_LABEL_IDS = new Set(['INBOX']);

@@ -246,7 +246,6 @@ export function EditVisitLinkClientPanel({
     setShowCombinedDd(false);
     setSelectedPatientId(null);
     setSelectedPatientLabel('');
-    setKeepAlternateAddress(false);
     setClientPets([]);
     setSelectedClientAlerts(null);
     await fetchClientPetsById(id);

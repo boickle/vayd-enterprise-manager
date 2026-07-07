@@ -10,12 +10,23 @@ import { linkedAppointmentEvetIdsFromRecord } from './appointmentRequestLinkedEv
 import { appointmentLinkedClientLabel } from './schedulerVisitDisplay';
 import { isAppointmentCancelledOnPracticeCalendar } from '../api/appointments';
 import type { Appointment } from '../api/roomLoader';
-import { requestDataAppointmentTypeForRouting, requestDataSelfScheduledSlot } from './appointmentRequestDisplay';
+import {
+  requestDataAppointmentTypeForRouting,
+  requestDataSelfScheduledSlot,
+} from './appointmentRequestDisplay';
+import {
+  effectiveWindowForScheduledStart,
+  type AppointmentTypeWindowSource,
+} from './appointmentArrivalWindow';
 import {
   normalizeAppointmentTypeName,
   pointsPerPatientForType,
   type AppointmentTypeCatalog,
 } from './appointmentTypeSettings';
+import {
+  appointmentRequestAutoBookedOnline,
+  appointmentRequestNeedsStaffConfirmation,
+} from './appointmentRequestStaffConfirm';
 
 export type AppointmentRequestBookedApptSummary = {
   start: string;
@@ -37,6 +48,8 @@ export type AppointmentRequestBookedApptSummary = {
   linkedClientLabel?: string | null;
   /** True when the linked hold was cancelled on the practice calendar. */
   appointmentCancelled?: boolean;
+  /** Routed / type-derived customer arrival window when returned by GET /appointments/:id. */
+  effectiveWindow?: { startIso: string; endIso: string } | null;
 };
 
 function pickStr(v: unknown): string | null {
@@ -126,6 +139,7 @@ export function appointmentRequestBookedSummaryFromAppointment(
         ? String(at).trim()
         : '') || null;
   const linkedEvet = linkedAppointmentEvetIdsFromRecord(appt);
+  const ew = (appt as { effectiveWindow?: { startIso?: string; endIso?: string } }).effectiveWindow;
   return {
     start: String(appt.appointmentStart ?? ''),
     end: appt.appointmentEnd ?? null,
@@ -144,6 +158,10 @@ export function appointmentRequestBookedSummaryFromAppointment(
     appointmentCancelled: isAppointmentCancelledOnPracticeCalendar(
       appt as Appointment & Record<string, unknown>,
     ),
+    effectiveWindow:
+      ew?.startIso?.trim() && ew?.endIso?.trim()
+        ? { startIso: ew.startIso.trim(), endIso: ew.endIso.trim() }
+        : null,
   };
 }
 
@@ -180,6 +198,25 @@ export function appointmentRequestSubmissionIsOnHold(
   return points != null && points <= 0;
 }
 
+/**
+ * Whether the managed ON HOLD Gmail label should be on this thread.
+ * Unconfirmed auto-booked online visits are on hold until staff confirms — even
+ * before calendar points hydrate on the submission row.
+ */
+export function appointmentRequestSubmissionGmailOnHold(
+  item: AppointmentRequestSubmissionItem,
+  bookedApptMeta: ReadonlyMap<number, AppointmentRequestBookedApptSummary>,
+  catalog?: AppointmentTypeCatalog | null,
+): boolean {
+  if (
+    appointmentRequestNeedsStaffConfirmation(item) &&
+    item.bookedAppointmentId != null
+  ) {
+    return true;
+  }
+  return appointmentRequestSubmissionIsOnHold(item, bookedApptMeta, catalog);
+}
+
 /** Booked tab / booked styling — not when the linked visit is on hold (0 points). */
 export function appointmentRequestSubmissionCountsAsBooked(
   item: AppointmentRequestSubmissionItem,
@@ -187,6 +224,12 @@ export function appointmentRequestSubmissionCountsAsBooked(
   catalog?: AppointmentTypeCatalog | null,
 ): boolean {
   if ((item.status ?? 'new') !== 'booked') return false;
+  if (
+    appointmentRequestAutoBookedOnline(item) &&
+    !item.staffConfirmedAt?.trim()
+  ) {
+    return false;
+  }
   return !appointmentRequestSubmissionIsOnHold(item, bookedApptMeta, catalog);
 }
 
@@ -226,11 +269,13 @@ export function appointmentRequestBookedVisitLabels(args: {
   bookedSummary?: AppointmentRequestBookedApptSummary | null;
   practiceTz: string;
   typeCatalog?: AppointmentTypeCatalog | null;
+  /** When set, overrides points-based on-hold detection for the visit line prefix. */
+  isOnHold?: boolean;
 }): {
   bookedLabel: string | null;
   providerLabel: string | null;
 } {
-  const { requestData, bookedSummary, practiceTz, typeCatalog } = args;
+  const { requestData, bookedSummary, practiceTz, typeCatalog, isOnHold: isOnHoldOverride } = args;
   const slot = requestDataSelfScheduledSlot(requestData);
   const start = bookedSummary?.start?.trim() || slot?.appointmentStart?.trim() || null;
   const end = bookedSummary?.end?.trim() || slot?.windowEndIso?.trim() || null;
@@ -247,11 +292,21 @@ export function appointmentRequestBookedVisitLabels(args: {
     return { bookedLabel: null, providerLabel: provider };
   }
 
-  const isOnHold = (bookedSummary?.points ?? 0) <= 0;
+  const isOnHold =
+    isOnHoldOverride ??
+    (bookedSummary != null ? bookedSummary.points <= 0 : false);
   const leadPrefix = isOnHold ? 'On hold. ' : '';
   const datePart = startDt.toFormat('EEE, MMMM d yyyy');
   const typePart = typeName ? `${typeName} - ` : '';
-  const arrivalWindow = formatBookedVisitArrivalWindow(slot, start, end, practiceTz);
+  const arrivalWindow = resolveBookedVisitArrivalWindowLabel({
+    requestData,
+    bookedSummary,
+    slot,
+    scheduledStart: start,
+    scheduledEnd: end,
+    practiceTz,
+    typeCatalog,
+  });
 
   let bookedLabel: string;
   if (arrivalWindow) {
@@ -293,13 +348,98 @@ function resolveBookedVisitInternalTypeName(
   return null;
 }
 
-function formatBookedVisitArrivalWindow(
-  slot: ReturnType<typeof requestDataSelfScheduledSlot>,
-  start: string,
-  end: string | null | undefined,
+function appointmentTypeWindowSource(
+  requestData: Record<string, unknown>,
+  bookedSummary: AppointmentRequestBookedApptSummary | null | undefined,
+  catalog?: AppointmentTypeCatalog | null,
+): AppointmentTypeWindowSource | undefined {
+  const internalName = resolveBookedVisitInternalTypeName(requestData, bookedSummary, catalog);
+  if (internalName && catalog) {
+    const row = catalog.byName.get(normalizeAppointmentTypeName(internalName));
+    if (row) {
+      return {
+        name: row.name,
+        prettyName: row.prettyName,
+        windowBeforeMinutes: row.windowBeforeMinutes,
+        windowAfterMinutes: row.windowAfterMinutes,
+      };
+    }
+  }
+  const { typeId } = requestDataAppointmentTypeForRouting(requestData);
+  if (typeId != null && catalog?.byId.has(typeId)) {
+    const row = catalog.byId.get(typeId)!;
+    return {
+      name: row.name,
+      prettyName: row.prettyName,
+      windowBeforeMinutes: row.windowBeforeMinutes,
+      windowAfterMinutes: row.windowAfterMinutes,
+    };
+  }
+  if (internalName) return { name: internalName };
+  return undefined;
+}
+
+function formatArrivalWindowTimes(
+  startIso: string,
+  endIso: string,
   practiceTz: string,
 ): string | null {
-  const windowDisplay = slot?.windowDisplay?.trim();
+  const startDt = DateTime.fromISO(startIso, { zone: 'utc' }).setZone(practiceTz);
+  const endDt = DateTime.fromISO(endIso, { zone: 'utc' }).setZone(practiceTz);
+  if (!startDt.isValid || !endDt.isValid) return null;
+  const startLabel = startDt.toFormat('h:mm a');
+  const endLabel = endDt.toFormat('h:mm a');
+  if (startLabel === endLabel) return startLabel;
+  return `${startLabel} and ${endLabel}`;
+}
+
+/** Client-facing arrival window — not the calendar slot start/end. */
+function resolveBookedVisitArrivalWindowLabel(args: {
+  requestData: Record<string, unknown>;
+  bookedSummary?: AppointmentRequestBookedApptSummary | null;
+  slot: ReturnType<typeof requestDataSelfScheduledSlot>;
+  scheduledStart: string;
+  scheduledEnd: string | null;
+  practiceTz: string;
+  typeCatalog?: AppointmentTypeCatalog | null;
+}): string | null {
+  const {
+    requestData,
+    bookedSummary,
+    slot,
+    scheduledStart,
+    scheduledEnd,
+    practiceTz,
+    typeCatalog,
+  } = args;
+
+  const ew = bookedSummary?.effectiveWindow;
+  if (ew?.startIso && ew?.endIso) {
+    const fromApi = formatArrivalWindowTimes(ew.startIso, ew.endIso, practiceTz);
+    if (fromApi) return fromApi;
+  }
+
+  const fromSlot = formatBookedVisitArrivalWindow(slot, practiceTz);
+  if (fromSlot) return fromSlot;
+
+  const typeSource = appointmentTypeWindowSource(requestData, bookedSummary, typeCatalog);
+  const computed = effectiveWindowForScheduledStart(
+    scheduledStart,
+    typeSource,
+    practiceTz,
+    { appointmentEndIso: scheduledEnd ?? undefined },
+  );
+  if (!computed) return null;
+  return formatArrivalWindowTimes(computed.startIso, computed.endIso, practiceTz);
+}
+
+function formatBookedVisitArrivalWindow(
+  slot: ReturnType<typeof requestDataSelfScheduledSlot>,
+  practiceTz: string,
+): string | null {
+  if (!slot) return null;
+
+  const windowDisplay = slot.windowDisplay?.trim();
   if (windowDisplay) {
     const betweenMatch = windowDisplay.match(/between\s+(.+?)\s+and\s+(.+)$/i);
     if (betweenMatch) {
@@ -308,17 +448,15 @@ function formatBookedVisitArrivalWindow(
     return windowDisplay;
   }
 
-  const windowStart = slot?.windowStartIso?.trim() || start;
-  const windowEnd = slot?.windowEndIso?.trim() || end?.trim() || null;
+  const windowStart = slot.windowStartIso?.trim();
+  const windowEnd = slot.windowEndIso?.trim();
+  if (!windowStart || !windowEnd) return null;
+
   const startDt = DateTime.fromISO(windowStart, { zone: 'utc' }).setZone(practiceTz);
   if (!startDt.isValid) return null;
-  const endDt = windowEnd
-    ? DateTime.fromISO(windowEnd, { zone: 'utc' }).setZone(practiceTz)
-    : null;
-  if (endDt?.isValid) {
-    return `${startDt.toFormat('h:mm a')} and ${endDt.toFormat('h:mm a')}`;
-  }
-  return null;
+  const endDt = DateTime.fromISO(windowEnd, { zone: 'utc' }).setZone(practiceTz);
+  if (!endDt.isValid) return null;
+  return `${startDt.toFormat('h:mm a')} and ${endDt.toFormat('h:mm a')}`;
 }
 
 export {

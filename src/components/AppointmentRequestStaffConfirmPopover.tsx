@@ -6,6 +6,8 @@ import {
   type PreviewPopoverClientContact as PreviewPopoverClientContactType,
 } from './PreviewPopoverClientContact';
 import { AppointmentRequestClientNameChange } from './AppointmentRequestClientNameChange';
+import type { StaffConfirmRecommendedLength } from '../utils/appointmentRequestStaffConfirmRecommendedLength';
+import { StaffConfirmBookingBreakdownSection } from './StaffConfirmBookingBreakdown';
 
 export type StaffConfirmHouseholdEditChoice = {
   appointmentId: number;
@@ -24,6 +26,8 @@ type Props = {
   clientContact?: PreviewPopoverClientContactType | null;
   /** Multi-pet household — when length > 1, Edit asks which pet to change. */
   householdEditChoices?: StaffConfirmHouseholdEditChoice[];
+  recommendedLength?: StaffConfirmRecommendedLength | null;
+  recommendedLengthLoading?: boolean;
   confirming?: boolean;
   error?: string | null;
   onConfirm: () => void;
@@ -87,6 +91,8 @@ export function AppointmentRequestStaffConfirmPopover({
   isNewClient = false,
   clientContact,
   householdEditChoices,
+  recommendedLength,
+  recommendedLengthLoading = false,
   confirming = false,
   error,
   onConfirm,
@@ -191,6 +197,17 @@ export function AppointmentRequestStaffConfirmPopover({
           <p className="scheduler-edit-preview-popover-change-line scheduler-edit-preview-popover-change-line--now">
             {visitRange}
           </p>
+          {recommendedLengthLoading ? (
+            <p className="scheduler-edit-preview-popover-change-line scheduler-edit-preview-popover-line--muted">
+              Calculating recommended appointment length…
+            </p>
+          ) : recommendedLength ? (
+            recommendedLength.bookingBreakdown ? (
+              <StaffConfirmBookingBreakdownSection
+                breakdown={recommendedLength.bookingBreakdown}
+              />
+            ) : null
+          ) : null}
         </div>
 
         <div className="scheduler-edit-preview-popover-body">

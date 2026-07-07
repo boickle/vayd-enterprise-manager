@@ -1,6 +1,10 @@
 /** Helpers for reading persisted public appointment request form payloads. */
 
 import { DateTime } from 'luxon';
+import type { AppointmentRequestListTab } from '../appointments-nav';
+import type { AppointmentRequestSubmissionItem } from '../api/appointmentRequestSubmissions';
+import { appointmentRequestSubmissionCountsAsBooked, appointmentRequestSubmissionIsOnHold } from './appointmentRequestOnHold';
+import { appointmentRequestNeedsStaffConfirmation } from './appointmentRequestStaffConfirm';
 import { fetchClientByIdStaff } from '../api/clientsStaff';
 import { practiceTimeZoneOrDefault } from './practiceTimezone';
 
@@ -14,6 +18,41 @@ export function clientDisplayNameFromRequestData(requestData: Record<string, unk
   const fn = (requestData.fullName as { first?: string; last?: string }) ?? {};
   const parts = [pickStr(fn.first), pickStr(fn.last)].filter(Boolean);
   return parts.length ? parts.join(' ') : pickStr(requestData.email) ?? 'Unknown';
+}
+
+function normalizeLookupName(name: string | null | undefined): string | null {
+  const n = (name ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+  return n || null;
+}
+
+/** Liaison notification subjects in info@ — manual requests and online auto-book. */
+const APPT_REQUEST_SUBJECT_RE =
+  /^(?:appointment request|online appointment booking):\s*(.+?)\s+for\s+(.+)$/i;
+
+/** Strip reply/forward prefixes so liaison subjects still match after staff replies. */
+function liaisonSubjectForMatch(subject: string | null | undefined): string {
+  return (subject ?? '').trim().replace(/^(?:(?:re|fwd):\s*)+/i, '');
+}
+
+export function isAppointmentRequestNotificationSubject(subject: string | null | undefined): boolean {
+  return APPT_REQUEST_SUBJECT_RE.test(liaisonSubjectForMatch(subject));
+}
+
+/** Normalized client name key from a liaison notification subject line. */
+export function clientNameFromAppointmentRequestSubject(
+  subject: string | null | undefined,
+): string | null {
+  const m = liaisonSubjectForMatch(subject).match(APPT_REQUEST_SUBJECT_RE);
+  return m ? normalizeLookupName(m[1]) : null;
+}
+
+/** Pet portion from a liaison notification subject (may be comma-separated). */
+export function petSummaryFromAppointmentRequestSubject(
+  subject: string | null | undefined,
+): string | null {
+  const m = liaisonSubjectForMatch(subject).match(APPT_REQUEST_SUBJECT_RE);
+  const pet = m?.[2]?.trim();
+  return pet || null;
 }
 
 export function requestDataPhone(requestData: Record<string, unknown>): string | null {
@@ -689,4 +728,17 @@ export function requestDataServiceMinutes(requestData: Record<string, unknown>):
     return Math.max(15, Math.round(Number(raw)));
   }
   return null;
+}
+
+/** List tab where this submission appears in the Scout appointments queue. */
+export function appointmentRequestListTabForSubmission(
+  item: AppointmentRequestSubmissionItem,
+): AppointmentRequestListTab {
+  const status = item.status ?? 'new';
+  if (status === 'dismissed') return 'dismissed';
+  if (appointmentRequestNeedsStaffConfirmation(item)) return 'to_confirm';
+  if (appointmentRequestSubmissionIsOnHold(item, new Map(), null)) return 'on_hold';
+  if (appointmentRequestSubmissionCountsAsBooked(item, new Map(), null)) return 'booked';
+  if (status === 'contacted') return 'contacted';
+  return 'new';
 }

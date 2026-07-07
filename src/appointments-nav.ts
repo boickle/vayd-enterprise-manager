@@ -5,6 +5,8 @@ export const APPOINTMENT_REQUESTS_LIST_PATH = APPOINTMENTS_PATH_PREFIX;
 
 export const APPOINTMENT_REQUESTS_TAB_PARAM = 'tab';
 export const APPOINTMENT_REQUESTS_ON_HOLD_OVER24_PARAM = 'over24';
+/** Scroll-to row when opening a specific submission from Gmail or another deep link. */
+export const APPOINTMENT_REQUESTS_HIGHLIGHT_PARAM = 'highlight';
 
 export type AppointmentRequestListTab =
   | 'new'
@@ -12,8 +14,7 @@ export type AppointmentRequestListTab =
   | 'on_hold'
   | 'to_confirm'
   | 'booked'
-  | 'dismissed'
-  | 'need_records';
+  | 'dismissed';
 
 const VALID_TABS = new Set<string>([
   'new',
@@ -22,7 +23,6 @@ const VALID_TABS = new Set<string>([
   'to_confirm',
   'booked',
   'dismissed',
-  'need_records',
 ]);
 
 export function parseAppointmentRequestsTabParam(
@@ -49,16 +49,32 @@ export function appointmentRequestsOnHoldOver24FromSearch(search: string): boole
   return new URLSearchParams(search).get(APPOINTMENT_REQUESTS_ON_HOLD_OVER24_PARAM) === '1';
 }
 
+export function parseAppointmentRequestsHighlightFromSearch(search: string): number | null {
+  const raw = new URLSearchParams(search).get(APPOINTMENT_REQUESTS_HIGHLIGHT_PARAM);
+  if (!raw?.trim()) return null;
+  const id = Number(raw);
+  return Number.isFinite(id) && id > 0 ? Math.trunc(id) : null;
+}
+
 export function appointmentRequestsPathForTab(
   tab: AppointmentRequestListTab,
-  opts?: { onHoldOver24Only?: boolean },
+  opts?: { onHoldOver24Only?: boolean; highlightId?: number },
 ): string {
   if (tab === 'on_hold') {
     const params = new URLSearchParams();
     if (opts?.onHoldOver24Only) params.set(APPOINTMENT_REQUESTS_ON_HOLD_OVER24_PARAM, '1');
+    if (opts?.highlightId != null) {
+      params.set(APPOINTMENT_REQUESTS_HIGHLIGHT_PARAM, String(opts.highlightId));
+    }
     const qs = params.toString();
     return qs ? `${APPOINTMENTS_PATH_PREFIX}/on-hold?${qs}` : `${APPOINTMENTS_PATH_PREFIX}/on-hold`;
   }
-  if (tab === 'new') return APPOINTMENTS_PATH_PREFIX;
-  return `${APPOINTMENTS_PATH_PREFIX}?${APPOINTMENT_REQUESTS_TAB_PARAM}=${encodeURIComponent(tab)}`;
+
+  const params = new URLSearchParams();
+  if (tab !== 'new') params.set(APPOINTMENT_REQUESTS_TAB_PARAM, tab);
+  if (opts?.highlightId != null) {
+    params.set(APPOINTMENT_REQUESTS_HIGHLIGHT_PARAM, String(opts.highlightId));
+  }
+  const qs = params.toString();
+  return qs ? `${APPOINTMENTS_PATH_PREFIX}?${qs}` : APPOINTMENTS_PATH_PREFIX;
 }

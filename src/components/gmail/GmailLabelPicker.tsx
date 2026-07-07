@@ -11,7 +11,7 @@ type Props = {
   onApply: (draft: Map<string, GmailLabelDraftState>) => Promise<void>;
   disabled?: boolean;
   applying?: boolean;
-  trigger?: 'toolbar-icon' | 'detail-button';
+  trigger?: 'toolbar-icon' | 'detail-button' | 'add-chip';
 };
 
 function initialDraftState(state: GmailLabelCheckState): GmailLabelDraftState {
@@ -126,7 +126,13 @@ export default function GmailLabelPicker({
 
   return (
     <div
-      className={`gmail-label-picker-wrap${trigger === 'toolbar-icon' ? ' gmail-bulk-toolbar__menu-wrap' : ''}`}
+      className={`gmail-label-picker-wrap${
+        trigger === 'toolbar-icon'
+          ? ' gmail-bulk-toolbar__menu-wrap'
+          : trigger === 'add-chip'
+            ? ' appt-request-gmail-label-picker'
+            : ''
+      }`}
       ref={rootRef}
     >
       <button
@@ -134,24 +140,38 @@ export default function GmailLabelPicker({
         className={
           trigger === 'toolbar-icon'
             ? `gmail-inbox__list-toolbar-btn${open ? ' gmail-inbox__list-toolbar-btn--active' : ''}`
-            : 'gmail-btn'
+            : trigger === 'add-chip'
+              ? 'appt-request-gmail-label-add'
+              : 'gmail-btn'
         }
-        aria-label="Label message"
+        aria-label="Add Gmail label"
         aria-expanded={open}
-        title="Label"
+        title="Add label"
         disabled={disabled || applying}
         onClick={() => setOpen((v) => !v)}
       >
-        <Tag
-          size={trigger === 'toolbar-icon' ? 18 : 14}
-          strokeWidth={1.75}
-          style={trigger === 'detail-button' ? { verticalAlign: -2, marginRight: 4 } : undefined}
-          aria-hidden
-        />
-        {trigger === 'detail-button' ? 'Label' : null}
+        {trigger === 'add-chip' ? (
+          <span aria-hidden>+</span>
+        ) : (
+          <>
+            <Tag
+              size={trigger === 'toolbar-icon' ? 18 : 14}
+              strokeWidth={1.75}
+              style={trigger === 'detail-button' ? { verticalAlign: -2, marginRight: 4 } : undefined}
+              aria-hidden
+            />
+            {trigger === 'detail-button' ? 'Label' : null}
+          </>
+        )}
       </button>
       {open ? (
-        <div className="gmail-bulk-menu gmail-bulk-menu--wide" role="menu" aria-label="Label as">
+        <div
+          className={`gmail-bulk-menu gmail-bulk-menu--wide${
+            trigger === 'add-chip' ? ' gmail-bulk-menu--add-chip' : ''
+          }`}
+          role="menu"
+          aria-label="Label as"
+        >
           <div className="gmail-bulk-menu__title">Label as:</div>
           <div className="gmail-bulk-menu__search">
             <input

@@ -1,16 +1,19 @@
-import { ArrowLeft, ChevronLeft, ChevronRight, Forward, Reply, X } from 'lucide-react';
-import GmailAttachmentIcon from './GmailAttachmentIcon';
-import type { ComposeContext } from './gmailCompose';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { ArrowLeft, ChevronLeft, ChevronRight, X } from 'lucide-react';
+import type { ComposeContext, GmailComposeDraftSavedInfo } from './gmailCompose';
 import GmailBulkToolbar, { type GmailLabelApplyUpdate } from './GmailBulkToolbar';
-import GmailScheduledSendIcon from './GmailScheduledSendIcon';
+import GmailMessageComposeBar from './GmailMessageComposeBar';
+import GmailComposePanel from './GmailComposePanel';
 import {
-  formatGmailAddress,
+  GmailThreadMessageArticle,
+  partitionThreadForDisplay,
+} from './GmailThreadMessage';
+import {
   decodeGmailSnippet,
   getMessageRemovableHeaderLabels,
-  hasScheduledSend,
   labelChipStyle,
   labelDisplayName,
-  truncateAttachmentFilename,
+  threadLabelIds,
   type GmailAttachmentSummary,
   type GmailLabelNode,
   type GmailMessageSummary,
@@ -40,13 +43,17 @@ type Props = {
   onOpenAttachment: (attachment: GmailAttachmentSummary) => void;
   onRemoveLabel: (labelId: string) => Promise<void>;
   latestThreadMessage: GmailThreadMessage | null;
+  /** Optional appointment-request action panel, rendered above the thread. */
+  appointmentRequestSlot?: ReactNode;
+  /** Optional pre-archive guard forwarded to the message toolbar. */
+  guardArchive?: (targets: GmailMessageSummary[]) => string | null;
+  composeOpen?: boolean;
+  composeContext?: ComposeContext;
+  onCloseCompose?: () => void;
+  onComposeSent?: () => void;
+  onComposeDraftSaved?: (info: GmailComposeDraftSavedInfo) => void;
+  onComposeDraftDeleted?: (info: { threadId: string }) => void;
 };
-
-function senderInitial(from: GmailMessageSummary['from']): string {
-  const name = from.name?.trim();
-  if (name) return name.charAt(0).toUpperCase();
-  return (from.email.charAt(0) || '?').toUpperCase();
-}
 
 export default function GmailMessageView({
   mailbox,
@@ -70,8 +77,100 @@ export default function GmailMessageView({
   onOpenAttachment,
   onRemoveLabel,
   latestThreadMessage,
+  appointmentRequestSlot,
+  guardArchive,
+  composeOpen,
+  composeContext,
+  onCloseCompose,
+  onComposeSent,
+  onComposeDraftSaved,
+  onComposeDraftDeleted,
 }: Props) {
   const removableLabels = getMessageRemovableHeaderLabels(message.labelIds, labelById);
+  const [expandedMessageIds, setExpandedMessageIds] = useState<Set<string>>(() => new Set());
+
+  const threadPartition = useMemo(
+    () =>
+      partitionThreadForDisplay(
+        threadMessages,
+        Boolean(composeOpen),
+        composeContext?.replyTo?.id,
+      ),
+    [threadMessages, composeOpen, composeContext?.replyTo?.id],
+  );
+
+  const defaultExpandedIds = useMemo(() => {
+    if (threadPartition.mode !== 'stack') return [];
+    return threadPartition.defaultExpandedIds;
+  }, [threadPartition]);
+
+  useEffect(() => {
+    if (defaultExpandedIds.length > 0) {
+      setExpandedMessageIds(new Set(defaultExpandedIds));
+    } else {
+      setExpandedMessageIds(new Set());
+    }
+  }, [defaultExpandedIds, message.threadId, composeOpen, composeContext?.replyTo?.id]);
+
+  const toggleMessageExpanded = (messageId: string, pinExpanded: boolean) => {
+    if (pinExpanded) return;
+    setExpandedMessageIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(messageId)) next.delete(messageId);
+      else next.add(messageId);
+      return next;
+    });
+  };
+
+  const threadInInbox = useMemo(() => {
+    if (threadMessages.length > 0) {
+      return threadLabelIds(threadMessages).includes('INBOX');
+    }
+    return message.labelIds.includes('INBOX');
+  }, [threadMessages, message.labelIds]);
+
+  const handleCompose = useCallback(
+    (ctx: ComposeContext) => {
+      onCompose({
+        ...ctx,
+        threadInInbox: ctx.threadInInbox ?? threadInInbox,
+      });
+    },
+    [onCompose, threadInInbox],
+  );
+
+  const sharedMessageProps = {
+    threadId: message.threadId,
+    actionBusy,
+    threadLoading,
+    onCompose: handleCompose,
+    onOpenAttachment,
+    showReplyActions: !composeOpen,
+  };
+
+  const renderThreadMessages = () => {
+    if (threadPartition.mode === 'all') {
+      return threadPartition.messages.map((msg) => (
+        <GmailThreadMessageArticle key={msg.id} msg={msg} {...sharedMessageProps} />
+      ));
+    }
+
+    return threadPartition.messages.map((msg) => {
+      const pinExpanded = msg.isUnread;
+      const isExpanded = pinExpanded || expandedMessageIds.has(msg.id);
+      return (
+        <GmailThreadMessageArticle
+          key={msg.id}
+          msg={msg}
+          compact
+          expanded={isExpanded}
+          pinExpanded={pinExpanded}
+          onToggleExpand={() => toggleMessageExpanded(msg.id, pinExpanded)}
+          {...sharedMessageProps}
+        />
+      );
+    });
+  };
 
   return (
     <div className="gmail-message-view">
@@ -94,39 +193,9 @@ export default function GmailMessageView({
           onComplete={onToolbarComplete}
           onLabelsApplied={onLabelsApplied}
           onError={onToolbarError}
+          guardArchive={guardArchive}
         />
         <div className="gmail-message-view__toolbar-spacer" />
-        <button
-          type="button"
-          className="gmail-inbox__list-toolbar-btn"
-          aria-label="Reply"
-          title="Reply"
-          disabled={actionBusy || threadLoading || !latestThreadMessage}
-          onClick={() =>
-            onCompose({
-              mode: 'reply',
-              threadId: message.threadId,
-              replyTo: latestThreadMessage ?? undefined,
-            })
-          }
-        >
-          <Reply size={18} strokeWidth={1.75} aria-hidden />
-        </button>
-        <button
-          type="button"
-          className="gmail-inbox__list-toolbar-btn"
-          aria-label="Forward"
-          title="Forward"
-          disabled={actionBusy || threadLoading || !latestThreadMessage}
-          onClick={() =>
-            onCompose({
-              mode: 'forward',
-              replyTo: latestThreadMessage ?? undefined,
-            })
-          }
-        >
-          <Forward size={18} strokeWidth={1.75} aria-hidden />
-        </button>
         <div className="gmail-inbox__pagination">
           <span className="gmail-inbox__pagination-range">{messagePositionLabel}</span>
           <button
@@ -180,119 +249,35 @@ export default function GmailMessageView({
           ) : null}
         </div>
 
+        {appointmentRequestSlot}
+
         {threadLoading ? (
           <div className="gmail-inbox__state">Loading message…</div>
         ) : threadMessages.length > 0 ? (
-          <div className="gmail-message-view__thread">
-            {threadMessages.map((msg) => (
-              <article key={msg.id} className="gmail-thread-message">
-                <div className="gmail-message-view__sender-row">
-                  <span className="gmail-message-view__avatar" aria-hidden>
-                    {senderInitial(msg.from)}
-                  </span>
-                  <div className="gmail-message-view__sender-meta">
-                    <div className="gmail-message-view__sender-line">
-                      <strong>{formatGmailAddress(msg.from)}</strong>
-                      <span className="gmail-message-view__date">
-                        {hasScheduledSend(msg) ? (
-                          <GmailScheduledSendIcon scheduledSendAt={msg.scheduledSendAt} />
-                        ) : null}
-                        {new Date(msg.date).toLocaleString(undefined, {
-                          dateStyle: 'medium',
-                          timeStyle: 'short',
-                        })}
-                      </span>
-                    </div>
-                    {hasScheduledSend(msg) ? (
-                      <div className="gmail-thread-message__scheduled">
-                        Scheduled to send{' '}
-                        {msg.scheduledSendAt
-                          ? new Date(msg.scheduledSendAt).toLocaleString(undefined, {
-                              dateStyle: 'medium',
-                              timeStyle: 'short',
-                            })
-                          : 'later'}
-                      </div>
-                    ) : null}
-                    {msg.headers.to ? (
-                      <div className="gmail-message-view__to">to {msg.headers.to}</div>
-                    ) : null}
-                  </div>
-                </div>
-                {msg.body.html ? (
-                  <div
-                    className="gmail-thread-message__body gmail-thread-message__body--html"
-                    dangerouslySetInnerHTML={{ __html: msg.body.html }}
-                  />
-                ) : (
-                  <div className="gmail-thread-message__body">
-                    {decodeGmailSnippet(msg.body.text ?? msg.snippet)}
-                  </div>
-                )}
-                {msg.attachments && msg.attachments.length > 0 ? (
-                  <div className="gmail-thread-message__attachments">
-                    <div className="gmail-thread-message__attachments-label">
-                      {msg.attachments.length === 1
-                        ? 'One attachment'
-                        : `${msg.attachments.length} attachments`}
-                    </div>
-                    <div className="gmail-thread-message__attachments-list">
-                      {msg.attachments.map((attachment) => (
-                        <button
-                          key={`${attachment.messageId}:${attachment.attachmentId}`}
-                          type="button"
-                          className="gmail-msg-item__attachment gmail-thread-message__attachment"
-                          title={attachment.filename}
-                          onClick={() => onOpenAttachment(attachment)}
-                        >
-                          <GmailAttachmentIcon
-                            mimeType={attachment.mimeType}
-                            filename={attachment.filename}
-                          />
-                          {truncateAttachmentFilename(attachment.filename, 24)}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-              </article>
-            ))}
-          </div>
+          <div className="gmail-message-view__thread">{renderThreadMessages()}</div>
         ) : (
           <div className="gmail-detail__snippet">{decodeGmailSnippet(message.snippet)}</div>
         )}
 
-        <div className="gmail-message-view__footer">
-          <button
-            type="button"
-            className="gmail-message-view__footer-btn"
-            disabled={actionBusy || threadLoading || !latestThreadMessage}
-            onClick={() =>
-              onCompose({
-                mode: 'reply',
-                threadId: message.threadId,
-                replyTo: latestThreadMessage ?? undefined,
-              })
-            }
-          >
-            <Reply size={16} strokeWidth={1.75} aria-hidden />
-            Reply
-          </button>
-          <button
-            type="button"
-            className="gmail-message-view__footer-btn"
-            disabled={actionBusy || threadLoading || !latestThreadMessage}
-            onClick={() =>
-              onCompose({
-                mode: 'forward',
-                replyTo: latestThreadMessage ?? undefined,
-              })
-            }
-          >
-            <Forward size={16} strokeWidth={1.75} aria-hidden />
-            Forward
-          </button>
-        </div>
+        {composeOpen && composeContext && onCloseCompose && onComposeSent ? (
+          <GmailComposePanel
+            mailbox={mailbox}
+            context={composeContext}
+            variant="inline"
+            threadMessages={threadMessages}
+            onClose={onCloseCompose}
+            onSent={onComposeSent}
+            onDraftSaved={onComposeDraftSaved}
+            onDraftDeleted={onComposeDraftDeleted}
+          />
+        ) : latestThreadMessage ? (
+          <GmailMessageComposeBar
+            threadId={message.threadId}
+            replyTo={latestThreadMessage}
+            disabled={actionBusy || threadLoading}
+            onCompose={handleCompose}
+          />
+        ) : null}
       </div>
     </div>
   );

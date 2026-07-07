@@ -53,6 +53,12 @@ type Props = {
   onComplete: () => void;
   onLabelsApplied: (updates: GmailLabelApplyUpdate[]) => void;
   onError: (message: string) => void;
+  /**
+   * Optional pre-archive check. Return an error string to block the archive
+   * (e.g. an appointment-request thread missing a BOOKED / NOT BOOKED label);
+   * return null to allow it.
+   */
+  guardArchive?: (targets: GmailMessageSummary[]) => string | null;
 };
 
 const MOVE_TARGET_IDS = ['INBOX', 'TRASH', 'SPAM'] as const;
@@ -67,6 +73,7 @@ export default function GmailBulkToolbar({
   onComplete,
   onLabelsApplied,
   onError,
+  guardArchive,
 }: Props) {
   const [busy, setBusy] = useState(false);
   const [labelApplying, setLabelApplying] = useState(false);
@@ -75,7 +82,7 @@ export default function GmailBulkToolbar({
 
   const moveTargets = useMemo(() => {
     const system = MOVE_TARGET_IDS.map((id) => labelById.get(id)).filter(
-      (l): l is GmailLabelNode => !!l,
+      (l): l is GmailLabelNode => !!l
     );
     return [...system, ...userLabels].filter((l) => l.id !== currentLabelId);
   }, [labelById, userLabels, currentLabelId]);
@@ -91,9 +98,7 @@ export default function GmailBulkToolbar({
     return () => document.removeEventListener('mousedown', onDocClick);
   }, [openMenu]);
 
-  const runOnChecked = async (
-    fn: (msg: GmailMessageSummary) => Promise<unknown>,
-  ) => {
+  const runOnChecked = async (fn: (msg: GmailMessageSummary) => Promise<unknown>) => {
     if (targetMessages.length === 0) return;
     setBusy(true);
     try {
@@ -107,7 +112,16 @@ export default function GmailBulkToolbar({
     }
   };
 
-  const handleArchive = () => runOnChecked((m) => archiveGmailMessage(mailbox, m.id, m.threadId));
+  const handleArchive = () => {
+    if (guardArchive) {
+      const blocked = guardArchive(targetMessages);
+      if (blocked) {
+        onError(blocked);
+        return;
+      }
+    }
+    void runOnChecked((m) => archiveGmailMessage(mailbox, m.id, m.threadId));
+  };
 
   const handleTrash = () => runOnChecked((m) => trashGmailMessage(mailbox, m.id, m.threadId));
 
@@ -116,9 +130,7 @@ export default function GmailBulkToolbar({
 
   const handleMoveTo = (targetLabelId: string) => {
     const removeLabelIds =
-      currentLabelId &&
-      currentLabelId !== targetLabelId &&
-      !isVirtualMailboxLabel(currentLabelId)
+      currentLabelId && currentLabelId !== targetLabelId && !isVirtualMailboxLabel(currentLabelId)
         ? [currentLabelId]
         : undefined;
     void runOnChecked((m) =>
@@ -129,8 +141,8 @@ export default function GmailBulkToolbar({
           addLabelIds: [targetLabelId],
           ...(removeLabelIds ? { removeLabelIds } : {}),
         },
-        m.threadId,
-      ),
+        m.threadId
+      )
     );
   };
 
@@ -166,14 +178,14 @@ export default function GmailBulkToolbar({
             mailbox,
             m.id,
             { addLabelIds, removeLabelIds },
-            m.threadId,
+            m.threadId
           );
           return {
             messageId: result.id,
             threadId: m.threadId,
             labelIds: result.labelIds,
           };
-        }),
+        })
       );
       onLabelsApplied(updates);
     } catch (e) {

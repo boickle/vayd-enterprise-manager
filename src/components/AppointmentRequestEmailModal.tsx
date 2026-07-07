@@ -6,6 +6,8 @@ import {
   fetchGmailThread,
   formatGmailAddress,
   gmailErrorMessage,
+  latestNonDraftThreadMessage,
+  threadLabelIds,
   type GmailThreadMessage,
 } from '../api/gmail';
 import { fetchAppointmentRequestGmailLink } from '../api/appointmentRequestSubmissions';
@@ -25,12 +27,19 @@ import { resolveAppointmentRequestSmsMessage } from '../utils/appointmentRequest
 import '../pages/GmailInbox.css';
 import './AppointmentRequestEmailModal.css';
 
+export type AppointmentRequestEmailSentContext = {
+  mailbox: string;
+  threadId: string;
+  messageId: string;
+  labelIds: string[];
+};
+
 type Props = {
   item: AppointmentRequestSubmissionItem;
   practiceId: number;
   practiceTz: string;
   onClose: () => void;
-  onSent?: () => void;
+  onSent?: (context: AppointmentRequestEmailSentContext | null) => void;
   onGmailLinked?: (patch: {
     gmailThreadId: string;
     gmailMailbox: string;
@@ -223,7 +232,19 @@ export function AppointmentRequestEmailModal({
         inReplyTo,
         references,
       });
-      onSent?.();
+      let sentContext: AppointmentRequestEmailSentContext | null = null;
+      if (mailbox && replyThreadId && threadMessages.length > 0) {
+        const latest = latestNonDraftThreadMessage(threadMessages);
+        if (latest) {
+          sentContext = {
+            mailbox,
+            threadId: replyThreadId,
+            messageId: latest.id,
+            labelIds: threadLabelIds(threadMessages),
+          };
+        }
+      }
+      onSent?.(sentContext);
       onClose();
     } catch (e) {
       setSendError(e instanceof Error ? e.message : 'Send failed');

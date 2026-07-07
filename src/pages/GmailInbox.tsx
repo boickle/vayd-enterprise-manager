@@ -1,18 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Navigate, useSearchParams } from 'react-router-dom';
-import {
-  ChevronLeft,
-  ChevronRight,
-  Mail,
-  PenSquare,
-  Plus,
-  RefreshCw,
-  Star,
-  X,
-} from 'lucide-react';
+import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
+import { ChevronLeft, ChevronRight, Mail, PenSquare, Plus, RefreshCw, Star, X } from 'lucide-react';
 import GmailAttachmentIcon from '../components/gmail/GmailAttachmentIcon';
 import GmailBulkToolbar, { type GmailLabelApplyUpdate } from '../components/gmail/GmailBulkToolbar';
-import GmailComposeModal from '../components/gmail/GmailComposeModal';
+import GmailComposePanel from '../components/gmail/GmailComposePanel';
 import GmailMessageView from '../components/gmail/GmailMessageView';
 import GmailSearchBar from '../components/gmail/GmailSearchBar';
 import {
@@ -21,7 +12,8 @@ import {
   searchLabelIdForScope,
   type GmailSearchFilterFields,
 } from '../components/gmail/gmailSearch';
-import type { ComposeContext } from '../components/gmail/gmailCompose';
+import type { ComposeContext, GmailComposeDraftSavedInfo } from '../components/gmail/gmailCompose';
+import { discardAllThreadDrafts } from '../components/gmail/gmailCompose';
 import '../components/gmail/GmailComposeModal.css';
 import GmailLabelTree from '../components/gmail/GmailLabelTree';
 import GmailScheduledSendIcon from '../components/gmail/GmailScheduledSendIcon';
@@ -52,9 +44,13 @@ import {
   modifyGmailMessage,
   openGmailAttachment,
   starGmailMessage,
+  threadLabelIds,
   truncateAttachmentFilename,
   decodeGmailSnippet,
+  findThreadDraftMessage,
   hasScheduledSend,
+  latestNonDraftThreadMessage,
+  messageHasDraft,
   type GmailAttachmentSummary,
   type GmailLabelNode,
   type GmailMailboxStatus,
@@ -63,9 +59,49 @@ import {
 } from '../api/gmail';
 import './GmailInbox.css';
 import { useGmailInboxAccess } from '../hooks/useGmailInboxAccess';
+import GmailAppointmentRequestPanel from '../components/gmail/GmailAppointmentRequestPanel';
+import {
+  useAppointmentRequestThreadIndex,
+} from '../hooks/useAppointmentRequestThreadIndex';
+import { extractEmailsFromText } from '../utils/gmailEmailExtract';
+import { requestDataEmail } from '../utils/appointmentRequestDisplay';
+import {
+  apptRequestGmailNotBookedLabelPendingDismissal,
+  apptRequestGmailOnHoldSyncSignature,
+  applyApptRequestGmailOnHoldLabel,
+  isAppointmentRequestMailbox,
+  isApptRequestOnHoldLabelId,
+  outcomeLabelPatch,
+  resolveApptRequestGmailOutcome,
+  resolveApptRequestLabelIds,
+  syncManagedApptRequestGmailLabels,
+  threadHasOutcomeLabel,
+} from '../utils/gmailAppointmentRequestLabels';
+import { appointmentRequestSubmissionGmailOnHold } from '../utils/appointmentRequestOnHold';
+import { beginAppointmentRequestNotBookedFlow } from '../utils/appointmentRequestNotBookedFlow';
+import { beginAppointmentRequestOnHoldReleaseFlow } from '../utils/appointmentRequestOnHoldReleaseFlow';
+import { buildGmailInboxReturnPath } from '../utils/routingAppointmentRequestIntent';
+import { practiceTimeZoneOrDefault } from '../utils/practiceTimezone';
+import {
+  patchAppointmentRequestSubmission,
+  fetchAppointmentRequestSubmission,
+  type AppointmentRequestSubmissionItem,
+} from '../api/appointmentRequestSubmissions';
 import { useAuth } from '../auth/useAuth';
 import { resolvePracticeIdFromToken } from '../utils/practiceIdFromToken';
 import { subscribeGmailInbox } from '../utils/gmailRealtime';
+import {
+  clearAppointmentRequestReturnSession,
+  readAppointmentRequestReturnSession,
+} from '../utils/appointmentRequestReturnSession';
+import {
+  clearAppointmentRequestStaffConfirmReturnSession,
+  readAppointmentRequestStaffConfirmReturnSession,
+} from '../utils/appointmentRequestStaffConfirmSession';
+import {
+  clearNotBookedRemoveReturnSession,
+  readNotBookedRemoveReturnSession,
+} from '../utils/appointmentRequestNotBookedRemoveSession';
 
 function formatMessageDate(iso: string): string {
   const d = new Date(iso);
@@ -79,6 +115,12 @@ function formatMessageDate(iso: string): string {
     return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
   }
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+function sameLabelIds(a: readonly string[], b: readonly string[]): boolean {
+  if (a.length !== b.length) return false;
+  const set = new Set(a);
+  return b.every((id) => set.has(id));
 }
 
 const INBOX_ATTACHMENT_PREVIEW_LIMIT = 3;
@@ -164,134 +206,148 @@ function MessageListSection({
   if (messages.length === 0) return null;
   return (
     <ul className="gmail-msg-list">
-        {messages.map((msg) => {
-          const userLabels = getMessageUserLabels(msg.labelIds, labelById);
-          return (
-            <li
-              key={msg.threadId}
-              className={[
-                'gmail-msg-item',
-                msg.isUnread ? 'gmail-msg-item--unread' : '',
-                selectedId === msg.id || selectedId === msg.threadId
-                  ? 'gmail-msg-item--selected'
-                  : '',
-                checkedIds.has(msg.id) ? 'gmail-msg-item--checked' : '',
-              ]
-                .filter(Boolean)
-                .join(' ')}
+      {messages.map((msg) => {
+        const userLabels = getMessageUserLabels(msg.labelIds, labelById);
+        return (
+          <li
+            key={msg.threadId}
+            className={[
+              'gmail-msg-item',
+              msg.isUnread ? 'gmail-msg-item--unread' : '',
+              selectedId === msg.id || selectedId === msg.threadId
+                ? 'gmail-msg-item--selected'
+                : '',
+              checkedIds.has(msg.id) ? 'gmail-msg-item--checked' : '',
+            ]
+              .filter(Boolean)
+              .join(' ')}
+          >
+            <input
+              type="checkbox"
+              className="gmail-msg-item__check"
+              checked={checkedIds.has(msg.id)}
+              aria-label={`Select message from ${msg.from.name?.trim() || msg.from.email}`}
+              onChange={() => onToggleCheck(msg)}
+              onClick={(e) => e.stopPropagation()}
+            />
+            <button
+              type="button"
+              className={`gmail-msg-item__star${msg.isStarred ? ' gmail-msg-item__star--on' : ''}`}
+              aria-label={msg.isStarred ? 'Unstar message' : 'Star message'}
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleStar(msg);
+              }}
             >
-              <input
-                type="checkbox"
-                className="gmail-msg-item__check"
-                checked={checkedIds.has(msg.id)}
-                aria-label={`Select message from ${msg.from.name?.trim() || msg.from.email}`}
-                onChange={() => onToggleCheck(msg)}
-                onClick={(e) => e.stopPropagation()}
-              />
-              <button
-                type="button"
-                className={`gmail-msg-item__star${msg.isStarred ? ' gmail-msg-item__star--on' : ''}`}
-                aria-label={msg.isStarred ? 'Unstar message' : 'Star message'}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onToggleStar(msg);
-                }}
-              >
-                <Star size={18} strokeWidth={1.5} aria-hidden />
-              </button>
-              <button type="button" className="gmail-msg-item__btn" onClick={() => onSelect(msg)}>
-                <div className="gmail-msg-item__main">
-                  <span className="gmail-msg-item__from">
-                    <span className="gmail-msg-item__participants">
-                      {msg.participants?.trim() ||
-                        msg.from.name?.trim() ||
-                        msg.from.email}
-                    </span>
-                    {(msg.threadMessageCount ?? 1) > 1 ? (
-                      <span className="gmail-msg-item__thread-count">
-                        {msg.threadMessageCount}
+              <Star size={18} strokeWidth={1.5} aria-hidden />
+            </button>
+            <div
+              role="button"
+              tabIndex={0}
+              className="gmail-msg-item__btn"
+              onClick={() => onSelect(msg)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  onSelect(msg);
+                }
+              }}
+            >
+              <div className="gmail-msg-item__main">
+                <span className="gmail-msg-item__from">
+                  <span className="gmail-msg-item__participants">
+                    {msg.participants?.trim() || msg.from.name?.trim() || msg.from.email}
+                  </span>
+                  {messageHasDraft(msg) ? (
+                    <span className="gmail-msg-item__draft-label">Draft</span>
+                  ) : null}
+                  {(msg.threadMessageCount ?? 1) > 1 ? (
+                    <span className="gmail-msg-item__thread-count">{msg.threadMessageCount}</span>
+                  ) : null}
+                </span>
+                <div className="gmail-msg-item__content">
+                  <div className="gmail-msg-item__headline">
+                    {userLabels.length > 0 ? (
+                      <span className="gmail-msg-item__labels">
+                        {userLabels.map((label) => (
+                          <span
+                            key={label.id}
+                            className="gmail-msg-item__label"
+                            style={labelChipStyle(label)}
+                            title={label.name}
+                          >
+                            {labelDisplayName(label)}
+                          </span>
+                        ))}
                       </span>
                     ) : null}
-                  </span>
-                  <div className="gmail-msg-item__content">
-                    <div className="gmail-msg-item__headline">
-                      {userLabels.length > 0 ? (
-                        <span className="gmail-msg-item__labels">
-                          {userLabels.map((label) => (
-                            <span
-                              key={label.id}
-                              className="gmail-msg-item__label"
-                              style={labelChipStyle(label)}
-                              title={label.name}
-                            >
-                              {labelDisplayName(label)}
-                            </span>
-                          ))}
+                    <span className="gmail-msg-item__subject-line">
+                      <span className="gmail-msg-item__subject">
+                        {msg.subject || '(no subject)'}
+                      </span>
+                      {msg.snippet?.trim() ? (
+                        <>
+                          <span className="gmail-msg-item__subject-sep"> — </span>
+                          <span className="gmail-msg-item__snippet">
+                            {decodeGmailSnippet(msg.snippet)}
+                          </span>
+                        </>
+                      ) : null}
+                    </span>
+                  </div>
+                  {msg.attachments && msg.attachments.length > 0 ? (
+                    <div className="gmail-msg-item__attachments">
+                      {msg.attachments
+                        .slice(0, INBOX_ATTACHMENT_PREVIEW_LIMIT)
+                        .map((attachment) => (
+                          <button
+                            key={`${attachment.messageId}:${attachment.attachmentId}`}
+                            type="button"
+                            className="gmail-msg-item__attachment"
+                            title={attachment.filename}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onOpenAttachment(attachment);
+                            }}
+                          >
+                            <GmailAttachmentIcon
+                              mimeType={attachment.mimeType}
+                              filename={attachment.filename}
+                            />
+                            {truncateAttachmentFilename(attachment.filename, 20)}
+                          </button>
+                        ))}
+                      {msg.attachments.length > INBOX_ATTACHMENT_PREVIEW_LIMIT ? (
+                        <span
+                          className="gmail-msg-item__attachment-more"
+                          title={`${msg.attachments.length - INBOX_ATTACHMENT_PREVIEW_LIMIT} more attachments`}
+                        >
+                          +{msg.attachments.length - INBOX_ATTACHMENT_PREVIEW_LIMIT}
                         </span>
                       ) : null}
-                      <span className="gmail-msg-item__subject-line">
-                        <span className="gmail-msg-item__subject">{msg.subject || '(no subject)'}</span>
-                        {msg.snippet?.trim() ? (
-                          <>
-                            <span className="gmail-msg-item__subject-sep"> — </span>
-                            <span className="gmail-msg-item__snippet">
-                              {decodeGmailSnippet(msg.snippet)}
-                            </span>
-                          </>
-                        ) : null}
-                      </span>
                     </div>
-                    {msg.attachments && msg.attachments.length > 0 ? (
-                      <div className="gmail-msg-item__attachments">
-                        {msg.attachments
-                          .slice(0, INBOX_ATTACHMENT_PREVIEW_LIMIT)
-                          .map((attachment) => (
-                            <button
-                              key={`${attachment.messageId}:${attachment.attachmentId}`}
-                              type="button"
-                              className="gmail-msg-item__attachment"
-                              title={attachment.filename}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onOpenAttachment(attachment);
-                              }}
-                            >
-                              <GmailAttachmentIcon
-                                mimeType={attachment.mimeType}
-                                filename={attachment.filename}
-                              />
-                              {truncateAttachmentFilename(attachment.filename, 20)}
-                            </button>
-                          ))}
-                        {msg.attachments.length > INBOX_ATTACHMENT_PREVIEW_LIMIT ? (
-                          <span
-                            className="gmail-msg-item__attachment-more"
-                            title={`${msg.attachments.length - INBOX_ATTACHMENT_PREVIEW_LIMIT} more attachments`}
-                          >
-                            +{msg.attachments.length - INBOX_ATTACHMENT_PREVIEW_LIMIT}
-                          </span>
-                        ) : null}
-                      </div>
-                    ) : null}
-                  </div>
-                  <span className="gmail-msg-item__date">
-                    {hasScheduledSend(msg) ? (
-                      <GmailScheduledSendIcon scheduledSendAt={msg.scheduledSendAt} />
-                    ) : null}
-                    {formatMessageDate(msg.date)}
-                  </span>
+                  ) : null}
                 </div>
-              </button>
-            </li>
-          );
-        })}
-      </ul>
+                <span className="gmail-msg-item__date">
+                  {hasScheduledSend(msg) ? (
+                    <GmailScheduledSendIcon scheduledSendAt={msg.scheduledSendAt} />
+                  ) : null}
+                  {formatMessageDate(msg.date)}
+                </span>
+              </div>
+            </div>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 
 export default function GmailInbox() {
   const { allowed: canAccessGmailInbox, loading: gmailAccessLoading } = useGmailInboxAccess();
   const { token } = useAuth() as { token?: string | null };
+  const navigate = useNavigate();
+  const practiceTz = practiceTimeZoneOrDefault(undefined);
   const [searchParams, setSearchParams] = useSearchParams();
   const [mailboxes, setMailboxes] = useState<GmailMailboxStatus[]>([]);
   const [selectedMailbox, setSelectedMailbox] = useState<string | null>(null);
@@ -309,6 +365,8 @@ export default function GmailInbox() {
   pageTokensRef.current = pageTokens;
   pageIndexRef.current = pageIndex;
   const [selectedMessage, setSelectedMessage] = useState<GmailMessageSummary | null>(null);
+  const selectedMessageRef = useRef(selectedMessage);
+  selectedMessageRef.current = selectedMessage;
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
@@ -318,14 +376,22 @@ export default function GmailInbox() {
   const [threadLoading, setThreadLoading] = useState(false);
   const [composeOpen, setComposeOpen] = useState(false);
   const [composeContext, setComposeContext] = useState<ComposeContext>({ mode: 'new' });
+  const [smsPromptSubmissionId, setSmsPromptSubmissionId] = useState<number | null>(null);
+  const [notBookedPromptSubmissionId, setNotBookedPromptSubmissionId] = useState<number | null>(null);
+  const pendingNotBookedOpenRef = useRef<number | null>(null);
+  const pendingBookReturnIdRef = useRef<number | null>(null);
+  const apptRequestGmailLabelSyncRef = useRef<string | null>(null);
+  const notBookedLabelFlowRef = useRef<Set<string>>(new Set());
+  const onHoldLabelFlowRef = useRef<Set<string>>(new Set());
+  const managedLabelsSyncedThreadsRef = useRef<Set<string>>(new Set());
   const [mailSearchInput, setMailSearchInput] = useState('');
   const [debouncedSearchText, setDebouncedSearchText] = useState('');
-  const [searchFilterDraft, setSearchFilterDraft] = useState<GmailSearchFilterFields>(
-    () => ({ ...EMPTY_GMAIL_SEARCH_FILTER }),
-  );
-  const [appliedSearchFilter, setAppliedSearchFilter] = useState<GmailSearchFilterFields>(
-    () => ({ ...EMPTY_GMAIL_SEARCH_FILTER }),
-  );
+  const [searchFilterDraft, setSearchFilterDraft] = useState<GmailSearchFilterFields>(() => ({
+    ...EMPTY_GMAIL_SEARCH_FILTER,
+  }));
+  const [appliedSearchFilter, setAppliedSearchFilter] = useState<GmailSearchFilterFields>(() => ({
+    ...EMPTY_GMAIL_SEARCH_FILTER,
+  }));
   const [searchFilterOpen, setSearchFilterOpen] = useState(false);
   const [checkedMessageIds, setCheckedMessageIds] = useState<Set<string>>(() => new Set());
   const [mailboxUnreadCounts, setMailboxUnreadCounts] = useState<Record<string, number>>({});
@@ -335,22 +401,38 @@ export default function GmailInbox() {
   const [addMailboxError, setAddMailboxError] = useState<string | null>(null);
   const addMailboxInputRef = useRef<HTMLInputElement | null>(null);
   const deepLinkHandledRef = useRef<string | null>(null);
+  /** Thread id from ?thread= while the deep link is resolving. */
+  const pendingThreadDeepLinkRef = useRef<string | null>(null);
+  /** Thread id to keep open until the user explicitly leaves (e.g. return from Book flow). */
+  const protectedThreadIdRef = useRef<string | null>(null);
 
   const deepLinkThreadId = searchParams.get('thread')?.trim() ?? null;
 
+  const shouldProtectThreadSelection = () =>
+    Boolean(pendingThreadDeepLinkRef.current || protectedThreadIdRef.current);
+
+  const clearProtectedThreadSelection = () => {
+    protectedThreadIdRef.current = null;
+    pendingThreadDeepLinkRef.current = null;
+  };
+
+  useEffect(() => {
+    if (deepLinkThreadId) pendingThreadDeepLinkRef.current = deepLinkThreadId;
+  }, [deepLinkThreadId]);
+
   const mailSearch = useMemo(
     () => buildGmailSearchQuery(appliedSearchFilter, debouncedSearchText),
-    [appliedSearchFilter, debouncedSearchText],
+    [appliedSearchFilter, debouncedSearchText]
   );
 
   const searchLabelId = useMemo(
     () => searchLabelIdForScope(appliedSearchFilter.scope, selectedLabelId),
-    [appliedSearchFilter.scope, selectedLabelId],
+    [appliedSearchFilter.scope, selectedLabelId]
   );
 
   const messageListParams = useMemo(
     () => resolveGmailMessageListParams(selectedLabelId, mailSearch, searchLabelId),
-    [selectedLabelId, mailSearch, searchLabelId],
+    [selectedLabelId, mailSearch, searchLabelId]
   );
 
   const activeMailbox = useMemo(() => {
@@ -362,7 +444,7 @@ export default function GmailInbox() {
 
   const activeMailboxStatus = useMemo(
     () => mailboxes.find((m) => m.email === activeMailbox) ?? null,
-    [mailboxes, activeMailbox],
+    [mailboxes, activeMailbox]
   );
 
   /** Tabs are entirely staff-added addresses; pull connection status from the API when known. */
@@ -370,7 +452,7 @@ export default function GmailInbox() {
     const byEmail = new Map(mailboxes.map((m) => [m.email, m]));
     return customMailboxes.map(
       (email): GmailMailboxStatus =>
-        byEmail.get(email) ?? { email, kind: 'personal', connected: false },
+        byEmail.get(email) ?? { email, kind: 'personal', connected: false }
     );
   }, [mailboxes, customMailboxes]);
 
@@ -392,6 +474,119 @@ export default function GmailInbox() {
     walk(sidebarUserLabels);
     return map;
   }, [navigationLabels, sidebarUserLabels]);
+
+  const isApptRequestMailbox = isAppointmentRequestMailbox(activeMailbox);
+  const apptRequestIndex = useAppointmentRequestThreadIndex(
+    isApptRequestMailbox && connected && canAccessGmailInbox
+  );
+  const resolveApptSubmission = apptRequestIndex.resolve;
+  // The request notification is sent info@ → info@, so the requester's real email
+  // only appears in the body — scrape it so we can match the submission.
+  const threadBodyEmails = useMemo(() => {
+    if (!isApptRequestMailbox) return [] as string[];
+    const parts: string[] = [];
+    for (const m of threadMessages) {
+      if (m.body?.text) parts.push(m.body.text);
+      else if (m.body?.html) parts.push(m.body.html);
+      if (m.snippet) parts.push(m.snippet);
+    }
+    return extractEmailsFromText(parts.join('\n'));
+  }, [isApptRequestMailbox, threadMessages]);
+  const linkedApptSubmission = useMemo(
+    () => (isApptRequestMailbox ? resolveApptSubmission(selectedMessage, threadBodyEmails) : null),
+    [isApptRequestMailbox, resolveApptSubmission, selectedMessage, threadBodyEmails]
+  );
+
+  /** Lazily link the open thread's submission — one gmail-link call, not bulk backfill. */
+  useEffect(() => {
+    if (!linkedApptSubmission?.id) return;
+    if (linkedApptSubmission.gmailThreadId?.trim()) return;
+    apptRequestIndex.ensureGmailLink(linkedApptSubmission.id);
+  }, [
+    linkedApptSubmission?.id,
+    linkedApptSubmission?.gmailThreadId,
+    apptRequestIndex.ensureGmailLink,
+  ]);
+
+  /** After Book → return from routing, refresh submission, apply labels, and prompt SMS. */
+  useEffect(() => {
+    if (!isApptRequestMailbox || !selectedMessage?.threadId) return;
+    const pending = readAppointmentRequestReturnSession();
+    if (!pending) return;
+
+    clearAppointmentRequestReturnSession();
+    pendingBookReturnIdRef.current = pending.appointmentRequestSubmissionId;
+
+    const warn = sessionStorage.getItem('vayd:appointment-request-return-toast');
+    if (warn) {
+      setBanner(warn);
+      sessionStorage.removeItem('vayd:appointment-request-return-toast');
+    }
+
+    apptRequestIndex.refresh();
+    void fetchAppointmentRequestSubmission(pending.appointmentRequestSubmissionId)
+      .then((item) => apptRequestIndex.applyLocalUpdate({ ...item, kind: 'submission' }))
+      .catch(() => {
+        /* refresh will catch up */
+      });
+  }, [
+    isApptRequestMailbox,
+    selectedMessage?.threadId,
+    apptRequestIndex.refresh,
+    apptRequestIndex.applyLocalUpdate,
+  ]);
+
+  /** After removing a linked visit for not booked → reopen reason modal on this thread. */
+  useEffect(() => {
+    if (!isApptRequestMailbox || !selectedMessage?.threadId) return;
+    const pending = readNotBookedRemoveReturnSession();
+    if (!pending) return;
+
+    clearNotBookedRemoveReturnSession();
+    pendingNotBookedOpenRef.current = pending.submissionId;
+    apptRequestIndex.refresh();
+    void fetchAppointmentRequestSubmission(pending.submissionId)
+      .then((item) => apptRequestIndex.applyLocalUpdate({ ...item, kind: 'submission' }))
+      .catch(() => {
+        /* refresh will catch up */
+      });
+  }, [
+    isApptRequestMailbox,
+    selectedMessage?.threadId,
+    apptRequestIndex.refresh,
+    apptRequestIndex.applyLocalUpdate,
+  ]);
+
+  useEffect(() => {
+    const targetId = pendingBookReturnIdRef.current;
+    if (targetId == null) return;
+    if (!linkedApptSubmission || linkedApptSubmission.id !== targetId) return;
+    pendingBookReturnIdRef.current = null;
+    setSmsPromptSubmissionId(targetId);
+  }, [linkedApptSubmission]);
+
+  useEffect(() => {
+    const targetId = pendingNotBookedOpenRef.current;
+    if (targetId == null) return;
+    if (!linkedApptSubmission || linkedApptSubmission.id !== targetId) return;
+    pendingNotBookedOpenRef.current = null;
+    setNotBookedPromptSubmissionId(targetId);
+  }, [linkedApptSubmission]);
+
+  const guardApptRequestArchive = useCallback(
+    (targets: GmailMessageSummary[]): string | null => {
+      if (!isApptRequestMailbox) return null;
+      const ids = resolveApptRequestLabelIds(userLabels);
+      for (const target of targets) {
+        if (!resolveApptSubmission(target)) continue;
+        if (!threadHasOutcomeLabel(target.labelIds, ids)) {
+          return 'Mark this appointment request as BOOKED or NOT BOOKED before archiving.';
+        }
+      }
+      return null;
+    },
+    [isApptRequestMailbox, userLabels, resolveApptSubmission]
+  );
 
   const clearOAuthParams = useCallback(() => {
     if (!oauthConnectedParam && !oauthErrorParam) return;
@@ -425,11 +620,16 @@ export default function GmailInbox() {
         if (cancelled || thread.messages.length === 0) return;
         const latest = thread.messages[thread.messages.length - 1];
         deepLinkHandledRef.current = key;
+        pendingThreadDeepLinkRef.current = null;
+        protectedThreadIdRef.current = deepLinkThreadId;
         setSelectedLabelId('INBOX');
+        setComposeOpen(false);
+        if (activeMailbox) setSelectedMailbox(activeMailbox);
         setSelectedMessage(threadMessageToSummary(latest));
         setThreadMessages(thread.messages);
         const next = new URLSearchParams(searchParams);
-        next.delete('thread');
+        if (activeMailbox) next.set('mailbox', activeMailbox);
+        next.set('thread', deepLinkThreadId);
         setSearchParams(next, { replace: true });
       } catch (e) {
         if (!cancelled) setError(gmailErrorMessage(e));
@@ -449,6 +649,7 @@ export default function GmailInbox() {
   ]);
 
   const handleSelectLabel = useCallback((labelId: string) => {
+    clearProtectedThreadSelection();
     setSelectedMessage(null);
     setSelectedLabelId(labelId);
     if (isMoreNavLabel(labelId)) {
@@ -505,7 +706,7 @@ export default function GmailInbox() {
           } catch {
             return [email, 0] as const;
           }
-        }),
+        })
       );
       if (cancelled) return;
       setMailboxUnreadCounts((prev) => {
@@ -545,7 +746,7 @@ export default function GmailInbox() {
       setCheckedMessageIds(new Set());
       return res;
     },
-    [activeMailbox, messageListParams],
+    [activeMailbox, messageListParams]
   );
 
   const refreshAll = useCallback(async () => {
@@ -592,7 +793,7 @@ export default function GmailInbox() {
       setNavigationLabels([]);
       setSidebarUserLabels([]);
       setMessages([]);
-      setSelectedMessage(null);
+      if (!shouldProtectThreadSelection()) setSelectedMessage(null);
       return;
     }
     let cancelled = false;
@@ -606,7 +807,6 @@ export default function GmailInbox() {
       setSearchFilterOpen(false);
       try {
         await loadLabels();
-        if (!cancelled) setSelectedMessage(null);
       } catch (e) {
         if (!cancelled) setError(gmailErrorMessage(e));
       }
@@ -645,7 +845,7 @@ export default function GmailInbox() {
       setPageTokens([null]);
       setHasNextPage(false);
       setResultSizeEstimate(null);
-      setSelectedMessage(null);
+      if (!shouldProtectThreadSelection()) setSelectedMessage(null);
       if (pageIndex !== 0) {
         setPageIndex(0);
         return;
@@ -669,9 +869,9 @@ export default function GmailInbox() {
   useEffect(() => {
     setSelectedMessage((prev) => {
       if (!prev) return null;
-      return (
-        messages.find((m) => m.id === prev.id || m.threadId === prev.threadId) ?? null
-      );
+      const match = messages.find((m) => m.id === prev.id || m.threadId === prev.threadId);
+      // Keep deep-linked / off-page threads open until the list catches up.
+      return match ?? prev;
     });
   }, [messages]);
 
@@ -774,6 +974,7 @@ export default function GmailInbox() {
   };
 
   const selectMailbox = (email: string) => {
+    clearProtectedThreadSelection();
     setSelectedMailbox(email);
     setMailSearchInput('');
     setDebouncedSearchText('');
@@ -792,9 +993,7 @@ export default function GmailInbox() {
       const target = prev.find((m) => m.id === id);
       threadIdForSync = target?.threadId;
       if (target) {
-        threadWasUnread = prev.some(
-          (m) => m.threadId === target.threadId && m.isUnread,
-        );
+        threadWasUnread = prev.some((m) => m.threadId === target.threadId && m.isUnread);
       }
       return prev.map((m) => {
         if (m.id === id) return { ...m, ...patch };
@@ -812,7 +1011,7 @@ export default function GmailInbox() {
             const base = label.threadsUnread ?? label.messagesUnread ?? 0;
             const next = Math.max(0, base - 1);
             return { ...label, threadsUnread: next, messagesUnread: next };
-          }),
+          })
         );
       } else if (patch.isUnread === true && !threadWasUnread) {
         setNavigationLabels((prev) =>
@@ -820,7 +1019,7 @@ export default function GmailInbox() {
             if (label.id !== 'INBOX') return label;
             const base = label.threadsUnread ?? label.messagesUnread ?? 0;
             return { ...label, threadsUnread: base + 1, messagesUnread: base + 1 };
-          }),
+          })
         );
       }
     }
@@ -839,14 +1038,24 @@ export default function GmailInbox() {
       setSelectedMessage((selected) =>
         selected && (selected.id === id || (threadId && selected.threadId === threadId))
           ? null
-          : selected,
+          : selected
       );
       return prev.filter((m) => m.id !== id && (!threadId || m.threadId !== threadId));
     });
   };
 
   const openCompose = (context: ComposeContext) => {
-    setComposeContext(context);
+    if (context.threadId?.trim()) {
+      discardedDraftThreadsRef.current.delete(context.threadId.trim());
+    }
+    const preferredTo =
+      linkedApptSubmission != null
+        ? requestDataEmail(linkedApptSubmission.requestData ?? {}) ?? undefined
+        : undefined;
+    setComposeContext({
+      ...context,
+      preferredTo: context.preferredTo ?? preferredTo,
+    });
     setComposeOpen(true);
   };
 
@@ -877,8 +1086,59 @@ export default function GmailInbox() {
     };
   }, [selectedMessage?.id, selectedMessage?.threadId, activeMailbox, connected]);
 
+  /** Replace stale list/search label chips with live labels from the opened thread. */
+  useEffect(() => {
+    if (!selectedMessage?.threadId || threadMessages.length === 0) return;
+    const merged = threadLabelIds(threadMessages);
+    const threadId = selectedMessage.threadId;
+    setSelectedMessage((prev) => {
+      if (!prev || prev.threadId !== threadId) return prev;
+      if (sameLabelIds(prev.labelIds, merged)) return prev;
+      return { ...prev, labelIds: merged };
+    });
+    setMessages((prev) =>
+      prev.map((m) => {
+        if (m.threadId !== threadId) return m;
+        if (sameLabelIds(m.labelIds, merged)) return m;
+        return { ...m, labelIds: merged };
+      }),
+    );
+  }, [threadMessages, selectedMessage?.threadId]);
+
+  useEffect(() => {
+    if (threadLoading || !selectedMessage?.threadId || threadMessages.length === 0) return;
+    const threadId = selectedMessage.threadId;
+    const draft = findThreadDraftMessage(threadMessages);
+    if (!draft) {
+      discardedDraftThreadsRef.current.delete(threadId);
+      return;
+    }
+    if (discardedDraftThreadsRef.current.has(threadId)) return;
+    if (draftAutoOpenedThreadRef.current === threadId) return;
+    const replyTo = latestNonDraftThreadMessage(threadMessages);
+    if (!replyTo) return;
+    draftAutoOpenedThreadRef.current = threadId;
+    openCompose({
+      mode: 'reply',
+      threadId,
+      replyTo,
+      threadInInbox: selectedMessage.labelIds.includes('INBOX'),
+    });
+  }, [threadLoading, selectedMessage?.threadId, selectedMessage?.labelIds, threadMessages]);
+
   const handleSelectMessage = async (msg: GmailMessageSummary) => {
+    clearProtectedThreadSelection();
+    draftAutoOpenedThreadRef.current = null;
+    setComposeOpen(false);
     setSelectedMessage(msg);
+    protectedThreadIdRef.current = msg.threadId;
+    if (activeMailbox) {
+      deepLinkHandledRef.current = `${activeMailbox}:${msg.threadId}`;
+      const next = new URLSearchParams(searchParams);
+      next.set('mailbox', activeMailbox);
+      next.set('thread', msg.threadId);
+      setSearchParams(next, { replace: true });
+    }
     if (!activeMailbox || !msg.isUnread) return;
     try {
       const result = await markGmailMessageRead(activeMailbox, msg.id, msg.threadId);
@@ -914,7 +1174,7 @@ export default function GmailInbox() {
         setError(gmailErrorMessage(e));
       }
     },
-    [activeMailbox],
+    [activeMailbox]
   );
 
   const visibleMessages = messages;
@@ -922,9 +1182,7 @@ export default function GmailInbox() {
   const allVisibleChecked =
     visibleMessages.length > 0 && visibleMessages.every((m) => checkedMessageIds.has(m.id));
 
-  const checkedVisibleCount = visibleMessages.filter((m) =>
-    checkedMessageIds.has(m.id),
-  ).length;
+  const checkedVisibleCount = visibleMessages.filter((m) => checkedMessageIds.has(m.id)).length;
   const someVisibleChecked =
     checkedVisibleCount > 0 && checkedVisibleCount < visibleMessages.length;
 
@@ -958,51 +1216,502 @@ export default function GmailInbox() {
 
   const hasCheckedMessages = checkedMessageIds.size > 0;
 
+  const handleNotBookedLabelForThread = useCallback(
+    async (message: GmailMessageSummary, submission: AppointmentRequestSubmissionItem) => {
+      if (!activeMailbox) return;
+      if (notBookedLabelFlowRef.current.has(message.threadId)) return;
+      notBookedLabelFlowRef.current.add(message.threadId);
+      try {
+        const result = await beginAppointmentRequestNotBookedFlow({
+          submission,
+          returnPath: buildGmailInboxReturnPath(activeMailbox, message.threadId),
+          practiceTz,
+          navigate,
+          mailbox: activeMailbox,
+          threadId: message.threadId,
+        });
+        if (result.kind === 'scheduler_remove') {
+          setBanner('Remove this visit from the calendar, then mark the request as not booked.');
+          return;
+        }
+        if (result.kind === 'needs_reason') {
+          if (selectedMessageRef.current?.threadId === message.threadId) {
+            setNotBookedPromptSubmissionId(submission.id);
+          } else {
+            pendingNotBookedOpenRef.current = submission.id;
+          }
+        }
+      } catch {
+        setError('Could not start the not booked flow for this appointment request.');
+      } finally {
+        notBookedLabelFlowRef.current.delete(message.threadId);
+      }
+    },
+    [activeMailbox, practiceTz, navigate],
+  );
+
+  const handleOnHoldLabelRemovedForThread = useCallback(
+    async (message: GmailMessageSummary, submission: AppointmentRequestSubmissionItem) => {
+      if (!activeMailbox) return;
+      if (onHoldLabelFlowRef.current.has(message.threadId)) return;
+      onHoldLabelFlowRef.current.add(message.threadId);
+      try {
+        const result = await beginAppointmentRequestOnHoldReleaseFlow({
+          submission,
+          returnPath: buildGmailInboxReturnPath(activeMailbox, message.threadId),
+          practiceTz,
+          navigate,
+          mailbox: activeMailbox,
+          threadId: message.threadId,
+        });
+        if (result.kind === 'scheduler_edit') {
+          setBanner(
+            'Remove or convert this hold on the calendar before removing the On hold label.',
+          );
+          const reapply = await applyApptRequestGmailOnHoldLabel({
+            mailbox: activeMailbox,
+            message: { id: message.id, threadId: message.threadId, labelIds: message.labelIds },
+            isOnHold: true,
+            userLabels,
+          });
+          if (reapply.labelIds) {
+            const threadId = message.threadId;
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.threadId === threadId ? { ...m, labelIds: reapply.labelIds! } : m,
+              ),
+            );
+            setSelectedMessage((prev) =>
+              prev?.threadId === threadId ? { ...prev, labelIds: reapply.labelIds! } : prev,
+            );
+            void loadLabels();
+          }
+        }
+      } catch {
+        setError('Could not verify the linked calendar hold. Try again.');
+      } finally {
+        onHoldLabelFlowRef.current.delete(message.threadId);
+      }
+    },
+    [activeMailbox, practiceTz, navigate, userLabels, loadLabels],
+  );
+
   const applyLabelUpdates = useCallback(
     (updates: GmailLabelApplyUpdate[]) => {
       if (updates.length === 0) return;
+
+      const apptLabelIds = resolveApptRequestLabelIds(userLabels);
+      const notBookedLabelId = apptLabelIds.notBooked;
+      if (isApptRequestMailbox && notBookedLabelId && activeMailbox) {
+        for (const update of updates) {
+          const prevMsg =
+            messages.find((m) => m.id === update.messageId) ??
+            (selectedMessage?.threadId === update.threadId ? selectedMessage : null) ??
+            messages.find((m) => m.threadId === update.threadId);
+          if (!prevMsg) continue;
+          const hadNotBooked = prevMsg.labelIds.includes(notBookedLabelId);
+          const hasNotBooked = update.labelIds.includes(notBookedLabelId);
+          if (hadNotBooked || !hasNotBooked) continue;
+
+          const threadEmails =
+            update.threadId === selectedMessage?.threadId ? threadBodyEmails : undefined;
+          const submission = resolveApptSubmission(prevMsg, threadEmails);
+          if (!submission || (submission.status ?? 'new') === 'dismissed') continue;
+
+          void handleNotBookedLabelForThread(prevMsg, submission);
+        }
+      }
+
+      const onHoldLabelId = apptLabelIds.onHold;
+      if (isApptRequestMailbox && onHoldLabelId && activeMailbox) {
+        for (const update of updates) {
+          const prevMsg =
+            messages.find((m) => m.id === update.messageId) ??
+            (selectedMessage?.threadId === update.threadId ? selectedMessage : null) ??
+            messages.find((m) => m.threadId === update.threadId);
+          if (!prevMsg) continue;
+          const hadOnHold = prevMsg.labelIds.includes(onHoldLabelId);
+          const hasOnHold = update.labelIds.includes(onHoldLabelId);
+          if (!hadOnHold || hasOnHold) continue;
+
+          const threadEmails =
+            update.threadId === selectedMessage?.threadId ? threadBodyEmails : undefined;
+          const submission = resolveApptSubmission(prevMsg, threadEmails);
+          if (!submission) continue;
+
+          void handleOnHoldLabelRemovedForThread(
+            { ...prevMsg, labelIds: update.labelIds },
+            submission,
+          );
+        }
+      }
+
       const updateByMessageId = new Map(updates.map((u) => [u.messageId, u]));
       const updateByThreadId = new Map(updates.map((u) => [u.threadId, u]));
       setMessages((prev) =>
         prev.map((m) => {
-          const update =
-            updateByMessageId.get(m.id) ?? updateByThreadId.get(m.threadId);
+          const update = updateByMessageId.get(m.id) ?? updateByThreadId.get(m.threadId);
           return update ? { ...m, labelIds: update.labelIds } : m;
-        }),
+        })
       );
       setSelectedMessage((prev) => {
         if (!prev) return null;
-        const update =
-          updateByMessageId.get(prev.id) ?? updateByThreadId.get(prev.threadId);
+        const update = updateByMessageId.get(prev.id) ?? updateByThreadId.get(prev.threadId);
         return update ? { ...prev, labelIds: update.labelIds } : prev;
       });
       void loadLabels();
     },
-    [loadLabels],
+    [
+      userLabels,
+      isApptRequestMailbox,
+      activeMailbox,
+      messages,
+      selectedMessage,
+      threadBodyEmails,
+      resolveApptSubmission,
+      handleNotBookedLabelForThread,
+      handleOnHoldLabelRemovedForThread,
+      loadLabels,
+    ]
   );
+
+  /** Reaching out (reply/text) on a linked request moves it to Contacted + labels the thread. */
+  const markApptRequestContacted = useCallback(
+    async (
+      submission: AppointmentRequestSubmissionItem,
+      message: GmailMessageSummary,
+      mailbox: string
+    ) => {
+      try {
+        if ((submission.status ?? 'new') === 'new') {
+          const updated = await patchAppointmentRequestSubmission(submission.id, {
+            status: 'contacted',
+          });
+          apptRequestIndex.applyLocalUpdate({ ...updated, kind: 'submission' });
+        }
+        const ids = resolveApptRequestLabelIds(userLabels);
+        const patch = outcomeLabelPatch('contacted', message.labelIds, ids);
+        if (patch) {
+          const result = await modifyGmailMessage(mailbox, message.id, patch, message.threadId);
+          applyLabelUpdates([
+            { messageId: message.id, threadId: message.threadId, labelIds: result.labelIds },
+          ]);
+        }
+      } catch {
+        /* non-blocking: reach-out already succeeded */
+      }
+    },
+    [userLabels, apptRequestIndex, applyLabelUpdates]
+  );
+
+  /** Reset label-sync dedup when switching threads. */
+  useEffect(() => {
+    apptRequestGmailLabelSyncRef.current = null;
+  }, [selectedMessage?.threadId]);
+
+  /**
+   * Keep Gmail managed labels (outcome + ON HOLD) aligned with Scout whenever the
+   * linked submission changes — including unconfirmed auto-books (no outcome yet).
+   */
+  useEffect(() => {
+    if (!isApptRequestMailbox || !activeMailbox || !selectedMessage || !linkedApptSubmission) {
+      return;
+    }
+
+    const ids = resolveApptRequestLabelIds(userLabels);
+    if (
+      apptRequestGmailNotBookedLabelPendingDismissal(
+        selectedMessage.labelIds,
+        linkedApptSubmission,
+        ids,
+      )
+    ) {
+      return;
+    }
+
+    const isOnHold = appointmentRequestSubmissionGmailOnHold(
+      linkedApptSubmission,
+      new Map(),
+      null,
+    );
+    const outcome = resolveApptRequestGmailOutcome(linkedApptSubmission);
+    const sig = [
+      selectedMessage.threadId,
+      outcome ?? 'none',
+      apptRequestGmailOnHoldSyncSignature(linkedApptSubmission, isOnHold),
+    ].join(':');
+    if (apptRequestGmailLabelSyncRef.current === sig) return;
+
+    void syncManagedApptRequestGmailLabels({
+      mailbox: activeMailbox,
+      message: selectedMessage,
+      submission: linkedApptSubmission,
+      userLabels,
+    }).then((labelIds) => {
+      if (!labelIds) return;
+      apptRequestGmailLabelSyncRef.current = sig;
+      applyLabelUpdates([
+        {
+          messageId: selectedMessage.id,
+          threadId: selectedMessage.threadId,
+          labelIds,
+        },
+      ]);
+      const pendingConfirm = readAppointmentRequestStaffConfirmReturnSession();
+      if (
+        pendingConfirm?.submissionId === linkedApptSubmission.id &&
+        outcome === 'booked'
+      ) {
+        clearAppointmentRequestStaffConfirmReturnSession();
+      }
+    });
+  }, [
+    isApptRequestMailbox,
+    activeMailbox,
+    selectedMessage,
+    linkedApptSubmission,
+    userLabels,
+    applyLabelUpdates,
+  ]);
+
+  /** ON HOLD + outcome labels on inbox rows — e.g. unconfirmed auto-books before a thread is opened. */
+  useEffect(() => {
+    if (!isApptRequestMailbox || !activeMailbox || !apptRequestIndex.ready || userLabels.length === 0) {
+      return;
+    }
+    if (messages.length === 0) return;
+
+    const labelIds = resolveApptRequestLabelIds(userLabels);
+    const onHoldId = labelIds.onHold;
+    let cancelled = false;
+
+    for (const msg of messages) {
+      const threadId = msg.threadId?.trim();
+      if (!threadId || managedLabelsSyncedThreadsRef.current.has(threadId)) continue;
+
+      const submission = resolveApptSubmission(msg);
+      if (!submission) continue;
+      if (!appointmentRequestSubmissionGmailOnHold(submission, new Map(), null)) continue;
+      if (onHoldId && msg.labelIds.includes(onHoldId)) {
+        managedLabelsSyncedThreadsRef.current.add(threadId);
+        continue;
+      }
+
+      managedLabelsSyncedThreadsRef.current.add(threadId);
+
+      void (async () => {
+        try {
+          const thread = await fetchGmailThread(activeMailbox, threadId);
+          if (cancelled) return;
+          const latest = latestNonDraftThreadMessage(thread.messages ?? []);
+          if (!latest?.id) return;
+
+          const nextLabelIds = await syncManagedApptRequestGmailLabels({
+            mailbox: activeMailbox,
+            message: { id: latest.id, threadId, labelIds: latest.labelIds },
+            submission,
+            userLabels,
+          });
+          if (cancelled || !nextLabelIds) return;
+
+          setMessages((prev) =>
+            prev.map((row) =>
+              row.threadId === threadId ? { ...row, labelIds: nextLabelIds } : row,
+            ),
+          );
+          if (selectedMessage?.threadId === threadId) {
+            setThreadMessages((prev) =>
+              prev.map((row) => ({ ...row, labelIds: nextLabelIds })),
+            );
+          }
+        } catch {
+          managedLabelsSyncedThreadsRef.current.delete(threadId);
+        }
+      })();
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    isApptRequestMailbox,
+    activeMailbox,
+    apptRequestIndex.ready,
+    userLabels,
+    messages,
+    resolveApptSubmission,
+    selectedMessage?.threadId,
+  ]);
+
+  /** After Confirm on calendar → refresh submission; label sync runs above. */
+  useEffect(() => {
+    if (!isApptRequestMailbox || !selectedMessage?.threadId) return;
+    const pending = readAppointmentRequestStaffConfirmReturnSession();
+    if (!pending) return;
+
+    apptRequestIndex.refresh();
+    void fetchAppointmentRequestSubmission(pending.submissionId)
+      .then((item) => apptRequestIndex.applyLocalUpdate({ ...item, kind: 'submission' }))
+      .catch(() => {
+        /* refresh will catch up */
+      });
+  }, [
+    isApptRequestMailbox,
+    selectedMessage?.threadId,
+    apptRequestIndex.refresh,
+    apptRequestIndex.applyLocalUpdate,
+  ]);
+
+  const draftAutoOpenedThreadRef = useRef<string | null>(null);
+  /** Threads where the user explicitly discarded a draft — skip auto-reopen until server confirms gone. */
+  const discardedDraftThreadsRef = useRef<Set<string>>(new Set());
+
+  const handleComposeDraftSaved = useCallback(
+    (info: GmailComposeDraftSavedInfo) => {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.threadId === info.threadId
+            ? {
+                ...m,
+                hasDraft: true,
+                draftId: info.draftId,
+                snippet: info.snippet || m.snippet,
+                ...(info.labelIds ? { labelIds: info.labelIds } : {}),
+              }
+            : m,
+        ),
+      );
+      setSelectedMessage((prev) =>
+        prev && prev.threadId === info.threadId
+          ? {
+              ...prev,
+              hasDraft: true,
+              draftId: info.draftId,
+              snippet: info.snippet || prev.snippet,
+              ...(info.labelIds ? { labelIds: info.labelIds } : {}),
+            }
+          : prev,
+      );
+    },
+    [],
+  );
+
+  const handleComposeDraftDeleted = useCallback(
+    (info: { threadId: string }) => {
+      if (!info.threadId) return;
+      discardedDraftThreadsRef.current.add(info.threadId);
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.threadId === info.threadId ? { ...m, hasDraft: false, draftId: undefined } : m,
+        ),
+      );
+      setSelectedMessage((prev) =>
+        prev && prev.threadId === info.threadId
+          ? { ...prev, hasDraft: false, draftId: undefined }
+          : prev,
+      );
+      if (activeMailbox) {
+        void discardAllThreadDrafts(activeMailbox, info.threadId)
+          .catch(() => {
+            /* list state already cleared */
+          })
+          .finally(() => {
+            void fetchGmailThread(activeMailbox, info.threadId)
+              .then((thread) => {
+                if (!findThreadDraftMessage(thread.messages)) {
+                  discardedDraftThreadsRef.current.delete(info.threadId);
+                }
+                if (selectedMessageRef.current?.threadId === info.threadId) {
+                  setThreadMessages(thread.messages);
+                }
+              })
+              .catch(() => {
+                /* list state already cleared */
+              });
+          });
+      }
+    },
+    [activeMailbox],
+  );
+
+  const handleComposeSent = useCallback(async () => {
+    if (selectedMessage?.threadId && activeMailbox) {
+      try {
+        await discardAllThreadDrafts(
+          activeMailbox,
+          selectedMessage.threadId,
+          threadMessages,
+        );
+      } catch {
+        /* compose panel may have already cleaned up */
+      }
+      handleComposeDraftDeleted({ threadId: selectedMessage.threadId });
+    }
+    setBanner('Message sent.');
+    const ctx = composeContext;
+    if (
+      isApptRequestMailbox &&
+      activeMailbox &&
+      selectedMessage &&
+      linkedApptSubmission &&
+      (ctx.mode === 'reply' || ctx.mode === 'replyAll')
+    ) {
+      void markApptRequestContacted(linkedApptSubmission, selectedMessage, activeMailbox);
+    }
+    await refreshAll();
+  }, [
+    composeContext,
+    isApptRequestMailbox,
+    activeMailbox,
+    selectedMessage,
+    linkedApptSubmission,
+    markApptRequestContacted,
+    refreshAll,
+    handleComposeDraftDeleted,
+    threadMessages,
+  ]);
 
   const handleRemoveMessageLabel = useCallback(
     async (labelId: string) => {
       if (!selectedMessage || !activeMailbox) return;
+
+      if (
+        isApptRequestMailbox &&
+        isApptRequestOnHoldLabelId(labelId, userLabels) &&
+        linkedApptSubmission
+      ) {
+        const result = await beginAppointmentRequestOnHoldReleaseFlow({
+          submission: linkedApptSubmission,
+          returnPath: buildGmailInboxReturnPath(activeMailbox, selectedMessage.threadId),
+          practiceTz,
+          navigate,
+          mailbox: activeMailbox,
+          threadId: selectedMessage.threadId,
+        });
+        if (result.kind === 'scheduler_edit') {
+          setBanner(
+            'Remove or convert this hold on the calendar before removing the On hold label.',
+          );
+          return;
+        }
+      }
+
       setActionBusy(true);
       try {
-        const result = await modifyGmailMessage(
+        await modifyGmailMessage(
           activeMailbox,
           selectedMessage.id,
           { removeLabelIds: [labelId] },
           selectedMessage.threadId,
         );
+        const thread = await fetchGmailThread(activeMailbox, selectedMessage.threadId);
+        setThreadMessages(thread.messages);
+        const labelIds = threadLabelIds(thread.messages);
         const threadId = selectedMessage.threadId;
         setMessages((prev) =>
-          prev.map((m) =>
-            m.id === selectedMessage.id || m.threadId === threadId
-              ? { ...m, labelIds: result.labelIds }
-              : m,
-          ),
+          prev.map((m) => (m.threadId === threadId ? { ...m, labelIds } : m)),
         );
-        setSelectedMessage((prev) =>
-          prev ? { ...prev, labelIds: result.labelIds } : null,
-        );
+        setSelectedMessage((prev) => (prev ? { ...prev, labelIds } : null));
         void loadLabels();
       } catch (e) {
         setError(gmailErrorMessage(e));
@@ -1011,26 +1720,24 @@ export default function GmailInbox() {
         setActionBusy(false);
       }
     },
-    [selectedMessage, activeMailbox, loadLabels],
+    [selectedMessage, activeMailbox, loadLabels, isApptRequestMailbox, userLabels, linkedApptSubmission, practiceTz, navigate],
   );
 
   const handleBulkComplete = () => {
+    clearProtectedThreadSelection();
     setCheckedMessageIds(new Set());
     setSelectedMessage(null);
     void Promise.all([loadPage(pageIndexRef.current), loadLabels()]);
   };
 
-  const paginationRangeStart =
-    messages.length === 0 ? 0 : pageIndex * GMAIL_MESSAGES_PAGE_SIZE + 1;
+  const paginationRangeStart = messages.length === 0 ? 0 : pageIndex * GMAIL_MESSAGES_PAGE_SIZE + 1;
   const paginationRangeEnd = pageIndex * GMAIL_MESSAGES_PAGE_SIZE + messages.length;
   const paginationTotal =
-    resultSizeEstimate ??
-    (hasNextPage ? null : messages.length === 0 ? 0 : paginationRangeEnd);
+    resultSizeEstimate ?? (hasNextPage ? null : messages.length === 0 ? 0 : paginationRangeEnd);
 
   const selectedMessageIndex = selectedMessage
     ? visibleMessages.findIndex(
-        (m) =>
-          m.id === selectedMessage.id || m.threadId === selectedMessage.threadId,
+        (m) => m.id === selectedMessage.id || m.threadId === selectedMessage.threadId
       )
     : -1;
 
@@ -1058,7 +1765,9 @@ export default function GmailInbox() {
       {banner ? (
         <div
           className={`gmail-inbox__banner${
-            banner.includes('failed') ? ' gmail-inbox__banner--error' : ' gmail-inbox__banner--success'
+            banner.includes('failed')
+              ? ' gmail-inbox__banner--error'
+              : ' gmail-inbox__banner--success'
           }`}
         >
           <span>{banner}</span>
@@ -1094,7 +1803,11 @@ export default function GmailInbox() {
             <strong>{activeMailbox}</strong> in Google.
           </span>
           <div className="gmail-inbox__banner-actions">
-            <button type="button" className="gmail-btn" onClick={() => handleDisconnect(activeMailbox!)}>
+            <button
+              type="button"
+              className="gmail-btn"
+              onClick={() => handleDisconnect(activeMailbox!)}
+            >
               Disconnect
             </button>
           </div>
@@ -1104,7 +1817,10 @@ export default function GmailInbox() {
       <header className="gmail-inbox__header">
         <div className="gmail-inbox__mailbox-tabs" role="tablist" aria-label="Gmail accounts">
           {displayMailboxes.map((mb) => (
-            <span key={mb.email} className="gmail-inbox__mailbox-tab-wrap gmail-inbox__mailbox-tab-wrap--custom">
+            <span
+              key={mb.email}
+              className="gmail-inbox__mailbox-tab-wrap gmail-inbox__mailbox-tab-wrap--custom"
+            >
               <button
                 type="button"
                 role="tab"
@@ -1116,9 +1832,7 @@ export default function GmailInbox() {
               >
                 {mailboxDisplayLabel(mb)}
                 {mb.connected && mailboxTabUnread(mb.email) > 0 ? (
-                  <sup className="gmail-inbox__mailbox-tab-badge">
-                    {mailboxTabUnread(mb.email)}
-                  </sup>
+                  <sup className="gmail-inbox__mailbox-tab-badge">{mailboxTabUnread(mb.email)}</sup>
                 ) : null}
                 {!mb.connected ? ' · not connected' : ''}
               </button>
@@ -1157,7 +1871,11 @@ export default function GmailInbox() {
                   }
                 }}
               />
-              <button type="button" className="gmail-btn gmail-btn--primary" onClick={handleAddMailbox}>
+              <button
+                type="button"
+                className="gmail-btn gmail-btn--primary"
+                onClick={handleAddMailbox}
+              >
                 Add
               </button>
               <button
@@ -1183,7 +1901,12 @@ export default function GmailInbox() {
               className="gmail-inbox__mailbox-tab gmail-inbox__mailbox-tab--add"
               onClick={() => setShowAddMailbox(true)}
             >
-              <Plus size={14} strokeWidth={2.5} aria-hidden style={{ verticalAlign: -2, marginRight: 2 }} />
+              <Plus
+                size={14}
+                strokeWidth={2.5}
+                aria-hidden
+                style={{ verticalAlign: -2, marginRight: 2 }}
+              />
               Add email
             </button>
           )}
@@ -1199,7 +1922,11 @@ export default function GmailInbox() {
             Refresh
           </button>
           {connected && activeMailbox ? (
-            <button type="button" className="gmail-btn" onClick={() => handleDisconnect(activeMailbox)}>
+            <button
+              type="button"
+              className="gmail-btn"
+              onClick={() => handleDisconnect(activeMailbox)}
+            >
               Disconnect
             </button>
           ) : activeMailbox ? (
@@ -1249,7 +1976,10 @@ export default function GmailInbox() {
         </div>
       ) : (
         <div className="gmail-inbox__body">
-          <section className="gmail-inbox__panel gmail-inbox__panel--labels" aria-label="Mail folders">
+          <section
+            className="gmail-inbox__panel gmail-inbox__panel--labels"
+            aria-label="Mail folders"
+          >
             <div className="gmail-inbox__panel-scroll">
               {connected && activeMailbox ? (
                 <button
@@ -1297,49 +2027,14 @@ export default function GmailInbox() {
             </div>
           </section>
 
-          {selectedMessage && activeMailbox ? (
-            <section className="gmail-inbox__panel gmail-inbox__panel--message" aria-label="Message">
-              <GmailMessageView
-                mailbox={activeMailbox}
-                message={selectedMessage}
-                threadMessages={threadMessages}
-                threadLoading={threadLoading}
-                labelById={labelById}
-                userLabels={userLabels}
-                currentLabelId={selectedLabelId}
-                listMessages={visibleMessages}
-                messagePositionLabel={messagePositionLabel}
-                actionBusy={actionBusy || refreshing}
-                latestThreadMessage={latestThreadMessage}
-                onBack={() => setSelectedMessage(null)}
-                onPrev={() => {
-                  if (selectedMessageIndex > 0) {
-                    setSelectedMessage(visibleMessages[selectedMessageIndex - 1]!);
-                  }
-                }}
-                onNext={() => {
-                  if (
-                    selectedMessageIndex >= 0 &&
-                    selectedMessageIndex < visibleMessages.length - 1
-                  ) {
-                    setSelectedMessage(visibleMessages[selectedMessageIndex + 1]!);
-                  }
-                }}
-                canPrev={selectedMessageIndex > 0}
-                canNext={
-                  selectedMessageIndex >= 0 &&
-                  selectedMessageIndex < visibleMessages.length - 1
-                }
-                onToolbarComplete={handleBulkComplete}
-                onToolbarError={(msg) => setError(msg)}
-                onLabelsApplied={applyLabelUpdates}
-                onCompose={openCompose}
-                onOpenAttachment={handleOpenAttachment}
-                onRemoveLabel={handleRemoveMessageLabel}
-              />
-            </section>
-          ) : (
-            <section className="gmail-inbox__panel gmail-inbox__panel--list" aria-label="Messages">
+          <div className="gmail-inbox__main-panel">
+            <section
+              className={`gmail-inbox__panel gmail-inbox__panel--list${
+                selectedMessage ? ' gmail-inbox__panel--concealed' : ''
+              }`}
+              aria-label="Messages"
+              aria-hidden={selectedMessage ? true : undefined}
+            >
               <div className="gmail-inbox__list-toolbar">
                 <input
                   type="checkbox"
@@ -1355,9 +2050,7 @@ export default function GmailInbox() {
                 {hasCheckedMessages ? (
                   <GmailBulkToolbar
                     mailbox={activeMailbox!}
-                    targetMessages={visibleMessages.filter((m) =>
-                      checkedMessageIds.has(m.id),
-                    )}
+                    targetMessages={visibleMessages.filter((m) => checkedMessageIds.has(m.id))}
                     currentLabelId={selectedLabelId}
                     userLabels={userLabels}
                     labelById={labelById}
@@ -1365,6 +2058,7 @@ export default function GmailInbox() {
                     onComplete={handleBulkComplete}
                     onLabelsApplied={applyLabelUpdates}
                     onError={(msg) => setError(msg)}
+                    guardArchive={isApptRequestMailbox ? guardApptRequestArchive : undefined}
                   />
                 ) : (
                   <button
@@ -1433,24 +2127,103 @@ export default function GmailInbox() {
                   onOpenAttachment={handleOpenAttachment}
                 />
                 {messages.length === 0 ? (
-                  <div className="gmail-inbox__state">No messages in this label.</div>
+                  <div className="gmail-inbox__state">
+                    {mailSearch ? 'No messages match your search.' : 'No messages in this label.'}
+                  </div>
                 ) : null}
               </div>
             </section>
-          )}
+
+            {selectedMessage && activeMailbox ? (
+              <section
+                className="gmail-inbox__panel gmail-inbox__panel--message"
+                aria-label="Message"
+              >
+                <GmailMessageView
+                  mailbox={activeMailbox}
+                  message={selectedMessage}
+                  threadMessages={threadMessages}
+                  threadLoading={threadLoading}
+                  labelById={labelById}
+                  userLabels={userLabels}
+                  currentLabelId={selectedLabelId}
+                  listMessages={visibleMessages}
+                  messagePositionLabel={messagePositionLabel}
+                  actionBusy={actionBusy || refreshing}
+                  latestThreadMessage={latestThreadMessage}
+                  onBack={() => {
+                    clearProtectedThreadSelection();
+                    setComposeOpen(false);
+                    setSelectedMessage(null);
+                    deepLinkHandledRef.current = null;
+                    const next = new URLSearchParams(searchParams);
+                    next.delete('thread');
+                    setSearchParams(next, { replace: true });
+                  }}
+                  onPrev={() => {
+                    if (selectedMessageIndex > 0) {
+                      setSelectedMessage(visibleMessages[selectedMessageIndex - 1]!);
+                    }
+                  }}
+                  onNext={() => {
+                    if (
+                      selectedMessageIndex >= 0 &&
+                      selectedMessageIndex < visibleMessages.length - 1
+                    ) {
+                      setSelectedMessage(visibleMessages[selectedMessageIndex + 1]!);
+                    }
+                  }}
+                  canPrev={selectedMessageIndex > 0}
+                  canNext={
+                    selectedMessageIndex >= 0 &&
+                    selectedMessageIndex < visibleMessages.length - 1
+                  }
+                  onToolbarComplete={handleBulkComplete}
+                  onToolbarError={(msg) => setError(msg)}
+                  onLabelsApplied={applyLabelUpdates}
+                  onCompose={openCompose}
+                  onOpenAttachment={handleOpenAttachment}
+                  onRemoveLabel={handleRemoveMessageLabel}
+                  guardArchive={isApptRequestMailbox ? guardApptRequestArchive : undefined}
+                  composeOpen={composeOpen}
+                  composeContext={composeContext}
+                  onCloseCompose={() => setComposeOpen(false)}
+                  onComposeSent={() => void handleComposeSent()}
+                  onComposeDraftSaved={handleComposeDraftSaved}
+                  onComposeDraftDeleted={handleComposeDraftDeleted}
+                  appointmentRequestSlot={
+                    isApptRequestMailbox && linkedApptSubmission ? (
+                      <GmailAppointmentRequestPanel
+                        mailbox={activeMailbox}
+                        message={selectedMessage}
+                        submission={linkedApptSubmission}
+                        userLabels={userLabels}
+                        onSubmissionUpdated={(item) => apptRequestIndex.applyLocalUpdate(item)}
+                        onLabelsApplied={applyLabelUpdates}
+                        onError={(msg) => setError(msg)}
+                        autoOpenSms={smsPromptSubmissionId === linkedApptSubmission.id}
+                        onAutoOpenSmsConsumed={() => setSmsPromptSubmissionId(null)}
+                        autoOpenNotBooked={notBookedPromptSubmissionId === linkedApptSubmission.id}
+                        onAutoOpenNotBookedConsumed={() => setNotBookedPromptSubmissionId(null)}
+                      />
+                    ) : null
+                  }
+                />
+              </section>
+            ) : null}
+          </div>
         </div>
       )}
 
-      {activeMailbox ? (
-        <GmailComposeModal
-          open={composeOpen}
+      {composeOpen && !selectedMessage && activeMailbox && composeContext.mode === 'new' ? (
+        <GmailComposePanel
           mailbox={activeMailbox}
           context={composeContext}
+          variant="float"
           onClose={() => setComposeOpen(false)}
-          onSent={async () => {
-            setBanner('Message sent.');
-            await refreshAll();
-          }}
+          onSent={() => void handleComposeSent()}
+          onDraftSaved={handleComposeDraftSaved}
+          onDraftDeleted={handleComposeDraftDeleted}
         />
       ) : null}
     </div>

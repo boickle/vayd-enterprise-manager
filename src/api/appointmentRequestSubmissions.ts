@@ -23,8 +23,10 @@ export type AppointmentRequestSubmissionItem = {
   bookedAt?: string | null;
   /** Present when status is dismissed (shown as "Not booked" in the UI). */
   notBookedReason?: string | null;
-  /** Independent flag — can coexist with booked / contacted / etc. */
+  /** Staff flagged that records are still needed — independent of booked / contacted / etc. */
   needsRecords?: boolean;
+  /** Set when staff clicks Records received (not inferred from `needsRecords === false`). */
+  recordsReceivedAt?: string | null;
   /** Set when staff confirms an auto-booked online request. */
   staffConfirmedAt?: string | null;
   /** Ops points on the linked calendar visit when `bookedAppointmentId` is set (from server). */
@@ -72,6 +74,8 @@ export type PatchAppointmentRequestSubmissionBody = {
   /** Required when setting status to `dismissed`. */
   notBookedReason?: string | null;
   needsRecords?: boolean;
+  /** Send `null` to clear after marking need records again. */
+  recordsReceivedAt?: string | null;
   /** Marks an auto-booked online request as staff-confirmed. */
   confirm?: boolean;
 };
@@ -93,6 +97,7 @@ export type SendAppointmentRequestSubmissionSmsResponse = {
   from?: string;
 };
 
+/** Liaison Gmail thread for a submission (stored link or server-side Gmail search). */
 export type AppointmentRequestGmailLink = {
   threadId: string | null;
   mailbox: string | null;
@@ -171,7 +176,13 @@ export async function sendAppointmentRequestSubmissionSms(
   return data;
 }
 
-/** GET /appointments/request-submissions/:id/gmail-link — liaison Gmail thread. */
+/**
+ * GET /appointments/request-submissions/:id/gmail-link — liaison Gmail thread.
+ *
+ * Returns the stored link when `gmailThreadId` is set. When missing, the server should
+ * search info@ for the notification around `submittedAt` (±5 minutes), persist the
+ * thread id, and return it. Ideally that runs once at submission create time.
+ */
 export async function fetchAppointmentRequestGmailLink(
   id: number,
 ): Promise<AppointmentRequestGmailLink> {

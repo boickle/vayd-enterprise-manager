@@ -558,6 +558,20 @@
   padding: 4px 12px;
 }
 
+.scheduler-embedded-reschedule-bar-actions {
+  flex-shrink: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.scheduler-embedded-reschedule-bar-actions .btn {
+  font-size: 12px;
+  padding: 4px 12px;
+}
+
 /** Routing workspace: forward booking from list — orange bar + frame around calendar */
 .scheduler-toolbar-calendar-merge--forward-booking-halo {
   border: 2px solid #f97316;
@@ -2429,13 +2443,44 @@ label.scheduler-go-date-heading {
   z-index: 3000;
 }
 
-/** Above appointment context menu (10050) so Remove Visit actions receive clicks. */
+/** Above appointment context menu (10050) and not-booked gate overlay (25000). */
 .scheduler-modal-backdrop--remove-visit {
-  z-index: 10100;
+  z-index: 26000;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 16px;
+}
+
+/** Portaled not-booked gate — no backdrop blur; highlight ring stacks above dialog. */
+.scheduler-not-booked-gate-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 25000;
+  pointer-events: none;
+}
+
+.scheduler-not-booked-gate-dialog {
+  box-shadow:
+    0 24px 64px rgba(15, 23, 42, 0.28),
+    0 0 0 1px rgba(15, 23, 42, 0.08);
+}
+
+/** Tracks the calendar visit — rendered after dialog so it paints on top. */
+.scheduler-not-booked-gate-highlight-ring {
+  position: fixed;
+  z-index: 2;
+  pointer-events: none;
+  box-sizing: border-box;
+  border-radius: 6px;
+  outline: 4px solid rgba(249, 115, 22, 1);
+  outline-offset: 2px;
+  box-shadow:
+    inset 0 0 0 999px rgba(249, 115, 22, 0.24),
+    0 0 0 3px rgba(255, 255, 255, 0.95),
+    0 0 36px 12px rgba(249, 115, 22, 0.78),
+    0 12px 40px rgba(194, 65, 12, 0.45);
+  animation: scheduler-not-booked-remove-highlight 2s ease-in-out infinite;
 }
 
 .scheduler-modal {
@@ -5112,6 +5157,79 @@ label.scheduler-household-pet-row {
   text-align: left;
 }
 
+.scheduler-staff-confirm-booking-breakdown {
+  margin-top: 6px;
+  padding-top: 8px;
+  border-top: 1px solid #e9d5ff;
+}
+
+.scheduler-staff-confirm-booking-breakdown-title {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #6b21a8;
+}
+
+.scheduler-staff-confirm-booking-breakdown-client {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #374151;
+}
+
+.scheduler-staff-confirm-booking-breakdown-pets {
+  margin: 0 0 8px;
+  padding-left: 18px;
+  font-size: 13px;
+  color: #374151;
+  line-height: 1.45;
+}
+
+.scheduler-staff-confirm-booking-breakdown-line,
+.scheduler-staff-confirm-booking-breakdown-total {
+  margin: 0 0 4px;
+  font-size: 13px;
+  color: #374151;
+}
+
+.scheduler-staff-confirm-booking-breakdown-total {
+  font-weight: 600;
+  color: #6b21a8;
+  margin-top: 4px;
+}
+
+.scheduler-staff-confirm-booking-breakdown-section {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed #e9d5ff;
+}
+
+.scheduler-staff-confirm-booking-breakdown-section:first-of-type {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+
+.scheduler-staff-confirm-booking-breakdown-subtitle {
+  margin: 0 0 4px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #7c3aed;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.scheduler-staff-confirm-booking-breakdown-difference {
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #faf5ff;
+  font-size: 13px;
+  font-weight: 600;
+  color: #6b21a8;
+  line-height: 1.4;
+}
+
 .scheduler-edit-preview-popover--staff-confirm .scheduler-edit-preview-popover-actions {
   flex-shrink: 0;
 }
@@ -5387,6 +5505,32 @@ label.scheduler-household-pet-row {
 .scheduler-event.scheduler-edit-visit-booked-slot--hold-converted,
 .scheduler-all-day-span-bar.scheduler-edit-visit-booked-slot--hold-converted {
   animation: scheduler-on-hold-converted-pulse 2.4s ease-in-out infinite;
+}
+
+.scheduler-event.scheduler-edit-visit-booked-slot--not-booked-gate,
+.scheduler-all-day-span-bar.scheduler-edit-visit-booked-slot--not-booked-gate {
+  z-index: 120;
+  animation: scheduler-not-booked-remove-highlight 2s ease-in-out infinite;
+}
+
+@keyframes scheduler-not-booked-remove-highlight {
+  0%,
+  100% {
+    outline-color: rgba(249, 115, 22, 1);
+    box-shadow:
+      inset 0 0 0 999px rgba(249, 115, 22, 0.24),
+      0 0 0 3px rgba(255, 255, 255, 0.95),
+      0 0 36px 12px rgba(249, 115, 22, 0.78),
+      0 12px 40px rgba(194, 65, 12, 0.45);
+  }
+  50% {
+    outline-color: rgba(251, 146, 60, 1);
+    box-shadow:
+      inset 0 0 0 999px rgba(249, 115, 22, 0.34),
+      0 0 0 4px rgba(255, 255, 255, 1),
+      0 0 48px 16px rgba(249, 115, 22, 0.92),
+      0 16px 52px rgba(194, 65, 12, 0.55);
+  }
 }
 
 @keyframes scheduler-on-hold-converted-pulse {

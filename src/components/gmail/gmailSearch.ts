@@ -68,6 +68,9 @@ const SCOPE_TO_GMAIL: Partial<Record<GmailSearchScope, string>> = {
   spam: 'in:spam',
 };
 
+/** Gmail query prefix for bar / filter search across all mail (excludes spam & trash). */
+export const GMAIL_ALL_MAIL_SEARCH_SCOPE = 'in:anywhere -in:spam -in:trash';
+
 function quoteIfNeeded(value: string): string {
   const trimmed = value.trim();
   if (!trimmed) return '';
@@ -116,7 +119,12 @@ export function buildGmailSearchQuery(
   }
 
   const scopeQ = SCOPE_TO_GMAIL[filter.scope];
-  if (scopeQ) parts.push(scopeQ);
+  if (scopeQ) {
+    parts.push(scopeQ);
+  } else if (filter.scope === 'current' && parts.length > 0) {
+    // Default scope with an active query → search all mail, not just the sidebar label.
+    parts.push(GMAIL_ALL_MAIL_SEARCH_SCOPE);
+  }
 
   if (filter.hasAttachment) parts.push('has:attachment');
 
