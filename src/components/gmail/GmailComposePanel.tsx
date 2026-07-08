@@ -19,6 +19,14 @@ import {
   type GmailComposeDraftSavedInfo,
 } from './gmailCompose';
 import { fetchGmailSendAsAlias, type GmailSendAsAlias } from '../../api/gmail';
+import GmailTemplateMenu from './GmailTemplateMenu';
+import {
+  createGmailTemplate,
+  deleteGmailTemplate,
+  loadGmailTemplates,
+  overwriteGmailTemplate,
+  type GmailTemplate,
+} from './gmailTemplates';
 
 const DRAFT_AUTOSAVE_MS = 1500;
 
@@ -66,6 +74,7 @@ export default function GmailComposePanel({
   const [showCc, setShowCc] = useState(false);
   const [draftId, setDraftId] = useState<string | undefined>();
   const [draftSaving, setDraftSaving] = useState(false);
+  const [templates, setTemplates] = useState<GmailTemplate[]>([]);
 
   const bodyRef = useRef<HTMLTextAreaElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
@@ -269,6 +278,54 @@ export default function GmailComposePanel({
         });
     }
   };
+
+  useEffect(() => {
+    setTemplates(loadGmailTemplates());
+  }, []);
+
+  const subjectEditable = context.mode === 'new' || context.mode === 'forward';
+  const canSaveTemplate = userBody.trim().length > 0 || subject.trim().length > 0;
+
+  const insertTemplate = useCallback(
+    (template: GmailTemplate) => {
+      if (subjectEditable && template.subject.trim() && !subject.trim()) {
+        setSubject(template.subject);
+      }
+      if (!template.body) return;
+      const el = bodyRef.current;
+      setUserBody((prev) => {
+        if (el && typeof el.selectionStart === 'number') {
+          const start = el.selectionStart;
+          const end = el.selectionEnd ?? start;
+          return prev.slice(0, start) + template.body + prev.slice(end);
+        }
+        return prev ? `${prev}\n${template.body}` : template.body;
+      });
+      requestAnimationFrame(() => bodyRef.current?.focus());
+    },
+    [subjectEditable, subject],
+  );
+
+  const handleSaveNewTemplate = useCallback(() => {
+    const name = window.prompt('Save as new template — name:');
+    if (name == null) return;
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    setTemplates(createGmailTemplate({ name: trimmed, subject, body: userBody }));
+  }, [subject, userBody]);
+
+  const handleOverwriteTemplate = useCallback(
+    (template: GmailTemplate) => {
+      if (!window.confirm(`Overwrite template “${template.name}” with the current message?`)) return;
+      setTemplates(overwriteGmailTemplate(template.id, { subject, body: userBody }));
+    },
+    [subject, userBody],
+  );
+
+  const handleDeleteTemplate = useCallback((template: GmailTemplate) => {
+    if (!window.confirm(`Delete template “${template.name}”?`)) return;
+    setTemplates(deleteGmailTemplate(template.id));
+  }, []);
 
   const handleDiscard = async () => {
     setBusy(true);
@@ -484,6 +541,16 @@ export default function GmailComposePanel({
         <button type="button" className="gmail-btn" disabled={busy} onClick={onClose}>
           Cancel
         </button>
+        <div className="gmail-compose-panel__footer-spacer" />
+        <GmailTemplateMenu
+          templates={templates}
+          canSave={canSaveTemplate}
+          disabled={busy}
+          onInsert={insertTemplate}
+          onSaveNew={handleSaveNewTemplate}
+          onOverwrite={handleOverwriteTemplate}
+          onDelete={handleDeleteTemplate}
+        />
       </footer>
     </div>
   );

@@ -3,8 +3,10 @@
 import { DateTime } from 'luxon';
 import type { AppointmentRequestListTab } from '../appointments-nav';
 import type { AppointmentRequestSubmissionItem } from '../api/appointmentRequestSubmissions';
+import type { AppointmentRequestBookedApptSummary } from './appointmentRequestOnHold';
 import { appointmentRequestSubmissionCountsAsBooked, appointmentRequestSubmissionIsOnHold } from './appointmentRequestOnHold';
 import { appointmentRequestNeedsStaffConfirmation } from './appointmentRequestStaffConfirm';
+import type { AppointmentTypeCatalog } from './appointmentTypeSettings';
 import { fetchClientByIdStaff } from '../api/clientsStaff';
 import { practiceTimeZoneOrDefault } from './practiceTimezone';
 
@@ -733,12 +735,18 @@ export function requestDataServiceMinutes(requestData: Record<string, unknown>):
 /** List tab where this submission appears in the Scout appointments queue. */
 export function appointmentRequestListTabForSubmission(
   item: AppointmentRequestSubmissionItem,
+  bookedApptMeta: ReadonlyMap<number, AppointmentRequestBookedApptSummary> = new Map(),
+  typeCatalog: AppointmentTypeCatalog | null = null,
 ): AppointmentRequestListTab {
   const status = item.status ?? 'new';
   if (status === 'dismissed') return 'dismissed';
-  if (appointmentRequestNeedsStaffConfirmation(item)) return 'to_confirm';
-  if (appointmentRequestSubmissionIsOnHold(item, new Map(), null)) return 'on_hold';
-  if (appointmentRequestSubmissionCountsAsBooked(item, new Map(), null)) return 'booked';
   if (status === 'contacted') return 'contacted';
+  if (appointmentRequestNeedsStaffConfirmation(item)) return 'to_confirm';
+  if (appointmentRequestSubmissionIsOnHold(item, bookedApptMeta, typeCatalog)) {
+    return 'on_hold';
+  }
+  if (appointmentRequestSubmissionCountsAsBooked(item, bookedApptMeta, typeCatalog)) {
+    return 'booked';
+  }
   return 'new';
 }

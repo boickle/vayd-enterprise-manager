@@ -186,13 +186,25 @@ export async function sendAppointmentRequestSubmissionSms(
  * search info@ for the notification around `submittedAt` (±5 minutes), persist the
  * thread id, and return it. Ideally that runs once at submission create time.
  */
+const gmailLinkInflight = new Map<number, Promise<AppointmentRequestGmailLink>>();
+
 export async function fetchAppointmentRequestGmailLink(
   id: number,
 ): Promise<AppointmentRequestGmailLink> {
-  const { data } = await http.get<AppointmentRequestGmailLink>(
-    `/appointments/request-submissions/${encodeURIComponent(String(id))}/gmail-link`,
-  );
-  return data;
+  const key = Number(id);
+  const existing = gmailLinkInflight.get(key);
+  if (existing) return existing;
+
+  const promise = http
+    .get<AppointmentRequestGmailLink>(
+      `/appointments/request-submissions/${encodeURIComponent(String(key))}/gmail-link`,
+    )
+    .then(({ data }) => data)
+    .finally(() => {
+      gmailLinkInflight.delete(key);
+    });
+  gmailLinkInflight.set(key, promise);
+  return promise;
 }
 
 export type AllAppointmentRequestSubmissionsResult = {

@@ -293,15 +293,26 @@ export async function disconnectGmail(mailbox?: string): Promise<void> {
   });
 }
 
+const gmailThreadInflight = new Map<string, Promise<GmailThreadResponse>>();
+
 export async function fetchGmailThread(
   mailbox: string,
   threadId: string,
 ): Promise<GmailThreadResponse> {
-  const { data } = await http.get<GmailThreadResponse>(
-    `/gmail/threads/${encodeURIComponent(threadId)}`,
-    { params: mailboxParams(mailbox) },
-  );
-  return data;
+  const key = `${mailbox}:${threadId}`;
+  const existing = gmailThreadInflight.get(key);
+  if (existing) return existing;
+
+  const promise = http
+    .get<GmailThreadResponse>(`/gmail/threads/${encodeURIComponent(threadId)}`, {
+      params: mailboxParams(mailbox),
+    })
+    .then(({ data }) => data)
+    .finally(() => {
+      gmailThreadInflight.delete(key);
+    });
+  gmailThreadInflight.set(key, promise);
+  return promise;
 }
 
 export async function fetchGmailSendAs(mailbox: string): Promise<{ aliases: GmailSendAsAlias[] }> {
