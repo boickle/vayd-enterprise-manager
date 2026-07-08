@@ -642,11 +642,20 @@ function buildStaffConfirmBookingBreakdown(args: {
       isNewClient ? petRows.length : 0,
     ),
   );
-  const originalMinutes = originalStored ?? originalEstimate?.minutes ?? bookedSlotMinutes;
+  // Prefer routing estimate (requested types + buffers) over form-stored minutes.
+  // selfScheduledSlot.serviceMinutes is a snapshot from slot pick and may use catalog
+  // defaults rather than this doctor's stats — do not derive "Visit time" from it.
+  const originalMinutes =
+    originalEstimate?.minutes ??
+    bookedSlotMinutes ??
+    originalStored ??
+    0;
   const originalBase =
-    originalStored != null
-      ? Math.max(0, originalStored - originalBuffer)
-      : (originalEstimate?.baseMinutes ?? Math.max(0, originalMinutes - originalBuffer));
+    originalEstimate?.baseMinutes ??
+    Math.max(
+      0,
+      originalMinutes - (originalEstimate?.newPatientBufferMinutes ?? originalBuffer),
+    );
 
   const original: StaffConfirmDurationBreakdown = {
     bookedMinutes: originalMinutes,
@@ -954,7 +963,6 @@ export async function resolveStaffConfirmRecommendedLength(args: {
   const doctorId = resolveStaffConfirmRoutingDoctorId(requestData, args.appt, args.providers);
   if (visitPets.length === 0 || doctorId == null) return base;
 
-  const requestStored = requestDataStoredServiceMinutes(requestData);
   const breakdown = base.bookingBreakdown;
 
   try {
@@ -965,22 +973,44 @@ export async function resolveStaffConfirmRecommendedLength(args: {
           ? requestVisitPets
           : calendarVisitPets;
 
-      const [originalResult, recommendedResult] = await Promise.all([
-        !requestStored && requestVisitPets.length > 0
-          ? fetchRoutingServiceMinutes({
-              practiceId: args.practiceId,
-              doctorId,
-              visitPets: requestVisitPets,
-            })
-          : Promise.resolve(null),
-        breakdown.recommended && recommendedVisitPets.length > 0
-          ? fetchRoutingServiceMinutes({
-              practiceId: args.practiceId,
-              doctorId,
-              visitPets: recommendedVisitPets,
-            })
-          : Promise.resolve(null),
-      ]);
+      const originalNeedsFetch = requestVisitPets.length > 0;
+      const recommendedNeedsFetch =
+        Boolean(breakdown.recommended) && recommendedVisitPets.length > 0;
+      const sameVisitPetsForFetch =
+        originalNeedsFetch &&
+        recommendedNeedsFetch &&
+        visitPetsTypeSignature(requestVisitPets) ===
+          visitPetsTypeSignature(recommendedVisitPets);
+
+      let originalResult: RoutingServiceMinutesResponse | null = null;
+      let recommendedResult: RoutingServiceMinutesResponse | null = null;
+
+      if (sameVisitPetsForFetch) {
+        const shared = await fetchRoutingServiceMinutes({
+          practiceId: args.practiceId,
+          doctorId,
+          visitPets: requestVisitPets,
+        });
+        originalResult = shared;
+        recommendedResult = shared;
+      } else {
+        [originalResult, recommendedResult] = await Promise.all([
+          originalNeedsFetch
+            ? fetchRoutingServiceMinutes({
+                practiceId: args.practiceId,
+                doctorId,
+                visitPets: requestVisitPets,
+              })
+            : Promise.resolve(null),
+          recommendedNeedsFetch
+            ? fetchRoutingServiceMinutes({
+                practiceId: args.practiceId,
+                doctorId,
+                visitPets: recommendedVisitPets,
+              })
+            : Promise.resolve(null),
+        ]);
+      }
 
       const nextBreakdown: StaffConfirmBookingBreakdown = {
         ...breakdown,

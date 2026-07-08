@@ -49,6 +49,70 @@ export type AppointmentRequestGmailThreadLabelsState = {
 /** Retry liaison-thread lookup while the notification email is still arriving in info@. */
 const GMAIL_LINK_RETRY_MS = [2_000, 5_000, 10_000, 20_000, 30_000] as const;
 
+/** Only retry linking for submissions this recent (notification still in flight). */
+const GMAIL_LINK_RETRY_MAX_AGE_MS = 30 * 60_000;
+
+/** Cap parallel gmail-link + thread fetches so the list cannot flood the API. */
+const GMAIL_LINK_MAX_CONCURRENT = 4;
+
+/** Once lazy-linked (success or fail) this session — do not re-hit on metadata refresh. */
+const gmailLinkAttemptedSession = new Set<number>();
+
+/** Survives effect cleanup so in-flight fetches are not repeated on re-render. */
+const gmailThreadCacheSession = new Map<number, SubmissionGmailThreadLabels>();
+const gmailThreadSyncKeySession = new Map<number, string>();
+const gmailManagedLabelSyncKeySession = new Map<number, string>();
+
+let gmailLinkActive = 0;
+const gmailLinkWaiters: Array<() => void> = [];
+
+async function withGmailLinkConcurrency<T>(fn: () => Promise<T>): Promise<T> {
+  while (gmailLinkActive >= GMAIL_LINK_MAX_CONCURRENT) {
+    await new Promise<void>((resolve) => gmailLinkWaiters.push(resolve));
+  }
+  gmailLinkActive += 1;
+  try {
+    return await fn();
+  } finally {
+    gmailLinkActive -= 1;
+    const next = gmailLinkWaiters.shift();
+    if (next) next();
+  }
+}
+
+function shouldRetryGmailLink(submittedAt: string | undefined, attempt: number): boolean {
+  if (GMAIL_LINK_RETRY_MS[attempt] == null) return false;
+  if (!submittedAt?.trim()) return attempt === 0;
+  const ageMs = Date.now() - Date.parse(submittedAt);
+  if (!Number.isFinite(ageMs)) return attempt === 0;
+  return ageMs <= GMAIL_LINK_RETRY_MAX_AGE_MS;
+}
+
+async function resolveGmailLinkWithRetry(
+  submissionId: number,
+  attempt: number,
+  submittedAt?: string,
+): Promise<{ threadId: string | null; mailbox: string }> {
+  const mailbox = APPOINTMENT_REQUEST_MAILBOX;
+  try {
+    const link = await withGmailLinkConcurrency(() =>
+      fetchAppointmentRequestGmailLink(submissionId),
+    );
+    const threadId = link.threadId?.trim() || null;
+    if (threadId) {
+      return { threadId, mailbox: link.mailbox?.trim() || mailbox };
+    }
+  } catch {
+    /* retry below for very recent submissions only */
+  }
+
+  if (!shouldRetryGmailLink(submittedAt, attempt)) {
+    return { threadId: null, mailbox };
+  }
+  await sleep(GMAIL_LINK_RETRY_MS[attempt]!);
+  return resolveGmailLinkWithRetry(submissionId, attempt + 1, submittedAt);
+}
+
 function walkLabelTree(nodes: readonly GmailLabelNode[], into: Map<string, GmailLabelNode>): void {
   for (const node of nodes) {
     into.set(node.id, node);
@@ -75,18 +139,25 @@ function itemSyncKey(item: AppointmentRequestSubmissionItem): string {
   return `${item.gmailThreadId ?? ''}:${item.updated ?? ''}:${item.linkedVisitPoints ?? ''}`;
 }
 
-function labelContextKey(
-  items: readonly AppointmentRequestSubmissionItem[],
+/** Drives thread fetch/link only — excludes linkedVisitPoints so metadata hydration does not re-fetch Gmail. */
+function itemThreadFetchKey(item: AppointmentRequestSubmissionItem): string {
+  return `${item.id}:${item.gmailThreadId ?? ''}:${item.updated ?? ''}`;
+}
+
+function itemManagedLabelKey(
+  item: AppointmentRequestSubmissionItem,
   ctx?: AppointmentRequestGmailLabelContext,
 ): string {
-  const meta = ctx?.bookedApptMeta;
-  const metaPart = meta
-    ? [...meta.entries()]
-        .sort(([a], [b]) => a - b)
-        .map(([id, s]) => `${id}:${s.points}`)
-        .join(',')
-    : '';
-  return `${items.map((i) => `${i.id}:${i.linkedVisitPoints ?? ''}`).join('|')}|${metaPart}`;
+  const apptId = item.bookedAppointmentId;
+  const metaPoints =
+    apptId != null ? ctx?.bookedApptMeta?.get(Number(apptId))?.points : undefined;
+  return [
+    item.id,
+    item.status ?? 'new',
+    item.linkedVisitPoints ?? '',
+    metaPoints ?? '',
+    item.gmailThreadId ?? '',
+  ].join(':');
 }
 
 function latestThreadMessage(messages: readonly GmailThreadMessage[]): GmailThreadMessage | null {
@@ -138,29 +209,6 @@ function buildDisplayLabelIds(
   return [...out];
 }
 
-async function resolveGmailLinkWithRetry(
-  submissionId: number,
-  attempt: number,
-): Promise<{ threadId: string | null; mailbox: string }> {
-  const mailbox = APPOINTMENT_REQUEST_MAILBOX;
-  try {
-    const link = await fetchAppointmentRequestGmailLink(submissionId);
-    const threadId = link.threadId?.trim() || null;
-    if (threadId) {
-      return { threadId, mailbox: link.mailbox?.trim() || mailbox };
-    }
-  } catch {
-    /* retry below */
-  }
-
-  const delay = GMAIL_LINK_RETRY_MS[attempt];
-  if (delay == null) {
-    return { threadId: null, mailbox };
-  }
-  await sleep(delay);
-  return resolveGmailLinkWithRetry(submissionId, attempt + 1);
-}
-
 /** Load Gmail user labels for appointment-request threads shown in Scout. */
 export function useAppointmentRequestGmailThreadLabels(
   items: AppointmentRequestSubmissionItem[],
@@ -176,27 +224,29 @@ export function useAppointmentRequestGmailThreadLabels(
   const labelByIdRef = useRef<Map<string, GmailLabelNode>>(new Map());
   const cacheRef = useRef<Map<number, SubmissionGmailThreadLabels>>(new Map());
   const syncKeyRef = useRef<Map<number, string>>(new Map());
+  const managedLabelSyncKeyRef = useRef<Map<number, string>>(new Map());
+  const threadFetchGenerationRef = useRef(0);
+  const managedLabelGenerationRef = useRef(0);
   const onGmailLinkResolvedRef = useRef(onGmailLinkResolved);
   const labelContextRef = useRef(labelContext);
+  const userLabelsRef = useRef(userLabels);
   onGmailLinkResolvedRef.current = onGmailLinkResolved;
   labelContextRef.current = labelContext;
+  userLabelsRef.current = userLabels;
 
   const fetchItems = useMemo(
     () => items.filter((item) => item.kind !== 'abandoned'),
     [items],
   );
 
-  const itemKeys = useMemo(
-    () => fetchItems.map((item) => `${item.id}:${itemSyncKey(item)}`).join('|'),
+  const itemThreadFetchKeys = useMemo(
+    () => fetchItems.map((item) => itemThreadFetchKey(item)).join('|'),
     [fetchItems],
   );
 
-  const managedLabelContextKey = useMemo(
-    () => labelContextKey(fetchItems, labelContext),
-    [fetchItems, labelContext],
-  );
-
   const commit = useCallback((submissionId: number, entry: SubmissionGmailThreadLabels, syncKey: string) => {
+    gmailThreadCacheSession.set(submissionId, entry);
+    gmailThreadSyncKeySession.set(submissionId, syncKey);
     cacheRef.current.set(submissionId, entry);
     syncKeyRef.current.set(submissionId, syncKey);
     setBySubmissionId(new Map(cacheRef.current));
@@ -212,7 +262,12 @@ export function useAppointmentRequestGmailThreadLabels(
 
   const invalidateSubmission = useCallback((submissionId: number) => {
     syncKeyRef.current.delete(submissionId);
+    managedLabelSyncKeyRef.current.delete(submissionId);
+    gmailThreadSyncKeySession.delete(submissionId);
+    gmailManagedLabelSyncKeySession.delete(submissionId);
+    gmailThreadCacheSession.delete(submissionId);
     cacheRef.current.delete(submissionId);
+    gmailLinkAttemptedSession.delete(submissionId);
     setBySubmissionId(new Map(cacheRef.current));
   }, []);
 
@@ -229,14 +284,16 @@ export function useAppointmentRequestGmailThreadLabels(
         mailbox,
         message: { id: messageId, threadId, labelIds },
         submission: item,
-        userLabels,
+        userLabels: userLabelsRef.current,
         bookedApptMeta: ctx?.bookedApptMeta,
         typeCatalog: ctx?.typeCatalog,
       });
       return synced ?? labelIds;
     },
-    [userLabels],
+    [],
   );
+  const applyManagedLabelsRef = useRef(applyManagedLabels);
+  applyManagedLabelsRef.current = applyManagedLabels;
 
   useEffect(() => {
     if (!enabled) {
@@ -271,13 +328,21 @@ export function useAppointmentRequestGmailThreadLabels(
   useEffect(() => {
     if (!enabled || !catalogReady || fetchItems.length === 0) return;
 
+    const generation = ++threadFetchGenerationRef.current;
     const labelById = labelByIdRef.current;
-    let cancelled = false;
+    const isStale = () => generation !== threadFetchGenerationRef.current;
 
     for (const item of fetchItems) {
       void (async () => {
         const submissionId = item.id;
         const syncKey = itemSyncKey(item);
+
+        const sessionCached = gmailThreadCacheSession.get(submissionId);
+        if (sessionCached && !cacheRef.current.has(submissionId)) {
+          cacheRef.current.set(submissionId, sessionCached);
+          const sessionSync = gmailThreadSyncKeySession.get(submissionId);
+          if (sessionSync) syncKeyRef.current.set(submissionId, sessionSync);
+        }
 
         if (syncKeyRef.current.get(submissionId) === syncKey && cacheRef.current.has(submissionId)) {
           return;
@@ -298,8 +363,19 @@ export function useAppointmentRequestGmailThreadLabels(
         let mailbox = item.gmailMailbox?.trim() || APPOINTMENT_REQUEST_MAILBOX;
 
         if (!threadId) {
-          const resolved = await resolveGmailLinkWithRetry(submissionId, 0);
-          if (cancelled) return;
+          if (gmailLinkAttemptedSession.has(submissionId)) {
+            if (syncKeyRef.current.get(submissionId) !== syncKey) {
+              syncKeyRef.current.set(submissionId, syncKey);
+            }
+            return;
+          }
+          gmailLinkAttemptedSession.add(submissionId);
+          const resolved = await resolveGmailLinkWithRetry(
+            submissionId,
+            0,
+            item.submittedAt,
+          );
+          if (isStale()) return;
           threadId = resolved.threadId;
           mailbox = resolved.mailbox;
           if (threadId) {
@@ -317,11 +393,20 @@ export function useAppointmentRequestGmailThreadLabels(
           }
         }
 
-        const resolvedSyncKey = `${threadId}:${item.updated ?? ''}:${item.linkedVisitPoints ?? ''}`;
+        if (cached?.threadId === threadId && cached.messageId) {
+          if (syncKeyRef.current.get(submissionId) !== syncKey) {
+            syncKeyRef.current.set(submissionId, syncKey);
+          }
+          return;
+        }
+
+        const resolvedSyncKey = itemSyncKey({ ...item, gmailThreadId: threadId ?? undefined });
 
         try {
-          const thread = await fetchGmailThread(mailbox, threadId);
-          if (cancelled) return;
+          const thread = await withGmailLinkConcurrency(() =>
+            fetchGmailThread(mailbox, threadId!),
+          );
+          if (isStale()) return;
           const messages = thread.messages ?? [];
           let labelIds = threadLabelIds(messages);
           const unionLabelIds = threadLabelIdsUnion(messages);
@@ -329,14 +414,20 @@ export function useAppointmentRequestGmailThreadLabels(
           const messageId = latest?.id ?? '';
 
           if (messageId) {
-            labelIds = await applyManagedLabels(item, mailbox, threadId, messageId, labelIds);
+            labelIds = await applyManagedLabelsRef.current(
+              item,
+              mailbox,
+              threadId,
+              messageId,
+              labelIds,
+            );
           }
 
-          if (cancelled) return;
+          if (isStale()) return;
           const displayLabelIds = buildDisplayLabelIds(
             unionLabelIds,
             labelIds,
-            managedLabelIdSet(userLabels),
+            managedLabelIdSet(userLabelsRef.current),
           );
           const labels = getMessageLabelsForAppointmentList(displayLabelIds, labelById);
           commit(
@@ -351,7 +442,7 @@ export function useAppointmentRequestGmailThreadLabels(
             resolvedSyncKey,
           );
         } catch {
-          if (cancelled) return;
+          if (isStale()) return;
           commit(
             submissionId,
             { mailbox, threadId, messageId: '', labelIds: [], labels: [] },
@@ -362,40 +453,55 @@ export function useAppointmentRequestGmailThreadLabels(
     }
 
     return () => {
-      cancelled = true;
+      threadFetchGenerationRef.current += 1;
     };
-  }, [enabled, catalogReady, itemKeys, fetchItems, commit, applyManagedLabels, userLabels]);
+  }, [enabled, catalogReady, itemThreadFetchKeys, commit]);
+
+  const managedLabelItemKeys = useMemo(
+    () => fetchItems.map((item) => itemManagedLabelKey(item, labelContext)).join('|'),
+    [fetchItems, labelContext],
+  );
 
   /** Re-apply managed labels when hold metadata hydrates after the thread was first linked. */
   useEffect(() => {
     if (!enabled || !catalogReady || fetchItems.length === 0) return;
 
+    const generation = ++managedLabelGenerationRef.current;
     const labelById = labelByIdRef.current;
-    let cancelled = false;
+    const ctx = labelContextRef.current;
+    const isStale = () => generation !== managedLabelGenerationRef.current;
 
     for (const item of fetchItems) {
       const cached = cacheRef.current.get(item.id);
       if (!cached?.threadId || !cached.messageId) continue;
 
+      const managedKey = itemManagedLabelKey(item, ctx);
+      const priorManagedKey = managedLabelSyncKeyRef.current.get(item.id);
+      const sessionManagedKey = gmailManagedLabelSyncKeySession.get(item.id);
+      if (priorManagedKey === managedKey || sessionManagedKey === managedKey) continue;
+
       void (async () => {
-        const labelIds = await applyManagedLabels(
+        const labelIds = await applyManagedLabelsRef.current(
           item,
           cached.mailbox,
           cached.threadId,
           cached.messageId,
           cached.labelIds,
         );
-        if (cancelled) return;
+        if (isStale()) return;
+        managedLabelSyncKeyRef.current.set(item.id, managedKey);
+        gmailManagedLabelSyncKeySession.set(item.id, managedKey);
+
         if (labelIds.join(',') === cached.labelIds.join(',')) return;
 
-        const managedIds = managedLabelIdSet(userLabels);
+        const managedIds = managedLabelIdSet(userLabelsRef.current);
         // Keep the conversation's non-managed chips that were already resolved.
         const priorNonManaged = cached.labels.map((label) => label.id);
         const displayLabelIds = buildDisplayLabelIds(priorNonManaged, labelIds, managedIds);
         const labels = getMessageLabelsForAppointmentList(displayLabelIds, labelById);
         const syncKey =
           syncKeyRef.current.get(item.id) ??
-          `${cached.threadId}:${item.updated ?? ''}:${item.linkedVisitPoints ?? ''}`;
+          itemSyncKey({ ...item, gmailThreadId: cached.threadId });
         commit(
           item.id,
           {
@@ -409,16 +515,13 @@ export function useAppointmentRequestGmailThreadLabels(
     }
 
     return () => {
-      cancelled = true;
+      managedLabelGenerationRef.current += 1;
     };
   }, [
     enabled,
     catalogReady,
-    managedLabelContextKey,
-    fetchItems,
+    managedLabelItemKeys,
     commit,
-    applyManagedLabels,
-    userLabels,
   ]);
 
   const labelById = useMemo(() => new Map(labelByIdRef.current), [catalogReady, userLabels]);

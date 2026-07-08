@@ -190,6 +190,123 @@
   background: #fff;
 }
 
+.gmail-compose-panel__footer-spacer {
+  flex: 1;
+}
+
+/* Templates menu */
+.gmail-template-menu {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.gmail-template-menu__trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gmail-template-menu__trigger--active {
+  background: #eef2ff;
+  border-color: #c7d2fe;
+}
+
+.gmail-template-menu__dropdown {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 6px);
+  z-index: 1200;
+  min-width: 240px;
+  max-width: 320px;
+  padding: 6px 0;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.18);
+  max-height: 340px;
+  overflow-y: auto;
+}
+
+.gmail-template-menu__section-title {
+  padding: 6px 14px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #94a3b8;
+}
+
+.gmail-template-menu__list,
+.gmail-template-menu__sublist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.gmail-template-menu__sublist {
+  background: #f8fafc;
+  border-top: 1px solid #f1f5f9;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.gmail-template-menu__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 14px;
+  border: none;
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  color: #1f2937;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gmail-template-menu__sublist .gmail-template-menu__item {
+  padding-left: 26px;
+}
+
+.gmail-template-menu__item:hover:not(:disabled) {
+  background: #f1f5f9;
+}
+
+.gmail-template-menu__item:disabled {
+  color: #cbd5e1;
+  cursor: not-allowed;
+}
+
+.gmail-template-menu__item--action {
+  color: #1d4ed8;
+  font-weight: 500;
+}
+
+.gmail-template-menu__item--danger:hover:not(:disabled) {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.gmail-template-menu__item--expand[aria-expanded='true'] {
+  background: #f1f5f9;
+}
+
+.gmail-template-menu__divider {
+  height: 1px;
+  margin: 6px 0;
+  background: #e2e8f0;
+}
+
+.gmail-template-menu__empty {
+  padding: 6px 14px 10px;
+  font-size: 13px;
+  color: #94a3b8;
+}
+
 /* Legacy modal styles kept for thread message body helpers in this file. */
 .gmail-compose-backdrop {
   display: none;
