@@ -23,6 +23,7 @@ export const SCHEDULE_OUTLET_EXTRA_SEGMENTS: string[] = [
   'analytics',
   'email',
   'appointments',
+  'holds',
   'exit-survey',
 ];
 

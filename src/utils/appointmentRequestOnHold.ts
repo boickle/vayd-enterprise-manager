@@ -12,6 +12,7 @@ import { isAppointmentCancelledOnPracticeCalendar } from '../api/appointments';
 import type { Appointment } from '../api/roomLoader';
 import {
   requestDataAppointmentTypeForRouting,
+  requestDataClientType,
   requestDataSelfScheduledSlot,
 } from './appointmentRequestDisplay';
 import {
@@ -190,6 +191,21 @@ export function appointmentRequestSubmissionIsOnHold(
   catalog?: AppointmentTypeCatalog | null,
 ): boolean {
   if (item.bookedAppointmentId == null) return false;
+
+  const isExistingClientAutobook =
+    appointmentRequestAutoBookedOnline(item) &&
+    requestDataClientType(item.requestData ?? {}) === 'existing';
+
+  // New-client online auto-books are calendar holds until liaison confirms; existing-client
+  // auto-books are real bookings on the schedule and only await staff review.
+  if (
+    !isExistingClientAutobook &&
+    appointmentRequestNeedsStaffConfirmation(item)
+  ) {
+    return true;
+  }
+
+  if (typeof item.linkedVisitIsHold === 'boolean') return item.linkedVisitIsHold;
   const linkedPoints = item.linkedVisitPoints;
   if (linkedPoints != null && Number.isFinite(linkedPoints)) {
     return linkedPoints <= 0;
@@ -200,20 +216,13 @@ export function appointmentRequestSubmissionIsOnHold(
 
 /**
  * Whether the managed ON HOLD Gmail label should be on this thread.
- * Unconfirmed auto-booked online visits are on hold until staff confirms — even
- * before calendar points hydrate on the submission row.
+ * Mirrors {@link appointmentRequestSubmissionIsOnHold}.
  */
 export function appointmentRequestSubmissionGmailOnHold(
   item: AppointmentRequestSubmissionItem,
   bookedApptMeta: ReadonlyMap<number, AppointmentRequestBookedApptSummary>,
   catalog?: AppointmentTypeCatalog | null,
 ): boolean {
-  if (
-    appointmentRequestNeedsStaffConfirmation(item) &&
-    item.bookedAppointmentId != null
-  ) {
-    return true;
-  }
   return appointmentRequestSubmissionIsOnHold(item, bookedApptMeta, catalog);
 }
 
@@ -226,7 +235,8 @@ export function appointmentRequestSubmissionCountsAsBooked(
   if ((item.status ?? 'new') !== 'booked') return false;
   if (
     appointmentRequestAutoBookedOnline(item) &&
-    !item.staffConfirmedAt?.trim()
+    !item.staffConfirmedAt?.trim() &&
+    requestDataClientType(item.requestData ?? {}) !== 'existing'
   ) {
     return false;
   }

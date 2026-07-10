@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { FolderInput, Mail, Trash2 } from 'lucide-react';
+import { FolderInput, Mail, Search, Trash2 } from 'lucide-react';
 import {
   archiveGmailMessage,
   isVirtualMailboxLabel,
@@ -78,6 +78,7 @@ export default function GmailBulkToolbar({
   const [busy, setBusy] = useState(false);
   const [labelApplying, setLabelApplying] = useState(false);
   const [openMenu, setOpenMenu] = useState<'move' | null>(null);
+  const [moveFilter, setMoveFilter] = useState('');
   const rootRef = useRef<HTMLDivElement>(null);
 
   const moveTargets = useMemo(() => {
@@ -87,11 +88,18 @@ export default function GmailBulkToolbar({
     return [...system, ...userLabels].filter((l) => l.id !== currentLabelId);
   }, [labelById, userLabels, currentLabelId]);
 
+  const filteredMoveTargets = useMemo(() => {
+    const q = moveFilter.trim().toLowerCase();
+    if (!q) return moveTargets;
+    return moveTargets.filter((l) => labelDisplayName(l).toLowerCase().includes(q));
+  }, [moveTargets, moveFilter]);
+
   useEffect(() => {
     if (!openMenu) return;
     const onDocClick = (e: MouseEvent) => {
       if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
         setOpenMenu(null);
+        setMoveFilter('');
       }
     };
     document.addEventListener('mousedown', onDocClick);
@@ -109,6 +117,7 @@ export default function GmailBulkToolbar({
     } finally {
       setBusy(false);
       setOpenMenu(null);
+      setMoveFilter('');
     }
   };
 
@@ -243,27 +252,53 @@ export default function GmailBulkToolbar({
           title="Move to"
           disabled={isDisabled}
           onClick={() => {
-            setOpenMenu((m) => (m === 'move' ? null : 'move'));
+            setOpenMenu((m) => {
+              if (m === 'move') {
+                setMoveFilter('');
+                return null;
+              }
+              setMoveFilter('');
+              return 'move';
+            });
           }}
         >
           <FolderInput size={18} strokeWidth={1.75} aria-hidden />
         </button>
         {openMenu === 'move' ? (
-          <div className="gmail-bulk-menu" role="menu" aria-label="Move to">
+          <div
+            className="gmail-bulk-menu gmail-bulk-menu--wide"
+            role="menu"
+            aria-label="Move to"
+          >
             <div className="gmail-bulk-menu__title">Move to:</div>
-            <ul className="gmail-bulk-menu__list">
-              {moveTargets.map((label) => (
-                <li key={label.id}>
-                  <button
-                    type="button"
-                    className="gmail-bulk-menu__item"
-                    role="menuitem"
-                    onClick={() => handleMoveTo(label.id)}
-                  >
-                    {labelDisplayName(label)}
-                  </button>
-                </li>
-              ))}
+            <div className="gmail-bulk-menu__search">
+              <input
+                type="search"
+                value={moveFilter}
+                onChange={(e) => setMoveFilter(e.target.value)}
+                placeholder="Search folders"
+                aria-label="Search folders"
+                autoFocus
+              />
+              <Search size={16} strokeWidth={1.75} aria-hidden />
+            </div>
+            <ul className="gmail-bulk-menu__list gmail-bulk-menu__list--scroll">
+              {filteredMoveTargets.length === 0 ? (
+                <li className="gmail-bulk-menu__empty">No folders found</li>
+              ) : (
+                filteredMoveTargets.map((label) => (
+                  <li key={label.id}>
+                    <button
+                      type="button"
+                      className="gmail-bulk-menu__item"
+                      role="menuitem"
+                      onClick={() => handleMoveTo(label.id)}
+                    >
+                      {labelDisplayName(label)}
+                    </button>
+                  </li>
+                ))
+              )}
             </ul>
           </div>
         ) : null}

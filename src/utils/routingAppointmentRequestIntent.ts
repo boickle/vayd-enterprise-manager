@@ -189,9 +189,9 @@ export function buildRoutingAppointmentRequestIntentFromSubmission(
 
   return {
     appointmentRequestSubmissionId: item.id,
+    ...(clientId ? { clientId } : {}),
     ...(!usesAlternateVisitAddress && clientId
       ? {
-          clientId,
           ...(preferredPatientIds.length > 0
             ? {
                 patientId: resolved?.patientId ?? preferredPatientIds[0],

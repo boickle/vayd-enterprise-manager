@@ -78,27 +78,6 @@ function tabBadgesForPath(
           title={`${counts.forwardBookingPending} in queue`}
         />
       );
-    case 'on-hold':
-      return (
-        <>
-          {counts.onHoldOver24 > 0 && counts.onHoldOver24 < counts.onHold ? (
-            <TabBadge
-              count={counts.onHold - counts.onHoldOver24}
-              variant="hold"
-              title={`${counts.onHold - counts.onHoldOver24} on hold under 24 hours`}
-            />
-          ) : null}
-          {counts.onHoldOver24 > 0 ? (
-            <TabBadge
-              count={counts.onHoldOver24}
-              variant="urgent"
-              title={`${counts.onHoldOver24} on hold over 24 hours`}
-            />
-          ) : (
-            <TabBadge count={counts.onHold} variant="hold" title={`${counts.onHold} on hold`} />
-          )}
-        </>
-      );
     case 'booked':
       return null;
     case 'texted-offers':

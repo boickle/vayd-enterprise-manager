@@ -75,6 +75,13 @@ import {
   formatSchedulerBookingApiError,
   rolesIncludeAdminBypass,
 } from '../utils/manualBookingPermissions';
+import HouseholdScheduledVisitsWarningModal from '../components/HouseholdScheduledVisitsWarningModal';
+import {
+  buildBookingAppointmentTypeCatalog,
+  findHouseholdScheduledVisitConflicts,
+  shouldWarnHouseholdVisitsOnBook,
+  type HouseholdScheduledVisitConflict,
+} from '../utils/bookingHouseholdVisitWarning';
 import { ScheduleOverrideDayFields } from '../components/ScheduleOverrideDayFields';
 import {
   applyScheduleOverridesForBook,
@@ -279,6 +286,8 @@ type Props = {
   onClose: () => void;
   /** After a successful POST /slot-offers/send from care outreach or schedule loader routing. */
   onSlotOfferSent?: (detail?: { outreachNotesWarning?: string }) => void;
+  /** Jump the practice calendar to an existing household visit from the pre-book warning. */
+  onViewConflictPlacement?: (conflict: HouseholdScheduledVisitConflict) => void;
   onBooked: (detail?: {
     routingFeedbackWarning?: string;
     forwardBookingWarning?: string;
@@ -288,11 +297,11 @@ type Props = {
     savedAppointmentId?: number;
     /** Internal provider id used for the saved visit (for calendar focus after cross-doctor reschedule). */
     primaryProviderId?: string;
-  /** Practice-local date (YYYY-MM-DD) of the booked slot. */
-  anchorDate?: string;
-  /** Appointment type id saved on the calendar visit (modal selection, not prefill default). */
-  bookedAppointmentTypeId?: number;
-}) => void;
+    /** Practice-local date (YYYY-MM-DD) of the booked slot. */
+    anchorDate?: string;
+    /** Appointment type id saved on the calendar visit (modal selection, not prefill default). */
+    bookedAppointmentTypeId?: number;
+  }) => void;
 };
 
 type PetRow = {
@@ -475,6 +484,7 @@ export function SchedulerBookModal({
   onPreviewOnCalendar,
   onClose,
   onSlotOfferSent,
+  onViewConflictPlacement,
   onBooked,
 }: Props) {
   const [combinedQuery, setCombinedQuery] = useState('');
@@ -517,6 +527,10 @@ export function SchedulerBookModal({
   }, [role]);
   const isAdminOrSuper = useMemo(() => rolesIncludeAdminBypass(rolesLower), [rolesLower]);
   const isRoutingBook = isSchedulerRoutingBookPrefill(prefill);
+  const appointmentTypeCatalog = useMemo(
+    () => buildBookingAppointmentTypeCatalog(appointmentTypes),
+    [appointmentTypes],
+  );
 
   useEffect(() => {
     if (!open || isRoutingBook || prefill?.coVisitAddPet) {
@@ -580,6 +594,11 @@ export function SchedulerBookModal({
   const [routingBookVisitEdits, setRoutingBookVisitEdits] = useState<RoutingBookVisitEdit[]>([]);
 
   const [submitting, setSubmitting] = useState(false);
+  const [checkingHouseholdVisits, setCheckingHouseholdVisits] = useState(false);
+  const [householdVisitConflicts, setHouseholdVisitConflicts] = useState<
+    HouseholdScheduledVisitConflict[] | null
+  >(null);
+  const householdVisitCheckBypassRef = useRef(false);
   const [sendingOffer, setSendingOffer] = useState(false);
   const [slotOfferComposeOpen, setSlotOfferComposeOpen] = useState(false);
   const [slotOfferComposeMessage, setSlotOfferComposeMessage] = useState('');
@@ -1653,6 +1672,58 @@ export function SchedulerBookModal({
     return resolveVerifiedAddressText(alternateAddressFields);
   }, [alternateAddressFields, alternateAddressTextForSubmit, showRoutingAlternateAddress]);
 
+  function collectBookAppointmentTypeIds(): number[] {
+    if (perVisitRoutingBook) {
+      return routingBookVisitEdits
+        .filter((v) => v.selected)
+        .map((v) => Number(v.appointmentTypeId))
+        .filter((id) => Number.isFinite(id) && id > 0);
+    }
+    if (perVisitReschedule) {
+      return rescheduleVisitEdits
+        .map((v) => v.appointmentTypeId)
+        .filter((id): id is number => id != null && Number.isFinite(Number(id)))
+        .map(Number);
+    }
+    const id = Number(typeId);
+    return Number.isFinite(id) && id > 0 ? [id] : [];
+  }
+
+  function collectBookPatientIds(): string[] {
+    if (perVisitRoutingBook) {
+      return routingBookVisitEdits
+        .filter((v) => v.selected && !v.isNoPatient && v.patientId?.trim())
+        .map((v) => v.patientId!.trim());
+    }
+    return selectedPatientId?.trim() ? [selectedPatientId.trim()] : [];
+  }
+
+  function collectExcludeAppointmentIds(): number[] {
+    const visitPatches =
+      prefill?.rescheduleVisitPatches?.filter(
+        (v) => Number.isFinite(Number(v.appointmentId)) && v.patientId?.trim(),
+      ) ?? [];
+    if (perVisitReschedule && rescheduleVisitEdits.length > 0) {
+      return [...new Set(rescheduleVisitEdits.map((v) => v.appointmentId))];
+    }
+    if (visitPatches.length > 0) {
+      return [...new Set(visitPatches.map((v) => Number(v.appointmentId)))];
+    }
+    const ids =
+      prefill?.rescheduleAppointmentIds?.length
+        ? prefill.rescheduleAppointmentIds
+        : prefill?.rescheduleAppointmentId != null
+          ? [prefill.rescheduleAppointmentId]
+          : [];
+    return ids.filter((id) => Number.isFinite(Number(id))).map(Number);
+  }
+
+  function activeHouseholdPatientIds(): string[] {
+    return clientPets
+      .filter((p) => p.isDeleted !== true && p.isActive !== false)
+      .map((p) => String(p.id));
+  }
+
   async function tryPreviewOnCalendar(): Promise<boolean> {
     setFormError(null);
     if (!canPreviewOnCalendar || !onPreviewOnCalendar) return false;
@@ -1805,25 +1876,69 @@ export function SchedulerBookModal({
       return;
     }
 
+    const startDateLocal = startLocal?.setZone(practiceTz).startOf('day') ?? null;
+    const endDateLocal = DateTime.fromISO(allDayEndDate, { zone: practiceTz }).startOf('day');
+    const bookAllDay = allDayBookSession && appointmentTypeAllowsAllDay(selectedType);
+    const startIso = bookAllDay
+      ? startDateLocal?.toUTC().toISO()
+      : startLocal?.setZone(practiceTz).toUTC().toISO();
+    const endIso = bookAllDay
+      ? endDateLocal.plus({ days: 1 }).toUTC().toISO()
+      : endLocal?.setZone(practiceTz).toUTC().toISO();
+    if (!startIso || !endIso) {
+      setFormError(bookAllDay ? 'Choose a valid all-day date range.' : 'Invalid start time.');
+      return;
+    }
+
+    const altResolved = await resolveSubmitAlternateAddress();
+    if (!altResolved.ok) {
+      setFormError(altResolved.message);
+      return;
+    }
+    const trimmedAlt = altResolved.text;
+
+    if (
+      !bookedViaRouting &&
+      !householdVisitCheckBypassRef.current &&
+      selectedClientId?.trim()
+    ) {
+      const appointmentTypeIds = collectBookAppointmentTypeIds();
+      if (
+        shouldWarnHouseholdVisitsOnBook({
+          catalog: appointmentTypeCatalog,
+          appointmentTypeIds,
+          clientId: selectedClientId,
+        })
+      ) {
+        setCheckingHouseholdVisits(true);
+        try {
+          const conflicts = await findHouseholdScheduledVisitConflicts({
+            practiceId,
+            clientId: selectedClientId.trim(),
+            placementStartIso: startIso,
+            practiceTz,
+            catalog: appointmentTypeCatalog,
+            householdPatientIds: activeHouseholdPatientIds(),
+            bookingPatientIds: collectBookPatientIds(),
+            excludeAppointmentIds: collectExcludeAppointmentIds(),
+          });
+          if (conflicts.length > 0) {
+            setHouseholdVisitConflicts(conflicts);
+            return;
+          }
+        } finally {
+          setCheckingHouseholdVisits(false);
+        }
+      }
+    } else {
+      householdVisitCheckBypassRef.current = false;
+    }
+
     setSubmitting(true);
     try {
-      const startDateLocal = startLocal?.setZone(practiceTz).startOf('day') ?? null;
-      const endDateLocal = DateTime.fromISO(allDayEndDate, { zone: practiceTz }).startOf('day');
-      const bookAllDay = allDayBookSession && appointmentTypeAllowsAllDay(selectedType);
-      const startIso = bookAllDay
-        ? startDateLocal?.toUTC().toISO()
-        : startLocal?.setZone(practiceTz).toUTC().toISO();
-      const endIso = bookAllDay
-        ? endDateLocal.plus({ days: 1 }).toUTC().toISO()
-        : endLocal?.setZone(practiceTz).toUTC().toISO();
-      if (!startIso || !endIso) {
-        setFormError(bookAllDay ? 'Choose a valid all-day date range.' : 'Invalid start time.');
-        setSubmitting(false);
-        return;
-      }
       const visitPatches =
         prefill?.rescheduleVisitPatches?.filter(
-          (v) => Number.isFinite(Number(v.appointmentId)) && v.patientId?.trim()
+          (v) => Number.isFinite(Number(v.appointmentId)) && v.patientId?.trim(),
         ) ?? [];
       const rescheduleIds =
         perVisitReschedule && rescheduleVisitEdits.length > 0
@@ -1837,13 +1952,6 @@ export function SchedulerBookModal({
                     ? [prefill.rescheduleAppointmentId]
                     : []
               ).filter((id) => Number.isFinite(Number(id)));
-      const altResolved = await resolveSubmitAlternateAddress();
-      if (!altResolved.ok) {
-        setFormError(altResolved.message);
-        setSubmitting(false);
-        return;
-      }
-      const trimmedAlt = altResolved.text;
 
       async function saveAlternateForAppointment(apptId: number) {
         if (!trimmedAlt) return;
@@ -3373,7 +3481,7 @@ export function SchedulerBookModal({
               <button
                 type="button"
                 className="scheduler-book-btn secondary"
-                disabled={submitting || sendingOffer || patientRequiredButMissing}
+                disabled={submitting || sendingOffer || checkingHouseholdVisits || patientRequiredButMissing}
                 onClick={() => void openSlotOfferCompose()}
                 title={
                   patientRequiredButMissing
@@ -3387,14 +3495,16 @@ export function SchedulerBookModal({
             <button
               type="submit"
               className="scheduler-book-btn primary"
-              disabled={submitting || sendingOffer || patientRequiredButMissing}
+              disabled={submitting || sendingOffer || checkingHouseholdVisits || patientRequiredButMissing}
               title={
                 patientRequiredButMissing
                   ? 'Select a patient — this appointment type requires one.'
                   : undefined
               }
             >
-              {submitting
+              {checkingHouseholdVisits
+                ? 'Checking visits…'
+                : submitting
                 ? isRescheduleBook
                   ? 'Saving…'
                   : 'Booking…'
@@ -3412,6 +3522,26 @@ export function SchedulerBookModal({
     </div>,
     document.body
       )}
+      <HouseholdScheduledVisitsWarningModal
+        open={Boolean(householdVisitConflicts?.length)}
+        clientLabel={selectedClientLabel}
+        conflicts={householdVisitConflicts ?? []}
+        continuing={submitting}
+        onCancel={() => setHouseholdVisitConflicts(null)}
+        onViewPlacement={
+          onViewConflictPlacement
+            ? (row) => {
+                setHouseholdVisitConflicts(null);
+                onViewConflictPlacement(row);
+              }
+            : undefined
+        }
+        onContinue={() => {
+          householdVisitCheckBypassRef.current = true;
+          setHouseholdVisitConflicts(null);
+          void handleSubmit({ preventDefault: () => {} } as React.FormEvent);
+        }}
+      />
       <ClientSmsComposeModal
         open={slotOfferComposeOpen}
         clientLabel={selectedClientLabel.trim() || prefill?.clientLabel?.trim() || 'Client'}

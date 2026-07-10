@@ -5286,6 +5286,32 @@ label.scheduler-household-pet-row {
   padding: 8px 12px 0;
 }
 
+.scheduler-edit-preview-popover-reason {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.scheduler-edit-preview-popover-reason-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+}
+
+.scheduler-edit-preview-popover-reason textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+  resize: vertical;
+  min-height: 72px;
+}
+
 .scheduler-edit-preview-popover-contact {
   display: flex;
   flex-wrap: wrap;
@@ -5629,6 +5655,29 @@ label.scheduler-household-pet-row {
   padding: 0;
   background: rgba(15, 23, 42, 0.32);
   backdrop-filter: blur(2px);
+}
+
+/** Household visit warning in routing workspace — calendar stays visible on the right. */
+.scheduler-modal-backdrop--routing-household {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  box-sizing: border-box;
+  background: rgba(248, 250, 252, 0.55);
+  backdrop-filter: none;
+  pointer-events: none;
+}
+
+.scheduler-modal-backdrop--routing-household .scheduler-household-visits-warning-modal {
+  pointer-events: auto;
+  max-height: calc(100% - 24px);
+  box-shadow:
+    0 24px 64px rgba(15, 23, 42, 0.22),
+    0 0 0 1px rgba(15, 23, 42, 0.08);
 }
 
 .scheduler-modal--edit-docked {
@@ -6367,6 +6416,116 @@ label.scheduler-household-pet-row {
     padding: 4px 8px;
     row-gap: 4px;
   }
+}
+
+.scheduler-household-visits-warning-modal {
+  max-width: 520px;
+}
+
+.scheduler-household-visits-warning-lead {
+  margin: 0 0 16px;
+  font-size: 14px;
+  line-height: 1.45;
+  color: #475569;
+}
+
+.scheduler-household-visits-warning-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.scheduler-household-visits-warning-item {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #f8fafc;
+}
+
+.scheduler-household-visits-warning-item--interactive {
+  cursor: pointer;
+  transition:
+    border-color 0.12s ease,
+    box-shadow 0.12s ease,
+    background-color 0.12s ease;
+}
+
+.scheduler-household-visits-warning-item--interactive:hover,
+.scheduler-household-visits-warning-item--previewing {
+  border-color: #fb923c;
+  background: #fff7ed;
+  box-shadow: 0 0 0 2px rgba(249, 115, 22, 0.22);
+}
+
+.scheduler-household-visits-warning-item-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.scheduler-household-visits-warning-meta {
+  font-size: 13px;
+  color: #64748b;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.scheduler-household-visits-warning-hold {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #fef3c7;
+  color: #92400e;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.scheduler-household-visits-warning-when {
+  font-size: 13px;
+  color: #334155;
+}
+
+.scheduler-household-visits-warning-notes {
+  margin-top: 6px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: #475569;
+  white-space: pre-wrap;
+}
+
+.scheduler-household-visits-warning-view {
+  margin-top: 8px;
+  border: none;
+  background: transparent;
+  padding: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #2563eb;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.scheduler-household-visits-warning-view:hover:not(:disabled) {
+  color: #1d4ed8;
+}
+
+.scheduler-household-visits-warning-view:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.scheduler-household-visits-warning-actions {
+  padding: 12px 20px 20px;
 }
 
 @media (max-width: 480px) {

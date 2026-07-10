@@ -35,6 +35,7 @@ import {
 import {
   FORWARD_BOOKING_NAVIGATION_BLOCKED_MESSAGE,
   FORWARD_BOOKING_ROUTE_PATH,
+  hasActiveForwardBookingWorkspaceLock,
   useForwardBookingWorkspaceLockActive,
   useForwardBookingWorkspaceNavigationGuard,
 } from '../utils/forwardBookingWorkspaceGuard';
@@ -116,12 +117,12 @@ export default function ScheduleLayout() {
   useForwardBookingWorkspaceNavigationGuard(forwardBookingWorkspaceLockActive);
 
   useEffect(() => {
-    if (!forwardBookingWorkspaceLockActive) return;
+    if (!hasActiveForwardBookingWorkspaceLock()) return;
     if (!location.pathname.startsWith('/schedule')) return;
     if (location.pathname === FORWARD_BOOKING_ROUTE_PATH) return;
     window.alert(FORWARD_BOOKING_NAVIGATION_BLOCKED_MESSAGE);
     navigate(FORWARD_BOOKING_ROUTE_PATH, { replace: true });
-  }, [forwardBookingWorkspaceLockActive, location.pathname, navigate]);
+  }, [location.pathname, navigate]);
 
   useEffect(() => {
     const mq = window.matchMedia('(min-width: 901px)');

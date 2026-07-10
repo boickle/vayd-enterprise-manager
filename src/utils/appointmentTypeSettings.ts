@@ -112,6 +112,10 @@ export function normalizeAppointmentTypeFromApi(row: AppointmentType): Appointme
     row.excludeFromReminders === true ||
     truthyFlag(r.exclude_from_reminders) ||
     truthyFlag(row.excludeFromReminders);
+  const isHold =
+    row.isHold === true ||
+    truthyFlag(r.is_hold) ||
+    truthyFlag(row.isHold);
   const usesLegacyRouting =
     row.usesLegacyRouting === true ||
     truthyFlag(r.uses_legacy_routing) ||
@@ -136,6 +140,7 @@ export function normalizeAppointmentTypeFromApi(row: AppointmentType): Appointme
     requiresPatient,
     excludeFromRouting,
     excludeFromReminders,
+    isHold,
     usesLegacyRouting,
     allowSchedulingOverride:
       row.allowSchedulingOverride === true || truthyFlag(r.allow_scheduling_override),

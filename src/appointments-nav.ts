@@ -1,4 +1,9 @@
+import { HOLDS_PATH, holdsPathWithHighlight } from './holds-nav';
+
 export const APPOINTMENTS_PATH_PREFIX = '/schedule/appointments';
+
+/** Simple client/patient appointment lookup (upcoming + recent past). */
+export const APPOINTMENT_SEARCH_PATH = `${APPOINTMENTS_PATH_PREFIX}/search`;
 
 /** Default list URL (New tab). */
 export const APPOINTMENT_REQUESTS_LIST_PATH = APPOINTMENTS_PATH_PREFIX;
@@ -61,13 +66,10 @@ export function appointmentRequestsPathForTab(
   opts?: { onHoldOver24Only?: boolean; highlightId?: number },
 ): string {
   if (tab === 'on_hold') {
-    const params = new URLSearchParams();
-    if (opts?.onHoldOver24Only) params.set(APPOINTMENT_REQUESTS_ON_HOLD_OVER24_PARAM, '1');
     if (opts?.highlightId != null) {
-      params.set(APPOINTMENT_REQUESTS_HIGHLIGHT_PARAM, String(opts.highlightId));
+      return holdsPathWithHighlight(opts.highlightId);
     }
-    const qs = params.toString();
-    return qs ? `${APPOINTMENTS_PATH_PREFIX}/on-hold?${qs}` : `${APPOINTMENTS_PATH_PREFIX}/on-hold`;
+    return HOLDS_PATH;
   }
 
   const params = new URLSearchParams();

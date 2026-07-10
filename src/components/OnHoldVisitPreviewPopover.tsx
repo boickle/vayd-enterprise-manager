@@ -117,9 +117,11 @@ export default function OnHoldVisitPreviewPopover({
 
       <div className="scheduler-edit-preview-popover-scroll">
         {displayClient ? (
-          <p className="scheduler-edit-preview-popover-line scheduler-edit-preview-popover-line--strong">
-            {displayClient}
-          </p>
+          <div className="scheduler-edit-preview-popover-client">
+            <p className="scheduler-edit-preview-popover-line scheduler-edit-preview-popover-line--strong">
+              {displayClient}
+            </p>
+          </div>
         ) : null}
 
         <PreviewPopoverClientContact contact={clientContact} />
@@ -137,15 +139,15 @@ export default function OnHoldVisitPreviewPopover({
 
         <div className="scheduler-edit-preview-popover-body">
           <p className="scheduler-edit-preview-popover-line scheduler-edit-preview-popover-line--muted">
-            Review this calendar hold. Edit to change time, visit type, or pets — or go back to On
-            hold.
+            Review this calendar hold. Edit to change time, visit type, or pets — or go back to
+            Holds.
           </p>
         </div>
       </div>
 
       <div className="scheduler-edit-preview-popover-actions scheduler-edit-preview-popover-actions--confirm">
         <button type="button" className="btn secondary" onClick={onBack}>
-          Back to On hold
+          Back to Holds
         </button>
         {onEdit ? (
           <button type="button" className="btn primary" onClick={handleEditClick}>

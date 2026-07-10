@@ -669,7 +669,7 @@ export default function AppointmentRequestForm() {
       zip: '',
       country: '',
     },
-    mailingAddressSame: '',
+    mailingAddressSame: 'No, it is the same.',
     mailingAddressManualEntry: false,
     petInfo: '',
     newClientPets: isLoggedIn ? [] : [defaultNewClientPet.pet],
@@ -3826,7 +3826,7 @@ export default function AppointmentRequestForm() {
               zip: formData.newMailingAddress.zip || '',
               country: formData.newMailingAddress.country || 'US',
             }
-          : !isExistingClient && formData.mailingAddressSame === 'No, it is the same.' && formData.mailingAddress
+          : !isExistingClient && formData.mailingAddressSame === 'Yes, it is different.' && formData.mailingAddress
           ? {
               line1: formData.mailingAddress.line1 || '',
               line2: formData.mailingAddress.line2 || undefined,
@@ -4886,13 +4886,160 @@ export default function AppointmentRequestForm() {
             <div
               style={{
                 marginTop: 8,
+                marginBottom: newClientSectionGap,
+                paddingTop: 20,
+                borderTop: '1px solid #d1d5db',
+              }}
+              data-form-field="mailingAddressSame"
+            >
+              <label style={{ display: 'block', marginBottom: newClientLabelMb, fontWeight: 600, color: '#111827', fontSize: '14px' }}>
+                Do you have a different mailing address where we could send medications or other information if needed?
+              </label>
+              <p style={{ fontSize: '13px', color: '#6b7280', marginTop: 0, marginBottom: '12px', lineHeight: 1.5 }}>
+                We ask in case we ever need to mail prescriptions, lab results, or other paperwork to you.
+              </p>
+              <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: newClientCompactForm ? 8 : 12 }}>
+                {(
+                  [
+                    { value: 'No, it is the same.', label: 'No — same as my home address' },
+                    { value: 'Yes, it is different.', label: 'Yes — I have a different mailing address' },
+                  ] as const
+                ).map(({ value, label }) => (
+                  <label
+                    key={value}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      cursor: 'pointer',
+                      padding: newClientInputPadding,
+                      border: `1px solid ${errors.mailingAddressSame ? '#ef4444' : formData.mailingAddressSame === value ? '#10b981' : '#d1d5db'}`,
+                      borderRadius: newClientInputRadius,
+                      backgroundColor: formData.mailingAddressSame === value ? '#f0fdf4' : '#fff',
+                      flex: 1,
+                      fontSize: '14px',
+                    }}
+                  >
+                    <input
+                      type="radio"
+                      name="mailingAddressSame"
+                      value={value}
+                      checked={formData.mailingAddressSame === value}
+                      onChange={(e) => updateFormData('mailingAddressSame', e.target.value)}
+                      style={{ margin: 0 }}
+                    />
+                    <span>{label}</span>
+                  </label>
+                ))}
+              </div>
+              {errors.mailingAddressSame && (
+                <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '8px' }}>{errors.mailingAddressSame}</div>
+              )}
+            </div>
+
+            {formData.mailingAddressSame === 'Yes, it is different.' && (
+              <div
+                style={{
+                  marginTop: -8,
+                  marginBottom: newClientSectionGap,
+                }}
+                data-form-field="mailingAddress.line1"
+              >
+                <label style={{ display: 'block', marginBottom: newClientLabelMb, fontWeight: 600, color: '#111827', fontSize: '14px' }}>
+                  Mailing address
+                </label>
+                <label
+                  style={{
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    gap: '8px',
+                    marginBottom: '12px',
+                    cursor: 'pointer',
+                    fontSize: '14px',
+                    color: '#374151',
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={!!formData.mailingAddressManualEntry}
+                    onChange={(e) => {
+                      const manual = e.target.checked;
+                      setFormData((prev) => ({
+                        ...prev,
+                        mailingAddressManualEntry: manual,
+                        mailingAddress: {
+                          line1: '',
+                          city: '',
+                          state: '',
+                          zip: '',
+                          country: 'US',
+                        },
+                      }));
+                      if (errors['mailingAddress.line1']) {
+                        setErrors((prev) => {
+                          const next = { ...prev };
+                          delete next['mailingAddress.line1'];
+                          delete next['mailingAddress.city'];
+                          delete next['mailingAddress.state'];
+                          delete next['mailingAddress.zip'];
+                          return next;
+                        });
+                      }
+                    }}
+                    style={{ marginTop: '3px' }}
+                  />
+                  <span>My mailing address is a PO Box or isn&apos;t listed — I&apos;ll enter it manually</span>
+                </label>
+                {formData.mailingAddressManualEntry ? (
+                  <ManualAddressFields
+                    value={
+                      formData.mailingAddress ?? {
+                        line1: '',
+                        city: '',
+                        state: '',
+                        zip: '',
+                        country: 'US',
+                      }
+                    }
+                    onChange={(address) => setAddressFields('mailingAddress', address)}
+                    errors={errors}
+                    errorPrefix="mailingAddress"
+                    isMobile={isMobile}
+                    line1Placeholder="PO Box 123 or street address"
+                  />
+                ) : (
+                  <AddressAutocomplete
+                    id="mailing-address"
+                    value={
+                      formData.mailingAddress ?? {
+                        line1: '',
+                        city: '',
+                        state: '',
+                        zip: '',
+                        country: 'US',
+                      }
+                    }
+                    onChange={(address) => setAddressFields('mailingAddress', address)}
+                    error={errors['mailingAddress.line1']}
+                    placeholder="Start typing your mailing address"
+                    compact={newClientCompactForm}
+                    showConfirmedMessage={!newClientCompactForm}
+                    suppressDropdown={showExistingClientModal || showMembershipModal || !!appointmentTypeChangeModal}
+                  />
+                )}
+              </div>
+            )}
+
+            <div
+              style={{
+                marginTop: 8,
                 marginBottom: isNewClientIntroStep ? 0 : 20,
                 paddingTop: 20,
                 borderTop: '1px solid #d1d5db',
               }}
             >
               <label style={{ display: 'block', marginBottom: newClientLabelMb, fontWeight: 600, color: '#111827', fontSize: '14px' }}>
-                What veterinary practice(s), including specialists, have you used previously for your pet(s)?
+                Which veterinary practice(s), including specialists, have you used previously for your pet(s)?
               </label>
               <textarea
                 value={formData.previousVeterinaryPractices || ''}

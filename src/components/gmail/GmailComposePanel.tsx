@@ -11,7 +11,9 @@ import {
   formatFromAlias,
   loadComposeFromThreadDraft,
   loadSendAsAliases,
+  replaceTrailingSignature,
   saveComposeDraft,
+  signatureForFromAlias,
   signatureHtmlForFromAlias,
   submitCompose,
   type ComposeContext,
@@ -128,13 +130,14 @@ export default function GmailComposePanel({
         setFrom(fromVal);
         const sigHtml = signatureHtmlForFromAlias(list, fromVal);
         setSignatureHtml(sigHtml);
+        const sigPlain = signatureForFromAlias(list, fromVal);
 
         const draft = buildComposeDraft({ ...context, mailboxEmail: mailbox });
         setTo(draft.to);
         setCc(draft.cc);
         setSubject(draft.subject);
         setQuotedSuffix(draft.quotedSuffix);
-        setUserBody('');
+        setUserBody(sigPlain);
         setThreadId(draft.threadId);
         setInReplyTo(draft.inReplyTo);
         setReferences(draft.references);
@@ -154,11 +157,15 @@ export default function GmailComposePanel({
     const existing = loadComposeFromThreadDraft(threadMessages, signatureHtml);
     if (!existing) return;
     setDraftId(existing.draftId);
-    setUserBody((prev) => (prev.trim() ? prev : existing.userBody));
+    setUserBody(existing.userBody);
   }, [threadMessages, signatureHtml]);
 
   useEffect(() => {
-    bodyRef.current?.focus();
+    const el = bodyRef.current;
+    el?.focus();
+    if (el) {
+      el.setSelectionRange(0, 0);
+    }
     panelRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }, [context.mode, context.threadId, context.replyTo?.id]);
 
@@ -208,7 +215,7 @@ export default function GmailComposePanel({
         cc: fields.cc,
         subject: fields.subject,
         userText: fields.userBody,
-        signatureHtml: fields.signatureHtml,
+        signatureHtml: '',
         quotedSuffix: fields.quotedSuffix,
         quotedMessage: context.replyTo ?? null,
         threadId: fields.threadId,
@@ -257,9 +264,12 @@ export default function GmailComposePanel({
   }, [flushDraftSave]);
 
   const handleFromChange = (nextFrom: string) => {
+    const oldSigPlain = signatureForFromAlias(aliases, from);
     setFrom(nextFrom);
     let html = signatureHtmlForFromAlias(aliases, nextFrom);
     setSignatureHtml(html);
+    const newSigPlain = html ? signatureForFromAlias(aliases, nextFrom) : '';
+    setUserBody((prev) => replaceTrailingSignature(prev, oldSigPlain, newSigPlain));
 
     if (!html) {
       const sendAsEmail = extractEmail(nextFrom);
@@ -271,7 +281,19 @@ export default function GmailComposePanel({
               a.sendAsEmail.toLowerCase() === sendAsEmail.toLowerCase() ? { ...a, ...detail } : a,
             ),
           );
-          setSignatureHtml(detail.signature!.trim());
+          const resolvedHtml = detail.signature!.trim();
+          setSignatureHtml(resolvedHtml);
+          const resolvedPlain = signatureForFromAlias(
+            aliases.map((a) =>
+              a.sendAsEmail.toLowerCase() === sendAsEmail.toLowerCase()
+                ? { ...a, ...detail }
+                : a,
+            ),
+            nextFrom,
+          );
+          setUserBody((prev) =>
+            replaceTrailingSignature(prev, oldSigPlain, resolvedPlain),
+          );
         })
         .catch(() => {
           /* signature optional */
@@ -362,7 +384,7 @@ export default function GmailComposePanel({
     try {
       const { bodyText, bodyHtml } = buildComposeSendBodies({
         userText: userBody,
-        signatureHtml,
+        signatureHtml: '',
         quotedSuffix,
         quotedMessage: context.replyTo ?? null,
       });
@@ -510,19 +532,12 @@ export default function GmailComposePanel({
         <textarea
           ref={bodyRef}
           className="gmail-compose-panel__body"
-          rows={variant === 'float' ? 8 : 2}
+          rows={variant === 'float' ? 8 : 6}
           value={userBody}
           disabled={busy}
           placeholder=""
           onChange={(e) => setUserBody(e.target.value)}
         />
-
-        {signatureHtml ? (
-          <div
-            className="gmail-compose-panel__signature"
-            dangerouslySetInnerHTML={{ __html: signatureHtml }}
-          />
-        ) : null}
 
         {quotedSuffix ? (
           <pre className="gmail-compose-panel__quote">{quotedSuffix.trimStart()}</pre>

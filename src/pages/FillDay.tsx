@@ -21,6 +21,7 @@ import {
   buildRoutingForwardBookingIntentFromEntry,
   writeRoutingForwardBookingIntent,
 } from '../utils/routingForwardBookingIntent';
+import { workingNotesFromReminders } from '../utils/reminderWorkingNotes';
 import {
   createForwardBookingsFromScheduleLoader,
   scheduleLoaderCandidateHasPastDueReminders,
@@ -32,15 +33,23 @@ import {
 } from '../utils/scheduleLoaderReturnSession';
 import {
   buildScheduleLoaderBookedSmsMessage,
+  providerLastNameFromDisplayName,
   resolveScheduleLoaderSmsBookedSlot,
 } from '../utils/scheduleLoaderSmsMessage';
+import { holdReleaseOptsForAppointment } from '../utils/forwardBookingSmsMessage';
+import { careOutreachSmsToEmail } from '../utils/clientOutreachEmailMessage';
+import { ClientEmailComposeModal } from '../components/ClientEmailComposeModal';
+import { useGmailInboxAccess } from '../hooks/useGmailInboxAccess';
 import {
   readAuthDoctorCache,
   writeAuthDoctorCache,
 } from '../utils/routingUiSnapshot';
 import { practiceTimeZoneOrDefault } from '../utils/practiceTimezone';
-import { fetchClientMessages, type ClientMessagesResponse } from '../api/clientPortal';
+import { fetchClientMessagesCached } from '../utils/clientMessagesCache';
+import { fetchSchedulingOutreachSmsFrom } from '../api/clientSms';
 import { BookPatientChartButton } from '../components/BookPatientChartButton';
+import { ClientMessagesHistoryModal } from '../components/ClientMessagesHistoryModal';
+import { ClientEmailHistoryModal } from '../components/ClientEmailHistoryModal';
 import { SCHEDULING_TOOLS_PAGE_REFRESH_EVENT } from '../hooks/useSchedulingToolsNavCounts';
 import SchedulingToolsListPagination, {
   paginateSchedulingToolsList,
@@ -242,6 +251,11 @@ export default function FillDayPage() {
   const [pendingSmsCandidate, setPendingSmsCandidate] = useState<FillDayCandidate | null>(null);
   const [smsMessagePreview, setSmsMessagePreview] = useState<string>('');
   const [sendWithOverride, setSendWithOverride] = useState(false);
+  const [emailModalOpen, setEmailModalOpen] = useState(false);
+  const [pendingEmailCandidate, setPendingEmailCandidate] = useState<FillDayCandidate | null>(null);
+  const [emailSubject, setEmailSubject] = useState('');
+  const [emailBodyText, setEmailBodyText] = useState('');
+  const { allowed: canAccessGmailInbox } = useGmailInboxAccess();
 
   // Check if we're in production
   // Vite provides:
@@ -278,12 +292,12 @@ export default function FillDayPage() {
   const [highlightClientId, setHighlightClientId] = useState<number | null>(null);
 
 
-  // Messages History Modal
-  const [messagesModalOpen, setMessagesModalOpen] = useState(false);
-  const [selectedClientId, setSelectedClientId] = useState<number | null>(null);
-  const [messagesData, setMessagesData] = useState<ClientMessagesResponse | null>(null);
-  const [messagesLoading, setMessagesLoading] = useState(false);
-  const [messagesError, setMessagesError] = useState<string | null>(null);
+  // Messages / email history
+  const [messagesClientId, setMessagesClientId] = useState<number | null>(null);
+  const [messagesClientLabel, setMessagesClientLabel] = useState('');
+  const [emailHistoryClientId, setEmailHistoryClientId] = useState<number | null>(null);
+  const [emailHistoryClientLabel, setEmailHistoryClientLabel] = useState('');
+  const [smsFromLine, setSmsFromLine] = useState<string | null>(null);
   const [messageCounts, setMessageCounts] = useState<Record<number, number>>({});
 
   // PDF export
@@ -315,6 +329,12 @@ export default function FillDayPage() {
       alive = false;
     };
   }, [userEmail]);
+
+  useEffect(() => {
+    void fetchSchedulingOutreachSmsFrom().then((phone) => {
+      if (phone) setSmsFromLine(phone);
+    });
+  }, []);
 
   const flushOutreachNotesSave = useCallback(async (reminderId: number, value: string) => {
     setOutreachNoteSaving((s) => ({ ...s, [reminderId]: true }));
@@ -544,11 +564,16 @@ export default function FillDayPage() {
             endIso: pending.bookedAppointmentEnd ?? pending.bookedAppointmentStart,
           }
         );
+        const holdRelease = holdReleaseOptsForAppointment(
+          pending.bookedAppointmentStart,
+          FILL_DAY_PRACTICE_TZ,
+        );
         const message = buildScheduleLoaderBookedSmsMessage({
           petNames,
           clientDisplayName: pending.clientDisplayName ?? candidate.clientName,
           providerLastName: pending.providerLastName,
           ...(bookedSlot ? { bookedSlot } : {}),
+          holdRelease,
         });
         setSmsError((prev) => ({ ...prev, [candidate.clientId]: null }));
         setSmsMessagePreview(message);
@@ -797,6 +822,36 @@ export default function FillDayPage() {
     return parts.join(' ');
   }
 
+  function buildFillDayOutreachSmsMessage(candidate: FillDayCandidate): string {
+    const petNames =
+      candidate.patientNames?.length > 0
+        ? candidate.patientNames
+        : fillDayPreviewPatients(candidate).map((p) => p.name);
+    return buildScheduleLoaderBookedSmsMessage({
+      petNames,
+      clientDisplayName: candidate.clientName,
+      providerLastName: providerLastNameFromDisplayName(selectedDoctorName),
+      anyPastDue: scheduleLoaderCandidateHasPastDueReminders(candidate),
+    });
+  }
+
+  function handleOpenEmailModal(candidate: FillDayCandidate) {
+    const providerLastName = providerLastNameFromDisplayName(selectedDoctorName);
+    const sms = smsMessagePreview.trim() || buildFillDayOutreachSmsMessage(candidate);
+    const email = careOutreachSmsToEmail(sms, providerLastName);
+    setEmailSubject(email.subject);
+    setEmailBodyText(email.bodyText);
+    setPendingEmailCandidate(candidate);
+    setEmailModalOpen(true);
+  }
+
+  function handleCloseEmailModal() {
+    setEmailModalOpen(false);
+    setPendingEmailCandidate(null);
+    setEmailSubject('');
+    setEmailBodyText('');
+  }
+
   function handleOpenSmsModal(candidate: FillDayCandidate, withOverride: boolean = false) {
     setSmsMessagePreview('');
     setPendingSmsCandidate(candidate);
@@ -912,6 +967,7 @@ export default function FillDayPage() {
 
       writeRoutingForwardBookingIntent({
         ...baseIntent,
+        reminderOutreachNotes: workingNotesFromReminders(candidate.reminders ?? []),
         returnToListAfterBook: true,
         workspaceActive: true,
         origin: 'schedule_loader',
@@ -939,36 +995,32 @@ export default function FillDayPage() {
     }
   }
 
-  // Handle opening Messages History modal
-  async function handleOpenMessagesModal(clientId: number) {
-    setSelectedClientId(clientId);
-    setMessagesModalOpen(true);
-    setMessagesLoading(true);
-    setMessagesError(null);
-    setMessagesData(null);
+  function handleOpenEmailHistoryModal(clientId: number, clientLabel?: string) {
+    setEmailHistoryClientId(clientId);
+    setEmailHistoryClientLabel(clientLabel?.trim() ?? '');
+  }
 
-    try {
-      const data = await fetchClientMessages(clientId);
-      // Cache the total message count
-      setMessageCounts((prev) => ({ ...prev, [clientId]: data.totalMessages }));
-      // Limit to 50 messages as specified
-      const limitedMessages = {
-        ...data,
-        messages: data.messages.slice(0, 50),
-      };
-      setMessagesData(limitedMessages);
-    } catch (e: any) {
-      setMessagesError(e?.response?.data?.message || e?.message || 'Failed to load messages');
-    } finally {
-      setMessagesLoading(false);
-    }
+  function handleCloseEmailHistoryModal() {
+    setEmailHistoryClientId(null);
+    setEmailHistoryClientLabel('');
+  }
+
+  function handleOpenMessagesModal(clientId: number, clientLabel?: string) {
+    setMessagesClientId(clientId);
+    setMessagesClientLabel(clientLabel?.trim() ?? '');
+    if (messageCounts[clientId] !== undefined) return;
+    void fetchClientMessagesCached(clientId)
+      .then((data) => {
+        setMessageCounts((prev) => ({ ...prev, [clientId]: data.totalMessages }));
+      })
+      .catch(() => {
+        /* badge optional */
+      });
   }
 
   function handleCloseMessagesModal() {
-    setMessagesModalOpen(false);
-    setSelectedClientId(null);
-    setMessagesData(null);
-    setMessagesError(null);
+    setMessagesClientId(null);
+    setMessagesClientLabel('');
   }
 
   const canSendPendingSms =
@@ -1378,18 +1430,19 @@ export default function FillDayPage() {
                     </div>
                   )}
                 </div>
-                <div style={{ textAlign: 'right', marginLeft: '16px' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
                   <div style={{ fontSize: '14px', color: '#6b7280', marginBottom: '4px' }}>
                     Hole #{candidate.holeIndex}
                   </div>
                   <div style={{ fontSize: '18px', fontWeight: 700, color: '#4FB128', marginBottom: '8px' }}>
                     Score: {candidate.finalScore.toFixed(1)}
                   </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'flex-end' }}>
                   <button
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
-                      handleOpenMessagesModal(candidate.clientId);
+                      handleOpenEmailHistoryModal(candidate.clientId, candidate.clientName);
                     }}
                     style={{
                       fontSize: '14px',
@@ -1408,14 +1461,40 @@ export default function FillDayPage() {
                       e.currentTarget.style.background = 'transparent';
                     }}
                   >
-                    Messages History
+                    Email history
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleOpenMessagesModal(candidate.clientId, candidate.clientName);
+                    }}
+                    style={{
+                      fontSize: '14px',
+                      color: '#4FB128',
+                      background: 'transparent',
+                      border: '1px solid #4FB128',
+                      borderRadius: '6px',
+                      padding: '6px 12px',
+                      cursor: 'pointer',
+                      fontWeight: 500,
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = '#f0f7f4';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = 'transparent';
+                    }}
+                  >
+                    Messages history
                     {messageCounts[candidate.clientId] !== undefined && (
                       <span style={{ marginLeft: '6px', fontWeight: 600 }}>
                         ({messageCounts[candidate.clientId]})
                       </span>
                     )}
                   </button>
-                </div>
+                  </div>
+                  </div>
               </div>
 
               {/* Pets and Reminders */}
@@ -1660,8 +1739,15 @@ export default function FillDayPage() {
                                           }}
                                           htmlFor={`fill-day-outreach-${rid}`}
                                         >
-                                          Outreach notes
+                                          Contact log
                                         </label>
+                                        <p
+                                          className="settings-muted"
+                                          style={{ margin: '0 0 6px', fontSize: 12, lineHeight: 1.35 }}
+                                        >
+                                          Shared across care outreach, schedule loader, on hold, and
+                                          the scheduler.
+                                        </p>
                                         <textarea
                                           id={`fill-day-outreach-${rid}`}
                                           rows={3}
@@ -1672,7 +1758,7 @@ export default function FillDayPage() {
                                           onChange={(e) => onOutreachNotesChange(rid, e.target.value)}
                                           onBlur={(e) => void onOutreachNotesBlur(rid, e.currentTarget.value)}
                                           placeholder="e.g. 11/14/2026 DF – LMOM"
-                                          aria-label={`Outreach notes for ${reminder.description}`}
+                                          aria-label={`Contact log for ${reminder.description}`}
                                           style={{
                                             display: 'block',
                                             width: '100%',
@@ -1826,6 +1912,28 @@ export default function FillDayPage() {
                 >
                   {sendingSms[candidate.clientId] ? 'Sending…' : 'Text client'}
                 </button>
+                {canAccessGmailInbox ? (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      handleOpenEmailModal(candidate);
+                    }}
+                    style={{
+                      padding: '10px 20px',
+                      background: '#fff',
+                      color: '#4FB128',
+                      border: '2px solid #4FB128',
+                      borderRadius: '8px',
+                      fontSize: '14px',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Email client
+                  </button>
+                ) : null}
                 {!isProd && (
                   <button
                     type="button"
@@ -1977,141 +2085,31 @@ export default function FillDayPage() {
         document.body
       )}
 
-      {/* Messages History Modal */}
-      {messagesModalOpen && typeof document !== 'undefined' && document.body && createPortal(
-        <div
-          role="dialog"
-          aria-modal="true"
-          onClick={handleCloseMessagesModal}
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            background: 'rgba(0,0,0,0.45)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 9999,
-            padding: 16,
-          }}
-        >
-          <div
-            className="card"
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              width: 'min(800px, 90vw)',
-              maxHeight: '90vh',
-              overflow: 'auto',
-              padding: '24px',
-              borderRadius: '12px',
-              background: '#fff',
-            }}
-          >
-            <div style={{ marginBottom: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-              <div>
-                <h3 style={{ margin: '0 0 8px', fontSize: '20px', fontWeight: 600 }}>
-                  Messages History
-                </h3>
-                {messagesData && (
-                  <p style={{ margin: 0, color: '#6b7280', fontSize: '14px' }}>
-                    {messagesData.totalMessages} {messagesData.totalMessages === 1 ? 'message' : 'messages'} total
-                    {messagesData.totalMessages > 50 && ' (showing most recent 50)'}
-                  </p>
-                )}
-              </div>
-              <button
-                onClick={handleCloseMessagesModal}
-                style={{
-                  background: 'transparent',
-                  border: 'none',
-                  fontSize: '24px',
-                  cursor: 'pointer',
-                  color: '#6b7280',
-                  padding: '0',
-                  width: '32px',
-                  height: '32px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
-              >
-                ×
-              </button>
-            </div>
+      {emailModalOpen && pendingEmailCandidate ? (
+        <ClientEmailComposeModal
+          open
+          clientId={pendingEmailCandidate.clientId}
+          clientLabel={pendingEmailCandidate.clientName}
+          initialSubject={emailSubject}
+          initialBodyText={emailBodyText}
+          onClose={handleCloseEmailModal}
+        />
+      ) : null}
 
-            {messagesLoading && (
-              <div style={{ textAlign: 'center', padding: '40px', color: '#6b7280' }}>
-                Loading messages...
-              </div>
-            )}
+      <ClientMessagesHistoryModal
+        open={messagesClientId != null}
+        clientId={messagesClientId}
+        clientLabel={messagesClientLabel}
+        openPhoneLine={smsFromLine}
+        onClose={handleCloseMessagesModal}
+      />
 
-            {messagesError && (
-              <div
-                style={{
-                  padding: '16px',
-                  background: '#fef2f2',
-                  border: '1px solid #fecaca',
-                  borderRadius: '8px',
-                  color: '#dc2626',
-                  marginBottom: '16px',
-                }}
-              >
-                <strong>Error:</strong> {messagesError}
-              </div>
-            )}
-
-            {messagesData && !messagesLoading && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                {messagesData.messages.length === 0 ? (
-                  <div style={{ textAlign: 'center', padding: '40px', color: '#6b7280' }}>
-                    No messages found for this client.
-                  </div>
-                ) : (
-                  messagesData.messages.map((message) => {
-                    const isIncoming = message.direction === 'incoming';
-                    const createdAt = DateTime.fromISO(message.createdAt);
-                    const formattedDate = createdAt.isValid
-                      ? createdAt.toFormat('MMM dd, yyyy h:mm a')
-                      : message.createdAt;
-
-                    return (
-                      <div
-                        key={message.id}
-                        style={{
-                          padding: '16px',
-                          background: isIncoming ? '#f0f7f4' : '#f9fafb',
-                          border: `1px solid ${isIncoming ? '#4FB128' : '#e5e7eb'}`,
-                          borderRadius: '8px',
-                          borderLeft: `4px solid ${isIncoming ? '#4FB128' : '#6b7280'}`,
-                        }}
-                      >
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px', flexWrap: 'wrap', gap: '8px' }}>
-                          <div style={{ fontSize: '12px', fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                            {isIncoming ? '📥 Incoming' : '📤 Outgoing'}
-                          </div>
-                          <div style={{ fontSize: '12px', color: '#6b7280' }}>
-                            {formattedDate}
-                          </div>
-                        </div>
-                        <div style={{ fontSize: '14px', color: '#111827', marginBottom: '8px', whiteSpace: 'pre-wrap' }}>
-                          {message.content}
-                        </div>
-                        <div style={{ fontSize: '12px', color: '#9ca3af' }}>
-                          {isIncoming ? `From: ${message.from}` : `To: ${Array.isArray(message.to) ? message.to.join(', ') : message.to}`}
-                          {message.status && ` · Status: ${message.status}`}
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-            )}
-          </div>
-        </div>,
-        document.body
-      )}
+      <ClientEmailHistoryModal
+        open={emailHistoryClientId != null}
+        clientId={emailHistoryClientId}
+        clientLabel={emailHistoryClientLabel}
+        onClose={handleCloseEmailHistoryModal}
+      />
     </div>
   );
 }

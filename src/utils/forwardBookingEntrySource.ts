@@ -70,7 +70,7 @@ export function parseForwardBookingSourceChipFilter(
   return null;
 }
 
-/** Appointment-request holds are triaged under /schedule/appointments/on-hold. */
+/** Appointment-request holds are triaged on the Holds board (/schedule/holds). */
 export function forwardBookingOnHoldBelongsInSchedulingTools(
   entry: Pick<ForwardBookingEntry, 'createdVia'>
 ): boolean {

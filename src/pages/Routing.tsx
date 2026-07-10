@@ -58,7 +58,6 @@ import { fetchPrimaryProviders } from '../api/employee';
 import { lookupClientZoneForAddress, clientZoneLookupIsOutOfServiceArea, type ClientZoneLookupResult } from '../api/zoneLookup';
 import {
   fetchVeterinariansForDoctorSelect,
-  fetchProvidersForAsapAllDoctorSearch,
   findDoctorsNotAssignedToClientZone,
   formatDoctorSelectSeeingClientsBadge,
   formatDoctorZoneConfirmMessage,
@@ -174,6 +173,23 @@ import {
 } from '../utils/routingCandidates';
 import { submitRoutingFeedback } from '../api/routingFeedback';
 import { DEFAULT_PRACTICE_TIMEZONE } from '../utils/practiceTimezone';
+import HouseholdScheduledVisitsWarningModal from '../components/HouseholdScheduledVisitsWarningModal';
+import {
+  buildBookingAppointmentTypeCatalog,
+  dispatchRoutingFocusHouseholdVisit,
+  findHouseholdScheduledVisitConflicts,
+  resolveRoutingHouseholdVisitClientId,
+  shouldWarnHouseholdVisitsOnRoutingSearch,
+  unpinRoutingHouseholdVisitHighlight,
+  type HouseholdScheduledVisitConflict,
+} from '../utils/bookingHouseholdVisitWarning';
+import { buildSchedulerFocusAppointmentUrl } from '../utils/schedulerFocusAppointment';
+import {
+  clearRoutingHouseholdVisitAck,
+  isRoutingHouseholdVisitAcked,
+  readRoutingHouseholdVisitAckClientId,
+  writeRoutingHouseholdVisitAck,
+} from '../utils/routingHouseholdVisitAck';
 import {
   clearSchedulerHandoffPreferRoutingDoctor,
   readSchedulerCalendarHandoff,
@@ -1518,6 +1534,47 @@ function endOfDayOverrunSeconds(
 
 const SELECTED_DOCTORS_STORAGE_KEY = 'routing:selected-doctors';
 
+type StoredDoctorSelection = {
+  doctorIds: string[];
+  zoneLabel?: string | null;
+  appointmentTypeId?: number | null;
+};
+
+function readStoredDoctorSelection(): StoredDoctorSelection | null {
+  try {
+    const raw = localStorage.getItem(SELECTED_DOCTORS_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as unknown;
+    if (Array.isArray(parsed)) {
+      return {
+        doctorIds: parsed.filter((id): id is string => typeof id === 'string'),
+      };
+    }
+    if (parsed && typeof parsed === 'object' && Array.isArray((parsed as StoredDoctorSelection).doctorIds)) {
+      const stored = parsed as StoredDoctorSelection;
+      return {
+        doctorIds: stored.doctorIds.filter((id): id is string => typeof id === 'string'),
+        zoneLabel: stored.zoneLabel ?? null,
+        appointmentTypeId: stored.appointmentTypeId ?? null,
+      };
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+function storedDoctorSelectionMatchesContext(
+  stored: StoredDoctorSelection,
+  zoneLabel: string | null,
+  appointmentTypeId: number | null,
+): boolean {
+  if (stored.zoneLabel == null && stored.appointmentTypeId == null) return false;
+  const zoneOk = (stored.zoneLabel ?? null) === zoneLabel;
+  const typeOk = (stored.appointmentTypeId ?? null) === appointmentTypeId;
+  return zoneOk && typeOk;
+}
+
 type RoutingDoctorPick = {
   id: string | number;
   name: string;
@@ -1526,7 +1583,25 @@ type RoutingDoctorPick = {
   seeingClients?: boolean;
   acceptingNewPatients?: boolean;
   transitioningOutOfClientZone?: boolean;
+  acceptsAppointmentType?: boolean;
 };
+
+/** Pre-check in-zone doctors who accept the selected appointment type (not transitioning out). */
+function isDefaultDoctorSelectChecked(provider: RoutingDoctorPick): boolean {
+  if (provider.seeingClients !== true || provider.transitioningOutOfClientZone === true) {
+    return false;
+  }
+  return provider.acceptsAppointmentType !== false;
+}
+
+function sortDoctorSelectProviders(providers: RoutingDoctorPick[]): RoutingDoctorPick[] {
+  return [...providers].sort((a, b) => {
+    const aChecked = isDefaultDoctorSelectChecked(a);
+    const bChecked = isDefaultDoctorSelectChecked(b);
+    if (aChecked !== bChecked) return aChecked ? -1 : 1;
+    return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+  });
+}
 
 function deriveRoutingRequestId(res: Result | null | undefined): string | undefined {
   if (!res) return undefined;
@@ -1790,6 +1865,17 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     proceed: () => void;
     message: string;
   } | null>(null);
+  const [householdVisitConfirm, setHouseholdVisitConfirm] = useState<{
+    conflicts: HouseholdScheduledVisitConflict[];
+    blocking: boolean;
+    proceed?: () => void;
+  } | null>(null);
+  const [householdVisitBanner, setHouseholdVisitBanner] = useState<{
+    clientId: string;
+    conflicts: HouseholdScheduledVisitConflict[];
+  } | null>(null);
+  const [checkingHouseholdVisits, setCheckingHouseholdVisits] = useState(false);
+  const householdVisitLastFocusRef = useRef<HouseholdScheduledVisitConflict | null>(null);
 
   // -------- Doctor search --------
   const [doctorQuery, setDoctorQuery] = useState(() => bootstrap.doctorQuery);
@@ -1826,6 +1912,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
   const [selectedDoctorIds, setSelectedDoctorIds] = useState<string[]>([]);
   const [providersLoading, setProvidersLoading] = useState(false);
   const [pendingEndpoint, setPendingEndpoint] = useState<string | null>(null);
+  const [pendingAsapAllDoctorSearch, setPendingAsapAllDoctorSearch] = useState(false);
 
   // -------- Winner doctor name cache --------
   const [doctorNames, setDoctorNames] = useState<Record<string, string>>(() => ({ ...bootstrap.doctorNames }));
@@ -1969,8 +2056,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
   const appointmentRequestStaticPatients = useMemo(() => {
     if (!appointmentRequestPerPetRouting || !activeAppointmentRequestIntent) return undefined;
     if (
-      activeAppointmentRequestIntent.isAlternateStop &&
-      !activeAppointmentRequestIntent.clientId?.trim()
+      activeAppointmentRequestIntent.isAlternateStop
     ) {
       return appointmentRequestRoutingPatientChips(activeAppointmentRequestIntent);
     }
@@ -1978,8 +2064,19 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
   }, [appointmentRequestPerPetRouting, activeAppointmentRequestIntent]);
 
   const lockAppointmentRequestClient =
-    hasActiveAppointmentRequestWorkspace && Boolean(activeAppointmentRequestIntent?.clientId?.trim());
+    hasActiveAppointmentRequestWorkspace &&
+    Boolean(activeAppointmentRequestIntent?.clientId?.trim()) &&
+    !activeAppointmentRequestIntent?.isAlternateStop;
   const lockQueueClient = lockForwardBookingClient || lockAppointmentRequestClient;
+
+  const householdVisitClientId = useMemo(
+    () =>
+      resolveRoutingHouseholdVisitClientId({
+        routingFormClientId: form.newAppt.clientId,
+        appointmentRequestClientId: activeAppointmentRequestIntent?.clientId,
+      }),
+    [form.newAppt.clientId, activeAppointmentRequestIntent?.clientId],
+  );
 
   const activeRescheduleIntent = useMemo(
     () => readRoutingRescheduleIntent(),
@@ -2458,13 +2555,15 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
         }
       }
 
-      const fallback = defaultRoutingAppointmentTypeSelection(routingAppointmentTypes);
-      if (fallback) {
-        setScheduleBookTypeId(fallback.id);
-        setRoutingApptStatsTypeKey(fallback.statsTypeKey);
-      }
-
-      const typeName = fallback?.statsTypeKey ?? null;
+      const typeName = (() => {
+        const fallback = defaultRoutingAppointmentTypeSelection(routingAppointmentTypes);
+        if (fallback) {
+          setScheduleBookTypeId(fallback.id);
+          setRoutingApptStatsTypeKey(fallback.statsTypeKey);
+          return fallback.statsTypeKey;
+        }
+        return null;
+      })();
 
       if (!syncedClient) {
         const alerts = intent.clientAlerts;
@@ -2717,8 +2816,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       if (
         !cancelled &&
         usesPerPetTypes &&
-        intent.isAlternateStop &&
-        !intent.clientId?.trim()
+        intent.isAlternateStop
       ) {
         const chips = appointmentRequestRoutingPatientChips(intent);
         if (chips.length > 0) {
@@ -2745,7 +2843,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       if (flashFields.length > 0) triggerRoutingPrefillFlash(flashFields);
 
       routingPatientSelectionClientRef.current = null;
-      if (!(usesPerPetTypes && intent.isAlternateStop && !intent.clientId?.trim())) {
+      if (!(usesPerPetTypes && intent.isAlternateStop)) {
         setRoutingClientPatients((roster) => {
           if (roster.length === 0) return roster;
           const defaults = defaultAppointmentRequestSelectedPatientIds(intent, roster);
@@ -3151,6 +3249,116 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     window.dispatchEvent(new Event(ROUTING_FOCUS_RESCHEDULE_SOURCE_EVENT));
   }
 
+  const focusHouseholdConflictOnCalendar = useCallback(
+    (conflict: HouseholdScheduledVisitConflict) => {
+      if (calendarWorkspaceMode) {
+        householdVisitLastFocusRef.current = conflict;
+        dispatchRoutingFocusHouseholdVisit(conflict, { pinHighlight: true });
+        return;
+      }
+      navigate(
+        buildSchedulerFocusAppointmentUrl(conflict.appointmentId, {
+          date: conflict.practiceDateKey,
+          providerId: conflict.primaryProviderId,
+        }),
+      );
+    },
+    [calendarWorkspaceMode, navigate],
+  );
+
+  const dismissHouseholdVisitConfirm = useCallback(() => {
+    if (calendarWorkspaceMode && householdVisitLastFocusRef.current) {
+      dispatchRoutingFocusHouseholdVisit(householdVisitLastFocusRef.current);
+    }
+    unpinRoutingHouseholdVisitHighlight();
+    const clientId = householdVisitClientId;
+    if (clientId && (householdVisitConfirm?.conflicts.length ?? 0) > 0) {
+      writeRoutingHouseholdVisitAck(clientId);
+    }
+    setHouseholdVisitConfirm(null);
+  }, [calendarWorkspaceMode, householdVisitClientId, householdVisitConfirm?.conflicts.length]);
+
+  const fetchRoutingHouseholdVisitConflicts = useCallback(
+    async (searchStartDate: string, searchEndDate: string) => {
+      const clientId = householdVisitClientId;
+      if (!clientId) return [];
+      if (!shouldWarnHouseholdVisitsOnRoutingSearch({ clientId })) return [];
+
+      const ri = readRoutingRescheduleIntent();
+      const excludeAppointmentIds =
+        ri?.appointmentId != null && Number.isFinite(Number(ri.appointmentId))
+          ? [Number(ri.appointmentId)]
+          : [];
+
+      return findHouseholdScheduledVisitConflicts({
+        practiceId: ROUTING_PRACTICE_ID,
+        clientId,
+        searchStartDate,
+        searchEndDate,
+        practiceTz: DEFAULT_PRACTICE_TIMEZONE,
+        catalog: buildBookingAppointmentTypeCatalog(routingAppointmentTypes),
+        excludeAppointmentIds,
+      });
+    },
+    [householdVisitClientId, routingAppointmentTypes],
+  );
+
+  const applyHouseholdVisitBanner = useCallback(
+    (clientId: string, conflicts: HouseholdScheduledVisitConflict[]) => {
+      if (conflicts.length === 0) {
+        setHouseholdVisitBanner((prev) => (prev?.clientId === clientId ? null : prev));
+        return;
+      }
+      setHouseholdVisitBanner({ clientId, conflicts });
+    },
+    [],
+  );
+
+  const openHouseholdVisitReview = useCallback(async () => {
+    if (!form.startDate?.trim() || !form.endDate?.trim()) return;
+    const { startDate, endDate } = adjustRoutingSlotSearchDates(
+      form.startDate,
+      form.endDate,
+      DEFAULT_PRACTICE_TIMEZONE,
+    );
+    setCheckingHouseholdVisits(true);
+    try {
+      const conflicts = await fetchRoutingHouseholdVisitConflicts(startDate, endDate);
+      const clientId = householdVisitClientId;
+      if (!clientId) return;
+      applyHouseholdVisitBanner(clientId, conflicts);
+      if (conflicts.length > 0) {
+        householdVisitLastFocusRef.current = null;
+        setHouseholdVisitConfirm({ conflicts, blocking: false });
+      }
+    } catch (err) {
+      console.warn('Routing household visit review failed', err);
+    } finally {
+      setCheckingHouseholdVisits(false);
+    }
+  }, [
+    applyHouseholdVisitBanner,
+    fetchRoutingHouseholdVisitConflicts,
+    form.endDate,
+    householdVisitClientId,
+    form.startDate,
+  ]);
+
+  useEffect(() => {
+    const clientId = householdVisitClientId ?? '';
+    if (!clientId) {
+      setHouseholdVisitBanner(null);
+      setHouseholdVisitConfirm(null);
+      return;
+    }
+    setHouseholdVisitBanner((prev) => (prev && prev.clientId !== clientId ? null : prev));
+    setHouseholdVisitConfirm(null);
+    const ackedClientId = readRoutingHouseholdVisitAckClientId();
+    if (ackedClientId && ackedClientId !== clientId) {
+      clearRoutingHouseholdVisitAck();
+    }
+  }, [householdVisitClientId]);
+
   function routingOptionKey(opt: UnifiedOption): string {
     return `${opt.doctorPimsId}-${opt.date}-${opt.insertionIndex}-${opt.candidateIndex ?? ''}`;
   }
@@ -3243,12 +3451,9 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
           .map((t) => normalizeAppointmentTypeFromApi(t))
           .filter((t) => appointmentTypeIncludedInRouting(t));
         setRoutingAppointmentTypes(active);
-        const prefer =
-          active.find((t) =>
-            /wellness|standard|check-up|checkup|office/i.test(String(t.prettyName || t.name || ''))
-          ) ?? active[0];
-        if (prefer?.id != null) {
-          setScheduleBookTypeId((cur) => (cur != null ? cur : Number(prefer.id)));
+        const defaultSelection = defaultRoutingAppointmentTypeSelection(active);
+        if (defaultSelection?.id != null) {
+          setScheduleBookTypeId((cur) => (cur != null ? cur : defaultSelection.id));
         }
       })
       .catch(() => {});
@@ -4244,7 +4449,11 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
   async function submitRoutingRequest(
     endpoint: string,
     doctorIdsArray?: string[],
-    opts?: { skipZoneConfirm?: boolean; asapAllDoctorSearch?: boolean }
+    opts?: {
+      skipZoneConfirm?: boolean;
+      skipHouseholdConfirm?: boolean;
+      asapAllDoctorSearch?: boolean;
+    }
   ) {
     const isAsapSearch = asapAllDoctorSearch || opts?.asapAllDoctorSearch === true;
     setResultsSortedByDateTime(isAsapSearch);
@@ -4382,6 +4591,44 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
               DEFAULT_PRACTICE_TIMEZONE
             ),
           };
+
+    if (!opts?.skipHouseholdConfirm) {
+      const clientId = householdVisitClientId;
+      if (clientId) {
+        setCheckingHouseholdVisits(true);
+        try {
+          const conflicts = await fetchRoutingHouseholdVisitConflicts(
+            routingStartDate,
+            routingEndDate,
+          );
+          if (conflicts.length > 0) {
+            applyHouseholdVisitBanner(clientId, conflicts);
+            const alreadyAcked = isRoutingHouseholdVisitAcked(clientId);
+            if (!alreadyAcked) {
+              householdVisitLastFocusRef.current = null;
+              setHouseholdVisitConfirm({
+                conflicts,
+                blocking: true,
+                proceed: () => {
+                  void submitRoutingRequest(endpoint, doctorIdsArray, {
+                    skipZoneConfirm: opts?.skipZoneConfirm,
+                    skipHouseholdConfirm: true,
+                    asapAllDoctorSearch: opts?.asapAllDoctorSearch,
+                  });
+                },
+              });
+              return;
+            }
+          } else {
+            setHouseholdVisitBanner((prev) => (prev?.clientId === clientId ? null : prev));
+          }
+        } catch (householdErr) {
+          console.warn('Routing household visit check failed', householdErr);
+        } finally {
+          setCheckingHouseholdVisits(false);
+        }
+      }
+    }
 
     // If both edge boxes are selected, cancel the preference.
     const preferEdge: 'first' | 'last' | null =
@@ -4555,38 +4802,9 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       if (clientZoneLookupIsOutOfServiceArea(addressZoneRef.current)) {
         return;
       }
-      try {
-        const lat = form.newAppt.lat;
-        const lon = form.newAppt.lon;
-        const address = (form.newAppt.address ?? '').trim();
-        const appointmentTypeId = routingRequestAppointmentTypeId();
-        const { providers, isOutOfServiceArea } = await fetchProvidersForAsapAllDoctorSearch({
-          address,
-          lat: typeof lat === 'number' && Number.isFinite(lat) ? lat : undefined,
-          lon: typeof lon === 'number' && Number.isFinite(lon) ? lon : undefined,
-          appointmentTypeId,
-        });
-        if (isOutOfServiceArea) {
-          return;
-        }
-        const doctorIds = providers
-          .map((p) => (p.pimsId ? String(p.pimsId) : String(p.id)))
-          .filter(Boolean);
-        if (doctorIds.length === 0) {
-          setError(
-            appointmentTypeId != null
-              ? 'No doctors in this zone offer the selected appointment type.'
-              : 'No doctors found for this zone.'
-          );
-          return;
-        }
-        await submitRoutingRequest(endpoint, doctorIds, {
-          skipZoneConfirm: true,
-          asapAllDoctorSearch: true,
-        });
-      } catch (err: unknown) {
-        setError(extractErrorMessage(err));
-      }
+      setPendingEndpoint(endpoint);
+      setPendingAsapAllDoctorSearch(true);
+      setShowDoctorSelectionModal(true);
       return;
     }
 
@@ -4609,11 +4827,13 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
         const lat = form.newAppt.lat;
         const lon = form.newAppt.lon;
         const address = (form.newAppt.address ?? '').trim();
+        const appointmentTypeId = resolveScheduleBookTypeId();
         const { providers: veterinarians, clientZoneLabel } =
           await fetchVeterinariansForDoctorSelect({
             address,
             lat: typeof lat === 'number' && Number.isFinite(lat) ? lat : undefined,
             lon: typeof lon === 'number' && Number.isFinite(lon) ? lon : undefined,
+            appointmentTypeId: appointmentTypeId ?? undefined,
           });
         if (!alive) return;
 
@@ -4630,29 +4850,27 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
             seeingClients: v.seeingClientsInClientZone === true,
             acceptingNewPatients: v.acceptingNewPatientsInClientZone === true,
             transitioningOutOfClientZone: v.transitioningOutOfClientZone === true,
+            acceptsAppointmentType: v.acceptsSelectedAppointmentType !== false,
           };
         });
 
-        setAllProviders(providersWithPims);
+        const sorted = sortDoctorSelectProviders(providersWithPims);
+        setAllProviders(sorted);
 
-        let defaultSelectedIds: string[] = [];
-        try {
-          const stored = localStorage.getItem(SELECTED_DOCTORS_STORAGE_KEY);
-          if (stored) {
-            const parsed = JSON.parse(stored);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              const validPimsIds = providersWithPims.map((p) => p.pimsId).filter(Boolean);
-              defaultSelectedIds = parsed.filter(
-                (id: unknown) => typeof id === 'string' && validPimsIds.includes(id)
-              );
-            }
-          }
-        } catch {
-          /* fall back to all */
-        }
+        const zoneDefaultIds = sorted
+          .filter(isDefaultDoctorSelectChecked)
+          .map((p) => p.pimsId)
+          .filter(Boolean);
 
-        if (defaultSelectedIds.length === 0) {
-          defaultSelectedIds = providersWithPims.map((p) => p.pimsId).filter(Boolean);
+        let defaultSelectedIds = zoneDefaultIds;
+        const stored = readStoredDoctorSelection();
+        if (
+          stored &&
+          storedDoctorSelectionMatchesContext(stored, clientZoneLabel, appointmentTypeId)
+        ) {
+          const validPimsIds = sorted.map((p) => p.pimsId).filter(Boolean);
+          const fromStorage = stored.doctorIds.filter((id) => validPimsIds.includes(id));
+          if (fromStorage.length > 0) defaultSelectedIds = fromStorage;
         }
 
         setSelectedDoctorIds(defaultSelectedIds);
@@ -4679,6 +4897,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
   function handleCancelDoctorSelection() {
     setShowDoctorSelectionModal(false);
     setPendingEndpoint(null);
+    setPendingAsapAllDoctorSearch(false);
     setSelectedDoctorIds([]);
   }
 
@@ -4693,19 +4912,32 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       setError(validation.error || 'Please fill in all required fields.');
       setShowDoctorSelectionModal(false);
       setPendingEndpoint(null);
+      setPendingAsapAllDoctorSearch(false);
       return;
     }
 
     try {
-      localStorage.setItem(SELECTED_DOCTORS_STORAGE_KEY, JSON.stringify(selectedDoctorIds));
+      localStorage.setItem(
+        SELECTED_DOCTORS_STORAGE_KEY,
+        JSON.stringify({
+          doctorIds: selectedDoctorIds,
+          zoneLabel: doctorSelectClientZoneLabel,
+          appointmentTypeId: resolveScheduleBookTypeId(),
+        } satisfies StoredDoctorSelection),
+      );
     } catch {
       /* ignore */
     }
 
+    const wasAsap = pendingAsapAllDoctorSearch;
     setShowDoctorSelectionModal(false);
     const endpoint = pendingEndpoint || '/routing/v2';
     setPendingEndpoint(null);
-    await submitRoutingRequest(endpoint, selectedDoctorIds);
+    setPendingAsapAllDoctorSearch(false);
+    await submitRoutingRequest(endpoint, selectedDoctorIds, {
+      skipZoneConfirm: wasAsap,
+      asapAllDoctorSearch: wasAsap,
+    });
   }
 
   // =========================
@@ -5766,6 +5998,27 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
           </div>
 
           {error && <div className="danger">{error}</div>}
+          {householdVisitBanner &&
+          householdVisitBanner.conflicts.length > 0 &&
+          householdVisitBanner.clientId === householdVisitClientId ? (
+            <button
+              type="button"
+              className="routing-household-visits-flag"
+              disabled={checkingHouseholdVisits}
+              onClick={() => void openHouseholdVisitReview()}
+            >
+              <span className="routing-household-visits-flag-icon" aria-hidden>
+                ⚠
+              </span>
+              <span className="routing-household-visits-flag-text">
+                {householdVisitBanner.conflicts.length === 1
+                  ? '1 other household visit scheduled'
+                  : `${householdVisitBanner.conflicts.length} other household visits scheduled`}
+                {' — '}
+                <span className="routing-household-visits-flag-link">Review</span>
+              </span>
+            </button>
+          ) : null}
           <div className="routing-submit-row">
             <button
               className="btn routing-submit-btn"
@@ -6326,6 +6579,32 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
           </div>
         </div>
       ) : null}
+
+      <HouseholdScheduledVisitsWarningModal
+        open={Boolean(householdVisitConfirm?.conflicts.length)}
+        context="routing"
+        reviewOnly={householdVisitConfirm?.blocking === false}
+        clientLabel={clientQuery}
+        conflicts={householdVisitConfirm?.conflicts ?? []}
+        continuing={checkingHouseholdVisits || loading}
+        dockInRoutingPanel={calendarWorkspaceMode}
+        portalContainerRef={routingPageRootRef}
+        onCancel={dismissHouseholdVisitConfirm}
+        onPreviewPlacement={focusHouseholdConflictOnCalendar}
+        onViewPlacement={focusHouseholdConflictOnCalendar}
+        onContinue={
+          householdVisitConfirm?.blocking
+            ? () => {
+                const pending = householdVisitConfirm;
+                const clientId = householdVisitClientId;
+                if (clientId) writeRoutingHouseholdVisitAck(clientId);
+                unpinRoutingHouseholdVisitHighlight();
+                setHouseholdVisitConfirm(null);
+                pending?.proceed?.();
+              }
+            : undefined
+        }
+      />
 
       {zoneWorkConfirm ? (
         <div

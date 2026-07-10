@@ -11,6 +11,7 @@ export type AppointmentRequestStaffConfirmSessionV1 = {
   bookedAppointmentId: number;
   clientLabel?: string | null;
   isNewClient?: boolean;
+  returnPath?: string | null;
 };
 
 export type AppointmentRequestStaffConfirmReturnV1 = {

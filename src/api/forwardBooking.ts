@@ -126,6 +126,8 @@ export type ForwardBookingEntry = {
   bookedAppointmentEnd?: string | null;
   /** Ops points on the linked calendar visit (from server when `bookedAppointmentId` is set). */
   linkedVisitPoints?: number | null;
+  /** True when the linked calendar visit is a HOLD (isHold type) — canonical on-hold signal. */
+  linkedVisitIsHold?: boolean;
   /** True when the linked calendar visit was cancelled. */
   linkedVisitCancelled?: boolean;
   /** When the linked visit was placed on the calendar (ISO UTC). */
@@ -192,6 +194,10 @@ export function normalizeForwardBookingEntry(raw: unknown): ForwardBookingEntry 
   if (linkedVisitPoints != null && linkedVisitPoints !== '') {
     const n = Number(linkedVisitPoints);
     if (Number.isFinite(n)) row.linkedVisitPoints = n;
+  }
+  const linkedVisitIsHold = o.linkedVisitIsHold ?? o.linked_visit_is_hold;
+  if (typeof linkedVisitIsHold === 'boolean') {
+    row.linkedVisitIsHold = linkedVisitIsHold;
   }
   const linkedVisitCancelled = o.linkedVisitCancelled ?? o.linked_visit_cancelled;
   if (typeof linkedVisitCancelled === 'boolean') {

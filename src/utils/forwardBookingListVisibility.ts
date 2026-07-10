@@ -202,7 +202,11 @@ export function forwardBookingLinkedAppointmentCancelled(
   return bookedApptMeta.get(apptId)!.appointmentCancelled === true;
 }
 
-/** Forward booking treats linked visits with 0 ops points as on hold (tab + badge). */
+/**
+ * A linked visit is "on hold" when its appointment type is a HOLD (isHold).
+ * Prefers the server `linkedVisitIsHold` flag; falls back to the legacy
+ * 0-ops-points heuristic when the flag is not present.
+ */
 export function forwardBookingLinkedVisitIsOnHold(
   entry: ForwardBookingEntry,
   bookedApptMeta: Map<number, BookedAppointmentMeta> | null | undefined,
@@ -210,6 +214,7 @@ export function forwardBookingLinkedVisitIsOnHold(
 ): boolean {
   if (!forwardBookingHasLinkedVisit(entry)) return false;
   if (forwardBookingLinkedAppointmentCancelled(entry, bookedApptMeta)) return false;
+  if (typeof entry.linkedVisitIsHold === 'boolean') return entry.linkedVisitIsHold;
   const points = forwardBookingLinkedAppointmentPoints(entry, bookedApptMeta, catalog);
   return points != null && points <= 0;
 }
@@ -227,6 +232,9 @@ export function forwardBookingListTab(
   if (forwardBookingHasLinkedVisit(entry)) {
     if (forwardBookingLinkedAppointmentCancelled(entry, bookedApptMeta)) {
       return 'removed';
+    }
+    if (typeof entry.linkedVisitIsHold === 'boolean') {
+      return entry.linkedVisitIsHold ? 'onHold' : 'booked';
     }
     const points = forwardBookingLinkedAppointmentPoints(entry, bookedApptMeta, catalog);
     if (points != null && points <= 0) return 'onHold';

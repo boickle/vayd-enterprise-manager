@@ -86,6 +86,7 @@ type EditDraft = {
   requiresPatient: boolean;
   excludeFromRouting: boolean;
   excludeFromReminders: boolean;
+  isHold: boolean;
   usesLegacyRouting: boolean;
   allowSchedulingOverride: boolean;
   useLegacyPoints: boolean;
@@ -119,6 +120,7 @@ function draftFromType(type: AppointmentType): EditDraft {
     requiresPatient: t.requiresPatient === true,
     excludeFromRouting: t.excludeFromRouting === true,
     excludeFromReminders: t.excludeFromReminders === true,
+    isHold: t.isHold === true,
     usesLegacyRouting: t.usesLegacyRouting === true,
     allowSchedulingOverride: t.allowSchedulingOverride === true,
     useLegacyPoints: t.points == null,
@@ -168,6 +170,7 @@ function emptyDraft(): EditDraft {
     requiresPatient: false,
     excludeFromRouting: false,
     excludeFromReminders: false,
+    isHold: false,
     usesLegacyRouting: false,
     allowSchedulingOverride: false,
     useLegacyPoints: true,
@@ -238,6 +241,7 @@ function buildUpdatePayloadFromDraft(draft: EditDraft): AppointmentTypeUpdate {
     requiresPatient: draft.requiresPatient,
     excludeFromRouting: draft.excludeFromRouting,
     excludeFromReminders: draft.excludeFromReminders,
+    isHold: draft.isHold,
     usesLegacyRouting: draft.usesLegacyRouting,
     allowSchedulingOverride: draft.allowSchedulingOverride,
     points,
@@ -480,6 +484,7 @@ export default function SettingsAppointmentTypes({
             type.requiresPatient ? 'Patient required' : null,
             type.excludeFromRouting ? 'No route' : null,
             type.excludeFromReminders ? 'No reminders' : null,
+            type.isHold ? 'Hold' : null,
             type.usesLegacyRouting ? 'Legacy routing' : null,
             type.allowSchedulingOverride ? 'Sched override' : null,
           ]
@@ -974,6 +979,16 @@ export default function SettingsAppointmentTypes({
                             }
                           />
                           Exclude from reminders &amp; visit analytics
+                        </label>
+                        <label className="settings-checkbox-label">
+                          <input
+                            type="checkbox"
+                            checked={draft.isHold}
+                            onChange={(e) =>
+                              setDraft({ ...draft, isHold: e.target.checked })
+                            }
+                          />
+                          Hold type (shows on Holds board, counts as on hold)
                         </label>
                         <label className="settings-checkbox-label">
                           <input
