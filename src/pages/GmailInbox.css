@@ -672,6 +672,12 @@
   padding: 4px 8px 4px;
 }
 
+.gmail-label-tree__children {
+  border-left: 1px solid #e2e8f0;
+  margin-left: 22px;
+  padding-left: 2px;
+}
+
 .gmail-sidebar__section-head {
   display: flex;
   align-items: center;
@@ -685,6 +691,28 @@
 .gmail-label-row__name--bold {
   font-weight: 600;
   color: #0f172a;
+}
+
+.gmail-label-row__name--folder {
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.gmail-label-row__text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 0;
+}
+
+.gmail-label-row--folder .gmail-label-row__icon {
+  color: #475569;
+}
+
+.gmail-label-row--nested .gmail-label-row__btn {
+  padding-top: 8px;
+  padding-bottom: 8px;
 }
 
 .gmail-label-row {

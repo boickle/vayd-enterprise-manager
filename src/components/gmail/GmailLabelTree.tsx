@@ -21,6 +21,7 @@ import {
   GMAIL_SNOOZED_ID,
   GmailLabelNode,
   isGmailLabelGroup,
+  isGmailVirtualLabelFolder,
   labelDisplayName,
   labelSidebarCount,
 } from '../../api/gmail';
@@ -76,17 +77,38 @@ function LabelRow({
 } & Props) {
   const isMoreGroup = label.id === GMAIL_MORE_GROUP_ID;
   const isGroup = isGmailLabelGroup(label);
+  const isVirtualFolder = isGmailVirtualLabelFolder(label);
   const hasChildren = label.children.length > 0;
+  const isFolder = hasChildren && (isGroup || isVirtualFolder || label.type === 'user');
   const isExpanded = expanded.has(label.id);
-  const isSelected = !isGroup && selectedId === label.id;
+  const isSelected = !isGroup && !isVirtualFolder && selectedId === label.id;
   const count = labelSidebarCount(label);
   const display = isMoreGroup ? (isExpanded ? 'Less' : 'More') : labelDisplayName(label);
+
+  const handleRowActivate = () => {
+    if (isMoreGroup || isGroup) {
+      onToggleExpand(label.id);
+      return;
+    }
+    if (isVirtualFolder && hasChildren) {
+      onToggleExpand(label.id);
+      return;
+    }
+    onSelect(label.id);
+  };
 
   return (
     <>
       <div
-        className={`gmail-label-row${isSelected ? ' gmail-label-row--selected' : ''}`}
-        style={{ paddingLeft: `${8 + depth * 14}px` }}
+        className={[
+          'gmail-label-row',
+          isSelected ? 'gmail-label-row--selected' : '',
+          isFolder ? 'gmail-label-row--folder' : '',
+          depth > 0 ? 'gmail-label-row--nested' : '',
+        ]
+          .filter(Boolean)
+          .join(' ')}
+        style={{ paddingLeft: `${8 + depth * 18}px` }}
       >
         {hasChildren && !isMoreGroup ? (
           <button
@@ -106,8 +128,9 @@ function LabelRow({
         <button
           type="button"
           className="gmail-label-row__btn"
-          onClick={() => (isGroup ? onToggleExpand(label.id) : onSelect(label.id))}
+          onClick={handleRowActivate}
           title={label.name}
+          aria-expanded={hasChildren ? isExpanded : undefined}
         >
           <span className="gmail-label-row__icon">
             {isMoreGroup ? (
@@ -126,16 +149,29 @@ function LabelRow({
               <LabelIcon label={label} />
             )}
           </span>
-          <span className={`gmail-label-row__name${label.id === 'DRAFT' || label.id === 'SPAM' || (label.id === 'INBOX' && count != null) ? ' gmail-label-row__name--bold' : ''}`}>
-            {display}
+          <span className="gmail-label-row__text">
+            <span
+              className={[
+                'gmail-label-row__name',
+                label.id === 'DRAFT' || label.id === 'SPAM' || (label.id === 'INBOX' && count != null)
+                  ? 'gmail-label-row__name--bold'
+                  : '',
+                isFolder ? 'gmail-label-row__name--folder' : '',
+              ]
+                .filter(Boolean)
+                .join(' ')}
+            >
+              {display}
+            </span>
           </span>
           {count != null ? (
             <span className="gmail-label-row__unread">{count.toLocaleString()}</span>
           ) : null}
         </button>
       </div>
-      {hasChildren && isExpanded
-        ? label.children.map((child) => (
+      {hasChildren && isExpanded ? (
+        <div className="gmail-label-tree__children" role="group" aria-label={display}>
+          {label.children.map((child) => (
             <LabelRow
               key={child.id}
               label={child}
@@ -146,8 +182,9 @@ function LabelRow({
               expanded={expanded}
               onToggleExpand={onToggleExpand}
             />
-          ))
-        : null}
+          ))}
+        </div>
+      ) : null}
     </>
   );
 }

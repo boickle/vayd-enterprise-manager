@@ -3,19 +3,20 @@ import { Trash2, X } from 'lucide-react';
 import type { GmailThreadMessage } from '../../api/gmail';
 import {
   buildComposeDraft,
-  buildComposeSendBodies,
+  buildComposeSendBodiesFromEditorHtml,
   defaultFromAlias,
   discardAllThreadDrafts,
   draftListSnippet,
   extractEmail,
   formatFromAlias,
+  joinComposeBodyHtml,
   loadComposeFromThreadDraft,
   loadSendAsAliases,
-  replaceTrailingSignature,
+  replaceSignatureHtmlInCompose,
   saveComposeDraft,
-  signatureForFromAlias,
   signatureHtmlForFromAlias,
   submitCompose,
+  userTextFromComposeHtml,
   type ComposeContext,
   type ComposeMode,
   type GmailComposeDraftSavedInfo,
@@ -31,6 +32,7 @@ import {
 } from './gmailTemplates';
 
 const DRAFT_AUTOSAVE_MS = 1500;
+const COMPOSE_USER_SELECTOR = '[data-compose-user]';
 
 type Props = {
   mailbox: string;
@@ -50,6 +52,20 @@ const COMPOSE_TITLES: Record<ComposeMode, string> = {
   forward: 'Forward',
 };
 
+function focusComposeEditorStart(root: HTMLElement | null) {
+  if (!root) return;
+  root.focus();
+  const userEl = root.querySelector(COMPOSE_USER_SELECTOR);
+  const target = userEl ?? root;
+  const sel = window.getSelection();
+  if (!sel) return;
+  const range = document.createRange();
+  range.selectNodeContents(target);
+  range.collapse(true);
+  sel.removeAllRanges();
+  sel.addRange(range);
+}
+
 export default function GmailComposePanel({
   mailbox,
   context,
@@ -65,8 +81,7 @@ export default function GmailComposePanel({
   const [to, setTo] = useState('');
   const [cc, setCc] = useState('');
   const [subject, setSubject] = useState('');
-  const [userBody, setUserBody] = useState('');
-  const [signatureHtml, setSignatureHtml] = useState('');
+  const [bodyHtml, setBodyHtml] = useState('');
   const [quotedSuffix, setQuotedSuffix] = useState('');
   const [threadId, setThreadId] = useState<string | undefined>();
   const [inReplyTo, setInReplyTo] = useState<string | undefined>();
@@ -78,20 +93,21 @@ export default function GmailComposePanel({
   const [draftSaving, setDraftSaving] = useState(false);
   const [templates, setTemplates] = useState<GmailTemplate[]>([]);
 
-  const bodyRef = useRef<HTMLTextAreaElement | null>(null);
+  const editorRef = useRef<HTMLDivElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const draftIdRef = useRef<string | undefined>();
   const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSavedKeyRef = useRef('');
   const discardRequestedRef = useRef(false);
   const saveGenerationRef = useRef(0);
+  const hydratedDraftRef = useRef(false);
+  const skipEditorSyncRef = useRef(false);
   const composeFieldsRef = useRef({
     from: '',
     to: '',
     cc: '',
     subject: '',
-    userBody: '',
-    signatureHtml: '',
+    bodyHtml: '',
     quotedSuffix: '',
     threadId: undefined as string | undefined,
     inReplyTo: undefined as string | undefined,
@@ -100,25 +116,40 @@ export default function GmailComposePanel({
 
   draftIdRef.current = draftId;
 
+  const applyEditorHtml = useCallback((html: string) => {
+    skipEditorSyncRef.current = true;
+    setBodyHtml(html);
+    if (editorRef.current) {
+      editorRef.current.innerHTML = html;
+    }
+  }, []);
+
+  const syncEditorFromDom = useCallback(() => {
+    if (!editorRef.current) return;
+    setBodyHtml(editorRef.current.innerHTML);
+  }, []);
+
   useEffect(() => {
     composeFieldsRef.current = {
       from,
       to,
       cc,
       subject,
-      userBody,
-      signatureHtml,
+      bodyHtml,
       quotedSuffix,
       threadId,
       inReplyTo,
       references,
     };
-  }, [from, to, cc, subject, userBody, signatureHtml, quotedSuffix, threadId, inReplyTo, references]);
+  }, [from, to, cc, subject, bodyHtml, quotedSuffix, threadId, inReplyTo, references]);
 
   useEffect(() => {
     let cancelled = false;
     setError(null);
     setDraftId(undefined);
+    setBodyHtml('');
+    setQuotedSuffix('');
+    hydratedDraftRef.current = false;
     lastSavedKeyRef.current = '';
     discardRequestedRef.current = false;
 
@@ -129,19 +160,27 @@ export default function GmailComposePanel({
         const fromVal = defaultFromAlias(list, mailbox);
         setFrom(fromVal);
         const sigHtml = signatureHtmlForFromAlias(list, fromVal);
-        setSignatureHtml(sigHtml);
-        const sigPlain = signatureForFromAlias(list, fromVal);
 
         const draft = buildComposeDraft({ ...context, mailboxEmail: mailbox });
         setTo(draft.to);
         setCc(draft.cc);
         setSubject(draft.subject);
         setQuotedSuffix(draft.quotedSuffix);
-        setUserBody(sigPlain);
         setThreadId(draft.threadId);
         setInReplyTo(draft.inReplyTo);
         setReferences(draft.references);
         setShowCc(Boolean(draft.cc.trim()));
+
+        const existing = loadComposeFromThreadDraft(threadMessages);
+        if (existing) {
+          hydratedDraftRef.current = true;
+          setDraftId(existing.draftId);
+          applyEditorHtml(existing.bodyHtml);
+        } else {
+          applyEditorHtml(
+            joinComposeBodyHtml('', sigHtml, draft.quotedSuffix, context.replyTo ?? null),
+          );
+        }
       })
       .catch((e) => {
         if (!cancelled) setError(e instanceof Error ? e.message : 'Could not load send-as aliases');
@@ -150,22 +189,29 @@ export default function GmailComposePanel({
     return () => {
       cancelled = true;
     };
-  }, [mailbox, context.mode, context.threadId, context.replyTo?.id]);
+  }, [mailbox, context.mode, context.threadId, context.replyTo?.id, applyEditorHtml]);
 
   useEffect(() => {
-    if (!threadMessages?.length || !signatureHtml) return;
-    const existing = loadComposeFromThreadDraft(threadMessages, signatureHtml);
+    if (hydratedDraftRef.current || !threadMessages?.length) return;
+    const existing = loadComposeFromThreadDraft(threadMessages);
     if (!existing) return;
+    hydratedDraftRef.current = true;
     setDraftId(existing.draftId);
-    setUserBody(existing.userBody);
-  }, [threadMessages, signatureHtml]);
+    applyEditorHtml(existing.bodyHtml);
+  }, [threadMessages, applyEditorHtml]);
 
   useEffect(() => {
-    const el = bodyRef.current;
-    el?.focus();
-    if (el) {
-      el.setSelectionRange(0, 0);
+    if (skipEditorSyncRef.current) {
+      skipEditorSyncRef.current = false;
+      return;
     }
+    if (editorRef.current && editorRef.current.innerHTML !== bodyHtml) {
+      editorRef.current.innerHTML = bodyHtml;
+    }
+  }, [bodyHtml]);
+
+  useEffect(() => {
+    requestAnimationFrame(() => focusComposeEditorStart(editorRef.current));
     panelRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }, [context.mode, context.threadId, context.replyTo?.id]);
 
@@ -173,11 +219,12 @@ export default function GmailComposePanel({
     if (discardRequestedRef.current) return;
 
     const fields = composeFieldsRef.current;
-    const userText = fields.userBody.trim();
+    const sigHtml = signatureHtmlForFromAlias(aliases, fields.from);
+    const userText = userTextFromComposeHtml(fields.bodyHtml, sigHtml, fields.quotedSuffix);
     const hasNewMessageFields =
       context.mode === 'new' &&
       (fields.to.trim().length > 0 || fields.subject.trim().length > 0);
-    if (!userText && !hasNewMessageFields) {
+    if (!userText.trim() && !hasNewMessageFields) {
       const existingDraftId = draftIdRef.current;
       if (existingDraftId || fields.threadId) {
         try {
@@ -199,7 +246,7 @@ export default function GmailComposePanel({
       to: fields.to,
       cc: fields.cc,
       subject: fields.subject,
-      userBody: fields.userBody,
+      bodyHtml: fields.bodyHtml,
       threadId: fields.threadId ?? '',
     });
     if (saveKey === lastSavedKeyRef.current) return;
@@ -214,10 +261,11 @@ export default function GmailComposePanel({
         to: fields.to,
         cc: fields.cc,
         subject: fields.subject,
-        userText: fields.userBody,
+        userText: '',
         signatureHtml: '',
-        quotedSuffix: fields.quotedSuffix,
-        quotedMessage: context.replyTo ?? null,
+        quotedSuffix: '',
+        quotedMessage: null,
+        editorHtml: fields.bodyHtml,
         threadId: fields.threadId,
         inReplyTo: fields.inReplyTo,
         references: fields.references,
@@ -231,7 +279,7 @@ export default function GmailComposePanel({
       onDraftSaved?.({
         draftId: result.id,
         threadId: result.threadId,
-        snippet: draftListSnippet(fields.userBody) || userText,
+        snippet: draftListSnippet(userText) || userText,
         labelIds: result.labelIds,
       });
     } catch (e) {
@@ -243,7 +291,15 @@ export default function GmailComposePanel({
         setDraftSaving(false);
       }
     }
-  }, [mailbox, context.mode, context.replyTo, context.threadInInbox, threadMessages, onDraftDeleted, onDraftSaved]);
+  }, [
+    aliases,
+    mailbox,
+    context.mode,
+    context.threadInInbox,
+    threadMessages,
+    onDraftDeleted,
+    onDraftSaved,
+  ]);
 
   useEffect(() => {
     if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
@@ -253,7 +309,7 @@ export default function GmailComposePanel({
     return () => {
       if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
     };
-  }, [from, to, cc, subject, userBody, flushDraftSave]);
+  }, [from, to, cc, subject, bodyHtml, flushDraftSave]);
 
   useEffect(() => {
     return () => {
@@ -264,12 +320,14 @@ export default function GmailComposePanel({
   }, [flushDraftSave]);
 
   const handleFromChange = (nextFrom: string) => {
-    const oldSigPlain = signatureForFromAlias(aliases, from);
     setFrom(nextFrom);
-    let html = signatureHtmlForFromAlias(aliases, nextFrom);
-    setSignatureHtml(html);
-    const newSigPlain = html ? signatureForFromAlias(aliases, nextFrom) : '';
-    setUserBody((prev) => replaceTrailingSignature(prev, oldSigPlain, newSigPlain));
+    const html = signatureHtmlForFromAlias(aliases, nextFrom);
+    setBodyHtml((prev) => {
+      const next = replaceSignatureHtmlInCompose(prev, html);
+      skipEditorSyncRef.current = true;
+      if (editorRef.current) editorRef.current.innerHTML = next;
+      return next;
+    });
 
     if (!html) {
       const sendAsEmail = extractEmail(nextFrom);
@@ -282,18 +340,12 @@ export default function GmailComposePanel({
             ),
           );
           const resolvedHtml = detail.signature!.trim();
-          setSignatureHtml(resolvedHtml);
-          const resolvedPlain = signatureForFromAlias(
-            aliases.map((a) =>
-              a.sendAsEmail.toLowerCase() === sendAsEmail.toLowerCase()
-                ? { ...a, ...detail }
-                : a,
-            ),
-            nextFrom,
-          );
-          setUserBody((prev) =>
-            replaceTrailingSignature(prev, oldSigPlain, resolvedPlain),
-          );
+          setBodyHtml((prev) => {
+            const next = replaceSignatureHtmlInCompose(prev, resolvedHtml);
+            skipEditorSyncRef.current = true;
+            if (editorRef.current) editorRef.current.innerHTML = next;
+            return next;
+          });
         })
         .catch(() => {
           /* signature optional */
@@ -306,7 +358,9 @@ export default function GmailComposePanel({
   }, []);
 
   const subjectEditable = context.mode === 'new' || context.mode === 'forward';
-  const canSaveTemplate = userBody.trim().length > 0 || subject.trim().length > 0;
+  const sigHtml = signatureHtmlForFromAlias(aliases, from);
+  const userTextOnly = userTextFromComposeHtml(bodyHtml, sigHtml, quotedSuffix);
+  const canSaveTemplate = userTextOnly.trim().length > 0 || subject.trim().length > 0;
 
   const insertTemplate = useCallback(
     (template: GmailTemplate) => {
@@ -314,18 +368,17 @@ export default function GmailComposePanel({
         setSubject(template.subject);
       }
       if (!template.body) return;
-      const el = bodyRef.current;
-      setUserBody((prev) => {
-        if (el && typeof el.selectionStart === 'number') {
-          const start = el.selectionStart;
-          const end = el.selectionEnd ?? start;
-          return prev.slice(0, start) + template.body + prev.slice(end);
-        }
-        return prev ? `${prev}\n${template.body}` : template.body;
-      });
-      requestAnimationFrame(() => bodyRef.current?.focus());
+      const root = editorRef.current;
+      if (!root) return;
+      root.focus();
+      const userEl = root.querySelector(COMPOSE_USER_SELECTOR);
+      if (userEl instanceof HTMLElement) {
+        userEl.focus();
+      }
+      document.execCommand('insertText', false, template.body);
+      syncEditorFromDom();
     },
-    [subjectEditable, subject],
+    [subjectEditable, subject, syncEditorFromDom],
   );
 
   const handleSaveNewTemplate = useCallback(() => {
@@ -333,15 +386,15 @@ export default function GmailComposePanel({
     if (name == null) return;
     const trimmed = name.trim();
     if (!trimmed) return;
-    setTemplates(createGmailTemplate({ name: trimmed, subject, body: userBody }));
-  }, [subject, userBody]);
+    setTemplates(createGmailTemplate({ name: trimmed, subject, body: userTextOnly }));
+  }, [subject, userTextOnly]);
 
   const handleOverwriteTemplate = useCallback(
     (template: GmailTemplate) => {
       if (!window.confirm(`Overwrite template “${template.name}” with the current message?`)) return;
-      setTemplates(overwriteGmailTemplate(template.id, { subject, body: userBody }));
+      setTemplates(overwriteGmailTemplate(template.id, { subject, body: userTextOnly }));
     },
-    [subject, userBody],
+    [subject, userTextOnly],
   );
 
   const handleDeleteTemplate = useCallback((template: GmailTemplate) => {
@@ -382,12 +435,8 @@ export default function GmailComposePanel({
       autosaveTimerRef.current = null;
     }
     try {
-      const { bodyText, bodyHtml } = buildComposeSendBodies({
-        userText: userBody,
-        signatureHtml: '',
-        quotedSuffix,
-        quotedMessage: context.replyTo ?? null,
-      });
+      const html = editorRef.current?.innerHTML ?? bodyHtml;
+      const { bodyText, bodyHtml: sendHtml } = buildComposeSendBodiesFromEditorHtml(html);
       await submitCompose({
         mailbox,
         from,
@@ -395,7 +444,7 @@ export default function GmailComposePanel({
         cc,
         subject,
         bodyText,
-        bodyHtml,
+        bodyHtml: sendHtml,
         threadId,
         inReplyTo,
         references,
@@ -529,19 +578,16 @@ export default function GmailComposePanel({
       ) : null}
 
       <div className="gmail-compose-panel__compose-body">
-        <textarea
-          ref={bodyRef}
-          className="gmail-compose-panel__body"
-          rows={variant === 'float' ? 8 : 6}
-          value={userBody}
-          disabled={busy}
-          placeholder=""
-          onChange={(e) => setUserBody(e.target.value)}
+        <div
+          ref={editorRef}
+          className="gmail-compose-panel__body gmail-compose-panel__body--rich"
+          contentEditable={busy ? 'false' : 'true'}
+          role="textbox"
+          aria-multiline="true"
+          aria-label="Message body"
+          suppressContentEditableWarning
+          onInput={syncEditorFromDom}
         />
-
-        {quotedSuffix ? (
-          <pre className="gmail-compose-panel__quote">{quotedSuffix.trimStart()}</pre>
-        ) : null}
       </div>
 
       <footer className="gmail-compose-panel__footer">

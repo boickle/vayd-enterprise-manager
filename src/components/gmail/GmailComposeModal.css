@@ -5,6 +5,9 @@
   box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08);
   margin-top: 16px;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  max-height: min(65vh, 580px);
 }
 
 .gmail-compose-panel--float {
@@ -119,30 +122,75 @@
   color: #334155;
 }
 
-.gmail-compose-panel__body {
-  width: 100%;
-  box-sizing: border-box;
-  border: none;
-  padding: 8px 12px 0;
-  font: inherit;
-  font-size: 14px;
-  line-height: 1.5;
-  color: #334155;
-  resize: vertical;
-  min-height: 0;
-  outline: none;
-}
-
 .gmail-compose-panel__compose-body {
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
 }
 
-.gmail-compose-panel__signature {
-  padding: 0 12px 8px;
+.gmail-compose-panel__body {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  border: none;
+  padding: 12px;
+  font: inherit;
   font-size: 14px;
   line-height: 1.5;
   color: #334155;
+  resize: none;
+  flex: 1;
+  min-height: 280px;
+  outline: none;
+  background: transparent;
+  overflow-y: auto;
+}
+
+.gmail-compose-panel__body--rich {
+  white-space: normal;
+  word-wrap: break-word;
+}
+
+.gmail-compose-panel__body--rich [data-compose-user] {
+  min-height: 4em;
+  margin-bottom: 0.75em;
+}
+
+.gmail-compose-panel__body--rich [data-compose-signature] {
+  margin-bottom: 0.75em;
+}
+
+.gmail-compose-panel__body--rich [data-compose-signature] p {
+  margin: 0 0 0.35em;
+}
+
+.gmail-compose-panel__body--rich [data-compose-signature] a {
+  color: #2563eb;
+}
+
+.gmail-compose-panel__body--rich [data-compose-signature] img {
+  max-width: 100%;
+  height: auto;
+}
+
+.gmail-compose-panel__body--rich [data-compose-quote] {
+  margin-top: 0.75em;
+  padding-top: 0.75em;
+  border-top: 1px solid #e2e8f0;
+}
+
+.gmail-compose-panel__body--rich blockquote {
+  margin: 0.5em 0 0;
+}
+
+.gmail-compose-panel__signature {
+  padding: 0 12px 12px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #334155;
+  pointer-events: none;
+  user-select: text;
 }
 
 .gmail-compose-panel__signature :first-child {
@@ -164,21 +212,16 @@
 
 .gmail-compose-panel__quote {
   margin: 0;
-  padding: 10px 12px 12px;
+  padding: 12px 12px 16px;
   border-top: 1px solid #e2e8f0;
   font-family: inherit;
   font-size: 13px;
   line-height: 1.45;
   color: #64748b;
   white-space: pre-wrap;
-  max-height: 220px;
-  overflow-y: auto;
-  background: #f8fafc;
-}
-
-.gmail-compose-panel--float .gmail-compose-panel__body {
-  flex: 1;
-  min-height: 120px;
+  background: transparent;
+  pointer-events: none;
+  user-select: text;
 }
 
 .gmail-compose-panel__footer {

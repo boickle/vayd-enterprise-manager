@@ -815,22 +815,107 @@ function systemLabelOrPlaceholder(
   );
 }
 
+/** Virtual folder node created for a parent segment (no standalone Gmail label). */
+export function isGmailVirtualLabelFolder(label: Pick<GmailLabelNode, 'id'>): boolean {
+  return label.id.startsWith('path:');
+}
+
+/** Collect real user labels (deduped by id) from a flat or nested API tree. */
+export function collectUserLabelLeaves(nodes: GmailLabelNode[]): GmailLabelNode[] {
+  const byId = new Map<string, GmailLabelNode>();
+  const walk = (list: GmailLabelNode[]) => {
+    for (const n of list) {
+      if (n.type === 'user' && !isGmailLabelGroup(n) && !isGmailVirtualLabelFolder(n)) {
+        byId.set(n.id, n);
+      }
+      if (n.children.length) walk(n.children);
+    }
+  };
+  walk(nodes);
+  return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Build nested sidebar tree from Gmail label paths (`Parent/Child/...`). */
+export function buildUserLabelTreeFromPaths(leaves: GmailLabelNode[]): GmailLabelNode[] {
+  type MutableNode = GmailLabelNode & { _children: Map<string, MutableNode> };
+  const roots = new Map<string, MutableNode>();
+
+  for (const label of leaves) {
+    const segments = label.name.split('/').filter((s) => s.trim().length > 0);
+    if (segments.length === 0) continue;
+    let level = roots;
+
+    for (let i = 0; i < segments.length; i++) {
+      const path = segments.slice(0, i + 1).join('/');
+      if (!level.has(path)) {
+        level.set(path, {
+          id: i === segments.length - 1 ? label.id : `path:${path}`,
+          name: path,
+          type: 'user',
+          messageListVisibility: null,
+          labelListVisibility: null,
+          color: null,
+          children: [],
+          _children: new Map(),
+        });
+      }
+      const node = level.get(path)!;
+      if (i === segments.length - 1) {
+        node.id = label.id;
+        node.messageListVisibility = label.messageListVisibility ?? null;
+        node.labelListVisibility = label.labelListVisibility ?? null;
+        node.messagesTotal = label.messagesTotal;
+        node.messagesUnread = label.messagesUnread;
+        node.threadsTotal = label.threadsTotal;
+        node.threadsUnread = label.threadsUnread;
+        node.color = label.color ?? null;
+      }
+      level = node._children;
+    }
+  }
+
+  const toTree = (map: Map<string, MutableNode>): GmailLabelNode[] =>
+    [...map.values()]
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map(({ _children, ...node }) => ({
+        ...node,
+        children: _children.size ? toTree(_children) : [],
+      }));
+
+  return toTree(roots);
+}
+
+/** Label ids for folders that should start expanded in the sidebar. */
+export function collectExpandableLabelIds(nodes: GmailLabelNode[]): string[] {
+  const ids: string[] = [];
+  const walk = (list: GmailLabelNode[]) => {
+    for (const n of list) {
+      if (n.children.length > 0) {
+        ids.push(n.id);
+        walk(n.children);
+      }
+    }
+  };
+  walk(nodes);
+  return ids;
+}
+
 /** Filter internal labels and return Gmail-style sidebar navigation + user labels. */
 export function prepareSidebarLabels(labels: GmailLabelNode[]): GmailSidebarLabels {
   const filtered = filterSidebarLabelTree(labels);
   const systemById = new Map<string, GmailLabelNode>();
-  const userLabels: GmailLabelNode[] = [];
   const categories: GmailLabelNode[] = [];
 
   for (const label of filtered) {
     if (label.id.startsWith(GMAIL_CATEGORY_LABEL_PREFIX)) {
       categories.push(label);
-    } else if (label.type === 'user') {
-      userLabels.push(label);
     } else if (SIDEBAR_SYSTEM_LABEL_IDS.has(label.id) && !systemById.has(label.id)) {
       systemById.set(label.id, label);
     }
   }
+
+  const userLabelRoots = filtered.filter((label) => label.type === 'user');
+  const userLabels = buildUserLabelTreeFromPaths(collectUserLabelLeaves(userLabelRoots));
 
   const navigation: GmailLabelNode[] = PRIMARY_NAV_ORDER.map((id) =>
     systemLabelOrPlaceholder(id, systemById),
