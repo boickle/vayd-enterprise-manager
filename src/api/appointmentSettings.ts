@@ -80,6 +80,9 @@ export type Employee = {
   bio?: string | null;
   /** OpenPhone user id for call attribution / CSR coaching when synced. */
   openPhoneUserId?: string | null;
+  /** Synced from eVet employee contact; used as SMS send-from for On My Way when set. */
+  phone1?: string | null;
+  phone2?: string | null;
   appointmentTypes: AppointmentType[];
   weeklySchedules: EmployeeWeeklySchedule[];
   practice?: {

@@ -107,6 +107,18 @@ function empBio(e: Employee): string | null | undefined {
   return e.bio ?? (e as Record<string, unknown>).bio as string | null | undefined;
 }
 
+function empPhone1(e: Employee): string {
+  const raw = e.phone1 ?? (e as Record<string, unknown>).phone1;
+  const s = str(raw).trim();
+  return s || '—';
+}
+
+function empPhone2(e: Employee): string | null {
+  const raw = e.phone2 ?? (e as Record<string, unknown>).phone2;
+  const s = str(raw).trim();
+  return s || null;
+}
+
 type Props = {
   onMessage?: (msg: string, kind: 'success' | 'error') => void;
 };
@@ -531,6 +543,7 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
                 <th>ID</th>
                 <th>Name</th>
                 <th>Email</th>
+                <th>Phone</th>
                 <th>PIMS ID</th>
                 <th>PIMS user</th>
                 <th>Provider</th>
@@ -556,6 +569,15 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
                       </button>
                     </td>
                     <td>{emp.email || '—'}</td>
+                    <td
+                      title={
+                        empPhone2(emp)
+                          ? `Phone 2: ${empPhone2(emp)}`
+                          : undefined
+                      }
+                    >
+                      {empPhone1(emp)}
+                    </td>
                     <td>{empPimsId(emp)}</td>
                     <td>{empPimsUserId(emp)}</td>
                     <td>{emp.isProvider ? 'Yes' : 'No'}</td>

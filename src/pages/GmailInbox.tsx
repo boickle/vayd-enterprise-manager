@@ -33,6 +33,7 @@ import {
   mergeGmailMessagesByDate,
   patchInboxUnreadCount,
   prepareSidebarLabels,
+  collectExpandableLabelIds,
   resolveGmailMessageListParams,
   isMoreNavLabel,
   GMAIL_MORE_GROUP_ID,
@@ -678,8 +679,8 @@ export default function GmailInbox() {
     setSidebarUserLabels(userLabelTree);
     setExpandedLabels((prev) => {
       const next = new Set(prev);
-      for (const n of userLabelTree) {
-        if (n.children.length) next.add(n.id);
+      for (const id of collectExpandableLabelIds(userLabelTree)) {
+        next.add(id);
       }
       if (navigation.some((n) => n.id === GMAIL_CATEGORIES_GROUP_ID)) {
         next.add(GMAIL_CATEGORIES_GROUP_ID);
