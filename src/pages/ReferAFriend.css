@@ -1,0 +1,359 @@
+/* Public "Refer a Friend" landing page (/refer-a-friend) — standalone marketing page, no login. */
+
+.raf-page {
+  /* Break out of the app's default `.container` (max-width 1100px, 24px padding) for full-bleed sections. */
+  margin: -24px -24px 0;
+  --raf-navy: #16324a;
+  --raf-navy-deep: #102638;
+  --raf-green: #4a7c3f;
+  --raf-green-dark: #3c6532;
+  --raf-card-bg: #eceeec;
+  --raf-body: #33403a;
+  background: #ffffff;
+}
+
+.raf-page * {
+  box-sizing: border-box;
+}
+
+.raf-wrap {
+  max-width: 1140px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+/* ---------- Hero ---------- */
+.raf-hero {
+  position: relative;
+  overflow: hidden;
+  min-height: 300px;
+  background: #f3efe7;
+}
+
+.raf-hero-media {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: linear-gradient(135deg, #ece5d6 0%, #d7c9ad 45%, #a9c6bd 100%);
+}
+
+.raf-hero-media img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 35%;
+}
+
+.raf-hero-inner {
+  position: relative;
+  z-index: 1;
+  max-width: 1140px;
+  margin: 0 auto;
+  /* Bottom padding is reserved empty space over the photo — the card below is pulled up into
+     exactly this amount via negative margin, so it can never cover the heading/lead copy above it. */
+  padding: 48px 24px 120px;
+}
+
+@media (min-width: 880px) {
+  .raf-hero-inner {
+    padding-bottom: 180px;
+  }
+}
+
+.raf-hero-copy {
+  max-width: 480px;
+}
+
+.raf-eyebrow {
+  display: block;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--raf-green);
+  margin-bottom: 10px;
+}
+
+.raf-heading {
+  font-family: 'Libre Baskerville', 'Times New Roman', serif;
+  font-weight: 400;
+  font-size: 34px;
+  line-height: 1.2;
+  color: var(--raf-navy);
+  margin: 0 0 16px;
+}
+
+.raf-lead {
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--raf-body);
+  max-width: 520px;
+  margin: 0;
+}
+
+.raf-lead strong {
+  color: var(--raf-navy);
+}
+
+/* ---------- Form card ---------- */
+.raf-card-wrap {
+  position: relative;
+  z-index: 1;
+  padding: 0 24px;
+  /* Pulls the card up into the hero's reserved bottom padding — never overlaps real content. */
+  margin-top: -100px;
+}
+
+@media (min-width: 880px) {
+  .raf-card-wrap {
+    margin-top: -160px;
+  }
+}
+
+.raf-card {
+  position: relative;
+  background: var(--raf-card-bg);
+  border-radius: 16px;
+  padding: 28px 24px;
+  box-shadow: 0 16px 32px rgba(16, 38, 56, 0.12);
+  margin: 0 auto 40px;
+  max-width: 640px;
+}
+
+.raf-form {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.raf-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.raf-label {
+  font-size: 14px;
+  font-weight: 700;
+  color: #1f2a25;
+}
+
+.raf-hint {
+  font-size: 12.5px;
+  color: var(--raf-body);
+  opacity: 0.85;
+  margin-top: -4px;
+}
+
+.raf-input {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 8px;
+  border: 1px solid #d7dbd8;
+  background: #ffffff;
+  color: #1f2a25;
+  font-size: 14px;
+}
+
+.raf-input:focus {
+  outline: none;
+  border-color: var(--raf-green);
+  box-shadow: 0 0 0 3px rgba(74, 124, 63, 0.15);
+}
+
+.raf-input:disabled {
+  opacity: 0.7;
+}
+
+.raf-submit-btn {
+  align-self: center;
+  margin-top: 6px;
+  padding: 13px 40px;
+  border: none;
+  border-radius: 999px;
+  background: var(--raf-green);
+  color: #ffffff;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.raf-submit-btn:hover:not(:disabled) {
+  background: var(--raf-green-dark);
+}
+
+.raf-submit-btn:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.raf-reassurance {
+  margin: 4px 0 0;
+  text-align: center;
+  font-size: 13px;
+  color: var(--raf-body);
+  opacity: 0.85;
+}
+
+.raf-error {
+  margin: 0;
+  font-size: 13px;
+  color: #b3261e;
+  text-align: center;
+}
+
+.raf-success {
+  text-align: center;
+  padding: 12px 4px;
+}
+
+.raf-success h2 {
+  font-family: 'Libre Baskerville', 'Times New Roman', serif;
+  font-size: 24px;
+  color: var(--raf-navy);
+  margin: 0 0 12px;
+}
+
+.raf-success p {
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--raf-body);
+  margin: 0 0 10px;
+}
+
+.raf-success .raf-link {
+  display: inline-block;
+  margin-top: 10px;
+  color: var(--raf-green);
+  font-weight: 700;
+}
+
+/* ---------- "Why clients share" section ---------- */
+.raf-why {
+  max-width: 1140px;
+  margin: 0 auto;
+  padding: 0 24px 64px;
+  display: grid;
+  gap: 32px;
+}
+
+.raf-why-media {
+  aspect-ratio: 4 / 3;
+  border-radius: 12px;
+  overflow: hidden;
+  position: relative;
+  background: linear-gradient(135deg, #cbb99a 0%, #9fb6a8 100%);
+}
+
+.raf-why-media img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.raf-why-copy h2 {
+  font-family: 'Libre Baskerville', 'Times New Roman', serif;
+  font-weight: 400;
+  font-size: 28px;
+  line-height: 1.25;
+  color: var(--raf-navy);
+  margin: 0 0 18px;
+}
+
+.raf-why-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.raf-why-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 15px;
+  font-weight: 700;
+  color: #1f2a25;
+  line-height: 1.4;
+}
+
+.raf-why-check {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+  border-radius: 50%;
+  border: 2px solid var(--raf-green);
+  color: var(--raf-green);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  line-height: 1;
+}
+
+@media (min-width: 880px) {
+  .raf-why {
+    grid-template-columns: 1fr 1fr;
+    align-items: center;
+  }
+}
+
+/* ---------- Testimonials ---------- */
+.raf-testimonials {
+  background: var(--raf-navy-deep);
+  padding: 48px 24px;
+}
+
+.raf-testimonials-label {
+  display: block;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--raf-green);
+  margin-bottom: 28px;
+}
+
+.raf-testimonials-grid {
+  max-width: 1140px;
+  margin: 0 auto;
+  display: grid;
+  gap: 28px;
+}
+
+@media (min-width: 880px) {
+  .raf-testimonials-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+.raf-testimonials-grid blockquote {
+  margin: 0;
+  font-family: 'Libre Baskerville', 'Times New Roman', serif;
+  font-size: 16px;
+  line-height: 1.55;
+  color: #ffffff;
+  text-align: center;
+}
+
+/* ---------- Footer ---------- */
+.raf-footer {
+  display: flex;
+  justify-content: center;
+  padding: 40px 24px;
+  background: #ffffff;
+}
+
+.raf-footer-logo {
+  height: 72px;
+  width: auto;
+  opacity: 0.92;
+  mix-blend-mode: multiply;
+}
