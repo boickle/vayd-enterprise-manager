@@ -47,6 +47,10 @@ export type RoutingForwardBookingIntentV1 = {
   description?: string | null;
   instructions?: string | null;
   bookingNotes?: string | null;
+  /** Staff working note on the forward booking row (`note`). */
+  staffNote?: string | null;
+  /** Live reminder outreach notes when entering routing from a list. */
+  reminderOutreachNotes?: string | null;
   intervalAmount: number;
   intervalUnit: ForwardBookingIntervalUnit;
   /** Legacy echo only — do not use for due-date math. */
@@ -345,6 +349,7 @@ export function buildRoutingForwardBookingIntentFromEntry(
     description: entry.description ?? null,
     instructions: entry.instructions ?? null,
     bookingNotes: entry.bookingNotes ?? null,
+    staffNote: entry.note ?? null,
     intervalAmount: interval.amount,
     intervalUnit: interval.unit,
     ...(entry.monthsOut != null ? { monthsOut: entry.monthsOut } : {}),

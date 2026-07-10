@@ -1,5 +1,6 @@
 import type { RoutingForwardBookingIntentV1 } from '../utils/routingForwardBookingIntent';
 import { buildForwardBookingWorkspaceContext } from '../utils/forwardBookingRoutingContext';
+import { ClientContactLogReadout } from './ClientContactLogEditor';
 import './ForwardBookingWorkspaceContextPanel.css';
 
 type Props = {
@@ -49,11 +50,11 @@ export function ForwardBookingWorkspaceContextPanel({ intent, practiceTz }: Prop
         ) : null}
         {ctx.providerLabel ? <span>Provider: {ctx.providerLabel}</span> : null}
       </div>
-      {ctx.bookingNote ? (
-        <div className="forward-booking-workspace-context__note">
-          <span className="forward-booking-workspace-context__note-label">Forward booking note:</span>{' '}
-          {ctx.bookingNote}
-        </div>
+      {ctx.contextNote || ctx.contactLog ? (
+        <ClientContactLogReadout
+          contextNote={ctx.contextNote}
+          contactLog={ctx.contactLog}
+        />
       ) : null}
     </div>
   );

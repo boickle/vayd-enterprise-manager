@@ -896,6 +896,9 @@
   font-size: 13px;
   color: #334155;
   cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .gmail-bulk-menu__item:hover {

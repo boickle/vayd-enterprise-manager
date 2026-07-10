@@ -285,9 +285,11 @@ export function forwardBookingIntervalSpanDays(
   return amount * 30;
 }
 
+const FORWARD_BOOKING_ROUTING_SEARCH_BUFFER_DAYS = 7;
+
 /**
- * Routing slot search range: target due date ± round(spanDays / 5).
- * Example: 2 weeks (14d) → ±3d around due date; 1 month (30d) → ±6d.
+ * Routing slot search range: target due date ±7 days.
+ * Start is never before today in practice TZ (so far-future targets do not pull the window back to now).
  */
 export function forwardBookingRoutingSearchDateRange(args: {
   intervalAmount: number;
@@ -296,17 +298,15 @@ export function forwardBookingRoutingSearchDateRange(args: {
   practiceTz: string;
 }): { startDate: string; endDate: string } | null {
   const { intervalAmount, intervalUnit, targetDueDateIso, practiceTz } = args;
-  const spanDays = forwardBookingIntervalSpanDays(intervalAmount, intervalUnit);
-  if (spanDays <= 0) return null;
-
-  const bufferDays = Math.max(1, Math.round(spanDays / 5));
   const tz = practiceTimeZoneOrDefault(practiceTz);
 
   let target: DateTime;
   if (targetDueDateIso?.trim()) {
-    target = DateTime.fromISO(targetDueDateIso, { zone: 'utc' }).setZone(tz);
+    target = DateTime.fromISO(targetDueDateIso, { zone: 'utc' }).setZone(tz).startOf('day');
   } else {
-    target = DateTime.now().setZone(tz);
+    const interval = forwardBookingIntervalSpanDays(intervalAmount, intervalUnit);
+    if (interval <= 0) return null;
+    target = DateTime.now().setZone(tz).startOf('day');
     target =
       intervalUnit === 'days'
         ? target.plus({ days: intervalAmount })
@@ -316,9 +316,14 @@ export function forwardBookingRoutingSearchDateRange(args: {
   }
   if (!target.isValid) return null;
 
+  const today = DateTime.now().setZone(tz).startOf('day');
+  const bufferDays = FORWARD_BOOKING_ROUTING_SEARCH_BUFFER_DAYS;
+  const start = DateTime.max(today, target.minus({ days: bufferDays }));
+  const end = DateTime.max(start, target.plus({ days: bufferDays }));
+
   return {
-    startDate: target.minus({ days: bufferDays }).toFormat('yyyy-MM-dd'),
-    endDate: target.plus({ days: bufferDays }).toFormat('yyyy-MM-dd'),
+    startDate: start.toFormat('yyyy-MM-dd'),
+    endDate: end.toFormat('yyyy-MM-dd'),
   };
 }
 

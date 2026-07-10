@@ -668,8 +668,14 @@ function buildStaffConfirmBookingBreakdown(args: {
         isNewClient ? petRows.length : 0,
       ),
     isNewClient,
-    pets: buildBreakdownPetsFromRequest(requestData, isNewClient),
-    typesLabel: formatTypesLabelFromRequestData(requestData) ?? undefined,
+    pets:
+      petRows.length > 0
+        ? buildBreakdownPetsFromRequest(requestData, isNewClient)
+        : buildBreakdownPetsFromCalendarAppts(args.calendarAppts, requestData, isNewClient),
+    typesLabel:
+      formatTypesLabelFromRequestData(requestData) ??
+      formatTypesLabelFromCalendarAppts(args.calendarAppts) ??
+      undefined,
     calendarStillHold: stillOnHold,
   };
 

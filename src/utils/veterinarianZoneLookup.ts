@@ -276,29 +276,6 @@ export function employeeAcceptsAppointmentType(
   return types.some((at) => at?.id != null && Number(at.id) === target);
 }
 
-async function filterProvidersByEmployeeAppointmentType(
-  providers: Provider[],
-  appointmentTypeId: number | undefined
-): Promise<Provider[]> {
-  if (
-    appointmentTypeId == null ||
-    !Number.isFinite(Number(appointmentTypeId)) ||
-    Number(appointmentTypeId) <= 0
-  ) {
-    return providers;
-  }
-  const typeId = Number(appointmentTypeId);
-  const filtered = await Promise.all(
-    providers.map(async (provider): Promise<Provider | null> => {
-      const pimsId = provider.pimsId ? String(provider.pimsId) : String(provider.id);
-      const employee = await loadEmployeeForDoctorPimsId(pimsId);
-      if (!employee || !employeeAcceptsAppointmentType(employee, typeId)) return null;
-      return provider;
-    })
-  );
-  return filtered.filter((p): p is Provider => p != null);
-}
-
 /** Distinct `dayOfWeek` values (0=Sun … 6=Sat) covered by an inclusive date range. */
 export function distinctDaysOfWeekInDateRange(
   startDate: string,
@@ -341,34 +318,94 @@ async function resolveLookupAddress(args: {
   }
 }
 
+async function enrichProvidersWithClientZoneFlags(
+  zone: {
+    id: number;
+    name: string;
+  },
+  appointmentTypeId?: number,
+): Promise<FetchVeterinariansResult> {
+  const zoneLabel = formatDoctorSelectZoneLabel(zone.name);
+  const providers = await fetchPrimaryProvidersCached();
+  const typeId =
+    appointmentTypeId != null &&
+    Number.isFinite(Number(appointmentTypeId)) &&
+    Number(appointmentTypeId) > 0
+      ? Number(appointmentTypeId)
+      : undefined;
+
+  const enriched = await Promise.all(
+    providers.map(async (provider): Promise<Provider> => {
+      const pimsId = provider.pimsId ? String(provider.pimsId) : String(provider.id);
+      const employeeId = await resolveEmployeeIdForDoctorPimsId(pimsId);
+      if (employeeId == null) {
+        return {
+          ...provider,
+          seeingClientsInClientZone: false,
+          acceptingNewPatientsInClientZone: false,
+          transitioningOutOfClientZone: false,
+          acceptsSelectedAppointmentType: typeId == null,
+        };
+      }
+      const employee = await loadEmployeeById(employeeId);
+      if (!employee) {
+        return {
+          ...provider,
+          seeingClientsInClientZone: false,
+          acceptingNewPatientsInClientZone: false,
+          transitioningOutOfClientZone: false,
+          acceptsSelectedAppointmentType: typeId == null,
+        };
+      }
+      const zoneFlags = deriveEmployeeZoneFlagsForZoneId(employee, zone.id, null, zoneLabel);
+      return {
+        ...provider,
+        seeingClientsInClientZone: zoneFlags.seeingClients,
+        acceptingNewPatientsInClientZone: zoneFlags.acceptingNewPatients,
+        transitioningOutOfClientZone: zoneFlags.transitioningOut,
+        acceptsSelectedAppointmentType:
+          typeId == null ? true : employeeAcceptsAppointmentType(employee, typeId),
+      };
+    }),
+  );
+
+  return { providers: enriched, clientZoneLabel: zoneLabel };
+}
+
+async function enrichProvidersWithAppointmentTypeAcceptance(
+  providers: Provider[],
+  appointmentTypeId?: number,
+): Promise<Provider[]> {
+  const typeId =
+    appointmentTypeId != null &&
+    Number.isFinite(Number(appointmentTypeId)) &&
+    Number(appointmentTypeId) > 0
+      ? Number(appointmentTypeId)
+      : undefined;
+  if (typeId == null) {
+    return providers.map((p) => ({ ...p, acceptsSelectedAppointmentType: true }));
+  }
+  return Promise.all(
+    providers.map(async (provider): Promise<Provider> => {
+      const pimsId = provider.pimsId ? String(provider.pimsId) : String(provider.id);
+      const employee = await loadEmployeeForDoctorPimsId(pimsId);
+      return {
+        ...provider,
+        acceptsSelectedAppointmentType: employee
+          ? employeeAcceptsAppointmentType(employee, typeId)
+          : false,
+      };
+    }),
+  );
+}
+
 async function fetchProvidersByZoneId(zone: {
   id: number;
   name: string;
 }): Promise<FetchVeterinariansResult> {
-  const zoneLabel = formatDoctorSelectZoneLabel(zone.name);
-  const providers = await fetchPrimaryProvidersCached();
-
-  const inZone = (
-    await Promise.all(
-      providers.map(async (provider): Promise<Provider | null> => {
-        const pimsId = provider.pimsId ? String(provider.pimsId) : String(provider.id);
-        const employeeId = await resolveEmployeeIdForDoctorPimsId(pimsId);
-        if (employeeId == null) return null;
-        const employee = await loadEmployeeById(employeeId);
-        if (!employee) return null;
-        const zoneFlags = deriveEmployeeZoneFlagsForZoneId(employee, zone.id, null, zoneLabel);
-        if (!zoneFlags.seeingClients) return null;
-        return {
-          ...provider,
-          seeingClientsInClientZone: true,
-          acceptingNewPatientsInClientZone: zoneFlags.acceptingNewPatients,
-          transitioningOutOfClientZone: zoneFlags.transitioningOut,
-        };
-      })
-    )
-  ).filter((p): p is Provider => p != null);
-
-  return { providers: inZone, clientZoneLabel: zoneLabel };
+  const { providers, clientZoneLabel } = await enrichProvidersWithClientZoneFlags(zone);
+  const inZone = providers.filter((p) => p.seeingClientsInClientZone === true);
+  return { providers: inZone, clientZoneLabel };
 }
 
 async function fetchAllProvidersForDoctorSelect(): Promise<FetchVeterinariansResult> {
@@ -574,105 +611,48 @@ export async function fetchVeterinariansForDoctorSelect(args: {
   address: string;
   lat?: number;
   lon?: number;
+  /** When set, each provider gets `acceptsSelectedAppointmentType` from employee settings. */
+  appointmentTypeId?: number;
 }): Promise<VeterinariansForDoctorSelectResult> {
   const lookupAddress = await resolveLookupAddress(args);
+  const appointmentTypeId = args.appointmentTypeId;
 
   if (lookupAddress) {
     const inPolygon = await resolveInPolygonZoneForAddress(lookupAddress);
     if (!inPolygon) {
       const fallback = await fetchAllProvidersForDoctorSelect();
+      const providers = await enrichProvidersWithAppointmentTypeAcceptance(
+        fallback.providers,
+        appointmentTypeId,
+      );
       return {
         ...fallback,
+        providers,
         clientZoneLabel: OUT_OF_SERVICE_AREA_SHORT_LABEL,
         usedNearestZone: true,
         isOutOfServiceArea: true,
       };
     }
-    const result = await fetchProvidersByZoneId(inPolygon);
+    const result = await enrichProvidersWithClientZoneFlags(inPolygon, appointmentTypeId);
     return { ...result, usedNearestZone: false, isOutOfServiceArea: false };
   }
 
   const fallback = await fetchAllProvidersForDoctorSelect();
-  return { ...fallback, usedNearestZone: false, isOutOfServiceArea: false };
+  const providers = await enrichProvidersWithAppointmentTypeAcceptance(
+    fallback.providers,
+    appointmentTypeId,
+  );
+  return { ...fallback, providers, usedNearestZone: false, isOutOfServiceArea: false };
 }
 
 /**
- * All active providers assigned to the client zone on any workday (assign zone checked),
- * regardless of transitioning / accepting-new-patients flags. Falls back to all providers
- * when the zone cannot be resolved.
+ * All active providers with client-zone flags for the doctor picker.
  */
 export async function fetchProvidersForAsapAllDoctorSearch(args: {
   address: string;
   lat?: number;
   lon?: number;
-  /** When set, only doctors with this type enabled in employee settings are included. */
   appointmentTypeId?: number;
 }): Promise<VeterinariansForDoctorSelectResult> {
-  const appointmentTypeId =
-    args.appointmentTypeId != null &&
-    Number.isFinite(Number(args.appointmentTypeId)) &&
-    Number(args.appointmentTypeId) > 0
-      ? Number(args.appointmentTypeId)
-      : undefined;
-  const lookupAddress = await resolveLookupAddress(args);
-
-  if (lookupAddress) {
-    const inPolygon = await resolveInPolygonZoneForAddress(lookupAddress);
-    if (!inPolygon) return outOfServiceAreaVeterinariansResult();
-
-    const zoneLabel = formatDoctorSelectZoneLabel(inPolygon.name);
-    const allProviders = await fetchPrimaryProvidersCached();
-    const inZone = (
-      await Promise.all(
-        allProviders.map(async (provider): Promise<Provider | null> => {
-          const pimsId = provider.pimsId ? String(provider.pimsId) : String(provider.id);
-          const employeeId = await resolveEmployeeIdForDoctorPimsId(pimsId);
-          if (employeeId == null) return null;
-          const employee = await loadEmployeeById(employeeId);
-          if (!employee) return null;
-          if (
-            appointmentTypeId != null &&
-            !employeeAcceptsAppointmentType(employee, appointmentTypeId)
-          ) {
-            return null;
-          }
-          if (!isEmployeeAssignedToZoneId(employee, inPolygon.id, null, zoneLabel)) {
-            return null;
-          }
-          const flags = deriveEmployeeZoneFlagsForZoneId(
-            employee,
-            inPolygon.id,
-            null,
-            zoneLabel
-          );
-          return {
-            ...provider,
-            seeingClientsInClientZone: flags.seeingClients,
-            acceptingNewPatientsInClientZone: flags.acceptingNewPatients,
-            transitioningOutOfClientZone: flags.transitioningOut,
-          };
-        })
-      )
-    ).filter((p): p is Provider => p != null);
-
-    if (inZone.length > 0) {
-      return {
-        providers: inZone,
-        clientZoneLabel: zoneLabel,
-        usedNearestZone: false,
-        isOutOfServiceArea: false,
-      };
-    }
-  }
-
-  const fallback = await fetchAllProvidersForDoctorSelect();
-  if (!appointmentTypeId) {
-    return { ...fallback, usedNearestZone: false, isOutOfServiceArea: false };
-  }
-  return {
-    ...fallback,
-    providers: await filterProvidersByEmployeeAppointmentType(fallback.providers, appointmentTypeId),
-    usedNearestZone: false,
-    isOutOfServiceArea: false,
-  };
+  return fetchVeterinariansForDoctorSelect(args);
 }

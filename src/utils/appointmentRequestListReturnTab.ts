@@ -8,6 +8,7 @@ import {
   parseAppointmentRequestsTabParam,
   type AppointmentRequestListTab,
 } from '../appointments-nav';
+import { HOLDS_PATH } from '../holds-nav';
 
 export const APPOINTMENT_REQUEST_LIST_RETURN_TAB_KEY =
   'vayd:appointment-request-list-return-tab-v1';
@@ -60,6 +61,10 @@ export function returnToAppointmentRequestsList(
   tab: AppointmentRequestListTab,
   opts?: { replace?: boolean; onHoldOver24Only?: boolean },
 ): void {
+  if (tab === 'on_hold') {
+    navigate(HOLDS_PATH, { replace: opts?.replace });
+    return;
+  }
   writeAppointmentRequestListReturnTab(tab);
   navigate(
     appointmentRequestsPathForTab(tab, {

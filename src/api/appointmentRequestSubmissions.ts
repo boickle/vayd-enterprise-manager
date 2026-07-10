@@ -31,6 +31,8 @@ export type AppointmentRequestSubmissionItem = {
   staffConfirmedAt?: string | null;
   /** Ops points on the linked calendar visit when `bookedAppointmentId` is set (from server). */
   linkedVisitPoints?: number | null;
+  /** True when the linked calendar visit is a HOLD (isHold type) — canonical on-hold signal. */
+  linkedVisitIsHold?: boolean;
   /** Linked liaison Gmail thread when resolved. */
   gmailThreadId?: string | null;
   gmailMailbox?: string | null;

@@ -36,3 +36,17 @@ export function clientFirstNameForSms(opts: {
 
   return 'there';
 }
+
+/** PIMS-style "Last, First" → "First Last"; leaves other labels unchanged. */
+export function clientDisplayLabelFirstLast(label: string | null | undefined): string {
+  const raw = label?.trim();
+  if (!raw) return 'this client';
+  if (!raw.includes(',')) return raw;
+  const commaIdx = raw.indexOf(',');
+  const last = stripNameToken(raw.slice(0, commaIdx));
+  const first = stripNameToken(raw.slice(commaIdx + 1));
+  if (first && last) return `${first} ${last}`;
+  if (first) return first;
+  if (last) return last;
+  return raw;
+}

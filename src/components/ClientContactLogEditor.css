@@ -1,0 +1,73 @@
+.client-contact-log {
+  width: min(100%, 480px);
+  font-size: 0.88rem;
+  color: var(--text-muted, #64748b);
+}
+
+.client-contact-log__label {
+  font-weight: 600;
+  color: inherit;
+}
+
+.client-contact-log__context {
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+}
+
+.client-contact-log__context-text {
+  margin: 4px 0 0;
+  color: var(--text, #1e293b);
+  white-space: pre-wrap;
+  line-height: 1.45;
+}
+
+.client-contact-log__head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.client-contact-log__save {
+  font-size: 12px;
+  padding: 4px 12px;
+  flex-shrink: 0;
+}
+
+.client-contact-log__hint {
+  margin: 0 0 6px;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.client-contact-log__textarea {
+  width: 100%;
+  resize: vertical;
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.client-contact-log__error {
+  margin: 4px 0 0;
+  color: #b91c1c;
+  font-size: 12px;
+}
+
+.client-contact-log-readout {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid color-mix(in srgb, #fdba74 65%, transparent);
+  line-height: 1.45;
+}
+
+.client-contact-log-readout__line + .client-contact-log-readout__line {
+  margin-top: 4px;
+}
+
+.client-contact-log-readout__label {
+  font-weight: 700;
+}

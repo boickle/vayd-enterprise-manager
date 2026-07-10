@@ -4,7 +4,8 @@ import { ChevronDown } from 'lucide-react';
 import { useAuth } from '../auth/useAuth';
 import { getVisibleScoutTabs } from '../scout-tabs';
 import { SCHEDULING_TOOLS_PATH_PREFIX } from '../scheduling-tools-nav';
-import { APPOINTMENTS_PATH_PREFIX } from '../appointments-nav';
+import { APPOINTMENTS_PATH_PREFIX, APPOINTMENT_SEARCH_PATH } from '../appointments-nav';
+import { HOLDS_PATH } from '../holds-nav';
 import { EXIT_SURVEY_PATH } from '../tools-tabs';
 import { blockRoutingCalendarPreviewNavigation } from '../utils/routingCalendarPreviewGuard';
 import TasksNavLabel from './TasksNavLabel';
@@ -50,7 +51,11 @@ function blockScheduleNavLeave(e: { preventDefault: () => void }): boolean {
 function SchedulingSubmenuLinks({ onNavigate }: { onNavigate: () => void }) {
   const location = useLocation();
   const schedulingToolsActive = location.pathname.startsWith(SCHEDULING_TOOLS_PATH_PREFIX);
-  const appointmentsActive = location.pathname.startsWith(APPOINTMENTS_PATH_PREFIX);
+  const appointmentsActive =
+    location.pathname.startsWith(APPOINTMENTS_PATH_PREFIX) &&
+    !location.pathname.startsWith(APPOINTMENT_SEARCH_PATH);
+  const appointmentSearchActive = location.pathname.startsWith(APPOINTMENT_SEARCH_PATH);
+  const holdsActive = location.pathname.startsWith(HOLDS_PATH);
   const exitSurveyActive = location.pathname.startsWith(EXIT_SURVEY_PATH);
   return (
     <>
@@ -68,6 +73,19 @@ function SchedulingSubmenuLinks({ onNavigate }: { onNavigate: () => void }) {
         Scheduling Tools
       </Link>
       <Link
+        to={APPOINTMENT_SEARCH_PATH}
+        className={`schedule-app__settings-link${
+          appointmentSearchActive ? ' schedule-app__settings-link--active' : ''
+        }`}
+        role="menuitem"
+        onClick={(e) => {
+          if (blockScheduleNavLeave(e)) return;
+          onNavigate();
+        }}
+      >
+        Appointment Search
+      </Link>
+      <Link
         to={APPOINTMENTS_PATH_PREFIX}
         className={`schedule-app__settings-link${
           appointmentsActive ? ' schedule-app__settings-link--active' : ''
@@ -79,6 +97,19 @@ function SchedulingSubmenuLinks({ onNavigate }: { onNavigate: () => void }) {
         }}
       >
         Appointments
+      </Link>
+      <Link
+        to={HOLDS_PATH}
+        className={`schedule-app__settings-link${
+          holdsActive ? ' schedule-app__settings-link--active' : ''
+        }`}
+        role="menuitem"
+        onClick={(e) => {
+          if (blockScheduleNavLeave(e)) return;
+          onNavigate();
+        }}
+      >
+        Holds
       </Link>
       <Link
         to={EXIT_SURVEY_PATH}
@@ -312,6 +343,7 @@ export default function NavbarScheduleHorizontalNav() {
     (overflowKeys.includes('scheduling') &&
       (location.pathname.startsWith(SCHEDULING_TOOLS_PATH_PREFIX) ||
         location.pathname.startsWith(APPOINTMENTS_PATH_PREFIX) ||
+        location.pathname.startsWith(HOLDS_PATH) ||
         location.pathname.startsWith(EXIT_SURVEY_PATH))) ||
     (overflowKeys.includes('settings') && location.pathname.startsWith('/schedule/settings')) ||
     (overflowKeys.includes('admin') && location.pathname.startsWith('/schedule/admin'));
@@ -382,6 +414,7 @@ export default function NavbarScheduleHorizontalNav() {
               className={`schedule-app__tab schedule-app__settings-summary${
                 location.pathname.startsWith(SCHEDULING_TOOLS_PATH_PREFIX) ||
                 location.pathname.startsWith(APPOINTMENTS_PATH_PREFIX) ||
+                location.pathname.startsWith(HOLDS_PATH) ||
                 location.pathname.startsWith(EXIT_SURVEY_PATH)
                   ? ' schedule-app__tab--active'
                   : ''

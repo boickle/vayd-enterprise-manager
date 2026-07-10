@@ -14,6 +14,8 @@ import {
 
 type Props = {
   breakdown: StaffConfirmBookingBreakdown;
+  originalSubtitle?: string;
+  recommendedSubtitle?: string;
 };
 
 function DurationBreakdownBlock({
@@ -63,7 +65,11 @@ function DurationBreakdownBlock({
   );
 }
 
-export function StaffConfirmBookingBreakdownSection({ breakdown }: Props) {
+export function StaffConfirmBookingBreakdownSection({
+  breakdown,
+  originalSubtitle = 'Original booking',
+  recommendedSubtitle,
+}: Props) {
   const holdNote = formatStaffConfirmHoldSchedulingNote(breakdown);
   const differenceLine = formatStaffConfirmSlotDifferenceLine(breakdown);
   const { original, recommended, bookedSlotMinutes } = breakdown;
@@ -84,15 +90,16 @@ export function StaffConfirmBookingBreakdownSection({ breakdown }: Props) {
         <DurationBreakdownBlock
           section={original}
           duration={original}
-          subtitle="Original booking"
+          subtitle={originalSubtitle}
         />
         <DurationBreakdownBlock
           section={recommended}
           duration={recommended}
           subtitle={
-            recommended.usesRequestedTypes
+            recommendedSubtitle ??
+            (recommended.usesRequestedTypes
               ? 'Recommended for requested types'
-              : 'Recommended for current types'
+              : 'Recommended for current types')
           }
         />
         {differenceLine ? (

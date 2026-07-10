@@ -1581,6 +1581,36 @@
   box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
 }
 
+.appt-request-row--owner-updated {
+  animation: holds-row-owner-updated 1.3s ease-out 2;
+}
+
+@keyframes holds-row-owner-updated {
+  0%,
+  100% {
+    box-shadow: none;
+  }
+  50% {
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.22);
+  }
+}
+
+.holds-owner-chip--updated {
+  animation: holds-owner-chip-updated 1.3s ease-out 2;
+}
+
+@keyframes holds-owner-chip-updated {
+  0%,
+  100% {
+    transform: scale(1);
+    box-shadow: none;
+  }
+  50% {
+    transform: scale(1.06);
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.35);
+  }
+}
+
 .appt-request-row-main {
   display: flex;
   flex-wrap: wrap;
@@ -1593,6 +1623,75 @@
 .appt-request-row-body {
   flex: 1 1 300px;
   min-width: 0;
+}
+
+.holds-client-panel {
+  border: 1px solid #bbf7d0;
+  background: #f0fdf4;
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+}
+
+.holds-client-panel__top {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.holds-client-panel__identity {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+.holds-client-panel__name {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #14532d;
+  line-height: 1.35;
+}
+
+.holds-client-panel__badge {
+  font-weight: 600;
+  margin-left: 8px;
+  font-size: 0.88rem;
+}
+
+.holds-client-panel__phone {
+  display: inline-block;
+  margin-top: 4px;
+  font-weight: 600;
+  color: #15803d;
+  text-decoration: none;
+}
+
+.holds-client-panel__phone:hover {
+  text-decoration: underline;
+}
+
+.holds-client-panel__phone-missing {
+  display: inline-block;
+  margin-top: 4px;
+  font-size: 0.88rem;
+}
+
+.holds-client-panel__history {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-left: auto;
+  align-items: flex-start;
+}
+
+.holds-client-panel__contact {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #bbf7d0;
 }
 
 .appt-request-gmail-labels-row {

@@ -26,6 +26,7 @@ import {
   fetchAppointmentsRange,
   isAppointmentCancelledOnPracticeCalendar,
   isAppointmentNoLocation,
+  cancelAppointment,
   isFlexBlockItem,
   isPracticeCalendarBlockAppointment,
   truthyApiFlag,
@@ -112,6 +113,7 @@ import {
   loadRoutingPreviewClientContact,
   previewClientContactFromAppointment,
 } from '../utils/schedulerPreviewClientContact';
+import { ClientContactLogReadout } from '../components/ClientContactLogEditor';
 import type { PreviewPopoverClientContact } from '../components/PreviewPopoverClientContact';
 import ScheduleOverrideModal from '../components/ScheduleOverrideModal';
 import { SchedulerReconcileModal } from '../components/SchedulerReconcileModal';
@@ -123,6 +125,8 @@ import { EditVisitPreviewPopover } from '../components/EditVisitPreviewPopover';
 import { AppointmentRequestStaffConfirmPopover } from '../components/AppointmentRequestStaffConfirmPopover';
 import OnHoldVisitConvertedPopover from '../components/OnHoldVisitConvertedPopover';
 import OnHoldVisitPreviewPopover from '../components/OnHoldVisitPreviewPopover';
+import OnHoldVisitRemovePopover from '../components/OnHoldVisitRemovePopover';
+import SlotOfferReviewPopover from '../components/SlotOfferReviewPopover';
 import { RoutingPreviewSlotPopover } from '../components/RoutingPreviewSlotPopover';
 import { ScheduleCalendarBlockedNotice } from '../components/ScheduleCalendarBlockedNotice';
 import {
@@ -230,6 +234,16 @@ import {
   manualBookPrefillFromDraft,
 } from '../utils/manualBookCalendarPreview';
 import { commitManualBookPreviewDraft } from '../utils/commitManualBookPreview';
+import HouseholdScheduledVisitsWarningModal from '../components/HouseholdScheduledVisitsWarningModal';
+import {
+  buildBookingAppointmentTypeCatalog,
+  findHouseholdScheduledVisitConflicts,
+  parseRoutingFocusHouseholdVisitEvent,
+  ROUTING_FOCUS_HOUSEHOLD_VISIT_EVENT,
+  ROUTING_HOUSEHOLD_VISIT_FOCUS_UNPIN_EVENT,
+  shouldWarnHouseholdVisitsOnBook,
+  type HouseholdScheduledVisitConflict,
+} from '../utils/bookingHouseholdVisitWarning';
 import {
   EDIT_VISIT_CALENDAR_BLOCKED_MESSAGE,
   EDIT_VISIT_TIME_PREVIEW_BLOCKED_MESSAGE,
@@ -330,9 +344,19 @@ import {
   writeOnHoldVisitEditReturnSession,
   type OnHoldVisitEditSessionV1,
 } from '../utils/onHoldVisitEditSession';
+import {
+  clearSlotOfferReviewSession,
+  readSlotOfferReviewSession,
+  TEXTED_OFFERS_TO_REVIEW_PATH,
+  type SlotOfferReviewSessionV1,
+} from '../utils/slotOfferReviewSession';
+import { writeSlotOfferReviewReturnSession } from '../utils/slotOfferReviewReturnSession';
+import { isHoldsBoardReturnPath } from '../holds-nav';
+import { writeHoldsBoardReturnSession } from '../utils/holdsBoardReturnSession';
 import { NotBookedRemoveGateOverlay } from '../components/NotBookedRemoveGateOverlay';
 import { ON_HOLD_LIST_PATH } from '../utils/forwardBookingReturnSession';
 import { opsPointsForAppointment } from '../utils/forwardBookingListVisibility';
+import { confirmSlotOffer } from '../api/slotOffers';
 import { patchAppointmentRequestSubmission, fetchAppointmentRequestSubmission } from '../api/appointmentRequestSubmissions';
 import {
   appointmentRequestWorkspaceIsActive,
@@ -1816,6 +1840,30 @@ function visitDetailsWindowLine(
   return null;
 }
 
+/** Compact appointment-card header: `🪟 8:50 AM – 10:50 AM`. */
+function schedulerEventWindowCardLabel(
+  appt: Appointment,
+  driveHint: SchedulerHoverDriveHint | null | undefined
+): string | null {
+  const range = visitDetailsWindowLine(appt, driveHint);
+  if (range) return `🪟 ${range}`;
+
+  const practiceTz = driveHint?.practiceTz ?? PRACTICE_TZ;
+  const resolved = resolveArrivalWindowIsos({
+    apptEffectiveWindow: appt.effectiveWindow ?? null,
+    household: null,
+    slot: null,
+    scheduledStartIso: appt.appointmentStart,
+    appointmentType: appt.appointmentType,
+    appointmentEndIso: appt.appointmentEnd,
+    practiceTz,
+  });
+  if (resolved?.startIso && resolved?.endIso) {
+    return `🪟 ${formatIsoTimeShortInPracticeZone(resolved.startIso, practiceTz)} – ${formatIsoTimeShortInPracticeZone(resolved.endIso, practiceTz)}`;
+  }
+  return null;
+}
+
 export function SchedulerHoverContent({
   appt,
   driveHint,
@@ -1948,8 +1996,13 @@ export function SchedulerHoverContent({
             if (!showArrive && !showWindow) return null;
             return (
               <div className="scheduler-tooltip-drive-block">
+                {showWindow && !(driveHint.isPersonalBlock && driveHint.isFixedTime) ? (
+                  <VisitHighlightsRow label="🪟 Promised Window of Arrival">
+                    {formatSchedulerArrivalWindowLine(driveHint)}
+                  </VisitHighlightsRow>
+                ) : null}
                 {showArrive ? (
-                  <VisitHighlightsRow label="ETA / ETD">
+                  <VisitHighlightsRow label="Expected time of arrival & departure">
                     {driveHint.etaIso
                       ? formatIsoTimeShortInPracticeZone(driveHint.etaIso, driveHint.practiceTz)
                       : '—'}
@@ -1957,11 +2010,6 @@ export function SchedulerHoverContent({
                     {driveHint.etdIso
                       ? formatIsoTimeShortInPracticeZone(driveHint.etdIso, driveHint.practiceTz)
                       : '—'}
-                  </VisitHighlightsRow>
-                ) : null}
-                {showWindow && !(driveHint.isPersonalBlock && driveHint.isFixedTime) ? (
-                  <VisitHighlightsRow label="Window of arrival">
-                    {formatSchedulerArrivalWindowLine(driveHint)}
                   </VisitHighlightsRow>
                 ) : null}
               </div>
@@ -2860,6 +2908,12 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     useState<EditVisitLinkSelection | null>(null);
   const [onHoldVisitPreview, setOnHoldVisitPreview] =
     useState<OnHoldVisitEditSessionV1 | null>(null);
+  const [onHoldVisitRemoveConfirming, setOnHoldVisitRemoveConfirming] = useState(false);
+  const [onHoldVisitRemoveError, setOnHoldVisitRemoveError] = useState<string | null>(null);
+  const [slotOfferReviewPreview, setSlotOfferReviewPreview] =
+    useState<SlotOfferReviewSessionV1 | null>(null);
+  const [slotOfferReviewConfirming, setSlotOfferReviewConfirming] = useState(false);
+  const [slotOfferReviewError, setSlotOfferReviewError] = useState<string | null>(null);
   const [notBookedRemoveGate, setNotBookedRemoveGate] =
     useState<NotBookedRemoveSessionV1 | null>(null);
   const [onHoldVisitConvertedExitKind, setOnHoldVisitConvertedExitKind] =
@@ -2890,6 +2944,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   );
   const editVisitHighlightTimerRef = useRef<number | null>(null);
   const editVisitHighlightDurationMsRef = useRef(2600);
+  const householdVisitHighlightPinnedRef = useRef(false);
   const editVisitPostBookScrollSigRef = useRef<string>('');
   const staffConfirmTypesAppliedRef = useRef<string | null>(null);
   const [schedulerFocusReturnTick, setSchedulerFocusReturnTick] = useState(0);
@@ -4010,6 +4065,10 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   }, [routingPreview, routingPreviewIsReschedule, routingPreviewIsManualBook, forwardBookingIntentTick]);
 
   const [manualBookPreviewCommitting, setManualBookPreviewCommitting] = useState(false);
+  const [manualBookHouseholdConflicts, setManualBookHouseholdConflicts] = useState<
+    HouseholdScheduledVisitConflict[] | null
+  >(null);
+  const manualBookHouseholdBypassRef = useRef(false);
 
   const reschedulePreviewSourceVisit = useMemo(() => {
     if (!routingPreviewIsReschedule) return null;
@@ -5706,6 +5765,79 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     [onHoldVisitApptForPopover],
   );
 
+  const onHoldVisitHouseholdApptTypeIds = useMemo(
+    () =>
+      onHoldVisitHouseholdAppts
+        .map(
+          (a) =>
+            a.appointmentType?.id ??
+            (a as { appointmentTypeId?: number }).appointmentTypeId ??
+            '',
+        )
+        .join(','),
+    [onHoldVisitHouseholdAppts],
+  );
+
+  const onHoldVisitHouseholdApptSlotTimes = useMemo(
+    () =>
+      onHoldVisitHouseholdAppts
+        .map((a) => `${a.appointmentStart ?? ''}|${a.appointmentEnd ?? ''}`)
+        .join(','),
+    [onHoldVisitHouseholdAppts],
+  );
+
+  const [onHoldVisitConvertedRecommendedLength, setOnHoldVisitConvertedRecommendedLength] =
+    useState<StaffConfirmRecommendedLength | null>(null);
+  const [onHoldVisitConvertedRecommendedLengthLoading, setOnHoldVisitConvertedRecommendedLengthLoading] =
+    useState(false);
+
+  useEffect(() => {
+    if (onHoldVisitConvertedExitKind !== 'booked' || !onHoldVisitApptForPopover) {
+      setOnHoldVisitConvertedRecommendedLength(null);
+      setOnHoldVisitConvertedRecommendedLengthLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setOnHoldVisitConvertedRecommendedLengthLoading(true);
+
+    void resolveStaffConfirmRecommendedLength({
+      practiceId: PRACTICE_ID,
+      requestData: onHoldVisitRequestData ?? {},
+      appt: onHoldVisitApptForPopover,
+      householdAppts: onHoldVisitHouseholdAppts,
+      appointmentTypes: typeList,
+      appointmentTypeCatalog: typeCatalog,
+      providers,
+    })
+      .then((result) => {
+        if (!cancelled) setOnHoldVisitConvertedRecommendedLength(result);
+      })
+      .catch(() => {
+        if (!cancelled) setOnHoldVisitConvertedRecommendedLength(null);
+      })
+      .finally(() => {
+        if (!cancelled) setOnHoldVisitConvertedRecommendedLengthLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    onHoldVisitConvertedExitKind,
+    onHoldVisitApptForPopover?.id,
+    onHoldVisitApptForPopover?.appointmentEnd,
+    onHoldVisitApptForPopover?.appointmentStart,
+    onHoldVisitHouseholdAppts,
+    onHoldVisitHouseholdApptTypeIds,
+    onHoldVisitHouseholdApptSlotTimes,
+    onHoldVisitRequestData,
+    typeList,
+    typeCatalog,
+    providers,
+    onHoldVisitApptForPopover,
+  ]);
+
   const [onHoldVisitAnchorRect, setOnHoldVisitAnchorRect] = useState<HoverAnchorRect | null>(null);
   const [onHoldVisitDayColumnRect, setOnHoldVisitDayColumnRect] =
     useState<HoverAnchorRect | null>(null);
@@ -5784,7 +5916,9 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     const cardW = onHoldVisitEditing ? 720 : 380;
     const cardEstH = onHoldVisitEditing
       ? Math.min(680, Math.max(360, vwH - 32))
-      : 420;
+      : onHoldVisitConvertedExitKind === 'booked'
+        ? 560
+        : 420;
     if (onHoldVisitAnchorRect) {
       return computeEditPreviewPopoverPosition({
         slotAnchor: onHoldVisitAnchorRect,
@@ -5801,9 +5935,138 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   }, [
     onHoldVisitPreview,
     onHoldVisitEditing,
+    onHoldVisitConvertedExitKind,
     onHoldVisitAnchorRect,
     onHoldVisitDayColumnRect,
   ]);
+
+  const slotOfferReviewAppt = useMemo(() => {
+    if (!slotOfferReviewPreview) return null;
+    const targetId = slotOfferReviewPreview.bookedAppointmentId;
+    return (
+      rawAppointments.find((a) => schedulerAppointmentIdsEqual(a.id, targetId)) ??
+      calendarAppointments.find((a) => schedulerAppointmentIdsEqual(a.id, targetId)) ??
+      null
+    );
+  }, [slotOfferReviewPreview, rawAppointments, calendarAppointments]);
+
+  const [slotOfferReviewApptResolved, setSlotOfferReviewApptResolved] = useState<Appointment | null>(
+    null,
+  );
+
+  useEffect(() => {
+    if (!slotOfferReviewPreview) {
+      setSlotOfferReviewApptResolved(null);
+      return;
+    }
+    if (slotOfferReviewAppt) {
+      setSlotOfferReviewApptResolved(slotOfferReviewAppt);
+      return;
+    }
+    let cancelled = false;
+    void fetchAppointmentById(slotOfferReviewPreview.bookedAppointmentId, {
+      practiceId: PRACTICE_ID,
+    }).then((appt) => {
+      if (!cancelled && appt) setSlotOfferReviewApptResolved(appt);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [slotOfferReviewPreview, slotOfferReviewAppt]);
+
+  const slotOfferReviewApptForPopover = slotOfferReviewApptResolved ?? slotOfferReviewAppt;
+
+  const [slotOfferReviewAnchorRect, setSlotOfferReviewAnchorRect] = useState<HoverAnchorRect | null>(
+    null,
+  );
+  const [slotOfferReviewDayColumnRect, setSlotOfferReviewDayColumnRect] =
+    useState<HoverAnchorRect | null>(null);
+
+  const refreshSlotOfferReviewAnchor = useCallback(() => {
+    const apptId = slotOfferReviewPreview?.bookedAppointmentId;
+    if (apptId == null) {
+      setSlotOfferReviewAnchorRect(null);
+      setSlotOfferReviewDayColumnRect(null);
+      return;
+    }
+    const slotEl = document.querySelector(`[data-appt-id="${CSS.escape(String(apptId))}"]`);
+    const columnEl = slotEl instanceof HTMLElement ? slotEl.closest('.scheduler-day-col') : null;
+    setSlotOfferReviewAnchorRect(rectFromElement(slotEl instanceof HTMLElement ? slotEl : null));
+    setSlotOfferReviewDayColumnRect(
+      rectFromElement(columnEl instanceof HTMLElement ? columnEl : null),
+    );
+  }, [slotOfferReviewPreview?.bookedAppointmentId]);
+
+  useLayoutEffect(() => {
+    if (!slotOfferReviewPreview) {
+      setSlotOfferReviewAnchorRect(null);
+      setSlotOfferReviewDayColumnRect(null);
+      return;
+    }
+    refreshSlotOfferReviewAnchor();
+    const onScrollOrResize = () => refreshSlotOfferReviewAnchor();
+    window.addEventListener('resize', onScrollOrResize);
+    window.addEventListener('scroll', onScrollOrResize, true);
+    const raf = requestAnimationFrame(refreshSlotOfferReviewAnchor);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener('resize', onScrollOrResize);
+      window.removeEventListener('scroll', onScrollOrResize, true);
+    };
+  }, [
+    slotOfferReviewPreview,
+    slotOfferReviewApptForPopover?.id,
+    slotOfferReviewApptForPopover?.appointmentStart,
+    loading,
+    showTimeGrid,
+    refreshSlotOfferReviewAnchor,
+  ]);
+
+  useEffect(() => {
+    if (!slotOfferReviewPreview || slotOfferReviewAnchorRect) return;
+    if (!showTimeGrid) return;
+    let attempts = 0;
+    const tick = () => {
+      attempts += 1;
+      refreshSlotOfferReviewAnchor();
+    };
+    tick();
+    const id = window.setInterval(() => {
+      if (attempts >= 24) {
+        window.clearInterval(id);
+        return;
+      }
+      tick();
+    }, 100);
+    return () => window.clearInterval(id);
+  }, [
+    slotOfferReviewPreview,
+    slotOfferReviewAnchorRect,
+    loading,
+    showTimeGrid,
+    refreshSlotOfferReviewAnchor,
+  ]);
+
+  const slotOfferReviewPopoverPos = useMemo(() => {
+    if (!slotOfferReviewPreview) return null;
+    const vwW = typeof window !== 'undefined' ? window.innerWidth : 1200;
+    const vwH = typeof window !== 'undefined' ? window.innerHeight : 800;
+    const cardW = 380;
+    const cardEstH = 420;
+    if (slotOfferReviewAnchorRect) {
+      return computeEditPreviewPopoverPosition({
+        slotAnchor: slotOfferReviewAnchorRect,
+        dayColumnAnchor: slotOfferReviewDayColumnRect,
+        vwW,
+        vwH,
+        cardW,
+        cardEstH,
+        padding: 12,
+        gutter: 10,
+      });
+    }
+    return fallbackEditPreviewPopoverPosition({ vwW, vwH, cardW, cardEstH, padding: 12 });
+  }, [slotOfferReviewPreview, slotOfferReviewAnchorRect, slotOfferReviewDayColumnRect]);
 
   /** Scroll to the proposed slot once per routing preview candidate (after grid paint). */
   const routingPreviewScrollSigRef = useRef<string>('');
@@ -6043,6 +6306,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           : FORWARD_BOOKING_LIST_PATH;
     const finishDismiss = () => {
       dismissRoutingForwardBookingWorkspace();
+      setRoutingPreview(null);
       setForwardBookingIntentTick((n) => n + 1);
       setBookSlot(null);
       setBookPrefill(null);
@@ -6486,12 +6750,106 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     [clearEditVisitHighlightTimer]
   );
 
+  const focusHouseholdConflictOnCalendar = useCallback(
+    (
+      conflict: HouseholdScheduledVisitConflict,
+      options?: { pinHighlight?: boolean },
+    ) => {
+      if (conflict.practiceDateKey) {
+        setAnchorDate(conflict.practiceDateKey);
+        setView('week');
+      }
+      const providerId = conflict.primaryProviderId?.trim();
+      if (providerId && providers.some((p) => String(p.id) === providerId)) {
+        setProviderFilter(providerId);
+      }
+      calendarFocusActiveRef.current = true;
+      setPendingFocusHighlightApptId(conflict.appointmentId);
+      if (options?.pinHighlight) {
+        householdVisitHighlightPinnedRef.current = true;
+        clearEditVisitHighlightTimer();
+      }
+      pulseEditVisitHighlight(
+        conflict.appointmentId,
+        options?.pinHighlight ? 86_400_000 : 8000,
+      );
+    },
+    [providers, pulseEditVisitHighlight, clearEditVisitHighlightTimer],
+  );
+
+  useEffect(() => {
+    if (!embedInRoutingWorkspace) return;
+    const onFocusHouseholdVisit = (event: Event) => {
+      const parsed = parseRoutingFocusHouseholdVisitEvent(event);
+      if (!parsed?.conflict?.appointmentId) return;
+      focusHouseholdConflictOnCalendar(parsed.conflict, {
+        pinHighlight: parsed.pinHighlight,
+      });
+    };
+    window.addEventListener(ROUTING_FOCUS_HOUSEHOLD_VISIT_EVENT, onFocusHouseholdVisit);
+    return () =>
+      window.removeEventListener(ROUTING_FOCUS_HOUSEHOLD_VISIT_EVENT, onFocusHouseholdVisit);
+  }, [embedInRoutingWorkspace, focusHouseholdConflictOnCalendar]);
+
+  useEffect(() => {
+    if (!embedInRoutingWorkspace) return;
+    const onUnpinHouseholdVisitHighlight = () => {
+      householdVisitHighlightPinnedRef.current = false;
+      if (editVisitHighlightIds.size > 0) {
+        editVisitHighlightDurationMsRef.current = 12_000;
+        startEditVisitHighlightClearTimer(12_000);
+      }
+    };
+    window.addEventListener(
+      ROUTING_HOUSEHOLD_VISIT_FOCUS_UNPIN_EVENT,
+      onUnpinHouseholdVisitHighlight,
+    );
+    return () =>
+      window.removeEventListener(
+        ROUTING_HOUSEHOLD_VISIT_FOCUS_UNPIN_EVENT,
+        onUnpinHouseholdVisitHighlight,
+      );
+  }, [embedInRoutingWorkspace, editVisitHighlightIds.size, startEditVisitHighlightClearTimer]);
+
   const confirmManualBookFromPreview = useCallback(async () => {
     const draft = routingPreview?.manualBookDraft;
     if (!draft) {
       setToast('Manual book preview is missing form data.');
       return;
     }
+
+    const catalog = buildBookingAppointmentTypeCatalog(typeList);
+    const clientId = draft.clientId?.trim();
+    if (
+      !manualBookHouseholdBypassRef.current &&
+      clientId &&
+      shouldWarnHouseholdVisitsOnBook({
+        catalog,
+        appointmentTypeIds: [draft.appointmentTypeId],
+        clientId,
+      })
+    ) {
+      setManualBookPreviewCommitting(true);
+      try {
+        const conflicts = await findHouseholdScheduledVisitConflicts({
+          practiceId: draft.practiceId,
+          clientId,
+          placementStartIso: draft.appointmentStartIso,
+          practiceTz: PRACTICE_TZ,
+          catalog,
+          bookingPatientIds: draft.patientId?.trim() ? [draft.patientId.trim()] : [],
+        });
+        if (conflicts.length > 0) {
+          setManualBookHouseholdConflicts(conflicts);
+          return;
+        }
+      } finally {
+        setManualBookPreviewCommitting(false);
+      }
+    } else {
+      manualBookHouseholdBypassRef.current = false;
+    }
+
     setManualBookPreviewCommitting(true);
     try {
       const savedId = await commitManualBookPreviewDraft(draft, {
@@ -6504,6 +6862,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       });
       clearRoutingCalendarPreview();
       setRoutingPreview(null);
+      setManualBookHouseholdConflicts(null);
       await loadRange({ refreshDrive: true });
       pulseEditVisitHighlight(savedId, 5000);
       setToast('Appointment saved to the schedule.');
@@ -6630,6 +6989,18 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           typeName: bookTypeName,
         });
         if (startIso) {
+          const forwardBookingPetNames = forwardBookingBookedPatientNames({
+            forwardBookingVisitCompletes: prefillAtBook?.forwardBookingVisitCompletes,
+            intent: fbiAtBook,
+          });
+          const forwardBookingEntryIds =
+            prefillAtBook?.forwardBookingVisitCompletes?.length
+              ? prefillAtBook.forwardBookingVisitCompletes.map((row) =>
+                  Number(row.forwardBookingEntryId),
+                )
+              : prefillAtBook?.forwardBookingEntryId != null
+                ? [Number(prefillAtBook.forwardBookingEntryId)]
+                : undefined;
           writeForwardBookingReturnSession({
             forwardBookingEntryId: Number(prefillAtBook!.forwardBookingEntryId),
             bookedAppointmentId: savedId!,
@@ -6638,6 +7009,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             targetWorkflowTab: isHold ? 'onHold' : 'booked',
             returnOrigin:
               fbiAtBook?.origin === 'care_outreach' ? 'care_outreach' : 'forward_booking',
+            ...(forwardBookingEntryIds?.length ? { forwardBookingEntryIds } : {}),
+            ...(forwardBookingPetNames.length ? { forwardBookingPetNames } : {}),
             ...(fbiAtBook?.origin === 'care_outreach'
               ? {
                   smsTemplate: 'care_outreach' as const,
@@ -6960,6 +7333,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   ]);
 
   const dismissStaffConfirmPreview = useCallback(() => {
+    const returnPath = staffConfirmPreview?.returnPath?.trim() || null;
     staffConfirmTypesAppliedRef.current = null;
     clearAppointmentRequestStaffConfirmSession();
     setStaffConfirmPreview(null);
@@ -6967,9 +7341,14 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     setStaffConfirmEditing(false);
     setStaffConfirmEditingApptId(null);
     setStaffConfirmLinkSelection(null);
+    setEditVisitPatientSelection(null);
     if (returnFromSchedulerFocusToGmail(navigate)) return;
+    if (returnPath) {
+      navigate(returnPath);
+      return;
+    }
     returnToAppointmentRequestsList(navigate, 'to_confirm');
-  }, [navigate]);
+  }, [navigate, staffConfirmPreview?.returnPath]);
 
   useEffect(() => {
     if (!staffConfirmPreview || staffConfirmPreviewConfirming || staffConfirmEditing) return;
@@ -7023,6 +7402,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       staffConfirmTypesAppliedRef.current = null;
       setStaffConfirmEditing(false);
       setStaffConfirmEditingApptId(null);
+      setEditVisitPatientSelection(null);
       void loadRange({ refreshDrive: true });
 
       if (!preview || !updated) return;
@@ -7054,6 +7434,32 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         if (exitKind === 'booked' || exitKind === 'removed') {
           await clearApptRequestGmailOnHoldLabel({ submissionId: preview.submissionId });
         }
+
+        if (
+          preview.returnPath &&
+          isHoldsBoardReturnPath(preview.returnPath) &&
+          (exitKind === 'booked' || exitKind === 'removed')
+        ) {
+          const appointmentIds = refreshedHousehold
+            .map((a) => Number(a.id))
+            .filter((id) => Number.isFinite(id) && id > 0);
+          writeHoldsBoardReturnSession({
+            appointmentIds:
+              appointmentIds.length > 0 ? appointmentIds : [preview.bookedAppointmentId],
+            exitKind: exitKind === 'removed' ? 'removed' : 'booked',
+            clientLabel: preview.clientLabel,
+          });
+          staffConfirmTypesAppliedRef.current = null;
+          clearAppointmentRequestStaffConfirmSession();
+          setStaffConfirmPreview(null);
+          setStaffConfirmPreviewError(null);
+          setStaffConfirmEditing(false);
+          setStaffConfirmEditingApptId(null);
+          setStaffConfirmLinkSelection(null);
+          setEditVisitPatientSelection(null);
+          notifySchedulingToolsNavCountsRefresh();
+          navigate(preview.returnPath);
+        }
       })();
     },
     [
@@ -7063,11 +7469,13 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       staffConfirmPreview,
       staffConfirmHouseholdAppts,
       typeCatalog,
+      navigate,
     ],
   );
 
   const handleStaffConfirmEditPet = useCallback((appointmentId: number) => {
     setStaffConfirmLinkSelection(null);
+    setEditVisitPatientSelection(null);
     setStaffConfirmEditingApptId(appointmentId);
     setStaffConfirmEditing(true);
   }, []);
@@ -7075,6 +7483,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   const handleStaffConfirmEdit = useCallback(() => {
     if (staffConfirmHouseholdEditChoices.length > 1) return;
     setStaffConfirmLinkSelection(null);
+    setEditVisitPatientSelection(null);
     const only = staffConfirmHouseholdEditChoices[0];
     setStaffConfirmEditingApptId(only?.appointmentId ?? staffConfirmPreview?.bookedAppointmentId ?? null);
     setStaffConfirmEditing(true);
@@ -7145,13 +7554,30 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         confirm: true,
       });
       staffConfirmTypesAppliedRef.current = null;
-      writeAppointmentRequestStaffConfirmReturnSession({
-        submissionId: staffConfirmPreview.submissionId,
-      });
+      const returnPath = staffConfirmPreview.returnPath?.trim() || null;
+      const submissionId = staffConfirmPreview.submissionId;
+      const bookedAppointmentId = staffConfirmPreview.bookedAppointmentId;
+      const confirmClientLabel = staffConfirmPreview.clientLabel;
+      const appointmentIds = apptsAfterUpdate
+        .map((a) => Number(a.id))
+        .filter((id) => Number.isFinite(id) && id > 0);
       clearAppointmentRequestStaffConfirmSession();
       setStaffConfirmPreview(null);
       notifySchedulingToolsNavCountsRefresh();
       if (returnFromSchedulerFocusToGmail(navigate)) return;
+      if (returnPath && isHoldsBoardReturnPath(returnPath)) {
+        writeHoldsBoardReturnSession({
+          appointmentIds:
+            appointmentIds.length > 0 ? appointmentIds : [bookedAppointmentId],
+          exitKind: 'booked',
+          clientLabel: confirmClientLabel,
+        });
+        navigate(returnPath);
+        return;
+      }
+      writeAppointmentRequestStaffConfirmReturnSession({
+        submissionId,
+      });
       returnToAppointmentRequestsList(navigate, 'to_confirm');
     } catch (e: unknown) {
       const msg =
@@ -7185,8 +7611,76 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     setOnHoldVisitEditing(false);
     setOnHoldVisitEditingApptId(null);
     setOnHoldVisitLinkSelection(null);
+    setEditVisitPatientSelection(null);
+    setOnHoldVisitRemoveConfirming(false);
+    setOnHoldVisitRemoveError(null);
     navigate(returnPath);
   }, [navigate, onHoldVisitPreview, clearEditVisitHighlightTimer]);
+
+  const confirmOnHoldVisitRemove = useCallback(
+    async (reason: string) => {
+      const preview = onHoldVisitPreview;
+      if (!preview || preview.flowIntent !== 'remove') return;
+      const trimmed = reason.trim();
+      if (!trimmed) return;
+      const ids =
+        preview.removeAppointmentIds && preview.removeAppointmentIds.length > 0
+          ? preview.removeAppointmentIds
+          : [preview.bookedAppointmentId];
+      setOnHoldVisitRemoveConfirming(true);
+      setOnHoldVisitRemoveError(null);
+      try {
+        for (const id of ids) {
+          await cancelAppointment(
+            id,
+            { cancellationFlag: true, cancellationReason: trimmed },
+            { practiceId: PRACTICE_ID },
+          );
+        }
+        if (preview.listKind === 'appointment_request') {
+          await clearApptRequestGmailOnHoldLabel({ submissionId: preview.listEntryId });
+        }
+        if (isHoldsBoardReturnPath(preview.returnPath)) {
+          writeHoldsBoardReturnSession({
+            appointmentIds: ids,
+            exitKind: 'removed',
+            clientLabel: preview.clientLabel,
+            groupKey: preview.groupKey,
+            snapshotAppointmentStart: onHoldVisitApptForPopover?.appointmentStart ?? null,
+          });
+        } else {
+          writeOnHoldVisitEditReturnSession({
+            listEntryId: preview.listEntryId,
+            listKind: preview.listKind,
+            exitKind: 'removed',
+          });
+        }
+        clearOnHoldVisitEditSession();
+        clearSchedulerFocusSession();
+        clearEditVisitHighlightTimer();
+        setEditVisitHighlightIds(new Set());
+        setOnHoldVisitPreview(null);
+        setOnHoldVisitConvertedExitKind(null);
+        setOnHoldVisitEditing(false);
+        setOnHoldVisitEditingApptId(null);
+        setOnHoldVisitLinkSelection(null);
+        setEditVisitPatientSelection(null);
+        setOnHoldVisitRemoveConfirming(false);
+        setOnHoldVisitRemoveError(null);
+        notifySchedulingToolsNavCountsRefresh();
+        navigate(preview.returnPath);
+      } catch (e: unknown) {
+        const msg =
+          (e as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+          (e as Error)?.message ??
+          'Could not remove this hold.';
+        setOnHoldVisitRemoveError(String(msg));
+      } finally {
+        setOnHoldVisitRemoveConfirming(false);
+      }
+    },
+    [onHoldVisitPreview, onHoldVisitApptForPopover, clearEditVisitHighlightTimer, navigate],
+  );
 
   const completeOnHoldVisitReturn = useCallback(() => {
     const preview = onHoldVisitPreview;
@@ -7195,11 +7689,25 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       dismissOnHoldVisitPreview();
       return;
     }
-    writeOnHoldVisitEditReturnSession({
-      listEntryId: preview.listEntryId,
-      listKind: preview.listKind,
-      exitKind,
-    });
+    if (isHoldsBoardReturnPath(preview.returnPath)) {
+      const householdIds = onHoldVisitHouseholdAppts
+        .map((a) => Number(a.id))
+        .filter((id) => Number.isFinite(id) && id > 0);
+      writeHoldsBoardReturnSession({
+        appointmentIds:
+          householdIds.length > 0 ? householdIds : [preview.bookedAppointmentId],
+        exitKind: exitKind === 'removed' ? 'removed' : 'booked',
+        clientLabel: preview.clientLabel,
+        groupKey: preview.groupKey,
+        snapshotAppointmentStart: onHoldVisitApptForPopover?.appointmentStart ?? null,
+      });
+    } else {
+      writeOnHoldVisitEditReturnSession({
+        listEntryId: preview.listEntryId,
+        listKind: preview.listKind,
+        exitKind,
+      });
+    }
     clearOnHoldVisitEditSession();
     clearEditVisitHighlightTimer();
     setEditVisitHighlightIds(new Set());
@@ -7208,11 +7716,14 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     setOnHoldVisitEditing(false);
     setOnHoldVisitEditingApptId(null);
     setOnHoldVisitLinkSelection(null);
+    setEditVisitPatientSelection(null);
     notifySchedulingToolsNavCountsRefresh();
     navigate(preview.returnPath);
   }, [
     onHoldVisitPreview,
     onHoldVisitConvertedExitKind,
+    onHoldVisitHouseholdAppts,
+    onHoldVisitApptForPopover,
     dismissOnHoldVisitPreview,
     clearEditVisitHighlightTimer,
     navigate,
@@ -7227,6 +7738,44 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     setNotBookedRemoveGate(null);
     if (returnPath) navigate(returnPath);
   }, [notBookedRemoveGate, navigate, clearEditVisitHighlightTimer]);
+
+  const dismissSlotOfferReview = useCallback(() => {
+    const returnPath = slotOfferReviewPreview?.returnPath ?? TEXTED_OFFERS_TO_REVIEW_PATH;
+    clearSlotOfferReviewSession();
+    clearSchedulerFocusSession();
+    clearEditVisitHighlightTimer();
+    setEditVisitHighlightIds(new Set());
+    setSlotOfferReviewPreview(null);
+    setSlotOfferReviewError(null);
+    navigate(returnPath);
+  }, [navigate, slotOfferReviewPreview, clearEditVisitHighlightTimer]);
+
+  const confirmSlotOfferReview = useCallback(async () => {
+    const preview = slotOfferReviewPreview;
+    if (!preview || slotOfferReviewConfirming) return;
+    setSlotOfferReviewConfirming(true);
+    setSlotOfferReviewError(null);
+    try {
+      await confirmSlotOffer(preview.offerId, PRACTICE_ID);
+      writeSlotOfferReviewReturnSession(preview.offerId);
+      clearSlotOfferReviewSession();
+      clearSchedulerFocusSession();
+      clearEditVisitHighlightTimer();
+      setEditVisitHighlightIds(new Set());
+      setSlotOfferReviewPreview(null);
+      setSlotOfferReviewError(null);
+      notifySchedulingToolsNavCountsRefresh();
+      navigate(preview.returnPath);
+    } catch (e: unknown) {
+      const msg =
+        (e as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+        (e as Error)?.message ??
+        'Could not mark this offer reviewed.';
+      setSlotOfferReviewError(String(msg));
+    } finally {
+      setSlotOfferReviewConfirming(false);
+    }
+  }, [slotOfferReviewPreview, slotOfferReviewConfirming, clearEditVisitHighlightTimer, navigate]);
 
   const completeNotBookedRemoveFlow = useCallback(
     (gate: NotBookedRemoveSessionV1) => {
@@ -7283,6 +7832,29 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       }
     });
   }, [notBookedRemoveGate, notBookedRemoveAppt]);
+
+  useEffect(() => {
+    if (!slotOfferReviewPreview) return;
+
+    const onPointerDown = (ev: PointerEvent) => {
+      const target = ev.target;
+      if (!(target instanceof Element)) return;
+      if (target.closest('[data-slot-offer-review-popover]')) return;
+      if (target.closest('[data-appt-id]')) return;
+      dismissSlotOfferReview();
+    };
+
+    const onKeyDown = (ev: KeyboardEvent) => {
+      if (ev.key === 'Escape') dismissSlotOfferReview();
+    };
+
+    document.addEventListener('pointerdown', onPointerDown, true);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown, true);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [slotOfferReviewPreview, dismissSlotOfferReview]);
 
   useEffect(() => {
     if (!onHoldVisitPreview || onHoldVisitEditing || onHoldVisitConvertedExitKind) return;
@@ -7343,6 +7915,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         setOnHoldVisitEditing(false);
         setOnHoldVisitEditingApptId(null);
         setOnHoldVisitLinkSelection(null);
+        setEditVisitPatientSelection(null);
 
         const anchorAppt = updated ?? onHoldVisitApptForPopover;
         const householdAppts = anchorAppt
@@ -7421,6 +7994,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
 
   const handleOnHoldVisitEditPet = useCallback((appointmentId: number) => {
     setOnHoldVisitLinkSelection(null);
+    setEditVisitPatientSelection(null);
     setOnHoldVisitEditingApptId(appointmentId);
     setOnHoldVisitEditing(true);
   }, []);
@@ -7428,12 +8002,17 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   const handleOnHoldVisitEdit = useCallback(() => {
     if (onHoldVisitHouseholdEditChoices.length > 1) return;
     setOnHoldVisitLinkSelection(null);
+    setEditVisitPatientSelection(null);
     const only = onHoldVisitHouseholdEditChoices[0];
     setOnHoldVisitEditingApptId(
       only?.appointmentId ?? onHoldVisitPreview?.bookedAppointmentId ?? null,
     );
     setOnHoldVisitEditing(true);
   }, [onHoldVisitHouseholdEditChoices, onHoldVisitPreview?.bookedAppointmentId]);
+
+  const handleOnHoldVisitEditFromConverted = useCallback(() => {
+    handleOnHoldVisitEdit();
+  }, [handleOnHoldVisitEdit]);
 
   useEffect(() => {
     if (pendingFocusApptId == null) return;
@@ -7458,6 +8037,9 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         const wasOnHoldEdit = readOnHoldVisitEditSession();
         clearOnHoldVisitEditSession();
         setOnHoldVisitPreview(null);
+        const wasSlotOfferReview = readSlotOfferReviewSession();
+        clearSlotOfferReviewSession();
+        setSlotOfferReviewPreview(null);
         setPendingFocusApptId(null);
         showToast('Could not find that appointment on the calendar.');
         if (wasStaffConfirm) {
@@ -7465,6 +8047,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           returnToAppointmentRequestsList(navigate, 'to_confirm');
         } else if (wasOnHoldEdit) {
           navigate(wasOnHoldEdit.returnPath);
+        } else if (wasSlotOfferReview) {
+          navigate(wasSlotOfferReview.returnPath);
         }
         return;
       }
@@ -7547,6 +8131,24 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       schedulerAppointmentIdsEqual(notBookedRemove.bookedAppointmentId, targetId)
     ) {
       setNotBookedRemoveGate(notBookedRemove);
+      requestAnimationFrame(() => {
+        const el = document.querySelector(
+          `[data-appt-id="${CSS.escape(String(targetId))}"]`
+        );
+        if (el instanceof HTMLElement) {
+          scrollAppointmentElementIntoView(el, 'smooth');
+        }
+      });
+      return;
+    }
+    const slotOfferReview = readSlotOfferReviewSession();
+    if (
+      slotOfferReview &&
+      schedulerAppointmentIdsEqual(slotOfferReview.bookedAppointmentId, targetId)
+    ) {
+      pulseEditVisitHighlight(highlightTargets.length > 0 ? highlightTargets : targetId, 6000);
+      setSlotOfferReviewError(null);
+      setSlotOfferReviewPreview(slotOfferReview);
       requestAnimationFrame(() => {
         const el = document.querySelector(
           `[data-appt-id="${CSS.escape(String(targetId))}"]`
@@ -8003,7 +8605,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         return;
       }
 
-      if (editVisitHighlightTimerRef.current == null) {
+      if (editVisitHighlightTimerRef.current == null && !householdVisitHighlightPinnedRef.current) {
         startEditVisitHighlightClearTimer(editVisitHighlightDurationMsRef.current);
       }
 
@@ -9140,18 +9742,16 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                           const leftPct = (100 * col) / colCount;
                           const apptColors = colorsForAppointment(appt, typeList, typeFillMap);
                           const member = appointmentPatientMember(appt);
-                          const schedStart = DateTime.fromISO(appt.appointmentStart, { zone: 'utc' }).setZone(
-                            PRACTICE_TZ
-                          );
-                          const schedEnd = DateTime.fromISO(appt.appointmentEnd, { zone: 'utc' }).setZone(
-                            PRACTICE_TZ
-                          );
-                          const scheduledTimeLabel =
-                            schedStart.isValid && schedEnd.isValid
-                              ? `${schedStart.toFormat('h:mm a')} – ${schedEnd.toFormat('h:mm a')}`
-                              : schedStart.isValid
-                                ? schedStart.toFormat('h:mm a')
-                                : null;
+                          const apptDriveHint =
+                            showByDriveTime && resolvedPrimaryProviderId.trim()
+                              ? buildSchedulerDriveHintForAppt(
+                                  appt,
+                                  showByDriveTime,
+                                  resolvedPrimaryProviderId,
+                                  driveDayByDate
+                                )
+                              : null;
+                          const eventWindowLabel = schedulerEventWindowCardLabel(appt, apptDriveHint);
                           const descTrim = appt.description?.trim() ?? '';
                           if (isRoutingPreviewSlot) {
                             const previewLabel = descTrim || 'Proposed visit';
@@ -9198,8 +9798,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                                   >
                                     <SchedulerAlternateLocationBadgeForAppt appt={appt} compact />
                                     <SchedulerClientZoneBadge appt={appt} compact />
-                                    {scheduledTimeLabel ? (
-                                      <span className="scheduler-event-time-text">{scheduledTimeLabel}</span>
+                                    {eventWindowLabel ? (
+                                      <span className="scheduler-event-time-text">{eventWindowLabel}</span>
                                     ) : null}
                                     {isCompactEvent ? (
                                       <span
@@ -9237,15 +9837,6 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                             rescheduleSourceHighlightIds != null &&
                             typeof appt.id === 'number' &&
                             rescheduleSourceHighlightIds.has(appt.id);
-                          const apptDriveHint =
-                            showByDriveTime && resolvedPrimaryProviderId.trim()
-                              ? buildSchedulerDriveHintForAppt(
-                                  appt,
-                                  showByDriveTime,
-                                  resolvedPrimaryProviderId,
-                                  driveDayByDate
-                                )
-                              : null;
                           const draftTypeForPreview =
                             isEditTimePreviewVisit &&
                             editTimePreview?.kind === 'type' &&
@@ -9345,8 +9936,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                               >
                                 <SchedulerAlternateLocationBadgeForAppt appt={appt} compact />
                                 <SchedulerClientZoneBadge appt={appt} compact />
-                                {scheduledTimeLabel ? (
-                                  <span className="scheduler-event-time-text">{scheduledTimeLabel}</span>
+                                {eventWindowLabel ? (
+                                  <span className="scheduler-event-time-text">{eventWindowLabel}</span>
                                 ) : null}
                                 {isCompactEvent ? (
                                   <>
@@ -9552,15 +10143,27 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               >
                 Current location
               </button>
+            ) : forwardBookingLockActive ? (
+              <button
+                type="button"
+                className="btn secondary scheduler-embedded-preview-bar-dismiss scheduler-forward-booking-workspace-back"
+                onClick={dismissForwardBookingWorkspace}
+                disabled={bookSlot != null}
+                title="Return to the forward booking list"
+              >
+                Back
+              </button>
             ) : null}
-            <button
-              type="button"
-              className="btn secondary scheduler-embedded-preview-bar-dismiss"
-              onClick={dismissRoutingPreview}
-              disabled={bookSlot != null}
-            >
-              Dismiss
-            </button>
+            {!forwardBookingLockActive ? (
+              <button
+                type="button"
+                className="btn secondary scheduler-embedded-preview-bar-dismiss"
+                onClick={dismissRoutingPreview}
+                disabled={bookSlot != null}
+              >
+                Dismiss
+              </button>
+            ) : null}
           </div>
         ) : null}
         {forwardBookingLockActive ? (
@@ -9587,10 +10190,11 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                       ) : null}
                     </span>
                   ) : null}
-                  {forwardBookingBarContext.bookingNote ? (
-                    <span className="scheduler-embedded-forward-booking-bar-note">
-                      Forward booking note: {forwardBookingBarContext.bookingNote}
-                    </span>
+                  {forwardBookingBarContext.contextNote || forwardBookingBarContext.contactLog ? (
+                    <ClientContactLogReadout
+                      contextNote={forwardBookingBarContext.contextNote}
+                      contactLog={forwardBookingBarContext.contactLog}
+                    />
                   ) : null}
                 </>
               ) : (
@@ -9974,10 +10578,13 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                   linkSelection={staffConfirmLinkSelection}
                   onLinkSelectionChange={setStaffConfirmLinkSelection}
                   linkPreferredPatientName={staffConfirmLinkPreferredPatientName}
+                  patientSelection={editVisitPatientSelection}
+                  onPatientSelectionChange={setEditVisitPatientSelection}
                   onClose={() => {
                     setStaffConfirmEditing(false);
                     setStaffConfirmEditingApptId(null);
                     setStaffConfirmLinkSelection(null);
+                    setEditVisitPatientSelection(null);
                   }}
                   onSaved={handleStaffConfirmEditSaved}
                 />
@@ -10057,14 +10664,28 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                   linkSelection={onHoldVisitLinkSelection}
                   onLinkSelectionChange={setOnHoldVisitLinkSelection}
                   linkPreferredPatientName={onHoldVisitLinkPreferredPatientName}
+                  patientSelection={editVisitPatientSelection}
+                  onPatientSelectionChange={setEditVisitPatientSelection}
                   onClose={() => {
                     setOnHoldVisitEditing(false);
                     setOnHoldVisitEditingApptId(null);
                     setOnHoldVisitLinkSelection(null);
+                    setEditVisitPatientSelection(null);
                   }}
                   onSaved={handleOnHoldVisitEditSaved}
                 />
               </div>
+            ) : onHoldVisitPreview.flowIntent === 'remove' ? (
+              <OnHoldVisitRemovePopover
+                appt={onHoldVisitApptForPopover}
+                practiceTz={PRACTICE_TZ}
+                clientLabel={onHoldVisitPreview.clientLabel}
+                multiHold={(onHoldVisitPreview.removeAppointmentIds?.length ?? 0) > 1}
+                confirming={onHoldVisitRemoveConfirming}
+                error={onHoldVisitRemoveError}
+                onBack={dismissOnHoldVisitPreview}
+                onRemove={confirmOnHoldVisitRemove}
+              />
             ) : onHoldVisitConvertedExitKind ? (
               <OnHoldVisitConvertedPopover
                 appt={onHoldVisitApptForPopover}
@@ -10072,7 +10693,14 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                 clientLabel={onHoldVisitPreview.clientLabel}
                 linkedClientLabel={onHoldVisitLinkedClientLabel}
                 exitKind={onHoldVisitConvertedExitKind}
+                recommendedLength={onHoldVisitConvertedRecommendedLength}
+                recommendedLengthLoading={onHoldVisitConvertedRecommendedLengthLoading}
                 onBack={completeOnHoldVisitReturn}
+                onEdit={
+                  onHoldVisitConvertedExitKind === 'booked'
+                    ? handleOnHoldVisitEditFromConverted
+                    : undefined
+                }
               />
             ) : (
               <OnHoldVisitPreviewPopover
@@ -10087,6 +10715,41 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                 onEditPet={handleOnHoldVisitEditPet}
               />
             )}
+          </div>,
+          document.body
+        )}
+
+      {slotOfferReviewPreview &&
+        slotOfferReviewApptForPopover &&
+        slotOfferReviewPopoverPos &&
+        createPortal(
+          <div
+            className="scheduler-edit-preview-popover-shell scheduler-staff-confirm-popover-shell"
+            data-schedule-preview-allow
+            data-slot-offer-review-popover
+            style={{
+              position: 'fixed',
+              left: slotOfferReviewPopoverPos.left,
+              width: slotOfferReviewPopoverPos.width,
+              maxHeight: slotOfferReviewPopoverPos.maxCardH,
+              zIndex: 2050,
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+              ...(slotOfferReviewPopoverPos.bottom != null
+                ? { top: 'auto', bottom: slotOfferReviewPopoverPos.bottom }
+                : { top: slotOfferReviewPopoverPos.top }),
+            }}
+          >
+            <SlotOfferReviewPopover
+              appt={slotOfferReviewApptForPopover}
+              practiceTz={PRACTICE_TZ}
+              clientLabel={slotOfferReviewPreview.clientLabel}
+              confirming={slotOfferReviewConfirming}
+              error={slotOfferReviewError}
+              onBack={dismissSlotOfferReview}
+              onReviewed={() => void confirmSlotOfferReview()}
+            />
           </div>,
           document.body
         )}
@@ -10167,7 +10830,25 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         }
         onClose={closeBookModal}
         onSlotOfferSent={handleSlotOfferSent}
+        onViewConflictPlacement={focusHouseholdConflictOnCalendar}
         onBooked={handleSchedulerBooked}
+      />
+
+      <HouseholdScheduledVisitsWarningModal
+        open={Boolean(manualBookHouseholdConflicts?.length)}
+        clientLabel={routingPreview?.manualBookDraft?.clientLabel}
+        conflicts={manualBookHouseholdConflicts ?? []}
+        continuing={manualBookPreviewCommitting}
+        onCancel={() => setManualBookHouseholdConflicts(null)}
+        onViewPlacement={(row) => {
+          setManualBookHouseholdConflicts(null);
+          focusHouseholdConflictOnCalendar(row);
+        }}
+        onContinue={() => {
+          manualBookHouseholdBypassRef.current = true;
+          setManualBookHouseholdConflicts(null);
+          void confirmManualBookFromPreview();
+        }}
       />
 
       {contextMenu ? (

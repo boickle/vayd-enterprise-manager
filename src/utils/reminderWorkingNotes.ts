@@ -17,6 +17,42 @@ export function workingNotesFromReminders(
   return unique.join('\n\n');
 }
 
+export type PatientReminderOutreachEntry = {
+  mergedText: string;
+  reminderIds: number[];
+};
+
+export function buildPatientReminderOutreachIndex(
+  reminders: readonly {
+    id?: number;
+    patient?: { id?: number } | null;
+    outreachNotes?: string | null;
+    notes?: string | null;
+  }[],
+): Map<number, PatientReminderOutreachEntry> {
+  const byPatient = new Map<number, { texts: Set<string>; reminderIds: number[] }>();
+  for (const reminder of reminders) {
+    const patientId = reminder.patient?.id;
+    const reminderId = reminder.id;
+    if (patientId == null || !Number.isFinite(patientId)) continue;
+    const entry = byPatient.get(patientId) ?? { texts: new Set<string>(), reminderIds: [] };
+    if (reminderId != null && Number.isFinite(reminderId)) {
+      entry.reminderIds.push(Number(reminderId));
+    }
+    const text = readReminderOutreachNotes(reminder);
+    if (text) entry.texts.add(text);
+    byPatient.set(patientId, entry);
+  }
+  const out = new Map<number, PatientReminderOutreachEntry>();
+  for (const [patientId, entry] of byPatient) {
+    out.set(patientId, {
+      mergedText: [...entry.texts].join('\n\n'),
+      reminderIds: entry.reminderIds,
+    });
+  }
+  return out;
+}
+
 export function buildReminderOutreachNotesByPatientId(
   reminders: readonly {
     patient?: { id?: number } | null;
@@ -24,19 +60,9 @@ export function buildReminderOutreachNotesByPatientId(
     notes?: string | null;
   }[],
 ): Map<number, string> {
-  const byPatient = new Map<number, Set<string>>();
-  for (const reminder of reminders) {
-    const patientId = reminder.patient?.id;
-    if (patientId == null || !Number.isFinite(patientId)) continue;
-    const text = readReminderOutreachNotes(reminder);
-    if (!text) continue;
-    const set = byPatient.get(patientId) ?? new Set<string>();
-    set.add(text);
-    byPatient.set(patientId, set);
-  }
   const out = new Map<number, string>();
-  for (const [patientId, texts] of byPatient) {
-    out.set(patientId, [...texts].join('\n\n'));
+  for (const [patientId, entry] of buildPatientReminderOutreachIndex(reminders)) {
+    if (entry.mergedText) out.set(patientId, entry.mergedText);
   }
   return out;
 }

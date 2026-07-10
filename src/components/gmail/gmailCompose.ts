@@ -183,6 +183,24 @@ export function joinComposeBody(userPart: string, signature: string, suffix: str
   return sig ? (top ? `${top}\n\n${sig}` : sig) : top;
 }
 
+/** Swap the trailing send-as signature when the From alias changes. */
+export function replaceTrailingSignature(
+  userBody: string,
+  oldSigPlain: string,
+  newSigPlain: string,
+): string {
+  let body = userBody.replace(/\s+$/g, '');
+  const old = oldSigPlain.trim();
+  if (old && body.endsWith(old)) {
+    body = body.slice(0, -old.length).replace(/\s+$/g, '');
+  } else if (old && body === old) {
+    body = '';
+  }
+  const next = newSigPlain.trim();
+  if (!next) return body;
+  return body ? `${body}\n\n${next}` : next;
+}
+
 function splitAddressList(raw: string | undefined): string[] {
   return (raw ?? '')
     .split(',')

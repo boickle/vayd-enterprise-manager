@@ -28,6 +28,12 @@ import MyDayToggle from './pages/MyDayToggle';
 import MyWeek from './pages/MyWeek';
 import SchedulingTools from './pages/SchedulingTools';
 import AppointmentRequestsPage from './pages/AppointmentRequestsPage';
+import AppointmentSearchPage from './pages/AppointmentSearchPage';
+import HoldsPage from './pages/HoldsPage';
+import {
+  parseAppointmentRequestsHighlightFromSearch,
+} from './appointments-nav';
+import { HOLDS_PATH, holdsPathWithHighlight } from './holds-nav';
 import ExitSurveyPage from './pages/ExitSurveyPage';
 import RoomLoaderPage from './pages/RoomLoader';
 import { ScheduleIndexRedirect } from './pages/ScheduleLayout';
@@ -256,6 +262,17 @@ function KeepAliveOutlet({ keepPaths }: { keepPaths: string[] }) {
       {/* If current path isn't in keep list, render it normally (not cached) */}
       {!shouldKeep && outlet}
     </>
+  );
+}
+
+function RedirectAppointmentsOnHold() {
+  const { search } = useLocation();
+  const highlightId = parseAppointmentRequestsHighlightFromSearch(search);
+  return (
+    <Navigate
+      to={highlightId != null ? holdsPathWithHighlight(highlightId) : HOLDS_PATH}
+      replace
+    />
   );
 }
 
@@ -519,12 +536,14 @@ export default function App() {
                         element={<Navigate to="/schedule/appointments" replace />}
                       />
                     </Route>
+                    <Route path="appointments/search" element={<AppointmentSearchPage />} />
                     <Route path="appointments" element={<AppointmentRequestsPage />} />
                     <Route
                       path="appointments/requests"
                       element={<Navigate to="/schedule/appointments" replace />}
                     />
-                    <Route path="appointments/on-hold" element={<AppointmentRequestsPage initialTab="on_hold" />} />
+                    <Route path="appointments/on-hold" element={<RedirectAppointmentsOnHold />} />
+                    <Route path="holds" element={<HoldsPage />} />
                     <Route path="exit-survey" element={<ExitSurveyPage />} />
                     <Route path="room-loader" element={<RoomLoaderPage />} />
                     <Route path="scheduler" element={<Scheduler />} />

@@ -769,6 +769,19 @@ function roomLoaderPatientMembershipIsFoundationsNotGolden(p: any, appointments:
   return s.includes('foundations');
 }
 
+/** Foundations (non-Golden) with staff lab-work = No → Early Detection replaces Senior Screen at senior age. */
+function roomLoaderFoundationsUsesEarlyDetectionOverSenior(
+  patient: any,
+  appointments: any[] | undefined,
+  formData: Record<string, unknown>,
+  petKey: string
+): boolean {
+  return (
+    roomLoaderPatientMembershipIsFoundationsNotGolden(patient, appointments) &&
+    !publicFormPetLabWorkConcernYes(formData, petKey, patient)
+  );
+}
+
 function RoomLoaderPatientMemberBadge({
   patient,
   appointments,
@@ -2324,6 +2337,33 @@ function rowIsFelineBundledSeniorScreenVisitLine(row: any): boolean {
     return true;
   }
   return false;
+}
+
+function visitRowIsSeniorScreenForFoundationsSuppression(row: any): boolean {
+  if (row._panelDeclineInjected) return false;
+  const code = (getCodeFromDisplayItem(row) ?? '').trim().toUpperCase();
+  if (code === 'FIL25659999' || code === 'FIL45129999' || code === 'FIL8659999' || code === '8659999') {
+    return true;
+  }
+  if (rowIsCanineBundledSeniorScreenVisitLine(row) || rowIsFelineBundledSeniorScreenVisitLine(row)) {
+    return true;
+  }
+  if (rowLooksLikeGenericSeniorChemScreen(row)) return true;
+  const n = (row?.name ?? '').toLowerCase();
+  return n.includes('senior screen') && !n.includes('early detection');
+}
+
+/** Foundations members at senior age (labs = No): hide Senior Screen visit rows so Early Detection is shown instead. */
+function filterSeniorScreenVisitRowsForFoundationsEarlyDetection(rows: any[], suppressSenior: boolean): any[] {
+  if (!suppressSenior) return rows;
+  return rows.filter((row) => !visitRowIsSeniorScreenForFoundationsSuppression(row));
+}
+
+function stripSeniorLabRecommendationCodes<T extends { code: string }>(recs: T[]): T[] {
+  return recs.filter((r) => {
+    const c = r.code;
+    return c !== '8659999' && c !== 'FIL8659999' && c !== 'FIL25659999' && c !== 'FIL45129999';
+  });
 }
 
 /** Senior bundled visit panels (and merged senior screen rows) that include urinalysis — excludes Early Detection FIL481/FIL487. */
@@ -7149,9 +7189,9 @@ export default function PublicRoomLoaderForm() {
       const isNewPatient = !explicitlyNotNew && (markedNewByApi || (!hasReminders && treatAsNewWhenNoReminders));
 
       const foundationsNotGoldenMember = roomLoaderPatientMembershipIsFoundationsNotGolden(patient, appointments);
+      const foundationsUsesEarlyDetection = foundationsNotGoldenMember && !labWorkYes;
       /** Age-based Senior Screen recs: skip for Foundations when staff did not flag lab work (Early Detection is offered instead). */
-      const ageBasedSeniorScreenForMember =
-        !(foundationsNotGoldenMember && !labWorkYes);
+      const ageBasedSeniorScreenForMember = !foundationsUsesEarlyDetection;
 
       if (labWorkYes) {
         recs.push({
@@ -7245,6 +7285,7 @@ export default function PublicRoomLoaderForm() {
 
       // Staff room loader: Senior Screen (FIL8659999 / 8659999) plus 4Dx, triple (IL3755), or fecal → recommend bundled senior panel
       if (
+        !foundationsUsesEarlyDetection &&
         standard &&
         patientVisitHasSeniorScreen865Generic(patient) &&
         patientVisitHasStaffBundlingLabCompanion(patient)
@@ -7356,6 +7397,12 @@ export default function PublicRoomLoaderForm() {
         }
       }
 
+      if (foundationsUsesEarlyDetection) {
+        const stripped = stripSeniorLabRecommendationCodes(recs);
+        recs.length = 0;
+        recs.push(...stripped);
+      }
+
       result.push({
         patientId,
         patientName: patient.patientName || `Pet ${idx + 1}`,
@@ -7387,16 +7434,31 @@ export default function PublicRoomLoaderForm() {
       const age = dob != null ? getAgeYears({ dob }) : null;
       const sp = publicSpeciesLowerForPet(p, appts, idx);
       const sk = publicPatientIsSeniorAgeForLabPanels(age, sp);
+      const petKey = `pet${idx}`;
+      const foundationsUsesEarlyDetection = roomLoaderFoundationsUsesEarlyDetectionOverSenior(
+        p,
+        appts,
+        formData,
+        petKey
+      );
       if (sk === 'cat' && (patientVisitHasItemCode(p, 'FIL48119999') || patientVisitHasItemCode(p, 'FIL48719999'))) {
-        hasEarlyFeline = false;
-        hasEarlyCanine = false;
-        hasSeniorFeline = true;
-        hasFIL45129999 = true;
+        if (foundationsUsesEarlyDetection && patientVisitHasItemCode(p, 'FIL48119999')) {
+          hasEarlyFeline = true;
+        } else {
+          hasEarlyFeline = false;
+          hasEarlyCanine = false;
+          hasSeniorFeline = true;
+          hasFIL45129999 = true;
+        }
       }
       if (sk === 'dog' && (patientVisitHasItemCode(p, 'FIL48719999') || patientVisitHasItemCode(p, 'FIL48119999'))) {
-        hasEarlyCanine = false;
-        hasEarlyFeline = false;
-        hasSeniorCanine = true;
+        if (foundationsUsesEarlyDetection && patientVisitHasItemCode(p, 'FIL48719999')) {
+          hasEarlyCanine = true;
+        } else {
+          hasEarlyCanine = false;
+          hasEarlyFeline = false;
+          hasSeniorCanine = true;
+        }
       }
     });
     const needStandard = hasSeniorCanine || has8659999 || hasFIL45129999 || hasSeniorFeline;
@@ -8152,14 +8214,24 @@ export default function PublicRoomLoaderForm() {
       isDogSpeciesTokens(speciesLowerPet) ||
       (speciesLowerPet.trim() === '' && !isCatSpeciesTokens(speciesLowerPet));
     const isCatPetItems = isCatSpeciesTokens(speciesLowerPet);
-    petItems = mergeStaffSeniorComprehensiveTrioRows(
-      petItems,
-      isDogPetItems,
-      isCatPetItems,
-      seniorCanineExtendedItem,
-      seniorFelineExtendedItem
+    const foundationsUsesEarlyDetection = roomLoaderFoundationsUsesEarlyDetectionOverSenior(
+      patient,
+      appointments,
+      formData,
+      `pet${petIdx}`
     );
-    petItems = filterEarlyDetectionVisitRowsForSeniorPetDisplay(petItems, seniorKindForPanels);
+    if (foundationsUsesEarlyDetection) {
+      petItems = filterSeniorScreenVisitRowsForFoundationsEarlyDetection(petItems, true);
+    } else {
+      petItems = mergeStaffSeniorComprehensiveTrioRows(
+        petItems,
+        isDogPetItems,
+        isCatPetItems,
+        seniorCanineExtendedItem,
+        seniorFelineExtendedItem
+      );
+      petItems = filterEarlyDetectionVisitRowsForSeniorPetDisplay(petItems, seniorKindForPanels);
+    }
     const bundledActive = bundledLabPanelActiveOnClient({
       patientId,
       formData,
@@ -9611,6 +9683,12 @@ export default function PublicRoomLoaderForm() {
                     patientForEntry,
                     appointments
                   );
+                  const foundationsEarlyDetectionInsteadOfSenior = roomLoaderFoundationsUsesEarlyDetectionOverSenior(
+                    patientForEntry,
+                    appointments,
+                    formData,
+                    `pet${idx}`
+                  );
                   const standardPricingSenior = getClientPricing(patientIdForPricing, seniorCanineStandardItem);
                   const extendedCaninePricingSenior = getClientPricing(patientIdForPricing, seniorCanineExtendedItem);
                   const extendedFelinePricingSenior = getClientPricing(patientIdForPricing, seniorFelineExtendedItem);
@@ -9999,6 +10077,7 @@ export default function PublicRoomLoaderForm() {
                   }
 
                   if (isSeniorCanine) {
+                    if (foundationsEarlyDetectionInsteadOfSenior) return null;
                     if (carePlanShowsMergedSeniorCanineComprehensive(entryDisplayItems)) return null;
                     if (rec.code === 'FIL8659999' && hasLabWorkYesSeniorCanine) return null;
                     const extendedMinusFecal = extendedPrice != null && fecalPrice != null ? extendedPrice - fecalPrice : null;
@@ -10313,6 +10392,7 @@ export default function PublicRoomLoaderForm() {
                   }
 
                   if (isSeniorFelineFullPanel) {
+                    if (foundationsEarlyDetectionInsteadOfSenior) return null;
                     if (carePlanShowsMergedSeniorFelineComprehensive(entryDisplayItems)) return null;
                     // When 8659999 is present we already show "Senior Screen — Feline" (symptom / lab-work path). Skip age-based FIL45129999 and FIL8659999 so the same two-panel choice isn't shown twice.
                     const hasLabWorkYesSeniorFeline = entry.recommendations.some((r: any) => r.code === '8659999');
