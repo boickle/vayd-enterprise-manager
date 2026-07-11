@@ -135,6 +135,12 @@
   overflow: auto;
 }
 
+@media (max-width: 900px) {
+  .pims-clients {
+    padding: 16px 12px 24px;
+  }
+}
+
 .pims-clients__table {
   width: 100%;
   border-collapse: collapse;

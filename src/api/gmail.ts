@@ -9,6 +9,7 @@ export type GmailMailboxStatus = {
   connectedAt?: string | null;
   tokenExpiresAt?: string | null;
   mailboxMismatch?: boolean;
+  contactsEnabled?: boolean;
 };
 
 export type GmailMailboxesResponse = {
@@ -194,6 +195,17 @@ export function groupGmailMessagesByThread(
     const draftRow =
       sorted.find((m) => m.hasDraft || m.labelIds.includes('DRAFT')) ?? null;
     const hasDraft = Boolean(draftRow);
+    const draftOnly =
+      hasDraft &&
+      !sorted.some((m) => !m.hasDraft && !m.labelIds.includes('DRAFT'));
+    const draftParticipants =
+      draftOnly && draftRow
+        ? messageListParticipants({
+            ...draftRow,
+            hasDraft: true,
+            labelIds: draftRow.labelIds,
+          })
+        : undefined;
     grouped.push({
       ...latest,
       threadId: threadKey(latest),
@@ -204,7 +216,9 @@ export function groupGmailMessagesByThread(
       hasAttachments: attachments.length > 0 || sorted.some((m) => m.hasAttachments),
       attachments,
       threadMessageCount: Math.max(maxCount, sorted.length),
-      participants: mergeParticipantLists(participantParts) ?? latest.participants,
+      participants:
+        draftParticipants ?? mergeParticipantLists(participantParts) ?? latest.participants,
+      ...(draftOnly && draftRow ? { to: [...draftRow.to] } : {}),
       scheduledSendAt: scheduledSendAt ?? latest.scheduledSendAt ?? null,
       hasDraft,
       draftId: draftRow?.draftId ?? (hasDraft ? draftRow?.id : undefined),
@@ -318,6 +332,26 @@ export async function fetchGmailThread(
 export async function fetchGmailSendAs(mailbox: string): Promise<{ aliases: GmailSendAsAlias[] }> {
   const { data } = await http.get<{ aliases: GmailSendAsAlias[] }>('/gmail/send-as', {
     params: mailboxParams(mailbox),
+  });
+  return data;
+}
+
+export type GmailContactSearchResponse = {
+  contacts: GmailAddress[];
+  contactsEnabled: boolean;
+};
+
+export async function fetchGmailContactSuggestions(
+  mailbox: string,
+  query: string,
+  limit = 12,
+): Promise<GmailContactSearchResponse> {
+  const trimmed = query.trim();
+  if (trimmed.length < 2) {
+    return { contacts: [], contactsEnabled: true };
+  }
+  const { data } = await http.get<GmailContactSearchResponse>('/gmail/contacts/search', {
+    params: { mailbox, q: trimmed, limit },
   });
   return data;
 }
@@ -1095,10 +1129,51 @@ export function flattenUserLabels(nodes: GmailLabelNode[]): GmailLabelNode[] {
   return out;
 }
 
+export type GmailLabelMenuRow = {
+  label: GmailLabelNode;
+  depth: number;
+  /** False for virtual parent folders (`path:…`) used only for grouping. */
+  movable: boolean;
+};
+
+/** Depth-first rows for Move to / label menus — preserves parent/child nesting. */
+export function flattenUserLabelsForMenu(nodes: GmailLabelNode[]): GmailLabelMenuRow[] {
+  const out: GmailLabelMenuRow[] = [];
+  const walk = (list: GmailLabelNode[], depth: number) => {
+    for (const n of list) {
+      if (n.type !== 'user' || isGmailLabelGroup(n)) continue;
+      const virtual = isGmailVirtualLabelFolder(n);
+      out.push({ label: n, depth, movable: !virtual });
+      if (n.children.length) walk(n.children, depth + 1);
+    }
+  };
+  walk(nodes, 0);
+  return out;
+}
+
 export function formatGmailAddress(addr: GmailAddress): string {
   const name = addr.name?.trim();
   if (name) return `${name} <${addr.email}>`;
   return addr.email;
+}
+
+/** Inbox row label: draft threads show recipients; others show senders/participants. */
+export function messageListParticipants(
+  msg: Pick<GmailMessageSummary, 'participants' | 'from' | 'to' | 'hasDraft' | 'labelIds'>,
+): string {
+  if (messageHasDraft(msg) || msg.labelIds.includes('DRAFT')) {
+    const parts = msg.to
+      .map((addr) => {
+        const name = addr.name?.trim();
+        if (name) return name;
+        const local = addr.email.split('@')[0];
+        return local || addr.email;
+      })
+      .filter(Boolean);
+    if (parts.length > 0) return parts.join(', ');
+    return '(no recipients)';
+  }
+  return msg.participants?.trim() || msg.from.name?.trim() || msg.from.email;
 }
 
 export function labelDisplayName(label: GmailLabelNode): string {

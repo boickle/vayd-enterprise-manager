@@ -400,35 +400,9 @@
     flex-direction: column;
   }
 
+  /** Mobile: primary nav is the top tab bar + hamburger; hide duplicate quick-actions rail. */
   .schedule-app__rail {
-    flex: none;
-    width: 100%;
-    max-width: none;
-    max-height: none;
-    position: relative;
-    border-right: none;
-    border-bottom: 1px solid #e2e8f0;
-    overflow: visible;
-  }
-
-  /** Practice calendar: quick actions live in the top navbar; reclaim vertical space for the grid. */
-  .schedule-app--scheduler-mobile-compact .schedule-app__rail {
     display: none;
-  }
-
-  .schedule-app__rail-scroll {
-    overflow: visible;
-    padding: 14px 14px 18px;
-  }
-
-  .schedule-app__quick {
-    flex-direction: row;
-    flex-wrap: wrap;
-  }
-
-  .schedule-app__quick--sub {
-    flex-direction: column;
-    flex-wrap: nowrap;
   }
 
   .schedule-app__main,
@@ -440,6 +414,28 @@
     overflow: hidden;
   }
 
+  .schedule-app__outlet {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    scroll-padding-top: 4px;
+  }
+
+  .schedule-app--gmail-mobile-compact .schedule-app__outlet--flush {
+    flex: 1 1 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .schedule-app--gmail-mobile-compact .schedule-app__outlet--flush > * {
+    flex: 1 1 0;
+    min-height: 0;
+    height: 100%;
+  }
+
   /** Practice scheduler: vertical scroll in the outlet; horizontal pan on `.scheduler-scroll`. */
   .schedule-app__outlet--flush.schedule-app__outlet--flush-scroll-y.schedule-app__outlet--practice-sticky-x {
     overflow-x: hidden;
@@ -448,6 +444,24 @@
     flex: 1 1 0;
     min-height: 0;
     max-width: 100%;
+    padding-bottom: max(32px, env(safe-area-inset-bottom, 0px));
+    scroll-padding-bottom: max(32px, env(safe-area-inset-bottom, 0px));
+  }
+
+  /**
+   * Routing on mobile: one vertical scroll for the form + calendar (avoid trapped 48vh calendar pane).
+   */
+  .schedule-app__outlet--routing-split {
+    overflow-x: hidden;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    height: auto;
+  }
+
+  .schedule-app__outlet--routing-split > * {
+    height: auto;
+    flex: none;
+    min-height: 0;
   }
 }
 

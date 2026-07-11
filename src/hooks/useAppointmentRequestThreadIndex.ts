@@ -8,6 +8,8 @@ import {
 import {
   clientDisplayNameFromRequestData,
   clientNameFromAppointmentRequestSubject,
+  isAppointmentRequestNotificationSubject,
+  petListsMatchForSubmission,
   petSummaryFromAppointmentRequestSubject,
   requestDataEmail,
   requestDataPetSummary,
@@ -80,6 +82,14 @@ export type AppointmentRequestThreadIndex = {
   ensureGmailLink: (submissionId: number) => void;
   /** Merge an updated submission back into the index after an action. */
   applyLocalUpdate: (item: AppointmentRequestSubmissionItem) => void;
+  /**
+   * When a liaison notification is open but not linked yet, resolve heuristically and
+   * lazily persist gmailThreadId via the server Gmail search.
+   */
+  proactivelyLinkNotification: (
+    message: GmailMessageSummary | null | undefined,
+    extraEmails?: readonly string[],
+  ) => void;
   refresh: () => void;
 };
 
@@ -246,14 +256,18 @@ export function useAppointmentRequestThreadIndex(enabled: boolean): AppointmentR
       }
       const subjectClient = clientNameFromAppointmentRequestSubject(message.subject);
       if (subjectClient) {
-        const subjectPet = petSummaryFromAppointmentRequestSubject(message.subject)?.toLowerCase();
+        const subjectPet = petSummaryFromAppointmentRequestSubject(message.subject);
         let candidates = byName.get(subjectClient);
         if (candidates && subjectPet) {
-          const filtered = candidates.filter((item) => {
-            const pets = requestDataPetSummary(item.requestData ?? {}).toLowerCase();
-            return pets === subjectPet || pets.includes(subjectPet);
-          });
-          if (filtered.length > 0) candidates = filtered;
+          const filtered = candidates.filter((item) =>
+            petListsMatchForSubmission(subjectPet, requestDataPetSummary(item.requestData ?? {})),
+          );
+          if (filtered.length > 0) {
+            candidates = filtered;
+          } else if (candidates.length === 1) {
+            // Trust a unique name match when pet strings differ only by formatting.
+            candidates = candidates;
+          }
         }
         const picked = pickClosest(candidates, messageTime);
         if (picked) return picked;
@@ -261,6 +275,33 @@ export function useAppointmentRequestThreadIndex(enabled: boolean): AppointmentR
       return null;
     },
     [byThread, byEmail, byName]
+  );
+
+  const proactivelyLinkNotification = useCallback(
+    (
+      message: GmailMessageSummary | null | undefined,
+      extraEmails?: readonly string[],
+    ) => {
+      if (!enabled || !ready || !message) return;
+      const matched = resolve(message, extraEmails);
+      if (matched) {
+        if (!normalizeThreadId(matched.gmailThreadId)) {
+          ensureGmailLink(matched.id);
+        }
+        return;
+      }
+      if (!isAppointmentRequestNotificationSubject(message.subject)) return;
+      const subjectClient = clientNameFromAppointmentRequestSubject(message.subject);
+      if (!subjectClient) return;
+      const candidates = byName.get(subjectClient);
+      if (!candidates?.length) return;
+      for (const item of candidates) {
+        if (!normalizeThreadId(item.gmailThreadId)) {
+          ensureGmailLink(item.id);
+        }
+      }
+    },
+    [enabled, ready, resolve, ensureGmailLink, byName],
   );
 
   const applyLocalUpdate = useCallback((item: AppointmentRequestSubmissionItem) => {
@@ -274,5 +315,13 @@ export function useAppointmentRequestThreadIndex(enabled: boolean): AppointmentR
     setReloadKey((k) => k + 1);
   }, []);
 
-  return { loading, ready, resolve, ensureGmailLink, applyLocalUpdate, refresh };
+  return {
+    loading,
+    ready,
+    resolve,
+    ensureGmailLink,
+    applyLocalUpdate,
+    proactivelyLinkNotification,
+    refresh,
+  };
 }

@@ -171,7 +171,10 @@ export default function ScheduleLayout() {
 
   /** Practice calendar (and home) can grow vertically; scroll inside outlet so toolbar/date chrome scrolls away. Routing split stays overflow-hidden. */
   const outletFlushVerticallyScrollable = useMemo(
-    () => outletFlush && !location.pathname.startsWith('/schedule/routing'),
+    () =>
+      outletFlush &&
+      !location.pathname.startsWith('/schedule/routing') &&
+      location.pathname !== '/schedule/email',
     [outletFlush, location.pathname]
   );
 
@@ -184,6 +187,9 @@ export default function ScheduleLayout() {
 
   /** Practice calendar on mobile: hide the quick-actions rail so the grid gets vertical space. */
   const scheduleAppMobileCompact = scheduleMainStickyCalendarChain;
+
+  /** Gmail inbox on mobile: hide the quick-actions rail so the mail UI fills the screen. */
+  const scheduleAppGmailMobileCompact = location.pathname === '/schedule/email';
 
   useEffect(() => {
     if (location.pathname === '/schedule/routing' && railWideEnough) {
@@ -200,6 +206,7 @@ export default function ScheduleLayout() {
       className={[
         'schedule-app',
         scheduleAppMobileCompact ? 'schedule-app--scheduler-mobile-compact' : '',
+        scheduleAppGmailMobileCompact ? 'schedule-app--gmail-mobile-compact' : '',
       ]
         .filter(Boolean)
         .join(' ')}
