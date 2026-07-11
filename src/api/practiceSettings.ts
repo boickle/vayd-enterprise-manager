@@ -23,6 +23,8 @@ export type ReminderSettings = {
   'reminders.smsExcludedNamePhrases'?: string[];
   /** Include only reminders whose type is in this list (reminder type names). Empty = no filter (include all). */
   'reminders.includedReminderTypes'?: string[];
+  /** Weekly CL seat par targets: { phones, outreach, email }. */
+  'cl.seatPar'?: { phones: number; outreach: number; email: number } | string;
 };
 
 export type ReminderSettingsForm = {
