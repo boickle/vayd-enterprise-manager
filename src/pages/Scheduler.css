@@ -6200,7 +6200,11 @@ label.scheduler-household-pet-row {
  */
 @media (max-width: 900px), (max-height: 560px) {
   .scheduler-page:not(.scheduler-page--embedded) {
-    padding: 8px 8px 16px;
+    padding: 8px 8px max(24px, env(safe-area-inset-bottom, 0px));
+  }
+
+  .scheduler-page:not(.scheduler-page--embedded) .scheduler-toolbar-calendar-merge {
+    margin-bottom: max(12px, env(safe-area-inset-bottom, 0px));
   }
 
   /**
@@ -6351,6 +6355,50 @@ label.scheduler-household-pet-row {
     overflow-x: auto;
     overflow-y: hidden;
     -webkit-overflow-scrolling: touch;
+  }
+
+  /**
+   * Routing workspace on mobile: scroll the schedule outlet, not a clipped calendar pane.
+   */
+  .schedule-routing-workspace .scheduler-page--embedded {
+    flex: none;
+    min-height: auto;
+    overflow: visible;
+  }
+
+  .schedule-routing-workspace .scheduler-page--embedded > .scheduler-calendar-outlet {
+    flex: none;
+    min-height: auto;
+    overflow: visible;
+  }
+
+  .schedule-routing-workspace .scheduler-page--embedded .scheduler-toolbar-calendar-merge {
+    flex: none;
+    min-height: auto;
+    overflow: visible;
+  }
+
+  .schedule-routing-workspace .scheduler-page--embedded .scheduler-scroll {
+    flex: none;
+    min-height: auto;
+    overflow-x: auto;
+    overflow-y: visible;
+    touch-action: pan-x pan-y;
+  }
+
+  .schedule-routing-workspace .scheduler-page--embedded .scheduler-calendar-shell {
+    overflow: visible;
+  }
+
+  .schedule-routing-workspace .scheduler-page--embedded .scheduler-calendar-scroll {
+    flex: none;
+    min-height: auto;
+    overflow: visible;
+  }
+
+  .schedule-routing-workspace .scheduler-page--embedded .scheduler-grid-wrap {
+    flex: none;
+    min-height: auto;
   }
 
   .scheduler-day-header {

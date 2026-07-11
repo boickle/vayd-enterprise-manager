@@ -535,7 +535,7 @@ const SCHEDULER_DAY_HEADER_STACK_PX = 96;
 const SLOT_MINUTES = 15;
 const DEFAULT_GRID_START = 7 * 60;
 /** Match My Week — practice calendar shows through a typical field day even without routed ETAs. */
-const DEFAULT_GRID_END = 19 * 60 + 30;
+const DEFAULT_GRID_END = 21 * 60;
 /** Minutes of grid past depot and past first/last timed item (same as My Week depot lead-in). */
 const SCHEDULER_GRID_EDGE_BUFFER_MIN = 30;
 
@@ -2775,6 +2775,24 @@ function SchedulerPreApptRlIcon({ confirmStatusName }: { confirmStatusName?: str
   );
 }
 
+/** Matches ScheduleLayout mobile breakpoint (rail stacks at 900px). */
+function isSchedulerMobileViewport(): boolean {
+  return (
+    typeof window !== 'undefined' && window.matchMedia('(max-width: 900px)').matches
+  );
+}
+
+/** Practice calendar default — day on mobile, week on desktop. */
+function defaultSchedulerCalendarView(): ViewMode {
+  return isSchedulerMobileViewport() ? 'day' : 'week';
+}
+
+/** Initial view for the practice calendar (not routing embed). Mobile always starts on day. */
+function initialPracticeCalendarView(handoffView?: ViewMode): ViewMode {
+  if (isSchedulerMobileViewport()) return 'day';
+  return handoffView ?? 'week';
+}
+
 function initialSchedulerCalendarState(embedInRoutingWorkspace: boolean): {
   anchorDate: string;
   view: ViewMode;
@@ -2809,12 +2827,12 @@ function initialSchedulerCalendarState(embedInRoutingWorkspace: boolean): {
   if (handoff) {
     return {
       anchorDate: handoff.anchorDate,
-      view: handoff.view ?? 'week',
+      view: initialPracticeCalendarView(handoff.view),
       providerFilter: handoff.providerFilter ?? '',
     };
   }
 
-  return { anchorDate: today, view: 'week', providerFilter: '' };
+  return { anchorDate: today, view: initialPracticeCalendarView(), providerFilter: '' };
 }
 
 type SchedulerMountState = {
@@ -2835,7 +2853,7 @@ function readSchedulerMountState(embedInRoutingWorkspace: boolean): SchedulerMou
   if (focusRequest) {
     return {
       anchorDate: focusRequest.dateHint ?? today,
-      view: 'week',
+      view: defaultSchedulerCalendarView(),
       providerFilter: focusRequest.providerHint ?? '',
       focusRequest,
     };
@@ -3504,7 +3522,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         : null;
     if (pendingFocusDateHintRef.current) {
       setAnchorDate(pendingFocusDateHintRef.current);
-      setView('week');
+      setView(defaultSchedulerCalendarView());
       setPendingFocusHighlightApptId(apptId);
     }
 

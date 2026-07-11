@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
-import { ChevronLeft, ChevronRight, Mail, PenSquare, Plus, RefreshCw, Star, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Mail, Menu, PenSquare, Plus, RefreshCw, Star, X } from 'lucide-react';
 import GmailAttachmentIcon from '../components/gmail/GmailAttachmentIcon';
 import GmailBulkToolbar, { type GmailLabelApplyUpdate } from '../components/gmail/GmailBulkToolbar';
 import GmailComposePanel from '../components/gmail/GmailComposePanel';
@@ -52,6 +52,7 @@ import {
   hasScheduledSend,
   latestNonDraftThreadMessage,
   messageHasDraft,
+  messageListParticipants,
   type GmailAttachmentSummary,
   type GmailLabelNode,
   type GmailMailboxStatus,
@@ -65,7 +66,7 @@ import {
   useAppointmentRequestThreadIndex,
 } from '../hooks/useAppointmentRequestThreadIndex';
 import { extractEmailsFromText } from '../utils/gmailEmailExtract';
-import { requestDataEmail } from '../utils/appointmentRequestDisplay';
+import { isAppointmentRequestNotificationSubject, requestDataEmail } from '../utils/appointmentRequestDisplay';
 import {
   apptRequestGmailNotBookedLabelPendingDismissal,
   apptRequestGmailOnHoldSyncSignature,
@@ -257,7 +258,7 @@ function MessageListSection({
               <div className="gmail-msg-item__main">
                 <span className="gmail-msg-item__from">
                   <span className="gmail-msg-item__participants">
-                    {msg.participants?.trim() || msg.from.name?.trim() || msg.from.email}
+                    {messageListParticipants(msg)}
                   </span>
                   {messageHasDraft(msg) ? (
                     <span className="gmail-msg-item__draft-label">Draft</span>
@@ -400,6 +401,7 @@ export default function GmailInbox() {
   const [showAddMailbox, setShowAddMailbox] = useState(false);
   const [newMailboxValue, setNewMailboxValue] = useState('');
   const [addMailboxError, setAddMailboxError] = useState<string | null>(null);
+  const [labelsDrawerOpen, setLabelsDrawerOpen] = useState(false);
   const addMailboxInputRef = useRef<HTMLInputElement | null>(null);
   const deepLinkHandledRef = useRef<string | null>(null);
   /** Thread id from ?thread= while the deep link is resolving. */
@@ -507,6 +509,18 @@ export default function GmailInbox() {
     linkedApptSubmission?.id,
     linkedApptSubmission?.gmailThreadId,
     apptRequestIndex.ensureGmailLink,
+  ]);
+
+  /** Resolve + persist gmailThreadId when a liaison notification is open but not indexed yet. */
+  useEffect(() => {
+    if (!isApptRequestMailbox || !selectedMessage || !apptRequestIndex.ready) return;
+    apptRequestIndex.proactivelyLinkNotification(selectedMessage, threadBodyEmails);
+  }, [
+    isApptRequestMailbox,
+    selectedMessage,
+    threadBodyEmails,
+    apptRequestIndex.ready,
+    apptRequestIndex.proactivelyLinkNotification,
   ]);
 
   /** After Book → return from routing, refresh submission, apply labels, and prompt SMS. */
@@ -653,6 +667,7 @@ export default function GmailInbox() {
     clearProtectedThreadSelection();
     setSelectedMessage(null);
     setSelectedLabelId(labelId);
+    setLabelsDrawerOpen(false);
     if (isMoreNavLabel(labelId)) {
       setExpandedLabels((prev) => {
         const next = new Set(prev);
@@ -661,6 +676,15 @@ export default function GmailInbox() {
       });
     }
   }, []);
+
+  useEffect(() => {
+    if (!labelsDrawerOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setLabelsDrawerOpen(false);
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [labelsDrawerOpen]);
 
   const loadMailboxes = useCallback(async () => {
     const res = await fetchGmailMailboxes();
@@ -976,6 +1000,7 @@ export default function GmailInbox() {
 
   const selectMailbox = (email: string) => {
     clearProtectedThreadSelection();
+    setLabelsDrawerOpen(false);
     setSelectedMailbox(email);
     setMailSearchInput('');
     setDebouncedSearchText('');
@@ -1117,8 +1142,15 @@ export default function GmailInbox() {
     if (discardedDraftThreadsRef.current.has(threadId)) return;
     if (draftAutoOpenedThreadRef.current === threadId) return;
     const replyTo = latestNonDraftThreadMessage(threadMessages);
-    if (!replyTo) return;
     draftAutoOpenedThreadRef.current = threadId;
+    if (!replyTo) {
+      openCompose({
+        mode: 'new',
+        threadId,
+        threadInInbox: selectedMessage.labelIds.includes('INBOX'),
+      });
+      return;
+    }
     openCompose({
       mode: 'reply',
       threadId,
@@ -1133,6 +1165,12 @@ export default function GmailInbox() {
     setComposeOpen(false);
     setSelectedMessage(msg);
     protectedThreadIdRef.current = msg.threadId;
+    if (typeof window !== 'undefined' && window.matchMedia('(max-width: 900px)').matches) {
+      window.scrollTo(0, 0);
+      requestAnimationFrame(() => {
+        document.querySelector('.gmail-message-view__scroll')?.scrollTo(0, 0);
+      });
+    }
     if (activeMailbox) {
       deepLinkHandledRef.current = `${activeMailbox}:${msg.threadId}`;
       const next = new URLSearchParams(searchParams);
@@ -1762,7 +1800,15 @@ export default function GmailInbox() {
   }
 
   return (
-    <div className="gmail-inbox">
+    <div
+      className={[
+        'gmail-inbox',
+        selectedMessage ? 'gmail-inbox--reading' : '',
+        labelsDrawerOpen ? 'gmail-inbox--labels-open' : '',
+      ]
+        .filter(Boolean)
+        .join(' ')}
+    >
       {banner ? (
         <div
           className={`gmail-inbox__banner${
@@ -1977,6 +2023,14 @@ export default function GmailInbox() {
         </div>
       ) : (
         <div className="gmail-inbox__body">
+          {labelsDrawerOpen ? (
+            <button
+              type="button"
+              className="gmail-inbox__labels-backdrop"
+              aria-label="Close folders"
+              onClick={() => setLabelsDrawerOpen(false)}
+            />
+          ) : null}
           <section
             className="gmail-inbox__panel gmail-inbox__panel--labels"
             aria-label="Mail folders"
@@ -1986,7 +2040,10 @@ export default function GmailInbox() {
                 <button
                   type="button"
                   className="gmail-sidebar__compose"
-                  onClick={() => openCompose({ mode: 'new' })}
+                  onClick={() => {
+                    setLabelsDrawerOpen(false);
+                    openCompose({ mode: 'new' });
+                  }}
                 >
                   <PenSquare size={18} strokeWidth={1.75} aria-hidden />
                   Compose
@@ -2026,6 +2083,26 @@ export default function GmailInbox() {
                 />
               ) : null}
             </div>
+            <div className="gmail-inbox__labels-footer">
+              <button
+                type="button"
+                className="gmail-btn"
+                onClick={() => refreshAll()}
+                disabled={!activeMailbox || refreshing}
+              >
+                <RefreshCw size={14} style={{ verticalAlign: -2, marginRight: 4 }} aria-hidden />
+                Refresh
+              </button>
+              {connected && activeMailbox ? (
+                <button
+                  type="button"
+                  className="gmail-btn"
+                  onClick={() => handleDisconnect(activeMailbox)}
+                >
+                  Disconnect
+                </button>
+              ) : null}
+            </div>
           </section>
 
           <div className="gmail-inbox__main-panel">
@@ -2037,6 +2114,14 @@ export default function GmailInbox() {
               aria-hidden={selectedMessage ? true : undefined}
             >
               <div className="gmail-inbox__list-toolbar">
+                <button
+                  type="button"
+                  className="gmail-inbox__list-toolbar-btn gmail-inbox__menu-btn"
+                  aria-label="Open folders"
+                  onClick={() => setLabelsDrawerOpen(true)}
+                >
+                  <Menu size={18} strokeWidth={1.75} aria-hidden />
+                </button>
                 <input
                   type="checkbox"
                   className="gmail-msg-item__check"
@@ -2054,6 +2139,7 @@ export default function GmailInbox() {
                     targetMessages={visibleMessages.filter((m) => checkedMessageIds.has(m.id))}
                     currentLabelId={selectedLabelId}
                     userLabels={userLabels}
+                    userLabelTree={sidebarUserLabels}
                     labelById={labelById}
                     disabled={actionBusy || refreshing}
                     onComplete={handleBulkComplete}
@@ -2147,6 +2233,7 @@ export default function GmailInbox() {
                   threadLoading={threadLoading}
                   labelById={labelById}
                   userLabels={userLabels}
+                  userLabelTree={sidebarUserLabels}
                   currentLabelId={selectedLabelId}
                   listMessages={visibleMessages}
                   messagePositionLabel={messagePositionLabel}
@@ -2192,6 +2279,7 @@ export default function GmailInbox() {
                   onComposeSent={() => void handleComposeSent()}
                   onComposeDraftSaved={handleComposeDraftSaved}
                   onComposeDraftDeleted={handleComposeDraftDeleted}
+                  contactsEnabled={activeMailboxStatus?.contactsEnabled ?? true}
                   appointmentRequestSlot={
                     isApptRequestMailbox && linkedApptSubmission ? (
                       <GmailAppointmentRequestPanel
@@ -2207,6 +2295,12 @@ export default function GmailInbox() {
                         autoOpenNotBooked={notBookedPromptSubmissionId === linkedApptSubmission.id}
                         onAutoOpenNotBookedConsumed={() => setNotBookedPromptSubmissionId(null)}
                       />
+                    ) : isApptRequestMailbox &&
+                      isAppointmentRequestNotificationSubject(selectedMessage.subject) &&
+                      (!apptRequestIndex.ready || apptRequestIndex.loading) ? (
+                      <div className="gmail-appt-panel gmail-appt-panel--loading" aria-busy="true">
+                        <div className="gmail-inbox__state">Loading appointment request…</div>
+                      </div>
                     ) : null
                   }
                 />
@@ -2216,11 +2310,23 @@ export default function GmailInbox() {
         </div>
       )}
 
+      {connected && activeMailbox && !selectedMessage && !composeOpen ? (
+        <button
+          type="button"
+          className="gmail-inbox__fab-compose"
+          aria-label="Compose"
+          onClick={() => openCompose({ mode: 'new' })}
+        >
+          <PenSquare size={22} strokeWidth={1.75} aria-hidden />
+        </button>
+      ) : null}
+
       {composeOpen && !selectedMessage && activeMailbox && composeContext.mode === 'new' ? (
         <GmailComposePanel
           mailbox={activeMailbox}
           context={composeContext}
           variant="float"
+          contactsEnabled={activeMailboxStatus?.contactsEnabled ?? true}
           onClose={() => setComposeOpen(false)}
           onSent={() => void handleComposeSent()}
           onDraftSaved={handleComposeDraftSaved}

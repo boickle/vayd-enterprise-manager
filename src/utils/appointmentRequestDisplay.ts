@@ -57,6 +57,33 @@ export function petSummaryFromAppointmentRequestSubject(
   return pet || null;
 }
 
+/** Normalize pet lists for liaison-subject ↔ request-data matching (spacing, commas). */
+export function normalizePetListForMatch(value: string | null | undefined): string {
+  return (value ?? '')
+    .toLowerCase()
+    .replace(/\s*,\s*/g, ',')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** True when liaison subject pets and stored request pets refer to the same visit. */
+export function petListsMatchForSubmission(
+  subjectPets: string | null | undefined,
+  requestPets: string | null | undefined,
+): boolean {
+  const subject = normalizePetListForMatch(subjectPets);
+  const request = normalizePetListForMatch(requestPets);
+  if (!subject || !request) return true;
+  if (subject === request) return true;
+  if (request.includes(subject) || subject.includes(request)) return true;
+  const subjectParts = subject.split(',').map((p) => p.trim()).filter(Boolean);
+  const requestParts = request.split(',').map((p) => p.trim()).filter(Boolean);
+  if (subjectParts.length === 0 || requestParts.length === 0) return true;
+  return subjectParts.every((sp) =>
+    requestParts.some((rp) => rp === sp || rp.includes(sp) || sp.includes(rp)),
+  );
+}
+
 export function requestDataPhone(requestData: Record<string, unknown>): string | null {
   return pickStr(requestData.phoneNumber) ?? pickStr(requestData.bestPhoneNumber) ?? pickStr(requestData.phoneNumbers);
 }

@@ -11,7 +11,9 @@ import {
   sendGmailMessage,
   threadDraftDeleteIds,
   updateGmailDraft,
+  formatGmailAddress,
   type GmailDraftResponse,
+  type GmailAddress,
   type GmailSendAsAlias,
   type GmailThreadMessage,
 } from '../../api/gmail';
@@ -39,6 +41,46 @@ function formatFromAlias(alias: GmailSendAsAlias): string {
 function extractEmail(raw: string): string {
   const match = raw.match(/<([^>]+)>/);
   return (match?.[1] ?? raw).trim();
+}
+
+const COMPOSE_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** Split a recipient field into committed addresses and the token being typed. */
+export function splitRecipientFieldActive(value: string): { committed: string; active: string } {
+  const lastSep = Math.max(value.lastIndexOf(','), value.lastIndexOf(';'));
+  if (lastSep === -1) {
+    return { committed: '', active: value.trimStart() };
+  }
+  return {
+    committed: value.slice(0, lastSep + 1).trim(),
+    active: value.slice(lastSep + 1).trimStart(),
+  };
+}
+
+function isCompleteRecipientToken(token: string): boolean {
+  const trimmed = token.trim();
+  if (!trimmed) return true;
+  return COMPOSE_EMAIL_RE.test(extractEmail(trimmed));
+}
+
+/** Whether compose fields are ready for Gmail draft autosave (avoids invalid To headers). */
+export function composeDraftSaveReady(fields: {
+  from: string;
+  to: string;
+  cc: string;
+}): boolean {
+  const fromEmail = extractEmail(fields.from);
+  if (!fromEmail || !COMPOSE_EMAIL_RE.test(fromEmail)) return false;
+
+  const toActive = splitRecipientFieldActive(fields.to);
+  if (!isCompleteRecipientToken(toActive.active)) return false;
+
+  if (fields.cc.trim()) {
+    const ccActive = splitRecipientFieldActive(fields.cc);
+    if (!isCompleteRecipientToken(ccActive.active)) return false;
+  }
+
+  return true;
 }
 
 function buildReferences(replyTo?: GmailThreadMessage): string | undefined {
@@ -444,6 +486,7 @@ export function buildComposeDraft(
       cc: '',
       subject: '',
       quotedSuffix: '',
+      threadId: ctx.threadId,
     };
   }
 
@@ -559,15 +602,41 @@ export function userBodyFromDraftMessage(
   return body;
 }
 
+export function formatRecipientField(addresses: GmailAddress[]): string {
+  return addresses
+    .map((addr) => formatGmailAddress(addr))
+    .filter(Boolean)
+    .join(', ');
+}
+
 export function loadComposeFromThreadDraft(
   threadMessages: GmailThreadMessage[] | undefined,
-): { draftId: string; bodyHtml: string } | null {
+): {
+  draftId: string;
+  bodyHtml: string;
+  to: string;
+  cc: string;
+  subject: string;
+  from: string;
+} | null {
   const draft = findThreadDraftMessage(threadMessages ?? []);
   if (!draft) return null;
   const draftId = draft.draftId?.trim() || draft.id;
+  const to =
+    formatRecipientField(draft.to) ||
+    draft.headers.to
+      ?.split(/[,;]/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .join(', ') ||
+    '';
   return {
     draftId,
     bodyHtml: fullHtmlFromDraftMessage(draft),
+    to: to ? `${to.replace(/,\s*$/, '')}, ` : '',
+    cc: draft.headers.cc?.trim() ?? '',
+    subject: draft.subject?.trim() || draft.headers.subject?.trim() || '',
+    from: draft.headers.from?.trim() || formatGmailAddress(draft.from),
   };
 }
 
