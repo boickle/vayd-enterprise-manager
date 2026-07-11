@@ -94,6 +94,33 @@ a:hover {
   padding: 24px;
 }
 
+/**
+ * `.app-root` is a fixed-height (100dvh) flex column with overflow:hidden at every
+ * breakpoint, and the app shell (html/body/#root) is likewise capped to the viewport.
+ * The general scroll rule below excludes `.container`, so a `container` page taller
+ * than the viewport (e.g. the login page) gets clipped with no scrollbar on both
+ * mobile and short desktop windows.
+ *
+ * Make `main.container` a FULL-WIDTH scroll container that fills the shell, and push
+ * the 1100px centering down onto its child content. Keeping the scroller full width
+ * means the scrollbar sits at the window edge (and the whole viewport responds to the
+ * wheel), instead of floating at the right edge of a centered 1100px box.
+ */
+main.container {
+  max-width: none;
+  margin: 0;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+main.container > * {
+  max-width: 1100px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
 .app-root {
   display: flex;
   flex-direction: column;
