@@ -4,6 +4,7 @@ import type { GmailThreadMessage } from '../../api/gmail';
 import {
   buildComposeDraft,
   buildComposeSendBodiesFromEditorHtml,
+  composeDraftSaveReady,
   defaultFromAlias,
   discardAllThreadDrafts,
   draftListSnippet,
@@ -21,8 +22,9 @@ import {
   type ComposeMode,
   type GmailComposeDraftSavedInfo,
 } from './gmailCompose';
-import { fetchGmailSendAsAlias, type GmailSendAsAlias } from '../../api/gmail';
+import { fetchGmailSendAsAlias, gmailErrorMessage, type GmailSendAsAlias } from '../../api/gmail';
 import GmailTemplateMenu from './GmailTemplateMenu';
+import GmailRecipientField from './GmailRecipientField';
 import {
   createGmailTemplate,
   deleteGmailTemplate,
@@ -39,6 +41,7 @@ type Props = {
   context: ComposeContext;
   variant?: 'inline' | 'float';
   threadMessages?: GmailThreadMessage[];
+  contactsEnabled?: boolean;
   onClose: () => void;
   onSent: () => void;
   onDraftSaved?: (info: GmailComposeDraftSavedInfo) => void;
@@ -71,6 +74,7 @@ export default function GmailComposePanel({
   context,
   variant = 'inline',
   threadMessages,
+  contactsEnabled = true,
   onClose,
   onSent,
   onDraftSaved,
@@ -162,21 +166,30 @@ export default function GmailComposePanel({
         const sigHtml = signatureHtmlForFromAlias(list, fromVal);
 
         const draft = buildComposeDraft({ ...context, mailboxEmail: mailbox });
-        setTo(draft.to);
-        setCc(draft.cc);
-        setSubject(draft.subject);
-        setQuotedSuffix(draft.quotedSuffix);
-        setThreadId(draft.threadId);
-        setInReplyTo(draft.inReplyTo);
-        setReferences(draft.references);
-        setShowCc(Boolean(draft.cc.trim()));
-
         const existing = loadComposeFromThreadDraft(threadMessages);
+
         if (existing) {
           hydratedDraftRef.current = true;
           setDraftId(existing.draftId);
+          setTo(existing.to);
+          setCc(existing.cc);
+          setSubject(existing.subject);
+          setQuotedSuffix(draft.quotedSuffix);
+          setThreadId(draft.threadId ?? context.threadId);
+          setInReplyTo(draft.inReplyTo);
+          setReferences(draft.references);
+          setShowCc(Boolean(existing.cc.trim()));
+          if (existing.from.trim()) setFrom(existing.from);
           applyEditorHtml(existing.bodyHtml);
         } else {
+          setTo(draft.to);
+          setCc(draft.cc);
+          setSubject(draft.subject);
+          setQuotedSuffix(draft.quotedSuffix);
+          setThreadId(draft.threadId);
+          setInReplyTo(draft.inReplyTo);
+          setReferences(draft.references);
+          setShowCc(Boolean(draft.cc.trim()));
           applyEditorHtml(
             joinComposeBodyHtml('', sigHtml, draft.quotedSuffix, context.replyTo ?? null),
           );
@@ -197,6 +210,11 @@ export default function GmailComposePanel({
     if (!existing) return;
     hydratedDraftRef.current = true;
     setDraftId(existing.draftId);
+    setTo(existing.to);
+    setCc(existing.cc);
+    setSubject(existing.subject);
+    setShowCc(Boolean(existing.cc.trim()));
+    if (existing.from.trim()) setFrom(existing.from);
     applyEditorHtml(existing.bodyHtml);
   }, [threadMessages, applyEditorHtml]);
 
@@ -219,6 +237,8 @@ export default function GmailComposePanel({
     if (discardRequestedRef.current) return;
 
     const fields = composeFieldsRef.current;
+    if (!composeDraftSaveReady(fields)) return;
+
     const sigHtml = signatureHtmlForFromAlias(aliases, fields.from);
     const userText = userTextFromComposeHtml(fields.bodyHtml, sigHtml, fields.quotedSuffix);
     const hasNewMessageFields =
@@ -284,7 +304,7 @@ export default function GmailComposePanel({
       });
     } catch (e) {
       if (!discardRequestedRef.current) {
-        setError(e instanceof Error ? e.message : 'Could not save draft');
+        setError(gmailErrorMessage(e));
       }
     } finally {
       if (generation === saveGenerationRef.current) {
@@ -533,13 +553,14 @@ export default function GmailComposePanel({
 
       {error ? <div className="gmail-compose-panel__error">{error}</div> : null}
 
-      <div className="gmail-compose-panel__row">
-        <span className="gmail-compose-panel__row-label">To</span>
-        <input
-          className="gmail-compose-panel__input"
+      <div className="gmail-compose-panel__row gmail-compose-panel__row--recipient">
+        <GmailRecipientField
+          label="To"
+          mailbox={mailbox}
           value={to}
           disabled={busy}
-          onChange={(e) => setTo(e.target.value)}
+          contactsEnabled={contactsEnabled}
+          onChange={setTo}
         />
         {!showCc ? (
           <button
@@ -555,12 +576,13 @@ export default function GmailComposePanel({
 
       {showCc ? (
         <div className="gmail-compose-panel__row">
-          <span className="gmail-compose-panel__row-label">Cc</span>
-          <input
-            className="gmail-compose-panel__input"
+          <GmailRecipientField
+            label="Cc"
+            mailbox={mailbox}
             value={cc}
             disabled={busy}
-            onChange={(e) => setCc(e.target.value)}
+            contactsEnabled={contactsEnabled}
+            onChange={setCc}
           />
         </div>
       ) : null}

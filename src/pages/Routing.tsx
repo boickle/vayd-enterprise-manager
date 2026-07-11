@@ -1630,6 +1630,17 @@ function deriveRoutingRequestId(res: Result | null | undefined): string | undefi
 
 /** Results stack under Get Best Route when the routing pane is narrower than this share of the viewport. */
 const ROUTING_STACK_COLUMNS_MAX_SCREEN_SHARE = 0.35;
+const ROUTING_MOBILE_MQ = '(max-width: 900px)';
+
+function routingShouldStackFormAndResults(paneWidthPx: number, screenWidthPx: number): boolean {
+  if (screenWidthPx <= 0) {
+    return typeof window !== 'undefined' && window.matchMedia(ROUTING_MOBILE_MQ).matches;
+  }
+  if (typeof window !== 'undefined' && window.matchMedia(ROUTING_MOBILE_MQ).matches) {
+    return true;
+  }
+  return paneWidthPx / screenWidthPx < ROUTING_STACK_COLUMNS_MAX_SCREEN_SHARE;
+}
 
 type RoutingProps = {
   /** When true, "Book appointment" updates the embedded calendar via event instead of navigating to `/schedule/scheduler`. */
@@ -1643,21 +1654,40 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
   const bootstrap = useMemo(() => readRoutingUiBootstrap(), []);
 
   const routingPageRootRef = useRef<HTMLDivElement>(null);
-  const [stackFormAndResults, setStackFormAndResults] = useState(false);
+  const [stackFormAndResults, setStackFormAndResults] = useState(() =>
+    typeof window !== 'undefined' ? window.matchMedia(ROUTING_MOBILE_MQ).matches : false
+  );
   const [calendarPreviewTick, setCalendarPreviewTick] = useState(0);
   const [sourceScoreTick, setSourceScoreTick] = useState(0);
+
+  useEffect(() => {
+    const mq = window.matchMedia(ROUTING_MOBILE_MQ);
+    const onMq = () => {
+      setStackFormAndResults((prev) => {
+        if (mq.matches) return true;
+        const el = routingPageRootRef.current;
+        if (!el) return prev;
+        const paneW = el.getBoundingClientRect().width;
+        const screenW = window.innerWidth || document.documentElement.clientWidth;
+        return routingShouldStackFormAndResults(paneW, screenW);
+      });
+    };
+    onMq();
+    mq.addEventListener('change', onMq);
+    return () => mq.removeEventListener('change', onMq);
+  }, []);
 
   useEffect(() => {
     const el = routingPageRootRef.current;
     if (!el) return;
     const update = () => {
-      const paneW = el.getBoundingClientRect().width;
-      const screenW = window.innerWidth || document.documentElement.clientWidth;
-      if (screenW <= 0) {
-        setStackFormAndResults(false);
+      if (window.matchMedia(ROUTING_MOBILE_MQ).matches) {
+        setStackFormAndResults(true);
         return;
       }
-      setStackFormAndResults(paneW / screenW < ROUTING_STACK_COLUMNS_MAX_SCREEN_SHARE);
+      const paneW = el.getBoundingClientRect().width;
+      const screenW = window.innerWidth || document.documentElement.clientWidth;
+      setStackFormAndResults(routingShouldStackFormAndResults(paneW, screenW));
     };
     const ro = new ResizeObserver(update);
     ro.observe(el);
@@ -5189,6 +5219,29 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
               .filter(Boolean)
               .join(' ')}
           >
+          {/* Date range — first so it stays visible on mobile (results stack below the full form). */}
+          <Field label="Date">
+            <div className="routing-date-range-row">
+              <input
+                className="date routing-date-input"
+                type="date"
+                value={form.startDate}
+                onChange={(e) => onChange('startDate', e.target.value)}
+                required
+              />
+              <span className="routing-date-range-sep" aria-hidden="true">
+                →
+              </span>
+              <input
+                className="date routing-date-input"
+                type="date"
+                value={form.endDate}
+                onChange={(e) => onChange('endDate', e.target.value)}
+                required
+              />
+            </div>
+          </Field>
+
           <label
             className={[
               'routing-asap-all-doctor-search',
@@ -5360,29 +5413,6 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
             ) : null}
           </div>
           ) : null}
-
-          {/* Date range */}
-          <Field label="Date">
-            <div className="routing-date-range-row">
-              <input
-                className="date routing-date-input"
-                type="date"
-                value={form.startDate}
-                onChange={(e) => onChange('startDate', e.target.value)}
-                required
-              />
-              <span className="routing-date-range-sep" aria-hidden="true">
-                →
-              </span>
-              <input
-                className="date routing-date-input"
-                type="date"
-                value={form.endDate}
-                onChange={(e) => onChange('endDate', e.target.value)}
-                required
-              />
-            </div>
-          </Field>
 
           {/* Calculate time: bordered type + pets; minutes on next line */}
           <div className="routing-visit-field routing-calculate-time-field">

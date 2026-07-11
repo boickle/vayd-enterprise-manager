@@ -81,19 +81,49 @@
 }
 
 .routing-page-root--calendar-workspace.routing-page-root--stack-columns {
-  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  grid-template-columns: unset;
+  height: auto;
   min-height: 0;
+  overflow: visible;
 }
 
 .routing-page-root--calendar-workspace.routing-page-root--stack-columns .routing-route-form-card {
-  flex: 1 1 0;
-  min-height: 0;
+  flex: none;
+  min-height: auto;
+  max-height: none;
 }
 
 .routing-page-root--calendar-workspace.routing-page-root--stack-columns .routing-results-card {
-  flex: 0 0 auto;
-  max-height: min(38vh, 280px);
-  overflow-y: auto;
+  flex: none;
+  max-height: none;
+  overflow: visible;
+}
+
+/** Stacked layout: let the whole form grow; scroll the outlet, not a trapped inner pane. */
+.routing-page-root--stack-columns .routing-route-form-stack--workspace {
+  flex: none;
+  min-height: auto;
+  overflow: visible;
+}
+
+.routing-page-root--stack-columns .routing-route-form-stack--workspace .routing-form-body {
+  flex: none;
+  min-height: auto;
+  overflow: visible;
+}
+
+.routing-page-root--stack-columns.routing-page-root--calendar-workspace .routing-route-form-card > form {
+  flex: none;
+  min-height: auto;
+  overflow: visible;
+}
+
+.routing-page-root--stack-columns.routing-page-root--calendar-workspace .routing-route-form-card,
+.routing-page-root--stack-columns.routing-page-root--calendar-workspace .routing-results-card {
+  overflow: visible;
 }
 
 .routing-route-form-stack--workspace {
@@ -1377,4 +1407,83 @@
   background: color-mix(in srgb, var(--accent, #10a37f) 70%, #0f172a);
   border-color: color-mix(in srgb, var(--accent, #10a37f) 82%, #0f172a);
   color: #ffffff;
+}
+
+/** Mobile routing workspace: form + results grow naturally; outlet scrolls the full page. */
+@media (max-width: 900px) {
+  .routing-page-root,
+  .routing-page-root--calendar-workspace,
+  .routing-page-root--calendar-workspace.routing-page-root--stack-columns {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch;
+    grid-template-columns: unset !important;
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+    gap: 16px;
+  }
+
+  .routing-page-root > .routing-route-form-card,
+  .routing-page-root > .routing-results-card,
+  .routing-page-root .routing-route-form-card,
+  .routing-page-root .routing-results-card {
+    width: 100% !important;
+    max-width: none !important;
+    grid-column: unset !important;
+    flex: none !important;
+    min-height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+    order: unset;
+  }
+
+  .routing-page-root > .routing-route-form-card {
+    order: 1;
+  }
+
+  .routing-page-root > .routing-results-card {
+    order: 2;
+  }
+
+  .routing-page-root--calendar-workspace .routing-route-form-card > form,
+  .routing-route-form-stack--workspace,
+  .routing-route-form-stack--workspace .routing-form-body {
+    flex: none !important;
+    min-height: auto !important;
+    overflow: visible !important;
+  }
+
+  .schedule-routing-workspace .routing-page-root--calendar-workspace {
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  .schedule-routing-workspace .routing-page-root--calendar-workspace.routing-page-root--stack-columns {
+    overflow: visible;
+    min-height: 0;
+  }
+
+  .schedule-routing-workspace .routing-page-root--calendar-workspace .routing-route-form-card,
+  .schedule-routing-workspace .routing-page-root--calendar-workspace .routing-results-card {
+    max-height: none;
+    overflow: visible;
+  }
+
+  .schedule-routing-workspace .routing-route-form-card {
+    scroll-margin-top: 12px;
+  }
+
+  .schedule-routing-workspace .routing-route-form-title {
+    scroll-margin-top: max(12px, env(safe-area-inset-top, 0px));
+  }
+
+  .routing-date-range-row {
+    flex-wrap: wrap;
+  }
+
+  .routing-date-input {
+    min-width: min(140px, 100%);
+  }
 }

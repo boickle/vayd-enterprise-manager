@@ -5,7 +5,11 @@ import { useAuth } from '../auth/useAuth';
 import { blockRoutingCalendarPreviewNavigation } from '../utils/routingCalendarPreviewGuard';
 import './UserMenu.css';
 
-export default function UserMenu({ menuExtras = [] }: { menuExtras?: { label: string; to: string }[] }) {
+export type UserMenuExtra =
+  | { label: string; to: string; external?: false; href?: undefined }
+  | { label: string; href: string; external: true; to?: undefined };
+
+export default function UserMenu({ menuExtras = [] }: { menuExtras?: UserMenuExtra[] }) {
   const { logout, userEmail, role } = useAuth() as any;
   const nav = useNavigate();
   const location = useLocation();
@@ -93,10 +97,25 @@ export default function UserMenu({ menuExtras = [] }: { menuExtras?: { label: st
 
           {menuExtras.length > 0 && (
             <>
-              <div className="user-menu-section-label">More</div>
+              <div className="user-menu-section-label">Menu</div>
               {menuExtras.map((extra) => {
+                if (extra.external) {
+                  return (
+                    <a
+                      key={extra.href}
+                      href={extra.href}
+                      className="user-menu-item user-menu-nav-item"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={() => setIsOpen(false)}
+                    >
+                      {extra.label}
+                    </a>
+                  );
+                }
+                const toPath = extra.to.split('?')[0] ?? extra.to;
                 const isActive =
-                  location.pathname === extra.to || location.pathname.startsWith(`${extra.to}/`);
+                  location.pathname === toPath || location.pathname.startsWith(`${toPath}/`);
                 return (
                   <NavLink
                     key={extra.to}
