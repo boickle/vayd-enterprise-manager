@@ -4,6 +4,8 @@ export type CareOutreachFilterSession = {
   priority: CareOutreachPriorityFilter;
   dueDateFrom: string;
   dueDateTo: string;
+  /** Selected provider filter: 'all', 'unassigned', or a provider id string. */
+  providerFilterId: string;
 };
 
 export const CARE_OUTREACH_FILTER_SESSION_KEY = 'vayd:care-outreach-filter-v1';
@@ -36,6 +38,10 @@ export function readCareOutreachFilterSession(): CareOutreachFilterSession | nul
       priority: parsed.priority,
       dueDateFrom: parsed.dueDateFrom,
       dueDateTo: parsed.dueDateTo,
+      providerFilterId:
+        typeof parsed.providerFilterId === 'string' && parsed.providerFilterId.trim()
+          ? parsed.providerFilterId
+          : 'all',
     };
   } catch {
     return null;

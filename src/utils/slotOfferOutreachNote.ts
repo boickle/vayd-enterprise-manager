@@ -8,7 +8,6 @@ import {
   resolveAppointmentChangeActorFromAuth,
   type AppointmentChangeActor,
 } from './appointmentChangeAuditNote';
-import { careOutreachChipCountFetchRange } from './careOutreachPriorityFilters';
 import { careOutreachReminderIsHidden } from './careOutreachReminderVisibility';
 import { formatForwardBookingSmsBookedSlot } from './forwardBookingSmsMessage';
 
@@ -58,11 +57,14 @@ async function reminderIdsForSlotOfferPatients(
   const wantPets = new Set(petIds.map(Number).filter((id) => Number.isFinite(id) && id > 0));
   if (wantPets.size === 0) return [];
 
-  const range = careOutreachChipCountFetchRange();
+  // Match reminders for the offered pets no matter how far past due they are. The chip-count
+  // range only spans ~30 days back, which misses long-overdue reminders that are now routable
+  // via the custom date range — so widen the window (we filter to the specific pets/client below).
+  const now = DateTime.now();
   const list = await fetchUnscheduledReminders({
     practiceId,
-    dueDateFrom: range.from,
-    dueDateTo: range.to,
+    dueDateFrom: now.minus({ years: 2 }).toFormat('yyyy-MM-dd'),
+    dueDateTo: now.plus({ months: 2 }).toFormat('yyyy-MM-dd'),
     limit: 2000,
   });
 

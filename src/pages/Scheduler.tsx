@@ -355,6 +355,7 @@ import { isHoldsBoardReturnPath } from '../holds-nav';
 import { writeHoldsBoardReturnSession } from '../utils/holdsBoardReturnSession';
 import { NotBookedRemoveGateOverlay } from '../components/NotBookedRemoveGateOverlay';
 import { ON_HOLD_LIST_PATH } from '../utils/forwardBookingReturnSession';
+import { writeCareOutreachFocusClient } from '../utils/careOutreachFocusSession';
 import { opsPointsForAppointment } from '../utils/forwardBookingListVisibility';
 import { confirmSlotOffer } from '../api/slotOffers';
 import { patchAppointmentRequestSubmission, fetchAppointmentRequestSubmission } from '../api/appointmentRequestSubmissions';
@@ -6798,6 +6799,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       return;
     }
     if (fbi?.origin === 'care_outreach') {
+      if (fbi.careOutreachClientKey) writeCareOutreachFocusClient(fbi.careOutreachClientKey);
       navigate(CARE_OUTREACH_LIST_PATH);
       return;
     }

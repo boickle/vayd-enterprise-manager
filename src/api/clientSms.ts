@@ -9,6 +9,8 @@ export type SendClientSmsPayload = {
   primaryProviderId?: number;
   /** Use server `SMS_REMINDERS_FROM` (scheduling tools outreach). Do not pass `from` with this — the API picks the line. */
   useRemindersFrom?: boolean;
+  /** Mark the Quo/OpenPhone conversation as done after send. */
+  markInboxDone?: boolean;
 };
 
 export async function sendClientSms(
