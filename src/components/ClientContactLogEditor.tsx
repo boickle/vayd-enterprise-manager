@@ -5,6 +5,7 @@ type Props = {
   contextLabel?: string;
   value: string;
   onChange: (value: string) => void;
+  onBlur?: () => void;
   onSave?: () => void;
   saving?: boolean;
   saveDisabled?: boolean;
@@ -22,6 +23,7 @@ export function ClientContactLogEditor({
   contextLabel = 'Visit context',
   value,
   onChange,
+  onBlur,
   onSave,
   saving,
   saveDisabled,
@@ -66,6 +68,7 @@ export function ClientContactLogEditor({
           rows={rows}
           value={value}
           onChange={(e) => onChange(e.target.value)}
+          onBlur={onBlur}
           placeholder={placeholder}
           disabled={disabled || saving}
           aria-label="Contact log"

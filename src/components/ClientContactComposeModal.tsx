@@ -38,6 +38,8 @@ type Props = {
   onOpenMessagesHistory?: () => void;
   onOpenEmailHistory?: () => void;
   smsFromLine?: string | null;
+  /** Mark Quo/OpenPhone conversation done after send (forward booking outreach). */
+  markInboxDone?: boolean;
 };
 
 function smsToEmailDraft(
@@ -62,6 +64,7 @@ export function ClientContactComposeModal({
   onOpenMessagesHistory,
   onOpenEmailHistory,
   smsFromLine,
+  markInboxDone,
 }: Props) {
   const { allowed: canEmail, loading: gmailAccessLoading } = useGmailInboxAccess();
   const allowSmsOverride = smsAllowsProductionOverride();
@@ -227,6 +230,7 @@ export function ClientContactComposeModal({
       await sendClientSms(clientId, {
         message: smsMessage.trim(),
         useRemindersFrom: true,
+        ...(markInboxDone ? { markInboxDone: true } : {}),
         ...(overrideNonProd ? { overrideNonProd: true } : {}),
       });
       onClose();

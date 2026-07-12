@@ -182,6 +182,9 @@ const WORKFLOW_STATUS_FILTERS = new Set<StatusFilter>(['onHold', 'booked', 'comp
 
 const WORKFLOW_LIST_PAGE_SIZE = 25;
 
+/** Debounce before auto-saving a contact-log note while typing. */
+const FORWARD_BOOKING_NOTE_AUTOSAVE_MS = 800;
+
 const ON_HOLD_OVER24_SEARCH_PARAM = 'over24';
 const ON_HOLD_SOURCE_SEARCH_PARAM = 'source';
 
@@ -583,6 +586,7 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
   const [noteDrafts, setNoteDrafts] = useState<Record<number, string>>({});
   const [noteSaving, setNoteSaving] = useState<Record<number, boolean>>({});
   const [noteError, setNoteError] = useState<Record<number, string | null>>({});
+  const noteSaveTimers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
   const [followUpCompleting, setFollowUpCompleting] = useState<Record<number, boolean>>({});
   const [followUpCompleteError, setFollowUpCompleteError] = useState<Record<number, string | null>>(
     {}
@@ -1189,6 +1193,14 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
     return () => clearTimeout(id);
   }, [notice]);
 
+  useEffect(() => {
+    const timers = noteSaveTimers.current;
+    return () => {
+      timers.forEach((t) => clearTimeout(t));
+      timers.clear();
+    };
+  }, []);
+
   const flushNoteSave = useCallback(
     async (entry: ForwardBookingEntry, value: string) => {
       const entryId = entry.id;
@@ -1237,17 +1249,35 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
     [patientReminderOutreachIndex, resolveListNote],
   );
 
-  function onNoteChange(entryId: number, value: string) {
-    setNoteDrafts((d) => ({ ...d, [entryId]: value }));
-    setNoteError((er) => ({ ...er, [entryId]: null }));
-  }
-
   function noteIsDirty(entry: ForwardBookingEntry): boolean {
     const draft = noteDrafts[entry.id] ?? resolveListNote(entry);
     return noteForPatch(draft) !== noteForPatch(resolveListNote(entry));
   }
 
-  function saveNote(entry: ForwardBookingEntry) {
+  function clearNoteSaveTimer(entryId: number) {
+    const pending = noteSaveTimers.current.get(entryId);
+    if (pending) {
+      clearTimeout(pending);
+      noteSaveTimers.current.delete(entryId);
+    }
+  }
+
+  function onNoteChange(entry: ForwardBookingEntry, value: string) {
+    const entryId = entry.id;
+    setNoteDrafts((d) => ({ ...d, [entryId]: value }));
+    setNoteError((er) => ({ ...er, [entryId]: null }));
+    clearNoteSaveTimer(entryId);
+    const timer = setTimeout(() => {
+      noteSaveTimers.current.delete(entryId);
+      if (noteForPatch(value) === noteForPatch(resolveListNote(entry))) return;
+      void flushNoteSave(entry, value);
+    }, FORWARD_BOOKING_NOTE_AUTOSAVE_MS);
+    noteSaveTimers.current.set(entryId, timer);
+  }
+
+  function onNoteBlur(entry: ForwardBookingEntry) {
+    clearNoteSaveTimer(entry.id);
+    if (!noteIsDirty(entry)) return;
     const value = noteDrafts[entry.id] ?? resolveListNote(entry);
     void flushNoteSave(entry, value);
   }
@@ -2327,10 +2357,9 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
                         contextNote={resolveContextNote(entry)}
                         contextLabel={forwardBookingSourceBookingNotesLabel(entry)}
                         value={noteDrafts[entry.id] ?? resolveListNote(entry)}
-                        onChange={(value) => onNoteChange(entry.id, value)}
-                        onSave={() => saveNote(entry)}
+                        onChange={(value) => onNoteChange(entry, value)}
+                        onBlur={() => onNoteBlur(entry)}
                         saving={Boolean(noteSaving[entry.id])}
-                        saveDisabled={isRemoved || !noteIsDirty(entry)}
                         disabled={isRemoved}
                         error={noteError[entry.id]}
                         placeholder="e.g. LMOM 11/14 — client prefers afternoons"
@@ -2606,6 +2635,7 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
           smsFromLine={smsFromLine}
           onOpenMessagesHistory={() => openMessagesHistory(contactEntry)}
           onOpenEmailHistory={() => openEmailHistory(contactEntry)}
+          markInboxDone
         />
       ) : null}
 

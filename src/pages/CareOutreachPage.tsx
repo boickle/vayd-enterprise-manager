@@ -54,6 +54,7 @@ import { fetchAllAppointmentTypes } from '../api/appointmentSettings';
 import SchedulingToolsListPagination, {
   paginateSchedulingToolsList,
   schedulingToolsListTotalPages,
+  SCHEDULING_TOOLS_LIST_PAGE_SIZE,
 } from '../components/SchedulingToolsListPagination';
 import {
   cleanupOrphanedListOriginatedForwardBookings,
@@ -79,6 +80,10 @@ import {
   readCareOutreachFilterSession,
   writeCareOutreachFilterSession,
 } from '../utils/careOutreachFilterSession';
+import {
+  clearCareOutreachFocusClient,
+  readCareOutreachFocusClient,
+} from '../utils/careOutreachFocusSession';
 import {
   clearForwardBookingReturnSession,
   readForwardBookingReturnSession,
@@ -464,7 +469,9 @@ export default function CareOutreachPage() {
   const debounceTimers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
 
   const [showHiddenReminders, setShowHiddenReminders] = useState(false);
-  const [providerFilterId, setProviderFilterId] = useState<string>('all');
+  const [providerFilterId, setProviderFilterId] = useState<string>(
+    () => persistedFilter?.providerFilterId ?? 'all',
+  );
   const [bookIncludeOtherPets, setBookIncludeOtherPets] = useState<
     Record<string, Map<number, string>>
   >({});
@@ -489,6 +496,12 @@ export default function CareOutreachPage() {
   const [emailHistoryClientId, setEmailHistoryClientId] = useState<number | null>(null);
   const [emailHistoryClientLabel, setEmailHistoryClientLabel] = useState('');
   const { allowed: canAccessGmailInbox } = useGmailInboxAccess();
+  const [focusClientKey, setFocusClientKey] = useState<string | null>(() =>
+    readCareOutreachFocusClient(),
+  );
+  const [highlightClientKey, setHighlightClientKey] = useState<string | null>(null);
+  const clientSectionRefs = useRef<Map<string, HTMLElement>>(new Map());
+  const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   /** API fetch window. Priority tabs filter client-side; use the same wide span as chip counts so list and badges stay aligned. */
   const effectiveDueRange = useMemo(() => {
@@ -631,8 +644,8 @@ export default function CareOutreachPage() {
   }, []);
 
   useEffect(() => {
-    writeCareOutreachFilterSession({ priority, dueDateFrom, dueDateTo });
-  }, [priority, dueDateFrom, dueDateTo]);
+    writeCareOutreachFilterSession({ priority, dueDateFrom, dueDateTo, providerFilterId });
+  }, [priority, dueDateFrom, dueDateTo, providerFilterId]);
 
   useEffect(() => {
     void load();
@@ -672,12 +685,15 @@ export default function CareOutreachPage() {
 
   useEffect(() => {
     if (providerFilterId === 'all') return;
+    // Don't clear a (possibly restored) provider until the list has loaded and options exist,
+    // otherwise the empty initial render would wipe the remembered selection.
+    if (loading || providerOptions.length === 0) return;
     const valid =
       providerFilterId === 'unassigned'
         ? providerOptions.some((o) => o.id === 'unassigned')
         : providerOptions.some((o) => o.id === providerFilterId);
     if (!valid) setProviderFilterId('all');
-  }, [providerFilterId, providerOptions]);
+  }, [providerFilterId, providerOptions, loading]);
 
   const filteredByProvider = useMemo(() => {
     if (providerFilterId === 'all') return filteredByHidden;
@@ -878,6 +894,43 @@ export default function CareOutreachPage() {
       setListPage(listTotalPages);
     }
   }, [listPage, listTotalPages]);
+
+  useEffect(() => {
+    clearCareOutreachFocusClient();
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+    };
+  }, []);
+
+  // After returning from a routed/offered client, scroll that client back into view (and
+  // briefly highlight it) instead of leaving the user at the top of the list.
+  useEffect(() => {
+    if (!focusClientKey || loading) return;
+    const index = grouped.findIndex((c) => c.clientKey === focusClientKey);
+    if (index < 0) {
+      setFocusClientKey(null);
+      return;
+    }
+    const targetPage = Math.floor(index / SCHEDULING_TOOLS_LIST_PAGE_SIZE) + 1;
+    if (listPage !== targetPage) {
+      setListPage(targetPage);
+      return;
+    }
+    const raf = requestAnimationFrame(() => {
+      const el = clientSectionRefs.current.get(focusClientKey);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        setHighlightClientKey(focusClientKey);
+        if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+        highlightTimerRef.current = setTimeout(() => setHighlightClientKey(null), 2600);
+      }
+      setFocusClientKey(null);
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [focusClientKey, loading, grouped, listPage]);
 
   const changeListPage = useCallback((page: number) => {
     setListPage(page);
@@ -1291,17 +1344,29 @@ export default function CareOutreachPage() {
               outreachPatientIds={Array.from(client.patients.keys())}
             >
             <section
+              ref={(el) => {
+                if (el) clientSectionRefs.current.set(client.clientKey, el);
+                else clientSectionRefs.current.delete(client.clientKey);
+              }}
               className={
                 rowExiting
                   ? 'appt-request-row--exiting appt-request-row--exiting-onHold'
                   : undefined
               }
               style={{
-                border: '1px solid var(--border)',
+                border:
+                  client.clientKey === highlightClientKey
+                    ? '2px solid var(--accent-strong, #2563eb)'
+                    : '1px solid var(--border)',
                 borderRadius: 12,
                 overflow: 'hidden',
                 background: 'var(--panel, #fff)',
                 position: rowExiting ? 'relative' : undefined,
+                boxShadow:
+                  client.clientKey === highlightClientKey
+                    ? '0 0 0 3px rgba(37, 99, 235, 0.15)'
+                    : undefined,
+                transition: 'border-color 0.3s ease, box-shadow 0.3s ease',
               }}
             >
               {rowExiting ? (
