@@ -533,7 +533,7 @@ export default function App() {
                     <Route path="scheduling-tools" element={<SchedulingTools />}>
                       <Route
                         index
-                        element={<Navigate to="/schedule/scheduling-tools/schedule-loader" replace />}
+                        element={<Navigate to="/schedule/scheduling-tools/care-outreach" replace />}
                       />
                       {getSchedulingToolsTabPages().map((tab) => (
                         <Route key={tab.path} path={tab.path} element={tab.element} />

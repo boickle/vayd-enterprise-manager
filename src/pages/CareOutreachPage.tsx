@@ -56,20 +56,29 @@ import SchedulingToolsListPagination, {
   schedulingToolsListTotalPages,
 } from '../components/SchedulingToolsListPagination';
 import {
-  filterCareOutreachRemindersForForwardBooking,
   cleanupOrphanedListOriginatedForwardBookings,
+  filterCareOutreachRemindersForForwardBooking,
   forwardBookingPatientIdsActiveInQueue,
 } from '../utils/careOutreachForwardBookingExclude';
-import {
-  filterCareOutreachRemindersWithoutFutureAppointments,
-  loadCareOutreachPatientIdsWithFutureAppointments,
-} from '../utils/careOutreachFutureAppointmentExclude';
 import {
   buildAppointmentTypeCatalogFromTypes,
   buildBookedAppointmentMetaMap,
   forwardBookingEntryVisibleOnList,
 } from '../utils/forwardBookingListVisibility';
-import { notifySchedulingToolsNavCountsRefresh, SCHEDULING_TOOLS_PAGE_REFRESH_EVENT } from '../hooks/useSchedulingToolsNavCounts';
+import {
+  notifySchedulingToolsNavCountsRefresh,
+  SCHEDULING_TOOLS_PAGE_REFRESH_EVENT,
+} from '../hooks/useSchedulingToolsNavCounts';
+import {
+  careOutreachListCacheKey,
+  clearCareOutreachListCache,
+  readCareOutreachListCache,
+  writeCareOutreachListCache,
+} from '../utils/careOutreachListCache';
+import {
+  readCareOutreachFilterSession,
+  writeCareOutreachFilterSession,
+} from '../utils/careOutreachFilterSession';
 import {
   clearForwardBookingReturnSession,
   readForwardBookingReturnSession,
@@ -429,9 +438,16 @@ function mergeReminderAfterPatch(
 export default function CareOutreachPage() {
   const navigate = useNavigate();
   const practiceTz = practiceTimeZoneOrDefault(undefined);
-  const [dueDateFrom, setDueDateFrom] = useState(() => dayjs().format('YYYY-MM-DD'));
-  const [dueDateTo, setDueDateTo] = useState(() => dayjs().add(1, 'month').format('YYYY-MM-DD'));
-  const [priority, setPriority] = useState<PriorityFilter>('overdue_today');
+  const persistedFilter = useRef(readCareOutreachFilterSession()).current;
+  const [dueDateFrom, setDueDateFrom] = useState(
+    () => persistedFilter?.dueDateFrom ?? dayjs().format('YYYY-MM-DD'),
+  );
+  const [dueDateTo, setDueDateTo] = useState(
+    () => persistedFilter?.dueDateTo ?? dayjs().add(1, 'month').format('YYYY-MM-DD'),
+  );
+  const [priority, setPriority] = useState<PriorityFilter>(
+    () => persistedFilter?.priority ?? 'overdue_today',
+  );
   const [listPage, setListPage] = useState(1);
   const [search, setSearch] = useState('');
   const [rows, setRows] = useState<UnscheduledReminder[]>([]);
@@ -482,9 +498,23 @@ export default function CareOutreachPage() {
     return careOutreachChipCountFetchRange();
   }, [priority, dueDateFrom, dueDateTo]);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  const load = useCallback(async (opts?: { force?: boolean }) => {
+    const cacheKey = careOutreachListCacheKey(priority, effectiveDueRange.from, effectiveDueRange.to);
+    const cached = opts?.force ? null : readCareOutreachListCache(cacheKey);
+    if (cached) {
+      setRows(cached.rows);
+      setPriorityChipCounts(cached.priorityChipCounts);
+      const drafts: Record<number, string> = {};
+      for (const r of cached.rows) {
+        drafts[r.id] = initialNotes(r);
+      }
+      setNoteDrafts(drafts);
+      setLoading(false);
+      setError(null);
+    } else {
+      setLoading(true);
+      setError(null);
+    }
     try {
       const chipCountRange = careOutreachChipCountFetchRange();
       const [types, forwardBookings, rawList, chipCountRawList] = await Promise.all([
@@ -530,22 +560,19 @@ export default function CareOutreachPage() {
         rawList,
         blockedPatientIds,
       );
-      const futureApptPatientIds = await loadCareOutreachPatientIdsWithFutureAppointments(
-        afterForwardBookingFilter,
-        PRACTICE_ID,
-      );
-      const list = filterCareOutreachRemindersWithoutFutureAppointments(
-        afterForwardBookingFilter,
-        futureApptPatientIds,
-      );
+      const list = afterForwardBookingFilter;
       const chipCountSource = chipCountRawList
-        ? filterCareOutreachRemindersWithoutFutureAppointments(
-            filterCareOutreachRemindersForForwardBooking(chipCountRawList, blockedPatientIds),
-            futureApptPatientIds,
-          )
+        ? filterCareOutreachRemindersForForwardBooking(chipCountRawList, blockedPatientIds)
         : list;
+      const nextChipCounts = countCareOutreachPriorityChipClients(chipCountSource);
       setRows(list);
-      setPriorityChipCounts(countCareOutreachPriorityChipClients(chipCountSource));
+      setPriorityChipCounts(nextChipCounts);
+      writeCareOutreachListCache({
+        rows: list,
+        priorityChipCounts: nextChipCounts,
+        cacheKey,
+        cachedAt: Date.now(),
+      });
       const drafts: Record<number, string> = {};
       for (const r of list) {
         drafts[r.id] = initialNotes(r);
@@ -560,11 +587,10 @@ export default function CareOutreachPage() {
         (e as Error)?.message ??
         'Failed to load unscheduled reminders';
       setError(String(msg));
-      setRows([]);
+      if (!cached) setRows([]);
     } finally {
       setLoading(false);
       clearCareOutreachHouseholdCache();
-      notifySchedulingToolsNavCountsRefresh();
     }
   }, [effectiveDueRange.from, effectiveDueRange.to, priority, practiceTz]);
 
@@ -605,12 +631,16 @@ export default function CareOutreachPage() {
   }, []);
 
   useEffect(() => {
+    writeCareOutreachFilterSession({ priority, dueDateFrom, dueDateTo });
+  }, [priority, dueDateFrom, dueDateTo]);
+
+  useEffect(() => {
     void load();
   }, [load]);
 
   useEffect(() => {
     const onPageRefresh = () => {
-      void load();
+      void load({ force: true });
     };
     window.addEventListener(SCHEDULING_TOOLS_PAGE_REFRESH_EVENT, onPageRefresh);
     return () => window.removeEventListener(SCHEDULING_TOOLS_PAGE_REFRESH_EVENT, onPageRefresh);
@@ -967,6 +997,7 @@ export default function CareOutreachPage() {
         );
       });
       notifySchedulingToolsNavCountsRefresh();
+      clearCareOutreachListCache();
     } catch (e: unknown) {
       const msg =
         (e as { response?: { data?: { message?: string } } })?.response?.data?.message ??
@@ -1162,7 +1193,7 @@ export default function CareOutreachPage() {
           <button
             type="button"
             className="btn primary"
-            onClick={() => void load()}
+            onClick={() => void load({ force: true })}
             disabled={loading}
           >
             Refresh
@@ -1240,7 +1271,7 @@ export default function CareOutreachPage() {
         </p>
       )}
 
-      {loading ? (
+      {loading && rows.length === 0 ? (
         <div className="settings-loading">
           <span className="settings-spinner" aria-hidden />
           Loading reminders…

@@ -5230,6 +5230,17 @@ label.scheduler-household-pet-row {
   line-height: 1.4;
 }
 
+.scheduler-staff-confirm-booking-breakdown-ideal-end {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #faf5ff;
+  font-size: 13px;
+  font-weight: 600;
+  color: #6b21a8;
+  line-height: 1.4;
+}
+
 .scheduler-edit-preview-popover--staff-confirm .scheduler-edit-preview-popover-actions {
   flex-shrink: 0;
 }

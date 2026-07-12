@@ -85,7 +85,7 @@ function SchedulingSubmenuLinks({
         </Link>
       ) : null}
       <Link
-        to={`${SCHEDULING_TOOLS_PATH_PREFIX}/schedule-loader`}
+        to={`${SCHEDULING_TOOLS_PATH_PREFIX}/care-outreach`}
         className={`schedule-app__settings-link${
           schedulingToolsActive ? ' schedule-app__settings-link--active' : ''
         }`}
