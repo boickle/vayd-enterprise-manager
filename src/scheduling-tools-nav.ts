@@ -8,12 +8,12 @@ export type SchedulingToolTab = {
 
 export const SCHEDULING_TOOLS_PATH_PREFIX = '/schedule/scheduling-tools';
 
-/** Outreach queues — care outreach through texted offers. */
+/** Outreach queues — care outreach through schedule loader. */
 export const SCHEDULING_TOOL_OUTREACH_TABS: SchedulingToolTab[] = [
   { path: 'care-outreach', label: 'Care outreach' },
-  { path: 'schedule-loader', label: 'Schedule loader' },
   { path: 'forward-booking', label: 'Forward booking' },
   { path: 'texted-offers', label: 'Texted offers' },
+  { path: 'schedule-loader', label: 'Schedule loader' },
 ];
 
 /** Workflow views after outreach — booked visits. */
@@ -67,7 +67,7 @@ export function isSchedulingToolTabActive(
   const base = `${SCHEDULING_TOOLS_PATH_PREFIX}/${tabPath}`;
   if (pathname === base || pathname.startsWith(`${base}/`)) return true;
   if (
-    tabPath === 'schedule-loader' &&
+    tabPath === 'care-outreach' &&
     (pathname === SCHEDULING_TOOLS_PATH_PREFIX || pathname === `${SCHEDULING_TOOLS_PATH_PREFIX}/`)
   ) {
     return true;

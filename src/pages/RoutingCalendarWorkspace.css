@@ -111,6 +111,17 @@
   min-height: 0;
 }
 
+/**
+ * Desktop: when the pane is narrowed enough to stack form + results, the routing
+ * page grows to its content height (overflow visible). The fixed-height inner
+ * outlet clips that overflow with no scrollbar, so scroll the outlet itself.
+ */
+@media (min-width: 901px) {
+  .schedule-routing-workspace__routing-inner:has(> .routing-page-root--stack-columns) {
+    overflow-y: auto;
+  }
+}
+
 .schedule-routing-workspace__calendar-scroll {
   flex: 1;
   min-height: 0;

@@ -205,6 +205,8 @@ export function AppointmentRequestStaffConfirmPopover({
             recommendedLength.bookingBreakdown ? (
               <StaffConfirmBookingBreakdownSection
                 breakdown={recommendedLength.bookingBreakdown}
+                visitStartIso={appt.appointmentStart}
+                practiceTz={practiceTz}
               />
             ) : null
           ) : null}

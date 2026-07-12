@@ -57,8 +57,8 @@ export type FetchUnscheduledRemindersParams = {
 };
 
 /**
- * GET /reminders/unscheduled — reminders still needing a visit with the assigned provider
- * (excluded when patient already has a future non-canceled appointment with that provider).
+ * GET /reminders/unscheduled — reminders still needing a visit.
+ * Excludes patients with any future non-canceled appointment (any provider) within 2 years.
  */
 export async function fetchUnscheduledReminders(
   params: FetchUnscheduledRemindersParams

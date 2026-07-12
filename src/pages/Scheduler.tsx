@@ -429,9 +429,60 @@ const PRACTICE_TZ =
 /** Admin double-click on practice calendar — distinct from routing / reschedule book flows. */
 const MANUAL_CALENDAR_BOOK_MODAL_TITLE = 'Book appointment - MANUAL OVERIDE';
 
+/** True when the timed grid itself scrolls (embedded routing column). */
+function timedGridScrollRoot(el: HTMLElement): HTMLElement | null {
+  const root = el.closest('.scheduler-calendar-scroll');
+  if (!(root instanceof HTMLElement)) return null;
+  const oy = getComputedStyle(root).overflowY;
+  return oy === 'auto' || oy === 'scroll' ? root : null;
+}
+
+function scheduleOutletScrollRoot(el: HTMLElement): HTMLElement | null {
+  const outlet = el.closest('.schedule-app__outlet--flush-scroll-y');
+  return outlet instanceof HTMLElement ? outlet : null;
+}
+
+/** Space below the outlet top so a focused visit clears sticky week/day headers. */
+function schedulerFocusTopInset(outlet: HTMLElement): number {
+  const stickyHead = outlet.querySelector('.scheduler-sticky-practice-week-head');
+  if (stickyHead instanceof HTMLElement) {
+    const outletRect = outlet.getBoundingClientRect();
+    const headRect = stickyHead.getBoundingClientRect();
+    const belowSticky = headRect.bottom - outletRect.top + 12;
+    if (belowSticky > 48) return belowSticky;
+  }
+  return 120;
+}
+
+function isFocusVisitVisibleInScheduler(
+  el: HTMLElement,
+  outlet: HTMLElement | null,
+  topInset: number,
+  marginBottom = 24,
+): boolean {
+  const elRect = el.getBoundingClientRect();
+  if (outlet) {
+    const outletRect = outlet.getBoundingClientRect();
+    const visibleTop = outletRect.top + topInset;
+    const visibleBottom = outletRect.bottom - marginBottom;
+    return elRect.top >= visibleTop && elRect.bottom <= visibleBottom;
+  }
+  const scrollRoot = timedGridScrollRoot(el);
+  if (scrollRoot) {
+    const rootRect = scrollRoot.getBoundingClientRect();
+    const margin = 28;
+    return (
+      elRect.top >= rootRect.top + margin &&
+      elRect.bottom <= rootRect.bottom - margin &&
+      elRect.height > 0
+    );
+  }
+  return true;
+}
+
 /** True when the slot is already mostly inside the timed grid scrollport (skip hover auto-scroll). */
 function timedGridElementMostlyVisible(el: HTMLElement, marginPx = 28): boolean {
-  const scrollRoot = el.closest('.scheduler-calendar-scroll');
+  const scrollRoot = timedGridScrollRoot(el) ?? el.closest('.scheduler-calendar-scroll');
   if (!(scrollRoot instanceof HTMLElement)) return true;
   const rootRect = scrollRoot.getBoundingClientRect();
   const elRect = el.getBoundingClientRect();
@@ -442,35 +493,57 @@ function timedGridElementMostlyVisible(el: HTMLElement, marginPx = 28): boolean 
   );
 }
 
-/** Scroll the timed grid (embedded routing column or full-page calendar) so a slot is centered. */
-function scrollTimedGridElementIntoView(el: HTMLElement, behavior: ScrollBehavior = 'auto') {
-  const scrollRoot = el.closest('.scheduler-calendar-scroll');
-  if (scrollRoot instanceof HTMLElement) {
+/**
+ * Scroll the timed grid (embedded routing column) so a slot is visible.
+ * `align` is the fraction of the leftover viewport placed above the element: 0.5 centers.
+ */
+function scrollTimedGridElementIntoView(
+  el: HTMLElement,
+  behavior: ScrollBehavior = 'auto',
+  align = 0.5,
+) {
+  const scrollRoot = timedGridScrollRoot(el);
+  if (scrollRoot) {
     const rootRect = scrollRoot.getBoundingClientRect();
     const elRect = el.getBoundingClientRect();
     const targetTop =
       scrollRoot.scrollTop +
       (elRect.top - rootRect.top) -
-      (rootRect.height - elRect.height) / 2;
+      (rootRect.height - elRect.height) * align;
     scrollRoot.scrollTo({ top: Math.max(0, targetTop), behavior });
     return;
   }
-  el.scrollIntoView({ block: 'center', behavior, inline: 'nearest' });
+  el.scrollIntoView({ block: 'nearest', behavior, inline: 'nearest' });
 }
 
-/** Scroll the timed grid and practice-calendar outlet so a visit is centered. */
+/**
+ * Scroll a focused visit into view. Full-page practice calendar scrolls the schedule
+ * outlet (not the timed grid) and clears sticky week/day headers. Embedded routing
+ * scrolls the inner timed grid only.
+ */
 function scrollAppointmentElementIntoView(el: HTMLElement, behavior: ScrollBehavior = 'smooth') {
-  scrollTimedGridElementIntoView(el, behavior);
-  const outlet = el.closest('.schedule-app__outlet--flush-scroll-y');
-  if (outlet instanceof HTMLElement) {
+  const outlet = scheduleOutletScrollRoot(el);
+  if (outlet) {
+    const topInset = schedulerFocusTopInset(outlet);
+    if (isFocusVisitVisibleInScheduler(el, outlet, topInset)) return;
+
     const outletRect = outlet.getBoundingClientRect();
     const elRect = el.getBoundingClientRect();
-    if (elRect.top < outletRect.top + 72 || elRect.bottom > outletRect.bottom - 24) {
-      outlet.scrollTo({
-        top: outlet.scrollTop + elRect.top - outletRect.top - 72,
-        behavior,
-      });
-    }
+    outlet.scrollTo({
+      top: Math.max(0, outlet.scrollTop + elRect.top - outletRect.top - topInset),
+      behavior,
+    });
+    return;
+  }
+
+  const innerScroll = timedGridScrollRoot(el);
+  if (innerScroll && !timedGridElementMostlyVisible(el)) {
+    scrollTimedGridElementIntoView(el, behavior, 0.35);
+    return;
+  }
+
+  if (!isFocusVisitVisibleInScheduler(el, null, 0)) {
+    el.scrollIntoView({ block: 'nearest', behavior, inline: 'nearest' });
   }
 }
 
@@ -8134,12 +8207,14 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       setStaffConfirmPreviewError(null);
       setStaffConfirmPreview(staffConfirm);
       requestAnimationFrame(() => {
-        const el = document.querySelector(
-          `[data-appt-id="${CSS.escape(String(targetId))}"]`
-        );
-        if (el instanceof HTMLElement) {
-          scrollAppointmentElementIntoView(el, 'smooth');
-        }
+        requestAnimationFrame(() => {
+          const el = document.querySelector(
+            `[data-appt-id="${CSS.escape(String(targetId))}"]`
+          );
+          if (el instanceof HTMLElement) {
+            scrollAppointmentElementIntoView(el, 'smooth');
+          }
+        });
       });
       return;
     }

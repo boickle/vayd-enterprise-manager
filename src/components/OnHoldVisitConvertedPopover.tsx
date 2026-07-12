@@ -95,7 +95,8 @@ export default function OnHoldVisitConvertedPopover({
             <StaffConfirmBookingBreakdownSection
               breakdown={recommendedLength.bookingBreakdown}
               originalSubtitle="Current calendar block"
-              recommendedSubtitle="Recommended for current types"
+              visitStartIso={appt.appointmentStart}
+              practiceTz={practiceTz}
             />
           ) : null}
         </div>
