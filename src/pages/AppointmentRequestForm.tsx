@@ -8366,7 +8366,7 @@ export default function AppointmentRequestForm() {
           <span style={{ fontSize: '20px' }}>🎉</span>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontWeight: 700, fontSize: isMobile ? '14px' : '15px', color: '#065f46' }}>
-              {activePromo.companyName} benefit
+              {activePromo.name?.trim() || activePromo.companyName}
             </div>
             <div style={{ fontSize: isMobile ? '12px' : '13px', color: '#047857', marginTop: '2px' }}>
               {formatPromotionBannerSubtitle(activePromo, {
@@ -8606,7 +8606,7 @@ export default function AppointmentRequestForm() {
                   {formatPromotionDiscount(appliedCodePromo)}
                 </div>
                 <div style={{ fontSize: '11px', color: '#047857', marginTop: '1px' }}>
-                  {appliedCodePromo.companyName}
+                  {appliedCodePromo.name?.trim() || appliedCodePromo.companyName}
                   {appliedCodePromo.description ? ` · ${appliedCodePromo.description}` : ''}
                 </div>
               </div>
