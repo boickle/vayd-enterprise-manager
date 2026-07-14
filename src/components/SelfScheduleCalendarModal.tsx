@@ -16,6 +16,7 @@ import {
   findVeterinarianById,
   isDoctorAcceptingNewPatientsOnSlotDate,
   isOnlineBookingUnavailableError,
+  isSupersededAvailabilityError,
   ONLINE_BOOKING_UNAVAILABLE_MESSAGE,
   type VeterinarianWithAppointmentTypes,
 } from '../utils/onlineBooking';
@@ -104,6 +105,8 @@ interface Props {
   slotPickerError?: string | null;
   /** Per-pet appointment types — server resolves doctor-specific duration. */
   visitPets?: RoutingVisitPetInput[];
+  /** Selected existing pets (DB patients.id) — member elevated offer tier when any is a member. */
+  patientIds?: number[];
 }
 
 // ─── Colour tokens ────────────────────────────────────────────────────────────
@@ -205,6 +208,7 @@ async function fetchMonthCandidatesForDoctor(
     lon?: number;
     serviceMinutes?: number;
     visitPets?: RoutingVisitPetInput[];
+    patientIds?: number[];
     doctorId: string | number;
     appointmentTypeId?: number;
     isNewPatientRequest: boolean;
@@ -230,6 +234,7 @@ async function fetchMonthCandidatesForDoctor(
       ? { lat: args.lat, lon: args.lon, allowOtherDoctors: false }
       : {}),
     ...(args.appointmentTypeId != null ? { appointmentTypeId: args.appointmentTypeId } : {}),
+    ...(args.patientIds?.length ? { patientIds: args.patientIds } : {}),
   });
 
   if (args.isNewPatientRequest && args.rawVeterinarians && args.rawVeterinarians.length > 0) {
@@ -733,6 +738,7 @@ export function SelfScheduleCalendarModal({
   onRequestDoctor,
   slotPickerError,
   visitPets,
+  patientIds,
 }: Props) {
   const [isNarrow, setIsNarrow] = useState(
     typeof window !== 'undefined' ? window.innerWidth <= 600 : false,
@@ -774,6 +780,8 @@ export function SelfScheduleCalendarModal({
   const skipMonthEffectRef = useRef(false);
   /** User clicked prev/next — do not auto-advance to a later month. */
   const manualMonthNavRef = useRef(false);
+  /** Scroll the times list into view after the client picks a calendar day. */
+  const timesSectionRef = useRef<HTMLDivElement>(null);
 
   const [soonestAvailabilityNote, setSoonestAvailabilityNote] = useState<string | null>(null);
 
@@ -961,6 +969,7 @@ export function SelfScheduleCalendarModal({
         lon,
         serviceMinutes,
         visitPets,
+        patientIds,
         doctorId,
         appointmentTypeId,
         isNewPatientRequest,
@@ -997,9 +1006,13 @@ export function SelfScheduleCalendarModal({
         setMonthCandidates(candidates);
       } catch (err: unknown) {
         if (key !== monthFetchKey.current) return;
-        setMonthCandidates([]);
         const ax = err as { response?: { status?: number; data?: { message?: string } } };
         const message = ax?.response?.data?.message;
+        // Newer browse replaced this one (or booking validation did) — leave UI loading/clear.
+        if (isSupersededAvailabilityError(ax?.response?.status, message)) {
+          return;
+        }
+        setMonthCandidates([]);
         if (isOnlineBookingUnavailableError(ax?.response?.status, message)) {
           setAvailabilityError(ONLINE_BOOKING_UNAVAILABLE_MESSAGE);
         } else {
@@ -1018,6 +1031,7 @@ export function SelfScheduleCalendarModal({
       lon,
       serviceMinutes,
       visitPets,
+      patientIds,
       appointmentTypeId,
       isNewPatientRequest,
       rawVeterinarians,
@@ -1057,6 +1071,17 @@ export function SelfScheduleCalendarModal({
     setDayCandidates(forDay);
     setSelectedSlotIso(null);
   }, [selectedDay, monthCandidates]);
+
+  // After picking a day, scroll the times section into view (often below the fold on mobile).
+  useEffect(() => {
+    if (!selectedDay) return;
+    const el = timesSectionRef.current;
+    if (!el) return;
+    const frame = window.requestAnimationFrame(() => {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [selectedDay]);
 
   const slotMatchesSelection = (c: MonthAvailabilityCandidate, selected: string) =>
     c.suggestedStartIso === selected || c.iso === selected;
@@ -1512,12 +1537,15 @@ export function SelfScheduleCalendarModal({
 
         {/* ── Time slots ─────────────────────────────────────────────────── */}
         {!showPreferencesPanel && selectedDay && (
-          <div style={{ marginTop: 14 }}>
-            <div style={{ fontSize: 13, fontWeight: 600, color: grey700, marginBottom: 8 }}>
+          <div ref={timesSectionRef} style={{ marginTop: 14, scrollMarginTop: 16 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: grey700, marginBottom: 4 }}>
               Available times on{' '}
               <span style={{ color: tealDark }}>
                 {DateTime.fromISO(selectedDay).toFormat('cccc, LLLL d')}
               </span>
+            </div>
+            <div style={{ fontSize: 12, color: grey400, marginBottom: 8 }}>
+              Tap a time to select it
             </div>
 
             {dayCandidates.length === 0 && !loadingMonth ? (

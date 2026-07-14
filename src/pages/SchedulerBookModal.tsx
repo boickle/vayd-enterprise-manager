@@ -229,6 +229,11 @@ export type SchedulerBookPrefill = {
   rescheduleAppointmentIds?: number[];
   /** Per-appointment patient, type, and description when rescheduling (e.g. all pets today). */
   rescheduleVisitPatches?: RescheduleVisitPatch[];
+  /**
+   * "Explore alternatives": keep the source appointment(s) and CREATE a new appointment at the
+   * chosen slot instead of moving. Uses the same reschedule prefill (provider/type/times/patient).
+   */
+  exploreAlternatives?: boolean;
   /** Prefer this patient in the picker (e.g. reschedule). */
   preferredPatientId?: string;
   /** Initial selection when booking from routing preview (e.g. preview chip pets). */
@@ -301,6 +306,14 @@ type Props = {
     anchorDate?: string;
     /** Appointment type id saved on the calendar visit (modal selection, not prefill default). */
     bookedAppointmentTypeId?: number;
+    /** "Explore alternatives": a new appointment was created and the source(s) were kept. */
+    exploreAlternatives?: boolean;
+    /** Source appointment id(s) that were kept when exploring alternatives. */
+    exploreSourceAppointmentIds?: number[];
+    /** All new appointment ids created for the alternative slot (multi-pet). */
+    exploreCreatedAppointmentIds?: number[];
+    /** Type id actually used when creating the alternative appointment. */
+    exploreCreatedAppointmentTypeId?: number;
   }) => void;
 };
 
@@ -1986,6 +1999,10 @@ export function SchedulerBookModal({
 
       let savedAppointmentId: number | undefined;
       let forwardBookingWarning: string | undefined;
+      /** "Explore alternatives" keeps the source appointment(s) and creates a new one instead. */
+      const exploreAlternatives = Boolean(prefill?.exploreAlternatives);
+      const exploreCreatedIds: number[] = [];
+      let exploreCreatedAppointmentTypeId: number | undefined;
       if (rescheduleIds.length > 0) {
         const patchBody = {
           appointmentStart: startIso,
@@ -2000,6 +2017,12 @@ export function SchedulerBookModal({
             : undefined;
           const visitPatch = visitPatches.find((v) => Number(v.appointmentId) === rescheduleId);
           const patientForPatch = edit?.patientId ?? visitPatch?.patientId ?? selectedPatientId;
+          const patientIdForPatch = Number(patientForPatch);
+          const hasPatientForPatch =
+            patientForPatch != null &&
+            String(patientForPatch).trim() !== '' &&
+            Number.isFinite(patientIdForPatch) &&
+            patientIdForPatch > 0;
           const rawDescription = (edit?.description ?? description).trim();
           const rawInstructions = (edit?.instructions ?? instructions).trim();
           const originalStartIso =
@@ -2010,6 +2033,39 @@ export function SchedulerBookModal({
             ? edit?.appointmentTypeId
             : (typeId && Number.isFinite(Number(typeId)) ? Number(typeId) : undefined) ??
               edit?.appointmentTypeId;
+          if (exploreAlternatives) {
+            // Keep the source visit untouched; book a second appointment at the new slot.
+            const created = await createAppointment({
+              practiceId,
+              primaryProviderId: Number(providerId),
+              ...(showAdditionalEmployeesField ? { additionalEmployeeIds } : {}),
+              ...(selectedClientId ? { clientId: Number(selectedClientId) } : {}),
+              ...(hasPatientForPatch ? { patientId: patientIdForPatch } : {}),
+              ...(trimmedAlt ? { alternateAddressText: trimmedAlt } : {}),
+              appointmentTypeId: Number(resolvedAppointmentTypeId),
+              appointmentStart: startIso,
+              appointmentEnd: endIso,
+              ...(bookAllDay ? { allDay: true } : {}),
+              description: descriptionForNewBook(rawDescription) || undefined,
+              instructions: staffNotesForNewBook(rawInstructions) || undefined,
+              ...(skipManualBookingPermissionGate ? { bookedViaRouting: true } : {}),
+            });
+            const idRaw = created?.id;
+            if (idRaw != null && Number.isFinite(Number(idRaw))) {
+              const apptId = Number(idRaw);
+              if (savedAppointmentId == null) savedAppointmentId = apptId;
+              exploreCreatedIds.push(apptId);
+              if (
+                exploreCreatedAppointmentTypeId == null &&
+                resolvedAppointmentTypeId != null &&
+                Number.isFinite(Number(resolvedAppointmentTypeId))
+              ) {
+                exploreCreatedAppointmentTypeId = Number(resolvedAppointmentTypeId);
+              }
+              await saveAlternateForAppointment(apptId);
+            }
+            continue;
+          }
           await patchAppointment(rescheduleId, {
             ...patchBody,
             appointmentTypeId: Number(resolvedAppointmentTypeId),
@@ -2021,14 +2077,16 @@ export function SchedulerBookModal({
                 practiceTz,
                 originalStartIso
               ).trim() || null,
-            patientId: Number(patientForPatch),
+            ...(hasPatientForPatch ? { patientId: patientIdForPatch } : {}),
             ...(skipManualBookingPermissionGate ? { bookedViaRouting: true } : {}),
           });
         }
-        savedAppointmentId = rescheduleIds[0];
-        if (trimmedAlt && savedAppointmentId != null) {
-          for (const rescheduleId of rescheduleIds) {
-            await saveAlternateForAppointment(rescheduleId);
+        if (!exploreAlternatives) {
+          savedAppointmentId = rescheduleIds[0];
+          if (trimmedAlt && savedAppointmentId != null) {
+            for (const rescheduleId of rescheduleIds) {
+              await saveAlternateForAppointment(rescheduleId);
+            }
           }
         }
       } else if (perVisitRoutingBook) {
@@ -2204,6 +2262,16 @@ export function SchedulerBookModal({
               anchorDate: startLocal?.isValid ? startLocal.toISODate() ?? undefined : undefined,
               ...(typeId && Number.isFinite(Number(typeId)) && Number(typeId) > 0
                 ? { bookedAppointmentTypeId: Number(typeId) }
+                : {}),
+              ...(exploreAlternatives && exploreCreatedIds.length > 0
+                ? {
+                    exploreAlternatives: true,
+                    exploreSourceAppointmentIds: rescheduleIds,
+                    exploreCreatedAppointmentIds: exploreCreatedIds,
+                    ...(exploreCreatedAppointmentTypeId != null
+                      ? { exploreCreatedAppointmentTypeId }
+                      : {}),
+                  }
                 : {}),
             }
           : bookedDetail
@@ -3506,10 +3574,14 @@ export function SchedulerBookModal({
                 ? 'Checking visits…'
                 : submitting
                 ? isRescheduleBook
-                  ? 'Saving…'
+                  ? prefill?.exploreAlternatives
+                    ? 'Adding…'
+                    : 'Saving…'
                   : 'Booking…'
                 : isRescheduleBook
-                  ? 'Reschedule appointment'
+                  ? prefill?.exploreAlternatives
+                    ? 'Add Alternative Appointment'
+                    : 'Reschedule appointment'
                   : canPreviewOnCalendar
                     ? 'Preview on calendar'
                     : isRoutingPreviewBook && routingBookSelectedCount > 1

@@ -69,6 +69,7 @@ import {
   type SelfScheduledSlot,
 } from '../api/publicAppointments';
 import { SelfScheduleCalendarModal } from '../components/SelfScheduleCalendarModal';
+import { selectedPatientDbIdsFromForm } from '../utils/onlineBookingPatientIds';
 import { trackEvent } from '../utils/analytics';
 import { useAppointmentFormDraftPersistence } from '../hooks/useAppointmentFormDraftPersistence';
 import type { AppointmentFormDraftSnapshotInput } from '../utils/appointmentFormDraftSnapshot';
@@ -1372,6 +1373,15 @@ export default function AppointmentRequestForm() {
       isNewPatientRequest,
       primaryAppointmentTypeId,
     ],
+  );
+
+  const onlineBookingPatientIds = useMemo(
+    () =>
+      selectedPatientDbIdsFromForm({
+        selectedPetIds: formData.selectedPetIds,
+        pets,
+      }),
+    [formData.selectedPetIds, pets],
   );
 
   const [resolvedServiceMinutes, setResolvedServiceMinutes] = useState<number | null>(null);
@@ -7404,7 +7414,7 @@ export default function AppointmentRequestForm() {
                   {/* Self-schedule modal */}
                   {showSelfScheduleModal && hasAddress && primaryAppointmentTypeId != null && (
                     <SelfScheduleCalendarModal
-                      key={`${scheduleModalRefreshKey}-${lat ?? ''}-${lon ?? ''}-${builtAddress}-${primaryProviderDoctorId ?? ''}`}
+                      key={`${scheduleModalRefreshKey}-${lat ?? ''}-${lon ?? ''}-${builtAddress}-${primaryProviderDoctorId ?? ''}-${onlineBookingPatientIds.join(',')}`}
                       practiceId={practiceId}
                       address={fullAddress}
                       lat={lat ?? undefined}
@@ -7420,6 +7430,11 @@ export default function AppointmentRequestForm() {
                       newPatientCount={newPatientCount}
                       isNewPatientRequest={isNewPatientRequest}
                       visitPets={routingVisitPets}
+                      patientIds={
+                        onlineBookingPatientIds.length > 0
+                          ? onlineBookingPatientIds
+                          : undefined
+                      }
                       rawVeterinarians={rawVeterinarianList}
                       slotPickerError={selfScheduleSlotError}
                       // Pass the already-fetched provider list so the modal doesn't need

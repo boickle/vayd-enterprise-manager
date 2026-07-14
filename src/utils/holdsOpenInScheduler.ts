@@ -1,7 +1,14 @@
 import type { NavigateFunction } from 'react-router-dom';
 import { DateTime } from 'luxon';
 import type { HoldListItem } from '../api/holds';
+import { fetchAppointmentById } from '../api/appointments';
 import { fetchAppointmentRequestSubmission } from '../api/appointmentRequestSubmissions';
+import {
+  buildRoutingRescheduleIntentFromAppointment,
+  writeRoutingRescheduleIntent,
+} from './routingRescheduleIntent';
+import { fetchAndCacheRescheduleSourcePlacementSnapshot } from './routingRescheduleScoreCompare';
+import { writeSchedulerCalendarHandoff } from './schedulerCalendarHandoff';
 import {
   clientDisplayNameFromRequestData,
   requestDataClientType,
@@ -189,6 +196,54 @@ export async function beginHoldRemoveInScheduler(args: {
     removeAppointmentIds,
   });
   focusHoldOnScheduler(anchor, navigate, practiceTz, groupKey);
+}
+
+export type BeginHoldRescheduleResult =
+  | { ok: true }
+  | { ok: false; reason: string };
+
+/**
+ * Holds board → routing reschedule flow. Loads the hold's calendar appointment,
+ * writes the routing reschedule intent + calendar handoff, then navigates to
+ * `/schedule/routing` (same path the scheduler uses for reschedule).
+ */
+export async function beginHoldReschedule(args: {
+  hold: HoldListItem;
+  navigate: NavigateFunction;
+  practiceTz: string;
+  practiceId: number;
+  /** Where "Dismiss" in the reschedule workspace should return (the Holds board). */
+  returnPath?: string;
+}): Promise<BeginHoldRescheduleResult> {
+  const { hold, navigate, practiceTz, practiceId, returnPath } = args;
+  const appt = await fetchAppointmentById(hold.id, { practiceId });
+  if (!appt) {
+    return { ok: false, reason: 'Could not load this hold to reschedule.' };
+  }
+  const intent = buildRoutingRescheduleIntentFromAppointment(appt, {
+    practiceTz,
+    allowAddressOnly: true,
+  });
+  if (!intent) {
+    return {
+      ok: false,
+      reason: 'This hold cannot be rescheduled (needs a linked client or a visit address).',
+    };
+  }
+  writeRoutingRescheduleIntent({
+    ...intent,
+    ...(returnPath?.trim() ? { returnPath: returnPath.trim() } : {}),
+  });
+  void fetchAndCacheRescheduleSourcePlacementSnapshot(intent);
+  writeSchedulerCalendarHandoff({
+    anchorDate: intent.practiceDateKey?.trim() || '',
+    view: 'week',
+    providerFilter: intent.primaryProviderInternalId?.trim() || '',
+    routingDoctorPimsId: intent.primaryDoctorPimsId,
+    routingDoctorLabel: intent.primaryDoctorDisplayName,
+  });
+  navigate('/schedule/routing');
+  return { ok: true };
 }
 
 export { resolveHoldClientLabel } from './holdsDisplay';

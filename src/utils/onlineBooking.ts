@@ -160,6 +160,23 @@ export function isOnlineBookingUnavailableError(
   return m.includes('online booking') || m.includes('not available');
 }
 
+/**
+ * Overlapping month browses for the same doctor abort the older search server-side.
+ * Treat that as a soft cancel (a newer request is in flight), not a user-facing failure.
+ */
+export function isSupersededAvailabilityError(
+  status: number | undefined,
+  message: string | string[] | undefined,
+): boolean {
+  if (status !== 400 && status !== 409) return false;
+  const m = (Array.isArray(message) ? message.join(' ') : (message ?? '')).toLowerCase();
+  return (
+    m.includes('superseded') ||
+    m.includes('booking is in progress') ||
+    m.includes('availability search was cancelled')
+  );
+}
+
 export const ONLINE_BOOKING_UNAVAILABLE_MESSAGE =
   "Online booking isn't available for this doctor and appointment type. Please enter your preferred times below and our team will reach out to schedule with you.";
 

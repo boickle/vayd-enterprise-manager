@@ -27,6 +27,7 @@ import {
   isAppointmentCancelledOnPracticeCalendar,
   isAppointmentNoLocation,
   cancelAppointment,
+  patchAppointment,
   isFlexBlockItem,
   isPracticeCalendarBlockAppointment,
   truthyApiFlag,
@@ -235,6 +236,7 @@ import {
 } from '../utils/manualBookCalendarPreview';
 import { commitManualBookPreviewDraft } from '../utils/commitManualBookPreview';
 import HouseholdScheduledVisitsWarningModal from '../components/HouseholdScheduledVisitsWarningModal';
+import ExploreAlternativesHoldPrompt from '../components/ExploreAlternativesHoldPrompt';
 import {
   buildBookingAppointmentTypeCatalog,
   findHouseholdScheduledVisitConflicts,
@@ -2479,10 +2481,14 @@ function rescheduleSourceHighlightAppointmentIds(
   return appointmentIds.length > 0 ? new Set(appointmentIds) : null;
 }
 
-/** While a reschedule preview is on the calendar, hide the visits being moved (show purple preview only). */
+/** While a reschedule preview is on the calendar, hide the visits being moved (show purple preview only).
+ * Explore Alternatives keeps the original, so never hide those visits. */
 function routingRescheduleHiddenAppointmentIds(
   preview: RoutingCalendarPreviewPayloadV1
 ): Set<number> | null {
+  const ri = readRoutingRescheduleIntent();
+  if (ri?.exploreAlternatives || preview.exploreAlternatives) return null;
+
   const fromPreview =
     preview.rescheduleAppointmentIds
       ?.filter((id) => Number.isFinite(Number(id)))
@@ -2492,7 +2498,6 @@ function routingRescheduleHiddenAppointmentIds(
       : []);
   if (fromPreview.length > 0) return new Set(fromPreview);
 
-  const ri = readRoutingRescheduleIntent();
   if (!ri) return null;
   const { appointmentIds } = rescheduleScopeTargets(ri);
   return appointmentIds.length > 0 ? new Set(appointmentIds) : null;
@@ -2956,6 +2961,18 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   >(null);
   const [typeList, setTypeList] = useState<AppointmentType[]>([]);
   const typeCatalog = useMemo(() => buildAppointmentTypeCatalog(typeList), [typeList]);
+  const holdAppointmentTypes = useMemo(
+    () => typeList.filter((t) => t.isHold === true),
+    [typeList]
+  );
+  /** After "Explore alternatives" books a second appointment, offer to keep both on hold. */
+  const [exploreHoldPrompt, setExploreHoldPrompt] = useState<{
+    newAppointmentId: number;
+    sourceNeedsHold: boolean;
+    newNeedsHold: boolean;
+    nonHoldAppointmentIds: number[];
+  } | null>(null);
+  const [convertingExploreHold, setConvertingExploreHold] = useState(false);
   const [manualBookableTypeIds, setManualBookableTypeIds] = useState<number[] | null>(null);
   const [rawAppointments, setRawAppointments] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
@@ -4010,6 +4027,18 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       ),
     [embedInRoutingWorkspace, routingPreview, rescheduleSourceHighlightIds]
   );
+
+  /** Reschedule opened from the Holds board — "Dismiss" returns there, so label it accordingly. */
+  const rescheduleReturnsToHolds = useMemo(() => {
+    if (!rescheduleWorkspaceActive) return false;
+    const returnPath = readRoutingRescheduleIntent()?.returnPath;
+    return Boolean(returnPath && isHoldsBoardReturnPath(returnPath));
+  }, [rescheduleWorkspaceActive, rescheduleIntentTick]);
+
+  /** Explore-alternatives intent — keep original booked. Used for badge + book/preview copy. */
+  const exploreAlternativesActive = useMemo(() => {
+    return Boolean(readRoutingRescheduleIntent()?.exploreAlternatives);
+  }, [rescheduleIntentTick]);
 
   const [forwardBookingIntentTick, setForwardBookingIntentTick] = useState(0);
   useEffect(() => {
@@ -6731,6 +6760,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       rescheduleAppointmentIds: isReschedule && rescheduleIds.length > 0 ? rescheduleIds : undefined,
       rescheduleVisitPatches:
         isReschedule && rescheduleVisitPatches?.length ? rescheduleVisitPatches : undefined,
+      ...(isReschedule && ri?.exploreAlternatives ? { exploreAlternatives: true } : {}),
       preferredPatientId:
         routingPreview.reschedulePatientId?.trim() || ri?.patientId || fbi?.patientId || ari?.patientId,
       routingPreviewBook: !isReschedule,
@@ -6739,7 +6769,11 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       providerId:
         routingSlotProviderId ??
         (isReschedule ? ri?.primaryProviderInternalId?.trim() : undefined),
-      modalTitle: isReschedule ? 'Reschedule appointment' : undefined,
+      modalTitle: isReschedule
+        ? ri?.exploreAlternatives
+          ? 'Add Alternative Appointment'
+          : 'Reschedule appointment'
+        : undefined,
       defaultInstructions: isReschedule
         ? rescheduleSourceAppt?.instructions?.trim()
         : undefined,
@@ -6987,9 +7021,14 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       primaryProviderId?: string;
       anchorDate?: string;
       bookedAppointmentTypeId?: number;
+      exploreAlternatives?: boolean;
+      exploreSourceAppointmentIds?: number[];
+      exploreCreatedAppointmentIds?: number[];
+      exploreCreatedAppointmentTypeId?: number;
     }) => {
       const prefillAtBook = bookPrefill;
       const wasReschedule = prefillAtBook?.rescheduleAppointmentId != null;
+      const wasExplore = Boolean(detail?.exploreAlternatives);
       const previewAtBook = routingPreview ?? readRoutingCalendarPreview();
       const wasForwardBooking = prefillAtBook?.forwardBookingTrackingToken != null;
       const wasAppointmentRequest = prefillAtBook?.appointmentRequestSubmissionId != null;
@@ -7283,10 +7322,89 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       } else {
         toastDismissMsRef.current = 6000;
         setToast(
-          wasReschedule
-            ? 'Appointment rescheduled.'
-            : 'Appointment saved to the schedule.'
+          wasExplore
+            ? 'Alternative appointment added — the original is still booked.'
+            : wasReschedule
+              ? 'Appointment rescheduled.'
+              : 'Appointment saved to the schedule.'
         );
+      }
+
+      if (wasExplore && savedId != null && Number.isFinite(savedId) && savedId > 0) {
+        const sourceIdsRaw = detail?.exploreSourceAppointmentIds ?? [];
+        const createdIdsRaw =
+          detail?.exploreCreatedAppointmentIds?.length
+            ? detail.exploreCreatedAppointmentIds
+            : [savedId];
+
+        /** Expand single-pet anchors to the full multi-pet visit so Hold conversion covers every pet. */
+        const expandVisitClumpIds = (ids: number[]): number[] => {
+          const out = new Set<number>();
+          for (const id of ids) {
+            if (!Number.isFinite(id) || id <= 0) continue;
+            const anchor = rawAppointments.find((a) => Number(a.id) === Number(id));
+            const clump = householdAppointmentIdsInVisitClump(
+              anchor,
+              rawAppointments,
+              PRACTICE_TZ
+            );
+            if (clump.length > 0) {
+              for (const cid of clump) out.add(cid);
+            } else {
+              out.add(id);
+            }
+          }
+          return [...out];
+        };
+
+        const sourceIds = expandVisitClumpIds(sourceIdsRaw);
+        // Newly created rows may not be in range state yet — keep book-modal ids + any clump mates we can resolve.
+        const createdIdSet = new Set([
+          ...expandVisitClumpIds(createdIdsRaw),
+          ...createdIdsRaw.filter((id) => Number.isFinite(id) && id > 0),
+        ]);
+
+        const newTypeId =
+          detail?.exploreCreatedAppointmentTypeId ??
+          detail?.bookedAppointmentTypeId ??
+          prefillAtBook?.appointmentTypeId;
+        const newTypeRow =
+          newTypeId != null ? typeList.find((t) => Number(t.id) === Number(newTypeId)) : undefined;
+        const newIsHold = isHoldAppointmentTypeForBook(typeCatalog, {
+          typeId: newTypeId,
+          typeName: newTypeRow?.name?.trim() || newTypeRow?.prettyName?.trim() || null,
+        });
+
+        const appointmentNeedsHold = (id: number): boolean => {
+          if (createdIdSet.has(id)) {
+            // Same type was used for each created alternative in the book loop.
+            return !newIsHold;
+          }
+          const src = rawAppointments.find((a) => Number(a.id) === Number(id));
+          const patch = prefillAtBook?.rescheduleVisitPatches?.find(
+            (p) => Number(p.appointmentId) === Number(id)
+          );
+          const typeId = src?.appointmentType?.id ?? patch?.appointmentTypeId ?? null;
+          const typeName =
+            src?.appointmentType?.name?.trim() ||
+            src?.appointmentType?.prettyName?.trim() ||
+            null;
+          // Only flag sources we can classify; unknown → leave alone.
+          if (typeId == null && !typeName) return false;
+          return !isHoldAppointmentTypeForBook(typeCatalog, { typeId, typeName });
+        };
+
+        const nonHoldSourceIds = sourceIds.filter(appointmentNeedsHold);
+        const nonHoldCreatedIds = [...createdIdSet].filter(appointmentNeedsHold);
+        const nonHoldIds = [...new Set([...nonHoldSourceIds, ...nonHoldCreatedIds])];
+        if (nonHoldIds.length > 0 && holdAppointmentTypes.length > 0) {
+          setExploreHoldPrompt({
+            newAppointmentId: savedId,
+            sourceNeedsHold: nonHoldSourceIds.length > 0,
+            newNeedsHold: nonHoldCreatedIds.length > 0,
+            nonHoldAppointmentIds: nonHoldIds,
+          });
+        }
       }
     },
     [
@@ -7309,6 +7427,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       view,
       typeList,
       typeCatalog,
+      rawAppointments,
+      holdAppointmentTypes,
     ]
   );
 
@@ -7316,6 +7436,28 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     toastDismissMsRef.current = dismissMs;
     setToast(msg);
   }, []);
+
+  const convertExploreHoldTypes = useCallback(
+    async (holdTypeId: number) => {
+      const prompt = exploreHoldPrompt;
+      if (!prompt || convertingExploreHold) return;
+      setConvertingExploreHold(true);
+      try {
+        for (const id of prompt.nonHoldAppointmentIds) {
+          await patchAppointment(id, { appointmentTypeId: holdTypeId });
+        }
+        setExploreHoldPrompt(null);
+        await loadRange({ refreshDrive: true });
+        const n = prompt.nonHoldAppointmentIds.length;
+        showToast(n === 1 ? 'Appointment is on hold.' : `All ${n} appointments are on hold.`);
+      } catch {
+        showToast('Could not change the appointment type — please update it manually.');
+      } finally {
+        setConvertingExploreHold(false);
+      }
+    },
+    [exploreHoldPrompt, convertingExploreHold, loadRange, showToast]
+  );
 
   const mergeStaffConfirmAppointmentUpdates = useCallback(
     (updated: Appointment[]) => {
@@ -8829,18 +8971,29 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             setEditPreviewScoreLoading(false);
             setEditAppt(appt);
             return;
-          case 'reschedule': {
+          case 'reschedule':
+          case 'exploreAlternatives': {
+            const explore = action.kind === 'exploreAlternatives';
             if (!appointmentIsTodayOrFuture(appt, PRACTICE_TZ)) {
-              fail('Visits before today cannot be rescheduled here.');
+              fail(
+                explore
+                  ? 'Visits before today cannot explore alternatives here.'
+                  : 'Visits before today cannot be rescheduled here.'
+              );
               return;
             }
             let intent = buildRoutingRescheduleIntentFromAppointment(appt, {
               sameCalendarDayAppointments: rawAppointments,
               providers,
               practiceTz: PRACTICE_TZ,
+              exploreAlternatives: explore,
             });
             if (!intent) {
-              fail('This visit cannot be rescheduled here (needs client and patient, not a block).');
+              fail(
+                explore
+                  ? 'This visit cannot explore alternatives here (needs client and patient, not a block).'
+                  : 'This visit cannot be rescheduled here (needs client and patient, not a block).'
+              );
               return;
             }
             const calendarProviderId = resolvedPrimaryProviderId.trim();
@@ -8868,7 +9021,11 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             if (embedInRoutingWorkspace) {
               applyRescheduleCalendarFocusFromIntent();
               setRescheduleIntentTick((n) => n + 1);
-              showToast('Reschedule: visit loaded in routing — calendar shows that week and doctor.');
+              showToast(
+                explore
+                  ? 'Alternatives: visit loaded in routing — keeping the current appointment.'
+                  : 'Reschedule: visit loaded in routing — calendar shows that week and doctor.'
+              );
             } else {
               const pimsRaw =
                 calendarProvider?.pimsId != null ? String(calendarProvider.pimsId).trim() : '';
@@ -10210,7 +10367,9 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           embedInRoutingWorkspace && routingPreview
             ? `Routing preview: ${embeddedCalendarProviderLabel}`
             : embedInRoutingWorkspace && rescheduleWorkspaceActive
-              ? `Rescheduling: ${embeddedCalendarProviderLabel}`
+              ? exploreAlternativesActive
+                ? `Looking for alternatives: ${embeddedCalendarProviderLabel}`
+                : `Rescheduling: ${embeddedCalendarProviderLabel}`
               : embedInRoutingWorkspace && forwardBookingLockActive
                 ? `Forward booking: ${
                     forwardBookingBarContext
@@ -10322,9 +10481,13 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         ) : null}
         {rescheduleWorkspaceActive ? (
           <div className="scheduler-embedded-reschedule-bar" role="status" aria-live="polite">
-            <span className="scheduler-embedded-reschedule-bar-badge">Rescheduling</span>
+            <span className="scheduler-embedded-reschedule-bar-badge">
+              {exploreAlternativesActive ? 'Alternatives' : 'Rescheduling'}
+            </span>
             <span className="scheduler-embedded-reschedule-bar-msg">
-              {embeddedCalendarProviderLabel}
+              {exploreAlternativesActive
+                ? `${embeddedCalendarProviderLabel} · keeping current appointment`
+                : embeddedCalendarProviderLabel}
             </span>
             <button
               type="button"
@@ -10332,7 +10495,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               onClick={dismissRescheduleWorkspace}
               disabled={bookSlot != null}
             >
-              Dismiss
+              {rescheduleReturnsToHolds ? 'Back to Holds' : 'Dismiss'}
             </button>
           </div>
         ) : null}
@@ -10547,6 +10710,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               preview={routingPreview}
               practiceTz={PRACTICE_TZ}
               isReschedule={routingPreviewIsReschedule}
+              exploreAlternatives={exploreAlternativesActive}
               sourceVisitForCompare={reschedulePreviewSourceVisit}
               originalAppointmentStart={reschedulePreviewOriginalTimes.start}
               originalAppointmentEnd={reschedulePreviewOriginalTimes.end}
@@ -10943,6 +11107,18 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           manualBookHouseholdBypassRef.current = true;
           setManualBookHouseholdConflicts(null);
           void confirmManualBookFromPreview();
+        }}
+      />
+
+      <ExploreAlternativesHoldPrompt
+        open={Boolean(exploreHoldPrompt)}
+        holdTypes={holdAppointmentTypes}
+        sourceNeedsHold={Boolean(exploreHoldPrompt?.sourceNeedsHold)}
+        newNeedsHold={Boolean(exploreHoldPrompt?.newNeedsHold)}
+        converting={convertingExploreHold}
+        onConfirm={(holdTypeId) => void convertExploreHoldTypes(holdTypeId)}
+        onDismiss={() => {
+          if (!convertingExploreHold) setExploreHoldPrompt(null);
         }}
       />
 

@@ -43,7 +43,12 @@ import {
   parseHoldsHighlightFromSearch,
   parseHoldsOwnerParam,
 } from '../holds-nav';
-import { beginHoldOpenInScheduler, beginHoldRemoveInScheduler, resolveHoldSubmissionId } from '../utils/holdsOpenInScheduler';
+import {
+  beginHoldOpenInScheduler,
+  beginHoldRemoveInScheduler,
+  beginHoldReschedule,
+  resolveHoldSubmissionId,
+} from '../utils/holdsOpenInScheduler';
 import { beginAppointmentRequestNotBookedFlow } from '../utils/appointmentRequestNotBookedFlow';
 import { beginAppointmentRequestOnHoldReleaseFlow } from '../utils/appointmentRequestOnHoldReleaseFlow';
 import {
@@ -554,6 +559,31 @@ export default function HoldsPage() {
       const submissionId = resolveHoldSubmissionId(hold);
       if (submissionId == null) return;
       navigate(holdsPathWithHighlight(submissionId, { owner }));
+    },
+    [navigate, owner]
+  );
+
+  const openReschedule = useCallback(
+    (hold: HoldListItem, groupKey: string) => {
+      setError(null);
+      setNotice(null);
+      setBusyGroupKey(groupKey);
+      void beginHoldReschedule({
+        hold,
+        navigate,
+        practiceTz: PRACTICE_TZ,
+        practiceId: PRACTICE_ID,
+        returnPath: holdsPathForOwner(owner),
+      })
+        .then((result) => {
+          if (!result.ok) setNotice(result.reason);
+        })
+        .catch(() => {
+          setError('Could not start the reschedule flow for this hold.');
+        })
+        .finally(() => {
+          setBusyGroupKey(null);
+        });
     },
     [navigate, owner]
   );
@@ -1377,6 +1407,14 @@ export default function HoldsPage() {
                               onClick={() => openInScheduler(slotHold, group.key)}
                             >
                               Open / convert
+                            </button>
+                            <button
+                              type="button"
+                              className="btn secondary"
+                              disabled={busy}
+                              onClick={() => openReschedule(slotHold, group.key)}
+                            >
+                              Reschedule
                             </button>
                             {slot.holds.some((h) => resolveHoldSubmissionId(h) != null) ? (
                               <button
