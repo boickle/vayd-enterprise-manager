@@ -402,6 +402,14 @@ function ReconcileConnectorLines({
   );
 }
 
+/** Sort key for actual visit ordering: actual start (fallback end), missing times last. */
+function actualVisitSortMillis(startIso: string | null, endIso: string | null): number {
+  const iso = startIso ?? endIso;
+  if (!iso) return Number.POSITIVE_INFINITY;
+  const dt = DateTime.fromISO(iso, { zone: 'utc' });
+  return dt.isValid ? dt.toMillis() : Number.POSITIVE_INFINITY;
+}
+
 function buildActualDayBundle(
   predicted: DayData,
   appointments: Appointment[],
@@ -410,7 +418,29 @@ function buildActualDayBundle(
 ): { dayData: DayData; workdayStartIso: string | null; workdayEndIso: string | null } {
   const byId = apptByIdMap(appointments);
   const tz = practiceTimeZoneOrDefault(predicted.timezone);
-  const households = (predicted.households ?? []).map((h) => {
+  const rawHouseholds = predicted.households ?? [];
+  const rawTimeline = predicted.timeline ?? [];
+  const predictedDs = predicted.driveSeconds ?? null;
+
+  // routingOrderIndices[displayPos] = raw household index. Invert so we can
+  // look up each visit's predicted drive-in value by its raw household index.
+  const order =
+    predicted.routingOrderIndices && predicted.routingOrderIndices.length === rawHouseholds.length
+      ? predicted.routingOrderIndices
+      : null;
+  const dsByRawIdx: (number | null)[] = new Array(rawHouseholds.length).fill(null);
+  if (predictedDs) {
+    for (let displayPos = 0; displayPos < rawHouseholds.length; displayPos++) {
+      const rawIdx = order ? order[displayPos] : displayPos;
+      if (rawIdx != null && rawIdx >= 0 && rawIdx < rawHouseholds.length) {
+        dsByRawIdx[rawIdx] = predictedDs[displayPos] ?? null;
+      }
+    }
+  }
+
+  // Build actual times per visit, then order visits by when they actually happened
+  // rather than inheriting the predicted route order.
+  const built = rawHouseholds.map((h, rawIdx) => {
     const id = primaryApptId(h);
     const appt = id ? byId.get(id) : undefined;
     const startIso =
@@ -420,12 +450,30 @@ function buildActualDayBundle(
       null;
     const endIso =
       (appt?.appointmentEndActual?.trim() || null) ?? h.endIso ?? appt?.appointmentEnd ?? null;
+    return { household: { ...h, startIso, endIso }, rawIdx };
+  });
+
+  const sorted = built
+    .map((b, stableIdx) => ({ ...b, stableIdx }))
+    .sort((a, b) => {
+      const at = actualVisitSortMillis(a.household.startIso, a.household.endIso);
+      const bt = actualVisitSortMillis(b.household.startIso, b.household.endIso);
+      if (at !== bt) return at - bt;
+      return a.stableIdx - b.stableIdx;
+    });
+
+  const households = sorted.map((b) => b.household);
+  const timeline = sorted.map((b) => {
+    const predictedSlot = rawTimeline[b.rawIdx];
     return {
-      ...h,
-      startIso,
-      endIso,
+      eta: b.household.startIso,
+      etd: b.household.endIso,
+      bufferAfterMinutes: predictedSlot?.bufferAfterMinutes,
+      windowStartIso: predictedSlot?.windowStartIso,
+      windowEndIso: predictedSlot?.windowEndIso,
     };
   });
+  const driveSeconds = predictedDs ? sorted.map((b) => dsByRawIdx[b.rawIdx] ?? 0) : null;
 
   const plannedStartIso =
     depotTimeToIso(predicted.date, employeeTimes.start, tz) ??
@@ -442,18 +490,11 @@ function buildActualDayBundle(
     dayData: {
       ...predicted,
       households,
-      timeline: households.map((h, idx) => {
-        const predictedSlot = predicted.timeline?.[idx];
-        return {
-          eta: h.startIso,
-          etd: h.endIso,
-          bufferAfterMinutes: predictedSlot?.bufferAfterMinutes,
-          windowStartIso: predictedSlot?.windowStartIso,
-          windowEndIso: predictedSlot?.windowEndIso,
-        };
-      }),
-      driveSeconds: predicted.driveSeconds ?? null,
-      routingOrderIndices: predicted.routingOrderIndices ?? null,
+      timeline,
+      driveSeconds,
+      // Visits are already ordered chronologically by actual time; don't re-apply
+      // the predicted route order on top.
+      routingOrderIndices: null,
       backToDepotSec: predicted.backToDepotSec ?? null,
       backToDepotIso: predicted.backToDepotIso ?? null,
       depotToFirstRoutableSec: predicted.depotToFirstRoutableSec ?? null,
@@ -670,7 +711,7 @@ function ReconcileDayGrid({
   practiceTz,
   showDrive,
   showVisitDelta,
-  predictedTimings,
+  predictedTimingByKey,
   shiftDepotStartTime,
   shiftDepotEndTime,
   apptById,
@@ -687,7 +728,8 @@ function ReconcileDayGrid({
   practiceTz: string;
   showDrive: boolean;
   showVisitDelta?: boolean;
-  predictedTimings?: VisitTiming[];
+  /** Predicted arrive/leave per visit, keyed by link key so it survives actual-column reordering. */
+  predictedTimingByKey?: Map<string, VisitTiming>;
   /** Scheduled appointment-day bounds (shift depot leave / return), not ETA or saved actuals. */
   shiftDepotStartTime: string;
   shiftDepotEndTime: string;
@@ -783,7 +825,8 @@ function ReconcileDayGrid({
             const top = topMin * PPM + driveOffsetMin * PPM;
             const height = Math.max(18, durMin * PPM);
             const slot = layout.displayTimeline[idx];
-            const predicted = predictedTimings?.[idx];
+            const linkKey = primaryApptId(h) ?? h.key;
+            const predicted = predictedTimingByKey?.get(linkKey);
             const timing = showDrive ? predictedVisitTiming(h, slot, true) : { startIso, endIso };
             const displayStart = timing.startIso ?? startIso;
             const displayEnd = timing.endIso ?? endIso;
@@ -793,7 +836,6 @@ function ReconcileDayGrid({
             const blockItem = h.primary;
             const isBlock = isBlockEntry(blockItem);
             const flexBlock = Boolean(h.isPersonalBlock && isFlexBlockItem(blockItem));
-            const linkKey = primaryApptId(h) ?? h.key;
             const appt = linkKey ? apptById.get(linkKey) : undefined;
             const apptColors =
               appt && !isBlock
@@ -1122,8 +1164,9 @@ export function SchedulerReconcileModal({
     return computeGridBounds(predicted, actualDay, practiceTz, workdayStartIso, workdayEndIso);
   }, [predicted, actualDay, practiceTz, workdayStartIso, workdayEndIso]);
 
-  const predictedTimings = useMemo((): VisitTiming[] | undefined => {
-    if (!predicted) return undefined;
+  const predictedTimingByKey = useMemo((): Map<string, VisitTiming> => {
+    const map = new Map<string, VisitTiming>();
+    if (!predicted) return map;
     const layout = computeMyWeekDayColumnLayout(
       predicted,
       weekGrid,
@@ -1131,10 +1174,12 @@ export function SchedulerReconcileModal({
       true,
       predicted.appointmentBufferMinutes ?? 5
     );
-    if (!layout) return [];
-    return layout.displayHouseholds.map((h, idx) =>
-      predictedVisitTiming(h, layout.displayTimeline[idx], true)
-    );
+    if (!layout) return map;
+    layout.displayHouseholds.forEach((h, idx) => {
+      const key = primaryApptId(h) ?? h.key;
+      map.set(key, predictedVisitTiming(h, layout.displayTimeline[idx], true));
+    });
+    return map;
   }, [predicted, weekGrid, date]);
 
   const predictedDayStartTime =
@@ -1324,7 +1369,7 @@ export function SchedulerReconcileModal({
                       practiceTz={practiceTimeZoneOrDefault(predicted.timezone)}
                       showDrive
                       showVisitDelta
-                      predictedTimings={predictedTimings}
+                      predictedTimingByKey={predictedTimingByKey}
                       shiftDepotStartTime={predictedDayStartTime}
                       shiftDepotEndTime={predictedShiftEndTime}
                       apptById={apptById}

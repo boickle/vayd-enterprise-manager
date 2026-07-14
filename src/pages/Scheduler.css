@@ -3495,6 +3495,17 @@ label.scheduler-go-date-heading {
   padding-top: 4px;
 }
 
+.explore-alternatives-hold-prompt .scheduler-modal-body {
+  padding-bottom: 8px;
+}
+
+.explore-alternatives-hold-prompt-actions {
+  margin: 0;
+  padding: 16px 20px 20px;
+  border-top: 1px solid #e5e7eb;
+  background: #f3f4f6;
+}
+
 .scheduler-book-btn {
   padding: 10px 18px;
   font-size: 14px;

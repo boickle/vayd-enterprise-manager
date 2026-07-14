@@ -57,6 +57,11 @@ export type RoutingCalendarPreviewPayloadV1 = {
   rescheduleAppointmentId?: number;
   /** When rescheduling all household pets today, PATCH each id to the new slot. */
   rescheduleAppointmentIds?: number[];
+  /**
+   * Explore Alternatives: keep original appointment(s) on the calendar while previewing a new slot.
+   * When set, Scheduler must not hide `rescheduleAppointmentIds` as it does for true reschedule.
+   */
+  exploreAlternatives?: boolean;
   reschedulePatientId?: string;
   /** Pets shown on the calendar preview chip (all household when rescheduling "all pets today"). */
   previewPatients?: { id: number | string; name: string }[];

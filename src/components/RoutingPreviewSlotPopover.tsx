@@ -18,6 +18,8 @@ type Props = {
   preview: RoutingCalendarPreviewPayloadV1;
   practiceTz: string;
   isReschedule: boolean;
+  /** Keep original appointment and add a second one — alternatives copy instead of reschedule. */
+  exploreAlternatives?: boolean;
   sourceVisitForCompare?: RescheduleOriginalVisitSnapshot | null;
   originalAppointmentStart?: string | null;
   originalAppointmentEnd?: string | null;
@@ -70,6 +72,7 @@ export function RoutingPreviewSlotPopover({
   preview,
   practiceTz,
   isReschedule,
+  exploreAlternatives = false,
   sourceVisitForCompare,
   originalAppointmentStart,
   originalAppointmentEnd,
@@ -82,13 +85,16 @@ export function RoutingPreviewSlotPopover({
   const opt = preview.option;
   const isScheduleLoader = isScheduleLoaderCalendarPreview(preview);
   const isManualBook = isManualBookCalendarPreview(preview);
-  const title = isReschedule
-    ? 'Reschedule preview'
-    : isManualBook
-      ? 'Manual booking preview'
-      : isScheduleLoader
-        ? 'Schedule loader preview'
-        : 'Routing preview';
+  const isExplore = Boolean(isReschedule && exploreAlternatives);
+  const title = isExplore
+    ? 'Alternatives preview'
+    : isReschedule
+      ? 'Reschedule preview'
+      : isManualBook
+        ? 'Manual booking preview'
+        : isScheduleLoader
+          ? 'Schedule loader preview'
+          : 'Routing preview';
   const rangeLabel = formatPreviewRange(
     String(opt.suggestedStartIso ?? ''),
     preview.serviceMinutes,
@@ -120,6 +126,9 @@ export function RoutingPreviewSlotPopover({
         : null;
   const scoreLineIsUnavailable =
     scoreLine === 'No previous routing score available for this visit.';
+  const primaryLabel =
+    confirmLabel ??
+    (isExplore ? 'Add Alternative Appointment' : isReschedule ? 'Reschedule' : 'Book');
 
   return (
     <div className="scheduler-edit-preview-popover" role="dialog" aria-label={title}>
@@ -147,14 +156,18 @@ export function RoutingPreviewSlotPopover({
         <div className="scheduler-edit-preview-popover-change">
           {originalRangeLabel ? (
             <p className="scheduler-edit-preview-popover-change-line scheduler-edit-preview-popover-change-line--was">
-              <span className="scheduler-edit-preview-popover-change-k">Was</span>
+              <span className="scheduler-edit-preview-popover-change-k">
+                {isExplore ? 'Current' : 'Was'}
+              </span>
               {originalRangeLabel}
             </p>
           ) : null}
           {rangeLabel ? (
             <p className="scheduler-edit-preview-popover-change-line scheduler-edit-preview-popover-change-line--now">
               {isReschedule && originalRangeLabel ? (
-                <span className="scheduler-edit-preview-popover-change-k">Now</span>
+                <span className="scheduler-edit-preview-popover-change-k">
+                  {isExplore ? 'Alternative' : 'Now'}
+                </span>
               ) : null}
               {rangeLabel}
             </p>
@@ -193,7 +206,7 @@ export function RoutingPreviewSlotPopover({
           disabled={bookDisabled}
           onClick={onBook}
         >
-          {confirmLabel ?? (isReschedule ? 'Reschedule' : 'Book')}
+          {primaryLabel}
         </button>
       </div>
     </div>

@@ -1,6 +1,9 @@
 import { http } from './http';
 import { DateTime } from 'luxon';
-import { isRoutingScoreOfferable } from '../utils/routingOfferableScore';
+import {
+  ROUTING_OFFERABLE_MAX_SCORE,
+  resolveOfferableMaxScoreFromApi,
+} from '../utils/routingOfferableScore';
 
 export {
   ROUTING_OFFERABLE_MAX_SCORE,
@@ -63,6 +66,8 @@ export type AvailabilityRequest = {
   appointmentTypeId?: number;
   /** Per-pet types for server-side routing duration (preferred over serviceMinutes). */
   visitPets?: RoutingVisitPetInput[];
+  /** Selected existing pets (DB patients.id) — member elevated offer tier when any is a member. */
+  patientIds?: number[];
 };
 
 export type RoutingVisitPetInput = {
@@ -238,9 +243,15 @@ export async function fetchPublicMonthAvailability(request: AvailabilityRequest)
     if (Array.isArray(data?.alternates)) rawCandidates.push(...data.alternates);
   }
 
+  const maxScore = resolveOfferableMaxScoreFromApi(data ?? {});
+
   const results: MonthAvailabilityCandidate[] = [];
   for (const c of rawCandidates) {
-    if (!isRoutingScoreOfferable(c.score)) continue;
+    const score = c.score;
+    if (score != null) {
+      const n = Number(score);
+      if (!Number.isFinite(n) || n > maxScore) continue;
+    }
 
     const dt = c.suggestedStartIso
       ? DateTime.fromISO(c.suggestedStartIso)

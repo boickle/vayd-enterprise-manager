@@ -295,8 +295,176 @@ function assignEtaKeysForSameAddress(households: SchedulerDriveHousehold[]): voi
   }
 }
 
+/** Overlap or back-to-back scheduled times — same visit clump (multi-pet); otherwise separate stops. */
+function scheduledIntervalsClumped(
+  aStart: number,
+  aEnd: number,
+  bStart: number,
+  bEnd: number
+): boolean {
+  return aStart <= bEnd && bStart <= aEnd;
+}
+
+function appointmentScheduledIntervalMs(
+  a: DoctorDayAppt
+): { start: number; end: number } | null {
+  const s = getStartISO(a);
+  const e = getEndISO(a);
+  if (!s || !e) return null;
+  const start = DateTime.fromISO(s).toMillis();
+  const end = DateTime.fromISO(e).toMillis();
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return null;
+  return { start, end };
+}
+
+/**
+ * Same client + location can host multiple same-day visits. Only merge when scheduled times
+ * overlap or touch (multi-pet one stop); morning + afternoon stay separate households.
+ */
+function splitApptsByScheduledTimeClumps(
+  bucket: { appt: DoctorDayAppt; index: number }[]
+): { appt: DoctorDayAppt; index: number }[][] {
+  if (bucket.length <= 1) return bucket.length === 1 ? [bucket] : [];
+  const intervals = bucket.map(({ appt }) => appointmentScheduledIntervalMs(appt));
+  const n = bucket.length;
+  const adj: number[][] = Array.from({ length: n }, () => []);
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      const a = intervals[i];
+      const b = intervals[j];
+      // Missing times: keep separate unless both missing (still same stop / multi-pet unknown).
+      if (!a || !b) {
+        if (!a && !b) {
+          adj[i].push(j);
+          adj[j].push(i);
+        }
+        continue;
+      }
+      if (scheduledIntervalsClumped(a.start, a.end, b.start, b.end)) {
+        adj[i].push(j);
+        adj[j].push(i);
+      }
+    }
+  }
+  const visited = new Array(n).fill(false);
+  const clumps: { appt: DoctorDayAppt; index: number }[][] = [];
+  for (let i = 0; i < n; i++) {
+    if (visited[i]) continue;
+    const stack = [i];
+    visited[i] = true;
+    const clump: { appt: DoctorDayAppt; index: number }[] = [];
+    while (stack.length) {
+      const u = stack.pop()!;
+      clump.push(bucket[u]!);
+      for (const v of adj[u]!) {
+        if (!visited[v]) {
+          visited[v] = true;
+          stack.push(v);
+        }
+      }
+    }
+    clump.sort((x, y) => x.index - y.index);
+    clumps.push(clump);
+  }
+  return clumps;
+}
+
+function householdFromApptClump(
+  clump: { appt: DoctorDayAppt; index: number }[],
+  lat: number,
+  lon: number,
+  hasGeo: boolean,
+  addrKey: string | null,
+  idPart: string
+): SchedulerDriveHousehold {
+  const first = clump[0]!;
+  const a0 = first.appt;
+  const groupKey = householdGroupKey(a0, lat, lon, addrKey, idPart, hasGeo);
+  const isPersonalBlock = isBlockEntry({ ...a0, key: groupKey });
+  const initialKey = hasGeo ? keyFor(lat, lon, 6) : addrKey ? `addr:${addrKey}` : `noloc:${idPart}`;
+
+  let startIso: string | null = null;
+  let endIso: string | null = null;
+  let isPreview = false;
+  const patients: PatientBadge[] = [];
+  const sourceAppointmentIds: (string | number)[] = [];
+  let primary = a0;
+  let firstApptIndex = first.index;
+  let windowStartIso: string | undefined;
+  let windowEndIso: string | undefined;
+  let effectiveWindow: { startIso: string; endIso: string } | undefined;
+
+  for (const { appt: a, index: idx } of clump) {
+    firstApptIndex = Math.min(firstApptIndex, idx);
+    const s = getStartISO(a);
+    const e = getEndISO(a);
+    const sDt = s ? DateTime.fromISO(s) : null;
+    const eDt = e ? DateTime.fromISO(e) : null;
+    if (sDt?.isValid && (!startIso || sDt < DateTime.fromISO(startIso))) startIso = sDt.toISO();
+    if (eDt?.isValid && (!endIso || eDt > DateTime.fromISO(endIso))) endIso = eDt.toISO();
+    if ((a as { isPreview?: boolean }).isPreview === true) {
+      isPreview = true;
+      primary = a;
+    }
+    if (!isPersonalBlock) {
+      const patient = makePatientBadge(a);
+      const exists = patients.some((p) => p.name === patient.name && p.type === patient.type);
+      if (!exists) patients.push(patient);
+    }
+    const apptId = (a as { id?: string | number }).id;
+    if (apptId != null) sourceAppointmentIds.push(apptId);
+    const ew = (a as { effectiveWindow?: { startIso?: string; endIso?: string } }).effectiveWindow;
+    if (ew?.startIso && ew?.endIso) {
+      if (!effectiveWindow) {
+        effectiveWindow = { startIso: ew.startIso, endIso: ew.endIso };
+        windowStartIso = ew.startIso;
+        windowEndIso = ew.endIso;
+      } else {
+        const w0 = DateTime.fromISO(effectiveWindow.startIso);
+        const w1 = DateTime.fromISO(effectiveWindow.endIso);
+        const n0 = DateTime.fromISO(ew.startIso);
+        const n1 = DateTime.fromISO(ew.endIso);
+        if (n0.isValid && (!w0.isValid || n0 < w0)) effectiveWindow.startIso = ew.startIso;
+        if (n1.isValid && (!w1.isValid || n1 > w1)) effectiveWindow.endIso = ew.endIso;
+        windowStartIso = effectiveWindow.startIso;
+        windowEndIso = effectiveWindow.endIso;
+      }
+    }
+  }
+
+  return {
+    key: initialKey,
+    client: isBlockEntry(a0) ? blockDisplayLabel(a0) : clientDisplayName(a0),
+    address: formatAddress(a0),
+    lat,
+    lon,
+    startIso,
+    endIso,
+    windowStartIso,
+    windowEndIso,
+    isNoLocation: !hasGeo,
+    isPersonalBlock,
+    isPreview,
+    patients: isPersonalBlock ? [] : patients,
+    primary,
+    effectiveWindow,
+    firstApptIndex,
+    sourceAppointmentIds,
+  };
+}
+
 function buildHouseholdsWithSourceIds(appts: DoctorDayAppt[]): SchedulerDriveHousehold[] {
-  const m = new Map<string, SchedulerDriveHousehold>();
+  type BucketItem = { appt: DoctorDayAppt; index: number };
+  type LocMeta = {
+    lat: number;
+    lon: number;
+    hasGeo: boolean;
+    addrKey: string | null;
+    idPart: string;
+    items: BucketItem[];
+  };
+  const buckets = new Map<string, LocMeta>();
+
   for (const [idx, a] of appts.entries()) {
     const rawLat = num(a, 'lat');
     const rawLon = num(a, 'lon');
@@ -317,56 +485,29 @@ function buildHouseholdsWithSourceIds(appts: DoctorDayAppt[]): SchedulerDriveHou
     const addrKey = hasGeo ? null : addressKeyForAppt(a);
     const idPart = (a as any)?.id != null ? String((a as any).id) : String(idx);
     const groupKey = householdGroupKey(a, lat, lon, addrKey, idPart, hasGeo);
-    const isPersonalBlock = isBlockEntry({ ...a, key: groupKey });
-    const isPreview = (a as any)?.isPreview === true;
-    const patient = makePatientBadge(a);
-    const effectiveWindow = (a as any)?.effectiveWindow;
-    const windowStartIso = effectiveWindow?.startIso ?? null;
-    const windowEndIso = effectiveWindow?.endIso ?? null;
-    const apptId = (a as any)?.id;
+    let bucket = buckets.get(groupKey);
+    if (!bucket) {
+      bucket = { lat, lon, hasGeo, addrKey, idPart, items: [] };
+      buckets.set(groupKey, bucket);
+    }
+    bucket.items.push({ appt: a, index: idx });
+  }
 
-    if (!m.has(groupKey)) {
-      const initialKey = hasGeo ? keyFor(lat, lon, 6) : addrKey ? `addr:${addrKey}` : `noloc:${idPart}`;
-      m.set(groupKey, {
-        key: initialKey,
-        client: isBlockEntry(a) ? blockDisplayLabel(a) : clientDisplayName(a),
-        address: formatAddress(a),
-        lat,
-        lon,
-        startIso: getStartISO(a) ?? null,
-        endIso: getEndISO(a) ?? null,
-        windowStartIso: windowStartIso ?? undefined,
-        windowEndIso: windowEndIso ?? undefined,
-        isNoLocation: !hasGeo,
-        isPersonalBlock,
-        isPreview,
-        patients: isPersonalBlock ? [] : [patient],
-        primary: a,
-        effectiveWindow: (() => {
-          const ew = (a as any)?.effectiveWindow;
-          return ew?.startIso && ew?.endIso ? { startIso: ew.startIso, endIso: ew.endIso } : undefined;
-        })(),
-        firstApptIndex: idx,
-        sourceAppointmentIds: apptId != null ? [apptId] : [],
-      });
-    } else {
-      const h = m.get(groupKey)!;
-      h.firstApptIndex = Math.min(h.firstApptIndex ?? idx, idx);
-      const s = getStartISO(a);
-      const e = getEndISO(a);
-      const sDt = s ? DateTime.fromISO(s) : null;
-      const eDt = e ? DateTime.fromISO(e) : null;
-      if (sDt && (!h.startIso || sDt < DateTime.fromISO(h.startIso))) h.startIso = sDt.toISO();
-      if (eDt && (!h.endIso || eDt > DateTime.fromISO(h.endIso))) h.endIso = eDt.toISO();
-      if (!h.isPersonalBlock) {
-        const exists = h.patients.some((p) => p.name === patient.name && p.type === patient.type);
-        if (!exists) h.patients.push(patient);
-      }
-      if (isPreview) h.isPreview = true;
-      if (apptId != null) h.sourceAppointmentIds.push(apptId);
+  const list: SchedulerDriveHousehold[] = [];
+  for (const meta of buckets.values()) {
+    const clumps = splitApptsByScheduledTimeClumps(meta.items);
+    for (const clump of clumps) {
+      const idPart =
+        (clump[0]!.appt as { id?: string | number }).id != null
+          ? String((clump[0]!.appt as { id?: string | number }).id)
+          : meta.idPart;
+      list.push(
+        householdFromApptClump(clump, meta.lat, meta.lon, meta.hasGeo, meta.addrKey, idPart)
+      );
     }
   }
-  const list = Array.from(m.values()).sort((a, b) => {
+
+  list.sort((a, b) => {
     if (a.firstApptIndex != null && b.firstApptIndex != null) {
       return a.firstApptIndex - b.firstApptIndex;
     }
@@ -396,12 +537,13 @@ export type SchedulerDriveRoutingPreviewOptions = {
   rescheduleIntent?: RoutingRescheduleIntentV1 | null;
 };
 
-/** Drop visits being rescheduled from doctor-day simulation (server `loadDoctorDay` parity). */
+/** Drop visits being rescheduled from doctor-day simulation (server `loadDoctorDay` parity).
+ * Explore Alternatives keeps the originals (new stop is additive). */
 export function omitRescheduleTargetsFromDoctorDayAppts(
   appts: DoctorDayAppt[],
   intent: RoutingRescheduleIntentV1 | null | undefined
 ): DoctorDayAppt[] {
-  if (!intent) return appts;
+  if (!intent || intent.exploreAlternatives) return appts;
   const omit = new Set(rescheduleScopeTargets(intent).appointmentIds);
   if (omit.size === 0) return appts;
   return appts.filter((a) => {

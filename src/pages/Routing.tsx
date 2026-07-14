@@ -55,7 +55,7 @@ import {
   parseCoordinate,
 } from '../utils/verifiedAddress';
 import { fetchPrimaryProviders } from '../api/employee';
-import { lookupClientZoneForAddress, clientZoneLookupIsOutOfServiceArea, type ClientZoneLookupResult } from '../api/zoneLookup';
+import { lookupClientZoneForAddress, type ClientZoneLookupResult } from '../api/zoneLookup';
 import {
   fetchVeterinariansForDoctorSelect,
   findDoctorsNotAssignedToClientZone,
@@ -105,6 +105,7 @@ import {
   resolveRescheduleIntentDoctorPimsId,
   rescheduleScopeTargets,
   rescheduleIntentUsesAlternateAddress,
+  rescheduleIntentDefaultDateRange,
   routingAddressesMatch,
   routingClientPickWouldReplaceAlternate,
   ROUTING_RESCHEDULE_INTENT_UPDATED_EVENT,
@@ -633,9 +634,6 @@ type Doctor = {
 // =========================
 
 const DOCTORS_SEARCH_URL = '/employees/search';
-
-const ROUTING_ASAP_OOSA_TOOLTIP =
-  'Unavailable for out-of-service-area (OOSA) addresses. ASAP searches doctors assigned to the address zone—use Best fit across doctors under Scheduling Preferences instead.';
 
 function buildDoctorName(emp: any, fallback?: string): string {
   const parts: string[] = [];
@@ -1433,6 +1431,43 @@ function EdgeChip({ first, last }: { first?: boolean; last?: boolean }) {
       {text}
     </span>
   );
+}
+
+/** Reschedule / Alternatives: badge when the candidate is on the original appointment's calendar day. */
+function SameDayChip() {
+  return (
+    <span
+      style={{
+        background: '#dbeafe',
+        color: '#1d4ed8',
+        padding: '2px 8px',
+        borderRadius: 999,
+        fontSize: Math.round(12 * ROUTING_RESULT_FONT_SCALE),
+        fontWeight: 700,
+        letterSpacing: 0.3,
+      }}
+      title="Same calendar day as the original appointment"
+    >
+      SAME DAY
+    </span>
+  );
+}
+
+function routingOptionIsSameDayAsReschedule(
+  optDate: string | undefined,
+  intent: { practiceDateKey?: string; originalStartIso?: string } | null | undefined,
+  practiceTz: string
+): boolean {
+  const optKey = String(optDate ?? '').trim().slice(0, 10);
+  if (!optKey || !intent) return false;
+  let originalKey = intent.practiceDateKey?.trim().slice(0, 10) || '';
+  if (!originalKey && intent.originalStartIso?.trim()) {
+    const local = DateTime.fromISO(intent.originalStartIso.trim(), { zone: 'utc' }).setZone(
+      practiceTz
+    );
+    if (local.isValid) originalKey = local.toISODate() ?? '';
+  }
+  return Boolean(originalKey && optKey === originalKey);
 }
 
 /** "HH:mm" or "HH:mm:ss" → seconds since midnight */
@@ -2249,19 +2284,29 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     [hasActiveRescheduleIntent, rescheduleOriginalVisitForCompare]
   );
 
+  const exploreAlternativesMode = Boolean(activeRescheduleIntent?.exploreAlternatives);
+
   const rescheduleModeSummary = useMemo(() => {
     const ri = activeRescheduleIntent;
     if (!ri) return null;
+    const explore = Boolean(ri.exploreAlternatives);
     const client = ri.clientDisplayLabel?.trim() || 'this household';
+    const lookingFor = (who: string) =>
+      explore ? `Looking for other appointments for ${who}` : `Moving ${who}`;
     if (selectedRoutingPatientIds.length > 0 && routingClientPatients.length > 0) {
       const names = routingClientPatients
         .filter((p) => selectedRoutingPatientIdSet.has(String(p.id)))
         .map((p) => p.name);
-      if (names.length === 1) return `Moving ${names[0]} (${client})`;
-      if (names.length > 1) return `Moving ${names.join(', ')} (${client})`;
+      if (names.length === 1) return lookingFor(`${names[0]} (${client})`);
+      if (names.length > 1) return lookingFor(`${names.join(', ')} (${client})`);
     }
     if (rescheduleScope === 'household_day') {
       const n = ri.sameDayVisits?.length ?? 0;
+      if (explore) {
+        return n > 1
+          ? `Looking for other appointments for all ${n} pets at ${client} scheduled today`
+          : lookingFor(client);
+      }
       return n > 1
         ? `Moving all ${n} pets at ${client} scheduled today`
         : `Moving ${client}`;
@@ -2269,12 +2314,21 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     if (rescheduleScope === 'selected_pet') {
       const visit = ri.sameDayVisits?.find((v) => v.patientId === ri.patientId);
       const pet = visit?.patientName?.trim();
+      if (explore) {
+        return pet
+          ? lookingFor(`${pet} (${client})`)
+          : `Looking for other appointments for one pet at ${client}`;
+      }
       return pet ? `Moving ${pet} (${client})` : `Moving one pet at ${client}`;
     }
     if (showRescheduleScopeField && selectedRoutingPatientIds.length === 0) {
-      return `Moving ${client} — click the pets to reschedule below`;
+      return explore
+        ? `Looking for other appointments for ${client} — click the pets below`
+        : `Moving ${client} — click the pets to reschedule below`;
     }
-    return `Moving a visit for ${client}`;
+    return explore
+      ? `Looking for other appointments for ${client}`
+      : `Moving a visit for ${client}`;
   }, [
     activeRescheduleIntent,
     rescheduleScope,
@@ -2381,6 +2435,15 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       setForm((f) => ({
         ...f,
         ...(pimsDoc ? { doctorId: pimsDoc } : {}),
+        ...(() => {
+          const range = rescheduleIntentDefaultDateRange(
+            intent,
+            DEFAULT_PRACTICE_TIMEZONE
+          );
+          return range
+            ? { startDate: range.startDate, endDate: range.endDate }
+            : {};
+        })(),
         newAppt: {
           ...f.newAppt,
           serviceMinutes:
@@ -2388,29 +2451,67 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
         },
       }));
 
-      let syncedClient: Client | null = null;
-      try {
-        const raw = await fetchClientByIdStaff(intent.clientId);
-        if (cancelled) return;
-        syncedClient = staffRecordToRoutingClient(raw);
-        if (syncedClient) {
-          const alt = intent.isAlternateStop
-            ? intent.alternateAddressText?.trim() || intent.address?.trim() || ''
-            : '';
-          pickClientRef.current(syncedClient, alt ? { alternateAddress: alt } : undefined);
-        }
-      } catch {
-        /* fall back to label only */
-      }
+      const rescheduleClientId = intent.clientId?.trim();
+      const rescheduleAddressOnly =
+        !rescheduleClientId && rescheduleIntentUsesAlternateAddress(intent);
 
-      if (!syncedClient && !cancelled) {
-        const label = intent.clientDisplayLabel?.trim();
-        if (label) {
-          setClientQuery(label);
+      let syncedClient: Client | null = null;
+      if (rescheduleAddressOnly) {
+        const addr = intent.alternateAddressText?.trim() || intent.address?.trim() || '';
+        if (addr) {
           setForm((f) => ({
             ...f,
-            newAppt: { ...f.newAppt, clientId: intent.clientId },
+            newAppt: {
+              ...f.newAppt,
+              address: addr,
+              clientId: undefined,
+              lat: undefined,
+              lon: undefined,
+            },
           }));
+          setRoutingAddressFields(addressFieldsFromFreeText(addr));
+          setAddressError(null);
+          linkedClientHomeAddressRef.current = null;
+          const label = intent.clientDisplayLabel?.trim();
+          if (label) setClientQuery(label);
+          try {
+            const geo = await geocodeRoutingAddressText(addr);
+            if (!cancelled && geo.ok) {
+              setForm((f) => ({
+                ...f,
+                newAppt: { ...f.newAppt, address: geo.address, lat: geo.lat, lon: geo.lon },
+              }));
+              setRoutingAddressFields(addressFieldsFromRoutingCoords(geo.address, geo.lat, geo.lon));
+              setAddressError(null);
+            }
+          } catch {
+            /* user can pick from autocomplete */
+          }
+        }
+      } else {
+        try {
+          const raw = await fetchClientByIdStaff(intent.clientId);
+          if (cancelled) return;
+          syncedClient = staffRecordToRoutingClient(raw);
+          if (syncedClient) {
+            const alt = intent.isAlternateStop
+              ? intent.alternateAddressText?.trim() || intent.address?.trim() || ''
+              : '';
+            pickClientRef.current(syncedClient, alt ? { alternateAddress: alt } : undefined);
+          }
+        } catch {
+          /* fall back to label only */
+        }
+
+        if (!syncedClient && !cancelled) {
+          const label = intent.clientDisplayLabel?.trim();
+          if (label) {
+            setClientQuery(label);
+            setForm((f) => ({
+              ...f,
+              newAppt: { ...f.newAppt, clientId: intent.clientId },
+            }));
+          }
         }
       }
 
@@ -2442,8 +2543,10 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
 
       const flashFields: RoutingPrefillFlashField[] = [];
       if (pimsDoc) flashFields.push('doctor');
-      if (syncedClient || intent.clientDisplayLabel?.trim()) flashFields.push('client');
-      if (intent.isAlternateStop && intent.alternateAddressText?.trim()) flashFields.push('address');
+      if (!rescheduleAddressOnly && (syncedClient || intent.clientDisplayLabel?.trim()))
+        flashFields.push('client');
+      if (rescheduleAddressOnly || (intent.isAlternateStop && intent.alternateAddressText?.trim()))
+        flashFields.push('address');
       if (intent.serviceMinutes > 0) flashFields.push('minutes');
       if (typeName || (tid != null && Number.isFinite(Number(tid)))) flashFields.push('apptType');
       if (flashFields.length > 0) triggerRoutingPrefillFlash(flashFields);
@@ -2456,7 +2559,15 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
 
       setResult(null);
       setFeedbackError(null);
-      setFeedbackToast('Reschedule: client loaded. Run routing, open My Week, then confirm the new time.');
+      setFeedbackToast(
+        intent.exploreAlternatives
+          ? rescheduleAddressOnly
+            ? 'Alternatives: visit address loaded. Run routing, open My Week, then book another time — the current appointment stays.'
+            : 'Alternatives: client loaded. Run routing, open My Week, then book another time — the current appointment stays.'
+          : rescheduleAddressOnly
+            ? 'Reschedule: visit address loaded (no client linked). Run routing, open My Week, then confirm the new time.'
+            : 'Reschedule: client loaded. Run routing, open My Week, then confirm the new time.'
+      );
       markRescheduleIntentAppliedToRoutingForm();
       void fetchAndCacheRescheduleSourcePlacementSnapshot(intent).then(() => {
         if (!cancelled) setSourceScoreTick((n) => n + 1);
@@ -3227,6 +3338,9 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       payload.rescheduleAppointmentId = targets.appointmentIds[0];
       payload.rescheduleAppointmentIds =
         targets.appointmentIds.length > 0 ? targets.appointmentIds : [rescheduleRow.appointmentId];
+      if (rescheduleRow.exploreAlternatives) {
+        payload.exploreAlternatives = true;
+      }
       payload.reschedulePatientId = targets.patientId;
       if (targets.visits.length > 0) {
         payload.previewPatients = targets.visits.map((v) => ({
@@ -3315,10 +3429,16 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       if (!shouldWarnHouseholdVisitsOnRoutingSearch({ clientId })) return [];
 
       const ri = readRoutingRescheduleIntent();
-      const excludeAppointmentIds =
-        ri?.appointmentId != null && Number.isFinite(Number(ri.appointmentId))
-          ? [Number(ri.appointmentId)]
-          : [];
+      // Exclude every visit we're moving (all selected household pets), not just the anchor.
+      const excludeAppointmentIds = (() => {
+        if (!ri) return [] as number[];
+        const targets = rescheduleTargetsForChipSelection(ri, selectedRoutingPatientIds);
+        return [
+          ...new Set(
+            targets.appointmentIds.filter((id) => Number.isFinite(Number(id)) && Number(id) > 0),
+          ),
+        ];
+      })();
 
       return findHouseholdScheduledVisitConflicts({
         practiceId: ROUTING_PRACTICE_ID,
@@ -3330,7 +3450,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
         excludeAppointmentIds,
       });
     },
-    [householdVisitClientId, routingAppointmentTypes],
+    [householdVisitClientId, routingAppointmentTypes, selectedRoutingPatientIds],
   );
 
   const applyHouseholdVisitBanner = useCallback(
@@ -3664,12 +3784,6 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       alive = false;
     };
   }, [routingAddressVerified, form.newAppt.address, form.newAppt.lat, form.newAppt.lon, addressError]);
-
-  useEffect(() => {
-    if (clientZoneLookupIsOutOfServiceArea(addressZone) && asapAllDoctorSearch) {
-      setAsapAllDoctorSearch(false);
-    }
-  }, [addressZone, asapAllDoctorSearch]);
 
   // Geocode client-prefilled or restored addresses that lack coordinates.
   useEffect(() => {
@@ -4634,7 +4748,10 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
           if (conflicts.length > 0) {
             applyHouseholdVisitBanner(clientId, conflicts);
             const alreadyAcked = isRoutingHouseholdVisitAcked(clientId);
-            if (!alreadyAcked) {
+            // Alternatives: staff already knows about the current booking — badge is enough.
+            const skipBlockingModal =
+              Boolean(readRoutingRescheduleIntent()?.exploreAlternatives);
+            if (!alreadyAcked && !skipBlockingModal) {
               householdVisitLastFocusRef.current = null;
               setHouseholdVisitConfirm({
                 conflicts,
@@ -4829,9 +4946,6 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     const endpoint = '/routing/v2';
 
     if (asapAllDoctorSearch) {
-      if (clientZoneLookupIsOutOfServiceArea(addressZoneRef.current)) {
-        return;
-      }
       setPendingEndpoint(endpoint);
       setPendingAsapAllDoctorSearch(true);
       setShowDoctorSelectionModal(true);
@@ -5169,7 +5283,9 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
         <div className="routing-route-form-header">
           <h2 className="routing-route-form-title">Get Best Route</h2>
           {hasActiveRescheduleIntent ? (
-            <span className="routing-reschedule-mode-badge">Rescheduling</span>
+            <span className="routing-reschedule-mode-badge">
+              {exploreAlternativesMode ? 'Alternatives' : 'Rescheduling'}
+            </span>
           ) : hasActiveForwardBookingWorkspace ? (
             <span className="routing-forward-booking-mode-badge">Forward booking</span>
           ) : hasActiveAppointmentRequestWorkspace ? (
@@ -5242,23 +5358,10 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
             </div>
           </Field>
 
-          <label
-            className={[
-              'routing-asap-all-doctor-search',
-              clientZoneLookupIsOutOfServiceArea(addressZone)
-                ? 'routing-asap-all-doctor-search--unavailable'
-                : '',
-            ]
-              .filter(Boolean)
-              .join(' ')}
-            title={
-              clientZoneLookupIsOutOfServiceArea(addressZone) ? ROUTING_ASAP_OOSA_TOOLTIP : undefined
-            }
-          >
+          <label className="routing-asap-all-doctor-search">
             <input
               type="checkbox"
               checked={asapAllDoctorSearch}
-              disabled={clientZoneLookupIsOutOfServiceArea(addressZone)}
               onChange={(e) => {
                 const checked = e.target.checked;
                 setAsapAllDoctorSearch(checked);
@@ -6355,8 +6458,16 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                       </div>
                     )}
 
-                    <div style={{ display: 'flex', gap: 8, marginBottom: 6, alignItems: 'center' }}>
+                    <div style={{ display: 'flex', gap: 8, marginBottom: 6, alignItems: 'center', flexWrap: 'wrap' }}>
                       <SlotChip slot={opt.slot ?? null} />
+                      {hasActiveRescheduleIntent &&
+                      routingOptionIsSameDayAsReschedule(
+                        opt.date,
+                        activeRescheduleIntent,
+                        DEFAULT_PRACTICE_TIMEZONE
+                      ) ? (
+                        <SameDayChip />
+                      ) : null}
                       <EdgeChip first={opt.isFirstEdge} last={opt.isLastEdge} />
                     </div>
 
