@@ -291,6 +291,7 @@ export type MembershipDiscountRecord = {
   percentOff?: number;
   amountOffCents?: number;
   duration: MembershipDiscountDuration;
+  durationInMonths?: number | null;
   maxRedemptions?: number | null;
   timesRedeemed?: number;
   expiresAt?: string | null;
@@ -323,6 +324,10 @@ export type CreateMembershipDiscountRequest = {
 export type UpdateMembershipDiscountRequest = Partial<{
   name: string;
   displayLabel: string;
+  /** Pass null to clear expiry. */
+  expiresAt: string | null;
+  /** Pass null to clear the max-redemptions cap. */
+  maxRedemptions: number | null;
   active: boolean;
   archived: boolean;
   /** Pass empty string to clear an existing code (makes it link-only again). */
