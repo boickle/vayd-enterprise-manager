@@ -188,7 +188,9 @@ export function ClientEmailHistoryModal({ open, clientId, clientLabel, onClose }
 
         const connected = (mailboxRes.mailboxes ?? []).filter((mb) => mb.connected);
         if (connected.length === 0) {
-          setError('No Gmail mailboxes are connected. Connect OAuth in Scout Email first.');
+          setError(
+            'No Gmail mailboxes are connected. Open Scout Email — shared inboxes connect automatically when configured; personal mailboxes still need OAuth once.',
+          );
           return;
         }
 

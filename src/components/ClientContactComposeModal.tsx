@@ -143,7 +143,9 @@ export function ClientContactComposeModal({
           connected[0]?.email ??
           null;
         if (!sendMailbox) {
-          throw new Error('No Gmail mailboxes are connected. Connect OAuth in Scout Email first.');
+          throw new Error(
+            'No Gmail mailboxes are connected. Open Scout Email — shared inboxes connect automatically when configured; personal mailboxes still need OAuth once.',
+          );
         }
 
         const aliases = await loadSendAsAliases(sendMailbox);

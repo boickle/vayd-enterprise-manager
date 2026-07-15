@@ -460,6 +460,7 @@ export default function GmailInbox() {
   }, [mailboxes, customMailboxes]);
 
   const connected = activeMailboxStatus?.connected === true;
+  const isServiceAccountMailbox = activeMailboxStatus?.authMode === 'service_account';
   const oauthConnectedParam = searchParams.get('connected') === '1';
   const oauthErrorParam = searchParams.get('error');
   const oauthMailboxParam = searchParams.get('mailbox')?.trim().toLowerCase() ?? null;
@@ -689,8 +690,33 @@ export default function GmailInbox() {
   const loadMailboxes = useCallback(async () => {
     const res = await fetchGmailMailboxes();
     setMailboxes(res.mailboxes);
+
+    const sharedEmails = (res.mailboxes ?? [])
+      .filter((m) => m.kind === 'shared' || m.authMode === 'service_account')
+      .map((m) => m.email.toLowerCase());
+    if (sharedEmails.length > 0) {
+      setCustomMailboxes((prev) => {
+        let changed = false;
+        const next = [...prev];
+        for (const email of sharedEmails) {
+          if (!next.includes(email)) {
+            next.push(email);
+            changed = true;
+          }
+        }
+        if (!changed) return prev;
+        saveCustomMailboxes(next);
+        return next;
+      });
+    }
+
     if (!selectedMailbox && !searchParams.get('mailbox')) {
-      setSelectedMailbox(customMailboxes[0] ?? null);
+      const defaultMb =
+        res.defaultMailbox ??
+        sharedEmails[0] ??
+        customMailboxes[0] ??
+        null;
+      setSelectedMailbox(defaultMb);
     }
     return res;
   }, [selectedMailbox, searchParams, customMailboxes]);
@@ -937,6 +963,11 @@ export default function GmailInbox() {
   }, [connected, activeMailbox, canAccessGmailInbox, token, loadPage, loadLabels]);
 
   const handleConnect = async (mailbox: string) => {
+    const status = mailboxes.find((m) => m.email === mailbox);
+    if (status?.authMode === 'service_account') {
+      setBanner(`${mailbox} is already available via service account — no password connect needed.`);
+      return;
+    }
     try {
       const url = await fetchGmailOAuthConnectUrl(mailbox, '/schedule/email');
       window.location.assign(url);
@@ -946,6 +977,11 @@ export default function GmailInbox() {
   };
 
   const handleDisconnect = async (mailbox: string) => {
+    const status = mailboxes.find((m) => m.email === mailbox);
+    if (status?.authMode === 'service_account') {
+      setError(`${mailbox} uses service-account access and cannot be disconnected.`);
+      return;
+    }
     try {
       await disconnectGmail(mailbox);
       await loadMailboxes();
@@ -975,12 +1011,17 @@ export default function GmailInbox() {
     setAddMailboxError(null);
     setShowAddMailbox(false);
     selectMailbox(email);
-    void handleConnect(email);
+    const alreadySa = mailboxes.some(
+      (m) => m.email === email && m.authMode === 'service_account' && m.connected
+    );
+    if (!alreadySa) {
+      void handleConnect(email);
+    }
   };
 
   const handleRemoveCustomMailbox = async (email: string) => {
     const status = mailboxes.find((m) => m.email === email);
-    if (status?.connected) {
+    if (status?.connected && status.authMode !== 'service_account') {
       try {
         await handleDisconnect(email);
       } catch {
@@ -1828,7 +1869,9 @@ export default function GmailInbox() {
         <div className="gmail-inbox__banner">
           <span>
             Connect <strong>{activeMailbox}</strong> to view this inbox. When Google asks you to
-            sign in, choose <strong>{activeMailbox}</strong>.
+            sign in, choose <strong>{activeMailbox}</strong> (personal VAYD accounts only —
+            shared inboxes like info@ / field@ no longer need a shared password when the service
+            account is configured).
           </span>
           <div className="gmail-inbox__banner-actions">
             <button
@@ -1842,7 +1885,7 @@ export default function GmailInbox() {
         </div>
       ) : null}
 
-      {connected && activeMailboxStatus?.mailboxMismatch ? (
+      {connected && activeMailboxStatus?.mailboxMismatch && !isServiceAccountMailbox ? (
         <div className="gmail-inbox__banner gmail-inbox__banner--error">
           <span>
             Connected as <strong>{activeMailboxStatus.grantedEmail}</strong>, but this tab expects{' '}
@@ -1968,7 +2011,7 @@ export default function GmailInbox() {
             <RefreshCw size={14} style={{ verticalAlign: -2, marginRight: 4 }} aria-hidden />
             Refresh
           </button>
-          {connected && activeMailbox ? (
+          {connected && activeMailbox && !isServiceAccountMailbox ? (
             <button
               type="button"
               className="gmail-btn"
@@ -1976,7 +2019,7 @@ export default function GmailInbox() {
             >
               Disconnect
             </button>
-          ) : activeMailbox ? (
+          ) : !connected && activeMailbox ? (
             <button
               type="button"
               className="gmail-btn gmail-btn--primary"

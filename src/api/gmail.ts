@@ -5,6 +5,8 @@ export type GmailMailboxStatus = {
   kind?: 'shared' | 'personal';
   displayLabel?: string;
   connected: boolean;
+  /** service_account = shared inbox via SA; oauth = personal (or legacy shared) connect. */
+  authMode?: 'service_account' | 'oauth';
   grantedEmail?: string | null;
   connectedAt?: string | null;
   tokenExpiresAt?: string | null;
