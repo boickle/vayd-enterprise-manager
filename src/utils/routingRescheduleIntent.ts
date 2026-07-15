@@ -801,8 +801,6 @@ function buildAddressOnlyRescheduleIntent(
   const originalEndIso =
     endLocal.isValid ? endLocal.toISO({ includeOffset: true }) ?? undefined : undefined;
 
-  const clientDisplayLabel = pickStr(appt.description) ?? undefined;
-
   return {
     v: 1,
     appointmentId: appt.id,
@@ -821,7 +819,6 @@ function buildAddressOnlyRescheduleIntent(
     sourceDoctorDisplayName: primaryDoctorDisplayName,
     description: appt.description ?? null,
     instructions: appt.instructions ?? null,
-    clientDisplayLabel,
     serviceMinutes: minutes,
     isAlternateStop: true,
     alternateAddressText: addressText,

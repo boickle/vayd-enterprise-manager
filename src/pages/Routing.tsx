@@ -2472,8 +2472,8 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
           setRoutingAddressFields(addressFieldsFromFreeText(addr));
           setAddressError(null);
           linkedClientHomeAddressRef.current = null;
-          const label = intent.clientDisplayLabel?.trim();
-          if (label) setClientQuery(label);
+          // Address-only holds have no client — do not put description/notes in Client.
+          setClientQuery(intent.clientDisplayLabel?.trim() || '');
           try {
             const geo = await geocodeRoutingAddressText(addr);
             if (!cancelled && geo.ok) {

@@ -8982,17 +8982,42 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               );
               return;
             }
-            let intent = buildRoutingRescheduleIntentFromAppointment(appt, {
+            const buildRescheduleOpts = {
               sameCalendarDayAppointments: rawAppointments,
               providers,
               practiceTz: PRACTICE_TZ,
               exploreAlternatives: explore,
-            });
+              allowAddressOnly: true,
+            };
+            let intent = buildRoutingRescheduleIntentFromAppointment(appt, buildRescheduleOpts);
+            // Range calendar rows often set isAlternateStop without address text — load full visit.
+            if (!intent && appointmentHasAlternateLocation(appt)) {
+              const full = await fetchAppointmentById(appt.id, { practiceId: PRACTICE_ID });
+              if (full) {
+                intent = buildRoutingRescheduleIntentFromAppointment(full, buildRescheduleOpts);
+                const text = appointmentAlternateAddressText(full);
+                if (text) {
+                  setRawAppointments((prev) => {
+                    const idx = prev.findIndex((a) => a.id === appt.id);
+                    if (idx === -1) return prev;
+                    const next = [...prev];
+                    next[idx] = {
+                      ...next[idx],
+                      ...full,
+                      alternateAddress: { addressText: text },
+                      alternateAddressText: text,
+                      isAlternateStop: true,
+                    } as Appointment;
+                    return next;
+                  });
+                }
+              }
+            }
             if (!intent) {
               fail(
                 explore
-                  ? 'This visit cannot explore alternatives here (needs client and patient, not a block).'
-                  : 'This visit cannot be rescheduled here (needs client and patient, not a block).'
+                  ? 'This visit cannot explore alternatives here (needs a linked client/patient or a visit address, not a block).'
+                  : 'This visit cannot be rescheduled here (needs a linked client/patient or a visit address, not a block).'
               );
               return;
             }
@@ -9226,19 +9251,35 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     return buildRoutingRescheduleIntentFromAppointment(contextMenu.appt, {
       sameCalendarDayAppointments: rawAppointments,
       providers,
+      allowAddressOnly: true,
     });
   }, [contextMenu, rawAppointments, providers]);
+
+  /** Range rows may flag ALT without address text; still allow the click path to fetch + build. */
+  const contextMenuMayAddressOnlyReschedule = useMemo(() => {
+    if (!contextMenu) return false;
+    if (!appointmentIsTodayOrFuture(contextMenu.appt, PRACTICE_TZ)) return false;
+    if (contextMenuRescheduleIntent) return false;
+    const appt = contextMenu.appt;
+    if ((appt as { type?: string }).type === 'block') return false;
+    if ((appt as { isBlock?: boolean }).isBlock === true) return false;
+    if ((appt as { isPersonalBlock?: boolean }).isPersonalBlock === true) return false;
+    const c = appt.client;
+    const p0 = patientsForAppointment(appt)[0];
+    if (c && c.id != null && p0 && p0.id != null) return false;
+    return appointmentHasAlternateLocation(appt);
+  }, [contextMenu, contextMenuRescheduleIntent]);
 
   const contextMenuRescheduleDisabledTitle = useMemo(() => {
     if (!contextMenu) return undefined;
     if (!appointmentIsTodayOrFuture(contextMenu.appt, PRACTICE_TZ)) {
       return 'Visits before today cannot be rescheduled here.';
     }
-    if (!contextMenuRescheduleIntent) {
-      return 'Needs a linked client and patient. Blocks cannot be rescheduled here.';
+    if (!contextMenuRescheduleIntent && !contextMenuMayAddressOnlyReschedule) {
+      return 'Needs a linked client/patient or a visit address. Blocks cannot be rescheduled here.';
     }
     return undefined;
-  }, [contextMenu, contextMenuRescheduleIntent]);
+  }, [contextMenu, contextMenuRescheduleIntent, contextMenuMayAddressOnlyReschedule]);
 
   const addAnotherPetMenuOpts = useMemo(() => {
     if (!contextMenu || !showEmployeeAddCoVisitPet) {
@@ -11136,7 +11177,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           addPetTitle={addAnotherPetMenuOpts.title}
           showSendForms={showPreApptRoomLoaderIcon(contextMenu.appt)}
           roomLoaderMenuLabel={schedulerRoomLoaderMenuLabel(contextMenu.appt.confirmStatusName)}
-          rescheduleDisabled={!contextMenuRescheduleIntent}
+          rescheduleDisabled={!contextMenuRescheduleIntent && !contextMenuMayAddressOnlyReschedule}
           rescheduleDisabledTitle={contextMenuRescheduleDisabledTitle}
           removeDisabled={isAppointmentCancelledOnPracticeCalendar(contextMenu.appt)}
           removeTitle={

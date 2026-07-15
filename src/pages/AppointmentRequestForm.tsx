@@ -25,6 +25,10 @@ import {
   type PetHandlingFields,
 } from '../components/PetHandlingNeedsPicker';
 import { getSelectedAppointmentType, EUTHANASIA_AFTERCARE_LABEL, EUTHANASIA_AFTERCARE_OPTIONS } from '../utils/petVisitQuestionUtils';
+import {
+  filterCompletedAppointmentRequestPets,
+  isAbandonedAppointmentRequestPetStub,
+} from '../utils/appointmentRequestPetCompleteness';
 import { sortAppointmentTypesForPicker } from '../utils/appointmentTypeSettings';
 import { resolveClientArrivalWindowForScheduledStart } from '../utils/appointmentArrivalWindow';
 import { DEFAULT_PRACTICE_TIMEZONE } from '../utils/practiceTimezone';
@@ -3186,10 +3190,11 @@ export default function AppointmentRequestForm() {
 
   const validateNewClientPetInfo = (newErrors: Record<string, string>) => {
     if (!isLoggedIn) {
-      if (!formData.newClientPets || formData.newClientPets.length === 0) {
+      const newClientPets = filterCompletedAppointmentRequestPets(formData.newClientPets);
+      if (newClientPets.length === 0) {
         newErrors.newClientPets = 'Please add at least one pet';
       } else {
-        formData.newClientPets.forEach((pet) => {
+        newClientPets.forEach((pet) => {
           if (!pet.name?.trim()) {
             newErrors[`newClientPet.${pet.id}.name`] = 'Pet name is required';
           }
@@ -3281,6 +3286,9 @@ export default function AppointmentRequestForm() {
     }
     if (formData.existingClientNewPets && formData.existingClientNewPets.length > 0) {
       formData.existingClientNewPets.forEach((pet) => {
+        // Blank "+ Add a new pet" stubs left unfinished should not block submit —
+        // they are stripped from the payload.
+        if (isAbandonedAppointmentRequestPetStub(pet)) return;
         if (!formData.selectedPetIds.includes(pet.id)) return;
         if (!pet.name?.trim()) {
           newErrors[`existingClientNewPet.${pet.id}.name`] = 'Pet name is required';
@@ -3380,6 +3388,26 @@ export default function AppointmentRequestForm() {
     }
   };
 
+  const pruneAbandonedExistingClientNewPetStubs = useCallback(() => {
+    setFormData((prev) => {
+      const current = prev.existingClientNewPets || [];
+      if (current.length === 0) return prev;
+      const kept = filterCompletedAppointmentRequestPets(current);
+      if (kept.length === current.length) return prev;
+      const keptIds = new Set(kept.map((p) => p.id));
+      const petSpecific = { ...(prev.petSpecificData || {}) };
+      for (const p of current) {
+        if (!keptIds.has(p.id)) delete petSpecific[p.id];
+      }
+      return {
+        ...prev,
+        existingClientNewPets: kept,
+        selectedPetIds: prev.selectedPetIds.filter((id) => keptIds.has(id) || !current.some((p) => p.id === id)),
+        petSpecificData: petSpecific,
+      };
+    });
+  }, []);
+
   const validatePage = (page: Page): boolean => {
     const newErrors: Record<string, string> = {};
 
@@ -3444,6 +3472,7 @@ export default function AppointmentRequestForm() {
     if (!validatePage(currentPage)) {
       return;
     }
+    pruneAbandonedExistingClientNewPetStubs();
 
     const isExistingClient = isLoggedIn || formData.haveUsedServicesBefore === 'Yes';
     const clientType = isExistingClient ? 'existing' : 'new';
@@ -3697,6 +3726,7 @@ export default function AppointmentRequestForm() {
   };
 
   const handleSubmit = async () => {
+    pruneAbandonedExistingClientNewPetStubs();
     if (!validatePage(currentPage)) {
       return;
     }
@@ -3880,9 +3910,13 @@ export default function AppointmentRequestForm() {
                   alerts: petAlerts.get(p.id) ?? null,
                 };
               }),
-              // New pets added by existing client (only if selected)
+              // New pets added by existing client (only if selected and not an abandoned blank stub)
               ...(formData.existingClientNewPets || [])
-                .filter(p => formData.selectedPetIds.includes(p.id))
+                .filter(
+                  (p) =>
+                    formData.selectedPetIds.includes(p.id) &&
+                    !isAbandonedAppointmentRequestPetStub(p),
+                )
                 .map(p => ({
                   id: p.id,
                   name: p.name,
@@ -3905,8 +3939,18 @@ export default function AppointmentRequestForm() {
         
         // Pet information for non-logged-in users
         petInfoText: !isLoggedIn && !formData.newClientPets?.length ? (formData.whatPets || formData.petInfo) : undefined,
-        newClientPets: formData.newClientPets && formData.newClientPets.length > 0 ? formData.newClientPets : undefined,
-        existingClientNewPets: formData.existingClientNewPets && formData.existingClientNewPets.length > 0 ? formData.existingClientNewPets : undefined,
+        newClientPets: (() => {
+          const pets = filterCompletedAppointmentRequestPets(formData.newClientPets);
+          return pets.length > 0 ? pets : undefined;
+        })(),
+        existingClientNewPets: (() => {
+          const pets = filterCompletedAppointmentRequestPets(
+            (formData.existingClientNewPets || []).filter((p) =>
+              formData.selectedPetIds.includes(p.id),
+            ),
+          );
+          return pets.length > 0 ? pets : undefined;
+        })(),
         newPetInfo: formData.newPetInfo || undefined,
         
         // All pets data (for logged-in users, include all pets even if not selected)
@@ -3940,8 +3984,8 @@ export default function AppointmentRequestForm() {
                   isSelected: formData.selectedPetIds.includes(p.id),
                 };
               }) : []),
-              // New pets added by existing client
-              ...(formData.existingClientNewPets || []).map(p => ({
+              // New pets added by existing client (omit abandoned blank stubs)
+              ...filterCompletedAppointmentRequestPets(formData.existingClientNewPets || []).map(p => ({
                 id: p.id,
                 name: p.name,
                 species: p.species,
