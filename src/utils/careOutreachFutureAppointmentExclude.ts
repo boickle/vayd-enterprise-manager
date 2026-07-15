@@ -9,17 +9,30 @@ import {
   fetchClientAppointmentsStaff,
   fetchPatientAppointmentsStaff,
 } from '../api/pimsAppointments';
+import { DateTime } from 'luxon';
+import { practiceTimeZoneOrDefault } from './practiceTimezone';
 
 const CLIENT_FETCH_CONCURRENCY = 6;
 
-function isFutureCountableAppointment(a: Appointment, asOfMs: number): boolean {
+/** Appointments that start on/after the practice-local start of the asOf day (includes rest of today). */
+function isScheduledCountableAppointment(
+  a: Appointment,
+  dayStartMs: number,
+): boolean {
   if (a.isDeleted === true || a.isActive === false) return false;
   if (a.allDay) return false;
   if (isPracticeCalendarBlockAppointment(a)) return false;
   if ((a as { isPersonalBlock?: boolean }).isPersonalBlock === true) return false;
   if (isAppointmentCancelledOnPracticeCalendar(a)) return false;
   const startMs = Date.parse(a.appointmentStart ?? '');
-  return Number.isFinite(startMs) && startMs > asOfMs;
+  return Number.isFinite(startMs) && startMs >= dayStartMs;
+}
+
+function practiceDayStartMs(asOfIso: string, practiceTz?: string): number {
+  const tz = practiceTimeZoneOrDefault(practiceTz);
+  const dt = DateTime.fromISO(asOfIso, { setZone: true });
+  const instant = dt.isValid ? dt : DateTime.now();
+  return instant.setZone(tz).startOf('day').toUTC().toMillis();
 }
 
 export function patientIdFromCareOutreachReminder(r: UnscheduledReminder): number | null {
@@ -45,33 +58,36 @@ export function clientIdFromCareOutreachReminder(r: UnscheduledReminder): string
   return null;
 }
 
-function markPatientsWithFutureAppointments(
+function markPatientsWithScheduledAppointments(
   appts: readonly Appointment[],
   patientIds: ReadonlySet<number>,
-  asOfMs: number,
+  dayStartMs: number,
   blocked: Set<number>,
 ): void {
   for (const patientId of patientIds) {
     const pid = String(patientId);
-    const hasFuture = appts.some(
-      (a) => isFutureCountableAppointment(a, asOfMs) && appointmentMatchesPatientId(a, pid),
+    const hasScheduled = appts.some(
+      (a) =>
+        isScheduledCountableAppointment(a, dayStartMs) &&
+        appointmentMatchesPatientId(a, pid),
     );
-    if (hasFuture) blocked.add(patientId);
+    if (hasScheduled) blocked.add(patientId);
   }
 }
 
 /**
- * Patient ids with a future non-canceled visit (any provider). Used to hide individual pets
- * from care outreach while leaving other household pets visible.
+ * Patient ids with a non-canceled visit starting today or later (any provider).
+ * Used to hide individual pets from care outreach while leaving other household pets visible.
  */
 export async function loadCareOutreachPatientIdsWithFutureAppointments(
   reminders: readonly UnscheduledReminder[],
   practiceId: number,
-  opts?: { asOf?: string },
+  opts?: { asOf?: string; practiceTz?: string },
 ): Promise<Set<number>> {
   const asOfIso = opts?.asOf?.trim() || new Date().toISOString();
-  const asOfMs = Date.parse(asOfIso);
-  if (!Number.isFinite(asOfMs)) return new Set();
+  const dayStartMs = practiceDayStartMs(asOfIso, opts?.practiceTz);
+  if (!Number.isFinite(dayStartMs)) return new Set();
+  const startIso = new Date(dayStartMs).toISOString();
 
   const rangeEnd = new Date(asOfIso);
   rangeEnd.setUTCFullYear(rangeEnd.getUTCFullYear() + 2);
@@ -108,11 +124,11 @@ export async function loadCareOutreachPatientIdsWithFutureAppointments(
         try {
           const appts = await fetchClientAppointmentsStaff(clientId, {
             practiceId,
-            start: asOfIso,
+            start: startIso,
             end: endIso,
             activePatientsOnly: false,
           });
-          markPatientsWithFutureAppointments(appts, patientIds, asOfMs, blocked);
+          markPatientsWithScheduledAppointments(appts, patientIds, dayStartMs, blocked);
         } catch (err) {
           console.warn('[care-outreach] future appointment check failed for client', clientId, err);
         }
@@ -128,10 +144,15 @@ export async function loadCareOutreachPatientIdsWithFutureAppointments(
         try {
           const appts = await fetchPatientAppointmentsStaff(patientId, {
             practiceId,
-            start: asOfIso,
+            start: startIso,
             end: endIso,
           });
-          markPatientsWithFutureAppointments(appts, new Set([patientId]), asOfMs, blocked);
+          markPatientsWithScheduledAppointments(
+            appts,
+            new Set([patientId]),
+            dayStartMs,
+            blocked,
+          );
         } catch (err) {
           console.warn('[care-outreach] future appointment check failed for patient', patientId, err);
         }
