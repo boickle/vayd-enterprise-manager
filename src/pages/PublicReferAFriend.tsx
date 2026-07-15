@@ -85,6 +85,7 @@ export default function PublicReferAFriend() {
         <div className="raf-hero-media" aria-hidden="true">
           <img src={HERO_IMAGE_SRC} alt="" onError={hideBrokenImage} />
         </div>
+        <div className="raf-hero-scrim" aria-hidden="true" />
         <div className="raf-hero-inner">
           <div className="raf-hero-copy">
             <span className="raf-eyebrow">Refer a Friend</span>
