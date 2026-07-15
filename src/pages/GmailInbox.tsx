@@ -694,21 +694,29 @@ export default function GmailInbox() {
     const sharedEmails = (res.mailboxes ?? [])
       .filter((m) => m.kind === 'shared' || m.authMode === 'service_account')
       .map((m) => m.email.toLowerCase());
-    if (sharedEmails.length > 0) {
-      setCustomMailboxes((prev) => {
-        let changed = false;
-        const next = [...prev];
-        for (const email of sharedEmails) {
-          if (!next.includes(email)) {
-            next.push(email);
-            changed = true;
-          }
-        }
-        if (!changed) return prev;
-        saveCustomMailboxes(next);
-        return next;
+    const allowedShared = new Set(sharedEmails);
+
+    setCustomMailboxes((prev) => {
+      let changed = false;
+      // Drop shared inboxes the API no longer allows (can_read revoked).
+      const next = prev.filter((email) => {
+        const isShared =
+          email === 'info@vetatyourdoor.com' || email === 'field@vetatyourdoor.com';
+        if (!isShared) return true;
+        if (allowedShared.has(email)) return true;
+        changed = true;
+        return false;
       });
-    }
+      for (const email of sharedEmails) {
+        if (!next.includes(email)) {
+          next.push(email);
+          changed = true;
+        }
+      }
+      if (!changed) return prev;
+      saveCustomMailboxes(next);
+      return next;
+    });
 
     if (!selectedMailbox && !searchParams.get('mailbox')) {
       const defaultMb =
