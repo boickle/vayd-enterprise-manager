@@ -90,7 +90,9 @@ function splitAddressForRoutingDoctorDay(addr?: string) {
 function buildDoctorDaySyntheticFromRoutingPreview(
   preview: RoutingCalendarPreviewPayloadV1,
   previewAppointmentType?: AppointmentType | null,
-  practiceTz = 'utc'
+  practiceTz = 'utc',
+  /** Co-visit add-pet anchor's doctor-day row — its backend-resolved geo + stop wins over client home. */
+  coVisitAnchorRow?: DoctorDayAppt | null
 ): DoctorDayAppt | null {
   const opt = preview.option;
   const startRaw = String(opt.suggestedStartIso ?? '').trim();
@@ -105,19 +107,59 @@ function buildDoctorDaySyntheticFromRoutingPreview(
     preview.clientDisplayLabel?.trim() ||
     (typeof opt.clientName === 'string' ? opt.clientName : null) ||
     'New Appointment';
+  const useAlt = Boolean(preview.routingUsesAlternateAddress && meta.address?.trim());
+  const previewPatients = preview.previewPatients ?? [];
+  const primaryPatient =
+    previewPatients.find((p) => String(p.name ?? '').trim()) ?? previewPatients[0] ?? null;
+
+  // The anchor visit is already geocoded for its (possibly alternate) stop, so inherit its
+  // coordinates/address instead of the client-home coords the draft carries. This keeps the
+  // co-visit pet on the same routed stop rather than routing to the client's home.
+  const anchorLat = coVisitAnchorRow != null ? num(coVisitAnchorRow, 'lat') : undefined;
+  const anchorLon = coVisitAnchorRow != null ? num(coVisitAnchorRow, 'lon') : undefined;
+  const anchorHasGeo =
+    typeof anchorLat === 'number' &&
+    typeof anchorLon === 'number' &&
+    Math.abs(anchorLat) > 1e-6 &&
+    Math.abs(anchorLon) > 1e-6;
 
   const synthetic: DoctorDayAppt = {
     id: SCHEDULER_ROUTING_PREVIEW_SYNTHETIC_APPT_ID,
     clientName,
-    lat: Number.isFinite(meta.lat as number) ? meta.lat : undefined,
-    lon: Number.isFinite(meta.lon as number) ? meta.lon : undefined,
-    address1: (parts.address1 ?? (typeof meta.address === 'string' ? meta.address : '')) || '',
-    city: parts.city ?? meta.city,
-    state: parts.state ?? meta.state,
-    zip: parts.zip ?? meta.zip,
+    ...(meta.clientPimsId?.trim() ? { clientPimsId: meta.clientPimsId.trim() } : {}),
+    lat: anchorHasGeo ? anchorLat : Number.isFinite(meta.lat as number) ? meta.lat : undefined,
+    lon: anchorHasGeo ? anchorLon : Number.isFinite(meta.lon as number) ? meta.lon : undefined,
+    address1:
+      (coVisitAnchorRow ? str(coVisitAnchorRow, 'address1') : undefined) ??
+      (parts.address1 ?? (typeof meta.address === 'string' ? meta.address : '')) ??
+      '',
+    city: (coVisitAnchorRow ? str(coVisitAnchorRow, 'city') : undefined) ?? parts.city ?? meta.city,
+    state: (coVisitAnchorRow ? str(coVisitAnchorRow, 'state') : undefined) ?? parts.state ?? meta.state,
+    zip: (coVisitAnchorRow ? str(coVisitAnchorRow, 'zip') : undefined) ?? parts.zip ?? meta.zip,
     startIso: start.toISO()!,
     endIso: end.toISO()!,
+    ...(primaryPatient
+      ? {
+          patientName: String(primaryPatient.name ?? '').trim() || undefined,
+          patientPimsId:
+            primaryPatient.id != null ? String(primaryPatient.id) : undefined,
+        }
+      : {}),
   };
+  if (meta.clientId?.trim()) {
+    (synthetic as DoctorDayAppt & { clientId?: string }).clientId = meta.clientId.trim();
+  }
+  const anchorAlt = coVisitAnchorRow?.isAlternateStop
+    ? (coVisitAnchorRow.alternateAddressText?.trim() ||
+        (coVisitAnchorRow.alternateAddress as { addressText?: string } | null)?.addressText?.trim() ||
+        '')
+    : '';
+  const altText = anchorAlt || (useAlt ? meta.address!.trim() : '');
+  if (altText) {
+    synthetic.isAlternateStop = true;
+    synthetic.alternateAddressText = altText;
+    synthetic.alternateAddress = { addressText: altText };
+  }
   const cz = miniZoneFromPayload((opt as { clientZone?: unknown }).clientZone);
   const ez = miniZoneFromPayload((opt as { effectiveZone?: unknown }).effectiveZone);
   if (cz) synthetic.clientZone = cz;
@@ -152,14 +194,60 @@ function buildDoctorDaySyntheticFromRoutingPreview(
   return synthetic;
 }
 
+/** Extra doctor-day rows so multi-pet co-visit previews show every pet on the household stop. */
+function buildDoctorDayCoVisitCompanionAppts(
+  preview: RoutingCalendarPreviewPayloadV1,
+  primary: DoctorDayAppt
+): DoctorDayAppt[] {
+  const patients = preview.previewPatients ?? [];
+  if (patients.length <= 1) return [];
+  const primaryName = (primary.patientName ?? '').trim().toLowerCase();
+  const primaryId = primary.patientPimsId != null ? String(primary.patientPimsId) : '';
+  const out: DoctorDayAppt[] = [];
+  let offset = 1;
+  for (const p of patients) {
+    const name = String(p.name ?? '').trim();
+    if (!name) continue;
+    const idStr = p.id != null ? String(p.id) : '';
+    if (
+      (primaryId && idStr && idStr === primaryId) ||
+      (primaryName && name.toLowerCase() === primaryName)
+    ) {
+      continue;
+    }
+    out.push({
+      ...primary,
+      id: SCHEDULER_ROUTING_PREVIEW_SYNTHETIC_APPT_ID - offset,
+      patientName: name,
+      patientPimsId: idStr || undefined,
+    });
+    offset += 1;
+  }
+  return out;
+}
+
 function injectDoctorDayAppointmentsRoutingPreview(
   appts: DoctorDayAppt[],
   preview: RoutingCalendarPreviewPayloadV1,
   previewAppointmentType?: AppointmentType | null,
-  practiceTz = 'utc'
+  practiceTz = 'utc',
+  /** Resolved before align-omit — the anchor is often removed from `appts` for the combined preview. */
+  coVisitAnchorRow?: DoctorDayAppt | null
 ): DoctorDayAppt[] {
-  const syn = buildDoctorDaySyntheticFromRoutingPreview(preview, previewAppointmentType, practiceTz);
+  const anchorId = Number(preview.manualBookDraft?.coVisitAnchorAppointmentId);
+  const anchorFromList =
+    Number.isFinite(anchorId) && anchorId > 0
+      ? appts.find((a) => Number(a.id) === anchorId) ?? null
+      : null;
+  const syn = buildDoctorDaySyntheticFromRoutingPreview(
+    preview,
+    previewAppointmentType,
+    practiceTz,
+    coVisitAnchorRow ?? anchorFromList
+  );
   if (!syn) return appts;
+  const companions = buildDoctorDayCoVisitCompanionAppts(preview, syn);
+  const inject = [syn, ...companions];
   const rawIns = preview.option.insertionIndex;
   const ins =
     typeof rawIns === 'number' && Number.isFinite(rawIns)
@@ -168,8 +256,27 @@ function injectDoctorDayAppointmentsRoutingPreview(
         ? Math.floor(Number(rawIns)) || 0
         : 0;
   const insertionIndex = Math.max(0, Math.min(appts.length, ins));
-  return [...appts.slice(0, insertionIndex), syn, ...appts.slice(insertionIndex)];
+  return [...appts.slice(0, insertionIndex), ...inject, ...appts.slice(insertionIndex)];
 }
+
+/** Hide co-visit siblings that will be time-aligned when confirming the manual-book preview. */
+export function omitManualBookCoVisitAlignFromDoctorDayAppts(
+  appts: DoctorDayAppt[],
+  preview: RoutingCalendarPreviewPayloadV1 | null | undefined
+): DoctorDayAppt[] {
+  if (!preview || preview.previewSource !== 'manual-book') return appts;
+  const ids = preview.manualBookDraft?.coVisitAlignAppointmentIds ?? [];
+  const omit = new Set(
+    ids.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0)
+  );
+  if (omit.size === 0) return appts;
+  return appts.filter((a) => {
+    if ((a as { isPreview?: boolean }).isPreview) return true;
+    const id = a.id;
+    return typeof id !== 'number' || !omit.has(id);
+  });
+}
+
 
 function normalizeAddressString(s?: string): string | null {
   if (!s) return null;
@@ -600,13 +707,24 @@ async function fetchEtaForOneDay(
                 .toISO() ?? undefined,
             }
           );
+    const previewHousehold = day.households.find(
+      (h: { isPreview?: boolean }) => h.isPreview === true
+    );
+    const candidateLat =
+      previewHousehold && Number.isFinite(previewHousehold.lat) && Math.abs(previewHousehold.lat) > 1e-6
+        ? previewHousehold.lat
+        : rp.newApptMeta?.lat;
+    const candidateLon =
+      previewHousehold && Number.isFinite(previewHousehold.lon) && Math.abs(previewHousehold.lon) > 1e-6
+        ? previewHousehold.lon
+        : rp.newApptMeta?.lon;
     const candidateSlot = buildEtaCandidateSlot(
       {
         insertionIndex: opt.insertionIndex as RoutingEtaCandidateSlotSource['insertionIndex'],
         positionInDay: opt.positionInDay as RoutingEtaCandidateSlotSource['positionInDay'],
         suggestedStartIso: opt.suggestedStartIso as string | undefined,
-        lat: rp.newApptMeta?.lat,
-        lon: rp.newApptMeta?.lon,
+        lat: candidateLat,
+        lon: candidateLon,
         serviceMinutes: rp.serviceMinutes,
         overrunSeconds: opt.overrunSeconds as RoutingEtaCandidateSlotSource['overrunSeconds'],
         validationLastEtdSec: opt.validationLastEtdSec as RoutingEtaCandidateSlotSource['validationLastEtdSec'],
@@ -873,7 +991,6 @@ export async function fetchSchedulerDoctorDayBundle(
     let appts: DoctorDayAppt[] = resp?.appointments ?? [];
     const membershipByApptId = membershipMapFromDoctorDayAppointments(appts);
     const zonesByApptId = zonesMapFromDoctorDayAppointments(appts);
-    const effectiveWindowByApptId = effectiveWindowMapFromDoctorDayAppointments(appts);
     const patientPrimaryProviderByApptId = patientPrimaryProviderMapFromDoctorDayAppointments(appts);
     const isCompleteByApptId = isCompleteMapFromDoctorDayAppointments(appts);
 
@@ -893,12 +1010,25 @@ export async function fetchSchedulerDoctorDayBundle(
       routingPreviewOpts.previewPracticeDateKey === date
     ) {
       const ri = routingPreviewOpts.rescheduleIntent ?? readRoutingRescheduleIntent();
+      // Capture before align-omit — Update-all hides the anchor, which still owns the ALT geo.
+      const anchorId = Number(
+        routingPreviewOpts.routingPreview.manualBookDraft?.coVisitAnchorAppointmentId
+      );
+      const coVisitAnchorRow =
+        Number.isFinite(anchorId) && anchorId > 0
+          ? appts.find((a) => Number(a.id) === anchorId) ?? null
+          : null;
       appts = omitRescheduleTargetsFromDoctorDayAppts(appts, ri);
+      appts = omitManualBookCoVisitAlignFromDoctorDayAppts(
+        appts,
+        routingPreviewOpts.routingPreview
+      );
       appts = injectDoctorDayAppointmentsRoutingPreview(
         appts,
         routingPreviewOpts.routingPreview,
         routingPreviewOpts.previewAppointmentType,
-        resp.timezone
+        resp.timezone,
+        coVisitAnchorRow
       );
     } else if (routingPreviewOpts?.rescheduleIntent) {
       appts = omitRescheduleTargetsFromDoctorDayAppts(appts, routingPreviewOpts.rescheduleIntent);
@@ -907,6 +1037,9 @@ export async function fetchSchedulerDoctorDayBundle(
     appts = appts.filter(
       (a) => !isAppointmentCancelledOnPracticeCalendar(a as Record<string, unknown>)
     );
+
+    // After preview/reschedule transforms so promised windows match the times we will drive/ETA.
+    const effectiveWindowByApptId = effectiveWindowMapFromDoctorDayAppointments(appts);
 
     const households = buildHouseholdsWithSourceIds(appts);
 

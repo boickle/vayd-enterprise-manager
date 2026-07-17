@@ -63,6 +63,15 @@ import {
   editVisitLinkClearsAlternateAddress,
   visitAddressForLinkMatching,
 } from '../utils/visitAddressMatch';
+import {
+  alignSiblingVisitScheduledTimes,
+  appointmentPatientLabel,
+  findHouseholdVisitsNeedingTimeAlign,
+} from '../utils/householdVisitTimeAlign';
+import {
+  HouseholdVisitTimeAlignModal,
+  type HouseholdTimeAlignChoice,
+} from '../components/HouseholdVisitTimeAlignModal';
 import './Scheduler.css';
 
 function pickStr(v: unknown): string | null {
@@ -130,7 +139,10 @@ type Props = {
   /** Practice calendar appointments — used to block duplicate pets in the same time slot. */
   practiceAppointments?: Appointment[];
   onClose: () => void;
-  onSaved: (updated?: Appointment, detail?: { routingFeedbackWarning?: string }) => void;
+  onSaved: (
+    updated?: Appointment,
+    detail?: { routingFeedbackWarning?: string; alignedAppointments?: Appointment[] }
+  ) => void;
   onViewPlacement?: (startUtc: string, endUtc: string) => void;
   /** Preview drive/windows when only the appointment type changes (times unchanged). */
   onPreviewSchedule?: (startUtc: string, endUtc: string, appointmentTypeId: number) => void;
@@ -428,6 +440,18 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
     );
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [timeAlignPrompt, setTimeAlignPrompt] = useState<{
+      siblings: Appointment[];
+      startUtc: string;
+      endUtc: string;
+    } | null>(null);
+    const pendingTimeAlignRef = useRef<{
+      startUtc: string;
+      endUtc: string;
+      tid: number;
+      pid: number;
+      tidFromPreview: number | null;
+    } | null>(null);
     const placementPreviewWasActiveRef = useRef(false);
 
     const additionalEmployeeOptions = useMemo(() => {
@@ -661,6 +685,134 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       previewKind,
     ]);
 
+    const commitSave = useCallback(
+      async (input: {
+        startUtc: string;
+        endUtc: string;
+        tid: number;
+        pid: number;
+        tidFromPreview: number | null;
+        siblingsToAlign: Appointment[] | null;
+      }) => {
+        const linkingClient = Boolean(linkSelection?.clientId?.trim());
+        setSaving(true);
+        try {
+          const editChanges = detectEditVisitChanges(
+            {
+              description: appt.description,
+              instructions: appt.instructions,
+              appointmentTypeId: appt.appointmentType?.id,
+              appointmentStart: appt.appointmentStart,
+              appointmentEnd: appt.appointmentEnd,
+            },
+            {
+              description,
+              instructions,
+              appointmentTypeId: input.tid,
+              appointmentStart: input.startUtc,
+              appointmentEnd: input.endUtc,
+            }
+          );
+          const updated = await commitEditVisit({
+            appointmentId: Number(appt.id),
+            practiceId,
+            appointmentStart: input.startUtc,
+            appointmentEnd: input.endUtc,
+            form: {
+              appointmentTypeId: input.tid,
+              primaryProviderId: input.pid,
+              additionalEmployeeIds,
+              description,
+              instructions,
+              statusName,
+              confirmStatusName,
+              isComplete,
+              allDay: appt.allDay,
+            },
+            previewAppointmentTypeId: input.tidFromPreview,
+            editedByAudit: {
+              actor: editedByActor,
+              practiceTz,
+              changes: editChanges,
+            },
+            linkClient:
+              linkingClient && linkSelection
+                ? commitLinkClientFromEditVisitSelection(appt, linkSelection, {
+                    actor: editedByActor,
+                    practiceTz,
+                  })
+                : undefined,
+            assignPatient: resolveEditVisitAssignPatient(appt, patientSelection),
+          });
+          let alignedAppointments: Appointment[] | undefined;
+          if (input.siblingsToAlign?.length) {
+            alignedAppointments = await alignSiblingVisitScheduledTimes({
+              siblings: input.siblingsToAlign,
+              startIso: input.startUtc,
+              endIso: input.endUtc,
+              practiceId,
+            });
+          }
+          let routingFeedbackWarning: string | undefined;
+          if (placementPreviewActive && typeScoreCompare?.feedbackHandoff) {
+            const fb = await submitEditVisitPreviewAcceptedFeedback(typeScoreCompare.feedbackHandoff);
+            if (!fb.submitted && fb.error) {
+              routingFeedbackWarning =
+                'Appointment saved, but routing score could not be linked. ' + fb.error;
+            }
+          }
+          onSaved(updated, {
+            ...(routingFeedbackWarning ? { routingFeedbackWarning } : {}),
+            ...(alignedAppointments?.length ? { alignedAppointments } : {}),
+          });
+          if (closeAfterSave) {
+            onClose();
+          }
+        } catch (e: unknown) {
+          setError(formatSchedulerBookingApiError(e));
+        } finally {
+          setSaving(false);
+          pendingTimeAlignRef.current = null;
+          setTimeAlignPrompt(null);
+        }
+      },
+      [
+        appt,
+        description,
+        instructions,
+        additionalEmployeeIds,
+        statusName,
+        confirmStatusName,
+        isComplete,
+        practiceId,
+        placementPreviewActive,
+        editedByActor,
+        practiceTz,
+        typeScoreCompare,
+        linkSelection,
+        patientSelection,
+        onSaved,
+        onClose,
+        closeAfterSave,
+      ]
+    );
+
+    const handleTimeAlignChoice = useCallback(
+      (choice: HouseholdTimeAlignChoice) => {
+        const pending = pendingTimeAlignRef.current;
+        const siblings = timeAlignPrompt?.siblings ?? null;
+        if (!pending) {
+          setTimeAlignPrompt(null);
+          return;
+        }
+        void commitSave({
+          ...pending,
+          siblingsToAlign: choice === 'align_all' ? siblings : null,
+        });
+      },
+      [commitSave, timeAlignPrompt]
+    );
+
     const handleSave = useCallback(async () => {
       setError(null);
       flushFormSnapshot();
@@ -732,103 +884,77 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
         return;
       }
 
-      setSaving(true);
-      try {
-        const editChanges = detectEditVisitChanges(
-          {
-            description: appt.description,
-            instructions: appt.instructions,
-            appointmentTypeId: appt.appointmentType?.id,
-            appointmentStart: appt.appointmentStart,
-            appointmentEnd: appt.appointmentEnd,
-          },
-          {
-            description,
-            instructions,
-            appointmentTypeId: tid,
-            appointmentStart: startUtc,
-            appointmentEnd: endUtc,
-          }
-        );
-        const updated = await commitEditVisit({
-          appointmentId: Number(appt.id),
-          practiceId,
+      const editChanges = detectEditVisitChanges(
+        {
+          description: appt.description,
+          instructions: appt.instructions,
+          appointmentTypeId: appt.appointmentType?.id,
+          appointmentStart: appt.appointmentStart,
+          appointmentEnd: appt.appointmentEnd,
+        },
+        {
+          description,
+          instructions,
+          appointmentTypeId: tid,
           appointmentStart: startUtc,
           appointmentEnd: endUtc,
-          form: {
-            appointmentTypeId: tid,
-            primaryProviderId: pid,
-            additionalEmployeeIds,
-            description,
-            instructions,
-            statusName,
-            confirmStatusName,
-            isComplete,
-            allDay: appt.allDay,
-          },
-          previewAppointmentTypeId: tidFromPreview,
-          editedByAudit: {
-            actor: editedByActor,
-            practiceTz,
-            changes: editChanges,
-          },
-          linkClient:
-            linkingClient && linkSelection
-              ? commitLinkClientFromEditVisitSelection(appt, linkSelection, {
-                  actor: editedByActor,
-                  practiceTz,
-                })
-              : undefined,
-          assignPatient: resolveEditVisitAssignPatient(appt, patientSelection),
-        });
-        let routingFeedbackWarning: string | undefined;
-        if (placementPreviewActive && typeScoreCompare?.feedbackHandoff) {
-          const fb = await submitEditVisitPreviewAcceptedFeedback(typeScoreCompare.feedbackHandoff);
-          if (!fb.submitted && fb.error) {
-            routingFeedbackWarning =
-              'Appointment saved, but routing score could not be linked. ' + fb.error;
-          }
         }
-        onSaved(updated, routingFeedbackWarning ? { routingFeedbackWarning } : undefined);
-        if (closeAfterSave) {
-          onClose();
+      );
+
+      if (editChanges.includes('appt_time') && !appt.allDay) {
+        const siblings = findHouseholdVisitsNeedingTimeAlign(
+          appt,
+          practiceAppointments,
+          practiceTz,
+          startUtc,
+          endUtc
+        );
+        if (siblings.length > 0) {
+          pendingTimeAlignRef.current = {
+            startUtc,
+            endUtc,
+            tid,
+            pid,
+            tidFromPreview,
+          };
+          setTimeAlignPrompt({ siblings, startUtc, endUtc });
+          return;
         }
-      } catch (e: unknown) {
-        setError(formatSchedulerBookingApiError(e));
-      } finally {
-        setSaving(false);
       }
+
+      await commitSave({
+        startUtc,
+        endUtc,
+        tid,
+        pid,
+        tidFromPreview,
+        siblingsToAlign: null,
+      });
     }, [
       appointmentTypeId,
       primaryProviderId,
-      additionalEmployeeIds,
       buildStartEndUtc,
       appt,
       description,
       instructions,
-      statusName,
-      confirmStatusName,
-      isComplete,
-      practiceId,
       placementPreviewActive,
       placementPreviewKind,
       draftPreviewAppointmentTypeId,
-      editedByActor,
-      practiceTz,
-      typeScoreCompare,
       editTypeFormFlags,
       linkSelection,
       patientSelection,
       resolvedClientId,
       visitAddressForLink,
       practiceAppointments,
-      onSaved,
-      onClose,
-      closeAfterSave,
+      practiceTz,
+      appointmentTypes,
       flushFormSnapshot,
+      commitSave,
     ]);
 
     function handleCancel() {
+      pendingTimeAlignRef.current = null;
+      setTimeAlignPrompt(null);
       onClose();
     }
 
@@ -1445,11 +1571,35 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       </div>
     );
 
+    const timeAlignModal = (
+      <HouseholdVisitTimeAlignModal
+        open={Boolean(timeAlignPrompt?.siblings.length)}
+        practiceTz={practiceTz}
+        newStartIso={timeAlignPrompt?.startUtc ?? ''}
+        newEndIso={timeAlignPrompt?.endUtc ?? ''}
+        addedPetName={appointmentPatientLabel(appt)}
+        siblings={timeAlignPrompt?.siblings ?? []}
+        saving={saving}
+        onChoose={handleTimeAlignChoice}
+        onCancel={() => {
+          if (saving) return;
+          pendingTimeAlignRef.current = null;
+          setTimeAlignPrompt(null);
+        }}
+      />
+    );
+
     if (inlinePaneMode) {
-      return <div className="scheduler-edit-inline-pane">{modalPanel}</div>;
+      return (
+        <>
+          <div className="scheduler-edit-inline-pane">{modalPanel}</div>
+          {timeAlignModal}
+        </>
+      );
     }
 
     return (
+      <>
       <div
         className={
           dockInRoutingPane
@@ -1461,6 +1611,8 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
       >
         {modalPanel}
       </div>
+      {timeAlignModal}
+      </>
     );
   }
 );

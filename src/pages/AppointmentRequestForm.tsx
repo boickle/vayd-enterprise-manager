@@ -3348,13 +3348,7 @@ export default function AppointmentRequestForm() {
     if (formData.selfScheduledSlot && !speciesAllowOnlineScheduling) {
       newErrors.selfScheduledSlot = ONLINE_BOOKING_OTHER_SPECIES_MESSAGE;
     }
-    if (
-      onlineBookingOffered &&
-      !isManualSchedulingHowSoon(formData.howSoon) &&
-      !formData.selfScheduledSlot
-    ) {
-      newErrors.selfScheduledSlot = 'Please choose an appointment time before submitting';
-    }
+    // Online booking offers a calendar, but preferred-times-only submit is always allowed.
 
     const isManualScheduling = isManualSchedulingHowSoon(formData.howSoon);
     const isNotUrgentTimeframe = formData.howSoon && !isManualScheduling;
@@ -4672,37 +4666,47 @@ export default function AppointmentRequestForm() {
     };
   }) => (
     <div
+      data-form-field="selfScheduledSlot"
       style={{
         padding: '16px',
         backgroundColor: '#f9fafb',
-        border: '1px solid #e5e7eb',
+        border: errors.selfScheduledSlot ? '2px solid #ef4444' : '1px solid #e5e7eb',
         borderRadius: '10px',
       }}
     >
-      <button
-        type="button"
-        onClick={options.onPickDate}
-        disabled={!options.hasAddress}
-        style={{
-          width: '100%',
-          padding: '14px',
-          backgroundColor: options.hasAddress ? '#0d9488' : '#e5e7eb',
-          color: options.hasAddress ? '#ffffff' : '#9ca3af',
-          border: 'none',
-          borderRadius: '10px',
-          fontSize: '15px',
-          fontWeight: 700,
-          cursor: options.hasAddress ? 'pointer' : 'not-allowed',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: '8px',
-          transition: 'background-color 0.15s',
-        }}
-      >
-        <span style={{ fontSize: 18 }}>📅</span>
-        Pick a Date &amp; Time Now
-      </button>
+      {errors.selfScheduledSlot && (
+        <div style={{ color: '#ef4444', fontSize: '12px', marginBottom: '10px' }}>
+          {errors.selfScheduledSlot}
+        </div>
+      )}
+      <div style={{ display: 'flex', justifyContent: 'center' }}>
+        <button
+          type="button"
+          onClick={options.onPickDate}
+          disabled={!options.hasAddress}
+          style={{
+            width: isMobile ? '100%' : 'auto',
+            minWidth: isMobile ? undefined : '280px',
+            padding: '12px 22px',
+            backgroundColor: options.hasAddress ? '#0d9488' : '#e5e7eb',
+            color: options.hasAddress ? '#ffffff' : '#9ca3af',
+            border: options.hasAddress ? '2px solid #0f766e' : 'none',
+            borderRadius: '8px',
+            fontSize: '15px',
+            fontWeight: 700,
+            cursor: options.hasAddress ? 'pointer' : 'not-allowed',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '8px',
+            boxShadow: options.hasAddress ? '0 2px 5px rgba(13,148,136,0.22)' : 'none',
+            transition: 'background-color 0.15s',
+          }}
+        >
+          <span style={{ fontSize: 18 }}>📅</span>
+          Pick a Date &amp; Time Now
+        </button>
+      </div>
       {!options.hasAddress && (
         <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '6px', textAlign: 'center' }}>
           {isLoggedIn ? 'Loading your address…' : 'Please enter your complete address above to choose a time.'}

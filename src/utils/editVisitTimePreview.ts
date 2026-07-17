@@ -186,6 +186,25 @@ export function applyEditTimePreviewToDoctorDayAppts(
       const ew = effectiveWindowForTypePreview(preview, draftType, practiceTz, undefined);
       if (ew) moved.effectiveWindow = ew;
     }
+  } else {
+    // Time edits must refresh the promised arrival window — spreading the original
+    // appointment kept the old ±N band around the previous start.
+    const typeName =
+      (typeof original.appointmentType === 'string' && original.appointmentType.trim()
+        ? original.appointmentType.trim()
+        : null) ||
+      preview.appointmentTypeName?.trim() ||
+      null;
+    const typeForWindow =
+      draftType ??
+      (typeName ? { name: typeName } : undefined);
+    const ew = effectiveWindowForScheduledStart(
+      preview.appointmentStart,
+      typeForWindow,
+      practiceTz,
+      { appointmentEndIso: preview.appointmentEnd }
+    );
+    if (ew) moved.effectiveWindow = ew;
   }
   (moved as { isPreview?: boolean }).isPreview = true;
 
