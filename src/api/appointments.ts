@@ -308,6 +308,16 @@ export function appointmentRemoveRequiresCancellationReason(
   return true;
 }
 
+/** True for Scout-native creates (`pimsType` VAYD / UUID pimsId) — not eVet-synced visits. */
+export function isScoutCreatedAppointment(appt: Appointment | null | undefined): boolean {
+  if (!appt) return false;
+  const pimsType = (appt as { pimsType?: string | null }).pimsType?.trim().toUpperCase() ?? '';
+  if (pimsType === 'VAYD') return true;
+  if (pimsType === 'EVET') return false;
+  const pimsId = (appt as { pimsId?: string | null }).pimsId?.trim() ?? '';
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(pimsId);
+}
+
 /** Merge cancel fields onto a row so the calendar hides it even if the API omits confirm status. */
 export function appointmentWithCancelledFields(
   row: Appointment,
@@ -375,6 +385,14 @@ export async function cancelAppointment(
   const trimmedReason = body.cancellationReason?.trim();
   const appt = opts?.appt ?? null;
   const patchOpts = opts?.practiceId != null ? { practiceId: opts.practiceId } : undefined;
+
+  // Scout-created visits (manual book / add-pet): soft-delete on Remove so they leave the range
+  // query entirely. Cancel-only left hidden rows that piled up during testing.
+  if (isScoutCreatedAppointment(appt)) {
+    await deleteAppointment(id);
+    return appointmentWithCancelledFields(appt ?? ({ id } as Appointment), trimmedReason ?? null);
+  }
+
   const basePayload: Record<string, unknown> = {
     cancellationFlag: true,
     confirmStatusName: PRACTICE_CALENDAR_CANCEL_CONFIRM_STATUS,

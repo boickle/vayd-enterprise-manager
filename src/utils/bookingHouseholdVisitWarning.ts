@@ -370,6 +370,13 @@ export async function findHouseholdScheduledVisitConflicts(args: {
       .filter((id) => Number.isFinite(id) && id > 0),
   );
 
+  const placementDateKey =
+    !isRoutingSearch && args.placementStartIso?.trim()
+      ? DateTime.fromISO(args.placementStartIso.trim(), { zone: 'utc' })
+          .setZone(practiceTimeZoneOrDefault(args.practiceTz))
+          .toISODate()
+      : null;
+
   const rows = (
     await fetchClientAppointmentsStaff(clientId, {
       practiceId: args.practiceId,
@@ -388,6 +395,15 @@ export async function findHouseholdScheduledVisitConflicts(args: {
     if (!Number.isFinite(apptId) || apptId <= 0) continue;
     if (exclude.has(apptId) || seen.has(apptId)) continue;
 
+    const practiceDateKey =
+      DateTime.fromISO(appt.appointmentStart!, { zone: 'utc' })
+        .setZone(practiceTimeZoneOrDefault(args.practiceTz))
+        .toISODate() ?? '';
+    // Same-day household visits are expected (multi-pet stop) — only warn about other days.
+    if (placementDateKey && practiceDateKey && practiceDateKey === placementDateKey) {
+      continue;
+    }
+
     const apptPatients = patientsForAppointment(appt);
     const matchedPatients = requirePatientMatch
       ? apptPatients.filter((p) => patientMatchKeys(p).some((key) => householdIds.has(key)))
@@ -402,10 +418,6 @@ export async function findHouseholdScheduledVisitConflicts(args: {
 
     seen.add(apptId);
     const points = opsPointsForAppointment(appt, args.catalog);
-    const practiceDateKey =
-      DateTime.fromISO(appt.appointmentStart!, { zone: 'utc' })
-        .setZone(practiceTimeZoneOrDefault(args.practiceTz))
-        .toISODate() ?? '';
     conflicts.push({
       appointmentId: apptId,
       patientNames:

@@ -67,7 +67,7 @@ import {
   holdHouseholdSharedSource,
   holdHouseholdWithin3BusinessDays,
   holdIsWithin3BusinessDays,
-  sortHoldHouseholdGroupsByPriority,
+  sortHoldHouseholdGroupsByAppointmentStart,
   type HoldHouseholdGroup,
   type HoldVisitSlotGroup,
 } from '../utils/holdsHousehold';
@@ -364,9 +364,8 @@ export default function HoldsPage() {
           const idSet = new Set(pending.appointmentIds);
           const exitGroupKey =
             pending.groupKey?.trim() || pendingDepartGroupKeyRef.current?.trim() || null;
-          const freshGrouped = sortHoldHouseholdGroupsByPriority(
+          const freshGrouped = sortHoldHouseholdGroupsByAppointmentStart(
             groupHoldsByClientHousehold(res.holds, PRACTICE_TZ),
-            PRACTICE_TZ,
           );
           const match =
             (exitGroupKey ? freshGrouped.find((g) => g.key === exitGroupKey) : undefined) ??
@@ -741,9 +740,8 @@ export default function HoldsPage() {
 
   const grouped = useMemo(
     () =>
-      sortHoldHouseholdGroupsByPriority(
+      sortHoldHouseholdGroupsByAppointmentStart(
         groupHoldsByClientHousehold(holds, PRACTICE_TZ),
-        PRACTICE_TZ
       ),
     [holds]
   );
@@ -826,7 +824,7 @@ export default function HoldsPage() {
       extras.push(pending);
     }
     if (extras.length === 0) return filteredGroups;
-    return sortHoldHouseholdGroupsByPriority([...filteredGroups, ...extras], PRACTICE_TZ);
+    return sortHoldHouseholdGroupsByAppointmentStart([...filteredGroups, ...extras]);
   }, [filteredGroups, exitSnapshots, exitingGroups, pendingHoldsBoardExit]);
 
   const highlightSubmissionId = useMemo(
