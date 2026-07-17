@@ -1217,3 +1217,40 @@ export function mailboxShortLabel(email: string): string {
   const local = email.split('@')[0] ?? email;
   return local.charAt(0).toUpperCase() + local.slice(1);
 }
+
+/** Admin Settings — shared inbox ACL (info@ / field@). */
+export type GmailAdminMailboxPermissionEntry = {
+  mailboxEmail: string;
+  canRead: boolean;
+  canSend: boolean;
+};
+
+export type GmailAdminMailboxPermissionsUser = {
+  userId: number;
+  email: string | null;
+  employeeId: number | null;
+  displayName: string;
+  role: string;
+  mailboxes: GmailAdminMailboxPermissionEntry[];
+};
+
+export type GmailAdminMailboxPermissionsOverview = {
+  mailboxes: Array<{ email: string; displayLabel: string }>;
+  users: GmailAdminMailboxPermissionsUser[];
+};
+
+export async function fetchGmailMailboxPermissions(): Promise<GmailAdminMailboxPermissionsOverview> {
+  const { data } = await http.get<GmailAdminMailboxPermissionsOverview>('/gmail/permissions');
+  return data;
+}
+
+export async function updateGmailMailboxPermissions(
+  userId: number,
+  mailboxes: GmailAdminMailboxPermissionEntry[],
+): Promise<{ userId: number; mailboxes: GmailAdminMailboxPermissionEntry[] }> {
+  const { data } = await http.put<{ userId: number; mailboxes: GmailAdminMailboxPermissionEntry[] }>(
+    `/gmail/permissions/${userId}`,
+    { mailboxes },
+  );
+  return data;
+}
