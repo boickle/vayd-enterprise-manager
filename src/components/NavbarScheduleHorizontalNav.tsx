@@ -226,6 +226,16 @@ function SettingsSubmenuLinks({
       >
         Employee appointment types
       </Link>
+      <Link
+        to={{ pathname: '/schedule/settings', search: '?tab=gmail-mailboxes' }}
+        className={`schedule-app__settings-link${
+          settingsTabFromLocation === 'gmail-mailboxes' ? ' schedule-app__settings-link--active' : ''
+        }`}
+        role="menuitem"
+        onClick={onNavigate}
+      >
+        Gmail mailboxes
+      </Link>
     </>
   );
 }
