@@ -344,7 +344,22 @@ export function excludePatientIdsForAddPet(
   allAppointments: Appointment[],
   practiceTz: string
 ): string[] {
-  return patientIdsInVisitClump(anchorAppt, allAppointments, practiceTz);
+  const out = new Set(patientIdsInVisitClump(anchorAppt, allAppointments, practiceTz));
+  const clientId = anchorAppt.client?.id;
+  if (clientId == null) return [...out];
+  const cid = String(clientId);
+  // Also block pets already booked elsewhere the same day (e.g. a prior add-pet that
+  // landed at home without ALT) so "Add another pet" cannot create a duplicate.
+  for (const a of allAppointments) {
+    if (!isAppointmentVisible(a)) continue;
+    if (a.allDay) continue;
+    if (a.client?.id == null || String(a.client.id) !== cid) continue;
+    if (!samePracticeDay(a.appointmentStart, anchorAppt.appointmentStart, practiceTz)) continue;
+    for (const p of patientsForAppointment(a)) {
+      if (p.id != null) out.add(String(p.id));
+    }
+  }
+  return [...out];
 }
 
 /** Routing-selected pets must remain bookable even when they overlap an existing visit at the slot. */

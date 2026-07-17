@@ -137,6 +137,10 @@ export default function MembershipStripeDiscountsPanel() {
 
   const [form, setForm] = useState(DEFAULT_FORM);
 
+  /** Amount/duration edits replace the coupon; only code-based promotions can keep their identifier
+   * (a link token always regenerates), so link-only rows are limited to metadata edits. */
+  const canEditEconomics = !editingRow || Boolean(editingRow.code);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -231,72 +235,97 @@ export default function MembershipStripeDiscountsPanel() {
       maxRedemptions = null;
     }
 
+    const effectiveDuration: MembershipDiscountDuration =
+      form.discountType === 'first_month_off' ? 'once' : form.duration;
+    const payload: CreateMembershipDiscountRequest = {
+      name: form.name.trim(),
+      displayLabel: form.displayLabel.trim() || undefined,
+      duration: effectiveDuration,
+      createLink: true,
+    };
+    const usePercent =
+      form.discountType === 'percent' ||
+      (form.discountType === 'first_month_off' && form.firstMonthOffKind === 'percent');
+
+    if (usePercent) {
+      const pct = Number(form.percentOff);
+      if (!Number.isFinite(pct) || pct <= 0 || pct > 100) {
+        setError('Enter a percent between 1 and 100.');
+        setCreating(false);
+        return;
+      }
+      payload.percentOff = pct;
+    } else {
+      const dollars = Number(form.amountOffDollars);
+      if (!Number.isFinite(dollars) || dollars <= 0) {
+        setError('Enter a positive dollar amount.');
+        setCreating(false);
+        return;
+      }
+      payload.amountOffCents = Math.round(dollars * 100);
+    }
+
+    if (form.discountType === 'first_month_off' && !form.displayLabel.trim()) {
+      payload.displayLabel =
+        payload.percentOff != null
+          ? payload.percentOff >= 100
+            ? 'First month free'
+            : `${payload.percentOff}% off your first month`
+          : `$${((payload.amountOffCents ?? 0) / 100).toFixed(2)} off your first month`;
+    }
+    if (effectiveDuration === 'repeating') {
+      const months = Number(form.durationInMonths);
+      if (!Number.isFinite(months) || months < 1) {
+        setError('Repeating discounts need duration in months (1 or more).');
+        setCreating(false);
+        return;
+      }
+      payload.durationInMonths = months;
+    }
+    if (maxRedemptions != null) payload.maxRedemptions = maxRedemptions;
+    if (expiresIso) payload.expiresAt = expiresIso;
+
+    let replacementStarted = false;
+    let replacementCreated = false;
     try {
       if (editingRow) {
-        const payload: UpdateMembershipDiscountRequest = {
-          name: form.name.trim(),
-          displayLabel: form.displayLabel.trim(),
-          expiresAt: expiresIso ?? null,
-          maxRedemptions,
-        };
-        await updateMembershipDiscount(editingRow.id, payload);
-        setSuccess(`Promotion "${form.name.trim()}" updated.`);
-      } else {
-        const effectiveDuration: MembershipDiscountDuration =
-          form.discountType === 'first_month_off' ? 'once' : form.duration;
+        // Link-only promotions can't keep their shared identifier through a replacement, so their
+        // economics are locked and only metadata is updated.
+        const economicsChanged =
+          canEditEconomics &&
+          (editingRow.duration !== payload.duration ||
+            (editingRow.percentOff ?? null) !== (payload.percentOff ?? null) ||
+            (editingRow.amountOffCents ?? null) !== (payload.amountOffCents ?? null) ||
+            (editingRow.durationInMonths ?? null) !== (payload.durationInMonths ?? null));
 
-        const payload: CreateMembershipDiscountRequest = {
-          name: form.name.trim(),
-          displayLabel: form.displayLabel.trim() || undefined,
-          duration: effectiveDuration,
-          createLink: true,
-        };
-
-        const usePercent =
-          form.discountType === 'percent' ||
-          (form.discountType === 'first_month_off' && form.firstMonthOffKind === 'percent');
-
-        if (usePercent) {
-          const pct = Number(form.percentOff);
-          if (!Number.isFinite(pct) || pct <= 0 || pct > 100) {
-            setError('Enter a percent between 1 and 100.');
-            setCreating(false);
-            return;
-          }
-          payload.percentOff = pct;
+        if (!economicsChanged) {
+          const update: UpdateMembershipDiscountRequest = {
+            name: payload.name,
+            displayLabel: payload.displayLabel ?? '',
+            expiresAt: expiresIso ?? null,
+            maxRedemptions,
+          };
+          await updateMembershipDiscount(editingRow.id, update);
+          setSuccess(`Promotion "${form.name.trim()}" updated.`);
         } else {
-          const dollars = Number(form.amountOffDollars);
-          if (!Number.isFinite(dollars) || dollars <= 0) {
-            setError('Enter a positive dollar amount.');
-            setCreating(false);
-            return;
-          }
-          payload.amountOffCents = Math.round(dollars * 100);
+          // Stripe coupon economics are immutable. Retire the old promotion and create its
+          // replacement; clearing the old code first lets the replacement retain that code.
+          replacementStarted = true;
+          await updateMembershipDiscount(editingRow.id, {
+            active: false,
+            ...(editingRow.code ? { code: '' } : {}),
+          });
+          if (editingRow.code) payload.code = editingRow.code;
+          const created = await createMembershipDiscount(payload);
+          replacementCreated = true;
+          await updateMembershipDiscount(editingRow.id, { archived: true, active: false });
+          setSuccess(
+            created.code
+              ? `Promotion replaced with the corrected offer. Code ${created.code} was kept; copy the new signup link.`
+              : 'Promotion replaced with the corrected offer. Copy the new signup link.',
+          );
         }
-
-        if (form.discountType === 'first_month_off' && !form.displayLabel.trim()) {
-          if (payload.percentOff != null) {
-            payload.displayLabel =
-              payload.percentOff >= 100
-                ? 'First month free'
-                : `${payload.percentOff}% off your first month`;
-          } else if (payload.amountOffCents != null) {
-            payload.displayLabel = `$${(payload.amountOffCents / 100).toFixed(2)} off your first month`;
-          }
-        }
-
-        if (effectiveDuration === 'repeating') {
-          const months = Number(form.durationInMonths);
-          if (!Number.isFinite(months) || months < 1) {
-            setError('Repeating discounts need duration in months (1 or more).');
-            setCreating(false);
-            return;
-          }
-          payload.durationInMonths = months;
-        }
-        if (maxRedemptions != null) payload.maxRedemptions = maxRedemptions;
-        if (expiresIso) payload.expiresAt = expiresIso;
-
+      } else {
         if (form.codeOption === 'generate') {
           payload.generateCode = true;
         } else if (form.codeOption === 'custom') {
@@ -323,10 +352,20 @@ export default function MembershipStripeDiscountsPanel() {
       setDialogOpen(false);
       await load();
     } catch (err: unknown) {
+      if (editingRow && replacementStarted && !replacementCreated) {
+        try {
+          await updateMembershipDiscount(editingRow.id, {
+            active: editingRow.active,
+            ...(editingRow.code ? { code: editingRow.code } : {}),
+          });
+        } catch {
+          // Preserve the original API error below; reload exposes any partial state.
+        }
+      }
       const msg =
         (err as { response?: { data?: { message?: string | string[] } } })?.response?.data
           ?.message ??
-        (editingRow ? 'Failed to update discount.' : 'Failed to create discount.');
+        (editingRow ? 'Failed to update promotion.' : 'Failed to create discount.');
       setError(Array.isArray(msg) ? msg.join(', ') : typeof msg === 'string' ? msg : 'Request failed.');
     } finally {
       setCreating(false);
@@ -648,15 +687,31 @@ export default function MembershipStripeDiscountsPanel() {
                 helperText="Shown on signup/payment"
               />
               {editingRow ? (
-                <Alert severity="info">
-                  Discount amount and duration are set in Stripe when created and cannot be changed
-                  here. You can still update the name, label, max redemptions, and expiration.
-                  <Box component="div" sx={{ mt: 1, fontWeight: 600 }}>
-                    {formatDiscountSummary(editingRow)} · {formatDiscountDuration(editingRow.duration)}
-                    {editingRow.code ? ` · code ${editingRow.code}` : ''}
-                  </Box>
-                </Alert>
-              ) : (
+                canEditEconomics ? (
+                  <Alert severity="info">
+                    Changing the amount or duration creates a corrected replacement because Stripe
+                    coupons cannot be edited in place. The old promotion will be archived and its
+                    code <strong>{editingRow.code}</strong> reused on the new offer. Any signup link
+                    you shared will change — re-share the new link if you sent one.
+                    <Box component="div" sx={{ mt: 1, fontWeight: 600 }}>
+                      Current: {formatDiscountSummary(editingRow)} ·{' '}
+                      {formatDiscountDuration(editingRow.duration)} · code {editingRow.code}
+                    </Box>
+                  </Alert>
+                ) : (
+                  <Alert severity="warning">
+                    This promotion is shared by link only, so its amount and duration can’t be
+                    changed here — a replacement would generate a new link and silently break the one
+                    you already shared. To change the offer, create a new promotion instead. You can
+                    still update the name, label, max redemptions, and expiration below.
+                    <Box component="div" sx={{ mt: 1, fontWeight: 600 }}>
+                      Current: {formatDiscountSummary(editingRow)} ·{' '}
+                      {formatDiscountDuration(editingRow.duration)}
+                    </Box>
+                  </Alert>
+                )
+              ) : null}
+              {canEditEconomics && (
                 <>
               <FormControl size="small">
                 <InputLabel id="discount-type-label">Discount type</InputLabel>

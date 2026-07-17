@@ -61,6 +61,7 @@ function isBucketTab(tab: TabId): tab is AssignedTasksTab {
 const EMPTY_SUMMARY: TaskSummaryResponse = {
   assigned: { active: 0, expired: 0, upcoming: 0, total: 0 },
   watching: { active: 0, expired: 0, upcoming: 0, total: 0 },
+  myBranchIds: [],
 };
 
 function normalizeRoles(role: string | string[] | undefined): string[] {
@@ -929,6 +930,7 @@ export default function PimsTasksPage() {
       {createOpen && (
         <CreateTaskModal
           branches={branches}
+          myBranchIds={taskSummary.myBranchIds ?? []}
           employees={employees}
           isPracticeAdmin={isPracticeAdmin}
           onClose={() => setCreateOpen(false)}
@@ -980,13 +982,22 @@ function TaskLinkInline({
 
 type ModalProps = {
   branches: PracticeBranch[];
+  /** Branches the signed-in employee belongs to (from /tasks/summary). */
+  myBranchIds: number[];
   employees: Employee[];
   isPracticeAdmin: boolean;
   onClose: () => void;
   onCreated: (id: number) => void;
 };
 
-function CreateTaskModal({ branches, employees, isPracticeAdmin, onClose, onCreated }: ModalProps) {
+function CreateTaskModal({
+  branches,
+  myBranchIds,
+  employees,
+  isPracticeAdmin,
+  onClose,
+  onCreated,
+}: ModalProps) {
   const { token } = useAuth();
   const practiceId = useMemo(() => resolvePracticeIdFromToken(token), [token]);
   const [title, setTitle] = useState('');
@@ -1005,7 +1016,14 @@ function CreateTaskModal({ branches, employees, isPracticeAdmin, onClose, onCrea
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
-  const activeBranches = useMemo(() => branches.filter((b) => b.isActive !== false), [branches]);
+  const selectableBranches = useMemo(() => {
+    const active = branches.filter((b) => b.isActive !== false);
+    if (isPracticeAdmin) return active;
+    if (myBranchIds.length === 0) return active;
+    const allowed = new Set(myBranchIds);
+    const mine = active.filter((b) => allowed.has(b.id));
+    return mine.length > 0 ? mine : active;
+  }, [branches, isPracticeAdmin, myBranchIds]);
 
   useEffect(() => {
     if (dueStartMode === 'today') {
@@ -1020,13 +1038,13 @@ function CreateTaskModal({ branches, employees, isPracticeAdmin, onClose, onCrea
   }, [dueAmount, dueUnit, dueStartMode]);
 
   useEffect(() => {
-    if (activeBranches.length === 1) {
-      setBranchSel({ [activeBranches[0].id]: true });
+    if (selectableBranches.length === 1) {
+      setBranchSel({ [selectableBranches[0].id]: true });
     }
-  }, [activeBranches]);
+  }, [selectableBranches]);
 
   const submit = async () => {
-    const selectedBranchIds = activeBranches.filter((b) => branchSel[b.id]).map((b) => b.id);
+    const selectedBranchIds = selectableBranches.filter((b) => branchSel[b.id]).map((b) => b.id);
     if (!title.trim()) {
       setFormError('Enter a task title');
       return;
@@ -1259,7 +1277,7 @@ function CreateTaskModal({ branches, employees, isPracticeAdmin, onClose, onCrea
           <div className="pims-tasks__modal-field">
             <span>Branches</span>
             <div className="pims-tasks__checks">
-              {activeBranches.map((b) => (
+              {selectableBranches.map((b) => (
                 <label key={b.id} className="pims-tasks__check">
                   <input
                     type="checkbox"

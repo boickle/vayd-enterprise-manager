@@ -37,6 +37,8 @@ export type RoutingCalendarPreviewPayloadV1 = {
   serviceMinutes: number;
   newApptMeta: {
     clientId?: string;
+    /** PIMS client id — matches doctor-day household grouping with booked visits. */
+    clientPimsId?: string;
     address?: string;
     lat?: number;
     lon?: number;
@@ -109,6 +111,12 @@ export type ManualBookPreviewDraft = {
   clientCity?: string;
   clientState?: string;
   clientZip?: string;
+  /** Co-visit add-pet: PATCH these existing household visits to the draft times on confirm. */
+  coVisitAlignAppointmentIds?: number[];
+  /** Anchor visit when adding another pet (for household clump / alt-stop preview). */
+  coVisitAnchorAppointmentId?: number;
+  /** Co-visit add-pet — skip manual booking type permission gate on create. */
+  coVisitAddPet?: boolean;
 };
 
 export function isScheduleLoaderCalendarPreview(

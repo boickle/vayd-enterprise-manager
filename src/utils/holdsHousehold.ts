@@ -363,39 +363,32 @@ export function holdHouseholdEarliestAppointmentStart(
   return best;
 }
 
-/** Urgent (≤3 business days) first, then stale (>24h), then by appointment date. */
+/** Earliest scheduled appointment first (household anchor / earliest hold in the group). */
+export function sortHoldHouseholdGroupsByAppointmentStart(
+  groups: HoldHouseholdGroup[],
+): HoldHouseholdGroup[] {
+  return [...groups].sort((a, b) => {
+    const aStart =
+      holdHouseholdEarliestAppointmentStart(a.holds) ?? a.anchor.appointmentStart ?? '';
+    const bStart =
+      holdHouseholdEarliestAppointmentStart(b.holds) ?? b.anchor.appointmentStart ?? '';
+    return (
+      aStart.localeCompare(bStart) ||
+      holdClientLabel(a.anchor).localeCompare(holdClientLabel(b.anchor), undefined, {
+        sensitivity: 'base',
+      }) ||
+      a.anchor.id - b.anchor.id
+    );
+  });
+}
+
+/** @deprecated Prefer {@link sortHoldHouseholdGroupsByAppointmentStart}. */
 export function sortHoldHouseholdGroupsByPriority(
   groups: HoldHouseholdGroup[],
-  practiceTz: string,
-  now: DateTime = DateTime.now()
+  _practiceTz?: string,
+  _now?: DateTime,
 ): HoldHouseholdGroup[] {
-  const sortKey = (group: HoldHouseholdGroup) => {
-    const within3 = holdHouseholdWithin3BusinessDays(group.holds, practiceTz, now);
-    const stale = holdHouseholdAnyStale(group.holds);
-    return {
-      tier: within3 ? 0 : stale ? 1 : 2,
-      daysUntil: holdHouseholdMinBusinessDaysUntil(group.holds, practiceTz, now) ?? 9999,
-      apptStart:
-        holdHouseholdEarliestAppointmentStart(group.holds) ??
-        group.anchor.appointmentStart ??
-        '',
-      placedAt: holdHouseholdEarliestPlacedAt(group.holds) ?? '',
-    };
-  };
-
-  return [...groups].sort((a, b) => {
-    const ka = sortKey(a);
-    const kb = sortKey(b);
-    if (ka.tier !== kb.tier) return ka.tier - kb.tier;
-    if (ka.tier === 0) {
-      if (ka.daysUntil !== kb.daysUntil) return ka.daysUntil - kb.daysUntil;
-      return ka.apptStart.localeCompare(kb.apptStart);
-    }
-    if (ka.tier === 1) {
-      return ka.placedAt.localeCompare(kb.placedAt);
-    }
-    return ka.apptStart.localeCompare(kb.apptStart);
-  });
+  return sortHoldHouseholdGroupsByAppointmentStart(groups);
 }
 
 export function holdHouseholdOwnerIsCurrentUser(holds: readonly HoldListItem[]): boolean {

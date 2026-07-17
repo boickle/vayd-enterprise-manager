@@ -2472,8 +2472,8 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
           setRoutingAddressFields(addressFieldsFromFreeText(addr));
           setAddressError(null);
           linkedClientHomeAddressRef.current = null;
-          const label = intent.clientDisplayLabel?.trim();
-          if (label) setClientQuery(label);
+          // Address-only holds have no client — do not put description/notes in Client.
+          setClientQuery(intent.clientDisplayLabel?.trim() || '');
           try {
             const geo = await geocodeRoutingAddressText(addr);
             if (!cancelled && geo.ok) {
@@ -3648,7 +3648,9 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     const addr = (form.newAppt.address ?? '').trim();
     if (!clientId || !addr) return false;
     const home = linkedClientHomeAddressRef.current?.trim();
-    if (!home) return true;
+    // Until home is loaded, do not treat the form address as ALT (was sticky-flagging
+    // leftover stops and PUTting them onto the visit after Get Best Route / book).
+    if (!home) return false;
     return !routingAddressesMatch(addr, home);
   }, [form.newAppt.clientId, form.newAppt.address]);
 
@@ -4548,6 +4550,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
         intent: readRoutingRescheduleIntent(),
         clientHomeAddress: clientHome,
         explicitAlternateOpt: opts?.alternateAddress,
+        pickingClientId: String(c.id),
       });
       if (alternateToPreserve && clientHome) {
         setClientPickAlternateConfirm({
@@ -5707,9 +5710,16 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                     setSelectedClientAlerts(null);
                     if (!next.trim()) {
                       linkedClientHomeAddressRef.current = null;
+                      setRoutingAddressFields(EMPTY_ADDRESS_FIELDS);
                       setForm((f) => ({
                         ...f,
-                        newAppt: { ...f.newAppt, clientId: undefined },
+                        newAppt: {
+                          ...f.newAppt,
+                          clientId: undefined,
+                          address: '',
+                          lat: undefined,
+                          lon: undefined,
+                        },
                       }));
                     }
                   }}

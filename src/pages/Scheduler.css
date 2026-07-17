@@ -6492,6 +6492,52 @@ label.scheduler-household-pet-row {
   max-width: 520px;
 }
 
+.scheduler-household-time-align-modal {
+  max-width: 480px;
+}
+
+.scheduler-household-time-align-lead {
+  margin: 0 0 14px;
+  font-size: 14px;
+  line-height: 1.45;
+  color: #475569;
+}
+
+.scheduler-household-time-align-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.scheduler-household-time-align-item {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #f8fafc;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.scheduler-household-time-align-when {
+  font-size: 13px;
+  color: #64748b;
+}
+
+.scheduler-household-time-align-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 20px 18px;
+  border-top: 1px solid #e2e8f0;
+}
+
 .scheduler-household-visits-warning-lead {
   margin: 0 0 16px;
   font-size: 14px;

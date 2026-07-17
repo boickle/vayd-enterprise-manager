@@ -1164,9 +1164,9 @@ export default function CareOutreachPage() {
       </h2>
       <p className="settings-muted" style={{ marginBottom: 16, maxWidth: 800 }}>
         Clients and patients who still need preventive or recommended care scheduled with their
-        assigned provider. A pet is removed once they have any future visit on the calendar (even
-        if reminders are still past due). Other pets in the same household stay on the list. Use
-        Route to send a visit (hold or booked) into forward booking.
+        assigned provider. A pet is removed once they have a visit on the calendar today or
+        later (even if reminders are still past due). Other pets in the same household stay on
+        the list. Use Route to send a visit (hold or booked) into forward booking.
       </p>
 
       {actionError ? (

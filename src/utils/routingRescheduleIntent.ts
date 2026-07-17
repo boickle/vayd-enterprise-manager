@@ -230,11 +230,17 @@ export function routingAddressesMatch(a: string, b: string): boolean {
 /** Alternate routing stop currently on the form that should not be silently replaced by client home. */
 export function routingFormAlternateAddressToPreserve(
   formAddress: string | undefined | null,
-  intent: RoutingRescheduleIntentV1 | null | undefined
+  intent: RoutingRescheduleIntentV1 | null | undefined,
+  opts?: { pickingClientId?: string | null }
 ): string | null {
+  if (!intent?.isAlternateStop) return null;
+  const pickingId = opts?.pickingClientId?.trim();
+  const intentClientId = intent.clientId?.trim();
+  // Do not carry a prior stop's ALT onto a different client (stale form / session leak).
+  if (pickingId && intentClientId && pickingId !== intentClientId) return null;
   const fromIntent = rescheduleIntentAlternateAddress(intent);
   if (fromIntent) return fromIntent;
-  if (intent?.isAlternateStop && formAddress?.trim()) return formAddress.trim();
+  if (formAddress?.trim()) return formAddress.trim();
   return null;
 }
 
@@ -244,9 +250,12 @@ export function routingClientPickWouldReplaceAlternate(args: {
   intent?: RoutingRescheduleIntentV1 | null;
   clientHomeAddress: string | null | undefined;
   explicitAlternateOpt?: string | null;
+  pickingClientId?: string | null;
 }): string | null {
   if (args.explicitAlternateOpt?.trim()) return null;
-  const preserved = routingFormAlternateAddressToPreserve(args.currentFormAddress, args.intent);
+  const preserved = routingFormAlternateAddressToPreserve(args.currentFormAddress, args.intent, {
+    pickingClientId: args.pickingClientId,
+  });
   const home = args.clientHomeAddress?.trim();
   if (!preserved || !home) return null;
   if (routingAddressesMatch(preserved, home)) return null;
@@ -801,8 +810,6 @@ function buildAddressOnlyRescheduleIntent(
   const originalEndIso =
     endLocal.isValid ? endLocal.toISO({ includeOffset: true }) ?? undefined : undefined;
 
-  const clientDisplayLabel = pickStr(appt.description) ?? undefined;
-
   return {
     v: 1,
     appointmentId: appt.id,
@@ -821,7 +828,6 @@ function buildAddressOnlyRescheduleIntent(
     sourceDoctorDisplayName: primaryDoctorDisplayName,
     description: appt.description ?? null,
     instructions: appt.instructions ?? null,
-    clientDisplayLabel,
     serviceMinutes: minutes,
     isAlternateStop: true,
     alternateAddressText: addressText,
