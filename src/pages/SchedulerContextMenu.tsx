@@ -34,6 +34,7 @@ export type SchedulerContextMenuAction =
   | { kind: 'text'; phone: 'phone1' | 'phone2' }
   | { kind: 'viewClientInfo' }
   | { kind: 'roomLoader' }
+  | { kind: 'euthanasiaConsent'; variant: 'southern' | 'cv' }
   | { kind: 'checkout' };
 
 type OpenGroup = 'scheduling' | 'forms' | 'visit' | 'patient' | 'client';
@@ -199,6 +200,14 @@ export function SchedulerAppointmentContextMenu({
           onCloseSub={closeForms}
         >
           <CtxSubRow label={roomLoaderMenuLabel} onPick={() => onAction({ kind: 'roomLoader' })} />
+          <CtxSubRow
+            label="Euthanasia Consent Form"
+            onPick={() => onAction({ kind: 'euthanasiaConsent', variant: 'southern' })}
+          />
+          <CtxSubRow
+            label="Euthanasia Consent Form (CV)"
+            onPick={() => onAction({ kind: 'euthanasiaConsent', variant: 'cv' })}
+          />
         </CtxParentRow>
       ) : null}
 

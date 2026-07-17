@@ -203,7 +203,9 @@ import type { EditVisitPatientSelection } from '../components/EditVisitAddPatien
 import type { EditVisitLinkSelection } from '../components/EditVisitLinkClientPanel';
 import { editVisitLinkClearsAlternateAddress, appointmentResolvedClientId, visitAddressForLinkMatching } from '../utils/visitAddressMatch';
 import { OnMyWaySmsModal } from '../components/OnMyWaySmsModal';
+import { SchedulerEuthanasiaConsentSendModal } from '../components/SchedulerEuthanasiaConsentSendModal';
 import { WorkZonesMapModal } from '../components/WorkZonesMapModal';
+import type { EuthanasiaConsentVariant } from '../api/euthanasiaConsent';
 import { etaMinutesAwayFromNow } from '../utils/onMyWaySmsMessage';
 import { SchedulerActualVisitTimeModal } from './SchedulerActualVisitTimeModal';
 import { SchedulerRemoveVisitModal } from './SchedulerRemoveVisitModal';
@@ -3088,6 +3090,10 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   const [onMyWaySmsAppt, setOnMyWaySmsAppt] = useState<Appointment | null>(null);
   const [embeddedRoomLoaderId, setEmbeddedRoomLoaderId] = useState<number | null>(null);
   const [roomLoaderPdfModalAppt, setRoomLoaderPdfModalAppt] = useState<Appointment | null>(null);
+  const [euthanasiaConsentSend, setEuthanasiaConsentSend] = useState<{
+    appt: Appointment;
+    variant: EuthanasiaConsentVariant;
+  } | null>(null);
   const [workZonesMapOpen, setWorkZonesMapOpen] = useState(false);
   const [roomLoaderOpening, setRoomLoaderOpening] = useState(false);
   /** null = not applicable or loading; true = at least one pet can be added; false = none left */
@@ -9180,6 +9186,10 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             })();
             return;
           }
+          case 'euthanasiaConsent': {
+            setEuthanasiaConsentSend({ appt, variant: action.variant });
+            return;
+          }
           case 'checkout': {
             const cid = pickStr(client?.pimsId);
             if (!cid) {
@@ -11310,6 +11320,15 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             setRoomLoaderPdfModalAppt(null);
             setEmbeddedRoomLoaderId(roomLoaderId);
           }}
+        />
+      ) : null}
+
+      {euthanasiaConsentSend ? (
+        <SchedulerEuthanasiaConsentSendModal
+          appt={euthanasiaConsentSend.appt}
+          variant={euthanasiaConsentSend.variant}
+          onClose={() => setEuthanasiaConsentSend(null)}
+          onToast={showToast}
         />
       ) : null}
 

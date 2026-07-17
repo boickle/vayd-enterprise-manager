@@ -275,6 +275,16 @@ export default function ScheduleLayout() {
               </span>
               <span className="schedule-app__quick-link-label">Send Room Loader</span>
             </NavLink>
+            <NavLink
+              to="/schedule/mail-order"
+              className="schedule-app__quick-link"
+              title={railCollapsedEffective ? 'Mail Order' : undefined}
+            >
+              <span className="schedule-app__quick-link-icon" aria-hidden>
+                <Package size={18} strokeWidth={1.75} />
+              </span>
+              <span className="schedule-app__quick-link-label">Mail Order</span>
+            </NavLink>
             {SHOW_RAIL_RESTOCK_LOCATION ? (
               <NavLink
                 to="/schedule/inventory"
