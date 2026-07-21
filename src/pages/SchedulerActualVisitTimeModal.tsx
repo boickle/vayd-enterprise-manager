@@ -52,8 +52,17 @@ import {
   type ForwardBookingDispositionFormState,
 } from '../utils/forwardBookingDisposition';
 import { SchedulerHouseholdPetRow } from '../components/SchedulerHouseholdPetRow';
+import EuthanasiaFutureAppointmentsModal from '../components/EuthanasiaFutureAppointmentsModal';
 import { fetchClientByIdStaff } from '../api/clientsStaff';
 import { patientsForAppointment } from '../utils/schedulerAddPet';
+import {
+  cancelEuthanasiaFutureAppointments,
+  findFutureAppointmentsForPatients,
+  inactivateEuthanasiaPatients,
+  isEuthanasiaAppointment,
+  type EuthanasiaFutureAppointmentRow,
+} from '../utils/euthanasiaFutureAppointments';
+import { patientIdFromAppointment } from '../api/pimsAppointments';
 import {
   enrichRoutingClientPatientsMembership,
   extractActivePatientsFromClientStaffRecord,
@@ -558,6 +567,20 @@ export function SchedulerActualVisitTimeModal({
   const [selectedVisitTimePatientIds, setSelectedVisitTimePatientIds] = useState<Set<string>>(
     () => new Set(householdVisits.map((visit) => visit.patientId))
   );
+  const [euthanasiaFutureRows, setEuthanasiaFutureRows] = useState<
+    EuthanasiaFutureAppointmentRow[] | null
+  >(null);
+  const [checkingEuthanasiaFuture, setCheckingEuthanasiaFuture] = useState(false);
+  const euthanasiaEndConfirmedRef = useRef(false);
+  const pendingEuthanasiaEndRef = useRef<{
+    postOpts: {
+      start?: { at?: string; clear?: boolean };
+      end?: { at?: string; clear?: boolean };
+    };
+    saveOptions?: { closeModal?: boolean; saveFollowUp?: boolean };
+    patientIdsToInactivate: string[];
+    futureRows: EuthanasiaFutureAppointmentRow[];
+  } | null>(null);
 
   useEffect(() => {
     setSelectedHouseholdPatientIds(allHouseholdPatientIds(householdVisits));
@@ -1004,13 +1027,80 @@ export function SchedulerActualVisitTimeModal({
     [appt, visitTimeAppointmentIds]
   );
 
+  const resolveEuthanasiaPatientsForVisitTimes = useCallback((): {
+    patientId: string;
+    patientName?: string | null;
+  }[] => {
+    const ids = new Set(visitTimeAppointmentIds());
+    const apptsById = new Map<number, Appointment>();
+    apptsById.set(Number(appt.id), appt);
+    for (const a of sameCalendarDayAppointments) {
+      if (a.id != null) apptsById.set(Number(a.id), a);
+    }
+
+    const out: { patientId: string; patientName?: string | null }[] = [];
+    const seen = new Set<string>();
+    for (const id of ids) {
+      const row = apptsById.get(id);
+      if (!row || !isEuthanasiaAppointment(row)) continue;
+      const patientId = patientIdFromAppointment(row);
+      if (!patientId || seen.has(patientId)) continue;
+      seen.add(patientId);
+      const name =
+        patientsForAppointment(row)[0]?.name ??
+        row.patient?.name ??
+        householdVisits.find((v) => v.patientId === patientId)?.patientName ??
+        null;
+      out.push({ patientId, patientName: name });
+    }
+    return out;
+  }, [appt, householdVisits, sameCalendarDayAppointments, visitTimeAppointmentIds]);
+
+  const runEuthanasiaEndSideEffects = useCallback(
+    async (args: {
+      patientIdsToInactivate: string[];
+      futureRows: EuthanasiaFutureAppointmentRow[];
+    }) => {
+      const warnings: string[] = [];
+      if (args.futureRows.length > 0) {
+        const cancelResult = await cancelEuthanasiaFutureAppointments({
+          rows: args.futureRows,
+          practiceId,
+        });
+        if (cancelResult.errors.length > 0) {
+          warnings.push(
+            cancelResult.cancelledIds.length > 0
+              ? `Removed ${cancelResult.cancelledIds.length} future visit(s); ${cancelResult.errors.length} could not be cancelled.`
+              : `Future appointments could not be cancelled. ${cancelResult.errors[0]}`,
+          );
+        }
+      }
+      if (args.patientIdsToInactivate.length > 0) {
+        const inactivateResult = await inactivateEuthanasiaPatients(args.patientIdsToInactivate);
+        if (inactivateResult.errors.length > 0) {
+          warnings.push(
+            inactivateResult.inactivatedIds.length > 0
+              ? `Inactivated ${inactivateResult.inactivatedIds.length} patient(s); ${inactivateResult.errors.length} could not be inactivated (eVet may already have done this).`
+              : `Could not inactivate patient. ${inactivateResult.errors[0]}`,
+          );
+        }
+      }
+      return warnings;
+    },
+    [practiceId]
+  );
+
   const postBoth = useCallback(
     async (
       opts: {
         start?: { at?: string; clear?: boolean };
         end?: { at?: string; clear?: boolean };
       },
-      saveOptions?: { closeModal?: boolean; saveFollowUp?: boolean }
+      saveOptions?: { closeModal?: boolean; saveFollowUp?: boolean },
+      euthanasiaSideEffects?: {
+        patientIdsToInactivate: string[];
+        futureRows: EuthanasiaFutureAppointmentRow[];
+      }
     ) => {
       setSaving(true);
       setError(null);
@@ -1034,12 +1124,22 @@ export function SchedulerActualVisitTimeModal({
           await ensureFollowUpSideEffects();
         }
 
+        let sideEffectWarning: string | null = null;
+        if (euthanasiaSideEffects) {
+          const warnings = await runEuthanasiaEndSideEffects(euthanasiaSideEffects);
+          if (warnings.length > 0) sideEffectWarning = warnings.join(' ');
+        }
+
         const closeModal =
           saveOptions?.closeModal ??
           (isEndOnly || isStartOnly || (isBoth && (savingEnd || savingStart)));
 
-        onSaved(updated, { closeModal });
-        if (closeModal) onClose();
+        onSaved(updated, { closeModal: closeModal && !sideEffectWarning });
+        if (sideEffectWarning) {
+          setError(sideEffectWarning);
+        } else if (closeModal) {
+          onClose();
+        }
       } catch (e: unknown) {
         const ax = e as { response?: { data?: { message?: string | string[] } }; message?: string };
         const m = ax?.response?.data?.message;
@@ -1064,6 +1164,7 @@ export function SchedulerActualVisitTimeModal({
       isEndOnly,
       isStartOnly,
       requiresForwardBooking,
+      runEuthanasiaEndSideEffects,
     ]
   );
 
@@ -1121,6 +1222,83 @@ export function SchedulerActualVisitTimeModal({
     return true;
   };
 
+  const postBothWithEuthanasiaGuard = useCallback(
+    async (
+      opts: {
+        start?: { at?: string; clear?: boolean };
+        end?: { at?: string; clear?: boolean };
+      },
+      saveOptions?: { closeModal?: boolean; saveFollowUp?: boolean }
+    ) => {
+      const endingVisit = Boolean(opts.end) && opts.end?.clear !== true;
+      if (!endingVisit || euthanasiaEndConfirmedRef.current) {
+        euthanasiaEndConfirmedRef.current = false;
+        const pending = pendingEuthanasiaEndRef.current;
+        pendingEuthanasiaEndRef.current = null;
+        await postBoth(
+          opts,
+          saveOptions,
+          pending
+            ? {
+                patientIdsToInactivate: pending.patientIdsToInactivate,
+                futureRows: pending.futureRows,
+              }
+            : undefined
+        );
+        return;
+      }
+
+      const euthPatients = resolveEuthanasiaPatientsForVisitTimes();
+      if (euthPatients.length === 0) {
+        await postBoth(opts, saveOptions);
+        return;
+      }
+
+      setCheckingEuthanasiaFuture(true);
+      try {
+        const futureRows = await findFutureAppointmentsForPatients({
+          practiceId,
+          practiceTz,
+          patients: euthPatients,
+          excludeAppointmentIds: visitTimeAppointmentIds(),
+        });
+        pendingEuthanasiaEndRef.current = {
+          postOpts: opts,
+          saveOptions,
+          patientIdsToInactivate: euthPatients.map((p) => p.patientId),
+          futureRows,
+        };
+        if (futureRows.length > 0) {
+          setEuthanasiaFutureRows(futureRows);
+          return;
+        }
+        // No future appointments — still inactivate after end without a list warning.
+        euthanasiaEndConfirmedRef.current = true;
+        const pending = pendingEuthanasiaEndRef.current;
+        pendingEuthanasiaEndRef.current = null;
+        await postBoth(
+          opts,
+          saveOptions,
+          pending
+            ? {
+                patientIdsToInactivate: pending.patientIdsToInactivate,
+                futureRows: pending.futureRows,
+              }
+            : undefined,
+        );
+      } finally {
+        setCheckingEuthanasiaFuture(false);
+      }
+    },
+    [
+      postBoth,
+      practiceId,
+      practiceTz,
+      resolveEuthanasiaPatientsForVisitTimes,
+      visitTimeAppointmentIds,
+    ]
+  );
+
   const handleSave = () => {
     if (!dateKey) {
       setError('Could not determine visit date.');
@@ -1160,7 +1338,7 @@ export function SchedulerActualVisitTimeModal({
         return;
       }
       if (!validateForwardBooking()) return;
-      void postBoth({ end: endPayload }, { closeModal: true, saveFollowUp: true });
+      void postBothWithEuthanasiaGuard({ end: endPayload }, { closeModal: true, saveFollowUp: true });
       return;
     }
     const startPayload = actualTimeFieldPayload(
@@ -1202,7 +1380,7 @@ export function SchedulerActualVisitTimeModal({
       return;
     }
 
-    void postBoth(
+    void postBothWithEuthanasiaGuard(
       {
         ...(startPayload ? { start: startPayload } : {}),
         ...(endPayload ? { end: endPayload } : {}),
@@ -1881,13 +2059,44 @@ export function SchedulerActualVisitTimeModal({
               Now (end)
             </button>
           ) : null}
-          <button type="button" className="btn" disabled={saving} onClick={handleSave}>
-            {saving ? 'Saving…' : 'Save'}
+          <button
+            type="button"
+            className="btn"
+            disabled={saving || checkingEuthanasiaFuture}
+            onClick={handleSave}
+          >
+            {saving || checkingEuthanasiaFuture ? 'Saving…' : 'Save'}
           </button>
         </div>
       </div>
     </div>
   );
 
-  return createPortal(modal, document.body);
+  return (
+    <>
+      {createPortal(modal, document.body)}
+      <EuthanasiaFutureAppointmentsModal
+        open={Boolean(euthanasiaFutureRows?.length)}
+        mode="end_visit"
+        rows={euthanasiaFutureRows ?? []}
+        continuing={saving || checkingEuthanasiaFuture}
+        onCancel={() => {
+          if (saving) return;
+          setEuthanasiaFutureRows(null);
+          pendingEuthanasiaEndRef.current = null;
+          euthanasiaEndConfirmedRef.current = false;
+        }}
+        onConfirmDelete={() => {
+          const pending = pendingEuthanasiaEndRef.current;
+          if (!pending) {
+            setEuthanasiaFutureRows(null);
+            return;
+          }
+          setEuthanasiaFutureRows(null);
+          euthanasiaEndConfirmedRef.current = true;
+          void postBothWithEuthanasiaGuard(pending.postOpts, pending.saveOptions);
+        }}
+      />
+    </>
+  );
 }

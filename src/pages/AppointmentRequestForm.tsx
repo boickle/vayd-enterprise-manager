@@ -345,6 +345,17 @@ function mapDoctorForSelfScheduleModal(
   };
 }
 
+const HOW_DID_YOU_HEAR_ABOUT_US_OPTIONS = [
+  'Referred by a friend or family',
+  'Google Search',
+  'Facebook',
+  'Instagram',
+  'Flyer or Printed Material',
+  'Other',
+] as const;
+
+type HowDidYouHearAboutUsOption = (typeof HOW_DID_YOU_HEAR_ABOUT_US_OPTIONS)[number];
+
 type FormData = {
   // Intro page
   email: string;
@@ -474,6 +485,8 @@ type FormData = {
 
   // Other Info
   membershipInterest?: 'Pay as you go' | 'Membership' | "I'm not sure yet";
+  howDidYouHearAboutUs?: HowDidYouHearAboutUsOption | '';
+  howDidYouHearAboutUsOther?: string;
 };
 
 type Page = 
@@ -853,6 +866,8 @@ export default function AppointmentRequestForm() {
       selectedDateTimeSlots: fd.selectedDateTimeSlots,
       selectedDateTimeSlotsVisit: fd.selectedDateTimeSlotsVisit,
       membershipInterest: fd.membershipInterest,
+      howDidYouHearAboutUs: fd.howDidYouHearAboutUs,
+      howDidYouHearAboutUsOther: fd.howDidYouHearAboutUsOther,
       anythingElse: fd.schedulingNotes,
       isLoggedIn: isLoggedInRef.current,
     };
@@ -3416,6 +3431,14 @@ export default function AppointmentRequestForm() {
             newErrors['physicalAddress.line1'] = 'Please select your address from the suggestions';
           }
           if (errors.zoneNotServiced) newErrors.zoneNotServiced = errors.zoneNotServiced;
+          if (!formData.howDidYouHearAboutUs) {
+            newErrors.howDidYouHearAboutUs = 'Please tell us how you heard about us';
+          } else if (
+            formData.howDidYouHearAboutUs === 'Other' &&
+            !formData.howDidYouHearAboutUsOther?.trim()
+          ) {
+            newErrors.howDidYouHearAboutUsOther = 'Please tell us how you heard about us';
+          }
         }
         break;
       case 'new-client':
@@ -4183,7 +4206,16 @@ export default function AppointmentRequestForm() {
         // Additional Information
         howSoon: formData.howSoon || undefined,
         schedulingNotes: formData.schedulingNotes?.trim() || undefined,
+        anythingElse: formData.schedulingNotes?.trim() || undefined,
         membershipInterest: formData.membershipInterest || undefined,
+        ...(!isExistingClient && formData.howDidYouHearAboutUs
+          ? {
+              howDidYouHearAboutUs: formData.howDidYouHearAboutUs,
+              ...(formData.howDidYouHearAboutUs === 'Other' && formData.howDidYouHearAboutUsOther?.trim()
+                ? { howDidYouHearAboutUsOther: formData.howDidYouHearAboutUsOther.trim() }
+                : {}),
+            }
+          : {}),
         
         // Appointment request promotion — token (URL) takes precedence over typed code.
         // Skipped entirely when this email already redeemed the promotion.
@@ -5116,6 +5148,90 @@ export default function AppointmentRequestForm() {
               <p style={{ fontSize: '13px', color: '#6b7280', marginTop: '8px', marginBottom: 0, lineHeight: 1.5 }}>
                 We will contact the practice(s) listed above to obtain your pet&apos;s prior medical records.
               </p>
+            </div>
+
+            <div
+              style={{
+                marginTop: 8,
+                marginBottom: isNewClientIntroStep ? 0 : 20,
+                paddingTop: 20,
+                borderTop: '1px solid #d1d5db',
+              }}
+              data-form-field="howDidYouHearAboutUs"
+            >
+              <label style={{ display: 'block', marginBottom: newClientLabelMb, fontWeight: 600, color: '#111827', fontSize: '14px' }}>
+                How did you hear about us? <span style={{ color: '#ef4444' }}>*</span>
+              </label>
+              <select
+                value={formData.howDidYouHearAboutUs || ''}
+                onChange={(e) => {
+                  const value = e.target.value as HowDidYouHearAboutUsOption | '';
+                  setFormData((prev) => ({
+                    ...prev,
+                    howDidYouHearAboutUs: value,
+                    howDidYouHearAboutUsOther:
+                      value === 'Other' ? prev.howDidYouHearAboutUsOther : '',
+                  }));
+                  setErrors((prev) => {
+                    const next = { ...prev };
+                    delete next.howDidYouHearAboutUs;
+                    if (value !== 'Other') delete next.howDidYouHearAboutUsOther;
+                    return next;
+                  });
+                }}
+                style={{
+                  width: '100%',
+                  padding: newClientInputPadding,
+                  border: `1px solid ${errors.howDidYouHearAboutUs ? '#ef4444' : '#d1d5db'}`,
+                  borderRadius: newClientInputRadius,
+                  fontSize: '14px',
+                  fontFamily: 'inherit',
+                  backgroundColor: '#fff',
+                }}
+              >
+                <option value="">Select an option</option>
+                {HOW_DID_YOU_HEAR_ABOUT_US_OPTIONS.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+              {errors.howDidYouHearAboutUs && (
+                <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>{errors.howDidYouHearAboutUs}</div>
+              )}
+              {formData.howDidYouHearAboutUs === 'Other' && (
+                <div style={{ marginTop: '12px' }} data-form-field="howDidYouHearAboutUsOther">
+                  <label style={{ display: 'block', marginBottom: newClientLabelMb, fontWeight: 600, color: '#111827', fontSize: '14px' }}>
+                    Please tell us how you heard about us <span style={{ color: '#ef4444' }}>*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.howDidYouHearAboutUsOther || ''}
+                    onChange={(e) => {
+                      updateFormData('howDidYouHearAboutUsOther', e.target.value);
+                      if (errors.howDidYouHearAboutUsOther) {
+                        setErrors((prev) => {
+                          const next = { ...prev };
+                          delete next.howDidYouHearAboutUsOther;
+                          return next;
+                        });
+                      }
+                    }}
+                    placeholder="How did you hear about us?"
+                    style={{
+                      width: '100%',
+                      padding: newClientInputPadding,
+                      border: `1px solid ${errors.howDidYouHearAboutUsOther ? '#ef4444' : '#d1d5db'}`,
+                      borderRadius: newClientInputRadius,
+                      fontSize: '14px',
+                      fontFamily: 'inherit',
+                    }}
+                  />
+                  {errors.howDidYouHearAboutUsOther && (
+                    <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>{errors.howDidYouHearAboutUsOther}</div>
+                  )}
+                </div>
+              )}
             </div>
 
           </div>

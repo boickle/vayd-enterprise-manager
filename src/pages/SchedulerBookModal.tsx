@@ -76,6 +76,7 @@ import {
   rolesIncludeAdminBypass,
 } from '../utils/manualBookingPermissions';
 import HouseholdScheduledVisitsWarningModal from '../components/HouseholdScheduledVisitsWarningModal';
+import EuthanasiaFutureAppointmentsModal from '../components/EuthanasiaFutureAppointmentsModal';
 import {
   HouseholdVisitTimeAlignModal,
   type HouseholdTimeAlignChoice,
@@ -92,6 +93,12 @@ import {
   shouldWarnHouseholdVisitsOnBook,
   type HouseholdScheduledVisitConflict,
 } from '../utils/bookingHouseholdVisitWarning';
+import {
+  cancelEuthanasiaFutureAppointments,
+  findFutureAppointmentsForPatients,
+  isEuthanasiaAppointmentType,
+  type EuthanasiaFutureAppointmentRow,
+} from '../utils/euthanasiaFutureAppointments';
 import { ScheduleOverrideDayFields } from '../components/ScheduleOverrideDayFields';
 import {
   applyScheduleOverridesForBook,
@@ -311,6 +318,7 @@ type Props = {
     routingFeedbackWarning?: string;
     forwardBookingWarning?: string;
     appointmentRequestWarning?: string;
+    euthanasiaFutureWarning?: string;
     schedulingOverrideWarning?: string;
     schedulingOverridesApplied?: boolean;
     savedAppointmentId?: number;
@@ -631,6 +639,13 @@ export function SchedulerBookModal({
     HouseholdScheduledVisitConflict[] | null
   >(null);
   const householdVisitCheckBypassRef = useRef(false);
+  const [euthanasiaFutureRows, setEuthanasiaFutureRows] = useState<
+    EuthanasiaFutureAppointmentRow[] | null
+  >(null);
+  const [checkingEuthanasiaFuture, setCheckingEuthanasiaFuture] = useState(false);
+  /** After the euthanasia future-appt prompt: delete those rows after a successful book, or keep them. */
+  const euthanasiaFutureChoiceRef = useRef<'delete' | 'keep' | null>(null);
+  const pendingEuthanasiaFutureDeletesRef = useRef<EuthanasiaFutureAppointmentRow[] | null>(null);
   const [coVisitTimeAlignPrompt, setCoVisitTimeAlignPrompt] = useState<{
     siblings: Appointment[];
     startIso: string;
@@ -1755,6 +1770,38 @@ export function SchedulerBookModal({
     return selectedPatientId?.trim() ? [selectedPatientId.trim()] : [];
   }
 
+  /** Patients being booked for a euthanasia type (routing multi-book may mix types). */
+  function collectEuthanasiaBookPatients(): { patientId: string; patientName?: string | null }[] {
+    if (perVisitRoutingBook) {
+      return routingBookVisitEdits
+        .filter((v) => v.selected && !v.isNoPatient && v.patientId?.trim())
+        .filter((v) => {
+          const t = appointmentTypes.find((at) => String(at.id) === String(v.appointmentTypeId));
+          return isEuthanasiaAppointmentType(t);
+        })
+        .map((v) => ({
+          patientId: v.patientId!.trim(),
+          patientName: v.patientName?.trim() || null,
+        }));
+    }
+    if (perVisitReschedule) {
+      return rescheduleVisitEdits
+        .filter((v) => {
+          const t = appointmentTypes.find((at) => Number(at.id) === Number(v.appointmentTypeId));
+          return isEuthanasiaAppointmentType(t);
+        })
+        .filter((v) => v.patientId?.trim())
+        .map((v) => ({
+          patientId: v.patientId!.trim(),
+          patientName: v.patientName?.trim() || null,
+        }));
+    }
+    if (!isEuthanasiaAppointmentType(selectedType)) return [];
+    const pid = selectedPatientId?.trim();
+    if (!pid) return [];
+    return [{ patientId: pid, patientName: selectedPatientLabel?.trim() || null }];
+  }
+
   function collectExcludeAppointmentIds(): number[] {
     const visitPatches =
       prefill?.rescheduleVisitPatches?.filter(
@@ -1789,6 +1836,7 @@ export function SchedulerBookModal({
   async function tryPreviewOnCalendar(opts?: {
     coVisitAlignAppointmentIds?: number[];
     coVisitAddPet?: boolean;
+    euthanasiaDeleteFutureAppointments?: boolean;
   }): Promise<boolean> {
     setFormError(null);
     if (!onPreviewOnCalendar) return false;
@@ -1855,6 +1903,9 @@ export function SchedulerBookModal({
       ...(Number.isFinite(Number(prefill?.coVisitAnchorAppointmentId)) &&
       Number(prefill?.coVisitAnchorAppointmentId) > 0
         ? { coVisitAnchorAppointmentId: Number(prefill!.coVisitAnchorAppointmentId) }
+        : {}),
+      ...(opts?.euthanasiaDeleteFutureAppointments
+        ? { euthanasiaDeleteFutureAppointments: true }
         : {}),
     });
     return true;
@@ -2010,9 +2061,40 @@ export function SchedulerBookModal({
           setCheckingHouseholdVisits(false);
         }
       }
-    } else {
-      householdVisitCheckBypassRef.current = false;
     }
+
+    if (!euthanasiaFutureChoiceRef.current) {
+      const euthPatients = collectEuthanasiaBookPatients();
+      if (euthPatients.length > 0) {
+        setCheckingEuthanasiaFuture(true);
+        try {
+          const futureRows = await findFutureAppointmentsForPatients({
+            practiceId,
+            practiceTz,
+            patients: euthPatients,
+            excludeAppointmentIds: collectExcludeAppointmentIds(),
+            asOfIso: startIso,
+          });
+          if (futureRows.length > 0) {
+            pendingEuthanasiaFutureDeletesRef.current = futureRows;
+            setEuthanasiaFutureRows(futureRows);
+            return;
+          }
+        } finally {
+          setCheckingEuthanasiaFuture(false);
+        }
+      }
+    }
+    // Past all pre-submit warning gates — clear one-shot bypasses for the next book attempt.
+    householdVisitCheckBypassRef.current = false;
+    const euthanasiaFutureChoice = euthanasiaFutureChoiceRef.current;
+    euthanasiaFutureChoiceRef.current = null;
+    const euthanasiaRowsToDelete =
+      euthanasiaFutureChoice === 'delete'
+        ? pendingEuthanasiaFutureDeletesRef.current
+        : null;
+    pendingEuthanasiaFutureDeletesRef.current = null;
+    setEuthanasiaFutureRows(null);
 
     if (prefill?.coVisitAddPet && !bookAllDay) {
       const anchorId = Number(prefill.coVisitAnchorAppointmentId);
@@ -2066,6 +2148,9 @@ export function SchedulerBookModal({
         await tryPreviewOnCalendar({
           coVisitAddPet: true,
           coVisitAlignAppointmentIds: alignIds,
+          ...(euthanasiaFutureChoice === 'delete'
+            ? { euthanasiaDeleteFutureAppointments: true }
+            : {}),
         });
         return;
       }
@@ -2342,6 +2427,20 @@ export function SchedulerBookModal({
         }
       }
 
+      let euthanasiaFutureWarning: string | undefined;
+      if (euthanasiaRowsToDelete?.length && savedAppointmentId != null) {
+        const cancelResult = await cancelEuthanasiaFutureAppointments({
+          rows: euthanasiaRowsToDelete,
+          practiceId,
+        });
+        if (cancelResult.errors.length > 0) {
+          euthanasiaFutureWarning =
+            cancelResult.cancelledIds.length > 0
+              ? `Appointment saved. Removed ${cancelResult.cancelledIds.length} future visit(s), but ${cancelResult.errors.length} could not be cancelled.`
+              : `Appointment saved, but future appointments could not be cancelled. ${cancelResult.errors[0]}`;
+        }
+      }
+
       let schedulingOverrideWarning: string | undefined;
       let schedulingOverridesApplied = false;
       const markRoutingDayOff = scheduleOverrideDayOffRef.current || scheduleOverrideDayOff;
@@ -2385,12 +2484,14 @@ export function SchedulerBookModal({
         routingFeedbackWarning ||
         forwardBookingWarning ||
         appointmentRequestWarning ||
+        euthanasiaFutureWarning ||
         schedulingOverrideWarning ||
         schedulingOverridesApplied
           ? {
               routingFeedbackWarning,
               forwardBookingWarning,
               appointmentRequestWarning,
+              euthanasiaFutureWarning,
               schedulingOverrideWarning,
               schedulingOverridesApplied,
             }
@@ -3774,7 +3875,7 @@ export function SchedulerBookModal({
               <button
                 type="button"
                 className="scheduler-book-btn secondary"
-                disabled={submitting || sendingOffer || checkingHouseholdVisits || patientRequiredButMissing}
+                disabled={submitting || sendingOffer || checkingHouseholdVisits || checkingEuthanasiaFuture || patientRequiredButMissing}
                 onClick={() => void openSlotOfferCompose()}
                 title={
                   patientRequiredButMissing
@@ -3788,14 +3889,14 @@ export function SchedulerBookModal({
             <button
               type="submit"
               className="scheduler-book-btn primary"
-              disabled={submitting || sendingOffer || checkingHouseholdVisits || patientRequiredButMissing}
+              disabled={submitting || sendingOffer || checkingHouseholdVisits || checkingEuthanasiaFuture || patientRequiredButMissing}
               title={
                 patientRequiredButMissing
                   ? 'Select a patient — this appointment type requires one.'
                   : undefined
               }
             >
-              {checkingHouseholdVisits
+              {checkingHouseholdVisits || checkingEuthanasiaFuture
                 ? 'Checking visits…'
                 : submitting
                 ? isRescheduleBook
@@ -3836,6 +3937,33 @@ export function SchedulerBookModal({
         onContinue={() => {
           householdVisitCheckBypassRef.current = true;
           setHouseholdVisitConflicts(null);
+          void handleSubmit({ preventDefault: () => {} } as React.FormEvent);
+        }}
+      />
+      <EuthanasiaFutureAppointmentsModal
+        open={Boolean(euthanasiaFutureRows?.length)}
+        mode="booking"
+        rows={euthanasiaFutureRows ?? []}
+        patientLabel={
+          euthanasiaFutureRows?.length === 1
+            ? euthanasiaFutureRows[0]?.patientName
+            : selectedPatientLabel
+        }
+        continuing={submitting || checkingEuthanasiaFuture}
+        onCancel={() => {
+          if (submitting) return;
+          setEuthanasiaFutureRows(null);
+          pendingEuthanasiaFutureDeletesRef.current = null;
+          euthanasiaFutureChoiceRef.current = null;
+        }}
+        onKeep={() => {
+          euthanasiaFutureChoiceRef.current = 'keep';
+          setEuthanasiaFutureRows(null);
+          void handleSubmit({ preventDefault: () => {} } as React.FormEvent);
+        }}
+        onConfirmDelete={() => {
+          euthanasiaFutureChoiceRef.current = 'delete';
+          setEuthanasiaFutureRows(null);
           void handleSubmit({ preventDefault: () => {} } as React.FormEvent);
         }}
       />

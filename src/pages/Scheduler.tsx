@@ -245,6 +245,7 @@ import {
 } from '../utils/manualBookCalendarPreview';
 import { commitManualBookPreviewDraft } from '../utils/commitManualBookPreview';
 import HouseholdScheduledVisitsWarningModal from '../components/HouseholdScheduledVisitsWarningModal';
+import EuthanasiaFutureAppointmentsModal from '../components/EuthanasiaFutureAppointmentsModal';
 import ExploreAlternativesHoldPrompt from '../components/ExploreAlternativesHoldPrompt';
 import {
   buildBookingAppointmentTypeCatalog,
@@ -255,6 +256,12 @@ import {
   shouldWarnHouseholdVisitsOnBook,
   type HouseholdScheduledVisitConflict,
 } from '../utils/bookingHouseholdVisitWarning';
+import {
+  cancelEuthanasiaFutureAppointments,
+  findFutureAppointmentsForPatients,
+  isEuthanasiaAppointmentType,
+  type EuthanasiaFutureAppointmentRow,
+} from '../utils/euthanasiaFutureAppointments';
 import {
   EDIT_VISIT_CALENDAR_BLOCKED_MESSAGE,
   EDIT_VISIT_TIME_PREVIEW_BLOCKED_MESSAGE,
@@ -4215,6 +4222,13 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     HouseholdScheduledVisitConflict[] | null
   >(null);
   const manualBookHouseholdBypassRef = useRef(false);
+  const [manualBookEuthanasiaFutureRows, setManualBookEuthanasiaFutureRows] = useState<
+    EuthanasiaFutureAppointmentRow[] | null
+  >(null);
+  const manualBookEuthanasiaChoiceRef = useRef<'delete' | 'keep' | null>(null);
+  const pendingManualBookEuthanasiaDeletesRef = useRef<EuthanasiaFutureAppointmentRow[] | null>(
+    null,
+  );
 
   const reschedulePreviewSourceVisit = useMemo(() => {
     if (!routingPreviewIsReschedule) return null;
@@ -7008,8 +7022,69 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         manualBookPreviewCommittingRef.current = false;
         setManualBookPreviewCommitting(false);
       }
-    } else {
-      manualBookHouseholdBypassRef.current = false;
+    }
+
+    const euthanasiaType = typeList.find((t) => Number(t.id) === Number(draft.appointmentTypeId));
+    const alreadyChoseEuthanasia =
+      draft.euthanasiaDeleteFutureAppointments === true ||
+      manualBookEuthanasiaChoiceRef.current != null;
+    if (
+      !alreadyChoseEuthanasia &&
+      draft.patientId?.trim() &&
+      isEuthanasiaAppointmentType(euthanasiaType)
+    ) {
+      manualBookPreviewCommittingRef.current = true;
+      setManualBookPreviewCommitting(true);
+      try {
+        const futureRows = await findFutureAppointmentsForPatients({
+          practiceId: draft.practiceId,
+          practiceTz: PRACTICE_TZ,
+          patients: [
+            {
+              patientId: draft.patientId.trim(),
+              patientName: draft.patientLabel?.trim() || null,
+            },
+          ],
+          asOfIso: draft.appointmentStartIso,
+        });
+        if (futureRows.length > 0) {
+          pendingManualBookEuthanasiaDeletesRef.current = futureRows;
+          setManualBookEuthanasiaFutureRows(futureRows);
+          return;
+        }
+      } finally {
+        manualBookPreviewCommittingRef.current = false;
+        setManualBookPreviewCommitting(false);
+      }
+    }
+
+    // Past all pre-commit warning gates — clear one-shot bypass for the next book attempt.
+    manualBookHouseholdBypassRef.current = false;
+    const euthanasiaChoice =
+      draft.euthanasiaDeleteFutureAppointments === true
+        ? 'delete'
+        : manualBookEuthanasiaChoiceRef.current;
+    manualBookEuthanasiaChoiceRef.current = null;
+    let euthanasiaRowsToDelete: EuthanasiaFutureAppointmentRow[] | null =
+      euthanasiaChoice === 'delete' ? pendingManualBookEuthanasiaDeletesRef.current : null;
+    pendingManualBookEuthanasiaDeletesRef.current = null;
+    setManualBookEuthanasiaFutureRows(null);
+    if (
+      euthanasiaChoice === 'delete' &&
+      (!euthanasiaRowsToDelete || euthanasiaRowsToDelete.length === 0) &&
+      draft.patientId?.trim()
+    ) {
+      euthanasiaRowsToDelete = await findFutureAppointmentsForPatients({
+        practiceId: draft.practiceId,
+        practiceTz: PRACTICE_TZ,
+        patients: [
+          {
+            patientId: draft.patientId.trim(),
+            patientName: draft.patientLabel?.trim() || null,
+          },
+        ],
+        asOfIso: draft.appointmentStartIso,
+      });
     }
 
     manualBookPreviewCommittingRef.current = true;
@@ -7043,6 +7118,23 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         appointmentTypes: typeList,
         existingAppointments: rawAppointments,
       });
+
+      let euthanasiaCancelHadErrors = false;
+      if (euthanasiaRowsToDelete?.length) {
+        const cancelResult = await cancelEuthanasiaFutureAppointments({
+          rows: euthanasiaRowsToDelete,
+          practiceId: draftSnapshot.practiceId,
+        });
+        if (cancelResult.errors.length > 0) {
+          euthanasiaCancelHadErrors = true;
+          setToast(
+            cancelResult.cancelledIds.length > 0
+              ? `Appointment saved. Removed ${cancelResult.cancelledIds.length} future visit(s), but ${cancelResult.errors.length} could not be cancelled.`
+              : `Appointment saved, but future appointments could not be cancelled. ${cancelResult.errors[0]}`,
+          );
+        }
+      }
+
       // Dismiss preview only after a successful create (failed Book used to leave a blank calendar).
       clearRoutingCalendarPreview();
       setRoutingPreview(null);
@@ -7065,11 +7157,13 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         alignIds.length > 0 ? [savedId, ...alignIds] : savedId,
         5000
       );
-      setToast(
-        alignIds.length > 0
-          ? `Appointment saved · aligned ${alignIds.length + 1} household pets.`
-          : 'Appointment saved to the schedule.'
-      );
+      if (!euthanasiaCancelHadErrors) {
+        setToast(
+          alignIds.length > 0
+            ? `Appointment saved · aligned ${alignIds.length + 1} household pets.`
+            : 'Appointment saved to the schedule.',
+        );
+      }
     } catch (e) {
       console.error(e);
       setToast(extractHttpErrorMessage(e) || 'Could not book appointment.');
@@ -7094,6 +7188,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       routingFeedbackWarning?: string;
       forwardBookingWarning?: string;
       appointmentRequestWarning?: string;
+      euthanasiaFutureWarning?: string;
       schedulingOverrideWarning?: string;
       schedulingOverridesApplied?: boolean;
       savedAppointmentId?: number;
@@ -7261,6 +7356,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         clearRoutingForwardBookingIntent();
         clearRoutingCalendarPreview();
         const warning =
+          detail?.euthanasiaFutureWarning ??
           detail?.forwardBookingWarning ??
           detail?.routingFeedbackWarning ??
           detail?.schedulingOverrideWarning;
@@ -7322,6 +7418,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         clearRoutingAppointmentRequestIntent();
         clearRoutingCalendarPreview();
         const warn =
+          detail?.euthanasiaFutureWarning ??
           detail?.appointmentRequestWarning ??
           detail?.forwardBookingWarning ??
           detail?.routingFeedbackWarning ??
@@ -7386,6 +7483,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         }
       }
       const warning =
+        detail?.euthanasiaFutureWarning ??
         detail?.schedulingOverrideWarning ??
         detail?.appointmentRequestWarning ??
         detail?.forwardBookingWarning ??
@@ -11291,6 +11389,29 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         onContinue={() => {
           manualBookHouseholdBypassRef.current = true;
           setManualBookHouseholdConflicts(null);
+          void confirmManualBookFromPreview();
+        }}
+      />
+      <EuthanasiaFutureAppointmentsModal
+        open={Boolean(manualBookEuthanasiaFutureRows?.length)}
+        mode="booking"
+        rows={manualBookEuthanasiaFutureRows ?? []}
+        patientLabel={routingPreview?.manualBookDraft?.patientLabel}
+        continuing={manualBookPreviewCommitting}
+        onCancel={() => {
+          if (manualBookPreviewCommitting) return;
+          setManualBookEuthanasiaFutureRows(null);
+          pendingManualBookEuthanasiaDeletesRef.current = null;
+          manualBookEuthanasiaChoiceRef.current = null;
+        }}
+        onKeep={() => {
+          manualBookEuthanasiaChoiceRef.current = 'keep';
+          setManualBookEuthanasiaFutureRows(null);
+          void confirmManualBookFromPreview();
+        }}
+        onConfirmDelete={() => {
+          manualBookEuthanasiaChoiceRef.current = 'delete';
+          setManualBookEuthanasiaFutureRows(null);
           void confirmManualBookFromPreview();
         }}
       />
