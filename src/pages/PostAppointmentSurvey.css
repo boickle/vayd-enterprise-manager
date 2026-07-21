@@ -605,6 +605,47 @@
   font-size: 16px;
 }
 
+.survey-compliment-lead {
+  margin: 0 0 24px;
+  line-height: 1.5;
+  color: var(--text);
+  font-size: 16px;
+}
+
+.survey-action-card {
+  margin: 0 0 18px;
+  padding: 20px 18px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--subtle-bg, #f4f6f8);
+}
+
+.survey-action-card-title {
+  font-family: 'Libre Baskerville', 'Times New Roman', serif;
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0 0 10px;
+  color: var(--text);
+}
+
+.survey-action-card-copy {
+  margin: 0 0 12px;
+  line-height: 1.5;
+  color: var(--muted);
+  font-size: 15px;
+}
+
+.survey-action-card-copy a {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.survey-action-card .btn {
+  display: inline-block;
+  text-decoration: none;
+  margin-top: 4px;
+}
+
 /* Testimonial / quote (response ready to publish) */
 .survey-testimonial {
   margin: 20px 0 0;
@@ -706,95 +747,10 @@
   padding: 10px 18px;
 }
 
-.survey-referral-section {
-  margin-top: 8px;
-  padding-top: 22px;
-  border-top: 1px solid var(--border);
-}
-
-.survey-referral-heading {
-  font-family: 'Libre Baskerville', 'Times New Roman', serif;
-  font-size: 18px;
-  font-weight: 600;
-  margin: 0 0 10px;
-  color: var(--text);
-}
-
-.survey-referral-copy {
-  text-align: left;
-}
-
-.survey-referral-cta-wrap {
-  margin-top: 18px;
-}
-
-.survey-referral-form {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  margin-top: 16px;
-}
-
-.survey-referral-form-expanded {
-  margin-top: 18px;
-  padding-top: 4px;
-}
-
-.survey-referral-label {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text);
-}
-
-.survey-referral-hint {
-  font-weight: 400;
-  font-size: 13px;
-  color: var(--muted);
-  line-height: 1.4;
-}
-
-.survey-referral-error {
-  margin: 0;
-}
-
-.survey-referral-success {
-  margin: 16px 0 0;
-  font-size: 15px;
-  color: var(--accent);
-  font-weight: 600;
-}
-
-.survey-referral-actions {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 10px;
-  margin-top: 6px;
-}
-
 .survey-btn-refer-friend {
   min-width: 200px;
   padding: 14px 22px;
   font-size: 16px;
-}
-
-.survey-btn-send-referral {
-  min-width: 160px;
-  padding: 12px 20px;
-  font-size: 15px;
-}
-
-.survey-btn-referral-alt {
-  min-width: unset;
-  align-self: flex-start;
-  padding: 8px 14px;
-  font-size: 13px;
-  font-weight: 500;
-  text-decoration: none;
-  text-align: center;
 }
 
 .survey-success-footer-blurb {

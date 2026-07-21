@@ -1,5 +1,5 @@
 // src/pages/PublicReferAFriend.tsx
-/** Standalone public "refer a friend" at a static URL (no survey token, no login). */
+/** Standalone public "share / refer a friend" page at /share (legacy /refer-a-friend redirects here). */
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { submitPublicReferral } from '../api/publicReferral';
