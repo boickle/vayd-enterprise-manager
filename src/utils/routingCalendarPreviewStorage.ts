@@ -117,6 +117,11 @@ export type ManualBookPreviewDraft = {
   coVisitAnchorAppointmentId?: number;
   /** Co-visit add-pet — skip manual booking type permission gate on create. */
   coVisitAddPet?: boolean;
+  /**
+   * After euthanasia future-appointment prompt in the book modal:
+   * delete those patient-scoped future rows after a successful preview commit.
+   */
+  euthanasiaDeleteFutureAppointments?: boolean;
 };
 
 export function isScheduleLoaderCalendarPreview(
