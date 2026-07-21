@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type FocusEvent,
@@ -15,9 +16,11 @@ import {
   enrichRoutingClientPatientsMembership,
   extractActivePatientsFromClientStaffRecord,
   loadRoutingPatientHoverSummary,
+  patientAlertsFromRecord,
   type RoutingClientPatientRow,
   type RoutingPatientHoverSummary,
 } from '../../utils/routingPatientHoverData';
+import { fetchPatientProfileForRow } from '../../api/patients';
 import { computeVisitHighlightsPopoverPosition } from '../../utils/hoverPopoverPosition';
 import '../PatientChartSummary.css';
 
@@ -59,6 +62,10 @@ export default function RoutingClientPatientsList({
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [summaryError, setSummaryError] = useState<string | null>(null);
   const summaryCacheRef = useRef(new Map<string, RoutingPatientHoverSummary>());
+  const alertsCacheRef = useRef(new Map<string, string | null>());
+  const alertsLoadingRef = useRef(new Set<string>());
+  const [resolvedAlertsById, setResolvedAlertsById] = useState<Record<string, string | null>>({});
+  const [alertsLoadingIds, setAlertsLoadingIds] = useState<Set<string>>(() => new Set());
   const hoverTimerRef = useRef<number | null>(null);
   const hideTimerRef = useRef<number | null>(null);
   const chipsContainerRef = useRef<HTMLDivElement>(null);
@@ -104,6 +111,76 @@ export default function RoutingClientPatientsList({
       cancelled = true;
     };
   }, [clientId, staticPatients, onPatientsLoaded]);
+
+  useEffect(() => {
+    if (!selectedPatientIds?.size) return;
+    let cancelled = false;
+
+    for (const rawId of selectedPatientIds) {
+      const id = String(rawId);
+      const patient = patients.find((p) => String(p.id) === id);
+      if (!patient) continue;
+
+      const inline = patient.alerts?.trim();
+      if (inline) {
+        alertsCacheRef.current.set(id, inline);
+        setResolvedAlertsById((prev) => (prev[id] === inline ? prev : { ...prev, [id]: inline }));
+        continue;
+      }
+
+      const cached = alertsCacheRef.current.get(id);
+      if (cached !== undefined) {
+        setResolvedAlertsById((prev) => (prev[id] === cached ? prev : { ...prev, [id]: cached }));
+        continue;
+      }
+
+      if (alertsLoadingRef.current.has(id)) continue;
+      alertsLoadingRef.current.add(id);
+      setAlertsLoadingIds((prev) => new Set(prev).add(id));
+
+      void fetchPatientProfileForRow({ id: patient.id })
+        .then((profile) => {
+          if (cancelled) return;
+          const text = patientAlertsFromRecord(profile);
+          alertsCacheRef.current.set(id, text);
+          setResolvedAlertsById((prev) => ({ ...prev, [id]: text }));
+        })
+        .catch(() => {
+          if (cancelled) return;
+          alertsCacheRef.current.set(id, null);
+          setResolvedAlertsById((prev) => ({ ...prev, [id]: null }));
+        })
+        .finally(() => {
+          alertsLoadingRef.current.delete(id);
+          setAlertsLoadingIds((prev) => {
+            const next = new Set(prev);
+            next.delete(id);
+            return next;
+          });
+        });
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [patients, selectedPatientIds]);
+
+  const selectedPatientAlerts = useMemo(() => {
+    if (!selectedPatientIds?.size) return [];
+    return patients
+      .filter((p) => selectedPatientIds.has(String(p.id)))
+      .map((p) => {
+        const id = String(p.id);
+        const alerts = p.alerts?.trim() || resolvedAlertsById[id] || null;
+        return alerts ? { id, name: p.name, alerts } : null;
+      })
+      .filter((row): row is { id: string; name: string; alerts: string } => row != null);
+  }, [patients, selectedPatientIds, resolvedAlertsById]);
+
+  const selectedAlertsLoading = useMemo(() => {
+    if (!selectedPatientIds?.size) return false;
+    return [...selectedPatientIds].some((rawId) => alertsLoadingIds.has(String(rawId)));
+  }, [selectedPatientIds, alertsLoadingIds]);
 
   const clearHoverTimers = useCallback(() => {
     if (hoverTimerRef.current != null) {
@@ -300,6 +377,25 @@ export default function RoutingClientPatientsList({
           })}
         </div>
       )}
+
+      {onTogglePatientSelect && selectedPatientIds && selectedPatientIds.size > 0 ? (
+        <div className="routing-client-patient-alerts">
+          {selectedAlertsLoading ? (
+            <p className="routing-client-patients-hint routing-client-patient-alerts-loading">
+              Loading patient alerts…
+            </p>
+          ) : null}
+          {selectedPatientAlerts.map((row) => (
+            <div
+              key={row.id}
+              className="routing-client-patient-alert-banner"
+              role="alert"
+            >
+              <strong>{row.name}:</strong> {row.alerts}
+            </div>
+          ))}
+        </div>
+      ) : null}
 
       {hover && layout
         ? createPortal(

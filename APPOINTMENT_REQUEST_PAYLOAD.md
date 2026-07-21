@@ -57,7 +57,8 @@ The form uses the following API endpoints for species and breed selection:
   "preferredDoctor": string | undefined,
   "serviceArea": "Kennebunk / Greater Portland / Augusta Area" | "Maine High Peaks Area" | undefined,
   "howSoon": "Emergent – today" | "Urgent – within 24–48 hours" | "Soon – sometime this week" | "In 3–4 weeks" | "Flexible – within the next month" | "Routine – in about 3 months" | "Planned – in about 6 months" | "Future – in about 12 months" | undefined,
-  "howDidYouHearAboutUs": string | undefined,
+  "howDidYouHearAboutUs": "Referred by a friend or family" | "Google Search" | "Facebook" | "Instagram" | "Flyer or Printed Material" | "Other" | undefined,
+  "howDidYouHearAboutUsOther": string | undefined,
   "anythingElse": string | undefined,
   "membershipInterest": "Pay as you go" | "Membership" | "I'm not sure yet" | undefined,
   "submittedAt": string (ISO 8601),
@@ -386,7 +387,7 @@ Before fetching available veterinarians, the form performs a zone check using th
   ],
   "noneOfWorkForMe": false,
   "serviceMinutes": 40,
-  "howDidYouHearAboutUs": "Google search",
+  "howDidYouHearAboutUs": "Google Search",
   "membershipInterest": "Membership",
   "submittedAt": "2024-01-10T10:30:00Z",
   "formFlow": {

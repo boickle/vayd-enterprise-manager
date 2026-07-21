@@ -53,7 +53,10 @@ function isExternalAppHref(href: string): boolean {
 }
 
 function isForwardBookingExitControl(target: Element): boolean {
-  return Boolean(target.closest('.scheduler-embedded-forward-booking-bar-dismiss'));
+  return Boolean(
+    target.closest('.scheduler-embedded-forward-booking-bar-dismiss') ||
+      target.closest('.scheduler-forward-booking-workspace-back')
+  );
 }
 
 /** Clicks that stay inside the forward-booking workflow (routing pane, preview, book modal). */

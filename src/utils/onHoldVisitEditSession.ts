@@ -5,10 +5,14 @@ export const ON_HOLD_VISIT_EDIT_RETURN_KEY = 'vayd:on-hold-visit-edit-return-v1'
 
 export type OnHoldVisitEditListKind = 'forward_booking' | 'appointment_request';
 
+export type OnHoldVisitEditFlowIntent = 'review' | 'remove';
+
 const VALID_LIST_KINDS = new Set<OnHoldVisitEditListKind>([
   'forward_booking',
   'appointment_request',
 ]);
+
+const VALID_FLOW_INTENTS = new Set<OnHoldVisitEditFlowIntent>(['review', 'remove']);
 
 function isOnHoldVisitEditListKind(value: unknown): value is OnHoldVisitEditListKind {
   return typeof value === 'string' && VALID_LIST_KINDS.has(value as OnHoldVisitEditListKind);
@@ -21,6 +25,12 @@ export type OnHoldVisitEditSessionV1 = {
   bookedAppointmentId: number;
   clientLabel?: string | null;
   returnPath: string;
+  /** Holds board household row — restored for scroll + exit animation. */
+  groupKey?: string | null;
+  /** Default `review` — open hold preview. `remove` — remove hold from calendar. */
+  flowIntent?: OnHoldVisitEditFlowIntent;
+  /** Calendar appointment ids to cancel when `flowIntent` is `remove`. */
+  removeAppointmentIds?: number[];
 };
 
 export type OnHoldVisitEditReturnExitKind = 'booked' | 'removed' | 'updated';
@@ -61,7 +71,31 @@ export function readOnHoldVisitEditSession(): OnHoldVisitEditSessionV1 | null {
     ) {
       return null;
     }
-    return o;
+    const flowIntent =
+      o.flowIntent != null && VALID_FLOW_INTENTS.has(o.flowIntent as OnHoldVisitEditFlowIntent)
+        ? (o.flowIntent as OnHoldVisitEditFlowIntent)
+        : 'review';
+    const removeAppointmentIds = Array.isArray(o.removeAppointmentIds)
+      ? o.removeAppointmentIds
+          .map((id) => Number(id))
+          .filter((id) => Number.isFinite(id) && id > 0)
+      : undefined;
+    const groupKey =
+      typeof o.groupKey === 'string' && o.groupKey.trim() ? o.groupKey.trim() : null;
+    return {
+      v: 1,
+      listEntryId: o.listEntryId,
+      listKind: o.listKind,
+      bookedAppointmentId: o.bookedAppointmentId,
+      clientLabel:
+        typeof o.clientLabel === 'string' && o.clientLabel.trim() ? o.clientLabel.trim() : null,
+      returnPath: o.returnPath.trim(),
+      groupKey,
+      flowIntent,
+      ...(removeAppointmentIds && removeAppointmentIds.length > 0
+        ? { removeAppointmentIds }
+        : {}),
+    };
   } catch {
     return null;
   }

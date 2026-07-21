@@ -54,8 +54,13 @@ export type CreateAppointmentRequestPromotionRequest = {
 };
 
 export type UpdateAppointmentRequestPromotionRequest = Partial<
-  Omit<CreateAppointmentRequestPromotionRequest, 'companyName'> & {
+  Omit<CreateAppointmentRequestPromotionRequest, 'companyName' | 'expiresAt' | 'description' | 'maxRedemptions'> & {
     companyName?: string;
+    description?: string | null;
+    /** Pass null to clear the expiration. */
+    expiresAt?: string | null;
+    /** Pass null to clear the max-redemptions cap. */
+    maxRedemptions?: number | null;
     isActive?: boolean;
     isDeleted?: boolean;
     /** Pass empty string to clear an existing code (makes it link-only again). */

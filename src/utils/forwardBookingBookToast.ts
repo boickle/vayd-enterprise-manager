@@ -1,5 +1,5 @@
 import type { AppointmentTypeCatalog } from './appointmentTypeSettings';
-import { pointsPerPatientForType } from './appointmentTypeSettings';
+import { pointsPerPatientForType, resolveAppointmentType } from './appointmentTypeSettings';
 import {
   forwardBookingScopeTargets,
   type RoutingForwardBookingIntentV1,
@@ -34,6 +34,10 @@ export function isHoldAppointmentTypeForBook(
   catalog: AppointmentTypeCatalog | undefined,
   opts: { typeId?: number | null; typeName?: string | null }
 ): boolean {
+  // Prefer the explicit isHold flag; fall back to the legacy 0-points heuristic.
+  const type = resolveAppointmentType(catalog, opts);
+  if (type?.isHold === true) return true;
+  if (type && type.isHold === false && type.points != null) return false;
   return pointsPerPatientForType(catalog, opts) <= 0;
 }
 

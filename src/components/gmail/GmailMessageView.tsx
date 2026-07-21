@@ -2,6 +2,10 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import { ArrowLeft, ChevronLeft, ChevronRight, X } from 'lucide-react';
 import type { ComposeContext, GmailComposeDraftSavedInfo } from './gmailCompose';
 import GmailBulkToolbar, { type GmailLabelApplyUpdate } from './GmailBulkToolbar';
+import GmailLabelPicker, {
+  type GmailLabelCheckState,
+  type GmailLabelDraftState,
+} from './GmailLabelPicker';
 import GmailMessageComposeBar from './GmailMessageComposeBar';
 import GmailComposePanel from './GmailComposePanel';
 import {
@@ -13,6 +17,7 @@ import {
   getMessageRemovableHeaderLabels,
   labelChipStyle,
   labelDisplayName,
+  modifyGmailMessage,
   threadLabelIds,
   type GmailAttachmentSummary,
   type GmailLabelNode,
@@ -27,6 +32,7 @@ type Props = {
   threadLoading: boolean;
   labelById: Map<string, GmailLabelNode>;
   userLabels: GmailLabelNode[];
+  userLabelTree?: GmailLabelNode[];
   currentLabelId: string;
   listMessages: GmailMessageSummary[];
   messagePositionLabel: string;
@@ -53,6 +59,7 @@ type Props = {
   onComposeSent?: () => void;
   onComposeDraftSaved?: (info: GmailComposeDraftSavedInfo) => void;
   onComposeDraftDeleted?: (info: { threadId: string }) => void;
+  contactsEnabled?: boolean;
 };
 
 export default function GmailMessageView({
@@ -62,6 +69,7 @@ export default function GmailMessageView({
   threadLoading,
   labelById,
   userLabels,
+  userLabelTree,
   currentLabelId,
   messagePositionLabel,
   actionBusy,
@@ -85,9 +93,50 @@ export default function GmailMessageView({
   onComposeSent,
   onComposeDraftSaved,
   onComposeDraftDeleted,
+  contactsEnabled = true,
 }: Props) {
   const removableLabels = getMessageRemovableHeaderLabels(message.labelIds, labelById);
   const [expandedMessageIds, setExpandedMessageIds] = useState<Set<string>>(() => new Set());
+  const [labelApplying, setLabelApplying] = useState(false);
+
+  const labelState = useCallback(
+    (labelId: string): GmailLabelCheckState =>
+      message.labelIds.includes(labelId) ? 'all' : 'none',
+    [message.labelIds],
+  );
+
+  const handleApplyLabels = async (draft: Map<string, GmailLabelDraftState>) => {
+    setLabelApplying(true);
+    try {
+      const addLabelIds: string[] = [];
+      const removeLabelIds: string[] = [];
+      for (const label of userLabels) {
+        const draftState = draft.get(label.id);
+        const has = message.labelIds.includes(label.id);
+        if (draftState === true && !has) addLabelIds.push(label.id);
+        if (draftState === false && has) removeLabelIds.push(label.id);
+      }
+      if (addLabelIds.length === 0 && removeLabelIds.length === 0) return;
+      const result = await modifyGmailMessage(
+        mailbox,
+        message.id,
+        { addLabelIds, removeLabelIds },
+        message.threadId,
+      );
+      onLabelsApplied([
+        {
+          messageId: result.id,
+          threadId: message.threadId,
+          labelIds: result.labelIds,
+        },
+      ]);
+    } catch (e) {
+      onToolbarError(e instanceof Error ? e.message : 'Failed to update labels.');
+      throw e;
+    } finally {
+      setLabelApplying(false);
+    }
+  };
 
   const threadPartition = useMemo(
     () =>
@@ -175,28 +224,49 @@ export default function GmailMessageView({
   return (
     <div className="gmail-message-view">
       <div className="gmail-message-view__toolbar">
-        <button
-          type="button"
-          className="gmail-inbox__list-toolbar-btn"
-          aria-label="Back to inbox"
-          onClick={onBack}
-        >
-          <ArrowLeft size={18} strokeWidth={1.75} aria-hidden />
-        </button>
-        <GmailBulkToolbar
-          mailbox={mailbox}
-          targetMessages={[message]}
-          currentLabelId={currentLabelId}
-          userLabels={userLabels}
-          labelById={labelById}
-          disabled={actionBusy}
-          onComplete={onToolbarComplete}
-          onLabelsApplied={onLabelsApplied}
-          onError={onToolbarError}
-          guardArchive={guardArchive}
-        />
-        <div className="gmail-message-view__toolbar-spacer" />
-        <div className="gmail-inbox__pagination">
+        <div className="gmail-message-view__toolbar-start">
+          <button
+            type="button"
+            className="gmail-message-view__back-btn"
+            aria-label="Back to inbox"
+            onClick={onBack}
+          >
+            <ArrowLeft size={22} strokeWidth={1.75} aria-hidden />
+          </button>
+        </div>
+        <div className="gmail-message-view__toolbar-actions gmail-message-view__toolbar-actions--desktop">
+          <GmailBulkToolbar
+            mailbox={mailbox}
+            targetMessages={[message]}
+            currentLabelId={currentLabelId}
+            userLabels={userLabels}
+            userLabelTree={userLabelTree}
+            labelById={labelById}
+            disabled={actionBusy || labelApplying}
+            onComplete={onToolbarComplete}
+            onLabelsApplied={onLabelsApplied}
+            onError={onToolbarError}
+            guardArchive={guardArchive}
+            variant="bulk"
+          />
+        </div>
+        <div className="gmail-message-view__toolbar-actions gmail-message-view__toolbar-actions--mobile">
+          <GmailBulkToolbar
+            mailbox={mailbox}
+            targetMessages={[message]}
+            currentLabelId={currentLabelId}
+            userLabels={userLabels}
+            userLabelTree={userLabelTree}
+            labelById={labelById}
+            disabled={actionBusy || labelApplying}
+            onComplete={onToolbarComplete}
+            onLabelsApplied={onLabelsApplied}
+            onError={onToolbarError}
+            guardArchive={guardArchive}
+            variant="message"
+          />
+        </div>
+        <div className="gmail-message-view__toolbar-nav">
           <span className="gmail-inbox__pagination-range">{messagePositionLabel}</span>
           <button
             type="button"
@@ -221,38 +291,63 @@ export default function GmailMessageView({
 
       <div className="gmail-message-view__scroll">
         <div className="gmail-message-view__head">
-          <h1 className="gmail-message-view__subject">{message.subject || '(no subject)'}</h1>
-          {removableLabels.length > 0 ? (
-            <div className="gmail-message-view__labels">
-              {removableLabels.map((label) => (
-                <span
-                  key={label.id}
-                  className="gmail-msg-item__label gmail-message-view__label"
-                  style={labelChipStyle(label)}
-                >
-                  <span className="gmail-message-view__label-name" title={label.name}>
-                    {labelDisplayName(label)}
-                  </span>
-                  <button
-                    type="button"
-                    className="gmail-message-view__label-remove"
-                    aria-label={`Remove label ${labelDisplayName(label)}`}
-                    title={`Remove label ${labelDisplayName(label)}`}
-                    disabled={actionBusy}
-                    onClick={() => void onRemoveLabel(label.id)}
-                  >
-                    <X size={12} strokeWidth={2.25} aria-hidden />
-                  </button>
-                </span>
-              ))}
+          <div className="gmail-message-view__subject-row">
+            <div className="gmail-message-view__subject-block">
+              <h1 className="gmail-message-view__subject">{message.subject || '(no subject)'}</h1>
+              {removableLabels.length > 0 || userLabels.length > 0 ? (
+                <div className="gmail-message-view__labels">
+                  {removableLabels.map((label) => (
+                    <span
+                      key={label.id}
+                      className="gmail-msg-item__label gmail-message-view__label"
+                      style={labelChipStyle(label)}
+                    >
+                      <span className="gmail-message-view__label-name" title={label.name}>
+                        {labelDisplayName(label)}
+                      </span>
+                      <button
+                        type="button"
+                        className="gmail-message-view__label-remove"
+                        aria-label={`Remove label ${labelDisplayName(label)}`}
+                        title={`Remove label ${labelDisplayName(label)}`}
+                        disabled={actionBusy || labelApplying}
+                        onClick={() => void onRemoveLabel(label.id)}
+                      >
+                        <X size={12} strokeWidth={2.25} aria-hidden />
+                      </button>
+                    </span>
+                  ))}
+                  {userLabels.length > 0 ? (
+                    <GmailLabelPicker
+                      userLabels={userLabels}
+                      labelState={labelState}
+                      onApply={handleApplyLabels}
+                      disabled={actionBusy || labelApplying}
+                      applying={labelApplying}
+                      trigger="add-chip"
+                    />
+                  ) : null}
+                </div>
+              ) : null}
             </div>
-          ) : null}
+            {!composeOpen && latestThreadMessage ? (
+              <div className="gmail-message-view__subject-actions">
+                <GmailMessageComposeBar
+                  threadId={message.threadId}
+                  replyTo={latestThreadMessage}
+                  disabled={actionBusy || threadLoading}
+                  onCompose={handleCompose}
+                  variant="inline"
+                />
+              </div>
+            ) : null}
+          </div>
         </div>
 
         {appointmentRequestSlot}
 
         {threadLoading ? (
-          <div className="gmail-inbox__state">Loading message…</div>
+          <div className="gmail-inbox__state">Loading message?</div>
         ) : threadMessages.length > 0 ? (
           <div className="gmail-message-view__thread">{renderThreadMessages()}</div>
         ) : (
@@ -265,20 +360,25 @@ export default function GmailMessageView({
             context={composeContext}
             variant="inline"
             threadMessages={threadMessages}
+            contactsEnabled={contactsEnabled}
             onClose={onCloseCompose}
             onSent={onComposeSent}
             onDraftSaved={onComposeDraftSaved}
             onDraftDeleted={onComposeDraftDeleted}
           />
-        ) : latestThreadMessage ? (
+        ) : null}
+      </div>
+
+      {!composeOpen && latestThreadMessage ? (
+        <div className="gmail-message-view__bottom-bar">
           <GmailMessageComposeBar
             threadId={message.threadId}
             replyTo={latestThreadMessage}
             disabled={actionBusy || threadLoading}
             onCompose={handleCompose}
           />
-        ) : null}
-      </div>
+        </div>
+      ) : null}
     </div>
   );
 }

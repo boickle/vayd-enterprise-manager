@@ -1,4 +1,5 @@
 import type { ForwardBookingSmsBookedSlot } from './forwardBookingSmsMessage';
+import { appendHoldSpotReleaseClause, type HoldSpotReleaseSmsOpts } from './holdSpotReleaseSmsClause';
 
 /** Appended to client-facing care outreach SMS (hold follow-up and text offers). */
 export const CARE_OUTREACH_SMS_SUFFIX = '-- neighborhood slots go fast.';
@@ -51,6 +52,8 @@ export function buildCareOutreachSmsMessage(opts: {
   providerLastName?: string | null;
   /** When true, use past-due wording (Schedule loader style). */
   anyPastDue?: boolean;
+  /** When set, append the hold-spot release deadline (held appointments). */
+  holdRelease?: HoldSpotReleaseSmsOpts;
 }): string {
   const firstName = normalizeClientFirstName(opts.clientFirstName, opts.clientDisplayName);
   const { phrase: pets, count: petCount } = formatPetNamesPhrase(opts.petNames);
@@ -59,14 +62,16 @@ export function buildCareOutreachSmsMessage(opts: {
   const windowStart = opts.bookedSlot?.windowStart?.trim() || 'xxxx';
   const windowEnd = opts.bookedSlot?.windowEnd?.trim() || 'xxxx';
   const doctorLastName = opts.providerLastName?.trim() || 'xxxxx';
+  let body: string;
   if (opts.anyPastDue) {
-    return appendCareOutreachSmsSuffix(
-      `Hi ${firstName}, it's Dr. ${doctorLastName}'s team at Vet At Your Door! It looks like ${pets} ${haveVerb} a few things past due, and Dr. ${doctorLastName} is going to be in your neighborhood on ${datePart} between ${windowStart} and ${windowEnd}. Would it be a good time for the team to stop by then to get ${pets} all up to date?`
-    );
+    body = `Hi ${firstName}, it's Dr. ${doctorLastName}'s team at Vet At Your Door! It looks like ${pets} ${haveVerb} a few things past due, and Dr. ${doctorLastName} is going to be in your neighborhood on ${datePart} between ${windowStart} and ${windowEnd}. Would it be a good time for the team to stop by then to get ${pets} all up to date?`;
+  } else {
+    body = `Hi ${firstName}, it's Dr. ${doctorLastName}'s team at Vet At Your Door! It looks like ${pets} ${haveVerb} a few things coming due, and Dr. ${doctorLastName} is already going to be in your neighborhood on ${datePart} between ${windowStart} and ${windowEnd}. Would it be a good time for the team to stop by then?`;
   }
-  return appendCareOutreachSmsSuffix(
-    `Hi ${firstName}, it's Dr. ${doctorLastName}'s team at Vet At Your Door! It looks like ${pets} ${haveVerb} a few things coming due, and Dr. ${doctorLastName} is already going to be in your neighborhood on ${datePart} between ${windowStart} and ${windowEnd}. Would it be a good time for the team to stop by then?`
-  );
+  if (opts.holdRelease) {
+    body = appendHoldSpotReleaseClause(body, opts.holdRelease);
+  }
+  return appendCareOutreachSmsSuffix(body);
 }
 
 export function careOutreachClientHasSmsPhone(phone: string | null | undefined): boolean {

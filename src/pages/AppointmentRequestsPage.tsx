@@ -157,6 +157,7 @@ import {
   APPOINTMENT_REQUESTS_HIGHLIGHT_PARAM,
   type AppointmentRequestListTab,
 } from '../appointments-nav';
+import { HOLDS_PATH, holdsPathWithHighlight } from '../holds-nav';
 import {
   appointmentRequestsListPathMatches,
   resolveAppointmentsListEntryTab,
@@ -179,7 +180,6 @@ const STATUS_TABS: { key: StatusFilter; label: string }[] = [
   { key: 'new', label: 'New' },
   { key: 'to_confirm', label: 'Auto-Booked' },
   { key: 'contacted', label: 'Contacted' },
-  { key: 'on_hold', label: 'On hold' },
   { key: 'booked', label: 'Booked' },
   { key: 'dismissed', label: 'Not Booked' },
 ];
@@ -207,7 +207,6 @@ const PAGINATED_LIST_TABS = new Set<StatusFilter>([
   'booked',
   'dismissed',
   'contacted',
-  'on_hold',
   'to_confirm',
 ]);
 const LIST_PAGE_SIZE = 25;
@@ -469,7 +468,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
     (tab: StatusFilter, opts?: { onHoldOver24Only?: boolean; replace?: boolean }) => {
       navigate(
         appointmentRequestsPathForTab(tab, {
-          onHoldOver24Only: tab === 'on_hold' ? (opts?.onHoldOver24Only ?? onHoldOver24Only) : false,
+          onHoldOver24Only: false,
         }),
         {
           replace: opts?.replace,
@@ -477,8 +476,17 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
         },
       );
     },
-    [navigate, onHoldOver24Only],
+    [navigate],
   );
+
+  useEffect(() => {
+    if (statusFilter !== 'on_hold') return;
+    const highlightId = parseAppointmentRequestsHighlightFromSearch(location.search);
+    navigate(
+      highlightId != null ? holdsPathWithHighlight(highlightId) : HOLDS_PATH,
+      { replace: true },
+    );
+  }, [statusFilter, location.search, navigate]);
 
   useEffect(() => {
     const resolved = resolveAppointmentsListEntryTab(
@@ -2032,17 +2040,18 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
     }
   };
 
-  const isOnHoldView = statusFilter === 'on_hold';
   const isToConfirmView = statusFilter === 'to_confirm';
+
+  if (statusFilter === 'on_hold') {
+    return null;
+  }
 
   return (
     <div className="container">
       <div className="settings-page">
       <h1 className="settings-title">Appointments</h1>
       <p className="settings-muted" style={{ marginBottom: 16, maxWidth: 800 }}>
-        {isOnHoldView
-          ? 'Calendar holds placed from appointment requests. Convert each hold to a booked visit when ready — holds older than 24 hours are flagged.'
-          : isToConfirmView
+        {isToConfirmView
             ? 'Clients who self-scheduled online land here until a Client Liaison verifies the visit on the calendar. Click Confirm to open the visit on the calendar and review it, then confirm to move to Booked, or Not booked if the visit should be cancelled.'
           : 'Triage incoming appointment requests from the client portal. Auto-booked online requests appear in Auto-Booked until reviewed. Use Book for requests that still need scheduling, then link the appointment. Text clients directly from the request phone number — including new clients who are not in the system yet.'}
       </p>
@@ -2062,7 +2071,6 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
       <div className="appt-request-status-tabs">
         {STATUS_TABS.map(({ key, label }) => {
           const active = highlightedStatusTab === key;
-          const isHoldTab = key === 'on_hold';
           return (
             <button
               key={key}
@@ -2079,14 +2087,6 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                   ({key === 'new' ? newTabVisibleCount : tabCounts[key]})
                 </span>
               ) : null}
-              {isHoldTab && onHoldOver24Count > 0 ? (
-                <span
-                  className="appt-request-status-tab-over24"
-                  title={`${onHoldOver24Count} on hold over 24 hours`}
-                >
-                  {onHoldOver24Count} &gt; 24h
-                </span>
-              ) : null}
             </button>
           );
         })}
@@ -2094,43 +2094,6 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
           Refresh
         </button>
       </div>
-
-      {isOnHoldView && tabCounts.on_hold > 0 && !isSearchActive ? (
-        <div style={{ marginBottom: 14, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
-          <button
-            type="button"
-            className={`settings-tab${!onHoldOver24Only ? ' active' : ''}`}
-            style={{
-              marginBottom: 0,
-              border: !onHoldOver24Only ? '2px solid var(--accent-strong, #4FB128)' : '1px solid var(--border)',
-              borderRadius: 8,
-              padding: '6px 12px',
-              fontSize: 13,
-            }}
-            aria-pressed={!onHoldOver24Only}
-            onClick={() => goToTab('on_hold', { onHoldOver24Only: false, replace: true })}
-          >
-            All holds ({tabCounts.on_hold})
-          </button>
-          <button
-            type="button"
-            className={`settings-tab${onHoldOver24Only ? ' active' : ''}`}
-            style={{
-              marginBottom: 0,
-              border: onHoldOver24Only ? '2px solid #991b1b' : '1px solid var(--border)',
-              borderRadius: 8,
-              padding: '6px 12px',
-              fontSize: 13,
-              background: onHoldOver24Only ? '#fecaca' : '#fff',
-              color: onHoldOver24Only ? '#991b1b' : 'var(--muted)',
-            }}
-            aria-pressed={onHoldOver24Only}
-            onClick={() => goToTab('on_hold', { onHoldOver24Only: true, replace: true })}
-          >
-            Over 24 hours ({onHoldOver24Count})
-          </button>
-        </div>
-      ) : null}
 
       <div style={{ marginBottom: 16, maxWidth: 420 }}>
         <input

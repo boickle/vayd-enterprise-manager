@@ -20,6 +20,7 @@ function pickStr(v: unknown): string | null {
 export type SchedulerContextMenuAction =
   | { kind: 'addPet' }
   | { kind: 'reschedule' }
+  | { kind: 'exploreAlternatives' }
   | { kind: 'view' }
   | { kind: 'edit' }
   | { kind: 'visitTimes' }
@@ -167,6 +168,16 @@ export function SchedulerAppointmentContextMenu({
           title={rescheduleDisabled ? rescheduleDisabledTitle : undefined}
           onPick={() => onAction({ kind: 'reschedule' })}
         />
+        <CtxSubRow
+          label="Explore alternatives"
+          disabled={Boolean(rescheduleDisabled)}
+          title={
+            rescheduleDisabled
+              ? rescheduleDisabledTitle
+              : 'Keep this appointment and search for other options.'
+          }
+          onPick={() => onAction({ kind: 'exploreAlternatives' })}
+        />
         <CtxSubRow label="View appointment" onPick={() => onAction({ kind: 'view' })} />
         {showEditAppointment ? (
           <CtxSubRow label="Edit Appointment" onPick={() => onAction({ kind: 'edit' })} />
@@ -298,6 +309,8 @@ const CTX_FLYOUT_OVERLAP = 14;
 const CTX_FLYOUT_CLOSE_MS = 280;
 const CTX_FLYOUT_Z = 10051;
 const CTX_FLYOUT_EST_WIDTH = 240;
+/** Scheduling has grown (Explore alternatives, etc.) — underestimate left menus short and clipped at the viewport edge. */
+const CTX_FLYOUT_EST_HEIGHT = 280;
 
 function ctxFlyoutPlacementEqual(a: CtxFlyoutPlacement, b: CtxFlyoutPlacement): boolean {
   return (
@@ -339,27 +352,29 @@ function horizontalFlyoutLeft(
   return { side: resolvedSide, left };
 }
 
+/**
+ * Prefer aligning with the parent row; when that would clip the bottom of the flyout,
+ * shift upward so the full height fits (then clamp into the viewport).
+ */
 function verticalFlyoutTop(wrapRect: DOMRect, flyH: number, vpH: number): number {
+  const avail = Math.max(0, vpH - 2 * CTX_FLYOUT_PAD);
+  const usedH = Math.min(flyH, avail);
   let top = wrapRect.top;
-  if (top + flyH > vpH - CTX_FLYOUT_PAD) {
-    top = wrapRect.bottom - flyH;
-  }
-  if (top + flyH > vpH - CTX_FLYOUT_PAD) {
-    top = vpH - CTX_FLYOUT_PAD - flyH;
+  if (top + usedH > vpH - CTX_FLYOUT_PAD) {
+    top = vpH - CTX_FLYOUT_PAD - usedH;
   }
   return Math.max(CTX_FLYOUT_PAD, top);
 }
 
-/** Estimate position before the flyout has been measured (avoids visibility:hidden flash). */
-function estimateCtxFlyoutPlacement(
+function flyoutPlacementFromSize(
   wrapEl: HTMLElement,
+  flyW: number,
+  flyH: number,
   opts: { nested?: boolean }
 ): CtxFlyoutPlacement {
   const vpW = window.innerWidth;
   const vpH = window.innerHeight;
   const wrapRect = wrapEl.getBoundingClientRect();
-  const flyW = CTX_FLYOUT_EST_WIDTH;
-  const flyH = 120;
   const parentFlyout = opts.nested ? wrapEl.closest('.scheduler-ctx-flyout') : null;
   const parentFlyoutOpensLeft = parentFlyout
     ? parentFlyout.getBoundingClientRect().right <= wrapRect.left + 2
@@ -372,7 +387,16 @@ function estimateCtxFlyoutPlacement(
     vpW
   );
   const top = verticalFlyoutTop(wrapRect, flyH, vpH);
-  return { side, left, top, maxHeight: Math.max(120, vpH - top - CTX_FLYOUT_PAD) };
+  const maxHeight = Math.max(80, Math.min(flyH, vpH - top - CTX_FLYOUT_PAD));
+  return { side, left, top, maxHeight };
+}
+
+/** Estimate position before the flyout has been measured (avoids visibility:hidden flash). */
+function estimateCtxFlyoutPlacement(
+  wrapEl: HTMLElement,
+  opts: { nested?: boolean }
+): CtxFlyoutPlacement {
+  return flyoutPlacementFromSize(wrapEl, CTX_FLYOUT_EST_WIDTH, CTX_FLYOUT_EST_HEIGHT, opts);
 }
 
 /** Viewport-fixed submenu position so flyouts are not clipped by the root menu box. */
@@ -381,26 +405,14 @@ function measureCtxFlyoutPlacement(
   flyoutEl: HTMLElement,
   opts: { nested?: boolean }
 ): CtxFlyoutPlacement {
-  const vpW = window.innerWidth;
-  const vpH = window.innerHeight;
-  const wrapRect = wrapEl.getBoundingClientRect();
-  const flyW = flyoutEl.offsetWidth || CTX_FLYOUT_EST_WIDTH;
-  const flyH = flyoutEl.offsetHeight || 120;
-  const parentFlyout = opts.nested ? wrapEl.closest('.scheduler-ctx-flyout') : null;
-  const parentFlyoutOpensLeft = parentFlyout
-    ? parentFlyout.getBoundingClientRect().right <= wrapRect.left + 2
-    : false;
+  // Measure uncapped height — offsetHeight alone stays stuck at a prior maxHeight and never shifts up.
+  const prevMax = flyoutEl.style.maxHeight;
+  flyoutEl.style.maxHeight = 'none';
+  const flyW = Math.max(flyoutEl.offsetWidth || 0, CTX_FLYOUT_EST_WIDTH);
+  const flyH = Math.max(flyoutEl.scrollHeight || 0, flyoutEl.offsetHeight || 0, 1);
+  flyoutEl.style.maxHeight = prevMax;
 
-  const { side, left } = horizontalFlyoutLeft(
-    parentFlyoutOpensLeft ? 'left' : 'right',
-    wrapRect,
-    flyW,
-    vpW
-  );
-  const top = verticalFlyoutTop(wrapRect, flyH, vpH);
-  const maxHeight = Math.max(120, vpH - top - CTX_FLYOUT_PAD);
-
-  return { side, left, top, maxHeight };
+  return flyoutPlacementFromSize(wrapEl, flyW, flyH, opts);
 }
 
 function CtxParentRow({

@@ -1,10 +1,14 @@
 # Scout Gmail inbox — backend API contract
 
-**Purpose:** Shared Gmail inbox inside Scout (`/schedule/email`). Staff read, compose, label, and manage email without leaving the PIMS. One shared Workspace inbox; per-user OAuth tokens (not a service account).
+**Purpose:** Shared Gmail inbox inside Scout (`/schedule/email`). Staff read, compose, label, and manage email without leaving the PIMS.
+
+**Auth (shared info@ / field@):** Google Cloud **service account** with domain-wide delegation, restricted by Admin Console **API Access Control Group Filter** to shared inboxes only. Scout impersonates the mailbox via JWT `subject` — staff never enter the shared inbox password.
+
+**Auth (personal @vetatyourdoor.com):** Per-user OAuth refresh tokens (encrypted in Postgres), as before.
 
 **Aligns with:** `ScheduleLayout` rail, Socket.IO pattern in `src/utils/calendarRealtime.ts`, integration style of `src/api/clientSms.ts`.
 
-**Consumers:** Enterprise manager (staff JWT), Google OAuth callback (browser redirect).
+**Consumers:** Enterprise manager (staff JWT), Google OAuth callback (browser redirect) for personal mailboxes only.
 
 **Backend repo:** `vayd-api` — implement under `src/gmail/`.
 
@@ -19,34 +23,28 @@ sequenceDiagram
   participant Google as Gmail API
   participant WS as Socket.IO /gmail
 
-  Staff->>API: GET /gmail/oauth/connect (JWT)
-  API->>Google: OAuth consent redirect
-  Google->>API: GET /gmail/oauth/callback?code=...
-  API->>API: Store encrypted refresh token (per user)
-  API->>Staff: Redirect to /schedule/email?connected=1
+  Note over API,Google: Shared inboxes use SA + subject=info@|field@
+  Staff->>API: GET /gmail/mailboxes (JWT)
+  API->>API: Check gmail_mailbox_permissions
+  API-->>Staff: info@/field@ connected (authMode=service_account)
 
-  Staff->>API: GET /gmail/labels
-  API->>Google: users.labels.list
-  API->>Staff: Nested label tree
+  Staff->>API: GET /gmail/messages?mailbox=info@...
+  API->>Google: users.messages.list (SA impersonating info@)
+  API->>Staff: Thread summaries
 
-  Staff->>API: GET /gmail/messages?labelId=INBOX
-  API->>Google: users.messages.list + batch get
-  API->>Staff: Thread summaries + untagged queue
-
-  Google-->>API: Pub/Sub history push (or poll)
-  API->>WS: gmail.inbox event
-  WS->>Staff: New mail badge / list refresh
+  Note over Staff,API: Personal mailboxes still use OAuth connect once
+  Staff->>API: GET /gmail/oauth/connect?mailbox=you@...
+  API->>Staff: { url } consent redirect
 ```
 
 | Concern | Approach |
 |--------|----------|
-| Inbox | Single shared mailbox (`GMAIL_SHARED_MAILBOX` env) |
-| Auth (Scout) | Existing staff JWT (`AuthGuard`) |
-| Auth (Gmail) | OAuth2 per user; encrypted refresh tokens in Postgres |
+| Shared inboxes | SA JWT with `subject` = info@ / field@ only |
+| Scout ACL | `gmail_mailbox_permissions` (user → mailbox) |
+| Personal mail | OAuth2 per user; encrypted refresh tokens |
+| Watch/history | `gmail_mailbox_state` cursor per mailbox (SA or OAuth) |
 | Labels | Pass-through from Gmail API; preserve nesting + colors |
-| Untagged queue | Messages in INBOX with **no user labels** (system labels only) |
 | Realtime | Socket.IO namespace `/gmail`, room `practice:{practiceId}` |
-| History sync | Gmail `history.list` from stored `historyId`; Pub/Sub preferred |
 
 ### Out of scope (v1)
 
@@ -54,21 +52,15 @@ Patient record linking, Drive, Chat, custom action buttons beyond label manageme
 
 ---
 
-## Google Cloud setup (one-time, ~10 min)
+## Google Cloud / Admin setup
 
-Workspace admin (Deirdre) completes once:
+1. Enable Gmail API + People API on the GCP project that owns the service account.
+2. Create a service account → download JSON key.
+3. Enable domain-wide delegation for the SA Client ID with Gmail + Contacts scopes.
+4. In Admin Console → Security → API Controls → Domain-wide Delegation, authorize the Client ID with a **Security Group filter** pointing at `api-allowed-inboxes@…` containing **only** info@ and field@.
+5. Keep the existing OAuth web client for **personal** mailbox connect.
 
-1. Create/select GCP project → **APIs & Services → Enable Gmail API**.
-2. **OAuth consent screen** — Internal (Workspace) or External if needed; add scopes:
-   - `https://www.googleapis.com/auth/gmail.readonly`
-   - `https://www.googleapis.com/auth/gmail.compose`
-   - `https://www.googleapis.com/auth/gmail.modify`
-3. **Credentials → OAuth 2.0 Client ID** — Web application.
-   - Authorized redirect URI: `{API_ORIGIN}/gmail/oauth/callback` (e.g. `http://localhost:3000/gmail/oauth/callback`).
-4. (Recommended) **Cloud Pub/Sub** topic + push subscription for Gmail `users.watch` push notifications.
-5. Copy **Client ID** and **Client secret** into API env.
-
-Staff each complete OAuth once via Scout Settings or first visit to `/schedule/email`.
+Staff no longer OAuth as info@ / field@. They may still OAuth their personal VAYD account once.
 
 ---
 
@@ -78,59 +70,64 @@ Add to `vayd-api` `.env.example`:
 
 | Variable | Required | Notes |
 |----------|----------|-------|
-| `GMAIL_OAUTH_CLIENT_ID` | yes | OAuth web client ID |
-| `GMAIL_OAUTH_CLIENT_SECRET` | yes | OAuth web client secret |
-| `GMAIL_OAUTH_REDIRECT_URI` | yes | Must match GCP console (API origin + `/gmail/oauth/callback`) |
-| `GMAIL_SHARED_MAILBOX` | yes | Shared inbox email, e.g. `care@vayd.com` |
-| `GMAIL_TOKEN_ENCRYPTION_KEY` | yes | 32-byte hex or base64 key for AES-256-GCM at rest |
-| `GMAIL_OAUTH_SUCCESS_REDIRECT` | yes | Frontend URL after connect, e.g. `http://localhost:5173/schedule/email?connected=1` |
-| `GMAIL_PUBSUB_TOPIC` | no | `projects/{project}/topics/{name}` for `users.watch` |
-| `GMAIL_WATCH_LABEL_IDS` | no | Default `INBOX`; comma-separated label IDs to watch |
-| `GMAIL_POLL_INTERVAL_MS` | no | Fallback poll when Pub/Sub absent (default `60000`) |
+| `GMAIL_SERVICE_ACCOUNT_JSON` | shared inboxes | Full SA JSON (raw or base64), preferred |
+| `GMAIL_SERVICE_ACCOUNT_EMAIL` | alt | SA client_email if not using JSON |
+| `GMAIL_SERVICE_ACCOUNT_PRIVATE_KEY` | alt | SA private_key (\\n escaped OK) |
+| `GMAIL_OAUTH_CLIENT_ID` | personal OAuth | OAuth web client ID |
+| `GMAIL_OAUTH_CLIENT_SECRET` | personal OAuth | OAuth secret |
+| `GMAIL_OAUTH_REDIRECT_URI` | personal OAuth | Must match GCP console |
+| `GMAIL_OAUTH_SUCCESS_REDIRECT` | personal OAuth | Frontend URL after connect |
+| `GMAIL_TOKEN_ENCRYPTION_KEY` | personal OAuth | 32-byte hex/base64 for refresh tokens |
+| `APPOINTMENT_REQUEST_GMAIL_MAILBOX` | no | Default info@ |
+| `GMAIL_PUBSUB_TOPIC` | no | Pub/Sub topic for watch |
+| `GMAIL_PUBSUB_AUDIENCE` | no | OIDC audience for push |
+| `GMAIL_WATCH_LABEL_IDS` | no | Default `INBOX` |
+| `GMAIL_POLL_INTERVAL_MS` | no | Fallback poll |
 
-**Do not** expose client secret or encryption key to the frontend. Optional public env in Vite: `VITE_GMAIL_OAUTH_CLIENT_ID` only if using popup flow (redirect flow preferred).
+**Do not** expose SA private keys or OAuth secrets to the frontend.
 
 ---
 
-## OAuth2 flow
+## OAuth2 flow (personal mailboxes only)
 
-### 1. Start connect
+When `GMAIL_SERVICE_ACCOUNT_*` is configured, `GET /gmail/oauth/connect` for info@ / field@ returns `GMAIL_SA_NO_OAUTH`. Personal addresses still use the legacy connect + callback flow.
 
-**`GET /gmail/oauth/connect`**
+### Connection status
 
-- **Auth:** staff JWT (`AuthGuard`).
-- **Query:** optional `returnTo` (frontend path under `/schedule`, validated server-side).
-- **Response `200`:** `{ "url": "https://accounts.google.com/o/oauth2/v2/auth?..." }`
-- Frontend: `fetch` with Bearer token, then `window.location.assign(url)`.
+**`GET /gmail/mailboxes`**
 
-### 2. Callback
+- Shared: `{ connected: true, authMode: "service_account", … }` when SA is configured and the user has a permissions row.
+- Personal: `{ connected: true|false, authMode: "oauth", … }` based on `gmail_oauth_tokens`.
 
-**`GET /gmail/oauth/callback`**
+---
 
-- **Auth:** `@Public()` (Google redirect).
-- **Query:** `code`, `state`, optional `error`.
-- Validates `state`, exchanges `code` for tokens via Google token endpoint.
-- Verifies token grants access to `GMAIL_SHARED_MAILBOX` (see **Shared mailbox access** below).
-- Upserts row in `gmail_oauth_tokens` for `userId` (encrypted refresh token, `accessToken` + expiry, `grantedEmail`, `scopes`).
-- Redirects to `GMAIL_OAUTH_SUCCESS_REDIRECT` or `returnTo` from state.
+## Permissions
 
-### 3. Connection status
+Table `gmail_mailbox_permissions` maps `user_id` → `mailbox_email` (`can_read` / `can_send`).
 
-**`GET /gmail/oauth/status`**
+On API boot, missing rows are seeded from legacy role rules (field@ for staff with Gmail access; info@ for receptionist/admin). Google’s group filter still blocks SA impersonation of personal addresses even if Scout misconfigures a subject.
 
-- **Auth:** staff JWT.
-- **Response `200`:**
+### Legacy `GET /gmail/oauth/status`
+
+Still available for older clients. Returns aggregate `connected` plus the `mailboxes` array (with `authMode`).
 
 ```json
 {
   "connected": true,
-  "grantedEmail": "staff@vayd.com",
-  "connectedAt": "2026-06-24T12:00:00.000Z",
-  "scopes": ["gmail.readonly", "gmail.compose", "gmail.modify"],
-  "sharedMailbox": "care@vayd.com",
-  "tokenExpiresAt": "2026-06-24T13:00:00.000Z"
+  "grantedEmail": "info@vetatyourdoor.com",
+  "sharedMailbox": "info@vetatyourdoor.com",
+  "mailboxes": [
+    {
+      "email": "info@vetatyourdoor.com",
+      "kind": "shared",
+      "connected": true,
+      "authMode": "service_account"
+    }
+  ]
 }
 ```
+
+---
 
 When not connected: `{ "connected": false, "sharedMailbox": "care@vayd.com" }`.
 

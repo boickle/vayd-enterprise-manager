@@ -52,13 +52,13 @@ export type FetchUnscheduledRemindersParams = {
   dueDateTo?: string;
   practiceId?: number;
   limit?: number;
-  /** ISO datetime — appointments with start >= asOf count as “future”; default server now. */
+  /** ISO datetime — appointments starting on/after the practice-local start of that day count; default server now. */
   asOf?: string;
 };
 
 /**
- * GET /reminders/unscheduled — reminders still needing a visit with the assigned provider
- * (excluded when patient already has a future non-canceled appointment with that provider).
+ * GET /reminders/unscheduled — reminders still needing a visit.
+ * Excludes patients with a non-canceled appointment starting today or later (any provider) within 2 years.
  */
 export async function fetchUnscheduledReminders(
   params: FetchUnscheduledRemindersParams

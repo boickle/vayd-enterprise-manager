@@ -1,0 +1,291 @@
+.appt-search-page {
+  padding: 20px 24px 32px;
+  background: #fff;
+  min-height: 320px;
+}
+
+.appt-search-page__head {
+  margin-bottom: 20px;
+}
+
+.appt-search-page__title {
+  margin: 0 0 6px;
+  font-size: 26px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.appt-search-page__subtitle {
+  margin: 0;
+  font-size: 14px;
+  color: #64748b;
+}
+
+.appt-search-page__selected {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 20px 0 12px;
+  padding: 14px 16px;
+  border: 1px solid #bfdbfe;
+  border-radius: 10px;
+  background: #eff6ff;
+}
+
+.appt-search-page__selected-label {
+  margin: 0;
+  font-size: 15px;
+  color: #1e3a8a;
+}
+
+.appt-search-page__selected-label strong {
+  font-weight: 700;
+}
+
+.appt-search-page__clear {
+  border: 1px solid #93c5fd;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #1d4ed8;
+  background: #fff;
+  cursor: pointer;
+}
+
+.appt-search-page__clear:hover {
+  background: #dbeafe;
+}
+
+.appt-search-page__results-head {
+  margin: 16px 0 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #475569;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.appt-search-history__block {
+  margin-bottom: 16px;
+}
+
+.appt-search-history__sections {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.appt-search-history__section {
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.appt-search-history__section-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 16px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  background: #f8fafc;
+  border-bottom: 1px solid transparent;
+}
+
+.appt-search-history__section[open] > .appt-search-history__section-summary {
+  border-bottom-color: #e2e8f0;
+}
+
+.appt-search-history__section-summary::-webkit-details-marker {
+  display: none;
+}
+
+.appt-search-history__section-summary::before {
+  content: '▸';
+  font-size: 12px;
+  color: #64748b;
+  transition: transform 0.15s ease;
+}
+
+.appt-search-history__section[open] > .appt-search-history__section-summary::before {
+  transform: rotate(90deg);
+}
+
+.appt-search-history__section-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.appt-search-history__section-count {
+  font-size: 14px;
+  font-weight: 600;
+  color: #64748b;
+}
+
+.appt-search-history__section-body {
+  padding: 0 12px 12px;
+}
+
+.appt-search-history__section-body .pims-appts-section__table-wrap {
+  margin-top: 8px;
+}
+
+.appt-search-history__list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: min(481px, 55vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.appt-search-history__visit {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.appt-search-history__visit--multi {
+  border-color: #cbd5e1;
+}
+
+.appt-search-history__visit--multi .appt-search-history__visit-head {
+  border-left: 3px solid #86efac;
+}
+
+.appt-search-history__visit-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  padding: 10px 12px;
+  background: #f8fafc;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.appt-search-history__visit-when {
+  font-size: 14px;
+  font-weight: 600;
+  color: #0f172a;
+  line-height: 1.35;
+}
+
+.appt-search-history__visit-pets-badge {
+  font-size: 11px;
+  font-weight: 600;
+  color: #475569;
+  background: #e2e8f0;
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.appt-search-history__visit-provider {
+  margin-left: auto;
+  font-size: 13px;
+  color: #475569;
+  text-align: right;
+}
+
+.appt-search-history__visit-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.appt-search-history__visit-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px 12px;
+  align-items: center;
+  padding: 10px 12px;
+  border-top: 1px solid #f1f5f9;
+}
+
+.appt-search-history__visit-row--with-patient {
+  grid-template-columns: minmax(72px, 9rem) minmax(0, 1fr) auto;
+}
+
+.appt-search-history__visit-row:first-child {
+  border-top: none;
+}
+
+.appt-search-history__visit-patient {
+  font-weight: 600;
+  color: #0f172a;
+  min-width: 0;
+}
+
+.appt-search-history__visit-details {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  min-width: 0;
+}
+
+.appt-search-history__visit-type {
+  color: #334155;
+}
+
+.appt-search-history__visit-status {
+  color: #64748b;
+  font-size: 13px;
+}
+
+.appt-search-history__visit-status::before {
+  content: '·';
+  margin-right: 10px;
+  color: #cbd5e1;
+}
+
+.appt-search-history__visit-provider-inline {
+  color: #475569;
+  font-size: 13px;
+}
+
+.appt-search-history__visit-provider-inline::before {
+  content: '·';
+  margin-right: 10px;
+  color: #cbd5e1;
+}
+
+.appt-search-history__visit-action {
+  justify-self: end;
+}
+
+.appt-search-history__view-btn {
+  font-size: 13px;
+  padding: 6px 10px;
+  white-space: nowrap;
+}
+
+.appt-search-history__controls {
+  margin-bottom: 12px;
+}
+
+.appt-search-page__pick-btn {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: #2563eb;
+  cursor: pointer;
+  text-align: left;
+}
+
+.pims-clients__inactive {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #475569;
+  white-space: nowrap;
+  flex-shrink: 0;
+}

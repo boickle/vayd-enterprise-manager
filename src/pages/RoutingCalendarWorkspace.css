@@ -111,6 +111,17 @@
   min-height: 0;
 }
 
+/**
+ * Desktop: when the pane is narrowed enough to stack form + results, the routing
+ * page grows to its content height (overflow visible). The fixed-height inner
+ * outlet clips that overflow with no scrollbar, so scroll the outlet itself.
+ */
+@media (min-width: 901px) {
+  .schedule-routing-workspace__routing-inner:has(> .routing-page-root--stack-columns) {
+    overflow-y: auto;
+  }
+}
+
 .schedule-routing-workspace__calendar-scroll {
   flex: 1;
   min-height: 0;
@@ -123,14 +134,32 @@
 @media (max-width: 900px) {
   .schedule-routing-workspace {
     flex-direction: column;
+    height: auto;
+    min-height: 0;
+    overflow: visible;
   }
 
   .schedule-routing-workspace__routing {
-    flex: 0 1 auto;
+    flex: 0 0 auto;
     width: 100% !important;
     max-width: none;
     min-width: 0;
-    max-height: min(52vh, 520px);
+    max-height: none;
+    overflow: visible;
+  }
+
+  .schedule-routing-workspace__routing-inner {
+    height: auto;
+    overflow: visible;
+    display: block;
+  }
+
+  .schedule-routing-workspace__routing-inner > .routing-page-root {
+    flex: none;
+    min-height: auto;
+    height: auto;
+    display: flex;
+    flex-direction: column;
   }
 
   .schedule-routing-workspace__splitter {
@@ -138,8 +167,28 @@
   }
 
   .schedule-routing-workspace__calendar {
-    flex: 1;
+    flex: 0 0 auto;
     min-width: 0;
-    min-height: min(48vh, 480px);
+    min-height: 0;
+    overflow: visible;
+  }
+
+  .schedule-routing-workspace__calendar-scroll {
+    flex: none;
+    overflow: visible;
+  }
+
+  /** Before a slot preview: routing form only — hide the embedded practice calendar chrome. */
+  .schedule-routing-workspace--mobile-routing-only .schedule-routing-workspace__routing {
+    flex: 1 1 auto;
+    width: 100% !important;
+  }
+
+  .schedule-routing-workspace--mobile-routing-only .schedule-routing-workspace__routing-inner {
+    padding: 10px 12px 20px;
+  }
+
+  .schedule-routing-workspace__calendar--mobile-hidden {
+    display: none !important;
   }
 }

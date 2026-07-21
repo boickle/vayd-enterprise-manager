@@ -51,6 +51,8 @@ import './Settings.css';
 import SettingsEmployeeDirectory from '../components/settings/SettingsEmployeeDirectory';
 import SettingsAppointmentTypes from '../components/settings/SettingsAppointmentTypes';
 import SettingsRoleManualBooking from '../components/settings/SettingsRoleManualBooking';
+import SettingsClSeatAssignment from '../components/settings/SettingsClSeatAssignment';
+import SettingsGmailMailboxPermissions from '../components/settings/SettingsGmailMailboxPermissions';
 import { appointmentTypeIsArchived } from '../utils/appointmentTypeSettings';
 
 const SETTINGS_TAB_IDS = [
@@ -63,6 +65,8 @@ const SETTINGS_TAB_IDS = [
   'employee-images',
   'employee-goals',
   'employee-directory',
+  'cl-seat-assignment',
+  'gmail-mailboxes',
   'reminders',
 ] as const;
 type SettingsTabId = (typeof SETTINGS_TAB_IDS)[number];
@@ -1101,6 +1105,18 @@ export default function Settings() {
             onClick={() => goToTab('employee-directory')}
           >
             Employees
+          </button>
+          <button
+            className={`settings-tab ${activeTab === 'cl-seat-assignment' ? 'active' : ''}`}
+            onClick={() => goToTab('cl-seat-assignment')}
+          >
+            CL Seat Assignment
+          </button>
+          <button
+            className={`settings-tab ${activeTab === 'gmail-mailboxes' ? 'active' : ''}`}
+            onClick={() => goToTab('gmail-mailboxes')}
+          >
+            Gmail Mailboxes
           </button>
           <button
             className={`settings-tab ${activeTab === 'reminders' ? 'active' : ''}`}
@@ -2505,6 +2521,54 @@ export default function Settings() {
               Click an employee name to edit roles, or use <strong>Edit bio</strong> for profile copy.
             </p>
             <SettingsEmployeeDirectory
+              onMessage={(msg, kind) => {
+                if (kind === 'success') {
+                  setSuccess(msg);
+                  setError(null);
+                  window.setTimeout(() => setSuccess(null), 4000);
+                } else {
+                  setError(msg);
+                  setSuccess(null);
+                }
+              }}
+            />
+          </div>
+        )}
+
+        {/* Shared Gmail mailbox ACL — which staff see info@ / field@ */}
+        {activeTab === 'gmail-mailboxes' && (
+          <div className="settings-section">
+            <h2 className="settings-section-title">Gmail Mailboxes</h2>
+            <p className="settings-section-description">
+              Choose which shared practice mailboxes each staff member can open in Scout Email.
+              <strong> Show</strong> controls the mailbox tab; <strong>Send</strong> allows composing
+              from that address. Personal mailboxes are still connected by each user via OAuth.
+            </p>
+            <SettingsGmailMailboxPermissions
+              onMessage={(msg, kind) => {
+                if (kind === 'success') {
+                  setSuccess(msg);
+                  setError(null);
+                  window.setTimeout(() => setSuccess(null), 4000);
+                } else {
+                  setError(msg);
+                  setSuccess(null);
+                }
+              }}
+            />
+          </div>
+        )}
+
+        {/* CL Seat Assignment — weekly Phones / Outreach / Email rotation + par */}
+        {activeTab === 'cl-seat-assignment' && (
+          <div className="settings-section">
+            <h2 className="settings-section-title">CL Seat Assignment</h2>
+            <p className="settings-section-description">
+              Assign each Client Liaison to Phones, Outreach, or Email for the week, and set weekly seat par
+              targets used by Analytics → CL Performance (normalized score = points ÷ par).
+            </p>
+            <SettingsClSeatAssignment
+              practiceId={REMINDERS_PRACTICE_ID}
               onMessage={(msg, kind) => {
                 if (kind === 'success') {
                   setSuccess(msg);

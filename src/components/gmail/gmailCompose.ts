@@ -11,7 +11,9 @@ import {
   sendGmailMessage,
   threadDraftDeleteIds,
   updateGmailDraft,
+  formatGmailAddress,
   type GmailDraftResponse,
+  type GmailAddress,
   type GmailSendAsAlias,
   type GmailThreadMessage,
 } from '../../api/gmail';
@@ -39,6 +41,46 @@ function formatFromAlias(alias: GmailSendAsAlias): string {
 function extractEmail(raw: string): string {
   const match = raw.match(/<([^>]+)>/);
   return (match?.[1] ?? raw).trim();
+}
+
+const COMPOSE_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** Split a recipient field into committed addresses and the token being typed. */
+export function splitRecipientFieldActive(value: string): { committed: string; active: string } {
+  const lastSep = Math.max(value.lastIndexOf(','), value.lastIndexOf(';'));
+  if (lastSep === -1) {
+    return { committed: '', active: value.trimStart() };
+  }
+  return {
+    committed: value.slice(0, lastSep + 1).trim(),
+    active: value.slice(lastSep + 1).trimStart(),
+  };
+}
+
+function isCompleteRecipientToken(token: string): boolean {
+  const trimmed = token.trim();
+  if (!trimmed) return true;
+  return COMPOSE_EMAIL_RE.test(extractEmail(trimmed));
+}
+
+/** Whether compose fields are ready for Gmail draft autosave (avoids invalid To headers). */
+export function composeDraftSaveReady(fields: {
+  from: string;
+  to: string;
+  cc: string;
+}): boolean {
+  const fromEmail = extractEmail(fields.from);
+  if (!fromEmail || !COMPOSE_EMAIL_RE.test(fromEmail)) return false;
+
+  const toActive = splitRecipientFieldActive(fields.to);
+  if (!isCompleteRecipientToken(toActive.active)) return false;
+
+  if (fields.cc.trim()) {
+    const ccActive = splitRecipientFieldActive(fields.cc);
+    if (!isCompleteRecipientToken(ccActive.active)) return false;
+  }
+
+  return true;
 }
 
 function buildReferences(replyTo?: GmailThreadMessage): string | undefined {
@@ -183,6 +225,170 @@ export function joinComposeBody(userPart: string, signature: string, suffix: str
   return sig ? (top ? `${top}\n\n${sig}` : sig) : top;
 }
 
+const COMPOSE_USER_ATTR = 'data-compose-user';
+const COMPOSE_SIG_ATTR = 'data-compose-signature';
+const COMPOSE_QUOTE_ATTR = 'data-compose-quote';
+
+export function buildQuotedComposeHtml(
+  quotedSuffix: string,
+  quotedMessage?: GmailThreadMessage | null,
+): string {
+  if (!quotedSuffix.trim() && !quotedMessage) return '';
+  if (quotedMessage) {
+    const attribution = `On ${new Date(quotedMessage.date).toLocaleString()}, ${quotedMessage.headers.from} wrote:`;
+    const originalHtml =
+      quotedMessage.body.html ??
+      plainTextToHtml(quotedMessage.body.text ?? quotedMessage.snippet);
+    return (
+      `<div ${COMPOSE_QUOTE_ATTR}="true" class="gmail_quote">` +
+      `<div dir="ltr" style="${EMAIL_BODY_FONT}color:#64748b">${escapeHtml(attribution)}</div>` +
+      `<blockquote class="gmail_quote" style="margin:0 0 0 .8ex;border-left:1px solid #ccc;padding-left:1ex;color:#64748b">` +
+      `${originalHtml}</blockquote></div>`
+    );
+  }
+  return `<div ${COMPOSE_QUOTE_ATTR}="true" style="${EMAIL_BODY_FONT}color:#64748b">${plainTextToHtml(quotedSuffix.trimStart())}</div>`;
+}
+
+/** Build unified HTML compose body: user area, signature, and quoted reply. */
+export function joinComposeBodyHtml(
+  userHtml: string,
+  signatureHtml: string,
+  quotedSuffix: string,
+  quotedMessage?: GmailThreadMessage | null,
+): string {
+  const parts: string[] = [];
+  const user = userHtml.trim() || '<br>';
+  parts.push(`<div ${COMPOSE_USER_ATTR}="true" style="${EMAIL_BODY_FONT}">${user}</div>`);
+  if (signatureHtml.trim()) {
+    parts.push(`<div ${COMPOSE_SIG_ATTR}="true">${signatureHtml.trim()}</div>`);
+  }
+  const quoteHtml = buildQuotedComposeHtml(quotedSuffix, quotedMessage);
+  if (quoteHtml) parts.push(quoteHtml);
+  return parts.join('');
+}
+
+export function buildComposeSendBodiesFromEditorHtml(bodyHtml: string): {
+  bodyText: string;
+  bodyHtml: string;
+} {
+  const trimmed = bodyHtml.trim();
+  if (!trimmed) return { bodyText: '', bodyHtml: '' };
+  return { bodyText: plainTextFromHtml(trimmed), bodyHtml: trimmed };
+}
+
+/** User-typed portion of a unified HTML compose body. */
+export function userTextFromComposeHtml(
+  bodyHtml: string,
+  signatureHtml: string,
+  quotedSuffix: string,
+): string {
+  if (typeof DOMParser !== 'undefined') {
+    const doc = new DOMParser().parseFromString(bodyHtml, 'text/html');
+    const userEl = doc.querySelector(`[${COMPOSE_USER_ATTR}]`);
+    if (userEl) return plainTextFromHtml(userEl.innerHTML);
+  }
+  const sigPlain = signatureHtml ? plainTextFromHtml(signatureHtml) : '';
+  return userTextFromComposeBody(plainTextFromHtml(bodyHtml), sigPlain, quotedSuffix);
+}
+
+/** Swap send-as signature HTML while preserving user text and quoted tail. */
+export function replaceSignatureHtmlInCompose(bodyHtml: string, newSignatureHtml: string): string {
+  if (typeof DOMParser === 'undefined') return bodyHtml;
+  const doc = new DOMParser().parseFromString(bodyHtml, 'text/html');
+  const sigEl = doc.querySelector(`[${COMPOSE_SIG_ATTR}]`);
+  if (!sigEl) return bodyHtml;
+  if (newSignatureHtml.trim()) {
+    sigEl.innerHTML = newSignatureHtml.trim();
+  } else {
+    sigEl.remove();
+  }
+  return doc.body.innerHTML;
+}
+
+/** HTML body from a saved Gmail draft message. */
+export function fullHtmlFromDraftMessage(message: GmailThreadMessage): string {
+  if (message.body.html?.trim()) return message.body.html.trim();
+  const text = message.body.text ?? message.snippet ?? '';
+  return plainTextToHtml(text);
+}
+
+/** Plain-text body from a saved Gmail draft message. */
+export function fullBodyFromDraftMessage(message: GmailThreadMessage): string {
+  const raw =
+    message.body.text ??
+    (message.body.html ? plainTextFromHtml(message.body.html) : '') ??
+    message.snippet;
+  return raw ?? '';
+}
+
+/** User-typed portion of a unified compose body (excludes signature and quoted tail). */
+export function userTextFromComposeBody(
+  body: string,
+  sigPlain: string,
+  quotedSuffix: string,
+): string {
+  const suffix = quotedSuffix.trimStart();
+  let top = body;
+  if (suffix) {
+    const suffixIdx = body.indexOf(suffix);
+    if (suffixIdx >= 0) top = body.slice(0, suffixIdx).replace(/\s+$/g, '');
+    else {
+      const { userPart } = splitComposeBodySuffix(body);
+      top = userPart.replace(/\s+$/g, '');
+    }
+  } else {
+    const { userPart } = splitComposeBodySuffix(body);
+    top = userPart.replace(/\s+$/g, '');
+  }
+  const sig = sigPlain.trim();
+  if (sig && top.endsWith(sig)) {
+    top = top.slice(0, -sig.length).replace(/\s+$/g, '');
+  }
+  return top;
+}
+
+/** Swap send-as signature while preserving user text and quoted tail in a unified body. */
+export function replaceSignatureBeforeQuote(
+  body: string,
+  oldSigPlain: string,
+  newSigPlain: string,
+  quotedSuffix: string,
+): string {
+  const suffix = quotedSuffix.trimStart();
+  if (suffix) {
+    const suffixIdx = body.indexOf(suffix);
+    if (suffixIdx >= 0) {
+      const beforeQuote = body.slice(0, suffixIdx).replace(/\s+$/g, '');
+      const afterQuote = body.slice(suffixIdx);
+      const old = oldSigPlain.trim();
+      let userPart = beforeQuote;
+      if (old && beforeQuote.endsWith(old)) {
+        userPart = beforeQuote.slice(0, -old.length).replace(/\s+$/g, '');
+      }
+      return joinComposeBody(userPart, newSigPlain, '') + afterQuote;
+    }
+  }
+  return replaceTrailingSignature(body, oldSigPlain, newSigPlain);
+}
+
+/** Swap the trailing send-as signature when the From alias changes. */
+export function replaceTrailingSignature(
+  userBody: string,
+  oldSigPlain: string,
+  newSigPlain: string,
+): string {
+  let body = userBody.replace(/\s+$/g, '');
+  const old = oldSigPlain.trim();
+  if (old && body.endsWith(old)) {
+    body = body.slice(0, -old.length).replace(/\s+$/g, '');
+  } else if (old && body === old) {
+    body = '';
+  }
+  const next = newSigPlain.trim();
+  if (!next) return body;
+  return body ? `${body}\n\n${next}` : next;
+}
+
 function splitAddressList(raw: string | undefined): string[] {
   return (raw ?? '')
     .split(',')
@@ -216,8 +422,8 @@ function externalEmailsFromMessage(message: GmailThreadMessage, mailbox: string)
 
 /**
  * Resolve the To line for reply / reply-all.
- * Prefers Reply-To, then an explicit override, then client emails in the body
- * (for info@→info@ liaison notifications), then From.
+ * Reply: Reply-To, explicit override, then From (body scrape only for self-sent liaison mail).
+ * Reply-all: Reply-To / override / From / To / Cc, excluding the active mailbox.
  */
 export function resolveReplyToLine(
   message: GmailThreadMessage,
@@ -230,9 +436,11 @@ export function resolveReplyToLine(
   if (mode === 'reply') {
     if (replyToHeader) return replyToHeader;
     if (preferredTo?.trim()) return preferredTo.trim();
-    const external = externalEmailsFromMessage(message, mailbox);
-    if (external.length === 1) return external[0]!;
-    if (external.length > 1) return external.join(', ');
+    // Liaison notifications may send From the mailbox with the client email only in the body.
+    if (isMailboxAddress(message.headers.from, mailbox)) {
+      const external = externalEmailsFromMessage(message, mailbox);
+      if (external.length === 1) return external[0]!;
+    }
     return message.headers.from;
   }
 
@@ -278,6 +486,7 @@ export function buildComposeDraft(
       cc: '',
       subject: '',
       quotedSuffix: '',
+      threadId: ctx.threadId,
     };
   }
 
@@ -393,16 +602,41 @@ export function userBodyFromDraftMessage(
   return body;
 }
 
+export function formatRecipientField(addresses: GmailAddress[]): string {
+  return addresses
+    .map((addr) => formatGmailAddress(addr))
+    .filter(Boolean)
+    .join(', ');
+}
+
 export function loadComposeFromThreadDraft(
   threadMessages: GmailThreadMessage[] | undefined,
-  signatureHtml: string,
-): { draftId: string; userBody: string } | null {
+): {
+  draftId: string;
+  bodyHtml: string;
+  to: string;
+  cc: string;
+  subject: string;
+  from: string;
+} | null {
   const draft = findThreadDraftMessage(threadMessages ?? []);
   if (!draft) return null;
   const draftId = draft.draftId?.trim() || draft.id;
+  const to =
+    formatRecipientField(draft.to) ||
+    draft.headers.to
+      ?.split(/[,;]/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .join(', ') ||
+    '';
   return {
     draftId,
-    userBody: userBodyFromDraftMessage(draft, signatureHtml),
+    bodyHtml: fullHtmlFromDraftMessage(draft),
+    to: to ? `${to.replace(/,\s*$/, '')}, ` : '',
+    cc: draft.headers.cc?.trim() ?? '',
+    subject: draft.subject?.trim() || draft.headers.subject?.trim() || '',
+    from: draft.headers.from?.trim() || formatGmailAddress(draft.from),
   };
 }
 
@@ -415,6 +649,7 @@ function composePayloadFromFields(opts: {
   signatureHtml: string;
   quotedSuffix: string;
   quotedMessage?: GmailThreadMessage | null;
+  editorHtml?: string;
   threadId?: string;
   inReplyTo?: string;
   references?: string;
@@ -427,12 +662,15 @@ function composePayloadFromFields(opts: {
     .split(/[,;]/)
     .map((s) => s.trim())
     .filter(Boolean);
-  const { bodyText, bodyHtml } = buildComposeSendBodies({
-    userText: opts.userText,
-    signatureHtml: opts.signatureHtml,
-    quotedSuffix: opts.quotedSuffix,
-    quotedMessage: opts.quotedMessage ?? null,
-  });
+  const { bodyText, bodyHtml } =
+    opts.editorHtml != null
+      ? buildComposeSendBodiesFromEditorHtml(opts.editorHtml)
+      : buildComposeSendBodies({
+          userText: opts.userText,
+          signatureHtml: opts.signatureHtml,
+          quotedSuffix: opts.quotedSuffix,
+          quotedMessage: opts.quotedMessage ?? null,
+        });
   return {
     from: extractEmail(opts.from),
     to,
@@ -457,6 +695,7 @@ export async function saveComposeDraft(opts: {
   signatureHtml: string;
   quotedSuffix: string;
   quotedMessage?: GmailThreadMessage | null;
+  editorHtml?: string;
   threadId?: string;
   inReplyTo?: string;
   references?: string;

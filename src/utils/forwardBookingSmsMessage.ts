@@ -7,6 +7,10 @@ import { fetchDoctorDayEffectiveWindowIsosForAppointment } from './appointmentRo
 import { isFixedTimeTypeName } from './editVisitTimePreview';
 import { formatForwardBookingIntervalLabel } from './forwardBookingFromAppointment';
 import { forwardBookingLinkedAppointmentId } from './forwardBookingLinkedVisit';
+import { computeHoldSpotReleaseDeadline, formatHoldSpotReleaseDeadlineShort, type HoldSpotReleaseSmsOpts } from './holdSpotReleaseSmsClause';
+import { resolveForwardBookingIntervalFromEntry } from './forwardBookingFromAppointment';
+
+export type { HoldSpotReleaseSmsOpts };
 
 export type ForwardBookingSmsBookedSlot = {
   /** e.g. Monday, June 15th, 2026 */
@@ -77,12 +81,81 @@ function forwardBookingTimeFramePhrase(entry: ForwardBookingEntry): string {
   return label.replace(/\s+out$/i, '').trim() || label;
 }
 
+const TIMEFRAME_COUNT_WORDS = [
+  'zero',
+  'one',
+  'two',
+  'three',
+  'four',
+  'five',
+  'six',
+  'seven',
+  'eight',
+  'nine',
+  'ten',
+  'eleven',
+  'twelve',
+] as const;
+
+/** “about four months” — spoken interval for client SMS. */
+function forwardBookingSmsTimeFramePhrase(entry: ForwardBookingEntry): string {
+  const resolved = resolveForwardBookingIntervalFromEntry(entry);
+  if (!resolved) return forwardBookingTimeFramePhrase(entry);
+  const { amount, unit } = resolved;
+  const countWord =
+    amount >= 0 && amount < TIMEFRAME_COUNT_WORDS.length
+      ? TIMEFRAME_COUNT_WORDS[amount]!
+      : String(amount);
+  const unitLabel =
+    unit === 'days'
+      ? amount === 1
+        ? 'day'
+        : 'days'
+      : unit === 'weeks'
+        ? amount === 1
+          ? 'week'
+          : 'weeks'
+        : amount === 1
+          ? 'month'
+          : 'months';
+  return `about ${countWord} ${unitLabel}`;
+}
+
+function possessivePetLabel(name: string): string {
+  const trimmed = name.trim();
+  if (!trimmed) return "your pet's";
+  if (/[sS]$/.test(trimmed)) return `${trimmed}'`;
+  return `${trimmed}'s`;
+}
+
+/** “8:40 and 10:40 AM” when both times share AM/PM. */
+export function formatForwardBookingSmsTimeWindow(slot: ForwardBookingSmsBookedSlot): string {
+  const start = slot.windowStart.trim();
+  const end = slot.windowEnd.trim();
+  if (!start || !end) return 'xxxx and xxxx';
+  if (start === end) return start;
+  const startMatch = start.match(/^(.+?)\s+(AM|PM)$/i);
+  const endMatch = end.match(/^(.+?)\s+(AM|PM)$/i);
+  if (startMatch && endMatch && startMatch[2]!.toUpperCase() === endMatch[2]!.toUpperCase()) {
+    return `${startMatch[1]!.trim()} and ${endMatch[1]!.trim()} ${endMatch[2]!.toUpperCase()}`;
+  }
+  return `${start} and ${end}`;
+}
+
 /** Pet name(s) for SMS — single patient on forward-booking rows. */
 function petNamesPhrase(entry: ForwardBookingEntry): string {
   const name = pickStr(entry.patient?.name);
   if (name) return name;
   if (entry.patientId) return `patient #${entry.patientId}`;
   return 'your pet';
+}
+
+function formatPetNamesList(names: readonly string[]): string {
+  const cleaned = names.map((n) => n.trim()).filter(Boolean);
+  if (cleaned.length === 0) return 'your pet';
+  if (cleaned.length === 1) return cleaned[0]!;
+  if (cleaned.length === 2) return `${cleaned[0]} and ${cleaned[1]}`;
+  return `${cleaned.slice(0, -1).join(', ')}, and ${cleaned[cleaned.length - 1]}`;
 }
 
 /** Parse a calendar date or instant for SMS/table labels in practice local time. */
@@ -327,15 +400,60 @@ export function formatForwardBookingSmsBookedSlotFromEntry(
 
 export function buildForwardBookingSmsMessage(
   entry: ForwardBookingEntry,
-  opts?: { bookedSlot?: ForwardBookingSmsBookedSlot }
+  opts?: {
+    bookedSlot?: ForwardBookingSmsBookedSlot;
+    holdRelease?: HoldSpotReleaseSmsOpts;
+    petNames?: readonly string[];
+  }
 ): string {
   const first = clientFirstName(entry);
-  const pets = petNamesPhrase(entry);
-  const timeframe = forwardBookingTimeFramePhrase(entry);
+  const pets =
+    opts?.petNames?.map((n) => n.trim()).filter(Boolean).length
+      ? formatPetNamesList(opts.petNames!)
+      : petNamesPhrase(entry);
+  const timeframe = forwardBookingSmsTimeFramePhrase(entry);
   const datePart = opts?.bookedSlot?.dateLabel?.trim() || 'xxxxx';
-  const windowStart = opts?.bookedSlot?.windowStart?.trim() || 'xxxx';
-  const windowEnd = opts?.bookedSlot?.windowEnd?.trim() || 'xxxx';
-  return `Hi ${first}. I'm following up on your VAYD team's request to book ${pets} in ${timeframe}. Could they come by on ${datePart} between ${windowStart} and ${windowEnd}?`;
+  const windowPhrase = opts?.bookedSlot
+    ? formatForwardBookingSmsTimeWindow(opts.bookedSlot)
+    : 'xxxx and xxxx';
+
+  const petSubject =
+    opts?.petNames?.length === 1 || (!opts?.petNames?.length && entry.patient?.name?.trim())
+      ? possessivePetLabel(
+          opts?.petNames?.[0]?.trim() || entry.patient?.name?.trim() || pets,
+        )
+      : null;
+
+  const scheduleTarget = petSubject
+    ? `${petSubject} visit`
+    : pets.includes(' and ') || pets.includes(',')
+      ? `visits for ${pets}`
+      : `${possessivePetLabel(pets)} visit`;
+
+  let message = `Hi ${first}, following up on the request to schedule ${scheduleTarget} in ${timeframe}. Would ${datePart}, between ${windowPhrase} work for you?`;
+
+  if (opts?.holdRelease) {
+    const deadline = computeHoldSpotReleaseDeadline(opts.holdRelease);
+    if (deadline?.isValid) {
+      const deadlineLabel = formatHoldSpotReleaseDeadlineShort(
+        deadline,
+        opts.holdRelease.practiceTz,
+        opts.holdRelease.now,
+      );
+      message += ` We're holding this slot for you until ${deadlineLabel}, after which we'll need to release it to another client. If a different time works better, just let us know.`;
+    }
+  }
+
+  return message;
+}
+
+export function holdReleaseOptsForAppointment(
+  appointmentStartIso: string | null | undefined,
+  practiceTz: string,
+): HoldSpotReleaseSmsOpts | undefined {
+  const start = appointmentStartIso?.trim();
+  if (!start) return undefined;
+  return { practiceTz, appointmentStartIso: start };
 }
 
 export function clientHasSmsPhone(entry: ForwardBookingEntry): boolean {

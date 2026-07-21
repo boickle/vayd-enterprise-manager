@@ -1,5 +1,6 @@
 import { DateTime } from 'luxon';
 import type { RoutingForwardBookingIntentV1 } from './routingForwardBookingIntent';
+import { mergeContactLogTexts } from './clientContactLog';
 import { formatForwardBookingIntervalLabel } from './forwardBookingFromAppointment';
 import { practiceTimeZoneOrDefault } from './practiceTimezone';
 
@@ -10,6 +11,11 @@ export type ForwardBookingWorkspaceContextView = {
   originalVisitLabel: string | null;
   targetDateLabel: string | null;
   providerLabel: string | null;
+  /** Auto-generated visit context (bookingNotes). */
+  contextNote: string | null;
+  /** Staff contact history — merged reminder outreach + forward booking note. */
+  contactLog: string | null;
+  /** @deprecated Use contextNote — kept for callers still reading bookingNote. */
   bookingNote: string | null;
 };
 
@@ -58,6 +64,11 @@ export function buildForwardBookingWorkspaceContext(
         : [];
 
   const targetIso = intent.targetDueDate?.trim() || null;
+  const contextNote = intent.bookingNotes?.trim() || null;
+  const contactLog = mergeContactLogTexts(
+    intent.reminderOutreachNotes,
+    intent.staffNote,
+  );
 
   return {
     clientLabel: intent.clientDisplayLabel?.trim() || 'Client',
@@ -66,7 +77,9 @@ export function buildForwardBookingWorkspaceContext(
     originalVisitLabel: formatForwardBookingDisplayDate(intent.sourceAppointmentStart, practiceTz),
     targetDateLabel: formatForwardBookingDisplayDate(targetIso, practiceTz),
     providerLabel: intent.primaryDoctorDisplayName?.trim() || null,
-    bookingNote: intent.bookingNotes?.trim() || null,
+    contextNote,
+    contactLog,
+    bookingNote: contextNote,
   };
 }
 

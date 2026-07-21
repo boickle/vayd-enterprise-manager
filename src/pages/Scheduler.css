@@ -3495,6 +3495,17 @@ label.scheduler-go-date-heading {
   padding-top: 4px;
 }
 
+.explore-alternatives-hold-prompt .scheduler-modal-body {
+  padding-bottom: 8px;
+}
+
+.explore-alternatives-hold-prompt-actions {
+  margin: 0;
+  padding: 16px 20px 20px;
+  border-top: 1px solid #e5e7eb;
+  background: #f3f4f6;
+}
+
 .scheduler-book-btn {
   padding: 10px 18px;
   font-size: 14px;
@@ -5230,6 +5241,17 @@ label.scheduler-household-pet-row {
   line-height: 1.4;
 }
 
+.scheduler-staff-confirm-booking-breakdown-ideal-end {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #faf5ff;
+  font-size: 13px;
+  font-weight: 600;
+  color: #6b21a8;
+  line-height: 1.4;
+}
+
 .scheduler-edit-preview-popover--staff-confirm .scheduler-edit-preview-popover-actions {
   flex-shrink: 0;
 }
@@ -5284,6 +5306,32 @@ label.scheduler-household-pet-row {
 
 .scheduler-edit-preview-popover-client {
   padding: 8px 12px 0;
+}
+
+.scheduler-edit-preview-popover-reason {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.scheduler-edit-preview-popover-reason-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+}
+
+.scheduler-edit-preview-popover-reason textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+  resize: vertical;
+  min-height: 72px;
 }
 
 .scheduler-edit-preview-popover-contact {
@@ -5629,6 +5677,29 @@ label.scheduler-household-pet-row {
   padding: 0;
   background: rgba(15, 23, 42, 0.32);
   backdrop-filter: blur(2px);
+}
+
+/** Household visit warning in routing workspace — calendar stays visible on the right. */
+.scheduler-modal-backdrop--routing-household {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  box-sizing: border-box;
+  background: rgba(248, 250, 252, 0.55);
+  backdrop-filter: none;
+  pointer-events: none;
+}
+
+.scheduler-modal-backdrop--routing-household .scheduler-household-visits-warning-modal {
+  pointer-events: auto;
+  max-height: calc(100% - 24px);
+  box-shadow:
+    0 24px 64px rgba(15, 23, 42, 0.22),
+    0 0 0 1px rgba(15, 23, 42, 0.08);
 }
 
 .scheduler-modal--edit-docked {
@@ -6151,7 +6222,11 @@ label.scheduler-household-pet-row {
  */
 @media (max-width: 900px), (max-height: 560px) {
   .scheduler-page:not(.scheduler-page--embedded) {
-    padding: 8px 8px 16px;
+    padding: 8px 8px max(24px, env(safe-area-inset-bottom, 0px));
+  }
+
+  .scheduler-page:not(.scheduler-page--embedded) .scheduler-toolbar-calendar-merge {
+    margin-bottom: max(12px, env(safe-area-inset-bottom, 0px));
   }
 
   /**
@@ -6304,6 +6379,50 @@ label.scheduler-household-pet-row {
     -webkit-overflow-scrolling: touch;
   }
 
+  /**
+   * Routing workspace on mobile: scroll the schedule outlet, not a clipped calendar pane.
+   */
+  .schedule-routing-workspace .scheduler-page--embedded {
+    flex: none;
+    min-height: auto;
+    overflow: visible;
+  }
+
+  .schedule-routing-workspace .scheduler-page--embedded > .scheduler-calendar-outlet {
+    flex: none;
+    min-height: auto;
+    overflow: visible;
+  }
+
+  .schedule-routing-workspace .scheduler-page--embedded .scheduler-toolbar-calendar-merge {
+    flex: none;
+    min-height: auto;
+    overflow: visible;
+  }
+
+  .schedule-routing-workspace .scheduler-page--embedded .scheduler-scroll {
+    flex: none;
+    min-height: auto;
+    overflow-x: auto;
+    overflow-y: visible;
+    touch-action: pan-x pan-y;
+  }
+
+  .schedule-routing-workspace .scheduler-page--embedded .scheduler-calendar-shell {
+    overflow: visible;
+  }
+
+  .schedule-routing-workspace .scheduler-page--embedded .scheduler-calendar-scroll {
+    flex: none;
+    min-height: auto;
+    overflow: visible;
+  }
+
+  .schedule-routing-workspace .scheduler-page--embedded .scheduler-grid-wrap {
+    flex: none;
+    min-height: auto;
+  }
+
   .scheduler-day-header {
     min-height: 80px;
     padding: 4px 2px 6px;
@@ -6367,6 +6486,217 @@ label.scheduler-household-pet-row {
     padding: 4px 8px;
     row-gap: 4px;
   }
+}
+
+.scheduler-household-visits-warning-modal {
+  max-width: 520px;
+}
+
+.scheduler-household-time-align-modal {
+  max-width: 480px;
+}
+
+.scheduler-household-time-align-lead {
+  margin: 0 0 14px;
+  font-size: 14px;
+  line-height: 1.45;
+  color: #475569;
+}
+
+.scheduler-household-time-align-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.scheduler-household-time-align-item {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #f8fafc;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.scheduler-household-time-align-when {
+  font-size: 13px;
+  color: #64748b;
+}
+
+.scheduler-household-time-align-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 20px 18px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.scheduler-household-visits-warning-lead {
+  margin: 0 0 16px;
+  font-size: 14px;
+  line-height: 1.45;
+  color: #475569;
+}
+
+.scheduler-household-visits-warning-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.scheduler-household-visits-warning-item {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #f8fafc;
+}
+
+.scheduler-household-visits-warning-item--interactive {
+  cursor: pointer;
+  transition:
+    border-color 0.12s ease,
+    box-shadow 0.12s ease,
+    background-color 0.12s ease;
+}
+
+.scheduler-household-visits-warning-item--interactive:hover,
+.scheduler-household-visits-warning-item--previewing {
+  border-color: #fb923c;
+  background: #fff7ed;
+  box-shadow: 0 0 0 2px rgba(249, 115, 22, 0.22);
+}
+
+.scheduler-household-visits-warning-item-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.scheduler-household-visits-warning-meta {
+  font-size: 13px;
+  color: #64748b;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.scheduler-household-visits-warning-hold {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #fef3c7;
+  color: #92400e;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.scheduler-household-visits-warning-when {
+  font-size: 13px;
+  color: #334155;
+}
+
+.scheduler-household-visits-warning-notes {
+  margin-top: 6px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: #475569;
+  white-space: pre-wrap;
+}
+
+.scheduler-household-visits-warning-view {
+  margin-top: 8px;
+  border: none;
+  background: transparent;
+  padding: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #2563eb;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.scheduler-household-visits-warning-view:hover:not(:disabled) {
+  color: #1d4ed8;
+}
+
+.scheduler-household-visits-warning-view:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.scheduler-household-visits-warning-actions {
+  padding: 12px 20px 20px;
+}
+
+.scheduler-euthanasia-future-appts-modal {
+  max-width: 520px;
+}
+
+.scheduler-euthanasia-future-appts-lead {
+  margin: 0 0 14px;
+  font-size: 14px;
+  line-height: 1.45;
+  color: #475569;
+}
+
+.scheduler-euthanasia-future-appts-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: min(40vh, 280px);
+  overflow: auto;
+}
+
+.scheduler-euthanasia-future-appts-item {
+  padding: 10px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.scheduler-euthanasia-future-appts-item-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 10px;
+  font-size: 14px;
+  color: #0f172a;
+}
+
+.scheduler-euthanasia-future-appts-meta {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.scheduler-euthanasia-future-appts-when {
+  margin-top: 4px;
+  font-size: 13px;
+  color: #334155;
+}
+
+.scheduler-euthanasia-future-appts-actions {
+  padding: 12px 20px 20px;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 @media (max-width: 480px) {

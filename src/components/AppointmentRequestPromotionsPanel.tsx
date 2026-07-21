@@ -34,6 +34,7 @@ import PlayCircleIcon from '@mui/icons-material/PlayCircle';
 import AddIcon from '@mui/icons-material/Add';
 import ArchiveIcon from '@mui/icons-material/Archive';
 import UnarchiveIcon from '@mui/icons-material/Unarchive';
+import EditIcon from '@mui/icons-material/Edit';
 import {
   buildAppointmentRequestPromoUrl,
   createAppointmentRequestPromotion,
@@ -41,6 +42,7 @@ import {
   updateAppointmentRequestPromotion,
   type AppointmentRequestPromotion,
   type CreateAppointmentRequestPromotionRequest,
+  type UpdateAppointmentRequestPromotionRequest,
 } from '../api/appointmentRequestPromotions';
 
 function formatDiscount(row: AppointmentRequestPromotion): string {
@@ -56,6 +58,23 @@ function formatDiscount(row: AppointmentRequestPromotion): string {
 function formatDate(iso?: string | null): string {
   if (!iso) return '—';
   return new Date(iso).toLocaleDateString();
+}
+
+/** `YYYY-MM-DD` for `<input type="date">` from an ISO timestamp. */
+function toDateInputValue(iso?: string | null): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toISOString().slice(0, 10);
+}
+
+/** Noon UTC on the given calendar day — avoids timezone day-shift; undefined when blank. */
+function optionalExpiresIso(dateOnly: string): string | undefined {
+  const t = dateOnly.trim();
+  if (!t) return undefined;
+  const d = new Date(`${t}T12:00:00.000Z`);
+  if (Number.isNaN(d.getTime())) return undefined;
+  return d.toISOString();
 }
 
 type CodeOption = 'none' | 'generate' | 'custom';
@@ -81,6 +100,8 @@ export default function AppointmentRequestPromotionsPanel() {
   const [success, setSuccess] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
+  /** When set, the dialog edits this promotion; otherwise it creates. */
+  const [editingRow, setEditingRow] = useState<AppointmentRequestPromotion | null>(null);
   const [copiedLinkId, setCopiedLinkId] = useState<number | null>(null);
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
   const [togglingId, setTogglingId] = useState<number | null>(null);
@@ -88,6 +109,8 @@ export default function AppointmentRequestPromotionsPanel() {
   const [archivingId, setArchivingId] = useState<number | null>(null);
 
   const [form, setForm] = useState(DEFAULT_FORM);
+  /** Errors from create/edit stay inside the dialog; page-level alerts are for load/toggle/etc. */
+  const [formError, setFormError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -113,66 +136,145 @@ export default function AppointmentRequestPromotionsPanel() {
     (field: keyof typeof DEFAULT_FORM) => (e: React.ChangeEvent<HTMLInputElement>) =>
       setForm((prev) => ({ ...prev, [field]: e.target.value }));
 
-  async function handleCreate(e: React.FormEvent) {
+  function openCreateDialog() {
+    setEditingRow(null);
+    setForm(DEFAULT_FORM);
+    setError(null);
+    setFormError(null);
+    setDialogOpen(true);
+  }
+
+  function openEditDialog(row: AppointmentRequestPromotion) {
+    setEditingRow(row);
+    setForm({
+      companyName: row.companyName ?? '',
+      name: row.name ?? '',
+      description: row.description ?? '',
+      amountOffDollars:
+        row.amountOffCents != null ? (row.amountOffCents / 100).toFixed(2) : '',
+      currency: row.currency || 'USD',
+      maxRedemptions: row.maxRedemptions != null ? String(row.maxRedemptions) : '',
+      expiresAt: toDateInputValue(row.expiresAt),
+      codeOption: row.code ? 'custom' : 'none',
+      customCode: row.code ?? '',
+    });
+    setError(null);
+    setFormError(null);
+    setDialogOpen(true);
+  }
+
+  function closeDialog() {
+    if (creating) return;
+    setDialogOpen(false);
+    setEditingRow(null);
+    setForm(DEFAULT_FORM);
+    setFormError(null);
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setCreating(true);
-    setError(null);
+    setFormError(null);
     setSuccess(null);
 
     const dollars = Number(form.amountOffDollars);
     if (!Number.isFinite(dollars) || dollars <= 0) {
-      setError('Enter a positive dollar amount for the discount.');
+      setFormError('Enter a positive dollar amount for the discount.');
       setCreating(false);
       return;
     }
 
-    const payload: CreateAppointmentRequestPromotionRequest = {
-      companyName: form.companyName.trim(),
-      name: form.name.trim(),
-      amountOffCents: Math.round(dollars * 100),
-      currency: form.currency.trim() || 'USD',
-    };
-
-    if (form.description.trim()) payload.description = form.description.trim();
+    let maxRedemptions: number | null | undefined;
     if (form.maxRedemptions.trim()) {
       const max = Number(form.maxRedemptions);
       if (!Number.isFinite(max) || max < 1) {
-        setError('Max redemptions must be a positive number.');
+        setFormError('Max redemptions must be a positive number.');
         setCreating(false);
         return;
       }
-      payload.maxRedemptions = max;
+      maxRedemptions = max;
+    } else if (editingRow) {
+      maxRedemptions = null;
     }
-    if (form.expiresAt.trim()) payload.expiresAt = new Date(form.expiresAt).toISOString();
 
-    if (form.codeOption === 'generate') {
-      payload.generateCode = true;
-    } else if (form.codeOption === 'custom') {
-      const c = form.customCode.trim().toUpperCase();
-      if (c.length < 3 || c.length > 64) {
-        setError('Custom code must be between 3 and 64 characters.');
-        setCreating(false);
-        return;
-      }
-      payload.code = c;
+    const expiresIso = optionalExpiresIso(form.expiresAt);
+    if (form.expiresAt.trim() && !expiresIso) {
+      setFormError('Enter a valid expiration date, or leave it blank for no expiry.');
+      setCreating(false);
+      return;
     }
 
     try {
-      const created = await createAppointmentRequestPromotion(payload);
-      const hasCode = !!created.code;
-      setSuccess(
-        hasCode
-          ? `Promotion created. Copy the code "${created.code}" or the link from the table to share.`
-          : 'Promotion created. Copy the link from the table to share with the employer.',
-      );
+      if (editingRow) {
+        const payload: UpdateAppointmentRequestPromotionRequest = {
+          companyName: form.companyName.trim(),
+          name: form.name.trim(),
+          description: form.description.trim() || null,
+          amountOffCents: Math.round(dollars * 100),
+          currency: form.currency.trim() || 'USD',
+          maxRedemptions,
+          expiresAt: expiresIso ?? null,
+        };
+        if (form.codeOption === 'generate') {
+          payload.generateCode = true;
+        } else if (form.codeOption === 'custom') {
+          const c = form.customCode.trim().toUpperCase();
+          if (c.length < 3 || c.length > 64) {
+            setFormError('Custom code must be between 3 and 64 characters.');
+            setCreating(false);
+            return;
+          }
+          payload.code = c;
+        } else if (editingRow.code) {
+          // Clear existing code → link-only. Skip when already link-only.
+          payload.code = '';
+        }
+        await updateAppointmentRequestPromotion(editingRow.id, payload);
+        setSuccess(`Promotion "${form.name.trim()}" updated.`);
+      } else {
+        const payload: CreateAppointmentRequestPromotionRequest = {
+          companyName: form.companyName.trim(),
+          name: form.name.trim(),
+          amountOffCents: Math.round(dollars * 100),
+          currency: form.currency.trim() || 'USD',
+        };
+        if (form.description.trim()) payload.description = form.description.trim();
+        if (maxRedemptions != null) payload.maxRedemptions = maxRedemptions;
+        if (expiresIso) payload.expiresAt = expiresIso;
+
+        if (form.codeOption === 'generate') {
+          payload.generateCode = true;
+        } else if (form.codeOption === 'custom') {
+          const c = form.customCode.trim().toUpperCase();
+          if (c.length < 3 || c.length > 64) {
+            setFormError('Custom code must be between 3 and 64 characters.');
+            setCreating(false);
+            return;
+          }
+          payload.code = c;
+        }
+
+        const created = await createAppointmentRequestPromotion(payload);
+        const hasCode = !!created.code;
+        setSuccess(
+          hasCode
+            ? `Promotion created. Copy the code "${created.code}" or the link from the table to share.`
+            : 'Promotion created. Copy the link from the table to share with the employer.',
+        );
+      }
       setForm(DEFAULT_FORM);
+      setEditingRow(null);
+      setFormError(null);
       setDialogOpen(false);
       await load();
     } catch (err: unknown) {
       const msg =
-        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
-        'Failed to create promotion.';
-      setError(typeof msg === 'string' ? msg : 'Failed to create promotion.');
+        (err as { response?: { data?: { message?: string | string[] } } })?.response?.data
+          ?.message ??
+        (editingRow ? 'Failed to update promotion.' : 'Failed to create promotion.');
+      setFormError(
+        Array.isArray(msg) ? msg.join(', ') : typeof msg === 'string' ? msg : 'Request failed.',
+      );
     } finally {
       setCreating(false);
     }
@@ -264,10 +366,7 @@ export default function AppointmentRequestPromotionsPanel() {
               <Button
                 variant="contained"
                 startIcon={<AddIcon />}
-                onClick={() => {
-                  setForm(DEFAULT_FORM);
-                  setDialogOpen(true);
-                }}
+                onClick={openCreateDialog}
               >
                 New promotion
               </Button>
@@ -303,8 +402,8 @@ export default function AppointmentRequestPromotionsPanel() {
               <Table size="small">
                 <TableHead>
                   <TableRow>
-                    <TableCell>Company</TableCell>
-                    <TableCell>Name</TableCell>
+                    <TableCell>Internal name</TableCell>
+                    <TableCell>Public Name</TableCell>
                     <TableCell>Discount</TableCell>
                     <TableCell>Redemptions</TableCell>
                     <TableCell>Started</TableCell>
@@ -364,6 +463,17 @@ export default function AppointmentRequestPromotionsPanel() {
                         <Stack direction="row" spacing={0.5} justifyContent="flex-end">
                           {listView === 'active' ? (
                             <>
+                              <Tooltip title="Edit">
+                                <span>
+                                  <IconButton
+                                    size="small"
+                                    onClick={() => openEditDialog(row)}
+                                    color="primary"
+                                  >
+                                    <EditIcon fontSize="small" />
+                                  </IconButton>
+                                </span>
+                              </Tooltip>
                               <Tooltip title={copiedLinkId === row.id ? 'Copied!' : 'Copy employer link'}>
                                 <span>
                                   <IconButton
@@ -434,29 +544,36 @@ export default function AppointmentRequestPromotionsPanel() {
         </Stack>
       </CardContent>
 
-      {/* Create Dialog */}
-      <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>Create appointment request promotion</DialogTitle>
-        <Box component="form" onSubmit={handleCreate}>
+      {/* Create / Edit Dialog */}
+      <Dialog open={dialogOpen} onClose={closeDialog} maxWidth="sm" fullWidth>
+        <DialogTitle>
+          {editingRow ? 'Edit appointment request promotion' : 'Create appointment request promotion'}
+        </DialogTitle>
+        <Box component="form" onSubmit={handleSubmit} noValidate>
           <DialogContent>
             <Stack spacing={2} sx={{ pt: 1 }}>
+              {formError ? (
+                <Alert severity="warning" onClose={() => setFormError(null)}>
+                  {formError}
+                </Alert>
+              ) : null}
               <TextField
-                label="Company name"
+                label="Internal name"
                 required
                 value={form.companyName}
                 onChange={setField('companyName')}
-                placeholder="e.g. Acme Corporation"
+                placeholder="e.g. Moody's — $50 off"
                 size="small"
-                helperText="Displayed to the client on the appointment form"
+                helperText="For your team — not shown to clients"
               />
               <TextField
-                label="Promotion name"
+                label="Public Name"
                 required
                 value={form.name}
                 onChange={setField('name')}
-                placeholder="e.g. Acme Employee Discount"
+                placeholder="e.g. $50 Off Your VAYD Visit!"
                 size="small"
-                helperText="Internal reference name"
+                helperText="Title shown to the client when they open the promo link"
               />
               <TextField
                 label="Description (optional)"
@@ -466,7 +583,7 @@ export default function AppointmentRequestPromotionsPanel() {
                 size="small"
                 multiline
                 minRows={2}
-                helperText="Shown to the client on the form"
+                helperText="Optional extra copy for staff — not used as the banner title"
               />
               <TextField
                 label="Discount amount (USD)"
@@ -493,6 +610,7 @@ export default function AppointmentRequestPromotionsPanel() {
                 onChange={setField('expiresAt')}
                 size="small"
                 InputLabelProps={{ shrink: true }}
+                helperText="Leave blank for no expiration date."
               />
 
               {/* Code options */}
@@ -553,7 +671,9 @@ export default function AppointmentRequestPromotionsPanel() {
             </Stack>
           </DialogContent>
           <DialogActions sx={{ px: 3, pb: 2 }}>
-            <Button onClick={() => setDialogOpen(false)}>Cancel</Button>
+            <Button onClick={closeDialog} disabled={creating}>
+              Cancel
+            </Button>
             <Button
               type="submit"
               variant="contained"
@@ -561,10 +681,17 @@ export default function AppointmentRequestPromotionsPanel() {
                 creating ||
                 !form.companyName.trim() ||
                 !form.name.trim() ||
+                !form.amountOffDollars.trim() ||
                 (form.codeOption === 'custom' && form.customCode.trim().length < 3)
               }
             >
-              {creating ? 'Creating…' : 'Create promotion'}
+              {creating
+                ? editingRow
+                  ? 'Saving…'
+                  : 'Creating…'
+                : editingRow
+                  ? 'Save changes'
+                  : 'Create promotion'}
             </Button>
           </DialogActions>
         </Box>

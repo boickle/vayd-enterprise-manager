@@ -1,12 +1,38 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import Routing from './Routing';
 import Scheduler from './Scheduler';
+import { hasActiveForwardBookingWorkspaceLock } from '../utils/forwardBookingWorkspaceGuard';
+import { hasActiveRoutingCalendarPreview } from '../utils/routingCalendarPreviewGuard';
+import { ROUTING_CALENDAR_PREVIEW_UPDATED_EVENT } from '../utils/routingCalendarPreviewStorage';
+import {
+  appointmentRequestWorkspaceIsActive,
+  ROUTING_APPOINTMENT_REQUEST_INTENT_UPDATED_EVENT,
+} from '../utils/routingAppointmentRequestIntent';
+import { ROUTING_FORWARD_BOOKING_INTENT_UPDATED_EVENT } from '../utils/routingForwardBookingIntent';
+import {
+  rescheduleIntentIsActive,
+  ROUTING_RESCHEDULE_INTENT_UPDATED_EVENT,
+} from '../utils/routingRescheduleIntent';
 import './RoutingCalendarWorkspace.css';
 
 const SPLIT_STORAGE_KEY = 'schedule-routing-workspace-split';
 const DEFAULT_ROUTING_PCT = 45;
 const MIN_ROUTING_PCT = 22;
 const MAX_ROUTING_PCT = 78;
+const MOBILE_MQ = '(max-width: 900px)';
+
+function isMobileRoutingViewport(): boolean {
+  return typeof window !== 'undefined' && window.matchMedia(MOBILE_MQ).matches;
+}
+
+function mobileRoutingNeedsEmbeddedCalendar(): boolean {
+  return (
+    hasActiveRoutingCalendarPreview() ||
+    rescheduleIntentIsActive() ||
+    hasActiveForwardBookingWorkspaceLock() ||
+    appointmentRequestWorkspaceIsActive()
+  );
+}
 
 function readStoredSplitPct(): number {
   try {
@@ -26,9 +52,56 @@ function readStoredSplitPct(): number {
  */
 export default function RoutingCalendarWorkspace() {
   const workspaceRef = useRef<HTMLDivElement>(null);
+  const calendarPaneRef = useRef<HTMLDivElement>(null);
   const [routingPct, setRoutingPct] = useState(readStoredSplitPct);
   const [dragging, setDragging] = useState(false);
   const dragRef = useRef<{ startX: number; startPct: number } | null>(null);
+  const [mobileViewport, setMobileViewport] = useState(isMobileRoutingViewport);
+  const [showEmbeddedCalendar, setShowEmbeddedCalendar] = useState(
+    () => !isMobileRoutingViewport() || mobileRoutingNeedsEmbeddedCalendar()
+  );
+
+  useEffect(() => {
+    const mq = window.matchMedia(MOBILE_MQ);
+    const onMq = () => setMobileViewport(mq.matches);
+    onMq();
+    mq.addEventListener('change', onMq);
+    return () => mq.removeEventListener('change', onMq);
+  }, []);
+
+  useEffect(() => {
+    const syncCalendar = () => {
+      setShowEmbeddedCalendar(!mobileViewport || mobileRoutingNeedsEmbeddedCalendar());
+    };
+    syncCalendar();
+    const events = [
+      ROUTING_CALENDAR_PREVIEW_UPDATED_EVENT,
+      ROUTING_RESCHEDULE_INTENT_UPDATED_EVENT,
+      ROUTING_FORWARD_BOOKING_INTENT_UPDATED_EVENT,
+      ROUTING_APPOINTMENT_REQUEST_INTENT_UPDATED_EVENT,
+    ] as const;
+    for (const name of events) {
+      window.addEventListener(name, syncCalendar);
+    }
+    return () => {
+      for (const name of events) {
+        window.removeEventListener(name, syncCalendar);
+      }
+    };
+  }, [mobileViewport]);
+
+  useEffect(() => {
+    if (!mobileViewport) return;
+    const outlet = document.querySelector('.schedule-app__outlet--routing-split');
+    outlet?.scrollTo({ top: 0, behavior: 'auto' });
+  }, [mobileViewport]);
+
+  useEffect(() => {
+    if (!mobileViewport || !showEmbeddedCalendar) return;
+    calendarPaneRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [mobileViewport, showEmbeddedCalendar]);
+
+  const mobileRoutingOnly = mobileViewport && !showEmbeddedCalendar;
 
   const persistSplit = useCallback((pct: number) => {
     const clamped = Math.min(MAX_ROUTING_PCT, Math.max(MIN_ROUTING_PCT, pct));
@@ -101,6 +174,7 @@ export default function RoutingCalendarWorkspace() {
       className={[
         'schedule-routing-workspace',
         dragging ? 'schedule-routing-workspace--resizing' : '',
+        mobileRoutingOnly ? 'schedule-routing-workspace--mobile-routing-only' : '',
       ]
         .filter(Boolean)
         .join(' ')}
@@ -134,7 +208,17 @@ export default function RoutingCalendarWorkspace() {
           }
         }}
       />
-      <div className="schedule-routing-workspace__calendar">
+      <div
+        ref={calendarPaneRef}
+        className={[
+          'schedule-routing-workspace__calendar',
+          showEmbeddedCalendar ? '' : 'schedule-routing-workspace__calendar--mobile-hidden',
+        ]
+          .filter(Boolean)
+          .join(' ')}
+        hidden={!showEmbeddedCalendar}
+        aria-hidden={!showEmbeddedCalendar}
+      >
         <div className="schedule-routing-workspace__calendar-scroll">
           <Scheduler embedInRoutingWorkspace />
         </div>

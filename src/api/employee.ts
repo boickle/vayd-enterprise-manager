@@ -18,6 +18,8 @@ export type Provider = {
   seeingClientsInClientZone?: boolean;
   acceptingNewPatientsInClientZone?: boolean;
   transitioningOutOfClientZone?: boolean;
+  /** Employee settings include the appointment type passed to the doctor-select fetch. */
+  acceptsSelectedAppointmentType?: boolean;
   /** Doctor Quo/OpenPhone inbox line for outbound call/text (`from` deep link param). */
   quoLinePhone?: string | null;
   /** Profile image URL stored on the employee record. */
