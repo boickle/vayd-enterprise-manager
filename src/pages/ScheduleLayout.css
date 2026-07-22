@@ -297,6 +297,10 @@
 
 .schedule-app__settings-summary {
   list-style: none;
+  /* Avoid flex on <summary> — breaks open/close on iOS WebKit (iPhone Chrome). */
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .schedule-app__settings-summary::-webkit-details-marker {
