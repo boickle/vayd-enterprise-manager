@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { Link, NavLink, useLocation } from 'react-router-dom';
 import { ChevronDown } from 'lucide-react';
 import { useAuth } from '../auth/useAuth';
@@ -292,8 +292,18 @@ export default function NavbarScheduleHorizontalNav() {
     if (el) el.open = false;
   }, []);
 
+  /** iOS WebKit (iPhone Chrome/Safari): native <details> toggle is unreliable with styled summaries. */
+  const toggleDetailsMenu = useCallback(
+    (el: HTMLDetailsElement | null, event: ReactMouseEvent) => {
+      event.preventDefault();
+      if (!el) return;
+      el.open = !el.open;
+    },
+    []
+  );
+
   useEffect(() => {
-    function handlePointerDown(event: MouseEvent) {
+    function handlePointerDown(event: PointerEvent) {
       const target = event.target;
       if (!(target instanceof Node)) return;
       const settingsEl = settingsMenuRef.current;
@@ -309,8 +319,8 @@ export default function NavbarScheduleHorizontalNav() {
         moreEl.open = false;
       }
     }
-    document.addEventListener('mousedown', handlePointerDown);
-    return () => document.removeEventListener('mousedown', handlePointerDown);
+    document.addEventListener('pointerdown', handlePointerDown);
+    return () => document.removeEventListener('pointerdown', handlePointerDown);
   }, []);
 
   useEffect(() => {
@@ -482,6 +492,7 @@ export default function NavbarScheduleHorizontalNav() {
                   : ''
               }`}
               aria-haspopup="menu"
+              onClick={(e) => toggleDetailsMenu(schedulingToolsMenuRef.current, e)}
             >
               Scheduling
             </summary>
@@ -498,6 +509,7 @@ export default function NavbarScheduleHorizontalNav() {
                 location.pathname.startsWith('/schedule/settings') ? ' schedule-app__tab--active' : ''
               }`}
               aria-haspopup="menu"
+              onClick={(e) => toggleDetailsMenu(settingsMenuRef.current, e)}
             >
               Settings
             </summary>
@@ -547,9 +559,12 @@ export default function NavbarScheduleHorizontalNav() {
                 moreSummaryActive ? ' schedule-app__tab--active' : ''
               }`}
               aria-haspopup="menu"
+              onClick={(e) => toggleDetailsMenu(moreMenuRef.current, e)}
             >
-              More
-              <ChevronDown className="navbar-schedule-more-chevron" size={16} strokeWidth={2} aria-hidden />
+              <span className="navbar-schedule-more-summary-inner">
+                More
+                <ChevronDown className="navbar-schedule-more-chevron" size={16} strokeWidth={2} aria-hidden />
+              </span>
             </summary>
             <div className="navbar-schedule-more-panel" role="menu" aria-label="More schedule sections">
               {overflowKeys.map((key) => {
