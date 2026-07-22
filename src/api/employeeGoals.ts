@@ -51,13 +51,16 @@ export type UpdateEmployeeGoalsDto = {
 };
 
 export type FetchEmployeeGoalsParams = {
-  goalPeriodStart?: string;
-  goalPeriodEnd?: string;
+  /** Goal period start (YYYY-MM-DD). Must be sent with endDate. */
+  startDate?: string;
+  /** Goal period end (YYYY-MM-DD, inclusive). Must be sent with startDate. */
+  endDate?: string;
 };
 
 /**
  * Get employee goals (creates with defaults if none exist).
- * GET /employees/:id/goals
+ * GET /employees/:id/goals?startDate=&endDate=
+ * When startDate/endDate are provided, response includes dailyGoalBreakdown with OFF days zeroed.
  */
 export async function fetchEmployeeGoals(
   employeeId: number,
@@ -84,7 +87,7 @@ export function getGoalBreakdownForDate(
   dateStr: string
 ): DailyGoalBreakdownItem | undefined {
   const key = dateStr.slice(0, 10);
-  return goals.dailyGoalBreakdown?.find((d) => d.date === key);
+  return goals.dailyGoalBreakdown?.find((d) => String(d.date ?? '').slice(0, 10) === key);
 }
 
 /**

@@ -139,8 +139,9 @@ function isWeeklyWorkday(
 
 /**
  * Whether a date counts toward goals vs actual.
- * Schedule OFF overrides win (same as Scheduler); otherwise use goals breakdown
- * isWorkday when present, else the weekly schedule.
+ * Schedule OFF overrides win; otherwise trust goals breakdown isWorkday (API already
+ * applies weekly + overrides when fetched with startDate/endDate); else weekly schedule.
+ * Do not use doctor/month workStart/workEnd — those are often empty on real workdays.
  */
 function dayCountsForGoals(
   emp: EmployeeWithGoals,
@@ -432,7 +433,7 @@ export default function VeterinaryServicesDeliveredPage() {
     setGoalsLoading(true);
     (async () => {
       try {
-        const goalPeriod = { goalPeriodStart: startStr, goalPeriodEnd: endStr };
+        const goalPeriod = { startDate: startStr, endDate: endStr };
         const periodDates = dateRange(start, end);
         const results = await Promise.allSettled(
           providersForApi.map(async (p) => {
