@@ -72,5 +72,5 @@ export async function fetchScheduleOverridesByDate(
     startDate: sorted[0]!,
     endDate: sorted[sorted.length - 1]!,
   });
-  return new Map(list.map((o) => [o.date, o]));
+  return new Map(list.map((o) => [String(o.date).slice(0, 10), o]));
 }
