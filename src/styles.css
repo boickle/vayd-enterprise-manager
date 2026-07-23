@@ -300,13 +300,22 @@ main.schedule-main-wrapper .scheduler-page:not(.scheduler-page--embedded) {
 .navbar-schedule-more > summary {
   list-style: none;
   cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+  /* Do not put display:flex/inline-flex on <summary> — iOS WebKit (iPhone Chrome/Safari)
+     fails to toggle <details> when summary is a flex container. */
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .navbar-schedule-more > summary::-webkit-details-marker {
   display: none;
+}
+
+.navbar-schedule-more-summary-inner {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  pointer-events: none;
 }
 
 .navbar-schedule-more-chevron {

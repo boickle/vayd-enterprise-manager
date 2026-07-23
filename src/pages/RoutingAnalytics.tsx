@@ -183,6 +183,20 @@ function classifyClientType(requestData: Record<string, unknown>): 'new' | 'exis
   return 'unknown';
 }
 
+/** Select answer from new-client public form (`howDidYouHearAboutUs`). */
+function requestDataHowDidYouHearAboutUs(requestData: Record<string, unknown>): string | null {
+  const v = requestData.howDidYouHearAboutUs;
+  if (typeof v === 'string' && v.trim()) return v.trim();
+  return null;
+}
+
+/** Free-text follow-up when select answer is "Other". */
+function requestDataHowDidYouHearAboutUsOther(requestData: Record<string, unknown>): string | null {
+  const v = requestData.howDidYouHearAboutUsOther;
+  if (typeof v === 'string' && v.trim()) return v.trim();
+  return null;
+}
+
 function classifySubmission(item: AppointmentRequestSubmissionItem): {
   isEuth: boolean;
   clientType: 'new' | 'existing' | 'unknown';
@@ -549,6 +563,8 @@ export default function RoutingAnalyticsPage() {
     let newClient = 0;
     let existingClient = 0;
     let abandoned = 0;
+    const howDidYouHearCounts = new Map<string, number>();
+    const howDidYouHearOtherCounts = new Map<string, number>();
     for (const item of items) {
       const { isEuth, clientType, localDay } = classifySubmission(item);
       if (isAbandonedSubmission(item)) {
@@ -560,6 +576,17 @@ export default function RoutingAnalyticsPage() {
       if (isEuth) euth += 1;
       if (clientType === 'new') newClient += 1;
       else if (clientType === 'existing') existingClient += 1;
+      const rd = item.requestData ?? {};
+      const hearAbout = requestDataHowDidYouHearAboutUs(rd);
+      if (hearAbout) {
+        howDidYouHearCounts.set(hearAbout, (howDidYouHearCounts.get(hearAbout) ?? 0) + 1);
+        if (hearAbout === 'Other') {
+          const other = requestDataHowDidYouHearAboutUsOther(rd);
+          if (other) {
+            howDidYouHearOtherCounts.set(other, (howDidYouHearOtherCounts.get(other) ?? 0) + 1);
+          }
+        }
+      }
       const row = byDay.get(localDay);
       if (row) {
         row.total += 1;
@@ -574,6 +601,8 @@ export default function RoutingAnalyticsPage() {
       const r = byDay.get(date) ?? { total: 0, euth: 0, nonEuth: 0 };
       return { date, totalBookedRequests: r.total, euthRequests: r.euth, nonEuthRequests: r.nonEuth };
     });
+    const howDidYouHearRows = [...howDidYouHearCounts.entries()].sort((a, b) => b[1] - a[1]);
+    const howDidYouHearOtherRows = [...howDidYouHearOtherCounts.entries()].sort((a, b) => b[1] - a[1]);
     return {
       total,
       euth,
@@ -584,6 +613,8 @@ export default function RoutingAnalyticsPage() {
       attempted,
       completionRate,
       chartRows,
+      howDidYouHearRows,
+      howDidYouHearOtherRows,
     };
   }, [requestSubmissions, dates]);
 
@@ -1811,9 +1842,10 @@ export default function RoutingAnalyticsPage() {
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
           GET /appointments/request-submissions (practiceId={APPOINTMENT_REQUEST_PRACTICE_ID}, from / to in
           ISO UTC derived from the selected local dates). Completed submissions (<code>kind: submission</code>)
-          are counted for totals, client type, and euthanasia breakdown; abandoned form sessions (
-          <code>kind: abandoned</code>) are counted separately. Attempted = completed + abandoned; completion
-          rate = completed ÷ attempted.
+          are counted for totals, client type, euthanasia breakdown, and how-did-you-hear-about-us answers;
+          abandoned form sessions (<code>kind: abandoned</code>) are counted separately. Attempted = completed +
+          abandoned; completion rate = completed ÷ attempted. “How did you hear about us” is asked on new-client
+          submissions only.
         </Typography>
 
         {requestSubmissionsError && (
@@ -1953,7 +1985,7 @@ export default function RoutingAnalyticsPage() {
               </Card>
             )}
 
-            <Card>
+            <Card sx={{ mb: 3 }}>
               <CardHeader
                 title={isSingleDay ? 'Submissions for this day' : 'Submissions for selected range'}
                 subheader="Completed submissions and abandoned sessions for the selected date range."
@@ -2007,6 +2039,67 @@ export default function RoutingAnalyticsPage() {
                     </TableBody>
                   </Table>
                 </TableContainer>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader
+                title="How did you hear about us"
+                subheader="Answers from completed new-client public appointment requests for the selected date range."
+              />
+              <CardContent>
+                <TableContainer component={Paper} variant="outlined">
+                  <Table size="small">
+                    <TableHead>
+                      <TableRow>
+                        <TableCell>Answer</TableCell>
+                        <TableCell align="right">Count</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {requestSubmissionStats.howDidYouHearRows.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={2}>
+                            <Typography color="text.secondary">No answers in this range</Typography>
+                          </TableCell>
+                        </TableRow>
+                      ) : (
+                        requestSubmissionStats.howDidYouHearRows.map(([answer, count]) => (
+                          <TableRow key={answer}>
+                            <TableCell>{answer}</TableCell>
+                            <TableCell align="right">{count}</TableCell>
+                          </TableRow>
+                        ))
+                      )}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+
+                {requestSubmissionStats.howDidYouHearOtherRows.length > 0 && (
+                  <Box sx={{ mt: 3 }}>
+                    <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                      “Other” details
+                    </Typography>
+                    <TableContainer component={Paper} variant="outlined">
+                      <Table size="small">
+                        <TableHead>
+                          <TableRow>
+                            <TableCell>Write-in</TableCell>
+                            <TableCell align="right">Count</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {requestSubmissionStats.howDidYouHearOtherRows.map(([answer, count]) => (
+                            <TableRow key={answer}>
+                              <TableCell>{answer}</TableCell>
+                              <TableCell align="right">{count}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                  </Box>
+                )}
               </CardContent>
             </Card>
           </>

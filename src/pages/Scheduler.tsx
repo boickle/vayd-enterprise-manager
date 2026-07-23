@@ -3777,16 +3777,16 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     const anchor = DateTime.fromISO(anchorDate, { zone: PRACTICE_TZ }).startOf('day');
     if (view === 'day') {
       const d = anchor.toISODate()!;
-      return { goalPeriodStart: d, goalPeriodEnd: d };
+      return { startDate: d, endDate: d };
     }
     if (view === 'week') {
       const startL = sundayWeekStart(anchor);
       const endL = startL.plus({ days: 6 });
-      return { goalPeriodStart: startL.toISODate()!, goalPeriodEnd: endL.toISODate()! };
+      return { startDate: startL.toISODate()!, endDate: endL.toISODate()! };
     }
     const startL = anchor.startOf('month');
     const endL = startL.endOf('month');
-    return { goalPeriodStart: startL.toISODate()!, goalPeriodEnd: endL.toISODate()! };
+    return { startDate: startL.toISODate()!, endDate: endL.toISODate()! };
   }, [anchorDate, view]);
 
   useEffect(() => {
