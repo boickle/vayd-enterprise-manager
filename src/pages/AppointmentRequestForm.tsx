@@ -99,8 +99,8 @@ const SHOW_DOCTOR_SELECTION = false;
 /** Set to true to show time slots ("Here are some possible dates and times..."). Code preserved for potential re-enable. */
 const SHOW_TIME_SLOTS = false;
 
-/** Set to true to show the manual promo code entry field on the submit step. Promotions via URL token (?promo=) still work. Code preserved for potential re-enable. */
-const SHOW_PROMO_CODE_FIELD = false;
+/** Set to true to show the manual promo code entry field on the submit step. Promotions via URL token (?promo=) still work. */
+const SHOW_PROMO_CODE_FIELD = true;
 
 const EMERGENT_HOW_SOON_VALUES = new Set([
   'Emergent – today',
