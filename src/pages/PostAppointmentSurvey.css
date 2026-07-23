@@ -595,7 +595,7 @@
 
 .survey-card.survey-success-promoter h1.survey-promoter-heading {
   text-align: left;
-  margin-bottom: 12px;
+  margin-bottom: 4px;
 }
 
 .survey-promoter-lead {
@@ -648,7 +648,7 @@
 
 /* Testimonial / quote (response ready to publish) */
 .survey-testimonial {
-  margin: 20px 0 0;
+  margin: 20px 0 20px;
   padding: 0;
 }
 
