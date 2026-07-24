@@ -950,6 +950,27 @@ label > .label {
   --warn: #b38600; /* yellow */
   --bad: #c52828; /* red */
 }
+
+/* CL seat day overrides — week grid in Settings */
+.cl-seat-day-override-scroll {
+  overflow-x: auto;
+  max-width: 100%;
+}
+.cl-seat-day-override-table th,
+.cl-seat-day-override-table td {
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.cl-seat-day-override-table select {
+  min-width: 6.5rem;
+  font-size: 0.85rem;
+}
+.cl-seat-day-cell--off {
+  background: #f8d7da;
+}
+.cl-seat-day-cell--swap {
+  background: #e8f0ea;
+}
 .dd-meta span b,
 .dd-meta span strong {
   font-weight: 600;

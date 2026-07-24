@@ -16,9 +16,12 @@ import {
   type OpenPhoneEmployeeSummary,
 } from './openphoneCalls';
 import {
+  computeClSeatParForRange,
   fetchClSeatAssignmentsRange,
+  fetchClSeatDayOverrides,
   fetchClSeatPar,
   sundayWeekStartLocal,
+  type ClSeatDayOverride,
   type ClSeatParSettings,
 } from './clSeatAssignments';
 import {
@@ -45,13 +48,15 @@ export type ClPerformanceLiaison = {
   priorTotalPoints: number | null;
   /** (current − prior) / |prior| when prior exists and ≠ 0. */
   improvementRate: number | null;
-  /** Seat for the primary week (Sunday of startDate); null if unassigned. */
+  /** Seat for the primary week (majority of days in range after overrides); null if unassigned. */
   seat: ClSeat | null;
   seatLabel: string | null;
-  /** Weekly par for the assigned seat (scaled by week count in range when seat is constant). */
+  /** Prorated par for the date range (day offs reduce; seat swaps use that day's seat par). */
   par: number | null;
   /** points ÷ par; 1.0 = on target. */
   normalizedScore: number | null;
+  /** Number of calendar days in range with a day override (off or seat change). */
+  seatOverrideDayCount: number;
   categories: ClPerformanceCategoryTotals;
   counts: {
     bookings: number;
@@ -374,13 +379,17 @@ export async function fetchClPerformanceAnalytics(params: {
     ) + 1
   );
 
-  const [receptionists, current, prior, seatPar, seatAssignments] = await Promise.all([
-    fetchReceptionistEmployees(),
-    loadPeriodInputs(startDate, endDate),
-    loadPeriodInputs(priorStartDate, priorEndDate).catch(() => null),
-    fetchClSeatPar(practiceId).catch(() => null),
-    fetchClSeatAssignmentsRange(practiceId, primaryWeekStart, endWeekStart).catch(() => null),
-  ]);
+  const [receptionists, current, prior, seatPar, seatAssignments, dayOverrides] =
+    await Promise.all([
+      fetchReceptionistEmployees(),
+      loadPeriodInputs(startDate, endDate),
+      loadPeriodInputs(priorStartDate, priorEndDate).catch(() => null),
+      fetchClSeatPar(practiceId).catch(() => null),
+      fetchClSeatAssignmentsRange(practiceId, primaryWeekStart, endWeekStart).catch(
+        () => null
+      ),
+      fetchClSeatDayOverrides(practiceId).catch(() => [] as ClSeatDayOverride[]),
+    ]);
 
   const parMap = seatPar ?? {
     phones: 80,
@@ -388,22 +397,28 @@ export async function fetchClPerformanceAnalytics(params: {
     email: 100,
   };
 
-  /** employeeId → seats seen in range (ordered by week). */
-  const seatsByEmployee = new Map<number, ClSeat[]>();
+  /** employeeId → weekStart → seat */
+  const weeklySeatByEmployee = new Map<number, Map<string, ClSeat>>();
   for (const row of seatAssignments?.assignments ?? []) {
-    const list = seatsByEmployee.get(row.employeeId) ?? [];
-    list.push(row.seat);
-    seatsByEmployee.set(row.employeeId, list);
+    let byWeek = weeklySeatByEmployee.get(row.employeeId);
+    if (!byWeek) {
+      byWeek = new Map();
+      weeklySeatByEmployee.set(row.employeeId, byWeek);
+    }
+    byWeek.set(sundayWeekStartLocal(row.weekStart), row.seat);
   }
 
-  const resolveSeat = (employeeId: number): ClSeat | null => {
-    const seats = seatsByEmployee.get(employeeId) ?? [];
-    if (seats.length === 0) return null;
-    // Prefer primary week (first in range); fall back to most recent.
-    const unique = [...new Set(seats)];
-    if (unique.length === 1) return unique[0];
-    return seats[0] ?? seats[seats.length - 1] ?? null;
-  };
+  /** employeeId → date → override */
+  const overridesByEmployee = new Map<number, Map<string, ClSeatDayOverride>>();
+  for (const o of dayOverrides ?? []) {
+    if (o.date < startDate || o.date > endDate) continue;
+    let byDate = overridesByEmployee.get(o.employeeId);
+    if (!byDate) {
+      byDate = new Map();
+      overridesByEmployee.set(o.employeeId, byDate);
+    }
+    byDate.set(o.date, o);
+  }
 
   const liaisons: ClPerformanceLiaison[] = receptionists.map((emp) => {
     const cur = scoreLiaisonPeriod(emp, current);
@@ -416,9 +431,20 @@ export async function fetchClPerformanceAnalytics(params: {
       improvementRate = 1;
     }
 
-    const seat = resolveSeat(emp.id);
-    const weeklyPar = seat ? parMap[seat] : null;
-    const par = weeklyPar != null ? weeklyPar * weekCount : null;
+    const weeklyMap: Map<string, ClSeat | null> = new Map(
+      [...(weeklySeatByEmployee.get(emp.id) ?? new Map()).entries()]
+    );
+    const {
+      par,
+      primarySeat: seat,
+      overrideDayCount,
+    } = computeClSeatParForRange({
+      startDate,
+      endDate,
+      weeklySeatByWeekStart: weeklyMap,
+      overridesByDate: overridesByEmployee.get(emp.id) ?? new Map(),
+      seatPar: parMap,
+    });
     const score = par != null ? normalizedClScore(cur.totalPoints, par) : null;
 
     return {
@@ -432,6 +458,7 @@ export async function fetchClPerformanceAnalytics(params: {
       seatLabel: seat ? CL_SEAT_LABELS[seat] : null,
       par,
       normalizedScore: score,
+      seatOverrideDayCount: overrideDayCount,
       categories: cur.categories,
       counts: cur.counts,
     };

@@ -25,6 +25,12 @@ export type ReminderSettings = {
   'reminders.includedReminderTypes'?: string[];
   /** Weekly CL seat par targets: { phones, outreach, email }. */
   'cl.seatPar'?: { phones: number; outreach: number; email: number } | string;
+  /**
+   * Per-date CL seat overrides (day off / seat swap), stored as a JSON string
+   * (practice settings non-cadence keys are strings).
+   * Shape: [{ employeeId, date, seat: 'phones'|'outreach'|'email'|'off', notes? }]
+   */
+  'cl.seatDayOverrides'?: string;
 };
 
 export type ReminderSettingsForm = {
