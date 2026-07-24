@@ -278,8 +278,9 @@ export default function CLPerformanceAnalyticsPage() {
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
           Client Liaison points vs the rotating-seat guide: bookings (lead-time tiers), OpenPhone
           calls, Fill Day contacts, and missed in-hours penalties. Normalized score uses seat
-          assignment and par from Settings → CL Seat Assignment (1.0× = on target). Scores are also
-          compared to the prior equal-length period for improvement.
+          assignment and par from Settings → CL Seat Assignment (1.0× = on target); day offs and
+          one-day seat swaps prorate par. Scores are also compared to the prior equal-length period
+          for improvement.
         </Typography>
 
         <Stack direction="row" flexWrap="wrap" gap={1} alignItems="center" sx={{ mb: 2 }}>
