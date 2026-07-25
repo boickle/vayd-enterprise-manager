@@ -116,6 +116,10 @@ export function normalizeAppointmentTypeFromApi(row: AppointmentType): Appointme
     row.isHold === true ||
     truthyFlag(r.is_hold) ||
     truthyFlag(row.isHold);
+  const isCalmingPremedType =
+    row.isCalmingPremedType === true ||
+    truthyFlag(r.is_calming_premed_type) ||
+    truthyFlag(row.isCalmingPremedType);
   const usesLegacyRouting =
     row.usesLegacyRouting === true ||
     truthyFlag(r.uses_legacy_routing) ||
@@ -141,6 +145,7 @@ export function normalizeAppointmentTypeFromApi(row: AppointmentType): Appointme
     excludeFromRouting,
     excludeFromReminders,
     isHold,
+    isCalmingPremedType,
     usesLegacyRouting,
     allowSchedulingOverride:
       row.allowSchedulingOverride === true || truthyFlag(r.allow_scheduling_override),
@@ -211,6 +216,36 @@ export function appointmentTypeAddressRequired(type: AppointmentType | undefined
 export function appointmentTypeRequiresPatient(type: AppointmentType | undefined): boolean {
   if (!type) return false;
   return normalizeAppointmentTypeFromApi(type).requiresPatient === true;
+}
+
+/** True when this type is the calming / Pre-Meds visit for online booking. */
+export function appointmentTypeIsCalmingPremed(type: AppointmentType | undefined | null): boolean {
+  if (!type) return false;
+  return normalizeAppointmentTypeFromApi(type).isCalmingPremedType === true;
+}
+
+/**
+ * Prefer the type flagged `isCalmingPremedType`. Falls back to a Pre-Meds-style
+ * name match only when no type is flagged (legacy / pre-migration).
+ */
+export function findCalmingPremedAppointmentType(
+  types: AppointmentType[] | undefined | null,
+): AppointmentType | undefined {
+  if (!types?.length) return undefined;
+  const normalized = types.map((t) => normalizeAppointmentTypeFromApi(t));
+  const flagged = normalized.find((t) => t.isCalmingPremedType === true && t.isDeleted !== true);
+  if (flagged) return flagged;
+  return normalized.find((t) => {
+    if (t.isDeleted === true) return false;
+    const key = normalizeAppointmentTypeName(t.name);
+    const pretty = normalizeAppointmentTypeName(t.prettyName);
+    return (
+      key.includes('pre med') ||
+      pretty.includes('pre med') ||
+      key.includes('premed') ||
+      pretty.includes('premed')
+    );
+  });
 }
 
 function appointmentTypePickerLabel(type: {

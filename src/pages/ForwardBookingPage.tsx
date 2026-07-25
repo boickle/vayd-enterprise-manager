@@ -2636,6 +2636,7 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
           onOpenMessagesHistory={() => openMessagesHistory(contactEntry)}
           onOpenEmailHistory={() => openEmailHistory(contactEntry)}
           markInboxDone
+          smsSource="forward_booking"
         />
       ) : null}
 

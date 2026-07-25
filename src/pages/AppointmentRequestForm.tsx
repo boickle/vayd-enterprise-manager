@@ -29,7 +29,7 @@ import {
   filterCompletedAppointmentRequestPets,
   isAbandonedAppointmentRequestPetStub,
 } from '../utils/appointmentRequestPetCompleteness';
-import { sortAppointmentTypesForPicker } from '../utils/appointmentTypeSettings';
+import { findCalmingPremedAppointmentType, sortAppointmentTypesForPicker } from '../utils/appointmentTypeSettings';
 import { resolveClientArrivalWindowForScheduledStart } from '../utils/appointmentArrivalWindow';
 import { DEFAULT_PRACTICE_TIMEZONE } from '../utils/practiceTimezone';
 import { formatAutobookDateTimePreferenceDisplay } from '../utils/appointmentRequestDisplay';
@@ -373,6 +373,8 @@ type FormData = {
     appointmentTypeId?: number; // Appointment type ID for backend lookup
     appointmentTypeName?: string; // Appointment type name for backend lookup
     needsTodayDetails?: string; // Details/reason for the selected need
+    /** Existing chart pets: client reports calming meds for this visit. */
+    needsCalmingMedications?: 'Yes' | 'No' | '';
     // Euthanasia-specific fields (for end-of-life option)
     euthanasiaReason?: string;
     beenToVetLastThreeMonths?: string;
@@ -1174,6 +1176,98 @@ export default function AppointmentRequestForm() {
     applyPetNeedsTodaySelection(petId, option);
   };
 
+  /**
+   * Existing chart pets: calming-meds checkbox sets the flag and steers the visit
+   * to the flagged Pre-Meds appointment type when available.
+   */
+  const handleUsesCalmingMedicationsChange = (
+    petId: string,
+    checked: boolean,
+    currentPetData: PetSpecificSlice | undefined,
+  ) => {
+    const calmingValue: 'Yes' | 'No' = checked ? 'Yes' : 'No';
+    const premed = findCalmingPremedAppointmentType(appointmentTypes);
+    const premedOption: NeedsTodayOption | null = premed
+      ? {
+          id: premed.id,
+          name: premed.name,
+          prettyName: premed.prettyName || premed.name,
+        }
+      : null;
+
+    if (checked && premedOption) {
+      const cur = currentPetData;
+      const alreadySelected =
+        cur?.needsToday === premedOption.prettyName || cur?.needsToday === premedOption.name;
+      if (alreadySelected) {
+        setFormData((prev) => {
+          const petMap = { ...(prev.petSpecificData || {}) };
+          const existing = petMap[petId] || {};
+          petMap[petId] = { ...existing, needsCalmingMedications: calmingValue };
+          return { ...prev, petSpecificData: petMap };
+        });
+        return;
+      }
+
+      const hadPriorSelection = !!(cur?.needsToday && cur.needsToday.trim());
+      if (hadPriorSelection && petHasEnteredDetailsForCurrentAppointmentType(cur)) {
+        setFormData((prev) => {
+          const petMap = { ...(prev.petSpecificData || {}) };
+          const existing = petMap[petId] || {};
+          petMap[petId] = { ...existing, needsCalmingMedications: calmingValue };
+          return { ...prev, petSpecificData: petMap };
+        });
+        setAppointmentTypeChangeModal({ petId, option: premedOption });
+        return;
+      }
+
+      setFormData((prev) => {
+        const petMap = { ...(prev.petSpecificData || {}) };
+        const existing = petMap[petId] || {};
+        petMap[petId] = {
+          ...existing,
+          needsCalmingMedications: calmingValue,
+          needsToday: premedOption.prettyName,
+          appointmentTypeId: premedOption.id,
+          appointmentTypeName: premedOption.name,
+          needsTodayDetails: '',
+          euthanasiaReason: '',
+          beenToVetLastThreeMonths: '',
+          interestedInOtherOptions: '',
+          aftercarePreference: '',
+        };
+        return { ...prev, petSpecificData: petMap };
+      });
+      setErrors((prev) => {
+        const keys = [
+          `needsToday.${petId}`,
+          `needsTodayDetails.${petId}`,
+          `euthanasiaReason.${petId}`,
+          `beenToVetLastThreeMonths.${petId}`,
+          `interestedInOtherOptions.${petId}`,
+          `aftercarePreference.${petId}`,
+        ];
+        let touched = false;
+        const next = { ...prev };
+        for (const k of keys) {
+          if (next[k] !== undefined) {
+            delete next[k];
+            touched = true;
+          }
+        }
+        return touched ? next : prev;
+      });
+      return;
+    }
+
+    setFormData((prev) => {
+      const petMap = { ...(prev.petSpecificData || {}) };
+      const existing = petMap[petId] || {};
+      petMap[petId] = { ...existing, needsCalmingMedications: calmingValue };
+      return { ...prev, petSpecificData: petMap };
+    });
+  };
+
   /** Include only fields that apply to the selected appointment type (payload / persistence). */
   const sanitizePetSpecificDataForPayload = (
     raw: FormData['petSpecificData'],
@@ -1186,6 +1280,9 @@ export default function AppointmentRequestForm() {
         needsToday: petData.needsToday,
         appointmentTypeId: petData.appointmentTypeId,
         appointmentTypeName: petData.appointmentTypeName,
+        ...(petData.needsCalmingMedications
+          ? { needsCalmingMedications: petData.needsCalmingMedications }
+          : {}),
       };
       if (!sel?.trim()) {
         out[petId] = base;
@@ -1233,6 +1330,20 @@ export default function AppointmentRequestForm() {
     () => appointmentTypes.find((type) => type.id === primaryAppointmentTypeId),
     [appointmentTypes, primaryAppointmentTypeId],
   );
+
+  const calmingPremedAppointmentType = useMemo(
+    () => findCalmingPremedAppointmentType(appointmentTypes),
+    [appointmentTypes],
+  );
+
+  const calmingPremedTypeOption = useMemo((): AppointmentTypeCardOption | null => {
+    if (!calmingPremedAppointmentType) return null;
+    return {
+      id: calmingPremedAppointmentType.id,
+      name: calmingPremedAppointmentType.name,
+      prettyName: calmingPremedAppointmentType.prettyName || calmingPremedAppointmentType.name,
+    };
+  }, [calmingPremedAppointmentType]);
 
   const rawVeterinarianList = isLoggedIn ? rawVeterinarians : rawPublicVeterinarians;
 
@@ -3925,6 +4036,8 @@ export default function AppointmentRequestForm() {
                   photoUrl: p.photoUrl,
                   wellnessPlans: p.wellnessPlans,
                   alerts: petAlerts.get(p.id) ?? null,
+                  needsCalmingMedications:
+                    formData.petSpecificData?.[p.id]?.needsCalmingMedications || undefined,
                 };
               }),
               // New pets added by existing client (only if selected and not an abandoned blank stub)
@@ -3999,6 +4112,8 @@ export default function AppointmentRequestForm() {
                   wellnessPlans: p.wellnessPlans,
                   alerts: petAlerts.get(p.id) ?? null,
                   isSelected: formData.selectedPetIds.includes(p.id),
+                  needsCalmingMedications:
+                    formData.petSpecificData?.[p.id]?.needsCalmingMedications || undefined,
                 };
               }) : []),
               // New pets added by existing client (omit abandoned blank stubs)
@@ -6658,6 +6773,11 @@ export default function AppointmentRequestForm() {
                             onUpdatePetData={updatePetSpecificData}
                             onSelectAppointmentType={(option) =>
                               attemptPetNeedsTodayChange(pet.id, option, getPetData(pet.id))
+                            }
+                            showUsesCalmingMedications
+                            calmingPremedType={calmingPremedTypeOption}
+                            onUsesCalmingMedicationsChange={(checked) =>
+                              handleUsesCalmingMedicationsChange(pet.id, checked, getPetData(pet.id))
                             }
                           />
                         )}

@@ -96,6 +96,7 @@ export default function GmailComposePanel({
   const [draftId, setDraftId] = useState<string | undefined>();
   const [draftSaving, setDraftSaving] = useState(false);
   const [templates, setTemplates] = useState<GmailTemplate[]>([]);
+  const [trackOpens, setTrackOpens] = useState(true);
 
   const editorRef = useRef<HTMLDivElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
@@ -490,6 +491,7 @@ export default function GmailComposePanel({
         threadId,
         inReplyTo,
         references,
+        trackOpens,
       });
       draftIdRef.current = undefined;
       setDraftId(undefined);
@@ -646,6 +648,18 @@ export default function GmailComposePanel({
         <button type="button" className="gmail-btn" disabled={busy} onClick={onClose}>
           Cancel
         </button>
+        <label
+          className="gmail-compose-panel__track-opens"
+          title="Adds an invisible pixel so Scout can show when the recipient opens this email."
+        >
+          <input
+            type="checkbox"
+            checked={trackOpens}
+            disabled={busy}
+            onChange={(e) => setTrackOpens(e.target.checked)}
+          />
+          Track opens
+        </label>
         <div className="gmail-compose-panel__footer-spacer" />
         <GmailTemplateMenu
           templates={templates}

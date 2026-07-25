@@ -474,7 +474,12 @@ export function buildAppointmentRequestDetailSections(
 
     const alerts = pickStr(pet.alerts);
     if (alerts) notes.push(asRow('Alerts', alerts, 'note'));
-    const handling = handlingSummary(pet);
+    const handling = handlingSummary({
+      ...pet,
+      ...(specific?.needsCalmingMedications != null
+        ? { needsCalmingMedications: specific.needsCalmingMedications }
+        : {}),
+    });
     if (handling) notes.push(asRow('Handling', handling, 'note'));
 
     if (specific) {

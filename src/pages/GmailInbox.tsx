@@ -17,6 +17,7 @@ import { discardAllThreadDrafts } from '../components/gmail/gmailCompose';
 import '../components/gmail/GmailComposeModal.css';
 import GmailLabelTree from '../components/gmail/GmailLabelTree';
 import GmailScheduledSendIcon from '../components/gmail/GmailScheduledSendIcon';
+import GmailOpenTrackingBadge from '../components/gmail/GmailOpenTrackingBadge';
 import {
   disconnectGmail,
   fetchGmailLabels,
@@ -330,6 +331,7 @@ function MessageListSection({
                     </div>
                   ) : null}
                 </div>
+                <GmailOpenTrackingBadge tracking={msg.tracking} compact />
                 <span className="gmail-msg-item__date">
                   {hasScheduledSend(msg) ? (
                     <GmailScheduledSendIcon scheduledSendAt={msg.scheduledSendAt} />

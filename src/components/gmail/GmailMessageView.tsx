@@ -200,6 +200,7 @@ export default function GmailMessageView({
 
   const sharedMessageProps = {
     threadId: message.threadId,
+    mailbox,
     actionBusy,
     threadLoading,
     onCompose: handleCompose,
