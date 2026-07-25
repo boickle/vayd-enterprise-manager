@@ -1,6 +1,6 @@
 // src/pages/Settings.tsx
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router';
 import { useAuth } from '../auth/useAuth';
 import ScheduleOverrideModal from '../components/ScheduleOverrideModal';
 import {

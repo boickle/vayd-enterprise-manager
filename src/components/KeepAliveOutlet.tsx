@@ -1,5 +1,5 @@
 // src/components/KeepAliveOutlet.tsx
-import { useLocation, useOutlet } from 'react-router-dom';
+import { useLocation, useOutlet } from 'react-router';
 import { useRef } from 'react';
 
 type Props = { keepPaths: string[] };

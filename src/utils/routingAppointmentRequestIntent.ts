@@ -1,7 +1,7 @@
 /**
  * Appointment request list → Routing prefill (same sessionStorage + event pattern as forward booking).
  */
-import type { NavigateFunction } from 'react-router-dom';
+import type { NavigateFunction } from 'react-router';
 import { clearRoutingCalendarPreview } from './routingCalendarPreviewStorage';
 import { ROUTING_DISMISS_FORWARD_BOOKING_EVENT } from './routingUiSnapshot';
 import type { AppointmentRequestListTab } from '../appointments-nav';

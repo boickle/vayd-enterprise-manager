@@ -1,6 +1,6 @@
 // src/pages/MembershipUpgrade.tsx
 import React, { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router';
 import {
   fetchSubscriptionPlanCatalog,
   type SubscriptionPlanCatalog,

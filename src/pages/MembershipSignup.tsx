@@ -1,6 +1,6 @@
 // src/pages/MembershipSignup.tsx
 import React, { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
+import { useNavigate, useLocation, useSearchParams } from 'react-router';
 import {
   fetchClientPets,
   type Pet,

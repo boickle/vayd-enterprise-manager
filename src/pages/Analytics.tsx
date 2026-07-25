@@ -1,5 +1,5 @@
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
-import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router';
 import { Box, CircularProgress } from '@mui/material';
 import { useAuth } from '../auth/useAuth';
 import { getAnalyticsTabPages, type AnalyticsTabPage } from '../analytics-tabs';

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { loadStripe, type Stripe, type StripeCardElement } from '@stripe/stripe-js';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router';
 import {
   createPayment,
   type PaymentResponse,

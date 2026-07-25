@@ -12,7 +12,7 @@ import {
   type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router';
 import { DateTime } from 'luxon';
 import { AlertTriangle, Cat, Dog, Heart, Printer, X } from 'lucide-react';
 import {

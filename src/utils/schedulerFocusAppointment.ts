@@ -1,5 +1,5 @@
 import { DateTime } from 'luxon';
-import type { NavigateFunction } from 'react-router-dom';
+import type { NavigateFunction } from 'react-router';
 import type { Appointment } from '../api/roomLoader';
 import { appointmentPracticeDateKey } from './editVisitTimeFields';
 import { buildGmailInboxReturnPath } from './routingAppointmentRequestIntent';

@@ -1,6 +1,6 @@
 // src/pages/PostAppointmentSurvey.tsx
 import React, { useState, useEffect, useMemo } from 'react';
-import { useSearchParams, Link, useParams } from 'react-router-dom';
+import { useSearchParams, Link, useParams } from 'react-router';
 import {
   getSurveyForm,
   submitSurvey,

@@ -3,7 +3,7 @@
  * metadata here so Routing can pre-fill the form and `/appointments/:id` is PATCHed after a new slot is chosen.
  */
 import { DateTime } from 'luxon';
-import type { NavigateFunction } from 'react-router-dom';
+import type { NavigateFunction } from 'react-router';
 import type { RescheduleOriginalVisitSnapshot } from '../api/routing';
 import type { Appointment, Client, Patient } from '../api/roomLoader';
 import type { AppointmentType } from '../api/appointmentSettings';
