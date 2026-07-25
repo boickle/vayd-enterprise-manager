@@ -1,4 +1,8 @@
-import { patchAppointment, putAppointmentAlternateAddress } from '../api/appointments';
+import {
+  appointmentAlternateAddressText,
+  patchAppointment,
+  putAppointmentAlternateAddress,
+} from '../api/appointments';
 import type { AppointmentType } from '../api/appointmentSettings';
 import type { Appointment } from '../api/roomLoader';
 import { appointmentTypeAllowsClient } from './appointmentTypeSettings';
@@ -11,7 +15,9 @@ import {
 } from './appointmentChangeAuditNote';
 import {
   addressMatchAllowsLink,
+  appointmentClientHomeAddress,
   appointmentResolvedClientId,
+  clientAddressFromRecord,
   compareVisitAddressToClientHome,
   visitAddressForLinkMatching,
 } from './visitAddressMatch';
@@ -286,6 +292,29 @@ export async function commitEditVisit(input: CommitEditVisitInput): Promise<Appo
         isAlternateStop: false,
       } as Appointment;
     }
+  }
+
+  // Already-linked visits: clear a stale ALT that matches the client's home.
+  const home =
+    link?.clientHomeAddress?.trim() ||
+    (updated.client && typeof updated.client === 'object'
+      ? clientAddressFromRecord(updated.client as Record<string, unknown>)
+      : null) ||
+    appointmentClientHomeAddress(updated);
+  const alt = appointmentAlternateAddressText(updated);
+  if (
+    alt?.trim() &&
+    home?.trim() &&
+    link?.keepAlternateAddress !== true &&
+    addressMatchAllowsLink(compareVisitAddressToClientHome(alt, home))
+  ) {
+    await putAppointmentAlternateAddress(input.appointmentId, { addressText: '' });
+    return {
+      ...updated,
+      alternateAddress: null,
+      alternateAddressText: null,
+      isAlternateStop: false,
+    } as Appointment;
   }
 
   return updated;

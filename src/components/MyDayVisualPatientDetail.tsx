@@ -5,6 +5,9 @@ export type MyDayVisualPatientDetailData = {
   name: string;
   type?: string | null;
   sex?: string | null;
+  species?: string | null;
+  age?: string | null;
+  weight?: string | null;
   appointmentNotes?: string | null;
   staffNotes?: string | null;
   petAlerts?: string | null;
@@ -52,6 +55,9 @@ export function MyDayVisualPatientDetail({
   const nameSize = isPdf ? 18 : 13;
   const metaSize = isPdf ? 16 : 12;
   const petAlerts = p.petAlerts?.trim() || p.alerts?.trim() || null;
+  const demographics = [p.species?.trim(), p.age?.trim(), p.weight?.trim()].filter(
+    Boolean,
+  ) as string[];
 
   const detail = (
     <>
@@ -80,6 +86,12 @@ export function MyDayVisualPatientDetail({
           </span>
         ) : null}
       </div>
+
+      {demographics.length > 0 ? (
+        <div style={{ fontSize: metaSize, color: '#475569', marginTop: isPdf ? 4 : 2 }}>
+          {demographics.join(' · ')}
+        </div>
+      ) : null}
 
       {p.type?.trim() ? (
         <div style={{ fontSize: metaSize, color: '#475569', marginTop: isPdf ? 4 : 2 }}>

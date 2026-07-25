@@ -19,6 +19,9 @@ export type DoctorDayVisualPdfPatient = {
   appointmentNotes?: string | null;
   staffNotes?: string | null;
   sex?: string | null;
+  species?: string | null;
+  age?: string | null;
+  weight?: string | null;
   petAlerts?: string | null;
   alerts?: string | null;
   isMember?: boolean;

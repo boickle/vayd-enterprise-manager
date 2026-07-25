@@ -5,7 +5,6 @@ import {
   buildComposeDraft,
   buildComposeSendBodiesFromEditorHtml,
   composeDraftSaveReady,
-  defaultFromAlias,
   discardAllThreadDrafts,
   draftListSnippet,
   extractEmail,
@@ -14,6 +13,7 @@ import {
   loadComposeFromThreadDraft,
   loadSendAsAliases,
   replaceSignatureHtmlInCompose,
+  resolveReplyFromAlias,
   saveComposeDraft,
   signatureHtmlForFromAlias,
   submitCompose,
@@ -161,7 +161,12 @@ export default function GmailComposePanel({
       .then((list) => {
         if (cancelled) return;
         setAliases(list);
-        const fromVal = defaultFromAlias(list, mailbox);
+        const fromVal = resolveReplyFromAlias(
+          list,
+          mailbox,
+          context.replyTo,
+          threadMessages,
+        );
         setFrom(fromVal);
         const sigHtml = signatureHtmlForFromAlias(list, fromVal);
 
@@ -171,7 +176,24 @@ export default function GmailComposePanel({
         if (existing) {
           hydratedDraftRef.current = true;
           setDraftId(existing.draftId);
-          setTo(existing.to);
+          // Don't keep a bad autosaved To that points at staff (legacy comma-split bug).
+          const draftToLooksInternal =
+            Boolean(existing.to.trim()) &&
+            existing.to
+              .split(/[,;]/)
+              .map((s) => s.trim())
+              .filter(Boolean)
+              .every((part) => {
+                const email = extractEmail(part).toLowerCase();
+                return (
+                  !email.includes('@') ||
+                  email.endsWith('@vetatyourdoor.com') ||
+                  email === mailbox.toLowerCase()
+                );
+              });
+          setTo(
+            draftToLooksInternal && draft.to.trim() ? draft.to : existing.to || draft.to,
+          );
           setCc(existing.cc);
           setSubject(existing.subject);
           setQuotedSuffix(draft.quotedSuffix);

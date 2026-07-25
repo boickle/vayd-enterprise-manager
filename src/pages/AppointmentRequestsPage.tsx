@@ -128,10 +128,10 @@ import {
   appointmentRequestAutoBookedOnline,
   appointmentRequestNeedsStaffConfirmation,
 } from '../utils/appointmentRequestStaffConfirm';
+import { beginAppointmentRequestStaffConfirmFlow } from '../utils/appointmentRequestStaffConfirmFlow';
 import {
   clearAppointmentRequestStaffConfirmReturnSession,
   readAppointmentRequestStaffConfirmReturnSession,
-  writeAppointmentRequestStaffConfirmSession,
 } from '../utils/appointmentRequestStaffConfirmSession';
 import {
   clearOnHoldVisitEditReturnSession,
@@ -141,12 +141,10 @@ import {
 } from '../utils/onHoldVisitEditSession';
 import {
   appointmentRecordHasActiveLinkedVisit,
-  appointmentRequestSubmissionHasActiveLinkedVisit,
 } from '../utils/appointmentRequestLinkedCalendarVisit';
 import {
   clearNotBookedRemoveReturnSession,
   readNotBookedRemoveReturnSession,
-  writeNotBookedRemoveSession,
 } from '../utils/appointmentRequestNotBookedRemoveSession';
 import {
   APPOINTMENT_REQUESTS_LIST_PATH,
@@ -634,11 +632,19 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
 
       if (generation !== hydrateGenerationRef.current) return new Map();
 
+      const requestedIds = new Set(uniqueBooked);
       setBookedApptMeta((prev) => {
-        if (meta.size === 0 && prev.size > 0) return prev;
+        // Total fetch miss with prior cache — keep prev (likely transient API failure).
+        if (meta.size === 0 && prev.size > 0 && uniqueBooked.length > 0) return prev;
         const next = new Map(meta);
         for (const [id, summary] of prev) {
-          if (!next.has(id)) next.set(id, summary);
+          if (next.has(id)) continue;
+          if (requestedIds.has(id)) {
+            // Re-fetched and gone (soft-deleted) — do not keep a stale "active" hold.
+            next.set(id, { ...summary, appointmentCancelled: true });
+            continue;
+          }
+          next.set(id, summary);
         }
         return next;
       });
@@ -1661,61 +1667,95 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
   );
 
   const openConfirmPreview = (item: AppointmentRequestSubmissionItem) => {
-    const apptId = item.bookedAppointmentId;
-    if (apptId == null) return;
+    if (!appointmentRequestNeedsStaffConfirmation(item)) return;
     setStatusError((e) => ({ ...e, [item.id]: null }));
-    const { dateKey, providerId } = appointmentRequestViewHints(item, bookedApptMeta, practiceTz);
-
     writeAppointmentRequestListReturnTab(statusFilter);
-    writeAppointmentRequestStaffConfirmSession({
-      submissionId: item.id,
-      bookedAppointmentId: Number(apptId),
-      clientLabel: clientDisplayNameFromRequestData(item.requestData ?? {}),
-      isNewClient: requestDataClientType(item.requestData ?? {}) === 'new',
-    });
-    writeSchedulerFocusSession({
-      appointmentId: Number(apptId),
-      dateHint: dateKey,
-      providerHint: providerId ?? null,
-    });
-    navigate(
-      buildSchedulerFocusAppointmentUrl(Number(apptId), {
-        date: dateKey ?? undefined,
-        providerId,
-      }),
-    );
+    const bookedSummary =
+      item.bookedAppointmentId != null
+        ? bookedApptMeta.get(Number(item.bookedAppointmentId))
+        : undefined;
+    setStatusUpdating((s) => ({ ...s, [item.id]: true }));
+    void beginAppointmentRequestStaffConfirmFlow({
+      submission: item,
+      practiceTz,
+      navigate,
+      typeCatalog,
+      bookedApptSummary: bookedSummary ?? null,
+      returnPath: appointmentRequestsPathForTab(statusFilter, { onHoldOver24Only }),
+    })
+      .then((result) => {
+        if (result.kind === 'scheduler_review') return;
+        if (result.kind === 'needs_relink') {
+          setManualBookModal({ item, relink: true });
+          setNotice(
+            'The linked calendar visit changed. Pick the correct appointment to track, then confirm.',
+          );
+          return;
+        }
+        if (result.kind === 'needs_not_booked') {
+          setNotBookedItem(item);
+          setNotBookedReasonChoice('');
+          setNotBookedReasonOther('');
+          setNotBookedError(null);
+          setNotice(
+            'No calendar visit found for this request. Mark it Not booked if it was cancelled or never booked.',
+          );
+          return;
+        }
+        if (result.kind === 'error') {
+          setStatusError((e) => ({ ...e, [item.id]: result.message }));
+          return;
+        }
+        // already_confirmed — nothing pending; just clear it from Auto-Booked.
+        mergeSubmission({
+          ...item,
+          staffConfirmedAt: item.staffConfirmedAt?.trim() || new Date().toISOString(),
+        });
+        beginRowExit(item.id, 'booked');
+        notifySchedulingToolsNavCountsRefresh();
+        setNotice('This request was already confirmed.');
+      })
+      .catch(() => {
+        setStatusError((e) => ({
+          ...e,
+          [item.id]: 'Could not confirm this appointment request.',
+        }));
+      })
+      .finally(() => {
+        setStatusUpdating((s) => ({ ...s, [item.id]: false }));
+      });
   };
 
   const openNotBookedModal = (item: AppointmentRequestSubmissionItem) => {
-    if (appointmentRequestSubmissionHasActiveLinkedVisit(item, bookedApptMeta)) {
-      const apptId = item.bookedAppointmentId;
-      if (apptId == null) return;
-      const { dateKey, providerId } = appointmentRequestViewHints(item, bookedApptMeta, practiceTz);
-      writeAppointmentRequestListReturnTab(statusFilter);
-      writeNotBookedRemoveSession({
-        submissionId: item.id,
-        bookedAppointmentId: Number(apptId),
-        clientLabel: clientDisplayNameFromRequestData(item.requestData ?? {}),
-        returnPath: appointmentRequestsPathForTab(statusFilter, { onHoldOver24Only }),
+    if ((item.status ?? 'new') === 'dismissed') return;
+    setStatusError((e) => ({ ...e, [item.id]: null }));
+    const bookedSummary =
+      item.bookedAppointmentId != null
+        ? bookedApptMeta.get(Number(item.bookedAppointmentId))
+        : undefined;
+    writeAppointmentRequestListReturnTab(statusFilter);
+    void beginAppointmentRequestNotBookedFlow({
+      submission: item,
+      returnPath: appointmentRequestsPathForTab(statusFilter, { onHoldOver24Only }),
+      practiceTz,
+      navigate,
+      bookedApptSummary: bookedSummary ?? null,
+    })
+      .then((result) => {
+        if (result.kind === 'scheduler_remove') {
+          setNotice('Remove this visit from the calendar, then mark the request as not booked.');
+          return;
+        }
+        if (result.kind === 'already_dismissed') return;
+        // needs_reason: linked visit missing/cancelled — reason modal only.
+        setNotBookedItem(item);
+        setNotBookedReasonChoice('');
+        setNotBookedReasonOther('');
+        setNotBookedError(null);
+      })
+      .catch(() => {
+        setError('Could not start the not booked flow for this appointment request.');
       });
-      writeSchedulerFocusSession({
-        appointmentId: Number(apptId),
-        dateHint: dateKey,
-        providerHint: providerId ?? null,
-      });
-      navigate(
-        buildSchedulerFocusAppointmentUrl(Number(apptId), {
-          date: dateKey ?? undefined,
-          providerId,
-        }),
-      );
-      setNotice('Remove this visit from the calendar, then mark the request as not booked.');
-      return;
-    }
-    setNotBookedItem(item);
-    setNotBookedReasonChoice('');
-    setNotBookedReasonOther('');
-    setNotBookedError(null);
   };
 
   const closeNotBookedModal = () => {

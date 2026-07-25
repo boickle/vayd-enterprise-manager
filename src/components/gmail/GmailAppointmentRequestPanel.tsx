@@ -36,8 +36,8 @@ import { startRescheduleFromBookedAppointmentRequest } from '../../utils/appoint
 import { appointmentRequestSchedulerViewHints } from '../../utils/appointmentRequestSchedulerFocus';
 import { appointmentRecordHasActiveLinkedVisit } from '../../utils/appointmentRequestLinkedCalendarVisit';
 import { beginAppointmentRequestNotBookedFlow } from '../../utils/appointmentRequestNotBookedFlow';
+import { beginAppointmentRequestStaffConfirmFlow } from '../../utils/appointmentRequestStaffConfirmFlow';
 import { buildGmailInboxReturnPath } from '../../utils/routingAppointmentRequestIntent';
-import { writeAppointmentRequestStaffConfirmSession } from '../../utils/appointmentRequestStaffConfirmSession';
 import {
   buildSchedulerFocusAppointmentUrl,
   writeSchedulerFocusSession,
@@ -48,6 +48,7 @@ import { buildAppointmentTypeCatalogFromTypes, opsPointsForAppointment } from '.
 import type { AppointmentTypeCatalog } from '../../utils/appointmentTypeSettings';
 import { appointmentRequestsPathForTab } from '../../appointments-nav';
 import type { AppointmentsListLocationState } from '../../utils/appointmentRequestListReturnTab';
+import { notifySchedulingToolsNavCountsRefresh } from '../../hooks/useSchedulingToolsNavCounts';
 import {
   applyApptRequestGmailOnHoldLabel,
   applyApptRequestGmailOutcomeLabel,
@@ -416,31 +417,44 @@ export default function GmailAppointmentRequestPanel({
   };
 
   const openConfirmPreview = () => {
-    const apptId = submission.bookedAppointmentId;
-    if (apptId == null) return;
-    const { dateKey, providerId } = appointmentRequestSchedulerViewHints(
+    if (!appointmentRequestNeedsStaffConfirmation(submission)) return;
+    void beginAppointmentRequestStaffConfirmFlow({
       submission,
-      bookedApptSummaryRef.current,
       practiceTz,
-    );
-    writeAppointmentRequestStaffConfirmSession({
-      submissionId: submission.id,
-      bookedAppointmentId: Number(apptId),
-      clientLabel: clientName,
-      isNewClient: clientType === 'new',
-    });
-    writeSchedulerFocusSession({
-      appointmentId: Number(apptId),
-      dateHint: dateKey,
-      providerHint: providerId ?? null,
-    });
-    writeSchedulerFocusReturnSession(mailbox, message.threadId);
-    navigate(
-      buildSchedulerFocusAppointmentUrl(Number(apptId), {
-        date: dateKey ?? undefined,
-        providerId,
-      }),
-    );
+      navigate,
+      typeCatalog,
+      bookedApptSummary: bookedApptSummaryRef.current,
+      mailbox,
+      threadId: message.threadId,
+    })
+      .then((result) => {
+        if (result.kind === 'scheduler_review') return;
+        if (result.kind === 'needs_relink') {
+          onError(
+            'The linked calendar visit changed. Use Re-link appointment on the appointment request to pick the correct one.',
+          );
+          return;
+        }
+        if (result.kind === 'needs_not_booked') {
+          onError(
+            'No calendar visit found for this request. Use Not booked if it was cancelled or never booked.',
+          );
+          return;
+        }
+        if (result.kind === 'error') {
+          onError(result.message);
+          return;
+        }
+        // already_confirmed
+        onSubmissionUpdated({
+          ...submission,
+          staffConfirmedAt: submission.staffConfirmedAt?.trim() || new Date().toISOString(),
+        });
+        notifySchedulingToolsNavCountsRefresh();
+      })
+      .catch(() => {
+        onError('Could not confirm this appointment request.');
+      });
   };
 
   const openSms = () => {
