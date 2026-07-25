@@ -1,4 +1,4 @@
-import type { NavigateFunction } from 'react-router-dom';
+import type { NavigateFunction } from 'react-router';
 import { fetchAppointmentById } from '../api/appointments';
 import type { AppointmentRequestSubmissionItem } from '../api/appointmentRequestSubmissions';
 import { clientDisplayNameFromRequestData } from './appointmentRequestDisplay';

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router';
 import { DateTime } from 'luxon';
 import { fetchAppointmentById } from '../api/appointments';
 import { fetchAllAppointmentTypes } from '../api/appointmentSettings';

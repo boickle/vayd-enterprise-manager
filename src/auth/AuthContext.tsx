@@ -1,6 +1,6 @@
 // src/auth/AuthContext.tsx
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 
 type AuthState = {
   accessToken: string | null;

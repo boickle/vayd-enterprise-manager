@@ -1,6 +1,6 @@
 // src/pages/AppointmentRequestForm.tsx
 import React, { useState, useEffect, useMemo, useRef, useCallback, type ReactNode } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router';
 import { useAuth } from '../auth/useAuth';
 import { http } from '../api/http';
 import { fetchClientPets, type Pet, fetchClientInfo, fetchWellnessPlansForPatient } from '../api/clientPortal';

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router';
 import { Search } from 'lucide-react';
 import { useAuth } from '../../auth/useAuth';
 import { searchPimsClientsAndPatients, type PimsPatientSearchHit } from '../../api/pimsSearch';

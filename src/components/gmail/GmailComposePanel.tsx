@@ -100,7 +100,7 @@ export default function GmailComposePanel({
 
   const editorRef = useRef<HTMLDivElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
-  const draftIdRef = useRef<string | undefined>();
+  const draftIdRef = useRef<string | undefined>(undefined);
   const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSavedKeyRef = useRef('');
   const discardRequestedRef = useRef(false);

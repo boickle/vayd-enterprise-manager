@@ -1,4 +1,4 @@
-import { Navigate, useLocation } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router';
 
 /** Old bookmarks under `/scheduling-tools/*` → `/schedule/scheduling-tools/*`. */
 export default function LegacySchedulingToolsRedirect() {

@@ -1,7 +1,7 @@
 // src/pages/RoomLoader.tsx
 import { useState, useEffect, useMemo, useRef, useCallback, Fragment } from 'react';
 import { createPortal } from 'react-dom';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router';
 import { DateTime } from 'luxon';
 import {
   searchRoomLoaders,

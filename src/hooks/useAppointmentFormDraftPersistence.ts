@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation } from 'react-router';
 import {
   APPOINTMENT_FORM_DRAFTS_ENABLED,
   abandonAppointmentFormDraft,

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
+import { Navigate, useNavigate, useSearchParams } from 'react-router';
 import { ChevronLeft, ChevronRight, Mail, Menu, PenSquare, Plus, RefreshCw, Star, X } from 'lucide-react';
 import GmailAttachmentIcon from '../components/gmail/GmailAttachmentIcon';
 import GmailBulkToolbar, { type GmailLabelApplyUpdate } from '../components/gmail/GmailBulkToolbar';

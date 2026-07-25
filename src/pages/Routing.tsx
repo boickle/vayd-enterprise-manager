@@ -1,5 +1,6 @@
 // src/pages/Routing.tsx
 import {
+  type JSX,
   FormEvent,
   Fragment,
   useCallback,
@@ -81,7 +82,7 @@ import {
   routingCardWindowWarningMessage,
   routingCardWindowWarningReasons,
 } from '../utils/routingCardWindowWarning';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router';
 import {
   clearRoutingCalendarPreview,
   readRoutingCalendarPreview,

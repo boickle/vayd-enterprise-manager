@@ -1,5 +1,5 @@
 // src/App.tsx
-import { Route, Routes, useNavigate, Navigate, useLocation, useOutlet, Link } from 'react-router-dom';
+import { Route, Routes, useNavigate, Navigate, useLocation, useOutlet, Link } from 'react-router';
 import { useEffect, useMemo, useRef } from 'react';
 import LoginPage from './pages/Login';
 import RequestReset from './pages/RequestReset';
