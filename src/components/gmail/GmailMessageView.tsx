@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { ArrowLeft, ChevronLeft, ChevronRight, X } from 'lucide-react';
-import type { ComposeContext, GmailComposeDraftSavedInfo } from './gmailCompose';
+import {
+  pickDefaultReplyMessage,
+  type ComposeContext,
+  type GmailComposeDraftSavedInfo,
+} from './gmailCompose';
 import GmailBulkToolbar, { type GmailLabelApplyUpdate } from './GmailBulkToolbar';
 import GmailLabelPicker, {
   type GmailLabelCheckState,
@@ -178,6 +182,12 @@ export default function GmailMessageView({
     return message.labelIds.includes('INBOX');
   }, [threadMessages, message.labelIds]);
 
+  /** Prefer latest client message so top/bottom Reply doesn't target an internal staff hop. */
+  const defaultReplyMessage = useMemo(
+    () => pickDefaultReplyMessage(threadMessages, mailbox) ?? latestThreadMessage,
+    [threadMessages, mailbox, latestThreadMessage],
+  );
+
   const handleCompose = useCallback(
     (ctx: ComposeContext) => {
       onCompose({
@@ -330,11 +340,11 @@ export default function GmailMessageView({
                 </div>
               ) : null}
             </div>
-            {!composeOpen && latestThreadMessage ? (
+            {!composeOpen && defaultReplyMessage ? (
               <div className="gmail-message-view__subject-actions">
                 <GmailMessageComposeBar
                   threadId={message.threadId}
-                  replyTo={latestThreadMessage}
+                  replyTo={defaultReplyMessage}
                   disabled={actionBusy || threadLoading}
                   onCompose={handleCompose}
                   variant="inline"
@@ -369,11 +379,11 @@ export default function GmailMessageView({
         ) : null}
       </div>
 
-      {!composeOpen && latestThreadMessage ? (
+      {!composeOpen && defaultReplyMessage ? (
         <div className="gmail-message-view__bottom-bar">
           <GmailMessageComposeBar
             threadId={message.threadId}
-            replyTo={latestThreadMessage}
+            replyTo={defaultReplyMessage}
             disabled={actionBusy || threadLoading}
             onCompose={handleCompose}
           />

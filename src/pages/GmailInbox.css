@@ -313,8 +313,9 @@
   align-items: center;
   gap: 4px;
   flex-shrink: 0;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   justify-content: flex-end;
+  margin-left: auto;
 }
 
 .gmail-message-view__inline-action {
@@ -388,12 +389,7 @@
   margin: 0;
 }
 
-/* Desktop: reply/forward live with the subject, not on each message header. */
-@media (min-width: 721px) {
-  .gmail-message-view__sender-actions .gmail-message-compose-bar--inline {
-    display: none;
-  }
-}
+/* Per-message reply/forward stays visible so staff can answer one hop (e.g. client only). */
 
 .gmail-message-view__subject {
   margin: 0 0 10px;
@@ -698,18 +694,21 @@
 
 .gmail-message-view__sender-line {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  min-width: 0;
 }
 
 .gmail-message-view__sender-line strong {
   font-size: 14px;
   color: #0f172a;
-  overflow-wrap: anywhere;
-  word-break: break-word;
   min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .gmail-message-view__to {
@@ -2329,19 +2328,6 @@
 
   .gmail-message-view__toolbar-nav {
     display: none;
-  }
-
-  .gmail-message-view__sender-actions .gmail-message-compose-bar--inline {
-    display: none;
-  }
-
-  .gmail-message-view__sender-line {
-    align-items: flex-start;
-  }
-
-  .gmail-message-view__sender-actions {
-    margin-left: auto;
-    justify-content: flex-end;
   }
 
   .gmail-message-view__labels {

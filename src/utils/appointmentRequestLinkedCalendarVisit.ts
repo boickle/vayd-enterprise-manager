@@ -18,7 +18,9 @@ export function appointmentRequestSubmissionHasActiveLinkedVisit(
   const apptId = item.bookedAppointmentId;
   if (apptId == null || !Number.isFinite(Number(apptId))) return false;
   const summary = bookedApptMeta.get(Number(apptId));
-  if (!summary) return true;
+  // Missing meta: do not assume the visit is still on the calendar (stale/deleted holds
+  // used to force the scheduler path and strand Not booked when GET /appointments/:id 404s).
+  if (!summary) return false;
   return appointmentRequestBookedSummaryIsActive(summary);
 }
 

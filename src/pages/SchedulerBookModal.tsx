@@ -261,6 +261,15 @@ export type SchedulerBookPrefill = {
   routingPreviewPatients?: Array<{ id: string; name: string }>;
   /** Routing calendar preview — lock slot/provider; multi-pet book at same time. */
   routingPreviewBook?: boolean;
+  /**
+   * PRE-FIRST book (`insertionIndex === 0`): PATCH the former first visit later so
+   * My Day chronological order matches the geographic preview route.
+   */
+  preFirstNeighborBump?: {
+    appointmentId: number;
+    appointmentStart: string;
+    appointmentEnd: string;
+  };
   defaultInstructions?: string;
   allDay?: boolean;
   additionalEmployeeIds?: number[];
@@ -2395,6 +2404,35 @@ export function SchedulerBookModal({
         if (!fb.submitted && fb.error) {
           routingFeedbackWarning =
             'Appointment saved, but routing could not be linked to this suggestion. ' + fb.error;
+        }
+      }
+
+      const neighborBump = prefill?.preFirstNeighborBump;
+      if (
+        neighborBump &&
+        savedAppointmentId != null &&
+        prefill?.routingPreviewBook &&
+        !isRescheduleBook
+      ) {
+        try {
+          await patchAppointment(
+            neighborBump.appointmentId,
+            {
+              appointmentStart: neighborBump.appointmentStart,
+              appointmentEnd: neighborBump.appointmentEnd,
+              bookedViaRouting: true,
+            },
+            { practiceId }
+          );
+        } catch (bumpErr) {
+          console.warn('Could not bump former-first visit after PRE-FIRST book', bumpErr);
+          const bumpMsg =
+            bumpErr instanceof Error && bumpErr.message.trim()
+              ? bumpErr.message
+              : 'Could not update the next visit time to match the route.';
+          routingFeedbackWarning = routingFeedbackWarning
+            ? `${routingFeedbackWarning} ${bumpMsg}`
+            : `Booked, but ${bumpMsg}`;
         }
       }
 

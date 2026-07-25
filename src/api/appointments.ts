@@ -6,6 +6,11 @@ import type { ForwardBookingCreatedVia } from './forwardBooking';
 import { mergeForwardBookingDispositionOntoAppointment } from '../utils/forwardBookingDisposition';
 import { practiceTimeZoneOrDefault } from '../utils/practiceTimezone';
 import { dedupeInFlight } from '../utils/inFlightDedupe';
+import {
+  addressMatchAllowsLink,
+  clientAddressFromRecord,
+  compareVisitAddressToClientHome,
+} from '../utils/addressMatchCore';
 
 export type RangeAppointment = Appointment;
 
@@ -198,10 +203,24 @@ export function appointmentAlternateAddressText(
 }
 
 export function appointmentHasAlternateLocation(
-  a: Pick<Appointment, 'alternateAddress'> & Record<string, unknown>
+  a: Pick<Appointment, 'alternateAddress' | 'client'> & Record<string, unknown>
 ): boolean {
-  if (truthyApiFlag(a.isAlternateStop)) return true;
-  return appointmentAlternateAddressText(a) != null;
+  const alt = appointmentAlternateAddressText(a);
+  const flagged = truthyApiFlag(a.isAlternateStop) || alt != null;
+  if (!flagged) return false;
+
+  // Redundant ALT that matches the linked client's home is not a true alternate stop —
+  // treat as home so badge/routing UI use the client address instead.
+  if (alt) {
+    const client = a.client;
+    if (client && typeof client === 'object') {
+      const home = clientAddressFromRecord(client as Record<string, unknown>);
+      if (home && addressMatchAllowsLink(compareVisitAddressToClientHome(alt, home))) {
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 /** Strip alternate routing fields for calendar display after a home-address link. */

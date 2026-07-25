@@ -28,6 +28,7 @@ import {
   isAppointmentNoLocation,
   cancelAppointment,
   patchAppointment,
+  putAppointmentAlternateAddress,
   isFlexBlockItem,
   isPracticeCalendarBlockAppointment,
   truthyApiFlag,
@@ -79,6 +80,11 @@ import {
 } from '../utils/schedulerDriveEta';
 import { mergeAppointmentPreserveRoomLoaderConfirmStatus } from '../utils/roomLoaderPreApptDisplay';
 import { summarizeReconciledDayWindowWarnings } from '../utils/routingCardWindowWarning';
+import {
+  driveSlotForAppointmentId,
+  findFormerFirstAppointmentForPreFirstBook,
+  resolvePreFirstNeighborBumpTarget,
+} from '../utils/preFirstNeighborBump';
 import {
   buildGoogleMapsLinksForDay,
   householdsInRoutingDisplayOrder,
@@ -210,7 +216,12 @@ import {
 } from './SchedulerEditVisitModal';
 import type { EditVisitPatientSelection } from '../components/EditVisitAddPatientPanel';
 import type { EditVisitLinkSelection } from '../components/EditVisitLinkClientPanel';
-import { editVisitLinkClearsAlternateAddress, appointmentResolvedClientId, visitAddressForLinkMatching } from '../utils/visitAddressMatch';
+import {
+  appointmentAlternateMatchesClientHome,
+  editVisitLinkClearsAlternateAddress,
+  appointmentResolvedClientId,
+  visitAddressForLinkMatching,
+} from '../utils/visitAddressMatch';
 import { OnMyWaySmsModal } from '../components/OnMyWaySmsModal';
 import { WorkZonesMapModal } from '../components/WorkZonesMapModal';
 import { etaMinutesAwayFromNow } from '../utils/onMyWaySmsMessage';
@@ -350,6 +361,8 @@ import {
   writeAppointmentRequestStaffConfirmReturnSession,
   type AppointmentRequestStaffConfirmSessionV1,
 } from '../utils/appointmentRequestStaffConfirmSession';
+import { appointmentRequestNeedsStaffConfirmation } from '../utils/appointmentRequestStaffConfirm';
+import { submissionIdFromOnlineHoldPimsId } from '../utils/holdsOpenInScheduler';
 import {
   clearNotBookedRemoveSession,
   readNotBookedRemoveSession,
@@ -376,7 +389,10 @@ import { ON_HOLD_LIST_PATH } from '../utils/forwardBookingReturnSession';
 import { writeCareOutreachFocusClient } from '../utils/careOutreachFocusSession';
 import { opsPointsForAppointment } from '../utils/forwardBookingListVisibility';
 import { confirmSlotOffer } from '../api/slotOffers';
-import { patchAppointmentRequestSubmission, fetchAppointmentRequestSubmission } from '../api/appointmentRequestSubmissions';
+import {
+  patchAppointmentRequestSubmission,
+  fetchAppointmentRequestSubmission,
+} from '../api/appointmentRequestSubmissions';
 import {
   appointmentRequestWorkspaceIsActive,
   clearRoutingAppointmentRequestIntent,
@@ -2998,6 +3014,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     nonHoldAppointmentIds: number[];
   } | null>(null);
   const [convertingExploreHold, setConvertingExploreHold] = useState(false);
+  const [exploreHoldConvertError, setExploreHoldConvertError] = useState<string | null>(null);
   const [manualBookableTypeIds, setManualBookableTypeIds] = useState<number[] | null>(null);
   const [rawAppointments, setRawAppointments] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
@@ -3371,6 +3388,40 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       cancelled = true;
     };
   }, [hover?.appt?.id, hover?.appt]);
+
+  /** Persist-clear a stale ALT that matches the linked client's home (badge already hidden). */
+  useEffect(() => {
+    const appt = hover?.appt;
+    if (!appt?.id || appt.id === SCHEDULER_ROUTING_PREVIEW_SYNTHETIC_APPT_ID) return;
+    if (!appointmentAlternateMatchesClientHome(appt)) return;
+
+    let cancelled = false;
+    void putAppointmentAlternateAddress(appt.id, { addressText: '' })
+      .then(() => {
+        if (cancelled) return;
+        const cleared = appointmentWithoutAlternateRoutingAddress(appt);
+        setHover((prev) =>
+          prev?.appt.id === appt.id ? { ...prev, appt: { ...prev.appt, ...cleared } } : prev
+        );
+        setRawAppointments((prev) => {
+          const idx = prev.findIndex((a) => a.id === appt.id);
+          if (idx === -1) return prev;
+          const next = [...prev];
+          next[idx] = { ...next[idx], ...cleared };
+          return next;
+        });
+      })
+      .catch(() => {
+        /* non-fatal — UI already treats matching ALT as home */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    hover?.appt?.id,
+    hover?.appt ? appointmentAlternateAddressText(hover.appt) : null,
+    hover?.appt?.client?.id,
+  ]);
 
   /** Range rows may omit patient sex — hydrate from GET /appointments/:id on hover. */
   useEffect(() => {
@@ -6757,6 +6808,51 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         : routingPreview.previewSource === 'schedule-loader'
           ? ('schedule_loader' as const)
           : undefined;
+    const insertionIndexRaw = opt.insertionIndex;
+    const insertionIndex =
+      typeof insertionIndexRaw === 'number' && Number.isFinite(insertionIndexRaw)
+        ? Math.floor(insertionIndexRaw)
+        : Number(insertionIndexRaw);
+    let preFirstNeighborBump:
+      | {
+          appointmentId: number;
+          appointmentStart: string;
+          appointmentEnd: string;
+        }
+      | undefined;
+    if (
+      !isReschedule &&
+      insertionIndex === 0 &&
+      routingSlotProviderId &&
+      start.isValid &&
+      end.isValid
+    ) {
+      const dayIso = start.toISODate();
+      const startIso = start.toUTC().toISO();
+      const endIso = end.toUTC().toISO();
+      if (dayIso && startIso && endIso) {
+        const dayData = driveDayByDate?.get(dayIso) ?? null;
+        const formerFirst = findFormerFirstAppointmentForPreFirstBook({
+          appointments: rawAppointments,
+          providerId: routingSlotProviderId,
+          dayIso,
+          practiceTz: PRACTICE_TZ,
+        });
+        const formerSlot = formerFirst
+          ? driveSlotForAppointmentId(dayData, formerFirst.id)
+          : null;
+        const bump = resolvePreFirstNeighborBumpTarget({
+          insertionIndex: 0,
+          suggestedStartIso: startIso,
+          suggestedEndIso: endIso,
+          practiceTz: PRACTICE_TZ,
+          providerId: routingSlotProviderId,
+          appointments: rawAppointments,
+          formerFirstDriveSlot: formerSlot,
+        });
+        if (bump) preFirstNeighborBump = bump;
+      }
+    }
     setBookPrefill({
       ...(hasLinkedClient
         ? {
@@ -6819,6 +6915,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       defaultInstructions: isReschedule
         ? rescheduleSourceAppt?.instructions?.trim()
         : undefined,
+      ...(preFirstNeighborBump ? { preFirstNeighborBump } : {}),
       ...(fbi && !isReschedule
         ? {
             forwardBookingTrackingToken: fbi.trackingToken,
@@ -6848,7 +6945,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     });
     setBookSlot({ start, end });
     })();
-  }, [routingPreview, rolesLower, rawAppointments, typeList]);
+  }, [routingPreview, rolesLower, rawAppointments, typeList, driveDayByDate]);
 
   const closeBookModal = useCallback(() => {
     setBookSlot(null);
@@ -7575,6 +7672,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         const nonHoldCreatedIds = [...createdIdSet].filter(appointmentNeedsHold);
         const nonHoldIds = [...new Set([...nonHoldSourceIds, ...nonHoldCreatedIds])];
         if (nonHoldIds.length > 0 && holdAppointmentTypes.length > 0) {
+          setExploreHoldConvertError(null);
           setExploreHoldPrompt({
             newAppointmentId: savedId,
             sourceNeedsHold: nonHoldSourceIds.length > 0,
@@ -7619,16 +7717,32 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       const prompt = exploreHoldPrompt;
       if (!prompt || convertingExploreHold) return;
       setConvertingExploreHold(true);
+      setExploreHoldConvertError(null);
       try {
         for (const id of prompt.nonHoldAppointmentIds) {
-          await patchAppointment(id, { appointmentTypeId: holdTypeId });
+          await patchAppointment(
+            id,
+            {
+              appointmentTypeId: holdTypeId,
+              /** Skip role manual-book gate — converting an existing visit to HOLD. */
+              bookedViaRouting: true,
+            },
+            { practiceId: PRACTICE_ID },
+          );
         }
         setExploreHoldPrompt(null);
         await loadRange({ refreshDrive: true });
         const n = prompt.nonHoldAppointmentIds.length;
         showToast(n === 1 ? 'Appointment is on hold.' : `All ${n} appointments are on hold.`);
-      } catch {
-        showToast('Could not change the appointment type — please update it manually.');
+      } catch (e: unknown) {
+        const msg =
+          (e as { response?: { data?: { message?: string | string[] } } })?.response?.data
+            ?.message ??
+          (e as Error)?.message ??
+          'Could not change the appointment type.';
+        const text = Array.isArray(msg) ? msg.join(', ') : String(msg);
+        setExploreHoldConvertError(text);
+        showToast(text);
       } finally {
         setConvertingExploreHold(false);
       }
@@ -7851,6 +7965,18 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         const exitKind = resolveHouseholdHoldExitKind(refreshedHousehold, typeCatalog);
         if (exitKind === 'booked' || exitKind === 'removed') {
           await clearApptRequestGmailOnHoldLabel({ submissionId: preview.submissionId });
+        }
+
+        // Converting the HOLD via Edit (without clicking Confirm) must still clear Auto-Booked.
+        if (exitKind === 'booked') {
+          try {
+            const submission = await fetchAppointmentRequestSubmission(preview.submissionId);
+            if (appointmentRequestNeedsStaffConfirmation(submission)) {
+              await patchAppointmentRequestSubmission(preview.submissionId, { confirm: true });
+            }
+          } catch {
+            /* non-fatal — Confirm on Auto-Booked can still finish it */
+          }
         }
 
         if (
@@ -8386,6 +8512,21 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           await clearApptRequestGmailOnHoldLabel({ submissionId: preview.listEntryId });
         }
 
+        // Booking a hold that is also an unconfirmed online auto-book (e.g. new-client
+        // onboarding) must clear it from the Auto-Booked queue too — otherwise it lingers
+        // there "as if not confirmed" after the hold is gone. Setting staffConfirmedAt keeps
+        // Holds + Auto-Booked in sync from a single action.
+        if (preview.listKind === 'appointment_request' && exitKind === 'booked') {
+          try {
+            const submission = await fetchAppointmentRequestSubmission(preview.listEntryId);
+            if (appointmentRequestNeedsStaffConfirmation(submission)) {
+              await patchAppointmentRequestSubmission(preview.listEntryId, { confirm: true });
+            }
+          } catch {
+            /* non-fatal: hold still booked; Auto-Booked can be cleared manually */
+          }
+        }
+
         const highlightTargets = anchorAppt
           ? householdAppointmentIdsInVisitClump(
               anchorAppt,
@@ -8453,7 +8594,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       if (!appt) {
         calendarFocusActiveRef.current = false;
         clearSchedulerFocusSession();
-        const wasStaffConfirm = Boolean(readAppointmentRequestStaffConfirmSession());
+        const staffConfirmSession = readAppointmentRequestStaffConfirmSession();
         clearAppointmentRequestStaffConfirmSession();
         setStaffConfirmPreview(null);
         const wasOnHoldEdit = readOnHoldVisitEditSession();
@@ -8462,17 +8603,95 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         const wasSlotOfferReview = readSlotOfferReviewSession();
         clearSlotOfferReviewSession();
         setSlotOfferReviewPreview(null);
+        const wasNotBookedRemove = readNotBookedRemoveSession();
+        clearNotBookedRemoveSession();
+        setNotBookedRemoveGate(null);
         setPendingFocusApptId(null);
-        showToast('Could not find that appointment on the calendar.');
-        if (wasStaffConfirm) {
+        // Linked visit already gone (soft-deleted / never found): still finish Not booked.
+        if (wasNotBookedRemove) {
+          writeNotBookedRemoveReturnSession({
+            submissionId: wasNotBookedRemove.submissionId,
+          });
+          showToast(
+            'That visit is no longer on the calendar. Finish marking the request as not booked.',
+          );
+          navigate(wasNotBookedRemove.returnPath);
+          return;
+        }
+        // Auto-book Confirm: linked visit id is stale. Return to Auto-Booked so re-clicking
+        // Confirm re-evaluates (re-link if another visit exists, else Not booked). Never
+        // confirm here without a real appointment.
+        if (staffConfirmSession) {
+          showToast(
+            'That visit is no longer on the calendar. Re-link the request or mark it Not booked.',
+          );
           if (returnFromSchedulerFocusToGmail(navigate)) return;
+          const returnPath = staffConfirmSession.returnPath?.trim() || null;
+          if (returnPath) {
+            navigate(returnPath);
+            return;
+          }
           returnToAppointmentRequestsList(navigate, 'to_confirm');
-        } else if (wasOnHoldEdit) {
+          return;
+        }
+        showToast('Could not find that appointment on the calendar.');
+        if (wasOnHoldEdit) {
           navigate(wasOnHoldEdit.returnPath);
         } else if (wasSlotOfferReview) {
           navigate(wasSlotOfferReview.returnPath);
         }
         return;
+      }
+
+      // Not booked: cancelled hold still returned by GET — skip the remove gate.
+      {
+        const notBookedRemove = readNotBookedRemoveSession();
+        if (
+          notBookedRemove &&
+          schedulerAppointmentIdsEqual(notBookedRemove.bookedAppointmentId, apptId) &&
+          isAppointmentCancelledOnPracticeCalendar(appt)
+        ) {
+          calendarFocusActiveRef.current = false;
+          clearSchedulerFocusSession();
+          writeNotBookedRemoveReturnSession({ submissionId: notBookedRemove.submissionId });
+          clearNotBookedRemoveSession();
+          setNotBookedRemoveGate(null);
+          setPendingFocusApptId(null);
+          showToast(
+            'That visit is no longer on the calendar. Finish marking the request as not booked.',
+          );
+          navigate(notBookedRemove.returnPath);
+          return;
+        }
+      }
+
+      // Staff Confirm: linked visit is cancelled. Return to Auto-Booked so re-clicking
+      // Confirm re-evaluates (re-link if another visit exists, else Not booked). Never
+      // confirm a cancelled visit.
+      {
+        const staffConfirmSession = readAppointmentRequestStaffConfirmSession();
+        if (
+          staffConfirmSession &&
+          schedulerAppointmentIdsEqual(staffConfirmSession.bookedAppointmentId, apptId) &&
+          isAppointmentCancelledOnPracticeCalendar(appt)
+        ) {
+          calendarFocusActiveRef.current = false;
+          clearSchedulerFocusSession();
+          clearAppointmentRequestStaffConfirmSession();
+          setStaffConfirmPreview(null);
+          setPendingFocusApptId(null);
+          showToast(
+            'That visit was cancelled. Re-link the request or mark it Not booked.',
+          );
+          if (returnFromSchedulerFocusToGmail(navigate)) return;
+          const returnPath = staffConfirmSession.returnPath?.trim() || null;
+          if (returnPath) {
+            navigate(returnPath);
+            return;
+          }
+          returnToAppointmentRequestsList(navigate, 'to_confirm');
+          return;
+        }
       }
 
       const focus = schedulerCalendarFocusFromAppointment(appt, providers, PRACTICE_TZ);
@@ -8505,7 +8724,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     return () => {
       cancelled = true;
     };
-  }, [pendingFocusApptId, providers, providersLoadState, showToast, navigate]);
+  }, [pendingFocusApptId, providers, providersLoadState, showToast, navigate, typeCatalog]);
 
   /** After focus navigation, wait until the appointment is on the loaded calendar before pulsing. */
   useEffect(() => {
@@ -11422,9 +11641,13 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         sourceNeedsHold={Boolean(exploreHoldPrompt?.sourceNeedsHold)}
         newNeedsHold={Boolean(exploreHoldPrompt?.newNeedsHold)}
         converting={convertingExploreHold}
+        error={exploreHoldConvertError}
         onConfirm={(holdTypeId) => void convertExploreHoldTypes(holdTypeId)}
         onDismiss={() => {
-          if (!convertingExploreHold) setExploreHoldPrompt(null);
+          if (!convertingExploreHold) {
+            setExploreHoldPrompt(null);
+            setExploreHoldConvertError(null);
+          }
         }}
       />
 
@@ -11683,6 +11906,29 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                 });
               }
               void loadRange({ refreshDrive: true });
+              // Converting an online auto-book HOLD via normal Edit must clear Auto-Booked.
+              if (updated) {
+                const submissionId = submissionIdFromOnlineHoldPimsId(
+                  (updated as { pimsId?: string | null }).pimsId,
+                );
+                if (
+                  submissionId != null &&
+                  !isAppointmentCancelledOnPracticeCalendar(updated) &&
+                  opsPointsForAppointment(updated, typeCatalog) > 0
+                ) {
+                  void (async () => {
+                    try {
+                      const submission = await fetchAppointmentRequestSubmission(submissionId);
+                      if (appointmentRequestNeedsStaffConfirmation(submission)) {
+                        await patchAppointmentRequestSubmission(submissionId, { confirm: true });
+                        notifySchedulingToolsNavCountsRefresh();
+                      }
+                    } catch {
+                      /* non-fatal */
+                    }
+                  })();
+                }
+              }
               if (detail?.routingFeedbackWarning) {
                 setToast(detail.routingFeedbackWarning);
               } else if (aligned.length > 0) {

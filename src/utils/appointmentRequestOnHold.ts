@@ -196,12 +196,21 @@ export function appointmentRequestSubmissionIsOnHold(
     appointmentRequestAutoBookedOnline(item) &&
     requestDataClientType(item.requestData ?? {}) === 'existing';
 
-  // New-client online auto-books are calendar holds until liaison confirms; existing-client
-  // auto-books are real bookings on the schedule and only await staff review.
+  // New-client online auto-books start as calendar holds until liaison confirms. Prefer a
+  // live calendar signal when we have one (converted / cancelled) so Autobooking doesn't
+  // keep saying "On hold" after the visit was already handled on the schedule.
   if (
     !isExistingClientAutobook &&
     appointmentRequestNeedsStaffConfirmation(item)
   ) {
+    if (typeof item.linkedVisitIsHold === 'boolean') {
+      return item.linkedVisitIsHold;
+    }
+    const summary = bookedApptMeta.get(Number(item.bookedAppointmentId));
+    if (summary != null) {
+      if (summary.appointmentCancelled) return false;
+      return summary.points <= 0;
+    }
     return true;
   }
 
