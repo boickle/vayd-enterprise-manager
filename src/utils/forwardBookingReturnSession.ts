@@ -1,6 +1,7 @@
 /**
  * After booking from forward booking → routing, return to the list with optional SMS prompt.
  */
+import { HOLDS_PATH } from '../holds-nav';
 import type { ForwardBookingEntry } from '../api/forwardBooking';
 import { forwardBookingLinkedAppointmentId } from './forwardBookingLinkedVisit';
 
@@ -36,6 +37,10 @@ export type ForwardBookingReturnSessionV1 = {
   careOutreachClientPhone?: string | null;
   careOutreachClientFirstName?: string | null;
   careOutreachProviderLastName?: string | null;
+  /** Household forward-booking rows booked together (multi-pet). */
+  forwardBookingEntryIds?: number[];
+  /** Pet names for SMS when multiple patients were booked together. */
+  forwardBookingPetNames?: string[];
 };
 
 export function readForwardBookingReturnSession(): ForwardBookingReturnSessionV1 | null {
@@ -84,6 +89,20 @@ export function clearForwardBookingReturnSession(): void {
   }
 }
 
+export function forwardBookingReturnSessionEntryIds(
+  pending: Pick<ForwardBookingReturnSessionV1, 'forwardBookingEntryId' | 'forwardBookingEntryIds'>,
+): number[] {
+  const fromList = pending.forwardBookingEntryIds
+    ?.map((id) => Number(id))
+    .filter((id) => Number.isFinite(id) && id > 0);
+  if (fromList?.length) return [...new Set(fromList)];
+  const single = pending.forwardBookingEntryId;
+  if (single != null && Number.isFinite(Number(single)) && Number(single) > 0) {
+    return [Number(single)];
+  }
+  return [];
+}
+
 /** Match a return-session row after refresh — by entry id or linked appointment id. */
 export function forwardBookingEntryForReturnSession(
   list: readonly ForwardBookingEntry[],
@@ -104,7 +123,7 @@ export function forwardBookingEntryForReturnSession(
 }
 
 export const FORWARD_BOOKING_LIST_PATH = '/schedule/scheduling-tools/forward-booking';
-export const ON_HOLD_LIST_PATH = '/schedule/scheduling-tools/on-hold';
+export const ON_HOLD_LIST_PATH = HOLDS_PATH;
 export const BOOKED_LIST_PATH = '/schedule/scheduling-tools/booked';
 export const COMPLETE_LIST_PATH = '/schedule/scheduling-tools/complete';
 export const CARE_OUTREACH_LIST_PATH = '/schedule/scheduling-tools/care-outreach';

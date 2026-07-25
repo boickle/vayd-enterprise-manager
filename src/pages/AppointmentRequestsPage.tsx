@@ -52,6 +52,7 @@ import {
   requestDataPrimaryProviderSummary,
   requestDataSelfScheduledSlot,
   requestDataUsesAlternateVisitAddress,
+  appointmentRequestListTabForSubmission,
   fetchClientPimsIdLookup,
   resolveClientPimsIdForRequest,
 } from '../utils/appointmentRequestDisplay';
@@ -156,6 +157,7 @@ import {
   APPOINTMENT_REQUESTS_HIGHLIGHT_PARAM,
   type AppointmentRequestListTab,
 } from '../appointments-nav';
+import { HOLDS_PATH, holdsPathWithHighlight } from '../holds-nav';
 import {
   appointmentRequestsListPathMatches,
   resolveAppointmentsListEntryTab,
@@ -178,7 +180,6 @@ const STATUS_TABS: { key: StatusFilter; label: string }[] = [
   { key: 'new', label: 'New' },
   { key: 'to_confirm', label: 'Auto-Booked' },
   { key: 'contacted', label: 'Contacted' },
-  { key: 'on_hold', label: 'On hold' },
   { key: 'booked', label: 'Booked' },
   { key: 'dismissed', label: 'Not Booked' },
 ];
@@ -199,12 +200,22 @@ const NOT_BOOKED_REASON_OPTIONS = [
 
 const NOT_BOOKED_REASON_OTHER = 'other';
 
-/** Booked / Not Booked lists can grow large — paginate and hide tab counts. */
-const ARCHIVE_LIST_TABS = new Set<StatusFilter>(['booked', 'dismissed']);
-const ARCHIVE_LIST_PAGE_SIZE = 25;
+/** Booked / Not Booked tab badges are hidden — the lists are long. */
+const HIDE_TAB_COUNT_TABS = new Set<StatusFilter>(['booked', 'dismissed']);
+/** Paginate large tabs so the list and Gmail label fetches stay bounded. */
+const PAGINATED_LIST_TABS = new Set<StatusFilter>([
+  'booked',
+  'dismissed',
+  'contacted',
+  'to_confirm',
+]);
+const LIST_PAGE_SIZE = 25;
+/** Max Gmail label fetches while searching — avoids storms on partial matches. */
+const SEARCH_GMAIL_LABEL_MAX = 25;
+const SEARCH_GMAIL_DEBOUNCE_MS = 350;
 
 function tabShowsCount(tab: StatusFilter): boolean {
-  return !ARCHIVE_LIST_TABS.has(tab);
+  return !HIDE_TAB_COUNT_TABS.has(tab);
 }
 
 /**
@@ -405,7 +416,9 @@ function formatLinkedVisitLine(
   requestTypeName?: string | null,
   requestData?: Record<string, unknown>,
   typeCatalog?: ReturnType<typeof buildAppointmentTypeCatalogFromTypes> | null,
+  opts?: { requestedOnly?: boolean },
 ): string {
+  const requestedOnly = opts?.requestedOnly === true;
   const isOnHold = summary.points <= 0;
   if (isOnHold && requestData) {
     const { bookedLabel, providerLabel } = appointmentRequestBookedVisitLabels({
@@ -425,14 +438,15 @@ function formatLinkedVisitLine(
   const typeName = summary.typeName?.trim() || requestTypeName?.trim() || null;
   const provider = summary.providerName?.trim() || null;
   const providerPart = provider ? ` with ${provider}` : '';
-  if (isOnHold) {
+  const bookedPrefix = requestedOnly ? 'Requested slot' : isOnHold ? 'On hold' : 'Booked';
+  if (isOnHold && !requestedOnly) {
     return typeName
-      ? `On hold${providerPart} — ${typeName}: ${visit}`
-      : `On hold${providerPart}: ${visit}`;
+      ? `${bookedPrefix}${providerPart} — ${typeName}: ${visit}`
+      : `${bookedPrefix}${providerPart}: ${visit}`;
   }
   return typeName
-    ? `Booked${providerPart} — ${typeName}: ${visit}`
-    : `Booked${providerPart}: ${visit}`;
+    ? `${bookedPrefix}${providerPart} — ${typeName}: ${visit}`
+    : `${bookedPrefix}${providerPart}: ${visit}`;
 }
 
 export default function AppointmentRequestsPage(_props: AppointmentRequestsPageProps) {
@@ -454,7 +468,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
     (tab: StatusFilter, opts?: { onHoldOver24Only?: boolean; replace?: boolean }) => {
       navigate(
         appointmentRequestsPathForTab(tab, {
-          onHoldOver24Only: tab === 'on_hold' ? (opts?.onHoldOver24Only ?? onHoldOver24Only) : false,
+          onHoldOver24Only: false,
         }),
         {
           replace: opts?.replace,
@@ -462,8 +476,17 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
         },
       );
     },
-    [navigate, onHoldOver24Only],
+    [navigate],
   );
+
+  useEffect(() => {
+    if (statusFilter !== 'on_hold') return;
+    const highlightId = parseAppointmentRequestsHighlightFromSearch(location.search);
+    navigate(
+      highlightId != null ? holdsPathWithHighlight(highlightId) : HOLDS_PATH,
+      { replace: true },
+    );
+  }, [statusFilter, location.search, navigate]);
 
   useEffect(() => {
     const resolved = resolveAppointmentsListEntryTab(
@@ -491,6 +514,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
     }
   }, [location.pathname, location.search, location.key, location.state, navigate]);
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [rows, setRows] = useState<AppointmentRequestSubmissionItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1055,6 +1079,16 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
   const submissions = useMemo(() => rows.filter(isCompletedSubmission), [rows]);
   const abandoned = useMemo(() => rows.filter(isAbandonedItem), [rows]);
   const isSearchActive = search.trim().length > 0;
+  /** Gmail waits until debounce catches up — avoids fetching for stale partial queries. */
+  const searchGmailFetchReady = isSearchActive && debouncedSearch === search.trim();
+
+  useEffect(() => {
+    const timer = window.setTimeout(
+      () => setDebouncedSearch(search.trim()),
+      SEARCH_GMAIL_DEBOUNCE_MS,
+    );
+    return () => window.clearTimeout(timer);
+  }, [search]);
 
   const tabCounts = useMemo(() => {
     const counts: Record<StatusFilter, number> = {
@@ -1166,19 +1200,70 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
     typeCatalog,
   ]);
 
-  const useArchiveListPagination =
-    !isSearchActive && ARCHIVE_LIST_TABS.has(statusFilter);
+  /** While searching across tabs, highlight the result tab when unambiguous; otherwise none. */
+  const highlightedStatusTab = useMemo((): StatusFilter | null => {
+    if (!isSearchActive) return statusFilter;
+    const tabs = new Set<StatusFilter>();
+    for (const item of filtered) {
+      if (isAbandonedItem(item)) continue;
+      tabs.add(appointmentRequestListTabForSubmission(item, bookedApptMeta, typeCatalog));
+    }
+    if (tabs.size === 1) return [...tabs][0]!;
+    return null;
+  }, [isSearchActive, filtered, statusFilter, bookedApptMeta, typeCatalog]);
 
-  const archiveListTotalPages = useMemo(() => {
-    if (!useArchiveListPagination) return 1;
-    return Math.max(1, Math.ceil(filtered.length / ARCHIVE_LIST_PAGE_SIZE));
-  }, [filtered.length, useArchiveListPagination]);
+  const useListPagination = !isSearchActive && PAGINATED_LIST_TABS.has(statusFilter);
+
+  const listTotalPages = useMemo(() => {
+    if (!useListPagination) return 1;
+    return Math.max(1, Math.ceil(filtered.length / LIST_PAGE_SIZE));
+  }, [filtered.length, useListPagination]);
 
   const listForDisplay = useMemo(() => {
-    if (!useArchiveListPagination) return filtered;
-    const start = (listPage - 1) * ARCHIVE_LIST_PAGE_SIZE;
-    return filtered.slice(start, start + ARCHIVE_LIST_PAGE_SIZE);
-  }, [filtered, listPage, useArchiveListPagination]);
+    if (!useListPagination) return filtered;
+    const start = (listPage - 1) * LIST_PAGE_SIZE;
+    return filtered.slice(start, start + LIST_PAGE_SIZE);
+  }, [filtered, listPage, useListPagination]);
+
+  const applyNewTabLaunchFilter =
+    !isSearchActive &&
+    statusFilter === 'new' &&
+    canAccessGmailInbox &&
+    Number.isFinite(APPT_REQUEST_NEW_TAB_LAUNCH_MS);
+
+  /**
+   * Gmail fetches only for settled search matches or the normal tab slice. Never use
+   * live keystrokes or lagging debounced prefixes (e.g. "brian" while typing
+   * "brian bennett") — that was hundreds of thread fetches per search.
+   */
+  const gmailThreadLinkItems = useMemo(() => {
+    if (isSearchActive) {
+      if (!searchGmailFetchReady) return [];
+      const q = debouncedSearch.toLowerCase();
+      return submissions
+        .filter((item) =>
+          matchesSearchQuery(submissionSearchHaystack(item, noteDrafts), q),
+        )
+        .slice(0, SEARCH_GMAIL_LABEL_MAX);
+    }
+    if (applyNewTabLaunchFilter) {
+      return listForDisplay.filter((item) => {
+        if (exitingRows.has(item.id)) return true;
+        const submittedMs = Date.parse(item.submittedAt);
+        return Number.isFinite(submittedMs) && submittedMs > APPT_REQUEST_NEW_TAB_LAUNCH_MS;
+      });
+    }
+    return listForDisplay;
+  }, [
+    isSearchActive,
+    searchGmailFetchReady,
+    debouncedSearch,
+    submissions,
+    noteDrafts,
+    applyNewTabLaunchFilter,
+    listForDisplay,
+    exitingRows,
+  ]);
 
   const handleGmailLinkResolved = useCallback(
     (submissionId: number, patch: { gmailThreadId: string; gmailMailbox: string }) => {
@@ -1200,7 +1285,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
     labelById: gmailLabelById,
     patchSubmission: patchGmailThreadLabels,
   } = useAppointmentRequestGmailThreadLabels(
-    listForDisplay,
+    gmailThreadLinkItems,
     canAccessGmailInbox,
     handleGmailLinkResolved,
     gmailLabelContext,
@@ -1209,12 +1294,12 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
   const gmailLabelsLoadingIds = useMemo(() => {
     if (!canAccessGmailInbox) return new Set<number>();
     const pending = new Set<number>();
-    for (const item of listForDisplay) {
+    for (const item of gmailThreadLinkItems) {
       if (item.kind === 'abandoned') continue;
       if (!gmailThreadLabelsBySubmission.has(item.id)) pending.add(item.id);
     }
     return pending;
-  }, [canAccessGmailInbox, listForDisplay, gmailThreadLabelsBySubmission]);
+  }, [canAccessGmailInbox, gmailThreadLinkItems, gmailThreadLabelsBySubmission]);
 
   /** True when a New-tab row should show given the Gmail go-live cutoff. */
   const newTabRowVisibleAtLaunch = useCallback(
@@ -1230,9 +1315,6 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
     },
     [exitingRows, gmailThreadLabelsBySubmission],
   );
-
-  const applyNewTabLaunchFilter =
-    statusFilter === 'new' && canAccessGmailInbox && Number.isFinite(APPT_REQUEST_NEW_TAB_LAUNCH_MS);
 
   const displayList = useMemo(() => {
     if (!applyNewTabLaunchFilter) return listForDisplay;
@@ -1377,29 +1459,29 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
   }, [search, statusFilter]);
 
   useEffect(() => {
-    if (!useArchiveListPagination) return;
-    if (listPage > archiveListTotalPages) {
-      setListPage(archiveListTotalPages);
+    if (!useListPagination) return;
+    if (listPage > listTotalPages) {
+      setListPage(listTotalPages);
     }
-  }, [listPage, useArchiveListPagination, archiveListTotalPages]);
+  }, [listPage, useListPagination, listTotalPages]);
 
   useEffect(() => {
-    if (!useArchiveListPagination || highlightEntryId == null || loading) return;
+    if (!useListPagination || highlightEntryId == null || loading) return;
     const idx = filtered.findIndex((item) => item.id === highlightEntryId);
     if (idx < 0) return;
-    const page = Math.floor(idx / ARCHIVE_LIST_PAGE_SIZE) + 1;
+    const page = Math.floor(idx / LIST_PAGE_SIZE) + 1;
     setListPage(page);
-  }, [highlightEntryId, filtered, loading, useArchiveListPagination]);
+  }, [highlightEntryId, filtered, loading, useListPagination]);
 
   useEffect(() => {
     if (highlightEntryId == null || loading) return;
     if (!highlightScrollSig.current) return;
     const id = highlightEntryId;
 
-    if (useArchiveListPagination) {
+    if (useListPagination) {
       const idx = filtered.findIndex((item) => item.id === id);
       if (idx < 0) return;
-      const page = Math.floor(idx / ARCHIVE_LIST_PAGE_SIZE) + 1;
+      const page = Math.floor(idx / LIST_PAGE_SIZE) + 1;
       if (listPage !== page) {
         setListPage(page);
         return;
@@ -1414,7 +1496,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
       window.clearTimeout(scrollT);
       window.clearTimeout(clearT);
     };
-  }, [highlightEntryId, loading, filtered, useArchiveListPagination, listPage]);
+  }, [highlightEntryId, loading, filtered, useListPagination, listPage]);
 
   const highlightFromUrl = useMemo(
     () => parseAppointmentRequestsHighlightFromSearch(location.search),
@@ -1958,17 +2040,18 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
     }
   };
 
-  const isOnHoldView = statusFilter === 'on_hold';
   const isToConfirmView = statusFilter === 'to_confirm';
+
+  if (statusFilter === 'on_hold') {
+    return null;
+  }
 
   return (
     <div className="container">
       <div className="settings-page">
       <h1 className="settings-title">Appointments</h1>
       <p className="settings-muted" style={{ marginBottom: 16, maxWidth: 800 }}>
-        {isOnHoldView
-          ? 'Calendar holds placed from appointment requests. Convert each hold to a booked visit when ready — holds older than 24 hours are flagged.'
-          : isToConfirmView
+        {isToConfirmView
             ? 'Clients who self-scheduled online land here until a Client Liaison verifies the visit on the calendar. Click Confirm to open the visit on the calendar and review it, then confirm to move to Booked, or Not booked if the visit should be cancelled.'
           : 'Triage incoming appointment requests from the client portal. Auto-booked online requests appear in Auto-Booked until reviewed. Use Book for requests that still need scheduling, then link the appointment. Text clients directly from the request phone number — including new clients who are not in the system yet.'}
       </p>
@@ -1987,8 +2070,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
 
       <div className="appt-request-status-tabs">
         {STATUS_TABS.map(({ key, label }) => {
-          const active = statusFilter === key;
-          const isHoldTab = key === 'on_hold';
+          const active = highlightedStatusTab === key;
           return (
             <button
               key={key}
@@ -2005,14 +2087,6 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                   ({key === 'new' ? newTabVisibleCount : tabCounts[key]})
                 </span>
               ) : null}
-              {isHoldTab && onHoldOver24Count > 0 ? (
-                <span
-                  className="appt-request-status-tab-over24"
-                  title={`${onHoldOver24Count} on hold over 24 hours`}
-                >
-                  {onHoldOver24Count} &gt; 24h
-                </span>
-              ) : null}
             </button>
           );
         })}
@@ -2020,43 +2094,6 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
           Refresh
         </button>
       </div>
-
-      {isOnHoldView && tabCounts.on_hold > 0 ? (
-        <div style={{ marginBottom: 14, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
-          <button
-            type="button"
-            className={`settings-tab${!onHoldOver24Only ? ' active' : ''}`}
-            style={{
-              marginBottom: 0,
-              border: !onHoldOver24Only ? '2px solid var(--accent-strong, #4FB128)' : '1px solid var(--border)',
-              borderRadius: 8,
-              padding: '6px 12px',
-              fontSize: 13,
-            }}
-            aria-pressed={!onHoldOver24Only}
-            onClick={() => goToTab('on_hold', { onHoldOver24Only: false, replace: true })}
-          >
-            All holds ({tabCounts.on_hold})
-          </button>
-          <button
-            type="button"
-            className={`settings-tab${onHoldOver24Only ? ' active' : ''}`}
-            style={{
-              marginBottom: 0,
-              border: onHoldOver24Only ? '2px solid #991b1b' : '1px solid var(--border)',
-              borderRadius: 8,
-              padding: '6px 12px',
-              fontSize: 13,
-              background: onHoldOver24Only ? '#fecaca' : '#fff',
-              color: onHoldOver24Only ? '#991b1b' : 'var(--muted)',
-            }}
-            aria-pressed={onHoldOver24Only}
-            onClick={() => goToTab('on_hold', { onHoldOver24Only: true, replace: true })}
-          >
-            Over 24 hours ({onHoldOver24Count})
-          </button>
-        </div>
-      ) : null}
 
       <div style={{ marginBottom: 16, maxWidth: 420 }}>
         <input
@@ -2185,17 +2222,39 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
             const needsManualBook = !isDismissed && !isBooked && !hasLinkedAppointment;
             const bookedSummary =
               bookedApptId != null ? bookedApptMeta.get(Number(bookedApptId)) : undefined;
-            const displayBookedSummary = resolveAppointmentRequestBookedVisitSummary(
-              item,
-              bookedSummary,
-              typeCatalog,
-            );
             const linkedAppointment = linkedEvetIdsFromBookedApptSummary(bookedSummary);
             const requestTypeName = requestDataAppointmentTypeLabel(rd);
+            const displayBookedSummary =
+              bookedApptId != null
+                ? resolveAppointmentRequestBookedVisitSummary(
+                    item,
+                    bookedSummary,
+                    typeCatalog,
+                  )
+                : null;
+            const requestedSlotSummary =
+              !hasLinkedAppointment && !autoBookedOnline
+                ? resolveAppointmentRequestBookedVisitSummary(item, undefined, typeCatalog)
+                : null;
             const linkedVisitLine =
               displayBookedSummary != null && !autoBookedOnline
-                ? formatLinkedVisitLine(displayBookedSummary, practiceTz, requestTypeName, rd, typeCatalog)
-                : null;
+                ? formatLinkedVisitLine(
+                    displayBookedSummary,
+                    practiceTz,
+                    requestTypeName,
+                    rd,
+                    typeCatalog,
+                  )
+                : requestedSlotSummary != null
+                  ? formatLinkedVisitLine(
+                      requestedSlotSummary,
+                      practiceTz,
+                      requestTypeName,
+                      rd,
+                      typeCatalog,
+                      { requestedOnly: true },
+                    )
+                  : null;
             const autoBookedVisit =
               autoBookedOnline
                 ? appointmentRequestBookedVisitLabels({
@@ -2765,7 +2824,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
             );
           })}
         </ul>
-        {useArchiveListPagination && filtered.length > ARCHIVE_LIST_PAGE_SIZE ? (
+        {useListPagination && filtered.length > LIST_PAGE_SIZE ? (
           <div
             style={{
               display: 'flex',
@@ -2777,8 +2836,8 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
             }}
           >
             <p className="settings-muted" style={{ margin: 0 }}>
-              Showing {(listPage - 1) * ARCHIVE_LIST_PAGE_SIZE + 1}–
-              {Math.min(listPage * ARCHIVE_LIST_PAGE_SIZE, filtered.length)} of {filtered.length}
+              Showing {(listPage - 1) * LIST_PAGE_SIZE + 1}–
+              {Math.min(listPage * LIST_PAGE_SIZE, filtered.length)} of {filtered.length}
             </p>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <button
@@ -2793,12 +2852,12 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                 Previous
               </button>
               <span className="settings-muted" style={{ fontSize: 14 }}>
-                Page {listPage} of {archiveListTotalPages}
+                Page {listPage} of {listTotalPages}
               </span>
               <button
                 type="button"
                 className="btn secondary"
-                disabled={listPage >= archiveListTotalPages}
+                disabled={listPage >= listTotalPages}
                 onClick={() => {
                   setListPage((page) => page + 1);
                   window.scrollTo({ top: 0, behavior: 'smooth' });

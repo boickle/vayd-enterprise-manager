@@ -5,6 +5,10 @@ import type {
   ManualBookPreviewDraft,
   RoutingCalendarPreviewPayloadV1,
 } from './routingCalendarPreviewStorage';
+import {
+  patientsForAppointment,
+} from './schedulerAddPet';
+import { appointmentAlternateAddressText } from '../api/appointments';
 
 function pickStr(v: unknown): string | null {
   if (v == null) return null;
@@ -60,12 +64,18 @@ export function computeManualBookInsertionIndex(
   startIso: string,
   appointments: readonly Appointment[],
   practiceTz: string,
+  opts?: { excludeAppointmentIds?: ReadonlySet<number> },
 ): number {
   const newStartMs = DateTime.fromISO(startIso, { zone: 'utc' }).toMillis();
   if (!Number.isFinite(newStartMs)) return 0;
+  const exclude = opts?.excludeAppointmentIds;
 
   const timedOnDay = appointments
-    .filter((a) => !a.allDay && dayKeyFromAppointmentIso(a.appointmentStart, practiceTz) === dayKey)
+    .filter((a) => {
+      if (a.allDay) return false;
+      if (exclude && typeof a.id === 'number' && exclude.has(a.id)) return false;
+      return dayKeyFromAppointmentIso(a.appointmentStart, practiceTz) === dayKey;
+    })
     .sort(
       (a, b) =>
         DateTime.fromISO(a.appointmentStart, { zone: 'utc' }).toMillis() -
@@ -92,7 +102,59 @@ export function manualBookPrefillFromDraft(draft: ManualBookPreviewDraft): Sched
     defaultDescription: draft.description,
     defaultInstructions: draft.instructions,
     additionalEmployeeIds: draft.additionalEmployeeIds,
+    ...(draft.coVisitAddPet ? { coVisitAddPet: true } : {}),
+    ...(draft.coVisitAnchorAppointmentId != null
+      ? { coVisitAnchorAppointmentId: draft.coVisitAnchorAppointmentId }
+      : {}),
+    ...(draft.alternateAddressText?.trim()
+      ? { coVisitAlternateAddress: draft.alternateAddressText.trim() }
+      : {}),
   };
+}
+
+function clientPimsIdFromAppointment(a: Appointment | undefined): string | undefined {
+  if (!a) return undefined;
+  const fromClient = pickStr(a.client?.pimsId);
+  if (fromClient) return fromClient;
+  const row = a as Appointment & { clientPimsId?: string | null };
+  return pickStr(row.clientPimsId) ?? undefined;
+}
+
+/** Pets already on the visit (align targets) plus the pet being added. */
+function buildCoVisitPreviewPatients(
+  draft: ManualBookPreviewDraft,
+  appointments: readonly Appointment[],
+  _practiceTz: string,
+): { id: number | string; name: string }[] {
+  const byId = new Map<string, { id: number | string; name: string }>();
+
+  const alignIds = new Set(
+    (draft.coVisitAlignAppointmentIds ?? [])
+      .map((id) => Number(id))
+      .filter((id) => Number.isFinite(id) && id > 0),
+  );
+
+  // Only list existing pets on the red chip when those visits are hidden (align-all preview).
+  if (alignIds.size > 0) {
+    for (const a of appointments) {
+      if (typeof a.id !== 'number' || !alignIds.has(a.id)) continue;
+      for (const p of patientsForAppointment(a)) {
+        const id = p.id != null ? String(p.id) : '';
+        const name = pickStr(p.name) || (id ? `Pet ${id}` : '');
+        if (!name) continue;
+        const key = id || name.toLowerCase();
+        if (!byId.has(key)) byId.set(key, { id: p.id ?? name, name });
+      }
+    }
+  }
+
+  if (draft.patientId) {
+    const id = draft.patientId;
+    const name = draft.patientLabel?.trim() || `Pet ${id}`;
+    if (!byId.has(String(id))) byId.set(String(id), { id, name });
+  }
+
+  return [...byId.values()];
 }
 
 export function buildManualBookCalendarPreviewPayload(args: {
@@ -112,21 +174,45 @@ export function buildManualBookCalendarPreviewPayload(args: {
       ? Math.round(endUtc.diff(startUtc, 'minutes').minutes)
       : 30,
   );
+
+  const alignHideIds = new Set(
+    (draft.coVisitAlignAppointmentIds ?? [])
+      .map((id) => Number(id))
+      .filter((id) => Number.isFinite(id) && id > 0),
+  );
+
   const insertionIndex = computeManualBookInsertionIndex(
     dayKey,
     draft.appointmentStartIso,
     appointments,
     practiceTz,
+    alignHideIds.size > 0 ? { excludeAppointmentIds: alignHideIds } : undefined,
   );
+
   const clientLabel =
     draft.clientLabel?.trim() ||
     (draft.clientId ? `Client #${draft.clientId}` : 'New appointment');
-  const previewPatients =
-    draft.patientId && draft.patientLabel?.trim()
+
+  const anchorId = Number(draft.coVisitAnchorAppointmentId);
+  const anchor =
+    Number.isFinite(anchorId) && anchorId > 0
+      ? appointments.find((a) => Number(a.id) === anchorId)
+      : undefined;
+
+  const previewPatients = draft.coVisitAddPet
+    ? buildCoVisitPreviewPatients(draft, appointments, practiceTz)
+    : draft.patientId && draft.patientLabel?.trim()
       ? [{ id: draft.patientId, name: draft.patientLabel.trim() }]
       : draft.patientId
         ? [{ id: draft.patientId, name: `Pet ${draft.patientId}` }]
         : undefined;
+
+  const altText = draft.alternateAddressText?.trim() || '';
+  const anchorAlt = anchor ? appointmentAlternateAddressText(anchor)?.trim() || '' : '';
+  const routingAlt = altText || (draft.coVisitAddPet ? anchorAlt : '');
+  const useAlternate = Boolean(routingAlt);
+
+  const clientPimsId = clientPimsIdFromAppointment(anchor);
 
   return {
     version: 1,
@@ -143,17 +229,25 @@ export function buildManualBookCalendarPreviewPayload(args: {
     serviceMinutes,
     newApptMeta: {
       ...(draft.clientId ? { clientId: draft.clientId } : {}),
-      ...(draft.clientAddress ? { address: draft.clientAddress } : {}),
-      ...(draft.clientCity ? { city: draft.clientCity } : {}),
-      ...(draft.clientState ? { state: draft.clientState } : {}),
-      ...(draft.clientZip ? { zip: draft.clientZip } : {}),
-      ...(draft.clientLat != null && Number.isFinite(draft.clientLat)
+      ...(clientPimsId ? { clientPimsId } : {}),
+      ...(useAlternate
+        ? { address: routingAlt }
+        : {
+            ...(draft.clientAddress ? { address: draft.clientAddress } : {}),
+            ...(draft.clientCity ? { city: draft.clientCity } : {}),
+            ...(draft.clientState ? { state: draft.clientState } : {}),
+            ...(draft.clientZip ? { zip: draft.clientZip } : {}),
+          }),
+      // Never attach client-home coords for an alternate stop — doctor-day inject copies the
+      // anchor visit's already-geocoded ALT lat/lon. Putting home here made ETA route to home.
+      ...(!useAlternate && draft.clientLat != null && Number.isFinite(draft.clientLat)
         ? { lat: draft.clientLat }
         : {}),
-      ...(draft.clientLon != null && Number.isFinite(draft.clientLon)
+      ...(!useAlternate && draft.clientLon != null && Number.isFinite(draft.clientLon)
         ? { lon: draft.clientLon }
         : {}),
     },
+    ...(useAlternate ? { routingUsesAlternateAddress: true } : {}),
     appointmentTypeId: draft.appointmentTypeId,
     clientDisplayLabel: clientLabel,
     ...(previewPatients?.length ? { previewPatients } : {}),

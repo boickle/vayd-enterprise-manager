@@ -3,12 +3,11 @@ import FillDayPage from './pages/FillDay';
 import CareOutreachPage from './pages/CareOutreachPage';
 import ForwardBookingPage from './pages/ForwardBookingPage';
 import TextedOffersPage from './pages/TextedOffersPage';
+import { HOLDS_PATH } from './holds-nav';
 import {
   LEGACY_WORKFLOW_STATUS_BY_PATH,
   SCHEDULING_TOOLS_PATH_PREFIX,
-  SCHEDULING_TOOL_OUTREACH_TABS,
   SCHEDULING_TOOL_TABS,
-  SCHEDULING_TOOL_WORKFLOW_TABS,
   bookedListPath,
   type SchedulingToolTab,
 } from './scheduling-tools-nav';
@@ -29,8 +28,6 @@ function elementForTab(path: string): JSX.Element {
       return <TextedOffersPage />;
     case 'forward-booking':
       return <ForwardBookingPage />;
-    case 'on-hold':
-      return <ForwardBookingPage variant="onHold" />;
     case 'booked':
       return <ForwardBookingPage variant="booked" />;
     default:
@@ -44,6 +41,12 @@ export const SCHEDULING_TOOLS_TAB_PAGES: SchedulingToolsTabPage[] = [
     label: tab.label,
     element: elementForTab(tab.path),
   })),
+  // Legacy On hold route — holds board lives at /schedule/holds.
+  {
+    path: 'on-hold',
+    label: 'On hold',
+    element: <Navigate to={HOLDS_PATH} replace />,
+  },
   // Legacy Booked / Complete routes redirect into top-level Booked or Forward booking.
   ...Object.entries(LEGACY_WORKFLOW_STATUS_BY_PATH).map(([path, status]) => ({
     path,

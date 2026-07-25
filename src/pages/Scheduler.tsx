@@ -26,6 +26,8 @@ import {
   fetchAppointmentsRange,
   isAppointmentCancelledOnPracticeCalendar,
   isAppointmentNoLocation,
+  cancelAppointment,
+  patchAppointment,
   isFlexBlockItem,
   isPracticeCalendarBlockAppointment,
   truthyApiFlag,
@@ -112,6 +114,7 @@ import {
   loadRoutingPreviewClientContact,
   previewClientContactFromAppointment,
 } from '../utils/schedulerPreviewClientContact';
+import { ClientContactLogReadout } from '../components/ClientContactLogEditor';
 import type { PreviewPopoverClientContact } from '../components/PreviewPopoverClientContact';
 import ScheduleOverrideModal from '../components/ScheduleOverrideModal';
 import { SchedulerReconcileModal } from '../components/SchedulerReconcileModal';
@@ -123,6 +126,8 @@ import { EditVisitPreviewPopover } from '../components/EditVisitPreviewPopover';
 import { AppointmentRequestStaffConfirmPopover } from '../components/AppointmentRequestStaffConfirmPopover';
 import OnHoldVisitConvertedPopover from '../components/OnHoldVisitConvertedPopover';
 import OnHoldVisitPreviewPopover from '../components/OnHoldVisitPreviewPopover';
+import OnHoldVisitRemovePopover from '../components/OnHoldVisitRemovePopover';
+import SlotOfferReviewPopover from '../components/SlotOfferReviewPopover';
 import { RoutingPreviewSlotPopover } from '../components/RoutingPreviewSlotPopover';
 import { ScheduleCalendarBlockedNotice } from '../components/ScheduleCalendarBlockedNotice';
 import {
@@ -181,6 +186,15 @@ import {
 import type { SchedulerHoverDriveHint } from '../utils/schedulerHoverTypes';
 import { submitEditVisitPreviewAcceptedFeedback } from '../utils/routingBookFeedback';
 import {
+  alignSiblingVisitScheduledTimes,
+  appointmentPatientLabel,
+  findHouseholdVisitsNeedingTimeAlign,
+} from '../utils/householdVisitTimeAlign';
+import {
+  HouseholdVisitTimeAlignModal,
+  type HouseholdTimeAlignChoice,
+} from '../components/HouseholdVisitTimeAlignModal';
+import {
   SchedulerBookModal,
   isSchedulerRoutingBookPrefill,
   type SchedulerBookPrefill,
@@ -230,6 +244,24 @@ import {
   manualBookPrefillFromDraft,
 } from '../utils/manualBookCalendarPreview';
 import { commitManualBookPreviewDraft } from '../utils/commitManualBookPreview';
+import HouseholdScheduledVisitsWarningModal from '../components/HouseholdScheduledVisitsWarningModal';
+import EuthanasiaFutureAppointmentsModal from '../components/EuthanasiaFutureAppointmentsModal';
+import ExploreAlternativesHoldPrompt from '../components/ExploreAlternativesHoldPrompt';
+import {
+  buildBookingAppointmentTypeCatalog,
+  findHouseholdScheduledVisitConflicts,
+  parseRoutingFocusHouseholdVisitEvent,
+  ROUTING_FOCUS_HOUSEHOLD_VISIT_EVENT,
+  ROUTING_HOUSEHOLD_VISIT_FOCUS_UNPIN_EVENT,
+  shouldWarnHouseholdVisitsOnBook,
+  type HouseholdScheduledVisitConflict,
+} from '../utils/bookingHouseholdVisitWarning';
+import {
+  cancelEuthanasiaFutureAppointments,
+  findFutureAppointmentsForPatients,
+  isEuthanasiaAppointmentType,
+  type EuthanasiaFutureAppointmentRow,
+} from '../utils/euthanasiaFutureAppointments';
 import {
   EDIT_VISIT_CALENDAR_BLOCKED_MESSAGE,
   EDIT_VISIT_TIME_PREVIEW_BLOCKED_MESSAGE,
@@ -330,9 +362,20 @@ import {
   writeOnHoldVisitEditReturnSession,
   type OnHoldVisitEditSessionV1,
 } from '../utils/onHoldVisitEditSession';
+import {
+  clearSlotOfferReviewSession,
+  readSlotOfferReviewSession,
+  TEXTED_OFFERS_TO_REVIEW_PATH,
+  type SlotOfferReviewSessionV1,
+} from '../utils/slotOfferReviewSession';
+import { writeSlotOfferReviewReturnSession } from '../utils/slotOfferReviewReturnSession';
+import { isHoldsBoardReturnPath } from '../holds-nav';
+import { writeHoldsBoardReturnSession } from '../utils/holdsBoardReturnSession';
 import { NotBookedRemoveGateOverlay } from '../components/NotBookedRemoveGateOverlay';
 import { ON_HOLD_LIST_PATH } from '../utils/forwardBookingReturnSession';
+import { writeCareOutreachFocusClient } from '../utils/careOutreachFocusSession';
 import { opsPointsForAppointment } from '../utils/forwardBookingListVisibility';
+import { confirmSlotOffer } from '../api/slotOffers';
 import { patchAppointmentRequestSubmission, fetchAppointmentRequestSubmission } from '../api/appointmentRequestSubmissions';
 import {
   appointmentRequestWorkspaceIsActive,
@@ -405,9 +448,60 @@ const PRACTICE_TZ =
 /** Admin double-click on practice calendar — distinct from routing / reschedule book flows. */
 const MANUAL_CALENDAR_BOOK_MODAL_TITLE = 'Book appointment - MANUAL OVERIDE';
 
+/** True when the timed grid itself scrolls (embedded routing column). */
+function timedGridScrollRoot(el: HTMLElement): HTMLElement | null {
+  const root = el.closest('.scheduler-calendar-scroll');
+  if (!(root instanceof HTMLElement)) return null;
+  const oy = getComputedStyle(root).overflowY;
+  return oy === 'auto' || oy === 'scroll' ? root : null;
+}
+
+function scheduleOutletScrollRoot(el: HTMLElement): HTMLElement | null {
+  const outlet = el.closest('.schedule-app__outlet--flush-scroll-y');
+  return outlet instanceof HTMLElement ? outlet : null;
+}
+
+/** Space below the outlet top so a focused visit clears sticky week/day headers. */
+function schedulerFocusTopInset(outlet: HTMLElement): number {
+  const stickyHead = outlet.querySelector('.scheduler-sticky-practice-week-head');
+  if (stickyHead instanceof HTMLElement) {
+    const outletRect = outlet.getBoundingClientRect();
+    const headRect = stickyHead.getBoundingClientRect();
+    const belowSticky = headRect.bottom - outletRect.top + 12;
+    if (belowSticky > 48) return belowSticky;
+  }
+  return 120;
+}
+
+function isFocusVisitVisibleInScheduler(
+  el: HTMLElement,
+  outlet: HTMLElement | null,
+  topInset: number,
+  marginBottom = 24,
+): boolean {
+  const elRect = el.getBoundingClientRect();
+  if (outlet) {
+    const outletRect = outlet.getBoundingClientRect();
+    const visibleTop = outletRect.top + topInset;
+    const visibleBottom = outletRect.bottom - marginBottom;
+    return elRect.top >= visibleTop && elRect.bottom <= visibleBottom;
+  }
+  const scrollRoot = timedGridScrollRoot(el);
+  if (scrollRoot) {
+    const rootRect = scrollRoot.getBoundingClientRect();
+    const margin = 28;
+    return (
+      elRect.top >= rootRect.top + margin &&
+      elRect.bottom <= rootRect.bottom - margin &&
+      elRect.height > 0
+    );
+  }
+  return true;
+}
+
 /** True when the slot is already mostly inside the timed grid scrollport (skip hover auto-scroll). */
 function timedGridElementMostlyVisible(el: HTMLElement, marginPx = 28): boolean {
-  const scrollRoot = el.closest('.scheduler-calendar-scroll');
+  const scrollRoot = timedGridScrollRoot(el) ?? el.closest('.scheduler-calendar-scroll');
   if (!(scrollRoot instanceof HTMLElement)) return true;
   const rootRect = scrollRoot.getBoundingClientRect();
   const elRect = el.getBoundingClientRect();
@@ -418,35 +512,57 @@ function timedGridElementMostlyVisible(el: HTMLElement, marginPx = 28): boolean 
   );
 }
 
-/** Scroll the timed grid (embedded routing column or full-page calendar) so a slot is centered. */
-function scrollTimedGridElementIntoView(el: HTMLElement, behavior: ScrollBehavior = 'auto') {
-  const scrollRoot = el.closest('.scheduler-calendar-scroll');
-  if (scrollRoot instanceof HTMLElement) {
+/**
+ * Scroll the timed grid (embedded routing column) so a slot is visible.
+ * `align` is the fraction of the leftover viewport placed above the element: 0.5 centers.
+ */
+function scrollTimedGridElementIntoView(
+  el: HTMLElement,
+  behavior: ScrollBehavior = 'auto',
+  align = 0.5,
+) {
+  const scrollRoot = timedGridScrollRoot(el);
+  if (scrollRoot) {
     const rootRect = scrollRoot.getBoundingClientRect();
     const elRect = el.getBoundingClientRect();
     const targetTop =
       scrollRoot.scrollTop +
       (elRect.top - rootRect.top) -
-      (rootRect.height - elRect.height) / 2;
+      (rootRect.height - elRect.height) * align;
     scrollRoot.scrollTo({ top: Math.max(0, targetTop), behavior });
     return;
   }
-  el.scrollIntoView({ block: 'center', behavior, inline: 'nearest' });
+  el.scrollIntoView({ block: 'nearest', behavior, inline: 'nearest' });
 }
 
-/** Scroll the timed grid and practice-calendar outlet so a visit is centered. */
+/**
+ * Scroll a focused visit into view. Full-page practice calendar scrolls the schedule
+ * outlet (not the timed grid) and clears sticky week/day headers. Embedded routing
+ * scrolls the inner timed grid only.
+ */
 function scrollAppointmentElementIntoView(el: HTMLElement, behavior: ScrollBehavior = 'smooth') {
-  scrollTimedGridElementIntoView(el, behavior);
-  const outlet = el.closest('.schedule-app__outlet--flush-scroll-y');
-  if (outlet instanceof HTMLElement) {
+  const outlet = scheduleOutletScrollRoot(el);
+  if (outlet) {
+    const topInset = schedulerFocusTopInset(outlet);
+    if (isFocusVisitVisibleInScheduler(el, outlet, topInset)) return;
+
     const outletRect = outlet.getBoundingClientRect();
     const elRect = el.getBoundingClientRect();
-    if (elRect.top < outletRect.top + 72 || elRect.bottom > outletRect.bottom - 24) {
-      outlet.scrollTo({
-        top: outlet.scrollTop + elRect.top - outletRect.top - 72,
-        behavior,
-      });
-    }
+    outlet.scrollTo({
+      top: Math.max(0, outlet.scrollTop + elRect.top - outletRect.top - topInset),
+      behavior,
+    });
+    return;
+  }
+
+  const innerScroll = timedGridScrollRoot(el);
+  if (innerScroll && !timedGridElementMostlyVisible(el)) {
+    scrollTimedGridElementIntoView(el, behavior, 0.35);
+    return;
+  }
+
+  if (!isFocusVisitVisibleInScheduler(el, null, 0)) {
+    el.scrollIntoView({ block: 'nearest', behavior, inline: 'nearest' });
   }
 }
 
@@ -511,7 +627,7 @@ const SCHEDULER_DAY_HEADER_STACK_PX = 96;
 const SLOT_MINUTES = 15;
 const DEFAULT_GRID_START = 7 * 60;
 /** Match My Week — practice calendar shows through a typical field day even without routed ETAs. */
-const DEFAULT_GRID_END = 19 * 60 + 30;
+const DEFAULT_GRID_END = 21 * 60;
 /** Minutes of grid past depot and past first/last timed item (same as My Week depot lead-in). */
 const SCHEDULER_GRID_EDGE_BUFFER_MIN = 30;
 
@@ -1816,6 +1932,30 @@ function visitDetailsWindowLine(
   return null;
 }
 
+/** Compact appointment-card header: `🪟 8:50 AM – 10:50 AM`. */
+function schedulerEventWindowCardLabel(
+  appt: Appointment,
+  driveHint: SchedulerHoverDriveHint | null | undefined
+): string | null {
+  const range = visitDetailsWindowLine(appt, driveHint);
+  if (range) return `🪟 ${range}`;
+
+  const practiceTz = driveHint?.practiceTz ?? PRACTICE_TZ;
+  const resolved = resolveArrivalWindowIsos({
+    apptEffectiveWindow: appt.effectiveWindow ?? null,
+    household: null,
+    slot: null,
+    scheduledStartIso: appt.appointmentStart,
+    appointmentType: appt.appointmentType,
+    appointmentEndIso: appt.appointmentEnd,
+    practiceTz,
+  });
+  if (resolved?.startIso && resolved?.endIso) {
+    return `🪟 ${formatIsoTimeShortInPracticeZone(resolved.startIso, practiceTz)} – ${formatIsoTimeShortInPracticeZone(resolved.endIso, practiceTz)}`;
+  }
+  return null;
+}
+
 export function SchedulerHoverContent({
   appt,
   driveHint,
@@ -1948,8 +2088,13 @@ export function SchedulerHoverContent({
             if (!showArrive && !showWindow) return null;
             return (
               <div className="scheduler-tooltip-drive-block">
+                {showWindow && !(driveHint.isPersonalBlock && driveHint.isFixedTime) ? (
+                  <VisitHighlightsRow label="🪟 Promised Window of Arrival">
+                    {formatSchedulerArrivalWindowLine(driveHint)}
+                  </VisitHighlightsRow>
+                ) : null}
                 {showArrive ? (
-                  <VisitHighlightsRow label="ETA / ETD">
+                  <VisitHighlightsRow label="Expected time of arrival & departure">
                     {driveHint.etaIso
                       ? formatIsoTimeShortInPracticeZone(driveHint.etaIso, driveHint.practiceTz)
                       : '—'}
@@ -1957,11 +2102,6 @@ export function SchedulerHoverContent({
                     {driveHint.etdIso
                       ? formatIsoTimeShortInPracticeZone(driveHint.etdIso, driveHint.practiceTz)
                       : '—'}
-                  </VisitHighlightsRow>
-                ) : null}
-                {showWindow && !(driveHint.isPersonalBlock && driveHint.isFixedTime) ? (
-                  <VisitHighlightsRow label="Window of arrival">
-                    {formatSchedulerArrivalWindowLine(driveHint)}
                   </VisitHighlightsRow>
                 ) : null}
               </div>
@@ -2357,10 +2497,15 @@ function rescheduleSourceHighlightAppointmentIds(
   return appointmentIds.length > 0 ? new Set(appointmentIds) : null;
 }
 
-/** While a reschedule preview is on the calendar, hide the visits being moved (show purple preview only). */
+/** While a reschedule preview is on the calendar, hide the visits being moved (show purple preview only).
+ * Explore Alternatives keeps the original, so never hide those visits.
+ * Co-visit add-pet with align: hide siblings that will move to the new times (one combined red slot). */
 function routingRescheduleHiddenAppointmentIds(
   preview: RoutingCalendarPreviewPayloadV1
 ): Set<number> | null {
+  const ri = readRoutingRescheduleIntent();
+  if (ri?.exploreAlternatives || preview.exploreAlternatives) return null;
+
   const fromPreview =
     preview.rescheduleAppointmentIds
       ?.filter((id) => Number.isFinite(Number(id)))
@@ -2370,7 +2515,14 @@ function routingRescheduleHiddenAppointmentIds(
       : []);
   if (fromPreview.length > 0) return new Set(fromPreview);
 
-  const ri = readRoutingRescheduleIntent();
+  const coVisitAlign =
+    preview.previewSource === 'manual-book'
+      ? (preview.manualBookDraft?.coVisitAlignAppointmentIds ?? [])
+          .map((id) => Number(id))
+          .filter((id) => Number.isFinite(id) && id > 0)
+      : [];
+  if (coVisitAlign.length > 0) return new Set(coVisitAlign);
+
   if (!ri) return null;
   const { appointmentIds } = rescheduleScopeTargets(ri);
   return appointmentIds.length > 0 ? new Set(appointmentIds) : null;
@@ -2727,6 +2879,24 @@ function SchedulerPreApptRlIcon({ confirmStatusName }: { confirmStatusName?: str
   );
 }
 
+/** Matches ScheduleLayout mobile breakpoint (rail stacks at 900px). */
+function isSchedulerMobileViewport(): boolean {
+  return (
+    typeof window !== 'undefined' && window.matchMedia('(max-width: 900px)').matches
+  );
+}
+
+/** Practice calendar default — day on mobile, week on desktop. */
+function defaultSchedulerCalendarView(): ViewMode {
+  return isSchedulerMobileViewport() ? 'day' : 'week';
+}
+
+/** Initial view for the practice calendar (not routing embed). Mobile always starts on day. */
+function initialPracticeCalendarView(handoffView?: ViewMode): ViewMode {
+  if (isSchedulerMobileViewport()) return 'day';
+  return handoffView ?? 'week';
+}
+
 function initialSchedulerCalendarState(embedInRoutingWorkspace: boolean): {
   anchorDate: string;
   view: ViewMode;
@@ -2761,12 +2931,12 @@ function initialSchedulerCalendarState(embedInRoutingWorkspace: boolean): {
   if (handoff) {
     return {
       anchorDate: handoff.anchorDate,
-      view: handoff.view ?? 'week',
+      view: initialPracticeCalendarView(handoff.view),
       providerFilter: handoff.providerFilter ?? '',
     };
   }
 
-  return { anchorDate: today, view: 'week', providerFilter: '' };
+  return { anchorDate: today, view: initialPracticeCalendarView(), providerFilter: '' };
 }
 
 type SchedulerMountState = {
@@ -2787,7 +2957,7 @@ function readSchedulerMountState(embedInRoutingWorkspace: boolean): SchedulerMou
   if (focusRequest) {
     return {
       anchorDate: focusRequest.dateHint ?? today,
-      view: 'week',
+      view: defaultSchedulerCalendarView(),
       providerFilter: focusRequest.providerHint ?? '',
       focusRequest,
     };
@@ -2816,6 +2986,18 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   >(null);
   const [typeList, setTypeList] = useState<AppointmentType[]>([]);
   const typeCatalog = useMemo(() => buildAppointmentTypeCatalog(typeList), [typeList]);
+  const holdAppointmentTypes = useMemo(
+    () => typeList.filter((t) => t.isHold === true),
+    [typeList]
+  );
+  /** After "Explore alternatives" books a second appointment, offer to keep both on hold. */
+  const [exploreHoldPrompt, setExploreHoldPrompt] = useState<{
+    newAppointmentId: number;
+    sourceNeedsHold: boolean;
+    newNeedsHold: boolean;
+    nonHoldAppointmentIds: number[];
+  } | null>(null);
+  const [convertingExploreHold, setConvertingExploreHold] = useState(false);
   const [manualBookableTypeIds, setManualBookableTypeIds] = useState<number[] | null>(null);
   const [rawAppointments, setRawAppointments] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
@@ -2844,6 +3026,12 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   const [editPreviewScoreLoading, setEditPreviewScoreLoading] = useState(false);
   const [editPreviewScoreError, setEditPreviewScoreError] = useState<string | null>(null);
   const [editPreviewConfirming, setEditPreviewConfirming] = useState(false);
+  const [editTimeAlignPrompt, setEditTimeAlignPrompt] = useState<{
+    siblings: Appointment[];
+    startIso: string;
+    endIso: string;
+  } | null>(null);
+  const editTimeAlignChoiceRef = useRef<HouseholdTimeAlignChoice | null>(null);
   const [staffConfirmPreview, setStaffConfirmPreview] =
     useState<AppointmentRequestStaffConfirmSessionV1 | null>(null);
   const [staffConfirmPreviewConfirming, setStaffConfirmPreviewConfirming] = useState(false);
@@ -2860,6 +3048,12 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     useState<EditVisitLinkSelection | null>(null);
   const [onHoldVisitPreview, setOnHoldVisitPreview] =
     useState<OnHoldVisitEditSessionV1 | null>(null);
+  const [onHoldVisitRemoveConfirming, setOnHoldVisitRemoveConfirming] = useState(false);
+  const [onHoldVisitRemoveError, setOnHoldVisitRemoveError] = useState<string | null>(null);
+  const [slotOfferReviewPreview, setSlotOfferReviewPreview] =
+    useState<SlotOfferReviewSessionV1 | null>(null);
+  const [slotOfferReviewConfirming, setSlotOfferReviewConfirming] = useState(false);
+  const [slotOfferReviewError, setSlotOfferReviewError] = useState<string | null>(null);
   const [notBookedRemoveGate, setNotBookedRemoveGate] =
     useState<NotBookedRemoveSessionV1 | null>(null);
   const [onHoldVisitConvertedExitKind, setOnHoldVisitConvertedExitKind] =
@@ -2890,6 +3084,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   );
   const editVisitHighlightTimerRef = useRef<number | null>(null);
   const editVisitHighlightDurationMsRef = useRef(2600);
+  const householdVisitHighlightPinnedRef = useRef(false);
   const editVisitPostBookScrollSigRef = useRef<string>('');
   const staffConfirmTypesAppliedRef = useRef<string | null>(null);
   const [schedulerFocusReturnTick, setSchedulerFocusReturnTick] = useState(0);
@@ -3449,7 +3644,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         : null;
     if (pendingFocusDateHintRef.current) {
       setAnchorDate(pendingFocusDateHintRef.current);
-      setView('week');
+      setView(defaultSchedulerCalendarView());
       setPendingFocusHighlightApptId(apptId);
     }
 
@@ -3582,16 +3777,16 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     const anchor = DateTime.fromISO(anchorDate, { zone: PRACTICE_TZ }).startOf('day');
     if (view === 'day') {
       const d = anchor.toISODate()!;
-      return { goalPeriodStart: d, goalPeriodEnd: d };
+      return { startDate: d, endDate: d };
     }
     if (view === 'week') {
       const startL = sundayWeekStart(anchor);
       const endL = startL.plus({ days: 6 });
-      return { goalPeriodStart: startL.toISODate()!, goalPeriodEnd: endL.toISODate()! };
+      return { startDate: startL.toISODate()!, endDate: endL.toISODate()! };
     }
     const startL = anchor.startOf('month');
     const endL = startL.endOf('month');
-    return { goalPeriodStart: startL.toISODate()!, goalPeriodEnd: endL.toISODate()! };
+    return { startDate: startL.toISODate()!, endDate: endL.toISODate()! };
   }, [anchorDate, view]);
 
   useEffect(() => {
@@ -3827,10 +4022,10 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     [editAppt, editTimePreview]
   );
 
-  /** Block calendar/toolbar until edit visit is closed (placement preview keeps calendar interactive). */
+  /** Block calendar/toolbar until edit visit is closed (placement preview keeps calendar interactive for the popover). */
   const editVisitCalendarLock = useMemo(
-    () => Boolean(editAppt && !editPlacementMode),
-    [editAppt, editPlacementMode]
+    () => Boolean(editAppt && !editPlacementMode && !editTimePreview),
+    [editAppt, editPlacementMode, editTimePreview]
   );
 
   const showCalendarBlockedNotice = useCallback((msg: string) => {
@@ -3863,6 +4058,18 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       ),
     [embedInRoutingWorkspace, routingPreview, rescheduleSourceHighlightIds]
   );
+
+  /** Reschedule opened from the Holds board — "Dismiss" returns there, so label it accordingly. */
+  const rescheduleReturnsToHolds = useMemo(() => {
+    if (!rescheduleWorkspaceActive) return false;
+    const returnPath = readRoutingRescheduleIntent()?.returnPath;
+    return Boolean(returnPath && isHoldsBoardReturnPath(returnPath));
+  }, [rescheduleWorkspaceActive, rescheduleIntentTick]);
+
+  /** Explore-alternatives intent — keep original booked. Used for badge + book/preview copy. */
+  const exploreAlternativesActive = useMemo(() => {
+    return Boolean(readRoutingRescheduleIntent()?.exploreAlternatives);
+  }, [rescheduleIntentTick]);
 
   const [forwardBookingIntentTick, setForwardBookingIntentTick] = useState(0);
   useEffect(() => {
@@ -4010,6 +4217,18 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   }, [routingPreview, routingPreviewIsReschedule, routingPreviewIsManualBook, forwardBookingIntentTick]);
 
   const [manualBookPreviewCommitting, setManualBookPreviewCommitting] = useState(false);
+  const manualBookPreviewCommittingRef = useRef(false);
+  const [manualBookHouseholdConflicts, setManualBookHouseholdConflicts] = useState<
+    HouseholdScheduledVisitConflict[] | null
+  >(null);
+  const manualBookHouseholdBypassRef = useRef(false);
+  const [manualBookEuthanasiaFutureRows, setManualBookEuthanasiaFutureRows] = useState<
+    EuthanasiaFutureAppointmentRow[] | null
+  >(null);
+  const manualBookEuthanasiaChoiceRef = useRef<'delete' | 'keep' | null>(null);
+  const pendingManualBookEuthanasiaDeletesRef = useRef<EuthanasiaFutureAppointmentRow[] | null>(
+    null,
+  );
 
   const reschedulePreviewSourceVisit = useMemo(() => {
     if (!routingPreviewIsReschedule) return null;
@@ -4365,9 +4584,11 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           ? {
               editTimePreview,
               editPreviewDraftType:
-                editTimePreview.kind === 'type' && editTimePreview.appointmentTypeId != null
+                editTimePreview.appointmentTypeId != null
                   ? typeList.find((t) => t.id === editTimePreview.appointmentTypeId) ?? null
-                  : null,
+                  : editAppt?.appointmentType?.id != null
+                    ? typeList.find((t) => t.id === editAppt.appointmentType?.id) ?? null
+                    : null,
             }
           : null;
 
@@ -4499,6 +4720,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     routingPreview,
     routingPreviewColumnKey,
     editTimePreview,
+    editAppt?.appointmentType?.id,
     typeList,
   ]);
 
@@ -4546,7 +4768,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         };
       }
       const doctorDayWindow = doctorDayEffectiveWindowByApptId.get(String(a.id));
-      if (doctorDayWindow && !next.effectiveWindow?.startIso && !next.effectiveWindow?.endIso) {
+      if (doctorDayWindow) {
         next = { ...next, effectiveWindow: doctorDayWindow };
       }
       if (doctorDayIsCompleteByApptId.has(String(a.id))) {
@@ -5706,6 +5928,79 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     [onHoldVisitApptForPopover],
   );
 
+  const onHoldVisitHouseholdApptTypeIds = useMemo(
+    () =>
+      onHoldVisitHouseholdAppts
+        .map(
+          (a) =>
+            a.appointmentType?.id ??
+            (a as { appointmentTypeId?: number }).appointmentTypeId ??
+            '',
+        )
+        .join(','),
+    [onHoldVisitHouseholdAppts],
+  );
+
+  const onHoldVisitHouseholdApptSlotTimes = useMemo(
+    () =>
+      onHoldVisitHouseholdAppts
+        .map((a) => `${a.appointmentStart ?? ''}|${a.appointmentEnd ?? ''}`)
+        .join(','),
+    [onHoldVisitHouseholdAppts],
+  );
+
+  const [onHoldVisitConvertedRecommendedLength, setOnHoldVisitConvertedRecommendedLength] =
+    useState<StaffConfirmRecommendedLength | null>(null);
+  const [onHoldVisitConvertedRecommendedLengthLoading, setOnHoldVisitConvertedRecommendedLengthLoading] =
+    useState(false);
+
+  useEffect(() => {
+    if (onHoldVisitConvertedExitKind !== 'booked' || !onHoldVisitApptForPopover) {
+      setOnHoldVisitConvertedRecommendedLength(null);
+      setOnHoldVisitConvertedRecommendedLengthLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setOnHoldVisitConvertedRecommendedLengthLoading(true);
+
+    void resolveStaffConfirmRecommendedLength({
+      practiceId: PRACTICE_ID,
+      requestData: onHoldVisitRequestData ?? {},
+      appt: onHoldVisitApptForPopover,
+      householdAppts: onHoldVisitHouseholdAppts,
+      appointmentTypes: typeList,
+      appointmentTypeCatalog: typeCatalog,
+      providers,
+    })
+      .then((result) => {
+        if (!cancelled) setOnHoldVisitConvertedRecommendedLength(result);
+      })
+      .catch(() => {
+        if (!cancelled) setOnHoldVisitConvertedRecommendedLength(null);
+      })
+      .finally(() => {
+        if (!cancelled) setOnHoldVisitConvertedRecommendedLengthLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    onHoldVisitConvertedExitKind,
+    onHoldVisitApptForPopover?.id,
+    onHoldVisitApptForPopover?.appointmentEnd,
+    onHoldVisitApptForPopover?.appointmentStart,
+    onHoldVisitHouseholdAppts,
+    onHoldVisitHouseholdApptTypeIds,
+    onHoldVisitHouseholdApptSlotTimes,
+    onHoldVisitRequestData,
+    typeList,
+    typeCatalog,
+    providers,
+    onHoldVisitApptForPopover,
+  ]);
+
   const [onHoldVisitAnchorRect, setOnHoldVisitAnchorRect] = useState<HoverAnchorRect | null>(null);
   const [onHoldVisitDayColumnRect, setOnHoldVisitDayColumnRect] =
     useState<HoverAnchorRect | null>(null);
@@ -5784,7 +6079,9 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     const cardW = onHoldVisitEditing ? 720 : 380;
     const cardEstH = onHoldVisitEditing
       ? Math.min(680, Math.max(360, vwH - 32))
-      : 420;
+      : onHoldVisitConvertedExitKind === 'booked'
+        ? 560
+        : 420;
     if (onHoldVisitAnchorRect) {
       return computeEditPreviewPopoverPosition({
         slotAnchor: onHoldVisitAnchorRect,
@@ -5801,9 +6098,138 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   }, [
     onHoldVisitPreview,
     onHoldVisitEditing,
+    onHoldVisitConvertedExitKind,
     onHoldVisitAnchorRect,
     onHoldVisitDayColumnRect,
   ]);
+
+  const slotOfferReviewAppt = useMemo(() => {
+    if (!slotOfferReviewPreview) return null;
+    const targetId = slotOfferReviewPreview.bookedAppointmentId;
+    return (
+      rawAppointments.find((a) => schedulerAppointmentIdsEqual(a.id, targetId)) ??
+      calendarAppointments.find((a) => schedulerAppointmentIdsEqual(a.id, targetId)) ??
+      null
+    );
+  }, [slotOfferReviewPreview, rawAppointments, calendarAppointments]);
+
+  const [slotOfferReviewApptResolved, setSlotOfferReviewApptResolved] = useState<Appointment | null>(
+    null,
+  );
+
+  useEffect(() => {
+    if (!slotOfferReviewPreview) {
+      setSlotOfferReviewApptResolved(null);
+      return;
+    }
+    if (slotOfferReviewAppt) {
+      setSlotOfferReviewApptResolved(slotOfferReviewAppt);
+      return;
+    }
+    let cancelled = false;
+    void fetchAppointmentById(slotOfferReviewPreview.bookedAppointmentId, {
+      practiceId: PRACTICE_ID,
+    }).then((appt) => {
+      if (!cancelled && appt) setSlotOfferReviewApptResolved(appt);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [slotOfferReviewPreview, slotOfferReviewAppt]);
+
+  const slotOfferReviewApptForPopover = slotOfferReviewApptResolved ?? slotOfferReviewAppt;
+
+  const [slotOfferReviewAnchorRect, setSlotOfferReviewAnchorRect] = useState<HoverAnchorRect | null>(
+    null,
+  );
+  const [slotOfferReviewDayColumnRect, setSlotOfferReviewDayColumnRect] =
+    useState<HoverAnchorRect | null>(null);
+
+  const refreshSlotOfferReviewAnchor = useCallback(() => {
+    const apptId = slotOfferReviewPreview?.bookedAppointmentId;
+    if (apptId == null) {
+      setSlotOfferReviewAnchorRect(null);
+      setSlotOfferReviewDayColumnRect(null);
+      return;
+    }
+    const slotEl = document.querySelector(`[data-appt-id="${CSS.escape(String(apptId))}"]`);
+    const columnEl = slotEl instanceof HTMLElement ? slotEl.closest('.scheduler-day-col') : null;
+    setSlotOfferReviewAnchorRect(rectFromElement(slotEl instanceof HTMLElement ? slotEl : null));
+    setSlotOfferReviewDayColumnRect(
+      rectFromElement(columnEl instanceof HTMLElement ? columnEl : null),
+    );
+  }, [slotOfferReviewPreview?.bookedAppointmentId]);
+
+  useLayoutEffect(() => {
+    if (!slotOfferReviewPreview) {
+      setSlotOfferReviewAnchorRect(null);
+      setSlotOfferReviewDayColumnRect(null);
+      return;
+    }
+    refreshSlotOfferReviewAnchor();
+    const onScrollOrResize = () => refreshSlotOfferReviewAnchor();
+    window.addEventListener('resize', onScrollOrResize);
+    window.addEventListener('scroll', onScrollOrResize, true);
+    const raf = requestAnimationFrame(refreshSlotOfferReviewAnchor);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener('resize', onScrollOrResize);
+      window.removeEventListener('scroll', onScrollOrResize, true);
+    };
+  }, [
+    slotOfferReviewPreview,
+    slotOfferReviewApptForPopover?.id,
+    slotOfferReviewApptForPopover?.appointmentStart,
+    loading,
+    showTimeGrid,
+    refreshSlotOfferReviewAnchor,
+  ]);
+
+  useEffect(() => {
+    if (!slotOfferReviewPreview || slotOfferReviewAnchorRect) return;
+    if (!showTimeGrid) return;
+    let attempts = 0;
+    const tick = () => {
+      attempts += 1;
+      refreshSlotOfferReviewAnchor();
+    };
+    tick();
+    const id = window.setInterval(() => {
+      if (attempts >= 24) {
+        window.clearInterval(id);
+        return;
+      }
+      tick();
+    }, 100);
+    return () => window.clearInterval(id);
+  }, [
+    slotOfferReviewPreview,
+    slotOfferReviewAnchorRect,
+    loading,
+    showTimeGrid,
+    refreshSlotOfferReviewAnchor,
+  ]);
+
+  const slotOfferReviewPopoverPos = useMemo(() => {
+    if (!slotOfferReviewPreview) return null;
+    const vwW = typeof window !== 'undefined' ? window.innerWidth : 1200;
+    const vwH = typeof window !== 'undefined' ? window.innerHeight : 800;
+    const cardW = 380;
+    const cardEstH = 420;
+    if (slotOfferReviewAnchorRect) {
+      return computeEditPreviewPopoverPosition({
+        slotAnchor: slotOfferReviewAnchorRect,
+        dayColumnAnchor: slotOfferReviewDayColumnRect,
+        vwW,
+        vwH,
+        cardW,
+        cardEstH,
+        padding: 12,
+        gutter: 10,
+      });
+    }
+    return fallbackEditPreviewPopoverPosition({ vwW, vwH, cardW, cardEstH, padding: 12 });
+  }, [slotOfferReviewPreview, slotOfferReviewAnchorRect, slotOfferReviewDayColumnRect]);
 
   /** Scroll to the proposed slot once per routing preview candidate (after grid paint). */
   const routingPreviewScrollSigRef = useRef<string>('');
@@ -6043,6 +6469,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           : FORWARD_BOOKING_LIST_PATH;
     const finishDismiss = () => {
       dismissRoutingForwardBookingWorkspace();
+      setRoutingPreview(null);
       setForwardBookingIntentTick((n) => n + 1);
       setBookSlot(null);
       setBookPrefill(null);
@@ -6375,6 +6802,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       rescheduleAppointmentIds: isReschedule && rescheduleIds.length > 0 ? rescheduleIds : undefined,
       rescheduleVisitPatches:
         isReschedule && rescheduleVisitPatches?.length ? rescheduleVisitPatches : undefined,
+      ...(isReschedule && ri?.exploreAlternatives ? { exploreAlternatives: true } : {}),
       preferredPatientId:
         routingPreview.reschedulePatientId?.trim() || ri?.patientId || fbi?.patientId || ari?.patientId,
       routingPreviewBook: !isReschedule,
@@ -6383,7 +6811,11 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       providerId:
         routingSlotProviderId ??
         (isReschedule ? ri?.primaryProviderInternalId?.trim() : undefined),
-      modalTitle: isReschedule ? 'Reschedule appointment' : undefined,
+      modalTitle: isReschedule
+        ? ri?.exploreAlternatives
+          ? 'Add Alternative Appointment'
+          : 'Reschedule appointment'
+        : undefined,
       defaultInstructions: isReschedule
         ? rescheduleSourceAppt?.instructions?.trim()
         : undefined,
@@ -6443,6 +6875,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       return;
     }
     if (fbi?.origin === 'care_outreach') {
+      if (fbi.careOutreachClientKey) writeCareOutreachFocusClient(fbi.careOutreachClientKey);
       navigate(CARE_OUTREACH_LIST_PATH);
       return;
     }
@@ -6486,31 +6919,256 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     [clearEditVisitHighlightTimer]
   );
 
+  const focusHouseholdConflictOnCalendar = useCallback(
+    (
+      conflict: HouseholdScheduledVisitConflict,
+      options?: { pinHighlight?: boolean },
+    ) => {
+      if (conflict.practiceDateKey) {
+        setAnchorDate(conflict.practiceDateKey);
+        setView('week');
+      }
+      const providerId = conflict.primaryProviderId?.trim();
+      if (providerId && providers.some((p) => String(p.id) === providerId)) {
+        setProviderFilter(providerId);
+      }
+      calendarFocusActiveRef.current = true;
+      setPendingFocusHighlightApptId(conflict.appointmentId);
+      if (options?.pinHighlight) {
+        householdVisitHighlightPinnedRef.current = true;
+        clearEditVisitHighlightTimer();
+      }
+      pulseEditVisitHighlight(
+        conflict.appointmentId,
+        options?.pinHighlight ? 86_400_000 : 8000,
+      );
+    },
+    [providers, pulseEditVisitHighlight, clearEditVisitHighlightTimer],
+  );
+
+  useEffect(() => {
+    if (!embedInRoutingWorkspace) return;
+    const onFocusHouseholdVisit = (event: Event) => {
+      const parsed = parseRoutingFocusHouseholdVisitEvent(event);
+      if (!parsed?.conflict?.appointmentId) return;
+      focusHouseholdConflictOnCalendar(parsed.conflict, {
+        pinHighlight: parsed.pinHighlight,
+      });
+    };
+    window.addEventListener(ROUTING_FOCUS_HOUSEHOLD_VISIT_EVENT, onFocusHouseholdVisit);
+    return () =>
+      window.removeEventListener(ROUTING_FOCUS_HOUSEHOLD_VISIT_EVENT, onFocusHouseholdVisit);
+  }, [embedInRoutingWorkspace, focusHouseholdConflictOnCalendar]);
+
+  useEffect(() => {
+    if (!embedInRoutingWorkspace) return;
+    const onUnpinHouseholdVisitHighlight = () => {
+      householdVisitHighlightPinnedRef.current = false;
+      if (editVisitHighlightIds.size > 0) {
+        editVisitHighlightDurationMsRef.current = 12_000;
+        startEditVisitHighlightClearTimer(12_000);
+      }
+    };
+    window.addEventListener(
+      ROUTING_HOUSEHOLD_VISIT_FOCUS_UNPIN_EVENT,
+      onUnpinHouseholdVisitHighlight,
+    );
+    return () =>
+      window.removeEventListener(
+        ROUTING_HOUSEHOLD_VISIT_FOCUS_UNPIN_EVENT,
+        onUnpinHouseholdVisitHighlight,
+      );
+  }, [embedInRoutingWorkspace, editVisitHighlightIds.size, startEditVisitHighlightClearTimer]);
+
   const confirmManualBookFromPreview = useCallback(async () => {
     const draft = routingPreview?.manualBookDraft;
     if (!draft) {
       setToast('Manual book preview is missing form data.');
       return;
     }
+    // Ref guard — React state alone races on double-click Book.
+    if (manualBookPreviewCommittingRef.current) return;
+
+    const catalog = buildBookingAppointmentTypeCatalog(typeList);
+    const clientId = draft.clientId?.trim();
+    // Co-visit add-pet already sits with household pets on purpose — skip the other-day warning
+    // gate the form skips for the same flow (avoids a second Book click after the modal).
+    if (
+      !draft.coVisitAddPet &&
+      !manualBookHouseholdBypassRef.current &&
+      clientId &&
+      shouldWarnHouseholdVisitsOnBook({
+        catalog,
+        appointmentTypeIds: [draft.appointmentTypeId],
+        clientId,
+      })
+    ) {
+      manualBookPreviewCommittingRef.current = true;
+      setManualBookPreviewCommitting(true);
+      try {
+        const conflicts = await findHouseholdScheduledVisitConflicts({
+          practiceId: draft.practiceId,
+          clientId,
+          placementStartIso: draft.appointmentStartIso,
+          practiceTz: PRACTICE_TZ,
+          catalog,
+          bookingPatientIds: draft.patientId?.trim() ? [draft.patientId.trim()] : [],
+        });
+        if (conflicts.length > 0) {
+          setManualBookHouseholdConflicts(conflicts);
+          return;
+        }
+      } finally {
+        manualBookPreviewCommittingRef.current = false;
+        setManualBookPreviewCommitting(false);
+      }
+    }
+
+    const euthanasiaType = typeList.find((t) => Number(t.id) === Number(draft.appointmentTypeId));
+    const alreadyChoseEuthanasia =
+      draft.euthanasiaDeleteFutureAppointments === true ||
+      manualBookEuthanasiaChoiceRef.current != null;
+    if (
+      !alreadyChoseEuthanasia &&
+      draft.patientId?.trim() &&
+      isEuthanasiaAppointmentType(euthanasiaType)
+    ) {
+      manualBookPreviewCommittingRef.current = true;
+      setManualBookPreviewCommitting(true);
+      try {
+        const futureRows = await findFutureAppointmentsForPatients({
+          practiceId: draft.practiceId,
+          practiceTz: PRACTICE_TZ,
+          patients: [
+            {
+              patientId: draft.patientId.trim(),
+              patientName: draft.patientLabel?.trim() || null,
+            },
+          ],
+          asOfIso: draft.appointmentStartIso,
+        });
+        if (futureRows.length > 0) {
+          pendingManualBookEuthanasiaDeletesRef.current = futureRows;
+          setManualBookEuthanasiaFutureRows(futureRows);
+          return;
+        }
+      } finally {
+        manualBookPreviewCommittingRef.current = false;
+        setManualBookPreviewCommitting(false);
+      }
+    }
+
+    // Past all pre-commit warning gates — clear one-shot bypass for the next book attempt.
+    manualBookHouseholdBypassRef.current = false;
+    const euthanasiaChoice =
+      draft.euthanasiaDeleteFutureAppointments === true
+        ? 'delete'
+        : manualBookEuthanasiaChoiceRef.current;
+    manualBookEuthanasiaChoiceRef.current = null;
+    let euthanasiaRowsToDelete: EuthanasiaFutureAppointmentRow[] | null =
+      euthanasiaChoice === 'delete' ? pendingManualBookEuthanasiaDeletesRef.current : null;
+    pendingManualBookEuthanasiaDeletesRef.current = null;
+    setManualBookEuthanasiaFutureRows(null);
+    if (
+      euthanasiaChoice === 'delete' &&
+      (!euthanasiaRowsToDelete || euthanasiaRowsToDelete.length === 0) &&
+      draft.patientId?.trim()
+    ) {
+      euthanasiaRowsToDelete = await findFutureAppointmentsForPatients({
+        practiceId: draft.practiceId,
+        practiceTz: PRACTICE_TZ,
+        patients: [
+          {
+            patientId: draft.patientId.trim(),
+            patientName: draft.patientLabel?.trim() || null,
+          },
+        ],
+        asOfIso: draft.appointmentStartIso,
+      });
+    }
+
+    manualBookPreviewCommittingRef.current = true;
     setManualBookPreviewCommitting(true);
+    const draftSnapshot = { ...draft };
+    setManualBookHouseholdConflicts(null);
     try {
-      const savedId = await commitManualBookPreviewDraft(draft, {
+      // Older/in-flight co-visit previews may have used the anchor ALT address for routing without
+      // persisting it in the draft. Commit must inherit that address too or the saved pet routes
+      // back to client home after refresh.
+      const coVisitAnchorId = Number(draftSnapshot.coVisitAnchorAppointmentId);
+      const coVisitAnchor =
+        draftSnapshot.coVisitAddPet && Number.isFinite(coVisitAnchorId) && coVisitAnchorId > 0
+          ? rawAppointments.find((a) => Number(a.id) === coVisitAnchorId)
+          : undefined;
+      const inheritedAlt =
+        draftSnapshot.alternateAddressText?.trim() ||
+        (coVisitAnchor ? appointmentAlternateAddressText(coVisitAnchor)?.trim() : '') ||
+        '';
+      const commitDraft =
+        inheritedAlt && !draftSnapshot.alternateAddressText?.trim()
+          ? { ...draftSnapshot, alternateAddressText: inheritedAlt }
+          : draftSnapshot;
+
+      const savedId = await commitManualBookPreviewDraft(commitDraft, {
         providers,
         practiceTz: PRACTICE_TZ,
         token: authToken,
         userEmail: authUserEmail,
         doctorId: authDoctorId,
         appointmentTypes: typeList,
+        existingAppointments: rawAppointments,
       });
+
+      let euthanasiaCancelHadErrors = false;
+      if (euthanasiaRowsToDelete?.length) {
+        const cancelResult = await cancelEuthanasiaFutureAppointments({
+          rows: euthanasiaRowsToDelete,
+          practiceId: draftSnapshot.practiceId,
+        });
+        if (cancelResult.errors.length > 0) {
+          euthanasiaCancelHadErrors = true;
+          setToast(
+            cancelResult.cancelledIds.length > 0
+              ? `Appointment saved. Removed ${cancelResult.cancelledIds.length} future visit(s), but ${cancelResult.errors.length} could not be cancelled.`
+              : `Appointment saved, but future appointments could not be cancelled. ${cancelResult.errors[0]}`,
+          );
+        }
+      }
+
+      // Dismiss preview only after a successful create (failed Book used to leave a blank calendar).
       clearRoutingCalendarPreview();
       setRoutingPreview(null);
+      const alignIds = (draftSnapshot.coVisitAlignAppointmentIds ?? [])
+        .map((id) => Number(id))
+        .filter((id) => Number.isFinite(id) && id > 0);
+      if (alignIds.length > 0) {
+        const siblings = rawAppointments.filter((a) => alignIds.includes(Number(a.id)));
+        if (siblings.length > 0) {
+          await alignSiblingVisitScheduledTimes({
+            siblings,
+            startIso: draftSnapshot.appointmentStartIso,
+            endIso: draftSnapshot.appointmentEndIso,
+            practiceId: draftSnapshot.practiceId,
+          });
+        }
+      }
       await loadRange({ refreshDrive: true });
-      pulseEditVisitHighlight(savedId, 5000);
-      setToast('Appointment saved to the schedule.');
+      pulseEditVisitHighlight(
+        alignIds.length > 0 ? [savedId, ...alignIds] : savedId,
+        5000
+      );
+      if (!euthanasiaCancelHadErrors) {
+        setToast(
+          alignIds.length > 0
+            ? `Appointment saved · aligned ${alignIds.length + 1} household pets.`
+            : 'Appointment saved to the schedule.',
+        );
+      }
     } catch (e) {
       console.error(e);
       setToast(extractHttpErrorMessage(e) || 'Could not book appointment.');
     } finally {
+      manualBookPreviewCommittingRef.current = false;
       setManualBookPreviewCommitting(false);
     }
   }, [
@@ -6522,6 +7180,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     authDoctorId,
     loadRange,
     pulseEditVisitHighlight,
+    rawAppointments,
   ]);
 
   const handleSchedulerBooked = useCallback(
@@ -6529,15 +7188,21 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       routingFeedbackWarning?: string;
       forwardBookingWarning?: string;
       appointmentRequestWarning?: string;
+      euthanasiaFutureWarning?: string;
       schedulingOverrideWarning?: string;
       schedulingOverridesApplied?: boolean;
       savedAppointmentId?: number;
       primaryProviderId?: string;
       anchorDate?: string;
       bookedAppointmentTypeId?: number;
+      exploreAlternatives?: boolean;
+      exploreSourceAppointmentIds?: number[];
+      exploreCreatedAppointmentIds?: number[];
+      exploreCreatedAppointmentTypeId?: number;
     }) => {
       const prefillAtBook = bookPrefill;
       const wasReschedule = prefillAtBook?.rescheduleAppointmentId != null;
+      const wasExplore = Boolean(detail?.exploreAlternatives);
       const previewAtBook = routingPreview ?? readRoutingCalendarPreview();
       const wasForwardBooking = prefillAtBook?.forwardBookingTrackingToken != null;
       const wasAppointmentRequest = prefillAtBook?.appointmentRequestSubmissionId != null;
@@ -6630,6 +7295,18 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           typeName: bookTypeName,
         });
         if (startIso) {
+          const forwardBookingPetNames = forwardBookingBookedPatientNames({
+            forwardBookingVisitCompletes: prefillAtBook?.forwardBookingVisitCompletes,
+            intent: fbiAtBook,
+          });
+          const forwardBookingEntryIds =
+            prefillAtBook?.forwardBookingVisitCompletes?.length
+              ? prefillAtBook.forwardBookingVisitCompletes.map((row) =>
+                  Number(row.forwardBookingEntryId),
+                )
+              : prefillAtBook?.forwardBookingEntryId != null
+                ? [Number(prefillAtBook.forwardBookingEntryId)]
+                : undefined;
           writeForwardBookingReturnSession({
             forwardBookingEntryId: Number(prefillAtBook!.forwardBookingEntryId),
             bookedAppointmentId: savedId!,
@@ -6638,6 +7315,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             targetWorkflowTab: isHold ? 'onHold' : 'booked',
             returnOrigin:
               fbiAtBook?.origin === 'care_outreach' ? 'care_outreach' : 'forward_booking',
+            ...(forwardBookingEntryIds?.length ? { forwardBookingEntryIds } : {}),
+            ...(forwardBookingPetNames.length ? { forwardBookingPetNames } : {}),
             ...(fbiAtBook?.origin === 'care_outreach'
               ? {
                   smsTemplate: 'care_outreach' as const,
@@ -6677,6 +7356,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         clearRoutingForwardBookingIntent();
         clearRoutingCalendarPreview();
         const warning =
+          detail?.euthanasiaFutureWarning ??
           detail?.forwardBookingWarning ??
           detail?.routingFeedbackWarning ??
           detail?.schedulingOverrideWarning;
@@ -6738,6 +7418,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         clearRoutingAppointmentRequestIntent();
         clearRoutingCalendarPreview();
         const warn =
+          detail?.euthanasiaFutureWarning ??
           detail?.appointmentRequestWarning ??
           detail?.forwardBookingWarning ??
           detail?.routingFeedbackWarning ??
@@ -6802,6 +7483,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         }
       }
       const warning =
+        detail?.euthanasiaFutureWarning ??
         detail?.schedulingOverrideWarning ??
         detail?.appointmentRequestWarning ??
         detail?.forwardBookingWarning ??
@@ -6817,10 +7499,89 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       } else {
         toastDismissMsRef.current = 6000;
         setToast(
-          wasReschedule
-            ? 'Appointment rescheduled.'
-            : 'Appointment saved to the schedule.'
+          wasExplore
+            ? 'Alternative appointment added — the original is still booked.'
+            : wasReschedule
+              ? 'Appointment rescheduled.'
+              : 'Appointment saved to the schedule.'
         );
+      }
+
+      if (wasExplore && savedId != null && Number.isFinite(savedId) && savedId > 0) {
+        const sourceIdsRaw = detail?.exploreSourceAppointmentIds ?? [];
+        const createdIdsRaw =
+          detail?.exploreCreatedAppointmentIds?.length
+            ? detail.exploreCreatedAppointmentIds
+            : [savedId];
+
+        /** Expand single-pet anchors to the full multi-pet visit so Hold conversion covers every pet. */
+        const expandVisitClumpIds = (ids: number[]): number[] => {
+          const out = new Set<number>();
+          for (const id of ids) {
+            if (!Number.isFinite(id) || id <= 0) continue;
+            const anchor = rawAppointments.find((a) => Number(a.id) === Number(id));
+            const clump = householdAppointmentIdsInVisitClump(
+              anchor,
+              rawAppointments,
+              PRACTICE_TZ
+            );
+            if (clump.length > 0) {
+              for (const cid of clump) out.add(cid);
+            } else {
+              out.add(id);
+            }
+          }
+          return [...out];
+        };
+
+        const sourceIds = expandVisitClumpIds(sourceIdsRaw);
+        // Newly created rows may not be in range state yet — keep book-modal ids + any clump mates we can resolve.
+        const createdIdSet = new Set([
+          ...expandVisitClumpIds(createdIdsRaw),
+          ...createdIdsRaw.filter((id) => Number.isFinite(id) && id > 0),
+        ]);
+
+        const newTypeId =
+          detail?.exploreCreatedAppointmentTypeId ??
+          detail?.bookedAppointmentTypeId ??
+          prefillAtBook?.appointmentTypeId;
+        const newTypeRow =
+          newTypeId != null ? typeList.find((t) => Number(t.id) === Number(newTypeId)) : undefined;
+        const newIsHold = isHoldAppointmentTypeForBook(typeCatalog, {
+          typeId: newTypeId,
+          typeName: newTypeRow?.name?.trim() || newTypeRow?.prettyName?.trim() || null,
+        });
+
+        const appointmentNeedsHold = (id: number): boolean => {
+          if (createdIdSet.has(id)) {
+            // Same type was used for each created alternative in the book loop.
+            return !newIsHold;
+          }
+          const src = rawAppointments.find((a) => Number(a.id) === Number(id));
+          const patch = prefillAtBook?.rescheduleVisitPatches?.find(
+            (p) => Number(p.appointmentId) === Number(id)
+          );
+          const typeId = src?.appointmentType?.id ?? patch?.appointmentTypeId ?? null;
+          const typeName =
+            src?.appointmentType?.name?.trim() ||
+            src?.appointmentType?.prettyName?.trim() ||
+            null;
+          // Only flag sources we can classify; unknown → leave alone.
+          if (typeId == null && !typeName) return false;
+          return !isHoldAppointmentTypeForBook(typeCatalog, { typeId, typeName });
+        };
+
+        const nonHoldSourceIds = sourceIds.filter(appointmentNeedsHold);
+        const nonHoldCreatedIds = [...createdIdSet].filter(appointmentNeedsHold);
+        const nonHoldIds = [...new Set([...nonHoldSourceIds, ...nonHoldCreatedIds])];
+        if (nonHoldIds.length > 0 && holdAppointmentTypes.length > 0) {
+          setExploreHoldPrompt({
+            newAppointmentId: savedId,
+            sourceNeedsHold: nonHoldSourceIds.length > 0,
+            newNeedsHold: nonHoldCreatedIds.length > 0,
+            nonHoldAppointmentIds: nonHoldIds,
+          });
+        }
       }
     },
     [
@@ -6843,6 +7604,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       view,
       typeList,
       typeCatalog,
+      rawAppointments,
+      holdAppointmentTypes,
     ]
   );
 
@@ -6850,6 +7613,28 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     toastDismissMsRef.current = dismissMs;
     setToast(msg);
   }, []);
+
+  const convertExploreHoldTypes = useCallback(
+    async (holdTypeId: number) => {
+      const prompt = exploreHoldPrompt;
+      if (!prompt || convertingExploreHold) return;
+      setConvertingExploreHold(true);
+      try {
+        for (const id of prompt.nonHoldAppointmentIds) {
+          await patchAppointment(id, { appointmentTypeId: holdTypeId });
+        }
+        setExploreHoldPrompt(null);
+        await loadRange({ refreshDrive: true });
+        const n = prompt.nonHoldAppointmentIds.length;
+        showToast(n === 1 ? 'Appointment is on hold.' : `All ${n} appointments are on hold.`);
+      } catch {
+        showToast('Could not change the appointment type — please update it manually.');
+      } finally {
+        setConvertingExploreHold(false);
+      }
+    },
+    [exploreHoldPrompt, convertingExploreHold, loadRange, showToast]
+  );
 
   const mergeStaffConfirmAppointmentUpdates = useCallback(
     (updated: Appointment[]) => {
@@ -6960,6 +7745,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   ]);
 
   const dismissStaffConfirmPreview = useCallback(() => {
+    const returnPath = staffConfirmPreview?.returnPath?.trim() || null;
     staffConfirmTypesAppliedRef.current = null;
     clearAppointmentRequestStaffConfirmSession();
     setStaffConfirmPreview(null);
@@ -6967,9 +7753,14 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     setStaffConfirmEditing(false);
     setStaffConfirmEditingApptId(null);
     setStaffConfirmLinkSelection(null);
+    setEditVisitPatientSelection(null);
     if (returnFromSchedulerFocusToGmail(navigate)) return;
+    if (returnPath) {
+      navigate(returnPath);
+      return;
+    }
     returnToAppointmentRequestsList(navigate, 'to_confirm');
-  }, [navigate]);
+  }, [navigate, staffConfirmPreview?.returnPath]);
 
   useEffect(() => {
     if (!staffConfirmPreview || staffConfirmPreviewConfirming || staffConfirmEditing) return;
@@ -7000,29 +7791,36 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   ]);
 
   const handleStaffConfirmEditSaved = useCallback(
-    (updated?: Appointment) => {
+    (updated?: Appointment, detail?: { alignedAppointments?: Appointment[] }) => {
       const preview = staffConfirmPreview;
-      if (updated?.id != null) {
-        const highlightTargets = householdAppointmentIdsInVisitClump(
-          updated,
-          calendarApptsForHouseholdLookup,
-          PRACTICE_TZ,
-        );
-        pulseEditVisitHighlight(
-          highlightTargets.length > 0 ? highlightTargets : Number(updated.id),
-        );
+      if (updated?.id != null || (detail?.alignedAppointments?.length ?? 0) > 0) {
+        if (updated?.id != null) {
+          const highlightTargets = householdAppointmentIdsInVisitClump(
+            updated,
+            calendarApptsForHouseholdLookup,
+            PRACTICE_TZ,
+          );
+          pulseEditVisitHighlight(
+            highlightTargets.length > 0 ? highlightTargets : Number(updated.id),
+          );
+        }
         setRawAppointments((prev) => {
-          const idx = prev.findIndex((a) => a.id === updated.id);
-          if (idx === -1) return prev;
           const next = [...prev];
-          next[idx] = { ...next[idx], ...updated };
+          const apply = (row: Appointment) => {
+            const idx = next.findIndex((a) => a.id === row.id);
+            if (idx === -1) return;
+            next[idx] = { ...next[idx], ...row };
+          };
+          if (updated?.id != null) apply(updated);
+          for (const row of detail?.alignedAppointments ?? []) apply(row);
           return next;
         });
-        setStaffConfirmApptResolved(updated);
+        if (updated) setStaffConfirmApptResolved(updated);
       }
       staffConfirmTypesAppliedRef.current = null;
       setStaffConfirmEditing(false);
       setStaffConfirmEditingApptId(null);
+      setEditVisitPatientSelection(null);
       void loadRange({ refreshDrive: true });
 
       if (!preview || !updated) return;
@@ -7054,6 +7852,32 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         if (exitKind === 'booked' || exitKind === 'removed') {
           await clearApptRequestGmailOnHoldLabel({ submissionId: preview.submissionId });
         }
+
+        if (
+          preview.returnPath &&
+          isHoldsBoardReturnPath(preview.returnPath) &&
+          (exitKind === 'booked' || exitKind === 'removed')
+        ) {
+          const appointmentIds = refreshedHousehold
+            .map((a) => Number(a.id))
+            .filter((id) => Number.isFinite(id) && id > 0);
+          writeHoldsBoardReturnSession({
+            appointmentIds:
+              appointmentIds.length > 0 ? appointmentIds : [preview.bookedAppointmentId],
+            exitKind: exitKind === 'removed' ? 'removed' : 'booked',
+            clientLabel: preview.clientLabel,
+          });
+          staffConfirmTypesAppliedRef.current = null;
+          clearAppointmentRequestStaffConfirmSession();
+          setStaffConfirmPreview(null);
+          setStaffConfirmPreviewError(null);
+          setStaffConfirmEditing(false);
+          setStaffConfirmEditingApptId(null);
+          setStaffConfirmLinkSelection(null);
+          setEditVisitPatientSelection(null);
+          notifySchedulingToolsNavCountsRefresh();
+          navigate(preview.returnPath);
+        }
       })();
     },
     [
@@ -7063,11 +7887,13 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       staffConfirmPreview,
       staffConfirmHouseholdAppts,
       typeCatalog,
+      navigate,
     ],
   );
 
   const handleStaffConfirmEditPet = useCallback((appointmentId: number) => {
     setStaffConfirmLinkSelection(null);
+    setEditVisitPatientSelection(null);
     setStaffConfirmEditingApptId(appointmentId);
     setStaffConfirmEditing(true);
   }, []);
@@ -7075,6 +7901,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   const handleStaffConfirmEdit = useCallback(() => {
     if (staffConfirmHouseholdEditChoices.length > 1) return;
     setStaffConfirmLinkSelection(null);
+    setEditVisitPatientSelection(null);
     const only = staffConfirmHouseholdEditChoices[0];
     setStaffConfirmEditingApptId(only?.appointmentId ?? staffConfirmPreview?.bookedAppointmentId ?? null);
     setStaffConfirmEditing(true);
@@ -7145,13 +7972,30 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         confirm: true,
       });
       staffConfirmTypesAppliedRef.current = null;
-      writeAppointmentRequestStaffConfirmReturnSession({
-        submissionId: staffConfirmPreview.submissionId,
-      });
+      const returnPath = staffConfirmPreview.returnPath?.trim() || null;
+      const submissionId = staffConfirmPreview.submissionId;
+      const bookedAppointmentId = staffConfirmPreview.bookedAppointmentId;
+      const confirmClientLabel = staffConfirmPreview.clientLabel;
+      const appointmentIds = apptsAfterUpdate
+        .map((a) => Number(a.id))
+        .filter((id) => Number.isFinite(id) && id > 0);
       clearAppointmentRequestStaffConfirmSession();
       setStaffConfirmPreview(null);
       notifySchedulingToolsNavCountsRefresh();
       if (returnFromSchedulerFocusToGmail(navigate)) return;
+      if (returnPath && isHoldsBoardReturnPath(returnPath)) {
+        writeHoldsBoardReturnSession({
+          appointmentIds:
+            appointmentIds.length > 0 ? appointmentIds : [bookedAppointmentId],
+          exitKind: 'booked',
+          clientLabel: confirmClientLabel,
+        });
+        navigate(returnPath);
+        return;
+      }
+      writeAppointmentRequestStaffConfirmReturnSession({
+        submissionId,
+      });
       returnToAppointmentRequestsList(navigate, 'to_confirm');
     } catch (e: unknown) {
       const msg =
@@ -7185,8 +8029,76 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     setOnHoldVisitEditing(false);
     setOnHoldVisitEditingApptId(null);
     setOnHoldVisitLinkSelection(null);
+    setEditVisitPatientSelection(null);
+    setOnHoldVisitRemoveConfirming(false);
+    setOnHoldVisitRemoveError(null);
     navigate(returnPath);
   }, [navigate, onHoldVisitPreview, clearEditVisitHighlightTimer]);
+
+  const confirmOnHoldVisitRemove = useCallback(
+    async (reason: string) => {
+      const preview = onHoldVisitPreview;
+      if (!preview || preview.flowIntent !== 'remove') return;
+      const trimmed = reason.trim();
+      if (!trimmed) return;
+      const ids =
+        preview.removeAppointmentIds && preview.removeAppointmentIds.length > 0
+          ? preview.removeAppointmentIds
+          : [preview.bookedAppointmentId];
+      setOnHoldVisitRemoveConfirming(true);
+      setOnHoldVisitRemoveError(null);
+      try {
+        for (const id of ids) {
+          await cancelAppointment(
+            id,
+            { cancellationFlag: true, cancellationReason: trimmed },
+            { practiceId: PRACTICE_ID },
+          );
+        }
+        if (preview.listKind === 'appointment_request') {
+          await clearApptRequestGmailOnHoldLabel({ submissionId: preview.listEntryId });
+        }
+        if (isHoldsBoardReturnPath(preview.returnPath)) {
+          writeHoldsBoardReturnSession({
+            appointmentIds: ids,
+            exitKind: 'removed',
+            clientLabel: preview.clientLabel,
+            groupKey: preview.groupKey,
+            snapshotAppointmentStart: onHoldVisitApptForPopover?.appointmentStart ?? null,
+          });
+        } else {
+          writeOnHoldVisitEditReturnSession({
+            listEntryId: preview.listEntryId,
+            listKind: preview.listKind,
+            exitKind: 'removed',
+          });
+        }
+        clearOnHoldVisitEditSession();
+        clearSchedulerFocusSession();
+        clearEditVisitHighlightTimer();
+        setEditVisitHighlightIds(new Set());
+        setOnHoldVisitPreview(null);
+        setOnHoldVisitConvertedExitKind(null);
+        setOnHoldVisitEditing(false);
+        setOnHoldVisitEditingApptId(null);
+        setOnHoldVisitLinkSelection(null);
+        setEditVisitPatientSelection(null);
+        setOnHoldVisitRemoveConfirming(false);
+        setOnHoldVisitRemoveError(null);
+        notifySchedulingToolsNavCountsRefresh();
+        navigate(preview.returnPath);
+      } catch (e: unknown) {
+        const msg =
+          (e as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+          (e as Error)?.message ??
+          'Could not remove this hold.';
+        setOnHoldVisitRemoveError(String(msg));
+      } finally {
+        setOnHoldVisitRemoveConfirming(false);
+      }
+    },
+    [onHoldVisitPreview, onHoldVisitApptForPopover, clearEditVisitHighlightTimer, navigate],
+  );
 
   const completeOnHoldVisitReturn = useCallback(() => {
     const preview = onHoldVisitPreview;
@@ -7195,11 +8107,25 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       dismissOnHoldVisitPreview();
       return;
     }
-    writeOnHoldVisitEditReturnSession({
-      listEntryId: preview.listEntryId,
-      listKind: preview.listKind,
-      exitKind,
-    });
+    if (isHoldsBoardReturnPath(preview.returnPath)) {
+      const householdIds = onHoldVisitHouseholdAppts
+        .map((a) => Number(a.id))
+        .filter((id) => Number.isFinite(id) && id > 0);
+      writeHoldsBoardReturnSession({
+        appointmentIds:
+          householdIds.length > 0 ? householdIds : [preview.bookedAppointmentId],
+        exitKind: exitKind === 'removed' ? 'removed' : 'booked',
+        clientLabel: preview.clientLabel,
+        groupKey: preview.groupKey,
+        snapshotAppointmentStart: onHoldVisitApptForPopover?.appointmentStart ?? null,
+      });
+    } else {
+      writeOnHoldVisitEditReturnSession({
+        listEntryId: preview.listEntryId,
+        listKind: preview.listKind,
+        exitKind,
+      });
+    }
     clearOnHoldVisitEditSession();
     clearEditVisitHighlightTimer();
     setEditVisitHighlightIds(new Set());
@@ -7208,11 +8134,14 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     setOnHoldVisitEditing(false);
     setOnHoldVisitEditingApptId(null);
     setOnHoldVisitLinkSelection(null);
+    setEditVisitPatientSelection(null);
     notifySchedulingToolsNavCountsRefresh();
     navigate(preview.returnPath);
   }, [
     onHoldVisitPreview,
     onHoldVisitConvertedExitKind,
+    onHoldVisitHouseholdAppts,
+    onHoldVisitApptForPopover,
     dismissOnHoldVisitPreview,
     clearEditVisitHighlightTimer,
     navigate,
@@ -7227,6 +8156,44 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     setNotBookedRemoveGate(null);
     if (returnPath) navigate(returnPath);
   }, [notBookedRemoveGate, navigate, clearEditVisitHighlightTimer]);
+
+  const dismissSlotOfferReview = useCallback(() => {
+    const returnPath = slotOfferReviewPreview?.returnPath ?? TEXTED_OFFERS_TO_REVIEW_PATH;
+    clearSlotOfferReviewSession();
+    clearSchedulerFocusSession();
+    clearEditVisitHighlightTimer();
+    setEditVisitHighlightIds(new Set());
+    setSlotOfferReviewPreview(null);
+    setSlotOfferReviewError(null);
+    navigate(returnPath);
+  }, [navigate, slotOfferReviewPreview, clearEditVisitHighlightTimer]);
+
+  const confirmSlotOfferReview = useCallback(async () => {
+    const preview = slotOfferReviewPreview;
+    if (!preview || slotOfferReviewConfirming) return;
+    setSlotOfferReviewConfirming(true);
+    setSlotOfferReviewError(null);
+    try {
+      await confirmSlotOffer(preview.offerId, PRACTICE_ID);
+      writeSlotOfferReviewReturnSession(preview.offerId);
+      clearSlotOfferReviewSession();
+      clearSchedulerFocusSession();
+      clearEditVisitHighlightTimer();
+      setEditVisitHighlightIds(new Set());
+      setSlotOfferReviewPreview(null);
+      setSlotOfferReviewError(null);
+      notifySchedulingToolsNavCountsRefresh();
+      navigate(preview.returnPath);
+    } catch (e: unknown) {
+      const msg =
+        (e as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+        (e as Error)?.message ??
+        'Could not mark this offer reviewed.';
+      setSlotOfferReviewError(String(msg));
+    } finally {
+      setSlotOfferReviewConfirming(false);
+    }
+  }, [slotOfferReviewPreview, slotOfferReviewConfirming, clearEditVisitHighlightTimer, navigate]);
 
   const completeNotBookedRemoveFlow = useCallback(
     (gate: NotBookedRemoveSessionV1) => {
@@ -7285,6 +8252,29 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   }, [notBookedRemoveGate, notBookedRemoveAppt]);
 
   useEffect(() => {
+    if (!slotOfferReviewPreview) return;
+
+    const onPointerDown = (ev: PointerEvent) => {
+      const target = ev.target;
+      if (!(target instanceof Element)) return;
+      if (target.closest('[data-slot-offer-review-popover]')) return;
+      if (target.closest('[data-appt-id]')) return;
+      dismissSlotOfferReview();
+    };
+
+    const onKeyDown = (ev: KeyboardEvent) => {
+      if (ev.key === 'Escape') dismissSlotOfferReview();
+    };
+
+    document.addEventListener('pointerdown', onPointerDown, true);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown, true);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [slotOfferReviewPreview, dismissSlotOfferReview]);
+
+  useEffect(() => {
     if (!onHoldVisitPreview || onHoldVisitEditing || onHoldVisitConvertedExitKind) return;
 
     const onPointerDown = (ev: PointerEvent) => {
@@ -7324,25 +8314,30 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   }, [onHoldVisitPreview, onHoldVisitConvertedExitKind, completeOnHoldVisitReturn]);
 
   const handleOnHoldVisitEditSaved = useCallback(
-    (updated?: Appointment) => {
+    (updated?: Appointment, detail?: { alignedAppointments?: Appointment[] }) => {
       const preview = onHoldVisitPreview;
       if (!preview) return;
 
       void (async () => {
-        if (updated?.id != null) {
+        if (updated?.id != null || (detail?.alignedAppointments?.length ?? 0) > 0) {
           setRawAppointments((prev) => {
-            const idx = prev.findIndex((a) => a.id === updated.id);
-            if (idx === -1) return prev;
             const next = [...prev];
-            next[idx] = { ...next[idx], ...updated };
+            const apply = (row: Appointment) => {
+              const idx = next.findIndex((a) => a.id === row.id);
+              if (idx === -1) return;
+              next[idx] = { ...next[idx], ...row };
+            };
+            if (updated?.id != null) apply(updated);
+            for (const row of detail?.alignedAppointments ?? []) apply(row);
             return next;
           });
-          setOnHoldVisitApptResolved(updated);
+          if (updated) setOnHoldVisitApptResolved(updated);
         }
 
         setOnHoldVisitEditing(false);
         setOnHoldVisitEditingApptId(null);
         setOnHoldVisitLinkSelection(null);
+        setEditVisitPatientSelection(null);
 
         const anchorAppt = updated ?? onHoldVisitApptForPopover;
         const householdAppts = anchorAppt
@@ -7421,6 +8416,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
 
   const handleOnHoldVisitEditPet = useCallback((appointmentId: number) => {
     setOnHoldVisitLinkSelection(null);
+    setEditVisitPatientSelection(null);
     setOnHoldVisitEditingApptId(appointmentId);
     setOnHoldVisitEditing(true);
   }, []);
@@ -7428,12 +8424,17 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   const handleOnHoldVisitEdit = useCallback(() => {
     if (onHoldVisitHouseholdEditChoices.length > 1) return;
     setOnHoldVisitLinkSelection(null);
+    setEditVisitPatientSelection(null);
     const only = onHoldVisitHouseholdEditChoices[0];
     setOnHoldVisitEditingApptId(
       only?.appointmentId ?? onHoldVisitPreview?.bookedAppointmentId ?? null,
     );
     setOnHoldVisitEditing(true);
   }, [onHoldVisitHouseholdEditChoices, onHoldVisitPreview?.bookedAppointmentId]);
+
+  const handleOnHoldVisitEditFromConverted = useCallback(() => {
+    handleOnHoldVisitEdit();
+  }, [handleOnHoldVisitEdit]);
 
   useEffect(() => {
     if (pendingFocusApptId == null) return;
@@ -7458,6 +8459,9 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         const wasOnHoldEdit = readOnHoldVisitEditSession();
         clearOnHoldVisitEditSession();
         setOnHoldVisitPreview(null);
+        const wasSlotOfferReview = readSlotOfferReviewSession();
+        clearSlotOfferReviewSession();
+        setSlotOfferReviewPreview(null);
         setPendingFocusApptId(null);
         showToast('Could not find that appointment on the calendar.');
         if (wasStaffConfirm) {
@@ -7465,6 +8469,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           returnToAppointmentRequestsList(navigate, 'to_confirm');
         } else if (wasOnHoldEdit) {
           navigate(wasOnHoldEdit.returnPath);
+        } else if (wasSlotOfferReview) {
+          navigate(wasSlotOfferReview.returnPath);
         }
         return;
       }
@@ -7532,12 +8538,14 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       setStaffConfirmPreviewError(null);
       setStaffConfirmPreview(staffConfirm);
       requestAnimationFrame(() => {
-        const el = document.querySelector(
-          `[data-appt-id="${CSS.escape(String(targetId))}"]`
-        );
-        if (el instanceof HTMLElement) {
-          scrollAppointmentElementIntoView(el, 'smooth');
-        }
+        requestAnimationFrame(() => {
+          const el = document.querySelector(
+            `[data-appt-id="${CSS.escape(String(targetId))}"]`
+          );
+          if (el instanceof HTMLElement) {
+            scrollAppointmentElementIntoView(el, 'smooth');
+          }
+        });
       });
       return;
     }
@@ -7547,6 +8555,24 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       schedulerAppointmentIdsEqual(notBookedRemove.bookedAppointmentId, targetId)
     ) {
       setNotBookedRemoveGate(notBookedRemove);
+      requestAnimationFrame(() => {
+        const el = document.querySelector(
+          `[data-appt-id="${CSS.escape(String(targetId))}"]`
+        );
+        if (el instanceof HTMLElement) {
+          scrollAppointmentElementIntoView(el, 'smooth');
+        }
+      });
+      return;
+    }
+    const slotOfferReview = readSlotOfferReviewSession();
+    if (
+      slotOfferReview &&
+      schedulerAppointmentIdsEqual(slotOfferReview.bookedAppointmentId, targetId)
+    ) {
+      pulseEditVisitHighlight(highlightTargets.length > 0 ? highlightTargets : targetId, 6000);
+      setSlotOfferReviewError(null);
+      setSlotOfferReviewPreview(slotOfferReview);
       requestAnimationFrame(() => {
         const el = document.querySelector(
           `[data-appt-id="${CSS.escape(String(targetId))}"]`
@@ -7632,7 +8658,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       editVisitPostBookScrollSigRef.current = '';
       setEditTimePreview(preview);
       writeEditVisitTimePreview(preview);
-      setEditPlacementMode(true);
+      // Full-calendar preview only — keep the edit form closed until the popover is dismissed.
+      setEditPlacementMode(false);
       setAnchorDate(preview.practiceDateKey);
       if (view === 'month') setView('week');
       driveSoftRefreshRef.current = true;
@@ -7643,9 +8670,15 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
 
   const handleViewPlacement = useCallback(
     (startUtc: string, endUtc: string) => {
-      openEditVisitPreview(startUtc, endUtc, { kind: 'time' });
+      const typeId = editAppt?.appointmentType?.id;
+      openEditVisitPreview(startUtc, endUtc, {
+        kind: 'time',
+        ...(typeId != null && Number.isFinite(Number(typeId))
+          ? { appointmentTypeId: Number(typeId) }
+          : {}),
+      });
     },
-    [openEditVisitPreview]
+    [openEditVisitPreview, editAppt?.appointmentType?.id]
   );
 
   const handlePreviewSchedule = useCallback(
@@ -7722,6 +8755,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     setEditPreviewScoreError(null);
     setEditPreviewScoreLoading(false);
     setEditPreviewConfirming(false);
+    setEditTimeAlignPrompt(null);
+    editTimeAlignChoiceRef.current = null;
     editVisitFormSnapshotRef.current = null;
   }, []);
 
@@ -7810,6 +8845,32 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           appointmentEnd: preview.appointmentEnd,
         }
       );
+
+      let siblingsToAlign: Appointment[] | null = null;
+      if (editChanges.includes('appt_time') && !editAppt.allDay) {
+        const siblings = findHouseholdVisitsNeedingTimeAlign(
+          editAppt,
+          rawAppointments,
+          PRACTICE_TZ,
+          preview.appointmentStart,
+          preview.appointmentEnd
+        );
+        if (siblings.length > 0) {
+          const choice = editTimeAlignChoiceRef.current;
+          if (choice == null) {
+            setEditTimeAlignPrompt({
+              siblings,
+              startIso: preview.appointmentStart,
+              endIso: preview.appointmentEnd,
+            });
+            return;
+          }
+          editTimeAlignChoiceRef.current = null;
+          setEditTimeAlignPrompt(null);
+          if (choice === 'align_all') siblingsToAlign = siblings;
+        }
+      }
+
       const updated = await commitEditVisit({
         appointmentId: Number(editAppt.id),
         practiceId: PRACTICE_ID,
@@ -7833,12 +8894,25 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           ),
           assignPatient: resolveEditVisitAssignPatient(editAppt, editVisitPatientSelection),
         });
-      if (updated?.id != null) {
+      let alignedAppointments: Appointment[] = [];
+      if (siblingsToAlign?.length) {
+        alignedAppointments = await alignSiblingVisitScheduledTimes({
+          siblings: siblingsToAlign,
+          startIso: preview.appointmentStart,
+          endIso: preview.appointmentEnd,
+          practiceId: PRACTICE_ID,
+        });
+      }
+      if (updated?.id != null || alignedAppointments.length > 0) {
         setRawAppointments((prev) => {
-          const idx = prev.findIndex((a) => a.id === updated.id);
-          if (idx === -1) return prev;
           const next = [...prev];
-          next[idx] = { ...next[idx], ...updated };
+          const apply = (row: Appointment) => {
+            const idx = next.findIndex((a) => a.id === row.id);
+            if (idx === -1) return;
+            next[idx] = { ...next[idx], ...row };
+          };
+          if (updated?.id != null) apply(updated);
+          for (const row of alignedAppointments) apply(row);
           return next;
         });
       }
@@ -7865,6 +8939,9 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       const bookedParts = [
         typeName ? `Saved as ${typeName}` : 'Appointment updated',
         patientLabel || clientLabel((updated ?? editAppt).client) || null,
+        alignedAppointments.length > 0
+          ? `aligned ${alignedAppointments.length + 1} household pets`
+          : null,
         scoreLine,
         editPreviewScoreCompare?.windowLine,
       ].filter(Boolean);
@@ -8003,7 +9080,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         return;
       }
 
-      if (editVisitHighlightTimerRef.current == null) {
+      if (editVisitHighlightTimerRef.current == null && !householdVisitHighlightPinnedRef.current) {
         startEditVisitHighlightClearTimer(editVisitHighlightDurationMsRef.current);
       }
 
@@ -8141,18 +9218,54 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             setEditPreviewScoreLoading(false);
             setEditAppt(appt);
             return;
-          case 'reschedule': {
+          case 'reschedule':
+          case 'exploreAlternatives': {
+            const explore = action.kind === 'exploreAlternatives';
             if (!appointmentIsTodayOrFuture(appt, PRACTICE_TZ)) {
-              fail('Visits before today cannot be rescheduled here.');
+              fail(
+                explore
+                  ? 'Visits before today cannot explore alternatives here.'
+                  : 'Visits before today cannot be rescheduled here.'
+              );
               return;
             }
-            let intent = buildRoutingRescheduleIntentFromAppointment(appt, {
+            const buildRescheduleOpts = {
               sameCalendarDayAppointments: rawAppointments,
               providers,
               practiceTz: PRACTICE_TZ,
-            });
+              exploreAlternatives: explore,
+              allowAddressOnly: true,
+            };
+            let intent = buildRoutingRescheduleIntentFromAppointment(appt, buildRescheduleOpts);
+            // Range calendar rows often set isAlternateStop without address text — load full visit.
+            if (!intent && appointmentHasAlternateLocation(appt)) {
+              const full = await fetchAppointmentById(appt.id, { practiceId: PRACTICE_ID });
+              if (full) {
+                intent = buildRoutingRescheduleIntentFromAppointment(full, buildRescheduleOpts);
+                const text = appointmentAlternateAddressText(full);
+                if (text) {
+                  setRawAppointments((prev) => {
+                    const idx = prev.findIndex((a) => a.id === appt.id);
+                    if (idx === -1) return prev;
+                    const next = [...prev];
+                    next[idx] = {
+                      ...next[idx],
+                      ...full,
+                      alternateAddress: { addressText: text },
+                      alternateAddressText: text,
+                      isAlternateStop: true,
+                    } as Appointment;
+                    return next;
+                  });
+                }
+              }
+            }
             if (!intent) {
-              fail('This visit cannot be rescheduled here (needs client and patient, not a block).');
+              fail(
+                explore
+                  ? 'This visit cannot explore alternatives here (needs a linked client/patient or a visit address, not a block).'
+                  : 'This visit cannot be rescheduled here (needs a linked client/patient or a visit address, not a block).'
+              );
               return;
             }
             const calendarProviderId = resolvedPrimaryProviderId.trim();
@@ -8180,7 +9293,11 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             if (embedInRoutingWorkspace) {
               applyRescheduleCalendarFocusFromIntent();
               setRescheduleIntentTick((n) => n + 1);
-              showToast('Reschedule: visit loaded in routing — calendar shows that week and doctor.');
+              showToast(
+                explore
+                  ? 'Alternatives: visit loaded in routing — keeping the current appointment.'
+                  : 'Reschedule: visit loaded in routing — calendar shows that week and doctor.'
+              );
             } else {
               const pimsRaw =
                 calendarProvider?.pimsId != null ? String(calendarProvider.pimsId).trim() : '';
@@ -8229,9 +9346,11 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               appointmentTypeId: Number.isFinite(typeNum) ? typeNum : undefined,
               lockClient: true,
               lockProvider: true,
-              lockSlotTimes: true,
+              // Times stay editable — lengthening the stop is common; submit prompts to align siblings.
+              lockSlotTimes: false,
               preserveDurationFromSlot: true,
               coVisitAddPet: true,
+              coVisitAnchorAppointmentId: Number(appt.id),
               ...(anchorAlternateAddress ? { coVisitAlternateAddress: anchorAlternateAddress } : {}),
               providerId: provId || undefined,
               excludePatientIds: exclude,
@@ -8381,19 +9500,35 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     return buildRoutingRescheduleIntentFromAppointment(contextMenu.appt, {
       sameCalendarDayAppointments: rawAppointments,
       providers,
+      allowAddressOnly: true,
     });
   }, [contextMenu, rawAppointments, providers]);
+
+  /** Range rows may flag ALT without address text; still allow the click path to fetch + build. */
+  const contextMenuMayAddressOnlyReschedule = useMemo(() => {
+    if (!contextMenu) return false;
+    if (!appointmentIsTodayOrFuture(contextMenu.appt, PRACTICE_TZ)) return false;
+    if (contextMenuRescheduleIntent) return false;
+    const appt = contextMenu.appt;
+    if ((appt as { type?: string }).type === 'block') return false;
+    if ((appt as { isBlock?: boolean }).isBlock === true) return false;
+    if ((appt as { isPersonalBlock?: boolean }).isPersonalBlock === true) return false;
+    const c = appt.client;
+    const p0 = patientsForAppointment(appt)[0];
+    if (c && c.id != null && p0 && p0.id != null) return false;
+    return appointmentHasAlternateLocation(appt);
+  }, [contextMenu, contextMenuRescheduleIntent]);
 
   const contextMenuRescheduleDisabledTitle = useMemo(() => {
     if (!contextMenu) return undefined;
     if (!appointmentIsTodayOrFuture(contextMenu.appt, PRACTICE_TZ)) {
       return 'Visits before today cannot be rescheduled here.';
     }
-    if (!contextMenuRescheduleIntent) {
-      return 'Needs a linked client and patient. Blocks cannot be rescheduled here.';
+    if (!contextMenuRescheduleIntent && !contextMenuMayAddressOnlyReschedule) {
+      return 'Needs a linked client/patient or a visit address. Blocks cannot be rescheduled here.';
     }
     return undefined;
-  }, [contextMenu, contextMenuRescheduleIntent]);
+  }, [contextMenu, contextMenuRescheduleIntent, contextMenuMayAddressOnlyReschedule]);
 
   const addAnotherPetMenuOpts = useMemo(() => {
     if (!contextMenu || !showEmployeeAddCoVisitPet) {
@@ -9149,18 +10284,16 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                           const leftPct = (100 * col) / colCount;
                           const apptColors = colorsForAppointment(appt, typeList, typeFillMap);
                           const member = appointmentPatientMember(appt);
-                          const schedStart = DateTime.fromISO(appt.appointmentStart, { zone: 'utc' }).setZone(
-                            PRACTICE_TZ
-                          );
-                          const schedEnd = DateTime.fromISO(appt.appointmentEnd, { zone: 'utc' }).setZone(
-                            PRACTICE_TZ
-                          );
-                          const scheduledTimeLabel =
-                            schedStart.isValid && schedEnd.isValid
-                              ? `${schedStart.toFormat('h:mm a')} – ${schedEnd.toFormat('h:mm a')}`
-                              : schedStart.isValid
-                                ? schedStart.toFormat('h:mm a')
-                                : null;
+                          const apptDriveHint =
+                            showByDriveTime && resolvedPrimaryProviderId.trim()
+                              ? buildSchedulerDriveHintForAppt(
+                                  appt,
+                                  showByDriveTime,
+                                  resolvedPrimaryProviderId,
+                                  driveDayByDate
+                                )
+                              : null;
+                          const eventWindowLabel = schedulerEventWindowCardLabel(appt, apptDriveHint);
                           const descTrim = appt.description?.trim() ?? '';
                           if (isRoutingPreviewSlot) {
                             const previewLabel = descTrim || 'Proposed visit';
@@ -9207,8 +10340,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                                   >
                                     <SchedulerAlternateLocationBadgeForAppt appt={appt} compact />
                                     <SchedulerClientZoneBadge appt={appt} compact />
-                                    {scheduledTimeLabel ? (
-                                      <span className="scheduler-event-time-text">{scheduledTimeLabel}</span>
+                                    {eventWindowLabel ? (
+                                      <span className="scheduler-event-time-text">{eventWindowLabel}</span>
                                     ) : null}
                                     {isCompactEvent ? (
                                       <span
@@ -9246,15 +10379,6 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                             rescheduleSourceHighlightIds != null &&
                             typeof appt.id === 'number' &&
                             rescheduleSourceHighlightIds.has(appt.id);
-                          const apptDriveHint =
-                            showByDriveTime && resolvedPrimaryProviderId.trim()
-                              ? buildSchedulerDriveHintForAppt(
-                                  appt,
-                                  showByDriveTime,
-                                  resolvedPrimaryProviderId,
-                                  driveDayByDate
-                                )
-                              : null;
                           const draftTypeForPreview =
                             isEditTimePreviewVisit &&
                             editTimePreview?.kind === 'type' &&
@@ -9354,8 +10478,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                               >
                                 <SchedulerAlternateLocationBadgeForAppt appt={appt} compact />
                                 <SchedulerClientZoneBadge appt={appt} compact />
-                                {scheduledTimeLabel ? (
-                                  <span className="scheduler-event-time-text">{scheduledTimeLabel}</span>
+                                {eventWindowLabel ? (
+                                  <span className="scheduler-event-time-text">{eventWindowLabel}</span>
                                 ) : null}
                                 {isCompactEvent ? (
                                   <>
@@ -9533,7 +10657,9 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           embedInRoutingWorkspace && routingPreview
             ? `Routing preview: ${embeddedCalendarProviderLabel}`
             : embedInRoutingWorkspace && rescheduleWorkspaceActive
-              ? `Rescheduling: ${embeddedCalendarProviderLabel}`
+              ? exploreAlternativesActive
+                ? `Looking for alternatives: ${embeddedCalendarProviderLabel}`
+                : `Rescheduling: ${embeddedCalendarProviderLabel}`
               : embedInRoutingWorkspace && forwardBookingLockActive
                 ? `Forward booking: ${
                     forwardBookingBarContext
@@ -9561,15 +10687,27 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               >
                 Current location
               </button>
+            ) : forwardBookingLockActive ? (
+              <button
+                type="button"
+                className="btn secondary scheduler-embedded-preview-bar-dismiss scheduler-forward-booking-workspace-back"
+                onClick={dismissForwardBookingWorkspace}
+                disabled={bookSlot != null}
+                title="Return to the forward booking list"
+              >
+                Back
+              </button>
             ) : null}
-            <button
-              type="button"
-              className="btn secondary scheduler-embedded-preview-bar-dismiss"
-              onClick={dismissRoutingPreview}
-              disabled={bookSlot != null}
-            >
-              Dismiss
-            </button>
+            {!forwardBookingLockActive ? (
+              <button
+                type="button"
+                className="btn secondary scheduler-embedded-preview-bar-dismiss"
+                onClick={dismissRoutingPreview}
+                disabled={bookSlot != null}
+              >
+                Dismiss
+              </button>
+            ) : null}
           </div>
         ) : null}
         {forwardBookingLockActive ? (
@@ -9596,10 +10734,11 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                       ) : null}
                     </span>
                   ) : null}
-                  {forwardBookingBarContext.bookingNote ? (
-                    <span className="scheduler-embedded-forward-booking-bar-note">
-                      Forward booking note: {forwardBookingBarContext.bookingNote}
-                    </span>
+                  {forwardBookingBarContext.contextNote || forwardBookingBarContext.contactLog ? (
+                    <ClientContactLogReadout
+                      contextNote={forwardBookingBarContext.contextNote}
+                      contactLog={forwardBookingBarContext.contactLog}
+                    />
                   ) : null}
                 </>
               ) : (
@@ -9632,9 +10771,13 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         ) : null}
         {rescheduleWorkspaceActive ? (
           <div className="scheduler-embedded-reschedule-bar" role="status" aria-live="polite">
-            <span className="scheduler-embedded-reschedule-bar-badge">Rescheduling</span>
+            <span className="scheduler-embedded-reschedule-bar-badge">
+              {exploreAlternativesActive ? 'Alternatives' : 'Rescheduling'}
+            </span>
             <span className="scheduler-embedded-reschedule-bar-msg">
-              {embeddedCalendarProviderLabel}
+              {exploreAlternativesActive
+                ? `${embeddedCalendarProviderLabel} · keeping current appointment`
+                : embeddedCalendarProviderLabel}
             </span>
             <button
               type="button"
@@ -9642,7 +10785,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               onClick={dismissRescheduleWorkspace}
               disabled={bookSlot != null}
             >
-              Dismiss
+              {rescheduleReturnsToHolds ? 'Back to Holds' : 'Dismiss'}
             </button>
           </div>
         ) : null}
@@ -9857,6 +11000,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               preview={routingPreview}
               practiceTz={PRACTICE_TZ}
               isReschedule={routingPreviewIsReschedule}
+              exploreAlternatives={exploreAlternativesActive}
               sourceVisitForCompare={reschedulePreviewSourceVisit}
               originalAppointmentStart={reschedulePreviewOriginalTimes.start}
               originalAppointmentEnd={reschedulePreviewOriginalTimes.end}
@@ -9983,10 +11127,13 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                   linkSelection={staffConfirmLinkSelection}
                   onLinkSelectionChange={setStaffConfirmLinkSelection}
                   linkPreferredPatientName={staffConfirmLinkPreferredPatientName}
+                  patientSelection={editVisitPatientSelection}
+                  onPatientSelectionChange={setEditVisitPatientSelection}
                   onClose={() => {
                     setStaffConfirmEditing(false);
                     setStaffConfirmEditingApptId(null);
                     setStaffConfirmLinkSelection(null);
+                    setEditVisitPatientSelection(null);
                   }}
                   onSaved={handleStaffConfirmEditSaved}
                 />
@@ -10066,14 +11213,28 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                   linkSelection={onHoldVisitLinkSelection}
                   onLinkSelectionChange={setOnHoldVisitLinkSelection}
                   linkPreferredPatientName={onHoldVisitLinkPreferredPatientName}
+                  patientSelection={editVisitPatientSelection}
+                  onPatientSelectionChange={setEditVisitPatientSelection}
                   onClose={() => {
                     setOnHoldVisitEditing(false);
                     setOnHoldVisitEditingApptId(null);
                     setOnHoldVisitLinkSelection(null);
+                    setEditVisitPatientSelection(null);
                   }}
                   onSaved={handleOnHoldVisitEditSaved}
                 />
               </div>
+            ) : onHoldVisitPreview.flowIntent === 'remove' ? (
+              <OnHoldVisitRemovePopover
+                appt={onHoldVisitApptForPopover}
+                practiceTz={PRACTICE_TZ}
+                clientLabel={onHoldVisitPreview.clientLabel}
+                multiHold={(onHoldVisitPreview.removeAppointmentIds?.length ?? 0) > 1}
+                confirming={onHoldVisitRemoveConfirming}
+                error={onHoldVisitRemoveError}
+                onBack={dismissOnHoldVisitPreview}
+                onRemove={confirmOnHoldVisitRemove}
+              />
             ) : onHoldVisitConvertedExitKind ? (
               <OnHoldVisitConvertedPopover
                 appt={onHoldVisitApptForPopover}
@@ -10081,7 +11242,14 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                 clientLabel={onHoldVisitPreview.clientLabel}
                 linkedClientLabel={onHoldVisitLinkedClientLabel}
                 exitKind={onHoldVisitConvertedExitKind}
+                recommendedLength={onHoldVisitConvertedRecommendedLength}
+                recommendedLengthLoading={onHoldVisitConvertedRecommendedLengthLoading}
                 onBack={completeOnHoldVisitReturn}
+                onEdit={
+                  onHoldVisitConvertedExitKind === 'booked'
+                    ? handleOnHoldVisitEditFromConverted
+                    : undefined
+                }
               />
             ) : (
               <OnHoldVisitPreviewPopover
@@ -10096,6 +11264,41 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                 onEditPet={handleOnHoldVisitEditPet}
               />
             )}
+          </div>,
+          document.body
+        )}
+
+      {slotOfferReviewPreview &&
+        slotOfferReviewApptForPopover &&
+        slotOfferReviewPopoverPos &&
+        createPortal(
+          <div
+            className="scheduler-edit-preview-popover-shell scheduler-staff-confirm-popover-shell"
+            data-schedule-preview-allow
+            data-slot-offer-review-popover
+            style={{
+              position: 'fixed',
+              left: slotOfferReviewPopoverPos.left,
+              width: slotOfferReviewPopoverPos.width,
+              maxHeight: slotOfferReviewPopoverPos.maxCardH,
+              zIndex: 2050,
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+              ...(slotOfferReviewPopoverPos.bottom != null
+                ? { top: 'auto', bottom: slotOfferReviewPopoverPos.bottom }
+                : { top: slotOfferReviewPopoverPos.top }),
+            }}
+          >
+            <SlotOfferReviewPopover
+              appt={slotOfferReviewApptForPopover}
+              practiceTz={PRACTICE_TZ}
+              clientLabel={slotOfferReviewPreview.clientLabel}
+              confirming={slotOfferReviewConfirming}
+              error={slotOfferReviewError}
+              onBack={dismissSlotOfferReview}
+              onReviewed={() => void confirmSlotOfferReview()}
+            />
           </div>,
           document.body
         )}
@@ -10165,18 +11368,73 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           return auth || null;
         })()}
         prefill={bookPrefill}
+        practiceAppointments={rawAppointments}
         routingLinkPreview={routingPreview}
         onPreviewOnCalendar={
-          bookPrefill?.modalTitle === MANUAL_CALENDAR_BOOK_MODAL_TITLE &&
-          !bookPrefill?.allDay &&
-          bookPrefill?.rescheduleAppointmentId == null &&
-          !isSchedulerRoutingBookPrefill(bookPrefill)
+          (bookPrefill?.modalTitle === MANUAL_CALENDAR_BOOK_MODAL_TITLE &&
+            !bookPrefill?.allDay &&
+            bookPrefill?.rescheduleAppointmentId == null &&
+            !isSchedulerRoutingBookPrefill(bookPrefill)) ||
+          (bookPrefill?.coVisitAddPet === true && !bookPrefill?.allDay)
             ? handleManualBookPreview
             : undefined
         }
         onClose={closeBookModal}
         onSlotOfferSent={handleSlotOfferSent}
+        onViewConflictPlacement={focusHouseholdConflictOnCalendar}
         onBooked={handleSchedulerBooked}
+      />
+
+      <HouseholdScheduledVisitsWarningModal
+        open={Boolean(manualBookHouseholdConflicts?.length)}
+        clientLabel={routingPreview?.manualBookDraft?.clientLabel}
+        conflicts={manualBookHouseholdConflicts ?? []}
+        continuing={manualBookPreviewCommitting}
+        onCancel={() => setManualBookHouseholdConflicts(null)}
+        onViewPlacement={(row) => {
+          setManualBookHouseholdConflicts(null);
+          focusHouseholdConflictOnCalendar(row);
+        }}
+        onContinue={() => {
+          manualBookHouseholdBypassRef.current = true;
+          setManualBookHouseholdConflicts(null);
+          void confirmManualBookFromPreview();
+        }}
+      />
+      <EuthanasiaFutureAppointmentsModal
+        open={Boolean(manualBookEuthanasiaFutureRows?.length)}
+        mode="booking"
+        rows={manualBookEuthanasiaFutureRows ?? []}
+        patientLabel={routingPreview?.manualBookDraft?.patientLabel}
+        continuing={manualBookPreviewCommitting}
+        onCancel={() => {
+          if (manualBookPreviewCommitting) return;
+          setManualBookEuthanasiaFutureRows(null);
+          pendingManualBookEuthanasiaDeletesRef.current = null;
+          manualBookEuthanasiaChoiceRef.current = null;
+        }}
+        onKeep={() => {
+          manualBookEuthanasiaChoiceRef.current = 'keep';
+          setManualBookEuthanasiaFutureRows(null);
+          void confirmManualBookFromPreview();
+        }}
+        onConfirmDelete={() => {
+          manualBookEuthanasiaChoiceRef.current = 'delete';
+          setManualBookEuthanasiaFutureRows(null);
+          void confirmManualBookFromPreview();
+        }}
+      />
+
+      <ExploreAlternativesHoldPrompt
+        open={Boolean(exploreHoldPrompt)}
+        holdTypes={holdAppointmentTypes}
+        sourceNeedsHold={Boolean(exploreHoldPrompt?.sourceNeedsHold)}
+        newNeedsHold={Boolean(exploreHoldPrompt?.newNeedsHold)}
+        converting={convertingExploreHold}
+        onConfirm={(holdTypeId) => void convertExploreHoldTypes(holdTypeId)}
+        onDismiss={() => {
+          if (!convertingExploreHold) setExploreHoldPrompt(null);
+        }}
       />
 
       {contextMenu ? (
@@ -10193,7 +11451,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           addPetTitle={addAnotherPetMenuOpts.title}
           showSendForms={showPreApptRoomLoaderIcon(contextMenu.appt)}
           roomLoaderMenuLabel={schedulerRoomLoaderMenuLabel(contextMenu.appt.confirmStatusName)}
-          rescheduleDisabled={!contextMenuRescheduleIntent}
+          rescheduleDisabled={!contextMenuRescheduleIntent && !contextMenuMayAddressOnlyReschedule}
           rescheduleDisabledTitle={contextMenuRescheduleDisabledTitle}
           removeDisabled={isAppointmentCancelledOnPracticeCalendar(contextMenu.appt)}
           removeTitle={
@@ -10300,6 +11558,27 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         />
       ) : null}
 
+      {editTimeAlignPrompt ? (
+        <HouseholdVisitTimeAlignModal
+          open
+          practiceTz={PRACTICE_TZ}
+          newStartIso={editTimeAlignPrompt.startIso}
+          newEndIso={editTimeAlignPrompt.endIso}
+          addedPetName={editAppt ? appointmentPatientLabel(editAppt) : 'this pet'}
+          siblings={editTimeAlignPrompt.siblings}
+          saving={editPreviewConfirming}
+          onCancel={() => {
+            if (editPreviewConfirming) return;
+            setEditTimeAlignPrompt(null);
+            editTimeAlignChoiceRef.current = null;
+          }}
+          onChoose={(choice) => {
+            editTimeAlignChoiceRef.current = choice;
+            void confirmEditTimeFromSlot();
+          }}
+        />
+      ) : null}
+
       {roomLoaderOpening
         ? createPortal(
             <div className="scheduler-modal-backdrop" role="status" aria-live="polite">
@@ -10344,6 +11623,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         : null}
 
       {editApptForModal &&
+        !editTimePreview &&
         createPortal(
           <SchedulerEditVisitModal
             ref={editVisitModalRef}
@@ -10357,13 +11637,11 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             accentColor={colorsForAppointment(editApptForModal, typeList, typeFillMap).fill}
             inlinePaneMode={editVisitInlinePaneMode}
             dockInRoutingPane={false}
-            placementPreviewActive={editTimePreview != null}
-            placementPreviewKind={editTimePreview?.kind ?? null}
-            draftPreviewAppointmentTypeId={
-              editTimePreview?.kind === 'type' ? editTimePreview.appointmentTypeId ?? null : null
-            }
-            draftPreviewAppointmentStart={editTimePreview?.appointmentStart ?? null}
-            draftPreviewAppointmentEnd={editTimePreview?.appointmentEnd ?? null}
+            placementPreviewActive={false}
+            placementPreviewKind={null}
+            draftPreviewAppointmentTypeId={null}
+            draftPreviewAppointmentStart={null}
+            draftPreviewAppointmentEnd={null}
             typeScoreCompare={editPreviewScoreCompare}
             typeScoreLoading={editPreviewScoreLoading}
             typeScoreError={editPreviewScoreError}
@@ -10399,18 +11677,27 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               if (updated?.id != null) {
                 pulseEditVisitHighlight(Number(updated.id));
               }
-              if (updated?.id != null) {
+              const aligned = detail?.alignedAppointments ?? [];
+              if (updated?.id != null || aligned.length > 0) {
                 setRawAppointments((prev) => {
-                  const idx = prev.findIndex((a) => a.id === updated.id);
-                  if (idx === -1) return prev;
                   const next = [...prev];
-                  next[idx] = { ...next[idx], ...updated };
+                  const apply = (row: Appointment) => {
+                    const idx = next.findIndex((a) => a.id === row.id);
+                    if (idx === -1) return;
+                    next[idx] = { ...next[idx], ...row };
+                  };
+                  if (updated?.id != null) apply(updated);
+                  for (const row of aligned) apply(row);
                   return next;
                 });
               }
               void loadRange({ refreshDrive: true });
               if (detail?.routingFeedbackWarning) {
                 setToast(detail.routingFeedbackWarning);
+              } else if (aligned.length > 0) {
+                setToast(
+                  `Appointment updated · aligned ${aligned.length + 1} household pets.`
+                );
               } else {
                 setToast('Appointment updated.');
               }

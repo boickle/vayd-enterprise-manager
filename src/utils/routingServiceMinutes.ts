@@ -300,6 +300,116 @@ export function estimateRoutingServiceMinutesForVisit(
   return { serviceMinutes, baseMinutes, source };
 }
 
+export type PerPetRoutingMinutesEstimate = {
+  baseMinutes: number;
+  newPatientBufferMinutes: number;
+  totalMinutes: number;
+  positionLabel: 'single pet' | 'multi-pet';
+};
+
+export type PerPetRoutingVisitEstimate = {
+  perPet: PerPetRoutingMinutesEstimate[];
+  baseMinutes: number;
+  newPatientBufferMinutes: number;
+  serviceMinutes: number;
+};
+
+/**
+ * One pet's base minutes from doctor stats. Rate depends on the whole visit:
+ * single-pet visits use the type's single-pet avg; multi-pet visits use each
+ * pet's type multi-pet avg (fallback: single avg → type default → fallback).
+ */
+function estimatePerPetBaseMinutes(
+  isMultiPetVisit: boolean,
+  appointmentTypeId: number,
+  apptLengthsRows: AvgMinutesByTypeRow[],
+  resolveTypeById: (appointmentTypeId: number) => RoutingServiceMinutesTypeSource | undefined,
+): number {
+  const type = resolveTypeById(appointmentTypeId);
+  const typeKey = appointmentTypeNameForRoutingStats(type);
+  const row = resolveRoutingApptStatsRow(typeKey, apptLengthsRows, type);
+  const fallbackSingle = (): number =>
+    defaultDurationMinutesForRoutingTypeSelection(type, 1) ?? ROUTING_FALLBACK_SERVICE_MINUTES;
+
+  if (!isMultiPetVisit) {
+    if (row && routingApptTypeStatsMeetMinInstances(row) && row.avgMinutes > 0) {
+      return Math.round(row.avgMinutes);
+    }
+    return fallbackSingle();
+  }
+
+  if (row && routingApptTypeStatsMeetMinInstances(row)) {
+    const mp = row.multipetAvgMinutes;
+    if (mp != null && mp > 0) return Math.round(mp);
+    if (row.avgMinutes > 0) return Math.round(row.avgMinutes);
+  }
+  return fallbackSingle();
+}
+
+/**
+ * Per-pet visit duration from doctor timing history. A single-pet visit uses the
+ * type's single-pet average; a multi-pet visit prices every pet at its type's
+ * multi-pet average, plus tiered new-patient buffers.
+ */
+export function estimatePerPetRoutingMinutesForVisit(
+  visitPets: RoutingVisitPetInput[],
+  apptLengthsRows: AvgMinutesByTypeRow[],
+  resolveTypeById: (appointmentTypeId: number) => RoutingServiceMinutesTypeSource | undefined,
+  resolveTypeByKey: (key: string) => RoutingServiceMinutesTypeSource | undefined,
+): PerPetRoutingVisitEstimate {
+  // Keep every input pet so per-pet output stays index-aligned with the caller's pet list
+  // (pets with an unresolved type fall back to default minutes rather than being dropped).
+  const pets = [...visitPets];
+
+  if (pets.length === 0) {
+    const buffer = 0;
+    const fallback = ROUTING_FALLBACK_SERVICE_MINUTES;
+    return {
+      perPet: [],
+      baseMinutes: fallback,
+      newPatientBufferMinutes: buffer,
+      serviceMinutes: fallback,
+    };
+  }
+
+  const newPatientIndices = pets
+    .map((pet, index) => (pet.isNewPatient ? index : -1))
+    .filter((index) => index >= 0);
+  const totalBuffer = newPatientDurationBufferMinutes(newPatientIndices.length);
+  const bufferByIndex = new Array<number>(pets.length).fill(0);
+  newPatientIndices.forEach((petIndex, newOrdinal) => {
+    bufferByIndex[petIndex] =
+      newOrdinal === 0
+        ? ROUTING_FIRST_NEW_PATIENT_DURATION_BUFFER_MINUTES
+        : ROUTING_ADDITIONAL_NEW_PATIENT_DURATION_BUFFER_MINUTES;
+  });
+
+  const isMultiPetVisit = pets.length > 1;
+  const perPet: PerPetRoutingMinutesEstimate[] = pets.map((pet, index) => {
+    const baseMinutes = estimatePerPetBaseMinutes(
+      isMultiPetVisit,
+      pet.appointmentTypeId,
+      apptLengthsRows,
+      resolveTypeById,
+    );
+    const newPatientBufferMinutes = bufferByIndex[index] ?? 0;
+    return {
+      baseMinutes,
+      newPatientBufferMinutes,
+      totalMinutes: baseMinutes + newPatientBufferMinutes,
+      positionLabel: isMultiPetVisit ? 'multi-pet' : 'single pet',
+    };
+  });
+
+  const baseMinutes = perPet.reduce((sum, row) => sum + row.baseMinutes, 0);
+  return {
+    perPet,
+    baseMinutes,
+    newPatientBufferMinutes: totalBuffer,
+    serviceMinutes: baseMinutes + totalBuffer,
+  };
+}
+
 export type RoutingServiceMinutesTypeSource = Pick<
   AppointmentType,
   'id' | 'name' | 'prettyName' | 'defaultDuration'

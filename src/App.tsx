@@ -1,5 +1,5 @@
 // src/App.tsx
-import { Route, Routes, useNavigate, Navigate, useLocation, useOutlet } from 'react-router-dom';
+import { Route, Routes, useNavigate, Navigate, useLocation, useOutlet, Link } from 'react-router-dom';
 import { useEffect, useMemo, useRef } from 'react';
 import LoginPage from './pages/Login';
 import RequestReset from './pages/RequestReset';
@@ -7,7 +7,7 @@ import ResetPass from './pages/ResetPass';
 import { ProtectedRoute } from './auth/ProtectedRoute';
 import { useAuth } from './auth/useAuth';
 import Home from './pages/Home';
-import UserMenu from './components/UserMenu';
+import UserMenu, { type UserMenuExtra } from './components/UserMenu';
 import NavbarGlobalSearch from './components/NavbarGlobalSearch';
 import NavbarScheduleHorizontalNav from './components/NavbarScheduleHorizontalNav';
 import { getAccessiblePages } from './app-pages';
@@ -28,6 +28,12 @@ import MyDayToggle from './pages/MyDayToggle';
 import MyWeek from './pages/MyWeek';
 import SchedulingTools from './pages/SchedulingTools';
 import AppointmentRequestsPage from './pages/AppointmentRequestsPage';
+import AppointmentSearchPage from './pages/AppointmentSearchPage';
+import HoldsPage from './pages/HoldsPage';
+import {
+  parseAppointmentRequestsHighlightFromSearch,
+} from './appointments-nav';
+import { HOLDS_PATH, holdsPathWithHighlight } from './holds-nav';
 import ExitSurveyPage from './pages/ExitSurveyPage';
 import RoomLoaderPage from './pages/RoomLoader';
 import SoapEncounterPage from './pages/SoapEncounterPage';
@@ -53,29 +59,9 @@ import { isCreateClientEnabled, isProduction } from './utils/env';
 import { savePostLoginRedirect } from './utils/postLoginRedirect';
 import { isPublicClientLinkPath } from './utils/publicClientLinkPaths';
 import { blockRoutingCalendarPreviewNavigation } from './utils/routingCalendarPreviewGuard';
-import { markSchedulerHandoffPreferRoutingDoctor } from './utils/schedulerCalendarHandoff';
-
-/** + Appointment in global navbar when viewing /schedule/* */
-function NavbarScheduleAddAppointment() {
-  const { abilities } = useAuth() as { abilities?: string[] };
-  const location = useLocation();
-  const navigate = useNavigate();
-  if (!location.pathname.startsWith('/schedule')) return null;
-  const toRouting = !abilities || abilities.includes('canSeeRouting');
-  return (
-    <button
-      type="button"
-      className="navbar-appointment-btn"
-      onClick={() => {
-        if (blockRoutingCalendarPreviewNavigation()) return;
-        markSchedulerHandoffPreferRoutingDoctor();
-        navigate(toRouting ? '/schedule/routing' : '/schedule/home');
-      }}
-    >
-      + Appointment
-    </button>
-  );
-}
+import { evetCreateClientLink } from './utils/evet';
+import { scoutTabPermissionOk } from './scout-tabs';
+import { useGmailInboxAccess } from './hooks/useGmailInboxAccess';
 
 /** Old `/scout/*` URLs → `/schedule/*` */
 function ScoutLegacyRedirect() {
@@ -261,6 +247,17 @@ function KeepAliveOutlet({ keepPaths }: { keepPaths: string[] }) {
   );
 }
 
+function RedirectAppointmentsOnHold() {
+  const { search } = useLocation();
+  const highlightId = parseAppointmentRequestsHighlightFromSearch(search);
+  return (
+    <Navigate
+      to={highlightId != null ? holdsPathWithHighlight(highlightId) : HOLDS_PATH}
+      replace
+    />
+  );
+}
+
 export default function App() {
   const { token, abilities, role } = useAuth() as any;
   const nav = useNavigate();
@@ -283,15 +280,34 @@ export default function App() {
     () => (isClient ? [] : getAccessiblePages(abilities, roles)),
     [abilities, roles, isClient]
   );
-  const menuExtras = useMemo(() => {
+  const { allowed: canAccessGmailInbox } = useGmailInboxAccess();
+
+  const menuExtras = useMemo((): UserMenuExtra[] => {
     if (isClient) return [];
     const paths = new Set(pages.map((p: { path: string }) => p.path));
-    const out: { label: string; to: string }[] = [];
+    const out: UserMenuExtra[] = [];
+    const onSchedule = location.pathname.startsWith('/schedule');
+
+    if (onSchedule) {
+      if (scoutTabPermissionOk('canSeeRouting', abilities)) {
+        out.push({ label: '+ Appointment', to: '/schedule/routing' });
+      }
+      out.push({ label: 'New Task', to: '/schedule/tasks?new=1' });
+      out.push({ label: 'Send Room Loader', to: '/schedule/room-loader' });
+      out.push({
+        label: 'Forward Booking',
+        to: '/schedule/scheduling-tools/forward-booking?new=1',
+      });
+      if (canAccessGmailInbox) {
+        out.push({ label: 'Email', to: '/schedule/email' });
+      }
+      out.push({ label: 'New Client', href: evetCreateClientLink(), external: true });
+    }
+
     if (paths.has('/analytics')) out.push({ label: 'Analytics', to: '/analytics' });
     if (paths.has('/tools')) out.push({ label: 'Tools', to: '/tools' });
-    if (paths.has('/pims')) out.push({ label: 'Appointments', to: '/schedule/routing' });
     return out;
-  }, [isClient, pages]);
+  }, [isClient, pages, location.pathname, canAccessGmailInbox, abilities]);
 
   // If a client lands on "/" or "/home", redirect to client portal
   useEffect(() => {
@@ -314,6 +330,8 @@ export default function App() {
     return 'container';
   }, [isClient, location.pathname]);
 
+  const brandHomeTo = isClient ? '/client-portal' : '/schedule';
+
   return (
     <div className={isProd ? 'app-root' : 'app-root app-root--nonprod'}>
       {!isProd && (
@@ -334,10 +352,17 @@ export default function App() {
               token && !isClient && location.pathname.startsWith('/schedule') ? ' navbar--schedule-shell' : ''
             }`}
           >
-            <div className="brand" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <Link
+              to={token ? brandHomeTo : '/login'}
+              className="brand brand--home-link"
+              aria-label={isClient ? 'Go to client portal' : 'Go to Scout home'}
+              onClick={(e) => {
+                if (blockRoutingCalendarPreviewNavigation()) e.preventDefault();
+              }}
+            >
               <img
                 src="/final_thick_lines_cropped.jpeg"
-                alt="Scout"
+                alt=""
                 style={{
                   height: '60px',
                   width: 'auto',
@@ -370,7 +395,7 @@ export default function App() {
                   TM
                 </sup>
               </span>
-            </div>
+            </Link>
 
             {token && !isClient && (
               <div className="navbar__center-block">
@@ -381,7 +406,6 @@ export default function App() {
               </div>
             )}
             {token && !isClient && <NavbarGlobalSearch />}
-            {token && !isClient && <NavbarScheduleAddAppointment />}
             {token && <UserMenu menuExtras={isClient ? [] : menuExtras} />}
           </header>
         )}
@@ -511,7 +535,7 @@ export default function App() {
                     <Route path="scheduling-tools" element={<SchedulingTools />}>
                       <Route
                         index
-                        element={<Navigate to="/schedule/scheduling-tools/schedule-loader" replace />}
+                        element={<Navigate to="/schedule/scheduling-tools/care-outreach" replace />}
                       />
                       {getSchedulingToolsTabPages().map((tab) => (
                         <Route key={tab.path} path={tab.path} element={tab.element} />
@@ -521,12 +545,14 @@ export default function App() {
                         element={<Navigate to="/schedule/appointments" replace />}
                       />
                     </Route>
+                    <Route path="appointments/search" element={<AppointmentSearchPage />} />
                     <Route path="appointments" element={<AppointmentRequestsPage />} />
                     <Route
                       path="appointments/requests"
                       element={<Navigate to="/schedule/appointments" replace />}
                     />
-                    <Route path="appointments/on-hold" element={<AppointmentRequestsPage initialTab="on_hold" />} />
+                    <Route path="appointments/on-hold" element={<RedirectAppointmentsOnHold />} />
+                    <Route path="holds" element={<HoldsPage />} />
                     <Route path="exit-survey" element={<ExitSurveyPage />} />
                     <Route path="room-loader" element={<RoomLoaderPage />} />
                     <Route path="soap" element={<DoctorWorklistPage />} />

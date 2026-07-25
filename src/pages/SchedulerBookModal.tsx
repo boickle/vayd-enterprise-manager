@@ -75,6 +75,30 @@ import {
   formatSchedulerBookingApiError,
   rolesIncludeAdminBypass,
 } from '../utils/manualBookingPermissions';
+import HouseholdScheduledVisitsWarningModal from '../components/HouseholdScheduledVisitsWarningModal';
+import EuthanasiaFutureAppointmentsModal from '../components/EuthanasiaFutureAppointmentsModal';
+import {
+  HouseholdVisitTimeAlignModal,
+  type HouseholdTimeAlignChoice,
+} from '../components/HouseholdVisitTimeAlignModal';
+import {
+  alignSiblingVisitScheduledTimes,
+  findCoVisitHouseholdVisitsNeedingAlign,
+} from '../utils/householdVisitTimeAlign';
+import { patientHasOverlappingActiveVisit } from '../utils/patientOverlappingVisit';
+import type { Appointment } from '../api/roomLoader';
+import {
+  buildBookingAppointmentTypeCatalog,
+  findHouseholdScheduledVisitConflicts,
+  shouldWarnHouseholdVisitsOnBook,
+  type HouseholdScheduledVisitConflict,
+} from '../utils/bookingHouseholdVisitWarning';
+import {
+  cancelEuthanasiaFutureAppointments,
+  findFutureAppointmentsForPatients,
+  isEuthanasiaAppointmentType,
+  type EuthanasiaFutureAppointmentRow,
+} from '../utils/euthanasiaFutureAppointments';
 import { ScheduleOverrideDayFields } from '../components/ScheduleOverrideDayFields';
 import {
   applyScheduleOverridesForBook,
@@ -214,6 +238,8 @@ export type SchedulerBookPrefill = {
   coVisitAddPet?: boolean;
   /** Visit alternate address from the anchor appointment when adding another pet. */
   coVisitAlternateAddress?: string;
+  /** Anchor visit id for co-visit add-pet — used to offer aligning household times. */
+  coVisitAnchorAppointmentId?: number;
   /** When true, date / start time / duration cannot be changed (same-slot co-visit). */
   lockSlotTimes?: boolean;
   /** When set with routing preview — PATCH existing visit instead of POST create. */
@@ -222,6 +248,11 @@ export type SchedulerBookPrefill = {
   rescheduleAppointmentIds?: number[];
   /** Per-appointment patient, type, and description when rescheduling (e.g. all pets today). */
   rescheduleVisitPatches?: RescheduleVisitPatch[];
+  /**
+   * "Explore alternatives": keep the source appointment(s) and CREATE a new appointment at the
+   * chosen slot instead of moving. Uses the same reschedule prefill (provider/type/times/patient).
+   */
+  exploreAlternatives?: boolean;
   /** Prefer this patient in the picker (e.g. reschedule). */
   preferredPatientId?: string;
   /** Initial selection when booking from routing preview (e.g. preview chip pets). */
@@ -272,6 +303,8 @@ type Props = {
   providers: Provider[];
   defaultProviderId: string | null;
   prefill?: SchedulerBookPrefill | null;
+  /** Practice calendar rows — used to offer aligning household times on co-visit add-pet. */
+  practiceAppointments?: Appointment[];
   /** When set, POST /routing/feedback after a successful book/reschedule from routing preview. */
   routingLinkPreview?: RoutingCalendarPreviewPayloadV1 | null;
   /** Timed manual book — preview on calendar before saving (all-day books save directly). */
@@ -279,20 +312,31 @@ type Props = {
   onClose: () => void;
   /** After a successful POST /slot-offers/send from care outreach or schedule loader routing. */
   onSlotOfferSent?: (detail?: { outreachNotesWarning?: string }) => void;
+  /** Jump the practice calendar to an existing household visit from the pre-book warning. */
+  onViewConflictPlacement?: (conflict: HouseholdScheduledVisitConflict) => void;
   onBooked: (detail?: {
     routingFeedbackWarning?: string;
     forwardBookingWarning?: string;
     appointmentRequestWarning?: string;
+    euthanasiaFutureWarning?: string;
     schedulingOverrideWarning?: string;
     schedulingOverridesApplied?: boolean;
     savedAppointmentId?: number;
     /** Internal provider id used for the saved visit (for calendar focus after cross-doctor reschedule). */
     primaryProviderId?: string;
-  /** Practice-local date (YYYY-MM-DD) of the booked slot. */
-  anchorDate?: string;
-  /** Appointment type id saved on the calendar visit (modal selection, not prefill default). */
-  bookedAppointmentTypeId?: number;
-}) => void;
+    /** Practice-local date (YYYY-MM-DD) of the booked slot. */
+    anchorDate?: string;
+    /** Appointment type id saved on the calendar visit (modal selection, not prefill default). */
+    bookedAppointmentTypeId?: number;
+    /** "Explore alternatives": a new appointment was created and the source(s) were kept. */
+    exploreAlternatives?: boolean;
+    /** Source appointment id(s) that were kept when exploring alternatives. */
+    exploreSourceAppointmentIds?: number[];
+    /** All new appointment ids created for the alternative slot (multi-pet). */
+    exploreCreatedAppointmentIds?: number[];
+    /** Type id actually used when creating the alternative appointment. */
+    exploreCreatedAppointmentTypeId?: number;
+  }) => void;
 };
 
 type PetRow = {
@@ -471,10 +515,12 @@ export function SchedulerBookModal({
   providers,
   defaultProviderId,
   prefill,
+  practiceAppointments = [],
   routingLinkPreview,
   onPreviewOnCalendar,
   onClose,
   onSlotOfferSent,
+  onViewConflictPlacement,
   onBooked,
 }: Props) {
   const [combinedQuery, setCombinedQuery] = useState('');
@@ -517,6 +563,10 @@ export function SchedulerBookModal({
   }, [role]);
   const isAdminOrSuper = useMemo(() => rolesIncludeAdminBypass(rolesLower), [rolesLower]);
   const isRoutingBook = isSchedulerRoutingBookPrefill(prefill);
+  const appointmentTypeCatalog = useMemo(
+    () => buildBookingAppointmentTypeCatalog(appointmentTypes),
+    [appointmentTypes],
+  );
 
   useEffect(() => {
     if (!open || isRoutingBook || prefill?.coVisitAddPet) {
@@ -566,6 +616,9 @@ export function SchedulerBookModal({
 
   const [startLocal, setStartLocal] = useState<DateTime | null>(null);
   const [durationMin, setDurationMin] = useState(30);
+  /** Local drafts so macOS/Safari `type="time"` can type through intermediate values (e.g. 10→11). */
+  const [startTimeDraft, setStartTimeDraft] = useState<string | null>(null);
+  const [endTimeDraft, setEndTimeDraft] = useState<string | null>(null);
   const [isAllDay, setIsAllDay] = useState(false);
   const [allDayEndDate, setAllDayEndDate] = useState('');
   const [additionalEmployeeIds, setAdditionalEmployeeIds] = useState<number[]>([]);
@@ -580,6 +633,26 @@ export function SchedulerBookModal({
   const [routingBookVisitEdits, setRoutingBookVisitEdits] = useState<RoutingBookVisitEdit[]>([]);
 
   const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
+  const [checkingHouseholdVisits, setCheckingHouseholdVisits] = useState(false);
+  const [householdVisitConflicts, setHouseholdVisitConflicts] = useState<
+    HouseholdScheduledVisitConflict[] | null
+  >(null);
+  const householdVisitCheckBypassRef = useRef(false);
+  const [euthanasiaFutureRows, setEuthanasiaFutureRows] = useState<
+    EuthanasiaFutureAppointmentRow[] | null
+  >(null);
+  const [checkingEuthanasiaFuture, setCheckingEuthanasiaFuture] = useState(false);
+  /** After the euthanasia future-appt prompt: delete those rows after a successful book, or keep them. */
+  const euthanasiaFutureChoiceRef = useRef<'delete' | 'keep' | null>(null);
+  const pendingEuthanasiaFutureDeletesRef = useRef<EuthanasiaFutureAppointmentRow[] | null>(null);
+  const [coVisitTimeAlignPrompt, setCoVisitTimeAlignPrompt] = useState<{
+    siblings: Appointment[];
+    startIso: string;
+    endIso: string;
+  } | null>(null);
+  const coVisitAlignChoiceRef = useRef<HouseholdTimeAlignChoice | null>(null);
+  const pendingCoVisitAlignSiblingsRef = useRef<Appointment[] | null>(null);
   const [sendingOffer, setSendingOffer] = useState(false);
   const [slotOfferComposeOpen, setSlotOfferComposeOpen] = useState(false);
   const [slotOfferComposeMessage, setSlotOfferComposeMessage] = useState('');
@@ -729,6 +802,9 @@ export function SchedulerBookModal({
     if (routingBookUsesClientHome) return '';
     const alt = bookAlternateAddressText.trim();
     if (!alt) return '';
+    // Add-pet inherits the anchor visit's explicit alternate stop. Never collapse it to home just
+    // because the client payload/address card happens to contain the same formatted string.
+    if (prefill?.coVisitAddPet && prefill.coVisitAlternateAddress?.trim()) return alt;
     // Routing preview: always book at the routed stop (placement was computed for this address).
     if (isRoutingPreviewBook && hasRoutingAlternateAddressText) return alt;
     if (
@@ -742,6 +818,8 @@ export function SchedulerBookModal({
     bookAlternateAddressText,
     hasRoutingAlternateAddressText,
     isRoutingPreviewBook,
+    prefill?.coVisitAddPet,
+    prefill?.coVisitAlternateAddress,
     routingBookUsesClientHome,
     selectedClientAddress,
   ]);
@@ -1129,6 +1207,8 @@ export function SchedulerBookModal({
     const s = slot!.start.setZone(practiceTz);
     const e = slot!.end.setZone(practiceTz);
     setStartLocal(s);
+    setStartTimeDraft(null);
+    setEndTimeDraft(null);
     const rawMins = Math.max(1, Math.round(e.diff(s, 'minutes').minutes));
     setDurationMin(rawMins);
     const inclusiveAllDayEnd = e.startOf('day') > s.startOf('day') ? e.minus({ days: 1 }) : s;
@@ -1647,15 +1727,119 @@ export function SchedulerBookModal({
     if (candidate.length > 4000) {
       return { ok: false, message: 'Alternate address must be 4000 characters or fewer.' };
     }
-    if (showRoutingAlternateAddress) {
+    // Co-visit / routing already have a trusted stop string — do not re-resolve against empty
+    // manual address fields (that returned '' and booked the pet at client home).
+    if (
+      showRoutingAlternateAddress ||
+      (prefill?.coVisitAddPet && prefill.coVisitAlternateAddress?.trim())
+    ) {
       return { ok: true, text: candidate };
     }
     return resolveVerifiedAddressText(alternateAddressFields);
-  }, [alternateAddressFields, alternateAddressTextForSubmit, showRoutingAlternateAddress]);
+  }, [
+    alternateAddressFields,
+    alternateAddressTextForSubmit,
+    prefill?.coVisitAddPet,
+    prefill?.coVisitAlternateAddress,
+    showRoutingAlternateAddress,
+  ]);
 
-  async function tryPreviewOnCalendar(): Promise<boolean> {
+  function collectBookAppointmentTypeIds(): number[] {
+    if (perVisitRoutingBook) {
+      return routingBookVisitEdits
+        .filter((v) => v.selected)
+        .map((v) => Number(v.appointmentTypeId))
+        .filter((id) => Number.isFinite(id) && id > 0);
+    }
+    if (perVisitReschedule) {
+      return rescheduleVisitEdits
+        .map((v) => v.appointmentTypeId)
+        .filter((id): id is number => id != null && Number.isFinite(Number(id)))
+        .map(Number);
+    }
+    const id = Number(typeId);
+    return Number.isFinite(id) && id > 0 ? [id] : [];
+  }
+
+  function collectBookPatientIds(): string[] {
+    if (perVisitRoutingBook) {
+      return routingBookVisitEdits
+        .filter((v) => v.selected && !v.isNoPatient && v.patientId?.trim())
+        .map((v) => v.patientId!.trim());
+    }
+    return selectedPatientId?.trim() ? [selectedPatientId.trim()] : [];
+  }
+
+  /** Patients being booked for a euthanasia type (routing multi-book may mix types). */
+  function collectEuthanasiaBookPatients(): { patientId: string; patientName?: string | null }[] {
+    if (perVisitRoutingBook) {
+      return routingBookVisitEdits
+        .filter((v) => v.selected && !v.isNoPatient && v.patientId?.trim())
+        .filter((v) => {
+          const t = appointmentTypes.find((at) => String(at.id) === String(v.appointmentTypeId));
+          return isEuthanasiaAppointmentType(t);
+        })
+        .map((v) => ({
+          patientId: v.patientId!.trim(),
+          patientName: v.patientName?.trim() || null,
+        }));
+    }
+    if (perVisitReschedule) {
+      return rescheduleVisitEdits
+        .filter((v) => {
+          const t = appointmentTypes.find((at) => Number(at.id) === Number(v.appointmentTypeId));
+          return isEuthanasiaAppointmentType(t);
+        })
+        .filter((v) => v.patientId?.trim())
+        .map((v) => ({
+          patientId: v.patientId!.trim(),
+          patientName: v.patientName?.trim() || null,
+        }));
+    }
+    if (!isEuthanasiaAppointmentType(selectedType)) return [];
+    const pid = selectedPatientId?.trim();
+    if (!pid) return [];
+    return [{ patientId: pid, patientName: selectedPatientLabel?.trim() || null }];
+  }
+
+  function collectExcludeAppointmentIds(): number[] {
+    const visitPatches =
+      prefill?.rescheduleVisitPatches?.filter(
+        (v) => Number.isFinite(Number(v.appointmentId)) && v.patientId?.trim(),
+      ) ?? [];
+    if (perVisitReschedule && rescheduleVisitEdits.length > 0) {
+      return [...new Set(rescheduleVisitEdits.map((v) => v.appointmentId))];
+    }
+    if (visitPatches.length > 0) {
+      return [...new Set(visitPatches.map((v) => Number(v.appointmentId)))];
+    }
+    const ids =
+      prefill?.rescheduleAppointmentIds?.length
+        ? prefill.rescheduleAppointmentIds
+        : prefill?.rescheduleAppointmentId != null
+          ? [prefill.rescheduleAppointmentId]
+          : [];
+    const out = ids.filter((id) => Number.isFinite(Number(id))).map(Number);
+    const coVisitAnchor = Number(prefill?.coVisitAnchorAppointmentId);
+    if (Number.isFinite(coVisitAnchor) && coVisitAnchor > 0) {
+      out.push(coVisitAnchor);
+    }
+    return [...new Set(out)];
+  }
+
+  function activeHouseholdPatientIds(): string[] {
+    return clientPets
+      .filter((p) => p.isDeleted !== true && p.isActive !== false)
+      .map((p) => String(p.id));
+  }
+
+  async function tryPreviewOnCalendar(opts?: {
+    coVisitAlignAppointmentIds?: number[];
+    coVisitAddPet?: boolean;
+    euthanasiaDeleteFutureAppointments?: boolean;
+  }): Promise<boolean> {
     setFormError(null);
-    if (!canPreviewOnCalendar || !onPreviewOnCalendar) return false;
+    if (!onPreviewOnCalendar) return false;
     if (!typeId) {
       setFormError('Select an appointment type.');
       return true;
@@ -1684,6 +1868,9 @@ export function SchedulerBookModal({
       setFormError('Select a patient — this appointment type requires one.');
       return true;
     }
+    const alignIds = (opts?.coVisitAlignAppointmentIds ?? [])
+      .map((id) => Number(id))
+      .filter((id) => Number.isFinite(id) && id > 0);
     onPreviewOnCalendar({
       practiceId,
       primaryProviderId: Number(providerId),
@@ -1711,13 +1898,27 @@ export function SchedulerBookModal({
       ...(selectedClientLon != null && Number.isFinite(selectedClientLon)
         ? { clientLon: selectedClientLon }
         : {}),
+      ...(opts?.coVisitAddPet || prefill?.coVisitAddPet ? { coVisitAddPet: true } : {}),
+      ...(alignIds.length ? { coVisitAlignAppointmentIds: alignIds } : {}),
+      ...(Number.isFinite(Number(prefill?.coVisitAnchorAppointmentId)) &&
+      Number(prefill?.coVisitAnchorAppointmentId) > 0
+        ? { coVisitAnchorAppointmentId: Number(prefill!.coVisitAnchorAppointmentId) }
+        : {}),
+      ...(opts?.euthanasiaDeleteFutureAppointments
+        ? { euthanasiaDeleteFutureAppointments: true }
+        : {}),
     });
     return true;
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (canPreviewOnCalendar) {
+    // Ref guard — double-click Book before `submitting` state flushes can create two pets.
+    if (submittingRef.current) return;
+    const coVisitPreviewAvailable = Boolean(
+      prefill?.coVisitAddPet && onPreviewOnCalendar && !allDayBookSession
+    );
+    if (canPreviewOnCalendar && !coVisitPreviewAvailable) {
       await tryPreviewOnCalendar();
       return;
     }
@@ -1805,25 +2006,179 @@ export function SchedulerBookModal({
       return;
     }
 
-    setSubmitting(true);
-    try {
-      const startDateLocal = startLocal?.setZone(practiceTz).startOf('day') ?? null;
-      const endDateLocal = DateTime.fromISO(allDayEndDate, { zone: practiceTz }).startOf('day');
-      const bookAllDay = allDayBookSession && appointmentTypeAllowsAllDay(selectedType);
-      const startIso = bookAllDay
-        ? startDateLocal?.toUTC().toISO()
-        : startLocal?.setZone(practiceTz).toUTC().toISO();
-      const endIso = bookAllDay
-        ? endDateLocal.plus({ days: 1 }).toUTC().toISO()
-        : endLocal?.setZone(practiceTz).toUTC().toISO();
-      if (!startIso || !endIso) {
-        setFormError(bookAllDay ? 'Choose a valid all-day date range.' : 'Invalid start time.');
-        setSubmitting(false);
+    const startDateLocal = startLocal?.setZone(practiceTz).startOf('day') ?? null;
+    const endDateLocal = DateTime.fromISO(allDayEndDate, { zone: practiceTz }).startOf('day');
+    const bookAllDay = allDayBookSession && appointmentTypeAllowsAllDay(selectedType);
+    const startIso = bookAllDay
+      ? startDateLocal?.toUTC().toISO()
+      : startLocal?.setZone(practiceTz).toUTC().toISO();
+    const endIso = bookAllDay
+      ? endDateLocal.plus({ days: 1 }).toUTC().toISO()
+      : endLocal?.setZone(practiceTz).toUTC().toISO();
+    if (!startIso || !endIso) {
+      setFormError(bookAllDay ? 'Choose a valid all-day date range.' : 'Invalid start time.');
+      return;
+    }
+
+    const altResolved = await resolveSubmitAlternateAddress();
+    if (!altResolved.ok) {
+      setFormError(altResolved.message);
+      return;
+    }
+    const trimmedAlt = altResolved.text;
+
+    if (
+      !bookedViaRouting &&
+      !prefill?.coVisitAddPet &&
+      !householdVisitCheckBypassRef.current &&
+      selectedClientId?.trim()
+    ) {
+      const appointmentTypeIds = collectBookAppointmentTypeIds();
+      if (
+        shouldWarnHouseholdVisitsOnBook({
+          catalog: appointmentTypeCatalog,
+          appointmentTypeIds,
+          clientId: selectedClientId,
+        })
+      ) {
+        setCheckingHouseholdVisits(true);
+        try {
+          const conflicts = await findHouseholdScheduledVisitConflicts({
+            practiceId,
+            clientId: selectedClientId.trim(),
+            placementStartIso: startIso,
+            practiceTz,
+            catalog: appointmentTypeCatalog,
+            householdPatientIds: activeHouseholdPatientIds(),
+            bookingPatientIds: collectBookPatientIds(),
+            excludeAppointmentIds: collectExcludeAppointmentIds(),
+          });
+          if (conflicts.length > 0) {
+            setHouseholdVisitConflicts(conflicts);
+            return;
+          }
+        } finally {
+          setCheckingHouseholdVisits(false);
+        }
+      }
+    }
+
+    if (!euthanasiaFutureChoiceRef.current) {
+      const euthPatients = collectEuthanasiaBookPatients();
+      if (euthPatients.length > 0) {
+        setCheckingEuthanasiaFuture(true);
+        try {
+          const futureRows = await findFutureAppointmentsForPatients({
+            practiceId,
+            practiceTz,
+            patients: euthPatients,
+            excludeAppointmentIds: collectExcludeAppointmentIds(),
+            asOfIso: startIso,
+          });
+          if (futureRows.length > 0) {
+            pendingEuthanasiaFutureDeletesRef.current = futureRows;
+            setEuthanasiaFutureRows(futureRows);
+            return;
+          }
+        } finally {
+          setCheckingEuthanasiaFuture(false);
+        }
+      }
+    }
+    // Past all pre-submit warning gates — clear one-shot bypasses for the next book attempt.
+    householdVisitCheckBypassRef.current = false;
+    const euthanasiaFutureChoice = euthanasiaFutureChoiceRef.current;
+    euthanasiaFutureChoiceRef.current = null;
+    const euthanasiaRowsToDelete =
+      euthanasiaFutureChoice === 'delete'
+        ? pendingEuthanasiaFutureDeletesRef.current
+        : null;
+    pendingEuthanasiaFutureDeletesRef.current = null;
+    setEuthanasiaFutureRows(null);
+
+    if (prefill?.coVisitAddPet && !bookAllDay) {
+      const anchorId = Number(prefill.coVisitAnchorAppointmentId);
+      const anchor =
+        Number.isFinite(anchorId) && anchorId > 0
+          ? practiceAppointments.find((a) => Number(a.id) === anchorId)
+          : undefined;
+      if (anchor) {
+        const needingAlign = findCoVisitHouseholdVisitsNeedingAlign(
+          anchor,
+          practiceAppointments,
+          practiceTz,
+          startIso,
+          endIso
+        );
+        if (needingAlign.length > 0) {
+          const choice = coVisitAlignChoiceRef.current;
+          if (choice == null) {
+            setCoVisitTimeAlignPrompt({
+              siblings: needingAlign,
+              startIso,
+              endIso,
+            });
+            return;
+          }
+          coVisitAlignChoiceRef.current = null;
+          setCoVisitTimeAlignPrompt(null);
+          pendingCoVisitAlignSiblingsRef.current =
+            choice === 'align_all' ? needingAlign : null;
+        } else {
+          pendingCoVisitAlignSiblingsRef.current = null;
+        }
+      }
+
+      // Changed times (or align choice): preview on calendar, then approve — don't book yet.
+      const timesDifferFromSlot = Boolean(
+        slot?.start?.isValid &&
+          slot?.end?.isValid &&
+          startLocal?.isValid &&
+          endLocal?.isValid &&
+          (slot.start.setZone(practiceTz).toFormat('yyyy-MM-dd HH:mm') !==
+            startLocal.setZone(practiceTz).toFormat('yyyy-MM-dd HH:mm') ||
+            slot.end.setZone(practiceTz).toFormat('yyyy-MM-dd HH:mm') !==
+              endLocal.setZone(practiceTz).toFormat('yyyy-MM-dd HH:mm'))
+      );
+      if (onPreviewOnCalendar && (timesDifferFromSlot || pendingCoVisitAlignSiblingsRef.current?.length)) {
+        const alignIds = (pendingCoVisitAlignSiblingsRef.current ?? [])
+          .map((a) => Number(a.id))
+          .filter((id) => Number.isFinite(id) && id > 0);
+        pendingCoVisitAlignSiblingsRef.current = null;
+        await tryPreviewOnCalendar({
+          coVisitAddPet: true,
+          coVisitAlignAppointmentIds: alignIds,
+          ...(euthanasiaFutureChoice === 'delete'
+            ? { euthanasiaDeleteFutureAppointments: true }
+            : {}),
+        });
         return;
       }
+    }
+
+    if (
+      prefill?.coVisitAddPet &&
+      selectedPatientId?.trim() &&
+      !bookAllDay &&
+      !perVisitRoutingBook &&
+      patientHasOverlappingActiveVisit({
+        appointments: practiceAppointments,
+        patientId: selectedPatientId.trim(),
+        startIso,
+        endIso,
+        excludeAppointmentIds: collectExcludeAppointmentIds(),
+      })
+    ) {
+      setFormError('This pet already has an appointment overlapping that time.');
+      return;
+    }
+
+    submittingRef.current = true;
+    setSubmitting(true);
+    try {
       const visitPatches =
         prefill?.rescheduleVisitPatches?.filter(
-          (v) => Number.isFinite(Number(v.appointmentId)) && v.patientId?.trim()
+          (v) => Number.isFinite(Number(v.appointmentId)) && v.patientId?.trim(),
         ) ?? [];
       const rescheduleIds =
         perVisitReschedule && rescheduleVisitEdits.length > 0
@@ -1837,13 +2192,6 @@ export function SchedulerBookModal({
                     ? [prefill.rescheduleAppointmentId]
                     : []
               ).filter((id) => Number.isFinite(Number(id)));
-      const altResolved = await resolveSubmitAlternateAddress();
-      if (!altResolved.ok) {
-        setFormError(altResolved.message);
-        setSubmitting(false);
-        return;
-      }
-      const trimmedAlt = altResolved.text;
 
       async function saveAlternateForAppointment(apptId: number) {
         if (!trimmedAlt) return;
@@ -1878,6 +2226,10 @@ export function SchedulerBookModal({
 
       let savedAppointmentId: number | undefined;
       let forwardBookingWarning: string | undefined;
+      /** "Explore alternatives" keeps the source appointment(s) and creates a new one instead. */
+      const exploreAlternatives = Boolean(prefill?.exploreAlternatives);
+      const exploreCreatedIds: number[] = [];
+      let exploreCreatedAppointmentTypeId: number | undefined;
       if (rescheduleIds.length > 0) {
         const patchBody = {
           appointmentStart: startIso,
@@ -1892,6 +2244,12 @@ export function SchedulerBookModal({
             : undefined;
           const visitPatch = visitPatches.find((v) => Number(v.appointmentId) === rescheduleId);
           const patientForPatch = edit?.patientId ?? visitPatch?.patientId ?? selectedPatientId;
+          const patientIdForPatch = Number(patientForPatch);
+          const hasPatientForPatch =
+            patientForPatch != null &&
+            String(patientForPatch).trim() !== '' &&
+            Number.isFinite(patientIdForPatch) &&
+            patientIdForPatch > 0;
           const rawDescription = (edit?.description ?? description).trim();
           const rawInstructions = (edit?.instructions ?? instructions).trim();
           const originalStartIso =
@@ -1902,6 +2260,39 @@ export function SchedulerBookModal({
             ? edit?.appointmentTypeId
             : (typeId && Number.isFinite(Number(typeId)) ? Number(typeId) : undefined) ??
               edit?.appointmentTypeId;
+          if (exploreAlternatives) {
+            // Keep the source visit untouched; book a second appointment at the new slot.
+            const created = await createAppointment({
+              practiceId,
+              primaryProviderId: Number(providerId),
+              ...(showAdditionalEmployeesField ? { additionalEmployeeIds } : {}),
+              ...(selectedClientId ? { clientId: Number(selectedClientId) } : {}),
+              ...(hasPatientForPatch ? { patientId: patientIdForPatch } : {}),
+              ...(trimmedAlt ? { alternateAddressText: trimmedAlt } : {}),
+              appointmentTypeId: Number(resolvedAppointmentTypeId),
+              appointmentStart: startIso,
+              appointmentEnd: endIso,
+              ...(bookAllDay ? { allDay: true } : {}),
+              description: descriptionForNewBook(rawDescription) || undefined,
+              instructions: staffNotesForNewBook(rawInstructions) || undefined,
+              ...(skipManualBookingPermissionGate ? { bookedViaRouting: true } : {}),
+            });
+            const idRaw = created?.id;
+            if (idRaw != null && Number.isFinite(Number(idRaw))) {
+              const apptId = Number(idRaw);
+              if (savedAppointmentId == null) savedAppointmentId = apptId;
+              exploreCreatedIds.push(apptId);
+              if (
+                exploreCreatedAppointmentTypeId == null &&
+                resolvedAppointmentTypeId != null &&
+                Number.isFinite(Number(resolvedAppointmentTypeId))
+              ) {
+                exploreCreatedAppointmentTypeId = Number(resolvedAppointmentTypeId);
+              }
+              await saveAlternateForAppointment(apptId);
+            }
+            continue;
+          }
           await patchAppointment(rescheduleId, {
             ...patchBody,
             appointmentTypeId: Number(resolvedAppointmentTypeId),
@@ -1913,14 +2304,16 @@ export function SchedulerBookModal({
                 practiceTz,
                 originalStartIso
               ).trim() || null,
-            patientId: Number(patientForPatch),
+            ...(hasPatientForPatch ? { patientId: patientIdForPatch } : {}),
             ...(skipManualBookingPermissionGate ? { bookedViaRouting: true } : {}),
           });
         }
-        savedAppointmentId = rescheduleIds[0];
-        if (trimmedAlt && savedAppointmentId != null) {
-          for (const rescheduleId of rescheduleIds) {
-            await saveAlternateForAppointment(rescheduleId);
+        if (!exploreAlternatives) {
+          savedAppointmentId = rescheduleIds[0];
+          if (trimmedAlt && savedAppointmentId != null) {
+            for (const rescheduleId of rescheduleIds) {
+              await saveAlternateForAppointment(rescheduleId);
+            }
           }
         }
       } else if (perVisitRoutingBook) {
@@ -2034,6 +2427,20 @@ export function SchedulerBookModal({
         }
       }
 
+      let euthanasiaFutureWarning: string | undefined;
+      if (euthanasiaRowsToDelete?.length && savedAppointmentId != null) {
+        const cancelResult = await cancelEuthanasiaFutureAppointments({
+          rows: euthanasiaRowsToDelete,
+          practiceId,
+        });
+        if (cancelResult.errors.length > 0) {
+          euthanasiaFutureWarning =
+            cancelResult.cancelledIds.length > 0
+              ? `Appointment saved. Removed ${cancelResult.cancelledIds.length} future visit(s), but ${cancelResult.errors.length} could not be cancelled.`
+              : `Appointment saved, but future appointments could not be cancelled. ${cancelResult.errors[0]}`;
+        }
+      }
+
       let schedulingOverrideWarning: string | undefined;
       let schedulingOverridesApplied = false;
       const markRoutingDayOff = scheduleOverrideDayOffRef.current || scheduleOverrideDayOff;
@@ -2077,16 +2484,60 @@ export function SchedulerBookModal({
         routingFeedbackWarning ||
         forwardBookingWarning ||
         appointmentRequestWarning ||
+        euthanasiaFutureWarning ||
         schedulingOverrideWarning ||
         schedulingOverridesApplied
           ? {
               routingFeedbackWarning,
               forwardBookingWarning,
               appointmentRequestWarning,
+              euthanasiaFutureWarning,
               schedulingOverrideWarning,
               schedulingOverridesApplied,
             }
           : undefined;
+
+      const siblingsToAlign = pendingCoVisitAlignSiblingsRef.current;
+      pendingCoVisitAlignSiblingsRef.current = null;
+      if (siblingsToAlign?.length && startIso && endIso) {
+        try {
+          await alignSiblingVisitScheduledTimes({
+            siblings: siblingsToAlign,
+            startIso,
+            endIso,
+            practiceId,
+          });
+        } catch (alignErr) {
+          console.warn('Could not align household visit times after add-pet book', alignErr);
+          const alignMsg =
+            alignErr instanceof Error && alignErr.message.trim()
+              ? alignErr.message
+              : 'Could not update other household pets to the new times.';
+          onBooked(
+            savedAppointmentId != null
+              ? {
+                  ...(bookedDetail ?? {}),
+                  savedAppointmentId,
+                  primaryProviderId: providerId.trim() || undefined,
+                  anchorDate: startLocal?.isValid ? startLocal.toISODate() ?? undefined : undefined,
+                  ...(typeId && Number.isFinite(Number(typeId)) && Number(typeId) > 0
+                    ? { bookedAppointmentTypeId: Number(typeId) }
+                    : {}),
+                  routingFeedbackWarning:
+                    (bookedDetail?.routingFeedbackWarning
+                      ? `${bookedDetail.routingFeedbackWarning} `
+                      : '') + `Pet booked, but ${alignMsg}`,
+                }
+              : {
+                  ...(bookedDetail ?? {}),
+                  routingFeedbackWarning: `Pet booked, but ${alignMsg}`,
+                }
+          );
+          onClose();
+          return;
+        }
+      }
+
       onBooked(
         savedAppointmentId != null
           ? {
@@ -2097,6 +2548,16 @@ export function SchedulerBookModal({
               ...(typeId && Number.isFinite(Number(typeId)) && Number(typeId) > 0
                 ? { bookedAppointmentTypeId: Number(typeId) }
                 : {}),
+              ...(exploreAlternatives && exploreCreatedIds.length > 0
+                ? {
+                    exploreAlternatives: true,
+                    exploreSourceAppointmentIds: rescheduleIds,
+                    exploreCreatedAppointmentIds: exploreCreatedIds,
+                    ...(exploreCreatedAppointmentTypeId != null
+                      ? { exploreCreatedAppointmentTypeId }
+                      : {}),
+                  }
+                : {}),
             }
           : bookedDetail
       );
@@ -2104,6 +2565,7 @@ export function SchedulerBookModal({
     } catch (err) {
       setFormError(formatSchedulerBookingApiError(err));
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   }
@@ -2420,8 +2882,9 @@ export function SchedulerBookModal({
     ) : null;
   }
 
-  const timeInputValue = startLocal.toFormat('HH:mm');
-  const endTimeInputValue = endLocal?.isValid ? endLocal.toFormat('HH:mm') : '';
+  const timeInputValue = startTimeDraft ?? startLocal.toFormat('HH:mm');
+  const endTimeInputValue =
+    endTimeDraft ?? (endLocal?.isValid ? endLocal.toFormat('HH:mm') : '');
   const dateInputValue = startLocal.toISODate() ?? '';
   const allDayStartDateValue = startLocal.setZone(practiceTz).startOf('day').toISODate() ?? '';
   const routingBookSelectedCount = routingBookVisitEdits.filter((v) => v.selected).length;
@@ -2635,8 +3098,9 @@ export function SchedulerBookModal({
               hint={
                 prefill?.coVisitAddPet ? (
                   <p className="scheduler-book-hint muted" style={{ marginTop: 6, marginBottom: 0 }}>
-                    This adds another appointment at the same time for a different pet. Pets already scheduled in
-                    this visit block (same time or back-to-back with this appointment) are not listed below.
+                    This adds another appointment for a different pet. You can adjust the length or times if the
+                    stop needs more time — we&apos;ll offer to align the other household pets already on this
+                    visit. Pets already scheduled in this visit block are not listed below.
                   </p>
                 ) : prefill?.routingPreviewBook ? (
                   <p className="scheduler-book-hint muted" style={{ marginTop: 6, marginBottom: 0 }}>
@@ -3189,6 +3653,7 @@ export function SchedulerBookModal({
                         value={durationMin}
                         onChange={(e) => {
                           setFormError(null);
+                          setEndTimeDraft(null);
                           setDurationMin(Number(e.target.value));
                         }}
                         disabled={Boolean(prefill?.lockSlotTimes)}
@@ -3210,13 +3675,17 @@ export function SchedulerBookModal({
                         step={300}
                         onChange={(e) => {
                           const v = e.target.value;
-                          if (!v || !startLocal) return;
+                          if (!startLocal) return;
+                          setFormError(null);
+                          setStartTimeDraft(v || null);
+                          if (!v) return;
                           const [hh, mm] = v.split(':').map((x) => parseInt(x, 10));
                           if (Number.isNaN(hh) || Number.isNaN(mm)) return;
                           setStartLocal(
                             startLocal.set({ hour: hh, minute: mm, second: 0, millisecond: 0 })
                           );
                         }}
+                        onBlur={() => setStartTimeDraft(null)}
                         disabled={Boolean(prefill?.lockSlotTimes)}
                       />
                     </Field>
@@ -3228,7 +3697,12 @@ export function SchedulerBookModal({
                         step={300}
                         onChange={(e) => {
                           const v = e.target.value;
-                          if (!v || !startLocal?.isValid) return;
+                          if (!startLocal?.isValid) return;
+                          // Keep draft while typing so intermediate values (01:xx while aiming for 11:xx)
+                          // do not snap back or sticky-error the form.
+                          setFormError(null);
+                          setEndTimeDraft(v || null);
+                          if (!v) return;
                           const [hh, mm] = v.split(':').map((x) => parseInt(x, 10));
                           if (Number.isNaN(hh) || Number.isNaN(mm)) return;
                           const endCandidate = startLocal.set({
@@ -3239,11 +3713,39 @@ export function SchedulerBookModal({
                           });
                           const mins = Math.round(endCandidate.diff(startLocal, 'minutes').minutes);
                           if (mins <= 0) {
-                            setFormError('End time must be after start time.');
+                            // Incomplete / intermediate clock value — wait for a valid end.
                             return;
                           }
-                          setFormError(null);
                           setDurationMin(mins);
+                        }}
+                        onBlur={() => {
+                          const draft = endTimeDraft;
+                          setEndTimeDraft(null);
+                          if (!startLocal?.isValid) return;
+                          if (draft) {
+                            const [hh, mm] = draft.split(':').map((x) => parseInt(x, 10));
+                            if (!Number.isNaN(hh) && !Number.isNaN(mm)) {
+                              const endCandidate = startLocal.set({
+                                hour: hh,
+                                minute: mm,
+                                second: 0,
+                                millisecond: 0,
+                              });
+                              const mins = Math.round(
+                                endCandidate.diff(startLocal, 'minutes').minutes
+                              );
+                              if (mins > 0) {
+                                setFormError(null);
+                                setDurationMin(mins);
+                                return;
+                              }
+                              setFormError('End time must be after start time.');
+                              return;
+                            }
+                          }
+                          if (endLocal?.isValid && endLocal <= startLocal) {
+                            setFormError('End time must be after start time.');
+                          }
                         }}
                         disabled={Boolean(prefill?.lockSlotTimes)}
                       />
@@ -3373,7 +3875,7 @@ export function SchedulerBookModal({
               <button
                 type="button"
                 className="scheduler-book-btn secondary"
-                disabled={submitting || sendingOffer || patientRequiredButMissing}
+                disabled={submitting || sendingOffer || checkingHouseholdVisits || checkingEuthanasiaFuture || patientRequiredButMissing}
                 onClick={() => void openSlotOfferCompose()}
                 title={
                   patientRequiredButMissing
@@ -3387,19 +3889,25 @@ export function SchedulerBookModal({
             <button
               type="submit"
               className="scheduler-book-btn primary"
-              disabled={submitting || sendingOffer || patientRequiredButMissing}
+              disabled={submitting || sendingOffer || checkingHouseholdVisits || checkingEuthanasiaFuture || patientRequiredButMissing}
               title={
                 patientRequiredButMissing
                   ? 'Select a patient — this appointment type requires one.'
                   : undefined
               }
             >
-              {submitting
+              {checkingHouseholdVisits || checkingEuthanasiaFuture
+                ? 'Checking visits…'
+                : submitting
                 ? isRescheduleBook
-                  ? 'Saving…'
+                  ? prefill?.exploreAlternatives
+                    ? 'Adding…'
+                    : 'Saving…'
                   : 'Booking…'
                 : isRescheduleBook
-                  ? 'Reschedule appointment'
+                  ? prefill?.exploreAlternatives
+                    ? 'Add Alternative Appointment'
+                    : 'Reschedule appointment'
                   : canPreviewOnCalendar
                     ? 'Preview on calendar'
                     : isRoutingPreviewBook && routingBookSelectedCount > 1
@@ -3412,6 +3920,74 @@ export function SchedulerBookModal({
     </div>,
     document.body
       )}
+      <HouseholdScheduledVisitsWarningModal
+        open={Boolean(householdVisitConflicts?.length)}
+        clientLabel={selectedClientLabel}
+        conflicts={householdVisitConflicts ?? []}
+        continuing={submitting}
+        onCancel={() => setHouseholdVisitConflicts(null)}
+        onViewPlacement={
+          onViewConflictPlacement
+            ? (row) => {
+                setHouseholdVisitConflicts(null);
+                onViewConflictPlacement(row);
+              }
+            : undefined
+        }
+        onContinue={() => {
+          householdVisitCheckBypassRef.current = true;
+          setHouseholdVisitConflicts(null);
+          void handleSubmit({ preventDefault: () => {} } as React.FormEvent);
+        }}
+      />
+      <EuthanasiaFutureAppointmentsModal
+        open={Boolean(euthanasiaFutureRows?.length)}
+        mode="booking"
+        rows={euthanasiaFutureRows ?? []}
+        patientLabel={
+          euthanasiaFutureRows?.length === 1
+            ? euthanasiaFutureRows[0]?.patientName
+            : selectedPatientLabel
+        }
+        continuing={submitting || checkingEuthanasiaFuture}
+        onCancel={() => {
+          if (submitting) return;
+          setEuthanasiaFutureRows(null);
+          pendingEuthanasiaFutureDeletesRef.current = null;
+          euthanasiaFutureChoiceRef.current = null;
+        }}
+        onKeep={() => {
+          euthanasiaFutureChoiceRef.current = 'keep';
+          setEuthanasiaFutureRows(null);
+          void handleSubmit({ preventDefault: () => {} } as React.FormEvent);
+        }}
+        onConfirmDelete={() => {
+          euthanasiaFutureChoiceRef.current = 'delete';
+          setEuthanasiaFutureRows(null);
+          void handleSubmit({ preventDefault: () => {} } as React.FormEvent);
+        }}
+      />
+      {coVisitTimeAlignPrompt ? (
+        <HouseholdVisitTimeAlignModal
+          open
+          practiceTz={practiceTz}
+          newStartIso={coVisitTimeAlignPrompt.startIso}
+          newEndIso={coVisitTimeAlignPrompt.endIso}
+          addedPetName={selectedPatientLabel}
+          siblings={coVisitTimeAlignPrompt.siblings}
+          saving={submitting}
+          onCancel={() => {
+            if (submitting) return;
+            setCoVisitTimeAlignPrompt(null);
+            coVisitAlignChoiceRef.current = null;
+            pendingCoVisitAlignSiblingsRef.current = null;
+          }}
+          onChoose={(choice) => {
+            coVisitAlignChoiceRef.current = choice;
+            void handleSubmit({ preventDefault: () => {} } as React.FormEvent);
+          }}
+        />
+      ) : null}
       <ClientSmsComposeModal
         open={slotOfferComposeOpen}
         clientLabel={selectedClientLabel.trim() || prefill?.clientLabel?.trim() || 'Client'}

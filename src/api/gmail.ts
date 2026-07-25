@@ -5,10 +5,13 @@ export type GmailMailboxStatus = {
   kind?: 'shared' | 'personal';
   displayLabel?: string;
   connected: boolean;
+  /** service_account = shared inbox via SA; oauth = personal (or legacy shared) connect. */
+  authMode?: 'service_account' | 'oauth';
   grantedEmail?: string | null;
   connectedAt?: string | null;
   tokenExpiresAt?: string | null;
   mailboxMismatch?: boolean;
+  contactsEnabled?: boolean;
 };
 
 export type GmailMailboxesResponse = {
@@ -194,6 +197,17 @@ export function groupGmailMessagesByThread(
     const draftRow =
       sorted.find((m) => m.hasDraft || m.labelIds.includes('DRAFT')) ?? null;
     const hasDraft = Boolean(draftRow);
+    const draftOnly =
+      hasDraft &&
+      !sorted.some((m) => !m.hasDraft && !m.labelIds.includes('DRAFT'));
+    const draftParticipants =
+      draftOnly && draftRow
+        ? messageListParticipants({
+            ...draftRow,
+            hasDraft: true,
+            labelIds: draftRow.labelIds,
+          })
+        : undefined;
     grouped.push({
       ...latest,
       threadId: threadKey(latest),
@@ -204,7 +218,9 @@ export function groupGmailMessagesByThread(
       hasAttachments: attachments.length > 0 || sorted.some((m) => m.hasAttachments),
       attachments,
       threadMessageCount: Math.max(maxCount, sorted.length),
-      participants: mergeParticipantLists(participantParts) ?? latest.participants,
+      participants:
+        draftParticipants ?? mergeParticipantLists(participantParts) ?? latest.participants,
+      ...(draftOnly && draftRow ? { to: [...draftRow.to] } : {}),
       scheduledSendAt: scheduledSendAt ?? latest.scheduledSendAt ?? null,
       hasDraft,
       draftId: draftRow?.draftId ?? (hasDraft ? draftRow?.id : undefined),
@@ -293,20 +309,51 @@ export async function disconnectGmail(mailbox?: string): Promise<void> {
   });
 }
 
+const gmailThreadInflight = new Map<string, Promise<GmailThreadResponse>>();
+
 export async function fetchGmailThread(
   mailbox: string,
   threadId: string,
 ): Promise<GmailThreadResponse> {
-  const { data } = await http.get<GmailThreadResponse>(
-    `/gmail/threads/${encodeURIComponent(threadId)}`,
-    { params: mailboxParams(mailbox) },
-  );
-  return data;
+  const key = `${mailbox}:${threadId}`;
+  const existing = gmailThreadInflight.get(key);
+  if (existing) return existing;
+
+  const promise = http
+    .get<GmailThreadResponse>(`/gmail/threads/${encodeURIComponent(threadId)}`, {
+      params: mailboxParams(mailbox),
+    })
+    .then(({ data }) => data)
+    .finally(() => {
+      gmailThreadInflight.delete(key);
+    });
+  gmailThreadInflight.set(key, promise);
+  return promise;
 }
 
 export async function fetchGmailSendAs(mailbox: string): Promise<{ aliases: GmailSendAsAlias[] }> {
   const { data } = await http.get<{ aliases: GmailSendAsAlias[] }>('/gmail/send-as', {
     params: mailboxParams(mailbox),
+  });
+  return data;
+}
+
+export type GmailContactSearchResponse = {
+  contacts: GmailAddress[];
+  contactsEnabled: boolean;
+};
+
+export async function fetchGmailContactSuggestions(
+  mailbox: string,
+  query: string,
+  limit = 12,
+): Promise<GmailContactSearchResponse> {
+  const trimmed = query.trim();
+  if (trimmed.length < 2) {
+    return { contacts: [], contactsEnabled: true };
+  }
+  const { data } = await http.get<GmailContactSearchResponse>('/gmail/contacts/search', {
+    params: { mailbox, q: trimmed, limit },
   });
   return data;
 }
@@ -514,7 +561,7 @@ export async function fetchGmailMessages(
   return data;
 }
 
-/** Label ids for a thread — Gmail applies labels to the conversation, not per message. */
+/** Label ids on the newest message in a thread (Scout's write/modify target). */
 export function threadLabelIds(
   messages: ReadonlyArray<{ labelIds: readonly string[]; date?: string }>,
 ): string[] {
@@ -529,6 +576,21 @@ export function threadLabelIds(
     }
   }
   return [...latest.labelIds];
+}
+
+/**
+ * Union of label ids across every message in a thread. Gmail stores labels per
+ * message, so the conversation-level chips shown in the Gmail UI are this union
+ * (e.g. a label applied to the original request that a later reply didn't inherit).
+ */
+export function threadLabelIdsUnion(
+  messages: ReadonlyArray<{ labelIds: readonly string[] }>,
+): string[] {
+  const out = new Set<string>();
+  for (const m of messages) {
+    for (const id of m.labelIds) out.add(id);
+  }
+  return [...out];
 }
 
 export async function modifyGmailMessage(
@@ -789,22 +851,107 @@ function systemLabelOrPlaceholder(
   );
 }
 
+/** Virtual folder node created for a parent segment (no standalone Gmail label). */
+export function isGmailVirtualLabelFolder(label: Pick<GmailLabelNode, 'id'>): boolean {
+  return label.id.startsWith('path:');
+}
+
+/** Collect real user labels (deduped by id) from a flat or nested API tree. */
+export function collectUserLabelLeaves(nodes: GmailLabelNode[]): GmailLabelNode[] {
+  const byId = new Map<string, GmailLabelNode>();
+  const walk = (list: GmailLabelNode[]) => {
+    for (const n of list) {
+      if (n.type === 'user' && !isGmailLabelGroup(n) && !isGmailVirtualLabelFolder(n)) {
+        byId.set(n.id, n);
+      }
+      if (n.children.length) walk(n.children);
+    }
+  };
+  walk(nodes);
+  return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Build nested sidebar tree from Gmail label paths (`Parent/Child/...`). */
+export function buildUserLabelTreeFromPaths(leaves: GmailLabelNode[]): GmailLabelNode[] {
+  type MutableNode = GmailLabelNode & { _children: Map<string, MutableNode> };
+  const roots = new Map<string, MutableNode>();
+
+  for (const label of leaves) {
+    const segments = label.name.split('/').filter((s) => s.trim().length > 0);
+    if (segments.length === 0) continue;
+    let level = roots;
+
+    for (let i = 0; i < segments.length; i++) {
+      const path = segments.slice(0, i + 1).join('/');
+      if (!level.has(path)) {
+        level.set(path, {
+          id: i === segments.length - 1 ? label.id : `path:${path}`,
+          name: path,
+          type: 'user',
+          messageListVisibility: null,
+          labelListVisibility: null,
+          color: null,
+          children: [],
+          _children: new Map(),
+        });
+      }
+      const node = level.get(path)!;
+      if (i === segments.length - 1) {
+        node.id = label.id;
+        node.messageListVisibility = label.messageListVisibility ?? null;
+        node.labelListVisibility = label.labelListVisibility ?? null;
+        node.messagesTotal = label.messagesTotal;
+        node.messagesUnread = label.messagesUnread;
+        node.threadsTotal = label.threadsTotal;
+        node.threadsUnread = label.threadsUnread;
+        node.color = label.color ?? null;
+      }
+      level = node._children;
+    }
+  }
+
+  const toTree = (map: Map<string, MutableNode>): GmailLabelNode[] =>
+    [...map.values()]
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map(({ _children, ...node }) => ({
+        ...node,
+        children: _children.size ? toTree(_children) : [],
+      }));
+
+  return toTree(roots);
+}
+
+/** Label ids for folders that should start expanded in the sidebar. */
+export function collectExpandableLabelIds(nodes: GmailLabelNode[]): string[] {
+  const ids: string[] = [];
+  const walk = (list: GmailLabelNode[]) => {
+    for (const n of list) {
+      if (n.children.length > 0) {
+        ids.push(n.id);
+        walk(n.children);
+      }
+    }
+  };
+  walk(nodes);
+  return ids;
+}
+
 /** Filter internal labels and return Gmail-style sidebar navigation + user labels. */
 export function prepareSidebarLabels(labels: GmailLabelNode[]): GmailSidebarLabels {
   const filtered = filterSidebarLabelTree(labels);
   const systemById = new Map<string, GmailLabelNode>();
-  const userLabels: GmailLabelNode[] = [];
   const categories: GmailLabelNode[] = [];
 
   for (const label of filtered) {
     if (label.id.startsWith(GMAIL_CATEGORY_LABEL_PREFIX)) {
       categories.push(label);
-    } else if (label.type === 'user') {
-      userLabels.push(label);
     } else if (SIDEBAR_SYSTEM_LABEL_IDS.has(label.id) && !systemById.has(label.id)) {
       systemById.set(label.id, label);
     }
   }
+
+  const userLabelRoots = filtered.filter((label) => label.type === 'user');
+  const userLabels = buildUserLabelTreeFromPaths(collectUserLabelLeaves(userLabelRoots));
 
   const navigation: GmailLabelNode[] = PRIMARY_NAV_ORDER.map((id) =>
     systemLabelOrPlaceholder(id, systemById),
@@ -984,10 +1131,51 @@ export function flattenUserLabels(nodes: GmailLabelNode[]): GmailLabelNode[] {
   return out;
 }
 
+export type GmailLabelMenuRow = {
+  label: GmailLabelNode;
+  depth: number;
+  /** False for virtual parent folders (`path:…`) used only for grouping. */
+  movable: boolean;
+};
+
+/** Depth-first rows for Move to / label menus — preserves parent/child nesting. */
+export function flattenUserLabelsForMenu(nodes: GmailLabelNode[]): GmailLabelMenuRow[] {
+  const out: GmailLabelMenuRow[] = [];
+  const walk = (list: GmailLabelNode[], depth: number) => {
+    for (const n of list) {
+      if (n.type !== 'user' || isGmailLabelGroup(n)) continue;
+      const virtual = isGmailVirtualLabelFolder(n);
+      out.push({ label: n, depth, movable: !virtual });
+      if (n.children.length) walk(n.children, depth + 1);
+    }
+  };
+  walk(nodes, 0);
+  return out;
+}
+
 export function formatGmailAddress(addr: GmailAddress): string {
   const name = addr.name?.trim();
   if (name) return `${name} <${addr.email}>`;
   return addr.email;
+}
+
+/** Inbox row label: draft threads show recipients; others show senders/participants. */
+export function messageListParticipants(
+  msg: Pick<GmailMessageSummary, 'participants' | 'from' | 'to' | 'hasDraft' | 'labelIds'>,
+): string {
+  if (messageHasDraft(msg) || msg.labelIds.includes('DRAFT')) {
+    const parts = msg.to
+      .map((addr) => {
+        const name = addr.name?.trim();
+        if (name) return name;
+        const local = addr.email.split('@')[0];
+        return local || addr.email;
+      })
+      .filter(Boolean);
+    if (parts.length > 0) return parts.join(', ');
+    return '(no recipients)';
+  }
+  return msg.participants?.trim() || msg.from.name?.trim() || msg.from.email;
 }
 
 export function labelDisplayName(label: GmailLabelNode): string {
@@ -1028,4 +1216,41 @@ export function mailboxDisplayLabel(mailbox: Pick<GmailMailboxStatus, 'email' | 
 export function mailboxShortLabel(email: string): string {
   const local = email.split('@')[0] ?? email;
   return local.charAt(0).toUpperCase() + local.slice(1);
+}
+
+/** Admin Settings — shared inbox ACL (info@ / field@). */
+export type GmailAdminMailboxPermissionEntry = {
+  mailboxEmail: string;
+  canRead: boolean;
+  canSend: boolean;
+};
+
+export type GmailAdminMailboxPermissionsUser = {
+  userId: number;
+  email: string | null;
+  employeeId: number | null;
+  displayName: string;
+  role: string;
+  mailboxes: GmailAdminMailboxPermissionEntry[];
+};
+
+export type GmailAdminMailboxPermissionsOverview = {
+  mailboxes: Array<{ email: string; displayLabel: string }>;
+  users: GmailAdminMailboxPermissionsUser[];
+};
+
+export async function fetchGmailMailboxPermissions(): Promise<GmailAdminMailboxPermissionsOverview> {
+  const { data } = await http.get<GmailAdminMailboxPermissionsOverview>('/gmail/permissions');
+  return data;
+}
+
+export async function updateGmailMailboxPermissions(
+  userId: number,
+  mailboxes: GmailAdminMailboxPermissionEntry[],
+): Promise<{ userId: number; mailboxes: GmailAdminMailboxPermissionEntry[] }> {
+  const { data } = await http.put<{ userId: number; mailboxes: GmailAdminMailboxPermissionEntry[] }>(
+    `/gmail/permissions/${userId}`,
+    { mailboxes },
+  );
+  return data;
 }

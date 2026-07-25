@@ -141,6 +141,14 @@ export type RoutingRescheduleIntentV1 = {
     mailbox: string;
     threadId: string;
   };
+  /** When set (e.g. reschedule opened from the Holds board), Dismiss returns here. */
+  returnPath?: string;
+  /**
+   * "Explore alternatives" mode: keep the original appointment and CREATE a new one at the chosen
+   * slot (instead of moving it). Search behaves like reschedule (score vs original + ±window
+   * exclusion on the source provider), but confirming books a second appointment.
+   */
+  exploreAlternatives?: boolean;
 };
 
 function pickStr(v: unknown): string | null {
@@ -222,11 +230,17 @@ export function routingAddressesMatch(a: string, b: string): boolean {
 /** Alternate routing stop currently on the form that should not be silently replaced by client home. */
 export function routingFormAlternateAddressToPreserve(
   formAddress: string | undefined | null,
-  intent: RoutingRescheduleIntentV1 | null | undefined
+  intent: RoutingRescheduleIntentV1 | null | undefined,
+  opts?: { pickingClientId?: string | null }
 ): string | null {
+  if (!intent?.isAlternateStop) return null;
+  const pickingId = opts?.pickingClientId?.trim();
+  const intentClientId = intent.clientId?.trim();
+  // Do not carry a prior stop's ALT onto a different client (stale form / session leak).
+  if (pickingId && intentClientId && pickingId !== intentClientId) return null;
   const fromIntent = rescheduleIntentAlternateAddress(intent);
   if (fromIntent) return fromIntent;
-  if (intent?.isAlternateStop && formAddress?.trim()) return formAddress.trim();
+  if (formAddress?.trim()) return formAddress.trim();
   return null;
 }
 
@@ -236,9 +250,12 @@ export function routingClientPickWouldReplaceAlternate(args: {
   intent?: RoutingRescheduleIntentV1 | null;
   clientHomeAddress: string | null | undefined;
   explicitAlternateOpt?: string | null;
+  pickingClientId?: string | null;
 }): string | null {
   if (args.explicitAlternateOpt?.trim()) return null;
-  const preserved = routingFormAlternateAddressToPreserve(args.currentFormAddress, args.intent);
+  const preserved = routingFormAlternateAddressToPreserve(args.currentFormAddress, args.intent, {
+    pickingClientId: args.pickingClientId,
+  });
   const home = args.clientHomeAddress?.trim();
   if (!preserved || !home) return null;
   if (routingAddressesMatch(preserved, home)) return null;
@@ -256,7 +273,11 @@ export function readRoutingRescheduleIntent(): RoutingRescheduleIntentV1 | null 
     const raw = sessionStorage.getItem(ROUTING_RESCHEDULE_INTENT_STORAGE_KEY);
     if (!raw) return null;
     const o = JSON.parse(raw) as RoutingRescheduleIntentV1;
-    if (o?.v !== 1 || typeof o.appointmentId !== 'number' || !o.clientId || !o.patientId) return null;
+    if (o?.v !== 1 || typeof o.appointmentId !== 'number') return null;
+    const hasClient = Boolean(o.clientId) && Boolean(o.patientId);
+    const hasAddressOnly =
+      Boolean(o.isAlternateStop) && Boolean(o.address?.trim() || o.alternateAddressText?.trim());
+    if (!hasClient && !hasAddressOnly) return null;
     return o;
   } catch {
     return null;
@@ -355,6 +376,11 @@ export function returnFromRescheduleWorkspace(
     navigate(buildGmailInboxReturnPath(gmail.mailbox, gmail.threadId), {
       replace: opts?.replace,
     });
+    return;
+  }
+  const returnPath = intent?.returnPath?.trim();
+  if (returnPath) {
+    navigate(returnPath, { replace: opts?.replace });
     return;
   }
   navigate('/schedule/routing', { replace: opts?.replace });
@@ -495,6 +521,35 @@ export function routingSlotSearchIncludesRescheduleDay(
 }
 
 /**
+ * Reschedule / Alternatives: default Get Best Route to ±7 days around the original visit day.
+ * Clamps the start to today in practice TZ so past calendar days aren't searched.
+ */
+export function rescheduleIntentDefaultDateRange(
+  intent: Pick<RoutingRescheduleIntentV1, 'practiceDateKey' | 'originalStartIso'>,
+  practiceTz: string
+): { startDate: string; endDate: string } | null {
+  const fromKey = intent.practiceDateKey?.trim();
+  const fromStart = intent.originalStartIso?.trim();
+  let anchorIso: string | null = fromKey || null;
+  if (!anchorIso && fromStart) {
+    const local = DateTime.fromISO(fromStart, { zone: 'utc' }).setZone(practiceTz);
+    if (local.isValid) anchorIso = local.toISODate();
+  }
+  if (!anchorIso) return null;
+  const day = DateTime.fromISO(anchorIso, { zone: practiceTz }).startOf('day');
+  if (!day.isValid) return null;
+  const today = DateTime.now().setZone(practiceTz).startOf('day');
+  if (!today.isValid) return null;
+  const startCandidate = day.minus({ days: 7 });
+  const start = startCandidate < today ? today : startCandidate;
+  const end = day.plus({ days: 7 });
+  const startDate = start.toISODate();
+  const endDate = end.toISODate();
+  if (!startDate || !endDate) return null;
+  return { startDate, endDate };
+}
+
+/**
  * Build `rescheduleContext` for POST `/routing/v2` when moving existing visits.
  * Omit when the search range does not include the original appointment day.
  */
@@ -552,6 +607,14 @@ export type BuildRoutingRescheduleIntentOpts = {
     firstName?: string | null;
     lastName?: string | null;
   }>;
+  /**
+   * Allow an address-only reschedule intent (empty client/patient) when the visit has no
+   * linked client but carries a routing/alternate address — e.g. an on-hold visit placed by
+   * address. Routing then searches by that address instead of a client home.
+   */
+  allowAddressOnly?: boolean;
+  /** Build an "explore alternatives" intent — keep the original, create a new appointment. */
+  exploreAlternatives?: boolean;
 };
 
 export type RescheduleIntentDoctorPims = {
@@ -695,6 +758,85 @@ export function rescheduleCalendarFocusFromIntent(
   return { anchorDate, providerFilter, viewMode: 'week' };
 }
 
+/**
+ * Address-only reschedule intent (no linked client/patient). Used for on-hold visits placed by
+ * routing address — Routing searches by the visit address instead of a client home.
+ */
+function buildAddressOnlyRescheduleIntent(
+  appt: Appointment,
+  opts?: BuildRoutingRescheduleIntentOpts
+): RoutingRescheduleIntentV1 | null {
+  const addressText =
+    appointmentAlternateAddressText(appt) ?? visitAddressFromAppointmentRow(appt);
+  if (!addressText) return null;
+
+  const start = DateTime.fromISO(appt.appointmentStart);
+  const end = DateTime.fromISO(appt.appointmentEnd);
+  const minutes =
+    start.isValid && end.isValid ? Math.max(15, Math.round(end.diff(start, 'minutes').minutes)) : 45;
+
+  const at = appt.appointmentType;
+  const typeId = at?.id;
+  const appointmentTypeId =
+    typeId != null && (typeof typeId === 'number' || typeof typeId === 'string')
+      ? Number(typeId)
+      : undefined;
+  const appointmentTypeName = pickStr(at?.prettyName) ?? pickStr(at?.name) ?? undefined;
+
+  const pp = appt.primaryProvider;
+  const pi = pp?.id;
+  const primaryProviderInternalId =
+    pi != null && Number.isFinite(Number(pi)) ? String(pi) : undefined;
+  let primaryDoctorDisplayName =
+    [pickStr(pp?.firstName), pickStr(pp?.lastName)].filter(Boolean).join(' ').trim() || undefined;
+  let primaryDoctorPimsId = pickStr(pp?.pimsId) ?? undefined;
+  if (opts?.providers?.length) {
+    const resolved = resolveRescheduleIntentDoctorPimsId(
+      { primaryDoctorPimsId, primaryProviderInternalId, primaryDoctorDisplayName },
+      opts.providers
+    );
+    if (resolved) {
+      primaryDoctorPimsId = resolved.pimsId;
+      primaryDoctorDisplayName = resolved.displayName ?? primaryDoctorDisplayName;
+    }
+  }
+
+  const practiceTz = opts?.practiceTz ?? practiceTimeZoneOrDefault(undefined);
+  const startLocal = DateTime.fromISO(appt.appointmentStart, { zone: 'utc' }).setZone(practiceTz);
+  const endLocal = DateTime.fromISO(appt.appointmentEnd, { zone: 'utc' }).setZone(practiceTz);
+  const practiceDateKey = startLocal.isValid ? startLocal.toISODate() ?? undefined : undefined;
+  const originalStartIso =
+    startLocal.isValid ? startLocal.toISO({ includeOffset: true }) ?? undefined : undefined;
+  const originalEndIso =
+    endLocal.isValid ? endLocal.toISO({ includeOffset: true }) ?? undefined : undefined;
+
+  return {
+    v: 1,
+    appointmentId: appt.id,
+    practiceDateKey,
+    originalStartIso,
+    originalEndIso,
+    clientId: '',
+    patientId: '',
+    appointmentTypeId: Number.isFinite(appointmentTypeId) ? appointmentTypeId : undefined,
+    appointmentTypeName,
+    primaryProviderInternalId,
+    primaryDoctorPimsId,
+    primaryDoctorDisplayName,
+    sourceProviderInternalId: primaryProviderInternalId,
+    sourceDoctorPimsId: primaryDoctorPimsId,
+    sourceDoctorDisplayName: primaryDoctorDisplayName,
+    description: appt.description ?? null,
+    instructions: appt.instructions ?? null,
+    serviceMinutes: minutes,
+    isAlternateStop: true,
+    alternateAddressText: addressText,
+    address: addressText,
+    rescheduleScope: 'selected_pet',
+    ...(opts?.exploreAlternatives ? { exploreAlternatives: true } : {}),
+  };
+}
+
 /** Build intent from scheduler appointment row + client for Routing + reschedule PATCH flow. */
 export function buildRoutingRescheduleIntentFromAppointment(
   appt: Appointment,
@@ -706,10 +848,12 @@ export function buildRoutingRescheduleIntentFromAppointment(
     return null;
 
   const c = appt.client as Client | undefined;
-  if (!c || c.id == null) return null;
   const patients = patientsForAppointment(appt);
   const p0 = patients[0];
-  if (!p0 || p0.id == null) return null;
+  if (!c || c.id == null || !p0 || p0.id == null) {
+    if (!opts?.allowAddressOnly) return null;
+    return buildAddressOnlyRescheduleIntent(appt, opts);
+  }
 
   const fn = pickStr(c.firstName) ?? '';
   const ln = pickStr(c.lastName) ?? '';
@@ -800,5 +944,6 @@ export function buildRoutingRescheduleIntentFromAppointment(
       : {}),
     sameDayVisits,
     rescheduleScope: sameDayVisits.length > 1 ? undefined : 'selected_pet',
+    ...(opts?.exploreAlternatives ? { exploreAlternatives: true } : {}),
   };
 }

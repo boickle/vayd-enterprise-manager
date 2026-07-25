@@ -1,8 +1,7 @@
-import { Fragment, useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { DateTime } from 'luxon';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  confirmSlotOffer,
   fetchSlotOfferDetail,
   fetchSlotOffers,
   removeSlotOffer,
@@ -29,6 +28,14 @@ import {
   buildSchedulerFocusAppointmentUrl,
   writeSchedulerFocusSession,
 } from '../utils/schedulerFocusAppointment';
+import {
+  TEXTED_OFFERS_TO_REVIEW_PATH,
+  writeSlotOfferReviewSession,
+} from '../utils/slotOfferReviewSession';
+import {
+  clearSlotOfferReviewReturnSession,
+  readSlotOfferReviewReturnSession,
+} from '../utils/slotOfferReviewReturnSession';
 import './Settings.css';
 
 const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
@@ -455,35 +462,32 @@ function OfferDetailPanel({
   smsFromLine,
   resolving,
   resolveError,
-  confirming,
-  confirmError,
   removing,
   removeError,
   showRemove,
   onResolve,
-  onConfirm,
   onRemove,
   onTextClient,
   onViewAppointment,
+  onReviewAppointment,
 }: {
   detail: SlotOfferDetail;
   practiceTz: string;
   smsFromLine: string | null;
   resolving: boolean;
   resolveError: string | null;
-  confirming: boolean;
-  confirmError: string | null;
   removing: boolean;
   removeError: string | null;
   showRemove: boolean;
   onResolve: () => void;
-  onConfirm: () => void;
   onRemove: () => void;
   onTextClient: () => void;
   onViewAppointment: () => void;
+  onReviewAppointment: () => void;
 }) {
   const hasBookedAppointment =
     detail.bookedAppointmentId != null && Number(detail.bookedAppointmentId) > 0;
+  const needsReview = canStaffConfirm(detail);
   return (
     <div
       style={{
@@ -576,20 +580,14 @@ function OfferDetailPanel({
                 Text client
               </button>
             ) : null}
-            {hasBookedAppointment ? (
+            {needsReview ? (
+              <button type="button" className="btn primary" onClick={onReviewAppointment}>
+                Review appointment
+              </button>
+            ) : hasBookedAppointment ? (
               <button type="button" className="btn secondary" onClick={onViewAppointment}>
                 View appointment
               </button>
-            ) : null}
-            {canStaffConfirm(detail) ? (
-              <>
-                <button type="button" className="btn secondary" disabled={confirming} onClick={onConfirm}>
-                  {confirming ? 'Saving…' : 'Reviewed'}
-                </button>
-                {confirmError ? (
-                  <span style={{ color: '#b91c1c', fontSize: 13 }}>{confirmError}</span>
-                ) : null}
-              </>
             ) : null}
             {canMarkBooked(detail) ? (
               <>
@@ -613,10 +611,10 @@ function OfferDetailPanel({
             ) : null}
           </div>
         ) : null}
-        {isToConfirmOffer(detail) ? (
+        {needsReview ? (
           <p className="settings-muted" style={{ margin: 0, fontSize: 13 }}>
-            Client accepted this offer and a visit was created — verify it on the calendar, then
-            click Reviewed.
+            Client accepted this offer and a visit was created — open Review appointment to verify
+            on the calendar, then mark reviewed.
           </p>
         ) : null}
         {isBookedOffer(detail) ? (
@@ -681,8 +679,6 @@ export default function TextedOffersPage() {
   const [detailError, setDetailError] = useState<Record<string, string | null>>({});
   const [resolving, setResolving] = useState<Record<string, boolean>>({});
   const [resolveError, setResolveError] = useState<Record<string, string | null>>({});
-  const [confirming, setConfirming] = useState<Record<string, boolean>>({});
-  const [confirmError, setConfirmError] = useState<Record<string, string | null>>({});
   const [removing, setRemoving] = useState<Record<string, boolean>>({});
   const [removeError, setRemoveError] = useState<Record<string, string | null>>({});
   const [search, setSearch] = useState('');
@@ -701,14 +697,30 @@ export default function TextedOffersPage() {
   const [messagesFromLine, setMessagesFromLine] = useState<string | null>(null);
   const [practiceMainPhone, setPracticeMainPhone] = useState<string | null>(null);
   const [providers, setProviders] = useState<Provider[]>([]);
+  const [reviewExitOfferId, setReviewExitOfferId] = useState<string | null>(null);
+  const pendingReviewReturnRef = useRef<string | null>(null);
   const { counts: navCounts, loading: navCountsLoading } = useSchedulingToolsNavCounts(true);
 
   const load = useCallback(async () => {
+    const pendingReturn = readSlotOfferReviewReturnSession();
+    if (pendingReturn) {
+      clearSlotOfferReviewReturnSession();
+      pendingReviewReturnRef.current = pendingReturn.offerId;
+    }
+
     setLoading(true);
     setError(null);
     try {
       const list = await fetchSlotOffers({ practiceId: PRACTICE_ID, tab });
       setRows(sortOffers(list, tab));
+
+      const reviewedOfferId = pendingReviewReturnRef.current;
+      if (reviewedOfferId) {
+        pendingReviewReturnRef.current = null;
+        setReviewExitOfferId(reviewedOfferId);
+        window.setTimeout(() => setReviewExitOfferId(null), 1100);
+        notifySchedulingToolsNavCountsRefresh();
+      }
     } catch (e: unknown) {
       const msg =
         (e as { response?: { data?: { message?: string } } })?.response?.data?.message ??
@@ -887,28 +899,36 @@ export default function TextedOffersPage() {
     [expandedId, load]
   );
 
-  const onStaffConfirm = useCallback(
-    async (offerId: string) => {
-      setConfirming((prev) => ({ ...prev, [offerId]: true }));
-      setConfirmError((prev) => ({ ...prev, [offerId]: null }));
-      try {
-        await confirmSlotOffer(offerId, PRACTICE_ID);
-        await load();
-        notifySchedulingToolsNavCountsRefresh();
-        if (expandedId === offerId) {
-          setExpandedId(null);
-        }
-      } catch (e: unknown) {
-        const msg =
-          (e as { response?: { data?: { message?: string } } })?.response?.data?.message ??
-          (e as Error)?.message ??
-          'Could not mark reviewed.';
-        setConfirmError((prev) => ({ ...prev, [offerId]: String(msg) }));
-      } finally {
-        setConfirming((prev) => ({ ...prev, [offerId]: false }));
-      }
+  const onReviewAppointment = useCallback(
+    (detail: SlotOfferDetail, offerId: string) => {
+      const apptId = detail.bookedAppointmentId;
+      if (apptId == null || !Number.isFinite(Number(apptId)) || Number(apptId) <= 0) return;
+      const appointmentId = Number(apptId);
+      const dateKey = slotOfferAppointmentDateHint(detail, practiceTz);
+      const providerId =
+        detail.doctorId != null && detail.doctorId > 0 ? String(detail.doctorId) : undefined;
+      const clientLabel =
+        detail.clientName?.trim() ||
+        (detail.clientId != null ? `Client #${detail.clientId}` : null);
+      writeSlotOfferReviewSession({
+        offerId,
+        bookedAppointmentId: appointmentId,
+        clientLabel,
+        returnPath: TEXTED_OFFERS_TO_REVIEW_PATH,
+      });
+      writeSchedulerFocusSession({
+        appointmentId,
+        dateHint: dateKey,
+        providerHint: providerId ?? null,
+      });
+      navigate(
+        buildSchedulerFocusAppointmentUrl(appointmentId, {
+          date: dateKey ?? undefined,
+          providerId,
+        })
+      );
     },
-    [expandedId, load]
+    [navigate, practiceTz]
   );
 
   const onViewAppointment = useCallback(
@@ -1091,6 +1111,7 @@ export default function TextedOffersPage() {
                 const highlight = needsFollowUp(row);
                 const toConfirm = isToConfirmOffer(row);
                 const removed = isRemovedOffer(row);
+                const rowExiting = reviewExitOfferId === row.id;
                 const showRemove = tab !== 'removed' && tab !== 'booked' && !removed;
                 const clientName = row.clientName?.trim() || (row.clientId ? `Client #${row.clientId}` : '—');
                 const detail = detailById[row.id];
@@ -1098,7 +1119,9 @@ export default function TextedOffersPage() {
                   <Fragment key={row.id}>
                     <tr
                       style={
-                        highlight
+                        rowExiting
+                          ? { background: '#ecfdf5' }
+                          : highlight
                           ? { background: '#fffbeb' }
                           : toConfirm
                             ? { background: '#eff6ff' }
@@ -1161,13 +1184,10 @@ export default function TextedOffersPage() {
                               )}
                               resolving={Boolean(resolving[row.id])}
                               resolveError={resolveError[row.id] ?? null}
-                              confirming={Boolean(confirming[row.id])}
-                              confirmError={confirmError[row.id] ?? null}
                               removing={Boolean(removing[row.id])}
                               removeError={removeError[row.id] ?? null}
                               showRemove={showRemove}
                               onResolve={() => void onMarkBooked(row.id)}
-                              onConfirm={() => void onStaffConfirm(row.id)}
                               onRemove={() => void onRemove(row.id)}
                               onTextClient={() => {
                                 const fromLine = resolveSlotOfferSmsFromLine(
@@ -1178,6 +1198,7 @@ export default function TextedOffersPage() {
                                 openTextClientModal(detail, fromLine);
                               }}
                               onViewAppointment={() => onViewAppointment(detail)}
+                              onReviewAppointment={() => onReviewAppointment(detail, row.id)}
                             />
                           ) : (
                             <div style={{ padding: 16 }} className="settings-muted">

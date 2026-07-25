@@ -31,6 +31,8 @@ export type AppointmentRequestSubmissionItem = {
   staffConfirmedAt?: string | null;
   /** Ops points on the linked calendar visit when `bookedAppointmentId` is set (from server). */
   linkedVisitPoints?: number | null;
+  /** True when the linked calendar visit is a HOLD (isHold type) — canonical on-hold signal. */
+  linkedVisitIsHold?: boolean;
   /** Linked liaison Gmail thread when resolved. */
   gmailThreadId?: string | null;
   gmailMailbox?: string | null;
@@ -114,6 +116,8 @@ export async function fetchAppointmentRequestSubmissionsPage(params: {
   to?: string;
   page?: number;
   limit?: number;
+  /** When true, server scans appointments to populate `conversions` (requires from/to for large sets). */
+  includeConversions?: boolean;
 }): Promise<AppointmentRequestSubmissionsListResponse> {
   const { data } = await http.get<AppointmentRequestSubmissionsListResponse>(
     '/appointments/request-submissions',
@@ -124,6 +128,7 @@ export async function fetchAppointmentRequestSubmissionsPage(params: {
         ...(params.to != null && params.to !== '' ? { to: params.to } : {}),
         page: params.page ?? 1,
         limit: params.limit ?? 50,
+        ...(params.includeConversions ? { includeConversions: 'true' } : {}),
       },
     }
   );
@@ -183,13 +188,25 @@ export async function sendAppointmentRequestSubmissionSms(
  * search info@ for the notification around `submittedAt` (±5 minutes), persist the
  * thread id, and return it. Ideally that runs once at submission create time.
  */
+const gmailLinkInflight = new Map<number, Promise<AppointmentRequestGmailLink>>();
+
 export async function fetchAppointmentRequestGmailLink(
   id: number,
 ): Promise<AppointmentRequestGmailLink> {
-  const { data } = await http.get<AppointmentRequestGmailLink>(
-    `/appointments/request-submissions/${encodeURIComponent(String(id))}/gmail-link`,
-  );
-  return data;
+  const key = Number(id);
+  const existing = gmailLinkInflight.get(key);
+  if (existing) return existing;
+
+  const promise = http
+    .get<AppointmentRequestGmailLink>(
+      `/appointments/request-submissions/${encodeURIComponent(String(key))}/gmail-link`,
+    )
+    .then(({ data }) => data)
+    .finally(() => {
+      gmailLinkInflight.delete(key);
+    });
+  gmailLinkInflight.set(key, promise);
+  return promise;
 }
 
 export type AllAppointmentRequestSubmissionsResult = {
@@ -202,6 +219,7 @@ export async function fetchAllAppointmentRequestSubmissions(params: {
   practiceId: number;
   from?: string;
   to?: string;
+  includeConversions?: boolean;
 }): Promise<AllAppointmentRequestSubmissionsResult> {
   const limit = 200;
   const first = await fetchAppointmentRequestSubmissionsPage({ ...params, page: 1, limit });

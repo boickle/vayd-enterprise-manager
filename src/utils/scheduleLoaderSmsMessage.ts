@@ -1,6 +1,7 @@
 import { fetchAppointmentById } from '../api/appointments';
 import { buildCareOutreachSmsMessage } from './careOutreachSmsMessage';
 import type { ForwardBookingSmsBookedSlot } from './forwardBookingSmsMessage';
+import type { HoldSpotReleaseSmsOpts } from './holdSpotReleaseSmsClause';
 import {
   formatForwardBookingSmsBookedSlot,
   formatForwardBookingSmsBookedSlotFromAppointment,
@@ -27,6 +28,8 @@ export function buildScheduleLoaderBookedSmsMessage(opts: {
   providerLastName?: string | null;
   /** Past-due care outreach wording when true (default). */
   anyPastDue?: boolean;
+  /** When set, append the hold-spot release deadline (held appointments). */
+  holdRelease?: HoldSpotReleaseSmsOpts;
 }): string {
   return buildCareOutreachSmsMessage({
     petNames: opts.petNames,
@@ -35,6 +38,7 @@ export function buildScheduleLoaderBookedSmsMessage(opts: {
     bookedSlot: opts.bookedSlot,
     providerLastName: opts.providerLastName,
     anyPastDue: opts.anyPastDue !== false,
+    holdRelease: opts.holdRelease,
   });
 }
 

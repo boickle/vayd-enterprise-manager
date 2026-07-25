@@ -37,6 +37,8 @@ export type RoutingCalendarPreviewPayloadV1 = {
   serviceMinutes: number;
   newApptMeta: {
     clientId?: string;
+    /** PIMS client id — matches doctor-day household grouping with booked visits. */
+    clientPimsId?: string;
     address?: string;
     lat?: number;
     lon?: number;
@@ -57,6 +59,11 @@ export type RoutingCalendarPreviewPayloadV1 = {
   rescheduleAppointmentId?: number;
   /** When rescheduling all household pets today, PATCH each id to the new slot. */
   rescheduleAppointmentIds?: number[];
+  /**
+   * Explore Alternatives: keep original appointment(s) on the calendar while previewing a new slot.
+   * When set, Scheduler must not hide `rescheduleAppointmentIds` as it does for true reschedule.
+   */
+  exploreAlternatives?: boolean;
   reschedulePatientId?: string;
   /** Pets shown on the calendar preview chip (all household when rescheduling "all pets today"). */
   previewPatients?: { id: number | string; name: string }[];
@@ -104,6 +111,17 @@ export type ManualBookPreviewDraft = {
   clientCity?: string;
   clientState?: string;
   clientZip?: string;
+  /** Co-visit add-pet: PATCH these existing household visits to the draft times on confirm. */
+  coVisitAlignAppointmentIds?: number[];
+  /** Anchor visit when adding another pet (for household clump / alt-stop preview). */
+  coVisitAnchorAppointmentId?: number;
+  /** Co-visit add-pet — skip manual booking type permission gate on create. */
+  coVisitAddPet?: boolean;
+  /**
+   * After euthanasia future-appointment prompt in the book modal:
+   * delete those patient-scoped future rows after a successful preview commit.
+   */
+  euthanasiaDeleteFutureAppointments?: boolean;
 };
 
 export function isScheduleLoaderCalendarPreview(

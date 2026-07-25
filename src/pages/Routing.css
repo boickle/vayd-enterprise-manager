@@ -33,6 +33,7 @@
  * the form body so "Get Best Route" stays reachable (submit row pinned below scroll).
  */
 .routing-page-root--calendar-workspace {
+  position: relative;
   height: 100%;
   min-height: 0;
   overflow: hidden;
@@ -80,19 +81,49 @@
 }
 
 .routing-page-root--calendar-workspace.routing-page-root--stack-columns {
-  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  grid-template-columns: unset;
+  height: auto;
   min-height: 0;
+  overflow: visible;
 }
 
 .routing-page-root--calendar-workspace.routing-page-root--stack-columns .routing-route-form-card {
-  flex: 1 1 0;
-  min-height: 0;
+  flex: none;
+  min-height: auto;
+  max-height: none;
 }
 
 .routing-page-root--calendar-workspace.routing-page-root--stack-columns .routing-results-card {
-  flex: 0 0 auto;
-  max-height: min(38vh, 280px);
-  overflow-y: auto;
+  flex: none;
+  max-height: none;
+  overflow: visible;
+}
+
+/** Stacked layout: let the whole form grow; scroll the outlet, not a trapped inner pane. */
+.routing-page-root--stack-columns .routing-route-form-stack--workspace {
+  flex: none;
+  min-height: auto;
+  overflow: visible;
+}
+
+.routing-page-root--stack-columns .routing-route-form-stack--workspace .routing-form-body {
+  flex: none;
+  min-height: auto;
+  overflow: visible;
+}
+
+.routing-page-root--stack-columns.routing-page-root--calendar-workspace .routing-route-form-card > form {
+  flex: none;
+  min-height: auto;
+  overflow: visible;
+}
+
+.routing-page-root--stack-columns.routing-page-root--calendar-workspace .routing-route-form-card,
+.routing-page-root--stack-columns.routing-page-root--calendar-workspace .routing-results-card {
+  overflow: visible;
 }
 
 .routing-route-form-stack--workspace {
@@ -110,6 +141,12 @@
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   padding-bottom: 4px;
+}
+
+.routing-form-body:not(.routing-form-body--inline) {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .routing-route-form-stack--workspace .routing-form-body {
@@ -332,6 +369,54 @@
   color: #9a3412;
   background: #ffedd5;
   border: 1px solid #fdba74;
+}
+
+.routing-household-visits-flag {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid #fdba74;
+  border-radius: 8px;
+  background: #fff7ed;
+  color: #9a3412;
+  font-size: 13px;
+  line-height: 1.4;
+  text-align: left;
+  cursor: pointer;
+  box-sizing: border-box;
+  transition:
+    background-color 0.12s ease,
+    border-color 0.12s ease;
+}
+
+.routing-household-visits-flag:hover:not(:disabled) {
+  background: #ffedd5;
+  border-color: #fb923c;
+}
+
+.routing-household-visits-flag:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.routing-household-visits-flag-icon {
+  flex: 0 0 auto;
+  font-size: 15px;
+  line-height: 1.2;
+}
+
+.routing-household-visits-flag-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.routing-household-visits-flag-link {
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 .routing-reschedule-mode-summary {
@@ -883,7 +968,7 @@
   cursor: pointer;
   font-size: 13px;
   line-height: 1.35;
-  margin: 0 0 12px;
+  margin: 10px 0 0;
   padding: 0;
 }
 
@@ -1250,6 +1335,32 @@
   gap: 8px;
 }
 
+.routing-client-patient-alerts {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.routing-client-patient-alerts-loading {
+  margin-top: 0;
+}
+
+.routing-client-patient-alert-banner {
+  padding: 8px 10px;
+  background: #fff7ed;
+  border: 1px solid #fdba74;
+  color: #7c2d12;
+  border-radius: 8px;
+  white-space: pre-wrap;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.routing-client-patient-alert-banner strong {
+  font-weight: 700;
+}
+
 .routing-client-patient-chip-wrap {
   display: inline-flex;
 }
@@ -1302,4 +1413,83 @@
   background: color-mix(in srgb, var(--accent, #10a37f) 70%, #0f172a);
   border-color: color-mix(in srgb, var(--accent, #10a37f) 82%, #0f172a);
   color: #ffffff;
+}
+
+/** Mobile routing workspace: form + results grow naturally; outlet scrolls the full page. */
+@media (max-width: 900px) {
+  .routing-page-root,
+  .routing-page-root--calendar-workspace,
+  .routing-page-root--calendar-workspace.routing-page-root--stack-columns {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch;
+    grid-template-columns: unset !important;
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+    gap: 16px;
+  }
+
+  .routing-page-root > .routing-route-form-card,
+  .routing-page-root > .routing-results-card,
+  .routing-page-root .routing-route-form-card,
+  .routing-page-root .routing-results-card {
+    width: 100% !important;
+    max-width: none !important;
+    grid-column: unset !important;
+    flex: none !important;
+    min-height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+    order: unset;
+  }
+
+  .routing-page-root > .routing-route-form-card {
+    order: 1;
+  }
+
+  .routing-page-root > .routing-results-card {
+    order: 2;
+  }
+
+  .routing-page-root--calendar-workspace .routing-route-form-card > form,
+  .routing-route-form-stack--workspace,
+  .routing-route-form-stack--workspace .routing-form-body {
+    flex: none !important;
+    min-height: auto !important;
+    overflow: visible !important;
+  }
+
+  .schedule-routing-workspace .routing-page-root--calendar-workspace {
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  .schedule-routing-workspace .routing-page-root--calendar-workspace.routing-page-root--stack-columns {
+    overflow: visible;
+    min-height: 0;
+  }
+
+  .schedule-routing-workspace .routing-page-root--calendar-workspace .routing-route-form-card,
+  .schedule-routing-workspace .routing-page-root--calendar-workspace .routing-results-card {
+    max-height: none;
+    overflow: visible;
+  }
+
+  .schedule-routing-workspace .routing-route-form-card {
+    scroll-margin-top: 12px;
+  }
+
+  .schedule-routing-workspace .routing-route-form-title {
+    scroll-margin-top: max(12px, env(safe-area-inset-top, 0px));
+  }
+
+  .routing-date-range-row {
+    flex-wrap: wrap;
+  }
+
+  .routing-date-input {
+    min-width: min(140px, 100%);
+  }
 }

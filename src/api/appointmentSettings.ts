@@ -46,6 +46,8 @@ export type AppointmentType = {
   excludeFromRouting?: boolean;
   /** Excluded from appointment reminders and visit-based analytics (server-side) */
   excludeFromReminders?: boolean;
+  /** Placeholder HOLD type — shown on the Holds board and classified as on hold (server-side) */
+  isHold?: boolean;
   /** Use legacy routing rules for this type (server-side) */
   usesLegacyRouting?: boolean;
   /** Ops analytics doctor-day points; null = legacy name-based rules on server */
@@ -78,6 +80,9 @@ export type Employee = {
   bio?: string | null;
   /** OpenPhone user id for call attribution / CSR coaching when synced. */
   openPhoneUserId?: string | null;
+  /** Synced from eVet employee contact; used as SMS send-from for On My Way when set. */
+  phone1?: string | null;
+  phone2?: string | null;
   appointmentTypes: AppointmentType[];
   weeklySchedules: EmployeeWeeklySchedule[];
   practice?: {
@@ -273,6 +278,7 @@ export type AppointmentTypeUpdate = {
   requiresPatient?: boolean;
   excludeFromRouting?: boolean;
   excludeFromReminders?: boolean;
+  isHold?: boolean;
   usesLegacyRouting?: boolean;
   points?: number | null;
   allowSchedulingOverride?: boolean;

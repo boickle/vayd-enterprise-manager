@@ -1,5 +1,4 @@
 import type { AppointmentType } from '../api/appointmentSettings';
-import { fetchRoutingServiceMinutes, type RoutingServiceMinutesResponse } from '../api/publicAppointments';
 import type { Provider } from '../api/employee';
 import type { Appointment } from '../api/roomLoader';
 import {
@@ -17,7 +16,9 @@ import { opsPointsForAppointment } from './forwardBookingListVisibility';
 import type { AppointmentTypeCatalog } from './appointmentTypeSettings';
 import {
   buildRoutingVisitPetsFromFormData,
+  estimatePerPetRoutingMinutesForVisit,
   estimateRoutingServiceMinutesForVisit,
+  fetchDoctorApptLengthStats,
   newPatientDurationBufferMinutes,
   ROUTING_ADDITIONAL_NEW_PATIENT_DURATION_BUFFER_MINUTES,
   ROUTING_FIRST_NEW_PATIENT_DURATION_BUFFER_MINUTES,
@@ -33,8 +34,12 @@ export type StaffConfirmBookingBreakdownPet = {
   key: string;
   name: string;
   appointmentType: string;
+  /** Resolved appointment type id for this pet (drives per-pet duration + raw name). */
+  appointmentTypeId?: number | null;
   isNewPatient: boolean;
   baseMinutes: number | null;
+  newPatientBufferMinutes?: number;
+  positionLabel?: 'single pet' | 'multi-pet';
 };
 
 /** One explainable duration (original request or current calendar types). */
@@ -517,10 +522,12 @@ function buildBreakdownPetsFromRequest(
   requestData: Record<string, unknown>,
   isNewClient: boolean,
 ): StaffConfirmBookingBreakdownPet[] {
+  const primaryTypeId = primaryAppointmentTypeIdFromRequestData(requestData);
   return requestDataPetRowSummaries(requestData).map((pet) => ({
     key: pet.key,
     name: pet.name,
     appointmentType: pet.appointmentType?.trim() || 'appointment',
+    appointmentTypeId: pet.appointmentTypeId ?? primaryTypeId ?? null,
     isNewPatient: isNewClient || !pet.patientId,
     baseMinutes: null,
   }));
@@ -530,6 +537,7 @@ function buildBreakdownPetsFromCalendarAppts(
   calendarAppts: readonly Appointment[],
   requestData: Record<string, unknown>,
   isNewClient: boolean,
+  appointmentTypes?: readonly AppointmentType[],
 ): StaffConfirmBookingBreakdownPet[] {
   const sorted = [...calendarAppts].sort(
     (a, b) =>
@@ -540,6 +548,7 @@ function buildBreakdownPetsFromCalendarAppts(
     key: String(appt.id),
     name: appointmentRequestPetNameForVisit(appt, requestData) ?? `Pet ${index + 1}`,
     appointmentType: appointmentTypeLabelFromAppt(appt) ?? 'appointment',
+    appointmentTypeId: appointmentTypeIdFromAppt(appt, appointmentTypes) ?? null,
     isNewPatient: isNewClient,
     baseMinutes: null,
   }));
@@ -642,11 +651,20 @@ function buildStaffConfirmBookingBreakdown(args: {
       isNewClient ? petRows.length : 0,
     ),
   );
-  const originalMinutes = originalStored ?? originalEstimate?.minutes ?? bookedSlotMinutes;
+  // Prefer routing estimate (requested types + buffers) over form-stored minutes.
+  // selfScheduledSlot.serviceMinutes is a snapshot from slot pick and may use catalog
+  // defaults rather than this doctor's stats — do not derive "Visit time" from it.
+  const originalMinutes =
+    originalEstimate?.minutes ??
+    bookedSlotMinutes ??
+    originalStored ??
+    0;
   const originalBase =
-    originalStored != null
-      ? Math.max(0, originalStored - originalBuffer)
-      : (originalEstimate?.baseMinutes ?? Math.max(0, originalMinutes - originalBuffer));
+    originalEstimate?.baseMinutes ??
+    Math.max(
+      0,
+      originalMinutes - (originalEstimate?.newPatientBufferMinutes ?? originalBuffer),
+    );
 
   const original: StaffConfirmDurationBreakdown = {
     bookedMinutes: originalMinutes,
@@ -659,8 +677,19 @@ function buildStaffConfirmBookingBreakdown(args: {
         isNewClient ? petRows.length : 0,
       ),
     isNewClient,
-    pets: buildBreakdownPetsFromRequest(requestData, isNewClient),
-    typesLabel: formatTypesLabelFromRequestData(requestData) ?? undefined,
+    pets:
+      petRows.length > 0
+        ? buildBreakdownPetsFromRequest(requestData, isNewClient)
+        : buildBreakdownPetsFromCalendarAppts(
+            args.calendarAppts,
+            requestData,
+            isNewClient,
+            args.appointmentTypes,
+          ),
+    typesLabel:
+      formatTypesLabelFromRequestData(requestData) ??
+      formatTypesLabelFromCalendarAppts(args.calendarAppts) ??
+      undefined,
     calendarStillHold: stillOnHold,
   };
 
@@ -692,7 +721,12 @@ function buildStaffConfirmBookingBreakdown(args: {
         isNewClient,
         pets: useRequestTypesForRecommended
           ? buildBreakdownPetsFromRequest(requestData, isNewClient)
-          : buildBreakdownPetsFromCalendarAppts(args.calendarAppts, requestData, isNewClient),
+          : buildBreakdownPetsFromCalendarAppts(
+              args.calendarAppts,
+              requestData,
+              isNewClient,
+              args.appointmentTypes,
+            ),
         typesLabel: useRequestTypesForRecommended
           ? formatTypesLabelFromRequestData(requestData) ?? undefined
           : formatTypesLabelFromCalendarAppts(args.calendarAppts) ?? undefined,
@@ -904,15 +938,66 @@ export function buildStaffConfirmRecommendedLengthDisplay(args: {
   };
 }
 
-function applyRoutingResultToDurationBreakdown(
+function appointmentTypeRawName(
+  typeId: number | null | undefined,
+  appointmentTypes: readonly AppointmentType[],
+  fallback?: string | null,
+): string {
+  if (typeId != null && Number.isFinite(Number(typeId)) && Number(typeId) > 0) {
+    const matched = appointmentTypes.find((type) => Number(type.id) === Number(typeId));
+    const raw = matched?.name?.trim();
+    if (raw) return raw;
+  }
+  return fallback?.trim() || 'appointment';
+}
+
+/**
+ * Compute per-pet minutes directly from the section's own pets so type + new-patient buffer
+ * always land on the right pet (each breakdown pet carries its resolved appointment type id
+ * and new-patient flag — no fragile zip against a separately-built visit-pets array).
+ *
+ * `typeIdOverrides` lets the caller supply the visit types to price with (e.g. the current
+ * calendar types for the Recommended block) while keeping each pet's identity/order.
+ */
+function enrichDurationBreakdownWithPerPetMinutes(
   section: StaffConfirmDurationBreakdown,
-  result: RoutingServiceMinutesResponse,
+  appointmentTypes: readonly AppointmentType[],
+  statsRows: Awaited<ReturnType<typeof fetchDoctorApptLengthStats>>,
+  typeIdOverrides?: readonly (number | null | undefined)[],
 ): StaffConfirmDurationBreakdown {
+  if (section.pets.length === 0) return section;
+
+  const visitPets: RoutingVisitPetInput[] = section.pets.map((pet, index) => ({
+    appointmentTypeId: Number(typeIdOverrides?.[index] ?? pet.appointmentTypeId ?? 0),
+    isNewPatient: pet.isNewPatient,
+  }));
+
+  const estimate = estimatePerPetRoutingMinutesForVisit(
+    visitPets,
+    statsRows,
+    (id) => appointmentTypes.find((type) => Number(type.id) === Number(id)),
+    (key) => appointmentTypeForRoutingStatsKey(key, appointmentTypes),
+  );
+
+  const pets = section.pets.map((pet, index) => {
+    const perPet = estimate.perPet[index];
+    const typeId = visitPets[index]?.appointmentTypeId ?? null;
+    return {
+      ...pet,
+      appointmentType: appointmentTypeRawName(typeId, appointmentTypes, pet.appointmentType),
+      baseMinutes: perPet?.baseMinutes ?? pet.baseMinutes,
+      newPatientBufferMinutes: perPet?.newPatientBufferMinutes ?? 0,
+      positionLabel: perPet?.positionLabel,
+    };
+  });
+
   return {
     ...section,
-    bookedMinutes: Math.max(1, Math.round(result.serviceMinutes)),
-    baseMinutes: Math.max(1, Math.round(result.baseMinutes)),
-    newPatientBufferMinutes: Math.max(0, Math.round(result.newPatientBufferMinutes)),
+    pets,
+    baseMinutes: estimate.baseMinutes,
+    newPatientBufferMinutes: estimate.newPatientBufferMinutes,
+    newPatientCount: section.pets.filter((pet) => pet.isNewPatient).length,
+    bookedMinutes: estimate.serviceMinutes,
   };
 }
 
@@ -954,72 +1039,68 @@ export async function resolveStaffConfirmRecommendedLength(args: {
   const doctorId = resolveStaffConfirmRoutingDoctorId(requestData, args.appt, args.providers);
   if (visitPets.length === 0 || doctorId == null) return base;
 
-  const requestStored = requestDataStoredServiceMinutes(requestData);
   const breakdown = base.bookingBreakdown;
 
   try {
-    if (breakdown) {
-      const recommendedUsesRequestTypes = breakdown.recommended?.usesRequestedTypes === true;
-      const recommendedVisitPets =
-        recommendedUsesRequestTypes && requestVisitPets.length > 0
-          ? requestVisitPets
-          : calendarVisitPets;
+    const statsRows = await fetchDoctorApptLengthStats(String(doctorId));
 
-      const [originalResult, recommendedResult] = await Promise.all([
-        !requestStored && requestVisitPets.length > 0
-          ? fetchRoutingServiceMinutes({
-              practiceId: args.practiceId,
-              doctorId,
-              visitPets: requestVisitPets,
-            })
-          : Promise.resolve(null),
-        breakdown.recommended && recommendedVisitPets.length > 0
-          ? fetchRoutingServiceMinutes({
-              practiceId: args.practiceId,
-              doctorId,
-              visitPets: recommendedVisitPets,
-            })
-          : Promise.resolve(null),
-      ]);
+    if (breakdown) {
+      // Each section prices its own pets (Original = requested types, Recommended =
+      // current calendar types). Pets carry their own appointment type id + new-patient
+      // flag, so minutes and buffers always land on the correct pet.
+      const nextOriginal = enrichDurationBreakdownWithPerPetMinutes(
+        breakdown.original,
+        args.appointmentTypes,
+        statsRows,
+      );
+
+      const nextRecommended = breakdown.recommended
+        ? enrichDurationBreakdownWithPerPetMinutes(
+            breakdown.recommended,
+            args.appointmentTypes,
+            statsRows,
+          )
+        : breakdown.recommended;
 
       const nextBreakdown: StaffConfirmBookingBreakdown = {
         ...breakdown,
-        original: originalResult
-          ? applyRoutingResultToDurationBreakdown(breakdown.original, originalResult)
-          : breakdown.original,
-        recommended:
-          recommendedResult && breakdown.recommended
-            ? applyRoutingResultToDurationBreakdown(breakdown.recommended, recommendedResult)
-            : breakdown.recommended,
+        original: nextOriginal,
+        recommended: nextRecommended,
       };
+
+      const displayMinutes =
+        nextBreakdown.recommended?.bookedMinutes ??
+        nextBreakdown.original.bookedMinutes;
 
       return {
         ...base,
         minutes:
           nextBreakdown.bookedSlotMinutes > 0
             ? nextBreakdown.bookedSlotMinutes
-            : nextBreakdown.original.bookedMinutes,
+            : displayMinutes,
         newPatientBufferMinutes:
           nextBreakdown.recommended?.newPatientBufferMinutes ??
           nextBreakdown.original.newPatientBufferMinutes,
         newPatientCount:
           (nextBreakdown.recommended?.newPatientCount ??
             nextBreakdown.original.newPatientCount) > 0
-            ? nextBreakdown.recommended?.newPatientCount ?? nextBreakdown.original.newPatientCount
+            ? nextBreakdown.recommended?.newPatientCount ??
+              nextBreakdown.original.newPatientCount
             : undefined,
         bookingBreakdown: nextBreakdown,
       };
     }
 
-    const result = await fetchRoutingServiceMinutes({
-      practiceId: args.practiceId,
-      doctorId,
+    const estimate = estimatePerPetRoutingMinutesForVisit(
       visitPets,
-    });
+      statsRows,
+      (id) => args.appointmentTypes.find((type) => Number(type.id) === Number(id)),
+      (key) => appointmentTypeForRoutingStatsKey(key, args.appointmentTypes),
+    );
     return {
       ...base,
-      minutes: Math.max(1, Math.round(result.serviceMinutes)),
-      newPatientBufferMinutes: Math.max(0, Math.round(result.newPatientBufferMinutes)),
+      minutes: Math.max(1, Math.round(estimate.serviceMinutes)),
+      newPatientBufferMinutes: Math.max(0, Math.round(estimate.newPatientBufferMinutes)),
     };
   } catch {
     return base;
@@ -1080,6 +1161,91 @@ export function formatStaffConfirmPetBreakdownLine(
 ): string {
   const newTag = pet.isNewPatient ? ' · new patient' : '';
   return `${pet.name} — ${pet.appointmentType}${newTag}`;
+}
+
+export function formatStaffConfirmOriginalBookingSubtitle(slotMinutes: number): string {
+  return `Original Booking - ${slotMinutes} minutes`;
+}
+
+export function formatStaffConfirmRecommendedSubtitle(
+  breakdown: StaffConfirmDurationBreakdown,
+): string {
+  if (breakdown.usesRequestedTypes) {
+    return 'Recommended for requested types';
+  }
+  return 'Recommended for current types';
+}
+
+export function formatStaffConfirmPetDurationLine(pet: StaffConfirmBookingBreakdownPet): string {
+  const typeLabel = pet.appointmentType?.trim() || 'appointment';
+  const position = pet.positionLabel ? ` (${pet.positionLabel})` : '';
+  const base = pet.baseMinutes;
+  if (base == null || !Number.isFinite(base)) {
+    return `${pet.name} — ${typeLabel}${position}`;
+  }
+
+  const buffer = pet.newPatientBufferMinutes ?? 0;
+  if (buffer > 0) {
+    return `${pet.name} — ${typeLabel} — ${base} minutes${position} plus ${buffer} minutes (new patient) = ${base + buffer} minutes.`;
+  }
+  return `${pet.name} — ${typeLabel} — ${base} minutes${position}`;
+}
+
+/** Per-pet line with base minutes only — omits the new-patient buffer math. */
+export function formatStaffConfirmPetTypeDurationLine(
+  pet: StaffConfirmBookingBreakdownPet,
+): string {
+  const typeLabel = pet.appointmentType?.trim() || 'appointment';
+  const position = pet.positionLabel ? ` (${pet.positionLabel})` : '';
+  const base = pet.baseMinutes;
+  if (base == null || !Number.isFinite(base)) {
+    return `${pet.name} — ${typeLabel}${position}`;
+  }
+  return `${pet.name} — ${typeLabel} — ${base} minutes${position}`;
+}
+
+/** Sum of per-pet base minutes only (no new-patient buffer); null when unknown. */
+export function staffConfirmPetTypeBaseTotalMinutes(
+  breakdown: StaffConfirmDurationBreakdown,
+): number | null {
+  const parts = breakdown.pets
+    .map((pet) => pet.baseMinutes)
+    .filter((value): value is number => value != null && Number.isFinite(value));
+  if (parts.length === 0) return null;
+  return parts.reduce((sum, value) => sum + value, 0);
+}
+
+/** Total line for base minutes only (no new-patient buffer). */
+export function formatStaffConfirmPetTypeTotalLine(
+  breakdown: StaffConfirmDurationBreakdown,
+): string | null {
+  const parts = breakdown.pets
+    .map((pet) => pet.baseMinutes)
+    .filter((value): value is number => value != null && Number.isFinite(value));
+  if (parts.length === 0) return null;
+  const total = parts.reduce((sum, value) => sum + value, 0);
+  if (parts.length === 1) return `Total: ${total} minutes.`;
+  return `Total: ${parts.join(' + ')} = ${total} minutes.`;
+}
+
+export function formatStaffConfirmPerPetTotalLine(
+  breakdown: StaffConfirmDurationBreakdown,
+): string | null {
+  const parts = breakdown.pets
+    .map((pet) => {
+      const base = pet.baseMinutes;
+      if (base == null || !Number.isFinite(base)) return null;
+      return base + (pet.newPatientBufferMinutes ?? 0);
+    })
+    .filter((value): value is number => value != null && Number.isFinite(value));
+
+  if (parts.length === 0) return null;
+
+  const total = parts.reduce((sum, value) => sum + value, 0);
+  if (parts.length === 1) {
+    return `Total: ${total} minutes.`;
+  }
+  return `Total: ${parts.join(' + ')} = ${total} minutes.`;
 }
 
 export function formatStaffConfirmVisitTimeTotalLine(

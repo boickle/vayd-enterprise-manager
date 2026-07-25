@@ -90,7 +90,9 @@ function splitAddressForRoutingDoctorDay(addr?: string) {
 function buildDoctorDaySyntheticFromRoutingPreview(
   preview: RoutingCalendarPreviewPayloadV1,
   previewAppointmentType?: AppointmentType | null,
-  practiceTz = 'utc'
+  practiceTz = 'utc',
+  /** Co-visit add-pet anchor's doctor-day row — its backend-resolved geo + stop wins over client home. */
+  coVisitAnchorRow?: DoctorDayAppt | null
 ): DoctorDayAppt | null {
   const opt = preview.option;
   const startRaw = String(opt.suggestedStartIso ?? '').trim();
@@ -105,19 +107,59 @@ function buildDoctorDaySyntheticFromRoutingPreview(
     preview.clientDisplayLabel?.trim() ||
     (typeof opt.clientName === 'string' ? opt.clientName : null) ||
     'New Appointment';
+  const useAlt = Boolean(preview.routingUsesAlternateAddress && meta.address?.trim());
+  const previewPatients = preview.previewPatients ?? [];
+  const primaryPatient =
+    previewPatients.find((p) => String(p.name ?? '').trim()) ?? previewPatients[0] ?? null;
+
+  // The anchor visit is already geocoded for its (possibly alternate) stop, so inherit its
+  // coordinates/address instead of the client-home coords the draft carries. This keeps the
+  // co-visit pet on the same routed stop rather than routing to the client's home.
+  const anchorLat = coVisitAnchorRow != null ? num(coVisitAnchorRow, 'lat') : undefined;
+  const anchorLon = coVisitAnchorRow != null ? num(coVisitAnchorRow, 'lon') : undefined;
+  const anchorHasGeo =
+    typeof anchorLat === 'number' &&
+    typeof anchorLon === 'number' &&
+    Math.abs(anchorLat) > 1e-6 &&
+    Math.abs(anchorLon) > 1e-6;
 
   const synthetic: DoctorDayAppt = {
     id: SCHEDULER_ROUTING_PREVIEW_SYNTHETIC_APPT_ID,
     clientName,
-    lat: Number.isFinite(meta.lat as number) ? meta.lat : undefined,
-    lon: Number.isFinite(meta.lon as number) ? meta.lon : undefined,
-    address1: (parts.address1 ?? (typeof meta.address === 'string' ? meta.address : '')) || '',
-    city: parts.city ?? meta.city,
-    state: parts.state ?? meta.state,
-    zip: parts.zip ?? meta.zip,
+    ...(meta.clientPimsId?.trim() ? { clientPimsId: meta.clientPimsId.trim() } : {}),
+    lat: anchorHasGeo ? anchorLat : Number.isFinite(meta.lat as number) ? meta.lat : undefined,
+    lon: anchorHasGeo ? anchorLon : Number.isFinite(meta.lon as number) ? meta.lon : undefined,
+    address1:
+      (coVisitAnchorRow ? str(coVisitAnchorRow, 'address1') : undefined) ??
+      (parts.address1 ?? (typeof meta.address === 'string' ? meta.address : '')) ??
+      '',
+    city: (coVisitAnchorRow ? str(coVisitAnchorRow, 'city') : undefined) ?? parts.city ?? meta.city,
+    state: (coVisitAnchorRow ? str(coVisitAnchorRow, 'state') : undefined) ?? parts.state ?? meta.state,
+    zip: (coVisitAnchorRow ? str(coVisitAnchorRow, 'zip') : undefined) ?? parts.zip ?? meta.zip,
     startIso: start.toISO()!,
     endIso: end.toISO()!,
+    ...(primaryPatient
+      ? {
+          patientName: String(primaryPatient.name ?? '').trim() || undefined,
+          patientPimsId:
+            primaryPatient.id != null ? String(primaryPatient.id) : undefined,
+        }
+      : {}),
   };
+  if (meta.clientId?.trim()) {
+    (synthetic as DoctorDayAppt & { clientId?: string }).clientId = meta.clientId.trim();
+  }
+  const anchorAlt = coVisitAnchorRow?.isAlternateStop
+    ? (coVisitAnchorRow.alternateAddressText?.trim() ||
+        (coVisitAnchorRow.alternateAddress as { addressText?: string } | null)?.addressText?.trim() ||
+        '')
+    : '';
+  const altText = anchorAlt || (useAlt ? meta.address!.trim() : '');
+  if (altText) {
+    synthetic.isAlternateStop = true;
+    synthetic.alternateAddressText = altText;
+    synthetic.alternateAddress = { addressText: altText };
+  }
   const cz = miniZoneFromPayload((opt as { clientZone?: unknown }).clientZone);
   const ez = miniZoneFromPayload((opt as { effectiveZone?: unknown }).effectiveZone);
   if (cz) synthetic.clientZone = cz;
@@ -152,14 +194,60 @@ function buildDoctorDaySyntheticFromRoutingPreview(
   return synthetic;
 }
 
+/** Extra doctor-day rows so multi-pet co-visit previews show every pet on the household stop. */
+function buildDoctorDayCoVisitCompanionAppts(
+  preview: RoutingCalendarPreviewPayloadV1,
+  primary: DoctorDayAppt
+): DoctorDayAppt[] {
+  const patients = preview.previewPatients ?? [];
+  if (patients.length <= 1) return [];
+  const primaryName = (primary.patientName ?? '').trim().toLowerCase();
+  const primaryId = primary.patientPimsId != null ? String(primary.patientPimsId) : '';
+  const out: DoctorDayAppt[] = [];
+  let offset = 1;
+  for (const p of patients) {
+    const name = String(p.name ?? '').trim();
+    if (!name) continue;
+    const idStr = p.id != null ? String(p.id) : '';
+    if (
+      (primaryId && idStr && idStr === primaryId) ||
+      (primaryName && name.toLowerCase() === primaryName)
+    ) {
+      continue;
+    }
+    out.push({
+      ...primary,
+      id: SCHEDULER_ROUTING_PREVIEW_SYNTHETIC_APPT_ID - offset,
+      patientName: name,
+      patientPimsId: idStr || undefined,
+    });
+    offset += 1;
+  }
+  return out;
+}
+
 function injectDoctorDayAppointmentsRoutingPreview(
   appts: DoctorDayAppt[],
   preview: RoutingCalendarPreviewPayloadV1,
   previewAppointmentType?: AppointmentType | null,
-  practiceTz = 'utc'
+  practiceTz = 'utc',
+  /** Resolved before align-omit — the anchor is often removed from `appts` for the combined preview. */
+  coVisitAnchorRow?: DoctorDayAppt | null
 ): DoctorDayAppt[] {
-  const syn = buildDoctorDaySyntheticFromRoutingPreview(preview, previewAppointmentType, practiceTz);
+  const anchorId = Number(preview.manualBookDraft?.coVisitAnchorAppointmentId);
+  const anchorFromList =
+    Number.isFinite(anchorId) && anchorId > 0
+      ? appts.find((a) => Number(a.id) === anchorId) ?? null
+      : null;
+  const syn = buildDoctorDaySyntheticFromRoutingPreview(
+    preview,
+    previewAppointmentType,
+    practiceTz,
+    coVisitAnchorRow ?? anchorFromList
+  );
   if (!syn) return appts;
+  const companions = buildDoctorDayCoVisitCompanionAppts(preview, syn);
+  const inject = [syn, ...companions];
   const rawIns = preview.option.insertionIndex;
   const ins =
     typeof rawIns === 'number' && Number.isFinite(rawIns)
@@ -168,8 +256,27 @@ function injectDoctorDayAppointmentsRoutingPreview(
         ? Math.floor(Number(rawIns)) || 0
         : 0;
   const insertionIndex = Math.max(0, Math.min(appts.length, ins));
-  return [...appts.slice(0, insertionIndex), syn, ...appts.slice(insertionIndex)];
+  return [...appts.slice(0, insertionIndex), ...inject, ...appts.slice(insertionIndex)];
 }
+
+/** Hide co-visit siblings that will be time-aligned when confirming the manual-book preview. */
+export function omitManualBookCoVisitAlignFromDoctorDayAppts(
+  appts: DoctorDayAppt[],
+  preview: RoutingCalendarPreviewPayloadV1 | null | undefined
+): DoctorDayAppt[] {
+  if (!preview || preview.previewSource !== 'manual-book') return appts;
+  const ids = preview.manualBookDraft?.coVisitAlignAppointmentIds ?? [];
+  const omit = new Set(
+    ids.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0)
+  );
+  if (omit.size === 0) return appts;
+  return appts.filter((a) => {
+    if ((a as { isPreview?: boolean }).isPreview) return true;
+    const id = a.id;
+    return typeof id !== 'number' || !omit.has(id);
+  });
+}
+
 
 function normalizeAddressString(s?: string): string | null {
   if (!s) return null;
@@ -295,8 +402,176 @@ function assignEtaKeysForSameAddress(households: SchedulerDriveHousehold[]): voi
   }
 }
 
+/** Overlap or back-to-back scheduled times — same visit clump (multi-pet); otherwise separate stops. */
+function scheduledIntervalsClumped(
+  aStart: number,
+  aEnd: number,
+  bStart: number,
+  bEnd: number
+): boolean {
+  return aStart <= bEnd && bStart <= aEnd;
+}
+
+function appointmentScheduledIntervalMs(
+  a: DoctorDayAppt
+): { start: number; end: number } | null {
+  const s = getStartISO(a);
+  const e = getEndISO(a);
+  if (!s || !e) return null;
+  const start = DateTime.fromISO(s).toMillis();
+  const end = DateTime.fromISO(e).toMillis();
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return null;
+  return { start, end };
+}
+
+/**
+ * Same client + location can host multiple same-day visits. Only merge when scheduled times
+ * overlap or touch (multi-pet one stop); morning + afternoon stay separate households.
+ */
+function splitApptsByScheduledTimeClumps(
+  bucket: { appt: DoctorDayAppt; index: number }[]
+): { appt: DoctorDayAppt; index: number }[][] {
+  if (bucket.length <= 1) return bucket.length === 1 ? [bucket] : [];
+  const intervals = bucket.map(({ appt }) => appointmentScheduledIntervalMs(appt));
+  const n = bucket.length;
+  const adj: number[][] = Array.from({ length: n }, () => []);
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      const a = intervals[i];
+      const b = intervals[j];
+      // Missing times: keep separate unless both missing (still same stop / multi-pet unknown).
+      if (!a || !b) {
+        if (!a && !b) {
+          adj[i].push(j);
+          adj[j].push(i);
+        }
+        continue;
+      }
+      if (scheduledIntervalsClumped(a.start, a.end, b.start, b.end)) {
+        adj[i].push(j);
+        adj[j].push(i);
+      }
+    }
+  }
+  const visited = new Array(n).fill(false);
+  const clumps: { appt: DoctorDayAppt; index: number }[][] = [];
+  for (let i = 0; i < n; i++) {
+    if (visited[i]) continue;
+    const stack = [i];
+    visited[i] = true;
+    const clump: { appt: DoctorDayAppt; index: number }[] = [];
+    while (stack.length) {
+      const u = stack.pop()!;
+      clump.push(bucket[u]!);
+      for (const v of adj[u]!) {
+        if (!visited[v]) {
+          visited[v] = true;
+          stack.push(v);
+        }
+      }
+    }
+    clump.sort((x, y) => x.index - y.index);
+    clumps.push(clump);
+  }
+  return clumps;
+}
+
+function householdFromApptClump(
+  clump: { appt: DoctorDayAppt; index: number }[],
+  lat: number,
+  lon: number,
+  hasGeo: boolean,
+  addrKey: string | null,
+  idPart: string
+): SchedulerDriveHousehold {
+  const first = clump[0]!;
+  const a0 = first.appt;
+  const groupKey = householdGroupKey(a0, lat, lon, addrKey, idPart, hasGeo);
+  const isPersonalBlock = isBlockEntry({ ...a0, key: groupKey });
+  const initialKey = hasGeo ? keyFor(lat, lon, 6) : addrKey ? `addr:${addrKey}` : `noloc:${idPart}`;
+
+  let startIso: string | null = null;
+  let endIso: string | null = null;
+  let isPreview = false;
+  const patients: PatientBadge[] = [];
+  const sourceAppointmentIds: (string | number)[] = [];
+  let primary = a0;
+  let firstApptIndex = first.index;
+  let windowStartIso: string | undefined;
+  let windowEndIso: string | undefined;
+  let effectiveWindow: { startIso: string; endIso: string } | undefined;
+
+  for (const { appt: a, index: idx } of clump) {
+    firstApptIndex = Math.min(firstApptIndex, idx);
+    const s = getStartISO(a);
+    const e = getEndISO(a);
+    const sDt = s ? DateTime.fromISO(s) : null;
+    const eDt = e ? DateTime.fromISO(e) : null;
+    if (sDt?.isValid && (!startIso || sDt < DateTime.fromISO(startIso))) startIso = sDt.toISO();
+    if (eDt?.isValid && (!endIso || eDt > DateTime.fromISO(endIso))) endIso = eDt.toISO();
+    if ((a as { isPreview?: boolean }).isPreview === true) {
+      isPreview = true;
+      primary = a;
+    }
+    if (!isPersonalBlock) {
+      const patient = makePatientBadge(a);
+      const exists = patients.some((p) => p.name === patient.name && p.type === patient.type);
+      if (!exists) patients.push(patient);
+    }
+    const apptId = (a as { id?: string | number }).id;
+    if (apptId != null) sourceAppointmentIds.push(apptId);
+    const ew = (a as { effectiveWindow?: { startIso?: string; endIso?: string } }).effectiveWindow;
+    if (ew?.startIso && ew?.endIso) {
+      if (!effectiveWindow) {
+        effectiveWindow = { startIso: ew.startIso, endIso: ew.endIso };
+        windowStartIso = ew.startIso;
+        windowEndIso = ew.endIso;
+      } else {
+        const w0 = DateTime.fromISO(effectiveWindow.startIso);
+        const w1 = DateTime.fromISO(effectiveWindow.endIso);
+        const n0 = DateTime.fromISO(ew.startIso);
+        const n1 = DateTime.fromISO(ew.endIso);
+        if (n0.isValid && (!w0.isValid || n0 < w0)) effectiveWindow.startIso = ew.startIso;
+        if (n1.isValid && (!w1.isValid || n1 > w1)) effectiveWindow.endIso = ew.endIso;
+        windowStartIso = effectiveWindow.startIso;
+        windowEndIso = effectiveWindow.endIso;
+      }
+    }
+  }
+
+  return {
+    key: initialKey,
+    client: isBlockEntry(a0) ? blockDisplayLabel(a0) : clientDisplayName(a0),
+    address: formatAddress(a0),
+    lat,
+    lon,
+    startIso,
+    endIso,
+    windowStartIso,
+    windowEndIso,
+    isNoLocation: !hasGeo,
+    isPersonalBlock,
+    isPreview,
+    patients: isPersonalBlock ? [] : patients,
+    primary,
+    effectiveWindow,
+    firstApptIndex,
+    sourceAppointmentIds,
+  };
+}
+
 function buildHouseholdsWithSourceIds(appts: DoctorDayAppt[]): SchedulerDriveHousehold[] {
-  const m = new Map<string, SchedulerDriveHousehold>();
+  type BucketItem = { appt: DoctorDayAppt; index: number };
+  type LocMeta = {
+    lat: number;
+    lon: number;
+    hasGeo: boolean;
+    addrKey: string | null;
+    idPart: string;
+    items: BucketItem[];
+  };
+  const buckets = new Map<string, LocMeta>();
+
   for (const [idx, a] of appts.entries()) {
     const rawLat = num(a, 'lat');
     const rawLon = num(a, 'lon');
@@ -317,56 +592,29 @@ function buildHouseholdsWithSourceIds(appts: DoctorDayAppt[]): SchedulerDriveHou
     const addrKey = hasGeo ? null : addressKeyForAppt(a);
     const idPart = (a as any)?.id != null ? String((a as any).id) : String(idx);
     const groupKey = householdGroupKey(a, lat, lon, addrKey, idPart, hasGeo);
-    const isPersonalBlock = isBlockEntry({ ...a, key: groupKey });
-    const isPreview = (a as any)?.isPreview === true;
-    const patient = makePatientBadge(a);
-    const effectiveWindow = (a as any)?.effectiveWindow;
-    const windowStartIso = effectiveWindow?.startIso ?? null;
-    const windowEndIso = effectiveWindow?.endIso ?? null;
-    const apptId = (a as any)?.id;
+    let bucket = buckets.get(groupKey);
+    if (!bucket) {
+      bucket = { lat, lon, hasGeo, addrKey, idPart, items: [] };
+      buckets.set(groupKey, bucket);
+    }
+    bucket.items.push({ appt: a, index: idx });
+  }
 
-    if (!m.has(groupKey)) {
-      const initialKey = hasGeo ? keyFor(lat, lon, 6) : addrKey ? `addr:${addrKey}` : `noloc:${idPart}`;
-      m.set(groupKey, {
-        key: initialKey,
-        client: isBlockEntry(a) ? blockDisplayLabel(a) : clientDisplayName(a),
-        address: formatAddress(a),
-        lat,
-        lon,
-        startIso: getStartISO(a) ?? null,
-        endIso: getEndISO(a) ?? null,
-        windowStartIso: windowStartIso ?? undefined,
-        windowEndIso: windowEndIso ?? undefined,
-        isNoLocation: !hasGeo,
-        isPersonalBlock,
-        isPreview,
-        patients: isPersonalBlock ? [] : [patient],
-        primary: a,
-        effectiveWindow: (() => {
-          const ew = (a as any)?.effectiveWindow;
-          return ew?.startIso && ew?.endIso ? { startIso: ew.startIso, endIso: ew.endIso } : undefined;
-        })(),
-        firstApptIndex: idx,
-        sourceAppointmentIds: apptId != null ? [apptId] : [],
-      });
-    } else {
-      const h = m.get(groupKey)!;
-      h.firstApptIndex = Math.min(h.firstApptIndex ?? idx, idx);
-      const s = getStartISO(a);
-      const e = getEndISO(a);
-      const sDt = s ? DateTime.fromISO(s) : null;
-      const eDt = e ? DateTime.fromISO(e) : null;
-      if (sDt && (!h.startIso || sDt < DateTime.fromISO(h.startIso))) h.startIso = sDt.toISO();
-      if (eDt && (!h.endIso || eDt > DateTime.fromISO(h.endIso))) h.endIso = eDt.toISO();
-      if (!h.isPersonalBlock) {
-        const exists = h.patients.some((p) => p.name === patient.name && p.type === patient.type);
-        if (!exists) h.patients.push(patient);
-      }
-      if (isPreview) h.isPreview = true;
-      if (apptId != null) h.sourceAppointmentIds.push(apptId);
+  const list: SchedulerDriveHousehold[] = [];
+  for (const meta of buckets.values()) {
+    const clumps = splitApptsByScheduledTimeClumps(meta.items);
+    for (const clump of clumps) {
+      const idPart =
+        (clump[0]!.appt as { id?: string | number }).id != null
+          ? String((clump[0]!.appt as { id?: string | number }).id)
+          : meta.idPart;
+      list.push(
+        householdFromApptClump(clump, meta.lat, meta.lon, meta.hasGeo, meta.addrKey, idPart)
+      );
     }
   }
-  const list = Array.from(m.values()).sort((a, b) => {
+
+  list.sort((a, b) => {
     if (a.firstApptIndex != null && b.firstApptIndex != null) {
       return a.firstApptIndex - b.firstApptIndex;
     }
@@ -396,12 +644,13 @@ export type SchedulerDriveRoutingPreviewOptions = {
   rescheduleIntent?: RoutingRescheduleIntentV1 | null;
 };
 
-/** Drop visits being rescheduled from doctor-day simulation (server `loadDoctorDay` parity). */
+/** Drop visits being rescheduled from doctor-day simulation (server `loadDoctorDay` parity).
+ * Explore Alternatives keeps the originals (new stop is additive). */
 export function omitRescheduleTargetsFromDoctorDayAppts(
   appts: DoctorDayAppt[],
   intent: RoutingRescheduleIntentV1 | null | undefined
 ): DoctorDayAppt[] {
-  if (!intent) return appts;
+  if (!intent || intent.exploreAlternatives) return appts;
   const omit = new Set(rescheduleScopeTargets(intent).appointmentIds);
   if (omit.size === 0) return appts;
   return appts.filter((a) => {
@@ -458,13 +707,24 @@ async function fetchEtaForOneDay(
                 .toISO() ?? undefined,
             }
           );
+    const previewHousehold = day.households.find(
+      (h: { isPreview?: boolean }) => h.isPreview === true
+    );
+    const candidateLat =
+      previewHousehold && Number.isFinite(previewHousehold.lat) && Math.abs(previewHousehold.lat) > 1e-6
+        ? previewHousehold.lat
+        : rp.newApptMeta?.lat;
+    const candidateLon =
+      previewHousehold && Number.isFinite(previewHousehold.lon) && Math.abs(previewHousehold.lon) > 1e-6
+        ? previewHousehold.lon
+        : rp.newApptMeta?.lon;
     const candidateSlot = buildEtaCandidateSlot(
       {
         insertionIndex: opt.insertionIndex as RoutingEtaCandidateSlotSource['insertionIndex'],
         positionInDay: opt.positionInDay as RoutingEtaCandidateSlotSource['positionInDay'],
         suggestedStartIso: opt.suggestedStartIso as string | undefined,
-        lat: rp.newApptMeta?.lat,
-        lon: rp.newApptMeta?.lon,
+        lat: candidateLat,
+        lon: candidateLon,
         serviceMinutes: rp.serviceMinutes,
         overrunSeconds: opt.overrunSeconds as RoutingEtaCandidateSlotSource['overrunSeconds'],
         validationLastEtdSec: opt.validationLastEtdSec as RoutingEtaCandidateSlotSource['validationLastEtdSec'],
@@ -731,7 +991,6 @@ export async function fetchSchedulerDoctorDayBundle(
     let appts: DoctorDayAppt[] = resp?.appointments ?? [];
     const membershipByApptId = membershipMapFromDoctorDayAppointments(appts);
     const zonesByApptId = zonesMapFromDoctorDayAppointments(appts);
-    const effectiveWindowByApptId = effectiveWindowMapFromDoctorDayAppointments(appts);
     const patientPrimaryProviderByApptId = patientPrimaryProviderMapFromDoctorDayAppointments(appts);
     const isCompleteByApptId = isCompleteMapFromDoctorDayAppointments(appts);
 
@@ -751,12 +1010,25 @@ export async function fetchSchedulerDoctorDayBundle(
       routingPreviewOpts.previewPracticeDateKey === date
     ) {
       const ri = routingPreviewOpts.rescheduleIntent ?? readRoutingRescheduleIntent();
+      // Capture before align-omit — Update-all hides the anchor, which still owns the ALT geo.
+      const anchorId = Number(
+        routingPreviewOpts.routingPreview.manualBookDraft?.coVisitAnchorAppointmentId
+      );
+      const coVisitAnchorRow =
+        Number.isFinite(anchorId) && anchorId > 0
+          ? appts.find((a) => Number(a.id) === anchorId) ?? null
+          : null;
       appts = omitRescheduleTargetsFromDoctorDayAppts(appts, ri);
+      appts = omitManualBookCoVisitAlignFromDoctorDayAppts(
+        appts,
+        routingPreviewOpts.routingPreview
+      );
       appts = injectDoctorDayAppointmentsRoutingPreview(
         appts,
         routingPreviewOpts.routingPreview,
         routingPreviewOpts.previewAppointmentType,
-        resp.timezone
+        resp.timezone,
+        coVisitAnchorRow
       );
     } else if (routingPreviewOpts?.rescheduleIntent) {
       appts = omitRescheduleTargetsFromDoctorDayAppts(appts, routingPreviewOpts.rescheduleIntent);
@@ -765,6 +1037,9 @@ export async function fetchSchedulerDoctorDayBundle(
     appts = appts.filter(
       (a) => !isAppointmentCancelledOnPracticeCalendar(a as Record<string, unknown>)
     );
+
+    // After preview/reschedule transforms so promised windows match the times we will drive/ETA.
+    const effectiveWindowByApptId = effectiveWindowMapFromDoctorDayAppointments(appts);
 
     const households = buildHouseholdsWithSourceIds(appts);
 

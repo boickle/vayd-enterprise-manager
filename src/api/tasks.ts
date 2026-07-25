@@ -111,6 +111,8 @@ export type TaskSummaryBucket = {
 export type TaskSummaryResponse = {
   assigned: TaskSummaryBucket;
   watching: TaskSummaryBucket;
+  /** Branch ids the current employee belongs to (auto-healed to practice default when empty). */
+  myBranchIds?: number[];
 };
 
 export async function listTasks(params?: ListTasksParams): Promise<TaskListResponse> {
@@ -141,6 +143,9 @@ export async function fetchTasksSummary(params?: { branchId?: number }): Promise
       upcoming: watching.upcoming ?? 0,
       total: watching.total ?? 0,
     },
+    myBranchIds: Array.isArray(data?.myBranchIds)
+      ? data.myBranchIds.filter((id): id is number => Number.isFinite(Number(id))).map(Number)
+      : [],
   };
 }
 

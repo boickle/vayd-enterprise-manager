@@ -63,13 +63,16 @@ import {
 import {
   fetchAllAppointmentTypes,
   fetchEmployee,
+  scheduleOverrideIsOff,
   type EmployeeWeeklySchedule,
+  type ScheduleOverride,
 } from '../api/appointmentSettings';
 import {
   buildAppointmentTypeCatalog,
   pointsFromAppointmentRows,
   type AppointmentTypeCatalog,
 } from '../utils/appointmentTypeSettings';
+import { fetchScheduleOverridesByDate } from '../utils/scheduleOverrideMerge';
 import { useAuth } from '../auth/useAuth';
 import { useCommittedDateRange } from '../hooks/useCommittedDateRange';
 import { isEmployeeAnalyticsRestricted, normalizeAuthRoles } from '../utils/analyticsAccess';
@@ -114,8 +117,17 @@ function providerHasConfiguredGoals(p: Provider): boolean {
   );
 }
 
+type EmployeeWithGoals = {
+  id: string;
+  name: string;
+  goals: EmployeeGoalsResponseDto;
+  weeklySchedules: EmployeeWeeklySchedule[];
+  /** Per-date schedule overrides for the loaded goal period (OFF / custom shifts). */
+  scheduleOverridesByDate: Map<string, ScheduleOverride>;
+};
+
 /** True if the employee is scheduled to work on the given date (by day of week). */
-function isWorkingDay(
+function isWeeklyWorkday(
   emp: { weeklySchedules?: EmployeeWeeklySchedule[] },
   dateStr: string
 ): boolean {
@@ -123,6 +135,27 @@ function isWorkingDay(
   const dayOfWeek = dayjs(dateStr).day();
   const schedule = schedules.find((s) => s.dayOfWeek === dayOfWeek);
   return schedule?.isWorkday ?? false;
+}
+
+/**
+ * Whether a date counts toward goals vs actual.
+ * Schedule OFF overrides win; otherwise trust goals breakdown isWorkday (API already
+ * applies weekly + overrides when fetched with startDate/endDate); else weekly schedule.
+ * Do not use doctor/month workStart/workEnd — those are often empty on real workdays.
+ */
+function dayCountsForGoals(
+  emp: EmployeeWithGoals,
+  dateStr: string,
+  resolvedIsWorkday?: boolean | null
+): boolean {
+  const override = emp.scheduleOverridesByDate.get(dateStr);
+  if (override) {
+    return !scheduleOverrideIsOff(override);
+  }
+  if (resolvedIsWorkday != null) {
+    return resolvedIsWorkday;
+  }
+  return isWeeklyWorkday(emp, dateStr);
 }
 
 /** Sum series by date into a map; missing dates are 0. */
@@ -336,9 +369,7 @@ export default function VeterinaryServicesDeliveredPage() {
 
   // Goals summary (whole company vs per-doctor)
   const [goalScope, setGoalScope] = useState<string>(PRACTICE_TOTAL_ID);
-  const [employeesWithGoals, setEmployeesWithGoals] = useState<
-    { id: string; name: string; goals: EmployeeGoalsResponseDto; weeklySchedules?: EmployeeWeeklySchedule[] }[]
-  >([]);
+  const [employeesWithGoals, setEmployeesWithGoals] = useState<EmployeeWithGoals[]>([]);
   const [goalsLoading, setGoalsLoading] = useState(false);
 
   const start = range.from.startOf('day');
@@ -392,7 +423,7 @@ export default function VeterinaryServicesDeliveredPage() {
     };
   }, []);
 
-  // Load goals and weekly schedules for each provider; keep only those with at least one goal set
+  // Load goals, weekly schedules, and schedule overrides; keep only those with at least one goal set
   useEffect(() => {
     if (!providersForApi.length) {
       setEmployeesWithGoals([]);
@@ -402,15 +433,19 @@ export default function VeterinaryServicesDeliveredPage() {
     setGoalsLoading(true);
     (async () => {
       try {
-        const goalPeriod = { goalPeriodStart: startStr, goalPeriodEnd: endStr };
+        const goalPeriod = { startDate: startStr, endDate: endStr };
+        const periodDates = dateRange(start, end);
         const results = await Promise.allSettled(
           providersForApi.map(async (p) => {
             const id = String(p.id);
             const empId = Number(p.id);
             if (!Number.isFinite(empId)) return null;
-            const [goals, employee] = await Promise.all([
+            const [goals, employee, scheduleOverridesByDate] = await Promise.all([
               fetchEmployeeGoals(empId, goalPeriod),
               fetchEmployee(empId),
+              fetchScheduleOverridesByDate(empId, periodDates).catch(
+                () => new Map<string, ScheduleOverride>()
+              ),
             ]);
             if (!hasAnyGoal(goals) && !providerHasConfiguredGoals(p)) {
               return null;
@@ -420,15 +455,15 @@ export default function VeterinaryServicesDeliveredPage() {
               name: p.name,
               goals,
               weeklySchedules: employee?.weeklySchedules ?? [],
-            };
+              scheduleOverridesByDate,
+            } satisfies EmployeeWithGoals;
           })
         );
         if (!alive) return;
         const withGoals = results
-          .filter((r): r is PromiseFulfilledResult<{ id: string; name: string; goals: EmployeeGoalsResponseDto; weeklySchedules: EmployeeWeeklySchedule[] } | null> =>
-            r.status === 'fulfilled')
+          .filter((r): r is PromiseFulfilledResult<EmployeeWithGoals | null> => r.status === 'fulfilled')
           .map((r) => r.value)
-          .filter((v): v is { id: string; name: string; goals: EmployeeGoalsResponseDto; weeklySchedules: EmployeeWeeklySchedule[] } => v != null);
+          .filter((v): v is EmployeeWithGoals => v != null);
         setEmployeesWithGoals(withGoals);
         setGoalScope((prev) => {
           if (restrictEmployeeAnalytics) {
@@ -872,11 +907,7 @@ export default function VeterinaryServicesDeliveredPage() {
       const dayOfWeek = dayjs(dateStr).day();
       for (const emp of emps) {
         const resolved = getGoalForDate(emp.goals, dateStr, dayOfWeek);
-        if (resolved.isWorkday != null) {
-          if (!resolved.isWorkday) continue;
-        } else if (!isWorkingDay(emp, dateStr)) {
-          continue;
-        }
+        if (!dayCountsForGoals(emp, dateStr, resolved.isWorkday)) continue;
         totalPointGoal += resolved.pointGoal;
         totalRevenueGoal += resolved.revenueGoal;
       }
@@ -884,7 +915,7 @@ export default function VeterinaryServicesDeliveredPage() {
     return { totalPointGoal, totalRevenueGoal };
   }, [goalScope, employeesWithGoals, employeesForGoalScopeSelect, restrictEmployeeAnalytics, start, end]);
 
-  /** Actual points and revenue for the selected scope (only on days the doctor(s) are working). */
+  /** Actual points and VSD for the selected scope (only on days the doctor(s) are working). */
   const actualsForGoalScope = useMemo(() => {
     const dates = dateRange(start, end);
     let actualPoints = 0;
@@ -892,8 +923,10 @@ export default function VeterinaryServicesDeliveredPage() {
     if (goalScope === PRACTICE_TOTAL_ID) {
       const empsForActuals = restrictEmployeeAnalytics ? employeesForGoalScopeSelect : employeesWithGoals;
       for (const dateStr of dates) {
+        const dayOfWeek = dayjs(dateStr).day();
         for (const emp of empsForActuals) {
-          if (!isWorkingDay(emp, dateStr)) continue;
+          const resolved = getGoalForDate(emp.goals, dateStr, dayOfWeek);
+          if (!dayCountsForGoals(emp, dateStr, resolved.isWorkday)) continue;
           const id = emp.id;
           actualPoints += pointsByDoctorByDate[id]?.[dateStr] ?? 0;
           const dr = doctorResponses.find((r) => String(r.doctorId) === id);
@@ -905,7 +938,9 @@ export default function VeterinaryServicesDeliveredPage() {
       const emp = employeesWithGoals.find((e) => e.id === goalScope);
       if (!emp) return { actualPoints: 0, actualRevenue: 0 };
       for (const dateStr of dates) {
-        if (!isWorkingDay(emp, dateStr)) continue;
+        const dayOfWeek = dayjs(dateStr).day();
+        const resolved = getGoalForDate(emp.goals, dateStr, dayOfWeek);
+        if (!dayCountsForGoals(emp, dateStr, resolved.isWorkday)) continue;
         actualPoints += pointsByDoctorByDate[emp.id]?.[dateStr] ?? 0;
         const dr = doctorResponses.find((r) => String(r.doctorId) === emp.id);
         const dayRevenue = (dr?.response.series ?? []).find((p) => String(p?.date ?? '').slice(0, 10) === dateStr);
@@ -1219,7 +1254,7 @@ export default function VeterinaryServicesDeliveredPage() {
                       </Box>
                       <Box>
                         <Typography variant="subtitle2" color="text.secondary">
-                          Revenue goal
+                          VSD goal
                         </Typography>
                         <Typography variant="body1">
                           {goalsSummary.totalRevenueGoal > 0 ? (
@@ -1233,7 +1268,7 @@ export default function VeterinaryServicesDeliveredPage() {
                             </>
                           ) : (
                             <Typography component="span" variant="body2" color="text.secondary">
-                              No revenue goal set
+                              No VSD goal set
                             </Typography>
                           )}
                         </Typography>

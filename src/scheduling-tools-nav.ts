@@ -1,3 +1,4 @@
+import { HOLDS_PATH } from './holds-nav';
 import type { ForwardBookingListTab } from './utils/forwardBookingListVisibility';
 
 export type SchedulingToolTab = {
@@ -7,21 +8,20 @@ export type SchedulingToolTab = {
 
 export const SCHEDULING_TOOLS_PATH_PREFIX = '/schedule/scheduling-tools';
 
-/** Outreach queues — care outreach through texted offers. */
+/** Outreach queues — care outreach through schedule loader. */
 export const SCHEDULING_TOOL_OUTREACH_TABS: SchedulingToolTab[] = [
   { path: 'care-outreach', label: 'Care outreach' },
-  { path: 'schedule-loader', label: 'Schedule loader' },
   { path: 'forward-booking', label: 'Forward booking' },
   { path: 'texted-offers', label: 'Texted offers' },
+  { path: 'schedule-loader', label: 'Schedule loader' },
 ];
 
-/** Workflow views after outreach — calendar holds and booked visits. */
+/** Workflow views after outreach — booked visits. */
 export const SCHEDULING_TOOL_WORKFLOW_TABS: SchedulingToolTab[] = [
-  { path: 'on-hold', label: 'On hold' },
   { path: 'booked', label: 'Booked' },
 ];
 
-/** Scheduling Tools tabs (appointment-request holds live under /schedule/appointments/on-hold). */
+/** Scheduling Tools tabs (holds board: /schedule/holds). */
 export const SCHEDULING_TOOL_TABS: SchedulingToolTab[] = [
   ...SCHEDULING_TOOL_OUTREACH_TABS,
   ...SCHEDULING_TOOL_WORKFLOW_TABS,
@@ -44,8 +44,7 @@ export function bookedListPath(search = ''): string {
 }
 
 export function onHoldListPath(search = ''): string {
-  const base = `${SCHEDULING_TOOLS_PATH_PREFIX}/on-hold`;
-  return search ? `${base}${search.startsWith('?') ? search : `?${search}`}` : base;
+  return search ? `${HOLDS_PATH}${search.startsWith('?') ? search : `?${search}`}` : HOLDS_PATH;
 }
 
 /** URL for a Forward booking status view (pending uses the bare path). */
@@ -68,7 +67,7 @@ export function isSchedulingToolTabActive(
   const base = `${SCHEDULING_TOOLS_PATH_PREFIX}/${tabPath}`;
   if (pathname === base || pathname.startsWith(`${base}/`)) return true;
   if (
-    tabPath === 'schedule-loader' &&
+    tabPath === 'care-outreach' &&
     (pathname === SCHEDULING_TOOLS_PATH_PREFIX || pathname === `${SCHEDULING_TOOLS_PATH_PREFIX}/`)
   ) {
     return true;
@@ -92,12 +91,6 @@ export function isSchedulingToolTabActive(
       const legacyPath = `${SCHEDULING_TOOLS_PATH_PREFIX}/${legacy}`;
       if (pathname === legacyPath || pathname.startsWith(`${legacyPath}/`)) return true;
     }
-  }
-  if (tabPath === 'on-hold') {
-    const forwardBookingOnHold =
-      pathname === `${SCHEDULING_TOOLS_PATH_PREFIX}/forward-booking` &&
-      new URLSearchParams(search).get(FORWARD_BOOKING_STATUS_PARAM) === 'onHold';
-    if (forwardBookingOnHold) return true;
   }
   return false;
 }
@@ -127,6 +120,9 @@ export function schedulingReturnPathAfterBook(args: {
       if (href) return href;
       return `${SCHEDULING_TOOLS_PATH_PREFIX}/schedule-loader`;
     }
+    return `${SCHEDULING_TOOLS_PATH_PREFIX}/forward-booking`;
+  }
+  if (args.origin === 'forward_booking') {
     return `${SCHEDULING_TOOLS_PATH_PREFIX}/forward-booking`;
   }
   return schedulingWorkflowListPathAfterBook(false);

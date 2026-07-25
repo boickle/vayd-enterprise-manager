@@ -3,8 +3,10 @@
 import { DateTime } from 'luxon';
 import type { AppointmentRequestListTab } from '../appointments-nav';
 import type { AppointmentRequestSubmissionItem } from '../api/appointmentRequestSubmissions';
+import type { AppointmentRequestBookedApptSummary } from './appointmentRequestOnHold';
 import { appointmentRequestSubmissionCountsAsBooked, appointmentRequestSubmissionIsOnHold } from './appointmentRequestOnHold';
 import { appointmentRequestNeedsStaffConfirmation } from './appointmentRequestStaffConfirm';
+import type { AppointmentTypeCatalog } from './appointmentTypeSettings';
 import { fetchClientByIdStaff } from '../api/clientsStaff';
 import { practiceTimeZoneOrDefault } from './practiceTimezone';
 
@@ -53,6 +55,33 @@ export function petSummaryFromAppointmentRequestSubject(
   const m = liaisonSubjectForMatch(subject).match(APPT_REQUEST_SUBJECT_RE);
   const pet = m?.[2]?.trim();
   return pet || null;
+}
+
+/** Normalize pet lists for liaison-subject ↔ request-data matching (spacing, commas). */
+export function normalizePetListForMatch(value: string | null | undefined): string {
+  return (value ?? '')
+    .toLowerCase()
+    .replace(/\s*,\s*/g, ',')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** True when liaison subject pets and stored request pets refer to the same visit. */
+export function petListsMatchForSubmission(
+  subjectPets: string | null | undefined,
+  requestPets: string | null | undefined,
+): boolean {
+  const subject = normalizePetListForMatch(subjectPets);
+  const request = normalizePetListForMatch(requestPets);
+  if (!subject || !request) return true;
+  if (subject === request) return true;
+  if (request.includes(subject) || subject.includes(request)) return true;
+  const subjectParts = subject.split(',').map((p) => p.trim()).filter(Boolean);
+  const requestParts = request.split(',').map((p) => p.trim()).filter(Boolean);
+  if (subjectParts.length === 0 || requestParts.length === 0) return true;
+  return subjectParts.every((sp) =>
+    requestParts.some((rp) => rp === sp || rp.includes(sp) || sp.includes(rp)),
+  );
 }
 
 export function requestDataPhone(requestData: Record<string, unknown>): string | null {
@@ -733,12 +762,18 @@ export function requestDataServiceMinutes(requestData: Record<string, unknown>):
 /** List tab where this submission appears in the Scout appointments queue. */
 export function appointmentRequestListTabForSubmission(
   item: AppointmentRequestSubmissionItem,
+  bookedApptMeta: ReadonlyMap<number, AppointmentRequestBookedApptSummary> = new Map(),
+  typeCatalog: AppointmentTypeCatalog | null = null,
 ): AppointmentRequestListTab {
   const status = item.status ?? 'new';
   if (status === 'dismissed') return 'dismissed';
-  if (appointmentRequestNeedsStaffConfirmation(item)) return 'to_confirm';
-  if (appointmentRequestSubmissionIsOnHold(item, new Map(), null)) return 'on_hold';
-  if (appointmentRequestSubmissionCountsAsBooked(item, new Map(), null)) return 'booked';
   if (status === 'contacted') return 'contacted';
+  if (appointmentRequestNeedsStaffConfirmation(item)) return 'to_confirm';
+  if (appointmentRequestSubmissionIsOnHold(item, bookedApptMeta, typeCatalog)) {
+    return 'on_hold';
+  }
+  if (appointmentRequestSubmissionCountsAsBooked(item, bookedApptMeta, typeCatalog)) {
+    return 'booked';
+  }
   return 'new';
 }
