@@ -362,15 +362,18 @@ Side effect: opening a thread marks messages read unless `?markRead=false`.
   "bodyText": "Thank you...",
   "threadId": "18f2abc123",
   "inReplyTo": "<abc@gmail.com>",
-  "references": "<abc@gmail.com>"
+  "references": "<abc@gmail.com>",
+  "trackOpens": true
 }
 ```
 
 - Build RFC 2822 MIME; set `From` to chosen **send-as alias** (must exist in user's send-as list).
 - **`threadId` + `inReplyTo` + `references`** required for reply/reply-all threading.
-- **Response `200`:** `{ "id": "...", "threadId": "...", "labelIds": ["SENT"] }`
+- `trackOpens` defaults to `true`; see [Open tracking](#open-tracking-read-receipts).
+- **Response `200`:** `{ "id": "...", "threadId": "...", "labelIds": ["SENT"], "tracking": { ... } | null }`
 
-**`POST /gmail/drafts`** / **`PUT /gmail/drafts/:draftId`** — optional v1; same body shape.
+**`POST /gmail/drafts`** / **`PUT /gmail/drafts/:draftId`** — optional v1; same body shape. Drafts are never
+pixel-injected; tracking is added at send time only.
 
 ### List send-as aliases
 
@@ -398,6 +401,67 @@ Side effect: opening a thread marks messages read unless `?markRead=false`.
 ```
 
 Reply/reply-all: frontend pre-fills `from` based on thread context (last alias used or `To` matching alias list).
+
+---
+
+## Open tracking (read receipts)
+
+Streak-style "did the client open it?" for mail Scout sends. Gmail itself reports nothing about
+recipient opens, so this is a pixel pipeline owned by `vayd-api`.
+
+### Flow
+
+1. On `POST /gmail/messages/send`, if the message has HTML and `trackOpens !== false`, the API
+   generates a token and appends a 1x1 pixel pointing at
+   `GET {API_BASE_URL}/gmail/email-open/{token}.gif` before building the MIME.
+2. The token is stored **only after Gmail accepts the send**, so every row is a real trackable email.
+3. The recipient's mail client loads the pixel; the public endpoint records the open and returns the GIF.
+4. Thread and list responses carry the resulting `tracking` object.
+
+Requires `API_BASE_URL` (fallback `APP_URL`) to be a public, non-localhost URL. Without it, sends go
+out untracked and `tracking` is `null` — local dev never tracks.
+
+### Storage
+
+| Table | Purpose |
+|-------|---------|
+| `gmail_tracked_sends` | One row per tracked send: `trackingToken` (unique), `mailboxEmail`, `gmailMessageId`, `gmailThreadId`, `sentByUserId`, `subject`, `recipients`, `sentAt`, `firstOpenedAt`, `lastOpenedAt`, `openCount` |
+| `gmail_tracked_send_opens` | One row per counted open: `trackedSendId`, `openedAt`, `userAgent`, `ipHash` |
+
+### Tracking object
+
+```json
+{
+  "messageId": "18f2abc123",
+  "threadId": "18f2abc000",
+  "sentAt": "2026-07-25T14:03:11.000Z",
+  "openCount": 2,
+  "firstOpenedAt": "2026-07-25T14:19:02.000Z",
+  "lastOpenedAt": "2026-07-26T09:41:55.000Z"
+}
+```
+
+- `GET /gmail/threads/:threadId` — each message carries `tracking` for that exact message.
+- `GET /gmail/messages` — each thread row carries `tracking` for the **newest** tracked send in it.
+- `GET /gmail/tracking/messages/:messageId?mailbox=` — `{ tracking, opens: [{ openedAt, userAgent }] }`,
+  newest first, capped at 50. Auth + Gmail access guard, scoped by mailbox.
+- Messages Scout did not send have no `tracking` key.
+
+### False-positive controls
+
+| Noise source | Handling |
+|--------------|----------|
+| Staff reading the thread in Scout | Our pixel is stripped from message HTML server-side before Scout renders it |
+| Spam filters / scanners fetching on delivery | Opens within 15s of the send are ignored |
+| Bots, scripted clients, link previewers | User-agent filter; a missing UA counts as automated |
+| A single view re-requesting the image | Repeat hits within 30s collapse into one open |
+
+Gmail's `GoogleImageProxy` is deliberately **allowed** — Gmail only proxies images when the recipient
+renders the message.
+
+Known limits, same as any pixel tracker: recipients who block images never register an open (so
+`openCount: 0` means "no evidence", not "not read"), Apple Mail Privacy Protection can preload images
+and inflate opens, and forwarded copies count against the original send.
 
 ---
 

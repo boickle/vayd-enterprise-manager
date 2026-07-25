@@ -1646,6 +1646,7 @@ export default function CareOutreachPage() {
           canText={contactCanText}
           onClose={closeContactModal}
           smsFromLine={smsFromLine}
+          smsSource="care_outreach"
           onOpenMessagesHistory={() => {
             setMessagesClientId(contactClientId);
             setMessagesClientLabel(contactClientLabel);

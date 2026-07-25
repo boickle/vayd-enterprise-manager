@@ -153,6 +153,66 @@ main.container > * {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
 }
 
+/** Quo undelivered staff SMS — floating so it does not cover the navbar. */
+.sms-delivery-failure-stack {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 10050;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: min(420px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
+.sms-delivery-failure-banner {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  background: #7f1d1d;
+  color: #fff;
+  padding: 12px 14px;
+  font-size: 13px;
+  line-height: 1.4;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+}
+
+.sms-delivery-failure-banner__body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.sms-delivery-failure-banner__body strong {
+  font-weight: 700;
+}
+
+.sms-delivery-failure-banner__dismiss {
+  flex-shrink: 0;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  background: transparent;
+  color: #fff;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.sms-delivery-failure-banner__dismiss:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.sms-delivery-failure-banner__dismiss:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 .app-root--nonprod .navbar {
   top: var(--app-nonprod-banner-height);
 }

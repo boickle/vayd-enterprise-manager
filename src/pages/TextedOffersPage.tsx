@@ -862,6 +862,7 @@ export default function TextedOffersPage() {
         await sendClientSms(smsTarget.clientId, {
           message: smsMessage.trim(),
           useRemindersFrom: true,
+          source: 'slot_offer',
           ...(opts.overrideNonProd ? { overrideNonProd: true } : {}),
         });
         closeSmsModal();

@@ -547,6 +547,8 @@ export async function submitCompose(opts: {
   threadId?: string;
   inReplyTo?: string;
   references?: string;
+  /** Defaults to tracked; false sends without a read receipt. */
+  trackOpens?: boolean;
 }) {
   const to = opts.to
     .split(/[,;]/)
@@ -567,6 +569,7 @@ export async function submitCompose(opts: {
     threadId: opts.threadId,
     inReplyTo: opts.inReplyTo,
     references: opts.references,
+    trackOpens: opts.trackOpens,
   });
 }
 

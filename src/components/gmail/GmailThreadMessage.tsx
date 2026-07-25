@@ -1,5 +1,6 @@
 import GmailAttachmentIcon from './GmailAttachmentIcon';
 import GmailMessageComposeBar from './GmailMessageComposeBar';
+import GmailOpenTrackingBadge from './GmailOpenTrackingBadge';
 import GmailScheduledSendIcon from './GmailScheduledSendIcon';
 import type { ComposeContext } from './gmailCompose';
 import {
@@ -37,6 +38,8 @@ function collapsedMessageDate(iso: string): string {
 type ThreadMessageProps = {
   msg: GmailThreadMessage;
   threadId: string;
+  /** Enables the read-receipt badge to load its per-open history. */
+  mailbox?: string;
   compact?: boolean;
   expanded?: boolean;
   /** When true, message cannot be collapsed (e.g. unread). */
@@ -52,6 +55,7 @@ type ThreadMessageProps = {
 export function GmailThreadMessageArticle({
   msg,
   threadId,
+  mailbox,
   compact = false,
   expanded = true,
   pinExpanded = false,
@@ -94,6 +98,7 @@ export function GmailThreadMessageArticle({
               {decodeGmailSnippet(msg.snippet)}
             </span>
           </span>
+          <GmailOpenTrackingBadge tracking={msg.tracking} compact />
           <span className="gmail-thread-message__collapsed-date">
             {collapsedMessageDate(msg.date)}
           </span>
@@ -133,6 +138,7 @@ export function GmailThreadMessageArticle({
                   onClick={(e) => e.stopPropagation()}
                   onKeyDown={(e) => e.stopPropagation()}
                 >
+                  <GmailOpenTrackingBadge tracking={msg.tracking} mailbox={mailbox} />
                   <span className="gmail-message-view__date">
                     {hasScheduledSend(msg) ? (
                       <GmailScheduledSendIcon scheduledSendAt={msg.scheduledSendAt} />

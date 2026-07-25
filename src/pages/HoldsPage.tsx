@@ -493,6 +493,7 @@ export default function HoldsPage() {
         await sendClientSms(clientId, {
           message: smsMessage.trim(),
           useRemindersFrom: true,
+          source: 'holds',
           ...(providerId != null ? { primaryProviderId: providerId } : {}),
           ...(opts.overrideNonProd ? { overrideNonProd: true } : {}),
         });
