@@ -829,6 +829,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
             practiceId: PRACTICE_ID,
             page: 1,
             limit: 200,
+            includeAbandoned: true,
           }),
         ]);
         const typeCatalog = buildAppointmentTypeCatalogFromTypes(types);
@@ -841,7 +842,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
 
         const runBackfillAndHydrate = async (backfillGen: number) => {
           const allItems = await fetchRemainingAppointmentRequestSubmissionPages(
-            { practiceId: PRACTICE_ID },
+            { practiceId: PRACTICE_ID, includeAbandoned: true },
             firstPage,
           );
           if (backfillGen !== submissionBackfillGenRef.current) return;
@@ -870,7 +871,10 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
       }
 
       const [{ items, conversions }, types] = await Promise.all([
-        fetchAllAppointmentRequestSubmissions({ practiceId: PRACTICE_ID }),
+        fetchAllAppointmentRequestSubmissions({
+          practiceId: PRACTICE_ID,
+          includeAbandoned: true,
+        }),
         fetchAllAppointmentTypes(PRACTICE_ID, { activeOnly: false }),
       ]);
       const typeCatalog = buildAppointmentTypeCatalogFromTypes(types);
