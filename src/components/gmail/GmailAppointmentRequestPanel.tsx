@@ -32,9 +32,14 @@ import {
   buildRoutingAppointmentRequestIntentFromSubmission,
   writeRoutingAppointmentRequestIntent,
 } from '../../utils/routingAppointmentRequestIntent';
+import { dismissRoutingRescheduleWorkspace } from '../../utils/routingRescheduleIntent';
+import { dismissRoutingForwardBookingWorkspace } from '../../utils/routingForwardBookingIntent';
 import { startRescheduleFromBookedAppointmentRequest } from '../../utils/appointmentRequestReschedule';
 import { appointmentRequestSchedulerViewHints } from '../../utils/appointmentRequestSchedulerFocus';
-import { appointmentRecordHasActiveLinkedVisit } from '../../utils/appointmentRequestLinkedCalendarVisit';
+import {
+  appointmentRecordHasActiveLinkedVisit,
+  appointmentRequestBookedSummaryMatchesSubmission,
+} from '../../utils/appointmentRequestLinkedCalendarVisit';
 import { beginAppointmentRequestNotBookedFlow } from '../../utils/appointmentRequestNotBookedFlow';
 import { beginAppointmentRequestStaffConfirmFlow } from '../../utils/appointmentRequestStaffConfirmFlow';
 import { buildGmailInboxReturnPath } from '../../utils/routingAppointmentRequestIntent';
@@ -234,15 +239,18 @@ export default function GmailAppointmentRequestPanel({
   const petSummary = requestDataPetSummary(rd);
   const apptType = requestDataAppointmentTypeLabel(rd);
   const clientType = requestDataClientType(rd);
-  const hasLinkedAppointment = submission.bookedAppointmentId != null;
-  const isOnHold = appointmentRequestSubmissionGmailOnHold(
-    submission,
-    bookedApptMeta,
-    typeCatalog,
-  );
+  const hasLinkedAppointment =
+    submission.bookedAppointmentId != null &&
+    appointmentRequestBookedSummaryMatchesSubmission(submission, bookedApptSummary);
+  const isOnHold =
+    hasLinkedAppointment &&
+    appointmentRequestSubmissionGmailOnHold(submission, bookedApptMeta, typeCatalog);
   const isDismissed = status === 'dismissed';
-  const needsStaffConfirmation = appointmentRequestNeedsStaffConfirmation(submission);
-  const isBooked = appointmentRequestSubmissionCountsAsBooked(submission, bookedApptMeta, typeCatalog);
+  const needsStaffConfirmation =
+    hasLinkedAppointment && appointmentRequestNeedsStaffConfirmation(submission);
+  const isBooked =
+    hasLinkedAppointment &&
+    appointmentRequestSubmissionCountsAsBooked(submission, bookedApptMeta, typeCatalog);
   const hasSms = appointmentRequestHasSmsPhone(submission);
 
   const bookedVisit = useMemo(
@@ -364,6 +372,10 @@ export default function GmailAppointmentRequestPanel({
   );
 
   const onBook = () => {
+    // Book must open a new discrete visit. Leftover reschedule / forward-booking
+    // session state would make Routing PATCH an existing household appointment.
+    dismissRoutingRescheduleWorkspace();
+    dismissRoutingForwardBookingWorkspace();
     const intent = buildRoutingAppointmentRequestIntentFromSubmission(submission);
     writeRoutingAppointmentRequestIntent({
       ...intent,

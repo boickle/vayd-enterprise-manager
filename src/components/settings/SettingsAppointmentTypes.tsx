@@ -1003,7 +1003,7 @@ export default function SettingsAppointmentTypes({
                               setDraft({ ...draft, isCalmingPremedType: e.target.checked })
                             }
                           />
-                          Calming / Pre-Meds type (suggested when client reports calming meds)
+                          Calming / Pre-Meds type (only one per company; checking this clears it elsewhere)
                         </label>
                         <label className="settings-checkbox-label">
                           <input
@@ -1032,9 +1032,12 @@ export default function SettingsAppointmentTypes({
                         must have a patient linked to be saved as that type.
                       </p>
                       <p className="settings-muted settings-appt-type-window-hint">
-                        Calming / Pre-Meds type is suggested on the appointment request form when an existing
-                        client reports calming medications. Configure a ~1-hour arrival window on that type
-                        (for example 30 minutes before and 30 after).
+                        Calming / Pre-Meds type is used on the appointment request form when a client reports
+                        calming medications, and its arrival window drives auto-book availability for the whole
+                        household (even when other pets use different types). Configure a ~1-hour window on it
+                        (for example 30 minutes before and 30 after). Only one type per company may carry this
+                        flag — saving it here removes it from any other type. It does not need “Show in appointment
+                        request form”; the calming-meds checkbox finds it by this flag.
                       </p>
                       <p className="settings-muted settings-appt-type-window-hint">
                         Scheduling override is shown in the scheduler UI only; appointment create/update
