@@ -29,7 +29,7 @@ import {
   filterCompletedAppointmentRequestPets,
   isAbandonedAppointmentRequestPetStub,
 } from '../utils/appointmentRequestPetCompleteness';
-import { findCalmingPremedAppointmentType, sortAppointmentTypesForPicker } from '../utils/appointmentTypeSettings';
+import { appointmentTypeIsCalmingPremed, findCalmingPremedAppointmentType, sortAppointmentTypesForPicker } from '../utils/appointmentTypeSettings';
 import { resolveClientArrivalWindowForScheduledStart } from '../utils/appointmentArrivalWindow';
 import { DEFAULT_PRACTICE_TIMEZONE } from '../utils/practiceTimezone';
 import { formatAutobookDateTimePreferenceDisplay } from '../utils/appointmentRequestDisplay';
@@ -198,17 +198,27 @@ function isPhysicalAddressComplete(addr: AddressFields | undefined): boolean {
 
 function resolvePrimaryAppointmentTypeId(
   formData: Pick<FormData, 'selectedPetIds' | 'newClientPets' | 'existingClientNewPets' | 'petSpecificData'>,
+  opts?: {
+    /**
+     * Type id to prefer when any pet in the visit uses it (calming / Pre-Meds).
+     * Its arrival window then applies to availability for the whole household.
+     */
+    preferredTypeId?: number;
+  },
 ): number | undefined {
   const petIds = [
     ...(formData.selectedPetIds ?? []),
     ...(formData.newClientPets?.map((p) => p.id) ?? []),
     ...(formData.existingClientNewPets?.map((p) => p.id) ?? []),
   ];
+  const typeIds: number[] = [];
   for (const petId of petIds) {
     const typeId = formData.petSpecificData?.[petId]?.appointmentTypeId;
-    if (typeId != null && Number.isFinite(typeId)) return typeId;
+    if (typeId != null && Number.isFinite(typeId)) typeIds.push(typeId);
   }
-  return undefined;
+  const preferred = opts?.preferredTypeId;
+  if (preferred != null && typeIds.includes(preferred)) return preferred;
+  return typeIds[0];
 }
 
 function resolveProviderFromDoctorName(
@@ -1006,6 +1016,10 @@ export default function AppointmentRequestForm() {
       // (if the flag is false, new patients should NOT see that appointment type)
       filteredTypes = appointmentTypes.filter(type => type.newPatientAllowed === true);
     }
+
+    // The Pre-Meds type never appears as a reason card — the calming-meds
+    // checkbox applies it behind the scenes. Only form-visible types show here.
+    filteredTypes = filteredTypes.filter((type) => type.showInApptRequestForm === true);
     
     const sortedTypes = sortAppointmentTypesForPicker(filteredTypes, {
       unrankedOrder: 'alphabetical',
@@ -1177,93 +1191,30 @@ export default function AppointmentRequestForm() {
   };
 
   /**
-   * Existing chart pets: calming-meds checkbox sets the flag and steers the visit
-   * to the flagged Pre-Meds appointment type when available.
+   * Existing chart pets: calming-meds checkbox only records the flag. The pet
+   * keeps its picked visit reason; the Pre-Meds type is applied behind the
+   * scenes for the arrival window, validation, and the booked appointment.
    */
-  const handleUsesCalmingMedicationsChange = (
-    petId: string,
-    checked: boolean,
-    currentPetData: PetSpecificSlice | undefined,
-  ) => {
+  const handleUsesCalmingMedicationsChange = (petId: string, checked: boolean) => {
     const calmingValue: 'Yes' | 'No' = checked ? 'Yes' : 'No';
-    const premed = findCalmingPremedAppointmentType(appointmentTypes);
-    const premedOption: NeedsTodayOption | null = premed
-      ? {
-          id: premed.id,
-          name: premed.name,
-          prettyName: premed.prettyName || premed.name,
-        }
-      : null;
-
-    if (checked && premedOption) {
-      const cur = currentPetData;
-      const alreadySelected =
-        cur?.needsToday === premedOption.prettyName || cur?.needsToday === premedOption.name;
-      if (alreadySelected) {
-        setFormData((prev) => {
-          const petMap = { ...(prev.petSpecificData || {}) };
-          const existing = petMap[petId] || {};
-          petMap[petId] = { ...existing, needsCalmingMedications: calmingValue };
-          return { ...prev, petSpecificData: petMap };
-        });
-        return;
-      }
-
-      const hadPriorSelection = !!(cur?.needsToday && cur.needsToday.trim());
-      if (hadPriorSelection && petHasEnteredDetailsForCurrentAppointmentType(cur)) {
-        setFormData((prev) => {
-          const petMap = { ...(prev.petSpecificData || {}) };
-          const existing = petMap[petId] || {};
-          petMap[petId] = { ...existing, needsCalmingMedications: calmingValue };
-          return { ...prev, petSpecificData: petMap };
-        });
-        setAppointmentTypeChangeModal({ petId, option: premedOption });
-        return;
-      }
-
-      setFormData((prev) => {
-        const petMap = { ...(prev.petSpecificData || {}) };
-        const existing = petMap[petId] || {};
-        petMap[petId] = {
-          ...existing,
-          needsCalmingMedications: calmingValue,
-          needsToday: premedOption.prettyName,
-          appointmentTypeId: premedOption.id,
-          appointmentTypeName: premedOption.name,
-          needsTodayDetails: '',
-          euthanasiaReason: '',
-          beenToVetLastThreeMonths: '',
-          interestedInOtherOptions: '',
-          aftercarePreference: '',
-        };
-        return { ...prev, petSpecificData: petMap };
-      });
-      setErrors((prev) => {
-        const keys = [
-          `needsToday.${petId}`,
-          `needsTodayDetails.${petId}`,
-          `euthanasiaReason.${petId}`,
-          `beenToVetLastThreeMonths.${petId}`,
-          `interestedInOtherOptions.${petId}`,
-          `aftercarePreference.${petId}`,
-        ];
-        let touched = false;
-        const next = { ...prev };
-        for (const k of keys) {
-          if (next[k] !== undefined) {
-            delete next[k];
-            touched = true;
-          }
-        }
-        return touched ? next : prev;
-      });
-      return;
-    }
-
+    const premedId = findCalmingPremedAppointmentType(appointmentTypes)?.id;
     setFormData((prev) => {
       const petMap = { ...(prev.petSpecificData || {}) };
       const existing = petMap[petId] || {};
-      petMap[petId] = { ...existing, needsCalmingMedications: calmingValue };
+      // Clean up drafts from the old behavior where checking swapped the pet's
+      // visible reason to the Pre-Meds type: unchecking clears that selection.
+      const hadPremedSelected =
+        !checked &&
+        premedId != null &&
+        existing.appointmentTypeId != null &&
+        Number(existing.appointmentTypeId) === Number(premedId);
+      petMap[petId] = {
+        ...existing,
+        needsCalmingMedications: calmingValue,
+        ...(hadPremedSelected
+          ? { needsToday: '', appointmentTypeId: undefined, appointmentTypeName: '' }
+          : {}),
+      };
       return { ...prev, petSpecificData: petMap };
     });
   };
@@ -1306,31 +1257,6 @@ export default function AppointmentRequestForm() {
     return out;
   };
 
-  const primaryAppointmentTypeId = useMemo(
-    () => resolvePrimaryAppointmentTypeId(formData),
-    [
-      formData.selectedPetIds,
-      formData.newClientPets,
-      formData.existingClientNewPets,
-      formData.petSpecificData,
-    ],
-  );
-
-  const visitAppointmentTypeIds = useMemo(
-    () => resolveVisitAppointmentTypeIdsFromFormData(formData),
-    [
-      formData.selectedPetIds,
-      formData.newClientPets,
-      formData.existingClientNewPets,
-      formData.petSpecificData,
-    ],
-  );
-
-  const primaryAppointmentType = useMemo(
-    () => appointmentTypes.find((type) => type.id === primaryAppointmentTypeId),
-    [appointmentTypes, primaryAppointmentTypeId],
-  );
-
   const calmingPremedAppointmentType = useMemo(
     () => findCalmingPremedAppointmentType(appointmentTypes),
     [appointmentTypes],
@@ -1344,6 +1270,60 @@ export default function AppointmentRequestForm() {
       prettyName: calmingPremedAppointmentType.prettyName || calmingPremedAppointmentType.name,
     };
   }, [calmingPremedAppointmentType]);
+
+  // Prefer the Pre-Meds type when any pet uses it: availability search and the
+  // slot arrival window then use its (wider) window for the whole household,
+  // while each pet keeps its own appointment type on the booked calendar visits.
+  const selectedChartPetUsesCalmingMedications = useMemo(
+    () =>
+      formData.selectedPetIds.some(
+        (petId) =>
+          formData.petSpecificData?.[petId]?.needsCalmingMedications === 'Yes',
+      ),
+    [formData.selectedPetIds, formData.petSpecificData],
+  );
+  const primaryAppointmentTypeId = useMemo(
+    () => {
+      // The checkbox is authoritative for the household window. Do not rely on
+      // the per-pet type update having rendered before availability opens.
+      if (
+        selectedChartPetUsesCalmingMedications &&
+        calmingPremedAppointmentType?.id != null
+      ) {
+        return Number(calmingPremedAppointmentType.id);
+      }
+      return resolvePrimaryAppointmentTypeId(formData, {
+        preferredTypeId: calmingPremedAppointmentType?.id,
+      });
+    },
+    [
+      formData.selectedPetIds,
+      formData.newClientPets,
+      formData.existingClientNewPets,
+      formData.petSpecificData,
+      calmingPremedAppointmentType?.id,
+      selectedChartPetUsesCalmingMedications,
+    ],
+  );
+
+  // Online-booking eligibility uses the client's picked visit reasons only.
+  // Pre-Meds is applied behind the scenes for the arrival window / booked type
+  // and is usually not on doctors' allow-online lists (hidden from the form).
+  const visitAppointmentTypeIds = useMemo(
+    () => resolveVisitAppointmentTypeIdsFromFormData(formData),
+    [
+      formData.selectedPetIds,
+      formData.newClientPets,
+      formData.existingClientNewPets,
+      formData.petSpecificData,
+    ],
+  );
+
+  const primaryAppointmentType = useMemo(
+    () =>
+      appointmentTypes.find((type) => Number(type.id) === Number(primaryAppointmentTypeId)),
+    [appointmentTypes, primaryAppointmentTypeId],
+  );
 
   const rawVeterinarianList = isLoggedIn ? rawVeterinarians : rawPublicVeterinarians;
 
@@ -3141,15 +3121,34 @@ export default function AppointmentRequestForm() {
           // New patient = not logged in AND haven't used services before
           const isNewPatient = !isLoggedIn && formData.haveUsedServicesBefore !== 'Yes';
 
-          const types = await fetchAppointmentTypes(
+          // Load all active types so the calming / Pre-Meds type is available even when
+          // it is hidden from the normal reason picker (showInApptRequestForm=false).
+          // Picker options still filter to form-visible types (+ selected Pre-Meds).
+          const allTypes = await fetchAppointmentTypes(
             practiceId,
-            true, // showInApptRequestForm
-            isNewPatient ? true : undefined, // newPatientAllowed for new patients
+            false,
+            undefined,
             isLoggedIn
           );
           if (!alive) return;
+          const active = allTypes.filter(
+            (type) => type.isDeleted !== true && type.isActive !== false,
+          );
+          const formVisible = active.filter((type) => type.showInApptRequestForm === true);
+          const premed = findCalmingPremedAppointmentType(active);
+          const merged: typeof active =
+            premed && !formVisible.some((t) => Number(t.id) === Number(premed.id))
+              ? [...formVisible, premed]
+              : formVisible;
+          // New-patient form still restricts picker options via getAppointmentTypeOptions;
+          // keep the Pre-Meds type in state for window resolution when calming is checked.
           setAppointmentTypes(
-            types.filter((type) => type.showInApptRequestForm === true)
+            isNewPatient
+              ? merged.filter(
+                  (type) =>
+                    type.newPatientAllowed === true || appointmentTypeIsCalmingPremed(type),
+                )
+              : merged,
           );
         } catch (error) {
           console.error('[AppointmentForm] Failed to load appointment types:', error);
@@ -3474,10 +3473,22 @@ export default function AppointmentRequestForm() {
     if (formData.selfScheduledSlot && !speciesAllowOnlineScheduling) {
       newErrors.selfScheduledSlot = ONLINE_BOOKING_OTHER_SPECIES_MESSAGE;
     }
-    // Online booking offers a calendar, but preferred-times-only submit is always allowed.
-
     const isManualScheduling = isManualSchedulingHowSoon(formData.howSoon);
     const isNotUrgentTimeframe = formData.howSoon && !isManualScheduling;
+
+    // Timing is required: either a picked date/time (calendar slot or suggested
+    // times) or written preferences in the scheduling notes box.
+    if (isNotUrgentTimeframe) {
+      const hasPickedSlot = !!formData.selfScheduledSlot;
+      const hasSelectedSuggestedTimes =
+        Object.keys(formData.selectedDateTimeSlotsVisit || {}).length > 0;
+      const hasWrittenPreference =
+        !!formData.schedulingNotes?.trim() || !!formData.preferredDateTime?.trim();
+      if (!hasPickedSlot && !hasSelectedSuggestedTimes && !hasWrittenPreference) {
+        newErrors.schedulingNotes =
+          'Please pick a date/time or tell us when you would like the appointment';
+      }
+    }
 
     if (isNotUrgentTimeframe && SHOW_TIME_SLOTS) {
       if (recommendedSlots.length > 0) {
@@ -4706,7 +4717,7 @@ export default function AppointmentRequestForm() {
       style?.label ?? 'Preferred days/times or anything we should know about scheduling';
     const showLabel = style?.showLabel ?? true;
     return (
-      <div>
+      <div data-form-field="schedulingNotes">
         {showLabel ? (
           <label style={{ display: 'block', marginBottom: labelMb, fontWeight: 600, color: '#374151', fontSize: labelFontSize }}>
             {label}
@@ -4721,7 +4732,11 @@ export default function AppointmentRequestForm() {
           style={{
             width: '100%',
             padding: inputPadding,
-            border: highlightSchedulingNotes ? '2px solid #10b981' : '1px solid #d1d5db',
+            border: errors.schedulingNotes
+              ? '2px solid #ef4444'
+              : highlightSchedulingNotes
+                ? '2px solid #10b981'
+                : '1px solid #d1d5db',
             borderRadius: inputRadius,
             fontSize: '16px',
             fontFamily: 'inherit',
@@ -4731,6 +4746,11 @@ export default function AppointmentRequestForm() {
             transition: 'border-color 0.2s ease, box-shadow 0.2s ease',
           }}
         />
+        {errors.schedulingNotes && (
+          <div style={{ color: '#ef4444', fontSize: '13px', marginTop: '6px' }}>
+            {errors.schedulingNotes}
+          </div>
+        )}
       </div>
     );
   };
@@ -6777,7 +6797,7 @@ export default function AppointmentRequestForm() {
                             showUsesCalmingMedications
                             calmingPremedType={calmingPremedTypeOption}
                             onUsesCalmingMedicationsChange={(checked) =>
-                              handleUsesCalmingMedicationsChange(pet.id, checked, getPetData(pet.id))
+                              handleUsesCalmingMedicationsChange(pet.id, checked)
                             }
                           />
                         )}
@@ -7698,7 +7718,7 @@ export default function AppointmentRequestForm() {
                   {/* Self-schedule modal */}
                   {showSelfScheduleModal && hasAddress && primaryAppointmentTypeId != null && (
                     <SelfScheduleCalendarModal
-                      key={`${scheduleModalRefreshKey}-${lat ?? ''}-${lon ?? ''}-${builtAddress}-${primaryProviderDoctorId ?? ''}-${onlineBookingPatientIds.join(',')}`}
+                      key={`${scheduleModalRefreshKey}-${lat ?? ''}-${lon ?? ''}-${builtAddress}-${primaryProviderDoctorId ?? ''}-${primaryAppointmentTypeId}-${onlineBookingPatientIds.join(',')}`}
                       practiceId={practiceId}
                       address={fullAddress}
                       lat={lat ?? undefined}
@@ -7797,6 +7817,14 @@ export default function AppointmentRequestForm() {
                           selfScheduledSlot: slot,
                           [doctorField]: doctorLabel,
                         }));
+                        // Picking a slot satisfies the timing requirement.
+                        setErrors((prev) => {
+                          if (!prev.schedulingNotes && !prev.selfScheduledSlot) return prev;
+                          const next = { ...prev };
+                          delete next.schedulingNotes;
+                          delete next.selfScheduledSlot;
+                          return next;
+                        });
                         setSelfScheduleSlotError(null);
                         setShowSelfScheduleModal(false);
                       }}

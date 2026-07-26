@@ -6661,27 +6661,32 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     const start = startUtc.setZone(PRACTICE_TZ);
     const end = start.plus({ minutes: mins });
     const isAdminOrSuper = rolesLower.includes('admin') || rolesLower.includes('superadmin');
-    const ri = readRoutingRescheduleIntent();
-    const fbi = forwardBookingWorkspaceIsActive()
-      ? storedForwardBookingIntent
-      : isScheduleLoaderCalendarPreview(routingPreview) &&
-          storedForwardBookingIntent?.origin === 'schedule_loader'
+    const ari = appointmentRequestWorkspaceIsActive() ? readRoutingAppointmentRequestIntent() : null;
+    // Appointment-request Book is always a new visit. Ignore leftover reschedule
+    // session/preview ids so we never PATCH another household appointment.
+    const ri = ari ? null : readRoutingRescheduleIntent();
+    const fbi = ari
+      ? null
+      : forwardBookingWorkspaceIsActive()
         ? storedForwardBookingIntent
-        : null;
+        : isScheduleLoaderCalendarPreview(routingPreview) &&
+            storedForwardBookingIntent?.origin === 'schedule_loader'
+          ? storedForwardBookingIntent
+          : null;
     const previewPatientIds =
       routingPreview.previewPatients?.map((p) => String(p.id)).filter(Boolean) ?? [];
-    const ari = appointmentRequestWorkspaceIsActive() ? readRoutingAppointmentRequestIntent() : null;
     const rescheduleTargets = ri
       ? previewPatientIds.length > 0
         ? rescheduleTargetsForChipSelection(ri, previewPatientIds)
         : rescheduleScopeTargets(ri)
       : null;
-    const rescheduleIds =
-      routingPreview.rescheduleAppointmentIds?.filter((id) => Number.isFinite(Number(id))) ??
-      (routingPreview.rescheduleAppointmentId != null &&
-      Number.isFinite(Number(routingPreview.rescheduleAppointmentId))
-        ? [Number(routingPreview.rescheduleAppointmentId)]
-        : rescheduleTargets?.appointmentIds ?? []);
+    const rescheduleIds = ari
+      ? []
+      : routingPreview.rescheduleAppointmentIds?.filter((id) => Number.isFinite(Number(id))) ??
+        (routingPreview.rescheduleAppointmentId != null &&
+        Number.isFinite(Number(routingPreview.rescheduleAppointmentId))
+          ? [Number(routingPreview.rescheduleAppointmentId)]
+          : rescheduleTargets?.appointmentIds ?? []);
     const routingUi = readRoutingUiBootstrap();
     const routingStatsTypeKey =
       routingPreview.routingStatsTypeKey?.trim() ||

@@ -75,7 +75,6 @@ export function PetVisitQuestionsBlock({
   const petDisplayName = pet.name?.trim() || 'your pet';
   const isEndOfLife = selectedAppointmentType ? isEuthanasiaTypeOption(selectedAppointmentType) : false;
   const usesCalmingMedications = petData.needsCalmingMedications === 'Yes';
-  const premedLabel = calmingPremedType?.prettyName || calmingPremedType?.name || 'Pre-Meds';
 
   return (
     <div
@@ -132,12 +131,6 @@ export function PetVisitQuestionsBlock({
               My pet uses calming medications for the appointment
             </span>
           </label>
-          {usesCalmingMedications && calmingPremedType && (
-            <p style={{ fontSize: 12, color: '#047857', margin: '8px 0 0', lineHeight: 1.45 }}>
-              We&apos;ll use the {premedLabel} appointment type, which includes a wider (about 1-hour)
-              arrival window so medication timing is easier.
-            </p>
-          )}
           {usesCalmingMedications && !calmingPremedType && (
             <p style={{ fontSize: 12, color: '#b45309', margin: '8px 0 0', lineHeight: 1.45 }}>
               We&apos;ve noted the calming medications. A care liaison may help finalize the visit type.

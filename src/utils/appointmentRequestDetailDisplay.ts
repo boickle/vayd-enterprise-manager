@@ -250,6 +250,7 @@ function petRowSummariesFromPetSpecificData(
       patientPimsId: pet ? patientPimsIdFromRequestPet(pet) : null,
       appointmentType,
       appointmentTypeId,
+      usesCalmingMedications: pickStr(specific.needsCalmingMedications) === 'Yes',
       primaryProvider: pet && !isNew ? petPrimaryProviderName(pet) : null,
       clientDetails: buildAppointmentRequestPetClientDetails(requestData, specific, {
         allowTopLevelFallback,
@@ -271,6 +272,8 @@ export type AppointmentRequestPetRowSummary = {
   patientPimsId: string | null;
   appointmentType: string | null;
   appointmentTypeId: number | null;
+  /** Client reported calming meds — pet books as the flagged Pre-Meds type. */
+  usesCalmingMedications?: boolean;
   primaryProvider: string | null;
   clientDetails: string | null;
   euthNotes?: AppointmentRequestPetEuthNotes;
@@ -314,6 +317,8 @@ export function requestDataPetRowSummaries(
       patientPimsId: patientPimsIdFromRequestPet(pet),
       appointmentType,
       appointmentTypeId,
+      usesCalmingMedications:
+        pickStr(specific?.needsCalmingMedications) === 'Yes',
       primaryProvider: isNew ? null : petPrimaryProviderName(pet),
       clientDetails: buildAppointmentRequestPetClientDetails(requestData, specific, {
         allowTopLevelFallback,

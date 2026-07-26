@@ -69,6 +69,8 @@ import {
   buildRoutingAppointmentRequestIntentFromSubmission,
   writeRoutingAppointmentRequestIntent,
 } from '../utils/routingAppointmentRequestIntent';
+import { dismissRoutingRescheduleWorkspace } from '../utils/routingRescheduleIntent';
+import { dismissRoutingForwardBookingWorkspace } from '../utils/routingForwardBookingIntent';
 import { startRescheduleFromBookedAppointmentRequest } from '../utils/appointmentRequestReschedule';
 import { appointmentRequestSchedulerViewHints } from '../utils/appointmentRequestSchedulerFocus';
 import {
@@ -141,6 +143,7 @@ import {
 } from '../utils/onHoldVisitEditSession';
 import {
   appointmentRecordHasActiveLinkedVisit,
+  appointmentRequestBookedSummaryMatchesSubmission,
 } from '../utils/appointmentRequestLinkedCalendarVisit';
 import {
   clearNotBookedRemoveReturnSession,
@@ -1827,6 +1830,10 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
   const onBook = (item: AppointmentRequestSubmissionItem) => {
     const rd = item.requestData ?? {};
     writeAppointmentRequestListReturnTab(statusFilter);
+    // Book must open a new discrete visit. Leftover reschedule / forward-booking
+    // session state would make Routing PATCH an existing household appointment.
+    dismissRoutingRescheduleWorkspace();
+    dismissRoutingForwardBookingWorkspace();
     const intent = buildRoutingAppointmentRequestIntentFromSubmission(item);
     writeRoutingAppointmentRequestIntent({
       ...intent,
@@ -2241,12 +2248,6 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
             const isEuth = isEuthanasiaRequestData(rd);
             const status = submissionStatus(item);
             const isDismissed = status === 'dismissed';
-            const isOnHoldVisit = appointmentRequestSubmissionIsOnHold(item, bookedApptMeta, typeCatalog);
-            const isBooked = appointmentRequestSubmissionCountsAsBooked(
-              item,
-              bookedApptMeta,
-              typeCatalog,
-            );
             // When Gmail is connected, the Gmail labels row is the single source of truth
             // for status/category labels (Booked / Not booked / Contacted / On hold /
             // Emergent / client type / Euthanasia — all mirrored or applied as Gmail
@@ -2254,14 +2255,27 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
             // equivalent (search-tab aid, text consent, auto-booked, convert-hold action).
             const showScoutLabelChips = !canAccessGmailInbox;
             const bookedApptId = item.bookedAppointmentId;
-            const hasLinkedAppointment = bookedApptId != null;
+            const bookedSummary =
+              bookedApptId != null ? bookedApptMeta.get(Number(bookedApptId)) : undefined;
+            const hasLinkedAppointment =
+              bookedApptId != null &&
+              appointmentRequestBookedSummaryMatchesSubmission(item, bookedSummary);
+            const isOnHoldVisit =
+              hasLinkedAppointment &&
+              appointmentRequestSubmissionIsOnHold(item, bookedApptMeta, typeCatalog);
+            const isBooked =
+              hasLinkedAppointment &&
+              appointmentRequestSubmissionCountsAsBooked(
+                item,
+                bookedApptMeta,
+                typeCatalog,
+              );
             // Only true when the client self-scheduled a slot and it was auto-booked online —
             // not for ordinary appointment requests that staff book later.
             const autoBookedOnline = appointmentRequestAutoBookedOnline(item);
-            const needsStaffConfirmation = appointmentRequestNeedsStaffConfirmation(item);
+            const needsStaffConfirmation =
+              hasLinkedAppointment && appointmentRequestNeedsStaffConfirmation(item);
             const needsManualBook = !isDismissed && !isBooked && !hasLinkedAppointment;
-            const bookedSummary =
-              bookedApptId != null ? bookedApptMeta.get(Number(bookedApptId)) : undefined;
             const linkedAppointment = linkedEvetIdsFromBookedApptSummary(bookedSummary);
             const requestTypeName = requestDataAppointmentTypeLabel(rd);
             const displayBookedSummary =

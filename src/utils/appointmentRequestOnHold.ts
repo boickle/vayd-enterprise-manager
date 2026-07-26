@@ -22,8 +22,10 @@ import {
 import {
   normalizeAppointmentTypeName,
   pointsPerPatientForType,
+  findCalmingPremedAppointmentType,
   type AppointmentTypeCatalog,
 } from './appointmentTypeSettings';
+import { requestDataPetRowSummaries } from './appointmentRequestDetailDisplay';
 import {
   appointmentRequestAutoBookedOnline,
   appointmentRequestNeedsStaffConfirmation,
@@ -367,11 +369,50 @@ function resolveBookedVisitInternalTypeName(
   return null;
 }
 
+function requestDataUsesCalmingMedications(
+  requestData: Record<string, unknown>,
+): boolean {
+  const psd = requestData.petSpecificData;
+  if (psd && typeof psd === 'object') {
+    for (const raw of Object.values(psd as Record<string, unknown>)) {
+      if (!raw || typeof raw !== 'object') continue;
+      if (pickStr((raw as { needsCalmingMedications?: unknown }).needsCalmingMedications) === 'Yes') {
+        return true;
+      }
+    }
+  }
+  // Fallback: pet row summaries / new-pet handling flags on the request payload.
+  return requestDataPetRowSummaries(requestData).some(
+    (row) => row.usesCalmingMedications === true,
+  );
+}
+
+function calmingPremedWindowSource(
+  catalog?: AppointmentTypeCatalog | null,
+): AppointmentTypeWindowSource | undefined {
+  if (!catalog) return undefined;
+  const types = [...catalog.byId.values()];
+  const premed = findCalmingPremedAppointmentType(types);
+  if (!premed) return undefined;
+  return {
+    name: premed.name,
+    prettyName: premed.prettyName,
+    windowBeforeMinutes: premed.windowBeforeMinutes,
+    windowAfterMinutes: premed.windowAfterMinutes,
+  };
+}
+
 function appointmentTypeWindowSource(
   requestData: Record<string, unknown>,
   bookedSummary: AppointmentRequestBookedApptSummary | null | undefined,
   catalog?: AppointmentTypeCatalog | null,
 ): AppointmentTypeWindowSource | undefined {
+  // Mixed households adopt the Pre-Meds arrival window when any pet uses calming meds.
+  if (requestDataUsesCalmingMedications(requestData)) {
+    const premed = calmingPremedWindowSource(catalog);
+    if (premed) return premed;
+  }
+
   const internalName = resolveBookedVisitInternalTypeName(requestData, bookedSummary, catalog);
   if (internalName && catalog) {
     const row = catalog.byName.get(normalizeAppointmentTypeName(internalName));
@@ -432,16 +473,35 @@ function resolveBookedVisitArrivalWindowLabel(args: {
     typeCatalog,
   } = args;
 
+  const usesCalming = requestDataUsesCalmingMedications(requestData);
+  const typeSource = appointmentTypeWindowSource(requestData, bookedSummary, typeCatalog);
+
+  // When calming meds apply, recompute from the Pre-Meds type. Do not trust a
+  // Standard-linked effectiveWindow or a stale self-schedule ±60 display.
+  if (usesCalming && typeSource) {
+    const computed = effectiveWindowForScheduledStart(
+      scheduledStart,
+      typeSource,
+      practiceTz,
+      { appointmentEndIso: scheduledEnd ?? undefined },
+    );
+    if (computed) {
+      const label = formatArrivalWindowTimes(computed.startIso, computed.endIso, practiceTz);
+      if (label) return label;
+    }
+  }
+
   const ew = bookedSummary?.effectiveWindow;
   if (ew?.startIso && ew?.endIso) {
     const fromApi = formatArrivalWindowTimes(ew.startIso, ew.endIso, practiceTz);
     if (fromApi) return fromApi;
   }
 
-  const fromSlot = formatBookedVisitArrivalWindow(slot, practiceTz);
-  if (fromSlot) return fromSlot;
+  if (!usesCalming) {
+    const fromSlot = formatBookedVisitArrivalWindow(slot, practiceTz);
+    if (fromSlot) return fromSlot;
+  }
 
-  const typeSource = appointmentTypeWindowSource(requestData, bookedSummary, typeCatalog);
   const computed = effectiveWindowForScheduledStart(
     scheduledStart,
     typeSource,

@@ -33,8 +33,12 @@ export function effectiveWindowForScheduledStart(
   const tz = practiceTimeZoneOrDefault(practiceTz);
   const start = DateTime.fromISO(appointmentStartIso, { zone: 'utc' }).setZone(tz);
   if (!start.isValid) return undefined;
-  const before = appointmentType?.windowBeforeMinutes ?? 60;
-  const after = appointmentType?.windowAfterMinutes ?? 60;
+  const beforeRaw = appointmentType?.windowBeforeMinutes;
+  const afterRaw = appointmentType?.windowAfterMinutes;
+  const beforeN = beforeRaw != null ? Number(beforeRaw) : NaN;
+  const afterN = afterRaw != null ? Number(afterRaw) : NaN;
+  const before = Number.isFinite(beforeN) && beforeN >= 0 ? beforeN : 60;
+  const after = Number.isFinite(afterN) && afterN >= 0 ? afterN : 60;
   return {
     startIso: start.minus({ minutes: before }).toUTC().toISO() ?? appointmentStartIso,
     endIso: start.plus({ minutes: after }).toUTC().toISO() ?? appointmentStartIso,
