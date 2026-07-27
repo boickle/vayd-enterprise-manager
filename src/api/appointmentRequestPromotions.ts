@@ -10,7 +10,7 @@ export type AppointmentRequestPromotion = {
   token: string;
   /** Human-readable promo code, e.g. VAYDH7K2MQ. Null for link-only promotions. */
   code?: string | null;
-  discountType: 'fixed_amount' | 'percentage';
+  discountType: 'fixed_amount' | 'percentage' | 'description_only';
   amountOffCents?: number | null;
   percentOff?: number | null;
   currency: string;
@@ -31,7 +31,7 @@ export type PublicAppointmentRequestPromotion = {
   token: string;
   /** Human-readable code when resolved via the code path. */
   code?: string | null;
-  discountType: 'fixed_amount' | 'percentage';
+  discountType: 'fixed_amount' | 'percentage' | 'description_only';
   amountOffCents?: number | null;
   percentOff?: number | null;
   currency: string;
@@ -42,6 +42,7 @@ export type CreateAppointmentRequestPromotionRequest = {
   companyName: string;
   name: string;
   description?: string;
+  discountType?: 'fixed_amount' | 'percentage' | 'description_only';
   amountOffCents?: number;
   currency?: string;
   maxRedemptions?: number;
@@ -54,9 +55,14 @@ export type CreateAppointmentRequestPromotionRequest = {
 };
 
 export type UpdateAppointmentRequestPromotionRequest = Partial<
-  Omit<CreateAppointmentRequestPromotionRequest, 'companyName' | 'expiresAt' | 'description' | 'maxRedemptions'> & {
+  Omit<
+    CreateAppointmentRequestPromotionRequest,
+    'companyName' | 'expiresAt' | 'description' | 'maxRedemptions' | 'amountOffCents'
+  > & {
     companyName?: string;
     description?: string | null;
+    /** Pass null to clear a fixed dollar amount (description-only offer). */
+    amountOffCents?: number | null;
     /** Pass null to clear the expiration. */
     expiresAt?: string | null;
     /** Pass null to clear the max-redemptions cap. */
@@ -203,8 +209,14 @@ export function buildAppointmentRequestPromoUrl(token: string): string {
   return `${window.location.origin}${base}?${APPOINTMENT_PROMO_QUERY_PARAM}=${encodeURIComponent(token)}`;
 }
 
+function hasMonetaryDiscount(promo: PublicAppointmentRequestPromotion): boolean {
+  if (promo.discountType === 'percentage' && promo.percentOff != null) return true;
+  if (promo.discountType === 'description_only') return false;
+  return promo.discountType === 'fixed_amount' && promo.amountOffCents != null && promo.amountOffCents > 0;
+}
+
 export function formatPromotionDiscount(promo: PublicAppointmentRequestPromotion): string {
-  if (promo.discountType === 'fixed_amount' && promo.amountOffCents != null) {
+  if (promo.discountType === 'fixed_amount' && promo.amountOffCents != null && promo.amountOffCents > 0) {
     const amount = (promo.amountOffCents / 100).toFixed(2);
     const currency = (promo.currency || 'USD').toUpperCase();
     return currency === 'USD' ? `$${amount} off` : `${amount} ${currency} off`;
@@ -212,18 +224,18 @@ export function formatPromotionDiscount(promo: PublicAppointmentRequestPromotion
   if (promo.discountType === 'percentage' && promo.percentOff != null) {
     return `${promo.percentOff}% off`;
   }
-  return 'Discount applied';
+  return 'Offer applied';
 }
 
 function formatPromotionAmountForApply(promo: PublicAppointmentRequestPromotion): string {
-  if (promo.discountType === 'fixed_amount' && promo.amountOffCents != null) {
+  if (promo.discountType === 'fixed_amount' && promo.amountOffCents != null && promo.amountOffCents > 0) {
     const amount = promo.amountOffCents / 100;
     return amount % 1 === 0 ? `$${amount.toFixed(0)}` : `$${amount.toFixed(2)}`;
   }
   if (promo.discountType === 'percentage' && promo.percentOff != null) {
     return `${promo.percentOff}%`;
   }
-  return 'your discount';
+  return 'this offer';
 }
 
 export function formatPromotionBannerSubtitle(
@@ -231,14 +243,24 @@ export function formatPromotionBannerSubtitle(
   options?: { isExistingClient?: boolean },
 ): string {
   const isExistingClient = options?.isExistingClient ?? false;
+  const description = promo.description?.trim();
 
   if (isExistingClient) {
-    const amount = formatPromotionAmountForApply(promo);
-    return `Thanks for already being a VAYD client! We will apply ${amount} to your next visit once you submit your request!`;
+    if (hasMonetaryDiscount(promo)) {
+      const amount = formatPromotionAmountForApply(promo);
+      return `Thanks for already being a VAYD client! We will apply ${amount} to your next visit once you submit your request!`;
+    }
+    if (description) {
+      return `Thanks for already being a VAYD client! ${description}`;
+    }
+    return 'Thanks for already being a VAYD client! We will apply this offer to your next visit once you submit your request!';
   }
 
-  return (
-    promo.description ||
-    `${formatPromotionDiscount(promo)} on your first visit — submitted automatically with your request.`
-  );
+  if (description) return description;
+
+  if (hasMonetaryDiscount(promo)) {
+    return `${formatPromotionDiscount(promo)} on your first visit — submitted automatically with your request.`;
+  }
+
+  return 'This offer will be submitted automatically with your request.';
 }
