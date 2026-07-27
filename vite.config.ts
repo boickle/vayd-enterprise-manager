@@ -10,7 +10,7 @@ const apiTarget = process.env.VITE_API_PROXY_TARGET || 'http://localhost:3000';
 /** SPA routes that share a path prefix with public API endpoints (see App.tsx). */
 function isPublicSpaDocumentRequest(url: string, acceptHeader: string | undefined): boolean {
   if (!acceptHeader?.includes('text/html')) return false;
-  return url.startsWith('/public/room-loader/form');
+  return url.startsWith('/public/room-loader/form') || url.startsWith('/public/euthanasia-consent/form');
 }
 
 export default defineConfig({

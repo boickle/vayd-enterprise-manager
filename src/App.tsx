@@ -23,6 +23,8 @@ import MembershipPayment from './pages/MembershipPayment';
 import MembershipUpgrade from './pages/MembershipUpgrade';
 import AppointmentRequestForm from './pages/AppointmentRequestForm';
 import PublicRoomLoaderForm from './pages/PublicRoomLoaderForm';
+import PublicEuthanasiaConsentForm from './pages/PublicEuthanasiaConsentForm';
+import MailOrderFormPage from './pages/MailOrderForm';
 import RoutingCalendarWorkspace from './pages/RoutingCalendarWorkspace';
 import MyDayToggle from './pages/MyDayToggle';
 import MyWeek from './pages/MyWeek';
@@ -483,6 +485,7 @@ export default function App() {
           <Route path="/confirm/:token" element={<SlotOfferConfirmPage />} />
           {/* Public room loader form (no authentication required) */}
           <Route path="/public/room-loader/form" element={<PublicRoomLoaderForm />} />
+          <Route path="/public/euthanasia-consent/form" element={<PublicEuthanasiaConsentForm />} />
 
           {/* Employees only: keep these pages alive across tab switches */}
           {!isClient && (
@@ -555,6 +558,7 @@ export default function App() {
                     <Route path="holds" element={<HoldsPage />} />
                     <Route path="exit-survey" element={<ExitSurveyPage />} />
                     <Route path="room-loader" element={<RoomLoaderPage />} />
+                    <Route path="mail-order" element={<MailOrderFormPage />} />
                     <Route path="scheduler" element={<Scheduler />} />
                     <Route path="inventory" element={<InventoryManagement />} />
                     <Route path="tasks" element={<PimsTasksPage />} />
