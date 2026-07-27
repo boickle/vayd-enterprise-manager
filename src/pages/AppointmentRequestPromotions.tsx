@@ -9,10 +9,10 @@ export default function AppointmentRequestPromotionsPage() {
           Appointment request promotions
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-          Create employer discount promotions and share a link with the company. When an
-          employee opens the appointment request form via that link, they&apos;ll see the
-          company name and discount amount at the top of the form, and the token is
-          submitted with their request so the care team can follow up accordingly.
+          Create employer promotions (dollar off or description-only, e.g. free trip fee) and
+          share a link or code. When someone opens the request form with that promo, they&apos;ll
+          see the offer at the top, and it is submitted with their request so the care team can
+          follow up.
         </Typography>
       </Box>
 
