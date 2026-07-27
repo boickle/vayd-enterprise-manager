@@ -150,7 +150,12 @@ export function SchedulerRoomLoaderPdfModal({
               {patientsLabel(appt)}
             </p>
           </div>
-          <button type="button" className="scheduler-modal-close" aria-label="Close" onClick={onClose}>
+          <button
+            type="button"
+            className="scheduler-modal-close"
+            aria-label="Close"
+            onClick={onClose}
+          >
             ×
           </button>
         </div>
@@ -180,7 +185,12 @@ export function SchedulerRoomLoaderPdfModal({
         </div>
 
         <div className="scheduler-edit-footer">
-          <button type="button" className="btn secondary" disabled={downloadingPdf} onClick={onClose}>
+          <button
+            type="button"
+            className="btn secondary"
+            disabled={downloadingPdf}
+            onClick={onClose}
+          >
             Close
           </button>
           {roomLoader?.sentStatus === 'completed' && roomLoader.id ? (
@@ -205,21 +215,41 @@ export function SchedulerRoomLoaderPdfModal({
   return createPortal(modal, document.body);
 }
 
-/** Label for context menu from appointment confirm status. */
+import {
+  preferRoomLoaderPreApptStatus,
+  resolveRoomLoaderPreApptUiStatus,
+  type RoomLoaderPreApptUiStatus,
+} from '../utils/roomLoaderPreApptDisplay';
+
+function roomLoaderMenuUiStatus(
+  confirmStatusName: string | null | undefined,
+  sentStatus?: string | null,
+  scoutUiStatus?: RoomLoaderPreApptUiStatus | null
+): RoomLoaderPreApptUiStatus {
+  const fromConfirmAndSent = resolveRoomLoaderPreApptUiStatus(confirmStatusName, sentStatus);
+  if (!scoutUiStatus || scoutUiStatus === 'none') return fromConfirmAndSent;
+  return preferRoomLoaderPreApptStatus(fromConfirmAndSent, scoutUiStatus);
+}
+
+/** Label for context menu from appointment confirm status (+ optional Scout sentStatus). */
 export function schedulerRoomLoaderMenuLabel(
-  confirmStatusName: string | null | undefined
+  confirmStatusName: string | null | undefined,
+  sentStatus?: string | null,
+  scoutUiStatus?: RoomLoaderPreApptUiStatus | null
 ): string {
-  const s = (confirmStatusName ?? '').trim();
-  if (s.includes('Client Submitted Pre-Appt form')) return 'View Room Loader';
-  if (s.includes('Pre-Appt Email Sent')) return 'Resend Room Loader';
+  const st = roomLoaderMenuUiStatus(confirmStatusName, sentStatus, scoutUiStatus);
+  if (st === 'complete') return 'View Room Loader';
+  if (st === 'sent') return 'Resend Room Loader';
   return 'Send Room Loader';
 }
 
 export function schedulerRoomLoaderMenuMode(
-  confirmStatusName: string | null | undefined
+  confirmStatusName: string | null | undefined,
+  sentStatus?: string | null,
+  scoutUiStatus?: RoomLoaderPreApptUiStatus | null
 ): 'send' | 'resend' | 'view' {
-  const s = (confirmStatusName ?? '').trim();
-  if (s.includes('Client Submitted Pre-Appt form')) return 'view';
-  if (s.includes('Pre-Appt Email Sent')) return 'resend';
+  const st = roomLoaderMenuUiStatus(confirmStatusName, sentStatus, scoutUiStatus);
+  if (st === 'complete') return 'view';
+  if (st === 'sent') return 'resend';
   return 'send';
 }
