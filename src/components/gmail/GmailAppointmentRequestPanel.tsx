@@ -10,15 +10,19 @@ import { fetchAppointmentById } from '../../api/appointments';
 import { fetchAllAppointmentTypes } from '../../api/appointmentSettings';
 import { type GmailLabelNode, type GmailMessageSummary } from '../../api/gmail';
 import { ClientSmsComposeModal } from '../ClientSmsComposeModal';
+import { ClientMessagesHistoryModal } from '../ClientMessagesHistoryModal';
 import { appointmentRequestHasSmsPhone } from '../AppointmentRequestManualBookModal';
 import {
   clientDisplayNameFromRequestData,
   appointmentRequestListTabForSubmission,
   requestDataAppointmentTypeLabel,
   requestDataCanText,
+  requestDataClientId,
   requestDataClientType,
   requestDataPetSummary,
+  requestDataPhone,
 } from '../../utils/appointmentRequestDisplay';
+import { resolveRequestDataClientIdStaff } from '../../utils/resolveRequestDataClientId';
 import { resolveAppointmentRequestSmsMessage } from '../../utils/appointmentRequestSmsMessage';
 import {
   appointmentRequestSubmissionGmailOnHold,
@@ -125,6 +129,9 @@ export default function GmailAppointmentRequestPanel({
   const [smsLoading, setSmsLoading] = useState(false);
   const [smsSending, setSmsSending] = useState(false);
   const [smsError, setSmsError] = useState<string | null>(null);
+  const [messagesClientId, setMessagesClientId] = useState<number | null>(null);
+  const [messagesClientLabel, setMessagesClientLabel] = useState('');
+  const [messagesFromLine, setMessagesFromLine] = useState<string | null>(null);
 
   const [notBookedOpen, setNotBookedOpen] = useState(false);
   const [notBookedChoice, setNotBookedChoice] = useState('');
@@ -504,6 +511,27 @@ export default function GmailAppointmentRequestPanel({
     }
   };
 
+  const openMessagesHistoryFromSms = () => {
+    const label = clientName;
+    const phone = requestDataPhone(rd);
+    const syncId = requestDataClientId(rd);
+    if (syncId) {
+      setMessagesClientId(Number(syncId));
+      setMessagesClientLabel(label);
+      setMessagesFromLine(phone);
+      return;
+    }
+    void resolveRequestDataClientIdStaff(rd, PRACTICE_ID).then((id) => {
+      if (!id) {
+        setSmsError('Could not find this client in the system to load message history.');
+        return;
+      }
+      setMessagesClientId(Number(id));
+      setMessagesClientLabel(label);
+      setMessagesFromLine(phone);
+    });
+  };
+
   /** After a successful reach-out, move a still-new request to Contacted + label the thread. */
   const markContacted = useCallback(async () => {
     if ((submission.status ?? 'new') === 'new') {
@@ -691,7 +719,7 @@ export default function GmailAppointmentRequestPanel({
           onMessageChange={setSmsMessage}
           onClose={() => setSmsOpen(false)}
           onSend={(opts) => void handleSendSms(opts)}
-          onOpenMessagesHistory={() => {}}
+          onOpenMessagesHistory={openMessagesHistoryFromSms}
           sending={smsSending || smsLoading}
           sendError={smsError}
           title="Text requester"
@@ -700,6 +728,18 @@ export default function GmailAppointmentRequestPanel({
           }.`}
         />
       ) : null}
+
+      <ClientMessagesHistoryModal
+        open={messagesClientId != null}
+        clientId={messagesClientId}
+        clientLabel={messagesClientLabel}
+        openPhoneLine={messagesFromLine}
+        onClose={() => {
+          setMessagesClientId(null);
+          setMessagesClientLabel('');
+          setMessagesFromLine(null);
+        }}
+      />
 
       {notBookedOpen ? (
         <div

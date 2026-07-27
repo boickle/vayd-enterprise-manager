@@ -22,6 +22,7 @@ import {
   type AppointmentFormDraftFollowUpStatus,
 } from '../api/appointmentFormDrafts';
 import { ClientSmsComposeModal } from '../components/ClientSmsComposeModal';
+import { ClientMessagesHistoryModal } from '../components/ClientMessagesHistoryModal';
 import { AppointmentRequestEmailModal } from '../components/AppointmentRequestEmailModal';
 import type { AppointmentRequestEmailSentContext } from '../components/AppointmentRequestEmailModal';
 import { AppointmentRequestDetailPanel } from '../components/AppointmentRequestDetailPanel';
@@ -39,6 +40,7 @@ import {
   requestDataAnythingElse,
   requestDataAppointmentTypeLabel,
   requestDataCanText,
+  requestDataClientId,
   requestDataClientType,
   requestDataHadVetCareElsewhere,
   requestDataHowSoon,
@@ -61,6 +63,7 @@ import {
   resolveClientPimsIdForRequestCard,
 } from '../utils/appointmentRequestLinkedEvet';
 import { resolveAppointmentRequestSmsMessage } from '../utils/appointmentRequestSmsMessage';
+import { resolveRequestDataClientIdStaff } from '../utils/resolveRequestDataClientId';
 import { evetClientLink } from '../utils/evet';
 import { AppointmentRequestClientNameChange } from '../components/AppointmentRequestClientNameChange';
 import { AppointmentRequestAlternateAddressCallout } from '../components/AppointmentRequestAlternateAddressCallout';
@@ -534,6 +537,9 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
   const [smsMessageLoading, setSmsMessageLoading] = useState(false);
   const [smsSending, setSmsSending] = useState(false);
   const [smsError, setSmsError] = useState<string | null>(null);
+  const [messagesClientId, setMessagesClientId] = useState<number | null>(null);
+  const [messagesClientLabel, setMessagesClientLabel] = useState('');
+  const [messagesFromLine, setMessagesFromLine] = useState<string | null>(null);
 
   const [emailItem, setEmailItem] = useState<AppointmentRequestSubmissionItem | null>(null);
   const [emailSentToast, setEmailSentToast] = useState(false);
@@ -1880,6 +1886,29 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
     setSmsError(null);
   };
 
+  const openMessagesHistoryFromSms = () => {
+    if (!smsItem) return;
+    const rd = (smsItem.requestData ?? {}) as Record<string, unknown>;
+    const label = clientDisplayNameFromRequestData(rd);
+    const phone = requestDataPhone(rd);
+    const syncId = requestDataClientId(rd);
+    if (syncId) {
+      setMessagesClientId(Number(syncId));
+      setMessagesClientLabel(label);
+      setMessagesFromLine(phone);
+      return;
+    }
+    void resolveRequestDataClientIdStaff(rd, PRACTICE_ID).then((id) => {
+      if (!id) {
+        setSmsError('Could not find this client in the system to load message history.');
+        return;
+      }
+      setMessagesClientId(Number(id));
+      setMessagesClientLabel(label);
+      setMessagesFromLine(phone);
+    });
+  };
+
   const openEmailClient = (item: AppointmentRequestSubmissionItem) => {
     setEmailItem(item);
   };
@@ -2948,13 +2977,25 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
           onMessageChange={setSmsMessage}
           onClose={closeSmsModal}
           onSend={(opts) => void handleSendSms(opts)}
-          onOpenMessagesHistory={() => {}}
+          onOpenMessagesHistory={openMessagesHistoryFromSms}
           sending={smsSending || smsMessageLoading}
           sendError={smsError}
           title="Text requester"
           subtitle={`Message goes to the phone on the request${requestDataCanText(smsItem.requestData ?? {}) === 'Yes' ? ' (client consented to texts)' : ''}.`}
         />
       ) : null}
+
+      <ClientMessagesHistoryModal
+        open={messagesClientId != null}
+        clientId={messagesClientId}
+        clientLabel={messagesClientLabel}
+        openPhoneLine={messagesFromLine}
+        onClose={() => {
+          setMessagesClientId(null);
+          setMessagesClientLabel('');
+          setMessagesFromLine(null);
+        }}
+      />
 
       {emailSentToast ? (
         <div
