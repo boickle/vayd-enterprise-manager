@@ -4,6 +4,7 @@ export function isPublicClientLinkPath(pathname: string): boolean {
     pathname.startsWith('/confirm/') ||
     pathname.startsWith('/survey/') ||
     pathname.startsWith('/public/room-loader') ||
+    pathname === '/share' ||
     pathname === '/refer-a-friend' ||
     pathname.startsWith('/client-portal/request-appointment')
   );

@@ -203,6 +203,8 @@ export async function checkAppointmentRequestPromoEligibilityByCode(
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 export const APPOINTMENT_PROMO_QUERY_PARAM = 'promo';
+/** Customer-facing promo code in the URL, e.g. ?code=welcome2026 */
+export const APPOINTMENT_PROMO_CODE_QUERY_PARAM = 'code';
 
 export function buildAppointmentRequestPromoUrl(token: string): string {
   const base = '/client-portal/request-appointment';
