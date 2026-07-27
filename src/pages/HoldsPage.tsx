@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router';
 import { DateTime } from 'luxon';
 import {
   CircularProgress,
@@ -493,6 +493,7 @@ export default function HoldsPage() {
         await sendClientSms(clientId, {
           message: smsMessage.trim(),
           useRemindersFrom: true,
+          source: 'holds',
           ...(providerId != null ? { primaryProviderId: providerId } : {}),
           ...(opts.overrideNonProd ? { overrideNonProd: true } : {}),
         });

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import {
   patchAppointmentRequestSubmission,
   sendAppointmentRequestSubmissionSms,
@@ -10,15 +10,19 @@ import { fetchAppointmentById } from '../../api/appointments';
 import { fetchAllAppointmentTypes } from '../../api/appointmentSettings';
 import { type GmailLabelNode, type GmailMessageSummary } from '../../api/gmail';
 import { ClientSmsComposeModal } from '../ClientSmsComposeModal';
+import { ClientMessagesHistoryModal } from '../ClientMessagesHistoryModal';
 import { appointmentRequestHasSmsPhone } from '../AppointmentRequestManualBookModal';
 import {
   clientDisplayNameFromRequestData,
   appointmentRequestListTabForSubmission,
   requestDataAppointmentTypeLabel,
   requestDataCanText,
+  requestDataClientId,
   requestDataClientType,
   requestDataPetSummary,
+  requestDataPhone,
 } from '../../utils/appointmentRequestDisplay';
+import { resolveRequestDataClientIdStaff } from '../../utils/resolveRequestDataClientId';
 import { resolveAppointmentRequestSmsMessage } from '../../utils/appointmentRequestSmsMessage';
 import {
   appointmentRequestSubmissionGmailOnHold,
@@ -32,12 +36,17 @@ import {
   buildRoutingAppointmentRequestIntentFromSubmission,
   writeRoutingAppointmentRequestIntent,
 } from '../../utils/routingAppointmentRequestIntent';
+import { dismissRoutingRescheduleWorkspace } from '../../utils/routingRescheduleIntent';
+import { dismissRoutingForwardBookingWorkspace } from '../../utils/routingForwardBookingIntent';
 import { startRescheduleFromBookedAppointmentRequest } from '../../utils/appointmentRequestReschedule';
 import { appointmentRequestSchedulerViewHints } from '../../utils/appointmentRequestSchedulerFocus';
-import { appointmentRecordHasActiveLinkedVisit } from '../../utils/appointmentRequestLinkedCalendarVisit';
+import {
+  appointmentRecordHasActiveLinkedVisit,
+  appointmentRequestBookedSummaryMatchesSubmission,
+} from '../../utils/appointmentRequestLinkedCalendarVisit';
 import { beginAppointmentRequestNotBookedFlow } from '../../utils/appointmentRequestNotBookedFlow';
+import { beginAppointmentRequestStaffConfirmFlow } from '../../utils/appointmentRequestStaffConfirmFlow';
 import { buildGmailInboxReturnPath } from '../../utils/routingAppointmentRequestIntent';
-import { writeAppointmentRequestStaffConfirmSession } from '../../utils/appointmentRequestStaffConfirmSession';
 import {
   buildSchedulerFocusAppointmentUrl,
   writeSchedulerFocusSession,
@@ -48,6 +57,7 @@ import { buildAppointmentTypeCatalogFromTypes, opsPointsForAppointment } from '.
 import type { AppointmentTypeCatalog } from '../../utils/appointmentTypeSettings';
 import { appointmentRequestsPathForTab } from '../../appointments-nav';
 import type { AppointmentsListLocationState } from '../../utils/appointmentRequestListReturnTab';
+import { notifySchedulingToolsNavCountsRefresh } from '../../hooks/useSchedulingToolsNavCounts';
 import {
   applyApptRequestGmailOnHoldLabel,
   applyApptRequestGmailOutcomeLabel,
@@ -119,6 +129,9 @@ export default function GmailAppointmentRequestPanel({
   const [smsLoading, setSmsLoading] = useState(false);
   const [smsSending, setSmsSending] = useState(false);
   const [smsError, setSmsError] = useState<string | null>(null);
+  const [messagesClientId, setMessagesClientId] = useState<number | null>(null);
+  const [messagesClientLabel, setMessagesClientLabel] = useState('');
+  const [messagesFromLine, setMessagesFromLine] = useState<string | null>(null);
 
   const [notBookedOpen, setNotBookedOpen] = useState(false);
   const [notBookedChoice, setNotBookedChoice] = useState('');
@@ -233,15 +246,18 @@ export default function GmailAppointmentRequestPanel({
   const petSummary = requestDataPetSummary(rd);
   const apptType = requestDataAppointmentTypeLabel(rd);
   const clientType = requestDataClientType(rd);
-  const hasLinkedAppointment = submission.bookedAppointmentId != null;
-  const isOnHold = appointmentRequestSubmissionGmailOnHold(
-    submission,
-    bookedApptMeta,
-    typeCatalog,
-  );
+  const hasLinkedAppointment =
+    submission.bookedAppointmentId != null &&
+    appointmentRequestBookedSummaryMatchesSubmission(submission, bookedApptSummary);
+  const isOnHold =
+    hasLinkedAppointment &&
+    appointmentRequestSubmissionGmailOnHold(submission, bookedApptMeta, typeCatalog);
   const isDismissed = status === 'dismissed';
-  const needsStaffConfirmation = appointmentRequestNeedsStaffConfirmation(submission);
-  const isBooked = appointmentRequestSubmissionCountsAsBooked(submission, bookedApptMeta, typeCatalog);
+  const needsStaffConfirmation =
+    hasLinkedAppointment && appointmentRequestNeedsStaffConfirmation(submission);
+  const isBooked =
+    hasLinkedAppointment &&
+    appointmentRequestSubmissionCountsAsBooked(submission, bookedApptMeta, typeCatalog);
   const hasSms = appointmentRequestHasSmsPhone(submission);
 
   const bookedVisit = useMemo(
@@ -363,6 +379,10 @@ export default function GmailAppointmentRequestPanel({
   );
 
   const onBook = () => {
+    // Book must open a new discrete visit. Leftover reschedule / forward-booking
+    // session state would make Routing PATCH an existing household appointment.
+    dismissRoutingRescheduleWorkspace();
+    dismissRoutingForwardBookingWorkspace();
     const intent = buildRoutingAppointmentRequestIntentFromSubmission(submission);
     writeRoutingAppointmentRequestIntent({
       ...intent,
@@ -416,31 +436,44 @@ export default function GmailAppointmentRequestPanel({
   };
 
   const openConfirmPreview = () => {
-    const apptId = submission.bookedAppointmentId;
-    if (apptId == null) return;
-    const { dateKey, providerId } = appointmentRequestSchedulerViewHints(
+    if (!appointmentRequestNeedsStaffConfirmation(submission)) return;
+    void beginAppointmentRequestStaffConfirmFlow({
       submission,
-      bookedApptSummaryRef.current,
       practiceTz,
-    );
-    writeAppointmentRequestStaffConfirmSession({
-      submissionId: submission.id,
-      bookedAppointmentId: Number(apptId),
-      clientLabel: clientName,
-      isNewClient: clientType === 'new',
-    });
-    writeSchedulerFocusSession({
-      appointmentId: Number(apptId),
-      dateHint: dateKey,
-      providerHint: providerId ?? null,
-    });
-    writeSchedulerFocusReturnSession(mailbox, message.threadId);
-    navigate(
-      buildSchedulerFocusAppointmentUrl(Number(apptId), {
-        date: dateKey ?? undefined,
-        providerId,
-      }),
-    );
+      navigate,
+      typeCatalog,
+      bookedApptSummary: bookedApptSummaryRef.current,
+      mailbox,
+      threadId: message.threadId,
+    })
+      .then((result) => {
+        if (result.kind === 'scheduler_review') return;
+        if (result.kind === 'needs_relink') {
+          onError(
+            'The linked calendar visit changed. Use Re-link appointment on the appointment request to pick the correct one.',
+          );
+          return;
+        }
+        if (result.kind === 'needs_not_booked') {
+          onError(
+            'No calendar visit found for this request. Use Not booked if it was cancelled or never booked.',
+          );
+          return;
+        }
+        if (result.kind === 'error') {
+          onError(result.message);
+          return;
+        }
+        // already_confirmed
+        onSubmissionUpdated({
+          ...submission,
+          staffConfirmedAt: submission.staffConfirmedAt?.trim() || new Date().toISOString(),
+        });
+        notifySchedulingToolsNavCountsRefresh();
+      })
+      .catch(() => {
+        onError('Could not confirm this appointment request.');
+      });
   };
 
   const openSms = () => {
@@ -476,6 +509,27 @@ export default function GmailAppointmentRequestPanel({
     } finally {
       setSmsSending(false);
     }
+  };
+
+  const openMessagesHistoryFromSms = () => {
+    const label = clientName;
+    const phone = requestDataPhone(rd);
+    const syncId = requestDataClientId(rd);
+    if (syncId) {
+      setMessagesClientId(Number(syncId));
+      setMessagesClientLabel(label);
+      setMessagesFromLine(phone);
+      return;
+    }
+    void resolveRequestDataClientIdStaff(rd, PRACTICE_ID).then((id) => {
+      if (!id) {
+        setSmsError('Could not find this client in the system to load message history.');
+        return;
+      }
+      setMessagesClientId(Number(id));
+      setMessagesClientLabel(label);
+      setMessagesFromLine(phone);
+    });
   };
 
   /** After a successful reach-out, move a still-new request to Contacted + label the thread. */
@@ -665,7 +719,7 @@ export default function GmailAppointmentRequestPanel({
           onMessageChange={setSmsMessage}
           onClose={() => setSmsOpen(false)}
           onSend={(opts) => void handleSendSms(opts)}
-          onOpenMessagesHistory={() => {}}
+          onOpenMessagesHistory={openMessagesHistoryFromSms}
           sending={smsSending || smsLoading}
           sendError={smsError}
           title="Text requester"
@@ -674,6 +728,18 @@ export default function GmailAppointmentRequestPanel({
           }.`}
         />
       ) : null}
+
+      <ClientMessagesHistoryModal
+        open={messagesClientId != null}
+        clientId={messagesClientId}
+        clientLabel={messagesClientLabel}
+        openPhoneLine={messagesFromLine}
+        onClose={() => {
+          setMessagesClientId(null);
+          setMessagesClientLabel('');
+          setMessagesFromLine(null);
+        }}
+      />
 
       {notBookedOpen ? (
         <div

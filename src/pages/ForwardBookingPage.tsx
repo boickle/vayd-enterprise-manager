@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router';
 import dayjs from 'dayjs';
 import { fetchAppointmentById } from '../api/appointments';
 import { fetchAllAppointmentTypes } from '../api/appointmentSettings';
@@ -2636,6 +2636,7 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
           onOpenMessagesHistory={() => openMessagesHistory(contactEntry)}
           onOpenEmailHistory={() => openEmailHistory(contactEntry)}
           markInboxDone
+          smsSource="forward_booking"
         />
       ) : null}
 

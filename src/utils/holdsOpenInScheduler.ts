@@ -1,4 +1,4 @@
-import type { NavigateFunction } from 'react-router-dom';
+import type { NavigateFunction } from 'react-router';
 import { DateTime } from 'luxon';
 import type { HoldListItem } from '../api/holds';
 import { fetchAppointmentById } from '../api/appointments';

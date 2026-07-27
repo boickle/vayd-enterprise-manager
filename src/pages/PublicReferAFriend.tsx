@@ -1,7 +1,7 @@
 // src/pages/PublicReferAFriend.tsx
 /** Standalone public “refer a friend” at a static URL (no survey token, no login). */
 import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { submitPublicReferral } from '../api/publicReferral';
 import './PostAppointmentSurvey.css';
 

@@ -1,5 +1,5 @@
 // src/pages/Admin.tsx
-import { NavLink, Navigate, Outlet } from 'react-router-dom';
+import { NavLink, Navigate, Outlet } from 'react-router';
 import { useAuth } from '../auth/useAuth';
 import { getAdminTabPages, type AdminTabPage } from '../admin-tabs';
 import './Settings.css';

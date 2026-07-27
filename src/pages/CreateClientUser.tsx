@@ -1,6 +1,6 @@
 // src/pages/CreateClientUser.tsx
 import { FormEvent, useEffect, useState, type CSSProperties } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation } from 'react-router';
 import { http } from '../api/http';
 
 const REQUEST_APPOINTMENT_URL = import.meta.env.VITE_APPOINTMENT_REQUEST_URL || '/client-portal/request-appointment';

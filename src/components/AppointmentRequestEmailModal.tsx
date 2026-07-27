@@ -1,21 +1,27 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react';
 import { createPortal } from 'react-dom';
 import {
   decodeGmailSnippet,
   fetchGmailMailboxes,
+  fetchGmailSendAsAlias,
   fetchGmailThread,
   formatGmailAddress,
   gmailErrorMessage,
   latestNonDraftThreadMessage,
   threadLabelIds,
+  type GmailSendAsAlias,
   type GmailThreadMessage,
 } from '../api/gmail';
 import { fetchAppointmentRequestGmailLink } from '../api/appointmentRequestSubmissions';
 import {
   buildComposeDraft,
+  buildComposeSendBodies,
   defaultFromAlias,
+  extractEmail,
   formatFromAlias,
   loadSendAsAliases,
+  plainTextFromHtml,
+  signatureHtmlForFromAlias,
   submitCompose,
 } from './gmail/gmailCompose';
 import type { AppointmentRequestSubmissionItem } from '../api/appointmentRequestSubmissions';
@@ -67,14 +73,21 @@ function plainTextToHtml(value: string): string {
 const EMAIL_BODY_FONT =
   'font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5;color:#111;';
 
-/** Rich HTML + plain-text fallback for the outgoing reply, with a Gmail-style quote. */
+/** Rich HTML + plain-text fallback for the outgoing reply, with signature + Gmail-style quote. */
 function buildEmailBodies(
   message: string,
   original: GmailThreadMessage | null,
+  signatureHtml: string,
 ): { html: string; text: string } {
-  const trimmed = message.trim();
-  let html = `<div style="${EMAIL_BODY_FONT}">${plainTextToHtml(trimmed)}</div>`;
-  let text = trimmed;
+  const { bodyText: withSigText, bodyHtml: withSigHtml } = buildComposeSendBodies({
+    userText: message,
+    signatureHtml,
+    quotedSuffix: '',
+  });
+  let html =
+    withSigHtml?.trim() ||
+    `<div style="${EMAIL_BODY_FONT}">${plainTextToHtml(message.trim())}</div>`;
+  let text = withSigText.trim() || message.trim();
 
   if (original) {
     const attribution = `On ${new Date(original.date).toLocaleString()}, ${formatGmailAddress(
@@ -91,6 +104,33 @@ function buildEmailBodies(
   }
 
   return { html, text };
+}
+
+function applySignatureForFrom(
+  mailbox: string,
+  aliases: GmailSendAsAlias[],
+  fromFormatted: string,
+  setAliases: Dispatch<SetStateAction<GmailSendAsAlias[]>>,
+  setSignatureHtml: (html: string) => void,
+): void {
+  const html = signatureHtmlForFromAlias(aliases, fromFormatted);
+  setSignatureHtml(html);
+  if (html) return;
+  const sendAsEmail = extractEmail(fromFormatted);
+  if (!sendAsEmail || !mailbox) return;
+  void fetchGmailSendAsAlias(mailbox, sendAsEmail)
+    .then((detail) => {
+      if (!detail.signature?.trim()) return;
+      setAliases((prev) =>
+        prev.map((a) =>
+          a.sendAsEmail.toLowerCase() === sendAsEmail.toLowerCase() ? { ...a, ...detail } : a,
+        ),
+      );
+      setSignatureHtml(detail.signature.trim());
+    })
+    .catch(() => {
+      /* signature optional */
+    });
 }
 
 export function AppointmentRequestEmailModal({
@@ -112,6 +152,8 @@ export function AppointmentRequestEmailModal({
 
   const [from, setFrom] = useState('');
   const [fromOptions, setFromOptions] = useState<string[]>([]);
+  const [sendAsAliases, setSendAsAliases] = useState<GmailSendAsAlias[]>([]);
+  const [signatureHtml, setSignatureHtml] = useState('');
   const [to, setTo] = useState(clientEmail ?? '');
   const [subject, setSubject] = useState('');
   const [bodyText, setBodyText] = useState('');
@@ -128,6 +170,8 @@ export function AppointmentRequestEmailModal({
     (async () => {
       setLoading(true);
       setLoadError(null);
+      setSignatureHtml('');
+      setSendAsAliases([]);
       try {
         const [link, defaultMessage] = await Promise.all([
           fetchAppointmentRequestGmailLink(item.id),
@@ -193,9 +237,18 @@ export function AppointmentRequestEmailModal({
         if (sendMailbox) {
           const aliases = await loadSendAsAliases(sendMailbox);
           if (!cancelled) {
+            const fromVal = defaultFromAlias(aliases, sendMailbox);
+            setSendAsAliases(aliases);
             setFromOptions(aliases.map((a) => formatFromAlias(a)));
-            setFrom(defaultFromAlias(aliases, sendMailbox));
+            setFrom(fromVal);
             setMailbox(sendMailbox);
+            applySignatureForFrom(
+              sendMailbox,
+              aliases,
+              fromVal,
+              setSendAsAliases,
+              setSignatureHtml,
+            );
           }
         }
       } catch (e) {
@@ -210,6 +263,15 @@ export function AppointmentRequestEmailModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- load once per item
   }, [item.id, practiceId, practiceTz]);
 
+  const handleFromChange = (nextFrom: string) => {
+    setFrom(nextFrom);
+    if (!mailbox) {
+      setSignatureHtml(signatureHtmlForFromAlias(sendAsAliases, nextFrom));
+      return;
+    }
+    applySignatureForFrom(mailbox, sendAsAliases, nextFrom, setSendAsAliases, setSignatureHtml);
+  };
+
   const canSend = Boolean(
     mailbox && from.trim() && to.trim() && subject.trim() && bodyText.trim() && !sending && !loading,
   );
@@ -219,7 +281,11 @@ export function AppointmentRequestEmailModal({
     setSending(true);
     setSendError(null);
     try {
-      const { html, text } = buildEmailBodies(bodyText, threadMessages[0] ?? null);
+      const { html, text } = buildEmailBodies(
+        bodyText,
+        threadMessages[0] ?? null,
+        signatureHtml,
+      );
       await submitCompose({
         mailbox,
         from,
@@ -257,6 +323,8 @@ export function AppointmentRequestEmailModal({
     if (liaisonSubject) return liaisonSubject;
     return threadMessages[0]?.subject ?? 'Appointment request email';
   }, [liaisonSubject, threadMessages]);
+
+  const signaturePlainPreview = signatureHtml ? plainTextFromHtml(signatureHtml) : '';
 
   if (typeof document === 'undefined') return null;
 
@@ -367,7 +435,7 @@ export function AppointmentRequestEmailModal({
                   <select
                     id="appt-request-email-from"
                     value={from}
-                    onChange={(e) => setFrom(e.target.value)}
+                    onChange={(e) => handleFromChange(e.target.value)}
                     disabled={sending}
                   >
                     {fromOptions.map((opt) => (
@@ -380,7 +448,7 @@ export function AppointmentRequestEmailModal({
                   <input
                     id="appt-request-email-from"
                     value={from}
-                    onChange={(e) => setFrom(e.target.value)}
+                    onChange={(e) => handleFromChange(e.target.value)}
                     disabled={sending || !mailbox}
                   />
                 )}
@@ -415,7 +483,20 @@ export function AppointmentRequestEmailModal({
                   value={bodyText}
                   onChange={(e) => setBodyText(e.target.value)}
                   disabled={sending}
+                  className={
+                    signatureHtml
+                      ? 'appt-request-email-modal__body-input appt-request-email-modal__body-input--with-sig'
+                      : 'appt-request-email-modal__body-input'
+                  }
                 />
+                {signatureHtml ? (
+                  <div
+                    className="appt-request-email-modal__signature"
+                    aria-label="Email signature"
+                    title={signaturePlainPreview || undefined}
+                    dangerouslySetInnerHTML={{ __html: signatureHtml }}
+                  />
+                ) : null}
               </div>
 
               {threadMessages[0] ? (

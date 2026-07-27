@@ -389,20 +389,79 @@ export function replaceTrailingSignature(
   return body ? `${body}\n\n${next}` : next;
 }
 
+const PRACTICE_EMAIL_DOMAIN = 'vetatyourdoor.com';
+
+/** Split a header address list without breaking commas inside quoted display names. */
 function splitAddressList(raw: string | undefined): string[] {
-  return (raw ?? '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
+  if (!raw?.trim()) return [];
+  const out: string[] = [];
+  let cur = '';
+  let inQuotes = false;
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i]!;
+    if (ch === '"') {
+      inQuotes = !inQuotes;
+      cur += ch;
+      continue;
+    }
+    if ((ch === ',' || ch === ';') && !inQuotes) {
+      const trimmed = cur.trim();
+      if (trimmed) out.push(trimmed);
+      cur = '';
+      continue;
+    }
+    cur += ch;
+  }
+  const trimmed = cur.trim();
+  if (trimmed) out.push(trimmed);
+  return out;
 }
 
 function isMailboxAddress(addr: string, mailbox: string): boolean {
   return normalizeEmail(extractEmail(addr)) === normalizeEmail(mailbox);
 }
 
-/** External (non-mailbox) emails scraped from the message body — liaison notifications hide the client there. */
+/** True for @vetatyourdoor.com addresses (staff / shared mailboxes). */
+export function isPracticeEmailAddress(addr: string | null | undefined): boolean {
+  const email = normalizeEmail(extractEmail(addr ?? ''));
+  return Boolean(email?.endsWith(`@${PRACTICE_EMAIL_DOMAIN}`));
+}
+
+function isInternalAddress(addr: string, mailbox: string): boolean {
+  return isMailboxAddress(addr, mailbox) || isPracticeEmailAddress(addr);
+}
+
+function formatReplyRecipient(email: string, name?: string | null): string {
+  const e = email.trim();
+  if (!e) return '';
+  const n = name?.trim();
+  if (!n) return e;
+  // Quote display names so commas (e.g. "Last, Title") don't break the To field.
+  if (/[",<>]/.test(n)) return `"${n.replace(/"/g, '')}" <${e}>`;
+  return `${n} <${e}>`;
+}
+
+function structuredExternalRecipients(
+  message: GmailThreadMessage,
+  mailbox: string,
+): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const add = (email: string | null | undefined, name?: string | null) => {
+    const e = normalizeEmail(email);
+    if (!e || isInternalAddress(e, mailbox) || seen.has(e)) return;
+    seen.add(e);
+    out.push(formatReplyRecipient(e, name));
+  };
+  add(message.from?.email, message.from?.name);
+  for (const addr of message.to ?? []) {
+    add(addr.email, addr.name);
+  }
+  return out;
+}
+
+/** External (non-practice) emails scraped from the message body — liaison notifications hide the client there. */
 function externalEmailsFromMessage(message: GmailThreadMessage, mailbox: string): string[] {
-  const mailboxNorm = normalizeEmail(mailbox) ?? '';
   const chunks = [
     message.body.text,
     message.body.html ? plainTextFromHtml(message.body.html) : null,
@@ -412,7 +471,7 @@ function externalEmailsFromMessage(message: GmailThreadMessage, mailbox: string)
   const out: string[] = [];
   for (const chunk of chunks) {
     for (const email of extractEmailsFromText(chunk)) {
-      if (email === mailboxNorm || seen.has(email)) continue;
+      if (isInternalAddress(email, mailbox) || seen.has(email)) continue;
       seen.add(email);
       out.push(email);
     }
@@ -420,10 +479,107 @@ function externalEmailsFromMessage(message: GmailThreadMessage, mailbox: string)
   return out;
 }
 
+function firstExternalAddress(
+  candidates: Array<string | undefined>,
+  mailbox: string,
+): string | undefined {
+  for (const raw of candidates) {
+    for (const addr of splitAddressList(raw)) {
+      if (!isInternalAddress(addr, mailbox)) {
+        const email = normalizeEmail(extractEmail(addr));
+        if (!email || !email.includes('@')) continue;
+        return email;
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Prefer the latest client (external) message for top-bar Reply so we don't reply to
+ * an internal staff forward/reply in the same thread.
+ */
+export function pickDefaultReplyMessage(
+  messages: readonly GmailThreadMessage[],
+  mailbox: string,
+): GmailThreadMessage | null {
+  if (messages.length === 0) return null;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i]!;
+    const from = msg.from?.email || msg.headers.from;
+    if (!isInternalAddress(from, mailbox)) return msg;
+  }
+  return messages[messages.length - 1] ?? null;
+}
+
+/**
+ * Prefer a send-as alias the client was corresponding with (To/Cc on their message,
+ * or From on a prior staff message) over the shared mailbox default (info@).
+ */
+export function resolveReplyFromAlias(
+  aliases: readonly GmailSendAsAlias[],
+  mailbox: string,
+  replyTo?: GmailThreadMessage | null,
+  threadMessages?: readonly GmailThreadMessage[],
+): string {
+  if (aliases.length === 0) return defaultFromAlias([...aliases], mailbox);
+
+  const aliasByEmail = new Map(
+    aliases.map((a) => [a.sendAsEmail.trim().toLowerCase(), a] as const),
+  );
+  const tryAlias = (raw: string | undefined): string | null => {
+    for (const addr of splitAddressList(raw)) {
+      const email = normalizeEmail(extractEmail(addr));
+      if (!email || !isPracticeEmailAddress(email)) continue;
+      const match = aliasByEmail.get(email);
+      if (match) return formatFromAlias(match);
+    }
+    return null;
+  };
+  const tryStructured = (addrs: Array<{ email?: string } | null | undefined>): string | null => {
+    for (const addr of addrs) {
+      const email = normalizeEmail(addr?.email);
+      if (!email || !isPracticeEmailAddress(email)) continue;
+      const match = aliasByEmail.get(email);
+      if (match) return formatFromAlias(match);
+    }
+    return null;
+  };
+
+  if (replyTo) {
+    const fromEmail = replyTo.from?.email || replyTo.headers.from;
+    const fromClient = !isInternalAddress(fromEmail, mailbox);
+    if (fromClient) {
+      const hit =
+        tryStructured(replyTo.to) ??
+        tryAlias(replyTo.headers.to) ??
+        tryAlias(replyTo.headers.cc) ??
+        tryAlias(replyTo.headers.replyTo);
+      if (hit) return hit;
+    } else {
+      const hit =
+        tryStructured([replyTo.from]) ?? tryAlias(replyTo.headers.from);
+      if (hit) return hit;
+    }
+  }
+
+  if (threadMessages?.length) {
+    for (let i = threadMessages.length - 1; i >= 0; i--) {
+      const msg = threadMessages[i]!;
+      const hit =
+        tryStructured([msg.from]) ?? tryAlias(msg.headers.from);
+      if (hit) return hit;
+    }
+  }
+
+  return defaultFromAlias([...aliases], mailbox);
+}
+
 /**
  * Resolve the To line for reply / reply-all.
- * Reply: Reply-To, explicit override, then From (body scrape only for self-sent liaison mail).
- * Reply-all: Reply-To / override / From / To / Cc, excluding the active mailbox.
+ * Prefers the client (external) address — never defaults To to staff @vetatyourdoor.com
+ * when a client address is available (common when replying from info@ to a thread that
+ * includes internal forwards).
  */
 export function resolveReplyToLine(
   message: GmailThreadMessage,
@@ -432,46 +588,81 @@ export function resolveReplyToLine(
   preferredTo?: string,
 ): string {
   const replyToHeader = message.headers.replyTo?.trim();
+  const preferred = preferredTo?.trim();
+  const fromEmail = message.from?.email || message.headers.from;
+  const fromIsInternal = isInternalAddress(fromEmail, mailbox);
 
   if (mode === 'reply') {
-    if (replyToHeader) return replyToHeader;
-    if (preferredTo?.trim()) return preferredTo.trim();
-    // Liaison notifications may send From the mailbox with the client email only in the body.
-    if (isMailboxAddress(message.headers.from, mailbox)) {
-      const external = externalEmailsFromMessage(message, mailbox);
-      if (external.length === 1) return external[0]!;
+    if (preferred && !isPracticeEmailAddress(preferred)) {
+      const email = normalizeEmail(extractEmail(preferred));
+      return email ?? preferred;
     }
-    return message.headers.from;
+
+    // Staff outbound message → reply to the client on To/Cc, not back to ourselves.
+    if (fromIsInternal) {
+      const clientOnTo = (message.to ?? []).find(
+        (a) => a.email && !isInternalAddress(a.email, mailbox),
+      );
+      if (clientOnTo?.email) {
+        return formatReplyRecipient(clientOnTo.email, clientOnTo.name);
+      }
+      const fromHeaders =
+        firstExternalAddress([message.headers.to, message.headers.cc, replyToHeader], mailbox) ??
+        externalEmailsFromMessage(message, mailbox)[0];
+      if (fromHeaders) return fromHeaders;
+    } else {
+      // Client message → reply to them.
+      if (message.from?.email && !isInternalAddress(message.from.email, mailbox)) {
+        return formatReplyRecipient(message.from.email, message.from.name);
+      }
+      const external =
+        firstExternalAddress([replyToHeader, message.headers.from], mailbox) ??
+        externalEmailsFromMessage(message, mailbox)[0];
+      if (external) return external;
+    }
+
+    if (preferred) return preferred;
+    if (replyToHeader && !isInternalAddress(replyToHeader, mailbox)) return replyToHeader;
+    const fallback = structuredExternalRecipients(message, mailbox)[0];
+    return fallback ?? '';
   }
 
   const parts: string[] = [];
   const seen = new Set<string>();
-  const add = (raw: string | undefined) => {
+  const addFormatted = (formatted: string) => {
+    const key = normalizeEmail(extractEmail(formatted)) ?? formatted.toLowerCase();
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    parts.push(formatted);
+  };
+  const addRaw = (raw: string | undefined) => {
     for (const addr of splitAddressList(raw)) {
-      if (isMailboxAddress(addr, mailbox)) continue;
-      const key = (normalizeEmail(extractEmail(addr)) ?? addr).toLowerCase();
-      if (seen.has(key)) continue;
-      seen.add(key);
-      parts.push(addr);
+      if (isInternalAddress(addr, mailbox)) continue;
+      const email = normalizeEmail(extractEmail(addr));
+      if (!email || !email.includes('@')) continue;
+      addFormatted(email);
     }
   };
 
-  if (replyToHeader) add(replyToHeader);
-  else if (preferredTo?.trim()) add(preferredTo);
-  add(message.headers.from);
-  add(message.headers.to);
-  if (mode === 'replyAll') add(message.headers.cc);
+  if (preferred && !isPracticeEmailAddress(preferred)) {
+    const email = normalizeEmail(extractEmail(preferred));
+    if (email) addFormatted(email);
+  }
+  for (const formatted of structuredExternalRecipients(message, mailbox)) {
+    addFormatted(formatted);
+  }
+  addRaw(replyToHeader);
+  addRaw(message.headers.from);
+  addRaw(message.headers.to);
+  if (mode === 'replyAll') addRaw(message.headers.cc);
 
   if (parts.length === 0) {
     for (const email of externalEmailsFromMessage(message, mailbox)) {
-      const key = email.toLowerCase();
-      if (seen.has(key)) continue;
-      seen.add(key);
-      parts.push(email);
+      addFormatted(email);
     }
   }
 
-  return parts.length > 0 ? parts.join(', ') : message.headers.from;
+  return parts.join(', ');
 }
 
 export function buildComposeDraft(
@@ -547,6 +738,8 @@ export async function submitCompose(opts: {
   threadId?: string;
   inReplyTo?: string;
   references?: string;
+  /** Defaults to tracked; false sends without a read receipt. */
+  trackOpens?: boolean;
 }) {
   const to = opts.to
     .split(/[,;]/)
@@ -567,6 +760,7 @@ export async function submitCompose(opts: {
     threadId: opts.threadId,
     inReplyTo: opts.inReplyTo,
     references: opts.references,
+    trackOpens: opts.trackOpens,
   });
 }
 

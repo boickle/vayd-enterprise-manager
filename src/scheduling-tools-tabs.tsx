@@ -1,4 +1,5 @@
-import { Navigate } from 'react-router-dom';
+import type { JSX } from 'react';
+import { Navigate } from 'react-router';
 import FillDayPage from './pages/FillDay';
 import CareOutreachPage from './pages/CareOutreachPage';
 import ForwardBookingPage from './pages/ForwardBookingPage';

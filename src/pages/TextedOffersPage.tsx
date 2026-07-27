@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { DateTime } from 'luxon';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router';
 import {
   fetchSlotOfferDetail,
   fetchSlotOffers,
@@ -862,6 +862,7 @@ export default function TextedOffersPage() {
         await sendClientSms(smsTarget.clientId, {
           message: smsMessage.trim(),
           useRemindersFrom: true,
+          source: 'slot_offer',
           ...(opts.overrideNonProd ? { overrideNonProd: true } : {}),
         });
         closeSmsModal();

@@ -1,5 +1,6 @@
 // src/pages/Routing.tsx
 import {
+  type JSX,
   FormEvent,
   Fragment,
   useCallback,
@@ -17,6 +18,7 @@ import {
   appointmentTypeAllowsClient,
   appointmentTypeIncludedInRouting,
   normalizeAppointmentTypeFromApi,
+  preferCalmingPremedVisitTypeId,
   sortAppointmentTypesForPicker,
 } from '../utils/appointmentTypeSettings';
 import { fetchClientByIdStaff } from '../api/clientsStaff';
@@ -81,7 +83,7 @@ import {
   routingCardWindowWarningMessage,
   routingCardWindowWarningReasons,
 } from '../utils/routingCardWindowWarning';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router';
 import {
   clearRoutingCalendarPreview,
   readRoutingCalendarPreview,
@@ -97,6 +99,7 @@ import { hasActiveRoutingCalendarPreview } from '../utils/routingCalendarPreview
 import {
   buildRoutingRescheduleContextForSlotSearch,
   clearRoutingRescheduleIntent,
+  dismissRoutingRescheduleWorkspace,
   markRescheduleIntentAppliedToRoutingForm,
   readRoutingRescheduleIntent,
   rescheduleIntentIsActive,
@@ -114,6 +117,7 @@ import {
   type RoutingRescheduleScope,
 } from '../utils/routingRescheduleIntent';
 import {
+  dismissRoutingForwardBookingWorkspace,
   forwardBookingRequiresScopeChoice,
   forwardBookingScopeTargets,
   markForwardBookingIntentAppliedToRoutingForm,
@@ -2784,8 +2788,14 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     async function mergeAppointmentRequestIntentFromList() {
       const intent = readRoutingAppointmentRequestIntent();
       if (!intent || !intent.workspaceActive || intent.appliedToRoutingForm) return;
-      if (readRoutingRescheduleIntent()) return;
-      if (readRoutingForwardBookingIntent()?.workspaceActive) return;
+      // Appointment-request Book wins over leftover reschedule / forward-booking
+      // session state (otherwise hydrate is skipped and Book becomes a PATCH).
+      if (readRoutingRescheduleIntent()) {
+        dismissRoutingRescheduleWorkspace();
+      }
+      if (readRoutingForwardBookingIntent()?.workspaceActive) {
+        dismissRoutingForwardBookingWorkspace();
+      }
 
       let pimsDoc = '';
       let doctorDisplayName = intent.preferredDoctorDisplayName?.trim() ?? '';
@@ -4299,7 +4309,14 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
           appointmentTypes: routingAppointmentTypes,
         },
       );
-      if (visitPets.length > 0) return visitPets[0]!.appointmentTypeId;
+      if (visitPets.length > 0) {
+        // Mixed households: the calming / Pre-Meds type's window drives routing
+        // even when other pets use different types (each keeps its own type on book).
+        return preferCalmingPremedVisitTypeId(
+          visitPets.map((p) => p.appointmentTypeId),
+          routingAppointmentTypes,
+        );
+      }
     }
     const typeKey = routingApptStatsTypeKey.trim();
     if (typeKey) {

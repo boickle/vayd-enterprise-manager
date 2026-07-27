@@ -57,15 +57,16 @@ async function reminderIdsForSlotOfferPatients(
   const wantPets = new Set(petIds.map(Number).filter((id) => Number.isFinite(id) && id > 0));
   if (wantPets.size === 0) return [];
 
-  // Match reminders for the offered pets no matter how far past due they are. The chip-count
-  // range only spans ~30 days back, which misses long-overdue reminders that are now routable
-  // via the custom date range — so widen the window (we filter to the specific pets/client below).
+  // Match reminders for the offered pets no matter how far past due they are. Scope by
+  // patientIds so we don't miss pets when the practice-wide unscheduled list is capped at 2000
+  // (oldest-first) — that truncation was dropping the offered pets and skipping outreach notes.
   const now = DateTime.now();
   const list = await fetchUnscheduledReminders({
     practiceId,
     dueDateFrom: now.minus({ years: 2 }).toFormat('yyyy-MM-dd'),
     dueDateTo: now.plus({ months: 2 }).toFormat('yyyy-MM-dd'),
-    limit: 2000,
+    patientIds: [...wantPets],
+    limit: Math.max(200, wantPets.size * 50),
   });
 
   const matches: UnscheduledReminder[] = [];

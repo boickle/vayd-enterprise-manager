@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useLocation, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useSearchParams } from 'react-router';
 import { FileText } from 'lucide-react';
 import { useAuth } from '../auth/useAuth';
 import { searchPatientsStaff, type PatientSearchRow } from '../api/patients';

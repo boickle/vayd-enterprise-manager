@@ -61,8 +61,8 @@ export function ClientSmsComposeModal({
         className="card"
         onClick={(e) => e.stopPropagation()}
         style={{
-          width: 'min(600px, 90vw)',
-          maxHeight: '90vh',
+          width: 'min(480px, 90vw)',
+          maxHeight: '85vh',
           overflow: 'auto',
           padding: 24,
           borderRadius: 12,
@@ -71,7 +71,7 @@ export function ClientSmsComposeModal({
       >
         <div
           style={{
-            marginBottom: 20,
+            marginBottom: 16,
             display: 'flex',
             justifyContent: 'space-between',
             alignItems: 'flex-start',
@@ -79,10 +79,10 @@ export function ClientSmsComposeModal({
           }}
         >
           <div>
-            <h3 id="client-sms-compose-title" style={{ margin: '0 0 8px', fontSize: 20, fontWeight: 600 }}>
+            <h3 id="client-sms-compose-title" style={{ margin: '0 0 6px', fontSize: 18, fontWeight: 600 }}>
               {title}
             </h3>
-            <p style={{ margin: 0, color: '#6b7280', fontSize: 14 }}>
+            <p style={{ margin: 0, color: '#6b7280', fontSize: 13, lineHeight: 1.45 }}>
               {subtitle ?? `Review and edit the message before sending to ${clientLabel}.`}
             </p>
             {fromLineLabel?.trim() ? (
@@ -117,21 +117,23 @@ export function ClientSmsComposeModal({
           </p>
         ) : null}
 
-        <label style={{ display: 'block', marginBottom: 20 }}>
+        <label style={{ display: 'block', marginBottom: 16 }}>
           <span style={{ display: 'block', marginBottom: 8, fontSize: 14, fontWeight: 600 }}>Message</span>
           <textarea
             value={message}
             onChange={(e) => onMessageChange(e.target.value)}
             disabled={sending}
+            rows={5}
             style={{
               width: '100%',
-              minHeight: 200,
+              minHeight: 110,
+              maxHeight: '40vh',
               padding: 12,
               background: '#f9fafb',
               border: '1px solid #e5e7eb',
               borderRadius: 8,
               fontSize: 14,
-              lineHeight: 1.6,
+              lineHeight: 1.5,
               resize: 'vertical',
               fontFamily: 'inherit',
               boxSizing: 'border-box',

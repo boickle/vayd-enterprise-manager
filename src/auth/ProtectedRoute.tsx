@@ -1,6 +1,6 @@
 // src/auth/ProtectedRoute.tsx
 import { ReactNode, useMemo } from 'react';
-import { Navigate, useLocation } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router';
 import { useAuth } from './useAuth';
 import { savePostLoginRedirect } from '../utils/postLoginRedirect';
 

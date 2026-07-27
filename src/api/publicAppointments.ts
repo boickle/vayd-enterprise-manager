@@ -379,6 +379,7 @@ export type AppointmentType = {
   formListOrder?: number | null;
   windowBeforeMinutes?: number | null;
   windowAfterMinutes?: number | null;
+  isCalmingPremedType?: boolean;
   practice?: {
     id: number;
     isActive: boolean;
@@ -434,6 +435,9 @@ export async function fetchAppointmentTypes(
     formListOrder: type.formListOrder ?? null,
     windowBeforeMinutes: type.windowBeforeMinutes ?? type.window_before_minutes ?? null,
     windowAfterMinutes: type.windowAfterMinutes ?? type.window_after_minutes ?? null,
+    isCalmingPremedType:
+      type.isCalmingPremedType === true ||
+      type.is_calming_premed_type === true,
     practice: type.practice,
   }));
 }

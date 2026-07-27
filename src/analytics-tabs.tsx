@@ -1,6 +1,6 @@
 // Analytics sub-tabs: path is relative to /analytics.
 // VSD and Time Spent are lazy-loaded so the spinner shows immediately when switching tabs.
-import React from 'react';
+import React, { type JSX } from 'react';
 import PaymentsAnalyticsPage from './pages/PaymentAnalytics';
 import RoutingAnalyticsPage from './pages/RoutingAnalytics';
 

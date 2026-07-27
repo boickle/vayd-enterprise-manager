@@ -33,6 +33,7 @@ export type PetVisitPetData = {
   aftercarePreference?: string;
   appointmentTypeId?: number;
   appointmentTypeName?: string;
+  needsCalmingMedications?: 'Yes' | 'No' | '';
 };
 
 type Props = {
@@ -44,6 +45,10 @@ type Props = {
   errors: Record<string, string>;
   onUpdatePetData: (petId: string, field: string, value: string) => void;
   onSelectAppointmentType: (option: AppointmentTypeCardOption) => void;
+  /** Existing chart pets: show calming-meds checkbox that steers to Pre-Meds type. */
+  showUsesCalmingMedications?: boolean;
+  calmingPremedType?: AppointmentTypeCardOption | null;
+  onUsesCalmingMedicationsChange?: (checked: boolean) => void;
   inputPadding?: string;
   inputRadius?: string;
   labelMb?: number;
@@ -59,6 +64,9 @@ export function PetVisitQuestionsBlock({
   errors,
   onUpdatePetData,
   onSelectAppointmentType,
+  showUsesCalmingMedications = false,
+  calmingPremedType = null,
+  onUsesCalmingMedicationsChange,
   inputPadding = '8px 10px',
   inputRadius = '6px',
   labelMb = 4,
@@ -66,6 +74,7 @@ export function PetVisitQuestionsBlock({
 }: Props) {
   const petDisplayName = pet.name?.trim() || 'your pet';
   const isEndOfLife = selectedAppointmentType ? isEuthanasiaTypeOption(selectedAppointmentType) : false;
+  const usesCalmingMedications = petData.needsCalmingMedications === 'Yes';
 
   return (
     <div
@@ -86,6 +95,48 @@ export function PetVisitQuestionsBlock({
           onSelect={onSelectAppointmentType}
           error={errors[`needsToday.${pet.id}`]}
         />
+      )}
+
+      {showUsesCalmingMedications && (
+        <div
+          data-form-field={`needsCalmingMedications.${pet.id}`}
+          style={{ marginTop: sectionGap }}
+        >
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: 10,
+              cursor: 'pointer',
+              padding: '10px 12px',
+              border: `2px solid ${usesCalmingMedications ? '#10b981' : '#e5e7eb'}`,
+              borderRadius: 8,
+              backgroundColor: usesCalmingMedications ? '#f0fdf4' : '#fff',
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={usesCalmingMedications}
+              onChange={(e) => onUsesCalmingMedicationsChange?.(e.target.checked)}
+              style={{
+                marginTop: 2,
+                flexShrink: 0,
+                width: 18,
+                height: 18,
+                accentColor: '#10b981',
+                cursor: 'pointer',
+              }}
+            />
+            <span style={{ fontSize: 14, lineHeight: 1.45, color: '#374151' }}>
+              My pet uses calming medications for the appointment
+            </span>
+          </label>
+          {usesCalmingMedications && !calmingPremedType && (
+            <p style={{ fontSize: 12, color: '#b45309', margin: '8px 0 0', lineHeight: 1.45 }}>
+              We&apos;ve noted the calming medications. A care liaison may help finalize the visit type.
+            </p>
+          )}
+        </div>
       )}
 
       {selectedAppointmentType && (

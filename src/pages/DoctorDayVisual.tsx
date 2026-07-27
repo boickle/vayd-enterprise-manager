@@ -43,10 +43,7 @@ import {
 } from '../utils/roomLoaderPreApptDisplay';
 import {
   buildPdfPatientsFromBadges,
-  appointmentNotesFromDoctorDayRow,
-  petAlertsFromDoctorDayRow,
-  sexFromDoctorDayRow,
-  staffNotesFromDoctorDayRow,
+  makeMyDayVisualPatientBadge,
 } from '../utils/myDayVisualPatientDetails';
 import { myDayVisualAlternateAddressPdfFields } from '../utils/myDayVisualAlternateAddress';
 import {
@@ -372,6 +369,9 @@ type PatientBadge = {
   appointmentNotes?: string | null;
   staffNotes?: string | null;
   sex?: string | null;
+  species?: string | null;
+  age?: string | null;
+  weight?: string | null;
   petAlerts?: string | null;
   startIso?: string | null;
   endIso?: string | null;
@@ -379,47 +379,12 @@ type PatientBadge = {
   isMember?: boolean;
   membershipName?: string | null;
 };
-function makePatientBadge(a: any): PatientBadge {
-  const name =
-    str(a, 'patientName') ||
-    str(a, 'petName') ||
-    str(a, 'animalName') ||
-    str(a, 'name') ||
-    'Patient';
-  const type =
-    str(a, 'appointmentType') || str(a, 'appointmentTypeName') || str(a, 'serviceName') || null;
-  const appointmentNotes = appointmentNotesFromDoctorDayRow(a);
-  const staffNotes = staffNotesFromDoctorDayRow(a);
-  const petAlerts = petAlertsFromDoctorDayRow(a);
-  const sex = sexFromDoctorDayRow(a);
-  const status = str(a, 'confirmStatusName') ?? null;
-  const recordStatus = str(a, 'statusName') ?? null;
-  const pat = a?.patient;
-  const isMember = Boolean(a?.isMember ?? pat?.isMember);
-  const rawMem = a?.membershipName ?? pat?.membershipName;
-  const membershipName =
-    typeof rawMem === 'string' && rawMem.trim()
-      ? rawMem.trim()
-      : rawMem != null && String(rawMem).trim()
-        ? String(rawMem).trim()
-        : null;
+function makePatientBadge(a: any, practiceTz?: string | null): PatientBadge {
+  const base = makeMyDayVisualPatientBadge(a, { practiceTz });
   return {
-    name,
-    sourceApptId: (a as { id?: string | number | null })?.id ?? null,
-    type,
-    desc: appointmentNotes,
-    appointmentNotes,
-    staffNotes,
-    sex,
-    petAlerts,
-    status,
-    recordStatus,
-    pimsId: str(a, 'patientPimsId') ?? null,
+    ...base,
     startIso: getStartISO(a) ?? null,
     endIso: getEndISO(a) ?? null,
-    alerts: petAlerts,
-    isMember,
-    membershipName,
   };
 }
 
@@ -965,7 +930,7 @@ export default function DoctorDayVisual({
 
       const isPersonalBlock = isBlockEntry({ ...a, key: groupKey });
 
-      const patient = makePatientBadge(a);
+      const patient = makePatientBadge(a, practiceTimeZone);
       const apptIsPreview = (a as any)?.isPreview === true;
 
       if (!m.has(groupKey)) {
@@ -1020,7 +985,7 @@ export default function DoctorDayVisual({
     });
     assignEtaKeysForSameAddress(list);
     return list;
-  }, [appts]);
+  }, [appts, practiceTimeZone]);
 
   const apptsById = useMemo(() => {
     const m = new Map<string, DoctorDayAppt>();
@@ -2678,7 +2643,9 @@ export default function DoctorDayVisual({
               : null,
         sIso: h.startIso!,
         eIso: h.endIso!,
-        patients: buildPdfPatientsFromBadges(h.patients ?? [], apptsById),
+        patients: buildPdfPatientsFromBadges(h.patients ?? [], apptsById, {
+          practiceTz: practiceTimeZone,
+        }),
         clientAlert: h?.clientAlert,
         isFixedTime,
         isPersonalBlock: h.isPersonalBlock,

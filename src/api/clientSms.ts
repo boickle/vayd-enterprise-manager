@@ -11,6 +11,22 @@ export type SendClientSmsPayload = {
   useRemindersFrom?: boolean;
   /** Mark the Quo/OpenPhone conversation as done after send. */
   markInboxDone?: boolean;
+  /** Label for delivery-failure alerts (e.g. care_outreach, forward_booking). */
+  source?: string;
+};
+
+export type StaffSmsDeliveryFailure = {
+  id: number;
+  clientId: number;
+  clientName: string;
+  phone: string;
+  fromPhone: string | null;
+  bodyPreview: string;
+  providerMessageId: string;
+  status: 'accepted' | 'delivered' | 'failed';
+  errorMessage: string | null;
+  source: string | null;
+  created: string;
 };
 
 export async function sendClientSms(
@@ -29,4 +45,19 @@ export async function fetchSchedulingOutreachSmsFrom(): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+/** Undelivered staff SMS that Quo reported failed and staff have not dismissed. */
+export async function fetchStaffSmsDeliveryFailures(
+  limit = 25,
+): Promise<StaffSmsDeliveryFailure[]> {
+  const { data } = await http.get<{ failures?: StaffSmsDeliveryFailure[] }>(
+    '/sms/delivery-failures',
+    { params: { limit } },
+  );
+  return Array.isArray(data?.failures) ? data.failures : [];
+}
+
+export async function acknowledgeStaffSmsDeliveryFailure(id: number): Promise<void> {
+  await http.post(`/sms/delivery-failures/${encodeURIComponent(String(id))}/acknowledge`);
 }

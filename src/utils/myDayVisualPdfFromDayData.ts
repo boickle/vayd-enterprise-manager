@@ -385,7 +385,9 @@ function buildAppointmentPayload(
           : null,
     sIso: h.startIso!,
     eIso: h.endIso!,
-    patients: buildPdfPatientsFromBadges(h.patients ?? [], apptsById),
+    patients: buildPdfPatientsFromBadges(h.patients ?? [], apptsById, {
+      practiceTz: practiceTimeZone,
+    }),
     clientAlert: str(h.primary, 'clientAlert') ?? undefined,
     isFixedTime,
     isPersonalBlock: !!h.isPersonalBlock,

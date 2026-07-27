@@ -121,6 +121,28 @@
   line-height: 1.5;
 }
 
+.appt-request-email-modal__body-input--with-sig {
+  border-bottom-left-radius: 0 !important;
+  border-bottom-right-radius: 0 !important;
+}
+
+.appt-request-email-modal__signature {
+  border: 1px solid #e5e7eb;
+  border-top: none;
+  border-radius: 0 0 8px 8px;
+  background: #f9fafb;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #334155;
+  overflow-x: auto;
+}
+
+.appt-request-email-modal__signature img {
+  max-width: 100%;
+  height: auto;
+}
+
 .appt-request-email-modal__quote-preview {
   margin-bottom: 12px;
 }

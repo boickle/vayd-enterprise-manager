@@ -1,5 +1,6 @@
 import { DateTime } from 'luxon';
 import { fetchAppointmentById } from '../api/appointments';
+import { fetchAllAppointmentTypes } from '../api/appointmentSettings';
 import type { AppointmentRequestSubmissionItem } from '../api/appointmentRequestSubmissions';
 import type { Appointment } from '../api/roomLoader';
 import {
@@ -9,6 +10,12 @@ import {
   requestDataSelfScheduledSlot,
   type RequestDataSelfScheduledSlot,
 } from './appointmentRequestDisplay';
+import { requestDataPetRowSummaries } from './appointmentRequestDetailDisplay';
+import {
+  effectiveWindowForScheduledStart,
+  type AppointmentTypeWindowSource,
+} from './appointmentArrivalWindow';
+import { findCalmingPremedAppointmentType } from './appointmentTypeSettings';
 import {
   appointmentArrivalWindowIsosForSms,
   formatForwardBookingSmsBookedSlot,
@@ -37,6 +44,59 @@ function pickStr(v: unknown): string | null {
   if (v == null) return null;
   const s = String(v).trim();
   return s || null;
+}
+
+function requestUsesCalmingMedications(requestData: Record<string, unknown>): boolean {
+  const psd = requestData.petSpecificData;
+  if (psd && typeof psd === 'object') {
+    for (const raw of Object.values(psd as Record<string, unknown>)) {
+      if (!raw || typeof raw !== 'object') continue;
+      if (pickStr((raw as { needsCalmingMedications?: unknown }).needsCalmingMedications) === 'Yes') {
+        return true;
+      }
+    }
+  }
+  return requestDataPetRowSummaries(requestData).some((row) => row.usesCalmingMedications === true);
+}
+
+async function resolveCalmingPremedWindowSource(
+  practiceId?: number,
+): Promise<AppointmentTypeWindowSource | null> {
+  try {
+    const types = await fetchAllAppointmentTypes(practiceId);
+    const premed = findCalmingPremedAppointmentType(types);
+    if (!premed) return null;
+    return {
+      name: premed.name,
+      prettyName: premed.prettyName,
+      windowBeforeMinutes: premed.windowBeforeMinutes,
+      windowAfterMinutes: premed.windowAfterMinutes,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function applyCalmingPremedWindow(
+  ctx: AppointmentRequestSmsBookingContext,
+  scheduledStartIso: string,
+  practiceTz: string,
+  premed: AppointmentTypeWindowSource,
+): AppointmentRequestSmsBookingContext {
+  const computed = effectiveWindowForScheduledStart(scheduledStartIso, premed, practiceTz);
+  if (!computed) return ctx;
+  const booked = formatForwardBookingSmsBookedSlot(
+    computed.startIso,
+    computed.endIso,
+    practiceTz,
+    scheduledStartIso,
+  );
+  return {
+    ...ctx,
+    dateLabel: booked.dateLabel,
+    windowStart: booked.windowStart,
+    windowEnd: booked.windowEnd,
+  };
 }
 
 function providerLastNameFromAppointment(appt: Appointment): string | null {
@@ -166,10 +226,13 @@ export async function resolveAppointmentRequestSmsMessage(
   const firstName = firstNameFromRequestData(rd);
   const separator = opts?.greeting === 'email' ? '\n\n' : ' ';
   const greet = (body: string) => withGreeting(firstName, body, separator);
+  const usesCalming = requestUsesCalmingMedications(rd);
+  const premedPromise = usesCalming
+    ? resolveCalmingPremedWindowSource(opts?.practiceId)
+    : Promise.resolve(null);
 
-  const fromSlot = bookingContextFromSelfScheduledSlot(rd, practiceTz);
-  if (fromSlot) return greet(buildAppointmentRequestSmsMessage(fromSlot));
-
+  // Prefer the linked calendar visit once booked. The request's self-scheduled
+  // slot can still carry a stale (±60) window from an earlier availability pass.
   const apptId = item.bookedAppointmentId;
   if (apptId != null && Number.isFinite(Number(apptId))) {
     try {
@@ -177,12 +240,29 @@ export async function resolveAppointmentRequestSmsMessage(
         practiceId: opts?.practiceId,
       });
       if (appt) {
-        const fromAppt = bookingContextFromAppointment(appt, practiceTz);
-        if (fromAppt) return greet(buildAppointmentRequestSmsMessage(fromAppt));
+        let fromAppt = bookingContextFromAppointment(appt, practiceTz);
+        if (fromAppt) {
+          const premed = await premedPromise;
+          const startIso = pickStr(appt.appointmentStart);
+          if (premed && startIso) {
+            fromAppt = applyCalmingPremedWindow(fromAppt, startIso, practiceTz, premed);
+          }
+          return greet(buildAppointmentRequestSmsMessage(fromAppt));
+        }
       }
     } catch {
       /* fall through */
     }
+  }
+
+  let fromSlot = bookingContextFromSelfScheduledSlot(rd, practiceTz);
+  if (fromSlot) {
+    const premed = await premedPromise;
+    const slot = requestDataSelfScheduledSlot(rd);
+    if (premed && slot?.appointmentStart) {
+      fromSlot = applyCalmingPremedWindow(fromSlot, slot.appointmentStart, practiceTz, premed);
+    }
+    return greet(buildAppointmentRequestSmsMessage(fromSlot));
   }
 
   return greet(FALLBACK_BODY);

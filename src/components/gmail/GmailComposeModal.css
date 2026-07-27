@@ -318,6 +318,22 @@
   flex: 1;
 }
 
+.gmail-compose-panel__track-opens {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 4px;
+  color: #64748b;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.gmail-compose-panel__track-opens input {
+  margin: 0;
+  cursor: pointer;
+}
+
 /* Templates menu */
 .gmail-template-menu {
   position: relative;
