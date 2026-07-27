@@ -1,4 +1,5 @@
 // Admin sub-tabs: path is relative to /admin. Kept in a separate file to avoid circular import (Admin.tsx imports this; app-pages imports Admin).
+import type { JSX } from 'react';
 import CreateUser from './pages/CreateUser';
 import CreateEmployee from './pages/CreateEmployee';
 import MembershipPromotionsPage from './pages/MembershipPromotions';

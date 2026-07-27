@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { DateTime } from 'luxon';
 import type { Appointment } from '../../api/roomLoader';
 import {

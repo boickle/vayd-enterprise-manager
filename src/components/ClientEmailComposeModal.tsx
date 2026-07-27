@@ -1,14 +1,21 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { fetchClientByIdStaff } from '../api/clientsStaff';
-import { fetchGmailMailboxes, gmailErrorMessage } from '../api/gmail';
+import {
+  fetchGmailMailboxes,
+  fetchGmailSendAsAlias,
+  gmailErrorMessage,
+  type GmailSendAsAlias,
+} from '../api/gmail';
 import { useGmailInboxAccess } from '../hooks/useGmailInboxAccess';
 import { clientEmailsFromStaffPayload } from '../utils/clientEmailGmailSearch';
-import { plainTextToClientEmailHtml } from '../utils/clientOutreachEmailMessage';
 import {
+  buildComposeSendBodies,
   defaultFromAlias,
+  extractEmail,
   formatFromAlias,
   loadSendAsAliases,
+  signatureHtmlForFromAlias,
   submitCompose,
 } from './gmail/gmailCompose';
 
@@ -39,6 +46,8 @@ export function ClientEmailComposeModal({
   const [mailbox, setMailbox] = useState<string | null>(null);
   const [from, setFrom] = useState('');
   const [fromOptions, setFromOptions] = useState<string[]>([]);
+  const [sendAsAliases, setSendAsAliases] = useState<GmailSendAsAlias[]>([]);
+  const [signatureHtml, setSignatureHtml] = useState('');
   const [to, setTo] = useState('');
   const [subject, setSubject] = useState('');
   const [bodyText, setBodyText] = useState('');
@@ -52,6 +61,8 @@ export function ClientEmailComposeModal({
       setMailbox(null);
       setFrom('');
       setFromOptions([]);
+      setSendAsAliases([]);
+      setSignatureHtml('');
       setTo('');
       setSubject('');
       setBodyText('');
@@ -62,6 +73,7 @@ export function ClientEmailComposeModal({
     setLoading(true);
     setLoadError(null);
     setSendError(null);
+    setSignatureHtml('');
     setSubject(initialSubject);
     setBodyText(initialBodyText);
 
@@ -95,9 +107,31 @@ export function ClientEmailComposeModal({
 
         const aliases = await loadSendAsAliases(sendMailbox);
         if (cancelled) return;
+        const fromVal = defaultFromAlias(aliases, sendMailbox);
         setMailbox(sendMailbox);
+        setSendAsAliases(aliases);
         setFromOptions(aliases.map((a) => formatFromAlias(a)));
-        setFrom(defaultFromAlias(aliases, sendMailbox));
+        setFrom(fromVal);
+        setSignatureHtml(signatureHtmlForFromAlias(aliases, fromVal));
+
+        const sendAsEmail = extractEmail(fromVal);
+        if (!signatureHtmlForFromAlias(aliases, fromVal) && sendAsEmail) {
+          void fetchGmailSendAsAlias(sendMailbox, sendAsEmail)
+            .then((detail) => {
+              if (cancelled || !detail.signature?.trim()) return;
+              setSendAsAliases((prev) =>
+                prev.map((a) =>
+                  a.sendAsEmail.toLowerCase() === sendAsEmail.toLowerCase()
+                    ? { ...a, ...detail }
+                    : a,
+                ),
+              );
+              setSignatureHtml(detail.signature.trim());
+            })
+            .catch(() => {
+              /* signature optional */
+            });
+        }
       } catch (e: unknown) {
         if (!cancelled) setLoadError(gmailErrorMessage(e));
       } finally {
@@ -110,6 +144,27 @@ export function ClientEmailComposeModal({
     };
   }, [open, clientId, initialSubject, initialBodyText, gmailAllowed]);
 
+  const handleFromChange = (nextFrom: string) => {
+    setFrom(nextFrom);
+    const html = signatureHtmlForFromAlias(sendAsAliases, nextFrom);
+    setSignatureHtml(html);
+    if (html || !mailbox) return;
+    const sendAsEmail = extractEmail(nextFrom);
+    void fetchGmailSendAsAlias(mailbox, sendAsEmail)
+      .then((detail) => {
+        if (!detail.signature?.trim()) return;
+        setSendAsAliases((prev) =>
+          prev.map((a) =>
+            a.sendAsEmail.toLowerCase() === sendAsEmail.toLowerCase() ? { ...a, ...detail } : a,
+          ),
+        );
+        setSignatureHtml(detail.signature.trim());
+      })
+      .catch(() => {
+        /* signature optional */
+      });
+  };
+
   const canSend =
     Boolean(mailbox && from.trim() && to.trim() && subject.trim() && bodyText.trim()) &&
     !sending &&
@@ -120,14 +175,18 @@ export function ClientEmailComposeModal({
     setSending(true);
     setSendError(null);
     try {
-      const bodyHtml = plainTextToClientEmailHtml(bodyText);
+      const { bodyText: text, bodyHtml } = buildComposeSendBodies({
+        userText: bodyText,
+        signatureHtml,
+        quotedSuffix: '',
+      });
       await submitCompose({
         mailbox,
         from,
         to,
         cc: '',
         subject: subject.trim(),
-        bodyText: bodyText.trim(),
+        bodyText: text,
         bodyHtml: bodyHtml || undefined,
       });
       onClose();
@@ -252,7 +311,7 @@ export function ClientEmailComposeModal({
               {fromOptions.length > 0 ? (
                 <select
                   value={from}
-                  onChange={(e) => setFrom(e.target.value)}
+                  onChange={(e) => handleFromChange(e.target.value)}
                   disabled={sending}
                   className="settings-input"
                   style={{ width: '100%', boxSizing: 'border-box' }}
@@ -267,7 +326,7 @@ export function ClientEmailComposeModal({
                 <input
                   type="text"
                   value={from}
-                  onChange={(e) => setFrom(e.target.value)}
+                  onChange={(e) => handleFromChange(e.target.value)}
                   disabled={sending}
                   className="settings-input"
                   style={{ width: '100%', boxSizing: 'border-box' }}
@@ -299,7 +358,7 @@ export function ClientEmailComposeModal({
                   padding: 12,
                   background: '#f9fafb',
                   border: '1px solid #e5e7eb',
-                  borderRadius: 8,
+                  borderRadius: signatureHtml ? '8px 8px 0 0' : 8,
                   fontSize: 14,
                   lineHeight: 1.6,
                   resize: 'vertical',
@@ -308,6 +367,19 @@ export function ClientEmailComposeModal({
                 }}
                 placeholder="Enter your message…"
               />
+              {signatureHtml ? (
+                <div
+                  className="gmail-compose-panel__signature"
+                  style={{
+                    border: '1px solid #e5e7eb',
+                    borderTop: 'none',
+                    borderRadius: '0 0 8px 8px',
+                    background: '#f9fafb',
+                    padding: '10px 12px',
+                  }}
+                  dangerouslySetInnerHTML={{ __html: signatureHtml }}
+                />
+              ) : null}
             </label>
           </>
         ) : null}

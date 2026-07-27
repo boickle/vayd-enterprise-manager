@@ -1,6 +1,6 @@
 // src/components/UserMenu.tsx
 import { useState, useRef, useEffect, type MouseEvent as ReactMouseEvent } from 'react';
-import { useNavigate, NavLink, useLocation } from 'react-router-dom';
+import { useNavigate, NavLink, useLocation } from 'react-router';
 import { useAuth } from '../auth/useAuth';
 import { blockRoutingCalendarPreviewNavigation } from '../utils/routingCalendarPreviewGuard';
 import './UserMenu.css';

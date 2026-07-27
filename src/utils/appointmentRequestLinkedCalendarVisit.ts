@@ -11,6 +11,21 @@ export function appointmentRequestBookedSummaryIsActive(
   return !summary.appointmentCancelled;
 }
 
+/**
+ * A newly submitted request cannot legitimately be linked to a visit that
+ * started before the request existed. Treat that as a stale/wrong association.
+ */
+export function appointmentRequestBookedSummaryMatchesSubmission(
+  item: AppointmentRequestSubmissionItem,
+  summary: AppointmentRequestBookedApptSummary | null | undefined,
+): boolean {
+  if (!appointmentRequestBookedSummaryIsActive(summary)) return false;
+  const visitStart = Date.parse(summary!.start);
+  const submittedAt = Date.parse(item.submittedAt || item.created);
+  if (!Number.isFinite(visitStart) || !Number.isFinite(submittedAt)) return false;
+  return visitStart >= submittedAt;
+}
+
 export function appointmentRequestSubmissionHasActiveLinkedVisit(
   item: AppointmentRequestSubmissionItem,
   bookedApptMeta: ReadonlyMap<number, AppointmentRequestBookedApptSummary>,
@@ -18,8 +33,10 @@ export function appointmentRequestSubmissionHasActiveLinkedVisit(
   const apptId = item.bookedAppointmentId;
   if (apptId == null || !Number.isFinite(Number(apptId))) return false;
   const summary = bookedApptMeta.get(Number(apptId));
-  if (!summary) return true;
-  return appointmentRequestBookedSummaryIsActive(summary);
+  // Missing meta: do not assume the visit is still on the calendar (stale/deleted holds
+  // used to force the scheduler path and strand Not booked when GET /appointments/:id 404s).
+  if (!summary) return false;
+  return appointmentRequestBookedSummaryMatchesSubmission(item, summary);
 }
 
 export function appointmentRecordHasActiveLinkedVisit(

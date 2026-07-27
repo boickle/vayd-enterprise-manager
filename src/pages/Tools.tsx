@@ -1,4 +1,4 @@
-import { NavLink, Outlet } from 'react-router-dom';
+import { NavLink, Outlet } from 'react-router';
 import { getToolsTabPages } from '../tools-tabs';
 import './Settings.css';
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
+import { Navigate, useNavigate, useSearchParams } from 'react-router';
 import { ChevronLeft, ChevronRight, Mail, Menu, PenSquare, Plus, RefreshCw, Star, X } from 'lucide-react';
 import GmailAttachmentIcon from '../components/gmail/GmailAttachmentIcon';
 import GmailBulkToolbar, { type GmailLabelApplyUpdate } from '../components/gmail/GmailBulkToolbar';
@@ -17,6 +17,7 @@ import { discardAllThreadDrafts } from '../components/gmail/gmailCompose';
 import '../components/gmail/GmailComposeModal.css';
 import GmailLabelTree from '../components/gmail/GmailLabelTree';
 import GmailScheduledSendIcon from '../components/gmail/GmailScheduledSendIcon';
+import GmailOpenTrackingBadge from '../components/gmail/GmailOpenTrackingBadge';
 import {
   disconnectGmail,
   fetchGmailLabels,
@@ -330,6 +331,7 @@ function MessageListSection({
                     </div>
                   ) : null}
                 </div>
+                <GmailOpenTrackingBadge tracking={msg.tracking} compact />
                 <span className="gmail-msg-item__date">
                   {hasScheduledSend(msg) ? (
                     <GmailScheduledSendIcon scheduledSendAt={msg.scheduledSendAt} />

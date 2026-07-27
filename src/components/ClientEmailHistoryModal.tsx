@@ -21,6 +21,7 @@ import {
   clientEmailsFromStaffPayload,
 } from '../utils/clientEmailGmailSearch';
 import { threadCacheKey, threadListPreviewFromMessages } from '../utils/gmailThreadPreview';
+import GmailOpenTrackingBadge from './gmail/GmailOpenTrackingBadge';
 import '../pages/GmailInbox.css';
 
 type Props = {
@@ -365,6 +366,10 @@ export function ClientEmailHistoryModal({ open, clientId, clientLabel, onClose }
                       <div className="gmail-message-view__sender-meta">
                         <div className="gmail-message-view__sender-line">
                           <strong>{formatGmailAddress(msg.from)}</strong>
+                          <GmailOpenTrackingBadge
+                            tracking={msg.tracking}
+                            mailbox={selectedThread.mailbox}
+                          />
                           <span className="gmail-message-view__date">{formatThreadDate(msg.date)}</span>
                         </div>
                         {msg.headers.to ? (
@@ -483,7 +488,16 @@ export function ClientEmailHistoryModal({ open, clientId, clientLabel, onClose }
                               <strong style={{ fontSize: 14, color: '#111827' }}>
                                 {thread.subject?.trim() || '(no subject)'}
                               </strong>
-                              <span style={{ fontSize: 12, color: '#6b7280' }}>
+                              <span
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: 8,
+                                  fontSize: 12,
+                                  color: '#6b7280',
+                                }}
+                              >
+                                <GmailOpenTrackingBadge tracking={thread.tracking} />
                                 {formatThreadDate(thread.date)}
                               </span>
                             </div>

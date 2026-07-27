@@ -31,7 +31,10 @@ import {
   estimateRoutingServiceMinutesForVisit,
   type RoutingServiceMinutesTypeSource,
 } from '../utils/routingServiceMinutes';
-import type { AppointmentType } from '../api/appointmentSettings';
+import {
+  fetchAppointmentType,
+  type AppointmentType,
+} from '../api/appointmentSettings';
 
 // ─── Fallback avatar ─────────────────────────────────────────────────────────
 const FALLBACK_AVATAR =
@@ -130,6 +133,23 @@ function resolveSlotArrivalWindow(
   practiceTz: string,
   serviceMinutes: number,
 ) {
+  const appointmentEndIso = DateTime.fromISO(slot.suggestedStartIso)
+    .plus({ minutes: serviceMinutes })
+    .toISO();
+
+  // Client-facing copy must follow the booking appointment type (e.g. Pre-Meds ±30).
+  // Slot-embedded windows often come from a default (±60) or a cached response for a
+  // different type and must not win when we know the booking type.
+  if (appointmentType) {
+    const fromType = resolveClientArrivalWindowForScheduledStart(
+      slot.suggestedStartIso,
+      appointmentType,
+      practiceTz,
+      appointmentEndIso ? { appointmentEndIso } : undefined,
+    );
+    if (fromType) return fromType;
+  }
+
   if (slot.windowStartIso && slot.windowEndIso) {
     const windowDisplay = formatClientArrivalWindowMessage(
       slot.windowStartIso,
@@ -144,10 +164,6 @@ function resolveSlotArrivalWindow(
       };
     }
   }
-
-  const appointmentEndIso = DateTime.fromISO(slot.suggestedStartIso)
-    .plus({ minutes: serviceMinutes })
-    .toISO();
 
   return resolveClientArrivalWindowForScheduledStart(
     slot.suggestedStartIso,
@@ -760,6 +776,50 @@ export function SelfScheduleCalendarModal({
   // Preferred days/times the client types when requesting a non-bookable doctor.
   const [requestPreferredTimes, setRequestPreferredTimes] = useState('');
 
+  const [hydratedAppointmentType, setHydratedAppointmentType] =
+    useState<AppointmentType | null>(null);
+  useEffect(() => {
+    setHydratedAppointmentType(null);
+    const id = Number(appointmentTypeId);
+    if (isNewClient || !Number.isFinite(id) || id <= 0) return;
+
+    let alive = true;
+    void fetchAppointmentType(id)
+      .then((type) => {
+        if (alive) setHydratedAppointmentType(type);
+      })
+      .catch((error) => {
+        console.warn(
+          `[SelfSchedule] Could not hydrate appointment type ${id}; using list data`,
+          error,
+        );
+      });
+    return () => {
+      alive = false;
+    };
+  }, [appointmentTypeId, isNewClient]);
+
+  /** Resolve the booking type (with windows) by id — prop alone can miss windows via id mismatch. */
+  const resolvedAppointmentType = useMemo((): AppointmentTypeWindowSource | undefined => {
+    const fromList =
+      appointmentTypeId != null
+        ? appointmentTypes?.find((t) => Number(t.id) === Number(appointmentTypeId))
+        : undefined;
+    const candidate = hydratedAppointmentType ?? fromList ?? appointmentType;
+    if (!candidate) return undefined;
+    return {
+      name: candidate.name,
+      prettyName: candidate.prettyName,
+      windowBeforeMinutes: candidate.windowBeforeMinutes,
+      windowAfterMinutes: candidate.windowAfterMinutes,
+    };
+  }, [
+    appointmentTypeId,
+    appointmentTypes,
+    appointmentType,
+    hydratedAppointmentType,
+  ]);
+
   const [selectedDoctorId, setSelectedDoctorId] = useState<string | number | null>(null);
   const [bioPopoverDoctorId, setBioPopoverDoctorId] = useState<string | number | null>(null);
 
@@ -1119,7 +1179,7 @@ export function SelfScheduleCalendarModal({
       monthCandidates.find((c) => c.suggestedStartIso === selectedSlotIso) ??
       monthCandidates.find((c) => c.iso === selectedSlotIso);
     if (!slot) return;
-    const window = resolveSlotArrivalWindow(slot, appointmentType, practiceTz, serviceMinutes);
+    const window = resolveSlotArrivalWindow(slot, resolvedAppointmentType, practiceTz, serviceMinutes);
     onConfirm({
       doctorId: selectedDoctorId,
       doctorName: doctor.name,
@@ -1138,7 +1198,7 @@ export function SelfScheduleCalendarModal({
         monthCandidates.find((c) => c.iso === selectedSlotIso)
       : null;
   const selectedSlotWindow = selectedSlot
-    ? resolveSlotArrivalWindow(selectedSlot, appointmentType, practiceTz, serviceMinutes)
+    ? resolveSlotArrivalWindow(selectedSlot, resolvedAppointmentType, practiceTz, serviceMinutes)
     : undefined;
 
   const availableDays = slotsToAvailableDays(monthCandidates);

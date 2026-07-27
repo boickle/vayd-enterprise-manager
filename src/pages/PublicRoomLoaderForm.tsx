@@ -1,7 +1,7 @@
 // src/pages/PublicRoomLoaderForm.tsx
 import { useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef } from 'react';
 import type { ReactNode } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router';
 import { apiBaseUrl, http } from '../api/http';
 import { getEcwidProducts, type EcwidProduct, type EcwidChoice } from '../api/ecwid';
 import {

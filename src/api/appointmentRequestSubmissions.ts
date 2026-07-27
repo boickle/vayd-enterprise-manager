@@ -118,6 +118,11 @@ export async function fetchAppointmentRequestSubmissionsPage(params: {
   limit?: number;
   /** When true, server scans appointments to populate `conversions` (requires from/to for large sets). */
   includeConversions?: boolean;
+  /**
+   * When true, server merges abandoned form drafts (`kind: 'abandoned'`).
+   * Defaults to false on the API (fast path: completed submissions only).
+   */
+  includeAbandoned?: boolean;
 }): Promise<AppointmentRequestSubmissionsListResponse> {
   const { data } = await http.get<AppointmentRequestSubmissionsListResponse>(
     '/appointments/request-submissions',
@@ -129,6 +134,7 @@ export async function fetchAppointmentRequestSubmissionsPage(params: {
         page: params.page ?? 1,
         limit: params.limit ?? 50,
         ...(params.includeConversions ? { includeConversions: 'true' } : {}),
+        ...(params.includeAbandoned ? { includeAbandoned: 'true' } : {}),
       },
     }
   );
@@ -220,6 +226,7 @@ export async function fetchAllAppointmentRequestSubmissions(params: {
   from?: string;
   to?: string;
   includeConversions?: boolean;
+  includeAbandoned?: boolean;
 }): Promise<AllAppointmentRequestSubmissionsResult> {
   const limit = 200;
   const first = await fetchAppointmentRequestSubmissionsPage({ ...params, page: 1, limit });
@@ -232,7 +239,13 @@ export async function fetchAllAppointmentRequestSubmissions(params: {
 
 /** Pages after the first — used to show page 1 quickly, then backfill the rest. */
 export async function fetchRemainingAppointmentRequestSubmissionPages(
-  params: { practiceId: number; from?: string; to?: string },
+  params: {
+    practiceId: number;
+    from?: string;
+    to?: string;
+    includeConversions?: boolean;
+    includeAbandoned?: boolean;
+  },
   firstPage: AppointmentRequestSubmissionsListResponse,
   limit = 200,
 ): Promise<AppointmentRequestSubmissionItem[]> {

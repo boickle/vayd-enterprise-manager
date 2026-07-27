@@ -1,7 +1,7 @@
 // src/pages/PublicReferAFriend.tsx
 /** Standalone public "share / refer a friend" page at /share (legacy /refer-a-friend redirects here). */
 import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { submitPublicReferral } from '../api/publicReferral';
 import './ReferAFriend.css';
 

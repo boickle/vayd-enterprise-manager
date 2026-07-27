@@ -87,6 +87,7 @@ type EditDraft = {
   excludeFromRouting: boolean;
   excludeFromReminders: boolean;
   isHold: boolean;
+  isCalmingPremedType: boolean;
   usesLegacyRouting: boolean;
   allowSchedulingOverride: boolean;
   useLegacyPoints: boolean;
@@ -121,6 +122,7 @@ function draftFromType(type: AppointmentType): EditDraft {
     excludeFromRouting: t.excludeFromRouting === true,
     excludeFromReminders: t.excludeFromReminders === true,
     isHold: t.isHold === true,
+    isCalmingPremedType: t.isCalmingPremedType === true,
     usesLegacyRouting: t.usesLegacyRouting === true,
     allowSchedulingOverride: t.allowSchedulingOverride === true,
     useLegacyPoints: t.points == null,
@@ -171,6 +173,7 @@ function emptyDraft(): EditDraft {
     excludeFromRouting: false,
     excludeFromReminders: false,
     isHold: false,
+    isCalmingPremedType: false,
     usesLegacyRouting: false,
     allowSchedulingOverride: false,
     useLegacyPoints: true,
@@ -242,6 +245,7 @@ function buildUpdatePayloadFromDraft(draft: EditDraft): AppointmentTypeUpdate {
     excludeFromRouting: draft.excludeFromRouting,
     excludeFromReminders: draft.excludeFromReminders,
     isHold: draft.isHold,
+    isCalmingPremedType: draft.isCalmingPremedType,
     usesLegacyRouting: draft.usesLegacyRouting,
     allowSchedulingOverride: draft.allowSchedulingOverride,
     points,
@@ -485,6 +489,7 @@ export default function SettingsAppointmentTypes({
             type.excludeFromRouting ? 'No route' : null,
             type.excludeFromReminders ? 'No reminders' : null,
             type.isHold ? 'Hold' : null,
+            type.isCalmingPremedType ? 'Pre-Meds' : null,
             type.usesLegacyRouting ? 'Legacy routing' : null,
             type.allowSchedulingOverride ? 'Sched override' : null,
           ]
@@ -993,6 +998,16 @@ export default function SettingsAppointmentTypes({
                         <label className="settings-checkbox-label">
                           <input
                             type="checkbox"
+                            checked={draft.isCalmingPremedType}
+                            onChange={(e) =>
+                              setDraft({ ...draft, isCalmingPremedType: e.target.checked })
+                            }
+                          />
+                          Calming / Pre-Meds type (only one per company; checking this clears it elsewhere)
+                        </label>
+                        <label className="settings-checkbox-label">
+                          <input
+                            type="checkbox"
                             checked={draft.usesLegacyRouting}
                             onChange={(e) =>
                               setDraft({ ...draft, usesLegacyRouting: e.target.checked })
@@ -1015,6 +1030,14 @@ export default function SettingsAppointmentTypes({
                         Address required means the visit must have a linked client with an address, or an
                         alternate address when alternate address is allowed. Requires patient means the visit
                         must have a patient linked to be saved as that type.
+                      </p>
+                      <p className="settings-muted settings-appt-type-window-hint">
+                        Calming / Pre-Meds type is used on the appointment request form when a client reports
+                        calming medications, and its arrival window drives auto-book availability for the whole
+                        household (even when other pets use different types). Configure a ~1-hour window on it
+                        (for example 30 minutes before and 30 after). Only one type per company may carry this
+                        flag — saving it here removes it from any other type. It does not need “Show in appointment
+                        request form”; the calming-meds checkbox finds it by this flag.
                       </p>
                       <p className="settings-muted settings-appt-type-window-hint">
                         Scheduling override is shown in the scheduler UI only; appointment create/update

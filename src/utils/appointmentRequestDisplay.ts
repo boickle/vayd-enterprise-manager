@@ -29,7 +29,7 @@ function normalizeLookupName(name: string | null | undefined): string | null {
 
 /** Liaison notification subjects in info@ — manual requests and online auto-book. */
 const APPT_REQUEST_SUBJECT_RE =
-  /^(?:appointment request|online appointment booking):\s*(.+?)\s+for\s+(.+)$/i;
+  /^(?:appointment request|online appointment booking):\s*(.+?)\s+for\s+(.+?)(?:\s+\[request\s+#\d+\])?$/i;
 
 /** Strip reply/forward prefixes so liaison subjects still match after staff replies. */
 function liaisonSubjectForMatch(subject: string | null | undefined): string {
@@ -38,6 +38,16 @@ function liaisonSubjectForMatch(subject: string | null | undefined): string {
 
 export function isAppointmentRequestNotificationSubject(subject: string | null | undefined): boolean {
   return APPT_REQUEST_SUBJECT_RE.test(liaisonSubjectForMatch(subject));
+}
+
+/** Exact submission reference embedded in new liaison email subjects. */
+export function appointmentRequestIdFromNotificationSubject(
+  subject: string | null | undefined,
+): number | null {
+  const match = liaisonSubjectForMatch(subject).match(/\[request\s+#(\d+)\]\s*$/i);
+  if (!match) return null;
+  const id = Number(match[1]);
+  return Number.isFinite(id) && id > 0 ? id : null;
 }
 
 /** Normalized client name key from a liaison notification subject line. */

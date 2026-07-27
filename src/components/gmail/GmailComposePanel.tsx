@@ -5,7 +5,6 @@ import {
   buildComposeDraft,
   buildComposeSendBodiesFromEditorHtml,
   composeDraftSaveReady,
-  defaultFromAlias,
   discardAllThreadDrafts,
   draftListSnippet,
   extractEmail,
@@ -14,6 +13,7 @@ import {
   loadComposeFromThreadDraft,
   loadSendAsAliases,
   replaceSignatureHtmlInCompose,
+  resolveReplyFromAlias,
   saveComposeDraft,
   signatureHtmlForFromAlias,
   submitCompose,
@@ -96,10 +96,11 @@ export default function GmailComposePanel({
   const [draftId, setDraftId] = useState<string | undefined>();
   const [draftSaving, setDraftSaving] = useState(false);
   const [templates, setTemplates] = useState<GmailTemplate[]>([]);
+  const [trackOpens, setTrackOpens] = useState(true);
 
   const editorRef = useRef<HTMLDivElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
-  const draftIdRef = useRef<string | undefined>();
+  const draftIdRef = useRef<string | undefined>(undefined);
   const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSavedKeyRef = useRef('');
   const discardRequestedRef = useRef(false);
@@ -161,7 +162,12 @@ export default function GmailComposePanel({
       .then((list) => {
         if (cancelled) return;
         setAliases(list);
-        const fromVal = defaultFromAlias(list, mailbox);
+        const fromVal = resolveReplyFromAlias(
+          list,
+          mailbox,
+          context.replyTo,
+          threadMessages,
+        );
         setFrom(fromVal);
         const sigHtml = signatureHtmlForFromAlias(list, fromVal);
 
@@ -171,7 +177,24 @@ export default function GmailComposePanel({
         if (existing) {
           hydratedDraftRef.current = true;
           setDraftId(existing.draftId);
-          setTo(existing.to);
+          // Don't keep a bad autosaved To that points at staff (legacy comma-split bug).
+          const draftToLooksInternal =
+            Boolean(existing.to.trim()) &&
+            existing.to
+              .split(/[,;]/)
+              .map((s) => s.trim())
+              .filter(Boolean)
+              .every((part) => {
+                const email = extractEmail(part).toLowerCase();
+                return (
+                  !email.includes('@') ||
+                  email.endsWith('@vetatyourdoor.com') ||
+                  email === mailbox.toLowerCase()
+                );
+              });
+          setTo(
+            draftToLooksInternal && draft.to.trim() ? draft.to : existing.to || draft.to,
+          );
           setCc(existing.cc);
           setSubject(existing.subject);
           setQuotedSuffix(draft.quotedSuffix);
@@ -468,6 +491,7 @@ export default function GmailComposePanel({
         threadId,
         inReplyTo,
         references,
+        trackOpens,
       });
       draftIdRef.current = undefined;
       setDraftId(undefined);
@@ -624,6 +648,18 @@ export default function GmailComposePanel({
         <button type="button" className="gmail-btn" disabled={busy} onClick={onClose}>
           Cancel
         </button>
+        <label
+          className="gmail-compose-panel__track-opens"
+          title="Adds an invisible pixel so Scout can show when the recipient opens this email."
+        >
+          <input
+            type="checkbox"
+            checked={trackOpens}
+            disabled={busy}
+            onChange={(e) => setTrackOpens(e.target.checked)}
+          />
+          Track opens
+        </label>
         <div className="gmail-compose-panel__footer-spacer" />
         <GmailTemplateMenu
           templates={templates}

@@ -1,4 +1,5 @@
 // src/app-pages.ts
+import type { JSX } from 'react';
 import CreateUser from './pages/CreateUser';
 import Admin from './pages/Admin';
 import Analytics from './pages/Analytics';

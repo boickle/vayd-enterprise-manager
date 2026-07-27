@@ -2,7 +2,7 @@
 import React, { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { DateTime } from 'luxon';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router';
 import { http } from '../api/http';
 import {
   fetchFillDayCandidates,

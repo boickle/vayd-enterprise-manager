@@ -1,4 +1,4 @@
-import type { NavigateFunction } from 'react-router-dom';
+import type { NavigateFunction } from 'react-router';
 import {
   APPOINTMENT_REQUESTS_HIGHLIGHT_PARAM,
   APPOINTMENT_REQUESTS_LIST_PATH,

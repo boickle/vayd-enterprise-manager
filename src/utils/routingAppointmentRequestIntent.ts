@@ -1,7 +1,7 @@
 /**
  * Appointment request list → Routing prefill (same sessionStorage + event pattern as forward booking).
  */
-import type { NavigateFunction } from 'react-router-dom';
+import type { NavigateFunction } from 'react-router';
 import { clearRoutingCalendarPreview } from './routingCalendarPreviewStorage';
 import { ROUTING_DISMISS_FORWARD_BOOKING_EVENT } from './routingUiSnapshot';
 import type { AppointmentRequestListTab } from '../appointments-nav';
@@ -54,6 +54,8 @@ export type RoutingAppointmentRequestIntentV1 = {
     name: string;
     appointmentType: string | null;
     appointmentTypeId?: number | null;
+    /** Client reported calming meds — pet books as the flagged Pre-Meds type. */
+    usesCalmingMedications?: boolean;
     patientId?: string | null;
     patientPimsId: string | null;
     clientDetails?: string | null;
@@ -231,6 +233,7 @@ export function buildRoutingAppointmentRequestIntentFromSubmission(
       name: pet.name,
       appointmentType: pet.appointmentType,
       ...(pet.appointmentTypeId != null ? { appointmentTypeId: pet.appointmentTypeId } : {}),
+      ...(pet.usesCalmingMedications ? { usesCalmingMedications: true } : {}),
       ...(pet.patientId ? { patientId: pet.patientId } : {}),
       patientPimsId: pet.patientPimsId,
       ...(pet.clientDetails ? { clientDetails: pet.clientDetails } : {}),

@@ -4,6 +4,7 @@ import type { RoutingAppointmentRequestIntentV1 } from './routingAppointmentRequ
 import type { RoutingPatientChipRow } from './routingPatientSelection';
 import type { RoutingVisitPetInput } from './routingServiceMinutes';
 import { appointmentTypeForRoutingStatsKey } from './routingCalculateTimeType';
+import { findCalmingPremedAppointmentType } from './appointmentTypeSettings';
 import {
   buildAppointmentRequestPetStaffInstructions,
   type AppointmentRequestPetEuthNotes,
@@ -23,9 +24,19 @@ export function appointmentRequestSyntheticPatientId(
 }
 
 export function resolveAppointmentRequestPetTypeId(
-  pet: { appointmentType?: string | null; appointmentTypeId?: number | null },
+  pet: {
+    appointmentType?: string | null;
+    appointmentTypeId?: number | null;
+    usesCalmingMedications?: boolean | null;
+  },
   types: readonly AppointmentType[],
 ): number | null {
+  // Calming-meds pets book as the practice's flagged Pre-Meds type, regardless
+  // of the visit reason the client picked on the form.
+  if (pet.usesCalmingMedications === true) {
+    const premed = findCalmingPremedAppointmentType(types);
+    if (premed?.id != null && Number(premed.id) > 0) return Number(premed.id);
+  }
   const rawId = pet.appointmentTypeId;
   if (rawId != null && Number.isFinite(Number(rawId)) && Number(rawId) > 0) {
     return Number(rawId);
@@ -84,6 +95,7 @@ export type AppointmentRequestBookPetSource = {
   name: string;
   appointmentType: string | null;
   appointmentTypeId?: number | null;
+  usesCalmingMedications?: boolean | null;
   patientId?: string | null;
   patientPimsId?: string | null;
   clientDetails?: string | null;
@@ -165,6 +177,7 @@ export function buildAppointmentRequestBookVisitPatchesFromRequestData(
       name: row.name,
       appointmentType: row.appointmentType,
       appointmentTypeId: row.appointmentTypeId,
+      usesCalmingMedications: row.usesCalmingMedications,
       patientId: row.patientId,
       patientPimsId: row.patientPimsId,
       clientDetails: row.clientDetails,
@@ -192,6 +205,7 @@ export function buildAppointmentRequestBookVisitPatches(
     name: pet.name,
     appointmentType: pet.appointmentType,
     appointmentTypeId: pet.appointmentTypeId,
+    usesCalmingMedications: pet.usesCalmingMedications,
     patientId: pet.patientId,
     patientPimsId: pet.patientPimsId,
     clientDetails: pet.clientDetails,
