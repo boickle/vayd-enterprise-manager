@@ -357,14 +357,6 @@ export default function PimsClientsPage() {
           next.set('clientId', id);
           setSearchParams(next, { replace: false });
         }}
-        onUpserted={(lastName) => {
-          setQuery(lastName);
-          const next = new URLSearchParams(searchParams);
-          if (lastName.trim()) next.set('q', lastName.trim());
-          else next.delete('q');
-          setSearchParams(next, { replace: true });
-          void runSearch(lastName);
-        }}
       />
     </div>
   );
