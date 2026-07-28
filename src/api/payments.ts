@@ -385,16 +385,36 @@ export interface PaymentResponse {
   status?: string;
 }
 
+export type PaymentsLeaderboardEntry = {
+  /** Day: YYYY-MM-DD; month: YYYY-MM; year: YYYY */
+  key: string;
+  revenue: number;
+  count: number;
+};
+
+export type PaymentsLeaderboards = {
+  topDays: PaymentsLeaderboardEntry[];
+  topMonths: PaymentsLeaderboardEntry[];
+  topYears: PaymentsLeaderboardEntry[];
+};
+
 /**
  * Fetch daily payments analytics between start/end (inclusive).
  * Matches backend controller: GET /analytics/payments?start=YYYY-MM-DD&end=YYYY-MM-DD[&practiceId=...]
+ * Pass includeSubscriptions: false to skip Square enrichment (faster for wide ranges).
  */
 export async function fetchPaymentsAnalytics(params: {
   start: string;
   end: string;
   practiceId?: string | number;
+  includeSubscriptions?: boolean;
 }): Promise<PaymentPoint[]> {
-  const { data } = await http.get('/analytics/payments', { params });
+  const { includeSubscriptions, ...rest } = params;
+  const query: Record<string, string | number | boolean> = { ...rest };
+  if (includeSubscriptions === false) {
+    query.includeSubscriptions = false;
+  }
+  const { data } = await http.get('/analytics/payments', { params: query });
 
   // Ensure we always return the normalized shape with numbers
   const rows: any[] = Array.isArray(data) ? data : (data?.rows ?? []);
@@ -406,6 +426,36 @@ export async function fetchPaymentsAnalytics(params: {
     onlinePharmacyRevenue: Number(r.onlinePharmacyRevenue ?? 0),
     practiceRevenue: Number(r.practiceRevenue ?? 0),
   }));
+}
+
+/**
+ * Top days / months / years matching the daily revenue card:
+ * DB payments (excl. Membership Plan Payment) + Square/Stripe from Dec 2025 membership launch.
+ * GET /analytics/payments/leaderboards?limit=10
+ */
+export async function fetchPaymentsLeaderboards(params?: {
+  limit?: number;
+  practiceId?: string | number;
+}): Promise<PaymentsLeaderboards> {
+  const { data } = await http.get('/analytics/payments/leaderboards', {
+    params: {
+      limit: params?.limit ?? 10,
+      ...(params?.practiceId != null ? { practiceId: params.practiceId } : {}),
+    },
+  });
+  const normalize = (rows: unknown): PaymentsLeaderboardEntry[] => {
+    if (!Array.isArray(rows)) return [];
+    return rows.map((r: any) => ({
+      key: String(r.key ?? r.date ?? ''),
+      revenue: Number(r.revenue ?? 0),
+      count: Number(r.count ?? 0),
+    }));
+  };
+  return {
+    topDays: normalize(data?.topDays),
+    topMonths: normalize(data?.topMonths),
+    topYears: normalize(data?.topYears),
+  };
 }
 
 export async function createPayment(payload: PaymentRequest): Promise<PaymentResponse> {
