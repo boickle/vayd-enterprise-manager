@@ -4,6 +4,11 @@ import { createPortal } from 'react-dom';
 import type { Appointment, RoomLoader } from '../api/roomLoader';
 import { http } from '../api/http';
 import { RoomLoaderPdfCanvas } from '../components/RoomLoaderPdfCanvas';
+import {
+  preferRoomLoaderPreApptStatus,
+  resolveRoomLoaderPreApptUiStatus,
+  type RoomLoaderPreApptUiStatus,
+} from '../utils/roomLoaderPreApptDisplay';
 import { findRoomLoaderForAppointment } from '../utils/schedulerRoomLoaderResolve';
 import './Scheduler.css';
 
@@ -214,12 +219,6 @@ export function SchedulerRoomLoaderPdfModal({
 
   return createPortal(modal, document.body);
 }
-
-import {
-  preferRoomLoaderPreApptStatus,
-  resolveRoomLoaderPreApptUiStatus,
-  type RoomLoaderPreApptUiStatus,
-} from '../utils/roomLoaderPreApptDisplay';
 
 function roomLoaderMenuUiStatus(
   confirmStatusName: string | null | undefined,

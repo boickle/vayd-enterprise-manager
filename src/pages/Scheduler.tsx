@@ -82,6 +82,7 @@ import {
   buildRoomLoaderPreApptStatusByAppointmentId,
   mergeAppointmentPreserveRoomLoaderConfirmStatus,
   preferRoomLoaderPreApptStatus,
+  ROOM_LOADER_SENT_STATUS_CHANGED_EVENT,
   roomLoaderPreApptUiStatus,
   type RoomLoaderPreApptUiStatus,
 } from '../utils/roomLoaderPreApptDisplay';
@@ -4521,7 +4522,10 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       }
 
       if (nonDels.length === 0) {
-        if (dels.length > 0) bumpDriveSoft();
+        if (dels.length > 0) {
+          bumpDriveSoft();
+          void loadRoomLoaderStatusesForRange();
+        }
         return;
       }
 
@@ -4566,6 +4570,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       });
 
       if (dels.length > 0 || nonDels.length > 0) bumpDriveSoft();
+      // Scout sentStatus can lead PIMS confirmStatusName; refresh RL badges on every calendar socket batch.
+      void loadRoomLoaderStatusesForRange();
     },
     [
       providers.length,
@@ -4575,6 +4581,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       rangeUtc.startUtc,
       rangeUtc.endUtc,
       loadRange,
+      loadRoomLoaderStatusesForRange,
     ]
   );
 
@@ -4591,8 +4598,20 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       onBatch: (payloads) => {
         void applyRealtimeCalendarBatch(payloads);
       },
+      onReconnect: () => {
+        void loadRoomLoaderStatusesForRange();
+      },
     });
-  }, [authToken, resolvedPrimaryProviderId, applyRealtimeCalendarBatch]);
+  }, [authToken, resolvedPrimaryProviderId, applyRealtimeCalendarBatch, loadRoomLoaderStatusesForRange]);
+
+  /** Same-tab: Room Loader send/update should flip calendar RL badges without waiting on PIMS/socket. */
+  useEffect(() => {
+    const onSentStatusChanged = () => {
+      void loadRoomLoaderStatusesForRange();
+    };
+    window.addEventListener(ROOM_LOADER_SENT_STATUS_CHANGED_EVENT, onSentStatusChanged);
+    return () => window.removeEventListener(ROOM_LOADER_SENT_STATUS_CHANGED_EVENT, onSentStatusChanged);
+  }, [loadRoomLoaderStatusesForRange]);
 
   useEffect(() => {
     const docId = resolvedPrimaryProviderId.trim();

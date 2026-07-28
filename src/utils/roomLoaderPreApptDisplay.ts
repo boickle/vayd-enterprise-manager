@@ -2,6 +2,14 @@
 export const PRE_APPT_SENT_SNIPPET = 'Pre-Appt Email Sent';
 export const PRE_APPT_COMPLETE_SNIPPET = 'Client Submitted Pre-Appt form';
 
+/** Fired after send-to-client / status changes so open calendars can refresh RL badges without a full reload. */
+export const ROOM_LOADER_SENT_STATUS_CHANGED_EVENT = 'vayd:room-loader-sent-status-changed';
+
+export function notifyRoomLoaderSentStatusChanged(): void {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new Event(ROOM_LOADER_SENT_STATUS_CHANGED_EVENT));
+}
+
 export type RoomLoaderPreApptUiStatus = 'none' | 'sent' | 'complete';
 
 const STATUS_RANK: Record<RoomLoaderPreApptUiStatus, number> = {
