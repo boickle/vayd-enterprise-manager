@@ -129,7 +129,9 @@ export default function VisitCheckoutPanel({
       ) : (
         <>
           <div className="soap-invoice-lines">
-            {(invoice.lines ?? []).map((l) => (
+            {(invoice.lines ?? [])
+              .filter((l) => !l.isDeleted)
+              .map((l) => (
               <div key={l.id} className="soap-invoice-line">
                 <span>{l.description}</span>
                 <span>{l.isCovered ? 'covered' : money(l.amount)}</span>

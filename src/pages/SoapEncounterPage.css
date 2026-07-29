@@ -247,6 +247,26 @@
 .soap-textarea {
   resize: vertical;
 }
+.soap-textarea--subjective {
+  min-height: 280px;
+}
+.soap-textarea--email {
+  min-height: 220px;
+  margin-top: 8px;
+}
+.soap-email-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--soap-muted, #6b7280);
+  margin-top: 4px;
+}
+.soap-email-label .soap-input {
+  font-weight: 500;
+  color: #111827;
+}
 .soap-input:focus,
 .soap-textarea:focus,
 .soap-select:focus {

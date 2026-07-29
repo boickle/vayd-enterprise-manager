@@ -185,6 +185,43 @@ export function buildSubjectiveTextFromRoomLoaderResponse(
   return paragraphs.join('\n\n').trim();
 }
 
+const PRE_VISIT_SUBJECTIVE_PREFIX = 'Pre-Visit Check-in Information';
+/** Older prefix — treat as already polished so we don't re-summarize or double-prefix. */
+const LEGACY_PRE_VISIT_SUBJECTIVE_PREFIXES = ['Room Loader information'];
+
+function hasPreVisitSubjectivePrefix(text: string): boolean {
+  const t = text.trim();
+  if (new RegExp(`^${PRE_VISIT_SUBJECTIVE_PREFIX}\\b`, 'i').test(t)) return true;
+  return LEGACY_PRE_VISIT_SUBJECTIVE_PREFIXES.some((p) =>
+    new RegExp(`^${p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(t)
+  );
+}
+
+/** Prefix AI (or raw) intake text so doctors can see it came from pre-visit check-in. */
+export function withRoomLoaderSubjectivePrefix(body: string): string {
+  const trimmed = body.trim();
+  if (!trimmed) return '';
+  if (hasPreVisitSubjectivePrefix(trimmed)) return trimmed;
+  return `${PRE_VISIT_SUBJECTIVE_PREFIX}:\n\n${trimmed}`;
+}
+
+/**
+ * True when Subjective still looks like our raw Room Loader Q&A dump (not a clinical note
+ * and not already prefixed). Intentionally strict so reopening an unfinished SOAP never
+ * overwrites doctor-typed history.
+ */
+export function looksLikeRawRoomLoaderSubjective(text: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  if (hasPreVisitSubjectivePrefix(t)) return false;
+  // Our builder always leads with staff/client visit reason when present.
+  if (/^Appointment reason:/i.test(t)) return true;
+  if (/^Reason for visit:/i.test(t)) return true;
+  // Fallback: multiple "Question? Answer." sentences typical of formAnswersForPdf export.
+  const qaPairs = t.match(/[^?\n]{8,}\?\s+\S+/g) ?? [];
+  return qaPairs.length >= 3;
+}
+
 function roomLoaderHasClientAnswers(loader: RoomLoader): boolean {
   const response = loader.responseFromClient;
   const pages = response?.formAnswersForPdf?.pages;

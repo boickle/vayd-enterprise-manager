@@ -127,6 +127,26 @@ export async function structureTranscript(
   return data;
 }
 
+/**
+ * Rewrite Room Loader / pre-visit Q&A into a short Subjective history note (1–3 paragraphs).
+ * Does not mutate the encounter — caller saves via updateEncounter after review.
+ */
+export async function summarizeIntakeHistory(
+  soapEncounterId: string,
+  intakeText: string,
+  patientName?: string | null
+): Promise<string> {
+  const { data } = await http.post<{ summary: string }>(
+    `/soap-encounters/${encodeURIComponent(soapEncounterId)}/scribe/summarize-intake`,
+    {
+      practiceId: VISIT_WORKFLOW_PRACTICE_ID,
+      intakeText,
+      ...(patientName?.trim() ? { patientName: patientName.trim() } : {}),
+    }
+  );
+  return typeof data?.summary === 'string' ? data.summary.trim() : '';
+}
+
 export type ScribeSocketStatus = 'idle' | 'connecting' | 'recording' | 'stopping' | 'error';
 
 export type ScribeSocketHandlers = {
