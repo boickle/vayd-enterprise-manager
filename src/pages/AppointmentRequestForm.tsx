@@ -8414,11 +8414,12 @@ export default function AppointmentRequestForm() {
               </p>
               <p style={{ fontSize: '14px', color: '#111827', marginBottom: '8px' }}>Members receive:</p>
               <ul style={{ margin: '0 0 16px 20px', padding: 0, fontSize: '14px', color: '#374151', lineHeight: 1.7 }}>
-                <li>Priority access to their dedicated veterinary One-Team</li>
-                <li>Preferred booking for appointments</li>
+                <li>Priority scheduling with their dedicated veterinary One-Team</li>
                 <li>Comprehensive Wellness care, including travel fees</li>
                 <li>Vaccines and recommended screening labs</li>
-                <li>After-hours telehealth support</li>
+                <li>Priority 7-day support from VAYD staff</li>
+                <li>50% off additional exams</li>
+                <li>Member pricing (10% off) in our online store</li>
               </ul>
               <p style={{ fontSize: '15px', fontWeight: 700, color: '#374151', lineHeight: 1.6, marginBottom: '16px' }}>
                 If you&apos;d like ongoing care with Vet At Your Door, you can explore and join One-Team Membership below.

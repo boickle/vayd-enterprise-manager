@@ -302,8 +302,6 @@ export default function MembershipRecommendationPanel({
             </>
           );
 
-        const showPlus = petPlans.plans.some((p) => normalizePlanBaseId(p.planId) === 'plus-addon');
-
         return (
           <div
             key={petPlans.patientId}
@@ -363,12 +361,10 @@ export default function MembershipRecommendationPanel({
                     Why families choose One-Team membership
                   </h4>
                   <ul style={{ margin: 0, paddingLeft: '20px', color: '#1a2f24', fontSize: '14px', lineHeight: 1.5 }}>
-                    <li style={{ marginBottom: '6px' }}>✔ Priority access to a dedicated One-Team who knows {petName} over time</li>
-                    <li style={{ marginBottom: '6px' }}>✔ Preferred booking with your veterinary team</li>
-                    <li style={{ marginBottom: '6px' }}>
-                      ✔ After-hours support from Vet At Your Door staff through the Client Portal when something comes up and
-                      you&apos;re worried
-                    </li>
+                    <li style={{ marginBottom: '6px' }}>✔ Priority scheduling with a dedicated One-Team who knows {petName} over time</li>
+                    <li style={{ marginBottom: '6px' }}>✔ Priority 7-day support from VAYD staff through the Client Portal</li>
+                    <li style={{ marginBottom: '6px' }}>✔ 50% off additional exams</li>
+                    <li style={{ marginBottom: '6px' }}>✔ Member pricing (10% off) in our online store</li>
                     <li style={{ marginBottom: '6px' }}>✔ Care designed for long-term health, not just sick visits</li>
                   </ul>
                 </div>
@@ -564,33 +560,10 @@ export default function MembershipRecommendationPanel({
               {monthlyFee != null && monthlyFee > 0 && (
                 <p style={{ margin: '10px 0 0', fontSize: '13px', color: '#5a6b6c', lineHeight: 1.45 }}>
                   Membership is how families access the Vet At Your Door One-Team model — ongoing care with one dedicated veterinary team who knows you
-                  and your pet over time, preferred booking with that team, and after-hours support through the Client Portal.
+                  and your pet over time, priority scheduling with that team, and priority 7-day support through the Client Portal.
                 </p>
               )}
             </div>
-
-            {showPlus && (
-              <div
-                style={{
-                  marginBottom: '16px',
-                  padding: '14px 16px',
-                  background: '#fff',
-                  border: '1px solid #c9e3d6',
-                  borderRadius: '8px',
-                }}
-              >
-                <div style={{ fontSize: '15px', fontWeight: 700, color: '#14532d', marginBottom: '8px' }}>Optional: PLUS Care Add-on</div>
-                <p style={{ margin: '0 0 10px', fontSize: '13px', color: '#3d5347', lineHeight: 1.5 }}>
-                  Designed for pets who may need additional visits or closer monitoring.
-                </p>
-                <div style={{ fontSize: '16px', fontWeight: 700, color: '#1a2f24', marginBottom: '8px' }}>49/month</div>
-                <ul style={{ margin: 0, paddingLeft: '18px', fontSize: '13px', color: '#3d5347', lineHeight: 1.45 }}>
-                  <li>50% off additional exams</li>
-                  <li>10% off labs, services, and medications</li>
-                  <li>One complimentary nail trim per year</li>
-                </ul>
-              </div>
-            )}
           </div>
         );
       })}

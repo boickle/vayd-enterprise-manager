@@ -364,33 +364,45 @@ const VACCINE_SEARCH_QUERIES = {
 
 type VaccineOptKey = keyof typeof VACCINE_SEARCH_QUERIES;
 
+const MEMBERSHIP_SHARED_BENEFITS = [
+  'A dedicated "One-Team" that gets to know your pet over time',
+  'Priority scheduling with your One-Team',
+  '7-day support from VAYD staff',
+  '50% off additional exams',
+  'Member pricing (10% off) in our online store',
+];
+
 /** Plan card content for room-loader info popover (same as MembershipSignup). Key by base plan id (e.g. foundations, golden). */
 const MEMBERSHIP_PLAN_CARD_DETAILS: Record<string, { name: string; tagLine: string; includes: string[] }> = {
   foundations: {
     name: 'Foundations',
     tagLine: 'Annual Membership Plan',
     includes: [
-      'One Comprehensive Wellness Exam & Trip Fee',
-      'Annual Vaccinations Recommended for Age and Lifestyle',
-      'Annual "Basic" Lab Panel (CBC, Abbreviated Chemistry)',
-      'Annual Fecal Test',
-      'Heartworm/Tick Test (Dogs)',
-      'FIV / FeLV / Heartworm test (Cats)',
-      'After-hours Online Chat Support via VAYD Client Portal',
+      'One comprehensive wellness exam & trip fee',
+      'Annual vaccinations recommended for age and lifestyle',
+      'Annual "basic" lab panel (CBC, abbreviated chemistry)',
+      'Annual fecal test',
+      'Heartworm/Tick test (dogs)',
+      'FIV/FeLV/heartworm test (cats)',
+      ...MEMBERSHIP_SHARED_BENEFITS,
     ],
   },
   golden: {
     name: 'Golden',
     tagLine: 'Annual Membership Plan',
     includes: [
-      'Two Comprehensive Wellness Exams & Trip Fees',
-      'Annual Vaccinations Recommended for Age and Lifestyle',
-      'Annual "Advanced" Lab Panel (CBC, Chemistry, Thyroid, Urinalysis)',
-      'Annual Fecal Test',
-      'FeLV/FIV/Heartworm test (Cats)',
-      'Pancreatitis Screening (Cats)',
-      '"4dx" Heartworm/Tick test (Dogs)',
-      'After-hours Online Chat Support via VAYD Client Portal',
+      'Two comprehensive wellness exams & trip fees',
+      'Annual vaccinations recommended for age and lifestyle',
+      'Annual "advanced" lab panel (CBC, chemistry, thyroid, urinalysis)',
+      'Annual fecal test',
+      'FeLV/FIV/heartworm test (cats)',
+      'Pancreatitis screening (cats)',
+      '"4dx" Heartworm/Tick test (dogs)',
+      'A team that gets to know your pet over time',
+      'Priority scheduling with your One-Team',
+      '7-day support from VAYD staff',
+      '50% off additional exams',
+      'Member pricing (10% off) in our online store',
     ],
   },
   'comfort-care': {
@@ -399,17 +411,8 @@ const MEMBERSHIP_PLAN_CARD_DETAILS: Record<string, { name: string; tagLine: stri
     includes: [
       'One Comprehensive Exam & Trip Fee per month',
       'One office-hours tele-health consult via phone or video',
-      'After-hours Online Chat Support via VAYD Client Portal',
+      'Priority 7-day support from VAYD staff',
       '15% off total euthanasia and after-care cost',
-    ],
-  },
-  'plus-addon': {
-    name: 'PLUS Add-on',
-    tagLine: 'Annual Membership Plan',
-    includes: [
-      '50% off all Additional Exams',
-      '10% off Everything We Offer (e.g. Lab Work, Services, Medications)',
-      'One Free Nail Trim Per Year',
     ],
   },
   'starter-addon': {
@@ -429,7 +432,7 @@ function getMembershipPlanCardDetails(planId: string): { name: string; tagLine: 
 }
 
 /** All plan IDs used in membership flow (base + add-ons). Filter per pet using same logic as MembershipSignup. */
-const ALL_MEMBERSHIP_PLAN_IDS = ['foundations', 'golden', 'comfort-care', 'plus-addon', 'starter-addon'] as const;
+const ALL_MEMBERSHIP_PLAN_IDS = ['foundations', 'golden', 'comfort-care', 'starter-addon'] as const;
 
 /** When species fields are empty, infer from reminders/added items (e.g. canine vaccines on the visit list). */
 function inferMembershipKindFromLineItems(p: any): 'dog' | 'cat' | null {
@@ -464,7 +467,6 @@ function getPlanIdsForPet(petDetails: { kind: 'dog' | 'cat' | null; ageYears: nu
   const planIds: string[] = ['foundations'];
   if (meetsGolden) planIds.push('golden');
   planIds.push('comfort-care');
-  planIds.push('plus-addon');
   if (shouldShowStarter) planIds.push('starter-addon');
   return planIds;
 }
@@ -473,7 +475,7 @@ function normalizePlanBaseId(planId: string): string {
   return (planId || '').replace(/-cat|-dog$/i, '');
 }
 
-const MEMBERSHIP_ADDON_PLAN_BASE_IDS = new Set(['plus-addon', 'starter-addon']);
+const MEMBERSHIP_ADDON_PLAN_BASE_IDS = new Set(['starter-addon']);
 
 /**
  * Primary wellness plan for recommendation copy (excludes add-ons).
@@ -8100,7 +8102,7 @@ export default function PublicRoomLoaderForm() {
             Want to spread out the cost of care while getting even more support and benefits?
           </p>
           <p style={{ margin: '0 0 12px', fontSize: '14px', color: '#555', lineHeight: 1.4, textAlign: 'left' }}>
-            Memberships allow you to turn wellness care into easy monthly payments while giving you priority access to your dedicated One Team and after-hours triage support. You can explore membership options in your Client Portal. To apply membership benefits to this visit, enrollment should be completed before your appointment.
+            Memberships allow you to turn wellness care into easy monthly payments while giving you priority scheduling with your dedicated One Team and priority 7-day support from VAYD staff. Members also save 50% on additional exams and get member pricing in our online store. You can explore membership options in your Client Portal. To apply membership benefits to this visit, enrollment should be completed before your appointment.
           </p>
           <div className="public-room-loader-thank-you-actions" style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', justifyContent: 'center', alignItems: 'center' }}>
             {token && (
