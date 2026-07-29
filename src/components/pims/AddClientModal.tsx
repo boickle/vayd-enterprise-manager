@@ -1,5 +1,5 @@
-import { FormEvent, useCallback, useMemo, useState } from 'react';
-import { upsertClients, saveClients, type ClientDto } from '../../api/clientsMutations';
+import { FormEvent, useCallback, useState } from 'react';
+import { createClientScout, type ScoutClientWrite } from '../../api/clientsMutations';
 
 const DEFAULT_PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
 
@@ -8,14 +8,8 @@ function extractErr(err: unknown): string {
   return e?.response?.data?.message ?? e?.message ?? 'Request failed';
 }
 
-function firstSavedClientId(result: unknown): string | null {
-  if (result == null) return null;
-  if (Array.isArray(result)) {
-    const first = result[0] as Record<string, unknown> | undefined;
-    if (first && first.id != null) return String(first.id);
-    return null;
-  }
-  if (typeof result === 'object' && 'id' in (result as object)) {
+function createdClientId(result: unknown): string | null {
+  if (result && typeof result === 'object' && 'id' in (result as object)) {
     const id = (result as { id: unknown }).id;
     if (id != null) return String(id);
   }
@@ -25,37 +19,39 @@ function firstSavedClientId(result: unknown): string | null {
 type Props = {
   open: boolean;
   onClose: () => void;
-  /** After POST /clients save — internal id when API returns it */
+  /** Receives the new client's internal id so the parent can open its detail view. */
   onCreated?: (clientId: string) => void;
-  /** After POST /clients/upsert — no id in response; parent can search by last name */
-  onUpserted?: (lastNameForSearch: string) => void;
 };
 
-export default function AddClientModal({ open, onClose, onCreated, onUpserted }: Props) {
+/**
+ * Creates a client that lives only in Scout (pimsType VAYD). There is no eVet counterpart,
+ * so nothing will ever overwrite it.
+ */
+export default function AddClientModal({ open, onClose, onCreated }: Props) {
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
-  const [pimsId, setPimsId] = useState('');
   const [email, setEmail] = useState('');
-  const [phone, setPhone] = useState('');
+  const [phone1, setPhone1] = useState('');
+  const [phone2, setPhone2] = useState('');
   const [address1, setAddress1] = useState('');
   const [city, setCity] = useState('');
   const [state, setState] = useState('');
-  const [zip, setZip] = useState('');
+  const [zipcode, setZipcode] = useState('');
+  const [alerts, setAlerts] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const practice = useMemo(() => ({ id: DEFAULT_PRACTICE_ID }), []);
 
   const reset = useCallback(() => {
     setFirstName('');
     setLastName('');
-    setPimsId('');
     setEmail('');
-    setPhone('');
+    setPhone1('');
+    setPhone2('');
     setAddress1('');
     setCity('');
     setState('');
-    setZip('');
+    setZipcode('');
+    setAlerts('');
     setError(null);
   }, []);
 
@@ -78,45 +74,27 @@ export default function AddClientModal({ open, onClose, onCreated, onUpserted }:
     }
     setSubmitting(true);
     setError(null);
-    const dto: ClientDto = {
+
+    const body: ScoutClientWrite & { practiceId: number; firstName: string } = {
+      practiceId: DEFAULT_PRACTICE_ID,
       firstName: fn,
       lastName: ln,
-      practice,
+      email: email.trim() || null,
+      phone1: phone1.trim() || null,
+      phone2: phone2.trim() || null,
+      address1: address1.trim() || null,
+      city: city.trim() || null,
+      state: state.trim() || null,
+      zipcode: zipcode.trim() || null,
+      alerts: alerts.trim() || null,
     };
-    const pid = pimsId.trim();
-    if (pid) dto.pimsId = pid;
-    const em = email.trim();
-    if (em) dto.email = em;
-    const ph = phone.trim();
-    if (ph) {
-      dto.phones = [{ number: ph, label: 'Mobile' }];
-      dto.mobilePhone = ph;
-    }
-    const a1 = address1.trim();
-    if (a1) dto.address1 = a1;
-    const c = city.trim();
-    if (c) dto.city = c;
-    const st = state.trim();
-    if (st) dto.state = st;
-    const z = zip.trim();
-    if (z) dto.zip = z;
-    dto.isActive = true;
-    dto.isDeleted = false;
 
     try {
-      if (pid) {
-        await upsertClients(dto);
-        const lnSearch = ln;
-        reset();
-        onClose();
-        onUpserted?.(lnSearch);
-      } else {
-        const result = await saveClients(dto);
-        const newId = firstSavedClientId(result);
-        reset();
-        onClose();
-        if (newId && onCreated) onCreated(newId);
-      }
+      const result = await createClientScout(body);
+      const newId = createdClientId(result);
+      reset();
+      onClose();
+      if (newId && onCreated) onCreated(newId);
     } catch (err) {
       setError(extractErr(err));
     } finally {
@@ -145,22 +123,17 @@ export default function AddClientModal({ open, onClose, onCreated, onUpserted }:
               <span className="pims-add-client-modal__label">Last name *</span>
               <input className="input" value={lastName} onChange={(e) => setLastName(e.target.value)} required />
             </label>
-            <label className="pims-add-client-modal__full">
-              <span className="pims-add-client-modal__label">PIMS ID (optional)</span>
-              <input
-                className="input"
-                value={pimsId}
-                onChange={(e) => setPimsId(e.target.value)}
-                placeholder="External / PIMS client id — uses upsert when set"
-              />
-            </label>
             <label>
               <span className="pims-add-client-modal__label">Email</span>
               <input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
             </label>
             <label>
               <span className="pims-add-client-modal__label">Phone</span>
-              <input className="input" type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} />
+              <input className="input" type="tel" value={phone1} onChange={(e) => setPhone1(e.target.value)} />
+            </label>
+            <label>
+              <span className="pims-add-client-modal__label">Alternate phone</span>
+              <input className="input" type="tel" value={phone2} onChange={(e) => setPhone2(e.target.value)} />
             </label>
             <label className="pims-add-client-modal__full">
               <span className="pims-add-client-modal__label">Address line 1</span>
@@ -176,13 +149,16 @@ export default function AddClientModal({ open, onClose, onCreated, onUpserted }:
             </label>
             <label>
               <span className="pims-add-client-modal__label">ZIP</span>
-              <input className="input" value={zip} onChange={(e) => setZip(e.target.value)} />
+              <input className="input" value={zipcode} onChange={(e) => setZipcode(e.target.value)} />
+            </label>
+            <label className="pims-add-client-modal__full">
+              <span className="pims-add-client-modal__label">Alerts</span>
+              <input className="input" value={alerts} onChange={(e) => setAlerts(e.target.value)} />
             </label>
           </div>
           <p className="pims-add-client-modal__hint muted" style={{ fontSize: 12, margin: '0 0 12px' }}>
-            Practice is taken from your JWT / env default ({DEFAULT_PRACTICE_ID}). With a PIMS ID, the client is{' '}
-            <strong>upserted</strong> (importer conflict key). Without PIMS ID, a new row is <strong>saved</strong> via{' '}
-            <code>POST /clients</code>.
+            Created in Scout only — this client has no eVet record, so imports will never change
+            it. Add the visit address so routing can geocode the stop.
           </p>
           <div className="pims-add-client-modal__actions">
             <button type="button" className="btn secondary" onClick={handleClose} disabled={submitting}>

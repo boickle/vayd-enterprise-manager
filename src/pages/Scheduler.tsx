@@ -59,7 +59,7 @@ import {
   rolesIncludeAdminBypass,
 } from '../utils/manualBookingPermissions';
 import { buildAppointmentTypeCatalog, appointmentFormFlags } from '../utils/appointmentTypeSettings';
-import type { Appointment, Client, Patient } from '../api/roomLoader';
+import { searchRoomLoaders, type Appointment, type Client, type Patient } from '../api/roomLoader';
 import {
   computeEditPreviewPopoverPosition,
   computeVisitHighlightsPopoverPosition,
@@ -78,7 +78,14 @@ import {
   type SchedulerDoctorDayEffectiveWindow,
   type SchedulerDoctorDayMembership,
 } from '../utils/schedulerDriveEta';
-import { mergeAppointmentPreserveRoomLoaderConfirmStatus } from '../utils/roomLoaderPreApptDisplay';
+import {
+  buildRoomLoaderPreApptStatusByAppointmentId,
+  mergeAppointmentPreserveRoomLoaderConfirmStatus,
+  preferRoomLoaderPreApptStatus,
+  ROOM_LOADER_SENT_STATUS_CHANGED_EVENT,
+  roomLoaderPreApptUiStatus,
+  type RoomLoaderPreApptUiStatus,
+} from '../utils/roomLoaderPreApptDisplay';
 import { summarizeReconciledDayWindowWarnings } from '../utils/routingCardWindowWarning';
 import {
   driveSlotForAppointmentId,
@@ -2836,20 +2843,6 @@ function appointmentOverlapsUtcRange(
   return s < re && e > rs;
 }
 
-/** Match `confirmStatusName` (room loader / pre-appt workflow). */
-const PRE_APPT_SENT_SNIPPET = 'Pre-Appt Email Sent';
-const PRE_APPT_COMPLETE_SNIPPET = 'Client Submitted Pre-Appt form';
-
-type RoomLoaderPreApptUiStatus = 'none' | 'sent' | 'complete';
-
-function roomLoaderPreApptStatus(confirmStatusName: string | null | undefined): RoomLoaderPreApptUiStatus {
-  const s = (confirmStatusName ?? '').trim();
-  if (!s) return 'none';
-  if (s.includes(PRE_APPT_COMPLETE_SNIPPET)) return 'complete';
-  if (s.includes(PRE_APPT_SENT_SNIPPET)) return 'sent';
-  return 'none';
-}
-
 function isCalendarBlockAppointment(a: Appointment): boolean {
   return isPracticeCalendarBlockAppointment(a);
 }
@@ -2870,8 +2863,24 @@ const PRE_APPT_STATUS_COLOR: Record<RoomLoaderPreApptUiStatus, string> = {
   complete: '#16a34a',
 };
 
-function SchedulerPreApptRlIcon({ confirmStatusName }: { confirmStatusName?: string | null }) {
-  const st = roomLoaderPreApptStatus(confirmStatusName);
+function resolveSchedulerRlStatus(
+  confirmStatusName: string | null | undefined,
+  scoutUiStatus?: RoomLoaderPreApptUiStatus | null
+): RoomLoaderPreApptUiStatus {
+  return preferRoomLoaderPreApptStatus(
+    roomLoaderPreApptUiStatus(confirmStatusName),
+    scoutUiStatus ?? 'none'
+  );
+}
+
+function SchedulerPreApptRlIcon({
+  confirmStatusName,
+  scoutUiStatus,
+}: {
+  confirmStatusName?: string | null;
+  scoutUiStatus?: RoomLoaderPreApptUiStatus | null;
+}) {
+  const st = resolveSchedulerRlStatus(confirmStatusName, scoutUiStatus);
   const title =
     st === 'complete'
       ? 'Room loader / pre-appt: client submitted form (completed)'
@@ -3136,6 +3145,10 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   const [onMyWaySmsAppt, setOnMyWaySmsAppt] = useState<Appointment | null>(null);
   const [embeddedRoomLoaderId, setEmbeddedRoomLoaderId] = useState<number | null>(null);
   const [roomLoaderPdfModalAppt, setRoomLoaderPdfModalAppt] = useState<Appointment | null>(null);
+  /** Scout room-loader sentStatus → RL badge color when PIMS confirmStatusName lags behind. */
+  const [roomLoaderStatusByApptId, setRoomLoaderStatusByApptId] = useState<
+    Map<number, RoomLoaderPreApptUiStatus>
+  >(() => new Map());
   const [workZonesMapOpen, setWorkZonesMapOpen] = useState(false);
   const [roomLoaderOpening, setRoomLoaderOpening] = useState(false);
   /** null = not applicable or loading; true = at least one pet can be added; false = none left */
@@ -4403,6 +4416,28 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     };
   }, [isAdminOrSuper]);
 
+  /** Align calendar RL badges with Scout room-loader sentStatus for the visible date range. */
+  const loadRoomLoaderStatusesForRange = useCallback(async () => {
+    const from = rangeUtc.startLocal.toISODate();
+    const toExclusive = rangeUtc.endLocalExclusive.toISODate();
+    if (!from || !toExclusive) {
+      setRoomLoaderStatusByApptId(new Map());
+      return;
+    }
+    const toInclusive = rangeUtc.endLocalExclusive.minus({ days: 1 }).toISODate() ?? from;
+    try {
+      const rows = await searchRoomLoaders({
+        practiceId: PRACTICE_ID,
+        appointmentFrom: from,
+        appointmentTo: toInclusive,
+        activeOnly: true,
+      });
+      setRoomLoaderStatusByApptId(buildRoomLoaderPreApptStatusByAppointmentId(rows ?? []));
+    } catch {
+      // Keep prior map on transient failures so badges don't flash red.
+    }
+  }, [rangeUtc.startLocal, rangeUtc.endLocalExclusive]);
+
   const loadRange = useCallback(
     async (opts?: { refreshDrive?: boolean; silent?: boolean; refreshDriveSoft?: boolean }) => {
       if (providers.length === 0) {
@@ -4435,6 +4470,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           setDriveRefreshNonce((n) => n + 1);
         }
         void refreshForwardBookingSourceIds();
+        void loadRoomLoaderStatusesForRange();
       } catch (e: unknown) {
         const msg = e && typeof e === 'object' && 'message' in e ? String((e as Error).message) : 'Failed to load';
         setError(msg);
@@ -4446,7 +4482,15 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         }
       }
     },
-    [rangeUtc.startUtc, rangeUtc.endUtc, resolvedPrimaryProviderId, providers, providersLoadState, refreshForwardBookingSourceIds]
+    [
+      rangeUtc.startUtc,
+      rangeUtc.endUtc,
+      resolvedPrimaryProviderId,
+      providers,
+      providersLoadState,
+      refreshForwardBookingSourceIds,
+      loadRoomLoaderStatusesForRange,
+    ]
   );
 
   useEffect(() => {
@@ -4478,7 +4522,10 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       }
 
       if (nonDels.length === 0) {
-        if (dels.length > 0) bumpDriveSoft();
+        if (dels.length > 0) {
+          bumpDriveSoft();
+          void loadRoomLoaderStatusesForRange();
+        }
         return;
       }
 
@@ -4523,6 +4570,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       });
 
       if (dels.length > 0 || nonDels.length > 0) bumpDriveSoft();
+      // Scout sentStatus can lead PIMS confirmStatusName; refresh RL badges on every calendar socket batch.
+      void loadRoomLoaderStatusesForRange();
     },
     [
       providers.length,
@@ -4532,6 +4581,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       rangeUtc.startUtc,
       rangeUtc.endUtc,
       loadRange,
+      loadRoomLoaderStatusesForRange,
     ]
   );
 
@@ -4548,8 +4598,20 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       onBatch: (payloads) => {
         void applyRealtimeCalendarBatch(payloads);
       },
+      onReconnect: () => {
+        void loadRoomLoaderStatusesForRange();
+      },
     });
-  }, [authToken, resolvedPrimaryProviderId, applyRealtimeCalendarBatch]);
+  }, [authToken, resolvedPrimaryProviderId, applyRealtimeCalendarBatch, loadRoomLoaderStatusesForRange]);
+
+  /** Same-tab: Room Loader send/update should flip calendar RL badges without waiting on PIMS/socket. */
+  useEffect(() => {
+    const onSentStatusChanged = () => {
+      void loadRoomLoaderStatusesForRange();
+    };
+    window.addEventListener(ROOM_LOADER_SENT_STATUS_CHANGED_EVENT, onSentStatusChanged);
+    return () => window.removeEventListener(ROOM_LOADER_SENT_STATUS_CHANGED_EVENT, onSentStatusChanged);
+  }, [loadRoomLoaderStatusesForRange]);
 
   useEffect(() => {
     const docId = resolvedPrimaryProviderId.trim();
@@ -9632,7 +9694,13 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             return;
           }
           case 'roomLoader': {
-            if (schedulerRoomLoaderMenuMode(appt.confirmStatusName) === 'view') {
+            if (
+              schedulerRoomLoaderMenuMode(
+                appt.confirmStatusName,
+                null,
+                roomLoaderStatusByApptId.get(Number(appt.id)) ?? null
+              ) === 'view'
+            ) {
               setRoomLoaderPdfModalAppt(appt);
               return;
             }
@@ -9715,6 +9783,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       resolvedPrimaryProviderId,
       anchorDate,
       view,
+      roomLoaderStatusByApptId,
     ]
   );
 
@@ -10262,7 +10331,10 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                       >
                         {showPreApptRoomLoaderIcon(appt) ? (
                           <div className="scheduler-appt-card-icons-tr" aria-hidden>
-                            <SchedulerPreApptRlIcon confirmStatusName={appt.confirmStatusName} />
+                            <SchedulerPreApptRlIcon
+                              confirmStatusName={appt.confirmStatusName}
+                              scoutUiStatus={roomLoaderStatusByApptId.get(Number(appt.id)) ?? null}
+                            />
                           </div>
                         ) : null}
                         <span className="scheduler-all-day-span-bar-text">
@@ -10689,7 +10761,10 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                             >
                               {showPreApptRoomLoaderIcon(appt) ? (
                                 <div className="scheduler-appt-card-icons-tr" aria-hidden>
-                                  <SchedulerPreApptRlIcon confirmStatusName={appt.confirmStatusName} />
+                                  <SchedulerPreApptRlIcon
+                                    confirmStatusName={appt.confirmStatusName}
+                                    scoutUiStatus={roomLoaderStatusByApptId.get(Number(appt.id)) ?? null}
+                                  />
                                 </div>
                               ) : null}
                               <div
@@ -11678,7 +11753,11 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           addPetDisabled={addAnotherPetMenuOpts.disabled}
           addPetTitle={addAnotherPetMenuOpts.title}
           showSendForms={showPreApptRoomLoaderIcon(contextMenu.appt)}
-          roomLoaderMenuLabel={schedulerRoomLoaderMenuLabel(contextMenu.appt.confirmStatusName)}
+          roomLoaderMenuLabel={schedulerRoomLoaderMenuLabel(
+            contextMenu.appt.confirmStatusName,
+            null,
+            roomLoaderStatusByApptId.get(Number(contextMenu.appt.id)) ?? null
+          )}
           rescheduleDisabled={!contextMenuRescheduleIntent && !contextMenuMayAddressOnlyReschedule}
           rescheduleDisabledTitle={contextMenuRescheduleDisabledTitle}
           removeDisabled={isAppointmentCancelledOnPracticeCalendar(contextMenu.appt)}
@@ -11842,7 +11921,10 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               <RoomLoaderPage
                 embedded={{
                   roomLoaderId: embeddedRoomLoaderId,
-                  onClose: () => setEmbeddedRoomLoaderId(null),
+                  onClose: () => {
+                    setEmbeddedRoomLoaderId(null);
+                    void loadRoomLoaderStatusesForRange();
+                  },
                 }}
               />
             </Suspense>,

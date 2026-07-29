@@ -480,7 +480,8 @@ export default function App() {
           {/* Public surveys by slug (no login), e.g. post-appointment, exit-interview; * catches duplicate path in email links */}
           <Route path="/survey/:surveySlug" element={<PostAppointmentSurvey />} />
           <Route path="/survey/:surveySlug/*" element={<PostAppointmentSurvey />} />
-          <Route path="/refer-a-friend" element={<PublicReferAFriend />} />
+          <Route path="/share" element={<PublicReferAFriend />} />
+          <Route path="/refer-a-friend" element={<Navigate to="/share" replace />} />
           {/* Slot offer confirm — same host as portal, e.g. /confirm/:token from SMS */}
           <Route path="/confirm/:token" element={<SlotOfferConfirmPage />} />
           {/* Public room loader form (no authentication required) */}
