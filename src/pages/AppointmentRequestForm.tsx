@@ -90,6 +90,7 @@ import {
   formatPromotionDiscount,
   formatPromotionBannerSubtitle,
   APPOINTMENT_PROMO_QUERY_PARAM,
+  APPOINTMENT_PROMO_CODE_QUERY_PARAM,
   type PublicAppointmentRequestPromotion,
 } from '../api/appointmentRequestPromotions';
 
@@ -800,6 +801,7 @@ export default function AppointmentRequestForm() {
   // Appointment request promotion — resolved via URL token or manually entered code
   const [appointmentPromo, setAppointmentPromo] = useState<PublicAppointmentRequestPromotion | null>(null);
   const promoToken = searchParams.get(APPOINTMENT_PROMO_QUERY_PARAM) ?? null;
+  const promoCodeFromQuery = searchParams.get(APPOINTMENT_PROMO_CODE_QUERY_PARAM)?.trim() || null;
   // Code entered manually by the client (no URL token present)
   const [promoCodeInput, setPromoCodeInput] = useState('');
   const [promoCodeApplying, setPromoCodeApplying] = useState(false);
@@ -3033,6 +3035,30 @@ export default function AppointmentRequestForm() {
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [promoToken]);
+
+  // Resolve customer-facing promo code from ?code= (e.g. welcome2026 from referral email)
+  useEffect(() => {
+    if (!promoCodeFromQuery || promoToken) return;
+    let alive = true;
+    (async () => {
+      try {
+        const promo = await resolveAppointmentRequestPromoByCode(promoCodeFromQuery);
+        if (alive) {
+          setAppliedCodePromo(promo);
+          setPromoCodeInput(promoCodeFromQuery);
+          setPromoCodeError(null);
+        }
+      } catch {
+        if (alive) {
+          setAppliedCodePromo(null);
+          setPromoCodeError('Code not found or no longer valid.');
+        }
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [promoCodeFromQuery, promoToken]);
 
   // Once the user's email is known, verify they haven't already redeemed the
   // active promotion (each email can use a given promotion only once).
