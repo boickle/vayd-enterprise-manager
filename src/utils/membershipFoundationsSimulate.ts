@@ -1,14 +1,13 @@
 /**
  * Foundations (non-Golden) membership simulate can mark senior screen lines as fully covered ($0 adjusted)
- * even though they are not plan-included — see `foundationsMayFalseZeroSeniorPanel` in PublicRoomLoaderForm.
+ * even though they are not plan-included — see `shouldSuppressFalseIncludedWellnessForFoundations`.
  * Used for Care Coverage Comparison rows and to reconcile footer covered / due amounts with that reality.
  */
-export function seniorScreenLineNameFalseFoundationsFullCoverage(name: string | undefined): boolean {
-  const n = (name ?? '').toLowerCase();
-  if (!n.includes('senior screen')) return false;
-  if (n.includes('early detection')) return false;
-  return true;
-}
+export {
+  seniorScreenLineNameFalseFoundationsFullCoverage,
+} from './membershipFoundationsLabs';
+
+import { seniorScreenLineNameFalseFoundationsFullCoverage } from './membershipFoundationsLabs';
 
 export type MembershipSimulateLineItemLike = { name?: string; price: number; quantity?: number };
 
