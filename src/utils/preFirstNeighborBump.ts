@@ -72,7 +72,9 @@ export function isPreFirstNeighborBumpEligibleAppointment(a: Appointment): boole
   if (isPracticeCalendarBlockAppointment(a)) return false;
   if (isFixedTimeTypeName(appointmentTypeName(a))) return false;
   if (isNonRoutableStaffCalendarTypeName(appointmentTypeName(a))) return false;
-  if (a.appointmentType?.excludeFromRouting === true) return false;
+  // Range AppointmentType rows may omit settings flags; read defensively when present.
+  const typeFlags = a.appointmentType as { excludeFromRouting?: boolean } | undefined;
+  if (typeFlags?.excludeFromRouting === true) return false;
   // Former-first bump only applies to real client stops on the geographic route.
   if (a.client?.id == null) return false;
   return true;
