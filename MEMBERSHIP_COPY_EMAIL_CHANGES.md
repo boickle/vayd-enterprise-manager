@@ -1,31 +1,33 @@
-# Membership email copy changes (backend)
+# Membership email / Ecwid copy changes (backend)
 
-These templates are not in the client portal frontend. Apply the following wording on the backend email service.
+Backend updates live in `vayd-api`. This note tracks the membership revision that was applied there.
 
-## Pre-visit email
+## Done in vayd-api
 
-**Replace** the after-hours live chat paragraph:
+### Pre-visit email
+`src/notifications/membership-promotion-email.service.ts`
+- Replaced after-hours live chat paragraph with 7-day support + 50% off additional exams copy (HTML + text).
 
-> Because care doesn't stop when the appointment ends, members also have after-hours live chat access to VAYD staff — not an answering service — so your One-Team stays informed and care remains connected.
+### Post-visit signup email
+`src/notifications/post-appointment-membership-email.service.ts`
+- Priority scheduling (reserve slots) wording
+- Real support / seven days a week wording
+- Added 50% off additional exams bullet (HTML + text)
 
-**With:**
+### Ecwid store codes
+`src/paymentProcessing/paymentProcessing.service.ts`
+- 10% Ecwid coupon is now created for **all** successful memberships (not PLUS-gated)
+- Methods renamed to `createEcwidCouponForMember` / `createEcwidCouponForMemberWithPetName`
 
-> Members also get 7-day support from our own VAYD staff, not an answering service, so your One-Team always stays informed and connected to your pet's care. Members also save 50% on any additional exams, so if {{Pet Name(s)}} need{{s}} a follow-up, membership is already working in your favor.
+### Welcome + staff emails
+`src/paymentProcessing/membership-email.service.ts`
+- Store discount section shown whenever a code exists; PLUS-only wording removed
+- Staff note: all members get a store discount code
+- After-hours section rebranded to Priority 7-Day Support
 
-## Post-visit sign-up email
+### Related blurbs
+- `src/roomLoader/room-loader.service.ts` — pre-visit check-in membership blurb (no PLUS add-on framing)
+- `src/appointments/public-appointment-request.service.ts` — “priority scheduling with your One-Team”
 
-1. Change “You'll receive priority access and preferred scheduling” to:
-
-> You'll receive priority scheduling, including reserve appointment slots held for members
-
-2. Change the “Peace of mind after hours…” bullet to:
-
-> Real support from real people. Message one of our experienced VAYD staff through the Client Portal, and connect with Vet At Your Door staff, seven days a week, who can see {{Pet Name(s)}} medical record and help guide next steps when questions or concerns come up.
-
-3. Add a bullet:
-
-> You'll get 50% off any additional exams, so a follow-up visit costs less if {{Pet Name(s)}} need one
-
-## Ecwid / store discount
-
-All members (Foundations and Golden) should receive an Ecwid store discount code for **10% off** after sign-up. This was previously Plus-only; the agreement and welcome email should state that a store discount code is issued after enrollment for every membership.
+## Frontend
+Client portal / signup UI changes live in `vayd-enterprise-manager` (separate from this API).
