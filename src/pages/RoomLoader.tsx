@@ -31,7 +31,43 @@ import {
   inventoryCategoryRequiresSharpsDisposal,
   labCodeRequiresSharpsDisposal,
 } from '../utils/roomLoaderSharps';
+import {
+  foundationsFalseZeroCorrectedUnitPrice,
+  membershipLabelIsFoundationsNotGolden,
+  stripFalseFoundationsSeniorInclusionFromWellness,
+} from '../utils/membershipFoundationsLabs';
 import './RoomLoader.css';
+
+/** Correct backend false $0 “included” senior panels for Foundations (non-Golden) members. */
+function applyFoundationsSeniorFalseZeroCorrection<T extends {
+  name?: string;
+  code?: string;
+  price?: number;
+  originalPrice?: number;
+  lab?: { code?: string; name?: string; price?: number };
+  wellnessPlanPricing?: any;
+}>(item: T, membershipName: string | null | undefined): T {
+  if (!membershipLabelIsFoundationsNotGolden(membershipName)) return item;
+  const wp = item.wellnessPlanPricing;
+  if (!wp) return item;
+  const code = String(item.code ?? item.lab?.code ?? '').trim().toUpperCase();
+  const name = String(item.name ?? item.lab?.name ?? '');
+  const corrected = foundationsFalseZeroCorrectedUnitPrice({
+    foundationsNotGolden: true,
+    wellnessPlanPricing: wp,
+    adjustedPrice: item.price ?? wp.adjustedPrice,
+    originalPrice: item.originalPrice ?? wp.originalPrice ?? item.lab?.price,
+    itemCode: code,
+    itemName: name,
+  });
+  if (corrected == null) return item;
+  return {
+    ...item,
+    price: corrected,
+    originalPrice: item.originalPrice ?? wp.originalPrice ?? corrected,
+    wellnessPlanPricing: stripFalseFoundationsSeniorInclusionFromWellness(wp, corrected),
+  };
+}
 
 type StaffVaccineCheckboxes = { felv: boolean; lepto: boolean; lyme: boolean; bordatella: boolean };
 
@@ -1553,6 +1589,22 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
         item: itemPayload,
       });
 
+      const membershipName =
+        patientData.patient.membershipName ??
+        (patientData as { membershipName?: string | null }).membershipName ??
+        null;
+      const correctedPricingItem = applyFoundationsSeniorFalseZeroCorrection(
+        {
+          name: item.name ?? pricingResponse.item?.name,
+          code: item.code ?? item.lab?.code ?? pricingResponse.item?.code ?? pricingResponse.item?.lab?.code,
+          lab: item.lab ?? pricingResponse.item?.lab,
+          price: pricingResponse.adjustedPrice,
+          originalPrice: pricingResponse.originalPrice,
+          wellnessPlanPricing: pricingResponse.wellnessPlanPricing,
+        },
+        membershipName
+      );
+
       // Update the item with the adjusted price and wellness plan info
       setAddedItems((prev) => {
         const items = prev[petId] || [];
@@ -1565,9 +1617,9 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
           const updatedItems = [...items];
           updatedItems[itemIndex] = {
             ...updatedItems[itemIndex],
-            price: pricingResponse.adjustedPrice,
-            originalPrice: pricingResponse.originalPrice,
-            wellnessPlanPricing: pricingResponse.wellnessPlanPricing,
+            price: correctedPricingItem.price,
+            originalPrice: correctedPricingItem.originalPrice ?? pricingResponse.originalPrice,
+            wellnessPlanPricing: correctedPricingItem.wellnessPlanPricing,
             discountPricing: pricingResponse.discountPricing,
             tieredPricing: pricingResponse.tieredPricing,
           };
@@ -1992,9 +2044,30 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
 
         // Use adjusted price when membership/discount applies (only when no correction; corrections use different item)
         // Note: discountPricing.priceAdjustedByDiscount is a boolean, not the price; use wellnessPlanPricing.adjustedPrice only
-        const wpAdjusted = reminderWithPrice.wellnessPlanPricing?.adjustedPrice;
+        const foundationsCorrectedReminder = !correction?.selectedItem
+          ? applyFoundationsSeniorFalseZeroCorrection(
+              {
+                name: finalItem?.name ?? reminderWithPrice.matchedItem?.name ?? reminderWithPrice.reminder.description,
+                code: finalItem?.code ?? reminderWithPrice.matchedItem?.code,
+                price:
+                  (reminderWithPrice.wellnessPlanPricing?.adjustedPrice != null &&
+                  typeof reminderWithPrice.wellnessPlanPricing.adjustedPrice === 'number'
+                    ? reminderWithPrice.wellnessPlanPricing.adjustedPrice
+                    : null) ??
+                  (finalItem?.price ?? reminderWithPrice.price ?? undefined) ??
+                  undefined,
+                originalPrice: reminderWithPrice.wellnessPlanPricing?.originalPrice,
+                wellnessPlanPricing: reminderWithPrice.wellnessPlanPricing,
+              },
+              patient.membershipName
+            )
+          : null;
+        const wpForReminder = foundationsCorrectedReminder?.wellnessPlanPricing ?? reminderWithPrice.wellnessPlanPricing;
+        const wpAdjusted = wpForReminder?.adjustedPrice;
         const effectivePrice = !correction?.selectedItem
-          ? ((wpAdjusted != null && typeof wpAdjusted === 'number' ? wpAdjusted : null) ?? (finalItem?.price ?? reminderWithPrice.price))
+          ? ((wpAdjusted != null && typeof wpAdjusted === 'number' ? wpAdjusted : null) ??
+              foundationsCorrectedReminder?.price ??
+              (finalItem?.price ?? reminderWithPrice.price))
           : (finalItem?.price ?? reminderWithPrice.price);
         if (finalItem && effectivePrice != null) {
           finalItem = { ...finalItem, price: Number(effectivePrice) };
@@ -2016,8 +2089,8 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
           confidence: reminderWithPrice.confidence,
         };
         // Include discount info so client can surface why price is discounted (only when no correction)
-        if (reminderWithPrice.wellnessPlanPricing && !correction?.selectedItem) {
-          reminderPayload.wellnessPlanPricing = reminderWithPrice.wellnessPlanPricing;
+        if (wpForReminder && !correction?.selectedItem) {
+          reminderPayload.wellnessPlanPricing = wpForReminder;
         }
         if (reminderWithPrice.discountPricing && !correction?.selectedItem) {
           reminderPayload.discountPricing = reminderWithPrice.discountPricing;
@@ -2027,9 +2100,20 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
 
       // Get added items (include wellnessPlanPricing/discountPricing so client can surface why price is discounted)
       const addedItemsList = getAddedItemsForPatient(patient.id).map((item, itemIdx) => {
-        const basePrice = item.price != null ? Number(item.price) : null;
+        const foundationsCorrectedAdded = applyFoundationsSeniorFalseZeroCorrection(
+          {
+            name: item.name,
+            code: item.code ?? item.lab?.code,
+            lab: item.lab,
+            price: item.price != null ? Number(item.price) : undefined,
+            originalPrice: (item as any).originalPrice,
+            wellnessPlanPricing: (item as any).wellnessPlanPricing,
+          },
+          patient.membershipName
+        );
+        const basePrice = foundationsCorrectedAdded.price != null ? Number(foundationsCorrectedAdded.price) : null;
         // Use wellnessPlanPricing.adjustedPrice only when it's a number; discountPricing.priceAdjustedByDiscount is a boolean
-        const wpAdjusted = (item as any).wellnessPlanPricing?.adjustedPrice;
+        const wpAdjusted = foundationsCorrectedAdded.wellnessPlanPricing?.adjustedPrice;
         const effectivePrice = (wpAdjusted != null && typeof wpAdjusted === 'number')
           ? Number(wpAdjusted)
           : basePrice;
@@ -2046,8 +2130,8 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
           const cat = (item.inventoryItem as { categoryName?: string } | undefined)?.categoryName;
           if (cat) payload.categoryName = cat;
         }
-        if ((item as any).wellnessPlanPricing) {
-          payload.wellnessPlanPricing = (item as any).wellnessPlanPricing;
+        if (foundationsCorrectedAdded.wellnessPlanPricing) {
+          payload.wellnessPlanPricing = foundationsCorrectedAdded.wellnessPlanPricing;
         }
         if ((item as any).discountPricing) {
           payload.discountPricing = (item as any).discountPricing;
