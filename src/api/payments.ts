@@ -7,7 +7,8 @@ export type PaymentPoint = {
   date: string; // "YYYY-MM-DD"
   revenue: number; // daily total (typically practice + online pharmacy)
   count: number; // number of payments
-  subscriptionRevenue?: number; // daily subscription revenue
+  subscriptionRevenue?: number; // daily Square subscription revenue
+  stripeRevenue?: number; // daily Stripe membership revenue (not part of `revenue`)
   onlinePharmacyRevenue?: number;
   practiceRevenue?: number;
 };
@@ -401,7 +402,7 @@ export type PaymentsLeaderboards = {
 /**
  * Fetch daily payments analytics between start/end (inclusive).
  * Matches backend controller: GET /analytics/payments?start=YYYY-MM-DD&end=YYYY-MM-DD[&practiceId=...]
- * Pass includeSubscriptions: false to skip Square enrichment (faster for wide ranges).
+ * Pass includeSubscriptions: false to skip Square/Stripe enrichment (faster for wide ranges).
  */
 export async function fetchPaymentsAnalytics(params: {
   start: string;
@@ -423,6 +424,7 @@ export async function fetchPaymentsAnalytics(params: {
     revenue: Number(r.revenue ?? 0),
     count: Number(r.count ?? 0),
     subscriptionRevenue: Number(r.subscriptionRevenue ?? 0),
+    stripeRevenue: Number(r.stripeRevenue ?? 0),
     onlinePharmacyRevenue: Number(r.onlinePharmacyRevenue ?? 0),
     practiceRevenue: Number(r.practiceRevenue ?? 0),
   }));

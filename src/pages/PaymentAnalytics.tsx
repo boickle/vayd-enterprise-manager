@@ -366,13 +366,15 @@ export default function PaymentsAnalyticsPage() {
       (s, p) => s + (p.subscriptionRevenue ?? 0),
       0
     );
-    const total = revenue + subscriptionRevenue;
+    const stripeRevenue = series.reduce((s, p) => s + (p.stripeRevenue ?? 0), 0);
+    const total = revenue + subscriptionRevenue + stripeRevenue;
     const avg = series.length ? total / series.length : 0;
     return {
       revenue,
       practiceRevenue,
       onlinePharmacyRevenue,
       subscriptionRevenue,
+      stripeRevenue,
       total,
       avg,
     };
@@ -382,7 +384,8 @@ export default function PaymentsAnalyticsPage() {
     () =>
       series.map((p) => ({
         ...p,
-        totalRevenue: p.revenue + (p.subscriptionRevenue ?? 0),
+        totalRevenue:
+          p.revenue + (p.subscriptionRevenue ?? 0) + (p.stripeRevenue ?? 0),
       })),
     [series]
   );
@@ -413,8 +416,8 @@ export default function PaymentsAnalyticsPage() {
   const rangeLeaderboards = useMemo((): PaymentsLeaderboards => {
     const dayTotals = series.map((p) => ({
       key: p.date,
-      // Match chart / daily card (sans Stripe): DB revenue + Square subscriptions
-      revenue: p.revenue + (p.subscriptionRevenue ?? 0),
+      // Match chart / daily card: DB revenue + Square subscriptions + Stripe
+      revenue: p.revenue + (p.subscriptionRevenue ?? 0) + (p.stripeRevenue ?? 0),
       count: p.count,
     }));
     const topDays: PaymentsLeaderboardEntry[] = [...dayTotals]
@@ -584,6 +587,22 @@ export default function PaymentsAnalyticsPage() {
             <Card variant="outlined">
               <CardHeader
                 titleTypographyProps={{ variant: 'subtitle2', color: 'text.secondary' }}
+                title="Stripe Revenue (range)"
+              />
+              <CardContent>
+                <Typography variant="h5" fontWeight={700}>
+                  {fmtUSD(totals.stripeRevenue)}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  memberships from Dec 2025 · {series.length} days
+                </Typography>
+              </CardContent>
+            </Card>
+          </Grid>
+          <Grid item xs={12} sm={6} md={4}>
+            <Card variant="outlined">
+              <CardHeader
+                titleTypographyProps={{ variant: 'subtitle2', color: 'text.secondary' }}
                 title="Total (range)"
               />
               <CardContent>
@@ -591,7 +610,7 @@ export default function PaymentsAnalyticsPage() {
                   {fmtUSD(totals.total)}
                 </Typography>
                 <Typography variant="caption" color="text.secondary">
-                  revenue + subscription · {series.length} days
+                  revenue + subscription + Stripe · {series.length} days
                 </Typography>
               </CardContent>
             </Card>
