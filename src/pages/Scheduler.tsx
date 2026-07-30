@@ -179,6 +179,7 @@ import {
 import {
   commitEditVisit,
   commitLinkClientFromEditVisitSelection,
+  editVisitTimesMatchAtPracticeMinute,
   resolveEditVisitAssignPatient,
   validateEditVisitAppointmentTypeClientConflict,
   validateEditVisitLinkSelection,
@@ -9115,6 +9116,46 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         setToast(patientValidationError);
         return;
       }
+      const timesUnchangedAtMinute =
+        preview.kind === 'type' &&
+        editVisitTimesMatchAtPracticeMinute(
+          editAppt.appointmentStart,
+          editAppt.appointmentEnd,
+          preview.appointmentStart,
+          preview.appointmentEnd,
+          PRACTICE_TZ
+        );
+      const commitStart = timesUnchangedAtMinute
+        ? editAppt.appointmentStart
+        : preview.appointmentStart;
+      const commitEnd = timesUnchangedAtMinute
+        ? editAppt.appointmentEnd
+        : preview.appointmentEnd;
+      const previewTypeName =
+        previewType?.name?.trim() || previewType?.prettyName?.trim() || null;
+      const savedAdditionalIds = new Set(
+        (editAppt.additionalEmployeeIds ??
+          editAppt.additionalEmployees?.map((emp) => Number(emp.id)) ??
+          []
+        )
+          .map((id) => Number(id))
+          .filter((id) => Number.isFinite(id) && id > 0)
+      );
+      const formAdditionalIds = new Set(
+        (formSnapshot.additionalEmployeeIds ?? [])
+          .map((id) => Number(id))
+          .filter((id) => Number.isFinite(id) && id > 0)
+      );
+      const additionalEmployeesUnchanged =
+        savedAdditionalIds.size === formAdditionalIds.size &&
+        [...savedAdditionalIds].every((id) => formAdditionalIds.has(id));
+      const typeOnlyPatch =
+        preview.kind === 'type' &&
+        timesUnchangedAtMinute &&
+        additionalEmployeesUnchanged &&
+        !editVisitLinkSelection?.clientId?.trim() &&
+        !editVisitPatientSelection?.patientId?.trim();
+
       const editChanges = detectEditVisitChanges(
         {
           description: editAppt.description,
@@ -9127,8 +9168,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           description: formSnapshot.description,
           instructions: formSnapshot.instructions,
           appointmentTypeId: typeId,
-          appointmentStart: preview.appointmentStart,
-          appointmentEnd: preview.appointmentEnd,
+          appointmentStart: commitStart,
+          appointmentEnd: commitEnd,
         }
       );
 
@@ -9138,16 +9179,16 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           editAppt,
           rawAppointments,
           PRACTICE_TZ,
-          preview.appointmentStart,
-          preview.appointmentEnd
+          commitStart,
+          commitEnd
         );
         if (siblings.length > 0) {
           const choice = editTimeAlignChoiceRef.current;
           if (choice == null) {
             setEditTimeAlignPrompt({
               siblings,
-              startIso: preview.appointmentStart,
-              endIso: preview.appointmentEnd,
+              startIso: commitStart,
+              endIso: commitEnd,
             });
             return;
           }
@@ -9160,11 +9201,13 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       const updated = await commitEditVisit({
         appointmentId: Number(editAppt.id),
         practiceId: PRACTICE_ID,
-        appointmentStart: preview.appointmentStart,
-        appointmentEnd: preview.appointmentEnd,
+        appointmentStart: commitStart,
+        appointmentEnd: commitEnd,
         form: formSnapshot,
         previewAppointmentTypeId:
           preview.kind === 'type' ? preview.appointmentTypeId ?? null : null,
+        appointmentTypeName: previewTypeName,
+        typeOnlyPatch,
         editedByAudit: {
           actor: appointmentChangeActor,
           practiceTz: PRACTICE_TZ,
@@ -9184,8 +9227,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       if (siblingsToAlign?.length) {
         alignedAppointments = await alignSiblingVisitScheduledTimes({
           siblings: siblingsToAlign,
-          startIso: preview.appointmentStart,
-          endIso: preview.appointmentEnd,
+          startIso: commitStart,
+          endIso: commitEnd,
           practiceId: PRACTICE_ID,
         });
       }
@@ -9238,11 +9281,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       void loadRange({ refreshDrive: true });
       setToast(routingFeedbackWarning ?? bookedParts.join(' · ') ?? 'Appointment updated.');
     } catch (e: unknown) {
-      const msg =
-        e instanceof Error && e.message.trim()
-          ? e.message
-          : 'Could not save changes.';
-      setToast(msg);
+      setToast(extractHttpErrorMessage(e, 'Could not save changes.'));
     } finally {
       setEditPreviewConfirming(false);
     }

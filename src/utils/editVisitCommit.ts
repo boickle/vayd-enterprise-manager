@@ -62,6 +62,13 @@ export type CommitEditVisitInput = {
   form: EditVisitFormSnapshot;
   /** When set (type preview on calendar), overrides `form.appointmentTypeId`. */
   previewAppointmentTypeId?: number | null;
+  /** PIMS/display name for the target type (helps type-only HOLD → visit upgrades). */
+  appointmentTypeName?: string | null;
+  /**
+   * Type-only Book from Appointment type preview — lean PATCH (type + notes/link),
+   * matching the staff-confirm HOLD upgrade path that already succeeds.
+   */
+  typeOnlyPatch?: boolean;
   /** Append edit audit line(s) to staff notes before save. */
   editedByAudit?: {
     actor: AppointmentChangeActor;
@@ -73,6 +80,46 @@ export type CommitEditVisitInput = {
   /** Attach a patient when the visit already has a client. */
   assignPatient?: CommitAssignVisitPatientInput;
 };
+
+/** Practice-local minute key for comparing reconstructed preview times to saved ISOs. */
+export function editVisitPracticeMinuteKey(
+  iso: string | null | undefined,
+  practiceTz: string
+): string | null {
+  if (!iso?.trim()) return null;
+  const dt = DateTime.fromISO(iso, { zone: 'utc' }).setZone(practiceTz);
+  if (!dt.isValid) {
+    const fallback = DateTime.fromISO(iso, { setZone: true }).setZone(practiceTz);
+    return fallback.isValid ? fallback.toFormat("yyyy-MM-dd'T'HH:mm") : null;
+  }
+  return dt.toFormat("yyyy-MM-dd'T'HH:mm");
+}
+
+/** True when preview times match the saved visit at practice-local minute precision. */
+export function editVisitTimesMatchAtPracticeMinute(
+  savedStart: string | null | undefined,
+  savedEnd: string | null | undefined,
+  previewStart: string | null | undefined,
+  previewEnd: string | null | undefined,
+  practiceTz: string
+): boolean {
+  const a = editVisitPracticeMinuteKey(savedStart, practiceTz);
+  const b = editVisitPracticeMinuteKey(previewStart, practiceTz);
+  const c = editVisitPracticeMinuteKey(savedEnd, practiceTz);
+  const d = editVisitPracticeMinuteKey(previewEnd, practiceTz);
+  return Boolean(a && b && c && d && a === b && c === d);
+}
+
+async function clearAlternateAddressBestEffort(appointmentId: number): Promise<boolean> {
+  try {
+    await putAppointmentAlternateAddress(appointmentId, { addressText: '' });
+    return true;
+  } catch {
+    // Same as calendar hover cleanup — UI already treats matching ALT as home.
+    // A failing clear must not fail HOLD → Standard Book after a successful PATCH.
+    return false;
+  }
+}
 
 export type CommitAssignVisitPatientInput = {
   patientId: number;
@@ -244,21 +291,38 @@ export async function commitEditVisit(input: CommitEditVisitInput): Promise<Appo
     }
   }
 
-  const patchBody: Record<string, unknown> = {
-    appointmentTypeId: typeId,
-    primaryProviderId: input.form.primaryProviderId,
-    additionalEmployeeIds: input.form.additionalEmployeeIds,
-    description: description || null,
-    instructions: instructions || null,
-    statusName: input.form.statusName.trim() || null,
-    confirmStatusName: input.form.confirmStatusName.trim() || null,
-    isComplete: input.form.isComplete,
-    allDay: input.form.allDay,
-    appointmentStart: input.appointmentStart,
-    appointmentEnd: input.appointmentEnd,
-    /** PATCH on existing visit — not manual booking; skip role type permission gate. */
-    bookedViaRouting: true,
-  };
+  const typeName = input.appointmentTypeName?.trim() || '';
+  const statusName = input.form.statusName.trim();
+  const confirmStatusName = input.form.confirmStatusName.trim();
+
+  // Lean type-only PATCH mirrors staff-confirm HOLD upgrades and avoids null status /
+  // reconstructed-time fields that have produced opaque API 400s on Book.
+  const patchBody: Record<string, unknown> = input.typeOnlyPatch
+    ? {
+        appointmentTypeId: typeId,
+        ...(typeName ? { appointmentTypeName: typeName } : {}),
+        ...(description ? { description } : {}),
+        ...(instructions ? { instructions } : {}),
+        /** PATCH on existing visit — not manual booking; skip role type permission gate. */
+        bookedViaRouting: true,
+      }
+    : {
+        appointmentTypeId: typeId,
+        ...(typeName ? { appointmentTypeName: typeName } : {}),
+        primaryProviderId: input.form.primaryProviderId,
+        additionalEmployeeIds: input.form.additionalEmployeeIds,
+        description: description || null,
+        instructions: instructions || null,
+        // Omit empty status fields — sending null can 400 on some PIMS-backed rows.
+        ...(statusName ? { statusName } : {}),
+        ...(confirmStatusName ? { confirmStatusName } : {}),
+        isComplete: input.form.isComplete,
+        allDay: input.form.allDay,
+        appointmentStart: input.appointmentStart,
+        appointmentEnd: input.appointmentEnd,
+        /** PATCH on existing visit — not manual booking; skip role type permission gate. */
+        bookedViaRouting: true,
+      };
 
   if (link) {
     patchBody.clientId = link.clientId;
@@ -284,13 +348,15 @@ export async function commitEditVisit(input: CommitEditVisitInput): Promise<Appo
   ) {
     const quality = compareVisitAddressToClientHome(link.visitAddress, link.clientHomeAddress);
     if (addressMatchAllowsLink(quality)) {
-      await putAppointmentAlternateAddress(input.appointmentId, { addressText: '' });
-      return {
-        ...updated,
-        alternateAddress: null,
-        alternateAddressText: null,
-        isAlternateStop: false,
-      } as Appointment;
+      const cleared = await clearAlternateAddressBestEffort(input.appointmentId);
+      if (cleared) {
+        return {
+          ...updated,
+          alternateAddress: null,
+          alternateAddressText: null,
+          isAlternateStop: false,
+        } as Appointment;
+      }
     }
   }
 
@@ -308,13 +374,15 @@ export async function commitEditVisit(input: CommitEditVisitInput): Promise<Appo
     link?.keepAlternateAddress !== true &&
     addressMatchAllowsLink(compareVisitAddressToClientHome(alt, home))
   ) {
-    await putAppointmentAlternateAddress(input.appointmentId, { addressText: '' });
-    return {
-      ...updated,
-      alternateAddress: null,
-      alternateAddressText: null,
-      isAlternateStop: false,
-    } as Appointment;
+    const cleared = await clearAlternateAddressBestEffort(input.appointmentId);
+    if (cleared) {
+      return {
+        ...updated,
+        alternateAddress: null,
+        alternateAddressText: null,
+        isAlternateStop: false,
+      } as Appointment;
+    }
   }
 
   return updated;
