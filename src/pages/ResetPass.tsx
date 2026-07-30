@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState, type CSSProperties } from 'react';
-import { useLocation, useNavigate, Link, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, Link, useSearchParams } from 'react-router';
 import { Field } from '../components/Field';
 import { completePasswordReset, requestPasswordReset } from '../api/users';
 

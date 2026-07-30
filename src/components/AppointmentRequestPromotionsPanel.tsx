@@ -46,12 +46,14 @@ import {
 } from '../api/appointmentRequestPromotions';
 
 function formatDiscount(row: AppointmentRequestPromotion): string {
-  if (row.discountType === 'fixed_amount' && row.amountOffCents != null) {
+  if (row.discountType === 'fixed_amount' && row.amountOffCents != null && row.amountOffCents > 0) {
     return `$${(row.amountOffCents / 100).toFixed(2)} off`;
   }
   if (row.discountType === 'percentage' && row.percentOff != null) {
     return `${row.percentOff}% off`;
   }
+  const description = row.description?.trim();
+  if (description) return description;
   return '—';
 }
 
@@ -177,9 +179,23 @@ export default function AppointmentRequestPromotionsPanel() {
     setFormError(null);
     setSuccess(null);
 
-    const dollars = Number(form.amountOffDollars);
-    if (!Number.isFinite(dollars) || dollars <= 0) {
-      setFormError('Enter a positive dollar amount for the discount.');
+    const amountRaw = form.amountOffDollars.trim();
+    const description = form.description.trim();
+    let amountOffCents: number | null | undefined;
+    if (amountRaw) {
+      const dollars = Number(amountRaw);
+      if (!Number.isFinite(dollars) || dollars <= 0) {
+        setFormError('Enter a positive dollar amount, or leave it blank for a description-only offer.');
+        setCreating(false);
+        return;
+      }
+      amountOffCents = Math.round(dollars * 100);
+    } else if (editingRow) {
+      amountOffCents = null;
+    }
+
+    if (amountOffCents == null && !description) {
+      setFormError('Add a discount amount or a description (e.g. “Get a free trip fee”).');
       setCreating(false);
       return;
     }
@@ -209,8 +225,9 @@ export default function AppointmentRequestPromotionsPanel() {
         const payload: UpdateAppointmentRequestPromotionRequest = {
           companyName: form.companyName.trim(),
           name: form.name.trim(),
-          description: form.description.trim() || null,
-          amountOffCents: Math.round(dollars * 100),
+          description: description || null,
+          discountType: amountOffCents != null ? 'fixed_amount' : 'description_only',
+          amountOffCents,
           currency: form.currency.trim() || 'USD',
           maxRedemptions,
           expiresAt: expiresIso ?? null,
@@ -235,10 +252,11 @@ export default function AppointmentRequestPromotionsPanel() {
         const payload: CreateAppointmentRequestPromotionRequest = {
           companyName: form.companyName.trim(),
           name: form.name.trim(),
-          amountOffCents: Math.round(dollars * 100),
           currency: form.currency.trim() || 'USD',
+          discountType: amountOffCents != null ? 'fixed_amount' : 'description_only',
         };
-        if (form.description.trim()) payload.description = form.description.trim();
+        if (amountOffCents != null) payload.amountOffCents = amountOffCents;
+        if (description) payload.description = description;
         if (maxRedemptions != null) payload.maxRedemptions = maxRedemptions;
         if (expiresIso) payload.expiresAt = expiresIso;
 
@@ -576,24 +594,23 @@ export default function AppointmentRequestPromotionsPanel() {
                 helperText="Title shown to the client when they open the promo link"
               />
               <TextField
-                label="Description (optional)"
+                label="Description"
                 value={form.description}
                 onChange={setField('description')}
-                placeholder="e.g. Acme employees get $50 off their first or next visit!"
+                placeholder="e.g. Get a free trip fee on your first visit"
                 size="small"
                 multiline
                 minRows={2}
-                helperText="Optional extra copy for staff — not used as the banner title"
+                helperText="Shown to the client on the request form. Required when no dollar amount is set."
               />
               <TextField
                 label="Discount amount (USD)"
-                required
                 type="number"
                 inputProps={{ min: 0.01, step: 0.01 }}
                 value={form.amountOffDollars}
                 onChange={setField('amountOffDollars')}
                 size="small"
-                helperText="Fixed dollar amount off — e.g. 50 for $50 off"
+                helperText="Optional. Leave blank for a description-only offer (e.g. free trip fee)."
               />
               <TextField
                 label="Max redemptions (optional)"
@@ -681,7 +698,7 @@ export default function AppointmentRequestPromotionsPanel() {
                 creating ||
                 !form.companyName.trim() ||
                 !form.name.trim() ||
-                !form.amountOffDollars.trim() ||
+                (!form.amountOffDollars.trim() && !form.description.trim()) ||
                 (form.codeOption === 'custom' && form.customCode.trim().length < 3)
               }
             >

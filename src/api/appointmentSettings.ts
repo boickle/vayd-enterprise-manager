@@ -48,6 +48,11 @@ export type AppointmentType = {
   excludeFromReminders?: boolean;
   /** Placeholder HOLD type — shown on the Holds board and classified as on hold (server-side) */
   isHold?: boolean;
+  /**
+   * Calming / Pre-Meds visit type — suggested when a client reports calming medications
+   * for the appointment (typically a wider arrival window).
+   */
+  isCalmingPremedType?: boolean;
   /** Use legacy routing rules for this type (server-side) */
   usesLegacyRouting?: boolean;
   /** Ops analytics doctor-day points; null = legacy name-based rules on server */
@@ -279,6 +284,7 @@ export type AppointmentTypeUpdate = {
   excludeFromRouting?: boolean;
   excludeFromReminders?: boolean;
   isHold?: boolean;
+  isCalmingPremedType?: boolean;
   usesLegacyRouting?: boolean;
   points?: number | null;
   allowSchedulingOverride?: boolean;

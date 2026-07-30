@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import dayjs from 'dayjs';
 import {
   fetchUnscheduledReminders,
@@ -1646,6 +1646,7 @@ export default function CareOutreachPage() {
           canText={contactCanText}
           onClose={closeContactModal}
           smsFromLine={smsFromLine}
+          smsSource="care_outreach"
           onOpenMessagesHistory={() => {
             setMessagesClientId(contactClientId);
             setMessagesClientLabel(contactClientLabel);

@@ -1,5 +1,5 @@
 // src/App.tsx
-import { Route, Routes, useNavigate, Navigate, useLocation, useOutlet, Link } from 'react-router-dom';
+import { Route, Routes, useNavigate, Navigate, useLocation, useOutlet, Link } from 'react-router';
 import { useEffect, useMemo, useRef } from 'react';
 import LoginPage from './pages/Login';
 import RequestReset from './pages/RequestReset';
@@ -62,6 +62,7 @@ import { blockRoutingCalendarPreviewNavigation } from './utils/routingCalendarPr
 import { evetCreateClientLink } from './utils/evet';
 import { scoutTabPermissionOk } from './scout-tabs';
 import { useGmailInboxAccess } from './hooks/useGmailInboxAccess';
+import SmsDeliveryFailureBanner from './components/SmsDeliveryFailureBanner';
 
 /** Old `/scout/*` URLs → `/schedule/*` */
 function ScoutLegacyRedirect() {
@@ -339,6 +340,7 @@ export default function App() {
           Not production — you are using a development or staging environment
         </div>
       )}
+      {token && !isClient ? <SmsDeliveryFailureBanner /> : null}
       {/* Hide navbar on client portal, login page, create-client page, reset password, and public room loader form */}
       {!(isClient && location.pathname.startsWith('/client-portal')) &&
         !location.pathname.startsWith('/client-portal/request-appointment') &&
@@ -478,7 +480,8 @@ export default function App() {
           {/* Public surveys by slug (no login), e.g. post-appointment, exit-interview; * catches duplicate path in email links */}
           <Route path="/survey/:surveySlug" element={<PostAppointmentSurvey />} />
           <Route path="/survey/:surveySlug/*" element={<PostAppointmentSurvey />} />
-          <Route path="/refer-a-friend" element={<PublicReferAFriend />} />
+          <Route path="/share" element={<PublicReferAFriend />} />
+          <Route path="/refer-a-friend" element={<Navigate to="/share" replace />} />
           {/* Slot offer confirm — same host as portal, e.g. /confirm/:token from SMS */}
           <Route path="/confirm/:token" element={<SlotOfferConfirmPage />} />
           {/* Public room loader form (no authentication required) */}

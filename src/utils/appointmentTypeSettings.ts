@@ -116,6 +116,10 @@ export function normalizeAppointmentTypeFromApi(row: AppointmentType): Appointme
     row.isHold === true ||
     truthyFlag(r.is_hold) ||
     truthyFlag(row.isHold);
+  const isCalmingPremedType =
+    row.isCalmingPremedType === true ||
+    truthyFlag(r.is_calming_premed_type) ||
+    truthyFlag(row.isCalmingPremedType);
   const usesLegacyRouting =
     row.usesLegacyRouting === true ||
     truthyFlag(r.uses_legacy_routing) ||
@@ -141,6 +145,7 @@ export function normalizeAppointmentTypeFromApi(row: AppointmentType): Appointme
     excludeFromRouting,
     excludeFromReminders,
     isHold,
+    isCalmingPremedType,
     usesLegacyRouting,
     allowSchedulingOverride:
       row.allowSchedulingOverride === true || truthyFlag(r.allow_scheduling_override),
@@ -211,6 +216,67 @@ export function appointmentTypeAddressRequired(type: AppointmentType | undefined
 export function appointmentTypeRequiresPatient(type: AppointmentType | undefined): boolean {
   if (!type) return false;
   return normalizeAppointmentTypeFromApi(type).requiresPatient === true;
+}
+
+/** True when this type is the calming / Pre-Meds visit for online booking. */
+export function appointmentTypeIsCalmingPremed(
+  type: { isCalmingPremedType?: boolean | null } | undefined | null,
+): boolean {
+  if (!type) return false;
+  return type.isCalmingPremedType === true;
+}
+
+/**
+ * Among the visit's appointment type ids, prefer the calming / Pre-Meds type so
+ * its (wider) arrival window drives routing for the whole household. Falls back
+ * to the first id when no Pre-Meds type is in the visit.
+ */
+export function preferCalmingPremedVisitTypeId(
+  typeIds: readonly number[],
+  types:
+    | Array<{ id?: number; isCalmingPremedType?: boolean | null; name?: string | null; prettyName?: string | null; isDeleted?: boolean | null }>
+    | undefined
+    | null,
+): number | undefined {
+  if (typeIds.length === 0) return undefined;
+  const premed = findCalmingPremedAppointmentType(types);
+  if (premed?.id != null && typeIds.some((id) => Number(id) === Number(premed.id))) {
+    return Number(premed.id);
+  }
+  return typeIds[0];
+}
+
+/**
+ * Prefer the type flagged `isCalmingPremedType`. Falls back to a Pre-Meds-style
+ * name match only when no type is flagged (legacy / pre-migration).
+ */
+export function findCalmingPremedAppointmentType<
+  T extends {
+    id?: number;
+    name?: string | null;
+    prettyName?: string | null;
+    isDeleted?: boolean | null;
+    isCalmingPremedType?: boolean | null;
+  },
+>(types: readonly T[] | undefined | null): T | undefined {
+  if (!types?.length) return undefined;
+  const flagged = types.find(
+    (t) => t.isCalmingPremedType === true && t.isDeleted !== true,
+  );
+  if (flagged) return flagged;
+  return types.find((t) => {
+    if (t.isDeleted === true) return false;
+    const key = normalizeAppointmentTypeName(t.name);
+    const pretty = normalizeAppointmentTypeName(t.prettyName);
+    const blob = `${key} ${pretty}`;
+    return (
+      blob.includes('pre med') ||
+      blob.includes('premed') ||
+      blob.includes('pre appt med') ||
+      blob.includes('pre-appt med') ||
+      (blob.includes('pre') && blob.includes('med'))
+    );
+  });
 }
 
 function appointmentTypePickerLabel(type: {

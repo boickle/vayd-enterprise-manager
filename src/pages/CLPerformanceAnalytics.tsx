@@ -40,11 +40,13 @@ import {
   fetchClPerformanceAnalytics,
   type ClPerformanceAnalyticsResponse,
   type ClPerformanceLiaison,
+  type ClSeatAverageRow,
 } from '../api/clPerformanceAnalytics';
 import {
   CL_POINTS_COST_GUIDE,
   CL_POINTS_EARN_GUIDE,
   CL_SEAT_LABELS,
+  type ClSeat,
 } from '../utils/clPoints';
 
 function toLocalDateStr(d: Dayjs) {
@@ -67,6 +69,10 @@ const PRESETS: Record<string, () => { from: Dayjs; to: Dayjs }> = {
   '7D': () => ({ from: dayjs().subtract(6, 'day'), to: dayjs() }),
   '30D': () => ({ from: dayjs().subtract(29, 'day'), to: dayjs() }),
 };
+
+type LeaderboardMode = 'overall' | 'bySeat';
+
+const SEAT_ORDER: ClSeat[] = ['phones', 'outreach', 'email'];
 
 function KpiCard({
   title,
@@ -209,6 +215,227 @@ function LiaisonDetailRow({ row }: { row: ClPerformanceLiaison }) {
   );
 }
 
+function LiaisonLeaderboardTable({
+  rows,
+  expandedId,
+  onToggle,
+  emptyLabel,
+}: {
+  rows: ClPerformanceLiaison[];
+  expandedId: number | null;
+  onToggle: (employeeId: number) => void;
+  emptyLabel: string;
+}) {
+  return (
+    <TableContainer component={Paper} variant="outlined" sx={{ border: 0 }}>
+      <Table size="small">
+        <TableHead>
+          <TableRow>
+            <TableCell width={40} />
+            <TableCell>Rank</TableCell>
+            <TableCell>Client liaison</TableCell>
+            <TableCell>Seat</TableCell>
+            <TableCell align="right">Score</TableCell>
+            <TableCell align="right">Points</TableCell>
+            <TableCell align="right">Bookings</TableCell>
+            <TableCell align="right">Calls</TableCell>
+            <TableCell align="right">Outreach</TableCell>
+            <TableCell align="right">vs prior</TableCell>
+          </TableRow>
+        </TableHead>
+        <TableBody>
+          {rows.length === 0 ? (
+            <TableRow>
+              <TableCell colSpan={10}>
+                <Typography color="text.secondary">{emptyLabel}</Typography>
+              </TableCell>
+            </TableRow>
+          ) : (
+            rows.map((row, idx) => {
+              const open = expandedId === row.employeeId;
+              return (
+                <React.Fragment key={row.employeeId}>
+                  <TableRow hover selected={open}>
+                    <TableCell>
+                      <IconButton
+                        size="small"
+                        aria-label={open ? 'Collapse' : 'Expand'}
+                        onClick={() => onToggle(row.employeeId)}
+                      >
+                        <ExpandMore
+                          fontSize="small"
+                          sx={{
+                            transform: open ? 'rotate(180deg)' : 'none',
+                            transition: 'transform 0.15s',
+                          }}
+                        />
+                      </IconButton>
+                    </TableCell>
+                    <TableCell>{idx + 1}</TableCell>
+                    <TableCell>
+                      <Typography variant="body2">{row.fullName}</Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        {row.email}
+                      </Typography>
+                    </TableCell>
+                    <TableCell>{row.seatLabel ?? '—'}</TableCell>
+                    <TableCell align="right">
+                      <Typography
+                        fontWeight={600}
+                        color={
+                          row.normalizedScore == null
+                            ? 'text.secondary'
+                            : row.normalizedScore >= 1
+                              ? 'success.main'
+                              : 'text.primary'
+                        }
+                      >
+                        {formatNormalized(row.normalizedScore)}
+                      </Typography>
+                    </TableCell>
+                    <TableCell align="right">{formatPoints(row.totalPoints)}</TableCell>
+                    <TableCell align="right">
+                      {formatPoints(row.categories.bookings + row.categories.newPatientBonus)}
+                    </TableCell>
+                    <TableCell align="right">
+                      {formatPoints(row.categories.calls + row.categories.penalties)}
+                    </TableCell>
+                    <TableCell align="right">{formatPoints(row.categories.outreach)}</TableCell>
+                    <TableCell
+                      align="right"
+                      sx={{
+                        color:
+                          (row.improvementRate ?? 0) > 0
+                            ? 'success.main'
+                            : (row.improvementRate ?? 0) < 0
+                              ? 'error.main'
+                              : 'text.secondary',
+                      }}
+                    >
+                      {formatImprovement(row.improvementRate)}
+                    </TableCell>
+                  </TableRow>
+                  {open ? <LiaisonDetailRow row={row} /> : null}
+                </React.Fragment>
+              );
+            })
+          )}
+        </TableBody>
+      </Table>
+    </TableContainer>
+  );
+}
+
+function SeatAveragesSection({
+  rows,
+  configuredPar,
+}: {
+  rows: ClSeatAverageRow[];
+  configuredPar: Record<ClSeat, number>;
+}) {
+  const chartData = rows.map((r) => ({
+    name: r.seatLabel,
+    avgWeekly: r.avgWeeklyPoints ?? 0,
+    configuredPar: configuredPar[r.seat],
+    workdayCount: r.workdayCount,
+  }));
+  const hasData = rows.some((r) => r.workdayCount > 0);
+
+  return (
+    <Card variant="outlined" sx={{ mb: 2 }}>
+      <CardHeader
+        title="Average by seat"
+        subheader="Day-attributed points while assigned to each seat. Weekly equiv (avg/day × 5) is a good basis for seat par and within-seat competition. Use the 30D preset for trailing-month targets."
+      />
+      <CardContent>
+        {!hasData ? (
+          <Typography color="text.secondary" variant="body2">
+            No seated workdays in this range. Assign seats under Settings → CL Seat Assignment.
+          </Typography>
+        ) : (
+          <Grid container spacing={2}>
+            {rows.map((r) => (
+              <Grid item xs={12} sm={4} key={r.seat}>
+                <KpiCard
+                  title={r.seatLabel}
+                  value={
+                    r.avgWeeklyPoints != null ? formatPoints(r.avgWeeklyPoints) : '—'
+                  }
+                  subtitle={
+                    r.workdayCount > 0
+                      ? `Weekly equiv · ${r.workdayCount} person-days · ${r.employeeCount} CL${r.employeeCount === 1 ? '' : 's'} · current par ${configuredPar[r.seat]}`
+                      : 'No days assigned'
+                  }
+                />
+              </Grid>
+            ))}
+            <Grid item xs={12} md={6}>
+              <Box sx={{ height: 240 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={chartData} margin={{ top: 8, right: 8, left: 0, bottom: 8 }}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="name" tick={{ fontSize: 12 }} />
+                    <YAxis tick={{ fontSize: 12 }} />
+                    <Tooltip
+                      formatter={(value, name) => [
+                        formatPoints(Number(value)),
+                        name === 'avgWeekly' ? 'Avg weekly points' : 'Configured par',
+                      ]}
+                    />
+                    <Bar dataKey="avgWeekly" name="avgWeekly" fill="#1B4D3E" radius={[4, 4, 0, 0]} />
+                    <Bar
+                      dataKey="configuredPar"
+                      name="configuredPar"
+                      fill="#95D5B2"
+                      radius={[4, 4, 0, 0]}
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              </Box>
+            </Grid>
+            <Grid item xs={12} md={6}>
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Seat</TableCell>
+                    <TableCell align="right">Avg / day</TableCell>
+                    <TableCell align="right">Weekly equiv</TableCell>
+                    <TableCell align="right">Suggested par</TableCell>
+                    <TableCell align="right">Person-days</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {rows.map((r) => (
+                    <TableRow key={r.seat}>
+                      <TableCell>{r.seatLabel}</TableCell>
+                      <TableCell align="right">
+                        {r.avgPointsPerWorkday == null
+                          ? '—'
+                          : formatPoints(r.avgPointsPerWorkday)}
+                      </TableCell>
+                      <TableCell align="right">
+                        {r.avgWeeklyPoints == null ? '—' : formatPoints(r.avgWeeklyPoints)}
+                      </TableCell>
+                      <TableCell align="right">
+                        {r.suggestedWeeklyPar ?? '—'}
+                      </TableCell>
+                      <TableCell align="right">{r.workdayCount}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+              <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1 }}>
+                Suggested par = round(weekly equiv). Copy into Settings → CL Seat Assignment when
+                you want targets based on actual points by seat.
+              </Typography>
+            </Grid>
+          </Grid>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function CLPerformanceAnalyticsPage() {
   const [range, setRange] = useState<{ from: Dayjs; to: Dayjs }>(() => currentWeekRange());
   const [data, setData] = useState<ClPerformanceAnalyticsResponse | null>(null);
@@ -216,6 +443,7 @@ export default function CLPerformanceAnalyticsPage() {
   const [error, setError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [showGuide, setShowGuide] = useState(false);
+  const [leaderboardMode, setLeaderboardMode] = useState<LeaderboardMode>('overall');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -270,7 +498,25 @@ export default function CLPerformanceAnalyticsPage() {
     }));
   }, [data]);
 
+  const liaisonsBySeat = useMemo(() => {
+    const groups: Record<ClSeat | 'unassigned', ClPerformanceLiaison[]> = {
+      phones: [],
+      outreach: [],
+      email: [],
+      unassigned: [],
+    };
+    for (const l of data?.liaisons ?? []) {
+      if (l.seat) groups[l.seat].push(l);
+      else groups.unassigned.push(l);
+    }
+    return groups;
+  }, [data?.liaisons]);
+
   const chartColors = ['#1B4D3E', '#2D6A4F', '#40916C', '#52B788', '#74C69D', '#95D5B2'];
+
+  const toggleExpanded = (employeeId: number) => {
+    setExpandedId((prev) => (prev === employeeId ? null : employeeId));
+  };
 
   return (
     <LocalizationProvider dateAdapter={AdapterDayjs}>
@@ -279,8 +525,9 @@ export default function CLPerformanceAnalyticsPage() {
           Client Liaison points vs the rotating-seat guide: bookings (lead-time tiers), OpenPhone
           calls, Fill Day contacts, and missed in-hours penalties. Normalized score uses seat
           assignment and par from Settings → CL Seat Assignment (1.0× = on target); day offs and
-          one-day seat swaps prorate par. Scores are also compared to the prior equal-length period
-          for improvement.
+          one-day seat swaps prorate par. Seat averages attribute points to the seat worked each
+          day so you can set par and run competitions by seat. Scores also compare to the prior
+          equal-length period for improvement.
         </Typography>
 
         <Stack direction="row" flexWrap="wrap" gap={1} alignItems="center" sx={{ mb: 2 }}>
@@ -466,6 +713,8 @@ export default function CLPerformanceAnalyticsPage() {
               </Grid>
             </Grid>
 
+            <SeatAveragesSection rows={data.seatAverages} configuredPar={data.seatPar} />
+
             {chartData.length > 0 ? (
               <Card variant="outlined" sx={{ mb: 2 }}>
                 <CardHeader title="Points by CL" subheader="Top 12 by total points" />
@@ -493,113 +742,78 @@ export default function CLPerformanceAnalyticsPage() {
             ) : null}
 
             <Card variant="outlined">
-              <CardHeader title="CL leaderboard" />
-              <TableContainer component={Paper} variant="outlined" sx={{ border: 0 }}>
-                <Table size="small">
-                  <TableHead>
-                    <TableRow>
-                      <TableCell width={40} />
-                      <TableCell>Rank</TableCell>
-                      <TableCell>Client liaison</TableCell>
-                      <TableCell>Seat</TableCell>
-                      <TableCell align="right">Score</TableCell>
-                      <TableCell align="right">Points</TableCell>
-                      <TableCell align="right">Bookings</TableCell>
-                      <TableCell align="right">Calls</TableCell>
-                      <TableCell align="right">Outreach</TableCell>
-                      <TableCell align="right">vs prior</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {data.liaisons.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={10}>
-                          <Typography color="text.secondary">
-                            No Receptionist-role employees found.
-                          </Typography>
-                        </TableCell>
-                      </TableRow>
-                    ) : (
-                      data.liaisons.map((row, idx) => {
-                        const open = expandedId === row.employeeId;
-                        return (
-                          <React.Fragment key={row.employeeId}>
-                            <TableRow hover selected={open}>
-                              <TableCell>
-                                <IconButton
-                                  size="small"
-                                  aria-label={open ? 'Collapse' : 'Expand'}
-                                  onClick={() =>
-                                    setExpandedId(open ? null : row.employeeId)
-                                  }
-                                >
-                                  <ExpandMore
-                                    fontSize="small"
-                                    sx={{
-                                      transform: open ? 'rotate(180deg)' : 'none',
-                                      transition: 'transform 0.15s',
-                                    }}
-                                  />
-                                </IconButton>
-                              </TableCell>
-                              <TableCell>{idx + 1}</TableCell>
-                              <TableCell>
-                                <Typography variant="body2">{row.fullName}</Typography>
-                                <Typography variant="caption" color="text.secondary">
-                                  {row.email}
-                                </Typography>
-                              </TableCell>
-                              <TableCell>{row.seatLabel ?? '—'}</TableCell>
-                              <TableCell align="right">
-                                <Typography
-                                  fontWeight={600}
-                                  color={
-                                    row.normalizedScore == null
-                                      ? 'text.secondary'
-                                      : row.normalizedScore >= 1
-                                        ? 'success.main'
-                                        : 'text.primary'
-                                  }
-                                >
-                                  {formatNormalized(row.normalizedScore)}
-                                </Typography>
-                              </TableCell>
-                              <TableCell align="right">
-                                {formatPoints(row.totalPoints)}
-                              </TableCell>
-                              <TableCell align="right">
-                                {formatPoints(
-                                  row.categories.bookings + row.categories.newPatientBonus
-                                )}
-                              </TableCell>
-                              <TableCell align="right">
-                                {formatPoints(row.categories.calls + row.categories.penalties)}
-                              </TableCell>
-                              <TableCell align="right">
-                                {formatPoints(row.categories.outreach)}
-                              </TableCell>
-                              <TableCell
-                                align="right"
-                                sx={{
-                                  color:
-                                    (row.improvementRate ?? 0) > 0
-                                      ? 'success.main'
-                                      : (row.improvementRate ?? 0) < 0
-                                        ? 'error.main'
-                                        : 'text.secondary',
-                                }}
-                              >
-                                {formatImprovement(row.improvementRate)}
-                              </TableCell>
-                            </TableRow>
-                            {open ? <LiaisonDetailRow row={row} /> : null}
-                          </React.Fragment>
-                        );
-                      })
-                    )}
-                  </TableBody>
-                </Table>
-              </TableContainer>
+              <CardHeader
+                title="CL leaderboard"
+                action={
+                  <Stack direction="row" spacing={1} sx={{ pr: 1, pt: 0.5 }}>
+                    <Button
+                      size="small"
+                      variant={leaderboardMode === 'overall' ? 'contained' : 'outlined'}
+                      onClick={() => setLeaderboardMode('overall')}
+                    >
+                      Overall
+                    </Button>
+                    <Button
+                      size="small"
+                      variant={leaderboardMode === 'bySeat' ? 'contained' : 'outlined'}
+                      onClick={() => setLeaderboardMode('bySeat')}
+                    >
+                      By seat
+                    </Button>
+                  </Stack>
+                }
+                subheader={
+                  leaderboardMode === 'bySeat'
+                    ? 'Ranked within each seat for fair comparison and competition'
+                    : 'All CLs ranked by normalized score, then points'
+                }
+              />
+              {leaderboardMode === 'overall' ? (
+                <LiaisonLeaderboardTable
+                  rows={data.liaisons}
+                  expandedId={expandedId}
+                  onToggle={toggleExpanded}
+                  emptyLabel="No Receptionist-role employees found."
+                />
+              ) : (
+                <Stack spacing={2} sx={{ px: 2, pb: 2 }}>
+                  {SEAT_ORDER.map((seat) => (
+                    <Box key={seat}>
+                      <Typography variant="subtitle1" sx={{ mb: 1 }}>
+                        {CL_SEAT_LABELS[seat]}
+                        <Typography
+                          component="span"
+                          variant="caption"
+                          color="text.secondary"
+                          sx={{ ml: 1 }}
+                        >
+                          {liaisonsBySeat[seat].length} CL
+                          {liaisonsBySeat[seat].length === 1 ? '' : 's'} · par {data.seatPar[seat]}
+                        </Typography>
+                      </Typography>
+                      <LiaisonLeaderboardTable
+                        rows={liaisonsBySeat[seat]}
+                        expandedId={expandedId}
+                        onToggle={toggleExpanded}
+                        emptyLabel={`No one primarily on ${CL_SEAT_LABELS[seat]} in this range.`}
+                      />
+                    </Box>
+                  ))}
+                  {liaisonsBySeat.unassigned.length > 0 ? (
+                    <Box>
+                      <Typography variant="subtitle1" sx={{ mb: 1 }}>
+                        Unassigned
+                      </Typography>
+                      <LiaisonLeaderboardTable
+                        rows={liaisonsBySeat.unassigned}
+                        expandedId={expandedId}
+                        onToggle={toggleExpanded}
+                        emptyLabel=""
+                      />
+                    </Box>
+                  ) : null}
+                </Stack>
+              )}
             </Card>
           </>
         ) : null}

@@ -1,4 +1,4 @@
-import { NavLink, Outlet, useNavigate, useLocation, Navigate } from 'react-router-dom';
+import { NavLink, Outlet, useNavigate, useLocation, Navigate } from 'react-router';
 import { useEffect, useMemo, useState } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import {

@@ -6,6 +6,7 @@ import {
   type AppointmentRequestSubmissionItem,
 } from '../api/appointmentRequestSubmissions';
 import {
+  appointmentRequestIdFromNotificationSubject,
   clientDisplayNameFromRequestData,
   clientNameFromAppointmentRequestSubject,
   isAppointmentRequestNotificationSubject,
@@ -202,14 +203,20 @@ export function useAppointmentRequestThreadIndex(enabled: boolean): AppointmentR
     return items.map((it) => localOverrides.current.get(it.id) ?? it);
   }, [items]);
 
-  const { byThread, byEmail, byName } = useMemo(() => {
-    const threadMap = new Map<string, AppointmentRequestSubmissionItem>();
+  const { byId, byThread, byEmail, byName } = useMemo(() => {
+    const idMap = new Map<number, AppointmentRequestSubmissionItem>();
+    const threadMap = new Map<string, AppointmentRequestSubmissionItem[]>();
     const emailMap = new Map<string, AppointmentRequestSubmissionItem[]>();
     const nameMap = new Map<string, AppointmentRequestSubmissionItem[]>();
     for (const item of mergedItems) {
       if (item.kind === 'abandoned') continue;
+      idMap.set(Number(item.id), item);
       const threadId = normalizeThreadId(item.gmailThreadId);
-      if (threadId) threadMap.set(threadId, item);
+      if (threadId) {
+        const list = threadMap.get(threadId) ?? [];
+        list.push(item);
+        threadMap.set(threadId, list);
+      }
       const email = normalizeEmail(requestDataEmail(item.requestData ?? {}));
       if (email) {
         const list = emailMap.get(email) ?? [];
@@ -229,7 +236,8 @@ export function useAppointmentRequestThreadIndex(enabled: boolean): AppointmentR
     ) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime();
     for (const list of emailMap.values()) list.sort(newestFirst);
     for (const list of nameMap.values()) list.sort(newestFirst);
-    return { byThread: threadMap, byEmail: emailMap, byName: nameMap };
+    for (const list of threadMap.values()) list.sort(newestFirst);
+    return { byId: idMap, byThread: threadMap, byEmail: emailMap, byName: nameMap };
   }, [mergedItems]);
 
   const resolve = useCallback(
@@ -238,43 +246,60 @@ export function useAppointmentRequestThreadIndex(enabled: boolean): AppointmentR
       extraEmails?: readonly string[]
     ): AppointmentRequestSubmissionItem | null => {
       if (!message) return null;
+      // New liaison subjects carry the submission id, making this association
+      // exact even when Gmail groups repeated client/pet requests together.
+      const subjectSubmissionId = appointmentRequestIdFromNotificationSubject(message.subject);
+      if (subjectSubmissionId != null) {
+        return byId.get(subjectSubmissionId) ?? null;
+      }
+
       const threadId = normalizeThreadId(message.threadId);
-      if (threadId) {
-        const byId = byThread.get(threadId);
-        if (byId) return byId;
+      const messageTime = new Date(message.date).getTime();
+      const candidates = new Map<number, AppointmentRequestSubmissionItem>();
+      for (const item of (threadId ? byThread.get(threadId) : undefined) ?? []) {
+        candidates.set(Number(item.id), item);
       }
 
       // Legacy fallback while older rows lack gmailThreadId — remove once linking is reliable.
-      const messageTime = new Date(message.date).getTime();
+      // Never borrow a submission already linked to a different Gmail thread.
+      const candidatesForThisThread = (
+        rows: AppointmentRequestSubmissionItem[] | undefined,
+      ) =>
+        rows?.filter((item) => {
+          const linkedThread = normalizeThreadId(item.gmailThreadId);
+          return !linkedThread || linkedThread === threadId;
+        });
       const emails = [
         ...messageCandidateEmails(message),
         ...(extraEmails ?? []).map((e) => normalizeEmail(e)).filter((e): e is string => !!e),
       ];
       for (const email of emails) {
-        const picked = pickClosest(byEmail.get(email), messageTime);
-        if (picked) return picked;
+        for (const item of candidatesForThisThread(byEmail.get(email)) ?? []) {
+          candidates.set(Number(item.id), item);
+        }
       }
       const subjectClient = clientNameFromAppointmentRequestSubject(message.subject);
       if (subjectClient) {
         const subjectPet = petSummaryFromAppointmentRequestSubject(message.subject);
-        let candidates = byName.get(subjectClient);
-        if (candidates && subjectPet) {
-          const filtered = candidates.filter((item) =>
+        let nameCandidates = candidatesForThisThread(byName.get(subjectClient));
+        if (nameCandidates && subjectPet) {
+          const filtered = nameCandidates.filter((item) =>
             petListsMatchForSubmission(subjectPet, requestDataPetSummary(item.requestData ?? {})),
           );
           if (filtered.length > 0) {
-            candidates = filtered;
-          } else if (candidates.length === 1) {
+            nameCandidates = filtered;
+          } else if (nameCandidates.length === 1) {
             // Trust a unique name match when pet strings differ only by formatting.
-            candidates = candidates;
+            nameCandidates = nameCandidates;
           }
         }
-        const picked = pickClosest(candidates, messageTime);
-        if (picked) return picked;
+        for (const item of nameCandidates ?? []) {
+          candidates.set(Number(item.id), item);
+        }
       }
-      return null;
+      return pickClosest([...candidates.values()], messageTime);
     },
-    [byThread, byEmail, byName]
+    [byId, byThread, byEmail, byName]
   );
 
   const proactivelyLinkNotification = useCallback(

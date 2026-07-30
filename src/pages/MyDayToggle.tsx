@@ -1,6 +1,6 @@
 // src/pages/MyDayToggle.tsx
 import { useState, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { DateTime } from 'luxon';
 import DoctorDay, { type DoctorDayProps } from './DoctorDay';
 import DoctorDayVisual from './DoctorDayVisual';

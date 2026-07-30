@@ -76,6 +76,7 @@ export function OnMyWaySmsModal({ appt, defaultMinutes, onClose }: Props) {
     try {
       await sendClientSms(clientId, {
         message: message.trim(),
+        source: 'on_my_way',
         ...(opts.overrideNonProd ? { overrideNonProd: true } : {}),
         ...(providerId != null ? { primaryProviderId: providerId } : {}),
       });

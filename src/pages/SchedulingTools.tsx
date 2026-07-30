@@ -1,5 +1,5 @@
 import { Children, Fragment, isValidElement, useState, type ReactNode } from 'react';
-import { NavLink, Outlet, useLocation, useOutletContext } from 'react-router-dom';
+import { NavLink, Outlet, useLocation, useOutletContext } from 'react-router';
 import {
   SCHEDULING_TOOL_OUTREACH_TABS,
   SCHEDULING_TOOL_WORKFLOW_TABS,
@@ -43,7 +43,7 @@ function hasVisibleBadges(children: ReactNode): boolean {
   let found = false;
   Children.forEach(children, (child) => {
     if (found || child == null || child === false) return;
-    if (isValidElement(child) && child.type === Fragment) {
+    if (isValidElement<{ children?: ReactNode }>(child) && child.type === Fragment) {
       if (hasVisibleBadges(child.props.children)) found = true;
     } else {
       found = true;

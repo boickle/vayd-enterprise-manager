@@ -40,6 +40,8 @@ type Props = {
   smsFromLine?: string | null;
   /** Mark Quo/OpenPhone conversation done after send (forward booking outreach). */
   markInboxDone?: boolean;
+  /** Passed through for Quo delivery-failure alerts (e.g. care_outreach, forward_booking). */
+  smsSource?: string;
 };
 
 function smsToEmailDraft(
@@ -65,6 +67,7 @@ export function ClientContactComposeModal({
   onOpenEmailHistory,
   smsFromLine,
   markInboxDone,
+  smsSource,
 }: Props) {
   const { allowed: canEmail, loading: gmailAccessLoading } = useGmailInboxAccess();
   const allowSmsOverride = smsAllowsProductionOverride();
@@ -234,6 +237,7 @@ export function ClientContactComposeModal({
         useRemindersFrom: true,
         ...(markInboxDone ? { markInboxDone: true } : {}),
         ...(overrideNonProd ? { overrideNonProd: true } : {}),
+        ...(smsSource ? { source: smsSource } : {}),
       });
       onClose();
     } catch (e: unknown) {

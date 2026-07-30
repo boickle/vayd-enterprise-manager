@@ -533,6 +533,7 @@ export default function RoutingAnalyticsPage() {
       from: fromIso,
       to: toIso,
       includeConversions: true,
+      includeAbandoned: true,
     })
       .then((res) => {
         if (!alive) return;

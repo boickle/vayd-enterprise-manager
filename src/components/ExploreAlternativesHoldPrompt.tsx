@@ -16,6 +16,7 @@ type Props = {
   /** The newly-added alternative still needs converting to a hold type. */
   newNeedsHold: boolean;
   converting?: boolean;
+  error?: string | null;
   onConfirm: (holdTypeId: number) => void;
   onDismiss: () => void;
 };
@@ -31,6 +32,7 @@ export default function ExploreAlternativesHoldPrompt({
   sourceNeedsHold,
   newNeedsHold,
   converting = false,
+  error = null,
   onConfirm,
   onDismiss,
 }: Props) {
@@ -119,6 +121,11 @@ export default function ExploreAlternativesHoldPrompt({
           ) : (
             <p>No hold appointment types are configured for this practice.</p>
           )}
+          {error ? (
+            <p className="scheduler-edit-error" role="alert">
+              {error}
+            </p>
+          ) : null}
         </div>
 
         <div className="scheduler-book-actions explore-alternatives-hold-prompt-actions">

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useLocation, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useSearchParams } from 'react-router';
 import { ChevronRight, FileText } from 'lucide-react';
 import { searchClientsStaff, type ClientSearchRow } from '../api/clientsStaff';
 import PimsClientDetailView from '../components/pims/PimsClientDetailView';

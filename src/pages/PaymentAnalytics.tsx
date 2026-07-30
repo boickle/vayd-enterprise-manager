@@ -34,6 +34,7 @@ import {
 } from 'recharts';
 import {
   fetchPaymentsAnalytics,
+  fetchPaymentsLeaderboards,
   fetchPaymentsReconciliation,
   fetchSquarePayments,
   fetchStripeRevenue,
@@ -41,6 +42,8 @@ import {
   sumCreditCardPaymentsForDay,
   sumSquarePayments,
   type PaymentPoint,
+  type PaymentsLeaderboardEntry,
+  type PaymentsLeaderboards,
 } from '../api/payments';
 import DayPaymentsListModal from '../components/DayPaymentsListModal';
 import SquareDayReconciliationModal from '../components/SquareDayReconciliationModal';
@@ -128,7 +131,10 @@ const PRESETS: Record<string, () => DateRange> = {
 export default function PaymentsAnalyticsPage() {
   const [range, setRange] = useState<DateRange>(PRESETS['7D']());
   const [series, setSeries] = useState<PaymentPoint[]>([]);
-  const [seriesAll, setSeriesAll] = useState<PaymentPoint[] | null>(null); // all-time for leaderboards
+  const [leaderboards, setLeaderboards] = useState<PaymentsLeaderboards | null>(null);
+  const [leaderboardsLoading, setLeaderboardsLoading] = useState(true);
+  /** Single-day analytics when the selected revenue day is outside the chart range. */
+  const [revenueDayOverride, setRevenueDayOverride] = useState<PaymentPoint | null>(null);
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
   const [unauthorized, setUnauthorized] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -189,26 +195,52 @@ export default function PaymentsAnalyticsPage() {
     };
   }, [range.from, range.to]);
 
-  // One-time fetch of "all-time" series for leaderboards (fallback to current range if it fails)
+  // Lightweight all-time leaderboards (SQL top-N) — avoids fetching every day since 2000
   useEffect(() => {
     let alive = true;
+    setLeaderboardsLoading(true);
     (async () => {
       try {
-        const all = await fetchPaymentsAnalytics({
-          start: '2000-01-01',
-          end: toISODate(dayjs().startOf('day').add(1, 'day')), // end is next day → backend < end will include today
-        });
+        const boards = await fetchPaymentsLeaderboards({ limit: 10 });
         if (!alive) return;
-        setSeriesAll(all);
+        setLeaderboards(boards);
       } catch (_) {
-        // If the all-time pull fails, we’ll use the current series as a fallback
-        setSeriesAll(null);
+        if (!alive) return;
+        setLeaderboards(null);
+      } finally {
+        if (alive) setLeaderboardsLoading(false);
       }
     })();
     return () => {
       alive = false;
     };
   }, []);
+
+  // When browsing a day outside the selected chart range, fetch that single day (with Square)
+  useEffect(() => {
+    const inSeries = findPaymentPointForDay(series, revenueDayKey);
+    if (inSeries) {
+      setRevenueDayOverride(null);
+      return;
+    }
+    let alive = true;
+    (async () => {
+      try {
+        const rows = await fetchPaymentsAnalytics({
+          start: revenueDayKey,
+          end: revenueDayKey,
+        });
+        if (!alive) return;
+        setRevenueDayOverride(findPaymentPointForDay(rows, revenueDayKey));
+      } catch (_) {
+        if (!alive) return;
+        setRevenueDayOverride(null);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [series, revenueDayKey]);
 
   // Square received + credit card comparison for the selected daily revenue day
   useEffect(() => {
@@ -270,9 +302,17 @@ export default function PaymentsAnalyticsPage() {
     };
   }, [revenueDayKey]);
 
-  // Stripe received for the selected daily revenue day
+  // Stripe received for the selected daily revenue day (memberships from Dec 2025 only —
+  // earlier Stripe would double-count charges already in Pulse).
   useEffect(() => {
     let alive = true;
+    if (revenueDayKey < '2025-12-01') {
+      setStripeLoading(false);
+      setStripeError(null);
+      setStripeTotal(0);
+      setStripeCount(0);
+      return;
+    }
     setStripeLoading(true);
     setStripeError(null);
     (async () => {
@@ -350,15 +390,10 @@ export default function PaymentsAnalyticsPage() {
   const chartDataWithTrend = useMemo(() => addLinearTrend(chartData), [chartData]);
 
   // ---------- Leaderboards + daily revenue card ----------
-  const dataset = seriesAll ?? series; // prefer all-time; fallback to current selection
   /** Revenue row for the day selected on the daily revenue card (local + UTC date matching). */
   const revenueDayRow = useMemo(() => {
-    return (
-      findPaymentPointForDay(series, revenueDayKey) ??
-      findPaymentPointForDay(seriesAll ?? [], revenueDayKey) ??
-      null
-    );
-  }, [series, seriesAll, revenueDayKey]);
+    return findPaymentPointForDay(series, revenueDayKey) ?? revenueDayOverride ?? null;
+  }, [series, revenueDayOverride, revenueDayKey]);
   const revenueDayPracticeRevenue = revenueDayRow?.practiceRevenue ?? 0;
   const revenueDayOnlinePharmacyRevenue = revenueDayRow?.onlinePharmacyRevenue ?? 0;
   /** Square (subscription) revenue for the day, from the payments analytics series. */
@@ -374,39 +409,44 @@ export default function PaymentsAnalyticsPage() {
       : revenueDayRecordedRevenue;
   const revenueDayTotalRevenue = revenueDayPaymentsTotal + revenueDaySquareRevenue + stripeTotal;
 
-  const topDays = useMemo(() => {
-    const copy = [...dataset];
-    copy.sort((a, b) => b.revenue - a.revenue);
-    return copy.slice(0, 10);
-  }, [dataset]);
+  /** Fallback: derive top-N from the current chart range if the leaderboards API fails. */
+  const rangeLeaderboards = useMemo((): PaymentsLeaderboards => {
+    const dayTotals = series.map((p) => ({
+      key: p.date,
+      // Match chart / daily card (sans Stripe): DB revenue + Square subscriptions
+      revenue: p.revenue + (p.subscriptionRevenue ?? 0),
+      count: p.count,
+    }));
+    const topDays: PaymentsLeaderboardEntry[] = [...dayTotals]
+      .sort((a, b) => b.revenue - a.revenue)
+      .slice(0, 10);
 
-  const topMonths = useMemo(() => {
-    const map = new Map<string, { key: string; revenue: number; count: number }>();
-    for (const p of dataset) {
-      const key = dayjs.utc(p.date).format('YYYY-MM');
-      const cur = map.get(key) || { key, revenue: 0, count: 0 };
-      cur.revenue += p.revenue;
-      cur.count += p.count;
-      map.set(key, cur);
+    const monthMap = new Map<string, PaymentsLeaderboardEntry>();
+    const yearMap = new Map<string, PaymentsLeaderboardEntry>();
+    for (const p of dayTotals) {
+      const monthKey = dayjs.utc(p.key).format('YYYY-MM');
+      const yearKey = dayjs.utc(p.key).format('YYYY');
+      const month = monthMap.get(monthKey) || { key: monthKey, revenue: 0, count: 0 };
+      month.revenue += p.revenue;
+      month.count += p.count;
+      monthMap.set(monthKey, month);
+      const year = yearMap.get(yearKey) || { key: yearKey, revenue: 0, count: 0 };
+      year.revenue += p.revenue;
+      year.count += p.count;
+      yearMap.set(yearKey, year);
     }
-    const arr = Array.from(map.values());
-    arr.sort((a, b) => b.revenue - a.revenue);
-    return arr.slice(0, 10);
-  }, [dataset]);
+    const byRevenue = (a: PaymentsLeaderboardEntry, b: PaymentsLeaderboardEntry) =>
+      b.revenue - a.revenue;
+    return {
+      topDays,
+      topMonths: Array.from(monthMap.values()).sort(byRevenue).slice(0, 10),
+      topYears: Array.from(yearMap.values()).sort(byRevenue).slice(0, 10),
+    };
+  }, [series]);
 
-  const topYears = useMemo(() => {
-    const map = new Map<string, { key: string; revenue: number; count: number }>();
-    for (const p of dataset) {
-      const key = dayjs.utc(p.date).format('YYYY');
-      const cur = map.get(key) || { key, revenue: 0, count: 0 };
-      cur.revenue += p.revenue;
-      cur.count += p.count;
-      map.set(key, cur);
-    }
-    const arr = Array.from(map.values());
-    arr.sort((a, b) => b.revenue - a.revenue);
-    return arr.slice(0, 10);
-  }, [dataset]);
+  const topDays = leaderboards?.topDays ?? rangeLeaderboards.topDays;
+  const topMonths = leaderboards?.topMonths ?? rangeLeaderboards.topMonths;
+  const topYears = leaderboards?.topYears ?? rangeLeaderboards.topYears;
 
   if (unauthorized) {
     return (
@@ -969,41 +1009,51 @@ export default function PaymentsAnalyticsPage() {
           {/* Top 10 Days */}
           <Grid item xs={12} md={4}>
             <Card variant="outlined">
-              <CardHeader title="Top 10 Days (all-time)" />
+              <CardHeader
+                title="Top 10 Days (all-time)"
+                subheader="Pulse payments (excl. membership plan) + Square/Stripe from Dec 2025"
+                subheaderTypographyProps={{ variant: 'caption' }}
+              />
               <CardContent>
-                <Box sx={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', fontSize: 14, borderCollapse: 'collapse' }}>
-                    <thead>
-                      <tr style={{ color: 'var(--mui-palette-text-secondary)' }}>
-                        <th style={{ textAlign: 'left', padding: '8px' }}>Date</th>
-                        <th style={{ textAlign: 'right', padding: '8px' }}>Revenue</th>
-                        <th style={{ textAlign: 'right', padding: '8px' }}>Payments</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {topDays.map((d) => (
-                        <tr key={d.date} style={{ borderTop: '1px solid rgba(0,0,0,0.08)' }}>
-                          <td style={{ padding: '8px', whiteSpace: 'nowrap' }}>
-                            {dayjs(d.date).format('MMM D, YYYY')}
-                          </td>
-                          <td style={{ padding: '8px', textAlign: 'right' }}>
-                            {fmtUSD(d.revenue)}
-                          </td>
-                          <td style={{ padding: '8px', textAlign: 'right' }}>
-                            {d.count.toLocaleString()}
-                          </td>
+                {leaderboardsLoading && !leaderboards ? (
+                  <Box display="flex" justifyContent="center" py={3}>
+                    <CircularProgress size={28} />
+                  </Box>
+                ) : (
+                  <Box sx={{ overflowX: 'auto' }}>
+                    <table style={{ width: '100%', fontSize: 14, borderCollapse: 'collapse' }}>
+                      <thead>
+                        <tr style={{ color: 'var(--mui-palette-text-secondary)' }}>
+                          <th style={{ textAlign: 'left', padding: '8px' }}>Date</th>
+                          <th style={{ textAlign: 'right', padding: '8px' }}>Revenue</th>
+                          <th style={{ textAlign: 'right', padding: '8px' }}>Payments</th>
                         </tr>
-                      ))}
-                      {topDays.length === 0 && (
-                        <tr>
-                          <td colSpan={3} style={{ padding: '8px' }}>
-                            No data
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </Box>
+                      </thead>
+                      <tbody>
+                        {topDays.map((d) => (
+                          <tr key={d.key} style={{ borderTop: '1px solid rgba(0,0,0,0.08)' }}>
+                            <td style={{ padding: '8px', whiteSpace: 'nowrap' }}>
+                              {dayjs(d.key).format('MMM D, YYYY')}
+                            </td>
+                            <td style={{ padding: '8px', textAlign: 'right' }}>
+                              {fmtUSD(d.revenue)}
+                            </td>
+                            <td style={{ padding: '8px', textAlign: 'right' }}>
+                              {d.count.toLocaleString()}
+                            </td>
+                          </tr>
+                        ))}
+                        {topDays.length === 0 && (
+                          <tr>
+                            <td colSpan={3} style={{ padding: '8px' }}>
+                              No data
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </Box>
+                )}
               </CardContent>
             </Card>
           </Grid>
@@ -1011,41 +1061,51 @@ export default function PaymentsAnalyticsPage() {
           {/* Top 10 Months */}
           <Grid item xs={12} md={4}>
             <Card variant="outlined">
-              <CardHeader title="Top 10 Months (all-time)" />
+              <CardHeader
+                title="Top 10 Months (all-time)"
+                subheader="Same total as daily revenue"
+                subheaderTypographyProps={{ variant: 'caption' }}
+              />
               <CardContent>
-                <Box sx={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', fontSize: 14, borderCollapse: 'collapse' }}>
-                    <thead>
-                      <tr style={{ color: 'var(--mui-palette-text-secondary)' }}>
-                        <th style={{ textAlign: 'left', padding: '8px' }}>Month</th>
-                        <th style={{ textAlign: 'right', padding: '8px' }}>Revenue</th>
-                        <th style={{ textAlign: 'right', padding: '8px' }}>Payments</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {topMonths.map((m) => (
-                        <tr key={m.key} style={{ borderTop: '1px solid rgba(0,0,0,0.08)' }}>
-                          <td style={{ padding: '8px', whiteSpace: 'nowrap' }}>
-                            {dayjs(m.key + '-01').format('MMM YYYY')}
-                          </td>
-                          <td style={{ padding: '8px', textAlign: 'right' }}>
-                            {fmtUSD(m.revenue)}
-                          </td>
-                          <td style={{ padding: '8px', textAlign: 'right' }}>
-                            {m.count.toLocaleString()}
-                          </td>
+                {leaderboardsLoading && !leaderboards ? (
+                  <Box display="flex" justifyContent="center" py={3}>
+                    <CircularProgress size={28} />
+                  </Box>
+                ) : (
+                  <Box sx={{ overflowX: 'auto' }}>
+                    <table style={{ width: '100%', fontSize: 14, borderCollapse: 'collapse' }}>
+                      <thead>
+                        <tr style={{ color: 'var(--mui-palette-text-secondary)' }}>
+                          <th style={{ textAlign: 'left', padding: '8px' }}>Month</th>
+                          <th style={{ textAlign: 'right', padding: '8px' }}>Revenue</th>
+                          <th style={{ textAlign: 'right', padding: '8px' }}>Payments</th>
                         </tr>
-                      ))}
-                      {topMonths.length === 0 && (
-                        <tr>
-                          <td colSpan={3} style={{ padding: '8px' }}>
-                            No data
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </Box>
+                      </thead>
+                      <tbody>
+                        {topMonths.map((m) => (
+                          <tr key={m.key} style={{ borderTop: '1px solid rgba(0,0,0,0.08)' }}>
+                            <td style={{ padding: '8px', whiteSpace: 'nowrap' }}>
+                              {dayjs(m.key + '-01').format('MMM YYYY')}
+                            </td>
+                            <td style={{ padding: '8px', textAlign: 'right' }}>
+                              {fmtUSD(m.revenue)}
+                            </td>
+                            <td style={{ padding: '8px', textAlign: 'right' }}>
+                              {m.count.toLocaleString()}
+                            </td>
+                          </tr>
+                        ))}
+                        {topMonths.length === 0 && (
+                          <tr>
+                            <td colSpan={3} style={{ padding: '8px' }}>
+                              No data
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </Box>
+                )}
               </CardContent>
             </Card>
           </Grid>
@@ -1053,39 +1113,49 @@ export default function PaymentsAnalyticsPage() {
           {/* Top 10 Years */}
           <Grid item xs={12} md={4}>
             <Card variant="outlined">
-              <CardHeader title="Top 10 Years (all-time)" />
+              <CardHeader
+                title="Top 10 Years (all-time)"
+                subheader="Same total as daily revenue"
+                subheaderTypographyProps={{ variant: 'caption' }}
+              />
               <CardContent>
-                <Box sx={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', fontSize: 14, borderCollapse: 'collapse' }}>
-                    <thead>
-                      <tr style={{ color: 'var(--mui-palette-text-secondary)' }}>
-                        <th style={{ textAlign: 'left', padding: '8px' }}>Year</th>
-                        <th style={{ textAlign: 'right', padding: '8px' }}>Revenue</th>
-                        <th style={{ textAlign: 'right', padding: '8px' }}>Payments</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {topYears.map((y) => (
-                        <tr key={y.key} style={{ borderTop: '1px solid rgba(0,0,0,0.08)' }}>
-                          <td style={{ padding: '8px', whiteSpace: 'nowrap' }}>{y.key}</td>
-                          <td style={{ padding: '8px', textAlign: 'right' }}>
-                            {fmtUSD(y.revenue)}
-                          </td>
-                          <td style={{ padding: '8px', textAlign: 'right' }}>
-                            {y.count.toLocaleString()}
-                          </td>
+                {leaderboardsLoading && !leaderboards ? (
+                  <Box display="flex" justifyContent="center" py={3}>
+                    <CircularProgress size={28} />
+                  </Box>
+                ) : (
+                  <Box sx={{ overflowX: 'auto' }}>
+                    <table style={{ width: '100%', fontSize: 14, borderCollapse: 'collapse' }}>
+                      <thead>
+                        <tr style={{ color: 'var(--mui-palette-text-secondary)' }}>
+                          <th style={{ textAlign: 'left', padding: '8px' }}>Year</th>
+                          <th style={{ textAlign: 'right', padding: '8px' }}>Revenue</th>
+                          <th style={{ textAlign: 'right', padding: '8px' }}>Payments</th>
                         </tr>
-                      ))}
-                      {topYears.length === 0 && (
-                        <tr>
-                          <td colSpan={3} style={{ padding: '8px' }}>
-                            No data
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </Box>
+                      </thead>
+                      <tbody>
+                        {topYears.map((y) => (
+                          <tr key={y.key} style={{ borderTop: '1px solid rgba(0,0,0,0.08)' }}>
+                            <td style={{ padding: '8px', whiteSpace: 'nowrap' }}>{y.key}</td>
+                            <td style={{ padding: '8px', textAlign: 'right' }}>
+                              {fmtUSD(y.revenue)}
+                            </td>
+                            <td style={{ padding: '8px', textAlign: 'right' }}>
+                              {y.count.toLocaleString()}
+                            </td>
+                          </tr>
+                        ))}
+                        {topYears.length === 0 && (
+                          <tr>
+                            <td colSpan={3} style={{ padding: '8px' }}>
+                              No data
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </Box>
+                )}
               </CardContent>
             </Card>
           </Grid>

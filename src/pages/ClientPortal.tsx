@@ -1,6 +1,6 @@
 // src/pages/ClientPortal.tsx
 import React, { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router';
 import { useAuth } from '../auth/useAuth';
 import {
   fetchClientAppointments,
@@ -1163,7 +1163,7 @@ export default function ClientPortal() {
           .cp-pet-img { height: 130px; border-radius: 16px; border: 1px solid rgba(0, 0, 0, 0.06); }
         }
 
-        /* Refer a friend, get $75!: desktop = next to logo, mobile = below welcome */
+        /* Share Vet at Your Door: desktop = next to logo, mobile = below welcome */
         .cp-referral-btn-desktop { display: none; }
         .cp-referral-btn-mobile { display: flex; }
         @media (min-width: 640px) {
@@ -1591,7 +1591,7 @@ export default function ClientPortal() {
               <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
               <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
             </svg>
-            Refer a friend, get $75!
+            Share Vet at Your Door
           </button>
         </div>
         {clientFirstName && (
@@ -1637,7 +1637,7 @@ export default function ClientPortal() {
                   <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
                   <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
                 </svg>
-                Refer a friend, get $75!
+                Share Vet at Your Door
               </button>
             </div>
           </>
@@ -3019,7 +3019,7 @@ export default function ClientPortal() {
                   Referring a friend is the highest compliment you can give our team. We are grateful for your trust.
                 </p>
                 <p style={{ color: '#374151', fontSize: 14, marginBottom: 24, lineHeight: 1.5 }}>
-                  We will reach out to your friend directly. You and your friend will receive a $50 VAYD credit once their appointment is complete, plus an additional $25 credit if they become a member.
+                  We will reach out to your friend directly. As a warm welcome, their first trip fee is on us.
                 </p>
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
                   <button
@@ -3073,7 +3073,7 @@ export default function ClientPortal() {
                   Share Vet At Your Door with a friend and invite them into the Vet At Your Door veterinary experience.
                 </p>
                 <p style={{ color: '#6b7280', fontSize: 14, marginBottom: 20, lineHeight: 1.5 }}>
-                  You and your friend will receive a <strong>$50 VAYD credit</strong> when your referral completes an appointment, and an <strong>additional $25</strong> if they become a member.
+                  As a warm welcome, their first trip fee is on us. If someone comes to mind whose pet would benefit from calmer visits and relationship-based care, we'd be honored if you shared Vet at Your Door.
                 </p>
                 {referralError && (
                   <div

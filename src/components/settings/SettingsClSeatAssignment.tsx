@@ -17,6 +17,7 @@ import {
   type ClSeatDayOverride,
   type ClSeatParSettings,
 } from '../../api/clSeatAssignments';
+import { fetchClPerformanceAnalytics } from '../../api/clPerformanceAnalytics';
 import {
   CL_SEAT_LABELS,
   type ClSeat,
@@ -28,6 +29,12 @@ function extractErr(err: unknown): string {
   const msg = e?.response?.data?.message;
   if (Array.isArray(msg)) return msg.join('; ');
   return msg ?? e?.message ?? 'Request failed';
+}
+
+function todayLocalIso(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 function findReceptionistRoleId(roles: EmployeeRole[]): number | null {
@@ -130,6 +137,13 @@ export default function SettingsClSeatAssignment({ practiceId, onMessage }: Prop
   });
   const [loadingPar, setLoadingPar] = useState(true);
   const [savingPar, setSavingPar] = useState(false);
+  const [suggestedPar, setSuggestedPar] = useState<ClSeatParSettings | null>(null);
+  const [suggestedParMeta, setSuggestedParMeta] = useState<{
+    startDate: string;
+    endDate: string;
+    workdays: Record<ClSeat, number>;
+  } | null>(null);
+  const [loadingSuggestedPar, setLoadingSuggestedPar] = useState(false);
 
   const weekLabel = useMemo(() => formatWeekLabel(weekStart), [weekStart]);
   const weekEnd = useMemo(() => addDaysIso(weekStart, 6), [weekStart]);
@@ -235,6 +249,44 @@ export default function SettingsClSeatAssignment({ practiceId, onMessage }: Prop
     }
   }, [practiceId]);
 
+  const loadSuggestedPar = useCallback(async () => {
+    setLoadingSuggestedPar(true);
+    try {
+      const endDate = todayLocalIso();
+      const startDate = addDaysIso(endDate, -29);
+      const res = await fetchClPerformanceAnalytics({
+        startDate,
+        endDate,
+        practiceId,
+      });
+      const next: ClSeatParSettings = {
+        phones: res.seatPar.phones,
+        outreach: res.seatPar.outreach,
+        email: res.seatPar.email,
+      };
+      const workdays: Record<ClSeat, number> = {
+        phones: 0,
+        outreach: 0,
+        email: 0,
+      };
+      let any = false;
+      for (const row of res.seatAverages) {
+        workdays[row.seat] = row.workdayCount;
+        if (row.suggestedWeeklyPar != null) {
+          next[row.seat] = row.suggestedWeeklyPar;
+          any = true;
+        }
+      }
+      setSuggestedPar(any ? next : null);
+      setSuggestedParMeta(any ? { startDate, endDate, workdays } : null);
+    } catch {
+      setSuggestedPar(null);
+      setSuggestedParMeta(null);
+    } finally {
+      setLoadingSuggestedPar(false);
+    }
+  }, [practiceId]);
+
   useEffect(() => {
     void loadRoster();
   }, [loadRoster]);
@@ -242,6 +294,10 @@ export default function SettingsClSeatAssignment({ practiceId, onMessage }: Prop
   useEffect(() => {
     void loadPar();
   }, [loadPar]);
+
+  useEffect(() => {
+    void loadSuggestedPar();
+  }, [loadSuggestedPar]);
 
   useEffect(() => {
     void loadWeek();
@@ -502,7 +558,8 @@ export default function SettingsClSeatAssignment({ practiceId, onMessage }: Prop
         <p className="settings-muted" style={{ marginBottom: 16 }}>
           Normalized score = points ÷ seat par. 1.0 means on target for that rotating seat.
           Day offs and mid-week seat swaps prorate par (weekly ÷ 5 per workday). Adjust these when
-          the competition targets change.
+          the competition targets change. Suggested values come from the last 30 days of actual
+          points by seat (Analytics → CL Performance).
         </p>
         {loadingPar ? (
           <p className="settings-muted">Loading par…</p>
@@ -527,9 +584,32 @@ export default function SettingsClSeatAssignment({ practiceId, onMessage }: Prop
                     }}
                     style={{ width: 120 }}
                   />
+                  {suggestedPar ? (
+                    <p className="settings-muted" style={{ marginTop: 4, fontSize: 12 }}>
+                      30D avg ≈ {suggestedPar[seat]}
+                      {suggestedParMeta
+                        ? ` (${suggestedParMeta.workdays[seat]} person-days)`
+                        : ''}
+                    </p>
+                  ) : null}
                 </div>
               ))}
             </div>
+            {loadingSuggestedPar ? (
+              <p className="settings-muted" style={{ marginTop: 8 }}>
+                Loading 30-day seat averages…
+              </p>
+            ) : suggestedPar && suggestedParMeta ? (
+              <p className="settings-muted" style={{ marginTop: 8 }}>
+                Trailing 30 days ({suggestedParMeta.startDate} → {suggestedParMeta.endDate}):
+                weekly-equivalent average points by seat. Apply to use these as targets, then Save.
+              </p>
+            ) : (
+              <p className="settings-muted" style={{ marginTop: 8 }}>
+                No 30-day seat averages yet — assign weekly seats so points can be attributed by
+                seat.
+              </p>
+            )}
             <div className="settings-action-bar">
               <button
                 type="button"
@@ -538,6 +618,21 @@ export default function SettingsClSeatAssignment({ practiceId, onMessage }: Prop
                 disabled={savingPar}
               >
                 {savingPar ? 'Saving…' : 'Save seat par'}
+              </button>
+              <button
+                type="button"
+                className="btn secondary"
+                disabled={!suggestedPar || savingPar || loadingSuggestedPar}
+                onClick={() => {
+                  if (!suggestedPar) return;
+                  setSeatPar(suggestedPar);
+                  onMessageRef.current?.(
+                    'Applied 30-day seat averages as par draft — click Save seat par to persist.',
+                    'success'
+                  );
+                }}
+              >
+                Apply 30D averages
               </button>
             </div>
           </>

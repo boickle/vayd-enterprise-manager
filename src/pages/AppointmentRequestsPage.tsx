@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router';
 import { DateTime } from 'luxon';
 import { fetchAppointmentById } from '../api/appointments';
 import { fetchAllAppointmentTypes } from '../api/appointmentSettings';
@@ -22,6 +22,7 @@ import {
   type AppointmentFormDraftFollowUpStatus,
 } from '../api/appointmentFormDrafts';
 import { ClientSmsComposeModal } from '../components/ClientSmsComposeModal';
+import { ClientMessagesHistoryModal } from '../components/ClientMessagesHistoryModal';
 import { AppointmentRequestEmailModal } from '../components/AppointmentRequestEmailModal';
 import type { AppointmentRequestEmailSentContext } from '../components/AppointmentRequestEmailModal';
 import { AppointmentRequestDetailPanel } from '../components/AppointmentRequestDetailPanel';
@@ -39,6 +40,7 @@ import {
   requestDataAnythingElse,
   requestDataAppointmentTypeLabel,
   requestDataCanText,
+  requestDataClientId,
   requestDataClientType,
   requestDataHadVetCareElsewhere,
   requestDataHowSoon,
@@ -61,6 +63,7 @@ import {
   resolveClientPimsIdForRequestCard,
 } from '../utils/appointmentRequestLinkedEvet';
 import { resolveAppointmentRequestSmsMessage } from '../utils/appointmentRequestSmsMessage';
+import { resolveRequestDataClientIdStaff } from '../utils/resolveRequestDataClientId';
 import { evetClientLink } from '../utils/evet';
 import { AppointmentRequestClientNameChange } from '../components/AppointmentRequestClientNameChange';
 import { AppointmentRequestAlternateAddressCallout } from '../components/AppointmentRequestAlternateAddressCallout';
@@ -69,6 +72,8 @@ import {
   buildRoutingAppointmentRequestIntentFromSubmission,
   writeRoutingAppointmentRequestIntent,
 } from '../utils/routingAppointmentRequestIntent';
+import { dismissRoutingRescheduleWorkspace } from '../utils/routingRescheduleIntent';
+import { dismissRoutingForwardBookingWorkspace } from '../utils/routingForwardBookingIntent';
 import { startRescheduleFromBookedAppointmentRequest } from '../utils/appointmentRequestReschedule';
 import { appointmentRequestSchedulerViewHints } from '../utils/appointmentRequestSchedulerFocus';
 import {
@@ -128,10 +133,10 @@ import {
   appointmentRequestAutoBookedOnline,
   appointmentRequestNeedsStaffConfirmation,
 } from '../utils/appointmentRequestStaffConfirm';
+import { beginAppointmentRequestStaffConfirmFlow } from '../utils/appointmentRequestStaffConfirmFlow';
 import {
   clearAppointmentRequestStaffConfirmReturnSession,
   readAppointmentRequestStaffConfirmReturnSession,
-  writeAppointmentRequestStaffConfirmSession,
 } from '../utils/appointmentRequestStaffConfirmSession';
 import {
   clearOnHoldVisitEditReturnSession,
@@ -141,12 +146,11 @@ import {
 } from '../utils/onHoldVisitEditSession';
 import {
   appointmentRecordHasActiveLinkedVisit,
-  appointmentRequestSubmissionHasActiveLinkedVisit,
+  appointmentRequestBookedSummaryMatchesSubmission,
 } from '../utils/appointmentRequestLinkedCalendarVisit';
 import {
   clearNotBookedRemoveReturnSession,
   readNotBookedRemoveReturnSession,
-  writeNotBookedRemoveSession,
 } from '../utils/appointmentRequestNotBookedRemoveSession';
 import {
   APPOINTMENT_REQUESTS_LIST_PATH,
@@ -533,6 +537,9 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
   const [smsMessageLoading, setSmsMessageLoading] = useState(false);
   const [smsSending, setSmsSending] = useState(false);
   const [smsError, setSmsError] = useState<string | null>(null);
+  const [messagesClientId, setMessagesClientId] = useState<number | null>(null);
+  const [messagesClientLabel, setMessagesClientLabel] = useState('');
+  const [messagesFromLine, setMessagesFromLine] = useState<string | null>(null);
 
   const [emailItem, setEmailItem] = useState<AppointmentRequestSubmissionItem | null>(null);
   const [emailSentToast, setEmailSentToast] = useState(false);
@@ -634,11 +641,19 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
 
       if (generation !== hydrateGenerationRef.current) return new Map();
 
+      const requestedIds = new Set(uniqueBooked);
       setBookedApptMeta((prev) => {
-        if (meta.size === 0 && prev.size > 0) return prev;
+        // Total fetch miss with prior cache — keep prev (likely transient API failure).
+        if (meta.size === 0 && prev.size > 0 && uniqueBooked.length > 0) return prev;
         const next = new Map(meta);
         for (const [id, summary] of prev) {
-          if (!next.has(id)) next.set(id, summary);
+          if (next.has(id)) continue;
+          if (requestedIds.has(id)) {
+            // Re-fetched and gone (soft-deleted) — do not keep a stale "active" hold.
+            next.set(id, { ...summary, appointmentCancelled: true });
+            continue;
+          }
+          next.set(id, summary);
         }
         return next;
       });
@@ -820,6 +835,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
             practiceId: PRACTICE_ID,
             page: 1,
             limit: 200,
+            includeAbandoned: true,
           }),
         ]);
         const typeCatalog = buildAppointmentTypeCatalogFromTypes(types);
@@ -832,7 +848,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
 
         const runBackfillAndHydrate = async (backfillGen: number) => {
           const allItems = await fetchRemainingAppointmentRequestSubmissionPages(
-            { practiceId: PRACTICE_ID },
+            { practiceId: PRACTICE_ID, includeAbandoned: true },
             firstPage,
           );
           if (backfillGen !== submissionBackfillGenRef.current) return;
@@ -861,7 +877,10 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
       }
 
       const [{ items, conversions }, types] = await Promise.all([
-        fetchAllAppointmentRequestSubmissions({ practiceId: PRACTICE_ID }),
+        fetchAllAppointmentRequestSubmissions({
+          practiceId: PRACTICE_ID,
+          includeAbandoned: true,
+        }),
         fetchAllAppointmentTypes(PRACTICE_ID, { activeOnly: false }),
       ]);
       const typeCatalog = buildAppointmentTypeCatalogFromTypes(types);
@@ -1661,61 +1680,95 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
   );
 
   const openConfirmPreview = (item: AppointmentRequestSubmissionItem) => {
-    const apptId = item.bookedAppointmentId;
-    if (apptId == null) return;
+    if (!appointmentRequestNeedsStaffConfirmation(item)) return;
     setStatusError((e) => ({ ...e, [item.id]: null }));
-    const { dateKey, providerId } = appointmentRequestViewHints(item, bookedApptMeta, practiceTz);
-
     writeAppointmentRequestListReturnTab(statusFilter);
-    writeAppointmentRequestStaffConfirmSession({
-      submissionId: item.id,
-      bookedAppointmentId: Number(apptId),
-      clientLabel: clientDisplayNameFromRequestData(item.requestData ?? {}),
-      isNewClient: requestDataClientType(item.requestData ?? {}) === 'new',
-    });
-    writeSchedulerFocusSession({
-      appointmentId: Number(apptId),
-      dateHint: dateKey,
-      providerHint: providerId ?? null,
-    });
-    navigate(
-      buildSchedulerFocusAppointmentUrl(Number(apptId), {
-        date: dateKey ?? undefined,
-        providerId,
-      }),
-    );
+    const bookedSummary =
+      item.bookedAppointmentId != null
+        ? bookedApptMeta.get(Number(item.bookedAppointmentId))
+        : undefined;
+    setStatusUpdating((s) => ({ ...s, [item.id]: true }));
+    void beginAppointmentRequestStaffConfirmFlow({
+      submission: item,
+      practiceTz,
+      navigate,
+      typeCatalog,
+      bookedApptSummary: bookedSummary ?? null,
+      returnPath: appointmentRequestsPathForTab(statusFilter, { onHoldOver24Only }),
+    })
+      .then((result) => {
+        if (result.kind === 'scheduler_review') return;
+        if (result.kind === 'needs_relink') {
+          setManualBookModal({ item, relink: true });
+          setNotice(
+            'The linked calendar visit changed. Pick the correct appointment to track, then confirm.',
+          );
+          return;
+        }
+        if (result.kind === 'needs_not_booked') {
+          setNotBookedItem(item);
+          setNotBookedReasonChoice('');
+          setNotBookedReasonOther('');
+          setNotBookedError(null);
+          setNotice(
+            'No calendar visit found for this request. Mark it Not booked if it was cancelled or never booked.',
+          );
+          return;
+        }
+        if (result.kind === 'error') {
+          setStatusError((e) => ({ ...e, [item.id]: result.message }));
+          return;
+        }
+        // already_confirmed — nothing pending; just clear it from Auto-Booked.
+        mergeSubmission({
+          ...item,
+          staffConfirmedAt: item.staffConfirmedAt?.trim() || new Date().toISOString(),
+        });
+        beginRowExit(item.id, 'booked');
+        notifySchedulingToolsNavCountsRefresh();
+        setNotice('This request was already confirmed.');
+      })
+      .catch(() => {
+        setStatusError((e) => ({
+          ...e,
+          [item.id]: 'Could not confirm this appointment request.',
+        }));
+      })
+      .finally(() => {
+        setStatusUpdating((s) => ({ ...s, [item.id]: false }));
+      });
   };
 
   const openNotBookedModal = (item: AppointmentRequestSubmissionItem) => {
-    if (appointmentRequestSubmissionHasActiveLinkedVisit(item, bookedApptMeta)) {
-      const apptId = item.bookedAppointmentId;
-      if (apptId == null) return;
-      const { dateKey, providerId } = appointmentRequestViewHints(item, bookedApptMeta, practiceTz);
-      writeAppointmentRequestListReturnTab(statusFilter);
-      writeNotBookedRemoveSession({
-        submissionId: item.id,
-        bookedAppointmentId: Number(apptId),
-        clientLabel: clientDisplayNameFromRequestData(item.requestData ?? {}),
-        returnPath: appointmentRequestsPathForTab(statusFilter, { onHoldOver24Only }),
+    if ((item.status ?? 'new') === 'dismissed') return;
+    setStatusError((e) => ({ ...e, [item.id]: null }));
+    const bookedSummary =
+      item.bookedAppointmentId != null
+        ? bookedApptMeta.get(Number(item.bookedAppointmentId))
+        : undefined;
+    writeAppointmentRequestListReturnTab(statusFilter);
+    void beginAppointmentRequestNotBookedFlow({
+      submission: item,
+      returnPath: appointmentRequestsPathForTab(statusFilter, { onHoldOver24Only }),
+      practiceTz,
+      navigate,
+      bookedApptSummary: bookedSummary ?? null,
+    })
+      .then((result) => {
+        if (result.kind === 'scheduler_remove') {
+          setNotice('Remove this visit from the calendar, then mark the request as not booked.');
+          return;
+        }
+        if (result.kind === 'already_dismissed') return;
+        // needs_reason: linked visit missing/cancelled — reason modal only.
+        setNotBookedItem(item);
+        setNotBookedReasonChoice('');
+        setNotBookedReasonOther('');
+        setNotBookedError(null);
+      })
+      .catch(() => {
+        setError('Could not start the not booked flow for this appointment request.');
       });
-      writeSchedulerFocusSession({
-        appointmentId: Number(apptId),
-        dateHint: dateKey,
-        providerHint: providerId ?? null,
-      });
-      navigate(
-        buildSchedulerFocusAppointmentUrl(Number(apptId), {
-          date: dateKey ?? undefined,
-          providerId,
-        }),
-      );
-      setNotice('Remove this visit from the calendar, then mark the request as not booked.');
-      return;
-    }
-    setNotBookedItem(item);
-    setNotBookedReasonChoice('');
-    setNotBookedReasonOther('');
-    setNotBookedError(null);
   };
 
   const closeNotBookedModal = () => {
@@ -1787,6 +1840,10 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
   const onBook = (item: AppointmentRequestSubmissionItem) => {
     const rd = item.requestData ?? {};
     writeAppointmentRequestListReturnTab(statusFilter);
+    // Book must open a new discrete visit. Leftover reschedule / forward-booking
+    // session state would make Routing PATCH an existing household appointment.
+    dismissRoutingRescheduleWorkspace();
+    dismissRoutingForwardBookingWorkspace();
     const intent = buildRoutingAppointmentRequestIntentFromSubmission(item);
     writeRoutingAppointmentRequestIntent({
       ...intent,
@@ -1827,6 +1884,29 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
     setSmsMessage('');
     setSmsMessageLoading(false);
     setSmsError(null);
+  };
+
+  const openMessagesHistoryFromSms = () => {
+    if (!smsItem) return;
+    const rd = (smsItem.requestData ?? {}) as Record<string, unknown>;
+    const label = clientDisplayNameFromRequestData(rd);
+    const phone = requestDataPhone(rd);
+    const syncId = requestDataClientId(rd);
+    if (syncId) {
+      setMessagesClientId(Number(syncId));
+      setMessagesClientLabel(label);
+      setMessagesFromLine(phone);
+      return;
+    }
+    void resolveRequestDataClientIdStaff(rd, PRACTICE_ID).then((id) => {
+      if (!id) {
+        setSmsError('Could not find this client in the system to load message history.');
+        return;
+      }
+      setMessagesClientId(Number(id));
+      setMessagesClientLabel(label);
+      setMessagesFromLine(phone);
+    });
   };
 
   const openEmailClient = (item: AppointmentRequestSubmissionItem) => {
@@ -2201,12 +2281,6 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
             const isEuth = isEuthanasiaRequestData(rd);
             const status = submissionStatus(item);
             const isDismissed = status === 'dismissed';
-            const isOnHoldVisit = appointmentRequestSubmissionIsOnHold(item, bookedApptMeta, typeCatalog);
-            const isBooked = appointmentRequestSubmissionCountsAsBooked(
-              item,
-              bookedApptMeta,
-              typeCatalog,
-            );
             // When Gmail is connected, the Gmail labels row is the single source of truth
             // for status/category labels (Booked / Not booked / Contacted / On hold /
             // Emergent / client type / Euthanasia — all mirrored or applied as Gmail
@@ -2214,14 +2288,27 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
             // equivalent (search-tab aid, text consent, auto-booked, convert-hold action).
             const showScoutLabelChips = !canAccessGmailInbox;
             const bookedApptId = item.bookedAppointmentId;
-            const hasLinkedAppointment = bookedApptId != null;
+            const bookedSummary =
+              bookedApptId != null ? bookedApptMeta.get(Number(bookedApptId)) : undefined;
+            const hasLinkedAppointment =
+              bookedApptId != null &&
+              appointmentRequestBookedSummaryMatchesSubmission(item, bookedSummary);
+            const isOnHoldVisit =
+              hasLinkedAppointment &&
+              appointmentRequestSubmissionIsOnHold(item, bookedApptMeta, typeCatalog);
+            const isBooked =
+              hasLinkedAppointment &&
+              appointmentRequestSubmissionCountsAsBooked(
+                item,
+                bookedApptMeta,
+                typeCatalog,
+              );
             // Only true when the client self-scheduled a slot and it was auto-booked online —
             // not for ordinary appointment requests that staff book later.
             const autoBookedOnline = appointmentRequestAutoBookedOnline(item);
-            const needsStaffConfirmation = appointmentRequestNeedsStaffConfirmation(item);
+            const needsStaffConfirmation =
+              hasLinkedAppointment && appointmentRequestNeedsStaffConfirmation(item);
             const needsManualBook = !isDismissed && !isBooked && !hasLinkedAppointment;
-            const bookedSummary =
-              bookedApptId != null ? bookedApptMeta.get(Number(bookedApptId)) : undefined;
             const linkedAppointment = linkedEvetIdsFromBookedApptSummary(bookedSummary);
             const requestTypeName = requestDataAppointmentTypeLabel(rd);
             const displayBookedSummary =
@@ -2890,13 +2977,25 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
           onMessageChange={setSmsMessage}
           onClose={closeSmsModal}
           onSend={(opts) => void handleSendSms(opts)}
-          onOpenMessagesHistory={() => {}}
+          onOpenMessagesHistory={openMessagesHistoryFromSms}
           sending={smsSending || smsMessageLoading}
           sendError={smsError}
           title="Text requester"
           subtitle={`Message goes to the phone on the request${requestDataCanText(smsItem.requestData ?? {}) === 'Yes' ? ' (client consented to texts)' : ''}.`}
         />
       ) : null}
+
+      <ClientMessagesHistoryModal
+        open={messagesClientId != null}
+        clientId={messagesClientId}
+        clientLabel={messagesClientLabel}
+        openPhoneLine={messagesFromLine}
+        onClose={() => {
+          setMessagesClientId(null);
+          setMessagesClientLabel('');
+          setMessagesFromLine(null);
+        }}
+      />
 
       {emailSentToast ? (
         <div

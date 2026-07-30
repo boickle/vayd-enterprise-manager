@@ -1,7 +1,7 @@
 // src/pages/RoomLoader.tsx
 import { useState, useEffect, useMemo, useRef, useCallback, Fragment } from 'react';
 import { createPortal } from 'react-dom';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router';
 import { DateTime } from 'luxon';
 import {
   searchRoomLoaders,
@@ -25,6 +25,7 @@ import { Heart } from 'lucide-react';
 import { KeyValue } from '../components/KeyValue';
 import { RoomLoaderReconciliationModal } from '../components/RoomLoaderReconciliationModal';
 import { roomLoaderAppointmentsHaveHappened } from '../utils/roomLoaderReconciliation';
+import { notifyRoomLoaderSentStatusChanged } from '../utils/roomLoaderPreApptDisplay';
 import { evetPatientLink, evetClientLink } from '../utils/evet';
 import {
   inventoryCategoryRequiresSharpsDisposal,
@@ -2449,6 +2450,7 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
       if (options?.sendViaSms) payload.sendViaSms = true;
       if (options?.smsMessage) payload.smsMessage = options.smsMessage;
       await http.post('/room-loader/send-to-client', payload);
+      notifyRoomLoaderSentStatusChanged();
       if (!embedded) await loadRoomLoaders();
       if (selectedRoomLoaderId) {
         await loadRoomLoaderDetails(selectedRoomLoaderId);

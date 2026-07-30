@@ -1,6 +1,6 @@
 // src/pages/Login.tsx
 import { FormEvent, useState, type CSSProperties } from 'react';
-import { useLocation, useNavigate, Link } from 'react-router-dom';
+import { useLocation, useNavigate, Link } from 'react-router';
 import { useAuth } from '../auth/useAuth';
 import { trackEvent } from '../utils/analytics';
 import { isCreateClientEnabled } from '../utils/env';

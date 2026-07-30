@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router';
 import { DateTime } from 'luxon';
 import { useAuth } from '../auth/useAuth';
 import { listPracticeBranches, type PracticeBranch } from '../api/branchInventory';

@@ -12,7 +12,7 @@ import {
   type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router';
 import { DateTime } from 'luxon';
 import { AlertTriangle, Cat, Dog, Heart, Printer, X } from 'lucide-react';
 import {
@@ -28,6 +28,7 @@ import {
   isAppointmentNoLocation,
   cancelAppointment,
   patchAppointment,
+  putAppointmentAlternateAddress,
   isFlexBlockItem,
   isPracticeCalendarBlockAppointment,
   truthyApiFlag,
@@ -58,7 +59,7 @@ import {
   rolesIncludeAdminBypass,
 } from '../utils/manualBookingPermissions';
 import { buildAppointmentTypeCatalog, appointmentFormFlags } from '../utils/appointmentTypeSettings';
-import type { Appointment, Client, Patient } from '../api/roomLoader';
+import { searchRoomLoaders, type Appointment, type Client, type Patient } from '../api/roomLoader';
 import {
   computeEditPreviewPopoverPosition,
   computeVisitHighlightsPopoverPosition,
@@ -77,8 +78,20 @@ import {
   type SchedulerDoctorDayEffectiveWindow,
   type SchedulerDoctorDayMembership,
 } from '../utils/schedulerDriveEta';
-import { mergeAppointmentPreserveRoomLoaderConfirmStatus } from '../utils/roomLoaderPreApptDisplay';
+import {
+  buildRoomLoaderPreApptStatusByAppointmentId,
+  mergeAppointmentPreserveRoomLoaderConfirmStatus,
+  preferRoomLoaderPreApptStatus,
+  ROOM_LOADER_SENT_STATUS_CHANGED_EVENT,
+  roomLoaderPreApptUiStatus,
+  type RoomLoaderPreApptUiStatus,
+} from '../utils/roomLoaderPreApptDisplay';
 import { summarizeReconciledDayWindowWarnings } from '../utils/routingCardWindowWarning';
+import {
+  driveSlotForAppointmentId,
+  findFormerFirstAppointmentForPreFirstBook,
+  resolvePreFirstNeighborBumpTarget,
+} from '../utils/preFirstNeighborBump';
 import {
   buildGoogleMapsLinksForDay,
   householdsInRoutingDisplayOrder,
@@ -210,7 +223,12 @@ import {
 } from './SchedulerEditVisitModal';
 import type { EditVisitPatientSelection } from '../components/EditVisitAddPatientPanel';
 import type { EditVisitLinkSelection } from '../components/EditVisitLinkClientPanel';
-import { editVisitLinkClearsAlternateAddress, appointmentResolvedClientId, visitAddressForLinkMatching } from '../utils/visitAddressMatch';
+import {
+  appointmentAlternateMatchesClientHome,
+  editVisitLinkClearsAlternateAddress,
+  appointmentResolvedClientId,
+  visitAddressForLinkMatching,
+} from '../utils/visitAddressMatch';
 import { OnMyWaySmsModal } from '../components/OnMyWaySmsModal';
 import { WorkZonesMapModal } from '../components/WorkZonesMapModal';
 import { etaMinutesAwayFromNow } from '../utils/onMyWaySmsMessage';
@@ -350,6 +368,8 @@ import {
   writeAppointmentRequestStaffConfirmReturnSession,
   type AppointmentRequestStaffConfirmSessionV1,
 } from '../utils/appointmentRequestStaffConfirmSession';
+import { appointmentRequestNeedsStaffConfirmation } from '../utils/appointmentRequestStaffConfirm';
+import { submissionIdFromOnlineHoldPimsId } from '../utils/holdsOpenInScheduler';
 import {
   clearNotBookedRemoveSession,
   readNotBookedRemoveSession,
@@ -376,7 +396,10 @@ import { ON_HOLD_LIST_PATH } from '../utils/forwardBookingReturnSession';
 import { writeCareOutreachFocusClient } from '../utils/careOutreachFocusSession';
 import { opsPointsForAppointment } from '../utils/forwardBookingListVisibility';
 import { confirmSlotOffer } from '../api/slotOffers';
-import { patchAppointmentRequestSubmission, fetchAppointmentRequestSubmission } from '../api/appointmentRequestSubmissions';
+import {
+  patchAppointmentRequestSubmission,
+  fetchAppointmentRequestSubmission,
+} from '../api/appointmentRequestSubmissions';
 import {
   appointmentRequestWorkspaceIsActive,
   clearRoutingAppointmentRequestIntent,
@@ -2820,20 +2843,6 @@ function appointmentOverlapsUtcRange(
   return s < re && e > rs;
 }
 
-/** Match `confirmStatusName` (room loader / pre-appt workflow). */
-const PRE_APPT_SENT_SNIPPET = 'Pre-Appt Email Sent';
-const PRE_APPT_COMPLETE_SNIPPET = 'Client Submitted Pre-Appt form';
-
-type RoomLoaderPreApptUiStatus = 'none' | 'sent' | 'complete';
-
-function roomLoaderPreApptStatus(confirmStatusName: string | null | undefined): RoomLoaderPreApptUiStatus {
-  const s = (confirmStatusName ?? '').trim();
-  if (!s) return 'none';
-  if (s.includes(PRE_APPT_COMPLETE_SNIPPET)) return 'complete';
-  if (s.includes(PRE_APPT_SENT_SNIPPET)) return 'sent';
-  return 'none';
-}
-
 function isCalendarBlockAppointment(a: Appointment): boolean {
   return isPracticeCalendarBlockAppointment(a);
 }
@@ -2854,8 +2863,24 @@ const PRE_APPT_STATUS_COLOR: Record<RoomLoaderPreApptUiStatus, string> = {
   complete: '#16a34a',
 };
 
-function SchedulerPreApptRlIcon({ confirmStatusName }: { confirmStatusName?: string | null }) {
-  const st = roomLoaderPreApptStatus(confirmStatusName);
+function resolveSchedulerRlStatus(
+  confirmStatusName: string | null | undefined,
+  scoutUiStatus?: RoomLoaderPreApptUiStatus | null
+): RoomLoaderPreApptUiStatus {
+  return preferRoomLoaderPreApptStatus(
+    roomLoaderPreApptUiStatus(confirmStatusName),
+    scoutUiStatus ?? 'none'
+  );
+}
+
+function SchedulerPreApptRlIcon({
+  confirmStatusName,
+  scoutUiStatus,
+}: {
+  confirmStatusName?: string | null;
+  scoutUiStatus?: RoomLoaderPreApptUiStatus | null;
+}) {
+  const st = resolveSchedulerRlStatus(confirmStatusName, scoutUiStatus);
   const title =
     st === 'complete'
       ? 'Room loader / pre-appt: client submitted form (completed)'
@@ -2998,6 +3023,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     nonHoldAppointmentIds: number[];
   } | null>(null);
   const [convertingExploreHold, setConvertingExploreHold] = useState(false);
+  const [exploreHoldConvertError, setExploreHoldConvertError] = useState<string | null>(null);
   const [manualBookableTypeIds, setManualBookableTypeIds] = useState<number[] | null>(null);
   const [rawAppointments, setRawAppointments] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
@@ -3119,6 +3145,10 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   const [onMyWaySmsAppt, setOnMyWaySmsAppt] = useState<Appointment | null>(null);
   const [embeddedRoomLoaderId, setEmbeddedRoomLoaderId] = useState<number | null>(null);
   const [roomLoaderPdfModalAppt, setRoomLoaderPdfModalAppt] = useState<Appointment | null>(null);
+  /** Scout room-loader sentStatus → RL badge color when PIMS confirmStatusName lags behind. */
+  const [roomLoaderStatusByApptId, setRoomLoaderStatusByApptId] = useState<
+    Map<number, RoomLoaderPreApptUiStatus>
+  >(() => new Map());
   const [workZonesMapOpen, setWorkZonesMapOpen] = useState(false);
   const [roomLoaderOpening, setRoomLoaderOpening] = useState(false);
   /** null = not applicable or loading; true = at least one pet can be added; false = none left */
@@ -3371,6 +3401,40 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       cancelled = true;
     };
   }, [hover?.appt?.id, hover?.appt]);
+
+  /** Persist-clear a stale ALT that matches the linked client's home (badge already hidden). */
+  useEffect(() => {
+    const appt = hover?.appt;
+    if (!appt?.id || appt.id === SCHEDULER_ROUTING_PREVIEW_SYNTHETIC_APPT_ID) return;
+    if (!appointmentAlternateMatchesClientHome(appt)) return;
+
+    let cancelled = false;
+    void putAppointmentAlternateAddress(appt.id, { addressText: '' })
+      .then(() => {
+        if (cancelled) return;
+        const cleared = appointmentWithoutAlternateRoutingAddress(appt);
+        setHover((prev) =>
+          prev?.appt.id === appt.id ? { ...prev, appt: { ...prev.appt, ...cleared } } : prev
+        );
+        setRawAppointments((prev) => {
+          const idx = prev.findIndex((a) => a.id === appt.id);
+          if (idx === -1) return prev;
+          const next = [...prev];
+          next[idx] = { ...next[idx], ...cleared };
+          return next;
+        });
+      })
+      .catch(() => {
+        /* non-fatal — UI already treats matching ALT as home */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    hover?.appt?.id,
+    hover?.appt ? appointmentAlternateAddressText(hover.appt) : null,
+    hover?.appt?.client?.id,
+  ]);
 
   /** Range rows may omit patient sex — hydrate from GET /appointments/:id on hover. */
   useEffect(() => {
@@ -4352,6 +4416,28 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     };
   }, [isAdminOrSuper]);
 
+  /** Align calendar RL badges with Scout room-loader sentStatus for the visible date range. */
+  const loadRoomLoaderStatusesForRange = useCallback(async () => {
+    const from = rangeUtc.startLocal.toISODate();
+    const toExclusive = rangeUtc.endLocalExclusive.toISODate();
+    if (!from || !toExclusive) {
+      setRoomLoaderStatusByApptId(new Map());
+      return;
+    }
+    const toInclusive = rangeUtc.endLocalExclusive.minus({ days: 1 }).toISODate() ?? from;
+    try {
+      const rows = await searchRoomLoaders({
+        practiceId: PRACTICE_ID,
+        appointmentFrom: from,
+        appointmentTo: toInclusive,
+        activeOnly: true,
+      });
+      setRoomLoaderStatusByApptId(buildRoomLoaderPreApptStatusByAppointmentId(rows ?? []));
+    } catch {
+      // Keep prior map on transient failures so badges don't flash red.
+    }
+  }, [rangeUtc.startLocal, rangeUtc.endLocalExclusive]);
+
   const loadRange = useCallback(
     async (opts?: { refreshDrive?: boolean; silent?: boolean; refreshDriveSoft?: boolean }) => {
       if (providers.length === 0) {
@@ -4384,6 +4470,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           setDriveRefreshNonce((n) => n + 1);
         }
         void refreshForwardBookingSourceIds();
+        void loadRoomLoaderStatusesForRange();
       } catch (e: unknown) {
         const msg = e && typeof e === 'object' && 'message' in e ? String((e as Error).message) : 'Failed to load';
         setError(msg);
@@ -4395,7 +4482,15 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         }
       }
     },
-    [rangeUtc.startUtc, rangeUtc.endUtc, resolvedPrimaryProviderId, providers, providersLoadState, refreshForwardBookingSourceIds]
+    [
+      rangeUtc.startUtc,
+      rangeUtc.endUtc,
+      resolvedPrimaryProviderId,
+      providers,
+      providersLoadState,
+      refreshForwardBookingSourceIds,
+      loadRoomLoaderStatusesForRange,
+    ]
   );
 
   useEffect(() => {
@@ -4427,7 +4522,10 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       }
 
       if (nonDels.length === 0) {
-        if (dels.length > 0) bumpDriveSoft();
+        if (dels.length > 0) {
+          bumpDriveSoft();
+          void loadRoomLoaderStatusesForRange();
+        }
         return;
       }
 
@@ -4472,6 +4570,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       });
 
       if (dels.length > 0 || nonDels.length > 0) bumpDriveSoft();
+      // Scout sentStatus can lead PIMS confirmStatusName; refresh RL badges on every calendar socket batch.
+      void loadRoomLoaderStatusesForRange();
     },
     [
       providers.length,
@@ -4481,6 +4581,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       rangeUtc.startUtc,
       rangeUtc.endUtc,
       loadRange,
+      loadRoomLoaderStatusesForRange,
     ]
   );
 
@@ -4497,8 +4598,20 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       onBatch: (payloads) => {
         void applyRealtimeCalendarBatch(payloads);
       },
+      onReconnect: () => {
+        void loadRoomLoaderStatusesForRange();
+      },
     });
-  }, [authToken, resolvedPrimaryProviderId, applyRealtimeCalendarBatch]);
+  }, [authToken, resolvedPrimaryProviderId, applyRealtimeCalendarBatch, loadRoomLoaderStatusesForRange]);
+
+  /** Same-tab: Room Loader send/update should flip calendar RL badges without waiting on PIMS/socket. */
+  useEffect(() => {
+    const onSentStatusChanged = () => {
+      void loadRoomLoaderStatusesForRange();
+    };
+    window.addEventListener(ROOM_LOADER_SENT_STATUS_CHANGED_EVENT, onSentStatusChanged);
+    return () => window.removeEventListener(ROOM_LOADER_SENT_STATUS_CHANGED_EVENT, onSentStatusChanged);
+  }, [loadRoomLoaderStatusesForRange]);
 
   useEffect(() => {
     const docId = resolvedPrimaryProviderId.trim();
@@ -6610,27 +6723,32 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     const start = startUtc.setZone(PRACTICE_TZ);
     const end = start.plus({ minutes: mins });
     const isAdminOrSuper = rolesLower.includes('admin') || rolesLower.includes('superadmin');
-    const ri = readRoutingRescheduleIntent();
-    const fbi = forwardBookingWorkspaceIsActive()
-      ? storedForwardBookingIntent
-      : isScheduleLoaderCalendarPreview(routingPreview) &&
-          storedForwardBookingIntent?.origin === 'schedule_loader'
+    const ari = appointmentRequestWorkspaceIsActive() ? readRoutingAppointmentRequestIntent() : null;
+    // Appointment-request Book is always a new visit. Ignore leftover reschedule
+    // session/preview ids so we never PATCH another household appointment.
+    const ri = ari ? null : readRoutingRescheduleIntent();
+    const fbi = ari
+      ? null
+      : forwardBookingWorkspaceIsActive()
         ? storedForwardBookingIntent
-        : null;
+        : isScheduleLoaderCalendarPreview(routingPreview) &&
+            storedForwardBookingIntent?.origin === 'schedule_loader'
+          ? storedForwardBookingIntent
+          : null;
     const previewPatientIds =
       routingPreview.previewPatients?.map((p) => String(p.id)).filter(Boolean) ?? [];
-    const ari = appointmentRequestWorkspaceIsActive() ? readRoutingAppointmentRequestIntent() : null;
     const rescheduleTargets = ri
       ? previewPatientIds.length > 0
         ? rescheduleTargetsForChipSelection(ri, previewPatientIds)
         : rescheduleScopeTargets(ri)
       : null;
-    const rescheduleIds =
-      routingPreview.rescheduleAppointmentIds?.filter((id) => Number.isFinite(Number(id))) ??
-      (routingPreview.rescheduleAppointmentId != null &&
-      Number.isFinite(Number(routingPreview.rescheduleAppointmentId))
-        ? [Number(routingPreview.rescheduleAppointmentId)]
-        : rescheduleTargets?.appointmentIds ?? []);
+    const rescheduleIds = ari
+      ? []
+      : routingPreview.rescheduleAppointmentIds?.filter((id) => Number.isFinite(Number(id))) ??
+        (routingPreview.rescheduleAppointmentId != null &&
+        Number.isFinite(Number(routingPreview.rescheduleAppointmentId))
+          ? [Number(routingPreview.rescheduleAppointmentId)]
+          : rescheduleTargets?.appointmentIds ?? []);
     const routingUi = readRoutingUiBootstrap();
     const routingStatsTypeKey =
       routingPreview.routingStatsTypeKey?.trim() ||
@@ -6757,6 +6875,51 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         : routingPreview.previewSource === 'schedule-loader'
           ? ('schedule_loader' as const)
           : undefined;
+    const insertionIndexRaw = opt.insertionIndex;
+    const insertionIndex =
+      typeof insertionIndexRaw === 'number' && Number.isFinite(insertionIndexRaw)
+        ? Math.floor(insertionIndexRaw)
+        : Number(insertionIndexRaw);
+    let preFirstNeighborBump:
+      | {
+          appointmentId: number;
+          appointmentStart: string;
+          appointmentEnd: string;
+        }
+      | undefined;
+    if (
+      !isReschedule &&
+      insertionIndex === 0 &&
+      routingSlotProviderId &&
+      start.isValid &&
+      end.isValid
+    ) {
+      const dayIso = start.toISODate();
+      const startIso = start.toUTC().toISO();
+      const endIso = end.toUTC().toISO();
+      if (dayIso && startIso && endIso) {
+        const dayData = driveDayByDate?.get(dayIso) ?? null;
+        const formerFirst = findFormerFirstAppointmentForPreFirstBook({
+          appointments: rawAppointments,
+          providerId: routingSlotProviderId,
+          dayIso,
+          practiceTz: PRACTICE_TZ,
+        });
+        const formerSlot = formerFirst
+          ? driveSlotForAppointmentId(dayData, formerFirst.id)
+          : null;
+        const bump = resolvePreFirstNeighborBumpTarget({
+          insertionIndex: 0,
+          suggestedStartIso: startIso,
+          suggestedEndIso: endIso,
+          practiceTz: PRACTICE_TZ,
+          providerId: routingSlotProviderId,
+          appointments: rawAppointments,
+          formerFirstDriveSlot: formerSlot,
+        });
+        if (bump) preFirstNeighborBump = bump;
+      }
+    }
     setBookPrefill({
       ...(hasLinkedClient
         ? {
@@ -6819,6 +6982,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       defaultInstructions: isReschedule
         ? rescheduleSourceAppt?.instructions?.trim()
         : undefined,
+      ...(preFirstNeighborBump ? { preFirstNeighborBump } : {}),
       ...(fbi && !isReschedule
         ? {
             forwardBookingTrackingToken: fbi.trackingToken,
@@ -6848,7 +7012,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     });
     setBookSlot({ start, end });
     })();
-  }, [routingPreview, rolesLower, rawAppointments, typeList]);
+  }, [routingPreview, rolesLower, rawAppointments, typeList, driveDayByDate]);
 
   const closeBookModal = useCallback(() => {
     setBookSlot(null);
@@ -7575,6 +7739,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         const nonHoldCreatedIds = [...createdIdSet].filter(appointmentNeedsHold);
         const nonHoldIds = [...new Set([...nonHoldSourceIds, ...nonHoldCreatedIds])];
         if (nonHoldIds.length > 0 && holdAppointmentTypes.length > 0) {
+          setExploreHoldConvertError(null);
           setExploreHoldPrompt({
             newAppointmentId: savedId,
             sourceNeedsHold: nonHoldSourceIds.length > 0,
@@ -7619,16 +7784,32 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       const prompt = exploreHoldPrompt;
       if (!prompt || convertingExploreHold) return;
       setConvertingExploreHold(true);
+      setExploreHoldConvertError(null);
       try {
         for (const id of prompt.nonHoldAppointmentIds) {
-          await patchAppointment(id, { appointmentTypeId: holdTypeId });
+          await patchAppointment(
+            id,
+            {
+              appointmentTypeId: holdTypeId,
+              /** Skip role manual-book gate — converting an existing visit to HOLD. */
+              bookedViaRouting: true,
+            },
+            { practiceId: PRACTICE_ID },
+          );
         }
         setExploreHoldPrompt(null);
         await loadRange({ refreshDrive: true });
         const n = prompt.nonHoldAppointmentIds.length;
         showToast(n === 1 ? 'Appointment is on hold.' : `All ${n} appointments are on hold.`);
-      } catch {
-        showToast('Could not change the appointment type — please update it manually.');
+      } catch (e: unknown) {
+        const msg =
+          (e as { response?: { data?: { message?: string | string[] } } })?.response?.data
+            ?.message ??
+          (e as Error)?.message ??
+          'Could not change the appointment type.';
+        const text = Array.isArray(msg) ? msg.join(', ') : String(msg);
+        setExploreHoldConvertError(text);
+        showToast(text);
       } finally {
         setConvertingExploreHold(false);
       }
@@ -7851,6 +8032,18 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         const exitKind = resolveHouseholdHoldExitKind(refreshedHousehold, typeCatalog);
         if (exitKind === 'booked' || exitKind === 'removed') {
           await clearApptRequestGmailOnHoldLabel({ submissionId: preview.submissionId });
+        }
+
+        // Converting the HOLD via Edit (without clicking Confirm) must still clear Auto-Booked.
+        if (exitKind === 'booked') {
+          try {
+            const submission = await fetchAppointmentRequestSubmission(preview.submissionId);
+            if (appointmentRequestNeedsStaffConfirmation(submission)) {
+              await patchAppointmentRequestSubmission(preview.submissionId, { confirm: true });
+            }
+          } catch {
+            /* non-fatal — Confirm on Auto-Booked can still finish it */
+          }
         }
 
         if (
@@ -8386,6 +8579,21 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           await clearApptRequestGmailOnHoldLabel({ submissionId: preview.listEntryId });
         }
 
+        // Booking a hold that is also an unconfirmed online auto-book (e.g. new-client
+        // onboarding) must clear it from the Auto-Booked queue too — otherwise it lingers
+        // there "as if not confirmed" after the hold is gone. Setting staffConfirmedAt keeps
+        // Holds + Auto-Booked in sync from a single action.
+        if (preview.listKind === 'appointment_request' && exitKind === 'booked') {
+          try {
+            const submission = await fetchAppointmentRequestSubmission(preview.listEntryId);
+            if (appointmentRequestNeedsStaffConfirmation(submission)) {
+              await patchAppointmentRequestSubmission(preview.listEntryId, { confirm: true });
+            }
+          } catch {
+            /* non-fatal: hold still booked; Auto-Booked can be cleared manually */
+          }
+        }
+
         const highlightTargets = anchorAppt
           ? householdAppointmentIdsInVisitClump(
               anchorAppt,
@@ -8453,7 +8661,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       if (!appt) {
         calendarFocusActiveRef.current = false;
         clearSchedulerFocusSession();
-        const wasStaffConfirm = Boolean(readAppointmentRequestStaffConfirmSession());
+        const staffConfirmSession = readAppointmentRequestStaffConfirmSession();
         clearAppointmentRequestStaffConfirmSession();
         setStaffConfirmPreview(null);
         const wasOnHoldEdit = readOnHoldVisitEditSession();
@@ -8462,17 +8670,95 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         const wasSlotOfferReview = readSlotOfferReviewSession();
         clearSlotOfferReviewSession();
         setSlotOfferReviewPreview(null);
+        const wasNotBookedRemove = readNotBookedRemoveSession();
+        clearNotBookedRemoveSession();
+        setNotBookedRemoveGate(null);
         setPendingFocusApptId(null);
-        showToast('Could not find that appointment on the calendar.');
-        if (wasStaffConfirm) {
+        // Linked visit already gone (soft-deleted / never found): still finish Not booked.
+        if (wasNotBookedRemove) {
+          writeNotBookedRemoveReturnSession({
+            submissionId: wasNotBookedRemove.submissionId,
+          });
+          showToast(
+            'That visit is no longer on the calendar. Finish marking the request as not booked.',
+          );
+          navigate(wasNotBookedRemove.returnPath);
+          return;
+        }
+        // Auto-book Confirm: linked visit id is stale. Return to Auto-Booked so re-clicking
+        // Confirm re-evaluates (re-link if another visit exists, else Not booked). Never
+        // confirm here without a real appointment.
+        if (staffConfirmSession) {
+          showToast(
+            'That visit is no longer on the calendar. Re-link the request or mark it Not booked.',
+          );
           if (returnFromSchedulerFocusToGmail(navigate)) return;
+          const returnPath = staffConfirmSession.returnPath?.trim() || null;
+          if (returnPath) {
+            navigate(returnPath);
+            return;
+          }
           returnToAppointmentRequestsList(navigate, 'to_confirm');
-        } else if (wasOnHoldEdit) {
+          return;
+        }
+        showToast('Could not find that appointment on the calendar.');
+        if (wasOnHoldEdit) {
           navigate(wasOnHoldEdit.returnPath);
         } else if (wasSlotOfferReview) {
           navigate(wasSlotOfferReview.returnPath);
         }
         return;
+      }
+
+      // Not booked: cancelled hold still returned by GET — skip the remove gate.
+      {
+        const notBookedRemove = readNotBookedRemoveSession();
+        if (
+          notBookedRemove &&
+          schedulerAppointmentIdsEqual(notBookedRemove.bookedAppointmentId, apptId) &&
+          isAppointmentCancelledOnPracticeCalendar(appt)
+        ) {
+          calendarFocusActiveRef.current = false;
+          clearSchedulerFocusSession();
+          writeNotBookedRemoveReturnSession({ submissionId: notBookedRemove.submissionId });
+          clearNotBookedRemoveSession();
+          setNotBookedRemoveGate(null);
+          setPendingFocusApptId(null);
+          showToast(
+            'That visit is no longer on the calendar. Finish marking the request as not booked.',
+          );
+          navigate(notBookedRemove.returnPath);
+          return;
+        }
+      }
+
+      // Staff Confirm: linked visit is cancelled. Return to Auto-Booked so re-clicking
+      // Confirm re-evaluates (re-link if another visit exists, else Not booked). Never
+      // confirm a cancelled visit.
+      {
+        const staffConfirmSession = readAppointmentRequestStaffConfirmSession();
+        if (
+          staffConfirmSession &&
+          schedulerAppointmentIdsEqual(staffConfirmSession.bookedAppointmentId, apptId) &&
+          isAppointmentCancelledOnPracticeCalendar(appt)
+        ) {
+          calendarFocusActiveRef.current = false;
+          clearSchedulerFocusSession();
+          clearAppointmentRequestStaffConfirmSession();
+          setStaffConfirmPreview(null);
+          setPendingFocusApptId(null);
+          showToast(
+            'That visit was cancelled. Re-link the request or mark it Not booked.',
+          );
+          if (returnFromSchedulerFocusToGmail(navigate)) return;
+          const returnPath = staffConfirmSession.returnPath?.trim() || null;
+          if (returnPath) {
+            navigate(returnPath);
+            return;
+          }
+          returnToAppointmentRequestsList(navigate, 'to_confirm');
+          return;
+        }
       }
 
       const focus = schedulerCalendarFocusFromAppointment(appt, providers, PRACTICE_TZ);
@@ -8505,7 +8791,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     return () => {
       cancelled = true;
     };
-  }, [pendingFocusApptId, providers, providersLoadState, showToast, navigate]);
+  }, [pendingFocusApptId, providers, providersLoadState, showToast, navigate, typeCatalog]);
 
   /** After focus navigation, wait until the appointment is on the loaded calendar before pulsing. */
   useEffect(() => {
@@ -9408,7 +9694,13 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             return;
           }
           case 'roomLoader': {
-            if (schedulerRoomLoaderMenuMode(appt.confirmStatusName) === 'view') {
+            if (
+              schedulerRoomLoaderMenuMode(
+                appt.confirmStatusName,
+                null,
+                roomLoaderStatusByApptId.get(Number(appt.id)) ?? null
+              ) === 'view'
+            ) {
               setRoomLoaderPdfModalAppt(appt);
               return;
             }
@@ -9491,6 +9783,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       resolvedPrimaryProviderId,
       anchorDate,
       view,
+      roomLoaderStatusByApptId,
     ]
   );
 
@@ -10038,7 +10331,10 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                       >
                         {showPreApptRoomLoaderIcon(appt) ? (
                           <div className="scheduler-appt-card-icons-tr" aria-hidden>
-                            <SchedulerPreApptRlIcon confirmStatusName={appt.confirmStatusName} />
+                            <SchedulerPreApptRlIcon
+                              confirmStatusName={appt.confirmStatusName}
+                              scoutUiStatus={roomLoaderStatusByApptId.get(Number(appt.id)) ?? null}
+                            />
                           </div>
                         ) : null}
                         <span className="scheduler-all-day-span-bar-text">
@@ -10465,7 +10761,10 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                             >
                               {showPreApptRoomLoaderIcon(appt) ? (
                                 <div className="scheduler-appt-card-icons-tr" aria-hidden>
-                                  <SchedulerPreApptRlIcon confirmStatusName={appt.confirmStatusName} />
+                                  <SchedulerPreApptRlIcon
+                                    confirmStatusName={appt.confirmStatusName}
+                                    scoutUiStatus={roomLoaderStatusByApptId.get(Number(appt.id)) ?? null}
+                                  />
                                 </div>
                               ) : null}
                               <div
@@ -11431,9 +11730,13 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         sourceNeedsHold={Boolean(exploreHoldPrompt?.sourceNeedsHold)}
         newNeedsHold={Boolean(exploreHoldPrompt?.newNeedsHold)}
         converting={convertingExploreHold}
+        error={exploreHoldConvertError}
         onConfirm={(holdTypeId) => void convertExploreHoldTypes(holdTypeId)}
         onDismiss={() => {
-          if (!convertingExploreHold) setExploreHoldPrompt(null);
+          if (!convertingExploreHold) {
+            setExploreHoldPrompt(null);
+            setExploreHoldConvertError(null);
+          }
         }}
       />
 
@@ -11450,7 +11753,11 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           addPetDisabled={addAnotherPetMenuOpts.disabled}
           addPetTitle={addAnotherPetMenuOpts.title}
           showSendForms={showPreApptRoomLoaderIcon(contextMenu.appt)}
-          roomLoaderMenuLabel={schedulerRoomLoaderMenuLabel(contextMenu.appt.confirmStatusName)}
+          roomLoaderMenuLabel={schedulerRoomLoaderMenuLabel(
+            contextMenu.appt.confirmStatusName,
+            null,
+            roomLoaderStatusByApptId.get(Number(contextMenu.appt.id)) ?? null
+          )}
           rescheduleDisabled={!contextMenuRescheduleIntent && !contextMenuMayAddressOnlyReschedule}
           rescheduleDisabledTitle={contextMenuRescheduleDisabledTitle}
           removeDisabled={isAppointmentCancelledOnPracticeCalendar(contextMenu.appt)}
@@ -11614,7 +11921,10 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               <RoomLoaderPage
                 embedded={{
                   roomLoaderId: embeddedRoomLoaderId,
-                  onClose: () => setEmbeddedRoomLoaderId(null),
+                  onClose: () => {
+                    setEmbeddedRoomLoaderId(null);
+                    void loadRoomLoaderStatusesForRange();
+                  },
                 }}
               />
             </Suspense>,
@@ -11692,6 +12002,29 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                 });
               }
               void loadRange({ refreshDrive: true });
+              // Converting an online auto-book HOLD via normal Edit must clear Auto-Booked.
+              if (updated) {
+                const submissionId = submissionIdFromOnlineHoldPimsId(
+                  (updated as { pimsId?: string | null }).pimsId,
+                );
+                if (
+                  submissionId != null &&
+                  !isAppointmentCancelledOnPracticeCalendar(updated) &&
+                  opsPointsForAppointment(updated, typeCatalog) > 0
+                ) {
+                  void (async () => {
+                    try {
+                      const submission = await fetchAppointmentRequestSubmission(submissionId);
+                      if (appointmentRequestNeedsStaffConfirmation(submission)) {
+                        await patchAppointmentRequestSubmission(submissionId, { confirm: true });
+                        notifySchedulingToolsNavCountsRefresh();
+                      }
+                    } catch {
+                      /* non-fatal */
+                    }
+                  })();
+                }
+              }
               if (detail?.routingFeedbackWarning) {
                 setToast(detail.routingFeedbackWarning);
               } else if (aligned.length > 0) {

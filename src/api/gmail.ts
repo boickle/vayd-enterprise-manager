@@ -62,6 +62,25 @@ export type GmailAttachmentSummary = {
   size?: number;
 };
 
+/**
+ * Open tracking for a message Scout sent (pixel-based read receipt).
+ * Present on thread messages, and on list rows for the newest tracked send
+ * in that conversation. Absent when the message was not sent from Scout.
+ */
+export type GmailMessageTracking = {
+  messageId: string | null;
+  threadId: string | null;
+  sentAt: string;
+  openCount: number;
+  firstOpenedAt: string | null;
+  lastOpenedAt: string | null;
+};
+
+export type GmailTrackedOpenEvent = {
+  openedAt: string;
+  userAgent: string | null;
+};
+
 export type GmailMessageSummary = {
   id: string;
   threadId: string;
@@ -83,6 +102,8 @@ export type GmailMessageSummary = {
   hasDraft?: boolean;
   /** Gmail draft message id when known. */
   draftId?: string;
+  /** Read receipt for the newest Scout-sent message in this thread. */
+  tracking?: GmailMessageTracking | null;
 };
 
 export type GmailMessagesResponse = {
@@ -398,6 +419,8 @@ export type GmailThreadMessage = {
     replyTo?: string;
   };
   body: { html: string | null; text: string | null };
+  /** Read receipt when Scout sent this message with tracking enabled. */
+  tracking?: GmailMessageTracking | null;
 };
 
 export type GmailThreadResponse = {
@@ -428,6 +451,16 @@ export type GmailComposePayload = {
   references?: string;
   /** When true, do not add INBOX to the thread (reply to archived / labeled mail). */
   keepOutOfInbox?: boolean;
+  /** Defaults to true server-side; set false to send without a read receipt. */
+  trackOpens?: boolean;
+};
+
+export type GmailSendResponse = {
+  id: string;
+  threadId: string;
+  labelIds?: string[];
+  /** Null when the send could not be tracked (plain text, or tracking off). */
+  tracking?: GmailMessageTracking | null;
 };
 
 export type GmailDraftResponse = {
@@ -436,8 +469,25 @@ export type GmailDraftResponse = {
   labelIds?: string[];
 };
 
-export async function sendGmailMessage(mailbox: string, body: GmailComposePayload) {
-  const { data } = await http.post('/gmail/messages/send', body, {
+export async function sendGmailMessage(
+  mailbox: string,
+  body: GmailComposePayload,
+): Promise<GmailSendResponse> {
+  const { data } = await http.post<GmailSendResponse>('/gmail/messages/send', body, {
+    params: mailboxParams(mailbox),
+  });
+  return data;
+}
+
+/** Individual open events for one sent message, newest first. */
+export async function fetchGmailMessageOpens(
+  mailbox: string,
+  messageId: string,
+): Promise<{ tracking: GmailMessageTracking | null; opens: GmailTrackedOpenEvent[] }> {
+  const { data } = await http.get<{
+    tracking: GmailMessageTracking | null;
+    opens: GmailTrackedOpenEvent[];
+  }>(`/gmail/tracking/messages/${encodeURIComponent(messageId)}`, {
     params: mailboxParams(mailbox),
   });
   return data;
