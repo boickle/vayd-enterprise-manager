@@ -953,7 +953,9 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
                 {costSummaryItems.map((item) => {
                   // Only show the price for the selected billing preference
                   const showPrice = state.billingPreference === 'annual' 
-                    ? (item.annual != null ? `${formatMoney(item.annual * 100, state.currency)} annually (10% discount!)` : null)
+                    ? (item.annual != null
+                        ? `${(item.annual / 12).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/mo equivalent · ${formatMoney(item.annual * 100, state.currency)} billed today`
+                        : null)
                     : (item.monthly != null ? `${formatMoney(item.monthly * 100, state.currency)}/mo` : null);
                   return (
                     <li
