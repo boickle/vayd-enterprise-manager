@@ -87,6 +87,7 @@ export type VisitInvoiceLine = {
   unitPrice: number;
   amount: number;
   isCovered: boolean;
+  isDeleted?: boolean;
 };
 
 export type VisitInvoice = {

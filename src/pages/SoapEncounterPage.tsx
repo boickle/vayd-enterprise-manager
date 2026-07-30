@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate, useParams, useSearchParams } from 'react-router';
 import {
   ClipboardList,
   Lock,
@@ -27,6 +27,7 @@ import {
   type VisitInvoice,
   VISIT_WORKFLOW_PRACTICE_ID,
 } from '../api/visitWorkflow';
+import { summarizeIntakeHistory } from '../api/soapScribe';
 import type { ForwardBookingDisposition } from '../api/forwardBookingDisposition';
 import { fetchPatientProfileForRow } from '../api/patients';
 import {
@@ -51,6 +52,8 @@ import {
   appointmentReasonFromSentToClient,
   buildSubjectiveTextFromRoomLoaderResponse,
   findSubmittedRoomLoaderForAppointment,
+  looksLikeRawRoomLoaderSubjective,
+  withRoomLoaderSubjectivePrefix,
 } from '../utils/roomLoaderSubjectiveText';
 
 export type Vitals = {
@@ -90,6 +93,28 @@ export function vitalsFromValue(v: unknown): Vitals {
   };
 }
 
+function emailDraftFromSubjective(subjective: Record<string, unknown> | null | undefined): {
+  subject: string;
+  body: string;
+} {
+  if (!subjective || typeof subjective !== 'object') return { subject: '', body: '' };
+  const subject =
+    typeof subjective.clientEmailSubject === 'string' ? subjective.clientEmailSubject : '';
+  const body = typeof subjective.clientEmailBody === 'string' ? subjective.clientEmailBody : '';
+  return { subject, body };
+}
+
+function buildSubjectivePayload(
+  history: string,
+  email: { subject: string; body: string }
+): Record<string, unknown> {
+  return {
+    history,
+    clientEmailSubject: email.subject.trim() ? email.subject : null,
+    clientEmailBody: email.body.trim() ? email.body : null,
+  };
+}
+
 export default function SoapEncounterPage() {
   const params = useParams();
   const [searchParams] = useSearchParams();
@@ -119,15 +144,18 @@ export default function SoapEncounterPage() {
   const [activeTab, setActiveTab] = useState<SoapTabId>('subjective');
   const [entryMode, setEntryMode] = useState<'manual' | 'scribe'>('manual');
   const [emailDraft, setEmailDraft] = useState<{
-    subject: string | null;
-    body: string | null;
-  }>({ subject: null, body: null });
+    subject: string;
+    body: string;
+  }>({ subject: '', body: '' });
+  const emailDraftRef = useRef(emailDraft);
+  emailDraftRef.current = emailDraft;
   const [scribePlanItems, setScribePlanItems] = useState<SuggestedPlanItem[]>([]);
   const [roster, setRoster] = useState<HouseholdRosterEntry[]>([]);
   const [householdRefreshTick, setHouseholdRefreshTick] = useState(0);
 
   const locked = encounter?.status === 'completed';
   const mode: SoapEncounterMode = encounter?.mode ?? 'comprehensive';
+  const scribeEnabled = String(import.meta.env.VITE_ENABLE_SCRIBE ?? '').toLowerCase() === 'true';
 
   const refreshInvoice = useCallback(async () => {
     try {
@@ -180,7 +208,7 @@ export default function SoapEncounterPage() {
       // scribe UI state from the previous pet needs an explicit reset here — everything else
       // (subjective/vitals/orders/invoice/etc.) is already fully re-derived from the freshly
       // loaded encounter below.
-      setEmailDraft({ subject: null, body: null });
+      setEmailDraft({ subject: '', body: '' });
       setScribePlanItems([]);
       setVisitCompleted(false);
       setShowEuthanasia(false);
@@ -198,31 +226,51 @@ export default function SoapEncounterPage() {
 
         let subjectiveHistory =
           typeof enc.subjective?.history === 'string' ? enc.subjective.history : '';
-        if (!subjectiveHistory.trim()) {
-          try {
+
+        // Prefill / polish Room Loader intake into a short Subjective narrative (auto, no button).
+        try {
+          let intakeSource = '';
+          if (!subjectiveHistory.trim()) {
             const roomLoader = await findSubmittedRoomLoaderForAppointment(appointmentId);
             const response = roomLoader?.responseFromClient;
             if (response) {
-              const prefilled = buildSubjectiveTextFromRoomLoaderResponse(response, patientId, {
+              intakeSource = buildSubjectiveTextFromRoomLoaderResponse(response, patientId, {
                 appointmentReason: appointmentReasonFromSentToClient(
                   roomLoader.sentToClient,
                   patientId
                 ),
               });
-              if (prefilled.trim()) {
-                subjectiveHistory = prefilled;
-                enc = await updateEncounter(enc.id, {
-                  subjective: { history: prefilled },
-                });
+            }
+          } else if (looksLikeRawRoomLoaderSubjective(subjectiveHistory)) {
+            intakeSource = subjectiveHistory;
+          }
+
+          if (intakeSource.trim()) {
+            let historyToSave = intakeSource.trim();
+            if (scribeEnabled) {
+              try {
+                const summary = await summarizeIntakeHistory(enc.id, intakeSource);
+                if (summary.trim()) historyToSave = summary.trim();
+              } catch {
+                /* keep raw Room Loader text if summarize fails */
               }
             }
-          } catch {
-            /* Room Loader preload is best-effort */
+            historyToSave = withRoomLoaderSubjectivePrefix(historyToSave);
+              if (historyToSave !== subjectiveHistory.trim()) {
+              subjectiveHistory = historyToSave;
+              const emailFields = emailDraftFromSubjective(enc.subjective);
+              enc = await updateEncounter(enc.id, {
+                subjective: buildSubjectivePayload(historyToSave, emailFields),
+              });
+            }
           }
+        } catch {
+          /* Room Loader preload is best-effort */
         }
 
         setEncounter(enc);
         setSubjective(subjectiveHistory);
+        setEmailDraft(emailDraftFromSubjective(enc.subjective));
         setVitals(vitalsFromValue(enc.objectiveVitals));
         setExam(peExamFromValue(enc.objectiveExam));
         setObjectiveNotes(enc.objectiveNotes ?? '');
@@ -280,15 +328,36 @@ export default function SoapEncounterPage() {
     [encounter, locked]
   );
 
-  const scribeEnabled = String(import.meta.env.VITE_ENABLE_SCRIBE ?? '').toLowerCase() === 'true';
   const effectiveEntryMode = scribeEnabled ? entryMode : 'manual';
+
+  const saveSubjective = useCallback(
+    async (history: string, email: { subject: string; body: string } = emailDraftRef.current) => {
+      await save({ subjective: buildSubjectivePayload(history, email) });
+    },
+    [save]
+  );
 
   const applyScribeSubjective = useCallback(
     (text: string) => {
       setSubjective(text);
-      void save({ subjective: { history: text } });
+      void saveSubjective(text);
     },
-    [save]
+    [saveSubjective]
+  );
+
+  const onNarrativeUpdate = useCallback(
+    (n: { emailSubject: string | null; emailBody: string | null }) => {
+      const next = {
+        subject: n.emailSubject ?? '',
+        body: n.emailBody ?? '',
+      };
+      setEmailDraft(next);
+      emailDraftRef.current = next;
+      void save({
+        subjective: buildSubjectivePayload(subjective, next),
+      });
+    },
+    [save, subjective]
   );
 
   const applyScribeVitals = useCallback(
@@ -486,7 +555,7 @@ export default function SoapEncounterPage() {
           onApplyPlanNotes={applyScribePlanNotes}
           onProblemCreated={onScribeProblemCreated}
           onOrderCreated={onScribeOrderCreated}
-          onNarrativeUpdate={(n) => setEmailDraft({ subject: n.emailSubject, body: n.emailBody })}
+          onNarrativeUpdate={onNarrativeUpdate}
           onPlanItemsChange={setScribePlanItems}
           onHouseholdOrdersChanged={() => setHouseholdRefreshTick((t) => t + 1)}
         />
@@ -505,7 +574,7 @@ export default function SoapEncounterPage() {
               disabled={locked}
               subjective={subjective}
               onSubjectiveChange={setSubjective}
-              onSubjectiveBlur={() => save({ subjective: { history: subjective } })}
+              onSubjectiveBlur={() => void saveSubjective(subjective)}
               objectiveNotes={objectiveNotes}
               onObjectiveNotesChange={setObjectiveNotes}
               onObjectiveNotesBlur={() => save({ objectiveNotes })}
@@ -547,6 +616,17 @@ export default function SoapEncounterPage() {
               }
               emailSubject={emailDraft.subject}
               emailBody={emailDraft.body}
+              onEmailSubjectChange={(text) => {
+                const next = { ...emailDraftRef.current, subject: text };
+                emailDraftRef.current = next;
+                setEmailDraft(next);
+              }}
+              onEmailBodyChange={(text) => {
+                const next = { ...emailDraftRef.current, body: text };
+                emailDraftRef.current = next;
+                setEmailDraft(next);
+              }}
+              onEmailBlur={() => void saveSubjective(subjective)}
             />
           ) : (
             <>
@@ -576,17 +656,17 @@ export default function SoapEncounterPage() {
                       <ClipboardList size={16} /> Subjective
                     </h2>
                     <p className="soap-section-hint">
-                      History from intake / Room Loader. Confirm or edit — don't re-key what the
-                      client already provided.
+                      Pre-visit check-in is summarized automatically. Confirm or edit — don't
+                      re-key what the client already provided.
                     </p>
                     <textarea
-                      className="soap-textarea"
-                      rows={4}
+                      className="soap-textarea soap-textarea--subjective"
+                      rows={14}
                       placeholder="Presenting history, owner concerns…"
                       value={subjective}
                       disabled={locked}
                       onChange={(e) => setSubjective(e.target.value)}
-                      onBlur={() => save({ subjective: { history: subjective } })}
+                      onBlur={() => void saveSubjective(subjective)}
                     />
                   </section>
                 )}
@@ -596,7 +676,7 @@ export default function SoapEncounterPage() {
                     <h2>
                       <Activity size={16} /> Objective
                     </h2>
-                    <div className="soap-subhead">Vitals (TPR, weight, BCS)</div>
+                    <div className="soap-subhead">Vitals (TPR, weight, BCS /9, FAS /5)</div>
                     <div className="soap-vitals">
                       {(
                         [
@@ -605,7 +685,7 @@ export default function SoapEncounterPage() {
                           ['rr', 'RR (rpm)'],
                           ['weight', 'Weight (lb)'],
                           ['bcs', 'BCS /9'],
-                          ['painScore', 'Pain /5'],
+                          ['painScore', 'FAS /5'],
                         ] as [keyof Vitals, string][]
                       ).map(([key, label]) => (
                         <label key={key} className="soap-vital">
@@ -621,6 +701,11 @@ export default function SoapEncounterPage() {
                         </label>
                       ))}
                     </div>
+                    <p className="soap-section-hint">
+                      BCS: 1 skeletal → 9 obese. FAS (fear/anxiety): 1 relaxed → 5 extremely
+                      reactive. Exam aids (treats, Calm &amp; Cozy, muzzle, etc.) go in Objective
+                      notes.
+                    </p>
 
                     {mode === 'comprehensive' && (
                       <>
@@ -668,11 +753,11 @@ export default function SoapEncounterPage() {
                         onToggleLink={toggleProblemLink}
                       />
                     )}
-                    <div className="soap-subhead">Clinical reasoning</div>
+                    <div className="soap-subhead">Clinical reasoning / problem list</div>
                     <textarea
                       className="soap-textarea"
-                      rows={3}
-                      placeholder="Assessment and clinical reasoning…"
+                      rows={5}
+                      placeholder={`Problem List:\n- Apparently healthy\n- Neck dermatitis - r/o contact dermatitis, food allergy`}
                       value={reasoning}
                       disabled={locked}
                       onChange={(e) => setReasoning(e.target.value)}
@@ -713,6 +798,41 @@ export default function SoapEncounterPage() {
                       disabled={locked}
                       onChange={(e) => setPlanNotes(e.target.value)}
                       onBlur={() => save({ planNotes })}
+                    />
+
+                    <div className="soap-subhead">Email to client</div>
+                    <p className="soap-section-hint">
+                      Draft follow-up email (filled by AI Scribe when you process a visit). Edit
+                      freely — it saves with this encounter.
+                    </p>
+                    <label className="soap-email-label">
+                      Subject
+                      <input
+                        className="soap-input"
+                        type="text"
+                        placeholder="Follow-up from today's visit…"
+                        value={emailDraft.subject}
+                        disabled={locked}
+                        onChange={(e) => {
+                          const next = { ...emailDraftRef.current, subject: e.target.value };
+                          emailDraftRef.current = next;
+                          setEmailDraft(next);
+                        }}
+                        onBlur={() => void saveSubjective(subjective)}
+                      />
+                    </label>
+                    <textarea
+                      className="soap-textarea soap-textarea--email"
+                      rows={12}
+                      placeholder={`Hello,\n\nI wanted to provide a summary of our conversation today…`}
+                      value={emailDraft.body}
+                      disabled={locked}
+                      onChange={(e) => {
+                        const next = { ...emailDraftRef.current, body: e.target.value };
+                        emailDraftRef.current = next;
+                        setEmailDraft(next);
+                      }}
+                      onBlur={() => void saveSubjective(subjective)}
                     />
                   </section>
                 )}

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { ClipboardList, Lock, Stethoscope } from 'lucide-react';
 import './SoapEncounterPage.css';
 import {

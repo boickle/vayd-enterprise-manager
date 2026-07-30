@@ -27,8 +27,11 @@ type Props = {
   /** Rendered directly under the Plan field — the itemized "match to catalog" plan-items UI
    * (docs/ai-scribe.md) lives here since it needs order/pricing APIs this view doesn't own. */
   planItemsSlot?: ReactNode;
-  emailSubject: string | null;
-  emailBody: string | null;
+  emailSubject: string;
+  emailBody: string;
+  onEmailSubjectChange: (text: string) => void;
+  onEmailBodyChange: (text: string) => void;
+  onEmailBlur: () => void;
 };
 
 function useCopy() {
@@ -106,10 +109,16 @@ export default function ScribeDocumentView({
   planItemsSlot,
   emailSubject,
   emailBody,
+  onEmailSubjectChange,
+  onEmailBodyChange,
+  onEmailBlur,
 }: Props) {
   const { copiedKey, copy } = useCopy();
 
-  const fullEmail = emailBody ? `Subject: ${emailSubject ?? ''}\n\n${emailBody}` : '';
+  const fullEmail =
+    emailSubject.trim() || emailBody.trim()
+      ? `Subject: ${emailSubject}\n\n${emailBody}`
+      : '';
 
   return (
     <div className="soap-doc-view">
@@ -123,7 +132,7 @@ export default function ScribeDocumentView({
       <SoapField
         letter="S"
         label="Subjective"
-        placeholder="Owner-reported history, presenting complaint…"
+        placeholder={`Presenting Complaint: …\n\nPatient History:\n- …`}
         field={{ value: subjective, onChange: onSubjectiveChange, onBlur: onSubjectiveBlur }}
         disabled={disabled}
       />
@@ -141,24 +150,24 @@ export default function ScribeDocumentView({
       <SoapField
         letter="A"
         label="Assessment"
-        placeholder="Problem list, clinical reasoning…"
+        placeholder={`Problem List:\n- …\n- … - r/o …`}
         field={{ value: assessment, onChange: onAssessmentChange, onBlur: onAssessmentBlur }}
         disabled={disabled}
       />
       <SoapField
         letter="P"
         label="Plan"
-        placeholder="Diagnostics, treatment, client communication…"
+        placeholder={`Diagnostics:\n- …\nTreatment Plan/Medications:\n- …\nClient Communication:\n- …`}
         field={{ value: planNotes, onChange: onPlanNotesChange, onBlur: onPlanNotesBlur }}
         disabled={disabled}
       />
 
       {planItemsSlot}
 
-      {emailBody && (
-        <section className="soap-doc-section">
-          <div className="soap-doc-section-head">
-            <h3>Email for the client</h3>
+      <section className="soap-doc-section">
+        <div className="soap-doc-section-head">
+          <h3>Email to client</h3>
+          {fullEmail ? (
             <button
               type="button"
               className="soap-btn small ghost"
@@ -167,11 +176,30 @@ export default function ScribeDocumentView({
               {copiedKey === 'email' ? <Check size={12} /> : <Copy size={12} />}
               {copiedKey === 'email' ? 'Copied' : 'Copy'}
             </button>
-          </div>
-          {emailSubject && <div className="soap-doc-email-subject">Subject: {emailSubject}</div>}
-          <pre className="soap-doc-text">{emailBody}</pre>
-        </section>
-      )}
+          ) : null}
+        </div>
+        <label className="soap-email-label">
+          Subject
+          <input
+            className="soap-input"
+            type="text"
+            placeholder="Follow-up from today's visit…"
+            value={emailSubject}
+            disabled={disabled}
+            onChange={(e) => onEmailSubjectChange(e.target.value)}
+            onBlur={onEmailBlur}
+          />
+        </label>
+        <textarea
+          className="soap-doc-textarea soap-textarea--email"
+          rows={12}
+          placeholder={`Hello,\n\nI wanted to provide a summary of our conversation today…`}
+          value={emailBody}
+          disabled={disabled}
+          onChange={(e) => onEmailBodyChange(e.target.value)}
+          onBlur={onEmailBlur}
+        />
+      </section>
     </div>
   );
 }

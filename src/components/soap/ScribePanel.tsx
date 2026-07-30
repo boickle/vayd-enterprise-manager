@@ -83,7 +83,7 @@ const VITAL_LABELS: Record<keyof Vitals, string> = {
   hr: 'HR (bpm)',
   rr: 'RR (rpm)',
   bcs: 'BCS /9',
-  painScore: 'Pain /5',
+  painScore: 'FAS /5',
 };
 
 const PE_LABEL_BY_KEY = Object.fromEntries(PE_SYSTEMS.map((s) => [s.key, s.label]));
@@ -125,6 +125,35 @@ function computeAppendDelta(
 function appendText(existing: string, delta: string): string {
   const trimmed = existing.trim();
   return trimmed ? `${trimmed}\n\n${delta}` : delta;
+}
+
+const VISIT_DISCUSSION_HEADER = 'Visit discussion:';
+
+/**
+ * Merge AI visit-conversation history into Subjective without clobbering Room Loader /
+ * pre-visit text. If Subjective already has a Pre-Visit block, append under
+ * "Visit discussion:"; otherwise normal append.
+ */
+function mergeSubjectiveHistory(existing: string, aiHistory: string): string {
+  const delta = aiHistory.trim();
+  if (!delta) return existing.trim();
+  const cur = existing.trim();
+  if (!cur) return delta;
+  if (cur.includes(delta)) return cur;
+  const hasPreVisit = /^Pre-Visit Check-in Information\b/i.test(cur);
+  if (hasPreVisit) {
+    if (new RegExp(`^${VISIT_DISCUSSION_HEADER}\\s*$`, 'im').test(cur) || cur.includes(`\n${VISIT_DISCUSSION_HEADER}`)) {
+      // Already has a visit-discussion section — replace that section with the new AI history.
+      const replaced = cur.replace(
+        /\n\nVisit discussion:\n\n[\s\S]*$/i,
+        `\n\n${VISIT_DISCUSSION_HEADER}\n\n${delta}`
+      );
+      if (replaced !== cur) return replaced;
+      return `${cur}\n\n${VISIT_DISCUSSION_HEADER}\n\n${delta}`;
+    }
+    return `${cur}\n\n${VISIT_DISCUSSION_HEADER}\n\n${delta}`;
+  }
+  return appendText(cur, delta);
 }
 
 /** Only fills vitals the doctor hasn't already entered — never overwrites (mirrors the live
@@ -194,7 +223,7 @@ function buildOtherEncounterPatch(
   if (suggestion.subjectiveHistory?.trim()) {
     patch.subjective = {
       ...(enc.subjective ?? {}),
-      history: appendText(currentSubjective, suggestion.subjectiveHistory),
+      history: mergeSubjectiveHistory(currentSubjective, suggestion.subjectiveHistory),
     };
   }
   if (suggestion.objectiveNotes?.trim()) {
@@ -264,6 +293,7 @@ export default function ScribePanel({
   const timerRef = useRef<number | null>(null);
   const prevSuggestionRef = useRef<ScribeSuggestion | null>(null);
   const logKeyRef = useRef(0);
+  const lastAppliedEmailRef = useRef<string | null>(null);
 
   // Mirrors of the latest prop values, read (not depended on) inside the auto-apply effect below
   // so it isn't re-triggered by the very updates it makes.
@@ -332,7 +362,14 @@ export default function ScribePanel({
 
   useEffect(() => {
     if (!suggestion) return;
-    if (suggestion.clientEmailSubject == null && suggestion.clientEmailBody == null) return;
+    const subject = suggestion.clientEmailSubject?.trim() || '';
+    const body = suggestion.clientEmailBody?.trim() || '';
+    if (!subject && !body) return;
+    const key = `${subject}\n---\n${body}`;
+    // Only push email into the chart once per distinct AI draft — otherwise this effect
+    // re-runs whenever the parent re-creates onNarrativeUpdate and undoes doctor edits/clears.
+    if (lastAppliedEmailRef.current === key) return;
+    lastAppliedEmailRef.current = key;
     onNarrativeUpdate?.({
       emailSubject: suggestion.clientEmailSubject,
       emailBody: suggestion.clientEmailBody,
@@ -385,7 +422,7 @@ export default function ScribePanel({
       suggestion.subjectiveHistory
     );
     if (subjectiveDelta) {
-      onApplySubjective(appendText(currentSubjectiveRef.current, subjectiveDelta));
+      onApplySubjective(mergeSubjectiveHistory(currentSubjectiveRef.current, subjectiveDelta));
       logApplied('Subjective updated');
     }
 
@@ -436,6 +473,7 @@ export default function ScribePanel({
     setDismissed(new Set());
     setAutoAppliedLog([]);
     prevSuggestionRef.current = null;
+    lastAppliedEmailRef.current = null;
 
     const socket = createScribeSocket({
       onStatusChange: setStatus,
@@ -543,6 +581,7 @@ export default function ScribePanel({
         setFinalTranscript(text);
         setInterimText('');
         prevSuggestionRef.current = null;
+        lastAppliedEmailRef.current = null;
         setSuggestion(result as ScribeSuggestion);
         setDismissed(new Set());
         setPasteOpen(false);
@@ -581,7 +620,9 @@ export default function ScribePanel({
             if (Object.keys(examPatch).length > 0) onApplyExam(examPatch);
           }
           if (sugg.subjectiveHistory?.trim()) {
-            onApplySubjective(appendText(currentSubjectiveRef.current, sugg.subjectiveHistory));
+            onApplySubjective(
+              mergeSubjectiveHistory(currentSubjectiveRef.current, sugg.subjectiveHistory)
+            );
           }
           if (sugg.objectiveNotes?.trim()) {
             onApplyObjectiveNotes(
@@ -684,6 +725,58 @@ export default function ScribePanel({
       problems,
     ]
   );
+
+  // Multi-pet: write into every selected pet's SOAP automatically (same as single-pet auto-apply).
+  // Doctors can still open each chart to review; they shouldn't have to click Apply per pet.
+  const multiAutoAppliedKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!multiSuggestion) {
+      multiAutoAppliedKeyRef.current = null;
+      return;
+    }
+    const key = multiSuggestion.patients.map((p) => p.patientId).join(',');
+    if (multiAutoAppliedKeyRef.current === key) return;
+    multiAutoAppliedKeyRef.current = key;
+
+    let canceled = false;
+    (async () => {
+      const rosterById = new Map(roster.map((r) => [r.patientId, r] as const));
+      for (const p of multiSuggestion.patients) {
+        if (canceled) return;
+        const entry = rosterById.get(p.patientId);
+        if (!entry) continue;
+        await applyMultiPatientEntry(entry, p);
+      }
+      if (canceled) return;
+      const subject = multiSuggestion.clientEmailSubject?.trim() || '';
+      const body = multiSuggestion.clientEmailBody?.trim() || '';
+      if (subject || body) {
+        const emailKey = `${subject}\n---\n${body}`;
+        if (lastAppliedEmailRef.current !== emailKey) {
+          lastAppliedEmailRef.current = emailKey;
+          onNarrativeUpdate?.({
+            emailSubject: multiSuggestion.clientEmailSubject,
+            emailBody: multiSuggestion.clientEmailBody,
+          });
+        }
+      }
+      logApplied(
+        `Multi-pet SOAP written for ${multiSuggestion.patients.length} pet${
+          multiSuggestion.patients.length === 1 ? '' : 's'
+        }`
+      );
+    })().catch((err) => {
+      if (!canceled) {
+        setErrorMessage(
+          err instanceof Error ? err.message : 'Could not auto-apply multi-pet SOAP.'
+        );
+      }
+    });
+
+    return () => {
+      canceled = true;
+    };
+  }, [multiSuggestion, roster, applyMultiPatientEntry, onNarrativeUpdate, logApplied]);
 
   // --- Diff suggestion vs. current SOAP state ---
   // Subjective/vitals/exam/assessment are auto-applied above (no review needed). Problems and
@@ -854,7 +947,6 @@ export default function ScribePanel({
           roster={roster}
           appliedIds={multiAppliedIds}
           applyingId={multiApplyingId}
-          onApply={applyMultiPatientEntry}
           onClose={() => setMultiSuggestion(null)}
         />
       )}
@@ -939,34 +1031,37 @@ type MultiPatientReviewProps = {
   roster: HouseholdRosterEntry[];
   appliedIds: Set<number>;
   applyingId: number | null;
-  onApply: (
-    entry: HouseholdRosterEntry,
-    suggestion: MultiPatientSuggestionEntry
-  ) => void | Promise<void>;
   onClose: () => void;
 };
 
 /**
- * Doctor review step for a multi-pet paste-transcript pass (docs/ai-scribe.md "Multi-pet
- * visits") — unlike the rest of ScribePanel, nothing here is auto-applied: misattributing a
- * finding to the wrong pet's chart is worse than a doctor having to click once per pet.
+ * Status panel after a multi-pet Process — SOAP fields are already auto-written into each pet's
+ * encounter. This is review-only (open sibling charts via link); no per-pet Apply click.
  */
 function MultiPatientReview({
   suggestion,
   roster,
   appliedIds,
   applyingId,
-  onApply,
   onClose,
 }: MultiPatientReviewProps) {
   const rosterById = useMemo(() => new Map(roster.map((r) => [r.patientId, r] as const)), [roster]);
+  const allApplied =
+    suggestion.patients.length > 0 &&
+    suggestion.patients.every((p) => appliedIds.has(p.patientId));
 
   return (
     <div className="soap-scribe-multi">
       <div className="soap-scribe-multi-head">
         <span>
-          <Users size={13} /> Multi-pet review — {suggestion.patients.length} pet
-          {suggestion.patients.length === 1 ? '' : 's'}
+          <Users size={13} />{' '}
+          {allApplied
+            ? `Written to ${suggestion.patients.length} pet chart${
+                suggestion.patients.length === 1 ? '' : 's'
+              }`
+            : applyingId != null
+              ? 'Writing to each pet\'s SOAP…'
+              : `Multi-pet — ${suggestion.patients.length} pets`}
         </span>
         <button type="button" className="soap-btn small ghost" onClick={onClose}>
           <XIcon size={12} /> Close
@@ -988,6 +1083,13 @@ function MultiPatientReview({
             <div className="soap-scribe-multi-card-head">
               <strong>{entry.patientName}</strong>
               {entry.isCurrent && <span className="soap-scribe-tag">this chart</span>}
+              {applied ? (
+                <span className="soap-scribe-tag">
+                  <Check size={10} /> saved
+                </span>
+              ) : applying ? (
+                <span className="soap-scribe-tag">saving…</span>
+              ) : null}
             </div>
 
             {p.subjectiveHistory && (
@@ -1033,24 +1135,8 @@ function MultiPatientReview({
                 </p>
               )}
 
-            <div className="soap-scribe-multi-actions">
-              <button
-                type="button"
-                className="soap-btn small primary"
-                disabled={applied || applying}
-                onClick={() => void onApply(entry, p)}
-              >
-                {applied ? (
-                  <>
-                    <Check size={12} /> Applied
-                  </>
-                ) : applying ? (
-                  'Applying…'
-                ) : (
-                  `Apply to ${entry.patientName}'s chart`
-                )}
-              </button>
-              {applied && !entry.isCurrent && (
+            {!entry.isCurrent && (
+              <div className="soap-scribe-multi-actions">
                 <a
                   className="soap-scribe-multi-link"
                   href={`/schedule/soap/${entry.appointmentId}/${entry.patientId}`}
@@ -1059,8 +1145,8 @@ function MultiPatientReview({
                 >
                   <ExternalLink size={12} /> View {entry.patientName}&apos;s chart
                 </a>
-              )}
-            </div>
+              </div>
+            )}
           </div>
         );
       })}
@@ -1069,7 +1155,7 @@ function MultiPatientReview({
         <div className="soap-scribe-multi-card">
           <div className="soap-scribe-multi-card-head">
             <strong>Client email</strong>
-            <span className="soap-scribe-tag">shared across pets</span>
+            <span className="soap-scribe-tag">shared · saved to this chart</span>
           </div>
           {suggestion.clientEmailSubject && (
             <div className="soap-scribe-multi-block">Subject: {suggestion.clientEmailSubject}</div>
