@@ -2,10 +2,14 @@
  * PRE-FIRST book: keep the new stop at the preview clock time and bump the former
  * first visit later (preview ETA / after new end) so My Day chronological order matches
  * the geographic route (avoids visit #2 + reverse geography / window warnings).
+ *
+ * Only flexible client visits are bumpable — never meetings, personal/flex blocks,
+ * notes, or other staff calendar items that are not part of the client route.
  */
 import { DateTime } from 'luxon';
 import {
   isAppointmentCancelledOnPracticeCalendar,
+  isPracticeCalendarBlockAppointment,
 } from '../api/appointments';
 import type { Appointment } from '../api/roomLoader';
 import { isFixedTimeTypeName } from './editVisitTimePreview';
@@ -46,6 +50,34 @@ function isVisibleTimedAppt(a: Appointment): boolean {
 
 function appointmentTypeName(a: Appointment): string {
   return pickStr(a.appointmentType?.name) || pickStr(a.appointmentType?.prettyName) || '';
+}
+
+/** Staff / non-route calendar types that must never be auto-moved by PRE-FIRST bump. */
+function isNonRoutableStaffCalendarTypeName(name: string): boolean {
+  const lower = name.trim().toLowerCase();
+  if (!lower) return false;
+  if (lower === 'meeting' || lower.includes('meeting')) return true;
+  if (lower.includes('note to staff')) return true;
+  if (lower === 'vacation' || lower === 'sick time') return true;
+  return false;
+}
+
+/**
+ * True when this row is a flexible client visit that may be shifted later after a
+ * PRE-FIRST book. Meetings/blocks/notes and exclude-from-routing types are skipped
+ * so booking a new first stop cannot move a doc meeting.
+ */
+export function isPreFirstNeighborBumpEligibleAppointment(a: Appointment): boolean {
+  if (!isVisibleTimedAppt(a)) return false;
+  if (isPracticeCalendarBlockAppointment(a)) return false;
+  if (isFixedTimeTypeName(appointmentTypeName(a))) return false;
+  if (isNonRoutableStaffCalendarTypeName(appointmentTypeName(a))) return false;
+  // Range AppointmentType rows may omit settings flags; read defensively when present.
+  const typeFlags = a.appointmentType as { excludeFromRouting?: boolean } | undefined;
+  if (typeFlags?.excludeFromRouting === true) return false;
+  // Former-first bump only applies to real client stops on the geographic route.
+  if (a.client?.id == null) return false;
+  return true;
 }
 
 function samePracticeDay(isoA: string, isoB: string, practiceTz: string): boolean {
@@ -106,12 +138,11 @@ export function findFormerFirstAppointmentForPreFirstBook(opts: {
   const dayRef = `${opts.dayIso}T12:00:00`;
   const candidates = opts.appointments
     .filter((a) => {
-      if (!isVisibleTimedAppt(a)) return false;
+      if (!isPreFirstNeighborBumpEligibleAppointment(a)) return false;
       const id = Number(a.id);
       if (!Number.isFinite(id) || id <= 0 || exclude.has(id)) return false;
       if (!providerMatches(a, opts.providerId)) return false;
       if (!samePracticeDay(a.appointmentStart, dayRef, opts.practiceTz)) return false;
-      if (isFixedTimeTypeName(appointmentTypeName(a))) return false;
       return true;
     })
     .sort(
