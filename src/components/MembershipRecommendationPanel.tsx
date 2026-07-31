@@ -363,7 +363,7 @@ export default function MembershipRecommendationPanel({
                   <ul style={{ margin: 0, paddingLeft: '20px', color: '#1a2f24', fontSize: '14px', lineHeight: 1.5 }}>
                     <li style={{ marginBottom: '6px' }}>✔ Priority scheduling with a dedicated One-Team who knows {petName} over time</li>
                     <li style={{ marginBottom: '6px' }}>✔ Priority 7-day support from VAYD staff through the Client Portal</li>
-                    <li style={{ marginBottom: '6px' }}>✔ 50% off additional exams</li>
+                    <li style={{ marginBottom: '6px' }}>✔ 50% off exams on additional visits</li>
                     <li style={{ marginBottom: '6px' }}>✔ Member pricing (10% off) in our online store</li>
                     <li style={{ marginBottom: '6px' }}>✔ Care designed for long-term health, not just sick visits</li>
                   </ul>

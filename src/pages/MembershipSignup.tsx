@@ -60,7 +60,7 @@ const MEMBERSHIP_SHARED_BENEFITS = [
   'A dedicated "One-Team" that gets to know your pet over time',
   'Priority scheduling with your One-Team',
   '7-day support from VAYD staff',
-  '50% off additional exams',
+  '50% off exams on additional visits',
   'Member pricing (10% off) in our online store',
 ];
 
@@ -104,7 +104,7 @@ const MEMBERSHIP_PLANS: MembershipPlan[] = [
       'A team that gets to know your pet over time',
       'Priority scheduling with your One-Team',
       '7-day support from VAYD staff',
-      '50% off additional exams',
+      '50% off exams on additional visits',
       'Member pricing (10% off) in our online store',
     ],
   },
@@ -147,8 +147,8 @@ const MEMBERSHIP_AGREEMENT_TEXT = [
   'Vet At Your Door Membership Agreement',
   'By enrolling your pet in a Vet At Your Door Membership Plan, you agree to the following terms and conditions.',
   'Membership Plans',
-  'Foundations: Includes one annual wellness exam and trip fee, recommended annual vaccines based on age and lifestyle, annual lab work, priority scheduling, priority 7-day support from VAYD staff, fifty percent (50%) off additional exams, and member pricing (10% off) in our online store. A store discount code is issued after sign-up. Requires a twelve (12) month commitment.',
-  'Golden: Includes two wellness exams with trip fees, recommended annual vaccines based on age and lifestyle, annual advanced lab work, priority scheduling, priority 7-day support from VAYD staff, fifty percent (50%) off additional exams, and member pricing (10% off) in our online store. A store discount code is issued after sign-up. Requires a twelve (12) month commitment.',
+  'Foundations: Includes one annual wellness exam and trip fee, recommended annual vaccines based on age and lifestyle, annual lab work, priority scheduling, priority 7-day support from VAYD staff, fifty percent (50%) off the exam fee on additional visits beyond those included in the plan. This discount applies to the exam only; trip fees are not discounted, and the discount does not apply to end-of-life (euthanasia) visits. Member pricing (10% off) in our online store. A store discount code is issued after sign-up. Requires a twelve (12) month commitment.',
+  'Golden: Includes two wellness exams with trip fees, recommended annual vaccines based on age and lifestyle, annual advanced lab work, priority scheduling, priority 7-day support from VAYD staff, fifty percent (50%) off the exam fee on additional visits beyond those included in the plan. This discount applies to the exam only; trip fees are not discounted, and the discount does not apply to end-of-life (euthanasia) visits. Member pricing (10% off) in our online store. A store discount code is issued after sign-up. Requires a twelve (12) month commitment.',
   'Puppy / Kitten Add-On: Covers booster vaccine appointments during your pet\'s first year, including the required doctor and technician visits with trip fees that are specifically tied to administering recommended booster vaccines.',
   'Priority 7-Day Support',
   'Members may access priority support from VAYD staff seven days a week during the following times: Monday through Friday from 8:00am to 5:00pm, and Saturday through Sunday from 8:00 am to 4:00 pm. VAYD will review your pet\'s history and may consult a veterinarian if needed. No house-call visits are made after hours. If urgent care is recommended, we will direct you to an appropriate emergency facility. This service is unavailable on holidays observed by Vet At Your Door. Hours may change with thirty (30) days of notice.',
@@ -172,7 +172,7 @@ const MEMBERSHIP_AGREEMENT_TEXT = [
   'Scheduling and Availability',
   'Visits should be scheduled in advance for best availability. Specific appointment times cannot be guaranteed. Services are available only within our service area and during our regular appointment hours. Members receive priority scheduling, including reserve appointment slots held for members.',
   'We will make every reasonable effort for your pet\'s care to be provided by your dedicated One Team, especially for wellness visits and planned follow-up care. In situations where schedule constraints, urgent needs, staffing limitations, or routing requirements prevent your One Team from being available, another Vet At Your Door team may provide care to ensure your pet is seen in a timely manner.',
-  'If we cannot accommodate an urgent case or a requested appointment time, we may refer you to another facility or veterinary team.',
+  'If we are unable to accommodate an urgent case or a requested appointment time, we may refer you to another facility or veterinary team. No refund, credit, or other remuneration will be provided as a result of such a referral.',
   'Access and Technology Requirements',
   'Internet access and a compatible device are required for virtual support and use of our online store. Instructions and your member store discount code will be provided in the Welcome Email.',
   'Client Conduct',
@@ -1998,7 +1998,7 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
                 </li>
                 <li className="cp-muted" style={{ display: 'flex', gap: 8, lineHeight: 1.5 }}>
                   <span aria-hidden="true">✓</span>
-                  <span>50% off additional exams — so cost never makes you wait to call us</span>
+                  <span>50% off exams on additional visits — so cost never makes you wait to call us</span>
                 </li>
               </ul>
             </div>
@@ -2763,9 +2763,9 @@ function AgreementSection({
           <p><strong>By enrolling your pet in a Vet At Your Door Membership Plan, you agree to the following terms and conditions.</strong></p>
           <p><strong>Membership Plans</strong></p>
           <p><em>Foundations</em></p>
-          <p style={{ marginLeft: '16px' }}>Includes one annual wellness exam and trip fee, recommended annual vaccines based on age and lifestyle, annual lab work, priority scheduling, priority 7-day support from VAYD staff, fifty percent (50%) off additional exams, and member pricing (10% off) in our online store. A store discount code is issued after sign-up. Requires a twelve (12) month commitment.</p>
+          <p style={{ marginLeft: '16px' }}>Includes one annual wellness exam and trip fee, recommended annual vaccines based on age and lifestyle, annual lab work, priority scheduling, priority 7-day support from VAYD staff, fifty percent (50%) off the exam fee on additional visits beyond those included in the plan. This discount applies to the exam only; trip fees are not discounted, and the discount does not apply to end-of-life (euthanasia) visits. Member pricing (10% off) in our online store. A store discount code is issued after sign-up. Requires a twelve (12) month commitment.</p>
           <p><em>Golden</em></p>
-          <p style={{ marginLeft: '16px' }}>Includes two wellness exams with trip fees, recommended annual vaccines based on age and lifestyle, annual advanced lab work, priority scheduling, priority 7-day support from VAYD staff, fifty percent (50%) off additional exams, and member pricing (10% off) in our online store. A store discount code is issued after sign-up. Requires a twelve (12) month commitment.</p>
+          <p style={{ marginLeft: '16px' }}>Includes two wellness exams with trip fees, recommended annual vaccines based on age and lifestyle, annual advanced lab work, priority scheduling, priority 7-day support from VAYD staff, fifty percent (50%) off the exam fee on additional visits beyond those included in the plan. This discount applies to the exam only; trip fees are not discounted, and the discount does not apply to end-of-life (euthanasia) visits. Member pricing (10% off) in our online store. A store discount code is issued after sign-up. Requires a twelve (12) month commitment.</p>
           <p><em>Puppy / Kitten Add-On</em></p>
           <p style={{ marginLeft: '16px' }}>Covers booster vaccine appointments during your pet&apos;s first year, including the required doctor and technician visits with trip fees that are specifically tied to administering recommended booster vaccines.</p>
           <p><strong>Priority 7-Day Support</strong></p>
@@ -2793,7 +2793,7 @@ function AgreementSection({
           <p><strong>Scheduling and Availability</strong></p>
           <p>Visits should be scheduled in advance for best availability. Specific appointment times cannot be guaranteed. Services are available only within our service area and during our regular appointment hours. Members receive priority scheduling, including reserve appointment slots held for members.</p>
           <p>We will make every reasonable effort for your pet&apos;s care to be provided by your dedicated One Team, especially for wellness visits and planned follow-up care. In situations where schedule constraints, urgent needs, staffing limitations, or routing requirements prevent your One Team from being available, another Vet At Your Door team may provide care to ensure your pet is seen in a timely manner.</p>
-          <p>If we cannot accommodate an urgent case or a requested appointment time, we may refer you to another facility or veterinary team.</p>
+          <p>If we are unable to accommodate an urgent case or a requested appointment time, we may refer you to another facility or veterinary team. No refund, credit, or other remuneration will be provided as a result of such a referral.</p>
           <p><strong>Access and Technology Requirements</strong></p>
           <p>Internet access and a compatible device are required for virtual support and use of our online store. Instructions and your member store discount code will be provided in the Welcome Email.</p>
           <p><strong>Client Conduct</strong></p>
