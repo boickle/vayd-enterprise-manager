@@ -8418,7 +8418,7 @@ export default function AppointmentRequestForm() {
                 <li>Comprehensive Wellness care, including travel fees</li>
                 <li>Vaccines and recommended screening labs</li>
                 <li>Priority 7-day support from VAYD staff</li>
-                <li>50% off additional exams</li>
+                <li>50% off exams on additional visits</li>
                 <li>Member pricing (10% off) in our online store</li>
               </ul>
               <p style={{ fontSize: '15px', fontWeight: 700, color: '#374151', lineHeight: 1.6, marginBottom: '16px' }}>

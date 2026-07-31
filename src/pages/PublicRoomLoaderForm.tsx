@@ -368,7 +368,7 @@ const MEMBERSHIP_SHARED_BENEFITS = [
   'A dedicated "One-Team" that gets to know your pet over time',
   'Priority scheduling with your One-Team',
   '7-day support from VAYD staff',
-  '50% off additional exams',
+  '50% off exams on additional visits',
   'Member pricing (10% off) in our online store',
 ];
 
@@ -401,7 +401,7 @@ const MEMBERSHIP_PLAN_CARD_DETAILS: Record<string, { name: string; tagLine: stri
       'A team that gets to know your pet over time',
       'Priority scheduling with your One-Team',
       '7-day support from VAYD staff',
-      '50% off additional exams',
+      '50% off exams on additional visits',
       'Member pricing (10% off) in our online store',
     ],
   },
