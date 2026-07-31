@@ -221,7 +221,14 @@ export default function PlanOrdersSection({
       if (snapshot) {
         const qty = Number(updated.qty) || 1;
         const { unitFinal, isCovered } = getCatalogLinePrice(snapshot, qty);
-        if (unitFinal !== Number(updated.unitPrice) || isCovered !== updated.isCovered) {
+        // Never overwrite a Room Loader / existing price with $0 from a failed catalog lookup.
+        // Covered membership lines legitimately price at 0; everything else keeps what it has.
+        const keepExisting =
+          unitFinal === 0 && !isCovered && Number(updated.unitPrice) > 0;
+        if (
+          !keepExisting &&
+          (unitFinal !== Number(updated.unitPrice) || isCovered !== updated.isCovered)
+        ) {
           updated = await updateOrder(encounterId, updated.id, {
             unitPrice: unitFinal,
             isCovered,

@@ -54,12 +54,14 @@ function SoapField({
   placeholder,
   field,
   disabled,
+  rows = 14,
 }: {
   letter: string;
   label: string;
   placeholder: string;
   field: SoapField;
   disabled: boolean;
+  rows?: number;
 }) {
   return (
     <section className="soap-doc-section">
@@ -70,7 +72,7 @@ function SoapField({
       </div>
       <textarea
         className="soap-doc-textarea"
-        rows={6}
+        rows={rows}
         placeholder={placeholder}
         value={field.value}
         disabled={disabled}
@@ -135,6 +137,7 @@ export default function ScribeDocumentView({
         placeholder={`Presenting Complaint: …\n\nPatient History:\n- …`}
         field={{ value: subjective, onChange: onSubjectiveChange, onBlur: onSubjectiveBlur }}
         disabled={disabled}
+        rows={16}
       />
       <SoapField
         letter="O"
@@ -146,6 +149,7 @@ export default function ScribeDocumentView({
           onBlur: onObjectiveNotesBlur,
         }}
         disabled={disabled}
+        rows={16}
       />
       <SoapField
         letter="A"
@@ -153,6 +157,7 @@ export default function ScribeDocumentView({
         placeholder={`Problem List:\n- …\n- … - r/o …`}
         field={{ value: assessment, onChange: onAssessmentChange, onBlur: onAssessmentBlur }}
         disabled={disabled}
+        rows={12}
       />
       <SoapField
         letter="P"
@@ -160,6 +165,7 @@ export default function ScribeDocumentView({
         placeholder={`Diagnostics:\n- …\nTreatment Plan/Medications:\n- …\nClient Communication:\n- …`}
         field={{ value: planNotes, onChange: onPlanNotesChange, onBlur: onPlanNotesBlur }}
         disabled={disabled}
+        rows={14}
       />
 
       {planItemsSlot}

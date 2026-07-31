@@ -8,6 +8,7 @@ import {
   ListChecks,
   CheckCircle2,
   PawPrint,
+  SlidersHorizontal,
 } from 'lucide-react';
 import './SoapEncounterPage.css';
 import {
@@ -15,7 +16,6 @@ import {
   createEncounter,
   getHouseholdRoster,
   getInvoiceByAppointment,
-  listEncounters,
   listOrders,
   listProblems,
   updateEncounter,
@@ -28,6 +28,7 @@ import {
   VISIT_WORKFLOW_PRACTICE_ID,
 } from '../api/visitWorkflow';
 import { summarizeIntakeHistory } from '../api/soapScribe';
+import { fetchAppointmentById } from '../api/appointments';
 import type { ForwardBookingDisposition } from '../api/forwardBookingDisposition';
 import { fetchPatientProfileForRow } from '../api/patients';
 import {
@@ -44,7 +45,9 @@ import HouseholdInvoiceSummary from '../components/soap/HouseholdInvoiceSummary'
 import EuthanasiaPrepayModal from '../components/soap/EuthanasiaPrepayModal';
 import ScribePanel from '../components/soap/ScribePanel';
 import ScribeDocumentView from '../components/soap/ScribeDocumentView';
+import ScribePromptOverridesModal from '../components/soap/ScribePromptOverridesModal';
 import ScribeSuggestedPlanItems, {
+  type SoapNarrativeSection,
   type SuggestedPlanItem,
 } from '../components/soap/ScribeSuggestedPlanItems';
 import type { PeSystemFinding } from '../components/soap/peTemplate';
@@ -52,9 +55,14 @@ import {
   appointmentReasonFromSentToClient,
   buildSubjectiveTextFromRoomLoaderResponse,
   findSubmittedRoomLoaderForAppointment,
+  hasPreVisitAnswersBlock,
   looksLikeRawRoomLoaderSubjective,
+  PRE_EXAM_CHECKIN_NOT_FILLED,
+  prependCheckinBlock,
+  stripCheckinPlaceholder,
   withRoomLoaderSubjectivePrefix,
 } from '../utils/roomLoaderSubjectiveText';
+import { takeDeferredPlanItems } from '../utils/deferredScribePlanItems';
 
 export type Vitals = {
   tempF: string;
@@ -128,6 +136,9 @@ export default function SoapEncounterPage() {
   const [orders, setOrders] = useState<EncounterOrder[]>([]);
   const [invoice, setInvoice] = useState<VisitInvoice | null>(null);
   const [patientName, setPatientName] = useState<string>('');
+  const [primaryProviderId, setPrimaryProviderId] = useState<number | null>(null);
+  const [primaryProviderName, setPrimaryProviderName] = useState<string | null>(null);
+  const [showPromptOverrides, setShowPromptOverrides] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showEuthanasia, setShowEuthanasia] = useState(false);
@@ -142,7 +153,7 @@ export default function SoapEncounterPage() {
   const [linkedProblemIds, setLinkedProblemIds] = useState<string[]>([]);
   const [visitCompleted, setVisitCompleted] = useState(false);
   const [activeTab, setActiveTab] = useState<SoapTabId>('subjective');
-  const [entryMode, setEntryMode] = useState<'manual' | 'scribe'>('manual');
+  const [entryMode, setEntryMode] = useState<'manual' | 'scribe'>('scribe');
   const [emailDraft, setEmailDraft] = useState<{
     subject: string;
     body: string;
@@ -150,12 +161,27 @@ export default function SoapEncounterPage() {
   const emailDraftRef = useRef(emailDraft);
   emailDraftRef.current = emailDraft;
   const [scribePlanItems, setScribePlanItems] = useState<SuggestedPlanItem[]>([]);
+  /** Parked by a multi-pet Process on another pet's tab — shown when this chart opens. */
+  const [deferredScribePlanItems, setDeferredScribePlanItems] = useState<SuggestedPlanItem[]>([]);
   const [roster, setRoster] = useState<HouseholdRosterEntry[]>([]);
   const [householdRefreshTick, setHouseholdRefreshTick] = useState(0);
 
   const locked = encounter?.status === 'completed';
   const mode: SoapEncounterMode = encounter?.mode ?? 'comprehensive';
   const scribeEnabled = String(import.meta.env.VITE_ENABLE_SCRIBE ?? '').toLowerCase() === 'true';
+
+  // Keep pet tab order stable when switching charts (name, then id) — don't float "current" first.
+  const petTabs = useMemo(
+    () =>
+      [...roster].sort((a, b) => {
+        const byName = a.patientName.localeCompare(b.patientName, undefined, {
+          sensitivity: 'base',
+        });
+        if (byName !== 0) return byName;
+        return a.patientId - b.patientId;
+      }),
+    [roster]
+  );
 
   const refreshInvoice = useCallback(async () => {
     try {
@@ -210,62 +236,84 @@ export default function SoapEncounterPage() {
       // loaded encounter below.
       setEmailDraft({ subject: '', body: '' });
       setScribePlanItems([]);
+      setDeferredScribePlanItems([]);
+      setPrimaryProviderId(null);
+      setPrimaryProviderName(null);
+      setShowPromptOverrides(false);
       setVisitCompleted(false);
       setShowEuthanasia(false);
       try {
-        const existing = await listEncounters({ appointmentId, patientId });
-        let enc = existing[0] ?? null;
-        if (!enc) {
-          enc = await createEncounter({
-            appointmentId,
-            patientId,
-            clientId: clientIdParam ? Number(clientIdParam) : undefined,
-          });
-        }
+        // Get-or-create: also backfills Room Loader proposed orders on an existing draft
+        // that predates the import (client-accepted estimate, with codes and prices).
+        let enc = await createEncounter({
+          appointmentId,
+          patientId,
+          clientId: clientIdParam ? Number(clientIdParam) : undefined,
+        });
         if (canceled) return;
+
+        // Multi-pet scribe may have parked plan-item suggestions for this chart — hold them
+        // separately so ScribePanel's onPlanItemsChange([]) doesn't wipe them on mount.
+        setDeferredScribePlanItems(takeDeferredPlanItems(enc.id));
 
         let subjectiveHistory =
           typeof enc.subjective?.history === 'string' ? enc.subjective.history : '';
 
-        // Prefill / polish Room Loader intake into a short Subjective narrative (auto, no button).
-        try {
-          let intakeSource = '';
-          if (!subjectiveHistory.trim()) {
-            const roomLoader = await findSubmittedRoomLoaderForAppointment(appointmentId);
-            const response = roomLoader?.responseFromClient;
-            if (response) {
-              intakeSource = buildSubjectiveTextFromRoomLoaderResponse(response, patientId, {
-                appointmentReason: appointmentReasonFromSentToClient(
-                  roomLoader.sentToClient,
-                  patientId
-                ),
-              });
+        // Subjective always opens with the pre-visit check-in block: the client's answers
+        // when they filled the form out, otherwise a line saying they didn't, so the doctor
+        // knows the difference between "no answers" and "not loaded". Self-healing — a chart
+        // whose history was written without the block (scribe applied first) gets it back on
+        // the next open, above what's already there.
+        if (!hasPreVisitAnswersBlock(subjectiveHistory)) {
+          let intake = '';
+          try {
+            if (looksLikeRawRoomLoaderSubjective(subjectiveHistory)) {
+              intake = subjectiveHistory;
+            } else {
+              const roomLoader = await findSubmittedRoomLoaderForAppointment(appointmentId);
+              const response = roomLoader?.responseFromClient;
+              if (response) {
+                intake = buildSubjectiveTextFromRoomLoaderResponse(response, patientId, {
+                  appointmentReason: appointmentReasonFromSentToClient(
+                    roomLoader.sentToClient,
+                    patientId
+                  ),
+                });
+              }
             }
-          } else if (looksLikeRawRoomLoaderSubjective(subjectiveHistory)) {
-            intakeSource = subjectiveHistory;
+          } catch (err) {
+            // Falls through to the "not filled out" line rather than leaving Subjective bare.
+            console.warn('Pre-exam check-in lookup failed', err);
           }
 
-          if (intakeSource.trim()) {
-            let historyToSave = intakeSource.trim();
+          let block = PRE_EXAM_CHECKIN_NOT_FILLED;
+          if (intake.trim()) {
+            let polished = intake.trim();
             if (scribeEnabled) {
               try {
-                const summary = await summarizeIntakeHistory(enc.id, intakeSource);
-                if (summary.trim()) historyToSave = summary.trim();
+                const summary = await summarizeIntakeHistory(enc.id, intake);
+                if (summary.trim()) polished = summary.trim();
               } catch {
                 /* keep raw Room Loader text if summarize fails */
               }
             }
-            historyToSave = withRoomLoaderSubjectivePrefix(historyToSave);
-              if (historyToSave !== subjectiveHistory.trim()) {
-              subjectiveHistory = historyToSave;
-              const emailFields = emailDraftFromSubjective(enc.subjective);
+            block = withRoomLoaderSubjectivePrefix(polished);
+          }
+
+          // The raw Q&A dump is the source of the block, not history to keep under it.
+          const existing = intake === subjectiveHistory ? '' : subjectiveHistory;
+          const next = prependCheckinBlock(block, stripCheckinPlaceholder(existing));
+          if (next !== subjectiveHistory.trim()) {
+            subjectiveHistory = next;
+            const emailFields = emailDraftFromSubjective(enc.subjective);
+            try {
               enc = await updateEncounter(enc.id, {
-                subjective: buildSubjectivePayload(historyToSave, emailFields),
+                subjective: buildSubjectivePayload(next, emailFields),
               });
+            } catch (err) {
+              console.warn('Failed to save the pre-exam check-in block', err);
             }
           }
-        } catch {
-          /* Room Loader preload is best-effort */
         }
 
         setEncounter(enc);
@@ -289,6 +337,29 @@ export default function SoapEncounterPage() {
               }
             } catch {
               if (!canceled) setPatientName(`Patient #${patientId}`);
+            }
+          })(),
+          (async () => {
+            try {
+              const appt = await fetchAppointmentById(appointmentId, {
+                practiceId: VISIT_WORKFLOW_PRACTICE_ID,
+              });
+              if (canceled) return;
+              const provider = appt?.primaryProvider;
+              if (provider?.id != null) {
+                setPrimaryProviderId(Number(provider.id));
+                const full = [provider.firstName, provider.lastName]
+                  .map((p) => (typeof p === 'string' ? p.trim() : ''))
+                  .filter(Boolean)
+                  .join(' ');
+                if (!full) {
+                  setPrimaryProviderName(`Provider #${provider.id}`);
+                } else {
+                  setPrimaryProviderName(/^dr\.?\b/i.test(full) ? full : `Dr. ${full}`);
+                }
+              }
+            } catch {
+              /* provider label is optional for the Prompt link */
             }
           })(),
         ]);
@@ -406,6 +477,36 @@ export default function SoapEncounterPage() {
     [save]
   );
 
+  const appendBulletToSoapSection = useCallback(
+    (section: SoapNarrativeSection, text: string) => {
+      const trimmed = text.trim();
+      if (!trimmed) return;
+      const bullet = trimmed.startsWith('-') ? trimmed : `- ${trimmed}`;
+      const append = (existing: string) => {
+        const cur = existing.trim();
+        return cur ? `${cur}\n${bullet}` : bullet;
+      };
+      if (section === 'subjective') {
+        const next = append(subjective);
+        setSubjective(next);
+        void saveSubjective(next);
+      } else if (section === 'objective') {
+        const next = append(objectiveNotes);
+        setObjectiveNotes(next);
+        void save({ objectiveNotes: next });
+      } else if (section === 'assessment') {
+        const next = append(reasoning);
+        setReasoning(next);
+        void save({ assessmentReasoning: next });
+      } else {
+        const next = append(planNotes);
+        setPlanNotes(next);
+        void save({ planNotes: next });
+      }
+    },
+    [subjective, objectiveNotes, reasoning, planNotes, save, saveSubjective]
+  );
+
   const dispositionValue = useMemo<ForwardBookingDisposition | null>(() => {
     const d = encounter?.forwardBookingDisposition;
     if (d && typeof d === 'object' && typeof (d as { mode?: unknown }).mode === 'string') {
@@ -469,21 +570,33 @@ export default function SoapEncounterPage() {
           </div>
         </div>
         <div className="soap-header-actions">
+          {scribeEnabled && primaryProviderId != null && (
+            <button
+              type="button"
+              className="soap-provider-prompt-btn"
+              onClick={() => setShowPromptOverrides(true)}
+              title={`Edit provider-wide AI scribe instructions for ${
+                primaryProviderName ?? `Provider #${primaryProviderId}`
+              }`}
+            >
+              <SlidersHorizontal size={13} /> Scribe prompt
+            </button>
+          )}
           {!locked && scribeEnabled && (
             <div className="soap-mode-switch">
-              <button
-                type="button"
-                className={effectiveEntryMode === 'manual' ? 'active' : ''}
-                onClick={() => setEntryMode('manual')}
-              >
-                Manual
-              </button>
               <button
                 type="button"
                 className={effectiveEntryMode === 'scribe' ? 'active' : ''}
                 onClick={() => setEntryMode('scribe')}
               >
                 AI Scribe
+              </button>
+              <button
+                type="button"
+                className={effectiveEntryMode === 'manual' ? 'active' : ''}
+                onClick={() => setEntryMode('manual')}
+              >
+                Manual
               </button>
             </div>
           )}
@@ -511,9 +624,9 @@ export default function SoapEncounterPage() {
 
       {error && <div className="soap-error soap-error-banner">{error}</div>}
 
-      {roster.length > 1 && (
+      {petTabs.length > 1 && (
         <div className="soap-pet-tabs" role="tablist" aria-label="Pets at this visit">
-          {roster.map((r) => (
+          {petTabs.map((r) => (
             <button
               key={r.patientId}
               type="button"
@@ -561,6 +674,14 @@ export default function SoapEncounterPage() {
         />
       )}
 
+      {showPromptOverrides && primaryProviderId != null && (
+        <ScribePromptOverridesModal
+          providerId={primaryProviderId}
+          providerName={primaryProviderName?.trim() || `Provider #${primaryProviderId}`}
+          onClose={() => setShowPromptOverrides(false)}
+        />
+      )}
+
       <div className="soap-body">
         <main className="soap-main">
           {effectiveEntryMode === 'scribe' ? (
@@ -590,7 +711,7 @@ export default function SoapEncounterPage() {
                     <ScribeSuggestedPlanItems
                       key={`plan-items-${encounter.id}`}
                       encounterId={encounter.id}
-                      suggestions={scribePlanItems}
+                      suggestions={[...deferredScribePlanItems, ...scribePlanItems]}
                       planNotes={planNotes}
                       orders={orders}
                       disabled={locked}
@@ -599,6 +720,7 @@ export default function SoapEncounterPage() {
                       practiceId={VISIT_WORKFLOW_PRACTICE_ID}
                       onOrderAdded={onScribeOrderCreated}
                       onInvoiceShouldRefresh={() => void refreshInvoice()}
+                      onAppendToSoapSection={appendBulletToSoapSection}
                     />
                     <PlanOrdersSection
                       key={`plan-orders-${encounter.id}`}

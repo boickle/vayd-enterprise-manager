@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ClipboardPaste,
   Mic,
   Square,
   Sparkles,
@@ -8,12 +9,11 @@ import {
   AlertTriangle,
   ChevronDown,
   ChevronUp,
-  ClipboardPaste,
   Users,
-  ExternalLink,
 } from 'lucide-react';
 import {
   createScribeSocket,
+  listScribeSessions,
   structureTranscript,
   type MultiPatientSuggestionEntry,
   type MultiPatientScribeSuggestion,
@@ -23,7 +23,6 @@ import {
 } from '../../api/soapScribe';
 import { startScribeAudioCapture, type ScribeAudioCapture } from '../../utils/scribeAudioCapture';
 import {
-  createOrder,
   createProblem,
   getEncounter,
   getHouseholdRoster,
@@ -38,6 +37,9 @@ import {
 import { PE_SYSTEMS, peExamFromValue, type PeExamState, type PeSystemFinding } from './peTemplate';
 import ScribeConsentModal from './ScribeConsentModal';
 import type { SuggestedPlanItem } from './ScribeSuggestedPlanItems';
+import { formatSoapSectionSpacing } from '../../utils/soapSectionSpacing';
+import { VISIT_DISCUSSION_HEADER } from '../../utils/roomLoaderSubjectiveText';
+import { stashDeferredPlanItems } from '../../utils/deferredScribePlanItems';
 import { vitalsFromValue, type Vitals } from '../../pages/SoapEncounterPage';
 
 type Props = {
@@ -98,62 +100,55 @@ function formatElapsed(sec: number): string {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-/**
- * Subjective/assessment text is re-derived in full from the whole transcript on each one-shot
- * "Process" call (not an incremental patch — see ScribeStructuringService), and a doctor can
- * process more than once per encounter (e.g. record a second segment later in the visit). To
- * auto-apply without clobbering anything the doctor typed directly into the field, we diff the
- * *previous* AI text against the *new* AI text to find only what's new, then append just that
- * delta.
- */
-function computeAppendDelta(
-  prevAiText: string | null | undefined,
-  newAiText: string | null | undefined
-): string | null {
-  const prev = (prevAiText ?? '').trim();
-  const next = (newAiText ?? '').trim();
-  if (!next || next === prev) return null;
-  if (prev && next.startsWith(prev)) {
-    const delta = next.slice(prev.length).trim();
-    return delta || null;
-  }
-  // AI revised earlier text rather than just extending it — can't cleanly diff, so append
-  // the whole new version rather than risk silently dropping something it noticed.
-  return next;
+/** Turn structured plan-item suggestions into matcher rows (never create $0 orders). */
+function toSuggestedPlanItems(
+  planItems: MultiPatientSuggestionEntry['planItems'],
+  existingOrders: EncounterOrder[]
+): SuggestedPlanItem[] {
+  const existingNames = new Set(existingOrders.map((o) => norm(o.name)));
+  return planItems
+    .filter((p) => p.name?.trim() && !existingNames.has(norm(p.name)))
+    .map((p) => ({
+      key: `planItem:${norm(p.name)}|${p.kind}`,
+      name: p.name.trim(),
+      kind: p.kind,
+      note: p.note ?? null,
+    }));
 }
-
-function appendText(existing: string, delta: string): string {
-  const trimmed = existing.trim();
-  return trimmed ? `${trimmed}\n\n${delta}` : delta;
-}
-
-const VISIT_DISCUSSION_HEADER = 'Visit discussion:';
 
 /**
  * Merge AI visit-conversation history into Subjective without clobbering Room Loader /
- * pre-visit text. If Subjective already has a Pre-Visit block, append under
- * "Visit discussion:"; otherwise normal append.
+ * pre-visit text. Process is always a full re-derive: keep the check-in block, replace
+ * (or add) the Visit discussion section. With no check-in block, replace Subjective with
+ * the new AI history so Re-load SOAP doesn't stack duplicate visit notes.
  */
 function mergeSubjectiveHistory(existing: string, aiHistory: string): string {
-  const delta = aiHistory.trim();
-  if (!delta) return existing.trim();
+  const delta = formatSoapSectionSpacing(aiHistory);
+  if (!delta) return formatSoapSectionSpacing(existing);
   const cur = existing.trim();
   if (!cur) return delta;
-  if (cur.includes(delta)) return cur;
-  const hasPreVisit = /^Pre-Visit Check-in Information\b/i.test(cur);
+  if (cur.includes(delta) || formatSoapSectionSpacing(cur).includes(delta)) {
+    return formatSoapSectionSpacing(cur);
+  }
+  const hasPreVisit =
+    /^Pre-Visit Check-in Information\b/i.test(cur) ||
+    /^Pre-Exam Check-in Form:\s*Not filled out by client\b/i.test(cur) ||
+    /^Room Loader information\b/i.test(cur);
   if (hasPreVisit) {
-    if (new RegExp(`^${VISIT_DISCUSSION_HEADER}\\s*$`, 'im').test(cur) || cur.includes(`\n${VISIT_DISCUSSION_HEADER}`)) {
-      // Already has a visit-discussion section — replace that section with the new AI history.
+    if (
+      new RegExp(`^${VISIT_DISCUSSION_HEADER}\\s*$`, 'im').test(cur) ||
+      cur.includes(`\n${VISIT_DISCUSSION_HEADER}`)
+    ) {
       const replaced = cur.replace(
         /\n\nVisit discussion:\n\n[\s\S]*$/i,
         `\n\n${VISIT_DISCUSSION_HEADER}\n\n${delta}`
       );
-      if (replaced !== cur) return replaced;
-      return `${cur}\n\n${VISIT_DISCUSSION_HEADER}\n\n${delta}`;
+      if (replaced !== cur) return formatSoapSectionSpacing(replaced);
+      return formatSoapSectionSpacing(`${cur}\n\n${VISIT_DISCUSSION_HEADER}\n\n${delta}`);
     }
-    return `${cur}\n\n${VISIT_DISCUSSION_HEADER}\n\n${delta}`;
+    return formatSoapSectionSpacing(`${cur}\n\n${VISIT_DISCUSSION_HEADER}\n\n${delta}`);
   }
-  return appendText(cur, delta);
+  return delta;
 }
 
 /** Only fills vitals the doctor hasn't already entered — never overwrites (mirrors the live
@@ -188,11 +183,10 @@ function abnormalOnlyExamPatch(
 }
 
 /**
- * Builds the `updateEncounter` patch for a multi-pet review entry applied to a patient other than
- * the one currently open in this page (docs/ai-scribe.md "Multi-pet visits") — the current
- * patient instead goes through the existing `onApply*` props so the open page's own state (and
- * its live-recording auto-apply logic) stays the single source of truth. Fetches the *other*
- * patient's own fresh encounter state so fill-empty/append never clobbers anything already there.
+ * Builds the `updateEncounter` patch for a multi-pet entry applied to a patient other than
+ * the one currently open. Process is a one-shot full document — set O/A/P narrative from the
+ * AI result (replace), don't append, or re-runs / Strict Mode stack duplicate blocks forever.
+ * Vitals/exam stay fill-empty only so doctor-entered values aren't clobbered.
  */
 function buildOtherEncounterPatch(
   enc: SoapEncounter,
@@ -202,9 +196,6 @@ function buildOtherEncounterPatch(
   const currentExam = peExamFromValue(enc.objectiveExam);
   const currentSubjective =
     typeof enc.subjective?.history === 'string' ? (enc.subjective.history as string) : '';
-  const currentObjectiveNotes = enc.objectiveNotes ?? '';
-  const currentReasoning = enc.assessmentReasoning ?? '';
-  const currentPlanNotes = enc.planNotes ?? '';
 
   const patch: Parameters<typeof updateEncounter>[1] = {};
 
@@ -227,13 +218,13 @@ function buildOtherEncounterPatch(
     };
   }
   if (suggestion.objectiveNotes?.trim()) {
-    patch.objectiveNotes = appendText(currentObjectiveNotes, suggestion.objectiveNotes);
+    patch.objectiveNotes = formatSoapSectionSpacing(suggestion.objectiveNotes);
   }
   if (suggestion.assessmentReasoning?.trim()) {
-    patch.assessmentReasoning = appendText(currentReasoning, suggestion.assessmentReasoning);
+    patch.assessmentReasoning = formatSoapSectionSpacing(suggestion.assessmentReasoning);
   }
   if (suggestion.planNotes?.trim()) {
-    patch.planNotes = appendText(currentPlanNotes, suggestion.planNotes);
+    patch.planNotes = formatSoapSectionSpacing(suggestion.planNotes);
   }
   return patch;
 }
@@ -246,9 +237,6 @@ export default function ScribePanel({
   currentSubjective,
   currentVitals,
   currentExam,
-  currentObjectiveNotes,
-  currentReasoning,
-  currentPlanNotes,
   problems,
   orders,
   onApplySubjective,
@@ -285,8 +273,12 @@ export default function ScribePanel({
   const [roster, setRoster] = useState<HouseholdRosterEntry[]>([]);
   const [selectedPatientIds, setSelectedPatientIds] = useState<Set<number>>(new Set([patientId]));
   const [multiSuggestion, setMultiSuggestion] = useState<MultiPatientScribeSuggestion | null>(null);
-  const [multiApplyingId, setMultiApplyingId] = useState<number | null>(null);
-  const [multiAppliedIds, setMultiAppliedIds] = useState<Set<number>>(new Set());
+  /** Ensures each Process result is written once (not re-applied when problems/orders update). */
+  const multiAppliedFingerprintRef = useRef<string | null>(null);
+  /** Multi-pet plan items for the open pet — fed to the catalog matcher, not created as $0 orders. */
+  const [multiPlanItemsForCurrent, setMultiPlanItemsForCurrent] = useState<SuggestedPlanItem[]>(
+    []
+  );
 
   const socketRef = useRef<ScribeSocketHandle | null>(null);
   const audioRef = useRef<ScribeAudioCapture | null>(null);
@@ -300,9 +292,6 @@ export default function ScribePanel({
   const currentSubjectiveRef = useRef(currentSubjective);
   const currentVitalsRef = useRef(currentVitals);
   const currentExamRef = useRef(currentExam);
-  const currentObjectiveNotesRef = useRef(currentObjectiveNotes);
-  const currentReasoningRef = useRef(currentReasoning);
-  const currentPlanNotesRef = useRef(currentPlanNotes);
   useEffect(() => {
     currentSubjectiveRef.current = currentSubjective;
   }, [currentSubjective]);
@@ -312,15 +301,6 @@ export default function ScribePanel({
   useEffect(() => {
     currentExamRef.current = currentExam;
   }, [currentExam]);
-  useEffect(() => {
-    currentObjectiveNotesRef.current = currentObjectiveNotes;
-  }, [currentObjectiveNotes]);
-  useEffect(() => {
-    currentReasoningRef.current = currentReasoning;
-  }, [currentReasoning]);
-  useEffect(() => {
-    currentPlanNotesRef.current = currentPlanNotes;
-  }, [currentPlanNotes]);
 
   const logApplied = useCallback((text: string) => {
     logKeyRef.current += 1;
@@ -350,10 +330,35 @@ export default function ScribePanel({
     let canceled = false;
     getHouseholdRoster(soapEncounterId)
       .then((entries) => {
-        if (!canceled) setRoster(entries);
+        if (canceled) return;
+        setRoster(entries);
+        // Default: every household pet on this visit is included in Process — otherwise only
+        // the open chart gets SOAP text and siblings look "empty" after a multi-pet visit.
+        if (entries.length > 0) {
+          setSelectedPatientIds(new Set(entries.map((e) => e.patientId)));
+        }
       })
       .catch(() => {
         /* Multi-pet detection is best-effort — falls back to single-patient paste. */
+      });
+    return () => {
+      canceled = true;
+    };
+  }, [soapEncounterId]);
+
+  // Restore the most recent saved transcript when returning to this chart. Sessions are
+  // audit-only (not part of the printed medical record); the UI just needs the text again.
+  useEffect(() => {
+    let canceled = false;
+    listScribeSessions(soapEncounterId)
+      .then((sessions) => {
+        if (canceled) return;
+        const saved = sessions.find((s) => s.transcript?.trim())?.transcript?.trim() ?? '';
+        if (!saved) return;
+        setFinalTranscript((prev) => prev || saved);
+      })
+      .catch(() => {
+        /* Restore is best-effort — paste/record still work without it. */
       });
     return () => {
       canceled = true;
@@ -381,7 +386,6 @@ export default function ScribePanel({
   // real records (a problem-list entry / a proposed order), not just a field edit.
   useEffect(() => {
     if (!suggestion) return;
-    const prev = prevSuggestionRef.current;
 
     const vitalsPatch: Partial<Vitals> = {};
     (Object.keys(VITAL_LABELS) as (keyof Vitals)[]).forEach((k) => {
@@ -417,38 +421,27 @@ export default function ScribePanel({
       }
     }
 
-    const subjectiveDelta = computeAppendDelta(
-      prev?.subjectiveHistory,
-      suggestion.subjectiveHistory
-    );
+    const subjectiveDelta = suggestion.subjectiveHistory?.trim()
+      ? suggestion.subjectiveHistory
+      : null;
     if (subjectiveDelta) {
       onApplySubjective(mergeSubjectiveHistory(currentSubjectiveRef.current, subjectiveDelta));
       logApplied('Subjective updated');
     }
 
-    const reasoningDelta = computeAppendDelta(
-      prev?.assessmentReasoning,
-      suggestion.assessmentReasoning
-    );
-    if (reasoningDelta) {
-      onApplyReasoning(appendText(currentReasoningRef.current, reasoningDelta));
+    if (suggestion.assessmentReasoning?.trim()) {
+      onApplyReasoning(formatSoapSectionSpacing(suggestion.assessmentReasoning));
       logApplied('Assessment updated');
     }
 
-    // Objective/Plan narrative text comes from generateNarrative(), run alongside structure()
-    // on every one-shot "Process" call (see ScribeController.structure).
-    const objectiveDelta = computeAppendDelta(
-      prev?.narrativeObjective,
-      suggestion.narrativeObjective
-    );
-    if (objectiveDelta) {
-      onApplyObjectiveNotes(appendText(currentObjectiveNotesRef.current, objectiveDelta));
+    // One-shot Process: replace O/A/P (do not append) so Re-load SOAP doesn't stack duplicates.
+    if (suggestion.narrativeObjective?.trim()) {
+      onApplyObjectiveNotes(formatSoapSectionSpacing(suggestion.narrativeObjective));
       logApplied('Objective notes updated');
     }
 
-    const planDelta = computeAppendDelta(prev?.narrativePlan, suggestion.narrativePlan);
-    if (planDelta) {
-      onApplyPlanNotes(appendText(currentPlanNotesRef.current, planDelta));
+    if (suggestion.narrativePlan?.trim()) {
+      onApplyPlanNotes(formatSoapSectionSpacing(suggestion.narrativePlan));
       logApplied('Plan notes updated');
     }
 
@@ -526,15 +519,18 @@ export default function ScribePanel({
       socketRef.current = null;
     }
     setInterimText('');
-    setFinalTranscript('');
     const text = transcript.trim();
     if (text) {
+      setFinalTranscript(text);
       setPasteText((prev) => {
         const prevTrimmed = prev.trim();
+        // Prefer the just-recorded segment alone when paste was empty; otherwise append.
         return prevTrimmed ? `${prevTrimmed}\n\n${text}` : text;
       });
       setPasteOpen(true);
       setTranscriptOpen(false);
+    } else {
+      setFinalTranscript('');
     }
   }, [teardown, finalTranscript]);
 
@@ -571,7 +567,8 @@ export default function ScribePanel({
         );
         setFinalTranscript(text);
         setInterimText('');
-        setMultiAppliedIds(new Set());
+        multiAppliedFingerprintRef.current = null;
+        setMultiPlanItemsForCurrent([]);
         setMultiSuggestion(result as MultiPatientScribeSuggestion);
         setPasteOpen(false);
         setPasteText('');
@@ -609,7 +606,6 @@ export default function ScribePanel({
 
   const applyMultiPatientEntry = useCallback(
     async (entry: HouseholdRosterEntry, sugg: MultiPatientSuggestionEntry) => {
-      setMultiApplyingId(entry.patientId);
       setErrorMessage(null);
       try {
         if (entry.isCurrent) {
@@ -624,25 +620,20 @@ export default function ScribePanel({
               mergeSubjectiveHistory(currentSubjectiveRef.current, sugg.subjectiveHistory)
             );
           }
+          // One-shot Process: replace O/A/P (do not append) — avoids duplicate blocks on re-run.
           if (sugg.objectiveNotes?.trim()) {
-            onApplyObjectiveNotes(
-              appendText(currentObjectiveNotesRef.current, sugg.objectiveNotes)
-            );
+            onApplyObjectiveNotes(formatSoapSectionSpacing(sugg.objectiveNotes));
           }
           if (sugg.assessmentReasoning?.trim()) {
-            onApplyReasoning(appendText(currentReasoningRef.current, sugg.assessmentReasoning));
+            onApplyReasoning(formatSoapSectionSpacing(sugg.assessmentReasoning));
           }
           if (sugg.planNotes?.trim()) {
-            onApplyPlanNotes(appendText(currentPlanNotesRef.current, sugg.planNotes));
+            onApplyPlanNotes(formatSoapSectionSpacing(sugg.planNotes));
           }
 
           const existingLabels = new Set(problems.map((p) => norm(p.label)));
           const newProblems = sugg.problems.filter(
             (p) => p.label?.trim() && !existingLabels.has(norm(p.label))
-          );
-          const existingNames = new Set(orders.map((o) => norm(o.name)));
-          const newPlanItems = sugg.planItems.filter(
-            (p) => p.name?.trim() && !existingNames.has(norm(p.name))
           );
           for (const p of newProblems) {
             const created = await createProblem({
@@ -653,15 +644,9 @@ export default function ScribePanel({
             });
             onProblemCreated(created);
           }
-          for (const p of newPlanItems) {
-            const created = await createOrder(entry.soapEncounterId, {
-              name: p.name,
-              kind: p.kind,
-              note: p.note ?? undefined,
-              state: 'proposed',
-            });
-            onOrderCreated(created);
-          }
+          // Plan items are only *suggestions* — they go to the catalog matcher below the Plan
+          // box so they become priced orders, never straight to an unpriced $0 order line.
+          setMultiPlanItemsForCurrent(toSuggestedPlanItems(sugg.planItems, orders));
         } else {
           const [enc, existingProblems, existingOrders] = await Promise.all([
             getEncounter(entry.soapEncounterId),
@@ -677,37 +662,27 @@ export default function ScribePanel({
           const newProblems = sugg.problems.filter(
             (p) => p.label?.trim() && !existingLabels.has(norm(p.label))
           );
-          const existingNames = new Set(existingOrders.map((o) => norm(o.name)));
-          const newPlanItems = sugg.planItems.filter(
-            (p) => p.name?.trim() && !existingNames.has(norm(p.name))
-          );
-          await Promise.all([
-            ...newProblems.map((p) =>
+          await Promise.all(
+            newProblems.map((p) =>
               createProblem({
                 patientId: entry.patientId,
                 label: p.label,
                 kind: p.kind,
                 createdInEncounterId: entry.soapEncounterId,
               })
-            ),
-            ...newPlanItems.map((p) =>
-              createOrder(entry.soapEncounterId, {
-                name: p.name,
-                kind: p.kind,
-                note: p.note ?? undefined,
-                state: 'proposed',
-              })
-            ),
-          ]);
+            )
+          );
+          // This pet's chart isn't open, so its plan items wait for the matcher on that tab.
+          stashDeferredPlanItems(
+            entry.soapEncounterId,
+            toSuggestedPlanItems(sugg.planItems, existingOrders)
+          );
         }
-        setMultiAppliedIds((prev) => new Set(prev).add(entry.patientId));
         onHouseholdOrdersChanged?.();
       } catch (err) {
         setErrorMessage(
           err instanceof Error ? err.message : `Could not apply to ${entry.patientName}'s chart.`
         );
-      } finally {
-        setMultiApplyingId(null);
       }
     },
     [
@@ -726,45 +701,57 @@ export default function ScribePanel({
     ]
   );
 
-  // Multi-pet: write into every selected pet's SOAP automatically (same as single-pet auto-apply).
-  // Doctors can still open each chart to review; they shouldn't have to click Apply per pet.
-  const multiAutoAppliedKeyRef = useRef<string | null>(null);
+  // Multi-pet: write into every selected pet's SOAP once per Process result.
+  // Only `multiSuggestion` may re-trigger this — including applyMultiPatientEntry / roster in
+  // deps caused an append loop (problems/orders updates → new callback → re-apply → 100× notes).
+  const applyMultiRef = useRef(applyMultiPatientEntry);
+  applyMultiRef.current = applyMultiPatientEntry;
+  const rosterRef = useRef(roster);
+  rosterRef.current = roster;
+
   useEffect(() => {
-    if (!multiSuggestion) {
-      multiAutoAppliedKeyRef.current = null;
+    if (!multiSuggestion) return;
+    const suggestion = multiSuggestion;
+    const fingerprint = suggestion.patients
+      .map(
+        (p) =>
+          `${p.patientId}:${(p.objectiveNotes ?? '').length}:${(p.planNotes ?? '').length}:${(p.assessmentReasoning ?? '').length}:${(p.subjectiveHistory ?? '').length}`
+      )
+      .join('|');
+    if (multiAppliedFingerprintRef.current === fingerprint) {
+      setMultiSuggestion(null);
       return;
     }
-    const key = multiSuggestion.patients.map((p) => p.patientId).join(',');
-    if (multiAutoAppliedKeyRef.current === key) return;
-    multiAutoAppliedKeyRef.current = key;
 
     let canceled = false;
     (async () => {
-      const rosterById = new Map(roster.map((r) => [r.patientId, r] as const));
-      for (const p of multiSuggestion.patients) {
+      const rosterById = new Map(rosterRef.current.map((r) => [r.patientId, r] as const));
+      for (const p of suggestion.patients) {
         if (canceled) return;
         const entry = rosterById.get(p.patientId);
         if (!entry) continue;
-        await applyMultiPatientEntry(entry, p);
+        await applyMultiRef.current(entry, p);
       }
       if (canceled) return;
-      const subject = multiSuggestion.clientEmailSubject?.trim() || '';
-      const body = multiSuggestion.clientEmailBody?.trim() || '';
+      multiAppliedFingerprintRef.current = fingerprint;
+      const subject = suggestion.clientEmailSubject?.trim() || '';
+      const body = suggestion.clientEmailBody?.trim() || '';
       if (subject || body) {
         const emailKey = `${subject}\n---\n${body}`;
         if (lastAppliedEmailRef.current !== emailKey) {
           lastAppliedEmailRef.current = emailKey;
           onNarrativeUpdate?.({
-            emailSubject: multiSuggestion.clientEmailSubject,
-            emailBody: multiSuggestion.clientEmailBody,
+            emailSubject: suggestion.clientEmailSubject,
+            emailBody: suggestion.clientEmailBody,
           });
         }
       }
       logApplied(
-        `Multi-pet SOAP written for ${multiSuggestion.patients.length} pet${
-          multiSuggestion.patients.length === 1 ? '' : 's'
+        `Multi-pet SOAP written for ${suggestion.patients.length} pet${
+          suggestion.patients.length === 1 ? '' : 's'
         }`
       );
+      setMultiSuggestion(null);
     })().catch((err) => {
       if (!canceled) {
         setErrorMessage(
@@ -776,7 +763,9 @@ export default function ScribePanel({
     return () => {
       canceled = true;
     };
-  }, [multiSuggestion, roster, applyMultiPatientEntry, onNarrativeUpdate, logApplied]);
+    // intentionally only multiSuggestion — see comment above
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [multiSuggestion]);
 
   // --- Diff suggestion vs. current SOAP state ---
   // Subjective/vitals/exam/assessment are auto-applied above (no review needed). Problems and
@@ -792,12 +781,29 @@ export default function ScribePanel({
   }, [suggestion, problems, dismissed]);
 
   const planDiffs = useMemo(() => {
-    if (!suggestion) return [];
     const existingNames = new Set(orders.map((o) => norm(o.name)));
-    return suggestion.planItems
-      .filter((p) => p.name?.trim() && !existingNames.has(norm(p.name)))
-      .map((p) => ({ key: `planItem:${norm(p.name)}|${p.kind}`, ...p }));
-  }, [suggestion, orders]);
+    const fromSingle = suggestion
+      ? suggestion.planItems
+          .filter((p) => p.name?.trim() && !existingNames.has(norm(p.name)))
+          .map((p) => ({
+            key: `planItem:${norm(p.name)}|${p.kind}`,
+            name: p.name,
+            kind: p.kind,
+            note: p.note ?? null,
+          }))
+      : [];
+    const fromMulti = multiPlanItemsForCurrent.filter(
+      (p) => p.name?.trim() && !existingNames.has(norm(p.name))
+    );
+    const seen = new Set(fromSingle.map((p) => norm(p.name)));
+    const merged = [...fromSingle];
+    for (const p of fromMulti) {
+      if (seen.has(norm(p.name))) continue;
+      seen.add(norm(p.name));
+      merged.push(p);
+    }
+    return merged;
+  }, [suggestion, orders, multiPlanItemsForCurrent]);
 
   // Plan items get their own dedicated section (with per-item catalog search) below the Plan text
   // box in the Document view, rather than a plain review card here — see ScribeSuggestedPlanItems.
@@ -838,10 +844,19 @@ export default function ScribePanel({
           <button
             type="button"
             className={`soap-scribe-paste-toggle${pasteOpen ? ' active' : ''}`}
-            onClick={() => setPasteOpen((v) => !v)}
+            onClick={() => {
+              setPasteOpen((open) => {
+                const next = !open;
+                if (next && !pasteText.trim() && finalTranscript.trim()) {
+                  setPasteText(finalTranscript);
+                }
+                return next;
+              });
+            }}
             disabled={busy || pasteBusy}
           >
-            <ClipboardPaste size={13} /> Paste transcript
+            <ClipboardPaste size={13} />{' '}
+            {finalTranscript.trim() ? 'Edit / re-load transcript' : 'Paste transcript'}
           </button>
         )}
         {suggestionCount > 0 && (
@@ -879,8 +894,9 @@ export default function ScribePanel({
       {pasteOpen && !recording && (
         <div className="soap-scribe-paste">
           <p className="soap-scribe-paste-hint">
-            Review the transcript below (fix anything the mic misheard), confirm which pet(s) it
-            covers, then hit Process — nothing is applied until you do.
+            {finalTranscript.trim()
+              ? 'Edit or replace the transcript, then Re-load SOAP to rewrite S/O/A/P from it. Pre-visit check-in stays; checkout orders are left alone. Not part of the printed medical record.'
+              : 'Review the transcript below (fix anything the mic misheard), confirm which pet(s) it covers, then Process — nothing is applied until you do. The transcript is saved with the visit but is not part of the printed medical record.'}
           </p>
           {roster.length > 1 && (
             <div className="soap-scribe-roster">
@@ -903,8 +919,8 @@ export default function ScribePanel({
               </div>
               {multiPetSelected && (
                 <p className="soap-scribe-roster-hint">
-                  The transcript will be split per pet — you&apos;ll review each pet&apos;s findings
-                  before anything is saved to their chart.
+                  All listed pets are included by default. Uncheck any that aren&apos;t in this
+                  transcript — Process writes into each checked chart&apos;s SOAP fields.
                 </p>
               )}
             </div>
@@ -915,7 +931,7 @@ export default function ScribePanel({
             value={pasteText}
             onChange={(e) => setPasteText(e.target.value)}
             disabled={pasteBusy}
-            rows={5}
+            rows={8}
           />
           <div className="soap-scribe-paste-actions">
             <button
@@ -924,7 +940,11 @@ export default function ScribePanel({
               disabled={pasteBusy || !pasteText.trim()}
               onClick={() => void processPastedTranscript()}
             >
-              {pasteBusy ? 'Processing…' : 'Process'}
+              {pasteBusy
+                ? 'Processing…'
+                : finalTranscript.trim()
+                  ? 'Re-load SOAP'
+                  : 'Process'}
             </button>
             <button
               type="button"
@@ -941,18 +961,11 @@ export default function ScribePanel({
         </div>
       )}
 
-      {multiSuggestion && (
-        <MultiPatientReview
-          suggestion={multiSuggestion}
-          roster={roster}
-          appliedIds={multiAppliedIds}
-          applyingId={multiApplyingId}
-          onClose={() => setMultiSuggestion(null)}
-        />
-      )}
-
       {transcriptOpen && (finalTranscript || interimText) && (
         <div className="soap-scribe-transcript">
+          <p className="soap-scribe-transcript-meta">
+            Saved with this visit for reference — not included on the printed medical record.
+          </p>
           {finalTranscript} <span className="soap-scribe-interim">{interimText}</span>
         </div>
       )}
@@ -960,8 +973,9 @@ export default function ScribePanel({
       {logOpen && autoAppliedLog.length > 0 && (
         <div className="soap-scribe-autolog">
           <p className="soap-scribe-autolog-hint">
-            Written straight into Subjective/Vitals/Exam/Assessment as the AI heard them — new text
-            is appended, existing vitals/exam entries are never overwritten.
+            Written straight into Subjective/Vitals/Exam/Assessment/Objective/Plan from the
+            transcript. Re-load SOAP replaces those narrative fields (pre-visit check-in is kept);
+            existing vitals/exam entries are never overwritten.
           </p>
           <ul>
             {autoAppliedLog.map((entry) => (
@@ -1021,149 +1035,6 @@ export default function ScribePanel({
             void startRecording();
           }}
         />
-      )}
-    </div>
-  );
-}
-
-type MultiPatientReviewProps = {
-  suggestion: MultiPatientScribeSuggestion;
-  roster: HouseholdRosterEntry[];
-  appliedIds: Set<number>;
-  applyingId: number | null;
-  onClose: () => void;
-};
-
-/**
- * Status panel after a multi-pet Process — SOAP fields are already auto-written into each pet's
- * encounter. This is review-only (open sibling charts via link); no per-pet Apply click.
- */
-function MultiPatientReview({
-  suggestion,
-  roster,
-  appliedIds,
-  applyingId,
-  onClose,
-}: MultiPatientReviewProps) {
-  const rosterById = useMemo(() => new Map(roster.map((r) => [r.patientId, r] as const)), [roster]);
-  const allApplied =
-    suggestion.patients.length > 0 &&
-    suggestion.patients.every((p) => appliedIds.has(p.patientId));
-
-  return (
-    <div className="soap-scribe-multi">
-      <div className="soap-scribe-multi-head">
-        <span>
-          <Users size={13} />{' '}
-          {allApplied
-            ? `Written to ${suggestion.patients.length} pet chart${
-                suggestion.patients.length === 1 ? '' : 's'
-              }`
-            : applyingId != null
-              ? 'Writing to each pet\'s SOAP…'
-              : `Multi-pet — ${suggestion.patients.length} pets`}
-        </span>
-        <button type="button" className="soap-btn small ghost" onClick={onClose}>
-          <XIcon size={12} /> Close
-        </button>
-      </div>
-
-      {suggestion.patients.map((p) => {
-        const entry = rosterById.get(p.patientId);
-        if (!entry) return null;
-        const applied = appliedIds.has(p.patientId);
-        const applying = applyingId === p.patientId;
-        const vitalsText = (Object.keys(VITAL_LABELS) as (keyof Vitals)[])
-          .filter((k) => p.vitals[k]?.trim())
-          .map((k) => `${VITAL_LABELS[k]}: ${p.vitals[k]}`)
-          .join(' · ');
-
-        return (
-          <div className="soap-scribe-multi-card" key={p.patientId}>
-            <div className="soap-scribe-multi-card-head">
-              <strong>{entry.patientName}</strong>
-              {entry.isCurrent && <span className="soap-scribe-tag">this chart</span>}
-              {applied ? (
-                <span className="soap-scribe-tag">
-                  <Check size={10} /> saved
-                </span>
-              ) : applying ? (
-                <span className="soap-scribe-tag">saving…</span>
-              ) : null}
-            </div>
-
-            {p.subjectiveHistory && (
-              <div className="soap-scribe-multi-block">
-                <span className="soap-scribe-multi-label">S</span> {p.subjectiveHistory}
-              </div>
-            )}
-            {(vitalsText || p.objectiveNotes) && (
-              <div className="soap-scribe-multi-block">
-                <span className="soap-scribe-multi-label">O</span>
-                {vitalsText && <div>{vitalsText}</div>}
-                {p.objectiveNotes && (
-                  <pre className="soap-scribe-multi-pre">{p.objectiveNotes}</pre>
-                )}
-              </div>
-            )}
-            {p.assessmentReasoning && (
-              <div className="soap-scribe-multi-block">
-                <span className="soap-scribe-multi-label">A</span> {p.assessmentReasoning}
-              </div>
-            )}
-            {p.planNotes && (
-              <div className="soap-scribe-multi-block">
-                <span className="soap-scribe-multi-label">P</span>
-                <pre className="soap-scribe-multi-pre">{p.planNotes}</pre>
-              </div>
-            )}
-            {p.problems.length > 0 && (
-              <div className="soap-scribe-multi-block">
-                <span className="soap-scribe-multi-label">Problems</span>{' '}
-                {p.problems.map((pr) => pr.label).join(', ')}
-              </div>
-            )}
-            {!p.subjectiveHistory &&
-              !vitalsText &&
-              !p.objectiveNotes &&
-              !p.assessmentReasoning &&
-              !p.planNotes &&
-              p.problems.length === 0 &&
-              p.planItems.length === 0 && (
-                <p className="soap-scribe-multi-empty">
-                  Nothing confidently attributed to {entry.patientName} in this transcript.
-                </p>
-              )}
-
-            {!entry.isCurrent && (
-              <div className="soap-scribe-multi-actions">
-                <a
-                  className="soap-scribe-multi-link"
-                  href={`/schedule/soap/${entry.appointmentId}/${entry.patientId}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  <ExternalLink size={12} /> View {entry.patientName}&apos;s chart
-                </a>
-              </div>
-            )}
-          </div>
-        );
-      })}
-
-      {(suggestion.clientEmailSubject || suggestion.clientEmailBody) && (
-        <div className="soap-scribe-multi-card">
-          <div className="soap-scribe-multi-card-head">
-            <strong>Client email</strong>
-            <span className="soap-scribe-tag">shared · saved to this chart</span>
-          </div>
-          {suggestion.clientEmailSubject && (
-            <div className="soap-scribe-multi-block">Subject: {suggestion.clientEmailSubject}</div>
-          )}
-          {suggestion.clientEmailBody && (
-            <pre className="soap-scribe-multi-pre">{suggestion.clientEmailBody}</pre>
-          )}
-        </div>
       )}
     </div>
   );
