@@ -3,6 +3,7 @@ import type { JSX } from 'react';
 import CreateUser from './pages/CreateUser';
 import CreateEmployee from './pages/CreateEmployee';
 import MembershipPromotionsPage from './pages/MembershipPromotions';
+import MembershipManagementPage from './pages/MembershipManagement';
 import AppointmentRequestPromotionsPage from './pages/AppointmentRequestPromotions';
 import OpenPhoneCoaching from './pages/OpenPhoneCoaching';
 import SurveyResults from './pages/SurveyResults';
@@ -34,6 +35,12 @@ export const ADMIN_TAB_PAGES: AdminTabPage[] = [
     label: 'Create Employee',
     element: <CreateEmployee />,
     role: 'superadmin',
+  },
+  {
+    path: 'memberships',
+    label: 'Memberships',
+    element: <MembershipManagementPage />,
+    role: ['admin', 'superadmin'],
   },
   {
     path: 'membership-promotions',
