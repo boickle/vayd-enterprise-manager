@@ -8,7 +8,7 @@ export type PaymentPoint = {
   revenue: number; // daily total (typically practice + online pharmacy)
   count: number; // number of payments
   subscriptionRevenue?: number; // daily Square subscription revenue
-  stripeRevenue?: number; // daily Stripe membership revenue (not part of `revenue`)
+  stripeRevenue?: number; // metadata-verified Stripe membership revenue (not part of `revenue`)
   onlinePharmacyRevenue?: number;
   practiceRevenue?: number;
 };
