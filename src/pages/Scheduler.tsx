@@ -87,6 +87,7 @@ import {
   type RoomLoaderPreApptUiStatus,
 } from '../utils/roomLoaderPreApptDisplay';
 import { summarizeReconciledDayWindowWarnings } from '../utils/routingCardWindowWarning';
+import { computeDepotReturnOverrunSeconds } from '../utils/depotReturnOverrun';
 import {
   driveSlotForAppointmentId,
   findFormerFirstAppointmentForPreFirstBook,
@@ -4803,6 +4804,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               r.date === routingPreviewColumnKey
             ) {
               const etaWindowSummary = summarizeReconciledDayWindowWarnings(r.dayData);
+              const reconciledOverrunSeconds = computeDepotReturnOverrunSeconds(r.dayData);
               notifyRoutingPreviewEtaWindowWarnings({
                 optionKey:
                   routingPreview.listOptionKey?.trim() ||
@@ -4810,6 +4812,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                 hasWindowWarning: etaWindowSummary.hasAnyWarning,
                 warningStopCount: etaWindowSummary.warningStopCount,
                 candidateHasWarning: etaWindowSummary.candidateHasWarning,
+                reconciledOverrunSeconds,
               });
             }
           } catch {

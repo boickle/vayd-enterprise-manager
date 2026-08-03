@@ -96,6 +96,7 @@ import {
   type RoutingCalendarPreviewPayloadV1,
 } from '../utils/routingCalendarPreviewStorage';
 import { hasActiveRoutingCalendarPreview } from '../utils/routingCalendarPreviewGuard';
+import { coerceOverrunSeconds } from '../utils/depotReturnOverrun';
 import {
   buildRoutingRescheduleContextForSlotSearch,
   clearRoutingRescheduleIntent,
@@ -6296,8 +6297,27 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                   })();
 
                 const emptyBadge = isEmptyDay(opt);
-                const shiftOverrunSec =
-                  typeof opt.overrunSeconds === 'number' ? opt.overrunSeconds : 0;
+                const apiOverrunSec = coerceOverrunSeconds(opt.overrunSeconds) ?? 0;
+                const budgetOverrunSec =
+                  endOfDayOverrunSeconds(
+                    {
+                      workStartLocal: opt.workStartLocal,
+                      effectiveEndLocal: opt.effectiveEndLocal,
+                      bookedServiceSeconds: opt.bookedServiceSeconds,
+                      projectedDriveSeconds: opt.projectedDriveSeconds,
+                      currentDriveSeconds: opt.currentDriveSeconds,
+                      addedDriveSeconds: opt.addedDriveSeconds,
+                    },
+                    form.newAppt.serviceMinutes
+                  ) ?? 0;
+                const reconciledOverrunSec = coerceOverrunSeconds(
+                  etaWindowWarningsByOptionKey[optionKey]?.reconciledOverrunSeconds
+                ) ?? 0;
+                const shiftOverrunSec = Math.max(
+                  apiOverrunSec,
+                  budgetOverrunSec,
+                  reconciledOverrunSec
+                );
                 const overtimeBadge = finite(shiftOverrunSec) && shiftOverrunSec >= 60;
                 const isEarlierFeasibleEmptyDay = opt.emptyDayStartVariant === 'earlier_feasible';
 

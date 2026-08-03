@@ -795,9 +795,6 @@ export default function DoctorDay({
                 lat: virtualAppt.lat,
                 lon: virtualAppt.lon,
                 serviceMinutes: virtualAppt.serviceMinutes,
-                overrunSeconds: virtualAppt.overrunSeconds,
-                validationLastEtdSec: virtualAppt.validationLastEtdSec,
-                validationReturnSec: virtualAppt.validationReturnSec,
                 arrivalWindow: virtualAppt.arrivalWindow,
               },
               { householdCount: households.length }
