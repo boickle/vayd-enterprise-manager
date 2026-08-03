@@ -1078,9 +1078,6 @@ export default function DoctorDayVisual({
                 lat: virtualAppt.lat,
                 lon: virtualAppt.lon,
                 serviceMinutes: virtualAppt.serviceMinutes,
-                overrunSeconds: (virtualAppt as { overrunSeconds?: number }).overrunSeconds,
-                validationLastEtdSec: (virtualAppt as { validationLastEtdSec?: number }).validationLastEtdSec,
-                validationReturnSec: virtualAppt.validationReturnSec,
                 arrivalWindow: virtualAppt.arrivalWindow,
               },
               { householdCount: households.length }
@@ -2352,8 +2349,8 @@ export default function DoctorDayVisual({
 
       const backToDepotIsoFinal =
         backToDepotArrivalDisplayIso ??
-        (previewReturnIso && DateTime.fromISO(previewReturnIso).isValid ? previewReturnIso : null) ??
         backToDepotIso ??
+        (previewReturnIso && DateTime.fromISO(previewReturnIso).isValid ? previewReturnIso : null) ??
         null;
 
       return {
@@ -2458,8 +2455,8 @@ export default function DoctorDayVisual({
 
     const backToDepotIsoFinal =
       backToDepotArrivalDisplayIso ??
-      (previewReturnIso && DateTime.fromISO(previewReturnIso).isValid ? previewReturnIso : null) ??
       backToDepotIso ??
+      (previewReturnIso && DateTime.fromISO(previewReturnIso).isValid ? previewReturnIso : null) ??
       (shiftEndMs > 0 ? DateTime.fromMillis(shiftEndMs).toISO() : null);
 
     const scheduleSec =
