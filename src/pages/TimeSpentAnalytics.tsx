@@ -35,6 +35,7 @@ import {
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import { fetchDoctorMonth, type DoctorMonthDay } from '../api/appointments';
 import { fetchDriveTime } from '../api/driveTime';
+import { fetchOpsStatsAnalytics, type OpsStatPoint } from '../api/opsStats';
 import {
   normalizeAppointmentType,
   processMultiPet,
@@ -251,8 +252,11 @@ function orderChartRowsByValuePerPeriod(rows: ChartRow[]): { data: ChartRowOrder
   return { data, maxSlots };
 }
 
-/** Linear regression trend for a series (index vs value). */
-function addLinearTrend<T extends { driveMinutes: number }>(data: T[]): (T & { trend: number })[] {
+/** Linear regression trend for a numeric series key (index vs value). */
+function addLinearTrend<T extends Record<string, unknown>>(
+  data: T[],
+  valueKey: keyof T & string
+): (T & { trend: number })[] {
   if (!data.length) return [];
   const n = data.length;
   let sumX = 0;
@@ -261,7 +265,7 @@ function addLinearTrend<T extends { driveMinutes: number }>(data: T[]): (T & { t
   let sumXX = 0;
   for (let i = 0; i < n; i++) {
     const x = i;
-    const y = Number(data[i]?.driveMinutes ?? 0);
+    const y = Number(data[i]?.[valueKey] ?? 0);
     sumX += x;
     sumY += y;
     sumXY += x * y;
@@ -272,6 +276,20 @@ function addLinearTrend<T extends { driveMinutes: number }>(data: T[]): (T & { t
   const intercept = sumY / n - slope * (sumX / n);
   return data.map((row, i) => ({ ...row, trend: intercept + slope * i }));
 }
+
+/** Points ÷ drive hours. Returns null when there is no drive time. */
+function pointsPerDriveHour(points: number, driveMin: number): number | null {
+  if (!(driveMin > 0)) return null;
+  return points / (driveMin / 60);
+}
+
+type DoctorPpdhRow = {
+  doctorId: string;
+  doctorName: string;
+  points: number;
+  driveMin: number;
+  pointsPerDriveHour: number | null;
+};
 
 const ALL_DVMS = '';
 const DEFAULT_PRACTICE_ID = 1;
@@ -296,6 +314,12 @@ export default function TimeSpentAnalyticsPage() {
   const [driveTimeLoading, setDriveTimeLoading] = useState(false);
   /** Chart shows either regular (single) appointment types only or multi-pet types only. */
   const [timeSpentViewMode, setTimeSpentViewMode] = useState<'regular' | 'multipet'>('regular');
+  const [ppdhDoctorId, setPpdhDoctorId] = useState<string>(ALL_DVMS);
+  const [ppdhGroupBy, setPpdhGroupBy] = useState<GroupByOption>('day');
+  const [ppdhLoading, setPpdhLoading] = useState(false);
+  const [ppdhSeries, setPpdhSeries] = useState<OpsStatPoint[]>([]);
+  const [ppdhByDoctor, setPpdhByDoctor] = useState<DoctorPpdhRow[]>([]);
+  const [ppdhError, setPpdhError] = useState<string | null>(null);
 
   const { role, assignedDoctorIds } = useAuth() as {
     role?: string[];
@@ -584,6 +608,137 @@ export default function TimeSpentAnalyticsPage() {
     if (!allowed.has(driveTimeDoctorId)) setDriveTimeDoctorId(ALL_DVMS);
   }, [restrictEmployeeAnalytics, doctorOptions, driveTimeDoctorId]);
 
+  useEffect(() => {
+    if (!restrictEmployeeAnalytics) return;
+    const allowed = new Set(doctorOptions.map((o) => o.id));
+    if (!allowed.has(ppdhDoctorId)) setPpdhDoctorId(ALL_DVMS);
+  }, [restrictEmployeeAnalytics, doctorOptions, ppdhDoctorId]);
+
+  useEffect(() => {
+    setPpdhLoading(true);
+    setPpdhError(null);
+    setPpdhSeries([]);
+    setPpdhByDoctor([]);
+    let alive = true;
+
+    (async () => {
+      try {
+        // Wait for providers so All DVMs has someone to fetch.
+        if (providers.length === 0) {
+          if (!alive) return;
+          setPpdhSeries([]);
+          setPpdhByDoctor([]);
+          setPpdhLoading(false);
+          return;
+        }
+
+        const doctorsForList =
+          ppdhDoctorId === ALL_DVMS
+            ? restrictEmployeeAnalytics
+              ? providersForApi
+              : providers
+            : providers.filter((p) => {
+                const id = String(p.id ?? '');
+                const pims = p.pimsId != null ? String(p.pimsId) : '';
+                return id === ppdhDoctorId || pims === ppdhDoctorId;
+              });
+
+        if (doctorsForList.length === 0) {
+          if (!alive) return;
+          setPpdhSeries([]);
+          setPpdhByDoctor([]);
+          return;
+        }
+
+        // Always fetch per doctor (same path that works for single-doctor view),
+        // then sum by date for the practice-wide chart. Avoids a separate "all"
+        // ops call that can return empty / unusable aggregates.
+        const doctorResults = await Promise.all(
+          doctorsForList.map(async (p) => {
+            const id = String(p.id ?? p.pimsId ?? '');
+            const rows = await fetchOpsStatsAnalytics({
+              start: startStr,
+              end: endStr,
+              providerIds: [id],
+            });
+            const points = rows.reduce((s, r) => s + (Number(r.points) || 0), 0);
+            const driveMin = rows.reduce((s, r) => s + (Number(r.driveMin) || 0), 0);
+            return {
+              summary: {
+                doctorId: id,
+                doctorName: p.name,
+                points,
+                driveMin,
+                pointsPerDriveHour: pointsPerDriveHour(points, driveMin),
+              } satisfies DoctorPpdhRow,
+              rows,
+            };
+          })
+        );
+        if (!alive) return;
+
+        const byDate = new Map<string, { points: number; driveMin: number }>();
+        for (const { rows } of doctorResults) {
+          for (const row of rows) {
+            const date = String(row.date ?? '').slice(0, 10);
+            if (!date) continue;
+            const cur = byDate.get(date) ?? { points: 0, driveMin: 0 };
+            cur.points += Number(row.points) || 0;
+            cur.driveMin += Number(row.driveMin) || 0;
+            byDate.set(date, cur);
+          }
+        }
+
+        const series: OpsStatPoint[] = Array.from(byDate.entries())
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([date, agg]) => ({
+            date,
+            driveMin: agg.driveMin,
+            householdMin: 0,
+            shiftMin: 0,
+            whiteMin: 0,
+            whitePct: 0,
+            hdRatio: 0,
+            points: agg.points,
+          }));
+
+        setPpdhSeries(series);
+        setPpdhByDoctor(
+          doctorResults
+            .map((r) => r.summary)
+            .filter((d) => d.points > 0 || d.driveMin > 0)
+            .sort((a, b) => {
+              const av = a.pointsPerDriveHour;
+              const bv = b.pointsPerDriveHour;
+              if (av == null && bv == null) return a.doctorName.localeCompare(b.doctorName);
+              if (av == null) return 1;
+              if (bv == null) return -1;
+              return bv - av;
+            })
+        );
+      } catch (e) {
+        if (!alive) return;
+        console.error('Points per drive hour fetch failed:', e);
+        setPpdhError('Failed to load points per drive hour');
+        setPpdhSeries([]);
+        setPpdhByDoctor([]);
+      } finally {
+        if (alive) setPpdhLoading(false);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [
+    startStr,
+    endStr,
+    ppdhDoctorId,
+    providers,
+    providersForApi,
+    restrictEmployeeAnalytics,
+  ]);
+
   const driveTimeData = useMemo(() => {
     const daily = driveTimeRawData
       .filter((row) => row.totalDriveMinutes > 0)
@@ -635,9 +790,82 @@ export default function TimeSpentAnalyticsPage() {
   }, [driveTimeRawData, driveTimeMetric, driveTimeGroupBy]);
 
   const driveTimeDataWithTrend = useMemo(
-    () => addLinearTrend(driveTimeData),
+    () => addLinearTrend(driveTimeData, 'driveMinutes'),
     [driveTimeData]
   );
+
+  const ppdhChartData = useMemo(() => {
+    const daily = ppdhSeries
+      .map((row) => {
+        const date = String(row.date ?? '').slice(0, 10);
+        const points = Number(row.points) || 0;
+        const driveMin = Number(row.driveMin) || 0;
+        const ratio = pointsPerDriveHour(points, driveMin);
+        return { date, points, driveMin, pointsPerDriveHour: ratio };
+      })
+      .filter((row) => row.date && row.pointsPerDriveHour != null);
+
+    if (ppdhGroupBy === 'day') {
+      return daily.map((d) => ({
+        date: d.date,
+        pointsPerDriveHour: d.pointsPerDriveHour as number,
+        points: d.points,
+        driveMin: d.driveMin,
+      }));
+    }
+
+    const periodKey = (dateStr: string) => {
+      const d = dayjs(dateStr);
+      if (ppdhGroupBy === 'week') return d.startOf('isoWeek').format('YYYY-MM-DD');
+      return d.format('YYYY-MM');
+    };
+    const periodLabel = (key: string) => {
+      if (ppdhGroupBy === 'month') {
+        const [y, m] = key.split('-').map(Number);
+        return dayjs().year(y).month((m ?? 1) - 1).format('MMM YYYY');
+      }
+      const startOfWeek = dayjs(key);
+      const endOfWeek = startOfWeek.add(6, 'day');
+      return `${startOfWeek.format('MMM D')} – ${endOfWeek.format('MMM D')}`;
+    };
+
+    const byPeriod = new Map<string, { points: number; driveMin: number }>();
+    for (const d of daily) {
+      const key = periodKey(d.date);
+      const cur = byPeriod.get(key) ?? { points: 0, driveMin: 0 };
+      cur.points += d.points;
+      cur.driveMin += d.driveMin;
+      byPeriod.set(key, cur);
+    }
+
+    return Array.from(byPeriod.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, agg]) => {
+        const ratio = pointsPerDriveHour(agg.points, agg.driveMin);
+        return {
+          date: periodLabel(key),
+          pointsPerDriveHour: ratio ?? 0,
+          points: agg.points,
+          driveMin: agg.driveMin,
+        };
+      })
+      .filter((row) => row.driveMin > 0);
+  }, [ppdhSeries, ppdhGroupBy]);
+
+  const ppdhChartDataWithTrend = useMemo(
+    () => addLinearTrend(ppdhChartData, 'pointsPerDriveHour'),
+    [ppdhChartData]
+  );
+
+  const ppdhPeriodTotals = useMemo(() => {
+    const points = ppdhByDoctor.reduce((s, d) => s + d.points, 0);
+    const driveMin = ppdhByDoctor.reduce((s, d) => s + d.driveMin, 0);
+    return {
+      points,
+      driveMin,
+      pointsPerDriveHour: pointsPerDriveHour(points, driveMin),
+    };
+  }, [ppdhByDoctor]);
 
   // When loading, render only the spinner so first paint is immediate (no heavy tree).
   if (loading) {
@@ -1013,6 +1241,210 @@ export default function TimeSpentAnalyticsPage() {
                   </LineChart>
                 </ResponsiveContainer>
               </Box>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card sx={{ mt: 3 }}>
+          <CardHeader
+            title="Points per drive hour"
+            subheader={
+              ppdhDoctorId === ALL_DVMS
+                ? `Points earned per hour of drive time ${ppdhGroupBy === 'day' ? 'per day' : ppdhGroupBy === 'week' ? 'per week' : 'per month'} for the entire practice. Periods with no drive time are excluded.`
+                : `Points earned per hour of drive time ${ppdhGroupBy === 'day' ? 'per day' : ppdhGroupBy === 'week' ? 'per week' : 'per month'} for the selected doctor. Periods with no drive time are excluded.`
+            }
+          />
+          <CardContent>
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 2, mb: 2 }}>
+              <FormControl size="small" sx={{ minWidth: 200 }}>
+                <InputLabel id="ppdh-doctor-label">Doctor</InputLabel>
+                <Select
+                  labelId="ppdh-doctor-label"
+                  value={ppdhDoctorId}
+                  label="Doctor"
+                  onChange={(e) => setPpdhDoctorId(e.target.value)}
+                >
+                  {doctorOptions.map((opt) => (
+                    <MenuItem key={opt.id} value={opt.id}>
+                      {opt.label}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+              <FormControl size="small" sx={{ minWidth: 180 }}>
+                <InputLabel id="ppdh-group-label">Group by</InputLabel>
+                <Select
+                  labelId="ppdh-group-label"
+                  value={ppdhGroupBy}
+                  label="Group by"
+                  onChange={(e) => setPpdhGroupBy(e.target.value as GroupByOption)}
+                >
+                  <MenuItem value="day">By day</MenuItem>
+                  <MenuItem value="week">By week</MenuItem>
+                  <MenuItem value="month">By month</MenuItem>
+                </Select>
+              </FormControl>
+            </Box>
+
+            {ppdhError && (
+              <Alert severity="error" sx={{ mb: 2 }}>
+                {ppdhError}
+              </Alert>
+            )}
+
+            {ppdhLoading ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+                <CircularProgress />
+              </Box>
+            ) : (
+              <Box sx={{ width: '100%', height: 320 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart
+                    data={ppdhChartDataWithTrend}
+                    margin={{ top: 8, right: 24, left: 8, bottom: 8 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+                    <YAxis
+                      label={{ value: 'Points / drive hr', angle: -90, position: 'insideLeft' }}
+                      tick={{ fontSize: 11 }}
+                    />
+                    <Tooltip
+                      content={({ active, payload, label }) => {
+                        if (!active || !payload?.length || !label) return null;
+                        const row = payload[0]?.payload as {
+                          pointsPerDriveHour?: number;
+                          points?: number;
+                          driveMin?: number;
+                          trend?: number;
+                        };
+                        const driveHrs =
+                          row.driveMin != null && row.driveMin > 0
+                            ? row.driveMin / 60
+                            : null;
+                        return (
+                          <Box
+                            sx={{
+                              bgcolor: 'background.paper',
+                              border: '1px solid',
+                              borderColor: 'divider',
+                              borderRadius: 1,
+                              p: 1.5,
+                              boxShadow: 1,
+                            }}
+                          >
+                            <Typography variant="body2" fontWeight={600} sx={{ mb: 0.5 }}>
+                              {String(label)}
+                            </Typography>
+                            <Typography variant="body2">
+                              Points / drive hr:{' '}
+                              {row.pointsPerDriveHour != null
+                                ? Number(row.pointsPerDriveHour).toFixed(2)
+                                : '—'}
+                            </Typography>
+                            {row.points != null && (
+                              <Typography variant="body2" color="text.secondary">
+                                Points: {Number(row.points).toFixed(1)}
+                              </Typography>
+                            )}
+                            {driveHrs != null && (
+                              <Typography variant="body2" color="text.secondary">
+                                Drive hours: {driveHrs.toFixed(2)}
+                              </Typography>
+                            )}
+                            {row.trend != null && (
+                              <Typography variant="body2" color="text.secondary">
+                                Trend: {Number(row.trend).toFixed(2)}
+                              </Typography>
+                            )}
+                          </Box>
+                        );
+                      }}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="pointsPerDriveHour"
+                      stroke="#1976d2"
+                      strokeWidth={2}
+                      dot={{ r: 3 }}
+                      name="Points / drive hr"
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="trend"
+                      stroke="#1976d2"
+                      strokeWidth={1.5}
+                      strokeDasharray="5 5"
+                      dot={false}
+                      name="Trend line (smoothed)"
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </Box>
+            )}
+
+            {!ppdhLoading && ppdhByDoctor.length > 0 && (
+              <Box sx={{ mt: 3, pt: 2, borderTop: '1px solid', borderColor: 'divider' }}>
+                <Typography variant="subtitle2" sx={{ mb: 1.5, fontWeight: 600, color: 'text.secondary' }}>
+                  Points per drive hour by doctor (selected period)
+                </Typography>
+                <Box
+                  component="ul"
+                  sx={{
+                    m: 0,
+                    p: 0,
+                    listStyle: 'none',
+                    '& li': {
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      py: 0.75,
+                      px: 0,
+                      borderBottom: '1px solid',
+                      borderColor: 'divider',
+                      '&:last-of-type': { borderBottom: 'none' },
+                    },
+                  }}
+                >
+                  {ppdhByDoctor.map((row) => (
+                    <li key={row.doctorId}>
+                      <Typography variant="body2">
+                        {row.doctorName}
+                        <Typography component="span" variant="caption" sx={{ ml: 0.5, color: 'text.secondary' }}>
+                          ({row.points.toFixed(1)} pts · {(row.driveMin / 60).toFixed(2)} hr drive)
+                        </Typography>
+                      </Typography>
+                      <Typography variant="body2" fontWeight={500}>
+                        {row.pointsPerDriveHour != null
+                          ? `${row.pointsPerDriveHour.toFixed(2)} / hr`
+                          : '—'}
+                      </Typography>
+                    </li>
+                  ))}
+                  {ppdhDoctorId === ALL_DVMS && ppdhByDoctor.length > 1 && (
+                    <li>
+                      <Typography variant="body2" fontWeight={700}>
+                        Practice total
+                        <Typography component="span" variant="caption" sx={{ ml: 0.5, color: 'text.secondary' }}>
+                          ({ppdhPeriodTotals.points.toFixed(1)} pts ·{' '}
+                          {(ppdhPeriodTotals.driveMin / 60).toFixed(2)} hr drive)
+                        </Typography>
+                      </Typography>
+                      <Typography variant="body2" fontWeight={700}>
+                        {ppdhPeriodTotals.pointsPerDriveHour != null
+                          ? `${ppdhPeriodTotals.pointsPerDriveHour.toFixed(2)} / hr`
+                          : '—'}
+                      </Typography>
+                    </li>
+                  )}
+                </Box>
+              </Box>
+            )}
+
+            {!ppdhLoading && !ppdhError && ppdhByDoctor.length === 0 && (
+              <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
+                No points or drive time in this date range for the selected doctor(s).
+              </Typography>
             )}
           </CardContent>
         </Card>
