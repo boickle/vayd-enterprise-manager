@@ -150,7 +150,10 @@ import {
   defaultRoutingAppointmentTypeSelection,
   resolveRoutingChosenAppointmentTypeId,
 } from '../utils/routingCalculateTimeType';
-import { applyRoutingServiceMinuteBuffers } from '../utils/routingServiceMinutes';
+import {
+  applyRoutingServiceMinuteBuffers,
+  shouldPassiveAutofillRoutingMinutes,
+} from '../utils/routingServiceMinutes';
 import {
   appointmentRequestUsesPerPetRouting,
   appointmentRequestRoutingPatientChips,
@@ -4091,7 +4094,8 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
 
   const applyRoutingServiceMinutes = useCallback(
     (typeKey: string, pets: number, opts?: { pulse?: boolean }) => {
-      if (hasActiveRescheduleIntent) return;
+      // Allow during reschedule when the user changes type/pets (or chips). Passive
+      // hydrate still skips via shouldPassiveAutofillRoutingMinutes / skipMinutes.
       const baseMins = estimateRoutingServiceMinutesForSelection(
         typeKey,
         pets,
@@ -4124,7 +4128,6 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       }
     },
     [
-      hasActiveRescheduleIntent,
       apptLengthsRows,
       routingAppointmentTypes,
       triggerRoutingMinutesPulse,
@@ -4133,14 +4136,14 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
   );
 
   const applyRoutingPatientChipSelection = useCallback(
-    (nextIds: readonly string[], opts?: { pulse?: boolean }) => {
+    (nextIds: readonly string[], opts?: { pulse?: boolean; skipMinutes?: boolean }) => {
       const count = nextIds.length;
       if (count > 0) {
         setRoutingPetCount(count);
         if (opts?.pulse !== false) {
           triggerRoutingPrefillFlash(['pets']);
         }
-        if (routingApptStatsTypeKey.trim()) {
+        if (!opts?.skipMinutes && routingApptStatsTypeKey.trim()) {
           applyRoutingServiceMinutes(routingApptStatsTypeKey, count, {
             pulse: opts?.pulse !== false,
           });
@@ -4189,7 +4192,8 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
         );
         if (defaults.length > 0) {
           setSelectedRoutingPatientIds(defaults);
-          applyRoutingPatientChipSelection(defaults, { pulse: true });
+          // Keep original visit duration on hydrate; user pet/type edits still autofill.
+          applyRoutingPatientChipSelection(defaults, { pulse: true, skipMinutes: true });
           return;
         }
       }
@@ -4348,7 +4352,14 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
   }
 
   useEffect(() => {
-    if (hasActiveRescheduleIntent) return;
+    if (
+      !shouldPassiveAutofillRoutingMinutes({
+        hasActiveRescheduleIntent,
+        currentServiceMinutes: form.newAppt.serviceMinutes,
+      })
+    ) {
+      return;
+    }
     if (appointmentRequestPerPetRouting) return;
     if (!routingApptStatsTypeKey.trim()) {
       routingCalcComboKeyRef.current = null;
@@ -4357,6 +4368,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     applyRoutingServiceMinutes(routingApptStatsTypeKey, routingPetCount, { pulse: false });
   }, [
     hasActiveRescheduleIntent,
+    form.newAppt.serviceMinutes,
     appointmentRequestPerPetRouting,
     routingApptStatsTypeKey,
     routingPetCount,

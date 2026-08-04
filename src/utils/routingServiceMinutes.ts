@@ -11,6 +11,21 @@ import { normalizeAppointmentType } from '../analytics/appointmentTypeTimeStats'
 export const ROUTING_FALLBACK_SERVICE_MINUTES = 45;
 const ROUTING_MIN_APPT_TYPE_INSTANCES_FOR_STATS = 5;
 
+/**
+ * Passive Calculate Time sync (stats load / type+pets effect) should not overwrite a
+ * reschedule visit's original duration. User-driven type/pet changes still apply minutes
+ * from the Routing form handlers. When minutes are missing/invalid during reschedule,
+ * allow passive fill so the field is not left at 0.
+ */
+export function shouldPassiveAutofillRoutingMinutes(opts: {
+  hasActiveRescheduleIntent: boolean;
+  currentServiceMinutes: number;
+}): boolean {
+  if (!opts.hasActiveRescheduleIntent) return true;
+  const mins = Number(opts.currentServiceMinutes);
+  return !(Number.isFinite(mins) && mins > 0);
+}
+
 function parseEnvNonNegativeInt(raw: unknown, fallback: number): number {
   const parsed = Number(raw);
   return Number.isFinite(parsed) && parsed >= 0 ? Math.round(parsed) : fallback;
