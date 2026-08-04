@@ -18,6 +18,7 @@ import {
 import { etaHouseholdArrivalWindowPayload, fetchEtas } from '../api/routing';
 import type { DayData } from '../pages/MyWeek';
 import { makeMyDayVisualPatientBadge, type MyDayVisualPatientBadge } from './myDayVisualPatientDetails';
+import { formatDoctorDayApptAddress } from './doctorDayAddress';
 import { mergeEtaFetchIntoDayData, type DayBundleIn } from './schedulerEtaMerge';
 import type { AppointmentType } from '../api/appointmentSettings';
 import {
@@ -302,21 +303,7 @@ function makePatientBadge(a: DoctorDayAppt): PatientBadge {
 }
 
 function formatAddress(a: DoctorDayAppt) {
-  const address1 = str(a, 'address1');
-  const city = str(a, 'city');
-  const state = str(a, 'state');
-  const zip = str(a, 'zip');
-  const line = [address1, [city, state].filter(Boolean).join(', '), zip]
-    .filter(Boolean)
-    .join(', ')
-    .replace(/\s+,/g, ',');
-  return (
-    line ||
-    str(a as any, 'address') ||
-    str(a as any, 'addressStr') ||
-    str(a as any, 'fullAddress') ||
-    'Address not available'
-  );
+  return formatDoctorDayApptAddress(a);
 }
 
 function serviceMinutesFromIsoPair(
