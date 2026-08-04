@@ -26,6 +26,7 @@ import {
 import { useAuth } from '../auth/useAuth';
 import { buildGoogleMapsLinksForDay, type Stop } from '../utils/maps';
 import { householdGroupKey } from '../utils/doctorDayHouseholdGroup';
+import { formatDoctorDayApptAddress } from '../utils/doctorDayAddress';
 import {
   appointmentNotesFromDoctorDayRow,
   petAlertsFromDoctorDayRow,
@@ -129,21 +130,7 @@ function keyVariantsForKeyString(s: string): string[] {
 }
 
 function formatAddress(a: DoctorDayAppt) {
-  const address1 = str(a, 'address1');
-  const city = str(a, 'city');
-  const state = str(a, 'state');
-  const zip = str(a, 'zip');
-  const line = [address1, [city, state].filter(Boolean).join(', '), zip]
-    .filter(Boolean)
-    .join(', ')
-    .replace(/\s+,/g, ',');
-  return (
-    line ||
-    str(a as any, 'address') ||
-    str(a as any, 'addressStr') ||
-    str(a as any, 'fullAddress') ||
-    'Address not available'
-  );
+  return formatDoctorDayApptAddress(a);
 }
 
 /** Hover: drop trailing US ZIP so street + city + state stay on one line with client. */
