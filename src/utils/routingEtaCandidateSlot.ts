@@ -49,10 +49,20 @@ export function resolveRoutingEtaInsertionIndex(
 /**
  * Build POST /routing/eta `candidateSlot` from a selected routing result card so
  * computeEtasForDay matches slot-search placement (not PIMS startIso times alone).
+ *
+ * By default we do **not** forward slot-search `overrunSeconds` /
+ * `validationReturnSec` / `validationLastEtdSec`. Pinning those made View Placement
+ * paint the optimistic search return-to-depot, while post-book `/routing/eta` (no
+ * pins) could show much larger overflow on the schedule.
  */
 export function buildEtaCandidateSlot(
   source: RoutingEtaCandidateSlotSource,
-  opts?: { householdCount?: number; defaultServiceMinutes?: number }
+  opts?: {
+    householdCount?: number;
+    defaultServiceMinutes?: number;
+    /** When true, forward search validation pins (legacy; prefer live ETA). */
+    pinSearchValidation?: boolean;
+  }
 ): EtaRequestCandidateSlot | undefined {
   const lat = finiteNumber(source.lat);
   const lon = finiteNumber(source.lon);
@@ -82,14 +92,16 @@ export function buildEtaCandidateSlot(
     ),
   };
 
-  const overrunSeconds = finiteNumber(source.overrunSeconds);
-  if (overrunSeconds !== undefined) slot.overrunSeconds = overrunSeconds;
+  if (opts?.pinSearchValidation) {
+    const overrunSeconds = finiteNumber(source.overrunSeconds);
+    if (overrunSeconds !== undefined) slot.overrunSeconds = overrunSeconds;
 
-  const validationLastEtdSec = finiteNumber(source.validationLastEtdSec);
-  if (validationLastEtdSec !== undefined) slot.validationLastEtdSec = validationLastEtdSec;
+    const validationLastEtdSec = finiteNumber(source.validationLastEtdSec);
+    if (validationLastEtdSec !== undefined) slot.validationLastEtdSec = validationLastEtdSec;
 
-  const validationReturnSec = finiteNumber(source.validationReturnSec);
-  if (validationReturnSec !== undefined) slot.validationReturnSec = validationReturnSec;
+    const validationReturnSec = finiteNumber(source.validationReturnSec);
+    if (validationReturnSec !== undefined) slot.validationReturnSec = validationReturnSec;
+  }
 
   const aw = source.arrivalWindow;
   if (aw?.windowStartIso && aw?.windowEndIso) {

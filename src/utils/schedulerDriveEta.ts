@@ -726,9 +726,6 @@ async function fetchEtaForOneDay(
         lat: candidateLat,
         lon: candidateLon,
         serviceMinutes: rp.serviceMinutes,
-        overrunSeconds: opt.overrunSeconds as RoutingEtaCandidateSlotSource['overrunSeconds'],
-        validationLastEtdSec: opt.validationLastEtdSec as RoutingEtaCandidateSlotSource['validationLastEtdSec'],
-        validationReturnSec: opt.validationReturnSec as RoutingEtaCandidateSlotSource['validationReturnSec'],
         arrivalWindow: fallbackArrivalWindow,
       },
       { householdCount: day.households.length, defaultServiceMinutes: rp.serviceMinutes }
