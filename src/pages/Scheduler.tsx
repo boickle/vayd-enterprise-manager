@@ -3504,11 +3504,20 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     }
   }, []);
 
-  const { token: authToken, doctorId: authDoctorId, userEmail: authUserEmail, role } = useAuth() as {
+  const {
+    token: authToken,
+    doctorId: authDoctorId,
+    employeeId: authEmployeeId,
+    userEmail: authUserEmail,
+    role,
+    assignedDoctorIds: authAssignedDoctorIds,
+  } = useAuth() as {
     token: string | null;
     doctorId: string | null;
+    employeeId?: string | null;
     userEmail?: string | null;
     role?: string | string[];
+    assignedDoctorIds?: string[];
   };
 
   const appointmentChangeActor = useMemo(
@@ -3809,6 +3818,37 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     () => providers.find((p) => String(p.id) === resolvedPrimaryProviderId.trim()) ?? null,
     [providers, resolvedPrimaryProviderId]
   );
+
+  /**
+   * Variable VSD/pt: admins always; otherwise when viewing a calendar for a doctor
+   * linked on the user row (users.doctorId / assignedDoctorIds) or the user's own
+   * employee record (users.employeeId — the doctor themselves).
+   */
+  const canViewVariableVsd = useMemo(() => {
+    if (isAdminOrSuper) return true;
+    const authIds = new Set<string>();
+    const push = (v: string | null | undefined) => {
+      const t = v?.trim();
+      if (t) authIds.add(t);
+    };
+    push(authDoctorId);
+    push(authEmployeeId ?? null);
+    for (const id of authAssignedDoctorIds ?? []) {
+      push(String(id ?? ''));
+    }
+    if (authIds.size === 0) return false;
+    const p = selectedPrimaryProvider;
+    if (!p) return false;
+    const id = String(p.id ?? '').trim();
+    const pims = p.pimsId != null ? String(p.pimsId).trim() : '';
+    return (id !== '' && authIds.has(id)) || (pims !== '' && authIds.has(pims));
+  }, [
+    isAdminOrSuper,
+    authDoctorId,
+    authEmployeeId,
+    authAssignedDoctorIds,
+    selectedPrimaryProvider,
+  ]);
 
   /** Provider shown on the embedded routing calendar bar (preview or reschedule source). */
   const embeddedCalendarProviderLabel = useMemo(() => {
@@ -10095,11 +10135,14 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                     scheduleOverride
                   );
                   const pointGoalDisplay = countsForPointGoal ? pointGoal : null;
-                  /** Revenue goal ÷ scheduled points — rises as the day has fewer points. */
-                  const variableVsdPerPoint =
-                    countsForPointGoal && revenueGoal > 0 && pts > 0
-                      ? revenueGoal / pts
-                      : null;
+                  /** Revenue goal ÷ scheduled points — rises as the day has fewer points; optional per-doctor cap. */
+                  const variableVsdPerPoint = (() => {
+                    if (!countsForPointGoal || revenueGoal <= 0 || pts <= 0) return null;
+                    const raw = revenueGoal / pts;
+                    const cap = Number(providerGoals?.maxVariableVsdPerPoint);
+                    if (Number.isFinite(cap) && cap > 0) return Math.min(raw, cap);
+                    return raw;
+                  })();
                   const driveSec = dayData ? dayTotalDriveSeconds(dayData) : 0;
                   const driveMin = Math.round(driveSec / 60);
                   const driveColor = colorForDrive(driveMin);
@@ -10217,6 +10260,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                             </div>
                             {showByDriveTime &&
                             resolvedPrimaryProviderId.trim() &&
+                            canViewVariableVsd &&
                             variableVsdPerPoint != null ? (
                               <div
                                 className="scheduler-day-header-vsd-per-point"
@@ -10224,6 +10268,12 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                                   revenueGoal
                                 )}) ÷ ${pts} scheduled point${
                                   pts === 1 ? '' : 's'
+                                }${
+                                  Number(providerGoals?.maxVariableVsdPerPoint) > 0
+                                    ? ` (capped at ${formatUsdWholeDollars(
+                                        Number(providerGoals?.maxVariableVsdPerPoint)
+                                      )})`
+                                    : ''
                                 }. Fewer points means a higher target per appointment to hit the goal.`}
                               >
                                 <strong>VSD/pt:</strong>{' '}
