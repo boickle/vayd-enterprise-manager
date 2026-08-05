@@ -26,6 +26,7 @@ import {
 import { useAuth } from '../auth/useAuth';
 import { buildGoogleMapsLinksForDay, type Stop } from '../utils/maps';
 import { householdGroupKey } from '../utils/doctorDayHouseholdGroup';
+import { formatDoctorDayApptAddress } from '../utils/doctorDayAddress';
 import {
   appointmentNotesFromDoctorDayRow,
   petAlertsFromDoctorDayRow,
@@ -129,21 +130,7 @@ function keyVariantsForKeyString(s: string): string[] {
 }
 
 function formatAddress(a: DoctorDayAppt) {
-  const address1 = str(a, 'address1');
-  const city = str(a, 'city');
-  const state = str(a, 'state');
-  const zip = str(a, 'zip');
-  const line = [address1, [city, state].filter(Boolean).join(', '), zip]
-    .filter(Boolean)
-    .join(', ')
-    .replace(/\s+,/g, ',');
-  return (
-    line ||
-    str(a as any, 'address') ||
-    str(a as any, 'addressStr') ||
-    str(a as any, 'fullAddress') ||
-    'Address not available'
-  );
+  return formatDoctorDayApptAddress(a);
 }
 
 /** Hover: drop trailing US ZIP so street + city + state stay on one line with client. */
@@ -1884,9 +1871,6 @@ export default function MyWeek(props: MyWeekProps = {}) {
                       lat: virtualAppt.lat,
                       lon: virtualAppt.lon,
                       serviceMinutes: virtualAppt.serviceMinutes,
-                      overrunSeconds: virtualAppt.overrunSeconds,
-                      validationLastEtdSec: virtualAppt.validationLastEtdSec,
-                      validationReturnSec: virtualAppt.validationReturnSec,
                       arrivalWindow: virtualAppt.arrivalWindow,
                     },
                     { householdCount: day.households.length }
@@ -2911,14 +2895,10 @@ export default function MyWeek(props: MyWeekProps = {}) {
                       bufferMin
                     );
                     if (!layout) return null;
-                    const dayDataForDrive =
-                      virtualAppt?.date === dateIso &&
-                      typeof virtualAppt.validationReturnSec === 'number' &&
-                      Number.isFinite(virtualAppt.validationReturnSec)
-                        ? { ...dayData, validationReturnSec: virtualAppt.validationReturnSec }
-                        : dayData;
+                    // Use live ETA return (backToDepot*), not slot-search validationReturnSec —
+                    // pinning search return hid post-book depot overflow during View Placement.
                     const driveSegs = showByDriveTime
-                      ? buildMyWeekDriveSegmentsFromLayout(layout, dayDataForDrive, weekGrid, dateIso)
+                      ? buildMyWeekDriveSegmentsFromLayout(layout, dayData, weekGrid, dateIso)
                       : [];
                     const driveBlockOverlapOverlays =
                       showByDriveTime && driveSegs.length > 0
@@ -2931,7 +2911,7 @@ export default function MyWeek(props: MyWeekProps = {}) {
                       showByDriveTime
                         ? computeDepotReturnTrailingBlockOverrunLayers(
                             layout,
-                            dayDataForDrive,
+                            dayData,
                             weekGrid,
                             dateIso,
                             PPM

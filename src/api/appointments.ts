@@ -639,6 +639,11 @@ export function mergeRangeClientContactOntoDoctorDayAppts(
     );
     const altText = appointmentAlternateAddressText(full);
     const hasAlt = appointmentHasAlternateLocation(full);
+    const clientRec = mergedClient ?? (appt.client as Record<string, unknown> | undefined);
+    const pickClientStr = (key: string): string | undefined => {
+      const v = clientRec?.[key];
+      return typeof v === 'string' && v.trim() ? v.trim() : undefined;
+    };
     const next: DoctorDayAppt = {
       ...appt,
       confirmStatusName: appt.confirmStatusName ?? full.confirmStatusName ?? undefined,
@@ -649,6 +654,15 @@ export function mergeRangeClientContactOntoDoctorDayAppts(
         full.patient?.alerts?.trim() ||
         appt.alerts ||
         undefined,
+      address1: appt.address1?.trim() || pickClientStr('address1') || appt.address1,
+      address2: appt.address2?.trim() || pickClientStr('address2') || appt.address2,
+      city: appt.city?.trim() || pickClientStr('city') || appt.city,
+      state: appt.state?.trim() || pickClientStr('state') || appt.state,
+      zip:
+        appt.zip?.trim() ||
+        pickClientStr('zip') ||
+        pickClientStr('zipcode') ||
+        appt.zip,
       ...(mergedClient ? { client: mergedClient } : {}),
       ...(mergedPatient ? { patient: mergedPatient } : {}),
       ...(altText
@@ -722,6 +736,8 @@ export type DoctorDayAppt = {
   appointmentType?: string;
 
   address1?: string;
+  /** Apartment / unit / suite (address line 2). */
+  address2?: string;
   city?: string;
   state?: string;
   zip?: string;
@@ -986,10 +1002,11 @@ export async function fetchDoctorDay(
       startIso: a?.startIso ?? a?.appointmentStart ?? a?.scheduledStartIso,
       endIso: a?.endIso ?? a?.appointmentEnd ?? a?.scheduledEndIso,
 
-      address1: a?.address1 ?? undefined,
-      city: a?.city ?? undefined,
-      state: a?.state ?? undefined,
-      zip: a?.zip ?? undefined,
+      address1: a?.address1 ?? a?.client?.address1 ?? undefined,
+      address2: a?.address2 ?? a?.client?.address2 ?? undefined,
+      city: a?.city ?? a?.client?.city ?? undefined,
+      state: a?.state ?? a?.client?.state ?? undefined,
+      zip: a?.zip ?? a?.client?.zip ?? a?.client?.zipcode ?? undefined,
 
       description: a?.description,
       visitReason: a?.visitReason,
