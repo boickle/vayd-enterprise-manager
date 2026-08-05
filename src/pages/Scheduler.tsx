@@ -10135,13 +10135,15 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                     scheduleOverride
                   );
                   const pointGoalDisplay = countsForPointGoal ? pointGoal : null;
-                  /** Revenue goal ÷ scheduled points — rises as the day has fewer points; optional per-doctor cap. */
+                  /** Revenue goal ÷ scheduled points; optional per-doctor baseline floor and cap. */
                   const variableVsdPerPoint = (() => {
                     if (!countsForPointGoal || revenueGoal <= 0 || pts <= 0) return null;
-                    const raw = revenueGoal / pts;
+                    let v = revenueGoal / pts;
                     const cap = Number(providerGoals?.maxVariableVsdPerPoint);
-                    if (Number.isFinite(cap) && cap > 0) return Math.min(raw, cap);
-                    return raw;
+                    const baseline = Number(providerGoals?.minVariableVsdPerPoint);
+                    if (Number.isFinite(cap) && cap > 0) v = Math.min(v, cap);
+                    if (Number.isFinite(baseline) && baseline > 0) v = Math.max(v, baseline);
+                    return v;
                   })();
                   const driveSec = dayData ? dayTotalDriveSeconds(dayData) : 0;
                   const driveMin = Math.round(driveSec / 60);
@@ -10269,12 +10271,18 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                                 )}) ÷ ${pts} scheduled point${
                                   pts === 1 ? '' : 's'
                                 }${
+                                  Number(providerGoals?.minVariableVsdPerPoint) > 0
+                                    ? ` (baseline ${formatUsdWholeDollars(
+                                        Number(providerGoals?.minVariableVsdPerPoint)
+                                      )})`
+                                    : ''
+                                }${
                                   Number(providerGoals?.maxVariableVsdPerPoint) > 0
                                     ? ` (capped at ${formatUsdWholeDollars(
                                         Number(providerGoals?.maxVariableVsdPerPoint)
                                       )})`
                                     : ''
-                                }. Fewer points means a higher target per appointment to hit the goal.`}
+                                }. Fewer points raises the target; a busy day will not go below the baseline.`}
                               >
                                 <strong>VSD/pt:</strong>{' '}
                                 {formatUsdWholeDollars(variableVsdPerPoint)}

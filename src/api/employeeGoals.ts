@@ -30,6 +30,8 @@ export type EmployeeGoalsResponseDto = {
   weeklyPointGoal?: number;
   /** Cap on calendar variable VSD/pt (revenue goal ÷ points). Null/omit = no cap. */
   maxVariableVsdPerPoint?: number | null;
+  /** Floor on calendar variable VSD/pt for busy days. Null/omit = no baseline. */
+  minVariableVsdPerPoint?: number | null;
   dailyGoals?: DailyGoalOverride[];
   goalPeriodStart?: string;
   goalPeriodEnd?: string;
@@ -51,6 +53,8 @@ export type UpdateEmployeeGoalsDto = {
   weeklyPointGoal?: number;
   /** Cap on calendar variable VSD/pt. Pass null to clear. */
   maxVariableVsdPerPoint?: number | null;
+  /** Baseline floor on calendar variable VSD/pt. Pass null to clear. */
+  minVariableVsdPerPoint?: number | null;
   dailyGoals?: { dayOfWeek: number; dailyPointGoal?: number; dailyRevenueGoal?: number }[];
 };
 
