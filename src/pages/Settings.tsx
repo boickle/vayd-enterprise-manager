@@ -437,6 +437,9 @@ export default function Settings() {
       if (goalsForm.maxVariableVsdPerPoint !== undefined) {
         payload.maxVariableVsdPerPoint = goalsForm.maxVariableVsdPerPoint;
       }
+      if (goalsForm.minVariableVsdPerPoint !== undefined) {
+        payload.minVariableVsdPerPoint = goalsForm.minVariableVsdPerPoint;
+      }
       if (goalsForm.dailyGoals !== undefined) {
         payload.dailyGoals = goalsForm.dailyGoals.map((d) => ({
           dayOfWeek: d.dayOfWeek,
@@ -1789,6 +1792,27 @@ export default function Settings() {
                           value={goalsForm.weeklyPointGoal ?? ''}
                           onChange={(e) => setGoalsForm((f) => ({ ...f, weeklyPointGoal: e.target.value === '' ? undefined : Number(e.target.value) }))}
                         />
+                      </div>
+                      <div>
+                        <label className="settings-label">Min variable VSD / pt (baseline)</label>
+                        <input
+                          type="number"
+                          min={0}
+                          step={1}
+                          className="settings-input"
+                          value={goalsForm.minVariableVsdPerPoint ?? ''}
+                          onChange={(e) =>
+                            setGoalsForm((f) => ({
+                              ...f,
+                              minVariableVsdPerPoint:
+                                e.target.value === '' ? null : Number(e.target.value),
+                            }))
+                          }
+                          title="Floor for calendar VSD/pt on busy days (revenue goal ÷ scheduled points). Leave blank for no baseline."
+                        />
+                        <p className="settings-muted" style={{ marginTop: 4, fontSize: 12 }}>
+                          Floor on busy days. Blank = no baseline.
+                        </p>
                       </div>
                       <div>
                         <label className="settings-label">Max variable VSD / pt</label>
