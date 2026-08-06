@@ -6,6 +6,7 @@ import MembershipPromotionsPage from './pages/MembershipPromotions';
 import AppointmentRequestPromotionsPage from './pages/AppointmentRequestPromotions';
 import OpenPhoneCoaching from './pages/OpenPhoneCoaching';
 import SurveyResults from './pages/SurveyResults';
+import AdminUsers from './pages/AdminUsers';
 import { getFrontendPaymentProvider } from './config/paymentProvider';
 
 export type AdminTabPage = {
@@ -26,6 +27,12 @@ export const ADMIN_TAB_PAGES: AdminTabPage[] = [
     path: 'open-phone-coaching',
     label: 'Open Phone Coaching',
     element: <OpenPhoneCoaching />,
+    role: ['admin', 'superadmin'],
+  },
+  {
+    path: 'users/manage',
+    label: 'Users',
+    element: <AdminUsers />,
     role: ['admin', 'superadmin'],
   },
   { path: 'users/create', label: 'Create User', element: <CreateUser />, role: 'superadmin' },
