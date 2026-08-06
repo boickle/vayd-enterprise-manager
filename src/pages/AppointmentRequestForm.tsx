@@ -34,6 +34,12 @@ import { resolveClientArrivalWindowForScheduledStart } from '../utils/appointmen
 import { DEFAULT_PRACTICE_TIMEZONE } from '../utils/practiceTimezone';
 import { formatAutobookDateTimePreferenceDisplay } from '../utils/appointmentRequestDisplay';
 import { appointmentTypeForRoutingStatsKey } from '../utils/routingCalculateTimeType';
+import { fetchPublicRoutingOfferableScoreThresholds } from '../api/routingOfferableScoreThresholds';
+import {
+  daysFromTodayForSlot,
+  defaultRoutingOfferableScoreConfig,
+  isRoutingScoreOfferableForConfig,
+} from '../utils/routingOfferableScoreConfig';
 import {
   buildRoutingVisitPetsFromFormData,
   estimateRoutingServiceMinutesForVisit,
@@ -1868,6 +1874,23 @@ export default function AppointmentRequestForm() {
 
       // Use public availability API for new clients, routing v2 for logged-in clients
       let data: any;
+
+      let scoreThresholdConfig = defaultRoutingOfferableScoreConfig();
+      try {
+        scoreThresholdConfig = await fetchPublicRoutingOfferableScoreThresholds(practiceId);
+      } catch (err) {
+        console.warn(
+          '[AppointmentForm] Failed to load routing score thresholds; using defaults',
+          err,
+        );
+      }
+
+      const selectedIds = formData.selectedPetIds.map(String);
+      const isMemberTier = selectedIds.some(
+        (id) =>
+          petIdsWithActiveWellnessPlan?.has(id) ||
+          petIdsWithActiveOrPendingMembership?.has(id),
+      );
       
       if (isLoggedIn) {
         // Build routing v2 request payload for logged-in clients
@@ -1929,6 +1952,25 @@ export default function AppointmentRequestForm() {
         return dt.set({ minute: roundedMinutes, second: 0, millisecond: 0 });
       };
 
+      const slotPassesOfferableScore = (opt: {
+        score?: unknown;
+        suggestedStartIso?: string;
+        iso?: string;
+        date?: string;
+      }): boolean => {
+        const slotIso =
+          opt?.suggestedStartIso || opt?.iso || opt?.date || null;
+        return isRoutingScoreOfferableForConfig(opt?.score, {
+          config: scoreThresholdConfig,
+          appointmentTypeId: primaryAppointmentTypeId,
+          daysFromToday: daysFromTodayForSlot(
+            slotIso,
+            DEFAULT_PRACTICE_TIMEZONE,
+          ),
+          isMember: isMemberTier,
+        });
+      };
+
       // Extract slots from response
       const slots: Array<{ date: string; time: string; display: string; iso: string }> = [];
       
@@ -1939,7 +1981,7 @@ export default function AppointmentRequestForm() {
       
       // If we have a slots array (from public API), use that
       if (Array.isArray(slotsArray) && slotsArray.length > 0) {
-        for (const slot of slotsArray.slice(0, 3)) {
+        for (const slot of slotsArray.filter(slotPassesOfferableScore).slice(0, 3)) {
           if (slot.iso || slot.date) {
             const slotDt = slot.iso 
               ? roundToNearest5Minutes(DateTime.fromISO(slot.iso))
@@ -1954,7 +1996,7 @@ export default function AppointmentRequestForm() {
         }
       } else {
         // Handle routing v2 format (winner + alternates)
-        // Combine winner and alternates, filter by score, then take top 3
+        // Combine winner and alternates, filter by configurable score thresholds, then take top 3
         const allOptions: any[] = [];
         
         // Add winner if available
@@ -1967,13 +2009,8 @@ export default function AppointmentRequestForm() {
           allOptions.push(...alternates);
         }
         
-        // Filter out items with score > 160, then take top 3
         const filteredOptions = allOptions
-          .filter(opt => {
-            const score = opt?.score;
-            // Include if score is undefined, null, or <= 160
-            return score == null || score <= 160;
-          })
+          .filter(slotPassesOfferableScore)
           .slice(0, 3);
         
         // Process filtered options into slots

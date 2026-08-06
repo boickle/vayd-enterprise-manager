@@ -5,6 +5,7 @@ import AppointmentRequestPromotionsPage from './pages/AppointmentRequestPromotio
 import OpenPhoneCoaching from './pages/OpenPhoneCoaching';
 import SurveyResults from './pages/SurveyResults';
 import AdminUsers from './pages/AdminUsers';
+import RoutingScoreThresholdsPage from './pages/RoutingScoreThresholds';
 import { getFrontendPaymentProvider } from './config/paymentProvider';
 
 export type AdminTabPage = {
@@ -43,6 +44,12 @@ export const ADMIN_TAB_PAGES: AdminTabPage[] = [
     path: 'appointment-request-promotions',
     label: 'Appt Request Promotions',
     element: <AppointmentRequestPromotionsPage />,
+    role: ['admin', 'superadmin'],
+  },
+  {
+    path: 'routing-score-thresholds',
+    label: 'Routing Score Thresholds',
+    element: <RoutingScoreThresholdsPage />,
     role: ['admin', 'superadmin'],
   },
 ];
