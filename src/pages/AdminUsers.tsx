@@ -3,6 +3,8 @@ import { Field } from '../components/Field';
 import { useAuth } from '../auth/useAuth';
 import {
   adminSendPasswordReset,
+  createEmployeeUser,
+  createUser,
   fetchAdminUsers,
   updateAdminUser,
   type AdminManagedUser,
@@ -84,6 +86,13 @@ export default function AdminUsers() {
   const [editIsActive, setEditIsActive] = useState(true);
   const [saving, setSaving] = useState(false);
   const [resettingId, setResettingId] = useState<number | null>(null);
+
+  const [creating, setCreating] = useState(false);
+  const [createEmail, setCreateEmail] = useState('');
+  const [createAsEmployee, setCreateAsEmployee] = useState(false);
+  const [createDoctorId, setCreateDoctorId] = useState('');
+  const [createPending, setCreatePending] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
 
   const loadUsers = useCallback(async () => {
     setLoading(true);
@@ -193,6 +202,57 @@ export default function AdminUsers() {
     setEditing(null);
   };
 
+  const openCreate = () => {
+    setCreating(true);
+    setCreateEmail('');
+    setCreateAsEmployee(false);
+    setCreateDoctorId('');
+    setCreateError(null);
+    setMessage(null);
+  };
+
+  const closeCreate = () => {
+    if (createPending) return;
+    setCreating(false);
+    setCreateError(null);
+  };
+
+  const onCreate = async (e: FormEvent) => {
+    e.preventDefault();
+    const email = createEmail.trim().toLowerCase();
+    if (!email) return;
+    setCreatePending(true);
+    setCreateError(null);
+    setMessage(null);
+    try {
+      if (createAsEmployee) {
+        await createEmployeeUser(
+          email,
+          createDoctorId ? Number(createDoctorId) : undefined,
+        );
+        setMessage({
+          text: `Employee user created for ${email}. A temporary password was emailed.`,
+          kind: 'success',
+        });
+      } else {
+        await createUser(email);
+        setMessage({
+          text: `User created for ${email}. A welcome/reset email was sent.`,
+          kind: 'success',
+        });
+      }
+      setCreating(false);
+      setCreateEmail('');
+      setCreateAsEmployee(false);
+      setCreateDoctorId('');
+      await loadUsers();
+    } catch (err) {
+      setCreateError(extractErr(err));
+    } finally {
+      setCreatePending(false);
+    }
+  };
+
   const onSave = async (e: FormEvent) => {
     e.preventDefault();
     if (!editing) return;
@@ -273,7 +333,17 @@ export default function AdminUsers() {
 
   return (
     <div className="settings-section">
-      <div className="settings-section-header" style={{ marginBottom: 16 }}>
+      <div
+        className="settings-section-header"
+        style={{
+          marginBottom: 16,
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: 12,
+          alignItems: 'flex-start',
+          justifyContent: 'space-between',
+        }}
+      >
         <div>
           <h2 className="settings-section-title" style={{ marginTop: 0 }}>
             Users
@@ -284,11 +354,17 @@ export default function AdminUsers() {
             {!isSuperadmin && (
               <>
                 {' '}
-                Only a superadmin can edit superadmins or assign the admin role.
+                Only a superadmin can create users, edit superadmins, or assign the admin
+                role.
               </>
             )}
           </p>
         </div>
+        {isSuperadmin && (
+          <button type="button" className="btn" onClick={openCreate}>
+            Create user
+          </button>
+        )}
       </div>
 
       {message && (
@@ -557,6 +633,104 @@ export default function AdminUsers() {
                 </button>
                 <button type="submit" className="btn" disabled={saving || lookupsLoading}>
                   {saving ? 'Saving…' : 'Save changes'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {creating && (
+        <div className="settings-modal-overlay" onClick={closeCreate}>
+          <div
+            className="settings-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="admin-user-create-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="settings-modal-header">
+              <h3 id="admin-user-create-title">Create user</h3>
+              <button
+                type="button"
+                className="settings-modal-close"
+                onClick={closeCreate}
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </div>
+            <form onSubmit={onCreate}>
+              <div className="settings-modal-body" style={{ display: 'grid', gap: 12 }}>
+                <Field label="Email">
+                  <input
+                    className="input"
+                    type="email"
+                    value={createEmail}
+                    onChange={(e) => setCreateEmail(e.target.value)}
+                    required
+                    autoFocus
+                  />
+                </Field>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <input
+                    type="checkbox"
+                    checked={createAsEmployee}
+                    onChange={(e) => {
+                      setCreateAsEmployee(e.target.checked);
+                      if (!e.target.checked) setCreateDoctorId('');
+                    }}
+                  />
+                  This user is an employee
+                </label>
+                {createAsEmployee && (
+                  <>
+                    <p className="settings-muted" style={{ margin: 0, fontSize: 13 }}>
+                      Email must match an active employee record. Optionally attach them to a
+                      doctor.
+                    </p>
+                    <Field label="Attach to doctor (optional)">
+                      <select
+                        className="input"
+                        value={createDoctorId}
+                        onChange={(e) => setCreateDoctorId(e.target.value)}
+                        disabled={lookupsLoading}
+                      >
+                        <option value="">
+                          {lookupsLoading ? 'Loading doctors…' : 'No doctor selected'}
+                        </option>
+                        {doctors.map((doc) => (
+                          <option key={String(doc.id)} value={String(doc.id)}>
+                            {doc.name}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                  </>
+                )}
+                {!createAsEmployee && (
+                  <p className="settings-muted" style={{ margin: 0, fontSize: 13 }}>
+                    Creates a login and sends a welcome email with a password setup link. If the
+                    email matches an employee, they are linked automatically when possible.
+                  </p>
+                )}
+                {createError && <div className="danger">{createError}</div>}
+              </div>
+              <div className="settings-modal-actions">
+                <button
+                  type="button"
+                  className="btn secondary"
+                  onClick={closeCreate}
+                  disabled={createPending}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn"
+                  disabled={createPending || (createAsEmployee && lookupsLoading)}
+                >
+                  {createPending ? 'Creating…' : 'Create'}
                 </button>
               </div>
             </form>
