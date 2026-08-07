@@ -1,20 +1,26 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
-import type { ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useLocation } from 'react-router';
 import {
-  ChevronDown,
-  ChevronRight,
-  KeyRound,
-  FileText,
-  Wallet,
+  ArrowLeft,
+  ExternalLink,
   Mail,
-  Printer,
-  UserPlus,
+  MapPin,
   PawPrint,
-  Pencil,
+  Phone,
+  Receipt,
+  User,
+  UserCheck,
+  UserX,
+  Wallet,
+  AlertTriangle,
 } from 'lucide-react';
 import { fetchClientByIdStaff } from '../../api/clientsStaff';
-import { patchClientStaff, saveClients, type ClientDto } from '../../api/clientsMutations';
+import {
+  deactivateClient,
+  patchClientStaff,
+  reactivateClient,
+  type ScoutClientWrite,
+} from '../../api/clientsMutations';
 import { apiBaseUrl } from '../../api/http';
 import PimsAppointmentsSection from './PimsAppointmentsSection';
 import ClientInvoiceDetailModal from './ClientInvoiceDetailModal';
@@ -23,14 +29,23 @@ import {
   normalizeInvoicesFromClient,
   type NormalizedInvoice,
 } from '../../utils/pimsInvoices';
-import { PIMS_ENTITY_EDIT_ENABLED } from '../../utils/pimsEntityEditing';
+import { scoutManagedState } from '../../utils/pimsScoutManaged';
 import { evetClientLink } from '../../utils/evet';
+import {
+  AlertBanner,
+  Card,
+  CollapsibleCard,
+  DetailHeader,
+  EditableCard,
+  PimsBadge,
+  TechnicalDetails,
+  type CardValues,
+  type FieldSpec,
+} from './detail/PimsDetailKit';
+import './detail/PimsDetailKit.css';
 import './PimsClientDetailView.css';
 
 const PIMS_CLIENT_DETAIL_PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
-
-/** Hide until in-app payment/deposit flows ship; buttons stay in DOM for later wiring. */
-const HIDE_ACCOUNT_BALANCE_SECONDARY_ACTIONS = true;
 
 function pickStr(v: unknown): string | null {
   if (v == null) return null;
@@ -71,27 +86,27 @@ function toNum(v: unknown): number | null {
   if (typeof v === 'number' && Number.isFinite(v)) return v;
   if (typeof v === 'string') {
     const t = v.trim().replace(/[$,]/g, '');
+    if (!t) return null;
     const n = Number(t);
     return Number.isFinite(n) ? n : null;
   }
   return null;
 }
 
-function primaryPhone(c: Record<string, unknown>): string | null {
-  const p1 = pickStr(c.phone1);
-  const p2 = pickStr(c.phone2);
-  if (p1 && p2) return `${p1} · ${p2}`;
-  if (p1) return p1;
-  if (p2) return p2;
-  const list = readList(c.phones ?? c.phoneNumbers ?? c.phone ?? c.mobilePhone ?? c.homePhone);
-  if (list.length) return list[0];
-  return pickStr(c.phone) ?? pickStr(c.mobilePhone) ?? pickStr(c.homePhone);
+function formatTs(iso: unknown): string {
+  const s = pickStr(iso);
+  if (!s) return '—';
+  const d = new Date(s);
+  return Number.isNaN(d.getTime())
+    ? s
+    : d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 }
 
-function formatTs(iso: unknown): string {
-  if (typeof iso !== 'string' || !iso.trim()) return '—';
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+function formatDateOnly(iso: unknown): string {
+  const s = pickStr(iso);
+  if (!s) return '—';
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? s : d.toLocaleDateString(undefined, { dateStyle: 'medium' });
 }
 
 function yn(v: unknown): string {
@@ -108,221 +123,128 @@ function mediaUrl(path: unknown): string | null {
   return `${base}/${p.replace(/^\//, '')}`;
 }
 
-function providerLabel(p: Record<string, unknown>): string {
-  const pp = p.primaryProvider;
-  if (!pp || typeof pp !== 'object') return '—';
-  const o = pp as Record<string, unknown>;
-  const parts = [
-    pickStr(o.title),
-    pickStr(o.firstName),
-    pickStr(o.middleName),
-    pickStr(o.lastName),
-    pickStr(o.designation),
-  ].filter(Boolean);
-  return parts.length ? parts.join(' ') : '—';
-}
-
-function providerDetailRows(p: Record<string, unknown>): { label: string; value: ReactNode }[] {
-  const pp = p.primaryProvider;
-  if (!pp || typeof pp !== 'object') return [];
-  const o = pp as Record<string, unknown>;
-  return [
-    { label: 'Provider PIMS ID', value: pickStr(o.pimsId) },
-    { label: 'Provider email', value: pickStr(o.email) },
-    { label: 'Provider license', value: pickStr(o.licenseNumber) },
-    { label: 'Provider phone', value: pickStr(o.phone1) ?? pickStr(o.phone2) },
-    { label: 'Provider city', value: pickStr(o.city) },
-    { label: 'Provider state', value: pickStr(o.state) },
-    { label: 'Provider timezone', value: pickStr(o.timezone) },
-  ];
-}
-
-function zoneDisplay(c: Record<string, unknown>): string {
-  const zn = pickStr(c.zoneName);
-  const topZid = c.zoneId != null && String(c.zoneId).trim() !== '' ? String(c.zoneId) : '';
-  const cz = c.clientZone;
-  let czName: string | null = null;
-  let czId = '';
-  if (cz && typeof cz === 'object') {
-    const co = cz as Record<string, unknown>;
-    czName = pickStr(co.name);
-    if (co.id != null && String(co.id).trim() !== '') czId = String(co.id);
-  }
-  const idBit = topZid || czId;
-  const bits: string[] = [];
-  if (zn) bits.push(zn);
-  if (czName) bits.push(czName);
-  if (idBit) bits.push(`Zone id ${idBit}`);
-  return bits.length ? bits.join(' · ') : '—';
-}
-
-function statusDiscountText(v: unknown): ReactNode {
-  if (v == null) return '—';
-  if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') return String(v);
-  try {
-    return (
-      <pre className="pims-client-detail__json-inline">{JSON.stringify(v, null, 2)}</pre>
-    );
-  } catch {
-    return '—';
-  }
-}
-
-function MetaDl({ rows, className }: { rows: { label: string; value: ReactNode }[]; className?: string }) {
-  return (
-    <dl className={['pims-client-detail__meta', className].filter(Boolean).join(' ')}>
-      {rows.map((r, i) => (
-        <div key={`${r.label}-${i}`}>
-          <dt>{r.label}</dt>
-          <dd>
-            {r.value == null ? (
-              '—'
-            ) : typeof r.value === 'string' ? (
-              r.value.trim() ? (
-                r.value
-              ) : (
-                '—'
-              )
-            ) : (
-              r.value
-            )}
-          </dd>
-        </div>
-      ))}
-    </dl>
-  );
-}
-
 function displayName(c: Record<string, unknown>): string {
-  const fn = pickStr(c.firstName) ?? '';
-  const ln = pickStr(c.lastName) ?? '';
-  const both = [fn, ln].filter(Boolean).join(' ');
+  const both = [pickStr(c.firstName), pickStr(c.lastName)].filter(Boolean).join(' ');
   return both || `Client #${pickStr(c.id) ?? ''}`;
 }
 
-type ClientEditDraft = {
-  firstName: string;
-  lastName: string;
-  secondFirstName: string;
-  secondLastName: string;
-  email: string;
-  secondEmail: string;
-  username: string;
-  portalEmail: string;
-  phone1: string;
-  phone2: string;
-  address1: string;
-  address2: string;
-  address3: string;
-  city: string;
-  state: string;
-  zipcode: string;
-  country: string;
-  county: string;
-  alerts: string;
-  discount: string;
-  statusDiscountStr: string;
-  lat: string;
-  lon: string;
-  latLonMatchLevel: string;
-  zoneId: string;
-  zoneName: string;
-};
-
-function payloadToEditDraft(p: Record<string, unknown>): ClientEditDraft {
-  const g = (key: string) => pickStr(p[key]) ?? '';
-  return {
-    firstName: g('firstName'),
-    lastName: g('lastName'),
-    secondFirstName: g('secondFirstName'),
-    secondLastName: g('secondLastName'),
-    email: g('email') || readList(p.emails).join(', '),
-    secondEmail: g('secondEmail'),
-    username: g('username'),
-    portalEmail: g('portalEmail'),
-    phone1: g('phone1'),
-    phone2: g('phone2'),
-    address1: g('address1'),
-    address2: g('address2'),
-    address3: g('address3'),
-    city: g('city'),
-    state: g('state'),
-    zipcode: g('zipcode'),
-    country: g('country'),
-    county: g('county'),
-    alerts: g('alerts'),
-    discount:
-      typeof p.discount === 'number' && Number.isFinite(p.discount) ? String(p.discount) : g('discount'),
-    statusDiscountStr: (() => {
-      const v = p.statusDiscount;
-      if (v == null) return '';
-      if (typeof v === 'object') return JSON.stringify(v, null, 2);
-      return String(v);
-    })(),
-    lat: typeof p.lat === 'number' ? String(p.lat) : g('lat'),
-    lon: typeof p.lon === 'number' ? String(p.lon) : g('lon'),
-    latLonMatchLevel: g('latLonMatchLevel'),
-    zoneId: p.zoneId != null ? String(p.zoneId) : '',
-    zoneName: g('zoneName'),
-  };
+function clientEmails(c: Record<string, unknown>): string | null {
+  return pickStr(c.email) ?? (readList(c.emails).join(', ') || null);
 }
 
-function extractClientSaveErr(err: unknown): string {
+/** Street address on one line, city/state/ZIP on the next — the way it goes on an envelope. */
+function addressLines(c: Record<string, unknown>): string[] {
+  const street = [pickStr(c.address1), pickStr(c.address2), pickStr(c.address3)].filter(Boolean);
+  const locality = [
+    [pickStr(c.city), pickStr(c.state)].filter(Boolean).join(', '),
+    pickStr(c.zipcode),
+  ]
+    .filter(Boolean)
+    .join(' ');
+  return [...street, locality].filter(Boolean) as string[];
+}
+
+function zoneLabel(c: Record<string, unknown>): string | null {
+  const cz = c.clientZone;
+  if (cz && typeof cz === 'object') {
+    const name = pickStr((cz as Record<string, unknown>).name);
+    if (name) return name;
+  }
+  return pickStr(c.zoneName);
+}
+
+/** How the coordinates were derived, in words rather than the raw match-level enum. */
+function geocodeSummary(c: Record<string, unknown>): { text: string; tone: 'ok' | 'warn' | 'muted' } {
+  const hasCoords = toNum(c.lat) != null && toNum(c.lon) != null;
+  if (!hasCoords) return { text: 'Not located yet', tone: 'warn' };
+  const level = (pickStr(c.latLonMatchLevel) ?? '').toLowerCase();
+  if (level === 'manual') return { text: 'Pinned manually', tone: 'ok' };
+  if (c.latLonValidated === true) return { text: 'Verified address', tone: 'ok' };
+  if (level.includes('street') || level.includes('rooftop') || level.includes('premise')) {
+    return { text: 'Matched to street address', tone: 'ok' };
+  }
+  if (level) return { text: `Approximate (${level})`, tone: 'warn' };
+  return { text: 'Located', tone: 'muted' };
+}
+
+/** Pet identity for the household list: "Spayed Female · 3y · Mini Goldendoodle". */
+function petSummary(p: Record<string, unknown>): string {
+  const sex = pickStr(p.sex);
+  const neuter = pickStr(p.neuterStatus);
+  const sexBit = [neuter, sex].filter(Boolean).join(' ') || null;
+  const dob = pickStr(p.dob) ?? pickStr(p.dateOfBirth);
+  const age = ageFromDob(dob);
+  const breed = pickStr(p.breed) ?? pickStr(p.species);
+  return [sexBit, age, breed].filter(Boolean).join(' · ') || 'No details recorded';
+}
+
+function ageFromDob(dob: string | null): string | null {
+  if (!dob) return null;
+  const d = new Date(dob);
+  if (Number.isNaN(d.getTime())) return null;
+  const now = new Date();
+  let years = now.getFullYear() - d.getFullYear();
+  const m = now.getMonth() - d.getMonth();
+  if (m < 0 || (m === 0 && now.getDate() < d.getDate())) years--;
+  if (years < 0) return null;
+  if (years === 0) {
+    const months = Math.max(
+      0,
+      (now.getFullYear() - d.getFullYear()) * 12 + (now.getMonth() - d.getMonth()),
+    );
+    return `${months}mo`;
+  }
+  return `${years}y`;
+}
+
+function extractErr(err: unknown): string {
   const e = err as { response?: { data?: { message?: string } }; message?: string };
   return e?.response?.data?.message ?? e?.message ?? 'Could not save client.';
 }
 
-function buildPatchBody(
-  d: ClientEditDraft,
-  isActive: boolean,
-  latLonValidated: boolean,
-): Record<string, unknown> {
-  const sdRaw = d.statusDiscountStr.trim();
-  let statusDiscount: unknown = null;
-  if (sdRaw) {
-    try {
-      statusDiscount = JSON.parse(sdRaw) as unknown;
-    } catch {
-      statusDiscount = sdRaw;
-    }
-  }
-  const zid = toNum(d.zoneId);
-  const body: Record<string, unknown> = {
-    firstName: d.firstName.trim() || null,
-    lastName: d.lastName.trim() || null,
-    secondFirstName: d.secondFirstName.trim() || null,
-    secondLastName: d.secondLastName.trim() || null,
-    email: d.email.trim() || null,
-    secondEmail: d.secondEmail.trim() || null,
-    username: d.username.trim() || null,
-    portalEmail: d.portalEmail.trim() || null,
-    phone1: d.phone1.trim() || null,
-    phone2: d.phone2.trim() || null,
-    address1: d.address1.trim() || null,
-    address2: d.address2.trim() || null,
-    address3: d.address3.trim() || null,
-    city: d.city.trim() || null,
-    state: d.state.trim() || null,
-    zipcode: d.zipcode.trim() || null,
-    country: d.country.trim() || null,
-    county: d.county.trim() || null,
-    alerts: d.alerts.trim() || null,
-    isActive,
-    latLonValidated,
-    statusDiscount,
-  };
-  const disc = toNum(d.discount);
-  body.discount = disc ?? 0;
-  const lat = toNum(d.lat);
-  const lon = toNum(d.lon);
-  if (lat != null) body.lat = lat;
-  if (lon != null) body.lon = lon;
-  body.latLonMatchLevel = d.latLonMatchLevel.trim() || null;
-  body.zoneName = d.zoneName.trim() || null;
-  if (d.zoneId.trim() !== '' && zid != null) body.zoneId = zid;
-  else body.zoneId = null;
-  return body;
-}
+const NAME_FIELDS: FieldSpec[] = [
+  { key: 'firstName', label: 'First name', required: true },
+  { key: 'lastName', label: 'Last name', required: true },
+  { key: 'secondFirstName', label: 'Second contact first name' },
+  { key: 'secondLastName', label: 'Second contact last name' },
+];
+
+const CONTACT_FIELDS: FieldSpec[] = [
+  { key: 'phone1', label: 'Primary phone', type: 'tel' },
+  { key: 'phone2', label: 'Alternate phone', type: 'tel' },
+  { key: 'email', label: 'Email', type: 'email' },
+  { key: 'secondEmail', label: 'Second contact email', type: 'email' },
+];
+
+const ADDRESS_FIELDS: FieldSpec[] = [
+  { key: 'address1', label: 'Street address', full: true },
+  { key: 'address2', label: 'Apartment, suite, unit', full: true },
+  { key: 'address3', label: 'Additional address line', full: true },
+  { key: 'city', label: 'City' },
+  { key: 'state', label: 'State' },
+  { key: 'zipcode', label: 'ZIP code' },
+  { key: 'county', label: 'County' },
+  { key: 'country', label: 'Country' },
+];
+
+const LOCATION_FIELDS: FieldSpec[] = [
+  {
+    key: 'lat',
+    label: 'Latitude',
+    type: 'number',
+    hint: 'Only set these to override an address that geocodes to the wrong spot.',
+  },
+  { key: 'lon', label: 'Longitude', type: 'number' },
+];
+
+const BILLING_FIELDS: FieldSpec[] = [
+  {
+    key: 'discount',
+    label: 'Standing discount (%)',
+    type: 'number',
+    display: (v) => `${v}%`,
+  },
+];
 
 type Props = {
   clientId: string;
@@ -334,16 +256,8 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
   const [payload, setPayload] = useState<Record<string, unknown> | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [openLogin, setOpenLogin] = useState(true);
-  const [openPatients, setOpenPatients] = useState(true);
-  const [openAccount, setOpenAccount] = useState(true);
-  const [confirmInfo, setConfirmInfo] = useState(false);
-  const [isEditing, setIsEditing] = useState(false);
-  const [editDraft, setEditDraft] = useState<ClientEditDraft | null>(null);
-  const [isActiveDraft, setIsActiveDraft] = useState(true);
-  const [latLonValidatedDraft, setLatLonValidatedDraft] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const [invoiceDetail, setInvoiceDetail] = useState<NormalizedInvoice | null>(null);
 
   const patientsBasePath = useMemo(
@@ -356,6 +270,8 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
     setLoading(true);
     setError(null);
     setPayload(null);
+    setInvoiceDetail(null);
+    setActionError(null);
     (async () => {
       try {
         const data = await fetchClientByIdStaff(clientId);
@@ -363,9 +279,7 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
         if (data && typeof data === 'object') setPayload(data as Record<string, unknown>);
         else setError('Client not found.');
       } catch (e: unknown) {
-        if (!cancelled) {
-          setError(e instanceof Error ? e.message : 'Could not load client.');
-        }
+        if (!cancelled) setError(e instanceof Error ? e.message : 'Could not load client.');
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -375,34 +289,32 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
     };
   }, [clientId]);
 
-  useEffect(() => {
-    setInvoiceDetail(null);
-  }, [clientId]);
+  /** Refreshes local state from a write response, falling back to a re-fetch. */
+  const applyWriteResult = useCallback(
+    async (updated: unknown) => {
+      let next: Record<string, unknown> | null = null;
+      if (updated && typeof updated === 'object' && !Array.isArray(updated)) {
+        next = updated as Record<string, unknown>;
+      } else {
+        const data = await fetchClientByIdStaff(clientId);
+        next = data && typeof data === 'object' ? (data as Record<string, unknown>) : null;
+      }
+      if (next) setPayload(next);
+    },
+    [clientId],
+  );
 
-  useEffect(() => {
-    setIsEditing(false);
-    setEditDraft(null);
-    setSaveError(null);
-    setSaving(false);
-  }, [clientId]);
+  const saveFields = useCallback(
+    async (body: ScoutClientWrite) => {
+      await applyWriteResult(await patchClientStaff(clientId, body));
+    },
+    [applyWriteResult, clientId],
+  );
 
-  useEffect(() => {
-    if (!PIMS_ENTITY_EDIT_ENABLED) {
-      setIsEditing(false);
-      setEditDraft(null);
-      setSaveError(null);
-      setSaving(false);
-    }
-  }, []);
-
-  const balance = payload ? accountBalanceFromClient(payload) : null;
-  const phone = payload ? primaryPhone(payload) : null;
-  const name = payload ? displayName(payload) : '';
-
-  const invoices = useMemo((): NormalizedInvoice[] => {
-    if (!payload) return [];
-    return normalizeInvoicesFromClient(payload);
-  }, [payload]);
+  const invoices = useMemo(
+    (): NormalizedInvoice[] => (payload ? normalizeInvoicesFromClient(payload) : []),
+    [payload],
+  );
 
   const patients = useMemo(() => {
     if (!payload) return [] as Record<string, unknown>[];
@@ -411,779 +323,268 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
     return raw.filter((p): p is Record<string, unknown> => p != null && typeof p === 'object');
   }, [payload]);
 
-  const collapseAll = useCallback(() => {
-    setOpenLogin(false);
-    setOpenPatients(false);
-    setOpenAccount(false);
-  }, []);
-
-  if (loading) {
-    return <div className="pims-client-detail__loading">Loading client…</div>;
-  }
+  if (loading) return <div className="pims-detail__loading">Loading client…</div>;
 
   if (error || !payload) {
     return (
-      <div className="pims-client-detail">
-        <div className="pims-client-detail__error">{error ?? 'Client not found.'}</div>
-        <button type="button" className="pims-client-detail__link" onClick={onBack}>
-          Back to List
+      <div className="pims-detail">
+        <div className="pims-detail__error">{error ?? 'Client not found.'}</div>
+        <button type="button" className="pims-detail__link" onClick={onBack}>
+          Back to list
         </button>
       </div>
     );
   }
 
-  const clientPimsId = pickStr(payload.pimsId) ?? String(payload.id ?? clientId);
-  const summaryTail = [
-    phone ? `C: ${phone}` : null,
-    balance != null ? formatUsd(balance) : null,
-  ].filter(Boolean);
+  const record = payload;
+  const name = displayName(record);
+  const balance = accountBalanceFromClient(record);
+  const scoutState = scoutManagedState(record, 'client');
+  const isActive = record.isActive === true;
+  const clientPimsId = pickStr(record.pimsId) ?? String(record.id ?? clientId);
+  const alerts = pickStr(record.alerts);
+  const emails = clientEmails(record);
+  const primaryEmail = pickStr(record.email);
+  const extraEmails = readList(record.emails).filter((e) => e !== primaryEmail);
+  const phone1 = pickStr(record.phone1);
+  const phone2 = pickStr(record.phone2);
+  const address = addressLines(record);
+  const geo = geocodeSummary(record);
+  const zone = zoneLabel(record);
+  const discount = toNum(record.discount);
 
-  const billing =
-    payload.billing && typeof payload.billing === 'object'
-      ? (payload.billing as Record<string, unknown>)
-      : null;
+  async function handleToggleActive() {
+    if (isActive) {
+      const ok = window.confirm(
+        `Deactivate ${name}? They stay in Scout with all history and appointments intact, but are hidden from active lists.`,
+      );
+      if (!ok) return;
+    }
+    setBusy(true);
+    setActionError(null);
+    try {
+      await applyWriteResult(
+        isActive ? await deactivateClient(clientId) : await reactivateClient(clientId),
+      );
+    } catch (err) {
+      setActionError(extractErr(err));
+    } finally {
+      setBusy(false);
+    }
+  }
 
-  const record = payload as Record<string, unknown>;
-
-  const fmtMoney = (v: unknown) => {
-    const n = toNum(v);
-    return n != null ? formatUsd(n) : '—';
+  const nameValues: CardValues = {
+    firstName: pickStr(record.firstName) ?? '',
+    lastName: pickStr(record.lastName) ?? '',
+    secondFirstName: pickStr(record.secondFirstName) ?? '',
+    secondLastName: pickStr(record.secondLastName) ?? '',
   };
 
-  function beginEdit() {
-    if (!PIMS_ENTITY_EDIT_ENABLED) return;
-    setSaveError(null);
-    setEditDraft(payloadToEditDraft(record));
-    setIsActiveDraft(record.isActive === true);
-    setLatLonValidatedDraft(record.latLonValidated === true);
-    setIsEditing(true);
-  }
+  // Only the stored `email` column is editable. `emails` can be a multi-address list from
+  // eVet, and round-tripping a comma-joined version of it would collapse them into one value.
+  const contactValues: CardValues = {
+    phone1: phone1 ?? '',
+    phone2: phone2 ?? '',
+    email: pickStr(record.email) ?? '',
+    secondEmail: pickStr(record.secondEmail) ?? '',
+  };
 
-  function cancelEdit() {
-    setIsEditing(false);
-    setEditDraft(null);
-    setSaveError(null);
-  }
+  const addressValues: CardValues = {
+    address1: pickStr(record.address1) ?? '',
+    address2: pickStr(record.address2) ?? '',
+    address3: pickStr(record.address3) ?? '',
+    city: pickStr(record.city) ?? '',
+    state: pickStr(record.state) ?? '',
+    zipcode: pickStr(record.zipcode) ?? '',
+    county: pickStr(record.county) ?? '',
+    country: pickStr(record.country) ?? '',
+  };
 
-  async function handleSave(e: FormEvent) {
-    e.preventDefault();
-    if (!PIMS_ENTITY_EDIT_ENABLED) return;
-    if (!editDraft) return;
-    if (!editDraft.firstName.trim() || !editDraft.lastName.trim()) {
-      setSaveError('First and last name are required.');
-      return;
-    }
-    setSaving(true);
-    setSaveError(null);
-    const body = buildPatchBody(editDraft, isActiveDraft, latLonValidatedDraft);
-    try {
-      let updated: unknown;
-      try {
-        updated = await patchClientStaff(clientId, body);
-      } catch (firstErr) {
-        const st = (firstErr as { response?: { status?: number } })?.response?.status;
-        if (st === 404 || st === 405) {
-          updated = await saveClients({ id: record.id, ...body } as ClientDto);
-        } else {
-          throw firstErr;
-        }
-      }
-      let next: Record<string, unknown> | null = null;
-      if (updated && typeof updated === 'object' && !Array.isArray(updated)) {
-        next = updated as Record<string, unknown>;
-      } else if (Array.isArray(updated) && updated[0] && typeof updated[0] === 'object') {
-        next = updated[0] as Record<string, unknown>;
-      } else {
-        const data = await fetchClientByIdStaff(clientId);
-        next = data && typeof data === 'object' ? (data as Record<string, unknown>) : null;
-      }
-      if (next) setPayload(next);
-      setIsEditing(false);
-      setEditDraft(null);
-    } catch (err) {
-      setSaveError(extractClientSaveErr(err));
-    } finally {
-      setSaving(false);
-    }
-  }
+  const locationValues: CardValues = {
+    lat: toNum(record.lat) != null ? String(toNum(record.lat)) : '',
+    lon: toNum(record.lon) != null ? String(toNum(record.lon)) : '',
+  };
+
+  const billingValues: CardValues = {
+    discount: discount != null ? String(discount) : '',
+  };
+
+  const balanceTone =
+    balance == null || Math.abs(balance) < 0.005
+      ? ''
+      : balance > 0
+        ? ' pims-detail__stat-value--owed'
+        : ' pims-detail__stat-value--credit';
 
   return (
-    <div className="pims-client-detail">
-      <div className="pims-client-detail__banner">
-        <div className="pims-client-detail__banner-actions" aria-hidden>
-          <button type="button" className="pims-client-detail__icon-btn" title="Email">
-            <Mail size={18} />
-          </button>
-          <button type="button" className="pims-client-detail__icon-btn" title="Print">
-            <Printer size={18} />
-          </button>
-          <button type="button" className="pims-client-detail__icon-btn" title="Add">
-            <UserPlus size={18} />
-          </button>
-        </div>
-        <div className="pims-client-detail__summary">
-          <a
-            href={evetClientLink(clientPimsId)}
-            target="_blank"
-            rel="noreferrer"
-            className="pims-client-detail__evet-name-link"
-            title="Open client in eVet"
-          >
-            {name}
-          </a>
-          {summaryTail.length > 0 ? <span> - {summaryTail.join(' - ')}</span> : null}
-        </div>
-        <div className="pims-client-detail__banner-links">
-          <button type="button" className="pims-client-detail__link" onClick={onBack}>
-            Back to List
-          </button>
-          <button type="button" className="pims-client-detail__link" onClick={collapseAll}>
-            Collapse All
-          </button>
-        </div>
-        <label className="pims-client-detail__confirm">
-          <input type="checkbox" checked={confirmInfo} onChange={(e) => setConfirmInfo(e.target.checked)} />
-          Confirm Information?
-        </label>
-      </div>
+    <div className="pims-detail">
+      <button type="button" className="pims-detail__back" onClick={onBack}>
+        <ArrowLeft size={15} aria-hidden />
+        Back to list
+      </button>
 
-      <div className="pims-client-detail__profile">
-        <div className="pims-client-detail__profile-title-row">
-          <h2 className="pims-client-detail__profile-title">
-            <FileText size={20} aria-hidden />
-            Client record
-          </h2>
-          {PIMS_ENTITY_EDIT_ENABLED && !isEditing ? (
-            <button type="button" className="pims-client-detail__btn-edit" onClick={beginEdit}>
-              <Pencil size={16} aria-hidden />
-              Edit
-            </button>
-          ) : null}
-        </div>
-        {saveError ? (
-          <div className="pims-client-detail__save-error" role="alert">
-            {saveError}
+      <DetailHeader
+        avatar={
+          <div className="pims-detail__avatar" aria-hidden>
+            <User size={26} strokeWidth={1.6} />
           </div>
-        ) : null}
-        {!PIMS_ENTITY_EDIT_ENABLED || !isEditing ? (
+        }
+        title={name}
+        badges={
           <>
-        <h3 className="pims-client-detail__subhead">Identity and PIMS</h3>
-        <MetaDl
-          rows={[
-            { label: 'Client ID', value: String(payload.id ?? clientId) },
-            { label: 'Created', value: formatTs(payload.created) },
-            { label: 'Updated', value: formatTs(payload.updated) },
-            { label: 'External created', value: formatTs(payload.externalCreated) },
-            { label: 'External updated', value: formatTs(payload.externalUpdated) },
-            { label: 'Active', value: yn(payload.isActive) },
-            { label: 'Deleted', value: yn(payload.isDeleted) },
-            { label: 'PIMS ID', value: pickStr(payload.pimsId) },
-            { label: 'PIMS type', value: pickStr(payload.pimsType) },
-          ]}
-        />
-
-        <h3 className="pims-client-detail__subhead">Primary contact</h3>
-        <MetaDl
-          rows={[
-            { label: 'First name', value: pickStr(payload.firstName) },
-            { label: 'Last name', value: pickStr(payload.lastName) },
-            { label: 'Email', value: pickStr(payload.email) ?? (readList(payload.emails).join(', ') || null) },
-            { label: 'Phone 1', value: pickStr(payload.phone1) },
-            { label: 'Phone 2', value: pickStr(payload.phone2) },
-          ]}
-        />
-
-        <h3 className="pims-client-detail__subhead">Secondary contact</h3>
-        <MetaDl
-          rows={[
-            { label: 'Second first name', value: pickStr(payload.secondFirstName) },
-            { label: 'Second last name', value: pickStr(payload.secondLastName) },
-            { label: 'Second email', value: pickStr(payload.secondEmail) },
-          ]}
-        />
-
-        <h3 className="pims-client-detail__subhead">Address</h3>
-        <MetaDl
-          rows={[
-            { label: 'Address line 1', value: pickStr(payload.address1) },
-            { label: 'Address line 2', value: pickStr(payload.address2) },
-            { label: 'Address line 3', value: pickStr(payload.address3) },
-            { label: 'City', value: pickStr(payload.city) },
-            { label: 'State', value: pickStr(payload.state) },
-            { label: 'ZIP', value: pickStr(payload.zipcode) },
-            { label: 'Country', value: pickStr(payload.country) },
-            { label: 'County', value: pickStr(payload.county) },
-          ]}
-        />
-
-        <h3 className="pims-client-detail__subhead">Geocoding</h3>
-        <MetaDl
-          rows={[
-            {
-              label: 'Latitude',
-              value:
-                typeof payload.lat === 'number'
-                  ? payload.lat.toFixed(7)
-                  : pickStr(payload.lat),
-            },
-            {
-              label: 'Longitude',
-              value:
-                typeof payload.lon === 'number'
-                  ? payload.lon.toFixed(7)
-                  : pickStr(payload.lon),
-            },
-            { label: 'Match level', value: pickStr(payload.latLonMatchLevel) },
-            { label: 'Validated', value: yn(payload.latLonValidated) },
-          ]}
-        />
-
-        <h3 className="pims-client-detail__subhead">Zone</h3>
-        <MetaDl rows={[{ label: 'Zone', value: zoneDisplay(payload) }]} />
-
-        <h3 className="pims-client-detail__subhead">Alerts</h3>
-        <div className="pims-client-detail__alerts-wrap">
-          {pickStr(payload.alerts) ? (
-            <p className="pims-client-detail__alerts">{pickStr(payload.alerts)}</p>
-          ) : (
-            <p className="pims-client-detail__muted">No client alerts.</p>
-          )}
-        </div>
-
-        <h3 className="pims-client-detail__subhead">Discounts</h3>
-        <MetaDl
-          rows={[
-            { label: 'Status discount', value: statusDiscountText(payload.statusDiscount) },
-            {
-              label: 'Discount',
-              value:
-                typeof payload.discount === 'number'
-                  ? String(payload.discount)
-                  : pickStr(payload.discount),
-            },
-          ]}
-        />
-
-        <h3 className="pims-client-detail__subhead">Balances (from response)</h3>
-        <MetaDl
-          rows={[
-            { label: 'Account balance', value: fmtMoney(payload.accountBalance) },
-            { label: 'Balance', value: fmtMoney(payload.balance) },
-            { label: 'Amount due', value: fmtMoney(payload.amountDue) },
-            ...(billing
-              ? ([
-                  { label: 'Billing — account balance', value: fmtMoney(billing.accountBalance) },
-                  { label: 'Billing — balance', value: fmtMoney(billing.balance) },
-                  { label: 'Billing — amount due', value: fmtMoney(billing.amountDue) },
-                ] as { label: string; value: ReactNode }[])
-              : []),
-          ]}
-        />
+            <PimsBadge tone={isActive ? 'ok' : 'muted'}>{isActive ? 'Active' : 'Inactive'}</PimsBadge>
+            <PimsBadge tone={scoutState.scoutManaged ? 'info' : 'muted'} title={scoutState.title}>
+              {scoutState.label}
+            </PimsBadge>
+            {discount != null && discount > 0 ? (
+              <PimsBadge tone="warn">{discount}% discount</PimsBadge>
+            ) : null}
           </>
-        ) : editDraft ? (
+        }
+        reach={
           <>
-            <form className="pims-client-detail__edit-form" onSubmit={handleSave}>
-              <div className="pims-client-detail__edit-toolbar">
-                <button
-                  type="button"
-                  className="pims-client-detail__btn-secondary"
-                  onClick={cancelEdit}
-                  disabled={saving}
-                >
-                  Cancel
-                </button>
-                <button type="submit" className="pims-client-detail__btn" disabled={saving}>
-                  {saving ? 'Saving…' : 'Save changes'}
-                </button>
-              </div>
-
-              <h3 className="pims-client-detail__subhead">Identity and PIMS (read-only)</h3>
-              <MetaDl
-                rows={[
-                  { label: 'Client ID', value: String(payload.id ?? clientId) },
-                  { label: 'Created', value: formatTs(payload.created) },
-                  { label: 'Updated', value: formatTs(payload.updated) },
-                  { label: 'External created', value: formatTs(payload.externalCreated) },
-                  { label: 'External updated', value: formatTs(payload.externalUpdated) },
-                  { label: 'Deleted', value: yn(payload.isDeleted) },
-                  { label: 'PIMS ID', value: pickStr(payload.pimsId) },
-                  { label: 'PIMS type', value: pickStr(payload.pimsType) },
-                ]}
-              />
-
-              <h3 className="pims-client-detail__subhead">Flags</h3>
-              <div className="pims-client-detail__edit-checks">
-                <label className="pims-client-detail__check">
-                  <input
-                    type="checkbox"
-                    checked={isActiveDraft}
-                    onChange={(e) => setIsActiveDraft(e.target.checked)}
-                  />
-                  Active
-                </label>
-                <label className="pims-client-detail__check">
-                  <input
-                    type="checkbox"
-                    checked={latLonValidatedDraft}
-                    onChange={(e) => setLatLonValidatedDraft(e.target.checked)}
-                  />
-                  Geocode validated
-                </label>
-              </div>
-
-              <h3 className="pims-client-detail__subhead">Primary contact</h3>
-              <div className="pims-client-detail__edit-grid">
-                <label className="pims-client-detail__edit-field">
-                  <span>First name *</span>
-                  <input
-                    className="input"
-                    value={editDraft.firstName}
-                    onChange={(e) => setEditDraft({ ...editDraft, firstName: e.target.value })}
-                    required
-                  />
-                </label>
-                <label className="pims-client-detail__edit-field">
-                  <span>Last name *</span>
-                  <input
-                    className="input"
-                    value={editDraft.lastName}
-                    onChange={(e) => setEditDraft({ ...editDraft, lastName: e.target.value })}
-                    required
-                  />
-                </label>
-                <label className="pims-client-detail__edit-field pims-client-detail__edit-field--full">
-                  <span>Email</span>
-                  <input
-                    className="input"
-                    type="email"
-                    value={editDraft.email}
-                    onChange={(e) => setEditDraft({ ...editDraft, email: e.target.value })}
-                  />
-                </label>
-                <label className="pims-client-detail__edit-field">
-                  <span>Phone 1</span>
-                  <input
-                    className="input"
-                    type="tel"
-                    value={editDraft.phone1}
-                    onChange={(e) => setEditDraft({ ...editDraft, phone1: e.target.value })}
-                  />
-                </label>
-                <label className="pims-client-detail__edit-field">
-                  <span>Phone 2</span>
-                  <input
-                    className="input"
-                    type="tel"
-                    value={editDraft.phone2}
-                    onChange={(e) => setEditDraft({ ...editDraft, phone2: e.target.value })}
-                  />
-                </label>
-              </div>
-
-              <h3 className="pims-client-detail__subhead">Secondary contact</h3>
-              <div className="pims-client-detail__edit-grid">
-                <label className="pims-client-detail__edit-field">
-                  <span>Second first name</span>
-                  <input
-                    className="input"
-                    value={editDraft.secondFirstName}
-                    onChange={(e) => setEditDraft({ ...editDraft, secondFirstName: e.target.value })}
-                  />
-                </label>
-                <label className="pims-client-detail__edit-field">
-                  <span>Second last name</span>
-                  <input
-                    className="input"
-                    value={editDraft.secondLastName}
-                    onChange={(e) => setEditDraft({ ...editDraft, secondLastName: e.target.value })}
-                  />
-                </label>
-                <label className="pims-client-detail__edit-field pims-client-detail__edit-field--full">
-                  <span>Second email</span>
-                  <input
-                    className="input"
-                    type="email"
-                    value={editDraft.secondEmail}
-                    onChange={(e) => setEditDraft({ ...editDraft, secondEmail: e.target.value })}
-                  />
-                </label>
-              </div>
-
-              <h3 className="pims-client-detail__subhead">Login</h3>
-              <div className="pims-client-detail__edit-grid">
-                <label className="pims-client-detail__edit-field">
-                  <span>Username</span>
-                  <input
-                    className="input"
-                    value={editDraft.username}
-                    onChange={(e) => setEditDraft({ ...editDraft, username: e.target.value })}
-                  />
-                </label>
-                <label className="pims-client-detail__edit-field pims-client-detail__edit-field--full">
-                  <span>Portal email</span>
-                  <input
-                    className="input"
-                    type="email"
-                    value={editDraft.portalEmail}
-                    onChange={(e) => setEditDraft({ ...editDraft, portalEmail: e.target.value })}
-                  />
-                </label>
-              </div>
-
-              <h3 className="pims-client-detail__subhead">Address</h3>
-              <div className="pims-client-detail__edit-grid">
-                <label className="pims-client-detail__edit-field pims-client-detail__edit-field--full">
-                  <span>Address line 1</span>
-                  <input
-                    className="input"
-                    value={editDraft.address1}
-                    onChange={(e) => setEditDraft({ ...editDraft, address1: e.target.value })}
-                  />
-                </label>
-                <label className="pims-client-detail__edit-field pims-client-detail__edit-field--full">
-                  <span>Address line 2</span>
-                  <input
-                    className="input"
-                    value={editDraft.address2}
-                    onChange={(e) => setEditDraft({ ...editDraft, address2: e.target.value })}
-                  />
-                </label>
-                <label className="pims-client-detail__edit-field pims-client-detail__edit-field--full">
-                  <span>Address line 3</span>
-                  <input
-                    className="input"
-                    value={editDraft.address3}
-                    onChange={(e) => setEditDraft({ ...editDraft, address3: e.target.value })}
-                  />
-                </label>
-                <label className="pims-client-detail__edit-field">
-                  <span>City</span>
-                  <input
-                    className="input"
-                    value={editDraft.city}
-                    onChange={(e) => setEditDraft({ ...editDraft, city: e.target.value })}
-                  />
-                </label>
-                <label className="pims-client-detail__edit-field">
-                  <span>State</span>
-                  <input
-                    className="input"
-                    value={editDraft.state}
-                    onChange={(e) => setEditDraft({ ...editDraft, state: e.target.value })}
-                  />
-                </label>
-                <label className="pims-client-detail__edit-field">
-                  <span>ZIP</span>
-                  <input
-                    className="input"
-                    value={editDraft.zipcode}
-                    onChange={(e) => setEditDraft({ ...editDraft, zipcode: e.target.value })}
-                  />
-                </label>
-                <label className="pims-client-detail__edit-field">
-                  <span>Country</span>
-                  <input
-                    className="input"
-                    value={editDraft.country}
-                    onChange={(e) => setEditDraft({ ...editDraft, country: e.target.value })}
-                  />
-                </label>
-                <label className="pims-client-detail__edit-field">
-                  <span>County</span>
-                  <input
-                    className="input"
-                    value={editDraft.county}
-                    onChange={(e) => setEditDraft({ ...editDraft, county: e.target.value })}
-                  />
-                </label>
-              </div>
-
-              <h3 className="pims-client-detail__subhead">Geocoding</h3>
-              <div className="pims-client-detail__edit-grid">
-                <label className="pims-client-detail__edit-field">
-                  <span>Latitude</span>
-                  <input
-                    className="input"
-                    inputMode="decimal"
-                    value={editDraft.lat}
-                    onChange={(e) => setEditDraft({ ...editDraft, lat: e.target.value })}
-                  />
-                </label>
-                <label className="pims-client-detail__edit-field">
-                  <span>Longitude</span>
-                  <input
-                    className="input"
-                    inputMode="decimal"
-                    value={editDraft.lon}
-                    onChange={(e) => setEditDraft({ ...editDraft, lon: e.target.value })}
-                  />
-                </label>
-                <label className="pims-client-detail__edit-field">
-                  <span>Match level</span>
-                  <input
-                    className="input"
-                    value={editDraft.latLonMatchLevel}
-                    onChange={(e) => setEditDraft({ ...editDraft, latLonMatchLevel: e.target.value })}
-                  />
-                </label>
-              </div>
-
-              <h3 className="pims-client-detail__subhead">Zone</h3>
-              <div className="pims-client-detail__edit-grid">
-                <label className="pims-client-detail__edit-field">
-                  <span>Zone ID</span>
-                  <input
-                    className="input"
-                    inputMode="numeric"
-                    value={editDraft.zoneId}
-                    onChange={(e) => setEditDraft({ ...editDraft, zoneId: e.target.value })}
-                  />
-                </label>
-                <label className="pims-client-detail__edit-field">
-                  <span>Zone name</span>
-                  <input
-                    className="input"
-                    value={editDraft.zoneName}
-                    onChange={(e) => setEditDraft({ ...editDraft, zoneName: e.target.value })}
-                  />
-                </label>
-              </div>
-
-              <h3 className="pims-client-detail__subhead">Alerts</h3>
-              <label className="pims-client-detail__edit-field pims-client-detail__edit-field--full">
-                <span>Client alerts</span>
-                <textarea
-                  className="input pims-client-detail__textarea"
-                  rows={4}
-                  value={editDraft.alerts}
-                  onChange={(e) => setEditDraft({ ...editDraft, alerts: e.target.value })}
-                />
-              </label>
-
-              <h3 className="pims-client-detail__subhead">Discounts</h3>
-              <div className="pims-client-detail__edit-grid">
-                <label className="pims-client-detail__edit-field">
-                  <span>Discount (number)</span>
-                  <input
-                    className="input"
-                    inputMode="decimal"
-                    value={editDraft.discount}
-                    onChange={(e) => setEditDraft({ ...editDraft, discount: e.target.value })}
-                  />
-                </label>
-              </div>
-              <label className="pims-client-detail__edit-field pims-client-detail__edit-field--full">
-                <span>Status discount (JSON or text)</span>
-                <textarea
-                  className="input pims-client-detail__textarea"
-                  rows={3}
-                  value={editDraft.statusDiscountStr}
-                  onChange={(e) => setEditDraft({ ...editDraft, statusDiscountStr: e.target.value })}
-                />
-              </label>
-            </form>
-
-            <h3 className="pims-client-detail__subhead">Balances (from response)</h3>
-            <MetaDl
-              rows={[
-                { label: 'Account balance', value: fmtMoney(payload.accountBalance) },
-                { label: 'Balance', value: fmtMoney(payload.balance) },
-                { label: 'Amount due', value: fmtMoney(payload.amountDue) },
-                ...(billing
-                  ? ([
-                      { label: 'Billing — account balance', value: fmtMoney(billing.accountBalance) },
-                      { label: 'Billing — balance', value: fmtMoney(billing.balance) },
-                      { label: 'Billing — amount due', value: fmtMoney(billing.amountDue) },
-                    ] as { label: string; value: ReactNode }[])
-                  : []),
-              ]}
-            />
+            {phone1 || phone2 ? (
+              <li>
+                <Phone size={15} aria-hidden />
+                <a href={`tel:${(phone1 ?? phone2 ?? '').replace(/[^\d+]/g, '')}`}>
+                  {[phone1, phone2].filter(Boolean).join(' · ')}
+                </a>
+              </li>
+            ) : null}
+            {emails ? (
+              <li>
+                <Mail size={15} aria-hidden />
+                <a href={`mailto:${emails.split(',')[0].trim()}`}>{emails}</a>
+              </li>
+            ) : null}
+            {address.length ? (
+              <li>
+                <MapPin size={15} aria-hidden />
+                {address.join(', ')}
+              </li>
+            ) : null}
           </>
-        ) : null}
-      </div>
+        }
+        stat={
+          balance != null ? (
+            <div className="pims-detail__stat">
+              <span className="pims-detail__stat-label">
+                {balance > 0.005 ? 'Balance due' : balance < -0.005 ? 'Credit' : 'Balance'}
+              </span>
+              <span className={`pims-detail__stat-value${balanceTone}`}>
+                {formatUsd(Math.abs(balance))}
+              </span>
+            </div>
+          ) : null
+        }
+        actions={
+          <>
+            <a
+              className="pims-detail__btn-secondary"
+              href={evetClientLink(clientPimsId)}
+              target="_blank"
+              rel="noreferrer"
+            >
+              <ExternalLink size={14} aria-hidden />
+              eVet
+            </a>
+            <button
+              type="button"
+              className="pims-detail__btn-danger"
+              onClick={handleToggleActive}
+              disabled={busy}
+            >
+              {isActive ? <UserX size={14} aria-hidden /> : <UserCheck size={14} aria-hidden />}
+              {isActive ? 'Deactivate' : 'Reactivate'}
+            </button>
+          </>
+        }
+      />
 
-      <div className="pims-client-detail__section">
-        <button
-          type="button"
-          className="pims-client-detail__section-head"
-          onClick={() => setOpenPatients((o) => !o)}
-          aria-expanded={openPatients}
-        >
-          {openPatients ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
-          <PawPrint size={18} />
-          Patients ({patients.length})
-        </button>
-        {openPatients && (
-          <div className="pims-client-detail__section-body">
+      {actionError ? <p className="pims-detail__banner-error">{actionError}</p> : null}
+
+      {alerts ? (
+        <AlertBanner icon={<AlertTriangle size={20} aria-hidden />}>{alerts}</AlertBanner>
+      ) : null}
+
+      <div className="pims-detail__columns">
+        <div className="pims-detail__col">
+          <Card
+            title={`Pets (${patients.length})`}
+            icon={<PawPrint size={16} aria-hidden />}
+            padded={patients.length === 0}
+          >
             {patients.length === 0 ? (
-              <p className="pims-client-detail__muted">No patients on this client.</p>
+              <p className="pims-detail__muted">
+                No pets on this client yet. Add one from the Patients page to make them bookable.
+              </p>
             ) : (
-              <ul className="pims-client-detail__patient-list">
+              <ul className="pims-client-detail__pets">
                 {patients.map((p, idx) => {
                   const pid = p.id != null ? String(p.id) : '';
-                  const href = pid ? `${patientsBasePath}?patientId=${encodeURIComponent(pid)}` : patientsBasePath;
+                  const href = pid
+                    ? `${patientsBasePath}?patientId=${encodeURIComponent(pid)}`
+                    : patientsBasePath;
                   const img = mediaUrl(p.imageUrl);
-                  const rowKey = pid || pickStr(p.pimsId) || `patient-${idx}`;
+                  const petActive = p.isActive !== false;
+                  const petAlerts = pickStr(p.alerts);
                   return (
-                    <li key={rowKey} className="pims-client-detail__patient-card">
+                    <li
+                      key={pid || pickStr(p.pimsId) || `pet-${idx}`}
+                      className="pims-client-detail__pet"
+                    >
                       {img ? (
-                        <img className="pims-client-detail__patient-img" src={img} alt="" width={72} height={72} />
-                      ) : (
-                        <div className="pims-client-detail__patient-img pims-client-detail__patient-img--placeholder" />
-                      )}
-                      <div className="pims-client-detail__patient-body">
-                        <div className="pims-client-detail__patient-title">
-                          {pid ? (
-                            <Link className="pims-client-detail__patient-link" to={href}>
-                              {pickStr(p.name) ?? `Patient #${pid}`}
-                            </Link>
-                          ) : (
-                            <span>{pickStr(p.name) ?? 'Patient'}</span>
-                          )}
-                        </div>
-                        <MetaDl
-                          className="pims-client-detail__meta--patient"
-                          rows={[
-                            { label: 'Patient ID', value: pid || '—' },
-                            { label: 'PIMS ID', value: pickStr(p.pimsId) },
-                            { label: 'PIMS type', value: pickStr(p.pimsType) },
-                            { label: 'Active', value: yn(p.isActive) },
-                            { label: 'Deleted', value: yn(p.isDeleted) },
-                            { label: 'DOB', value: formatTs(p.dob) },
-                            { label: 'Species', value: pickStr(p.species) },
-                            { label: 'Breed', value: pickStr(p.breed) },
-                            { label: 'Sex', value: pickStr(p.sex) },
-                            { label: 'Color', value: pickStr(p.color) },
-                            { label: 'Weight', value: pickStr(p.weight) },
-                            { label: 'Primary provider', value: providerLabel(p) },
-                            ...providerDetailRows(p),
-                            {
-                              label: 'Created',
-                              value: formatTs(p.created),
-                            },
-                            { label: 'Updated', value: formatTs(p.updated) },
-                            { label: 'External created', value: formatTs(p.externalCreated) },
-                            { label: 'External updated', value: formatTs(p.externalUpdated) },
-                          ]}
+                        <img
+                          className="pims-client-detail__pet-img"
+                          src={img}
+                          alt=""
+                          width={44}
+                          height={44}
                         />
-                        {pickStr(p.alerts) ? (
-                          <div className="pims-client-detail__patient-alerts">
-                            <strong>Patient alerts</strong>
-                            <p className="pims-client-detail__alerts">{pickStr(p.alerts)}</p>
-                          </div>
-                        ) : null}
+                      ) : (
+                        <span className="pims-client-detail__pet-img pims-client-detail__pet-img--ph">
+                          <PawPrint size={18} aria-hidden />
+                        </span>
+                      )}
+                      <div className="pims-client-detail__pet-main">
+                        <div className="pims-client-detail__pet-name">
+                          {pid ? (
+                            <Link to={href}>{pickStr(p.name) ?? `Pet #${pid}`}</Link>
+                          ) : (
+                            <span>{pickStr(p.name) ?? 'Pet'}</span>
+                          )}
+                          {!petActive ? <PimsBadge tone="muted">Inactive</PimsBadge> : null}
+                          {petAlerts ? (
+                            <span className="pims-client-detail__pet-alert" title={petAlerts}>
+                              <AlertTriangle size={13} aria-hidden />
+                              Alert
+                            </span>
+                          ) : null}
+                        </div>
+                        <p className="pims-client-detail__pet-summary">{petSummary(p)}</p>
                       </div>
                     </li>
                   );
                 })}
               </ul>
             )}
-          </div>
-        )}
-      </div>
+          </Card>
 
-      <PimsAppointmentsSection
-        variant="client"
-        practiceId={PIMS_CLIENT_DETAIL_PRACTICE_ID}
-        clientId={clientId}
-        patients={patients}
-      />
+          <PimsAppointmentsSection
+            variant="client"
+            practiceId={PIMS_CLIENT_DETAIL_PRACTICE_ID}
+            clientId={clientId}
+            patients={patients}
+          />
 
-      <div className="pims-client-detail__section">
-        <button
-          type="button"
-          className="pims-client-detail__section-head"
-          onClick={() => setOpenLogin((o) => !o)}
-          aria-expanded={openLogin}
-        >
-          {openLogin ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
-          <KeyRound size={18} />
-          Login information
-        </button>
-        {openLogin && (
-          <div className="pims-client-detail__section-body">
-            <MetaDl
-              rows={[
-                { label: 'Username', value: pickStr(payload.username) },
-                { label: 'Primary email', value: pickStr(payload.email) ?? readList(payload.emails).join(', ') },
-                { label: 'Second email', value: pickStr(payload.secondEmail) },
-                { label: 'Portal email', value: pickStr(payload.portalEmail) },
-              ]}
-            />
-          </div>
-        )}
-      </div>
-
-      <div className="pims-client-detail__section">
-        <button
-          type="button"
-          className="pims-client-detail__section-head"
-          onClick={() => setOpenAccount((o) => !o)}
-          aria-expanded={openAccount}
-        >
-          {openAccount ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
-          <Wallet size={18} />
-          Account Balance
-        </button>
-        {openAccount && (
-          <div className="pims-client-detail__section-body">
-            <div className="pims-client-detail__account-actions">
-              <button type="button" className="pims-client-detail__btn">
-                View History
-              </button>
-              <button
-                type="button"
-                className={`pims-client-detail__btn${HIDE_ACCOUNT_BALANCE_SECONDARY_ACTIONS ? ' pims-client-detail__btn--hidden' : ''}`}
-              >
-                Make Payment
-              </button>
-              <button
-                type="button"
-                className={`pims-client-detail__btn${HIDE_ACCOUNT_BALANCE_SECONDARY_ACTIONS ? ' pims-client-detail__btn--hidden' : ''}`}
-              >
-                Make Deposit
-              </button>
-              <button
-                type="button"
-                className={`pims-client-detail__btn pims-client-detail__btn--ghost${HIDE_ACCOUNT_BALANCE_SECONDARY_ACTIONS ? ' pims-client-detail__btn--hidden' : ''}`}
-              >
-                More ▾
-              </button>
-            </div>
-
-            <MetaDl
-              rows={[
-                {
-                  label: 'Invoices (count)',
-                  value: String(Array.isArray(payload.invoices) ? payload.invoices.length : 0),
-                },
-                {
-                  label: 'Open invoices (count)',
-                  value: String(Array.isArray(payload.openInvoices) ? payload.openInvoices.length : 0),
-                },
-                ...(billing
-                  ? ([
-                      {
-                        label: 'Billing — invoices (count)',
-                        value: String(Array.isArray(billing.invoices) ? billing.invoices.length : 0),
-                      },
-                      {
-                        label: 'Billing — open invoices (count)',
-                        value: String(
-                          Array.isArray(billing.openInvoices) ? billing.openInvoices.length : 0,
-                        ),
-                      },
-                    ] as { label: string; value: ReactNode }[])
-                  : []),
-              ]}
-            />
-
+          <CollapsibleCard
+            title="Invoices"
+            icon={<Receipt size={16} aria-hidden />}
+            count={invoices.length}
+            defaultOpen={invoices.length > 0}
+          >
             {invoices.length === 0 ? (
-              <div className="pims-client-detail__api-note">
-                <strong>No invoices in this response.</strong> When <code>GET /clients/:id</code> includes an{' '}
-                <code>invoices</code> array (or billing invoices), they appear here. Click a row for line items and
-                payments.
-              </div>
+              <p className="pims-detail__muted">No invoices for this client yet.</p>
             ) : (
               <>
                 <div className="pims-client-detail__invoice-list-scroll">
@@ -1227,21 +628,172 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
                     </tbody>
                   </table>
                 </div>
-                <p className="pims-client-detail__invoice-hint">
-                  Scroll the list to see all invoices. Click a row for full details, line items, and payments.
-                </p>
-                {invoiceDetail ? (
-                  <ClientInvoiceDetailModal
-                    inv={invoiceDetail}
-                    balance={balance}
-                    onClose={() => setInvoiceDetail(null)}
-                  />
-                ) : null}
+                <p className="pims-detail__muted">Select an invoice for line items and payments.</p>
               </>
             )}
-          </div>
-        )}
+          </CollapsibleCard>
+        </div>
+
+        <div className="pims-detail__col">
+          <EditableCard
+            title="Name"
+            icon={<User size={16} aria-hidden />}
+            fields={NAME_FIELDS}
+            values={nameValues}
+            onSave={(v) =>
+              saveFields({
+                firstName: v.firstName.trim() || null,
+                lastName: v.lastName.trim() || null,
+                secondFirstName: v.secondFirstName.trim() || null,
+                secondLastName: v.secondLastName.trim() || null,
+              })
+            }
+          />
+
+          <EditableCard
+            title="Contact"
+            icon={<Phone size={16} aria-hidden />}
+            fields={CONTACT_FIELDS}
+            values={contactValues}
+            emptyHint="No phone or email on file."
+            onSave={(v) =>
+              saveFields({
+                phone1: v.phone1.trim() || null,
+                phone2: v.phone2.trim() || null,
+                email: v.email.trim() || null,
+                secondEmail: v.secondEmail.trim() || null,
+              })
+            }
+          >
+            {extraEmails.length ? (
+              <p className="pims-detail__muted pims-client-detail__extra-emails">
+                Also on file from eVet: {extraEmails.join(', ')}
+              </p>
+            ) : null}
+          </EditableCard>
+
+          <EditableCard
+            title="Address"
+            icon={<MapPin size={16} aria-hidden />}
+            fields={ADDRESS_FIELDS}
+            values={addressValues}
+            emptyHint="No address on file. Visits can't be routed without one."
+            onSave={(v) =>
+              saveFields({
+                address1: v.address1.trim() || null,
+                address2: v.address2.trim() || null,
+                address3: v.address3.trim() || null,
+                city: v.city.trim() || null,
+                state: v.state.trim() || null,
+                zipcode: v.zipcode.trim() || null,
+                county: v.county.trim() || null,
+                country: v.country.trim() || null,
+              })
+            }
+            footer={
+              <div className="pims-client-detail__routing">
+                <span className="pims-detail__stat-label">Routing</span>
+                <div className="pims-client-detail__routing-row">
+                  <PimsBadge tone={geo.tone}>{geo.text}</PimsBadge>
+                  {zone ? <PimsBadge tone="muted">{zone}</PimsBadge> : null}
+                </div>
+              </div>
+            }
+          />
+
+          <EditableCard
+            title="Map coordinates"
+            icon={<MapPin size={16} aria-hidden />}
+            fields={LOCATION_FIELDS}
+            values={locationValues}
+            emptyHint="Derived from the address automatically. Set these only to correct a bad match."
+            onSave={(v) => {
+              const lat = toNum(v.lat);
+              const lon = toNum(v.lon);
+              if (!v.lat.trim() && !v.lon.trim()) {
+                return saveFields({ lat: null, lon: null });
+              }
+              if (lat == null || lon == null) {
+                throw new Error('Enter both latitude and longitude, or clear both.');
+              }
+              return saveFields({ lat, lon, latLonValidated: true });
+            }}
+          />
+
+          <EditableCard
+            title="Alerts"
+            icon={<AlertTriangle size={16} aria-hidden />}
+            fields={[
+              {
+                key: 'alerts',
+                label: 'Client alerts',
+                type: 'textarea',
+                full: true,
+                placeholder: 'Gate code, aggressive dog on property, payment arrangement…',
+                hint: 'Shown as a banner at the top of this client and on their visits.',
+              },
+            ]}
+            values={{ alerts: alerts ?? '' }}
+            columns={1}
+            emptyHint="No alerts. Add one for anything staff should know before a visit."
+            onSave={(v) => saveFields({ alerts: v.alerts.trim() || null })}
+          />
+
+          <EditableCard
+            title="Billing"
+            icon={<Wallet size={16} aria-hidden />}
+            fields={BILLING_FIELDS}
+            values={billingValues}
+            columns={1}
+            emptyHint="No standing discount."
+            onSave={(v) => {
+              const raw = v.discount.trim();
+              if (!raw) return saveFields({ discount: null });
+              const n = toNum(raw);
+              if (n == null) throw new Error('Discount must be a number.');
+              return saveFields({ discount: n });
+            }}
+          />
+
+          <TechnicalDetails
+            note={
+              scoutState.scoutManaged
+                ? 'Scout owns this record. eVet imports will not overwrite the fields above.'
+                : 'eVet still owns this record. Editing any field above hands ownership to Scout.'
+            }
+            rows={[
+              { label: 'Scout ID', value: String(record.id ?? clientId) },
+              { label: 'PIMS ID', value: pickStr(record.pimsId) },
+              { label: 'PIMS type', value: pickStr(record.pimsType) },
+              { label: 'Portal username', value: pickStr(record.username) },
+              { label: 'Created in Scout', value: formatTs(record.created) },
+              { label: 'Updated in Scout', value: formatTs(record.updated) },
+              { label: 'Created in eVet', value: formatDateOnly(record.externalCreated) },
+              { label: 'Last Scout edit', value: formatTs(record.externalUpdated) },
+              { label: 'Last eVet sync', value: formatTs(record.lastPimsSyncedAt) },
+              {
+                label: 'Coordinates',
+                value:
+                  toNum(record.lat) != null && toNum(record.lon) != null
+                    ? `${toNum(record.lat)!.toFixed(6)}, ${toNum(record.lon)!.toFixed(6)}`
+                    : null,
+              },
+              { label: 'Geocode match', value: pickStr(record.latLonMatchLevel) },
+              { label: 'Address verified', value: yn(record.latLonValidated) },
+              { label: 'SMS opted out', value: yn(record.smsOptOut) },
+              { label: 'Deleted', value: yn(record.isDeleted) },
+            ]}
+          />
+        </div>
       </div>
+
+      {invoiceDetail ? (
+        <ClientInvoiceDetailModal
+          inv={invoiceDetail}
+          balance={balance}
+          onClose={() => setInvoiceDetail(null)}
+        />
+      ) : null}
     </div>
   );
 }
