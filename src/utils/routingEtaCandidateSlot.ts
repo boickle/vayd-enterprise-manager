@@ -47,6 +47,56 @@ export function resolveRoutingEtaInsertionIndex(
 }
 
 /**
+ * Slot-search `insertionIndex` / `positionInDay` count routable client stops only.
+ * Meetings, personal blocks, and other non-route calendar rows are excluded from that
+ * count but still appear in doctor-day / ETA household lists — map before inserting.
+ */
+export function householdCountsForRoutingInsertionIndex(h: {
+  isPreview?: boolean;
+  isPersonalBlock?: boolean;
+}): boolean {
+  if (h.isPreview) return false;
+  if (h.isPersonalBlock) return false;
+  return true;
+}
+
+/**
+ * Map a routable-relative insertion index onto a full existing-stop list that may
+ * include leading/trailing meetings and personal blocks.
+ *
+ * Example: existing `[Meeting, Dostie, Seaver]`, slot-search last-of-day index `2`
+ * (Visit #3 among two client stops) → full index `3` (after Seaver), not `2`
+ * (which would incorrectly place the candidate before Seaver).
+ */
+export function mapRoutableInsertionIndexToFullIndex<T>(
+  existing: T[],
+  insertionIndex: unknown,
+  counts: (item: T) => boolean = householdCountsForRoutingInsertionIndex as (item: T) => boolean
+): number {
+  const n = existing.length;
+  if (n === 0) return 0;
+
+  const raw = finiteNumber(insertionIndex);
+  const desired = raw !== undefined ? Math.max(0, Math.floor(raw)) : 0;
+
+  const routableIdxs: number[] = [];
+  for (let i = 0; i < n; i++) {
+    if (counts(existing[i]!)) routableIdxs.push(i);
+  }
+
+  if (routableIdxs.length === 0) {
+    return Math.max(0, Math.min(n, desired));
+  }
+
+  const amongRoutable = Math.max(0, Math.min(routableIdxs.length, desired));
+  if (amongRoutable >= routableIdxs.length) {
+    // After the last routable stop (keeps any trailing blocks after the candidate).
+    return routableIdxs[routableIdxs.length - 1]! + 1;
+  }
+  return routableIdxs[amongRoutable]!;
+}
+
+/**
  * Build POST /routing/eta `candidateSlot` from a selected routing result card so
  * computeEtasForDay matches slot-search placement (not PIMS startIso times alone).
  *
@@ -114,17 +164,31 @@ export function buildEtaCandidateSlot(
   return slot;
 }
 
-/** Existing households first, candidate preview at `insertionIndex` (matches My Week / scheduler). */
+/**
+ * Existing households first (by `firstApptIndex`), candidate preview inserted at the
+ * slot-search index mapped across personal blocks / meetings.
+ */
 export function orderHouseholdsWithCandidateAtInsertion<
-  T extends { isPreview?: boolean; firstApptIndex?: number },
->(households: T[], insertionIndex: number): T[] {
+  T extends { isPreview?: boolean; firstApptIndex?: number; isPersonalBlock?: boolean },
+>(households: T[], insertionIndex: unknown): T[] {
   const existing = households.filter((h) => !h.isPreview);
   const virtualH = households.find((h) => h.isPreview);
   const sortedExisting = [...existing].sort(
     (a, b) => (a.firstApptIndex ?? 999) - (b.firstApptIndex ?? 999)
   );
-  const ins = Math.max(0, Math.min(sortedExisting.length, insertionIndex));
+  const fullIns = mapRoutableInsertionIndexToFullIndex(sortedExisting, insertionIndex);
   return virtualH != null
-    ? [...sortedExisting.slice(0, ins), virtualH, ...sortedExisting.slice(ins)]
+    ? [...sortedExisting.slice(0, fullIns), virtualH, ...sortedExisting.slice(fullIns)]
     : sortedExisting;
+}
+
+/** Index of the preview household in visit order (for `candidateSlot.insertionIndex`). */
+export function routingEtaCandidateInsertionIndexInOrder<T extends { isPreview?: boolean }>(
+  orderedHouseholds: T[],
+  fallback: unknown = 0
+): number {
+  const idx = orderedHouseholds.findIndex((h) => h.isPreview);
+  if (idx >= 0) return idx;
+  const n = finiteNumber(fallback);
+  return n !== undefined ? Math.max(0, Math.floor(n)) : 0;
 }
