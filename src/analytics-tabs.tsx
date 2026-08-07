@@ -7,6 +7,9 @@ import RoutingAnalyticsPage from './pages/RoutingAnalytics';
 const VeterinaryServicesDeliveredPage = React.lazy(
   () => import('./pages/VeterinaryServicesDelivered')
 );
+const ProjectedRevenueAnalyticsPage = React.lazy(
+  () => import('./pages/ProjectedRevenueAnalytics')
+);
 const TimeSpentAnalyticsPage = React.lazy(
   () => import('./pages/TimeSpentAnalytics')
 );
@@ -34,6 +37,12 @@ export type AnalyticsTabPage = {
 export const ANALYTICS_TAB_PAGES: AnalyticsTabPage[] = [
   { path: 'payments', label: 'Payments', element: <PaymentsAnalyticsPage />, role: ['employee', 'admin', 'superadmin'] },
   { path: 'vsd', label: 'Veterinary Services Delivered', element: <VeterinaryServicesDeliveredPage />, role: ['employee', 'admin', 'superadmin'] },
+  {
+    path: 'projected-revenue',
+    label: 'Projected Revenue',
+    element: <ProjectedRevenueAnalyticsPage />,
+    role: ['employee', 'admin', 'superadmin'],
+  },
   { path: 'time-spent', label: 'Time Spent', element: <TimeSpentAnalyticsPage />, role: ['employee', 'admin', 'superadmin'] },
   { path: 'appointments', label: 'Appointments', element: <RoutingAnalyticsPage />, role: ['employee', 'admin', 'superadmin'] },
   {
