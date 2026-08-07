@@ -39,11 +39,22 @@ import {
 } from '../api/opsStats';
 import { fetchDoctorMonth, type DoctorMonthDay } from '../api/appointments';
 import { fetchAllAppointmentTypes } from '../api/appointmentSettings';
+import { fetchAppointmentBookingsAnalytics } from '../api/appointmentBookingsAnalytics';
+import { fetchPaymentsAnalytics, type PaymentPoint } from '../api/payments';
 import {
   buildAppointmentTypeCatalog,
   pointsFromAppointmentRows,
   type AppointmentTypeCatalog,
 } from '../utils/appointmentTypeSettings';
+import {
+  BOOKING_FILL_SERVICE_LOOKBACK_DAYS,
+  bookingFillHistoryWindow,
+  buildBookingFillCurve,
+  flattenBookingAnalyticsDetails,
+  projectPointsWithFillCurve,
+  type BookingFillCurve,
+  type BookingForFillCurve,
+} from '../utils/bookingFillCurve';
 import { useAuth } from '../auth/useAuth';
 import { useCommittedDateRange } from '../hooks/useCommittedDateRange';
 import { isEmployeeAnalyticsRestricted, normalizeAuthRoles } from '../utils/analyticsAccess';
@@ -155,6 +166,89 @@ function pointsFromMonthDay(day: DoctorMonthDay, catalog?: AppointmentTypeCatalo
   return pointsFromAppointmentRows([...apptsWithType, ...blocksAsPersonal], catalog);
 }
 
+/** Square + Stripe membership recurring revenue for one payment day. */
+function membershipRevenueForDay(p: PaymentPoint): number {
+  return (Number(p.subscriptionRevenue) || 0) + (Number(p.stripeRevenue) || 0);
+}
+
+/**
+ * Weekday-aware trailing averages for pharmacy / membership.
+ * Missing days in the series count as $0 so sparse data does not inflate the mean.
+ */
+function buildAncillaryDailyRates(
+  series: PaymentPoint[],
+  histStart: Dayjs,
+  histEnd: Dayjs
+): {
+  pharmacyByDow: number[];
+  membershipByDow: number[];
+  pharmacyOverall: number;
+  membershipOverall: number;
+  sampleDays: number;
+} {
+  const pharmacyByDate = new Map<string, number>();
+  const membershipByDate = new Map<string, number>();
+  for (const p of series) {
+    const d = String(p?.date ?? '').slice(0, 10);
+    if (!d) continue;
+    pharmacyByDate.set(d, Number(p.onlinePharmacyRevenue) || 0);
+    membershipByDate.set(d, membershipRevenueForDay(p));
+  }
+
+  const pharmacySums = Array.from({ length: 7 }, () => 0);
+  const membershipSums = Array.from({ length: 7 }, () => 0);
+  const counts = Array.from({ length: 7 }, () => 0);
+  let pharmacyTotal = 0;
+  let membershipTotal = 0;
+  let sampleDays = 0;
+
+  for (const dateStr of dateRange(histStart, histEnd)) {
+    const dow = dayjs(dateStr).day();
+    const pharmacy = pharmacyByDate.get(dateStr) ?? 0;
+    const membership = membershipByDate.get(dateStr) ?? 0;
+    pharmacySums[dow] += pharmacy;
+    membershipSums[dow] += membership;
+    counts[dow] += 1;
+    pharmacyTotal += pharmacy;
+    membershipTotal += membership;
+    sampleDays += 1;
+  }
+
+  const overallPharmacy = sampleDays > 0 ? pharmacyTotal / sampleDays : 0;
+  const overallMembership = sampleDays > 0 ? membershipTotal / sampleDays : 0;
+  const pharmacyByDow = pharmacySums.map((s, i) =>
+    counts[i] > 0 ? s / counts[i] : overallPharmacy
+  );
+  const membershipByDow = membershipSums.map((s, i) =>
+    counts[i] > 0 ? s / counts[i] : overallMembership
+  );
+
+  return {
+    pharmacyByDow,
+    membershipByDow,
+    pharmacyOverall: overallPharmacy,
+    membershipOverall: overallMembership,
+    sampleDays,
+  };
+}
+
+function ancillaryForDate(
+  dateStr: string,
+  rates: {
+    pharmacyByDow: number[];
+    membershipByDow: number[];
+    pharmacyOverall: number;
+    membershipOverall: number;
+  } | null
+): { pharmacy: number; membership: number } {
+  if (!rates) return { pharmacy: 0, membership: 0 };
+  const dow = dayjs(dateStr).day();
+  return {
+    pharmacy: rates.pharmacyByDow[dow] ?? rates.pharmacyOverall,
+    membership: rates.membershipByDow[dow] ?? rates.membershipOverall,
+  };
+}
+
 /** Future-looking presets (from today forward). */
 const PRESETS: Record<string, () => { from: Dayjs; to: Dayjs }> = {
   '7D': () => {
@@ -174,8 +268,18 @@ const PRESETS: Record<string, () => { from: Dayjs; to: Dayjs }> = {
 type BucketRow = {
   key: string;
   label: string;
+  /** Treatment revenue from currently booked points only. */
+  bookedEstimated: number;
+  /** Treatment revenue after expected late-booking fill-in. */
+  treatmentEstimated: number;
+  /** Trailing weekday-avg online pharmacy revenue. */
+  pharmacyEstimated: number;
+  /** Trailing weekday-avg membership (Square + Stripe) revenue. */
+  membershipEstimated: number;
+  /** treatment + pharmacy + membership (practice) or treatment only (doctor). */
   estimated: number;
   points: number;
+  projectedPoints: number;
   appointmentCount: number;
 };
 
@@ -198,6 +302,8 @@ export default function ProjectedRevenueAnalyticsPage() {
   const [histPointsByDoctorByDate, setHistPointsByDoctorByDate] = useState<
     Record<string, Record<string, number>>
   >({});
+  const [bookingHistoryRows, setBookingHistoryRows] = useState<BookingForFillCurve[]>([]);
+  const [paymentHistorySeries, setPaymentHistorySeries] = useState<PaymentPoint[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -262,12 +368,15 @@ export default function ProjectedRevenueAnalyticsPage() {
   }, []);
 
   // Load booked appointment points for the selected projection range + trailing VSD history for rates
+  // + historical bookings for the late-booking fill curve.
   useEffect(() => {
     if (!providersForApi.length) {
       setPointsByDoctorByDate({});
       setApptCountByDoctorByDate({});
       setHistDoctorResponses([]);
       setHistPointsByDoctorByDate({});
+      setBookingHistoryRows([]);
+      setPaymentHistorySeries([]);
       setLoading(false);
       return;
     }
@@ -277,6 +386,7 @@ export default function ProjectedRevenueAnalyticsPage() {
     const histStart = histEnd.subtract(VSD_ESTIMATE_LOOKBACK_DAYS - 1, 'day');
     const histStartStr = toLocalDateStr(histStart);
     const histEndStr = toLocalDateStr(histEnd);
+    const fillWindow = bookingFillHistoryWindow(todayD);
 
     // Include today in hist months so today's calendar points can be projected too
     const projectionMonths = monthsInRange(start, end);
@@ -294,27 +404,43 @@ export default function ProjectedRevenueAnalyticsPage() {
 
     (async () => {
       try {
-        const revenueResults = await Promise.all(
-          providersForApi.map(async (p) => {
-            const id = String(p.id);
-            const response = await fetchDoctorRevenueSeries({
-              start: histStartStr,
-              end: histEndStr,
-              doctorId: id,
-            });
-            return { doctorId: id, name: p.name, response };
-          })
-        );
-
-        const pointResults = await Promise.all(
-          providersForApi.flatMap((p) =>
-            monthPairs.map(async ({ year, month }) => {
-              const doctorId = String(p.id);
-              const resp = await fetchDoctorMonth(year, month, doctorId);
-              return { doctorId, days: resp?.days ?? [] };
+        const [revenueResults, pointResults, bookingsResp, paymentsSeries] = await Promise.all([
+          Promise.all(
+            providersForApi.map(async (p) => {
+              const id = String(p.id);
+              const response = await fetchDoctorRevenueSeries({
+                start: histStartStr,
+                end: histEndStr,
+                doctorId: id,
+              });
+              return { doctorId: id, name: p.name, response };
             })
-          )
-        );
+          ),
+          Promise.all(
+            providersForApi.flatMap((p) =>
+              monthPairs.map(async ({ year, month }) => {
+                const doctorId = String(p.id);
+                const resp = await fetchDoctorMonth(year, month, doctorId);
+                return { doctorId, days: resp?.days ?? [] };
+              })
+            )
+          ),
+          fetchAppointmentBookingsAnalytics({
+            startDate: toLocalDateStr(fillWindow.bookedStart),
+            endDate: toLocalDateStr(fillWindow.bookedEnd),
+          }).catch((e) => {
+            console.error('Booking history for fill curve failed:', e);
+            return null;
+          }),
+          fetchPaymentsAnalytics({
+            start: histStartStr,
+            end: histEndStr,
+            practiceId: PRACTICE_ID,
+          }).catch((e) => {
+            console.error('Payments history for pharmacy/membership failed:', e);
+            return [] as PaymentPoint[];
+          }),
+        ]);
 
         if (!alive) return;
 
@@ -335,6 +461,8 @@ export default function ProjectedRevenueAnalyticsPage() {
         setHistPointsByDoctorByDate(pointsByDoctor);
         setPointsByDoctorByDate(pointsByDoctor);
         setApptCountByDoctorByDate(countsByDoctor);
+        setBookingHistoryRows(flattenBookingAnalyticsDetails(bookingsResp?.users));
+        setPaymentHistorySeries(Array.isArray(paymentsSeries) ? paymentsSeries : []);
       } catch (e) {
         if (!alive) return;
         console.error('Projected revenue fetch failed:', e);
@@ -343,6 +471,8 @@ export default function ProjectedRevenueAnalyticsPage() {
         setApptCountByDoctorByDate({});
         setHistDoctorResponses([]);
         setHistPointsByDoctorByDate({});
+        setBookingHistoryRows([]);
+        setPaymentHistorySeries([]);
       } finally {
         if (alive) setLoading(false);
       }
@@ -387,45 +517,118 @@ export default function ProjectedRevenueAnalyticsPage() {
     return { byDoctor, practiceAvg };
   }, [providersForApi, histDoctorResponses, histPointsByDoctorByDate]);
 
-  /** Per-day estimated revenue / points / appt counts for the selected range. */
+  /** Practice + per-doctor booking fill curves from historical bookedAt → appointmentStart lead times. */
+  const fillCurves = useMemo(() => {
+    const todayD = dayjs().startOf('day');
+    const { serviceStart, serviceEnd } = bookingFillHistoryWindow(todayD);
+    const practice = buildBookingFillCurve(bookingHistoryRows, serviceStart, serviceEnd);
+    const byDoctor: Record<string, BookingFillCurve> = {};
+    for (const p of providersForApi) {
+      const id = String(p.id);
+      const doctorCurve = buildBookingFillCurve(bookingHistoryRows, serviceStart, serviceEnd, {
+        primaryProviderId: id,
+      });
+      // Fall back to practice curve when a doctor has too few completed days.
+      byDoctor[id] = doctorCurve.sampleDays >= 5 ? doctorCurve : practice;
+    }
+    return { practice, byDoctor };
+  }, [bookingHistoryRows, providersForApi]);
+
+  /** Trailing weekday averages for pharmacy + membership (practice-wide, from Payments). */
+  const ancillaryRates = useMemo(() => {
+    const todayD = dayjs().startOf('day');
+    const histEnd = todayD.subtract(1, 'day');
+    const histStart = histEnd.subtract(VSD_ESTIMATE_LOOKBACK_DAYS - 1, 'day');
+    return buildAncillaryDailyRates(paymentHistorySeries, histStart, histEnd);
+  }, [paymentHistorySeries]);
+
+  const includeAncillary = graphSelection === PRACTICE_TOTAL_ID;
+
+  /** Per-day estimated revenue / points for the selected range (booked + fill-adjusted + ancillary). */
   const dailyEstimates = useMemo(() => {
     const dates = dateRange(start, end);
-    const providerIds =
-      graphSelection === PRACTICE_TOTAL_ID
-        ? providersForApi.map((p) => String(p.id))
-        : [graphSelection];
+    const todayD = dayjs().startOf('day');
 
     return dates.map((date) => {
-      let estimated = 0;
-      let points = 0;
-      let appointmentCount = 0;
-      let hasRate = false;
-      for (const id of providerIds) {
-        const pts = pointsByDoctorByDate[id]?.[date] ?? 0;
-        const count = apptCountByDoctorByDate[id]?.[date] ?? 0;
-        const rate = ratesByDoctor.byDoctor[id]?.rate;
-        points += pts;
-        appointmentCount += count;
-        if (rate != null) {
-          estimated += rate * pts;
-          hasRate = true;
+      const daysUntil = Math.max(0, dayjs(date).startOf('day').diff(todayD, 'day'));
+      const ancillary = includeAncillary ? ancillaryForDate(date, ancillaryRates) : { pharmacy: 0, membership: 0 };
+
+      if (graphSelection === PRACTICE_TOTAL_ID) {
+        let bookedEstimated = 0;
+        let points = 0;
+        let appointmentCount = 0;
+        let hasRate = false;
+        for (const p of providersForApi) {
+          const id = String(p.id);
+          const pts = pointsByDoctorByDate[id]?.[date] ?? 0;
+          const count = apptCountByDoctorByDate[id]?.[date] ?? 0;
+          const rate = ratesByDoctor.byDoctor[id]?.rate;
+          points += pts;
+          appointmentCount += count;
+          if (rate != null) {
+            bookedEstimated += rate * pts;
+            hasRate = true;
+          }
         }
+        const fill = projectPointsWithFillCurve(points, daysUntil, fillCurves.practice);
+        let treatmentEstimated = 0;
+        if (hasRate) {
+          if (points > 0) {
+            treatmentEstimated = bookedEstimated * (fill.projectedPoints / points);
+          } else if (ratesByDoctor.practiceAvg != null) {
+            treatmentEstimated = ratesByDoctor.practiceAvg * fill.projectedPoints;
+          }
+        }
+        return {
+          date,
+          bookedEstimated: hasRate ? bookedEstimated : 0,
+          treatmentEstimated: hasRate ? treatmentEstimated : 0,
+          pharmacyEstimated: ancillary.pharmacy,
+          membershipEstimated: ancillary.membership,
+          estimated:
+            (hasRate ? treatmentEstimated : 0) + ancillary.pharmacy + ancillary.membership,
+          points,
+          projectedPoints: fill.projectedPoints,
+          appointmentCount,
+          daysUntil,
+          fillFraction: fill.fillFraction,
+        };
       }
+
+      const id = graphSelection;
+      const pts = pointsByDoctorByDate[id]?.[date] ?? 0;
+      const count = apptCountByDoctorByDate[id]?.[date] ?? 0;
+      const rate = ratesByDoctor.byDoctor[id]?.rate;
+      const curve = fillCurves.byDoctor[id] ?? fillCurves.practice;
+      const fill = projectPointsWithFillCurve(pts, daysUntil, curve);
+      const bookedEstimated = rate != null ? rate * pts : 0;
+      const treatmentEstimated = rate != null ? rate * fill.projectedPoints : 0;
+
       return {
         date,
-        estimated: hasRate ? estimated : 0,
-        points,
-        appointmentCount,
+        bookedEstimated,
+        treatmentEstimated,
+        pharmacyEstimated: 0,
+        membershipEstimated: 0,
+        estimated: treatmentEstimated,
+        points: pts,
+        projectedPoints: fill.projectedPoints,
+        appointmentCount: count,
+        daysUntil,
+        fillFraction: fill.fillFraction,
       };
     });
   }, [
     start,
     end,
     graphSelection,
+    includeAncillary,
     providersForApi,
     pointsByDoctorByDate,
     apptCountByDoctorByDate,
     ratesByDoctor,
+    fillCurves,
+    ancillaryRates,
   ]);
 
   const buckets: BucketRow[] = useMemo(() => {
@@ -433,8 +636,13 @@ export default function ProjectedRevenueAnalyticsPage() {
       return dailyEstimates.map((d) => ({
         key: d.date,
         label: dayjs(d.date).format('MMM D'),
+        bookedEstimated: d.bookedEstimated,
+        treatmentEstimated: d.treatmentEstimated,
+        pharmacyEstimated: d.pharmacyEstimated,
+        membershipEstimated: d.membershipEstimated,
         estimated: d.estimated,
         points: d.points,
+        projectedPoints: d.projectedPoints,
         appointmentCount: d.appointmentCount,
       }));
     }
@@ -448,13 +656,23 @@ export default function ProjectedRevenueAnalyticsPage() {
         byWeek.set(key, {
           key,
           label: `Week of ${weekStart.format('MMM D')}`,
+          bookedEstimated: d.bookedEstimated,
+          treatmentEstimated: d.treatmentEstimated,
+          pharmacyEstimated: d.pharmacyEstimated,
+          membershipEstimated: d.membershipEstimated,
           estimated: d.estimated,
           points: d.points,
+          projectedPoints: d.projectedPoints,
           appointmentCount: d.appointmentCount,
         });
       } else {
+        existing.bookedEstimated += d.bookedEstimated;
+        existing.treatmentEstimated += d.treatmentEstimated;
+        existing.pharmacyEstimated += d.pharmacyEstimated;
+        existing.membershipEstimated += d.membershipEstimated;
         existing.estimated += d.estimated;
         existing.points += d.points;
+        existing.projectedPoints += d.projectedPoints;
         existing.appointmentCount += d.appointmentCount;
       }
     }
@@ -464,12 +682,26 @@ export default function ProjectedRevenueAnalyticsPage() {
   const totals = useMemo(() => {
     return buckets.reduce(
       (acc, b) => {
+        acc.bookedEstimated += b.bookedEstimated;
+        acc.treatmentEstimated += b.treatmentEstimated;
+        acc.pharmacyEstimated += b.pharmacyEstimated;
+        acc.membershipEstimated += b.membershipEstimated;
         acc.estimated += b.estimated;
         acc.points += b.points;
+        acc.projectedPoints += b.projectedPoints;
         acc.appointmentCount += b.appointmentCount;
         return acc;
       },
-      { estimated: 0, points: 0, appointmentCount: 0 }
+      {
+        bookedEstimated: 0,
+        treatmentEstimated: 0,
+        pharmacyEstimated: 0,
+        membershipEstimated: 0,
+        estimated: 0,
+        points: 0,
+        projectedPoints: 0,
+        appointmentCount: 0,
+      }
     );
   }, [buckets]);
 
@@ -493,12 +725,38 @@ export default function ProjectedRevenueAnalyticsPage() {
       buckets.map((b) => ({
         period: b.label,
         estimated: Math.round(b.estimated * 100) / 100,
+        treatmentEstimated: Math.round(b.treatmentEstimated * 100) / 100,
+        bookedEstimated: Math.round(b.bookedEstimated * 100) / 100,
+        pharmacyEstimated: Math.round(b.pharmacyEstimated * 100) / 100,
+        membershipEstimated: Math.round(b.membershipEstimated * 100) / 100,
         points: Math.round(b.points * 10) / 10,
+        projectedPoints: Math.round(b.projectedPoints * 10) / 10,
       })),
     [buckets]
   );
 
   const hasAnyRate = Object.values(ratesByDoctor.byDoctor).some((r) => r.rate != null);
+  const fillSampleDays = fillCurves.practice.sampleDays;
+  const expectedAdditionalTreatment = Math.max(
+    0,
+    totals.treatmentEstimated - totals.bookedEstimated
+  );
+  const chartLabel = (name: string) => {
+    switch (name) {
+      case 'estimated':
+        return includeAncillary ? 'Total projected' : 'Projected (w/ fill-in)';
+      case 'treatmentEstimated':
+        return 'Treatment (VSD)';
+      case 'bookedEstimated':
+        return 'Treatment on the books';
+      case 'pharmacyEstimated':
+        return 'Pharmacy';
+      case 'membershipEstimated':
+        return 'Membership';
+      default:
+        return name;
+    }
+  };
 
   if (loading) {
     return (
@@ -517,8 +775,10 @@ export default function ProjectedRevenueAnalyticsPage() {
           Projected Revenue
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          Estimates practice revenue from booked appointments using each doctor&apos;s trailing{' '}
-          {VSD_ESTIMATE_LOOKBACK_DAYS}-day average VSD per point (same method as estimated daily VSD).
+          Estimates treatment revenue from booked appointments using each doctor&apos;s trailing{' '}
+          {VSD_ESTIMATE_LOOKBACK_DAYS}-day average VSD per point, adjusted for expected late bookings
+          from the last {BOOKING_FILL_SERVICE_LOOKBACK_DAYS} days of lead-time history. Practice totals
+          also add pharmacy and membership using trailing weekday averages from Payments.
           {useDailyBuckets
             ? ' Showing daily totals for this range.'
             : ' Range is over 30 days — showing weekly totals.'}
@@ -591,10 +851,19 @@ export default function ProjectedRevenueAnalyticsPage() {
           </Alert>
         )}
 
+        {hasAnyRate && fillSampleDays === 0 && !error && (
+          <Alert severity="info" sx={{ mb: 2 }}>
+            No historical booking lead-time data was found, so projections use currently booked
+            appointments only (no late-booking fill-in).
+          </Alert>
+        )}
+
         <Card sx={{ mb: 3 }}>
           <CardHeader
             title="Summary"
-            subheader={`${start.format('MMM D, YYYY')} – ${end.format('MMM D, YYYY')}`}
+            subheader={`${start.format('MMM D, YYYY')} – ${end.format('MMM D, YYYY')}${
+              fillSampleDays > 0 ? ` · fill curve from ${fillSampleDays} past service days` : ''
+            }`}
             action={
               <FormControl size="small" sx={{ minWidth: 220, mr: 1, mt: 0.5 }}>
                 <InputLabel id="projected-scope-label">Show for</InputLabel>
@@ -617,15 +886,59 @@ export default function ProjectedRevenueAnalyticsPage() {
             <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
               <Box>
                 <Typography variant="subtitle2" color="text.secondary">
-                  Projected revenue
+                  {includeAncillary ? 'Total projected revenue' : 'Projected treatment revenue'}
                 </Typography>
                 <Typography variant="h5">{fmtUSD(totals.estimated)}</Typography>
               </Box>
+              {includeAncillary && (
+                <>
+                  <Box>
+                    <Typography variant="subtitle2" color="text.secondary">
+                      Treatment (VSD, w/ fill-in)
+                    </Typography>
+                    <Typography variant="h5">{fmtUSD(totals.treatmentEstimated)}</Typography>
+                  </Box>
+                  <Box>
+                    <Typography variant="subtitle2" color="text.secondary">
+                      Pharmacy (trailing avg)
+                    </Typography>
+                    <Typography variant="h5">{fmtUSD(totals.pharmacyEstimated)}</Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      ~{fmtUSD(ancillaryRates.pharmacyOverall)}/day
+                    </Typography>
+                  </Box>
+                  <Box>
+                    <Typography variant="subtitle2" color="text.secondary">
+                      Membership (trailing avg)
+                    </Typography>
+                    <Typography variant="h5">{fmtUSD(totals.membershipEstimated)}</Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      ~{fmtUSD(ancillaryRates.membershipOverall)}/day
+                    </Typography>
+                  </Box>
+                </>
+              )}
               <Box>
                 <Typography variant="subtitle2" color="text.secondary">
-                  Booked points
+                  Treatment on the books
                 </Typography>
-                <Typography variant="h5">{Math.round(totals.points * 10) / 10}</Typography>
+                <Typography variant="h5">{fmtUSD(totals.bookedEstimated)}</Typography>
+              </Box>
+              <Box>
+                <Typography variant="subtitle2" color="text.secondary">
+                  Expected from late bookings
+                </Typography>
+                <Typography variant="h5">{fmtUSD(expectedAdditionalTreatment)}</Typography>
+              </Box>
+              <Box>
+                <Typography variant="subtitle2" color="text.secondary">
+                  Booked / expected points
+                </Typography>
+                <Typography variant="h5">
+                  {Math.round(totals.points * 10) / 10}
+                  {' / '}
+                  {Math.round(totals.projectedPoints * 10) / 10}
+                </Typography>
               </Box>
               <Box>
                 <Typography variant="subtitle2" color="text.secondary">
@@ -658,13 +971,22 @@ export default function ProjectedRevenueAnalyticsPage() {
                 </Box>
               )}
             </Box>
+            {!includeAncillary && (
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 2 }}>
+                Pharmacy and membership are practice-wide — switch to Practice total to include them.
+              </Typography>
+            )}
           </CardContent>
         </Card>
 
         <Card sx={{ mb: 3 }}>
           <CardHeader
             title={useDailyBuckets ? 'Projected revenue by day' : 'Projected revenue by week'}
-            subheader="Based on booked appointment points × trailing VSD per point"
+            subheader={
+              includeAncillary
+                ? 'Total includes treatment (with late-booking fill-in), pharmacy, and membership'
+                : 'Solid line includes expected late bookings; dashed line is treatment already booked'
+            }
           />
           <CardContent>
             {chartData.length === 0 ? (
@@ -678,7 +1000,6 @@ export default function ProjectedRevenueAnalyticsPage() {
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="period" tick={{ fontSize: 12 }} />
                     <YAxis
-                      yAxisId="revenue"
                       tickFormatter={(v) =>
                         new Intl.NumberFormat(undefined, {
                           style: 'currency',
@@ -688,20 +1009,14 @@ export default function ProjectedRevenueAnalyticsPage() {
                       }
                       width={72}
                     />
-                    <YAxis yAxisId="points" orientation="right" width={48} />
                     <Tooltip
                       formatter={(value: unknown, name: unknown) => [
-                        String(name) === 'estimated'
-                          ? fmtUSD(Number(value ?? 0))
-                          : Number(value ?? 0),
-                        String(name) === 'estimated' ? 'Projected' : 'Points',
+                        fmtUSD(Number(value ?? 0)),
+                        chartLabel(String(name)),
                       ]}
                     />
-                    <Legend
-                      formatter={(value) => (value === 'estimated' ? 'Projected revenue' : 'Points')}
-                    />
+                    <Legend formatter={(value) => chartLabel(String(value))} />
                     <Line
-                      yAxisId="revenue"
                       type="monotone"
                       dataKey="estimated"
                       stroke="#1976d2"
@@ -709,16 +1024,48 @@ export default function ProjectedRevenueAnalyticsPage() {
                       dot={{ r: 3 }}
                       name="estimated"
                     />
-                    <Line
-                      yAxisId="points"
-                      type="monotone"
-                      dataKey="points"
-                      stroke="#2e7d32"
-                      strokeWidth={2}
-                      strokeDasharray="4 4"
-                      dot={{ r: 2 }}
-                      name="points"
-                    />
+                    {includeAncillary && (
+                      <Line
+                        type="monotone"
+                        dataKey="treatmentEstimated"
+                        stroke="#1565c0"
+                        strokeWidth={2}
+                        strokeDasharray="4 4"
+                        dot={{ r: 2 }}
+                        name="treatmentEstimated"
+                      />
+                    )}
+                    {!includeAncillary && (
+                      <Line
+                        type="monotone"
+                        dataKey="bookedEstimated"
+                        stroke="#90caf9"
+                        strokeWidth={2}
+                        strokeDasharray="4 4"
+                        dot={{ r: 2 }}
+                        name="bookedEstimated"
+                      />
+                    )}
+                    {includeAncillary && (
+                      <>
+                        <Line
+                          type="monotone"
+                          dataKey="pharmacyEstimated"
+                          stroke="#2e7d32"
+                          strokeWidth={2}
+                          dot={{ r: 2 }}
+                          name="pharmacyEstimated"
+                        />
+                        <Line
+                          type="monotone"
+                          dataKey="membershipEstimated"
+                          stroke="#6a1b9a"
+                          strokeWidth={2}
+                          dot={{ r: 2 }}
+                          name="membershipEstimated"
+                        />
+                      </>
+                    )}
                   </LineChart>
                 </ResponsiveContainer>
               </Box>
@@ -733,9 +1080,17 @@ export default function ProjectedRevenueAnalyticsPage() {
               <TableHead>
                 <TableRow>
                   <TableCell>{useDailyBuckets ? 'Date' : 'Week'}</TableCell>
-                  <TableCell align="right">Appointments</TableCell>
-                  <TableCell align="right">Points</TableCell>
-                  <TableCell align="right">Projected revenue</TableCell>
+                  <TableCell align="right">Appts</TableCell>
+                  <TableCell align="right">Booked pts</TableCell>
+                  <TableCell align="right">Expected pts</TableCell>
+                  <TableCell align="right">Treatment</TableCell>
+                  {includeAncillary && (
+                    <>
+                      <TableCell align="right">Pharmacy</TableCell>
+                      <TableCell align="right">Membership</TableCell>
+                    </>
+                  )}
+                  <TableCell align="right">{includeAncillary ? 'Total' : 'Projected'}</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -746,6 +1101,14 @@ export default function ProjectedRevenueAnalyticsPage() {
                     </TableCell>
                     <TableCell align="right">{b.appointmentCount}</TableCell>
                     <TableCell align="right">{Math.round(b.points * 10) / 10}</TableCell>
+                    <TableCell align="right">{Math.round(b.projectedPoints * 10) / 10}</TableCell>
+                    <TableCell align="right">{fmtUSD(b.treatmentEstimated)}</TableCell>
+                    {includeAncillary && (
+                      <>
+                        <TableCell align="right">{fmtUSD(b.pharmacyEstimated)}</TableCell>
+                        <TableCell align="right">{fmtUSD(b.membershipEstimated)}</TableCell>
+                      </>
+                    )}
                     <TableCell align="right">{fmtUSD(b.estimated)}</TableCell>
                   </TableRow>
                 ))}
@@ -761,6 +1124,26 @@ export default function ProjectedRevenueAnalyticsPage() {
                       {Math.round(totals.points * 10) / 10}
                     </Typography>
                   </TableCell>
+                  <TableCell align="right">
+                    <Typography variant="subtitle2">
+                      {Math.round(totals.projectedPoints * 10) / 10}
+                    </Typography>
+                  </TableCell>
+                  <TableCell align="right">
+                    <Typography variant="subtitle2">{fmtUSD(totals.treatmentEstimated)}</Typography>
+                  </TableCell>
+                  {includeAncillary && (
+                    <>
+                      <TableCell align="right">
+                        <Typography variant="subtitle2">{fmtUSD(totals.pharmacyEstimated)}</Typography>
+                      </TableCell>
+                      <TableCell align="right">
+                        <Typography variant="subtitle2">
+                          {fmtUSD(totals.membershipEstimated)}
+                        </Typography>
+                      </TableCell>
+                    </>
+                  )}
                   <TableCell align="right">
                     <Typography variant="subtitle2">{fmtUSD(totals.estimated)}</Typography>
                   </TableCell>
