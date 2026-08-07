@@ -20,6 +20,95 @@
   font-size: 12px;
 }
 
+/* ---------- Chronic problems ---------- */
+
+/* Ongoing problems, pinned above the record so they read at a glance rather than
+   needing to be dug out of the timeline. */
+.pims-patient-detail__chronic {
+  border: 1px solid #fcd34d;
+  border-radius: 12px;
+  padding: 16px;
+  margin-top: 16px;
+  background: #fffbeb;
+}
+
+.pims-patient-detail__chronic-heading svg {
+  color: #b45309;
+}
+
+.pims-patient-detail__chronic-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pims-patient-detail__chronic-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border: 1px solid #fde68a;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.pims-patient-detail__chronic-label {
+  flex: 1;
+  min-width: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #0f172a;
+  overflow-wrap: anywhere;
+}
+
+.pims-patient-detail__chronic-since {
+  font-size: 12px;
+  color: #64748b;
+  white-space: nowrap;
+}
+
+.pims-patient-detail__chronic-resolve {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  color: #0f172a;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.pims-patient-detail__chronic-resolve:hover:not(:disabled) {
+  border-color: #16a34a;
+  color: #15803d;
+  background: #f0fdf4;
+}
+
+.pims-patient-detail__chronic-resolve:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.pims-patient-detail__chronic--meds {
+  border-color: #93c5fd;
+  background: #eff6ff;
+}
+
+.pims-patient-detail__chronic--meds .pims-patient-detail__chronic-heading svg {
+  color: #1d4ed8;
+}
+
+.pims-patient-detail__chronic--meds .pims-patient-detail__chronic-list li {
+  border-color: #bfdbfe;
+}
+
 /* ---------- Medical record ---------- */
 
 .pims-patient-detail__mr {

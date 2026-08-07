@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Check, Minus, Pill, Plus, Search, StickyNote, Trash2, X } from 'lucide-react';
+import { Minus, Pill, Plus, Search, StickyNote, Trash2, X } from 'lucide-react';
 import {
   deleteOrder,
   setOrderState,
@@ -15,6 +15,11 @@ import {
   getCatalogLinePrice,
   type CatalogPricingItem,
 } from '../../utils/catalogItemPricing';
+import {
+  ensureSharpsFeeOrder,
+  isSharpsOrderName,
+  isVaccineSearchItem,
+} from '../../utils/visitSharpsFee';
 
 type Props = {
   encounterId: string;
@@ -25,6 +30,12 @@ type Props = {
   practiceId: number;
   onChange: (orders: EncounterOrder[]) => void;
   onInvoiceShouldRefresh: () => void;
+  /** Room Loader–originated ids: Accept/Decline stay on the right; don't list them here. */
+  excludeOrderIds?: ReadonlySet<string>;
+  /** Inventory catalog picks also go under Treatment Plan/Medications in the Plan narrative. */
+  onInventoryItemAdded?: (item: { name: string; isVaccine?: boolean }) => void;
+  /** When an inventory order is removed from Plan/checkout, drop its Plan narrative bullet. */
+  onInventoryItemRemoved?: (itemName: string) => void;
 };
 
 function money(n: number): string {
@@ -48,9 +59,12 @@ export default function PlanOrdersSection({
   disabled,
   patientId,
   clientId,
+  excludeOrderIds,
   practiceId,
   onChange,
   onInvoiceShouldRefresh,
+  onInventoryItemAdded,
+  onInventoryItemRemoved,
 }: Props) {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchableItem[]>([]);
@@ -187,8 +201,28 @@ export default function PlanOrdersSection({
         clientId,
       });
       storePricing(order.id, pricingItem);
-      onChange([...orders, order]);
+      const nextOrders = [...orders, order];
+      let sharpsOrder: EncounterOrder | null = null;
+      try {
+        sharpsOrder = await ensureSharpsFeeOrder({
+          encounterId,
+          practiceId,
+          patientId: canPrice ? patientId : undefined,
+          clientId,
+          existingOrders: nextOrders,
+          triggerItem: item,
+        });
+      } catch {
+        /* Sharps is best-effort — the vaccine/injection still charges. */
+      }
+      onChange(sharpsOrder ? [...nextOrders, sharpsOrder] : nextOrders);
       onInvoiceShouldRefresh();
+      if (item.itemType === 'inventory' && !isSharpsOrderName(item.name)) {
+        onInventoryItemAdded?.({
+          name: item.name,
+          isVaccine: isVaccineSearchItem(item),
+        });
+      }
       setQuery('');
       setResults([]);
       setOpen(false);
@@ -223,8 +257,7 @@ export default function PlanOrdersSection({
         const { unitFinal, isCovered } = getCatalogLinePrice(snapshot, qty);
         // Never overwrite a Room Loader / existing price with $0 from a failed catalog lookup.
         // Covered membership lines legitimately price at 0; everything else keeps what it has.
-        const keepExisting =
-          unitFinal === 0 && !isCovered && Number(updated.unitPrice) > 0;
+        const keepExisting = unitFinal === 0 && !isCovered && Number(updated.unitPrice) > 0;
         if (
           !keepExisting &&
           (unitFinal !== Number(updated.unitPrice) || isCovered !== updated.isCovered)
@@ -246,48 +279,23 @@ export default function PlanOrdersSection({
     dropPricing(order.id);
     onChange(orders.filter((o) => o.id !== order.id));
     onInvoiceShouldRefresh();
+    if (order.catalogItemType === 'inventory') {
+      onInventoryItemRemoved?.(order.name);
+    }
   };
 
-  const proposed = orders.filter((o) => o.state === 'proposed');
-  const active = orders.filter((o) => o.state !== 'proposed');
+  // Charging items live in Checkout only. Plan keeps notes (and anything not yet
+  // charged) so Revolution / Solensia / Trip Fee don't also sit here with a Decline.
+  // Room Loader proposed/declined lines stay in `ProposedOrdersPanel` on the right.
+  const active = orders.filter(
+    (o) =>
+      o.state === 'accepted' &&
+      !(excludeOrderIds?.has(o.id) ?? false) &&
+      (o.kind === 'note' || !o.invoiceLineId)
+  );
 
   return (
     <div className="soap-plan">
-      {proposed.length > 0 && (
-        <div className="soap-plan-proposed">
-          <div className="soap-subhead">Proposed (from Room Loader) — accept or decline</div>
-          {proposed.map((o) => (
-            <div key={o.id} className="soap-order proposed">
-              <span className="soap-order-name">
-                {o.kind === 'med' && <Pill size={13} />} {o.name}
-                {Number(o.qty) > 1 && <span className="soap-order-qty"> ×{Number(o.qty)}</span>}
-              </span>
-              <span className="soap-order-price">
-                {o.isCovered ? '—' : money(Number(o.qty) * Number(o.unitPrice))}
-              </span>
-              <div className="soap-order-actions">
-                <button
-                  type="button"
-                  className="soap-btn small ok"
-                  disabled={disabled}
-                  onClick={() => void changeState(o, 'accepted')}
-                >
-                  <Check size={13} /> Accept
-                </button>
-                <button
-                  type="button"
-                  className="soap-btn small danger"
-                  disabled={disabled}
-                  onClick={() => void changeState(o, 'declined')}
-                >
-                  <X size={13} /> Decline
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
       <div className="soap-order-table">
         {active.length === 0 ? (
           <div className="soap-empty">No orders placed. Each order becomes a charge.</div>

@@ -1,29 +1,27 @@
-import { useState } from 'react';
-import {
-  CreditCard,
-  Lock,
-  Receipt,
-  Smartphone,
-  ShieldCheck,
-  CheckCircle2,
-} from 'lucide-react';
+import { useState, type ReactNode } from 'react';
+import { CreditCard, Receipt, RotateCcw, Smartphone, ShieldCheck, X } from 'lucide-react';
 import {
   chargeSavedCard,
   createTerminalPaymentIntent,
-  finalizeInvoice,
-  markVisitCompleted,
+  deleteOrder,
+  reopenInvoice,
   voidInvoice,
   type VisitInvoice,
+  type VisitInvoiceLine,
 } from '../../api/visitWorkflow';
 
 type Props = {
-  appointmentId: number;
+  /** Needed to delete the encounter order behind an invoice line. */
+  encounterId?: string | null;
   invoice: VisitInvoice | null;
-  visitCompleted: boolean;
   disabled?: boolean;
+  /** Rendered below the payment actions — the follow-up question, asked while
+   * the client is still here (see CheckoutFollowUpPrompt). */
+  followUpSlot?: ReactNode;
   onInvoiceChange: (invoice: VisitInvoice) => void;
-  onVisitCompleted: () => void;
   onOpenEuthanasiaPrepay: () => void;
+  /** After removing a line's order, drop it from local order state and refresh the invoice. */
+  onOrderRemoved?: (orderId: string) => void;
 };
 
 function money(n: number | null | undefined): string {
@@ -33,16 +31,20 @@ function money(n: number | null | undefined): string {
 /**
  * Tech-run checkout (spec §7). Runs off the invoice and is independent of SOAP
  * completion — the tech can check the client out before the doctor finishes
- * notes. Finalizing/paying never mutates the visit (spec §2).
+ * notes, and the doctor can sign the chart before checkout ends.
+ *
+ * Payment is the invoice's lock: it finalizes and publishes charges to the chart,
+ * so there is no separate Finalize step. Checkout never marks the visit completed
+ * (that is End Visit on the schedule) and never mutates the visit (spec §2).
  */
 export default function VisitCheckoutPanel({
-  appointmentId,
+  encounterId,
   invoice,
-  visitCompleted,
   disabled,
+  followUpSlot,
   onInvoiceChange,
-  onVisitCompleted,
   onOpenEuthanasiaPrepay,
+  onOrderRemoved,
 }: Props) {
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -61,16 +63,22 @@ export default function VisitCheckoutPanel({
     }
   };
 
-  const finalize = () =>
-    run('finalize', async () => {
-      if (!invoice) return;
-      onInvoiceChange(await finalizeInvoice(invoice.id));
-    });
-
   const voidInv = () =>
     run('void', async () => {
       if (!invoice) return;
+      const ok = window.confirm(
+        'Void this whole invoice? Every charge comes off the bill and no payment can be taken until it is reopened. Nothing has been collected yet.'
+      );
+      if (!ok) return;
       onInvoiceChange(await voidInvoice(invoice.id));
+      setNote('Invoice voided. Reopen it to take payment.');
+    });
+
+  const reopen = () =>
+    run('reopen', async () => {
+      if (!invoice) return;
+      onInvoiceChange(await reopenInvoice(invoice.id));
+      setNote('Invoice reopened — charges are editable and payment can be taken.');
     });
 
   const cardOnFile = () =>
@@ -84,32 +92,25 @@ export default function VisitCheckoutPanel({
     run('terminal', async () => {
       if (!invoice) return;
       const pi = await createTerminalPaymentIntent(invoice.id);
+      if (pi.invoice) onInvoiceChange(pi.invoice);
       setNote(
         `Tap to Pay ready (PaymentIntent ${pi.id}). Connect the Stripe reader to collect at card-present rates.`
       );
-    });
-
-  const completeVisit = () =>
-    run('complete', async () => {
-      const result = await markVisitCompleted(appointmentId);
-      onVisitCompleted();
-      if (result.euthanasiaCharge?.attempted) {
-        setNote(
-          result.euthanasiaCharge.success
-            ? 'Visit completed. Euthanasia card charged off-session.'
-            : `Visit completed. Euthanasia charge needs manual collection: ${
-                result.euthanasiaCharge.message ?? 'card declined'
-              }`
-        );
-      } else {
-        setNote('Visit marked completed.');
-      }
     });
 
   const status = invoice?.status ?? 'open';
   const isPaid = status === 'paid';
   const isVoid = status === 'void';
   const hasSavedCard = Boolean(invoice?.savedPaymentMethodId);
+  const canEditLines = Boolean(encounterId) && !isPaid && !isVoid && status === 'open';
+
+  const removeLine = (line: VisitInvoiceLine) => {
+    if (!encounterId || !line.orderId || !canEditLines) return;
+    void run(`remove:${line.id}`, async () => {
+      await deleteOrder(encounterId, line.orderId!);
+      onOrderRemoved?.(line.orderId!);
+    });
+  };
 
   return (
     <div className="soap-checkout">
@@ -132,17 +133,54 @@ export default function VisitCheckoutPanel({
             {(invoice.lines ?? [])
               .filter((l) => !l.isDeleted)
               .map((l) => (
-              <div key={l.id} className="soap-invoice-line">
-                <span>{l.description}</span>
-                <span>{l.isCovered ? 'covered' : money(l.amount)}</span>
-              </div>
-            ))}
+                <div key={l.id} className="soap-invoice-line">
+                  <span className="soap-invoice-line-desc">
+                    {l.isCovered ? (
+                      <span
+                        className="soap-invoice-heart"
+                        title="Membership covered"
+                        aria-label="Membership covered"
+                      >
+                        ❤️{' '}
+                      </span>
+                    ) : null}
+                    {l.description}
+                    {Number(l.qty) > 1 ? ` ×${Number(l.qty)}` : ''}
+                  </span>
+                  <span className="soap-invoice-line-amt">
+                    {l.isCovered ? 'covered' : money(l.amount)}
+                  </span>
+                  {canEditLines && l.orderId && (
+                    <button
+                      type="button"
+                      className="soap-invoice-line-remove"
+                      title="Remove from checkout"
+                      disabled={disabled || busy != null}
+                      onClick={() => removeLine(l)}
+                    >
+                      <X size={14} />
+                    </button>
+                  )}
+                </div>
+              ))}
           </div>
           <div className="soap-invoice-totals">
             {Number(invoice.membershipAdjustments) !== 0 && (
               <div className="soap-invoice-row covered">
                 <span>Membership covered</span>
                 <span>{money(invoice.membershipAdjustments)}</span>
+              </div>
+            )}
+            {Number(invoice.subtotal) !== Number(invoice.total) && (
+              <div className="soap-invoice-row">
+                <span>Subtotal</span>
+                <span>{money(invoice.subtotal)}</span>
+              </div>
+            )}
+            {Number(invoice.taxTotal) > 0 && (
+              <div className="soap-invoice-row">
+                <span>Sales tax</span>
+                <span>{money(invoice.taxTotal)}</span>
               </div>
             )}
             <div className="soap-invoice-row total">
@@ -159,18 +197,14 @@ export default function VisitCheckoutPanel({
 
           {error && <div className="soap-error">{error}</div>}
           {note && <div className="soap-note-banner">{note}</div>}
+          {isVoid && (
+            <p className="soap-hint">
+              This invoice is voided, so no payment can be taken and charges are locked. Nothing was
+              collected. Reopen it to correct the bill and take payment.
+            </p>
+          )}
 
           <div className="soap-checkout-actions">
-            {!isPaid && !isVoid && status === 'open' && (
-              <button
-                type="button"
-                className="soap-btn ghost"
-                disabled={disabled || busy != null}
-                onClick={finalize}
-              >
-                <Lock size={14} /> Finalize
-              </button>
-            )}
             {!isPaid && !isVoid && (
               <>
                 <button
@@ -205,33 +239,33 @@ export default function VisitCheckoutPanel({
                 type="button"
                 className="soap-btn ghost danger"
                 disabled={disabled || busy != null}
+                title="Cancel this entire bill. Nothing has been collected yet."
                 onClick={voidInv}
               >
-                Void
+                Void invoice
+              </button>
+            )}
+            {isVoid && (
+              <button
+                type="button"
+                className="soap-btn"
+                disabled={disabled || busy != null}
+                title="Back to open so charges can be edited and payment taken"
+                onClick={reopen}
+              >
+                <RotateCcw size={14} /> Reopen invoice
               </button>
             )}
           </div>
         </>
       )}
 
+      {followUpSlot}
+
       <div className="soap-visit-complete">
-        {visitCompleted ? (
-          <div className="soap-visit-complete-done">
-            <CheckCircle2 size={15} /> Visit completed
-          </div>
-        ) : (
-          <button
-            type="button"
-            className="soap-btn primary"
-            disabled={busy != null}
-            onClick={completeVisit}
-          >
-            <CheckCircle2 size={14} /> Mark visit completed (tech)
-          </button>
-        )}
         <p className="soap-hint">
-          Marking the visit completed is independent of finishing notes and is the
-          trigger for euthanasia off-session capture.
+          Payment locks the invoice and posts these charges to the chart. Ending the visit on the
+          schedule and signing the SOAP are separate steps — neither one waits on this.
         </p>
       </div>
     </div>

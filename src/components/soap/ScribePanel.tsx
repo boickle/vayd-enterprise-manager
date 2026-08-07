@@ -9,9 +9,11 @@ import {
   AlertTriangle,
   ChevronDown,
   ChevronUp,
+  Trash2,
   Users,
 } from 'lucide-react';
 import {
+  clearScribeTranscript,
   createScribeSocket,
   listScribeSessions,
   structureTranscript,
@@ -32,6 +34,8 @@ import {
   type EncounterOrder,
   type HouseholdRosterEntry,
   type PatientProblem,
+  type PatientProblemAcuity,
+  type PatientProblemKind,
   type SoapEncounter,
 } from '../../api/visitWorkflow';
 import { PE_SYSTEMS, peExamFromValue, type PeExamState, type PeSystemFinding } from './peTemplate';
@@ -63,11 +67,6 @@ type Props = {
   onApplyPlanNotes: (text: string) => void;
   onProblemCreated: (problem: PatientProblem) => void;
   onOrderCreated: (order: EncounterOrder) => void;
-  /** Fired whenever a suggestion carrying the freeform "Document view" email arrives. */
-  onNarrativeUpdate?: (narrative: {
-    emailSubject: string | null;
-    emailBody: string | null;
-  }) => void;
   /** Products/services the AI heard mentioned in the plan, not yet added as real orders — feeds
    * `ScribeSuggestedPlanItems` (rendered below the Plan text box in the Document view) so the
    * doctor can match each one to a catalog item instead of it just sitting in a review card. */
@@ -99,6 +98,62 @@ function formatElapsed(sec: number): string {
   const s = sec % 60;
   return `${m}:${String(s).padStart(2, '0')}`;
 }
+
+/** True when Process / Re-load would rewrite doctor-visible narrative already on the chart. */
+function chartHasRewritableContent(
+  subjective: string,
+  objectiveNotes: string,
+  reasoning: string,
+  planNotes: string
+): boolean {
+  if (objectiveNotes.trim() || reasoning.trim() || planNotes.trim()) return true;
+  // Pre-visit check-in alone does not count — Process keeps that block. A prior "Visit discussion"
+  // section means we're about to replace doctor-facing narrative.
+  return subjective.includes(VISIT_DISCUSSION_HEADER);
+}
+
+/** A saved suggestion can be either shape — multi-pet runs store a per-patient breakdown. */
+function isMultiPatientSuggestion(
+  value: ScribeSuggestion | MultiPatientScribeSuggestion
+): value is MultiPatientScribeSuggestion {
+  return Array.isArray((value as MultiPatientScribeSuggestion).patients);
+}
+
+// Dismissed review cards are a per-chart UI preference, so they ride in sessionStorage rather
+// than the encounter — otherwise restoring the last suggestion resurrects cards the doctor
+// already waved off.
+const DISMISSED_KEY_PREFIX = 'soap-scribe-dismissed:';
+
+function readDismissedKeys(soapEncounterId: string): Set<string> {
+  try {
+    const raw = sessionStorage.getItem(`${DISMISSED_KEY_PREFIX}${soapEncounterId}`);
+    const parsed: unknown = raw ? JSON.parse(raw) : null;
+    return new Set(
+      Array.isArray(parsed) ? parsed.filter((k): k is string => typeof k === 'string') : []
+    );
+  } catch {
+    return new Set();
+  }
+}
+
+function writeDismissedKeys(soapEncounterId: string, keys: Set<string>): void {
+  try {
+    sessionStorage.setItem(`${DISMISSED_KEY_PREFIX}${soapEncounterId}`, JSON.stringify([...keys]));
+  } catch {
+    /* private mode / quota — dismissals just won't survive a reload */
+  }
+}
+
+const OVERWRITE_CONFIRM =
+  'You are about to overwrite your current SOAP work.\n\n' +
+  'Re-load rewrites Subjective (visit discussion), Objective notes, Assessment, and Plan from this transcript. ' +
+  'Pre-visit check-in and checkout orders stay. Vitals and exam findings you already entered are kept.\n\n' +
+  'Proceed?';
+
+const DELETE_TRANSCRIPT_CONFIRM =
+  'Delete the saved transcript for this visit?\n\n' +
+  'The SOAP notes you already have are kept, but the transcript text is gone and cannot be used to re-load the SOAP.\n\n' +
+  'Proceed?';
 
 /** Turn structured plan-item suggestions into matcher rows (never create $0 orders). */
 function toSuggestedPlanItems(
@@ -237,6 +292,9 @@ export default function ScribePanel({
   currentSubjective,
   currentVitals,
   currentExam,
+  currentObjectiveNotes,
+  currentReasoning,
+  currentPlanNotes,
   problems,
   orders,
   onApplySubjective,
@@ -247,7 +305,6 @@ export default function ScribePanel({
   onApplyPlanNotes,
   onProblemCreated,
   onOrderCreated,
-  onNarrativeUpdate,
   onPlanItemsChange,
   onHouseholdOrdersChanged,
 }: Props) {
@@ -259,8 +316,11 @@ export default function ScribePanel({
   const [suggestion, setSuggestion] = useState<ScribeSuggestion | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
-  const [dismissed, setDismissed] = useState<Set<string>>(new Set());
+  const [dismissed, setDismissed] = useState<Set<string>>(() => readDismissedKeys(soapEncounterId));
   const [applyingKey, setApplyingKey] = useState<string | null>(null);
+  /** Doctor's edits to suggested problem wording, keyed by suggestion key — this text is what
+   * lands on the medical record, so it is theirs to fix before accepting. */
+  const [problemLabelEdits, setProblemLabelEdits] = useState<Record<string, string>>({});
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pasteText, setPasteText] = useState('');
   const [pasteBusy, setPasteBusy] = useState(false);
@@ -276,16 +336,13 @@ export default function ScribePanel({
   /** Ensures each Process result is written once (not re-applied when problems/orders update). */
   const multiAppliedFingerprintRef = useRef<string | null>(null);
   /** Multi-pet plan items for the open pet — fed to the catalog matcher, not created as $0 orders. */
-  const [multiPlanItemsForCurrent, setMultiPlanItemsForCurrent] = useState<SuggestedPlanItem[]>(
-    []
-  );
+  const [multiPlanItemsForCurrent, setMultiPlanItemsForCurrent] = useState<SuggestedPlanItem[]>([]);
 
   const socketRef = useRef<ScribeSocketHandle | null>(null);
   const audioRef = useRef<ScribeAudioCapture | null>(null);
   const timerRef = useRef<number | null>(null);
   const prevSuggestionRef = useRef<ScribeSuggestion | null>(null);
   const logKeyRef = useRef(0);
-  const lastAppliedEmailRef = useRef<string | null>(null);
 
   // Mirrors of the latest prop values, read (not depended on) inside the auto-apply effect below
   // so it isn't re-triggered by the very updates it makes.
@@ -346,46 +403,61 @@ export default function ScribePanel({
     };
   }, [soapEncounterId]);
 
-  // Restore the most recent saved transcript when returning to this chart. Sessions are
-  // audit-only (not part of the printed medical record); the UI just needs the text again.
+  // Restore the last scribe run when returning to this chart: the transcript, plus the review
+  // cards (problems / plan items) that are otherwise lost with in-memory state. Sessions are
+  // audit-only — nothing here is part of the printed medical record.
   useEffect(() => {
     let canceled = false;
     listScribeSessions(soapEncounterId)
       .then((sessions) => {
         if (canceled) return;
-        const saved = sessions.find((s) => s.transcript?.trim())?.transcript?.trim() ?? '';
-        if (!saved) return;
-        setFinalTranscript((prev) => prev || saved);
+        const recent = [...sessions].sort((a, b) =>
+          (b.updated || b.created || '').localeCompare(a.updated || a.created || '')
+        );
+
+        const saved = recent.find((s) => s.transcript?.trim())?.transcript?.trim() ?? '';
+        if (saved) {
+          setFinalTranscript((prev) => prev || saved);
+          setPasteText((prev) => prev || saved);
+          // Stay collapsed — View / Re-load transcript opens the editor when they need it.
+        }
+
+        const last = (recent.find((s) => s.lastSuggestion)?.lastSuggestion ?? null) as
+          | ScribeSuggestion
+          | MultiPatientScribeSuggestion
+          | null;
+        if (!last) return;
+
+        if (isMultiPatientSuggestion(last)) {
+          // Multi-pet runs write each chart directly, so only the plan-item matcher needs
+          // rehydrating. `multiSuggestion` stays null — setting it would re-apply the whole run.
+          const entry = last.patients.find((p) => p.patientId === patientId);
+          if (entry) setMultiPlanItemsForCurrent(toSuggestedPlanItems(entry.planItems, []));
+          return;
+        }
+
+        // Mark this suggestion as already applied *before* storing it, so the auto-apply
+        // effect treats a restore as read-only and never rewrites the doctor's edits.
+        prevSuggestionRef.current = last;
+        setSuggestion(last);
       })
-      .catch(() => {
-        /* Restore is best-effort — paste/record still work without it. */
+      .catch((err) => {
+        console.warn('Could not restore the last scribe run for this chart', err);
       });
     return () => {
       canceled = true;
     };
-  }, [soapEncounterId]);
-
-  useEffect(() => {
-    if (!suggestion) return;
-    const subject = suggestion.clientEmailSubject?.trim() || '';
-    const body = suggestion.clientEmailBody?.trim() || '';
-    if (!subject && !body) return;
-    const key = `${subject}\n---\n${body}`;
-    // Only push email into the chart once per distinct AI draft — otherwise this effect
-    // re-runs whenever the parent re-creates onNarrativeUpdate and undoes doctor edits/clears.
-    if (lastAppliedEmailRef.current === key) return;
-    lastAppliedEmailRef.current = key;
-    onNarrativeUpdate?.({
-      emailSubject: suggestion.clientEmailSubject,
-      emailBody: suggestion.clientEmailBody,
-    });
-  }, [suggestion, onNarrativeUpdate]);
+  }, [soapEncounterId, patientId]);
 
   // Auto-apply text/vitals/exam suggestions straight into the encounter — no per-item review.
   // Problems and Plan items still go through review cards below since accepting those creates
   // real records (a problem-list entry / a proposed order), not just a field edit.
   useEffect(() => {
     if (!suggestion) return;
+    // Apply each Process result exactly once. The handlers below save to the encounter, which
+    // re-creates them in the parent, so without this the effect re-fires on its own writes.
+    if (prevSuggestionRef.current === suggestion) return;
+    prevSuggestionRef.current = suggestion;
 
     const vitalsPatch: Partial<Vitals> = {};
     (Object.keys(VITAL_LABELS) as (keyof Vitals)[]).forEach((k) => {
@@ -444,8 +516,6 @@ export default function ScribePanel({
       onApplyPlanNotes(formatSoapSectionSpacing(suggestion.narrativePlan));
       logApplied('Plan notes updated');
     }
-
-    prevSuggestionRef.current = suggestion;
   }, [
     suggestion,
     examEnabled,
@@ -464,9 +534,10 @@ export default function ScribePanel({
     setFinalTranscript('');
     setSuggestion(null);
     setDismissed(new Set());
+    writeDismissedKeys(soapEncounterId, new Set());
+    setProblemLabelEdits({});
     setAutoAppliedLog([]);
     prevSuggestionRef.current = null;
-    lastAppliedEmailRef.current = null;
 
     const socket = createScribeSocket({
       onStatusChange: setStatus,
@@ -550,6 +621,15 @@ export default function ScribePanel({
   const processPastedTranscript = useCallback(async () => {
     const text = pasteText.trim();
     if (!text) return;
+
+    const willOverwrite = chartHasRewritableContent(
+      currentSubjective,
+      currentObjectiveNotes,
+      currentReasoning,
+      currentPlanNotes
+    );
+    if (willOverwrite && !window.confirm(OVERWRITE_CONFIRM)) return;
+
     setPasteBusy(true);
     setErrorMessage(null);
     try {
@@ -571,19 +651,20 @@ export default function ScribePanel({
         setMultiPlanItemsForCurrent([]);
         setMultiSuggestion(result as MultiPatientScribeSuggestion);
         setPasteOpen(false);
-        setPasteText('');
-        setTranscriptOpen(true);
+        setPasteText(text);
+        setTranscriptOpen(false);
       } else {
         const result = await structureTranscript(soapEncounterId, text);
         setFinalTranscript(text);
         setInterimText('');
         prevSuggestionRef.current = null;
-        lastAppliedEmailRef.current = null;
         setSuggestion(result as ScribeSuggestion);
         setDismissed(new Set());
+        writeDismissedKeys(soapEncounterId, new Set());
+        setProblemLabelEdits({});
         setPasteOpen(false);
-        setPasteText('');
-        setTranscriptOpen(true);
+        setPasteText(text);
+        setTranscriptOpen(false);
       }
     } catch (err) {
       setErrorMessage(
@@ -592,7 +673,40 @@ export default function ScribePanel({
     } finally {
       setPasteBusy(false);
     }
-  }, [multiPetSelected, pasteText, roster, selectedPatientIds, soapEncounterId]);
+  }, [
+    multiPetSelected,
+    pasteText,
+    roster,
+    selectedPatientIds,
+    soapEncounterId,
+    currentSubjective,
+    currentObjectiveNotes,
+    currentReasoning,
+    currentPlanNotes,
+  ]);
+
+  /**
+   * Deletes the saved transcript for this visit. Needs its own path because "Re-load SOAP"
+   * only ever saves non-empty text — clearing the box alone left the stored copy behind,
+   * which then came back on the next visit to this chart.
+   */
+  const deleteTranscript = useCallback(async () => {
+    if (!window.confirm(DELETE_TRANSCRIPT_CONFIRM)) return;
+    setPasteBusy(true);
+    setErrorMessage(null);
+    try {
+      await clearScribeTranscript(soapEncounterId);
+      setFinalTranscript('');
+      setInterimText('');
+      setPasteText('');
+      setTranscriptOpen(false);
+      setPasteOpen(false);
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : 'Could not delete the transcript.');
+    } finally {
+      setPasteBusy(false);
+    }
+  }, [soapEncounterId]);
 
   const togglePatientSelected = (id: number) => {
     if (id === patientId) return; // current patient always included
@@ -734,18 +848,6 @@ export default function ScribePanel({
       }
       if (canceled) return;
       multiAppliedFingerprintRef.current = fingerprint;
-      const subject = suggestion.clientEmailSubject?.trim() || '';
-      const body = suggestion.clientEmailBody?.trim() || '';
-      if (subject || body) {
-        const emailKey = `${subject}\n---\n${body}`;
-        if (lastAppliedEmailRef.current !== emailKey) {
-          lastAppliedEmailRef.current = emailKey;
-          onNarrativeUpdate?.({
-            emailSubject: suggestion.clientEmailSubject,
-            emailBody: suggestion.clientEmailBody,
-          });
-        }
-      }
       logApplied(
         `Multi-pet SOAP written for ${suggestion.patients.length} pet${
           suggestion.patients.length === 1 ? '' : 's'
@@ -811,7 +913,12 @@ export default function ScribePanel({
     onPlanItemsChange?.(planDiffs);
   }, [planDiffs, onPlanItemsChange]);
 
-  const dismiss = (key: string) => setDismissed((prev) => new Set(prev).add(key));
+  const dismiss = (key: string) =>
+    setDismissed((prev) => {
+      const next = new Set(prev).add(key);
+      writeDismissedKeys(soapEncounterId, next);
+      return next;
+    });
 
   const suggestionCount = problemDiffs.length;
 
@@ -823,6 +930,25 @@ export default function ScribePanel({
     } finally {
       setApplyingKey(null);
     }
+  };
+
+  /** Accept a suggested problem onto the Master Problem List with the doctor's wording and acuity. */
+  const addProblem = (
+    p: { key: string; label: string; kind: PatientProblemKind },
+    acuity: PatientProblemAcuity
+  ) => {
+    const label = (problemLabelEdits[p.key] ?? p.label).trim();
+    if (!label) return;
+    return runApply(p.key, async () => {
+      const created = await createProblem({
+        patientId,
+        label,
+        kind: p.kind,
+        acuity,
+        createdInEncounterId: soapEncounterId,
+      });
+      onProblemCreated(created);
+    });
   };
 
   if (disabled) return null;
@@ -847,8 +973,11 @@ export default function ScribePanel({
             onClick={() => {
               setPasteOpen((open) => {
                 const next = !open;
-                if (next && !pasteText.trim() && finalTranscript.trim()) {
-                  setPasteText(finalTranscript);
+                if (next) {
+                  if (!pasteText.trim() && finalTranscript.trim()) {
+                    setPasteText(finalTranscript);
+                  }
+                  setTranscriptOpen(false);
                 }
                 return next;
               });
@@ -856,7 +985,7 @@ export default function ScribePanel({
             disabled={busy || pasteBusy}
           >
             <ClipboardPaste size={13} />{' '}
-            {finalTranscript.trim() ? 'Edit / re-load transcript' : 'Paste transcript'}
+            {finalTranscript.trim() ? 'View / Re-load transcript' : 'Paste transcript'}
           </button>
         )}
         {suggestionCount > 0 && (
@@ -895,7 +1024,7 @@ export default function ScribePanel({
         <div className="soap-scribe-paste">
           <p className="soap-scribe-paste-hint">
             {finalTranscript.trim()
-              ? 'Edit or replace the transcript, then Re-load SOAP to rewrite S/O/A/P from it. Pre-visit check-in stays; checkout orders are left alone. Not part of the printed medical record.'
+              ? 'Edit or replace the transcript, then Re-load SOAP to rewrite S/O/A/P from it. This overwrites the current narrative (you’ll be asked to confirm). Pre-visit check-in stays; checkout orders are left alone. Not part of the printed medical record.'
               : 'Review the transcript below (fix anything the mic misheard), confirm which pet(s) it covers, then Process — nothing is applied until you do. The transcript is saved with the visit but is not part of the printed medical record.'}
           </p>
           {roster.length > 1 && (
@@ -940,11 +1069,7 @@ export default function ScribePanel({
               disabled={pasteBusy || !pasteText.trim()}
               onClick={() => void processPastedTranscript()}
             >
-              {pasteBusy
-                ? 'Processing…'
-                : finalTranscript.trim()
-                  ? 'Re-load SOAP'
-                  : 'Process'}
+              {pasteBusy ? 'Processing…' : finalTranscript.trim() ? 'Re-load SOAP' : 'Process'}
             </button>
             <button
               type="button"
@@ -957,6 +1082,16 @@ export default function ScribePanel({
             >
               Cancel
             </button>
+            {finalTranscript.trim() && (
+              <button
+                type="button"
+                className="soap-btn small danger soap-scribe-delete-transcript"
+                disabled={pasteBusy}
+                onClick={() => void deleteTranscript()}
+              >
+                <Trash2 size={13} /> Delete transcript
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -964,7 +1099,8 @@ export default function ScribePanel({
       {transcriptOpen && (finalTranscript || interimText) && (
         <div className="soap-scribe-transcript">
           <p className="soap-scribe-transcript-meta">
-            Saved with this visit for reference — not included on the printed medical record.
+            Saved with this visit for reference — not included on the printed medical record. Use
+            View / Re-load transcript to rewrite the SOAP from this text.
           </p>
           {finalTranscript} <span className="soap-scribe-interim">{interimText}</span>
         </div>
@@ -988,42 +1124,56 @@ export default function ScribePanel({
       )}
 
       {suggestionCount > 0 && (
-        <div className="soap-scribe-suggestions">
-          {problemDiffs.map((p) => (
-            <div className="soap-scribe-card" key={p.key}>
-              <div className="soap-scribe-card-head">Problem list</div>
-              <p>
-                {p.label} <span className="soap-scribe-tag">{p.kind.replace(/_/g, ' ')}</span>
-              </p>
-              <div className="soap-scribe-card-actions">
-                <button
-                  type="button"
-                  className="soap-btn small primary"
-                  disabled={applyingKey === p.key}
-                  onClick={() =>
-                    runApply(p.key, async () => {
-                      const created = await createProblem({
-                        patientId,
-                        label: p.label,
-                        kind: p.kind,
-                        createdInEncounterId: soapEncounterId,
-                      });
-                      onProblemCreated(created);
-                    })
-                  }
-                >
-                  <Check size={12} /> Add
-                </button>
-                <button
-                  type="button"
-                  className="soap-btn small ghost"
-                  onClick={() => dismiss(p.key)}
-                >
-                  <XIcon size={12} /> Dismiss
-                </button>
+        <div className="soap-scribe-problems">
+          <div className="soap-scribe-suggestions">
+            {problemDiffs.map((p) => (
+              <div className="soap-scribe-card" key={p.key}>
+                <div className="soap-scribe-card-head">Problem list</div>
+                <label className="soap-scribe-problem-label">
+                  <span className="soap-scribe-problem-label-text">
+                    Problem <span className="soap-scribe-tag">{p.kind.replace(/_/g, ' ')}</span>
+                  </span>
+                  <input
+                    type="text"
+                    value={problemLabelEdits[p.key] ?? p.label}
+                    disabled={applyingKey === p.key}
+                    onChange={(e) =>
+                      setProblemLabelEdits((prev) => ({ ...prev, [p.key]: e.target.value }))
+                    }
+                  />
+                </label>
+                <div className="soap-scribe-card-actions">
+                  <button
+                    type="button"
+                    className="soap-btn small primary"
+                    disabled={
+                      applyingKey === p.key || !(problemLabelEdits[p.key] ?? p.label).trim()
+                    }
+                    onClick={() => void addProblem(p, 'acute')}
+                  >
+                    <Check size={12} /> Acute
+                  </button>
+                  <button
+                    type="button"
+                    className="soap-btn small primary"
+                    disabled={
+                      applyingKey === p.key || !(problemLabelEdits[p.key] ?? p.label).trim()
+                    }
+                    onClick={() => void addProblem(p, 'chronic')}
+                  >
+                    <Check size={12} /> Chronic
+                  </button>
+                  <button
+                    type="button"
+                    className="soap-btn small ghost"
+                    onClick={() => dismiss(p.key)}
+                  >
+                    <XIcon size={12} /> Dismiss
+                  </button>
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
       )}
 

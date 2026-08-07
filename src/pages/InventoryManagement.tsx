@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '../auth/useAuth';
 import {
   searchItems,
@@ -14,13 +14,14 @@ import {
   getInventoryCostSummary,
   patchPracticeInventoryItem,
   postBulkInventoryPriceAdjust,
+  uploadInventoryItemImage,
+  deleteInventoryItemImage,
+  inventoryItemImageUrl,
   type InventoryCostSummary,
 } from '../api/inventoryTools';
 import {
   listPracticeBranches,
   listInventoryBranchLocations,
-  createInventoryBranchLocation,
-  patchInventoryBranchLocation,
   getInventoryBranchStock,
   upsertInventoryBranchStock,
   postInventoryMovement,
@@ -36,11 +37,18 @@ import {
   type InventoryStockMovement,
   type PostInventoryMovementBody,
 } from '../api/branchInventory';
-import { Pencil, Copy, X } from 'lucide-react';
+import {
+  getPracticeSettings,
+  isOnlineStoreImplemented,
+} from '../api/practiceSettings';
+import { getPreDiscountForOneUnit } from '../utils/catalogItemPricing';
+import { Pencil, Copy, X, ChevronDown, ChevronRight } from 'lucide-react';
 import './Settings.css';
 import './InventoryManagement.css';
 
 const BRANCH_STORAGE_PREFIX = 'vayd_inventory_branch:';
+/** Pseudo-id in priceTargetBranchIds for the Online Store price target (not a real branch). */
+const ONLINE_STORE_TARGET_ID = -1;
 
 function decodeJwtPayload(token: string): Record<string, unknown> | null {
   try {
@@ -95,6 +103,23 @@ function effectiveToResolved(m: MoneyFields): ResolvedMoney {
     serviceFee: m.serviceFee ?? 0,
     minimumPrice: m.minimumPrice ?? 0,
   };
+}
+
+/**
+ * Sell total for one unit using the same formulas SOAP / checkout run
+ * ({@link getPreDiscountForOneUnit}): labs are price only, procedures add the service fee, and
+ * inventory adds the fee then floors at the minimum price.
+ */
+function unitSellTotal(
+  itemType: ItemType,
+  money: { price?: number | null; serviceFee?: number | null; minimumPrice?: number | null }
+): number {
+  return getPreDiscountForOneUnit({
+    itemType,
+    price: toMoneyNumber(money.price),
+    serviceFee: toMoneyNumber(money.serviceFee),
+    minimumPrice: toMoneyNumber(money.minimumPrice),
+  });
 }
 
 function itemTypeToEntityType(itemType: ItemType): BranchPriceOverrideEntityType {
@@ -216,19 +241,21 @@ export default function InventoryManagement() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
 
-  const [stockSnapshot, setStockSnapshot] = useState<InventoryBranchStock | null>(null);
-  const [reorderDraft, setReorderDraft] = useState('');
+  const [stockByBranchId, setStockByBranchId] = useState<Record<number, InventoryBranchStock>>({});
+  /** Item the counts / reorder / movements apply to: the linked stock item, else this item. */
+  const [stockItemId, setStockItemId] = useState<number | null>(null);
+  const [countsExpandedBranchId, setCountsExpandedBranchId] = useState<number | null>(null);
+  const [reorderDraftByBranchId, setReorderDraftByBranchId] = useState<Record<number, string>>({});
   const [stockLoading, setStockLoading] = useState(false);
   const [stockSaving, setStockSaving] = useState(false);
   const [stockError, setStockError] = useState<string | null>(null);
 
+  /** Page-level locations (unbox / cost summary branch). */
   const [branchLocations, setBranchLocations] = useState<InventoryBranchLocation[]>([]);
-  const [locLoading, setLocLoading] = useState(false);
-  const [locError, setLocError] = useState<string | null>(null);
-  const [newLocCode, setNewLocCode] = useState('');
-  const [newLocName, setNewLocName] = useState('');
-  const [newLocSort, setNewLocSort] = useState('');
-  const [newLocSaving, setNewLocSaving] = useState(false);
+
+  /** Branch used inside the item modal for record movement + history. */
+  const [movementBranchId, setMovementBranchId] = useState<number | null>(null);
+  const [movementLocations, setMovementLocations] = useState<InventoryBranchLocation[]>([]);
 
   const [movementType, setMovementType] = useState<InventoryMovementType>('receive');
   const [movementQty, setMovementQty] = useState('1');
@@ -241,10 +268,13 @@ export default function InventoryManagement() {
 
   const [movements, setMovements] = useState<InventoryStockMovement[]>([]);
   const [movementTotal, setMovementTotal] = useState(0);
-  const [movementOffset, setMovementOffset] = useState(0);
   const [movementsLoading, setMovementsLoading] = useState(false);
 
   const [effective, setEffective] = useState<MoneyFields | null>(null);
+  /** Effective money for every active practice branch (item pricing table). */
+  const [branchEffectiveById, setBranchEffectiveById] = useState<Record<number, MoneyFields>>({});
+  const [branchPricesLoading, setBranchPricesLoading] = useState(false);
+  const [branchPricesError, setBranchPricesError] = useState<string | null>(null);
   const [priceModalOpen, setPriceModalOpen] = useState(false);
   const [priceForm, setPriceForm] = useState<ResolvedMoney>({
     price: 0,
@@ -252,8 +282,12 @@ export default function InventoryManagement() {
     serviceFee: 0,
     minimumPrice: 0,
   });
+  /** Branches that receive the override on Save / Clear. May include ONLINE_STORE_TARGET_ID. */
+  const [priceTargetBranchIds, setPriceTargetBranchIds] = useState<number[]>([]);
   const [priceSaving, setPriceSaving] = useState(false);
   const [priceError, setPriceError] = useState<string | null>(null);
+  /** Company setting: practice runs an online store (Settings → Inventory). */
+  const [onlineStoreImplemented, setOnlineStoreImplemented] = useState(false);
 
   const [toast, setToast] = useState<string | null>(null);
 
@@ -273,7 +307,11 @@ export default function InventoryManagement() {
 
   const [catalogSaving, setCatalogSaving] = useState(false);
   const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [unitsSaving, setUnitsSaving] = useState(false);
+  const [unitsError, setUnitsError] = useState<string | null>(null);
   const [catalogDraft, setCatalogDraft] = useState({
+    description: '',
+    shippable: false,
     showOnOnlineStore: false,
     onlineStorePrice: '',
     sellUnitType: '',
@@ -282,6 +320,24 @@ export default function InventoryManagement() {
     alternateSellUnitType: '',
     alternateUnitsPerPackage: '',
   });
+  /**
+   * Master stock item this code draws down (null = draws on itself). Counts, reorder points and
+   * movements all belong to the stock item, not to each sellable code.
+   */
+  const [stockLinkItemId, setStockLinkItemId] = useState<number | null>(null);
+  const [stockLinkItemLabel, setStockLinkItemLabel] = useState('');
+  const [stockLinkQty, setStockLinkQty] = useState('');
+  const [stockLinkQuery, setStockLinkQuery] = useState('');
+  const [stockLinkResults, setStockLinkResults] = useState<SearchResultItem[]>([]);
+  const [stockLinkSearching, setStockLinkSearching] = useState(false);
+  const [stockLinkSaving, setStockLinkSaving] = useState(false);
+  const [stockLinkError, setStockLinkError] = useState<string | null>(null);
+  const stockLinkSearchSeq = useRef(0);
+
+  const [itemHasImage, setItemHasImage] = useState(false);
+  const [itemImageVersion, setItemImageVersion] = useState(0);
+  const [imageUploading, setImageUploading] = useState(false);
+  const itemImageInputRef = useRef<HTMLInputElement | null>(null);
 
   const [unboxVendor, setUnboxVendor] = useState('');
   const [unboxInvoice, setUnboxInvoice] = useState('');
@@ -300,15 +356,20 @@ export default function InventoryManagement() {
   const unboxSearchSeq = useRef(0);
 
   const reloadMovements = useCallback(async () => {
-    if (!selected || selected.itemType !== 'inventory' || branchId == null) {
+    if (
+      !selected ||
+      selected.itemType !== 'inventory' ||
+      movementBranchId == null ||
+      stockItemId == null
+    ) {
       setMovements([]);
       setMovementTotal(0);
       return;
     }
     setMovementsLoading(true);
     try {
-      const r = await listInventoryMovements(practiceId, branchId, {
-        inventoryItemId: selected.itemId,
+      const r = await listInventoryMovements(practiceId, movementBranchId, {
+        inventoryItemId: stockItemId,
         limit: 50,
         offset: 0,
       });
@@ -320,7 +381,7 @@ export default function InventoryManagement() {
     } finally {
       setMovementsLoading(false);
     }
-  }, [selected, branchId, practiceId]);
+  }, [selected, movementBranchId, practiceId, stockItemId]);
 
   const persistBranch = useCallback(
     (id: number) => {
@@ -338,8 +399,12 @@ export default function InventoryManagement() {
     (async () => {
       setBranchesError(null);
       try {
-        const list = await listPracticeBranches(practiceId);
+        const [list, settings] = await Promise.all([
+          listPracticeBranches(practiceId),
+          getPracticeSettings(practiceId).catch(() => ({})),
+        ]);
         if (cancelled) return;
+        setOnlineStoreImplemented(isOnlineStoreImplemented(settings));
         const active = list.filter((b) => b.isActive !== false);
         setBranches(active);
         let initial: number | null = null;
@@ -377,15 +442,11 @@ export default function InventoryManagement() {
     }
     let cancelled = false;
     (async () => {
-      setLocLoading(true);
-      setLocError(null);
       try {
         const list = await listInventoryBranchLocations(practiceId, branchId);
         if (!cancelled) setBranchLocations(Array.isArray(list) ? list : []);
-      } catch (e: unknown) {
-        if (!cancelled) setLocError(e instanceof Error ? e.message : 'Failed to load locations');
-      } finally {
-        if (!cancelled) setLocLoading(false);
+      } catch {
+        if (!cancelled) setBranchLocations([]);
       }
     })();
     return () => {
@@ -428,7 +489,10 @@ export default function InventoryManagement() {
     if (!detail || detail.itemType !== 'inventory') return;
     const item = detail.item as InventoryItem;
     const raw = item.showOnOnlineStore as unknown;
+    const shipRaw = item.shippable as unknown;
     setCatalogDraft({
+      description: item.description != null ? String(item.description) : '',
+      shippable: shipRaw === true || shipRaw === 'true' || shipRaw === 1 || shipRaw === '1',
       showOnOnlineStore: raw === true || raw === 'true' || raw === 1 || raw === '1',
       onlineStorePrice:
         item.onlineStorePrice != null && String(item.onlineStorePrice).trim() !== ''
@@ -446,7 +510,88 @@ export default function InventoryManagement() {
           ? String(item.alternateUnitsPerPackage)
           : '',
     });
+    setItemHasImage(Boolean(item.imageUrl && String(item.imageUrl).trim()));
+
+    const linkedId =
+      item.linkedInventoryItemId != null && Number.isFinite(Number(item.linkedInventoryItemId))
+        ? Number(item.linkedInventoryItemId)
+        : null;
+    setStockLinkItemId(linkedId);
+    setStockLinkQty(
+      item.linkedInventoryItemDefaultQuantity != null &&
+        String(item.linkedInventoryItemDefaultQuantity).trim() !== ''
+        ? String(item.linkedInventoryItemDefaultQuantity)
+        : ''
+    );
+    setStockLinkQuery('');
+    setStockLinkResults([]);
+    setStockLinkError(null);
   }, [detail]);
+
+  /** The link is stored as an id; fetch the stock item so the picker can name it. */
+  useEffect(() => {
+    if (stockLinkItemId == null) {
+      setStockLinkItemLabel('');
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const linked = await getItemWithPriceBreaks('inventory', stockLinkItemId, practiceId);
+        if (!cancelled) setStockLinkItemLabel(linked.item.name);
+      } catch {
+        if (!cancelled) setStockLinkItemLabel(`Item #${stockLinkItemId}`);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [stockLinkItemId, practiceId]);
+
+  useEffect(() => {
+    const q = stockLinkQuery.trim();
+    if (!q) {
+      setStockLinkResults([]);
+      return;
+    }
+    const seq = ++stockLinkSearchSeq.current;
+    const t = window.setTimeout(async () => {
+      setStockLinkSearching(true);
+      try {
+        const rows = await searchItems(q, practiceId, 25);
+        if (stockLinkSearchSeq.current !== seq) return;
+        setStockLinkResults(
+          rows.filter(
+            (r) => r.itemType === 'inventory' && r.inventoryItem?.id !== selected?.itemId
+          )
+        );
+      } catch {
+        if (stockLinkSearchSeq.current === seq) setStockLinkResults([]);
+      } finally {
+        if (stockLinkSearchSeq.current === seq) setStockLinkSearching(false);
+      }
+    }, 300);
+    return () => window.clearTimeout(t);
+  }, [stockLinkQuery, practiceId, selected?.itemId]);
+
+  useEffect(() => {
+    if (movementBranchId == null) {
+      setMovementLocations([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await listInventoryBranchLocations(practiceId, movementBranchId);
+        if (!cancelled) setMovementLocations(Array.isArray(list) ? list : []);
+      } catch {
+        if (!cancelled) setMovementLocations([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [practiceId, movementBranchId]);
 
   useEffect(() => {
     const q = unboxItemQuery.trim();
@@ -471,16 +616,25 @@ export default function InventoryManagement() {
   }, [unboxItemQuery, practiceId]);
 
   useEffect(() => {
-    if (!branchLocations.length) {
+    if (!movementLocations.length) {
       setMovementFromId('');
       setMovementToId('');
+      return;
+    }
+    const def = movementLocations.find((l) => l.code === 'main') ?? movementLocations[0];
+    setMovementFromId(String(def.id));
+    setMovementToId(String(def.id));
+  }, [movementBranchId, movementLocations]);
+
+  useEffect(() => {
+    if (!branchLocations.length) {
       setUnboxToLocId('');
       return;
     }
     const def = branchLocations.find((l) => l.code === 'main') ?? branchLocations[0];
-    setMovementFromId(String(def.id));
-    setMovementToId(String(def.id));
-    setUnboxToLocId((prev) => (prev && branchLocations.some((l) => String(l.id) === prev) ? prev : String(def.id)));
+    setUnboxToLocId((prev) =>
+      prev && branchLocations.some((l) => String(l.id) === prev) ? prev : String(def.id)
+    );
   }, [branchId, branchLocations]);
 
   useEffect(() => {
@@ -511,62 +665,135 @@ export default function InventoryManagement() {
 
   const refreshDetailBundle = useCallback(
     async (sel: { itemType: ItemType; itemId: number }) => {
-      if (branchId == null) return;
       setDetailLoading(true);
       setDetailError(null);
       setStockError(null);
+      setBranchPricesError(null);
       try {
         const item = await getItemWithPriceBreaks(sel.itemType, sel.itemId, practiceId);
         setDetail(item);
 
         const entityType = itemTypeToEntityType(item.itemType);
         const base = moneyBaseFromCatalogRow(item.item as Record<string, unknown>);
-        const eff = await postEffectiveBranchPrice(practiceId, branchId, {
-          entityType,
-          entityId: sel.itemId,
-          base,
-        });
-        setEffective(eff.effective);
+
+        setBranchPricesLoading(true);
+        const branchList = branches.length
+          ? branches
+          : (await listPracticeBranches(practiceId)).filter((b) => b.isActive !== false);
+        const settled = await Promise.all(
+          branchList.map(async (b) => {
+            try {
+              const eff = await postEffectiveBranchPrice(practiceId, b.id, {
+                entityType,
+                entityId: sel.itemId,
+                base,
+              });
+              return { id: b.id, effective: eff.effective as MoneyFields, ok: true as const };
+            } catch {
+              return { id: b.id, effective: null, ok: false as const };
+            }
+          })
+        );
+        const map: Record<number, MoneyFields> = {};
+        let failCount = 0;
+        for (const row of settled) {
+          if (row.ok && row.effective) map[row.id] = row.effective;
+          else failCount += 1;
+        }
+        setBranchEffectiveById(map);
+        if (failCount > 0 && Object.keys(map).length === 0) {
+          setBranchPricesError('Could not load branch prices.');
+        } else if (failCount > 0) {
+          setBranchPricesError(`Could not load prices for ${failCount} branch${failCount === 1 ? '' : 'es'}.`);
+        }
+        setBranchPricesLoading(false);
 
         if (item.itemType === 'inventory') {
           setStockLoading(true);
+          // Counts belong to the stock item, so a code that draws from a master shows the
+          // master's on-hand rather than a confusing zero of its own.
+          const rawLink = (item.item as InventoryItem).linkedInventoryItemId;
+          const countedItemId =
+            rawLink != null && Number.isFinite(Number(rawLink)) ? Number(rawLink) : sel.itemId;
+          setStockItemId(countedItemId);
           try {
-            const s = await getInventoryBranchStock(practiceId, branchId, sel.itemId);
-            setStockSnapshot(s);
-            setReorderDraft(
-              s.reorderPoint == null || Number.isNaN(Number(s.reorderPoint))
-                ? ''
-                : String(s.reorderPoint)
+            const stockSettled = await Promise.all(
+              branchList.map(async (b) => {
+                try {
+                  const s = await getInventoryBranchStock(practiceId, b.id, countedItemId);
+                  return { id: b.id, stock: s, ok: true as const };
+                } catch {
+                  return { id: b.id, stock: null, ok: false as const };
+                }
+              })
             );
+            const stockMap: Record<number, InventoryBranchStock> = {};
+            const reorderMap: Record<number, string> = {};
+            for (const row of stockSettled) {
+              if (row.ok && row.stock) {
+                stockMap[row.id] = row.stock;
+                reorderMap[row.id] =
+                  row.stock.reorderPoint == null || Number.isNaN(Number(row.stock.reorderPoint))
+                    ? ''
+                    : String(row.stock.reorderPoint);
+              }
+            }
+            setStockByBranchId(stockMap);
+            setReorderDraftByBranchId(reorderMap);
           } catch {
-            setStockSnapshot(null);
-            setReorderDraft('');
+            setStockByBranchId({});
+            setReorderDraftByBranchId({});
           } finally {
             setStockLoading(false);
           }
         } else {
-          setStockSnapshot(null);
-          setReorderDraft('');
+          setStockByBranchId({});
+          setReorderDraftByBranchId({});
+          setStockItemId(null);
         }
       } catch (e: unknown) {
         setDetail(null);
-        setEffective(null);
+        setBranchEffectiveById({});
+        setStockByBranchId({});
         setDetailError(e instanceof Error ? e.message : 'Failed to load item');
       } finally {
         setDetailLoading(false);
+        setBranchPricesLoading(false);
       }
     },
-    [branchId, practiceId]
+    [practiceId, branches]
   );
 
   useEffect(() => {
-    if (!selected || branchId == null) {
+    if (!selected) {
       setDetail(null);
       setEffective(null);
+      setBranchEffectiveById({});
+      setStockByBranchId({});
+      setCountsExpandedBranchId(null);
+      setMovementBranchId(null);
       return;
     }
+    setCountsExpandedBranchId(null);
     void refreshDetailBundle(selected);
-  }, [selected, branchId, refreshDetailBundle]);
+  }, [selected, refreshDetailBundle]);
+
+  useEffect(() => {
+    if (!selected) return;
+    setMovementBranchId((prev) => {
+      if (prev != null && branches.some((b) => b.id === prev)) return prev;
+      if (branchId != null && branches.some((b) => b.id === branchId)) return branchId;
+      return branches[0]?.id ?? null;
+    });
+  }, [selected, branches, branchId]);
+
+  useEffect(() => {
+    if (branchId != null && branchEffectiveById[branchId]) {
+      setEffective(branchEffectiveById[branchId]);
+    } else {
+      setEffective(null);
+    }
+  }, [branchId, branchEffectiveById]);
 
   useEffect(() => {
     if (!selected) return;
@@ -580,33 +807,107 @@ export default function InventoryManagement() {
     return () => window.removeEventListener('keydown', onKey);
   }, [selected, priceModalOpen, bulkModalOpen]);
 
-  function openPriceModal() {
-    if (effective) {
-      setPriceForm(effectiveToResolved(effective));
+  function openPriceModal(opts?: {
+    seedBranchId?: number | null;
+    targetBranchIds?: number[];
+    onlineStoreOnly?: boolean;
+  }) {
+    const seedId = opts?.seedBranchId ?? branchId;
+    const seed = (seedId != null ? branchEffectiveById[seedId] : null) ?? effective;
+    if (seed) {
+      setPriceForm(effectiveToResolved(seed));
     } else if (detail) {
       setPriceForm(moneyBaseFromCatalogRow(detail.item as Record<string, unknown>));
+    }
+    if (opts?.onlineStoreOnly) {
+      setPriceTargetBranchIds(
+        onlineStoreImplemented && detail?.itemType === 'inventory' ? [ONLINE_STORE_TARGET_ID] : []
+      );
+      const base =
+        catalogDraft.onlineStorePrice.trim() !== ''
+          ? Number(catalogDraft.onlineStorePrice)
+          : NaN;
+      setPriceForm({
+        price: Number.isFinite(base) ? base : 0,
+        cost: practiceMoney?.cost ?? 0,
+        serviceFee: practiceMoney?.serviceFee ?? 0,
+        minimumPrice: practiceMoney?.minimumPrice ?? 0,
+      });
+    } else {
+      const targets =
+        opts?.targetBranchIds ??
+        (seedId != null ? [seedId] : branchId != null ? [branchId] : []);
+      setPriceTargetBranchIds(targets);
     }
     setPriceError(null);
     setPriceModalOpen(true);
   }
 
+  function openPriceModalAllBranches() {
+    const targets = branches.map((b) => b.id);
+    if (onlineStoreImplemented && detail?.itemType === 'inventory') {
+      targets.push(ONLINE_STORE_TARGET_ID);
+    }
+    openPriceModal({
+      seedBranchId: branchId,
+      targetBranchIds: targets,
+    });
+  }
+
   async function saveBranchPrices() {
-    if (!selected || branchId == null || !detail) return;
+    if (!selected || !detail) return;
+    const realBranchIds = priceTargetBranchIds.filter((id) => id !== ONLINE_STORE_TARGET_ID);
+    const applyOnlineStore =
+      onlineStoreImplemented &&
+      selected.itemType === 'inventory' &&
+      priceTargetBranchIds.includes(ONLINE_STORE_TARGET_ID);
+    if (realBranchIds.length === 0 && !applyOnlineStore) {
+      setPriceError('Select at least one branch, or Online Store.');
+      return;
+    }
     setPriceSaving(true);
     setPriceError(null);
     try {
       const entityType = itemTypeToEntityType(detail.itemType);
-      await upsertBranchPriceOverride(practiceId, branchId, {
+      const body = {
         entityType,
         entityId: selected.itemId,
         price: priceForm.price,
         cost: priceForm.cost,
         serviceFee: priceForm.serviceFee,
         minimumPrice: priceForm.minimumPrice,
-      });
-      setToast('Branch prices saved');
+      };
+      const branchResults = await Promise.allSettled(
+        realBranchIds.map((id) => upsertBranchPriceOverride(practiceId, id, body))
+      );
+      const branchFailed = branchResults.filter((r) => r.status === 'rejected').length;
+      const branchOk = branchResults.length - branchFailed;
+
+      let storeOk = false;
+      if (applyOnlineStore) {
+        // Price only — leave per-SKU showOnOnlineStore as the doctor set it.
+        await patchPracticeInventoryItem(practiceId, selected.itemId, {
+          onlineStorePrice: priceForm.price,
+        });
+        storeOk = true;
+      }
+
+      if (branchFailed > 0 && branchOk === 0 && !storeOk) {
+        setPriceError(`Could not save prices (${branchFailed} failed).`);
+        return;
+      }
+      if (branchFailed > 0) {
+        setPriceError(
+          `Saved to ${branchOk} branch${branchOk === 1 ? '' : 'es'}; ${branchFailed} failed.`
+        );
+      }
+
+      const parts: string[] = [];
+      if (branchOk > 0) parts.push(`${branchOk} branch${branchOk === 1 ? '' : 'es'}`);
+      if (storeOk) parts.push('online store');
+      setToast(parts.length ? `Prices saved to ${parts.join(' and ')}` : 'Saved');
       window.setTimeout(() => setToast(null), 3500);
-      setPriceModalOpen(false);
+      if (branchFailed === 0) setPriceModalOpen(false);
       await refreshDetailBundle(selected);
     } catch (e: unknown) {
       setPriceError(e instanceof Error ? e.message : 'Save failed');
@@ -616,22 +917,41 @@ export default function InventoryManagement() {
   }
 
   async function resetBranchPrices() {
-    if (!selected || branchId == null || !detail) return;
+    if (!selected || !detail) return;
+    const realBranchIds = priceTargetBranchIds.filter((id) => id !== ONLINE_STORE_TARGET_ID);
+    if (realBranchIds.length === 0) {
+      setPriceError('Select at least one branch to clear (Online Store is not cleared here).');
+      return;
+    }
     setPriceSaving(true);
     setPriceError(null);
     try {
       const entityType = itemTypeToEntityType(detail.itemType);
-      await upsertBranchPriceOverride(practiceId, branchId, {
+      const body = {
         entityType,
         entityId: selected.itemId,
         price: null,
         cost: null,
         serviceFee: null,
         minimumPrice: null,
-      });
-      setToast('Branch price overrides cleared');
+      };
+      const results = await Promise.allSettled(
+        realBranchIds.map((id) => upsertBranchPriceOverride(practiceId, id, body))
+      );
+      const failed = results.filter((r) => r.status === 'rejected').length;
+      const ok = results.length - failed;
+      if (failed > 0 && ok === 0) {
+        setPriceError('Could not clear overrides.');
+        return;
+      }
+      if (failed > 0) {
+        setPriceError(`Cleared ${ok}; ${failed} failed.`);
+      }
+      setToast(
+        `Branch price overrides cleared on ${ok} branch${ok === 1 ? '' : 'es'}`
+      );
       window.setTimeout(() => setToast(null), 3500);
-      setPriceModalOpen(false);
+      if (failed === 0) setPriceModalOpen(false);
       await refreshDetailBundle(selected);
     } catch (e: unknown) {
       setPriceError(e instanceof Error ? e.message : 'Reset failed');
@@ -640,21 +960,31 @@ export default function InventoryManagement() {
     }
   }
 
-  async function saveReorderPoint() {
-    if (!selected || branchId == null || selected.itemType !== 'inventory') return;
+  async function saveReorderPoint(forBranchId: number) {
+    if (!selected || selected.itemType !== 'inventory' || stockItemId == null) return;
     setStockSaving(true);
     setStockError(null);
     try {
-      const reorderPoint =
-        reorderDraft.trim() === '' ? null : Number(reorderDraft.trim());
-      if (reorderDraft.trim() !== '' && !Number.isFinite(reorderPoint as number)) {
+      const draft = reorderDraftByBranchId[forBranchId] ?? '';
+      const reorderPoint = draft.trim() === '' ? null : Number(draft.trim());
+      if (draft.trim() !== '' && !Number.isFinite(reorderPoint as number)) {
         setStockError('Reorder point must be a number');
         return;
       }
-      const updated = await upsertInventoryBranchStock(practiceId, branchId, selected.itemId, {
-        reorderPoint,
-      });
-      setStockSnapshot(updated);
+      const updated = await upsertInventoryBranchStock(
+        practiceId,
+        forBranchId,
+        stockItemId,
+        { reorderPoint }
+      );
+      setStockByBranchId((prev) => ({ ...prev, [forBranchId]: updated }));
+      setReorderDraftByBranchId((prev) => ({
+        ...prev,
+        [forBranchId]:
+          updated.reorderPoint == null || Number.isNaN(Number(updated.reorderPoint))
+            ? ''
+            : String(updated.reorderPoint),
+      }));
       setToast('Reorder point saved');
       window.setTimeout(() => setToast(null), 3500);
     } catch (e: unknown) {
@@ -665,7 +995,14 @@ export default function InventoryManagement() {
   }
 
   async function submitMovement() {
-    if (!selected || branchId == null || selected.itemType !== 'inventory') return;
+    if (
+      !selected ||
+      movementBranchId == null ||
+      selected.itemType !== 'inventory' ||
+      stockItemId == null
+    ) {
+      return;
+    }
     setMovementSubmitting(true);
     setMovementError(null);
     try {
@@ -690,7 +1027,7 @@ export default function InventoryManagement() {
       }
       const body: PostInventoryMovementBody = {
         movementType,
-        inventoryItemId: selected.itemId,
+        inventoryItemId: stockItemId,
         quantity: qty,
       };
       if (movementNeedsFrom(movementType)) body.fromBranchLocationId = fromId;
@@ -706,7 +1043,7 @@ export default function InventoryManagement() {
         }
         body.movedByEmployeeId = eid;
       }
-      await postInventoryMovement(practiceId, branchId, body);
+      await postInventoryMovement(practiceId, movementBranchId, body);
       setToast('Movement recorded');
       window.setTimeout(() => setToast(null), 3500);
       setMovementNote('');
@@ -719,60 +1056,20 @@ export default function InventoryManagement() {
     }
   }
 
-  async function addBranchLocation() {
-    if (branchId == null) return;
-    const code = newLocCode.trim();
-    const name = newLocName.trim();
-    if (!code || !name) {
-      setLocError('Location code and name are required');
+  async function loadMoreMovements() {
+    if (
+      !selected ||
+      selected.itemType !== 'inventory' ||
+      movementBranchId == null ||
+      stockItemId == null
+    ) {
       return;
     }
-    setNewLocSaving(true);
-    setLocError(null);
-    try {
-      const sortOrderRaw = newLocSort.trim();
-      const sortOrder = sortOrderRaw === '' ? undefined : Number(sortOrderRaw);
-      await createInventoryBranchLocation(practiceId, branchId, {
-        code,
-        name,
-        ...(Number.isFinite(sortOrder as number) ? { sortOrder: sortOrder as number } : {}),
-      });
-      setNewLocCode('');
-      setNewLocName('');
-      setNewLocSort('');
-      setToast('Location created');
-      window.setTimeout(() => setToast(null), 3500);
-      const list = await listInventoryBranchLocations(practiceId, branchId);
-      setBranchLocations(Array.isArray(list) ? list : []);
-    } catch (e: unknown) {
-      setLocError(e instanceof Error ? e.message : 'Failed to create location');
-    } finally {
-      setNewLocSaving(false);
-    }
-  }
-
-  async function deactivateLocation(loc: InventoryBranchLocation) {
-    if (branchId == null || loc.isDefault) return;
-    if (!window.confirm(`Deactivate location “${loc.name}”?`)) return;
-    setLocError(null);
-    try {
-      await patchInventoryBranchLocation(practiceId, branchId, loc.id, { isActive: false });
-      const list = await listInventoryBranchLocations(practiceId, branchId);
-      setBranchLocations(Array.isArray(list) ? list : []);
-      setToast('Location deactivated');
-      window.setTimeout(() => setToast(null), 3500);
-    } catch (e: unknown) {
-      setLocError(e instanceof Error ? e.message : 'Update failed');
-    }
-  }
-
-  async function loadMoreMovements() {
-    if (!selected || selected.itemType !== 'inventory' || branchId == null) return;
     if (movements.length >= movementTotal) return;
     setMovementsLoading(true);
     try {
-      const r = await listInventoryMovements(practiceId, branchId, {
-        inventoryItemId: selected.itemId,
+      const r = await listInventoryMovements(practiceId, movementBranchId, {
+        inventoryItemId: stockItemId,
         limit: 50,
         offset: movements.length,
       });
@@ -785,15 +1082,12 @@ export default function InventoryManagement() {
     }
   }
 
-  async function saveCatalogExtensions() {
-    if (!selected || selected.itemType !== 'inventory' || branchId == null) return;
-    setCatalogSaving(true);
-    setCatalogError(null);
+  async function saveUnitFields() {
+    if (!selected || selected.itemType !== 'inventory') return;
+    setUnitsSaving(true);
+    setUnitsError(null);
     try {
       await patchPracticeInventoryItem(practiceId, selected.itemId, {
-        showOnOnlineStore: catalogDraft.showOnOnlineStore,
-        onlineStorePrice:
-          catalogDraft.onlineStorePrice.trim() === '' ? null : Number(catalogDraft.onlineStorePrice),
         sellUnitType: catalogDraft.sellUnitType || null,
         sellUnitTypeDetail: catalogDraft.sellUnitTypeDetail.trim() || null,
         unitsPerPackage:
@@ -804,13 +1098,98 @@ export default function InventoryManagement() {
             ? null
             : Number(catalogDraft.alternateUnitsPerPackage),
       });
-      setToast('Online store & unit fields saved');
+      setToast('Sell / dispense units saved');
+      window.setTimeout(() => setToast(null), 3500);
+      await refreshDetailBundle(selected);
+    } catch (e: unknown) {
+      setUnitsError(e instanceof Error ? e.message : 'Save failed');
+    } finally {
+      setUnitsSaving(false);
+    }
+  }
+
+  async function saveStockLink() {
+    if (!selected || selected.itemType !== 'inventory') return;
+    setStockLinkSaving(true);
+    setStockLinkError(null);
+    try {
+      const qty = stockLinkQty.trim() === '' ? null : Number(stockLinkQty);
+      if (stockLinkItemId != null && (qty == null || !Number.isFinite(qty) || qty <= 0)) {
+        setStockLinkError('Enter how many stock units one sale consumes (e.g. 100).');
+        return;
+      }
+      await patchPracticeInventoryItem(practiceId, selected.itemId, {
+        linkedInventoryItemId: stockLinkItemId,
+        linkedInventoryItemDefaultQuantity: stockLinkItemId == null ? null : qty,
+      });
+      setToast(stockLinkItemId == null ? 'Stock link cleared' : 'Stock item saved');
+      window.setTimeout(() => setToast(null), 3500);
+      await refreshDetailBundle(selected);
+    } catch (e: unknown) {
+      setStockLinkError(e instanceof Error ? e.message : 'Save failed');
+    } finally {
+      setStockLinkSaving(false);
+    }
+  }
+
+  async function saveOnlineStoreFields() {
+    if (!selected || selected.itemType !== 'inventory') return;
+    setCatalogSaving(true);
+    setCatalogError(null);
+    try {
+      await patchPracticeInventoryItem(practiceId, selected.itemId, {
+        description: catalogDraft.description.trim() || null,
+        shippable: catalogDraft.shippable,
+        showOnOnlineStore: catalogDraft.showOnOnlineStore,
+        onlineStorePrice:
+          catalogDraft.onlineStorePrice.trim() === ''
+            ? null
+            : Number(catalogDraft.onlineStorePrice),
+      });
+      setToast('Online store details saved');
       window.setTimeout(() => setToast(null), 3500);
       await refreshDetailBundle(selected);
     } catch (e: unknown) {
       setCatalogError(e instanceof Error ? e.message : 'Save failed');
     } finally {
       setCatalogSaving(false);
+    }
+  }
+
+  async function onInventoryImageSelected(file: File | null) {
+    if (!file || !selected || selected.itemType !== 'inventory') return;
+    setImageUploading(true);
+    setCatalogError(null);
+    try {
+      await uploadInventoryItemImage(practiceId, selected.itemId, file);
+      setItemHasImage(true);
+      setItemImageVersion((v) => v + 1);
+      setToast('Picture uploaded');
+      window.setTimeout(() => setToast(null), 3500);
+      await refreshDetailBundle(selected);
+    } catch (e: unknown) {
+      setCatalogError(e instanceof Error ? e.message : 'Image upload failed');
+    } finally {
+      setImageUploading(false);
+      if (itemImageInputRef.current) itemImageInputRef.current.value = '';
+    }
+  }
+
+  async function removeInventoryImage() {
+    if (!selected || selected.itemType !== 'inventory') return;
+    setImageUploading(true);
+    setCatalogError(null);
+    try {
+      await deleteInventoryItemImage(practiceId, selected.itemId);
+      setItemHasImage(false);
+      setItemImageVersion((v) => v + 1);
+      setToast('Picture removed');
+      window.setTimeout(() => setToast(null), 3500);
+      await refreshDetailBundle(selected);
+    } catch (e: unknown) {
+      setCatalogError(e instanceof Error ? e.message : 'Could not remove image');
+    } finally {
+      setImageUploading(false);
     }
   }
 
@@ -944,24 +1323,14 @@ export default function InventoryManagement() {
 
   function resolveLocationName(id: number | null | undefined): string {
     if (id == null) return '—';
-    const loc = branchLocations.find((l) => l.id === id);
+    const loc =
+      movementLocations.find((l) => l.id === id) ?? branchLocations.find((l) => l.id === id);
     return loc ? locationLabel(loc) : `#${id}`;
   }
 
   const practiceMoney: ResolvedMoney | null = detail
     ? moneyBaseFromCatalogRow(detail.item as Record<string, unknown>)
     : null;
-
-  const unitCostForSelected =
-    effective != null ? toMoneyNumber(effective.cost) : practiceMoney ? practiceMoney.cost : 0;
-  const selectedInventoryExtendedCost =
-    selected?.itemType === 'inventory' &&
-    detail?.itemType === 'inventory' &&
-    stockSnapshot != null &&
-    stockSnapshot.quantityOnHandTotal != null &&
-    !Number.isNaN(Number(stockSnapshot.quantityOnHandTotal))
-      ? unitCostForSelected * Number(stockSnapshot.quantityOnHandTotal)
-      : null;
 
   return (
     <div className="settings-section">
@@ -1220,20 +1589,6 @@ export default function InventoryManagement() {
       </div>
 
       <div className="settings-form-group" style={{ marginBottom: 20 }}>
-        <label className="settings-label">Practice</label>
-        <p className="settings-muted" style={{ marginTop: 0 }}>
-          Using practice ID <strong>{practiceId}</strong>
-          {decodeJwtPayload(token ?? '')?.practiceId != null ? ' (from your session)' : ''}
-          {decodeJwtPayload(token ?? '')?.practiceId == null && import.meta.env.VITE_PRACTICE_ID
-            ? ' (from VITE_PRACTICE_ID)'
-            : ''}
-          {decodeJwtPayload(token ?? '')?.practiceId == null && !import.meta.env.VITE_PRACTICE_ID
-            ? ' (default 1 — set VITE_PRACTICE_ID or JWT practiceId if needed)'
-            : ''}
-        </p>
-      </div>
-
-      <div className="settings-form-group" style={{ marginBottom: 20 }}>
         <label className="settings-label" htmlFor="inv-branch">
           Branch
         </label>
@@ -1264,6 +1619,10 @@ export default function InventoryManagement() {
             </option>
           ))}
         </select>
+        <p className="settings-muted" style={{ marginTop: 8, fontSize: 13 }}>
+          Add or edit branches and location buckets under{' '}
+          <a href="/schedule/settings?tab=branches-locations">Settings → Branches &amp; Locations</a>.
+        </p>
       </div>
 
       {branchId != null && (
@@ -1309,105 +1668,6 @@ export default function InventoryManagement() {
                   </table>
                 </div>
               )}
-            </>
-          )}
-        </div>
-      )}
-
-      {branchId != null && (
-        <div className="settings-card" style={{ marginBottom: 24 }}>
-          <h3 className="settings-card-title">Location buckets (this branch)</h3>
-          <p className="settings-muted" style={{ marginBottom: 12 }}>
-            Each branch has a default <code>main</code> bucket. Add more (office, vehicle, etc.) for
-            transfers and reporting.
-          </p>
-          {locError && <p className="settings-error-message">{locError}</p>}
-          {locLoading ? (
-            <p className="settings-muted">Loading locations…</p>
-          ) : (
-            <>
-              <div className="settings-table-container" style={{ marginBottom: 16 }}>
-                <table className="settings-table">
-                  <thead>
-                    <tr>
-                      <th>Code</th>
-                      <th>Name</th>
-                      <th>Default</th>
-                      <th>Active</th>
-                      <th />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {branchLocations.map((loc) => (
-                      <tr key={loc.id}>
-                        <td>
-                          <code>{loc.code}</code>
-                        </td>
-                        <td>{loc.name}</td>
-                        <td>{loc.isDefault ? 'Yes' : '—'}</td>
-                        <td>{loc.isActive === false ? 'No' : 'Yes'}</td>
-                        <td>
-                          {!loc.isDefault && loc.isActive !== false && (
-                            <button
-                              type="button"
-                              className="btn secondary"
-                              style={{ fontSize: 12, padding: '4px 10px' }}
-                              onClick={() => void deactivateLocation(loc)}
-                            >
-                              Deactivate
-                            </button>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <div
-                style={{
-                  display: 'flex',
-                  flexWrap: 'wrap',
-                  gap: 10,
-                  alignItems: 'flex-end',
-                  maxWidth: 720,
-                }}
-              >
-                <label className="settings-label" style={{ flex: '1 1 140px', marginBottom: 0 }}>
-                  New code
-                  <input
-                    className="settings-input"
-                    value={newLocCode}
-                    onChange={(e) => setNewLocCode(e.target.value)}
-                    placeholder="e.g. vehicle_1"
-                  />
-                </label>
-                <label className="settings-label" style={{ flex: '1 1 160px', marginBottom: 0 }}>
-                  New name
-                  <input
-                    className="settings-input"
-                    value={newLocName}
-                    onChange={(e) => setNewLocName(e.target.value)}
-                    placeholder="Display name"
-                  />
-                </label>
-                <label className="settings-label" style={{ flex: '0 1 100px', marginBottom: 0 }}>
-                  Sort
-                  <input
-                    className="settings-input"
-                    value={newLocSort}
-                    onChange={(e) => setNewLocSort(e.target.value)}
-                    placeholder="Optional"
-                  />
-                </label>
-                <button
-                  type="button"
-                  className="btn primary"
-                  disabled={newLocSaving}
-                  onClick={() => void addBranchLocation()}
-                >
-                  {newLocSaving ? 'Adding…' : 'Add location'}
-                </button>
-              </div>
             </>
           )}
         </div>
@@ -1589,34 +1849,14 @@ export default function InventoryManagement() {
           <div className="inv-item-detail-modal" onClick={(e) => e.stopPropagation()}>
             <div className="inv-item-detail-modal__header">
               <div>
-                <h2 id="inv-item-detail-modal-title">Branch details</h2>
+                <h2 id="inv-item-detail-modal-title">
+                  {selected.itemType === 'inventory'
+                    ? 'View / edit inventory item'
+                    : 'Inventory item'}
+                </h2>
                 <p className="inv-item-detail-modal__subtitle">{selected.label}</p>
               </div>
               <div className="inv-item-detail-modal__header-actions">
-                <label htmlFor="inv-branch-modal" className="settings-label" style={{ margin: 0, fontSize: 12 }}>
-                  Branch
-                  <select
-                    id="inv-branch-modal"
-                    className="settings-input inv-item-detail-modal__branch"
-                    value={branchId ?? ''}
-                    disabled={!branches.length}
-                    onChange={(e) => {
-                      const v = Number(e.target.value);
-                      if (Number.isFinite(v)) {
-                        setBranchId(v);
-                        persistBranch(v);
-                      }
-                    }}
-                  >
-                    {!branches.length && <option value="">No branches</option>}
-                    {branches.map((b) => (
-                      <option key={b.id} value={b.id}>
-                        {b.name}
-                        {b.isDefault ? ' (default)' : ''}
-                      </option>
-                    ))}
-                  </select>
-                </label>
                 <button
                   type="button"
                   className="inv-item-detail-modal__close"
@@ -1629,10 +1869,7 @@ export default function InventoryManagement() {
             </div>
             <div className="inv-item-detail-modal__body">
               <div className="settings-card" style={{ margin: 0 }}>
-          {selected && branchId == null && (
-            <p className="settings-muted">Choose a branch to load stock and prices.</p>
-          )}
-          {selected && branchId != null && detailLoading && (
+          {selected && detailLoading && (
             <div className="settings-loading">
               <div className="settings-spinner" />
               <span>Loading…</span>
@@ -1641,7 +1878,7 @@ export default function InventoryManagement() {
           {detailError && (
             <div className="settings-message settings-error-message">{detailError}</div>
           )}
-          {selected && branchId != null && !detailLoading && detail && (
+          {selected && !detailLoading && detail && (
             <>
               <p className="settings-card-subtitle" style={{ marginBottom: 16 }}>
                 <strong>{detail.item.name}</strong> ·{' '}
@@ -1651,128 +1888,25 @@ export default function InventoryManagement() {
                 )}
               </p>
 
-              {practiceMoney && (
-                <div style={{ marginBottom: 16 }}>
-                  <h4 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 8px' }}>Practice catalog</h4>
-                  <table className="settings-table">
-                    <tbody>
-                      <tr>
-                        <td>Price</td>
-                        <td>${practiceMoney.price.toFixed(2)}</td>
-                      </tr>
-                      <tr>
-                        <td>Cost</td>
-                        <td>${practiceMoney.cost.toFixed(2)}</td>
-                      </tr>
-                      <tr>
-                        <td>Service fee</td>
-                        <td>${practiceMoney.serviceFee.toFixed(2)}</td>
-                      </tr>
-                      <tr>
-                        <td>Minimum price</td>
-                        <td>${practiceMoney.minimumPrice.toFixed(2)}</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              )}
-
-              {effective && (
-                <div style={{ marginBottom: 16 }}>
-                  <h4 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 8px' }}>
-                    Effective at this branch
-                  </h4>
-                  <table className="settings-table">
-                    <tbody>
-                      <tr>
-                        <td>Price</td>
-                        <td>${effective.price?.toFixed(2) ?? '—'}</td>
-                      </tr>
-                      <tr>
-                        <td>Cost</td>
-                        <td>${effective.cost?.toFixed(2) ?? '—'}</td>
-                      </tr>
-                      <tr>
-                        <td>Service fee</td>
-                        <td>${effective.serviceFee?.toFixed(2) ?? '—'}</td>
-                      </tr>
-                      <tr>
-                        <td>Minimum price</td>
-                        <td>${effective.minimumPrice?.toFixed(2) ?? '—'}</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                  <div style={{ marginTop: 10, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                    <button type="button" className="btn primary" onClick={openPriceModal}>
-                      Edit branch prices
-                    </button>
-                    <button type="button" className="btn secondary" onClick={() => refreshDetailBundle(selected)}>
-                      Refresh
-                    </button>
-                  </div>
-                </div>
-              )}
-
               {detail.itemType === 'inventory' && (
-                <div
-                  style={{
-                    marginBottom: 20,
-                    padding: 16,
-                    border: '1px solid rgba(0,0,0,0.08)',
-                    borderRadius: 8,
-                  }}
-                >
+                <div style={{ marginBottom: 20 }}>
                   <h4 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 8px' }}>
-                    Online store & sell / dispense units
+                    Sell / dispense units
                   </h4>
                   <p className="settings-muted" style={{ marginBottom: 12, fontSize: 13 }}>
-                    Show this SKU on the online store and set its web price. Primary and alternate units
-                    describe how you sell or use the item (for example bottle of 100 vs single capsule).
+                    How this item is counted when sold or dispensed (for example a bottle of 100 vs a
+                    single capsule).
                   </p>
-                  {catalogError && (
+                  {unitsError && (
                     <div className="settings-message settings-error-message" style={{ marginBottom: 8 }}>
-                      {catalogError}
+                      {unitsError}
                     </div>
                   )}
-                  <label
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 8,
-                      marginBottom: 12,
-                      cursor: 'pointer',
-                      fontSize: 14,
-                    }}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={catalogDraft.showOnOnlineStore}
-                      onChange={(e) =>
-                        setCatalogDraft((d) => ({ ...d, showOnOnlineStore: e.target.checked }))
-                      }
-                    />
-                    Show on online store
-                  </label>
-                  <label className="settings-label">
-                    Online store price
-                    <input
-                      type="number"
-                      step="0.01"
-                      className="settings-input"
-                      disabled={!catalogDraft.showOnOnlineStore}
-                      value={catalogDraft.onlineStorePrice}
-                      onChange={(e) =>
-                        setCatalogDraft((d) => ({ ...d, onlineStorePrice: e.target.value }))
-                      }
-                      placeholder="0.00"
-                    />
-                  </label>
                   <div
                     style={{
                       display: 'grid',
                       gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
                       gap: 10,
-                      marginTop: 10,
                     }}
                   >
                     <label className="settings-label">
@@ -1834,7 +1968,10 @@ export default function InventoryManagement() {
                         className="settings-input"
                         value={catalogDraft.alternateUnitsPerPackage}
                         onChange={(e) =>
-                          setCatalogDraft((d) => ({ ...d, alternateUnitsPerPackage: e.target.value }))
+                          setCatalogDraft((d) => ({
+                            ...d,
+                            alternateUnitsPerPackage: e.target.value,
+                          }))
                         }
                       />
                     </label>
@@ -1843,275 +1980,819 @@ export default function InventoryManagement() {
                     type="button"
                     className="btn primary"
                     style={{ marginTop: 14 }}
-                    disabled={catalogSaving}
-                    onClick={() => void saveCatalogExtensions()}
+                    disabled={unitsSaving}
+                    onClick={() => void saveUnitFields()}
                   >
-                    {catalogSaving ? 'Saving…' : 'Save online store & units'}
+                    {unitsSaving ? 'Saving…' : 'Save units'}
                   </button>
                 </div>
               )}
 
               {detail.itemType === 'inventory' && (
                 <div style={{ marginBottom: 20 }}>
-                  <h4 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 8px' }}>Stock at this branch</h4>
-                  {stockLoading ? (
-                    <p className="settings-muted">Loading stock…</p>
-                  ) : (
-                    <>
-                      {stockError && (
-                        <div className="settings-message settings-error-message" style={{ marginBottom: 8 }}>
-                          {stockError}
+                  <h4 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 8px' }}>Stock item</h4>
+                  <p className="settings-muted" style={{ marginBottom: 12, fontSize: 13 }}>
+                    Which item is counted when this one is sold. Leave empty when this item is its
+                    own stock. Point several sellable codes at one stock item — a single capsule and
+                    a bottle of 100 both draw from the same capsule pool — and counts stay in one
+                    place no matter how you sell.
+                  </p>
+                  {stockLinkError && (
+                    <div className="settings-message settings-error-message" style={{ marginBottom: 8 }}>
+                      {stockLinkError}
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 520 }}>
+                    <div>
+                      <div className="settings-label" style={{ marginBottom: 6 }}>
+                        Draws from
+                      </div>
+                      {stockLinkItemId == null ? (
+                        <>
+                          <input
+                            className="settings-input"
+                            value={stockLinkQuery}
+                            onChange={(e) => setStockLinkQuery(e.target.value)}
+                            placeholder="Search inventory items (blank = draws on itself)"
+                          />
+                          {stockLinkSearching && (
+                            <p className="settings-muted" style={{ margin: '6px 0 0', fontSize: 13 }}>
+                              Searching…
+                            </p>
+                          )}
+                          {stockLinkResults.length > 0 && (
+                            <div className="inv-stock-link__results">
+                              {stockLinkResults.map((r) => (
+                                <button
+                                  key={`stock-link-${r.inventoryItem?.id}`}
+                                  type="button"
+                                  className="inv-stock-link__result"
+                                  onClick={() => {
+                                    const id = r.inventoryItem?.id;
+                                    if (id == null) return;
+                                    setStockLinkItemId(Number(id));
+                                    setStockLinkItemLabel(r.name);
+                                    setStockLinkQuery('');
+                                    setStockLinkResults([]);
+                                  }}
+                                >
+                                  {r.name}
+                                  {r.code ? (
+                                    <span className="settings-muted"> · {r.code}</span>
+                                  ) : null}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                          <strong>{stockLinkItemLabel || `Item #${stockLinkItemId}`}</strong>
+                          <button
+                            type="button"
+                            className="btn secondary"
+                            style={{ padding: '4px 10px', fontSize: 13 }}
+                            onClick={() => {
+                              setStockLinkItemId(null);
+                              setStockLinkItemLabel('');
+                              setStockLinkQty('');
+                            }}
+                          >
+                            Change
+                          </button>
                         </div>
                       )}
-                      <p style={{ margin: '0 0 12px', fontSize: 16 }}>
-                        <strong>Total on hand:</strong>{' '}
-                        {stockSnapshot?.quantityOnHandTotal == null ||
-                        Number.isNaN(Number(stockSnapshot.quantityOnHandTotal))
-                          ? '—'
-                          : String(stockSnapshot.quantityOnHandTotal)}
-                      </p>
-                      {selectedInventoryExtendedCost != null && (
-                        <p style={{ margin: '0 0 12px', fontSize: 15 }}>
-                          <strong>Extended cost (this branch, this item):</strong> $
-                          {selectedInventoryExtendedCost.toFixed(2)}
-                          <span className="settings-muted" style={{ marginLeft: 8, fontSize: 13 }}>
-                            (effective unit cost × total on hand)
-                          </span>
-                        </p>
+                    </div>
+                    {stockLinkItemId != null && (
+                      <label className="settings-label" style={{ maxWidth: 320 }}>
+                        Stock units consumed per unit sold
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          className="settings-input"
+                          value={stockLinkQty}
+                          onChange={(e) => setStockLinkQty(e.target.value)}
+                          placeholder="e.g. 100 for a bottle of 100"
+                        />
+                      </label>
+                    )}
+                    <div>
+                      <button
+                        type="button"
+                        className="btn primary"
+                        disabled={stockLinkSaving}
+                        onClick={() => void saveStockLink()}
+                      >
+                        {stockLinkSaving ? 'Saving…' : 'Save stock item'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div style={{ marginBottom: 16 }}>
+                  <h4 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 8px' }}>
+                    Prices by branch
+                  </h4>
+                  <p className="settings-muted" style={{ marginBottom: 10, fontSize: 13 }}>
+                    Effective sell prices at each branch (practice catalog with any branch overrides).
+                    Sell total uses the same formula as SOAP and checkout. Edit one branch, or apply
+                    the same values to all.
+                  </p>
+                  {branchPricesError && (
+                    <div className="settings-message settings-error-message" style={{ marginBottom: 8 }}>
+                      {branchPricesError}
+                    </div>
+                  )}
+                  {branchPricesLoading && Object.keys(branchEffectiveById).length === 0 ? (
+                    <p className="settings-muted">Loading branch prices…</p>
+                  ) : (
+                    <table className="settings-table">
+                      <thead>
+                        <tr>
+                          <th>Branch</th>
+                          <th>Price</th>
+                          <th>Cost</th>
+                          <th>Service fee</th>
+                          <th>Min</th>
+                          <th>Sell total</th>
+                          <th />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {branches.map((b) => {
+                          const m = branchEffectiveById[b.id];
+                          return (
+                            <tr key={b.id}>
+                              <td>{b.name}</td>
+                              <td>{m?.price != null ? `$${Number(m.price).toFixed(2)}` : '—'}</td>
+                              <td>{m?.cost != null ? `$${Number(m.cost).toFixed(2)}` : '—'}</td>
+                              <td>
+                                {m?.serviceFee != null ? `$${Number(m.serviceFee).toFixed(2)}` : '—'}
+                              </td>
+                              <td>
+                                {m?.minimumPrice != null
+                                  ? `$${Number(m.minimumPrice).toFixed(2)}`
+                                  : '—'}
+                              </td>
+                              <td>
+                                {m?.price != null ? (
+                                  <strong>
+                                    ${unitSellTotal(detail.itemType, m).toFixed(2)}
+                                  </strong>
+                                ) : (
+                                  '—'
+                                )}
+                              </td>
+                              <td>
+                                <button
+                                  type="button"
+                                  className="btn secondary"
+                                  style={{ padding: '4px 10px', fontSize: 13 }}
+                                  onClick={() =>
+                                    openPriceModal({
+                                      seedBranchId: b.id,
+                                      targetBranchIds: [b.id],
+                                    })
+                                  }
+                                >
+                                  Edit
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                        {detail.itemType === 'inventory' && onlineStoreImplemented && (
+                          (() => {
+                            const base =
+                              catalogDraft.onlineStorePrice.trim() === ''
+                                ? null
+                                : Number(catalogDraft.onlineStorePrice);
+                            const hasBase = base != null && Number.isFinite(base);
+                            // Online store is not a branch: it carries its own web price but uses
+                            // the practice catalog cost / fee / minimum in the sell formula.
+                            const storeMoney: ResolvedMoney = {
+                              price: hasBase ? (base as number) : 0,
+                              cost: practiceMoney?.cost ?? 0,
+                              serviceFee: practiceMoney?.serviceFee ?? 0,
+                              minimumPrice: practiceMoney?.minimumPrice ?? 0,
+                            };
+                            return (
+                              <tr>
+                                <td>
+                                  Online store
+                                  {!catalogDraft.showOnOnlineStore && (
+                                    <span className="settings-muted" style={{ fontSize: 12 }}>
+                                      {' '}
+                                      · not listed
+                                    </span>
+                                  )}
+                                </td>
+                                <td>{hasBase ? `$${storeMoney.price.toFixed(2)}` : '—'}</td>
+                                <td>${storeMoney.cost.toFixed(2)}</td>
+                                <td>${storeMoney.serviceFee.toFixed(2)}</td>
+                                <td>${storeMoney.minimumPrice.toFixed(2)}</td>
+                                <td>
+                                  {hasBase ? (
+                                    <strong>
+                                      ${unitSellTotal(detail.itemType, storeMoney).toFixed(2)}
+                                    </strong>
+                                  ) : (
+                                    '—'
+                                  )}
+                                </td>
+                                <td>
+                                  <button
+                                    type="button"
+                                    className="btn secondary"
+                                    style={{ padding: '4px 10px', fontSize: 13 }}
+                                    onClick={() =>
+                                      openPriceModal({
+                                        seedBranchId: branchId,
+                                        onlineStoreOnly: true,
+                                      })
+                                    }
+                                  >
+                                    Edit
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })()
+                        )}
+                      </tbody>
+                    </table>
+                  )}
+                  <div style={{ marginTop: 10, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      className="btn primary"
+                      onClick={() => openPriceModalAllBranches()}
+                      disabled={!branches.length}
+                    >
+                      Apply prices to all…
+                    </button>
+                    <button
+                      type="button"
+                      className="btn secondary"
+                      onClick={() => refreshDetailBundle(selected)}
+                    >
+                      Refresh
+                    </button>
+                  </div>
+                </div>
+
+              {detail.itemType === 'inventory' && (
+                <div style={{ marginBottom: 20 }}>
+                  <h4 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 8px' }}>
+                    Counts by branch
+                  </h4>
+                  <p className="settings-muted" style={{ marginBottom: 10, fontSize: 13 }}>
+                    Click a branch to see location breakdown and set the reorder point.
+                    {stockLinkItemId != null && (
+                      <>
+                        {' '}
+                        Counts, reorder points and movements below belong to{' '}
+                        <strong>{stockLinkItemLabel || `item #${stockLinkItemId}`}</strong>, the
+                        stock item this one draws from.
+                      </>
+                    )}
+                  </p>
+                  {stockError && (
+                    <div className="settings-message settings-error-message" style={{ marginBottom: 8 }}>
+                      {stockError}
+                    </div>
+                  )}
+                  {stockLoading && Object.keys(stockByBranchId).length === 0 ? (
+                    <p className="settings-muted">Loading stock…</p>
+                  ) : (
+                    <table className="settings-table inv-counts-by-branch">
+                      <thead>
+                        <tr>
+                          <th style={{ width: 28 }} />
+                          <th>Branch</th>
+                          <th>On hand</th>
+                          <th>Reorder</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {branches.map((b) => {
+                          const stock = stockByBranchId[b.id];
+                          const expanded = countsExpandedBranchId === b.id;
+                          const onHand =
+                            stock?.quantityOnHandTotal == null ||
+                            Number.isNaN(Number(stock.quantityOnHandTotal))
+                              ? '—'
+                              : String(stock.quantityOnHandTotal);
+                          const reorder =
+                            stock?.reorderPoint == null || Number.isNaN(Number(stock.reorderPoint))
+                              ? '—'
+                              : String(stock.reorderPoint);
+                          const unitCost = toMoneyNumber(
+                            branchEffectiveById[b.id]?.cost ?? practiceMoney?.cost
+                          );
+                          const extCost =
+                            stock?.quantityOnHandTotal != null &&
+                            !Number.isNaN(Number(stock.quantityOnHandTotal))
+                              ? unitCost * Number(stock.quantityOnHandTotal)
+                              : null;
+                          return (
+                            <Fragment key={b.id}>
+                              <tr
+                                className="inv-counts-by-branch__row"
+                                onClick={() =>
+                                  setCountsExpandedBranchId((prev) => (prev === b.id ? null : b.id))
+                                }
+                              >
+                                <td>
+                                  {expanded ? (
+                                    <ChevronDown size={16} aria-hidden />
+                                  ) : (
+                                    <ChevronRight size={16} aria-hidden />
+                                  )}
+                                </td>
+                                <td>{b.name}</td>
+                                <td>{onHand}</td>
+                                <td>{reorder}</td>
+                              </tr>
+                              {expanded && (
+                                <tr className="inv-counts-by-branch__detail">
+                                  <td colSpan={4}>
+                                    {extCost != null && (
+                                      <p style={{ margin: '0 0 12px', fontSize: 14 }}>
+                                        <strong>Extended cost:</strong> ${extCost.toFixed(2)}
+                                        <span
+                                          className="settings-muted"
+                                          style={{ marginLeft: 8, fontSize: 13 }}
+                                        >
+                                          (unit cost × on hand)
+                                        </span>
+                                      </p>
+                                    )}
+                                    {stock?.locations && stock.locations.length > 0 ? (
+                                      <div
+                                        className="settings-table-container"
+                                        style={{ marginBottom: 12 }}
+                                      >
+                                        <table className="settings-table">
+                                          <thead>
+                                            <tr>
+                                              <th>Location</th>
+                                              <th>Code</th>
+                                              <th>Qty</th>
+                                            </tr>
+                                          </thead>
+                                          <tbody>
+                                            {stock.locations.map((row) => (
+                                              <tr key={row.branchLocationId}>
+                                                <td>{row.name}</td>
+                                                <td>
+                                                  <code>{row.code}</code>
+                                                </td>
+                                                <td>
+                                                  {row.quantityOnHand == null
+                                                    ? '—'
+                                                    : String(row.quantityOnHand)}
+                                                </td>
+                                              </tr>
+                                            ))}
+                                          </tbody>
+                                        </table>
+                                      </div>
+                                    ) : (
+                                      <p className="settings-muted" style={{ marginBottom: 12 }}>
+                                        No location balances yet.
+                                      </p>
+                                    )}
+                                    <div
+                                      style={{
+                                        display: 'flex',
+                                        flexDirection: 'column',
+                                        gap: 10,
+                                        maxWidth: 360,
+                                      }}
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
+                                      <label className="settings-label">
+                                        Reorder point
+                                        <input
+                                          type="text"
+                                          inputMode="decimal"
+                                          className="settings-input"
+                                          value={reorderDraftByBranchId[b.id] ?? ''}
+                                          onChange={(e) =>
+                                            setReorderDraftByBranchId((prev) => ({
+                                              ...prev,
+                                              [b.id]: e.target.value,
+                                            }))
+                                          }
+                                          placeholder="Not set"
+                                        />
+                                      </label>
+                                      <button
+                                        type="button"
+                                        className="btn primary"
+                                        disabled={stockSaving}
+                                        onClick={() => void saveReorderPoint(b.id)}
+                                      >
+                                        {stockSaving ? 'Saving…' : 'Save reorder point'}
+                                      </button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              )}
+                            </Fragment>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              )}
+
+              {detail.itemType === 'inventory' && (
+                <div
+                  style={{
+                    marginBottom: 20,
+                    padding: 16,
+                    border: '1px solid rgba(0,0,0,0.08)',
+                    borderRadius: 8,
+                  }}
+                >
+                  <h4 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 8px' }}>
+                    Online store details
+                  </h4>
+                  <p className="settings-muted" style={{ marginBottom: 12, fontSize: 13 }}>
+                    {onlineStoreImplemented
+                      ? 'Description, shipping, picture, listing, and web price for this SKU.'
+                      : 'Online store listing is off for this practice — enable it under Settings → Inventory.'}
+                  </p>
+                  {catalogError && (
+                    <div className="settings-message settings-error-message" style={{ marginBottom: 8 }}>
+                      {catalogError}
+                    </div>
+                  )}
+                  {onlineStoreImplemented ? (
+                    <>
+                      <label className="settings-label" style={{ display: 'block', marginBottom: 12 }}>
+                        Description
+                        <textarea
+                          className="settings-input"
+                          rows={3}
+                          value={catalogDraft.description}
+                          onChange={(e) =>
+                            setCatalogDraft((d) => ({ ...d, description: e.target.value }))
+                          }
+                          placeholder="Storefront / catalog description"
+                        />
+                      </label>
+                      <fieldset style={{ border: 'none', padding: 0, margin: '0 0 12px' }}>
+                        <legend className="settings-label" style={{ marginBottom: 6 }}>
+                          Shippable?
+                        </legend>
+                        <label style={{ marginRight: 16, fontSize: 14, cursor: 'pointer' }}>
+                          <input
+                            type="radio"
+                            name="inv-shippable"
+                            checked={catalogDraft.shippable}
+                            onChange={() => setCatalogDraft((d) => ({ ...d, shippable: true }))}
+                          />{' '}
+                          Yes
+                        </label>
+                        <label style={{ fontSize: 14, cursor: 'pointer' }}>
+                          <input
+                            type="radio"
+                            name="inv-shippable"
+                            checked={!catalogDraft.shippable}
+                            onChange={() => setCatalogDraft((d) => ({ ...d, shippable: false }))}
+                          />{' '}
+                          No
+                        </label>
+                      </fieldset>
+                      <div className="inv-item-picture" style={{ marginBottom: 14 }}>
+                        <div className="settings-label" style={{ marginBottom: 6 }}>
+                          Picture
+                        </div>
+                        <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+                          <div className="inv-item-picture__preview">
+                            {itemHasImage ? (
+                              <img
+                                src={inventoryItemImageUrl(
+                                  practiceId,
+                                  selected.itemId,
+                                  itemImageVersion
+                                )}
+                                alt=""
+                              />
+                            ) : (
+                              <span className="settings-muted">No picture</span>
+                            )}
+                          </div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                            <input
+                              ref={itemImageInputRef}
+                              type="file"
+                              accept="image/jpeg,image/png,image/gif,image/webp"
+                              style={{ display: 'none' }}
+                              onChange={(e) =>
+                                void onInventoryImageSelected(e.target.files?.[0] ?? null)
+                              }
+                            />
+                            <button
+                              type="button"
+                              className="btn secondary"
+                              disabled={imageUploading}
+                              onClick={() => itemImageInputRef.current?.click()}
+                            >
+                              {imageUploading
+                                ? 'Uploading…'
+                                : itemHasImage
+                                  ? 'Replace picture'
+                                  : 'Upload picture'}
+                            </button>
+                            {itemHasImage && (
+                              <button
+                                type="button"
+                                className="btn secondary"
+                                disabled={imageUploading}
+                                onClick={() => void removeInventoryImage()}
+                              >
+                                Remove
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                      <label
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 8,
+                          marginBottom: 12,
+                          cursor: 'pointer',
+                          fontSize: 14,
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={catalogDraft.showOnOnlineStore}
+                          onChange={(e) =>
+                            setCatalogDraft((d) => ({ ...d, showOnOnlineStore: e.target.checked }))
+                          }
+                        />
+                        Show on online store
+                      </label>
+                      <label className="settings-label">
+                        Online store price
+                        <input
+                          type="number"
+                          step="0.01"
+                          className="settings-input"
+                          disabled={!catalogDraft.showOnOnlineStore}
+                          value={catalogDraft.onlineStorePrice}
+                          onChange={(e) =>
+                            setCatalogDraft((d) => ({ ...d, onlineStorePrice: e.target.value }))
+                          }
+                          placeholder="0.00"
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        className="btn primary"
+                        style={{ marginTop: 14 }}
+                        disabled={catalogSaving}
+                        onClick={() => void saveOnlineStoreFields()}
+                      >
+                        {catalogSaving ? 'Saving…' : 'Save online store details'}
+                      </button>
+                    </>
+                  ) : (
+                    <p className="settings-muted" style={{ marginBottom: 0, fontSize: 13 }}>
+                      Online store not implemented for this company.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {detail.itemType === 'inventory' && (
+                <div style={{ marginBottom: 20 }}>
+                  <h4 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 8px' }}>
+                    Stock movements
+                  </h4>
+                  <p className="settings-muted" style={{ marginBottom: 12, fontSize: 13 }}>
+                    Transfers move stock between locations <strong>within</strong> a branch. Choose
+                    the branch for recording and history below. Branch-to-branch moves use receive /
+                    adjust.
+                  </p>
+                  <label className="settings-label" style={{ maxWidth: 320, marginBottom: 16 }}>
+                    Branch
+                    <select
+                      className="settings-input"
+                      value={movementBranchId ?? ''}
+                      disabled={!branches.length}
+                      onChange={(e) => {
+                        const v = Number(e.target.value);
+                        if (Number.isFinite(v)) setMovementBranchId(v);
+                      }}
+                    >
+                      {!branches.length && <option value="">No branches</option>}
+                      {branches.map((b) => (
+                        <option key={b.id} value={b.id}>
+                          {b.name}
+                          {b.isDefault ? ' (default)' : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <div style={{ marginBottom: 24 }}>
+                    <h4 style={{ fontSize: 14, fontWeight: 600, margin: '0 0 8px' }}>
+                      Record movement
+                    </h4>
+                    <p className="settings-muted" style={{ marginBottom: 12, fontSize: 13 }}>
+                      Attribution uses your session by default; set employee ID only to override
+                      (e.g. <code>doctorId</code> from profile is {doctorId ?? 'not set'}).
+                    </p>
+                    {movementError && (
+                      <div
+                        className="settings-message settings-error-message"
+                        style={{ marginBottom: 8 }}
+                      >
+                        {movementError}
+                      </div>
+                    )}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 440 }}>
+                      <label className="settings-label">
+                        Movement type
+                        <select
+                          className="settings-input"
+                          value={movementType}
+                          onChange={(e) => {
+                            setMovementType(e.target.value as InventoryMovementType);
+                            setMovementError(null);
+                          }}
+                        >
+                          {MOVEMENT_TYPES.map((o) => (
+                            <option key={o.value} value={o.value}>
+                              {o.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="settings-label">
+                        Quantity
+                        <input
+                          type="number"
+                          min={1}
+                          step={1}
+                          className="settings-input"
+                          value={movementQty}
+                          onChange={(e) => setMovementQty(e.target.value)}
+                        />
+                      </label>
+                      {movementNeedsFrom(movementType) && (
+                        <label className="settings-label">
+                          From location
+                          <select
+                            className="settings-input"
+                            value={movementFromId}
+                            onChange={(e) => setMovementFromId(e.target.value)}
+                          >
+                            {movementLocations.map((loc) => (
+                              <option
+                                key={loc.id}
+                                value={loc.id}
+                                disabled={loc.isActive === false}
+                              >
+                                {locationLabel(loc)}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
                       )}
-                      {stockSnapshot && stockSnapshot.locations && stockSnapshot.locations.length > 0 && (
-                        <div className="settings-table-container" style={{ marginBottom: 16 }}>
+                      {movementNeedsTo(movementType) && (
+                        <label className="settings-label">
+                          To location
+                          <select
+                            className="settings-input"
+                            value={movementToId}
+                            onChange={(e) => setMovementToId(e.target.value)}
+                          >
+                            {movementLocations.map((loc) => (
+                              <option
+                                key={loc.id}
+                                value={loc.id}
+                                disabled={loc.isActive === false}
+                              >
+                                {locationLabel(loc)}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      )}
+                      <label className="settings-label">
+                        Note (optional)
+                        <input
+                          className="settings-input"
+                          value={movementNote}
+                          onChange={(e) => setMovementNote(e.target.value)}
+                          placeholder="Invoice #, reason, etc."
+                        />
+                      </label>
+                      <label className="settings-label">
+                        Moved by employee ID (optional override)
+                        <input
+                          className="settings-input"
+                          value={movementEmployeeId}
+                          onChange={(e) => setMovementEmployeeId(e.target.value)}
+                          placeholder="Leave blank for JWT default"
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        className="btn primary"
+                        disabled={
+                          movementSubmitting || !movementLocations.length || movementBranchId == null
+                        }
+                        onClick={() => void submitMovement()}
+                      >
+                        {movementSubmitting ? 'Recording…' : 'Record movement'}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <h4 style={{ fontSize: 14, fontWeight: 600, margin: '0 0 8px' }}>
+                      Movement history
+                    </h4>
+                    {movementsLoading && movements.length === 0 ? (
+                      <p className="settings-muted">Loading history…</p>
+                    ) : movements.length === 0 ? (
+                      <p className="settings-muted">No movements yet for this item at this branch.</p>
+                    ) : (
+                      <>
+                        <div className="settings-table-container">
                           <table className="settings-table">
                             <thead>
                               <tr>
-                                <th>Location</th>
-                                <th>Code</th>
+                                <th>When</th>
+                                <th>Type</th>
                                 <th>Qty</th>
+                                <th>From</th>
+                                <th>To</th>
+                                <th>Note</th>
                               </tr>
                             </thead>
                             <tbody>
-                              {stockSnapshot.locations.map((row) => (
-                                <tr key={row.branchLocationId}>
-                                  <td>{row.name}</td>
-                                  <td>
-                                    <code>{row.code}</code>
+                              {movements.map((m, idx) => (
+                                <tr key={String(m.id ?? idx)}>
+                                  <td style={{ whiteSpace: 'nowrap', fontSize: 12 }}>
+                                    {m.created
+                                      ? new Date(String(m.created)).toLocaleString()
+                                      : '—'}
                                   </td>
-                                  <td>
-                                    {row.quantityOnHand == null ? '—' : String(row.quantityOnHand)}
+                                  <td style={{ fontSize: 12 }}>{String(m.movementType ?? '—')}</td>
+                                  <td>{m.quantity != null ? String(m.quantity) : '—'}</td>
+                                  <td style={{ fontSize: 12 }}>
+                                    {resolveLocationName(m.fromBranchLocationId as number)}
+                                  </td>
+                                  <td style={{ fontSize: 12 }}>
+                                    {resolveLocationName(m.toBranchLocationId as number)}
+                                  </td>
+                                  <td
+                                    style={{ fontSize: 12, maxWidth: 160 }}
+                                    title={String(m.note ?? '')}
+                                  >
+                                    {m.note ? String(m.note) : '—'}
                                   </td>
                                 </tr>
                               ))}
                             </tbody>
                           </table>
                         </div>
-                      )}
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 360 }}>
-                        <label className="settings-label">
-                          Reorder point (branch + item)
-                          <input
-                            type="text"
-                            inputMode="decimal"
-                            className="settings-input"
-                            value={reorderDraft}
-                            onChange={(e) => setReorderDraft(e.target.value)}
-                            placeholder="Not set"
-                          />
-                        </label>
-                        <button
-                          type="button"
-                          className="btn primary"
-                          disabled={stockSaving}
-                          onClick={() => void saveReorderPoint()}
-                        >
-                          {stockSaving ? 'Saving…' : 'Save reorder point'}
-                        </button>
-                      </div>
-
-                      <div
-                        style={{
-                          marginTop: 24,
-                          paddingTop: 20,
-                          borderTop: '1px solid rgba(0,0,0,0.08)',
-                        }}
-                      >
-                        <h4 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 8px' }}>
-                          Record movement
-                        </h4>
-                        <p className="settings-muted" style={{ marginBottom: 12, fontSize: 13 }}>
-                          Use audited movements for all quantity changes. Attribution uses your
-                          session by default; set employee ID only to override (e.g.{' '}
-                          <code>doctorId</code> from profile is {doctorId ?? 'not set'}).
-                        </p>
-                        {movementError && (
-                          <div className="settings-message settings-error-message" style={{ marginBottom: 8 }}>
-                            {movementError}
-                          </div>
-                        )}
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 440 }}>
-                          <label className="settings-label">
-                            Movement type
-                            <select
-                              className="settings-input"
-                              value={movementType}
-                              onChange={(e) => {
-                                setMovementType(e.target.value as InventoryMovementType);
-                                setMovementError(null);
-                              }}
-                            >
-                              {MOVEMENT_TYPES.map((o) => (
-                                <option key={o.value} value={o.value}>
-                                  {o.label}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                          <label className="settings-label">
-                            Quantity
-                            <input
-                              type="number"
-                              min={1}
-                              step={1}
-                              className="settings-input"
-                              value={movementQty}
-                              onChange={(e) => setMovementQty(e.target.value)}
-                            />
-                          </label>
-                          {movementNeedsFrom(movementType) && (
-                            <label className="settings-label">
-                              From location
-                              <select
-                                className="settings-input"
-                                value={movementFromId}
-                                onChange={(e) => setMovementFromId(e.target.value)}
-                              >
-                                {branchLocations.map((loc) => (
-                                  <option key={loc.id} value={loc.id} disabled={loc.isActive === false}>
-                                    {locationLabel(loc)}
-                                  </option>
-                                ))}
-                              </select>
-                            </label>
-                          )}
-                          {movementNeedsTo(movementType) && (
-                            <label className="settings-label">
-                              To location
-                              <select
-                                className="settings-input"
-                                value={movementToId}
-                                onChange={(e) => setMovementToId(e.target.value)}
-                              >
-                                {branchLocations.map((loc) => (
-                                  <option key={loc.id} value={loc.id} disabled={loc.isActive === false}>
-                                    {locationLabel(loc)}
-                                  </option>
-                                ))}
-                              </select>
-                            </label>
-                          )}
-                          <label className="settings-label">
-                            Note (optional)
-                            <input
-                              className="settings-input"
-                              value={movementNote}
-                              onChange={(e) => setMovementNote(e.target.value)}
-                              placeholder="Invoice #, reason, etc."
-                            />
-                          </label>
-                          <label className="settings-label">
-                            Moved by employee ID (optional override)
-                            <input
-                              className="settings-input"
-                              value={movementEmployeeId}
-                              onChange={(e) => setMovementEmployeeId(e.target.value)}
-                              placeholder="Leave blank for JWT default"
-                            />
-                          </label>
+                        {movements.length < movementTotal && (
                           <button
                             type="button"
-                            className="btn primary"
-                            disabled={movementSubmitting || !branchLocations.length}
-                            onClick={() => void submitMovement()}
+                            className="btn secondary"
+                            style={{ marginTop: 10 }}
+                            disabled={movementsLoading}
+                            onClick={() => void loadMoreMovements()}
                           >
-                            {movementSubmitting ? 'Recording…' : 'Record movement'}
+                            {movementsLoading
+                              ? 'Loading…'
+                              : `Load more (${movements.length} of ${movementTotal})`}
                           </button>
-                        </div>
-                      </div>
-
-                      <div
-                        style={{
-                          marginTop: 24,
-                          paddingTop: 20,
-                          borderTop: '1px solid rgba(0,0,0,0.08)',
-                        }}
-                      >
-                        <h4 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 8px' }}>
-                          Movement history
-                        </h4>
-                        {movementsLoading && movements.length === 0 ? (
-                          <p className="settings-muted">Loading history…</p>
-                        ) : movements.length === 0 ? (
-                          <p className="settings-muted">No movements yet for this item.</p>
-                        ) : (
-                          <>
-                            <div className="settings-table-container">
-                              <table className="settings-table">
-                                <thead>
-                                  <tr>
-                                    <th>When</th>
-                                    <th>Type</th>
-                                    <th>Qty</th>
-                                    <th>From</th>
-                                    <th>To</th>
-                                    <th>Note</th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {movements.map((m, idx) => (
-                                    <tr key={String(m.id ?? idx)}>
-                                      <td style={{ whiteSpace: 'nowrap', fontSize: 12 }}>
-                                        {m.created
-                                          ? new Date(String(m.created)).toLocaleString()
-                                          : '—'}
-                                      </td>
-                                      <td style={{ fontSize: 12 }}>{String(m.movementType ?? '—')}</td>
-                                      <td>{m.quantity != null ? String(m.quantity) : '—'}</td>
-                                      <td style={{ fontSize: 12 }}>
-                                        {resolveLocationName(m.fromBranchLocationId as number)}
-                                      </td>
-                                      <td style={{ fontSize: 12 }}>
-                                        {resolveLocationName(m.toBranchLocationId as number)}
-                                      </td>
-                                      <td style={{ fontSize: 12, maxWidth: 160 }} title={String(m.note ?? '')}>
-                                        {m.note ? String(m.note) : '—'}
-                                      </td>
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
-                            </div>
-                            {movements.length < movementTotal && (
-                              <button
-                                type="button"
-                                className="btn secondary"
-                                style={{ marginTop: 10 }}
-                                disabled={movementsLoading}
-                                onClick={() => void loadMoreMovements()}
-                              >
-                                {movementsLoading ? 'Loading…' : `Load more (${movements.length} of ${movementTotal})`}
-                              </button>
-                            )}
-                          </>
                         )}
-                      </div>
-                    </>
-                  )}
+                      </>
+                    )}
+                  </div>
                 </div>
               )}
 
               {detail.itemType !== 'inventory' && (
                 <p className="settings-muted" style={{ marginBottom: 16 }}>
                   On-hand quantity applies to inventory items only. You can still override prices for
-                  this {detail.itemType} at the selected branch.
+                  this {detail.itemType} by branch.
                 </p>
               )}
 
@@ -2176,17 +2857,48 @@ export default function InventoryManagement() {
           <div
             className="settings-card"
             onClick={(e) => e.stopPropagation()}
-            style={{ width: 'min(440px, 100%)', padding: 24 }}
+            style={{ width: 'min(520px, 100%)', padding: 24, maxHeight: '90vh', overflow: 'auto' }}
           >
             <h3 className="settings-card-title">Branch price override</h3>
             <p className="settings-muted" style={{ marginBottom: 16 }}>
-              Values saved here apply only to <strong>{branches.find((b) => b.id === branchId)?.name}</strong>.
-              Use &quot;Clear overrides&quot; to fall back to the practice catalog for all four fields.
+              Set the values below, then choose which branches receive them as overrides. Clear
+              overrides falls back to the practice catalog on the checked branches only.
             </p>
             {priceError && (
               <div className="settings-message settings-error-message" style={{ marginBottom: 12 }}>
                 {priceError}
               </div>
+            )}
+            {branches.length > 0 && (
+              <label className="settings-label" style={{ display: 'block', marginBottom: 14 }}>
+                Copy from branch
+                <select
+                  className="settings-input"
+                  disabled={priceSaving}
+                  value=""
+                  onChange={(e) => {
+                    const id = Number(e.target.value);
+                    if (!Number.isFinite(id)) return;
+                    const m = branchEffectiveById[id];
+                    if (!m) return;
+                    setPriceForm(effectiveToResolved(m));
+                  }}
+                >
+                  <option value="" disabled>
+                    Choose a branch to fill the fields…
+                  </option>
+                  {branches.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name}
+                    </option>
+                  ))}
+                </select>
+                <span className="settings-muted" style={{ display: 'block', marginTop: 4, fontSize: 12 }}>
+                  Fills Price, Cost, Service fee, and Minimum from that branch’s effective prices.
+                  Nothing is saved until you click Save. For Online store, only Price is written as
+                  the web base.
+                </span>
+              </label>
             )}
             {(['price', 'cost', 'serviceFee', 'minimumPrice'] as const).map((key) => (
               <label key={key} className="settings-label" style={{ display: 'block', marginBottom: 12 }}>
@@ -2207,19 +2919,155 @@ export default function InventoryManagement() {
                 />
               </label>
             ))}
+
+            <div style={{ marginTop: 8, marginBottom: 12 }}>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 8,
+                  marginBottom: 8,
+                }}
+              >
+                <strong style={{ fontSize: 14 }}>Apply to</strong>
+                <span style={{ display: 'flex', gap: 8 }}>
+                  <button
+                    type="button"
+                    className="btn secondary"
+                    style={{ padding: '2px 8px', fontSize: 12 }}
+                    disabled={priceSaving}
+                    onClick={() => {
+                      const ids = branches.map((b) => b.id);
+                      if (onlineStoreImplemented && detail.itemType === 'inventory') {
+                        ids.push(ONLINE_STORE_TARGET_ID);
+                      }
+                      setPriceTargetBranchIds(ids);
+                    }}
+                  >
+                    Select all
+                  </button>
+                  <button
+                    type="button"
+                    className="btn secondary"
+                    style={{ padding: '2px 8px', fontSize: 12 }}
+                    disabled={priceSaving || branchId == null}
+                    onClick={() => setPriceTargetBranchIds(branchId != null ? [branchId] : [])}
+                  >
+                    Only this branch
+                  </button>
+                </span>
+              </div>
+              <div
+                style={{
+                  border: '1px solid rgba(0,0,0,0.1)',
+                  borderRadius: 8,
+                  padding: '8px 12px',
+                  maxHeight: 180,
+                  overflow: 'auto',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 6,
+                }}
+              >
+                {branches.map((b) => {
+                  const checked = priceTargetBranchIds.includes(b.id);
+                  return (
+                    <label
+                      key={b.id}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        fontSize: 14,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        disabled={priceSaving}
+                        onChange={() => {
+                          setPriceTargetBranchIds((prev) =>
+                            checked ? prev.filter((id) => id !== b.id) : [...prev, b.id]
+                          );
+                        }}
+                      />
+                      {b.name}
+                    </label>
+                  );
+                })}
+                {onlineStoreImplemented && detail.itemType === 'inventory' && (
+                  <label
+                    style={{
+                      display: 'flex',
+                      alignItems: 'flex-start',
+                      gap: 8,
+                      fontSize: 14,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={priceTargetBranchIds.includes(ONLINE_STORE_TARGET_ID)}
+                      disabled={priceSaving}
+                      onChange={() => {
+                        setPriceTargetBranchIds((prev) =>
+                          prev.includes(ONLINE_STORE_TARGET_ID)
+                            ? prev.filter((id) => id !== ONLINE_STORE_TARGET_ID)
+                            : [...prev, ONLINE_STORE_TARGET_ID]
+                        );
+                      }}
+                      style={{ marginTop: 3 }}
+                    />
+                    <span>
+                      Online store
+                      <span className="settings-muted" style={{ display: 'block', fontSize: 12 }}>
+                        Saves Price as the web base; listed total uses the same formula as SOAP and
+                        checkout, with the practice catalog fee/min.
+                        {` → $${unitSellTotal(detail.itemType, {
+                          price: priceForm.price,
+                          serviceFee: practiceMoney?.serviceFee ?? priceForm.serviceFee,
+                          minimumPrice: practiceMoney?.minimumPrice ?? priceForm.minimumPrice,
+                        }).toFixed(2)}`}
+                      </span>
+                    </span>
+                  </label>
+                )}
+                {!branches.length && (
+                  <span className="settings-muted" style={{ fontSize: 13 }}>
+                    No branches loaded.
+                  </span>
+                )}
+              </div>
+            </div>
+
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 16 }}>
-              <button type="button" className="btn primary" disabled={priceSaving} onClick={() => void saveBranchPrices()}>
+              <button
+                type="button"
+                className="btn primary"
+                disabled={priceSaving}
+                onClick={() => void saveBranchPrices()}
+              >
                 {priceSaving ? 'Saving…' : 'Save'}
               </button>
               <button
                 type="button"
                 className="btn secondary"
-                disabled={priceSaving}
+                disabled={
+                  priceSaving ||
+                  priceTargetBranchIds.filter((id) => id !== ONLINE_STORE_TARGET_ID).length === 0
+                }
                 onClick={() => void resetBranchPrices()}
               >
                 Clear overrides
               </button>
-              <button type="button" className="btn secondary" disabled={priceSaving} onClick={() => setPriceModalOpen(false)}>
+              <button
+                type="button"
+                className="btn secondary"
+                disabled={priceSaving}
+                onClick={() => setPriceModalOpen(false)}
+              >
                 Cancel
               </button>
             </div>

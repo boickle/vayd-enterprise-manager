@@ -16,6 +16,8 @@ import {
   Check,
   UserX,
   UserCheck,
+  Activity,
+  Pill,
 } from 'lucide-react';
 import {
   deactivatePatient,
@@ -30,6 +32,16 @@ import {
   getPatientTreatmentMedications,
   type TreatmentWithItems,
 } from '../../api/treatments';
+import {
+  listProblems,
+  listPatientPrescriptions,
+  listPatientVisitCharges,
+  updateProblem,
+  updatePatientPrescription,
+  type PatientProblem,
+  type PatientPrescription,
+  type PostedVisitCharge,
+} from '../../api/visitWorkflow';
 import {
   buildChartRowsFromMedicalRecord,
   filterRowsByDateRange,
@@ -54,11 +66,7 @@ import {
   type CardValues,
   type FieldSpec,
 } from './detail/PimsDetailKit';
-import {
-  BreedPicker,
-  SpeciesSelect,
-  useSpeciesCatalog,
-} from './detail/SpeciesBreedFields';
+import { BreedPicker, SpeciesSelect, useSpeciesCatalog } from './detail/SpeciesBreedFields';
 import './detail/PimsDetailKit.css';
 import './PimsPatientDetailView.css';
 
@@ -110,7 +118,10 @@ function formatAddressClient(c: Record<string, unknown>): string {
   return parts.join(', ') || '—';
 }
 
-function alertText(p: Record<string, unknown>, client: Record<string, unknown> | null): string | null {
+function alertText(
+  p: Record<string, unknown>,
+  client: Record<string, unknown> | null
+): string | null {
   const direct =
     pickStr(p.clientAlert) ??
     pickStr(p.alert) ??
@@ -200,8 +211,14 @@ function groupPrescriptionTreatmentRows(items: unknown[]) {
   for (const raw of items) {
     if (!raw || typeof raw !== 'object') continue;
     const row = raw as Record<string, unknown>;
-    const inv = row.inventoryItem && typeof row.inventoryItem === 'object' ? (row.inventoryItem as Record<string, unknown>) : null;
-    const presc = row.prescription && typeof row.prescription === 'object' ? (row.prescription as Record<string, unknown>) : null;
+    const inv =
+      row.inventoryItem && typeof row.inventoryItem === 'object'
+        ? (row.inventoryItem as Record<string, unknown>)
+        : null;
+    const presc =
+      row.prescription && typeof row.prescription === 'object'
+        ? (row.prescription as Record<string, unknown>)
+        : null;
     const code =
       pickStr(row.productCode) ??
       pickStr(row.code) ??
@@ -381,6 +398,11 @@ export default function PimsPatientDetailView({
   const [medicalRecord, setMedicalRecord] = useState<MedicalRecordBundle | null>(null);
   const [mrLoadError, setMrLoadError] = useState<string | null>(null);
   const [rxItems, setRxItems] = useState<unknown[]>([]);
+  const [problems, setProblems] = useState<PatientProblem[]>([]);
+  const [visitCharges, setVisitCharges] = useState<PostedVisitCharge[]>([]);
+  const [chronicMedications, setChronicMedications] = useState<PatientPrescription[]>([]);
+  const [resolvingProblemId, setResolvingProblemId] = useState<string | null>(null);
+  const [discontinuingRxId, setDiscontinuingRxId] = useState<number | null>(null);
   const [treatments, setTreatments] = useState<TreatmentWithItems[] | null>(null);
   const [treatmentsLoading, setTreatmentsLoading] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -402,28 +424,42 @@ export default function PimsPatientDetailView({
     ? '/schedule/clients'
     : '/pims/clients';
 
-  const reloadChartData = useCallback(async (isStale?: () => boolean) => {
-    const id = patientId;
-    setMrLoadError(null);
-    const [patientData, mrData, rxData] = await Promise.all([
-      fetchPatientByIdStaff(id),
-      fetchPatientMedicalRecordStaff(id).catch((e: unknown) => {
-        if (!isStale?.()) {
-          setMrLoadError(e instanceof Error ? e.message : 'Medical record request failed.');
-        }
-        return null as MedicalRecordBundle | null;
-      }),
-      getPatientTreatmentMedications(id).catch(() => [] as unknown[]),
-    ]);
-    if (isStale?.()) return;
-    if (patientData && typeof patientData === 'object') {
-      setPayload(patientData as Record<string, unknown>);
-    } else {
-      setPayload(null);
-    }
-    setMedicalRecord(mrData);
-    setRxItems(rxData);
-  }, [patientId]);
+  const reloadChartData = useCallback(
+    async (isStale?: () => boolean) => {
+      const id = patientId;
+      setMrLoadError(null);
+      const [patientData, mrData, rxData, problemRows, chronicMedRows, chargeRows] =
+        await Promise.all([
+          fetchPatientByIdStaff(id),
+          fetchPatientMedicalRecordStaff(id).catch((e: unknown) => {
+            if (!isStale?.()) {
+              setMrLoadError(e instanceof Error ? e.message : 'Medical record request failed.');
+            }
+            return null as MedicalRecordBundle | null;
+          }),
+          getPatientTreatmentMedications(id).catch(() => [] as unknown[]),
+          // Master Problem List, the source of both the chronic problems box and the problem rows on
+          // the timeline. A patient never charted in Scout simply has none.
+          listProblems(Number(id)).catch(() => [] as PatientProblem[]),
+          listPatientPrescriptions(Number(id), { activeChronicOnly: true }).catch(
+            () => [] as PatientPrescription[]
+          ),
+          listPatientVisitCharges(Number(id)).catch(() => [] as PostedVisitCharge[]),
+        ]);
+      if (isStale?.()) return;
+      if (patientData && typeof patientData === 'object') {
+        setPayload(patientData as Record<string, unknown>);
+      } else {
+        setPayload(null);
+      }
+      setMedicalRecord(mrData);
+      setRxItems(rxData);
+      setProblems(problemRows);
+      setChronicMedications(chronicMedRows);
+      setVisitCharges(chargeRows);
+    },
+    [patientId]
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -434,6 +470,8 @@ export default function PimsPatientDetailView({
     setMedicalRecord(null);
     setMrLoadError(null);
     setRxItems([]);
+    setProblems([]);
+    setVisitCharges([]);
     setTreatments(null);
     (async () => {
       try {
@@ -480,14 +518,45 @@ export default function PimsPatientDetailView({
 
   const client = payload ? clientBlockFromPatient(payload) : null;
   const pname = payload ? patientNameFrom(payload) : '';
-  const patientPimsId = payload
-    ? pickStr(payload.pimsId) ?? String(payload.id ?? patientId)
-    : '';
-  const cname = client ? clientDisplayName(client) : pickStr(payload?.clientName) ?? '—';
+  const patientPimsId = payload ? (pickStr(payload.pimsId) ?? String(payload.id ?? patientId)) : '';
+  const cname = client ? clientDisplayName(client) : (pickStr(payload?.clientName) ?? '—');
   const alert = payload ? alertText(payload, client) : null;
   const badge = payload ? patientDetailStatus(payload) : { label: '—', variant: 'muted' as const };
 
-  const chartRows = useMemo(() => buildChartRowsFromMedicalRecord(medicalRecord), [medicalRecord]);
+  const chartRows = useMemo(
+    () => buildChartRowsFromMedicalRecord(medicalRecord, problems, visitCharges),
+    [medicalRecord, problems, visitCharges]
+  );
+
+  /** Ongoing problems, pinned above the record so they are not buried in the timeline. */
+  const chronicProblems = useMemo(
+    () => problems.filter((p) => p.acuity === 'chronic' && p.status !== 'resolved'),
+    [problems]
+  );
+
+  const resolveProblem = async (p: PatientProblem) => {
+    setResolvingProblemId(p.id);
+    try {
+      const updated = await updateProblem(p.id, { status: 'resolved' });
+      setProblems((prev) => prev.map((x) => (x.id === p.id ? updated : x)));
+    } finally {
+      setResolvingProblemId(null);
+    }
+  };
+
+  const discontinueMedication = async (rx: PatientPrescription) => {
+    setDiscontinuingRxId(rx.id);
+    try {
+      const updated = await updatePatientPrescription(rx.id, { discontinued: true });
+      setChronicMedications((prev) =>
+        updated.discontinuedAt
+          ? prev.filter((m) => m.id !== rx.id)
+          : prev.map((m) => (m.id === rx.id ? updated : m))
+      );
+    } finally {
+      setDiscontinuingRxId(null);
+    }
+  };
 
   const dateRangeMs = useMemo(() => {
     const start = Date.parse(dateStart);
@@ -500,7 +569,10 @@ export default function PimsPatientDetailView({
     return filterRowsByDateRange(chartRows, dateRangeMs.start, dateRangeMs.end);
   }, [chartRows, dateRangeMs]);
 
-  const groupedByDate = useMemo(() => groupChartRowsByLocalDate(filteredChartRows), [filteredChartRows]);
+  const groupedByDate = useMemo(
+    () => groupChartRowsByLocalDate(filteredChartRows),
+    [filteredChartRows]
+  );
 
   const monitoringForms = medicalRecord?.anestheticMonitorForms ?? [];
   const monitoringCount = monitoringForms.length;
@@ -533,10 +605,17 @@ export default function PimsPatientDetailView({
   }, [medicalRecord]);
 
   const remindersSorted = useMemo(() => {
-    const rows = [...remindersList].filter((r) => r && typeof r === 'object') as Record<string, unknown>[];
+    const rows = [...remindersList].filter((r) => r && typeof r === 'object') as Record<
+      string,
+      unknown
+    >[];
     const due = (o: Record<string, unknown>) =>
       Date.parse(
-        pickStr(o.dueDate) ?? pickStr(o.reminderDate) ?? pickStr(o.serviceDate) ?? pickStr(o.createdAt) ?? ''
+        pickStr(o.dueDate) ??
+          pickStr(o.reminderDate) ??
+          pickStr(o.serviceDate) ??
+          pickStr(o.createdAt) ??
+          ''
       ) || 0;
     rows.sort((a, b) => due(a) - due(b));
     return rows;
@@ -617,7 +696,7 @@ export default function PimsPatientDetailView({
   async function handleToggleActive() {
     if (isActive) {
       const ok = window.confirm(
-        `Deactivate ${pname}? The pet stays in Scout with its full medical history, but is hidden from active lists.`,
+        `Deactivate ${pname}? The pet stays in Scout with its full medical history, but is hidden from active lists.`
       );
       if (!ok) return;
     }
@@ -625,7 +704,7 @@ export default function PimsPatientDetailView({
     setSaveError(null);
     try {
       await applyWriteResult(
-        isActive ? await deactivatePatient(patientId) : await reactivatePatient(patientId),
+        isActive ? await deactivatePatient(patientId) : await reactivatePatient(patientId)
       );
     } catch (err) {
       setSaveError(extractPatientSaveErr(err));
@@ -640,18 +719,21 @@ export default function PimsPatientDetailView({
   const weightKg = pickStr(payload.weightKg);
   const weightLine =
     weightLb || weightKg
-      ? [weightLb ? `${weightLb} lbs` : null, weightKg ? `${weightKg} kg` : null].filter(Boolean).join(' / ')
+      ? [weightLb ? `${weightLb} lbs` : null, weightKg ? `${weightKg} kg` : null]
+          .filter(Boolean)
+          .join(' / ')
       : null;
 
   const clientPhone =
     client &&
-    (pickStr(client.phone) ??
-      pickStr(client.mobilePhone) ??
-      pickStr(client.homePhone) ??
-      null);
+    (pickStr(client.phone) ?? pickStr(client.mobilePhone) ?? pickStr(client.homePhone) ?? null);
   const clientEmail =
-    (client && pickStr(client.email)) ?? pickStr(payload.clientEmail) ?? pickStr(payload.ownerEmail);
-  const secondContact = client ? pickStr(client.secondaryContact) ?? pickStr(client.secondOwnerName) : null;
+    (client && pickStr(client.email)) ??
+    pickStr(payload.clientEmail) ??
+    pickStr(payload.ownerEmail);
+  const secondContact = client
+    ? (pickStr(client.secondaryContact) ?? pickStr(client.secondOwnerName))
+    : null;
 
   /** A 404 from the medical-record endpoint, as opposed to a record that exists but is empty. */
   const mrNotFound = medicalRecord === null && !mrLoadError;
@@ -756,7 +838,9 @@ export default function PimsPatientDetailView({
             <li>
               <User size={15} aria-hidden />
               {clientId ? (
-                <Link to={`${clientsBasePath}?clientId=${encodeURIComponent(clientId)}`}>{cname}</Link>
+                <Link to={`${clientsBasePath}?clientId=${encodeURIComponent(clientId)}`}>
+                  {cname}
+                </Link>
               ) : (
                 cname
               )}
@@ -952,6 +1036,76 @@ export default function PimsPatientDetailView({
         patientRecord={record}
       />
 
+      {chronicProblems.length > 0 && (
+        <section
+          className="pims-patient-detail__chronic"
+          aria-labelledby="pims-chronic-problems-heading"
+        >
+          <h2
+            id="pims-chronic-problems-heading"
+            className="pims-patient-detail__mr-heading pims-patient-detail__chronic-heading"
+          >
+            <Activity size={17} aria-hidden />
+            Chronic problems
+          </h2>
+          <ul className="pims-patient-detail__chronic-list">
+            {chronicProblems.map((p) => (
+              <li key={p.id}>
+                <span className="pims-patient-detail__chronic-label">{p.label}</span>
+                {p.postedToRecordAt && (
+                  <span className="pims-patient-detail__chronic-since">
+                    since {formatChartDateShort(p.postedToRecordAt)}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  className="pims-patient-detail__chronic-resolve"
+                  disabled={resolvingProblemId != null}
+                  onClick={() => void resolveProblem(p)}
+                >
+                  <Check size={13} aria-hidden /> Resolved
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {chronicMedications.length > 0 && (
+        <section
+          className="pims-patient-detail__chronic pims-patient-detail__chronic--meds"
+          aria-labelledby="pims-chronic-meds-heading"
+        >
+          <h2
+            id="pims-chronic-meds-heading"
+            className="pims-patient-detail__mr-heading pims-patient-detail__chronic-heading"
+          >
+            <Pill size={17} aria-hidden />
+            Chronic medications
+          </h2>
+          <ul className="pims-patient-detail__chronic-list">
+            {chronicMedications.map((rx) => (
+              <li key={rx.id}>
+                <span className="pims-patient-detail__chronic-label">{rx.name}</span>
+                {rx.startDate && (
+                  <span className="pims-patient-detail__chronic-since">
+                    since {formatChartDateShort(rx.startDate)}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  className="pims-patient-detail__chronic-resolve"
+                  disabled={discontinuingRxId != null}
+                  onClick={() => void discontinueMedication(rx)}
+                >
+                  No longer taking
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       <section className="pims-patient-detail__mr" aria-labelledby="pims-mr-heading">
         <h2 id="pims-mr-heading" className="pims-patient-detail__mr-heading">
           <Stethoscope size={17} aria-hidden />
@@ -1044,7 +1198,11 @@ export default function PimsPatientDetailView({
                       ...rows.map((r: ChartRow) => (
                         <tr
                           key={r.id}
-                          className={r.source === 'exam' ? 'pims-patient-detail__mr-row--clickable' : undefined}
+                          className={
+                            r.source === 'exam'
+                              ? 'pims-patient-detail__mr-row--clickable'
+                              : undefined
+                          }
                           onClick={
                             r.source === 'exam' ? () => openExamFromChartRow(r, exams) : undefined
                           }
@@ -1052,12 +1210,23 @@ export default function PimsPatientDetailView({
                           <td>{r.typeLabel}</td>
                           <td>
                             {(r.source === 'lab' || r.source === 'communication') && r.hasResult ? (
-                              <Check size={16} className="pims-patient-detail__row-icon pims-patient-detail__check" aria-label="Complete" />
+                              <Check
+                                size={16}
+                                className="pims-patient-detail__row-icon pims-patient-detail__check"
+                                aria-label="Complete"
+                              />
                             ) : (
                               <span className="pims-patient-detail__dash">—</span>
                             )}
                           </td>
-                          <td>{r.description}</td>
+                          <td>
+                            {r.isCovered ? (
+                              <span title="Membership covered" aria-label="Membership covered">
+                                ❤️{' '}
+                              </span>
+                            ) : null}
+                            {r.description}
+                          </td>
                           <td>{r.provider}</td>
                           <td>{formatChartDateTime(r.serviceDateIso)}</td>
                         </tr>
@@ -1110,7 +1279,11 @@ export default function PimsPatientDetailView({
                         return (
                           <tr
                             key={r.id}
-                            className={r.source === 'exam' ? 'pims-patient-detail__mr-row--clickable' : undefined}
+                            className={
+                              r.source === 'exam'
+                                ? 'pims-patient-detail__mr-row--clickable'
+                                : undefined
+                            }
                             onClick={
                               r.source === 'exam' ? () => openExamFromChartRow(r, exams) : undefined
                             }
@@ -1127,11 +1300,20 @@ export default function PimsPatientDetailView({
                               </button>
                             </td>
                             <td>{r.typeLabel}</td>
-                            <td>{r.description}</td>
+                            <td>
+                              {r.isCovered ? (
+                                <span title="Membership covered" aria-label="Membership covered">
+                                  ❤️{' '}
+                                </span>
+                              ) : null}
+                              {r.description}
+                            </td>
                             <td
                               className={[
                                 'pims-patient-detail__detail-cell',
-                                open && r.detailHtml ? 'pims-patient-detail__detail-cell--rich' : '',
+                                open && r.detailHtml
+                                  ? 'pims-patient-detail__detail-cell--rich'
+                                  : '',
                               ]
                                 .filter(Boolean)
                                 .join(' ')}
@@ -1140,7 +1322,9 @@ export default function PimsPatientDetailView({
                                 r.detailHtml ? (
                                   <>
                                     {r.detailText?.trim() ? (
-                                      <div className="pims-patient-detail__detail-meta">{r.detailText}</div>
+                                      <div className="pims-patient-detail__detail-meta">
+                                        {r.detailText}
+                                      </div>
                                     ) : null}
                                     <div
                                       className="pims-patient-detail__html-body"
@@ -1150,16 +1334,22 @@ export default function PimsPatientDetailView({
                                 ) : (
                                   r.detailText || '—'
                                 )
-                              ) : (() => {
-                                if (r.detailHtml) {
-                                  const meta = (r.detailText || '').trim();
-                                  const plain = htmlToPlainText(r.detailHtml).replace(/\s+/g, ' ').trim();
-                                  const joined = [meta, plain].filter(Boolean).join(' — ');
-                                  return joined.length > 120 ? `${joined.slice(0, 120)}…` : joined || '—';
-                                }
-                                const t = r.detailText || '—';
-                                return t.length > 120 ? `${t.slice(0, 120)}…` : t;
-                              })()}
+                              ) : (
+                                (() => {
+                                  if (r.detailHtml) {
+                                    const meta = (r.detailText || '').trim();
+                                    const plain = htmlToPlainText(r.detailHtml)
+                                      .replace(/\s+/g, ' ')
+                                      .trim();
+                                    const joined = [meta, plain].filter(Boolean).join(' — ');
+                                    return joined.length > 120
+                                      ? `${joined.slice(0, 120)}…`
+                                      : joined || '—';
+                                  }
+                                  const t = r.detailText || '—';
+                                  return t.length > 120 ? `${t.slice(0, 120)}…` : t;
+                                })()
+                              )}
                             </td>
                             <td>{r.provider}</td>
                             <td>{formatChartDateTime(r.serviceDateIso)}</td>
@@ -1176,13 +1366,23 @@ export default function PimsPatientDetailView({
 
         {mrTab === 'groups' && (
           <div className="pims-patient-detail__groups">
-            <button type="button" className="pims-patient-detail__expand-all" onClick={expandAllGroups}>
+            <button
+              type="button"
+              className="pims-patient-detail__expand-all"
+              onClick={expandAllGroups}
+            >
               Expand All
             </button>
             {(
               [
                 ['visits', 'Reason for Visits', complaints.length, complaints, false],
-                ['communications', 'Communications', communicationLogs.length, communicationLogs, false],
+                [
+                  'communications',
+                  'Communications',
+                  communicationLogs.length,
+                  communicationLogs,
+                  false,
+                ],
                 ['histories', 'History', histories.length, histories, false],
                 ['exams', 'Exams', exams.length, exams, false],
                 ['diagnoses', 'Diagnoses', diagnoses.length, diagnoses, false],
@@ -1217,9 +1417,13 @@ export default function PimsPatientDetailView({
                       )}
                       {key === 'treatments' && (
                         <>
-                          {treatmentsLoading && <p className="pims-patient-detail__muted">Loading treatments…</p>}
+                          {treatmentsLoading && (
+                            <p className="pims-patient-detail__muted">Loading treatments…</p>
+                          )}
                           {!treatmentsLoading && (treatments?.length ?? 0) === 0 && (
-                            <p className="pims-patient-detail__muted">No treatment plans recorded.</p>
+                            <p className="pims-patient-detail__muted">
+                              No treatment plans recorded.
+                            </p>
                           )}
                           {!treatmentsLoading &&
                             (treatments ?? []).map((t) => (
@@ -1255,7 +1459,8 @@ export default function PimsPatientDetailView({
                         communicationLogs.map((row) => {
                           const o = row as Record<string, unknown>;
                           const nested =
-                            o.communicationMessageLog && typeof o.communicationMessageLog === 'object'
+                            o.communicationMessageLog &&
+                            typeof o.communicationMessageLog === 'object'
                               ? (o.communicationMessageLog as Record<string, unknown>)
                               : null;
                           const text =
@@ -1268,7 +1473,9 @@ export default function PimsPatientDetailView({
                             ? htmlToPlainText(text).replace(/\s+/g, ' ').trim()
                             : String(text).trim();
                           const truncated =
-                            displayLine.length > 160 ? `${displayLine.slice(0, 160)}…` : displayLine;
+                            displayLine.length > 160
+                              ? `${displayLine.slice(0, 160)}…`
+                              : displayLine;
                           return (
                             <div key={String(o.id)} className="pims-patient-detail__group-line">
                               {truncated} —{' '}
@@ -1283,7 +1490,8 @@ export default function PimsPatientDetailView({
                           const o = row as Record<string, unknown>;
                           return (
                             <div key={String(o.id)} className="pims-patient-detail__group-line">
-                              {pickStr(o.formName) ?? 'History'} — {formatChartDateTime(pickStr(o.serviceDate))}
+                              {pickStr(o.formName) ?? 'History'} —{' '}
+                              {formatChartDateTime(pickStr(o.serviceDate))}
                             </div>
                           );
                         })}
@@ -1293,7 +1501,11 @@ export default function PimsPatientDetailView({
                           const iso = pickStr(o.serviceDate);
                           const d = iso ? new Date(iso) : null;
                           const ampm =
-                            d && !Number.isNaN(d.getTime()) ? (d.getHours() < 12 ? 'AM' : 'PM') : '—';
+                            d && !Number.isNaN(d.getTime())
+                              ? d.getHours() < 12
+                                ? 'AM'
+                                : 'PM'
+                              : '—';
                           return (
                             <button
                               key={String(o.id)}
@@ -1319,7 +1531,8 @@ export default function PimsPatientDetailView({
                           const o = row as Record<string, unknown>;
                           return (
                             <div key={String(o.id)} className="pims-patient-detail__group-line">
-                              {pickStr(o.name) ?? 'Diagnosis'} — {formatChartDateTime(pickStr(o.serviceDate))}
+                              {pickStr(o.name) ?? 'Diagnosis'} —{' '}
+                              {formatChartDateTime(pickStr(o.serviceDate))}
                             </div>
                           );
                         })}
@@ -1328,8 +1541,12 @@ export default function PimsPatientDetailView({
                           const p = pair as { order?: Record<string, unknown> };
                           const o = p.order ?? {};
                           return (
-                            <div key={String(o.id ?? idx)} className="pims-patient-detail__group-line">
-                              {pickStr(o.labOrderType) ?? 'Lab'} — {formatChartDateTime(pickStr(o.submittedDate))}
+                            <div
+                              key={String(o.id ?? idx)}
+                              className="pims-patient-detail__group-line"
+                            >
+                              {pickStr(o.labOrderType) ?? 'Lab'} —{' '}
+                              {formatChartDateTime(pickStr(o.submittedDate))}
                             </div>
                           );
                         })}
@@ -1370,9 +1587,7 @@ export default function PimsPatientDetailView({
                         <td>{pickStr(o.name) ?? '—'}</td>
                         <td>{formatChartDateTime(pickStr(o.serviceDate))}</td>
                         <td>{employeeNameFromUnknown(o.surgeonEmployee)}</td>
-                        <td>
-                          {start || end ? `${start ?? '?'} → ${end ?? '?'}` : '—'}
-                        </td>
+                        <td>{start || end ? `${start ?? '?'} → ${end ?? '?'}` : '—'}</td>
                         <td>{pickStr(o.description) ?? '—'}</td>
                       </tr>
                     );
@@ -1409,7 +1624,10 @@ export default function PimsPatientDetailView({
                     </thead>
                     <tbody>
                       {g.entries.map((row, i) => {
-                        const go = row.goToTreatment && typeof row.goToTreatment === 'object' ? (row.goToTreatment as Record<string, unknown>) : null;
+                        const go =
+                          row.goToTreatment && typeof row.goToTreatment === 'object'
+                            ? (row.goToTreatment as Record<string, unknown>)
+                            : null;
                         const treatmentId = row.treatmentId ?? go?.treatmentId;
                         const treatmentItemId = row.treatmentItemId ?? go?.treatmentItemId;
                         const qtyLabel =
@@ -1417,13 +1635,17 @@ export default function PimsPatientDetailView({
                           (row.quantity != null ? String(row.quantity) : null) ??
                           pickStr(row.quantityDispensed);
                         const refillsAllowed =
-                          typeof row.refillsAllowed === 'number' ? row.refillsAllowed : Number(row.refillsAllowed);
+                          typeof row.refillsAllowed === 'number'
+                            ? row.refillsAllowed
+                            : Number(row.refillsAllowed);
                         const hasRefills = row.hasRefills === true;
                         return (
                           <tr key={`${g.code}-${i}`}>
                             <td>{formatChartDateShort(pickStr(row.serviceDate))}</td>
                             <td>{prescriberFromRxRow(row)}</td>
-                            <td>{pickStr(row.productName) ?? pickStr(row.name) ?? g.displayName}</td>
+                            <td>
+                              {pickStr(row.productName) ?? pickStr(row.name) ?? g.displayName}
+                            </td>
                             <td>{qtyLabel ?? '—'}</td>
                             <td>{hasRefills ? 'Yes' : 'No'}</td>
                             <td>
@@ -1466,7 +1688,8 @@ export default function PimsPatientDetailView({
                 <h3>Weight history</h3>
               </div>
               <p>
-                <strong>Profile weight (patient row):</strong> {pickStr(payload.weight) ?? weightLine ?? '—'}
+                <strong>Profile weight (patient row):</strong>{' '}
+                {pickStr(payload.weight) ?? weightLine ?? '—'}
               </p>
               {latestWeightPoint && (
                 <p>
@@ -1491,7 +1714,10 @@ export default function PimsPatientDetailView({
               <ul className="pims-patient-detail__hl-list">
                 {vaccinationLogs.slice(0, 20).map((v) => {
                   const o = v as Record<string, unknown>;
-                  const inv = o.inventoryItem && typeof o.inventoryItem === 'object' ? (o.inventoryItem as Record<string, unknown>) : null;
+                  const inv =
+                    o.inventoryItem && typeof o.inventoryItem === 'object'
+                      ? (o.inventoryItem as Record<string, unknown>)
+                      : null;
                   const label =
                     pickStr(o.vaccineName) ??
                     pickStr(o.name) ??
@@ -1502,7 +1728,8 @@ export default function PimsPatientDetailView({
                     <li key={String(o.id)}>
                       {label}{' '}
                       <span className="pims-patient-detail__muted">
-                        · {formatChartDateShort(pickStr(o.dateVaccinated) ?? pickStr(o.serviceDate))}
+                        ·{' '}
+                        {formatChartDateShort(pickStr(o.dateVaccinated) ?? pickStr(o.serviceDate))}
                       </span>
                     </li>
                   );
@@ -1524,9 +1751,7 @@ export default function PimsPatientDetailView({
                 {vaccinationLogs.length === 0 &&
                   (medicalRecord?.medications ?? []).every(
                     (m) => !vaccineHintName(pickStr((m as Record<string, unknown>).name) ?? '')
-                  ) && (
-                    <li className="pims-patient-detail__muted">No vaccinations recorded.</li>
-                  )}
+                  ) && <li className="pims-patient-detail__muted">No vaccinations recorded.</li>}
               </ul>
             </div>
             <div className="pims-patient-detail__hl-card">
@@ -1538,13 +1763,19 @@ export default function PimsPatientDetailView({
               ) : (
                 <ul className="pims-patient-detail__hl-list">
                   {remindersSorted.slice(0, 25).map((o) => {
-                    const title = pickStr(o.title) ?? pickStr(o.name) ?? pickStr(o.description) ?? 'Reminder';
+                    const title =
+                      pickStr(o.title) ?? pickStr(o.name) ?? pickStr(o.description) ?? 'Reminder';
                     const due =
-                      pickStr(o.dueDate) ?? pickStr(o.reminderDate) ?? pickStr(o.serviceDate) ?? pickStr(o.createdAt);
+                      pickStr(o.dueDate) ??
+                      pickStr(o.reminderDate) ??
+                      pickStr(o.serviceDate) ??
+                      pickStr(o.createdAt);
                     return (
                       <li key={String(o.id)}>
                         {title}{' '}
-                        <span className="pims-patient-detail__muted">· due {formatChartDateShort(due)}</span>
+                        <span className="pims-patient-detail__muted">
+                          · due {formatChartDateShort(due)}
+                        </span>
                       </li>
                     );
                   })}
@@ -1557,13 +1788,18 @@ export default function PimsPatientDetailView({
         {mrTab === 'wellness' && (
           <div className="pims-patient-detail__wellness">
             {wellnessPlans.length === 0 ? (
-              <p className="pims-patient-detail__muted">No wellness plans on this medical record.</p>
+              <p className="pims-patient-detail__muted">
+                No wellness plans on this medical record.
+              </p>
             ) : (
               <ul className="pims-patient-detail__wellness-list">
                 {wellnessPlans.map((raw) => {
                   const p = raw as Record<string, unknown>;
                   const label =
-                    pickStr(p.name) ?? pickStr(p.planName) ?? pickStr(p.description) ?? `Plan #${String(p.id ?? '')}`;
+                    pickStr(p.name) ??
+                    pickStr(p.planName) ??
+                    pickStr(p.description) ??
+                    `Plan #${String(p.id ?? '')}`;
                   return (
                     <li key={String(p.id)}>
                       <strong>{label}</strong>

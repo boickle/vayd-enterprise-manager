@@ -7,6 +7,7 @@ import {
   type CatalogPricingItem,
 } from '../../utils/catalogItemPricing';
 import type { EncounterOrder, EncounterOrderKind } from '../../api/visitWorkflow';
+import { ensureSharpsFeeOrder, isVaccineSearchItem } from '../../utils/visitSharpsFee';
 
 export type SuggestedPlanItem = {
   key: string;
@@ -38,7 +39,10 @@ type Props = {
   patientId?: number;
   clientId?: number;
   practiceId: number;
-  onOrderAdded: (order: EncounterOrder) => void;
+  onOrderAdded: (
+    order: EncounterOrder,
+    meta?: { isVaccine?: boolean; skipPlanNarrative?: boolean }
+  ) => void;
   onInvoiceShouldRefresh: () => void;
   /** Freeform text that isn't a catalog charge — append as a bullet on the chosen SOAP section. */
   onAppendToSoapSection: (section: SoapNarrativeSection, text: string) => void;
@@ -46,6 +50,29 @@ type Props = {
 
 function norm(s: string): string {
   return s.trim().toLowerCase();
+}
+
+/** Bullets written when an inventory item is already charging — never re-offer them. */
+const RXED_BULLET = /^rx'?ed\s+/i;
+const VX_ADMINISTERED_BULLET = /^vx\s+administered:\s*/i;
+
+/**
+ * A narrative bullet and an order are the same item when one name starts with the other:
+ * `shortenForSearch` truncates at the first comma, so "Bravecto 10-22lb (3 month dose) ADD
+ * REBATE FOR 2" has to still match the order's full "… FOR 2, 3, OR 4 DOSES".
+ */
+function matchesExistingOrder(name: string, orderNames: string[]): boolean {
+  const candidate = norm(name)
+    .replace(RXED_BULLET, '')
+    .replace(VX_ADMINISTERED_BULLET, '')
+    .replace(/\s+sq\.?$/i, '')
+    .trim();
+  if (!candidate) return false;
+  return orderNames.some(
+    (order) =>
+      order === candidate ||
+      (candidate.length >= 6 && (order.startsWith(candidate) || candidate.startsWith(order)))
+  );
 }
 
 const SECTION_KIND: { pattern: RegExp; kind: EncounterOrderKind }[] = [
@@ -92,6 +119,9 @@ function extractPlanNarrativeItems(planNotes: string): SuggestedPlanItem[] {
     }
     const text = bulletMatch[1].trim();
     if (!text) continue;
+    // Auto Plan bullets for items already charging — never re-offer them as checkout rows.
+    // Freeform notes like "Administered SQF" still come through (no Vx/Rx prefix).
+    if (RXED_BULLET.test(text) || VX_ADMINISTERED_BULLET.test(text)) continue;
     const query = shortenForSearch(text);
     items.push({
       key: `narrative:${norm(text)}`,
@@ -153,9 +183,9 @@ export default function ScribeSuggestedPlanItems({
   const [extraRows, setExtraRows] = useState<string[]>([]);
 
   const mergedSuggestions = useMemo(() => {
-    const existingOrderNames = new Set(orders.map((o) => norm(o.name)));
+    const existingOrderNames = orders.map((o) => norm(o.name));
     const narrativeItems = extractPlanNarrativeItems(planNotes).filter(
-      (n) => !existingOrderNames.has(norm(n.name))
+      (n) => !matchesExistingOrder(n.name, existingOrderNames)
     );
     const seen = new Set(suggestions.map((s) => norm(s.name)));
     const extra = narrativeItems.filter((n) => {
@@ -163,7 +193,10 @@ export default function ScribeSuggestedPlanItems({
       seen.add(norm(n.name));
       return true;
     });
-    return [...suggestions, ...extra];
+    const transcriptRows = suggestions.filter(
+      (s) => !matchesExistingOrder(s.name, existingOrderNames)
+    );
+    return [...transcriptRows, ...extra];
   }, [suggestions, planNotes, orders]);
 
   useEffect(() => {
@@ -213,8 +246,9 @@ export default function ScribeSuggestedPlanItems({
               patientId={patientId}
               clientId={clientId}
               practiceId={practiceId}
-              onAdded={(order) => {
-                onOrderAdded(order);
+              existingOrders={orders}
+              onAdded={(order, meta) => {
+                onOrderAdded(order, meta);
                 onInvoiceShouldRefresh();
                 setResolvedKeys((prev) => new Set(prev).add(s.key));
               }}
@@ -235,8 +269,9 @@ export default function ScribeSuggestedPlanItems({
               patientId={patientId}
               clientId={clientId}
               practiceId={practiceId}
-              onAdded={(order) => {
-                onOrderAdded(order);
+              existingOrders={orders}
+              onAdded={(order, meta) => {
+                onOrderAdded(order, meta);
                 onInvoiceShouldRefresh();
                 setExtraRows((prev) => prev.filter((k) => k !== key));
               }}
@@ -269,6 +304,7 @@ function PlanItemSearchRow({
   patientId,
   clientId,
   practiceId,
+  existingOrders,
   onAdded,
   onAppendToSoap,
   onDismiss,
@@ -280,7 +316,11 @@ function PlanItemSearchRow({
   patientId?: number;
   clientId?: number;
   practiceId: number;
-  onAdded: (order: EncounterOrder) => void;
+  existingOrders: EncounterOrder[];
+  onAdded: (
+    order: EncounterOrder,
+    meta?: { isVaccine?: boolean; skipPlanNarrative?: boolean }
+  ) => void;
   onAppendToSoap: (section: SoapNarrativeSection, text: string) => void;
   onDismiss: () => void;
 }) {
@@ -344,7 +384,21 @@ function PlanItemSearchRow({
         practiceId,
         clientId,
       });
-      onAdded(order);
+      const isVaccine = isVaccineSearchItem(item);
+      onAdded(order, { isVaccine });
+      try {
+        const sharps = await ensureSharpsFeeOrder({
+          encounterId,
+          practiceId,
+          patientId,
+          clientId,
+          existingOrders: [...existingOrders, order],
+          triggerItem: item,
+        });
+        if (sharps) onAdded(sharps, { skipPlanNarrative: true });
+      } catch {
+        /* Sharps is best-effort — the vaccine/injection still charges. */
+      }
     } finally {
       setAdding(false);
     }
@@ -407,7 +461,11 @@ function PlanItemSearchRow({
                 <span className="soap-plan-result-price">{money(displayPrice(item))}</span>
               </button>
             ))}
-          <div className="soap-plan-result soap-plan-result-add-to" role="option" aria-selected={false}>
+          <div
+            className="soap-plan-result soap-plan-result-add-to"
+            role="option"
+            aria-selected={false}
+          >
             <div className="soap-plan-add-to-head">
               <span className="soap-tag type-add-to">Add to</span>
               <span className="soap-plan-result-name">

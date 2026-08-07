@@ -12,6 +12,9 @@ export type SoapEncounterStatus = 'draft' | 'completed';
 
 export type PatientProblemKind = 'presenting_complaint' | 'rule_out' | 'diagnosis';
 export type PatientProblemStatus = 'open' | 'active' | 'resolved';
+/** Chronic problems pin to the top of the patient record; null means nobody has classified it yet. */
+export type PatientProblemAcuity = 'acute' | 'chronic';
+export type PrescriptionAcuity = 'acute' | 'chronic';
 
 export type EncounterOrderKind = 'exam' | 'diagnostic' | 'treatment' | 'med' | 'client_ed' | 'note';
 export type EncounterOrderState = 'proposed' | 'accepted' | 'declined';
@@ -50,8 +53,12 @@ export type PatientProblem = {
   label: string;
   kind: PatientProblemKind;
   status: PatientProblemStatus;
+  acuity: PatientProblemAcuity | null;
   note: string | null;
   createdInEncounterId: string | null;
+  /** Set by the first encounter completion that addressed this problem — until then it is
+   * only on the working list and does not appear on the medical record. */
+  postedToRecordAt: string | null;
   resolvedAt: string | null;
   created: string;
   updated: string;
@@ -87,6 +94,11 @@ export type VisitInvoiceLine = {
   unitPrice: number;
   amount: number;
   isCovered: boolean;
+  taxLevelValue?: number | null;
+  isTaxExempt?: boolean;
+  taxableAmount?: number;
+  taxRate?: number;
+  taxAmount?: number;
   isDeleted?: boolean;
 };
 
@@ -98,6 +110,8 @@ export type VisitInvoice = {
   status: VisitInvoiceStatus;
   subtotal: number;
   membershipAdjustments: number;
+  /** Sum of line tax snapshots — ready for a sales/tax report. */
+  taxTotal: number;
   total: number;
   amountPaid: number;
   isEuthanasiaPrepay: boolean;
@@ -137,6 +151,25 @@ export async function listEncounters(params: {
     params: { practiceId: pid(), ...params },
   });
   return data;
+}
+
+/**
+ * Appointment ids whose SOAP is signed & locked — for calendar lock badges / menu copy.
+ * Same pattern as GET /forward-bookings/calendar-index.
+ */
+export async function fetchSoapCalendarLockIndex(
+  practiceId: number = VISIT_WORKFLOW_PRACTICE_ID
+): Promise<{ lockedAppointmentIds: number[] }> {
+  const { data } = await http.get<{ lockedAppointmentIds?: number[] }>(
+    '/soap-encounters/calendar-lock-index',
+    { params: { practiceId } }
+  );
+  const ids = Array.isArray(data?.lockedAppointmentIds)
+    ? data.lockedAppointmentIds
+        .map((id) => Number(id))
+        .filter((id) => Number.isFinite(id) && id > 0)
+    : [];
+  return { lockedAppointmentIds: ids };
 }
 
 export async function createEncounter(body: {
@@ -288,6 +321,189 @@ export async function deleteOrder(encounterId: string, orderId: string): Promise
   );
 }
 
+// --- What the visit produced: doses given and prescriptions written ---
+
+export type VaccineDosageType = 'booster' | 'initial';
+
+/**
+ * A dose recorded against an order. This is a real `vaccination_logs` row, the same table the
+ * eVet import fills, so it shows up in the patient chart and the vaccination certificate.
+ */
+export type OrderVaccination = {
+  id: number;
+  encounterOrderId: string | null;
+  vaccineName: string | null;
+  dateVaccinated: string | null;
+  nextVaccinationDate: string | null;
+  lotNumber: string | null;
+  serialNumber: string | null;
+  vaccineExpiration: string | null;
+  tagNumber: string | null;
+  manufacturer: string | null;
+  vaccineType: string | null;
+  dosageType: number | null;
+  usdaLicensingMonths: number | null;
+  animalControlLicensingMonths: number | null;
+  veterinarianName: string | null;
+  veterinarianLicense: string | null;
+};
+
+/** A prescription written against an order. A real `prescriptions` row. */
+export type OrderPrescription = {
+  id: number;
+  encounterOrderId: string | null;
+  name: string;
+  strength: string | null;
+  instructions: string | null;
+  refill: number | null;
+  refillExpiration: string | null;
+  startDate: string | null;
+  rxNumber: number | null;
+  acuity: PrescriptionAcuity | null;
+  discontinuedAt: string | null;
+};
+
+/** A patient-scoped chronic (or any) prescription for the EMR / SOAP pin. */
+export type PatientPrescription = {
+  id: number;
+  name: string;
+  strength: string | null;
+  instructions: string | null;
+  refill: number | null;
+  refillExpiration: string | null;
+  startDate: string | null;
+  acuity: PrescriptionAcuity | null;
+  discontinuedAt: string | null;
+  /** Catalog item for future refills when the pin was matched to inventory. */
+  inventoryItemId: number | null;
+};
+
+/**
+ * The stock an order consumes, which is often not the item charged: DAPP1, DAPP3 and DAPPBOOST
+ * all draw from a single DAPPINV stock item. Read-only — nothing decrements yet.
+ */
+export type StockDraw = {
+  orderId: string;
+  inventoryItemId: number;
+  inventoryItemName: string;
+  inventoryItemCode: string | null;
+  quantity: number;
+};
+
+export type OrderClinicalDetails = {
+  vaccinations: OrderVaccination[];
+  prescriptions: OrderPrescription[];
+  /** Orders whose catalog item sits in the Vaccines category, so a dose must be recorded. */
+  vaccineOrderIds: string[];
+  stockDraws: StockDraw[];
+};
+
+export async function getOrderClinicalDetails(encounterId: string): Promise<OrderClinicalDetails> {
+  const { data } = await http.get<OrderClinicalDetails>(
+    `/soap-encounters/${encodeURIComponent(encounterId)}/order-clinical-details`,
+    { params: { practiceId: pid() } }
+  );
+  return data;
+}
+
+export type VaccineDefaults = {
+  /** Interval from the last time this practice gave this vaccine; null if never. */
+  nextDueMonths: number | null;
+  manufacturer: string | null;
+  vaccineType: string | null;
+  serialNumber: string | null;
+};
+
+export async function getVaccineDefaults(
+  encounterId: string,
+  orderId: string,
+  catalogItemId: number
+): Promise<VaccineDefaults> {
+  const { data } = await http.get<VaccineDefaults>(
+    `/soap-encounters/${encodeURIComponent(encounterId)}/orders/${encodeURIComponent(
+      orderId
+    )}/vaccination-defaults`,
+    { params: { practiceId: pid(), catalogItemId } }
+  );
+  return data;
+}
+
+export type PrescriptionDefaults = {
+  instructions: string | null;
+  strength: string | null;
+  refill: number | null;
+  /** Applied to whichever start date the form is showing. */
+  refillExpiration: { unit: 'days' | 'months'; amount: number } | null;
+  /** ISO date, set instead of `refillExpiration` when the catalog pins a fixed date. */
+  refillExpirationDate: string | null;
+  source: 'patient-history' | 'catalog' | null;
+};
+
+export async function getPrescriptionDefaults(
+  encounterId: string,
+  orderId: string,
+  catalogItemId: number
+): Promise<PrescriptionDefaults> {
+  const { data } = await http.get<PrescriptionDefaults>(
+    `/soap-encounters/${encodeURIComponent(encounterId)}/orders/${encodeURIComponent(
+      orderId
+    )}/prescription-defaults`,
+    { params: { practiceId: pid(), catalogItemId } }
+  );
+  return data;
+}
+
+export async function saveOrderVaccination(
+  encounterId: string,
+  orderId: string,
+  body: {
+    vaccineName?: string;
+    dateVaccinated?: string;
+    nextVaccinationDate: string;
+    lotNumber?: string;
+    serialNumber?: string;
+    vaccineExpiration?: string;
+    tagNumber?: string;
+    manufacturer?: string;
+    vaccineType?: string;
+    dosageType?: VaccineDosageType;
+    usdaLicensingMonths?: number;
+    animalControlLicensingMonths?: number;
+    employeeId?: number;
+  }
+): Promise<OrderVaccination> {
+  const { data } = await http.put<OrderVaccination>(
+    `/soap-encounters/${encodeURIComponent(encounterId)}/orders/${encodeURIComponent(
+      orderId
+    )}/vaccination`,
+    { practiceId: pid(), ...body }
+  );
+  return data;
+}
+
+export async function saveOrderPrescription(
+  encounterId: string,
+  orderId: string,
+  body: {
+    name?: string;
+    strength?: string;
+    instructions?: string;
+    refill?: number;
+    refillExpiration?: string;
+    startDate?: string;
+    acuity?: PrescriptionAcuity;
+    employeeId?: number;
+  }
+): Promise<OrderPrescription> {
+  const { data } = await http.put<OrderPrescription>(
+    `/soap-encounters/${encodeURIComponent(encounterId)}/orders/${encodeURIComponent(
+      orderId
+    )}/prescription`,
+    { practiceId: pid(), ...body }
+  );
+  return data;
+}
+
 // --- Master Problem List ---
 
 export async function listProblems(
@@ -305,6 +521,7 @@ export async function createProblem(body: {
   label: string;
   kind?: PatientProblemKind;
   status?: PatientProblemStatus;
+  acuity?: PatientProblemAcuity;
   note?: string;
   createdInEncounterId?: string;
 }): Promise<PatientProblem> {
@@ -317,7 +534,7 @@ export async function createProblem(body: {
 
 export async function updateProblem(
   id: string,
-  body: Partial<Pick<PatientProblem, 'label' | 'kind' | 'status' | 'note'>>
+  body: Partial<Pick<PatientProblem, 'label' | 'kind' | 'status' | 'acuity' | 'note'>>
 ): Promise<PatientProblem> {
   const { data } = await http.patch<PatientProblem>(`/patient-problems/${encodeURIComponent(id)}`, {
     practiceId: pid(),
@@ -330,6 +547,81 @@ export async function deleteProblem(id: string): Promise<void> {
   await http.delete(`/patient-problems/${encodeURIComponent(id)}`, {
     params: { practiceId: pid() },
   });
+}
+
+/** Chronic meds still being taken (and optionally the full patient Rx list). */
+export async function listPatientPrescriptions(
+  patientId: number,
+  opts?: { activeChronicOnly?: boolean }
+): Promise<PatientPrescription[]> {
+  const { data } = await http.get<PatientPrescription[]>('/patient-prescriptions', {
+    params: {
+      practiceId: pid(),
+      patientId,
+      activeChronicOnly: opts?.activeChronicOnly,
+    },
+  });
+  return data;
+}
+
+/** Mark a prescription as no longer taking (or clear that mark). */
+export async function updatePatientPrescription(
+  id: number,
+  body: { discontinued?: boolean }
+): Promise<PatientPrescription> {
+  const { data } = await http.patch<PatientPrescription>(
+    `/patient-prescriptions/${encodeURIComponent(String(id))}`,
+    { practiceId: pid(), ...body }
+  );
+  return data;
+}
+
+/** Freeform chronic med on the patient pin (no checkout charge). */
+export async function createPatientPrescription(body: {
+  patientId: number;
+  name: string;
+  acuity?: PrescriptionAcuity;
+  inventoryItemId?: number | null;
+}): Promise<PatientPrescription> {
+  const { data } = await http.post<PatientPrescription>('/patient-prescriptions', {
+    practiceId: pid(),
+    ...body,
+  });
+  return data;
+}
+
+/** Charged visit item published to the patient medical record after finalize. */
+export type PostedVisitCharge = {
+  id: string;
+  name: string;
+  kind: string;
+  qty: number;
+  unitPrice: number;
+  isCovered: boolean;
+  postedToRecordAt: string;
+  isVaccine: boolean;
+  isMed: boolean;
+  prescriptionPending: boolean;
+  vaccinationPending: boolean;
+  prescription: {
+    instructions: string | null;
+    strength: string | null;
+    refill: number;
+    acuity: string | null;
+    refillExpiration: string | null;
+  } | null;
+  vaccination: {
+    lotNumber: string | null;
+    nextVaccinationDate: string | null;
+    dateVaccinated: string | null;
+  } | null;
+};
+
+export async function listPatientVisitCharges(patientId: number): Promise<PostedVisitCharge[]> {
+  const { data } = await http.get<PostedVisitCharge[]>('/patient-visit-charges', {
+    params: { practiceId: pid(), patientId },
+  });
+  return data;
 }
 
 // --- Visit invoice / checkout ---
@@ -373,6 +665,15 @@ export async function voidInvoice(id: string): Promise<VisitInvoice> {
   const { data } = await http.post<VisitInvoice>(`/visit-invoices/${encodeURIComponent(id)}/void`, {
     practiceId: pid(),
   });
+  return data;
+}
+
+/** Undo a void — back to open so the bill can be corrected and collected. */
+export async function reopenInvoice(id: string): Promise<VisitInvoice> {
+  const { data } = await http.post<VisitInvoice>(
+    `/visit-invoices/${encodeURIComponent(id)}/reopen`,
+    { practiceId: pid() }
+  );
   return data;
 }
 
@@ -421,9 +722,12 @@ export async function getTerminalConnectionToken(): Promise<{ secret: string }> 
   return data;
 }
 
-export async function createTerminalPaymentIntent(
-  invoiceId: string
-): Promise<{ id: string; clientSecret: string; invoiceId: string }> {
+export async function createTerminalPaymentIntent(invoiceId: string): Promise<{
+  id: string;
+  clientSecret: string;
+  invoiceId: string;
+  invoice?: VisitInvoice;
+}> {
   const { data } = await http.post(
     `/visit-payments/${encodeURIComponent(invoiceId)}/terminal/payment-intent`,
     { practiceId: pid() }

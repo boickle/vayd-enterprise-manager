@@ -93,6 +93,13 @@ export async function listScribeSessions(soapEncounterId: string): Promise<Scrib
   return data;
 }
 
+/** Deletes the saved transcript text for a visit (session audit rows are kept). */
+export async function clearScribeTranscript(soapEncounterId: string): Promise<void> {
+  await http.delete(`/soap-encounters/${encodeURIComponent(soapEncounterId)}/scribe/transcript`, {
+    params: { practiceId: VISIT_WORKFLOW_PRACTICE_ID },
+  });
+}
+
 export async function getScribeSession(
   soapEncounterId: string,
   sessionId: string

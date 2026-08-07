@@ -9,6 +9,15 @@ export interface CadenceEntry {
   smsFallback?: 'email' | 'none';
 }
 
+/** Practice setting: company has an online store (price target next to branches). */
+export const ONLINE_STORE_IMPLEMENTED_KEY = 'inventory.onlineStoreImplemented' as const;
+/** Branch that fulfills online store orders (stock draws). */
+export const ONLINE_STORE_FULFILLMENT_BRANCH_KEY =
+  'inventory.onlineStoreFulfillmentBranchId' as const;
+/** Inventory location within that branch for online store fulfillment. */
+export const ONLINE_STORE_FULFILLMENT_LOCATION_KEY =
+  'inventory.onlineStoreFulfillmentLocationId' as const;
+
 export type ReminderSettings = {
   'reminders.enableEmail'?: string;
   'reminders.enableSms'?: string;
@@ -31,7 +40,41 @@ export type ReminderSettings = {
    * Shape: [{ employeeId, date, seat: 'phones'|'outreach'|'email'|'off', notes? }]
    */
   'cl.seatDayOverrides'?: string;
+  /**
+   * Whether this practice runs an online store. `'true'` / `'false'`; unset = No (opt-in).
+   * When Yes, Inventory pricing treats Online Store as a price target alongside branches.
+   */
+  'inventory.onlineStoreImplemented'?: string;
+  /** Branch id (string) used when fulfilling online store orders. */
+  'inventory.onlineStoreFulfillmentBranchId'?: string;
+  /** Inventory location id (string) within the fulfillment branch. */
+  'inventory.onlineStoreFulfillmentLocationId'?: string;
 };
+
+/** True only when the practice explicitly enabled an online store (default No). */
+export function isOnlineStoreImplemented(
+  settings: Pick<ReminderSettings, 'inventory.onlineStoreImplemented'> | null | undefined
+): boolean {
+  return settings?.[ONLINE_STORE_IMPLEMENTED_KEY] === 'true';
+}
+
+export function parseOnlineStoreFulfillmentBranchId(
+  settings: Pick<ReminderSettings, 'inventory.onlineStoreFulfillmentBranchId'> | null | undefined
+): number | null {
+  const raw = settings?.[ONLINE_STORE_FULFILLMENT_BRANCH_KEY];
+  if (raw == null || String(raw).trim() === '') return null;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+export function parseOnlineStoreFulfillmentLocationId(
+  settings: Pick<ReminderSettings, 'inventory.onlineStoreFulfillmentLocationId'> | null | undefined
+): number | null {
+  const raw = settings?.[ONLINE_STORE_FULFILLMENT_LOCATION_KEY];
+  if (raw == null || String(raw).trim() === '') return null;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
 
 export type ReminderSettingsForm = {
   enableEmail: boolean;

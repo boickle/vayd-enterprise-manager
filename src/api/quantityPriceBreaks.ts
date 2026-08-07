@@ -25,12 +25,19 @@ export type InventoryItem = {
   /** Online store listing (backend may add). */
   showOnOnlineStore?: boolean;
   onlineStorePrice?: string | number | null;
+  /** When true, item can ship from the online storefront. */
+  shippable?: boolean;
+  /** S3 key for catalog image (display via GET …/image). */
+  imageUrl?: string | null;
   /** How the item is counted when selling or dispensing: capsule, bottle, ml, etc. */
   sellUnitType?: string | null;
   sellUnitTypeDetail?: string | null;
   unitsPerPackage?: number | string | null;
   alternateSellUnitType?: string | null;
   alternateUnitsPerPackage?: number | string | null;
+  /** Stock item this code draws down; null means it draws on itself. */
+  linkedInventoryItemId?: number | null;
+  linkedInventoryItemDefaultQuantity?: number | string | null;
   [key: string]: any; // Allow additional fields
 };
 

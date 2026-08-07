@@ -37,6 +37,7 @@ import { HOLDS_PATH, holdsPathWithHighlight } from './holds-nav';
 import ExitSurveyPage from './pages/ExitSurveyPage';
 import RoomLoaderPage from './pages/RoomLoader';
 import SoapEncounterPage from './pages/SoapEncounterPage';
+import VisitWrapUpPage from './pages/VisitWrapUpPage';
 import DoctorWorklistPage from './pages/DoctorWorklistPage';
 import { ScheduleIndexRedirect } from './pages/ScheduleLayout';
 import ScheduleHomePage from './pages/ScheduleHomePage';
@@ -562,6 +563,10 @@ export default function App() {
                     <Route
                       path="soap/:appointmentId/:patientId"
                       element={<SoapEncounterPage />}
+                    />
+                    <Route
+                      path="soap/:appointmentId/:patientId/wrap-up"
+                      element={<VisitWrapUpPage />}
                     />
                     <Route path="scheduler" element={<Scheduler />} />
                     <Route path="inventory" element={<InventoryManagement />} />

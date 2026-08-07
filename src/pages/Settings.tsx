@@ -24,9 +24,21 @@ import {
   updatePracticeSettings,
   settingsToForm,
   formToSettings,
+  isOnlineStoreImplemented,
+  parseOnlineStoreFulfillmentBranchId,
+  parseOnlineStoreFulfillmentLocationId,
+  ONLINE_STORE_IMPLEMENTED_KEY,
+  ONLINE_STORE_FULFILLMENT_BRANCH_KEY,
+  ONLINE_STORE_FULFILLMENT_LOCATION_KEY,
   type ReminderSettingsForm,
   type CadenceEntry,
 } from '../api/practiceSettings';
+import {
+  listInventoryBranchLocations,
+  listPracticeBranches,
+  type InventoryBranchLocation,
+  type PracticeBranch,
+} from '../api/branchInventory';
 import dayjs from 'dayjs';
 import { apiBaseUrl } from '../api/http';
 import {
@@ -53,6 +65,7 @@ import SettingsAppointmentTypes from '../components/settings/SettingsAppointment
 import SettingsRoleManualBooking from '../components/settings/SettingsRoleManualBooking';
 import SettingsClSeatAssignment from '../components/settings/SettingsClSeatAssignment';
 import SettingsGmailMailboxPermissions from '../components/settings/SettingsGmailMailboxPermissions';
+import SettingsBranchesLocations from '../components/settings/SettingsBranchesLocations';
 import { appointmentTypeIsArchived } from '../utils/appointmentTypeSettings';
 
 const SETTINGS_TAB_IDS = [
@@ -61,6 +74,7 @@ const SETTINGS_TAB_IDS = [
   'employee-types',
   'employee-zones',
   'employee-schedule',
+  'branches-locations',
   'inventory',
   'employee-images',
   'employee-goals',
@@ -240,6 +254,20 @@ export default function Settings() {
   const [reminderSaving, setReminderSaving] = useState(false);
   const [reminderLoadError, setReminderLoadError] = useState<string | null>(null);
 
+  // Inventory tab — company online-store capability + fulfillment source
+  const [onlineStoreImplemented, setOnlineStoreImplemented] = useState(false);
+  const [onlineStoreFulfillmentBranchId, setOnlineStoreFulfillmentBranchId] = useState<
+    number | null
+  >(null);
+  const [onlineStoreFulfillmentLocationId, setOnlineStoreFulfillmentLocationId] = useState<
+    number | null
+  >(null);
+  const [onlineStoreBranches, setOnlineStoreBranches] = useState<PracticeBranch[]>([]);
+  const [onlineStoreLocations, setOnlineStoreLocations] = useState<InventoryBranchLocation[]>([]);
+  const [onlineStoreSettingLoading, setOnlineStoreSettingLoading] = useState(false);
+  const [onlineStoreSettingSaving, setOnlineStoreSettingSaving] = useState(false);
+  const [onlineStoreSettingError, setOnlineStoreSettingError] = useState<string | null>(null);
+
   // Normalize roles
   const roles = Array.isArray(role) ? role : role ? [String(role)] : [];
   const isAdmin = roles.some((r) => ['admin', 'superadmin'].includes(String(r).toLowerCase()));
@@ -286,6 +314,77 @@ export default function Settings() {
     };
   }, [isAdmin, activeTab]);
 
+  // Load online-store company setting when Inventory tab is active
+  useEffect(() => {
+    if (!isAdmin || activeTab !== 'inventory') return;
+    let cancelled = false;
+    setOnlineStoreSettingError(null);
+    setOnlineStoreSettingLoading(true);
+    Promise.all([
+      getPracticeSettings(REMINDERS_PRACTICE_ID),
+      listPracticeBranches(REMINDERS_PRACTICE_ID),
+    ])
+      .then(async ([settings, branchList]) => {
+        if (cancelled) return;
+        setOnlineStoreImplemented(isOnlineStoreImplemented(settings));
+        const activeBranches = branchList.filter((b) => b.isActive !== false);
+        setOnlineStoreBranches(activeBranches);
+        const branchId = parseOnlineStoreFulfillmentBranchId(settings);
+        const locationId = parseOnlineStoreFulfillmentLocationId(settings);
+        setOnlineStoreFulfillmentBranchId(branchId);
+        setOnlineStoreFulfillmentLocationId(locationId);
+        if (branchId != null) {
+          try {
+            const locs = await listInventoryBranchLocations(REMINDERS_PRACTICE_ID, branchId);
+            if (!cancelled) setOnlineStoreLocations(locs.filter((l) => l.isActive !== false));
+          } catch {
+            if (!cancelled) setOnlineStoreLocations([]);
+          }
+        } else {
+          setOnlineStoreLocations([]);
+        }
+      })
+      .catch((err: any) => {
+        if (!cancelled) {
+          setOnlineStoreSettingError(
+            err?.response?.data?.message || err?.message || 'Failed to load online store setting'
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setOnlineStoreSettingLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isAdmin, activeTab]);
+
+  useEffect(() => {
+    if (!isAdmin || activeTab !== 'inventory' || onlineStoreFulfillmentBranchId == null) {
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const locs = await listInventoryBranchLocations(
+          REMINDERS_PRACTICE_ID,
+          onlineStoreFulfillmentBranchId
+        );
+        if (cancelled) return;
+        const active = locs.filter((l) => l.isActive !== false);
+        setOnlineStoreLocations(active);
+        setOnlineStoreFulfillmentLocationId((prev) => {
+          if (prev != null && active.some((l) => l.id === prev)) return prev;
+          return active.find((l) => l.isDefault)?.id ?? active[0]?.id ?? null;
+        });
+      } catch {
+        if (!cancelled) setOnlineStoreLocations([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isAdmin, activeTab, onlineStoreFulfillmentBranchId]);
   const loadData = async () => {
     setLoading(true);
     setError(null);
@@ -973,6 +1072,43 @@ export default function Settings() {
     }
   };
 
+  const handleSaveOnlineStoreImplemented = async () => {
+    setOnlineStoreSettingSaving(true);
+    setOnlineStoreSettingError(null);
+    setError(null);
+    setSuccess(null);
+    try {
+      if (
+        onlineStoreImplemented &&
+        (onlineStoreFulfillmentBranchId == null || onlineStoreFulfillmentLocationId == null)
+      ) {
+        setOnlineStoreSettingError(
+          'Choose a fulfillment branch and location for online store orders.'
+        );
+        return;
+      }
+      await updatePracticeSettings(REMINDERS_PRACTICE_ID, {
+        [ONLINE_STORE_IMPLEMENTED_KEY]: onlineStoreImplemented ? 'true' : 'false',
+        [ONLINE_STORE_FULFILLMENT_BRANCH_KEY]:
+          onlineStoreImplemented && onlineStoreFulfillmentBranchId != null
+            ? String(onlineStoreFulfillmentBranchId)
+            : '',
+        [ONLINE_STORE_FULFILLMENT_LOCATION_KEY]:
+          onlineStoreImplemented && onlineStoreFulfillmentLocationId != null
+            ? String(onlineStoreFulfillmentLocationId)
+            : '',
+      });
+      setSuccess('Online store setting saved');
+      setTimeout(() => setSuccess(null), 3000);
+    } catch (err: any) {
+      setOnlineStoreSettingError(
+        err?.response?.data?.message || err?.message || 'Failed to save online store setting'
+      );
+    } finally {
+      setOnlineStoreSettingSaving(false);
+    }
+  };
+
   const updateAppointmentCadenceEntry = (index: number, update: Partial<CadenceEntry>) => {
     setReminderForm((prev) => {
       const next = [...prev.appointmentCadence];
@@ -1081,6 +1217,12 @@ export default function Settings() {
             onClick={() => goToTab('employee-schedule')}
           >
             Employee Schedule
+          </button>
+          <button
+            className={`settings-tab ${activeTab === 'branches-locations' ? 'active' : ''}`}
+            onClick={() => goToTab('branches-locations')}
+          >
+            Branches &amp; Locations
           </button>
           <button
             className={`settings-tab ${activeTab === 'inventory' ? 'active' : ''}`}
@@ -1994,13 +2136,171 @@ export default function Settings() {
           initialDate={overrideModalInitial.date}
         />
 
+        {activeTab === 'branches-locations' && (
+          <div className="settings-section">
+            <h2 className="settings-section-title">Branches &amp; Locations</h2>
+            <p className="settings-section-description">
+              Set up practice offices (branches) and their inventory location buckets (main, vehicle,
+              staging, etc.). Stock transfers and receiving under Inventory use these buckets.
+            </p>
+            <SettingsBranchesLocations
+              practiceId={Number(import.meta.env.VITE_PRACTICE_ID) || practiceId}
+              onMessage={(msg, kind) => {
+                if (kind === 'success') {
+                  setSuccess(msg);
+                  setError(null);
+                  window.setTimeout(() => setSuccess(null), 4000);
+                } else {
+                  setError(msg);
+                  setSuccess(null);
+                }
+              }}
+            />
+          </div>
+        )}
+
         {/* Inventory Tab */}
         {activeTab === 'inventory' && (
           <div className="settings-section">
             <h2 className="settings-section-title">Inventory Management</h2>
             <p className="settings-section-description">
-              Search for inventory items, labs, and procedures to manage quantity price breaks.
+              Company storefront capability and quantity price breaks for inventory items, labs, and
+              procedures.
             </p>
+
+            <div className="settings-card" style={{ marginBottom: 24 }}>
+              <h3 className="settings-card-title">Online store</h3>
+              <p className="settings-muted" style={{ marginBottom: 12, fontSize: 13 }}>
+                When Yes, Online Store appears as a price target next to branches when editing
+                inventory prices. Per-SKU listing is still controlled on each item.
+              </p>
+              {onlineStoreSettingLoading ? (
+                <p className="settings-muted">Loading…</p>
+              ) : (
+                <>
+                  <fieldset style={{ border: 'none', padding: 0, margin: '0 0 12px' }}>
+                    <legend className="settings-label" style={{ marginBottom: 8 }}>
+                      Online store implemented?
+                    </legend>
+                    <label
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        marginRight: 16,
+                        cursor: 'pointer',
+                        fontSize: 14,
+                      }}
+                    >
+                      <input
+                        type="radio"
+                        name="onlineStoreImplemented"
+                        checked={onlineStoreImplemented}
+                        onChange={() => setOnlineStoreImplemented(true)}
+                        disabled={onlineStoreSettingSaving}
+                      />
+                      Yes
+                    </label>
+                    <label
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        cursor: 'pointer',
+                        fontSize: 14,
+                      }}
+                    >
+                      <input
+                        type="radio"
+                        name="onlineStoreImplemented"
+                        checked={!onlineStoreImplemented}
+                        onChange={() => setOnlineStoreImplemented(false)}
+                        disabled={onlineStoreSettingSaving}
+                      />
+                      No
+                    </label>
+                  </fieldset>
+                  {onlineStoreImplemented && (
+                    <div
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
+                        gap: 12,
+                        marginBottom: 12,
+                      }}
+                    >
+                      <label className="settings-label">
+                        Fulfillment branch
+                        <select
+                          className="settings-input"
+                          value={onlineStoreFulfillmentBranchId ?? ''}
+                          disabled={onlineStoreSettingSaving}
+                          onChange={(e) => {
+                            const v =
+                              e.target.value === '' ? null : Number(e.target.value);
+                            setOnlineStoreFulfillmentBranchId(
+                              v != null && Number.isFinite(v) ? v : null
+                            );
+                            setOnlineStoreFulfillmentLocationId(null);
+                          }}
+                        >
+                          <option value="">Select branch…</option>
+                          {onlineStoreBranches.map((b) => (
+                            <option key={b.id} value={b.id}>
+                              {b.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="settings-label">
+                        Fulfillment location
+                        <select
+                          className="settings-input"
+                          value={onlineStoreFulfillmentLocationId ?? ''}
+                          disabled={
+                            onlineStoreSettingSaving || onlineStoreFulfillmentBranchId == null
+                          }
+                          onChange={(e) => {
+                            const v =
+                              e.target.value === '' ? null : Number(e.target.value);
+                            setOnlineStoreFulfillmentLocationId(
+                              v != null && Number.isFinite(v) ? v : null
+                            );
+                          }}
+                        >
+                          <option value="">Select location…</option>
+                          {onlineStoreLocations.map((loc) => (
+                            <option key={loc.id} value={loc.id}>
+                              {loc.name}
+                              {loc.isDefault ? ' (default)' : ''}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <p
+                        className="settings-muted"
+                        style={{ gridColumn: '1 / -1', margin: 0, fontSize: 12 }}
+                      >
+                        Online orders draw stock from this branch and location when fulfilled.
+                      </p>
+                    </div>
+                  )}
+                  {onlineStoreSettingError && (
+                    <div className="settings-message settings-error-message" style={{ marginBottom: 8 }}>
+                      {onlineStoreSettingError}
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    className="btn primary"
+                    disabled={onlineStoreSettingSaving}
+                    onClick={() => void handleSaveOnlineStoreImplemented()}
+                  >
+                    {onlineStoreSettingSaving ? 'Saving…' : 'Save'}
+                  </button>
+                </>
+              )}
+            </div>
 
             <div className="settings-form-group">
               <label className="settings-label">Search Items</label>

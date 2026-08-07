@@ -96,9 +96,36 @@ export type InventoryStockMovement = {
   [key: string]: unknown;
 };
 
-export async function listPracticeBranches(practiceId: number): Promise<PracticeBranch[]> {
-  const { data } = await http.get<PracticeBranch[]>(`/practice/${practiceId}/branches`);
+export async function listPracticeBranches(
+  practiceId: number,
+  opts?: { includeInactive?: boolean }
+): Promise<PracticeBranch[]> {
+  const { data } = await http.get<PracticeBranch[]>(`/practice/${practiceId}/branches`, {
+    params: opts?.includeInactive ? { includeInactive: true } : undefined,
+  });
   return Array.isArray(data) ? data : [];
+}
+
+/** Create an office/site branch. Default inventory location (`main`) is created server-side. */
+export async function createPracticeBranch(
+  practiceId: number,
+  body: { name: string; pimsLocationId?: string | null }
+): Promise<PracticeBranch> {
+  const { data } = await http.post<PracticeBranch>(`/practice/${practiceId}/branches`, body);
+  return data;
+}
+
+/** Update name / PIMS id, or archive (`isActive: false`) / restore (`isActive: true`). */
+export async function patchPracticeBranch(
+  practiceId: number,
+  branchId: number,
+  body: { name?: string; pimsLocationId?: string | null; isActive?: boolean }
+): Promise<PracticeBranch> {
+  const { data } = await http.patch<PracticeBranch>(
+    `/practice/${practiceId}/branches/${branchId}`,
+    body
+  );
+  return data;
 }
 
 export async function listInventoryBranchLocations(
@@ -250,3 +277,32 @@ export async function postEffectiveBranchPrice(
   );
   return data;
 }
+
+export type EmployeeBranchAssignment = {
+  branchId: number;
+  isPrimary: boolean;
+  defaultInventoryLocationId: number | null;
+};
+
+export async function getEmployeeBranches(
+  practiceId: number,
+  employeeId: number
+): Promise<EmployeeBranchAssignment[]> {
+  const { data } = await http.get<EmployeeBranchAssignment[]>(
+    `/practice/${practiceId}/employees/${employeeId}/branches`
+  );
+  return Array.isArray(data) ? data : [];
+}
+
+export async function setEmployeeBranches(
+  practiceId: number,
+  employeeId: number,
+  body: {
+    branchIds: number[];
+    primaryBranchId?: number;
+    defaultInventoryLocationId?: number | null;
+  }
+): Promise<void> {
+  await http.put(`/practice/${practiceId}/employees/${employeeId}/branches`, body);
+}
+
