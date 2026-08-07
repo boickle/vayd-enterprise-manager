@@ -5,7 +5,11 @@ import {
   isPracticeCalendarBlockAppointment,
   normalizeRangeAppointment,
 } from '../api/appointments';
-import { patchPatient } from '../api/patients';
+import {
+  fetchPatientByIdStaff,
+  fetchPatientByPimsIdStaff,
+  patchPatient,
+} from '../api/patients';
 import {
   appointmentMatchesPatientId,
   fetchPatientAppointmentsStaff,
@@ -227,11 +231,97 @@ export async function cancelEuthanasiaFutureAppointments(args: {
   return { cancelledIds, errors };
 }
 
-/** Best-effort patient inactivation after euthanasia (eVet may already have done this). */
+/** True when a patient payload already looks inactive. */
+export function isPatientRecordInactive(record: Record<string, unknown> | null | undefined): boolean {
+  if (!record) return false;
+  if (record.isActive === false || record.active === false) return true;
+  const st = String(record.status ?? record.patientStatus ?? '')
+    .trim()
+    .toLowerCase();
+  return st.includes('inactive');
+}
+
+/** NestJS 404/405 when Scout patient write routes are not deployed yet. */
+export function isPatientPatchUnavailableError(err: unknown): boolean {
+  const ax = err as {
+    response?: { status?: number; data?: { message?: unknown; error?: unknown } };
+    message?: string;
+  };
+  const status = ax.response?.status;
+  if (status === 404 || status === 405) return true;
+  const raw = ax.response?.data?.message ?? ax.response?.data?.error ?? ax.message ?? '';
+  const msg = Array.isArray(raw) ? raw.join(' ') : String(raw);
+  return /^Cannot\s+(PATCH|PUT)\s+\/patients\//i.test(msg.trim());
+}
+
+function extractPatientMutationErrorMessage(err: unknown, patientId: string): string {
+  const ax = err as { response?: { data?: { message?: string | string[] } }; message?: string };
+  const m = ax?.response?.data?.message;
+  if (Array.isArray(m)) return m.join(', ');
+  if (typeof m === 'string' && m.trim()) return m.trim();
+  if (ax?.message?.trim()) return ax.message.trim();
+  return `Could not inactivate patient #${patientId}`;
+}
+
+function looksAlreadyInactiveMessage(message: string): boolean {
+  return /already\s+inactive|patient\s+is\s+inactive|not\s+active/i.test(message);
+}
+
+async function loadPatientRecordForInactivation(
+  patientId: string,
+): Promise<Record<string, unknown> | null> {
+  try {
+    const data = await fetchPatientByIdStaff(patientId);
+    if (data && typeof data === 'object' && !Array.isArray(data)) {
+      return data as Record<string, unknown>;
+    }
+  } catch {
+    /* try PIMS id lookup below */
+  }
+  try {
+    const data = await fetchPatientByPimsIdStaff(patientId);
+    if (data && typeof data === 'object' && !Array.isArray(data)) {
+      return data as Record<string, unknown>;
+    }
+  } catch {
+    /* best-effort only */
+  }
+  return null;
+}
+
+function resolvePatientWriteId(
+  record: Record<string, unknown> | null,
+  fallbackId: string,
+): string {
+  if (record?.id != null) {
+    const resolved = String(record.id).trim();
+    if (resolved) return resolved;
+  }
+  return fallbackId;
+}
+
+export type InactivateEuthanasiaPatientsResult = {
+  inactivatedIds: string[];
+  alreadyInactiveIds: string[];
+  /**
+   * Soft failures (missing PATCH route, already inactive via eVet, etc.).
+   * End Visit should still close — do not surface these as hard errors.
+   */
+  softErrors: string[];
+  /** Unexpected failures; still best-effort (do not block End Visit). */
+  errors: string[];
+};
+
+/**
+ * Best-effort patient inactivation after euthanasia.
+ * Scout `PATCH /patients/:id` may be unavailable; eVet often already marks the pet inactive.
+ */
 export async function inactivateEuthanasiaPatients(
   patientIds: readonly string[],
-): Promise<{ inactivatedIds: string[]; errors: string[] }> {
+): Promise<InactivateEuthanasiaPatientsResult> {
   const inactivatedIds: string[] = [];
+  const alreadyInactiveIds: string[] = [];
+  const softErrors: string[] = [];
   const errors: string[] = [];
   const seen = new Set<string>();
 
@@ -239,22 +329,32 @@ export async function inactivateEuthanasiaPatients(
     const id = String(raw).trim();
     if (!id || seen.has(id)) continue;
     seen.add(id);
+
+    const record = await loadPatientRecordForInactivation(id);
+    if (isPatientRecordInactive(record)) {
+      alreadyInactiveIds.push(id);
+      continue;
+    }
+
+    const writeId = resolvePatientWriteId(record, id);
     try {
-      await patchPatient(id, { isActive: false });
-      inactivatedIds.push(id);
+      await patchPatient(writeId, { isActive: false });
+      inactivatedIds.push(writeId);
     } catch (e: unknown) {
-      const ax = e as { response?: { data?: { message?: string | string[] } }; message?: string };
-      const m = ax?.response?.data?.message;
-      const msg = Array.isArray(m)
-        ? m.join(', ')
-        : typeof m === 'string' && m.trim()
-          ? m
-          : ax?.message || `Could not inactivate patient #${id}`;
+      const msg = extractPatientMutationErrorMessage(e, writeId);
+      if (looksAlreadyInactiveMessage(msg)) {
+        alreadyInactiveIds.push(writeId);
+        continue;
+      }
+      if (isPatientPatchUnavailableError(e)) {
+        softErrors.push(msg);
+        continue;
+      }
       errors.push(msg);
     }
   }
 
-  return { inactivatedIds, errors };
+  return { inactivatedIds, alreadyInactiveIds, softErrors, errors };
 }
 
 export function patientIdsFromEuthanasiaAppointments(

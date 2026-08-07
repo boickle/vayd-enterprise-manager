@@ -51,8 +51,12 @@ function defaultApiErrorMessage(err: unknown): string {
     message?: string;
   };
   const m = ax?.response?.data?.message;
-  if (Array.isArray(m)) return m.join(', ');
+  if (Array.isArray(m)) {
+    const joined = m.map((part) => String(part).trim()).filter(Boolean).join(', ');
+    if (joined) return joined;
+  }
   if (typeof m === 'string' && m.trim()) return m;
-  if (ax?.message) return ax.message;
+  const msg = ax?.message?.trim();
+  if (msg && !/^Request failed with status code \d+$/i.test(msg)) return msg;
   return 'Request failed';
 }

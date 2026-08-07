@@ -56,23 +56,31 @@ import {
   billingNote?: string;
 };
 
+const MEMBERSHIP_SHARED_BENEFITS = [
+  'A dedicated "One-Team" that gets to know your pet over time',
+  'Priority scheduling with your One-Team',
+  '7-day support from VAYD staff',
+  '50% off exams on additional visits',
+  'Member pricing (10% off) in our online store',
+];
+
 const MEMBERSHIP_PLANS: MembershipPlan[] = [
   {
     id: 'foundations',
     name: 'Foundations',
     tagLine: 'Annual Membership Plan',
     pricing: [
-      { species: 'dog', monthly: 79, annual: 749 },
-      { species: 'cat', monthly: 69, annual: 639 },
+      { species: 'dog', monthly: 69, annual: 749 },
+      { species: 'cat', monthly: 59, annual: 639 },
     ],
     includes: [
-      'One Comprehensive Wellness Exam & Trip Fee',
-      'Annual Vaccinations Recommended for Age and Lifestyle',
-      'Annual "Basic" Lab Panel (CBC, Abbreviated Chemistry)',
-      'Annual Fecal Test',
-      'Heartworm/Tick Test (Dogs)',
-      'FIV / FeLV / Heartworm test (Cats)',
-      'After-hours Online Chat Support via VAYD Client Portal',
+      'One comprehensive wellness exam & trip fee',
+      'Annual vaccinations recommended for age and lifestyle',
+      'Annual "basic" lab panel (CBC, abbreviated chemistry)',
+      'Annual fecal test',
+      'Heartworm/Tick test (dogs)',
+      'FIV/FeLV/heartworm test (cats)',
+      ...MEMBERSHIP_SHARED_BENEFITS,
     ],
   },
   {
@@ -82,18 +90,22 @@ const MEMBERSHIP_PLANS: MembershipPlan[] = [
     badge: 'Most Popular!',
     badgeColor: '#facc15',
     pricing: [
-      { species: 'dog', monthly: 109, annual: 1179 },
-      { species: 'cat', monthly: 99, annual: 1069 },
+      { species: 'dog', monthly: 99, annual: 1069 },
+      { species: 'cat', monthly: 89, annual: 949 },
     ],
     includes: [
-      'Two Comprehensive Wellness Exams & Trip Fees',
-      'Annual Vaccinations Recommended for Age and Lifestyle',
-      'Annual "Advanced" Lab Panel (CBC, Chemistry, Thyroid, Urinalysis)',
-      'Annual Fecal Test',
-      'FeLV/FIV/Heartworm test (Cats)',
-      'Pancreatitis Screening (Cats)',
-      '"4dx" Heartworm/Tick test (Dogs)',
-      'After-hours Online Chat Support via VAYD Client Portal',
+      'Two comprehensive wellness exams & trip fees',
+      'Annual vaccinations recommended for age and lifestyle',
+      'Annual "advanced" lab panel (CBC, chemistry, thyroid, urinalysis)',
+      'Annual fecal test',
+      'FeLV/FIV/heartworm test (cats)',
+      'Pancreatitis screening (cats)',
+      '"4dx" Heartworm/Tick test (dogs)',
+      'A team that gets to know your pet over time',
+      'Priority scheduling with your One-Team',
+      '7-day support from VAYD staff',
+      '50% off exams on additional visits',
+      'Member pricing (10% off) in our online store',
     ],
   },
   {
@@ -104,24 +116,9 @@ const MEMBERSHIP_PLANS: MembershipPlan[] = [
     includes: [
       'One Comprehensive Exam & Trip Fee per month',
       'One office-hours tele-health consult via phone or video',
-      'After-hours Online Chat Support via VAYD Client Portal',
+      'Priority 7-day support from VAYD staff',
       '15% off total euthanasia and after-care cost',
     ],
-  },
-  {
-    id: 'plus-addon',
-    name: 'PLUS Add-on',
-    tagLine: 'Annual Membership Plan',
-    badge: 'Ideal for Chronic Conditions!*',
-    badgeColor: '#f9b938',
-    pricing: [{ monthly: 49, annual: 529, suffix: 'additional' }],
-    includes: [
-      '50% off all Additional Exams',
-      '10% off Everything We Offer (e.g. Lab Work, Services, Medications)',
-      'One Free Nail Trim Per Year',
-    ],
-    billingNote:
-      '* Examples include chronic kidney disease, hyperthyroidism, allergic skin disease, arthritis, cancer.',
   },
   {
     id: 'starter-addon',
@@ -139,11 +136,6 @@ const MEMBERSHIP_PLANS: MembershipPlan[] = [
 ];
 
 const ADD_ON_PRICING: Record<string, { label: string; monthly: number; annual?: number }> = {
-  'plus-addon': {
-    label: 'PLUS Add-on',
-    monthly: 49,
-    annual: 529,
-  },
   'starter-addon': {
     label: 'Puppy / Kitten Add-on',
     monthly: 29,
@@ -155,16 +147,15 @@ const MEMBERSHIP_AGREEMENT_TEXT = [
   'Vet At Your Door Membership Agreement',
   'By enrolling your pet in a Vet At Your Door Membership Plan, you agree to the following terms and conditions.',
   'Membership Plans',
-  'Foundations: Includes one annual wellness exam and trip fee, recommended annual vaccines based on age and lifestyle, annual lab work, and after-hours tele-chat. Requires a twelve (12) month commitment.',
-  'Golden: Includes two wellness exams with trip fees, recommended annual vaccines based on age and lifestyle, annual lab work, and after-hours tele-chat. Requires a twelve (12) month commitment.',
-  'Plus Add-On: Provides ten percent (10%) off all services and medications and fifty percent (50%) off exams. One free nail trim is included per year. The term of Plus matches the term of the primary plan. A store discount code is issued after sign-up.',
+  'Foundations: Includes one annual wellness exam and trip fee, recommended annual vaccines based on age and lifestyle, annual lab work, priority scheduling, priority 7-day support from VAYD staff, fifty percent (50%) off the exam fee on additional visits beyond those included in the plan. This discount applies to the exam only; trip fees are not discounted, and the discount does not apply to end-of-life (euthanasia) visits. Member pricing (10% off) in our online store. A store discount code is issued after sign-up. Requires a twelve (12) month commitment.',
+  'Golden: Includes two wellness exams with trip fees, recommended annual vaccines based on age and lifestyle, annual advanced lab work, priority scheduling, priority 7-day support from VAYD staff, fifty percent (50%) off the exam fee on additional visits beyond those included in the plan. This discount applies to the exam only; trip fees are not discounted, and the discount does not apply to end-of-life (euthanasia) visits. Member pricing (10% off) in our online store. A store discount code is issued after sign-up. Requires a twelve (12) month commitment.',
   'Puppy / Kitten Add-On: Covers booster vaccine appointments during your pet\'s first year, including the required doctor and technician visits with trip fees that are specifically tied to administering recommended booster vaccines.',
-  'After-Hours Telehealth',
-  'Members may access our virtual triage chat after hours during the following times: Monday through Friday from 5:00 pm to 9:00 pm, and Saturday through Sunday from 8:00 am to 5:00 pm. A Triage Technician will review your pet\'s history and may consult a veterinarian if needed. No house-call visits are made after hours. If urgent care is recommended, we will direct you to an appropriate emergency facility. This service is unavailable on holidays observed by Vet At Your Door. Hours may change with thirty (30) days of notice.',
+  'Priority 7-Day Support',
+  'Members may access priority support from VAYD staff seven days a week during the following times: Monday through Friday from 8:00am to 5:00pm, and Saturday through Sunday from 8:00 am to 4:00 pm. VAYD will review your pet\'s history and may consult a veterinarian if needed. No house-call visits are made after hours. If urgent care is recommended, we will direct you to an appropriate emergency facility. This service is unavailable on holidays observed by Vet At Your Door. Hours may change with thirty (30) days of notice.',
   'VCPR Requirements and Limitations for New or Lapsed Patients',
   'A valid Veterinarian-Client-Patient Relationship (VCPR) requires an in-person exam within the past 365 days. If more than twelve (12) months have passed since your pet\'s most recent in-person exam with us, the VCPR is considered expired.',
   'For pets we have not yet seen, or for pets whose VCPR has lapsed, the following services cannot be provided until a current VCPR is re-established through an in-person exam:',
-  'After-hours telehealth',
+  'Priority 7-day support',
   'Medical advice, triage guidance, or care recommendations from your One Team',
   'Prescription medications or refills of any kind',
   'Once the initial or renewal exam is completed, all membership benefits become fully active.',
@@ -172,30 +163,35 @@ const MEMBERSHIP_AGREEMENT_TEXT = [
   'Membership Rules',
   'Benefits apply only to the enrolled pet and cannot be shared or transferred, including to another pet in the same household. Misuse may result in cancellation and repayment of any discounts received.',
   'Memberships bill monthly or annually, renew automatically, and may transition from Foundations to Golden when your pet reaches eight (8) years of age for dogs and cats. We will email you twenty (20) to thirty (30) days before renewal with a recommendation. You may change your selection or cancel at that time.',
-  'Foundations, Golden, Plus, and Puppy / Kitten plans require a twelve (12) month term.',
+  'Foundations, Golden, and Puppy / Kitten plans require a twelve (12) month term. Annual billing saves ten percent (10%) compared with paying monthly.',
   'If your pet passes away or moves, the value of used services will be deducted from the payments you have made. If the value of services used exceeds payments made, the remaining balance will be due before the plan is closed. No partial refunds are issued. Re-enrollment requires a new registration fee if charged.',
   'If the client moves, any refund will be issued only after we receive both a record request from a veterinary hospital outside our service area and a copy of the client\'s new lease or mortgage agreement.',
   'A one-time registration fee, if charged, supports our Angel Fund for pets in need.',
   'Plan Change and Upgrade Limitations',
-  'Membership plans, including the Plus and Puppy / Kitten Add-Ons, must be selected at the time of initial enrollment and cannot be added or upgraded mid-term. No other plan upgrades, downgrades, or add-ons may be added after enrollment.',
+  'Membership plans, including the Puppy / Kitten Add-On, must be selected at the time of initial enrollment and cannot be added or upgraded mid-term. No other plan upgrades, downgrades, or add-ons may be added after enrollment.',
   'Scheduling and Availability',
-  'Visits should be scheduled in advance for best availability. Specific appointment times cannot be guaranteed. Services are available only within our service area and during our regular appointment hours.',
+  'Visits should be scheduled in advance for best availability. Specific appointment times cannot be guaranteed. Services are available only within our service area and during our regular appointment hours. Members receive priority scheduling, including reserve appointment slots held for members.',
   'We will make every reasonable effort for your pet\'s care to be provided by your dedicated One Team, especially for wellness visits and planned follow-up care. In situations where schedule constraints, urgent needs, staffing limitations, or routing requirements prevent your One Team from being available, another Vet At Your Door team may provide care to ensure your pet is seen in a timely manner.',
-  'If we cannot accommodate an urgent case or a requested appointment time, we may refer you to another facility or veterinary team.',
+  'If we are unable to accommodate an urgent case or a requested appointment time, we may refer you to another facility or veterinary team. No refund, credit, or other remuneration will be provided as a result of such a referral.',
   'Access and Technology Requirements',
-  'Internet access and a compatible device are required for virtual chat and use of our online store. Instructions will be provided in the Welcome Email.',
+  'Internet access and a compatible device are required for virtual support and use of our online store. Instructions and your member store discount code will be provided in the Welcome Email.',
   'Client Conduct',
   'We strive to provide compassionate and high-quality care and expect respectful communication in return. Disrespectful behavior may result in termination of membership without refund.',
   'Membership Scope',
   'Membership supports proactive and routine care. Membership does not guarantee emergency availability.',
 ].join('\n\n');
 
-function formatMoney(amount?: number | null): string {
+function formatMoney(amount?: number | null, fractionDigits = 0): string {
   if (amount == null) return '—';
   return amount.toLocaleString(undefined, {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits,
   });
+}
+
+/** Monthly-equivalent display when paying annually (e.g. 639 / 12 = 53.25). */
+function formatMonthlyEquivalent(annual: number): string {
+  return formatMoney(annual / 12, 2);
 }
 
 function fmtDate(iso?: string) {
@@ -508,11 +504,10 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
   const [petsForPicker, setPetsForPicker] = useState<Pet[]>([]);
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
   const [selectedPlanExplicit, setSelectedPlanExplicit] = useState<string | null>(null);
-  const [plusExplicit, setPlusExplicit] = useState(false);
   const [starterAnswer, setStarterAnswer] = useState<'yes' | 'no' | null>(null);
   const [starterExplicit, setStarterExplicit] = useState(false);
   const [comfortAnswer, setComfortAnswer] = useState<'yes' | 'no' | null>('no');
-  const [billingPreference, setBillingPreference] = useState<'monthly' | 'annual'>('monthly');
+  const [billingPreference, setBillingPreference] = useState<'monthly' | 'annual'>('annual');
   const [appointmentsLoaded, setAppointmentsLoaded] = useState(false);
   const [hasAnyAppointments, setHasAnyAppointments] = useState(false);
   const [hasPastAppointment, setHasPastAppointment] = useState(false);
@@ -968,32 +963,28 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
         <strong style={{ display: 'block', fontSize: 16, marginBottom: 8 }}>
           We recommend the Golden Plan for {name}.
         </strong>
-        <p className="cp-muted" style={{ margin: '0 0 8px' }}>
-          It's designed for seniors and includes two visits plus advanced labs. If you prefer something lighter, Foundations includes one visit with an abbreviated lab panel.
-        </p>
         <p className="cp-muted" style={{ margin: 0 }}>
-          For added support with chronic conditions or closer monitoring, you can add PLUS to either plan. Please note: Upgrading to Plus later isn't available, so choose it now if {name} may need the extra support.
+          It's designed for senior pets and includes two wellness visits per year plus advanced lab work, comprehensive bloodwork, thyroid, and urinalysis, so age-related changes get caught early. If you'd prefer something lighter, Foundations covers one visit with an abbreviated lab panel.
         </p>
       </div>
     );
-  }, [pet, meetsGolden, brand, brandSoft]);
+  }, [pet, meetsGolden, brandSoft]);
 
   useEffect(() => {
     if (comfortAnswer === 'yes') {
       setSelectedPlanExplicit(null);
       setSelectedPlanId('comfort-care');
       setBillingPreference('monthly');
-      setPlusExplicit(false);
     }
     if (comfortAnswer === 'no') {
       setSelectedPlanExplicit(null);
       setSelectedPlanId(null);
-      setPlusExplicit(false);
+      setBillingPreference('annual');
     }
     if (comfortAnswer == null) {
       setSelectedPlanExplicit(null);
       setSelectedPlanId(null);
-      setPlusExplicit(false);
+      setBillingPreference('annual');
     }
     setAgreementAccepted(false);
     setAgreementSignature('');
@@ -1011,6 +1002,8 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
   useEffect(() => {
     if (!selectedPlanExplicit || selectedPlanExplicit === 'comfort-care') {
       setBillingPreference('monthly');
+    } else {
+      setBillingPreference('annual');
     }
   }, [selectedPlanExplicit]);
 
@@ -1034,9 +1027,6 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
       }
     }
 
-    if (plusExplicit) {
-      items.push({ label: 'PLUS Add-on', monthly: 49, annual: selectedPlanExplicit === 'comfort-care' ? null : 529 });
-    }
     if (starterExplicit) {
       items.push({ label: 'Puppy / Kitten Add-on', monthly: 29, annual: selectedPlanExplicit === 'comfort-care' ? null : 309 });
     }
@@ -1050,7 +1040,7 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
       : null;
 
     return { items, totalMonthly, totalAnnual };
-  }, [selectedPlanExplicit, plans, petDetails.kind, plusExplicit, starterExplicit]);
+  }, [selectedPlanExplicit, plans, petDetails.kind, starterExplicit]);
 
   const displayCostSummary = useMemo(() => {
     if (!costSummary || !checkoutDiscount) return costSummary;
@@ -1089,7 +1079,6 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
       originalAmountBase != null ? Math.round(originalAmountBase * 100) : undefined;
     const addOns: string[] = [];
     const includeStarter = starterExplicit && selectedPlanExplicit !== 'comfort-care';
-    if (plusExplicit) addOns.push('plus-addon');
     if (includeStarter) addOns.push('starter-addon');
 
     if (!planCatalog) {
@@ -1115,14 +1104,7 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
     const billingKey: BillingCadence =
       billingPreference === 'annual' && hasAnnualOption ? 'annual' : 'monthly';
 
-    const combination: PlanCombination =
-      plusExplicit && includeStarter
-        ? 'plusStarter'
-        : plusExplicit
-          ? 'plus'
-          : includeStarter
-            ? 'starter'
-            : 'base';
+    const combination: PlanCombination = includeStarter ? 'starter' : 'base';
 
     const catalogEntry = lookupCatalogEntry(
       planCatalog,
@@ -1130,7 +1112,7 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
       speciesKey,
       billingKey,
       combination,
-      plusExplicit,
+      false,
     );
 
     const subscriptionPlanId = catalogEntry?.planId;
@@ -1143,7 +1125,6 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
         speciesKey,
         billingKey,
         combination,
-        plusExplicit,
         catalogEntry,
         comfortCareNode: selectedPlanExplicit === 'comfort-care' ? planCatalog?.['comfort-care'] : undefined,
         planSlice:
@@ -1955,7 +1936,7 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
             >
               <strong style={{ display: 'block', marginBottom: 8 }}>Welcome!</strong>
               <p className="cp-muted" style={{ margin: 0, lineHeight: 1.6 }}>
-                We're so excited to have you sign up. Our membership plans are one of the best ways to get proactive, personalized care from your One Team, and we're thrilled you're joining the community. Before your first visit, just a quick note: we aren't able to dispense medications, offer after-hours online chat support, or provide medical advice until we meet {pet.name} and establish a Veterinary Client Patient Relationship (VCPR). Once we've done that at your appointment, your One Team will be able to support you fully.
+                We're so excited to have you sign up. Our membership plans are one of the best ways to get proactive, personalized care from your One Team, and we're thrilled you're joining the community. Before your first visit, just a quick note: we aren't able to dispense medications, offer 7-day support, or provide medical advice until we meet {pet.name} and establish a Veterinary Client Patient Relationship (VCPR). Once we've done that at your appointment, your One Team will be able to support you fully.
               </p>
             </div>
           )}
@@ -1997,6 +1978,29 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
                   </div>
                 )}
               </div>
+            </div>
+            <div className="cp-card" style={{ padding: 20, marginTop: 12 }}>
+              <strong style={{ display: 'block', fontSize: 16, marginBottom: 12 }}>
+                Your pet deserves a team, not a time slot.
+              </strong>
+              <ul style={{ margin: 0, paddingLeft: 0, listStyle: 'none', display: 'grid', gap: 10 }}>
+                <li className="cp-muted" style={{ display: 'flex', gap: 8, lineHeight: 1.5 }}>
+                  <span aria-hidden="true">✓</span>
+                  <span>Your pet's whole year of wellness care, handled — we track what's due and when, so nothing gets missed</span>
+                </li>
+                <li className="cp-muted" style={{ display: 'flex', gap: 8, lineHeight: 1.5 }}>
+                  <span aria-hidden="true">✓</span>
+                  <span>A team that gets to know your pet over time — build a real relationship with your primary veterinarian and technician</span>
+                </li>
+                <li className="cp-muted" style={{ display: 'flex', gap: 8, lineHeight: 1.5 }}>
+                  <span aria-hidden="true">✓</span>
+                  <span>One predictable monthly payment — or pay annually and save 10%</span>
+                </li>
+                <li className="cp-muted" style={{ display: 'flex', gap: 8, lineHeight: 1.5 }}>
+                  <span aria-hidden="true">✓</span>
+                  <span>50% off exams on additional visits — so cost never makes you wait to call us</span>
+                </li>
+              </ul>
             </div>
           </section>
         </>
@@ -2062,11 +2066,10 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
             <strong style={{ display: 'block', fontSize: 16, marginBottom: 8 }}>
               We recommend the Foundations Membership Plan for {pet.name}.
             </strong>
-            <p className="cp-muted" style={{ margin: '0 0 8px' }}>
-              It includes one annual visit and an abbreviated early detection lab panel, which is great for young, healthy pets who don't need intensive monitoring.
-            </p>
             <p className="cp-muted" style={{ margin: 0 }}>
-              If {pet.name} has any chronic conditions, needs more frequent check-ins, or would benefit from additional support, you can add PLUS to Foundations. Please note: Upgrading to Plus later isn't available, so choose it now if {pet.name} may need the extra support.
+              It includes one annual wellness visit and an early detection lab panel, ideal for a healthy young{' '}
+              {petDetails.kind === 'dog' ? 'dog' : petDetails.kind === 'cat' ? 'cat' : 'pet'}. As {pet.name} reaches age 8,
+              we'll recommend moving to Golden, which adds a second annual visit and more comprehensive senior screening.
             </p>
           </div>
         )}
@@ -2197,7 +2200,7 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
                               </div>
                               {tier.annual ? (
                                 <div className="cp-card-price-note">
-                                  or {tier.annual} annually (10% discount!) {tier.suffix ? `(${tier.suffix})` : ''}
+                                  or {tier.annual} annually (10% off) {tier.suffix ? `(${tier.suffix})` : ''}
                                 </div>
                               ) : tier.suffix ? (
                                 <div className="cp-card-price-note">{tier.suffix}</div>
@@ -2241,7 +2244,6 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
                             const next = prev === plan.id ? null : plan.id;
                             setSelectedPlanId(next);
                             if (!next) {
-                              setPlusExplicit(false);
                               setStarterExplicit(false);
                             }
                             if (next !== prev) {
@@ -2312,7 +2314,7 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
                           <div className="cp-card-price-main">
                             29<span>/month</span>
                           </div>
-                          <div className="cp-card-price-note">or {formatMoney(309)} annually (10% discount!)</div>
+                          <div className="cp-card-price-note">or {formatMoney(309)} annually (10% off)</div>
                         </div>
                       </div>
                       <div className="cp-card-body">
@@ -2383,88 +2385,6 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
                 return planElements;
               });
             })()}
-
-            {comfortAnswer && (
-              <article
-                className={`cp-card cp-plan-card ${plusExplicit ? 'selected' : ''}`}
-                style={{ padding: 24, position: 'relative' }}
-              >
-                {plusExplicit && <span className="cp-added-badge">Added to Cart</span>}
-                <div className="cp-card-upper">
-                  <div className="cp-card-head">
-                    <h3>PLUS Add-on</h3>
-                    <div className="cp-card-sub">Annual Membership Plan</div>
-                  </div>
-                  <div className="cp-card-price">
-                    <div className="cp-card-price-main">
-                      49<span>/month</span>
-                    </div>
-                    <div className="cp-card-price-note">or 529 annually (10% discount!)</div>
-                  </div>
-                </div>
-                <div className="cp-card-body">
-                  <div className="cp-card-includes">
-                    <strong style={{ fontSize: 14, display: 'block', marginBottom: 8 }}>Includes:</strong>
-                    <ul>
-                      {MEMBERSHIP_PLANS.find(p => p.id === 'plus-addon')?.includes.map((item, idx) => (
-                        <li key={idx} className="cp-muted" style={{ marginBottom: 4 }}>
-                          <span role="img" aria-label="star" style={{ marginRight: 6 }}>
-                            ⭐
-                          </span>
-                          {formatIncludesText(item)}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                  <button
-                    className="btn"
-                    type="button"
-                    onClick={() => {
-                      if (!selectedPlanExplicit) {
-                        setToast(`Please select ${primaryPlanName} first`);
-                        return;
-                      }
-                      setPlusExplicit((prev) => {
-                        const isAdding = !prev;
-                        
-                        // Track add to cart / remove from cart
-                        if (isAdding) {
-                          // Get price based on billing preference
-                          const price = billingPreference === 'annual' && selectedPlanExplicit !== 'comfort-care' ? 529 : 49;
-                          trackAddToCart(
-                            'plus-addon',
-                            'PLUS Add-on',
-                            price,
-                            'USD',
-                            1,
-                            {
-                              pet_id: pet?.id,
-                              pet_name: pet?.name,
-                              pet_species: petDetails.kind,
-                              billing_preference: billingPreference,
-                              is_addon: true,
-                              addon_type: 'plus',
-                            }
-                          );
-                        } else {
-                          trackEvent('remove_from_cart', {
-                            item_id: 'plus-addon',
-                            item_name: 'PLUS Add-on',
-                            pet_id: pet?.id,
-                            pet_name: pet?.name,
-                          });
-                        }
-                        
-                        return !prev;
-                      });
-                    }}
-                    style={{ alignSelf: 'flex-end', marginTop: 'auto', background: '#4FB128', color: '#fff' }}
-                  >
-                    {plusExplicit ? 'Remove from Cart' : 'Add to Cart'}
-                  </button>
-                </div>
-              </article>
-            )}
             </div>
           );
         })()}
@@ -2528,13 +2448,19 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
                 }}
                 disabled={!annualAvailable}
               >
-                Pay Annually
+                Pay Annually — Save 10%
               </button>
             </div>
 
             <p className="cp-muted" style={{ margin: '-6px 0 14px', fontSize: 13 }}>
               {annualAvailable
-                ? 'Pay annually to unlock a 10% discount on every membership item.'
+                ? billingPreference === 'annual' &&
+                  displayCostSummary.totalAnnual != null &&
+                  displayCostSummary.totalMonthly * 12 > displayCostSummary.totalAnnual
+                  ? `You're saving $${formatMoney(
+                      displayCostSummary.totalMonthly * 12 - displayCostSummary.totalAnnual,
+                    )} a year by paying annually.`
+                  : 'Pay annually to unlock a 10% discount on every membership item.'
                 : 'Comfort Care is billed month-to-month for ongoing support.'}
             </p>
 
@@ -2545,23 +2471,36 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
                   style={{
                     display: 'flex',
                     justifyContent: 'space-between',
-                    alignItems: 'center',
+                    alignItems: 'flex-start',
                     borderBottom: '1px solid rgba(0,0,0,0.08)',
                     paddingBottom: 6,
+                    gap: 12,
                   }}
                 >
                   <span>{row.label}</span>
                   {(() => {
-                    const annualText =
-                      row.annual != null ? `${formatMoney(row.annual)} annually (10% discount!)` : null;
+                    const preferAnnual = billingPreference === 'annual' && row.annual != null;
+                    if (preferAnnual && row.annual != null) {
+                      return (
+                        <span className="cp-cost-wrapper" style={{ textAlign: 'right' }}>
+                          <span className="cp-cost-primary">
+                            {formatMonthlyEquivalent(row.annual)}/month
+                          </span>
+                          <span className="cp-cost-secondary">
+                            billed annually at {formatMoney(row.annual)}
+                          </span>
+                        </span>
+                      );
+                    }
                     const monthlyText = row.monthly != null ? `${formatMoney(row.monthly)}/month` : null;
-                    const preferAnnual = billingPreference === 'annual' && annualText !== null;
-                    const primary = preferAnnual ? annualText! : monthlyText ?? annualText ?? '0';
-                    const secondary = preferAnnual ? monthlyText : annualText;
+                    const annualText =
+                      row.annual != null ? `${formatMoney(row.annual)} annually (10% off)` : null;
                     return (
-                      <span className="cp-cost-wrapper">
-                        <span className="cp-cost-primary">{primary}</span>
-                        {secondary ? <span className="cp-cost-secondary">or {secondary}</span> : null}
+                      <span className="cp-cost-wrapper" style={{ textAlign: 'right' }}>
+                        <span className="cp-cost-primary">{monthlyText ?? annualText ?? '0'}</span>
+                        {monthlyText && annualText ? (
+                          <span className="cp-cost-secondary">or {annualText}</span>
+                        ) : null}
                       </span>
                     );
                   })()}
@@ -2573,10 +2512,11 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
               style={{
                 display: 'flex',
                 justifyContent: 'space-between',
-                alignItems: 'center',
+                alignItems: 'flex-start',
                 marginTop: 16,
                 fontSize: 16,
                 fontWeight: 700,
+                gap: 12,
               }}
             >
               <span>Total</span>
@@ -2585,14 +2525,8 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
                   originalTotalMonthly?: number;
                   originalTotalAnnual?: number | null;
                 };
-                const annualText =
-                  displayCostSummary.totalAnnual != null
-                    ? `${formatMoney(displayCostSummary.totalAnnual)} annually (10% discount!)`
-                    : null;
-                const monthlyText = `${formatMoney(displayCostSummary.totalMonthly)}/month`;
-                const preferAnnual = billingPreference === 'annual' && annualText !== null;
-                const primary = preferAnnual ? annualText! : monthlyText;
-                const secondary = preferAnnual ? monthlyText : annualText;
+                const preferAnnual =
+                  billingPreference === 'annual' && displayCostSummary.totalAnnual != null;
                 const origAnnual =
                   orig.originalTotalAnnual != null
                     ? `${formatMoney(orig.originalTotalAnnual)} annually`
@@ -2603,6 +2537,31 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
                     : null;
                 const origPrimary =
                   preferAnnual && origAnnual ? origAnnual : origMonthly;
+                if (preferAnnual && displayCostSummary.totalAnnual != null) {
+                  return (
+                    <span className="cp-cost-wrapper" style={{ textAlign: 'right' }}>
+                      {checkoutDiscount && origPrimary ? (
+                        <span
+                          className="cp-muted"
+                          style={{
+                            display: 'block',
+                            fontSize: 13,
+                            textDecoration: 'line-through',
+                            fontWeight: 400,
+                          }}
+                        >
+                          {origPrimary}
+                        </span>
+                      ) : null}
+                      <span className="cp-cost-primary">
+                        {formatMoney(displayCostSummary.totalAnnual)} today
+                      </span>
+                      <span className="cp-cost-secondary">
+                        ({formatMonthlyEquivalent(displayCostSummary.totalAnnual)}/month equivalent)
+                      </span>
+                    </span>
+                  );
+                }
                 return (
                   <span className="cp-cost-wrapper" style={{ textAlign: 'right' }}>
                     {checkoutDiscount && origPrimary ? (
@@ -2618,8 +2577,14 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
                         {origPrimary}
                       </span>
                     ) : null}
-                    <span className="cp-cost-primary">{primary}</span>
-                    {secondary ? <span className="cp-cost-secondary">or {secondary}</span> : null}
+                    <span className="cp-cost-primary">
+                      {formatMoney(displayCostSummary.totalMonthly)}/month
+                    </span>
+                    {displayCostSummary.totalAnnual != null ? (
+                      <span className="cp-cost-secondary">
+                        or {formatMoney(displayCostSummary.totalAnnual)} annually (10% off)
+                      </span>
+                    ) : null}
                   </span>
                 );
               })()}
@@ -2798,21 +2763,19 @@ function AgreementSection({
           <p><strong>By enrolling your pet in a Vet At Your Door Membership Plan, you agree to the following terms and conditions.</strong></p>
           <p><strong>Membership Plans</strong></p>
           <p><em>Foundations</em></p>
-          <p style={{ marginLeft: '16px' }}>Includes one annual wellness exam and trip fee, recommended annual vaccines based on age and lifestyle, annual lab work, and after-hours tele-chat. Requires a twelve (12) month commitment.</p>
+          <p style={{ marginLeft: '16px' }}>Includes one annual wellness exam and trip fee, recommended annual vaccines based on age and lifestyle, annual lab work, priority scheduling, priority 7-day support from VAYD staff, fifty percent (50%) off the exam fee on additional visits beyond those included in the plan. This discount applies to the exam only; trip fees are not discounted, and the discount does not apply to end-of-life (euthanasia) visits. Member pricing (10% off) in our online store. A store discount code is issued after sign-up. Requires a twelve (12) month commitment.</p>
           <p><em>Golden</em></p>
-          <p style={{ marginLeft: '16px' }}>Includes two wellness exams with trip fees, recommended annual vaccines based on age and lifestyle, annual lab work, and after-hours tele-chat. Requires a twelve (12) month commitment.</p>
-          <p><em>Plus Add-On</em></p>
-          <p style={{ marginLeft: '16px' }}>Provides ten percent (10%) off all services and medications and fifty percent (50%) off exams. One free nail trim is included per year. The term of Plus matches the term of the primary plan. A store discount code is issued after sign-up.</p>
+          <p style={{ marginLeft: '16px' }}>Includes two wellness exams with trip fees, recommended annual vaccines based on age and lifestyle, annual advanced lab work, priority scheduling, priority 7-day support from VAYD staff, fifty percent (50%) off the exam fee on additional visits beyond those included in the plan. This discount applies to the exam only; trip fees are not discounted, and the discount does not apply to end-of-life (euthanasia) visits. Member pricing (10% off) in our online store. A store discount code is issued after sign-up. Requires a twelve (12) month commitment.</p>
           <p><em>Puppy / Kitten Add-On</em></p>
           <p style={{ marginLeft: '16px' }}>Covers booster vaccine appointments during your pet&apos;s first year, including the required doctor and technician visits with trip fees that are specifically tied to administering recommended booster vaccines.</p>
-          <p><strong>After-Hours Telehealth</strong></p>
-          <p>Members may access our virtual triage chat after hours during the following times:</p>
-          <p style={{ marginLeft: '16px' }}>Monday through Friday from 5:00 pm to 9:00 pm, and Saturday through Sunday from 8:00 am to 5:00 pm. A Triage Technician will review your pet&apos;s history and may consult a veterinarian if needed. No house-call visits are made after hours. If urgent care is recommended, we will direct you to an appropriate emergency facility. This service is unavailable on holidays observed by Vet At Your Door. Hours may change with thirty (30) days of notice.</p>
+          <p><strong>Priority 7-Day Support</strong></p>
+          <p>Members may access priority support from VAYD staff seven days a week during the following times:</p>
+          <p style={{ marginLeft: '16px' }}>Monday through Friday from 8:00am to 5:00pm, and Saturday through Sunday from 8:00 am to 4:00 pm. VAYD will review your pet&apos;s history and may consult a veterinarian if needed. No house-call visits are made after hours. If urgent care is recommended, we will direct you to an appropriate emergency facility. This service is unavailable on holidays observed by Vet At Your Door. Hours may change with thirty (30) days of notice.</p>
           <p><strong>VCPR Requirements and Limitations for New or Lapsed Patients</strong></p>
           <p>A valid Veterinarian-Client-Patient Relationship (VCPR) requires an in-person exam within the past 365 days. If more than twelve (12) months have passed since your pet&apos;s most recent in-person exam with us, the VCPR is considered expired.</p>
           <p>For pets we have not yet seen, or for pets whose VCPR has lapsed, the following services cannot be provided until a current VCPR is re-established through an in-person exam:</p>
           <ul style={{ paddingLeft: 20 }}>
-            <li>After-hours telehealth</li>
+            <li>Priority 7-day support</li>
             <li>Medical advice, triage guidance, or care recommendations from your One Team</li>
             <li>Prescription medications or refills of any kind</li>
           </ul>
@@ -2821,18 +2784,18 @@ function AgreementSection({
           <p><strong>Membership Rules</strong></p>
           <p>Benefits apply only to the enrolled pet and cannot be shared or transferred, including to another pet in the same household. Misuse may result in cancellation and repayment of any discounts received.</p>
           <p>Memberships bill monthly or annually, renew automatically, and may transition from Foundations to Golden when your pet reaches eight (8) years of age for dogs and cats. We will email you twenty (20) to thirty (30) days before renewal with a recommendation. You may change your selection or cancel at that time.</p>
-          <p>Foundations, Golden, Plus, and Puppy / Kitten plans require a twelve (12) month term.</p>
+          <p>Foundations, Golden, and Puppy / Kitten plans require a twelve (12) month term. Annual billing saves ten percent (10%) compared with paying monthly.</p>
           <p>If your pet passes away or moves, the value of used services will be deducted from the payments you have made. If the value of services used exceeds payments made, the remaining balance will be due before the plan is closed. No partial refunds are issued. Re-enrollment requires a new registration fee if charged.</p>
           <p>If the client moves, any refund will be issued only after we receive both a record request from a veterinary hospital outside our service area and a copy of the client&apos;s new lease or mortgage agreement.</p>
           <p>A one-time registration fee, if charged, supports our Angel Fund for pets in need.</p>
           <p><strong>Plan Change and Upgrade Limitations</strong></p>
-          <p>Membership plans, including the Plus and Puppy / Kitten Add-Ons, must be selected at the time of initial enrollment and cannot be added or upgraded mid-term. No other plan upgrades, downgrades, or add-ons may be added after enrollment.</p>
+          <p>Membership plans, including the Puppy / Kitten Add-On, must be selected at the time of initial enrollment and cannot be added or upgraded mid-term. No other plan upgrades, downgrades, or add-ons may be added after enrollment.</p>
           <p><strong>Scheduling and Availability</strong></p>
-          <p>Visits should be scheduled in advance for best availability. Specific appointment times cannot be guaranteed. Services are available only within our service area and during our regular appointment hours.</p>
+          <p>Visits should be scheduled in advance for best availability. Specific appointment times cannot be guaranteed. Services are available only within our service area and during our regular appointment hours. Members receive priority scheduling, including reserve appointment slots held for members.</p>
           <p>We will make every reasonable effort for your pet&apos;s care to be provided by your dedicated One Team, especially for wellness visits and planned follow-up care. In situations where schedule constraints, urgent needs, staffing limitations, or routing requirements prevent your One Team from being available, another Vet At Your Door team may provide care to ensure your pet is seen in a timely manner.</p>
-          <p>If we cannot accommodate an urgent case or a requested appointment time, we may refer you to another facility or veterinary team.</p>
+          <p>If we are unable to accommodate an urgent case or a requested appointment time, we may refer you to another facility or veterinary team. No refund, credit, or other remuneration will be provided as a result of such a referral.</p>
           <p><strong>Access and Technology Requirements</strong></p>
-          <p>Internet access and a compatible device are required for virtual chat and use of our online store. Instructions will be provided in the Welcome Email.</p>
+          <p>Internet access and a compatible device are required for virtual support and use of our online store. Instructions and your member store discount code will be provided in the Welcome Email.</p>
           <p><strong>Client Conduct</strong></p>
           <p>We strive to provide compassionate and high-quality care and expect respectful communication in return. Disrespectful behavior may result in termination of membership without refund.</p>
           <p><strong>Membership Scope</strong></p>

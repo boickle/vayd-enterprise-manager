@@ -1037,11 +1037,13 @@ export function SchedulerActualVisitTimeModal({
       }
       if (args.patientIdsToInactivate.length > 0) {
         const inactivateResult = await inactivateEuthanasiaPatients(args.patientIdsToInactivate);
-        if (inactivateResult.errors.length > 0) {
-          warnings.push(
-            inactivateResult.inactivatedIds.length > 0
-              ? `Inactivated ${inactivateResult.inactivatedIds.length} patient(s); ${inactivateResult.errors.length} could not be inactivated (eVet may already have done this).`
-              : `Could not inactivate patient. ${inactivateResult.errors[0]}`
+        // Inactivation is best-effort (Scout PATCH may 404; eVet often owns status).
+        // Never block End Visit / forward-booking save on these failures.
+        const softOrHard = [...inactivateResult.softErrors, ...inactivateResult.errors];
+        if (softOrHard.length > 0) {
+          console.warn(
+            '[euthanasia] patient inactivation incomplete after end visit',
+            softOrHard,
           );
         }
       }

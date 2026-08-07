@@ -88,6 +88,7 @@ import {
   type RoomLoaderPreApptUiStatus,
 } from '../utils/roomLoaderPreApptDisplay';
 import { summarizeReconciledDayWindowWarnings } from '../utils/routingCardWindowWarning';
+import { computeDepotReturnOverrunSeconds } from '../utils/depotReturnOverrun';
 import {
   driveSlotForAppointmentId,
   findFormerFirstAppointmentForPreFirstBook,
@@ -179,6 +180,7 @@ import {
 import {
   commitEditVisit,
   commitLinkClientFromEditVisitSelection,
+  editVisitTimesMatchAtPracticeMinute,
   resolveEditVisitAssignPatient,
   validateEditVisitAppointmentTypeClientConflict,
   validateEditVisitLinkSelection,
@@ -702,6 +704,14 @@ function schedulerWorkDayMinutesForDate(
  * workday (unless override adds a shift), or no depot shift and no timed range visits.
  * OFF overrides still show timed visits on top of the Off marking.
  */
+function formatUsdWholeDollars(n: number): string {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: 0,
+  }).format(Number(n) || 0);
+}
+
 function schedulerPracticeCalendarDayOff(
   dayData: DayData | null | undefined,
   dayAppointments: Appointment[],
@@ -3586,11 +3596,20 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     }
   }, []);
 
-  const { token: authToken, doctorId: authDoctorId, userEmail: authUserEmail, role } = useAuth() as {
+  const {
+    token: authToken,
+    doctorId: authDoctorId,
+    employeeId: authEmployeeId,
+    userEmail: authUserEmail,
+    role,
+    assignedDoctorIds: authAssignedDoctorIds,
+  } = useAuth() as {
     token: string | null;
     doctorId: string | null;
+    employeeId?: string | null;
     userEmail?: string | null;
     role?: string | string[];
+    assignedDoctorIds?: string[];
   };
 
   const appointmentChangeActor = useMemo(
@@ -3892,6 +3911,37 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     [providers, resolvedPrimaryProviderId]
   );
 
+  /**
+   * Variable VSD/pt: admins always; otherwise when viewing a calendar for a doctor
+   * linked on the user row (users.doctorId / assignedDoctorIds) or the user's own
+   * employee record (users.employeeId — the doctor themselves).
+   */
+  const canViewVariableVsd = useMemo(() => {
+    if (isAdminOrSuper) return true;
+    const authIds = new Set<string>();
+    const push = (v: string | null | undefined) => {
+      const t = v?.trim();
+      if (t) authIds.add(t);
+    };
+    push(authDoctorId);
+    push(authEmployeeId ?? null);
+    for (const id of authAssignedDoctorIds ?? []) {
+      push(String(id ?? ''));
+    }
+    if (authIds.size === 0) return false;
+    const p = selectedPrimaryProvider;
+    if (!p) return false;
+    const id = String(p.id ?? '').trim();
+    const pims = p.pimsId != null ? String(p.pimsId).trim() : '';
+    return (id !== '' && authIds.has(id)) || (pims !== '' && authIds.has(pims));
+  }, [
+    isAdminOrSuper,
+    authDoctorId,
+    authEmployeeId,
+    authAssignedDoctorIds,
+    selectedPrimaryProvider,
+  ]);
+
   /** Provider shown on the embedded routing calendar bar (preview or reschedule source). */
   const embeddedCalendarProviderLabel = useMemo(() => {
     if (!embedInRoutingWorkspace) return null;
@@ -3989,6 +4039,25 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         ).pointGoal;
       }
       const fallback = selectedPrimaryProvider?.dailyPointGoal;
+      if (fallback != null && Number.isFinite(Number(fallback)) && Number(fallback) > 0) {
+        return Number(fallback);
+      }
+      return 0;
+    },
+    [providerGoals, selectedPrimaryProvider]
+  );
+
+  const revenueGoalForDay = useCallback(
+    (dayDt: DateTime): number => {
+      const dateStr = dayDt.toISODate()!;
+      if (providerGoals) {
+        return getGoalForDate(
+          providerGoals,
+          dateStr,
+          goalDayOfWeekFromLuxonWeekday(dayDt.weekday)
+        ).revenueGoal;
+      }
+      const fallback = selectedPrimaryProvider?.dailyRevenueGoal;
       if (fallback != null && Number.isFinite(Number(fallback)) && Number(fallback) > 0) {
         return Number(fallback);
       }
@@ -4897,6 +4966,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               r.date === routingPreviewColumnKey
             ) {
               const etaWindowSummary = summarizeReconciledDayWindowWarnings(r.dayData);
+              const reconciledOverrunSeconds = computeDepotReturnOverrunSeconds(r.dayData);
               notifyRoutingPreviewEtaWindowWarnings({
                 optionKey:
                   routingPreview.listOptionKey?.trim() ||
@@ -4904,6 +4974,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                 hasWindowWarning: etaWindowSummary.hasAnyWarning,
                 warningStopCount: etaWindowSummary.warningStopCount,
                 candidateHasWarning: etaWindowSummary.candidateHasWarning,
+                reconciledOverrunSeconds,
               });
             }
           } catch {
@@ -9210,6 +9281,46 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         setToast(patientValidationError);
         return;
       }
+      const timesUnchangedAtMinute =
+        preview.kind === 'type' &&
+        editVisitTimesMatchAtPracticeMinute(
+          editAppt.appointmentStart,
+          editAppt.appointmentEnd,
+          preview.appointmentStart,
+          preview.appointmentEnd,
+          PRACTICE_TZ
+        );
+      const commitStart = timesUnchangedAtMinute
+        ? editAppt.appointmentStart
+        : preview.appointmentStart;
+      const commitEnd = timesUnchangedAtMinute
+        ? editAppt.appointmentEnd
+        : preview.appointmentEnd;
+      const previewTypeName =
+        previewType?.name?.trim() || previewType?.prettyName?.trim() || null;
+      const savedAdditionalIds = new Set(
+        (editAppt.additionalEmployeeIds ??
+          editAppt.additionalEmployees?.map((emp) => Number(emp.id)) ??
+          []
+        )
+          .map((id) => Number(id))
+          .filter((id) => Number.isFinite(id) && id > 0)
+      );
+      const formAdditionalIds = new Set(
+        (formSnapshot.additionalEmployeeIds ?? [])
+          .map((id) => Number(id))
+          .filter((id) => Number.isFinite(id) && id > 0)
+      );
+      const additionalEmployeesUnchanged =
+        savedAdditionalIds.size === formAdditionalIds.size &&
+        [...savedAdditionalIds].every((id) => formAdditionalIds.has(id));
+      const typeOnlyPatch =
+        preview.kind === 'type' &&
+        timesUnchangedAtMinute &&
+        additionalEmployeesUnchanged &&
+        !editVisitLinkSelection?.clientId?.trim() &&
+        !editVisitPatientSelection?.patientId?.trim();
+
       const editChanges = detectEditVisitChanges(
         {
           description: editAppt.description,
@@ -9222,8 +9333,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           description: formSnapshot.description,
           instructions: formSnapshot.instructions,
           appointmentTypeId: typeId,
-          appointmentStart: preview.appointmentStart,
-          appointmentEnd: preview.appointmentEnd,
+          appointmentStart: commitStart,
+          appointmentEnd: commitEnd,
         }
       );
 
@@ -9233,16 +9344,16 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           editAppt,
           rawAppointments,
           PRACTICE_TZ,
-          preview.appointmentStart,
-          preview.appointmentEnd
+          commitStart,
+          commitEnd
         );
         if (siblings.length > 0) {
           const choice = editTimeAlignChoiceRef.current;
           if (choice == null) {
             setEditTimeAlignPrompt({
               siblings,
-              startIso: preview.appointmentStart,
-              endIso: preview.appointmentEnd,
+              startIso: commitStart,
+              endIso: commitEnd,
             });
             return;
           }
@@ -9255,11 +9366,13 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       const updated = await commitEditVisit({
         appointmentId: Number(editAppt.id),
         practiceId: PRACTICE_ID,
-        appointmentStart: preview.appointmentStart,
-        appointmentEnd: preview.appointmentEnd,
+        appointmentStart: commitStart,
+        appointmentEnd: commitEnd,
         form: formSnapshot,
         previewAppointmentTypeId:
           preview.kind === 'type' ? preview.appointmentTypeId ?? null : null,
+        appointmentTypeName: previewTypeName,
+        typeOnlyPatch,
         editedByAudit: {
           actor: appointmentChangeActor,
           practiceTz: PRACTICE_TZ,
@@ -9279,8 +9392,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       if (siblingsToAlign?.length) {
         alignedAppointments = await alignSiblingVisitScheduledTimes({
           siblings: siblingsToAlign,
-          startIso: preview.appointmentStart,
-          endIso: preview.appointmentEnd,
+          startIso: commitStart,
+          endIso: commitEnd,
           practiceId: PRACTICE_ID,
         });
       }
@@ -9333,11 +9446,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       void loadRange({ refreshDrive: true });
       setToast(routingFeedbackWarning ?? bookedParts.join(' · ') ?? 'Appointment updated.');
     } catch (e: unknown) {
-      const msg =
-        e instanceof Error && e.message.trim()
-          ? e.message
-          : 'Could not save changes.';
-      setToast(msg);
+      setToast(extractHttpErrorMessage(e, 'Could not save changes.'));
     } finally {
       setEditPreviewConfirming(false);
     }
@@ -10123,6 +10232,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                   const hasStops = (dayData?.households?.length ?? 0) > 0;
                   const pts = dayData ? dayPoints(dayData.households, typeCatalog) : 0;
                   const pointGoal = pointGoalForDay(dayDt);
+                  const revenueGoal = revenueGoalForDay(dayDt);
                   const countsForPointGoal = schedulerDayCountsForPointGoal(
                     dayData,
                     dayApptsHeader,
@@ -10131,6 +10241,16 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                     scheduleOverride
                   );
                   const pointGoalDisplay = countsForPointGoal ? pointGoal : null;
+                  /** Revenue goal ÷ scheduled points; optional per-doctor baseline floor and cap. */
+                  const variableVsdPerPoint = (() => {
+                    if (!countsForPointGoal || revenueGoal <= 0 || pts <= 0) return null;
+                    let v = revenueGoal / pts;
+                    const cap = Number(providerGoals?.maxVariableVsdPerPoint);
+                    const baseline = Number(providerGoals?.minVariableVsdPerPoint);
+                    if (Number.isFinite(cap) && cap > 0) v = Math.min(v, cap);
+                    if (Number.isFinite(baseline) && baseline > 0) v = Math.max(v, baseline);
+                    return v;
+                  })();
                   const driveSec = dayData ? dayTotalDriveSeconds(dayData) : 0;
                   const driveMin = Math.round(driveSec / 60);
                   const driveColor = colorForDrive(driveMin);
@@ -10246,6 +10366,34 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                                 </>
                               ) : null}
                             </div>
+                            {showByDriveTime &&
+                            resolvedPrimaryProviderId.trim() &&
+                            canViewVariableVsd &&
+                            variableVsdPerPoint != null ? (
+                              <div
+                                className="scheduler-day-header-vsd-per-point"
+                                title={`Variable VSD per point: daily revenue goal (${formatUsdWholeDollars(
+                                  revenueGoal
+                                )}) ÷ ${pts} scheduled point${
+                                  pts === 1 ? '' : 's'
+                                }${
+                                  Number(providerGoals?.minVariableVsdPerPoint) > 0
+                                    ? ` (baseline ${formatUsdWholeDollars(
+                                        Number(providerGoals?.minVariableVsdPerPoint)
+                                      )})`
+                                    : ''
+                                }${
+                                  Number(providerGoals?.maxVariableVsdPerPoint) > 0
+                                    ? ` (capped at ${formatUsdWholeDollars(
+                                        Number(providerGoals?.maxVariableVsdPerPoint)
+                                      )})`
+                                    : ''
+                                }. Fewer points raises the target; a busy day will not go below the baseline.`}
+                              >
+                                <strong>VSD/pt:</strong>{' '}
+                                {formatUsdWholeDollars(variableVsdPerPoint)}
+                              </div>
+                            ) : null}
                             {scheduleLoaderHref || mapsLinks.length > 0 || isWorkingDay ? (
                               <div className="scheduler-day-header-actions">
                                 {scheduleLoaderHref ? (

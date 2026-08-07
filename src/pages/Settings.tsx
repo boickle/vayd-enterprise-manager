@@ -58,6 +58,12 @@ import {
   type EmployeeGoalsResponseDto,
   type DailyGoalOverride,
 } from '../api/employeeGoals';
+import {
+  defaultAppointmentBookingsGoalsByDow,
+  fetchAppointmentBookingsGoalsByDow,
+  saveAppointmentBookingsGoalsByDow,
+  type AppointmentBookingsGoalsByDow,
+} from '../api/appointmentBookingsGoals';
 import { DepotLocationField } from '../components/DepotLocationField';
 import './Settings.css';
 import SettingsEmployeeDirectory from '../components/settings/SettingsEmployeeDirectory';
@@ -236,6 +242,12 @@ export default function Settings() {
   const [goalsLoading, setGoalsLoading] = useState(false);
   const [goalsSaving, setGoalsSaving] = useState(false);
   const [goalsLoadError, setGoalsLoadError] = useState<string | null>(null);
+  const [bookingsGoalsByDow, setBookingsGoalsByDow] = useState<AppointmentBookingsGoalsByDow>(
+    defaultAppointmentBookingsGoalsByDow
+  );
+  const [bookingsGoalsLoading, setBookingsGoalsLoading] = useState(false);
+  const [bookingsGoalsSaving, setBookingsGoalsSaving] = useState(false);
+  const [bookingsGoalsLoadError, setBookingsGoalsLoadError] = useState<string | null>(null);
 
   // Reminders tab state
   const [reminderForm, setReminderForm] = useState<ReminderSettingsForm>({
@@ -467,6 +479,43 @@ export default function Settings() {
     }
   };
 
+  const handleLoadAppointmentBookingsGoals = useCallback(async () => {
+    setBookingsGoalsLoadError(null);
+    setBookingsGoalsLoading(true);
+    try {
+      const goals = await fetchAppointmentBookingsGoalsByDow(REMINDERS_PRACTICE_ID);
+      setBookingsGoalsByDow(goals);
+    } catch (err: any) {
+      setBookingsGoalsLoadError(
+        err?.response?.data?.message || err?.message || 'Failed to load appointment bookings goals'
+      );
+      setBookingsGoalsByDow(defaultAppointmentBookingsGoalsByDow());
+    } finally {
+      setBookingsGoalsLoading(false);
+    }
+  }, []);
+
+  const handleSaveAppointmentBookingsGoals = async () => {
+    setBookingsGoalsSaving(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const saved = await saveAppointmentBookingsGoalsByDow(REMINDERS_PRACTICE_ID, bookingsGoalsByDow);
+      setBookingsGoalsByDow(saved);
+      setSuccess('Appointment bookings goals updated successfully');
+      setTimeout(() => setSuccess(null), 3000);
+    } catch (err: any) {
+      setError(err?.response?.data?.message || err?.message || 'Failed to update appointment bookings goals');
+    } finally {
+      setBookingsGoalsSaving(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!isAdmin || activeTab !== 'employee-goals') return;
+    void handleLoadAppointmentBookingsGoals();
+  }, [isAdmin, activeTab, handleLoadAppointmentBookingsGoals]);
+
   const handleSaveEmployeeGoals = async () => {
     if (!selectedEmployeeForGoals) return;
     setGoalsSaving(true);
@@ -484,6 +533,12 @@ export default function Settings() {
       if (goalsForm.bonusRevenueGoal !== undefined) payload.bonusRevenueGoal = goalsForm.bonusRevenueGoal;
       if (goalsForm.dailyPointGoal !== undefined) payload.dailyPointGoal = goalsForm.dailyPointGoal;
       if (goalsForm.weeklyPointGoal !== undefined) payload.weeklyPointGoal = goalsForm.weeklyPointGoal;
+      if (goalsForm.maxVariableVsdPerPoint !== undefined) {
+        payload.maxVariableVsdPerPoint = goalsForm.maxVariableVsdPerPoint;
+      }
+      if (goalsForm.minVariableVsdPerPoint !== undefined) {
+        payload.minVariableVsdPerPoint = goalsForm.minVariableVsdPerPoint;
+      }
       if (goalsForm.dailyGoals !== undefined) {
         payload.dailyGoals = goalsForm.dailyGoals.map((d) => ({
           dayOfWeek: d.dayOfWeek,
@@ -1730,6 +1785,65 @@ export default function Settings() {
               Set default work times, depot locations, and revenue/point goals per employee. Use per-day overrides to set different daily goals by day of week (e.g. higher goals on weekdays).
             </p>
 
+            <div className="settings-card" style={{ marginBottom: 20 }}>
+              <h3 className="settings-card-title">Practice appointment bookings goals</h3>
+              <p className="settings-muted" style={{ marginBottom: 12 }}>
+                Total appointments the practice needs booked each day of the week (Routing Analytics).
+                Previously hardcoded at 37.
+              </p>
+              {bookingsGoalsLoadError && (
+                <div className="settings-message settings-error-message">
+                  {bookingsGoalsLoadError}
+                  <button onClick={() => setBookingsGoalsLoadError(null)} className="settings-close">×</button>
+                </div>
+              )}
+              {bookingsGoalsLoading ? (
+                <div className="settings-loading">
+                  <div className="settings-spinner"></div>
+                  <span>Loading bookings goals...</span>
+                </div>
+              ) : (
+                <>
+                  <div
+                    className="settings-form-group"
+                    style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 12 }}
+                  >
+                    {dayNames.map((name, dow) => (
+                      <div key={dow}>
+                        <label className="settings-label">{name}</label>
+                        <input
+                          type="number"
+                          min={0}
+                          step={1}
+                          className="settings-input"
+                          value={bookingsGoalsByDow[dow] ?? ''}
+                          onChange={(e) => {
+                            const next =
+                              e.target.value === ''
+                                ? 0
+                                : Number(e.target.value);
+                            setBookingsGoalsByDow((prev) => ({
+                              ...prev,
+                              [dow]: Number.isFinite(next) && next >= 0 ? next : 0,
+                            }));
+                          }}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    className="settings-btn settings-btn-primary"
+                    disabled={bookingsGoalsSaving}
+                    onClick={() => void handleSaveAppointmentBookingsGoals()}
+                    style={{ marginTop: 12 }}
+                  >
+                    {bookingsGoalsSaving ? 'Saving...' : 'Save bookings goals'}
+                  </button>
+                </>
+              )}
+            </div>
+
             <div className="settings-form-group">
               <label className="settings-label">Select Employee</label>
               <select
@@ -1820,6 +1934,48 @@ export default function Settings() {
                           value={goalsForm.weeklyPointGoal ?? ''}
                           onChange={(e) => setGoalsForm((f) => ({ ...f, weeklyPointGoal: e.target.value === '' ? undefined : Number(e.target.value) }))}
                         />
+                      </div>
+                      <div>
+                        <label className="settings-label">Min variable VSD / pt (baseline)</label>
+                        <input
+                          type="number"
+                          min={0}
+                          step={1}
+                          className="settings-input"
+                          value={goalsForm.minVariableVsdPerPoint ?? ''}
+                          onChange={(e) =>
+                            setGoalsForm((f) => ({
+                              ...f,
+                              minVariableVsdPerPoint:
+                                e.target.value === '' ? null : Number(e.target.value),
+                            }))
+                          }
+                          title="Floor for calendar VSD/pt on busy days (revenue goal ÷ scheduled points). Leave blank for no baseline."
+                        />
+                        <p className="settings-muted" style={{ marginTop: 4, fontSize: 12 }}>
+                          Floor on busy days. Blank = no baseline.
+                        </p>
+                      </div>
+                      <div>
+                        <label className="settings-label">Max variable VSD / pt</label>
+                        <input
+                          type="number"
+                          min={0}
+                          step={1}
+                          className="settings-input"
+                          value={goalsForm.maxVariableVsdPerPoint ?? ''}
+                          onChange={(e) =>
+                            setGoalsForm((f) => ({
+                              ...f,
+                              maxVariableVsdPerPoint:
+                                e.target.value === '' ? null : Number(e.target.value),
+                            }))
+                          }
+                          title="Caps the calendar VSD/pt target (revenue goal ÷ scheduled points). Leave blank for no cap."
+                        />
+                        <p className="settings-muted" style={{ marginTop: 4, fontSize: 12 }}>
+                          Caps calendar VSD/pt. Blank = no cap.
+                        </p>
                       </div>
                     </div>
 

@@ -890,9 +890,8 @@ export default function ClientPortal() {
       wellnessPlansCount: allWellnessPlans.length,
     });
     
-    // Show upgrade button if they have a base plan in EITHER membership transaction OR wellness plans
-    // AND they don't already have Plus or Puppy/Kitten in either
-    return canUpgrade;
+    // PLUS add-on is retired for new upgrades. Only Puppy/Kitten upgrades remain (handled above).
+    return false;
   }
 
   const brand = 'var(--brand, #0f766e)';

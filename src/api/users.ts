@@ -49,3 +49,75 @@ export async function updateCommunicationPreferences(allowEmail?: boolean, allow
   if (allowText !== undefined) body.allowText = allowText;
   return http.post('/users/communication-preferences', body);
 }
+
+/** Scout login roles managed in Admin → Users. */
+export type ScoutUserRole =
+  | 'superadmin'
+  | 'admin'
+  | 'employee'
+  | 'provider'
+  | 'generic'
+  | 'client';
+
+export type AdminManagedUser = {
+  id: number;
+  email: string | null;
+  role: ScoutUserRole | string;
+  employeeId: number | null;
+  doctorId: number | null;
+  employeeName: string | null;
+  doctorName: string | null;
+  clientId?: number | null;
+  clientName?: string | null;
+  isActive: boolean;
+  requiresPasswordReset: boolean;
+  created: string | null;
+  updated: string | null;
+};
+
+export type UpdateAdminUserPayload = {
+  role?: ScoutUserRole | string;
+  employeeId?: number | null;
+  doctorId?: number | null;
+  isActive?: boolean;
+};
+
+export type ListAdminUsersParams = {
+  q?: string;
+  role?: string;
+  isActive?: boolean;
+};
+
+export async function fetchAdminUsers(
+  params: ListAdminUsersParams = {},
+): Promise<AdminManagedUser[]> {
+  const { data } = await http.get('/admin/users', {
+    params: {
+      q: params.q || undefined,
+      role: params.role || undefined,
+      isActive:
+        params.isActive === undefined ? undefined : params.isActive ? 'true' : 'false',
+    },
+  });
+  return Array.isArray(data) ? data : [];
+}
+
+export async function fetchAdminUser(userId: number): Promise<AdminManagedUser> {
+  const { data } = await http.get(`/admin/users/${userId}`);
+  return data;
+}
+
+export async function updateAdminUser(
+  userId: number,
+  payload: UpdateAdminUserPayload,
+): Promise<AdminManagedUser> {
+  const { data } = await http.patch(`/admin/users/${userId}`, payload);
+  return data;
+}
+
+export async function adminSendPasswordReset(
+  userId: number,
+): Promise<{ status: string }> {
+  const { data } = await http.post(`/admin/users/${userId}/reset-password`);
+  return data;
+}

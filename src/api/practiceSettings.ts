@@ -49,6 +49,17 @@ export type ReminderSettings = {
   'inventory.onlineStoreFulfillmentBranchId'?: string;
   /** Inventory location id (string) within the fulfillment branch. */
   'inventory.onlineStoreFulfillmentLocationId'?: string;
+  /**
+   * Practice daily appointment bookings goals by day of week (JSON string).
+   * Shape: { "0": 37, "1": 37, ... } where 0=Sunday … 6=Saturday.
+   */
+  'appointmentBookings.goalsByDayOfWeek'?: string;
+  /**
+   * Max routing scores for client-offered slots (JSON string).
+   * Shape: { defaults: { sameDay, nextDay, withinWeek, later }, memberBonus, byAppointmentTypeId }.
+   * See `routingOfferableScoreConfig.ts`.
+   */
+  'routing.offerableScoreThresholds'?: string;
 };
 
 /** True only when the practice explicitly enabled an online store (default No). */

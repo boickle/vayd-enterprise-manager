@@ -16,10 +16,13 @@ import {
   type OpenPhoneEmployeeSummary,
 } from './openphoneCalls';
 import {
+  CL_SEAT_WORKDAYS_PER_WEEK,
   computeClSeatParForRange,
+  eachIsoDateInclusive,
   fetchClSeatAssignmentsRange,
   fetchClSeatDayOverrides,
   fetchClSeatPar,
+  resolveClSeatForDate,
   sundayWeekStartLocal,
   type ClSeatDayOverride,
   type ClSeatParSettings,
@@ -37,6 +40,8 @@ import {
 import { formatEmployeeDisplayName } from '../utils/employeeDisplayName';
 
 const DEFAULT_PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+
+const ALL_SEATS: ClSeat[] = ['phones', 'outreach', 'email'];
 
 export type ClPerformanceCategoryTotals = ClPointsCategoryTotals;
 
@@ -71,6 +76,26 @@ export type ClPerformanceLiaison = {
   };
 };
 
+/**
+ * Average points earned while assigned to a seat (day-attributed).
+ * Weekly equivalent = avg per seated workday × 5 — useful for setting seat par.
+ */
+export type ClSeatAverageRow = {
+  seat: ClSeat;
+  seatLabel: string;
+  /** Person-workdays with this seat in the window. */
+  workdayCount: number;
+  /** Distinct employees who spent ≥1 day in this seat. */
+  employeeCount: number;
+  totalPoints: number;
+  avgPointsPerWorkday: number | null;
+  /** avgPointsPerWorkday × 5 (Mon–Fri week). */
+  avgWeeklyPoints: number | null;
+  /** Rounded avgWeeklyPoints for copying into seat par. */
+  suggestedWeeklyPar: number | null;
+  categories: ClPerformanceCategoryTotals;
+};
+
 export type ClPerformanceAnalyticsResponse = {
   startDate: string;
   endDate: string;
@@ -79,6 +104,8 @@ export type ClPerformanceAnalyticsResponse = {
   primaryWeekStart: string;
   weekCount: number;
   seatPar: ClSeatParSettings;
+  /** Day-attributed averages for the selected range (use 30D preset for trailing-month par). */
+  seatAverages: ClSeatAverageRow[];
   scoredCategories: string[];
   unscoredNote: string;
   liaisons: ClPerformanceLiaison[];
@@ -339,6 +366,185 @@ function scoreLiaisonPeriod(emp: Employee, inputs: PeriodInputs): {
   };
 }
 
+/** YYYY-MM-DD in local time from an ISO / date string. */
+function toLocalDateKey(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const trimmed = String(raw).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
+  const t = Date.parse(trimmed);
+  if (!Number.isFinite(t)) {
+    const m = trimmed.match(/^(\d{4}-\d{2}-\d{2})/);
+    return m ? m[1] : null;
+  }
+  const d = new Date(t);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/**
+ * Per-day points for bookings + outreach (dated sources). Call points are omitted —
+ * they are spread across seated workdays when building seat averages.
+ */
+function dailyDatedPointsForEmail(
+  userEmail: string,
+  inputs: PeriodInputs
+): Map<string, ClPointsCategoryTotals> {
+  const byDate = new Map<string, ClPointsCategoryTotals>();
+  const bump = (date: string, patch: Partial<ClPointsCategoryTotals>) => {
+    const cur = byDate.get(date) ?? emptyCategories();
+    for (const key of Object.keys(patch) as (keyof ClPointsCategoryTotals)[]) {
+      cur[key] += patch[key] ?? 0;
+    }
+    byDate.set(date, cur);
+  };
+
+  const email = normEmail(userEmail);
+  const bookUser = inputs.bookingsUsers.find((u) => normEmail(u.userEmail) === email);
+  for (const day of bookUser?.bookingsByDay ?? []) {
+    const date = toLocalDateKey(day.date);
+    if (!date) continue;
+    const details = day.bookings ?? [];
+    if (details.length > 0) {
+      for (const b of details) {
+        const scored = scoreClBooking({
+          bookedAt: b.bookedAt,
+          appointmentStart: b.appointmentStart,
+          newPatient: b.newPatient,
+        });
+        bump(date, {
+          bookings: scored.bookingPoints,
+          newPatientBonus: scored.newPatientBonusPoints,
+        });
+      }
+    } else {
+      const existing = day.existingPatientBooked ?? 0;
+      const neu = day.newPatientBooked ?? 0;
+      bump(date, {
+        bookings: (existing + neu) * CL_POINT_VALUES.bookingBase,
+        newPatientBonus: neu * CL_POINT_VALUES.newPatientBonus,
+      });
+    }
+  }
+
+  const fillUser = inputs.fillDayUsers.find((u) => normEmail(u.userEmail) === email);
+  for (const day of fillUser?.requestsByDay ?? []) {
+    const date = toLocalDateKey(day.date);
+    if (!date) continue;
+    bump(date, {
+      outreach: (day.requestCount ?? 0) * CL_POINT_VALUES.outreachContactWorked,
+    });
+  }
+
+  return byDate;
+}
+
+type SeatAcc = {
+  workdayCount: number;
+  employeeIds: Set<number>;
+  totalPoints: number;
+  categories: ClPointsCategoryTotals;
+};
+
+function emptySeatAcc(): SeatAcc {
+  return {
+    workdayCount: 0,
+    employeeIds: new Set(),
+    totalPoints: 0,
+    categories: emptyCategories(),
+  };
+}
+
+/**
+ * Attribute each seated workday's points to that day's seat.
+ * Bookings/outreach use per-day data; OpenPhone call points (period totals) are
+ * spread evenly across the employee's seated workdays in the window.
+ */
+function computeSeatAverages(opts: {
+  employees: Employee[];
+  inputs: PeriodInputs;
+  startDate: string;
+  endDate: string;
+  weeklySeatByEmployee: Map<number, Map<string, ClSeat>>;
+  overridesByEmployee: Map<number, Map<string, ClSeatDayOverride>>;
+}): ClSeatAverageRow[] {
+  const acc: Record<ClSeat, SeatAcc> = {
+    phones: emptySeatAcc(),
+    outreach: emptySeatAcc(),
+    email: emptySeatAcc(),
+  };
+
+  for (const emp of opts.employees) {
+    const weeklyMap = opts.weeklySeatByEmployee.get(emp.id) ?? new Map();
+    const overrides = opts.overridesByEmployee.get(emp.id) ?? new Map();
+    const dated = dailyDatedPointsForEmail(emp.email ?? '', opts.inputs);
+    const calls = scoreCallsForEmployee(emp.id, opts.inputs.openPhoneEmployees);
+
+    const seatedDates: string[] = [];
+    for (const date of eachIsoDateInclusive(opts.startDate, opts.endDate)) {
+      const weekStart = sundayWeekStartLocal(date);
+      const weekly = weeklyMap.get(weekStart) ?? null;
+      const override = overrides.get(date) ?? null;
+      const resolved = resolveClSeatForDate({ date, weeklySeat: weekly, override });
+      if (resolved.seat) seatedDates.push(date);
+    }
+    if (seatedDates.length === 0) continue;
+
+    const callShare = calls.categories.calls / seatedDates.length;
+    const penaltyShare = calls.categories.penalties / seatedDates.length;
+
+    for (const date of seatedDates) {
+      const weekStart = sundayWeekStartLocal(date);
+      const weekly = weeklyMap.get(weekStart) ?? null;
+      const override = overrides.get(date) ?? null;
+      const seat = resolveClSeatForDate({ date, weeklySeat: weekly, override }).seat;
+      if (!seat) continue;
+
+      const dayCats = dated.get(date) ?? emptyCategories();
+      const categories: ClPointsCategoryTotals = {
+        bookings: dayCats.bookings,
+        newPatientBonus: dayCats.newPatientBonus,
+        calls: callShare,
+        outreach: dayCats.outreach,
+        penalties: penaltyShare,
+        other: dayCats.other,
+      };
+      const points = sumClCategoryTotals(categories);
+      const bucket = acc[seat];
+      bucket.workdayCount += 1;
+      bucket.employeeIds.add(emp.id);
+      bucket.totalPoints += points;
+      bucket.categories.bookings += categories.bookings;
+      bucket.categories.newPatientBonus += categories.newPatientBonus;
+      bucket.categories.calls += categories.calls;
+      bucket.categories.outreach += categories.outreach;
+      bucket.categories.penalties += categories.penalties;
+      bucket.categories.other += categories.other;
+    }
+  }
+
+  return ALL_SEATS.map((seat) => {
+    const row = acc[seat];
+    const avgPerDay =
+      row.workdayCount > 0 ? row.totalPoints / row.workdayCount : null;
+    const avgWeekly =
+      avgPerDay != null ? avgPerDay * CL_SEAT_WORKDAYS_PER_WEEK : null;
+    return {
+      seat,
+      seatLabel: CL_SEAT_LABELS[seat],
+      workdayCount: row.workdayCount,
+      employeeCount: row.employeeIds.size,
+      totalPoints: row.totalPoints,
+      avgPointsPerWorkday: avgPerDay,
+      avgWeeklyPoints: avgWeekly,
+      suggestedWeeklyPar:
+        avgWeekly != null && Number.isFinite(avgWeekly)
+          ? Math.max(1, Math.round(avgWeekly))
+          : null,
+      categories: row.categories,
+    };
+  });
+}
+
 async function loadPeriodInputs(startDate: string, endDate: string): Promise<PeriodInputs> {
   const [bookings, openPhone, fillDay] = await Promise.all([
     fetchAppointmentBookingsAnalytics({ startDate, endDate }),
@@ -489,6 +695,15 @@ export async function fetchClPerformanceAnalytics(params: {
     { totalPoints: 0, bookings: 0, calls: 0, outreach: 0, penalties: 0 }
   );
 
+  const seatAverages = computeSeatAverages({
+    employees: receptionists,
+    inputs: current,
+    startDate,
+    endDate,
+    weeklySeatByEmployee,
+    overridesByEmployee,
+  });
+
   return {
     startDate,
     endDate,
@@ -497,15 +712,17 @@ export async function fetchClPerformanceAnalytics(params: {
     primaryWeekStart,
     weekCount,
     seatPar: parMap,
+    seatAverages,
     scoredCategories: [
       'Appointment bookings (lead-time tiers + new-patient bonus)',
       'Inbound calls answered & outbound calls (OpenPhone)',
       'Missed in-hours call penalties (OpenPhone)',
       'Fill Day / schedule-loader contacts worked',
       'Seat assignment + par normalization (Settings → CL Seat Assignment)',
+      'Day-attributed seat averages (bookings/outreach by day; calls spread across seated workdays)',
     ],
     unscoredNote:
-      'Not yet scored automatically: memberships, direct-booking review, voicemail timing, text/email thread resolution, holds aging, and complaints. Assign seats under Settings → CL Seat Assignment to unlock normalized scores.',
+      'Not yet scored automatically: memberships, direct-booking review, voicemail timing, text/email thread resolution, holds aging, and complaints. Assign seats under Settings → CL Seat Assignment to unlock normalized scores and seat averages. Use the 30D range to set par from trailing-month averages by seat.',
     liaisons,
     teamTotals,
   };

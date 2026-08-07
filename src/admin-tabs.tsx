@@ -1,11 +1,11 @@
 // Admin sub-tabs: path is relative to /admin. Kept in a separate file to avoid circular import (Admin.tsx imports this; app-pages imports Admin).
 import type { JSX } from 'react';
-import CreateUser from './pages/CreateUser';
-import CreateEmployee from './pages/CreateEmployee';
 import MembershipPromotionsPage from './pages/MembershipPromotions';
 import AppointmentRequestPromotionsPage from './pages/AppointmentRequestPromotions';
 import OpenPhoneCoaching from './pages/OpenPhoneCoaching';
 import SurveyResults from './pages/SurveyResults';
+import AdminUsers from './pages/AdminUsers';
+import RoutingScoreThresholdsPage from './pages/RoutingScoreThresholds';
 import { getFrontendPaymentProvider } from './config/paymentProvider';
 
 export type AdminTabPage = {
@@ -28,12 +28,11 @@ export const ADMIN_TAB_PAGES: AdminTabPage[] = [
     element: <OpenPhoneCoaching />,
     role: ['admin', 'superadmin'],
   },
-  { path: 'users/create', label: 'Create User', element: <CreateUser />, role: 'superadmin' },
   {
-    path: 'users/create-employee',
-    label: 'Create Employee',
-    element: <CreateEmployee />,
-    role: 'superadmin',
+    path: 'users',
+    label: 'Users',
+    element: <AdminUsers />,
+    role: ['admin', 'superadmin'],
   },
   {
     path: 'membership-promotions',
@@ -45,6 +44,12 @@ export const ADMIN_TAB_PAGES: AdminTabPage[] = [
     path: 'appointment-request-promotions',
     label: 'Appt Request Promotions',
     element: <AppointmentRequestPromotionsPage />,
+    role: ['admin', 'superadmin'],
+  },
+  {
+    path: 'routing-score-thresholds',
+    label: 'Routing Score Thresholds',
+    element: <RoutingScoreThresholdsPage />,
     role: ['admin', 'superadmin'],
   },
 ];

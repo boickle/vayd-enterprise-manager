@@ -363,7 +363,7 @@ export default function PaymentsAnalyticsPage() {
       0
     );
     const subscriptionRevenue = series.reduce(
-      (s, p) => s + (p.subscriptionRevenue ?? 0),
+      (s, p) => s + (p.subscriptionRevenue ?? 0) + (p.stripeRevenue ?? 0),
       0
     );
     const total = revenue + subscriptionRevenue;
@@ -382,7 +382,9 @@ export default function PaymentsAnalyticsPage() {
     () =>
       series.map((p) => ({
         ...p,
-        totalRevenue: p.revenue + (p.subscriptionRevenue ?? 0),
+        subscriptionRevenue: (p.subscriptionRevenue ?? 0) + (p.stripeRevenue ?? 0),
+        totalRevenue:
+          p.revenue + (p.subscriptionRevenue ?? 0) + (p.stripeRevenue ?? 0),
       })),
     [series]
   );
@@ -396,8 +398,11 @@ export default function PaymentsAnalyticsPage() {
   }, [series, revenueDayOverride, revenueDayKey]);
   const revenueDayPracticeRevenue = revenueDayRow?.practiceRevenue ?? 0;
   const revenueDayOnlinePharmacyRevenue = revenueDayRow?.onlinePharmacyRevenue ?? 0;
-  /** Square (subscription) revenue for the day, from the payments analytics series. */
+  /** Provider membership revenue for the day, from the payments analytics series. */
   const revenueDaySquareRevenue = revenueDayRow?.subscriptionRevenue ?? 0;
+  const revenueDayStripeMembershipRevenue = revenueDayRow?.stripeRevenue ?? 0;
+  const revenueDaySubscriptionRevenue =
+    revenueDaySquareRevenue + revenueDayStripeMembershipRevenue;
   const revenueDayPaymentsBreakdown = revenueDayPracticeRevenue + revenueDayOnlinePharmacyRevenue;
   const revenueDayRecordedRevenue = revenueDayRow?.revenue ?? 0;
   const revenueDayUseLegacyPaymentsRow =
@@ -407,14 +412,14 @@ export default function PaymentsAnalyticsPage() {
     : revenueDayPaymentsBreakdown > 0
       ? revenueDayPaymentsBreakdown
       : revenueDayRecordedRevenue;
-  const revenueDayTotalRevenue = revenueDayPaymentsTotal + revenueDaySquareRevenue + stripeTotal;
+  const revenueDayTotalRevenue = revenueDayPaymentsTotal + revenueDaySubscriptionRevenue;
 
   /** Fallback: derive top-N from the current chart range if the leaderboards API fails. */
   const rangeLeaderboards = useMemo((): PaymentsLeaderboards => {
     const dayTotals = series.map((p) => ({
       key: p.date,
-      // Match chart / daily card (sans Stripe): DB revenue + Square subscriptions
-      revenue: p.revenue + (p.subscriptionRevenue ?? 0),
+      // Match chart / daily card: DB revenue + Square and Stripe memberships.
+      revenue: p.revenue + (p.subscriptionRevenue ?? 0) + (p.stripeRevenue ?? 0),
       count: p.count,
     }));
     const topDays: PaymentsLeaderboardEntry[] = [...dayTotals]
@@ -575,7 +580,7 @@ export default function PaymentsAnalyticsPage() {
                   {fmtUSD(totals.subscriptionRevenue)}
                 </Typography>
                 <Typography variant="caption" color="text.secondary">
-                  {series.length} days
+                  Square + Stripe memberships · {series.length} days
                 </Typography>
               </CardContent>
             </Card>
@@ -591,7 +596,7 @@ export default function PaymentsAnalyticsPage() {
                   {fmtUSD(totals.total)}
                 </Typography>
                 <Typography variant="caption" color="text.secondary">
-                  revenue + subscription · {series.length} days
+                  revenue + membership subscriptions · {series.length} days
                 </Typography>
               </CardContent>
             </Card>
@@ -670,7 +675,7 @@ export default function PaymentsAnalyticsPage() {
               )}
               <Box display="flex" justifyContent="space-between" alignItems="baseline">
                 <Typography variant="body2" color="text.secondary">
-                  Square revenue
+                  Square membership revenue
                 </Typography>
                 <Typography variant="body1" fontWeight={600}>
                   {fmtUSD(revenueDaySquareRevenue)}
@@ -678,14 +683,10 @@ export default function PaymentsAnalyticsPage() {
               </Box>
               <Box display="flex" justifyContent="space-between" alignItems="baseline">
                 <Typography variant="body2" color="text.secondary">
-                  Stripe revenue
+                  Stripe membership revenue
                 </Typography>
                 <Typography variant="body1" fontWeight={600}>
-                  {stripeLoading ? (
-                    <CircularProgress size={14} />
-                  ) : (
-                    fmtUSD(stripeTotal)
-                  )}
+                  {fmtUSD(revenueDayStripeMembershipRevenue)}
                 </Typography>
               </Box>
               <Divider sx={{ my: 0.5 }} />
@@ -835,7 +836,7 @@ export default function PaymentsAnalyticsPage() {
         <Card variant="outlined">
           <CardHeader
             title={isRevenueDayToday ? 'Stripe Received Today' : 'Stripe Received'}
-            subheader="Payments recorded in Stripe for this day"
+            subheader="All Stripe activity for reconciliation; only verified memberships count as revenue"
           />
           <CardContent>
             {stripeLoading ? (

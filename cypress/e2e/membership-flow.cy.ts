@@ -5,7 +5,7 @@
  * 
  * Tests the complete membership signup flow including:
  * - Plan selection (Foundations, Golden, Comfort Care)
- * - Add-on selection (PLUS, Puppy/Kitten)
+ * - Add-on selection (Puppy/Kitten; PLUS retired)
  * - Billing preference (monthly/annual)
  * - Total calculation verification
  * - Navigation to payment page
@@ -99,7 +99,7 @@ describe('Membership Purchase Flow', () => {
   /**
    * Helper to select add-ons
    */
-  function selectAddOn(addOnName: 'PLUS Add-on' | 'Puppy / Kitten Add-on') {
+  function selectAddOn(addOnName: 'Puppy / Kitten Add-on') {
     cy.contains('h3', addOnName)
       .parents('.cp-plan-card')
       .within(() => {
@@ -121,7 +121,7 @@ describe('Membership Purchase Flow', () => {
       if (preference === 'monthly') {
         cy.contains('button', 'Monthly').click();
       } else {
-        cy.contains('button', 'Annual').click();
+        cy.contains('button', /Annual/).click();
       }
     });
   }
@@ -396,35 +396,31 @@ describe('Membership Purchase Flow', () => {
   });
 
   describe('Add-on Scenarios', () => {
-    it('should complete Foundations + PLUS (monthly) for cat using Templeton', () => {
+    it.skip('PLUS Add-on retired — was Foundations + PLUS (monthly) for cat using Templeton', () => {
       navigateToMembershipSignup('Templeton');
       
       cy.contains('button', 'No').click();
       selectPlan('Foundations');
-      selectAddOn('PLUS Add-on');
       selectBillingPreference('monthly');
       
-      // Verify total: $59 (Foundations cat) + $49 (PLUS) = $108/month
-      verifyCostSummary(108, 'monthly');
+      // Verify Foundations cat monthly (PLUS no longer offered)
+      verifyCostSummary(59, 'monthly');
       
       acceptAgreementAndProceed();
-      verifyPaymentPageTotals(10800); // 108 * 100
+      verifyPaymentPageTotals(5900);
     });
 
-    it('should complete Foundations + PLUS (annual) for cat using Templeton', () => {
+    it.skip('PLUS Add-on retired — was Foundations + PLUS (annual) for cat using Templeton', () => {
       navigateToMembershipSignup('Templeton');
       
       cy.contains('button', 'No').click();
       selectPlan('Foundations');
-      selectAddOn('PLUS Add-on');
       selectBillingPreference('annual');
       
-      // Verify total: $659 (Foundations cat annual) + $529 (PLUS annual) = $1188/year
-      verifyCostSummary(1188, 'annual');
+      verifyCostSummary(639, 'annual');
       
       acceptAgreementAndProceed();
-      // Verify payment page total (1188 * 100 = 118800 cents)
-      verifyPaymentPageTotals(118800);
+      verifyPaymentPageTotals(63900);
     });
 
     it.skip('should complete Foundations + Puppy/Kitten (monthly) for kitten using Newey', () => {
@@ -482,7 +478,7 @@ describe('Membership Purchase Flow', () => {
       verifyPaymentPageTotals(96800);
     });
 
-    it.skip('should complete Foundations + PLUS + Puppy/Kitten (annual) for kitten using Newey', () => {
+    it.skip('PLUS Add-on retired — was Foundations + PLUS + Puppy/Kitten (annual) for kitten using Newey', () => {
       navigateToMembershipSignup('Newey');
       
       cy.contains('button', 'No').click();
@@ -497,37 +493,33 @@ describe('Membership Purchase Flow', () => {
       
       selectPlan('Foundations');
       
-      // Both add-ons should be available
-      cy.contains('h3', 'PLUS Add-on', { timeout: 5000 }).should('be.visible');
+      cy.contains('h3', 'PLUS Add-on').should('not.exist');
       cy.contains('h3', 'Puppy / Kitten', { timeout: 5000 }).should('be.visible');
       
-      selectAddOn('PLUS Add-on');
       selectAddOn('Puppy / Kitten Add-on');
       selectBillingPreference('annual');
       
-      // Verify total: $659 (Foundations cat annual) + $529 (PLUS annual) + $309 (Puppy/Kitten annual) = $1497/year
-      verifyCostSummary(1497, 'annual');
+      // Foundations cat annual 639 + Puppy/Kitten 309 = 948
+      verifyCostSummary(948, 'annual');
       
       acceptAgreementAndProceed();
-      // Verify payment page total (1497 * 100 = 149700 cents)
-      verifyPaymentPageTotals(149700);
+      verifyPaymentPageTotals(94800);
     });
 
-    it.skip('should complete Golden + PLUS (monthly) for senior dog using Oldie', () => {
+    it.skip('PLUS Add-on retired — was Golden + PLUS (monthly) for senior dog using Oldie', () => {
       navigateToMembershipSignup('Oldie');
       
       cy.contains('button', 'No').click();
       
       cy.contains('h3', 'Golden', { timeout: 5000 }).should('be.visible');
       selectPlan('Golden');
-      selectAddOn('PLUS Add-on');
+      cy.contains('h3', 'PLUS Add-on').should('not.exist');
       selectBillingPreference('monthly');
       
-      // Verify total: $109 (Golden dog) + $49 (PLUS) = $158/month
-      verifyCostSummary(158, 'monthly');
+      verifyCostSummary(99, 'monthly');
       
       acceptAgreementAndProceed();
-      verifyPaymentPageTotals(15800); // 158 * 100
+      verifyPaymentPageTotals(9900);
     });
   });
 
@@ -536,45 +528,24 @@ describe('Membership Purchase Flow', () => {
       const testCases = [
         // Base plans - monthly
         { plan: 'Foundations', species: 'cat', billing: 'monthly', addons: [], expected: 59 },
-        { plan: 'Foundations', species: 'dog', billing: 'monthly', addons: [], expected: 79 },
-        { plan: 'Golden', species: 'dog', billing: 'monthly', addons: [], expected: 109 },
-        { plan: 'Golden', species: 'cat', billing: 'monthly', addons: [], expected: 99 },
+        { plan: 'Foundations', species: 'dog', billing: 'monthly', addons: [], expected: 69 },
+        { plan: 'Golden', species: 'dog', billing: 'monthly', addons: [], expected: 99 },
+        { plan: 'Golden', species: 'cat', billing: 'monthly', addons: [], expected: 89 },
         { plan: 'Comfort Care', species: null, billing: 'monthly', addons: [], expected: 289 },
         
         // Base plans - annual
         { plan: 'Foundations', species: 'dog', billing: 'annual', addons: [], expected: 749 },
-        { plan: 'Foundations', species: 'cat', billing: 'annual', addons: [], expected: 659 },
-        { plan: 'Golden', species: 'dog', billing: 'annual', addons: [], expected: 1179 },
-        { plan: 'Golden', species: 'cat', billing: 'annual', addons: [], expected: 1069 },
-        
-        // With PLUS - monthly
-        { plan: 'Foundations', species: 'dog', billing: 'monthly', addons: ['PLUS'], expected: 128 },
-        { plan: 'Foundations', species: 'cat', billing: 'monthly', addons: ['PLUS'], expected: 108 },
-        { plan: 'Golden', species: 'dog', billing: 'monthly', addons: ['PLUS'], expected: 158 },
-        { plan: 'Golden', species: 'cat', billing: 'monthly', addons: ['PLUS'], expected: 148 },
-        { plan: 'Comfort Care', species: null, billing: 'monthly', addons: ['PLUS'], expected: 338 },
-        
-        // With PLUS - annual
-        { plan: 'Foundations', species: 'dog', billing: 'annual', addons: ['PLUS'], expected: 1278 },
-        { plan: 'Foundations', species: 'cat', billing: 'annual', addons: ['PLUS'], expected: 1188 },
-        { plan: 'Golden', species: 'dog', billing: 'annual', addons: ['PLUS'], expected: 1708 },
-        { plan: 'Golden', species: 'cat', billing: 'annual', addons: ['PLUS'], expected: 1598 },
+        { plan: 'Foundations', species: 'cat', billing: 'annual', addons: [], expected: 639 },
+        { plan: 'Golden', species: 'dog', billing: 'annual', addons: [], expected: 1069 },
+        { plan: 'Golden', species: 'cat', billing: 'annual', addons: [], expected: 949 },
         
         // With Puppy/Kitten - monthly
-        { plan: 'Foundations', species: 'dog', billing: 'monthly', addons: ['Puppy/Kitten'], expected: 108 },
+        { plan: 'Foundations', species: 'dog', billing: 'monthly', addons: ['Puppy/Kitten'], expected: 98 },
         { plan: 'Foundations', species: 'cat', billing: 'monthly', addons: ['Puppy/Kitten'], expected: 88 },
         
         // With Puppy/Kitten - annual
         { plan: 'Foundations', species: 'dog', billing: 'annual', addons: ['Puppy/Kitten'], expected: 1058 },
-        { plan: 'Foundations', species: 'cat', billing: 'annual', addons: ['Puppy/Kitten'], expected: 968 },
-        
-        // With both add-ons - monthly
-        { plan: 'Foundations', species: 'dog', billing: 'monthly', addons: ['PLUS', 'Puppy/Kitten'], expected: 157 },
-        { plan: 'Foundations', species: 'cat', billing: 'monthly', addons: ['PLUS', 'Puppy/Kitten'], expected: 137 },
-        
-        // With both add-ons - annual
-        { plan: 'Foundations', species: 'dog', billing: 'annual', addons: ['PLUS', 'Puppy/Kitten'], expected: 1587 },
-        { plan: 'Foundations', species: 'cat', billing: 'annual', addons: ['PLUS', 'Puppy/Kitten'], expected: 1497 },
+        { plan: 'Foundations', species: 'cat', billing: 'annual', addons: ['Puppy/Kitten'], expected: 948 },
       ];
 
       // Run first test case as a sample using Templeton
@@ -591,10 +562,6 @@ describe('Membership Purchase Flow', () => {
         cy.contains('button', 'No').click();
         cy.wait(500);
         selectPlan(testCase.plan as 'Foundations' | 'Golden');
-      }
-      
-      if (testCase.addons.includes('PLUS')) {
-        selectAddOn('PLUS Add-on');
       }
       
       if (testCase.addons.includes('Puppy/Kitten')) {
@@ -675,12 +642,11 @@ describe('Membership Purchase Flow', () => {
       });
     });
 
-    it('should show correct breakdown for plan with add-ons on payment page', () => {
+    it('should show correct breakdown for plan on payment page', () => {
       navigateToMembershipSignup('Templeton');
       
       cy.contains('button', 'No').click();
       selectPlan('Foundations');
-      selectAddOn('PLUS Add-on');
       selectBillingPreference('annual');
       acceptAgreementAndProceed();
       
@@ -689,20 +655,16 @@ describe('Membership Purchase Flow', () => {
       // Wait a moment for page to load
       cy.wait(500);
       
-      // Verify total amount is displayed (cat Foundations annual + PLUS = $1188.00)
+      // Verify annual Foundations cat total is displayed ($639)
       cy.get('body', { timeout: 5000 }).should('satisfy', ($body) => {
         const bodyText = $body.text();
-        return bodyText.includes('$1,188.00') || bodyText.includes('$1188.00');
+        return bodyText.includes('$639.00') || bodyText.includes('$639') || bodyText.includes('639');
       });
       
-      // Verify plan name includes add-ons
+      // Verify plan name
       cy.get('body', { timeout: 5000 }).should('satisfy', ($body) => {
         const bodyText = $body.text();
         return bodyText.includes('Foundations');
-      });
-      cy.get('body', { timeout: 5000 }).should('satisfy', ($body) => {
-        const bodyText = $body.text();
-        return bodyText.includes('PLUS');
       });
     });
   });

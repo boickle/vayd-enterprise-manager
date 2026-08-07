@@ -26,6 +26,7 @@ import {
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import { fetchAllAppointmentTypes } from '../api/appointmentSettings';
 import { householdGroupKey } from '../utils/doctorDayHouseholdGroup';
+import { formatDoctorDayApptAddress } from '../utils/doctorDayAddress';
 import {
   appointmentNotesFromDoctorDayRow,
   petAlertsFromDoctorDayRow,
@@ -139,24 +140,7 @@ function addressKeyForAppt(a: DoctorDayAppt): string | null {
   return free ? `free:${free}` : null;
 }
 function formatAddress(a: DoctorDayAppt) {
-  const address1 = str(a, 'address1');
-  const city = str(a, 'city');
-  const state = str(a, 'state');
-  const zip = str(a, 'zip');
-  const line = [address1, [city, state].filter(Boolean).join(', '), zip]
-    .filter(Boolean)
-    .join(', ')
-    .replace(/\s+,/g, ',');
-  if (line) return line;
-  const freeForm =
-    str(a as any, 'address') ?? str(a as any, 'addressStr') ?? str(a as any, 'fullAddress');
-  if (freeForm) return freeForm;
-  const lat = num(a as any, 'lat');
-  const lon = num(a as any, 'lon');
-  if (typeof lat === 'number' && typeof lon === 'number') {
-    return `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
-  }
-  return 'Address not available';
+  return formatDoctorDayApptAddress(a);
 }
 function keyFor(lat: number, lon: number, d = 6): string {
   const m = Math.pow(10, d);
@@ -795,9 +779,6 @@ export default function DoctorDay({
                 lat: virtualAppt.lat,
                 lon: virtualAppt.lon,
                 serviceMinutes: virtualAppt.serviceMinutes,
-                overrunSeconds: virtualAppt.overrunSeconds,
-                validationLastEtdSec: virtualAppt.validationLastEtdSec,
-                validationReturnSec: virtualAppt.validationReturnSec,
                 arrivalWindow: virtualAppt.arrivalWindow,
               },
               { householdCount: households.length }
