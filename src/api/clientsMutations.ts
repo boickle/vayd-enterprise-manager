@@ -1,41 +1,82 @@
 import { http } from './http';
 
-/** Matches backend ClientDto; extra keys are allowed. */
-export type ClientDto = Record<string, unknown> & {
-  id?: number | string;
-  pimsId?: string | number | null;
+/**
+ * Scout client writes.
+ *
+ * `POST /clients` and `POST /clients/upsert` are deliberately not wrapped here — both are
+ * eVet-import entry points keyed on (pimsId, practice). Creating a client through them
+ * would hand ownership to eVet. Use `createClientScout` instead. Deactivate rather than
+ * delete so appointment and billing history survives.
+ */
+
+/**
+ * Fields accepted by the Scout client write endpoints. Anything not listed here is
+ * either eVet-owned or lives on another table (e.g. portal login on `users`).
+ */
+export type ScoutClientWrite = {
+  practiceId?: number;
   firstName?: string | null;
   lastName?: string | null;
-  practice?: { id: number; name?: string } | null;
+  secondFirstName?: string | null;
+  secondLastName?: string | null;
+  email?: string | null;
+  secondEmail?: string | null;
+  phone1?: string | null;
+  phone2?: string | null;
+  address1?: string | null;
+  address2?: string | null;
+  address3?: string | null;
+  city?: string | null;
+  state?: string | null;
+  zipcode?: string | null;
+  country?: string | null;
+  county?: string | null;
+  username?: string | null;
+  alerts?: string | null;
+  discount?: number | null;
+  clientStatusId?: number | null;
+  lat?: number | null;
+  lon?: number | null;
+  latLonValidated?: boolean;
+  zoneId?: number | null;
   isActive?: boolean;
-  isDeleted?: boolean;
+  smsOptOut?: boolean;
+  patientIds?: number[];
 };
 
-export type UpsertClientsResponse = { ok: boolean; upserted: number };
-
-export type DeleteClientsResponse = { ok: boolean; deleted: number };
-
-export async function upsertClients(body: ClientDto | ClientDto[]): Promise<UpsertClientsResponse> {
-  const { data } = await http.post<UpsertClientsResponse>('/clients/upsert', body);
-  return data;
-}
-
-/** POST /clients — save one or many; returns saved DTO(s) from API. */
-export async function saveClients(body: ClientDto | ClientDto[]): Promise<unknown> {
-  const { data } = await http.post<unknown>('/clients', body);
-  return data;
-}
-
-/** PATCH /clients/:id — partial update (staff). */
-export async function patchClientStaff(clientId: string | number, body: Record<string, unknown>): Promise<unknown> {
+/**
+ * PATCH /clients/:id — partial update from Scout.
+ *
+ * Saving marks the client as Scout-edited, which stops the eVet import from overwriting
+ * these values until eVet reports a change newer than this edit.
+ */
+export async function patchClientStaff(
+  clientId: string | number,
+  body: ScoutClientWrite,
+): Promise<unknown> {
   const { data } = await http.patch(`/clients/${encodeURIComponent(String(clientId))}`, body);
   return data;
 }
 
-export async function deleteClients(ids: (string | number)[]): Promise<DeleteClientsResponse> {
-  if (ids.length === 0) return { ok: true, deleted: 0 };
-  const { data } = await http.delete<DeleteClientsResponse>('/clients', {
-    params: { ids: ids.map(String).join(',') },
-  });
+/**
+ * POST /clients/scout — create a client that exists only in Scout.
+ * The API assigns pimsType VAYD and a UUID pimsId so no eVet import can claim it.
+ */
+export async function createClientScout(
+  body: ScoutClientWrite & { practiceId: number; firstName: string },
+): Promise<unknown> {
+  const { data } = await http.post('/clients/scout', body);
+  return data;
+}
+
+/** POST /clients/:id/deactivate — soft deactivate, keeps history and appointments. */
+export async function deactivateClient(clientId: string | number): Promise<unknown> {
+  const { data } = await http.post(`/clients/${encodeURIComponent(String(clientId))}/deactivate`);
+  return data;
+}
+
+/** POST /clients/:id/reactivate — undo a deactivation. */
+export async function reactivateClient(clientId: string | number): Promise<unknown> {
+  const { data } = await http.post(`/clients/${encodeURIComponent(String(clientId))}/reactivate`);
   return data;
 }

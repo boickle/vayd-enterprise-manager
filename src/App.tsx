@@ -36,6 +36,8 @@ import {
 import { HOLDS_PATH, holdsPathWithHighlight } from './holds-nav';
 import ExitSurveyPage from './pages/ExitSurveyPage';
 import RoomLoaderPage from './pages/RoomLoader';
+import SoapEncounterPage from './pages/SoapEncounterPage';
+import DoctorWorklistPage from './pages/DoctorWorklistPage';
 import { ScheduleIndexRedirect } from './pages/ScheduleLayout';
 import ScheduleHomePage from './pages/ScheduleHomePage';
 import LegacySchedulingToolsRedirect from './components/LegacySchedulingToolsRedirect';
@@ -556,6 +558,11 @@ export default function App() {
                     <Route path="holds" element={<HoldsPage />} />
                     <Route path="exit-survey" element={<ExitSurveyPage />} />
                     <Route path="room-loader" element={<RoomLoaderPage />} />
+                    <Route path="soap" element={<DoctorWorklistPage />} />
+                    <Route
+                      path="soap/:appointmentId/:patientId"
+                      element={<SoapEncounterPage />}
+                    />
                     <Route path="scheduler" element={<Scheduler />} />
                     <Route path="inventory" element={<InventoryManagement />} />
                     <Route path="tasks" element={<PimsTasksPage />} />

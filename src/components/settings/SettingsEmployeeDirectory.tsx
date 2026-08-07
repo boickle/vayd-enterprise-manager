@@ -15,7 +15,7 @@ import {
   upsertEmployees,
   type EmployeeDto,
 } from '../../api/employeesMutations';
-import { PIMS_ENTITY_EDIT_ENABLED } from '../../utils/pimsEntityEditing';
+import { EMPLOYEE_DIRECTORY_EDIT_ENABLED } from '../../utils/pimsEntityEditing';
 import {
   assignEmployeeRoleNameGroup,
   groupEmployeeRolesByName,
@@ -195,11 +195,11 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
   }, [load]);
 
   useEffect(() => {
-    if (!PIMS_ENTITY_EDIT_ENABLED) setModalMode(null);
+    if (!EMPLOYEE_DIRECTORY_EDIT_ENABLED) setModalMode(null);
   }, []);
 
   const openAdd = () => {
-    if (!PIMS_ENTITY_EDIT_ENABLED) return;
+    if (!EMPLOYEE_DIRECTORY_EDIT_ENABLED) return;
     setEditingId(null);
     setFirstName('');
     setLastName('');
@@ -281,7 +281,7 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
   };
 
   const openEdit = async (id: number) => {
-    if (!PIMS_ENTITY_EDIT_ENABLED) return;
+    if (!EMPLOYEE_DIRECTORY_EDIT_ENABLED) return;
     setSaving(false);
     setModalMode(null);
     try {
@@ -384,7 +384,7 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
 
   const submitModal = async (e: FormEvent) => {
     e.preventDefault();
-    if (!PIMS_ENTITY_EDIT_ENABLED) return;
+    if (!EMPLOYEE_DIRECTORY_EDIT_ENABLED) return;
     const fn = firstName.trim();
     const ln = lastName.trim();
     if (!fn || !ln) {
@@ -432,7 +432,7 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
   };
 
   const deactivate = async (emp: Employee) => {
-    if (!PIMS_ENTITY_EDIT_ENABLED) return;
+    if (!EMPLOYEE_DIRECTORY_EDIT_ENABLED) return;
     if (!window.confirm(`Deactivate ${emp.firstName} ${emp.lastName}? They will be hidden from active lists.`)) {
       return;
     }
@@ -453,7 +453,7 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
   };
 
   const reactivate = async (emp: Employee) => {
-    if (!PIMS_ENTITY_EDIT_ENABLED) return;
+    if (!EMPLOYEE_DIRECTORY_EDIT_ENABLED) return;
     try {
       const full = await fetchEmployee(emp.id);
       const merged = {
@@ -471,7 +471,7 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
   };
 
   const removeRow = async (emp: Employee) => {
-    if (!PIMS_ENTITY_EDIT_ENABLED) return;
+    if (!EMPLOYEE_DIRECTORY_EDIT_ENABLED) return;
     if (
       !window.confirm(
         `Permanently delete employee #${emp.id} from the database? This cannot be undone.`
@@ -497,7 +497,7 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
   return (
     <div className="settings-employee-directory">
       <p className="muted" style={{ marginBottom: 16, maxWidth: 900 }}>
-        {PIMS_ENTITY_EDIT_ENABLED ? (
+        {EMPLOYEE_DIRECTORY_EDIT_ENABLED ? (
           <>
             Add or edit staff using <code>POST /employees/upsert</code> (when PIMS ID is set on add) or{' '}
             <code>POST /employees</code> (save). The editor loads the same fields returned by <code>GET /employees/:id</code>{' '}
@@ -517,7 +517,7 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
       </p>
 
       <div style={{ marginBottom: 12 }}>
-        {PIMS_ENTITY_EDIT_ENABLED ? (
+        {EMPLOYEE_DIRECTORY_EDIT_ENABLED ? (
           <button type="button" className="btn" onClick={openAdd}>
             + Add employee
           </button>
@@ -525,7 +525,7 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
         <button
           type="button"
           className="btn secondary"
-          style={{ marginLeft: PIMS_ENTITY_EDIT_ENABLED ? 8 : 0 }}
+          style={{ marginLeft: EMPLOYEE_DIRECTORY_EDIT_ENABLED ? 8 : 0 }}
           onClick={() => void load()}
         >
           Refresh
@@ -617,7 +617,7 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
                       >
                         Edit bio
                       </button>
-                      {PIMS_ENTITY_EDIT_ENABLED ? (
+                      {EMPLOYEE_DIRECTORY_EDIT_ENABLED ? (
                         <>
                           <button
                             type="button"
@@ -770,7 +770,7 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
         </div>
       ) : null}
 
-      {PIMS_ENTITY_EDIT_ENABLED && (modalMode === 'add' || modalMode === 'edit') ? (
+      {EMPLOYEE_DIRECTORY_EDIT_ENABLED && (modalMode === 'add' || modalMode === 'edit') ? (
         <div className="settings-employee-modal-root" role="presentation">
           <button type="button" className="settings-employee-modal-backdrop" aria-label="Close" onClick={closeModal} />
           <div className="settings-employee-modal settings-employee-modal--wide" role="dialog" aria-modal="true">

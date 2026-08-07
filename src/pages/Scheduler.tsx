@@ -9570,6 +9570,15 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             void refreshForwardBookingSourceIds();
             setActualVisitModal(appt);
             return;
+          case 'openSoap': {
+            if (!firstPatient) {
+              fail('No patient on this appointment to open a SOAP for.');
+              return;
+            }
+            const clientQs = client?.id != null ? `?clientId=${client.id}` : '';
+            navigate(`/schedule/soap/${appt.id}/${firstPatient.id}${clientQs}`);
+            return;
+          }
           case 'onMyWayText': {
             if (!client) {
               fail('No client on this appointment.');
