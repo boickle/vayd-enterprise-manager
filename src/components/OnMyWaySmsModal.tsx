@@ -1,13 +1,17 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { Appointment } from '../api/roomLoader';
-import { sendClientSms } from '../api/clientSms';
+import { fetchSchedulingOutreachSmsFrom, sendClientSms } from '../api/clientSms';
+import { fetchPracticeMainPhone } from '../api/clientPortal';
+import type { Provider } from '../api/employee';
 import { ClientMessagesHistoryModal } from './ClientMessagesHistoryModal';
 import {
   buildOnMyWaySmsMessage,
   ON_MY_WAY_SMS_DEFAULT_MINUTES,
   resolveTechnicianFirstNameForAppointment,
 } from '../utils/onMyWaySmsMessage';
+import { resolveOnMyWaySmsFromLine } from '../utils/onMyWaySmsFromLine';
+import { resolveQuoFromLine } from '../utils/quoContact';
 import { smsAllowsProductionOverride } from '../utils/smsEnvironment';
 import '../pages/Scheduler.css';
 
@@ -15,6 +19,9 @@ type Props = {
   appt: Appointment;
   defaultMinutes?: number;
   onClose: () => void;
+  /** `/employees/providers` — used when the calendar row omits `quoLinePhone`. */
+  providers?: readonly Provider[];
+  practiceId?: number;
 };
 
 function pickStr(v: unknown): string | null {
@@ -23,7 +30,13 @@ function pickStr(v: unknown): string | null {
   return s || null;
 }
 
-export function OnMyWaySmsModal({ appt, defaultMinutes, onClose }: Props) {
+export function OnMyWaySmsModal({
+  appt,
+  defaultMinutes,
+  onClose,
+  providers,
+  practiceId,
+}: Props) {
   const technicianFirstName = useMemo(
     () => resolveTechnicianFirstNameForAppointment(appt),
     [appt]
@@ -37,6 +50,10 @@ export function OnMyWaySmsModal({ appt, defaultMinutes, onClose }: Props) {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [messagesOpen, setMessagesOpen] = useState(false);
+  const [practiceMainPhone, setPracticeMainPhone] = useState<string | null>(null);
+  const [remindersFrom, setRemindersFrom] = useState<string | null>(null);
+  /** Avoid sending before backup-line lookup finishes (API would fall through to reminders). */
+  const [fromLineLookupDone, setFromLineLookupDone] = useState(false);
 
   const client = appt.client;
   const clientId = client?.id;
@@ -52,6 +69,63 @@ export function OnMyWaySmsModal({ appt, defaultMinutes, onClose }: Props) {
     appt.primaryProvider?.id != null && Number.isFinite(Number(appt.primaryProvider.id))
       ? Number(appt.primaryProvider.id)
       : undefined;
+
+  const providerLabel = useMemo(() => {
+    if (!appt.primaryProvider) return null;
+    return (
+      [pickStr(appt.primaryProvider.firstName), pickStr(appt.primaryProvider.lastName)]
+        .filter(Boolean)
+        .join(' ')
+        .trim() || 'provider'
+    );
+  }, [appt.primaryProvider]);
+
+  const quoFromLine = useMemo(
+    () =>
+      resolveQuoFromLine({
+        appointmentPrimaryProvider: appt.primaryProvider,
+        providers,
+      }),
+    [appt.primaryProvider, providers]
+  );
+
+  const fromLineRouting = useMemo(
+    () =>
+      resolveOnMyWaySmsFromLine({
+        primaryProviderId: providerId,
+        quoFromLine,
+        employeePhone1: appt.primaryProvider?.phone1,
+        practiceMainPhone,
+        remindersFrom,
+      }),
+    [
+      providerId,
+      quoFromLine,
+      appt.primaryProvider?.phone1,
+      practiceMainPhone,
+      remindersFrom,
+    ]
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    setFromLineLookupDone(false);
+    void Promise.all([
+      fetchPracticeMainPhone(practiceId),
+      fetchSchedulingOutreachSmsFrom(),
+    ])
+      .then(([main, reminders]) => {
+        if (cancelled) return;
+        setPracticeMainPhone(main);
+        setRemindersFrom(reminders);
+      })
+      .finally(() => {
+        if (!cancelled) setFromLineLookupDone(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [practiceId]);
 
   const parsedMinutes = Number(minutes);
   const minutesValid = Number.isFinite(parsedMinutes) && parsedMinutes > 0;
@@ -71,6 +145,10 @@ export function OnMyWaySmsModal({ appt, defaultMinutes, onClose }: Props) {
       setError('Enter how many minutes away you are.');
       return;
     }
+    if (!fromLineLookupDone) {
+      setError('Still resolving which phone line to send from. Try again in a moment.');
+      return;
+    }
     setSending(true);
     setError(null);
     try {
@@ -78,7 +156,7 @@ export function OnMyWaySmsModal({ appt, defaultMinutes, onClose }: Props) {
         message: message.trim(),
         source: 'on_my_way',
         ...(opts.overrideNonProd ? { overrideNonProd: true } : {}),
-        ...(providerId != null ? { primaryProviderId: providerId } : {}),
+        ...fromLineRouting.payload,
       });
       onClose();
     } catch (e: unknown) {
@@ -90,6 +168,17 @@ export function OnMyWaySmsModal({ appt, defaultMinutes, onClose }: Props) {
   };
 
   const allowOverride = smsAllowsProductionOverride();
+  const sendDisabled = sending || !message.trim() || !minutesValid || !fromLineLookupDone;
+
+  const fromLineHelp = !fromLineLookupDone
+    ? 'Resolving which phone line to send from…'
+    : fromLineRouting.usedPracticeBackup
+      ? `Sends from the practice backup phone line${
+          fromLineRouting.fromLineLabel ? ` (${fromLineRouting.fromLineLabel})` : ''
+        } — this visit has no provider Quo line.`
+      : `Sends from the appointment provider's phone line${
+          providerLabel ? ` (${providerLabel})` : ''
+        }. Review the message before sending.`;
 
   const modal = (
     <div
@@ -120,14 +209,7 @@ export function OnMyWaySmsModal({ appt, defaultMinutes, onClose }: Props) {
         <div className="scheduler-modal-body scheduler-modal-body--edit">
           {error ? <p className="scheduler-edit-error">{error}</p> : null}
           <p className="settings-muted" style={{ marginTop: 0 }}>
-            Sends from the appointment provider&apos;s phone line
-            {appt.primaryProvider
-              ? ` (${[pickStr(appt.primaryProvider.firstName), pickStr(appt.primaryProvider.lastName)]
-                  .filter(Boolean)
-                  .join(' ')
-                  .trim() || 'provider'})`
-              : ''}
-            . Review the message before sending.
+            {fromLineHelp}
           </p>
 
           <label className="scheduler-edit-field" style={{ display: 'block', maxWidth: 160 }}>
@@ -193,7 +275,7 @@ export function OnMyWaySmsModal({ appt, defaultMinutes, onClose }: Props) {
               <button
                 type="button"
                 className="btn secondary"
-                disabled={sending || !message.trim() || !minutesValid}
+                disabled={sendDisabled}
                 onClick={() => void handleSend({ overrideNonProd: true })}
               >
                 {sending ? 'Sending…' : 'Send to actual client'}
@@ -202,7 +284,7 @@ export function OnMyWaySmsModal({ appt, defaultMinutes, onClose }: Props) {
             <button
               type="button"
               className="btn"
-              disabled={sending || !message.trim() || !minutesValid}
+              disabled={sendDisabled}
               onClick={() => void handleSend({ overrideNonProd: false })}
             >
               {sending ? 'Sending…' : 'Send message'}
