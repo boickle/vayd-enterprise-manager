@@ -33,28 +33,34 @@ import {
 } from 'recharts';
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import {
-  fetchDoctorRevenueSeries,
   type DoctorRevenuePoint,
   type DoctorRevenueSeriesResponse,
 } from '../api/opsStats';
-import { fetchDoctorMonth, type DoctorMonthDay } from '../api/appointments';
+import { type DoctorMonthDay } from '../api/appointments';
 import {
   fetchAllAppointmentTypes,
-  fetchEmployee,
   scheduleOverrideIsOff,
   type EmployeeWeeklySchedule,
   type ScheduleOverride,
 } from '../api/appointmentSettings';
-import { fetchAppointmentBookingsAnalytics } from '../api/appointmentBookingsAnalytics';
-import { fetchEmployeeGoals } from '../api/employeeGoals';
-import { fetchPaymentsAnalytics, type PaymentPoint } from '../api/payments';
+import { type PaymentPoint } from '../api/payments';
 import {
   buildAppointmentTypeCatalog,
   pointsFromAppointmentRows,
   type AppointmentTypeCatalog,
 } from '../utils/appointmentTypeSettings';
-import { fetchScheduleOverridesByDate } from '../utils/scheduleOverrideMerge';
 import { monthDayIsTimeOff } from '../utils/doctorTimeOff';
+import {
+  fetchBookingsAnalyticsCached,
+  fetchDoctorMonthsCached,
+  fetchDoctorRevenueSeriesCachedMany,
+  fetchEmployeeGoalsCached,
+  fetchEmployeeWeeklySchedulesCached,
+  fetchPaymentsAnalyticsCached,
+  fetchScheduleOverridesCached,
+  PROJECTED_REVENUE_FETCH_CONCURRENCY,
+} from '../utils/projectedRevenueFetch';
+import { mapPool } from '../utils/asyncTtlCache';
 import {
   BOOKING_FILL_SERVICE_LOOKBACK_DAYS,
   bookingFillHistoryWindow,
@@ -180,21 +186,34 @@ function membershipRevenueForDay(p: PaymentPoint): number {
   return (Number(p.subscriptionRevenue) || 0) + (Number(p.stripeRevenue) || 0);
 }
 
+type AncillaryDailyRates = {
+  /** Plain pharmacy average (shown in summaries); projections use baseline + growth. */
+  pharmacyOverall: number;
+  /** Recent half-window pharmacy $/day — starting point for the next projected day. */
+  pharmacyBaseline: number;
+  /** Linear pharmacy growth $/calendar-day from the lookback window. */
+  pharmacyDailyGrowth: number;
+  /** Recent half-window membership $/day — starting point for the next projected day. */
+  membershipBaseline: number;
+  /** Linear membership growth $/calendar-day from the lookback window. */
+  membershipDailyGrowth: number;
+  /** Plain membership average (shown in summaries); projections use baseline + growth. */
+  membershipOverall: number;
+  sampleDays: number;
+};
+
 /**
- * Weekday-aware trailing averages for pharmacy / membership.
- * Missing days in the series count as $0 so sparse data does not inflate the mean.
+ * Trailing ancillary rates from Payments over the lookback window.
+ * Pharmacy (onlinePharmacyRevenue) and membership (Square subscriptionRevenue + Stripe
+ * stripeRevenue only) each use half-window growth: change from the first half to the
+ * second half, spread per calendar day, so future days step from the recent half's
+ * average with that daily growth applied. Missing days count as $0.
  */
 function buildAncillaryDailyRates(
   series: PaymentPoint[],
   histStart: Dayjs,
   histEnd: Dayjs
-): {
-  pharmacyByDow: number[];
-  membershipByDow: number[];
-  pharmacyOverall: number;
-  membershipOverall: number;
-  sampleDays: number;
-} {
+): AncillaryDailyRates {
   const pharmacyByDate = new Map<string, number>();
   const membershipByDate = new Map<string, number>();
   for (const p of series) {
@@ -204,57 +223,84 @@ function buildAncillaryDailyRates(
     membershipByDate.set(d, membershipRevenueForDay(p));
   }
 
-  const pharmacySums = Array.from({ length: 7 }, () => 0);
-  const membershipSums = Array.from({ length: 7 }, () => 0);
-  const counts = Array.from({ length: 7 }, () => 0);
+  const dates = dateRange(histStart, histEnd);
   let pharmacyTotal = 0;
   let membershipTotal = 0;
-  let sampleDays = 0;
+  const pharmacySeries: number[] = [];
+  const membershipSeries: number[] = [];
 
-  for (const dateStr of dateRange(histStart, histEnd)) {
-    const dow = dayjs(dateStr).day();
+  for (const dateStr of dates) {
     const pharmacy = pharmacyByDate.get(dateStr) ?? 0;
     const membership = membershipByDate.get(dateStr) ?? 0;
-    pharmacySums[dow] += pharmacy;
-    membershipSums[dow] += membership;
-    counts[dow] += 1;
     pharmacyTotal += pharmacy;
     membershipTotal += membership;
-    sampleDays += 1;
+    pharmacySeries.push(pharmacy);
+    membershipSeries.push(membership);
   }
 
-  const overallPharmacy = sampleDays > 0 ? pharmacyTotal / sampleDays : 0;
-  const overallMembership = sampleDays > 0 ? membershipTotal / sampleDays : 0;
-  const pharmacyByDow = pharmacySums.map((s, i) =>
-    counts[i] > 0 ? s / counts[i] : overallPharmacy
-  );
-  const membershipByDow = membershipSums.map((s, i) =>
-    counts[i] > 0 ? s / counts[i] : overallMembership
-  );
+  const sampleDays = dates.length;
+  const pharmacyTrend = ancillaryGrowthFromWindow(pharmacySeries);
+  const membershipTrend = ancillaryGrowthFromWindow(membershipSeries);
 
   return {
-    pharmacyByDow,
-    membershipByDow,
-    pharmacyOverall: overallPharmacy,
-    membershipOverall: overallMembership,
+    pharmacyOverall: sampleDays > 0 ? pharmacyTotal / sampleDays : 0,
+    pharmacyBaseline: pharmacyTrend.baseline,
+    pharmacyDailyGrowth: pharmacyTrend.dailyGrowth,
+    membershipBaseline: membershipTrend.baseline,
+    membershipDailyGrowth: membershipTrend.dailyGrowth,
+    membershipOverall: sampleDays > 0 ? membershipTotal / sampleDays : 0,
     sampleDays,
   };
 }
 
+/**
+ * Growth from the lookback window: compare first-half vs second-half averages
+ * (smoother than fitting noisy billing days), use the recent half as the near-term baseline,
+ * and spread the half-to-half change across the days between the two half midpoints.
+ */
+function ancillaryGrowthFromWindow(values: number[]): {
+  baseline: number;
+  dailyGrowth: number;
+} {
+  const n = values.length;
+  if (n <= 0) return { baseline: 0, dailyGrowth: 0 };
+  if (n === 1) return { baseline: Math.max(0, values[0] ?? 0), dailyGrowth: 0 };
+
+  const mid = Math.floor(n / 2);
+  const first = values.slice(0, mid);
+  const second = values.slice(mid);
+  const avg = (arr: number[]) =>
+    arr.length > 0 ? arr.reduce((s, v) => s + v, 0) / arr.length : 0;
+  const firstAvg = avg(first);
+  const secondAvg = avg(second);
+  // Days between half midpoints (at least 1).
+  const firstMid = (first.length - 1) / 2;
+  const secondMid = mid + (second.length - 1) / 2;
+  const spanDays = Math.max(1, secondMid - firstMid);
+  const dailyGrowth = (secondAvg - firstAvg) / spanDays;
+  return {
+    baseline: Math.max(0, secondAvg),
+    dailyGrowth,
+  };
+}
+
+/**
+ * Pharmacy and membership each start from their recent half-window average and add
+ * one day of measured growth per calendar day past today.
+ */
 function ancillaryForDate(
   dateStr: string,
-  rates: {
-    pharmacyByDow: number[];
-    membershipByDow: number[];
-    pharmacyOverall: number;
-    membershipOverall: number;
-  } | null
+  rates: AncillaryDailyRates | null,
+  today: Dayjs = dayjs().startOf('day')
 ): { pharmacy: number; membership: number } {
   if (!rates) return { pharmacy: 0, membership: 0 };
-  const dow = dayjs(dateStr).day();
+  const daysUntil = Math.max(0, dayjs(dateStr).startOf('day').diff(today, 'day'));
   return {
-    pharmacy: rates.pharmacyByDow[dow] ?? rates.pharmacyOverall,
-    membership: rates.membershipByDow[dow] ?? rates.membershipOverall,
+    pharmacy: Math.max(0, rates.pharmacyBaseline + rates.pharmacyDailyGrowth * daysUntil),
+    membership: Math.max(
+      0,
+      rates.membershipBaseline + rates.membershipDailyGrowth * daysUntil
+    ),
   };
 }
 
@@ -264,6 +310,10 @@ type DoctorScheduleInfo = {
   scheduleOverridesByDate: Map<string, ScheduleOverride>;
   /** Server-resolved workday flags from the goals breakdown (weekly + overrides already merged). */
   goalsWorkdayByDate: Map<string, boolean>;
+  /** Daily revenue goal per date; once actual meets it, the day stops being estimated up. */
+  revenueGoalByDate: Map<string, number>;
+  /** Daily point goal per date; caps how far late-booking fill may push a future day. */
+  pointGoalByDate: Map<string, number>;
   /** Dates blocked out on the calendar for vacation / OOO / holiday. */
   timeOffDates: Set<string>;
 };
@@ -318,9 +368,9 @@ type BucketRow = {
   bookedEstimated: number;
   /** Treatment revenue after fill-in (future) or actual VSD (past/today). */
   treatmentEstimated: number;
-  /** Pharmacy: actual payments (past/today) or trailing weekday avg (future). */
+  /** Pharmacy: actual payments (past/today) or trailing trend (future). */
   pharmacyEstimated: number;
-  /** Membership: actual payments (past/today) or trailing weekday avg (future). */
+  /** Membership: actual payments (past/today) or trailing trend (future). */
   membershipEstimated: number;
   /** treatment + pharmacy + membership (practice) or treatment only (doctor). */
   estimated: number;
@@ -335,6 +385,8 @@ type BucketRow = {
   projectedDayCount: number;
   /** Projected days where nobody was scheduled (weekend, day off, vacation). */
   offDayCount: number;
+  /** Current day where actual so far was topped up with an estimate for remaining visits. */
+  partialDayCount: number;
 };
 
 export default function ProjectedRevenueAnalyticsPage() {
@@ -344,21 +396,16 @@ export default function ProjectedRevenueAnalyticsPage() {
   const [providers, setProviders] = useState<Provider[]>([]);
   const [graphSelection, setGraphSelection] = useState<string>(PRACTICE_TOTAL_ID);
   const [typeCatalog, setTypeCatalog] = useState<AppointmentTypeCatalog | undefined>();
-  const [pointsByDoctorByDate, setPointsByDoctorByDate] = useState<
-    Record<string, Record<string, number>>
-  >({});
-  const [apptCountByDoctorByDate, setApptCountByDoctorByDate] = useState<
-    Record<string, Record<string, number>>
-  >({});
+  /** Raw doctor/month days — points are derived in a memo so catalog arrival doesn't re-fetch. */
+  const [monthDaysByDoctor, setMonthDaysByDoctor] = useState<Record<string, DoctorMonthDay[]>>({});
   const [histDoctorResponses, setHistDoctorResponses] = useState<
     { doctorId: string; name: string; response: DoctorRevenueSeriesResponse }[]
   >([]);
-  const [histPointsByDoctorByDate, setHistPointsByDoctorByDate] = useState<
-    Record<string, Record<string, number>>
-  >({});
   const [bookingHistoryRows, setBookingHistoryRows] = useState<BookingForFillCurve[]>([]);
   const [paymentHistorySeries, setPaymentHistorySeries] = useState<PaymentPoint[]>([]);
-  const [doctorSchedules, setDoctorSchedules] = useState<Record<string, DoctorScheduleInfo>>({});
+  const [doctorSchedulesBase, setDoctorSchedulesBase] = useState<
+    Record<string, Omit<DoctorScheduleInfo, 'timeOffDates'>>
+  >({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -422,17 +469,33 @@ export default function ProjectedRevenueAnalyticsPage() {
     };
   }, []);
 
+  // Prefetch practice-wide lookback as soon as the page mounts (does not need providers).
+  // Results land in the TTL cache so the main load below is mostly a cache hit.
+  useEffect(() => {
+    const todayD = dayjs().startOf('day');
+    const rateHistEnd = todayD.subtract(1, 'day');
+    const rateHistStart = rateHistEnd.subtract(VSD_ESTIMATE_LOOKBACK_DAYS - 1, 'day');
+    const fillWindow = bookingFillHistoryWindow(todayD);
+    void fetchBookingsAnalyticsCached({
+      startDate: toLocalDateStr(fillWindow.bookedStart),
+      endDate: toLocalDateStr(fillWindow.bookedEnd),
+    });
+    void fetchPaymentsAnalyticsCached({
+      start: toLocalDateStr(rateHistStart),
+      end: toLocalDateStr(todayD),
+      practiceId: PRACTICE_ID,
+    });
+  }, []);
+
   // Load booked appointment points for the selected projection range + trailing VSD history for rates
   // + historical bookings for the late-booking fill curve + actual revenue through today for past days.
   useEffect(() => {
     if (!providersForApi.length) {
-      setPointsByDoctorByDate({});
-      setApptCountByDoctorByDate({});
+      setMonthDaysByDoctor({});
       setHistDoctorResponses([]);
-      setHistPointsByDoctorByDate({});
       setBookingHistoryRows([]);
       setPaymentHistorySeries([]);
-      setDoctorSchedules({});
+      setDoctorSchedulesBase({});
       setLoading(false);
       return;
     }
@@ -444,9 +507,11 @@ export default function ProjectedRevenueAnalyticsPage() {
     const actualsStart = start.isAfter(todayD) ? null : start;
     const fetchStart =
       actualsStart && actualsStart.isBefore(rateHistStart) ? actualsStart : rateHistStart;
-    const fetchEnd = todayD;
     const fetchStartStr = toLocalDateStr(fetchStart);
-    const fetchEndStr = toLocalDateStr(fetchEnd);
+    const fetchEndStr = toLocalDateStr(todayD);
+    // Treatment is often invoiced when a visit is booked, so future dates already carry real
+    // revenue. Pull the whole selected range so projections can floor at what is on the books.
+    const revenueEndStr = toLocalDateStr(end.isAfter(todayD) ? end : todayD);
     const fillWindow = bookingFillHistoryWindow(todayD);
 
     // Include today in hist months so today's calendar points can be projected too
@@ -460,6 +525,7 @@ export default function ProjectedRevenueAnalyticsPage() {
     const monthPairs = Array.from(allMonthPairs.values());
     // Schedules/overrides for the selected range (needed for future non-workday zeroing).
     const scheduleDates = dateRange(start, end);
+    const doctorIds = providersForApi.map((p) => String(p.id));
 
     let alive = true;
     setLoading(true);
@@ -469,123 +535,87 @@ export default function ProjectedRevenueAnalyticsPage() {
       try {
         const [revenueResults, pointResults, bookingsResp, paymentsSeries, scheduleResults] =
           await Promise.all([
-            Promise.all(
-              providersForApi.map(async (p) => {
-                const id = String(p.id);
-                const response = await fetchDoctorRevenueSeries({
-                  start: fetchStartStr,
-                  end: fetchEndStr,
-                  doctorId: id,
-                });
-                return { doctorId: id, name: p.name, response };
-              })
+            fetchDoctorRevenueSeriesCachedMany(
+              providersForApi.map((p) => ({ id: String(p.id), name: p.name })),
+              fetchStartStr,
+              revenueEndStr
             ),
-            Promise.all(
-              providersForApi.flatMap((p) =>
-                monthPairs.map(async ({ year, month }) => {
-                  const doctorId = String(p.id);
-                  const resp = await fetchDoctorMonth(year, month, doctorId);
-                  return { doctorId, days: resp?.days ?? [] };
-                })
-              )
-            ),
-            fetchAppointmentBookingsAnalytics({
+            fetchDoctorMonthsCached(doctorIds, monthPairs),
+            fetchBookingsAnalyticsCached({
               startDate: toLocalDateStr(fillWindow.bookedStart),
               endDate: toLocalDateStr(fillWindow.bookedEnd),
-            }).catch((e) => {
-              console.error('Booking history for fill curve failed:', e);
-              return null;
             }),
-            fetchPaymentsAnalytics({
+            fetchPaymentsAnalyticsCached({
               start: fetchStartStr,
               end: fetchEndStr,
               practiceId: PRACTICE_ID,
-            }).catch((e) => {
-              console.error('Payments history for pharmacy/membership failed:', e);
-              return [] as PaymentPoint[];
             }),
-            Promise.all(
-              providersForApi.map(async (p) => {
-                const id = String(p.id);
-                const empId = Number(p.id);
-                if (!Number.isFinite(empId)) {
-                  return {
-                    id,
-                    weeklySchedules: [] as EmployeeWeeklySchedule[],
-                    scheduleOverridesByDate: new Map<string, ScheduleOverride>(),
-                    goalsWorkdayByDate: new Map<string, boolean>(),
-                    timeOffDates: new Set<string>(),
-                  } satisfies DoctorScheduleInfo;
-                }
-                const [employee, scheduleOverridesByDate, goals] = await Promise.all([
-                  fetchEmployee(empId).catch(() => null),
-                  fetchScheduleOverridesByDate(empId, scheduleDates).catch(
-                    () => new Map<string, ScheduleOverride>()
-                  ),
-                  fetchEmployeeGoals(empId, { startDate: startStr, endDate: endStr }).catch(
-                    () => null
-                  ),
-                ]);
-                const goalsWorkdayByDate = new Map<string, boolean>();
-                for (const item of goals?.dailyGoalBreakdown ?? []) {
-                  const date = String(item?.date ?? '').slice(0, 10);
-                  if (date) goalsWorkdayByDate.set(date, Boolean(item.isWorkday));
-                }
+            mapPool(providersForApi, PROJECTED_REVENUE_FETCH_CONCURRENCY, async (p) => {
+              const id = String(p.id);
+              const empId = Number(p.id);
+              if (!Number.isFinite(empId)) {
                 return {
                   id,
-                  weeklySchedules: employee?.weeklySchedules ?? [],
-                  scheduleOverridesByDate,
-                  goalsWorkdayByDate,
-                  timeOffDates: new Set<string>(),
-                } satisfies DoctorScheduleInfo;
-              })
-            ),
+                  weeklySchedules: [] as EmployeeWeeklySchedule[],
+                  scheduleOverridesByDate: new Map<string, ScheduleOverride>(),
+                  goalsWorkdayByDate: new Map<string, boolean>(),
+                  revenueGoalByDate: new Map<string, number>(),
+                  pointGoalByDate: new Map<string, number>(),
+                };
+              }
+              const [weeklySchedules, scheduleOverridesByDate, goals] = await Promise.all([
+                fetchEmployeeWeeklySchedulesCached(empId),
+                fetchScheduleOverridesCached(empId, scheduleDates),
+                fetchEmployeeGoalsCached(empId, startStr, endStr),
+              ]);
+              const goalsWorkdayByDate = new Map<string, boolean>();
+              const revenueGoalByDate = new Map<string, number>();
+              const pointGoalByDate = new Map<string, number>();
+              for (const item of goals?.dailyGoalBreakdown ?? []) {
+                const date = String(item?.date ?? '').slice(0, 10);
+                if (!date) continue;
+                goalsWorkdayByDate.set(date, Boolean(item.isWorkday));
+                revenueGoalByDate.set(date, Number(item.dailyRevenueGoal) || 0);
+                pointGoalByDate.set(date, Number(item.dailyPointGoal) || 0);
+              }
+              return {
+                id,
+                weeklySchedules,
+                scheduleOverridesByDate,
+                goalsWorkdayByDate,
+                revenueGoalByDate,
+                pointGoalByDate,
+              };
+            }),
           ]);
 
         if (!alive) return;
 
-        const pointsByDoctor: Record<string, Record<string, number>> = {};
-        const countsByDoctor: Record<string, Record<string, number>> = {};
-        const timeOffByDoctor: Record<string, Set<string>> = {};
+        const daysByDoctor: Record<string, DoctorMonthDay[]> = {};
         for (const { doctorId, days } of pointResults) {
-          if (!pointsByDoctor[doctorId]) pointsByDoctor[doctorId] = {};
-          if (!countsByDoctor[doctorId]) countsByDoctor[doctorId] = {};
-          if (!timeOffByDoctor[doctorId]) timeOffByDoctor[doctorId] = new Set<string>();
-          for (const day of days) {
-            const date = day?.date?.slice(0, 10);
-            if (!date) continue;
-            pointsByDoctor[doctorId][date] = pointsFromMonthDay(day, typeCatalog);
-            countsByDoctor[doctorId][date] = (day.appts ?? []).length;
-            if (monthDayIsTimeOff(day)) timeOffByDoctor[doctorId].add(date);
-          }
+          if (!daysByDoctor[doctorId]) daysByDoctor[doctorId] = [];
+          daysByDoctor[doctorId].push(...days);
         }
 
-        const schedulesById: Record<string, DoctorScheduleInfo> = {};
+        const schedulesById: Record<string, Omit<DoctorScheduleInfo, 'timeOffDates'>> = {};
         for (const s of scheduleResults) {
-          schedulesById[s.id] = {
-            ...s,
-            timeOffDates: timeOffByDoctor[s.id] ?? new Set<string>(),
-          };
+          schedulesById[s.id] = s;
         }
 
         setHistDoctorResponses(revenueResults);
-        setHistPointsByDoctorByDate(pointsByDoctor);
-        setPointsByDoctorByDate(pointsByDoctor);
-        setApptCountByDoctorByDate(countsByDoctor);
+        setMonthDaysByDoctor(daysByDoctor);
         setBookingHistoryRows(flattenBookingAnalyticsDetails(bookingsResp?.users));
         setPaymentHistorySeries(Array.isArray(paymentsSeries) ? paymentsSeries : []);
-        setDoctorSchedules(schedulesById);
+        setDoctorSchedulesBase(schedulesById);
       } catch (e) {
         if (!alive) return;
         console.error('Projected revenue fetch failed:', e);
         setError('Failed to load projected revenue data');
-        setPointsByDoctorByDate({});
-        setApptCountByDoctorByDate({});
+        setMonthDaysByDoctor({});
         setHistDoctorResponses([]);
-        setHistPointsByDoctorByDate({});
         setBookingHistoryRows([]);
         setPaymentHistorySeries([]);
-        setDoctorSchedules({});
+        setDoctorSchedulesBase({});
       } finally {
         if (alive) setLoading(false);
       }
@@ -594,7 +624,48 @@ export default function ProjectedRevenueAnalyticsPage() {
     return () => {
       alive = false;
     };
-  }, [providersForApi, startStr, endStr, typeCatalog]);
+    // start/end dayjs objects track startStr/endStr; omit them to avoid identity churn.
+  }, [providersForApi, startStr, endStr]);
+
+  /** Derive points / counts / time-off from cached month days + type catalog. */
+  const {
+    pointsByDoctorByDate,
+    histPointsByDoctorByDate,
+    apptCountByDoctorByDate,
+    doctorSchedules,
+  } = useMemo(() => {
+    const pointsByDoctor: Record<string, Record<string, number>> = {};
+    const countsByDoctor: Record<string, Record<string, number>> = {};
+    const timeOffByDoctor: Record<string, Set<string>> = {};
+
+    for (const [doctorId, days] of Object.entries(monthDaysByDoctor)) {
+      if (!pointsByDoctor[doctorId]) pointsByDoctor[doctorId] = {};
+      if (!countsByDoctor[doctorId]) countsByDoctor[doctorId] = {};
+      if (!timeOffByDoctor[doctorId]) timeOffByDoctor[doctorId] = new Set<string>();
+      for (const day of days) {
+        const date = day?.date?.slice(0, 10);
+        if (!date) continue;
+        pointsByDoctor[doctorId][date] = pointsFromMonthDay(day, typeCatalog);
+        countsByDoctor[doctorId][date] = (day.appts ?? []).length;
+        if (monthDayIsTimeOff(day)) timeOffByDoctor[doctorId].add(date);
+      }
+    }
+
+    const schedules: Record<string, DoctorScheduleInfo> = {};
+    for (const [id, base] of Object.entries(doctorSchedulesBase)) {
+      schedules[id] = {
+        ...base,
+        timeOffDates: timeOffByDoctor[id] ?? new Set<string>(),
+      };
+    }
+
+    return {
+      pointsByDoctorByDate: pointsByDoctor,
+      histPointsByDoctorByDate: pointsByDoctor,
+      apptCountByDoctorByDate: countsByDoctor,
+      doctorSchedules: schedules,
+    };
+  }, [monthDaysByDoctor, doctorSchedulesBase, typeCatalog]);
 
   const ratesByDoctor = useMemo(() => {
     const todayD = dayjs().startOf('day');
@@ -630,7 +701,7 @@ export default function ProjectedRevenueAnalyticsPage() {
     return { byDoctor, practiceAvg };
   }, [providersForApi, histDoctorResponses, histPointsByDoctorByDate]);
 
-  /** Actual treatment VSD by doctor/date from ops revenue series (through today). */
+  /** Posted treatment VSD by doctor/date from ops revenue series; includes pre-billed future dates. */
   const actualTreatmentByDoctorByDate = useMemo(() => {
     const out: Record<string, Record<string, number>> = {};
     for (const { doctorId, response } of histDoctorResponses) {
@@ -674,7 +745,7 @@ export default function ProjectedRevenueAnalyticsPage() {
     return { practice, byDoctor };
   }, [bookingHistoryRows, providersForApi]);
 
-  /** Trailing weekday averages for pharmacy + membership (practice-wide, from Payments). */
+  /** Pharmacy + membership with measured daily growth (from Payments). */
   const ancillaryRates = useMemo(() => {
     const todayD = dayjs().startOf('day');
     const histEnd = todayD.subtract(1, 'day');
@@ -712,20 +783,45 @@ export default function ProjectedRevenueAnalyticsPage() {
       })();
 
       if (isActual) {
+        const isToday = date === todayCalStr;
+        const idsForDay =
+          graphSelection === PRACTICE_TOTAL_ID
+            ? providersForApi.map((p) => String(p.id))
+            : [graphSelection];
+
+        let actualTreatment = 0;
         let treatment = 0;
-        if (graphSelection === PRACTICE_TOTAL_ID) {
-          for (const p of providersForApi) {
-            treatment += actualTreatmentByDoctorByDate[String(p.id)]?.[date] ?? 0;
+        let estimateExceedsActual = false;
+        for (const id of idsForDay) {
+          const actual = actualTreatmentByDoctorByDate[id]?.[date] ?? 0;
+          actualTreatment += actual;
+          if (!isToday) {
+            treatment += actual;
+            continue;
           }
-        } else {
-          treatment = actualTreatmentByDoctorByDate[graphSelection]?.[date] ?? 0;
+          // Once a doctor has hit their revenue goal, stop estimating more for the day.
+          const goal = doctorSchedules[id]?.revenueGoalByDate.get(date) ?? 0;
+          if (goal > 0 && actual >= goal) {
+            treatment += actual;
+            continue;
+          }
+          // Treatment is often invoiced when the visit is booked rather than when it is
+          // delivered, so today's posted revenue already covers appointments that have not
+          // happened yet. Adding a points estimate on top would count those twice; take
+          // whichever view of the day is larger instead.
+          const points = pointsByDoctorByDate[id]?.[date] ?? 0;
+          const rate = ratesByDoctor.byDoctor[id]?.rate;
+          const estimate = rate != null && points > 0 ? rate * points : 0;
+          if (estimate > actual) estimateExceedsActual = true;
+          treatment += Math.max(actual, estimate);
         }
+
         const ancillaryActual = includeAncillary
           ? actualAncillaryByDate.get(date) ?? { pharmacy: 0, membership: 0 }
           : { pharmacy: 0, membership: 0 };
         return {
           date,
-          bookedEstimated: treatment,
+          bookedEstimated: actualTreatment,
           treatmentEstimated: treatment,
           pharmacyEstimated: ancillaryActual.pharmacy,
           membershipEstimated: ancillaryActual.membership,
@@ -736,14 +832,18 @@ export default function ProjectedRevenueAnalyticsPage() {
           daysUntil: 0,
           fillFraction: null as number | null,
           isActual: true,
+          isPartialToday: isToday && estimateExceedsActual,
           isDayOff: false,
         };
       }
 
       const daysUntil = Math.max(0, dayjs(date).startOf('day').diff(todayD, 'day'));
       const ancillary = includeAncillary
-        ? ancillaryForDate(date, ancillaryRates)
+        ? ancillaryForDate(date, ancillaryRates, todayD)
         : { pharmacy: 0, membership: 0 };
+      // Revenue already invoiced against this future date. It is a floor, not an addition: the
+      // points estimate is predicting the same visits this money was billed for.
+      const postedFor = (id: string) => actualTreatmentByDoctorByDate[id]?.[date] ?? 0;
 
       if (graphSelection === PRACTICE_TOTAL_ID) {
         // Split the day between doctors who are scheduled and doctors who are off. Only the
@@ -754,26 +854,39 @@ export default function ProjectedRevenueAnalyticsPage() {
         let hasWorkingRate = false;
         let offPoints = 0;
         let offBooked = 0;
+        let postedTotal = 0;
+        // Working doctors split into those with a point goal (cappable) and those without.
+        let goaledPointGoal = 0;
+        let goaledPoints = 0;
+        let goaledCount = 0;
         for (const p of providersForApi) {
           const id = String(p.id);
           const pts = pointsByDoctorByDate[id]?.[date] ?? 0;
           const rate = ratesByDoctor.byDoctor[id]?.rate;
+          const posted = postedFor(id);
+          postedTotal += posted;
           if (isDoctorWorkingOnDate(doctorSchedules[id], date)) {
             workingIds.push(id);
             workingPoints += pts;
+            const pointGoal = doctorSchedules[id]?.pointGoalByDate.get(date) ?? 0;
+            if (pointGoal > 0) {
+              goaledPointGoal += pointGoal;
+              goaledPoints += pts;
+              goaledCount += 1;
+            }
             if (rate != null) {
-              workingBooked += rate * pts;
+              workingBooked += Math.max(rate * pts, posted);
               hasWorkingRate = true;
             }
             continue;
           }
-          if (pts <= 0) continue;
+          if (pts <= 0 && posted <= 0) continue;
           offPoints += pts;
-          if (rate != null) offBooked += rate * pts;
+          offBooked += Math.max(rate != null ? rate * pts : 0, posted);
         }
 
         // No one scheduled and nothing on the books → $0 treatment (weekends / all OFF).
-        if (workingIds.length === 0 && offPoints <= 0) {
+        if (workingIds.length === 0 && offPoints <= 0 && postedTotal <= 0) {
           return {
             date,
             bookedEstimated: 0,
@@ -787,6 +900,7 @@ export default function ProjectedRevenueAnalyticsPage() {
             daysUntil,
             fillFraction: null,
             isActual: false,
+            isPartialToday: false,
             isDayOff: true,
           };
         }
@@ -798,6 +912,20 @@ export default function ProjectedRevenueAnalyticsPage() {
           projectedWorkingPoints =
             fill.projectedPoints * (workingIds.length / providersForApi.length);
         }
+        // A point goal is a full day for that doctor, so fill can't push past the goals combined
+        // and a doctor already at or over goal keeps exactly what is booked. Doctors with no goal
+        // configured can't be capped, so clamp only the goaled share of the day.
+        if (goaledPointGoal > 0 && projectedWorkingPoints > 0) {
+          const goaledShare =
+            workingPoints > 0
+              ? goaledPoints / workingPoints
+              : workingIds.length > 0
+                ? goaledCount / workingIds.length
+                : 0;
+          const goaledProjected = projectedWorkingPoints * goaledShare;
+          const cappedGoaled = Math.max(goaledPoints, Math.min(goaledProjected, goaledPointGoal));
+          projectedWorkingPoints = projectedWorkingPoints - goaledProjected + cappedGoaled;
+        }
 
         let workingTreatment = 0;
         if (workingPoints > 0 && hasWorkingRate) {
@@ -806,8 +934,8 @@ export default function ProjectedRevenueAnalyticsPage() {
           workingTreatment = ratesByDoctor.practiceAvg * projectedWorkingPoints;
         }
 
-        const treatmentEstimated = workingTreatment + offBooked;
-        const bookedEstimated = workingBooked + offBooked;
+        const treatmentEstimated = Math.max(workingTreatment + offBooked, postedTotal);
+        const bookedEstimated = Math.max(workingBooked + offBooked, postedTotal);
         return {
           date,
           bookedEstimated,
@@ -821,14 +949,16 @@ export default function ProjectedRevenueAnalyticsPage() {
           daysUntil,
           fillFraction: fill.fillFraction,
           isActual: false,
+          isPartialToday: false,
           isDayOff: false,
         };
       }
 
       const id = graphSelection;
       const pts = pointsByDoctorByDate[id]?.[date] ?? 0;
+      const posted = postedFor(id);
       const working = isDoctorWorkingOnDate(doctorSchedules[id], date);
-      if (!working && pts <= 0) {
+      if (!working && pts <= 0 && posted <= 0) {
         return {
           date,
           bookedEstimated: 0,
@@ -842,6 +972,7 @@ export default function ProjectedRevenueAnalyticsPage() {
           daysUntil,
           fillFraction: null,
           isActual: false,
+          isPartialToday: false,
           isDayOff: true,
         };
       }
@@ -852,8 +983,15 @@ export default function ProjectedRevenueAnalyticsPage() {
       const fill = working
         ? projectPointsWithFillCurve(pts, daysUntil, curve)
         : { projectedPoints: pts, fillFraction: null as number | null };
-      const bookedEstimated = rate != null ? rate * pts : 0;
-      const treatmentEstimated = rate != null ? rate * fill.projectedPoints : 0;
+      // A point goal is a full day, so never fill past it — a doctor already at or over goal
+      // keeps exactly what is on the books.
+      const pointGoal = doctorSchedules[id]?.pointGoalByDate.get(date) ?? 0;
+      const projectedPoints =
+        pointGoal > 0
+          ? Math.max(pts, Math.min(fill.projectedPoints, pointGoal))
+          : fill.projectedPoints;
+      const bookedEstimated = Math.max(rate != null ? rate * pts : 0, posted);
+      const treatmentEstimated = Math.max(rate != null ? rate * projectedPoints : 0, posted);
 
       return {
         date,
@@ -863,11 +1001,12 @@ export default function ProjectedRevenueAnalyticsPage() {
         membershipEstimated: 0,
         estimated: treatmentEstimated,
         points: pts,
-        projectedPoints: fill.projectedPoints,
+        projectedPoints,
         appointmentCount,
         daysUntil,
         fillFraction: fill.fillFraction,
         isActual: false,
+        isPartialToday: false,
         isDayOff: !working,
       };
     });
@@ -879,6 +1018,7 @@ export default function ProjectedRevenueAnalyticsPage() {
     providersForApi,
     pointsByDoctorByDate,
     apptCountByDoctorByDate,
+    todayCalStr,
     ratesByDoctor,
     fillCurves,
     ancillaryRates,
@@ -904,6 +1044,7 @@ export default function ProjectedRevenueAnalyticsPage() {
         actualDayCount: d.isActual ? 1 : 0,
         projectedDayCount: d.isActual ? 0 : 1,
         offDayCount: d.isDayOff ? 1 : 0,
+        partialDayCount: d.isPartialToday ? 1 : 0,
       }));
     }
 
@@ -928,6 +1069,7 @@ export default function ProjectedRevenueAnalyticsPage() {
           actualDayCount: d.isActual ? 1 : 0,
           projectedDayCount: d.isActual ? 0 : 1,
           offDayCount: d.isDayOff ? 1 : 0,
+          partialDayCount: d.isPartialToday ? 1 : 0,
         });
       } else {
         existing.bookedEstimated += d.bookedEstimated;
@@ -941,6 +1083,7 @@ export default function ProjectedRevenueAnalyticsPage() {
         existing.actualDayCount += d.isActual ? 1 : 0;
         existing.projectedDayCount += d.isActual ? 0 : 1;
         existing.offDayCount += d.isDayOff ? 1 : 0;
+        existing.partialDayCount += d.isPartialToday ? 1 : 0;
         existing.isActual = existing.projectedDayCount === 0;
       }
     }
@@ -961,6 +1104,7 @@ export default function ProjectedRevenueAnalyticsPage() {
         acc.actualDayCount += b.actualDayCount;
         acc.projectedDayCount += b.projectedDayCount;
         acc.offDayCount += b.offDayCount;
+        acc.partialDayCount += b.partialDayCount;
         return acc;
       },
       {
@@ -975,6 +1119,7 @@ export default function ProjectedRevenueAnalyticsPage() {
         actualDayCount: 0,
         projectedDayCount: 0,
         offDayCount: 0,
+        partialDayCount: 0,
       }
     );
   }, [buckets]);
@@ -1055,7 +1200,7 @@ export default function ProjectedRevenueAnalyticsPage() {
 
   function bucketSourceLabel(b: BucketRow): string {
     if (b.actualDayCount > 0 && b.projectedDayCount > 0) return 'Mixed';
-    if (b.isActual) return 'Actual';
+    if (b.isActual) return b.partialDayCount > 0 ? 'Est. full day' : 'Actual';
     if (b.projectedDayCount > 0 && b.offDayCount === b.projectedDayCount) return 'Not scheduled';
     return 'Projected';
   }
@@ -1077,12 +1222,20 @@ export default function ProjectedRevenueAnalyticsPage() {
           Projected Revenue
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          Days through today use actual treatment VSD and (for practice totals) actual pharmacy /
-          membership payments. Future days estimate treatment from booked appointments × trailing{' '}
+          Past days use actual treatment VSD and (for practice totals) actual pharmacy / membership
+          payments. For today, each doctor shows the greater of their posted VSD and their booked
+          points × trailing {VSD_ESTIMATE_LOOKBACK_DAYS}-day VSD per point — treatment is often
+          invoiced at booking, so the two are never added together. A doctor whose posted VSD already
+          meets their daily revenue goal shows actual only. Future days
+          estimate treatment from booked appointments × trailing{' '}
           {VSD_ESTIMATE_LOOKBACK_DAYS}-day VSD per point, with late-booking fill-in from the last{' '}
-          {BOOKING_FILL_SERVICE_LOOKBACK_DAYS} days of lead-time history, plus pharmacy and membership
-          weekday averages from Payments. Future treatment fill-in respects weekly schedules and OFF
-          overrides (no invented volume on days nobody is working).
+          {BOOKING_FILL_SERVICE_LOOKBACK_DAYS} days of lead-time history, plus pharmacy and Square
+          + Stripe membership revenue that each follow their measured daily growth trend from the
+          last {VSD_ESTIMATE_LOOKBACK_DAYS} days. Because visits are billed at booking, a future day never
+          projects below the treatment revenue already invoiced against it. Fill-in never pushes a
+          day past the working doctors&apos; daily point goals — a doctor already at or over goal
+          keeps exactly what is on the books. Future treatment fill-in also respects weekly schedules
+          and OFF overrides (no invented volume on days nobody is working).
           {useDailyBuckets
             ? ' Showing daily totals for this range.'
             : ' Range is over 30 days — showing weekly totals.'}
@@ -1231,8 +1384,10 @@ export default function ProjectedRevenueAnalyticsPage() {
                     </Typography>
                     <Typography variant="h5">{fmtUSD(totals.pharmacyEstimated)}</Typography>
                     {totals.projectedDayCount > 0 && (
-                      <Typography variant="caption" color="text.secondary">
-                        future ~{fmtUSD(ancillaryRates.pharmacyOverall)}/day
+                      <Typography variant="caption" color="text.secondary" display="block">
+                        {ancillaryRates.pharmacyDailyGrowth >= 0 ? '+' : ''}
+                        {fmtUSD(ancillaryRates.pharmacyDailyGrowth)}/day growth · near-term ~
+                        {fmtUSD(ancillaryRates.pharmacyBaseline)}
                       </Typography>
                     )}
                   </Box>
@@ -1242,8 +1397,10 @@ export default function ProjectedRevenueAnalyticsPage() {
                     </Typography>
                     <Typography variant="h5">{fmtUSD(totals.membershipEstimated)}</Typography>
                     {totals.projectedDayCount > 0 && (
-                      <Typography variant="caption" color="text.secondary">
-                        future ~{fmtUSD(ancillaryRates.membershipOverall)}/day
+                      <Typography variant="caption" color="text.secondary" display="block">
+                        {ancillaryRates.membershipDailyGrowth >= 0 ? '+' : ''}
+                        {fmtUSD(ancillaryRates.membershipDailyGrowth)}/day growth · near-term ~
+                        {fmtUSD(ancillaryRates.membershipBaseline)}
                       </Typography>
                     )}
                   </Box>
