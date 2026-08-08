@@ -52,6 +52,8 @@ export function OnMyWaySmsModal({
   const [messagesOpen, setMessagesOpen] = useState(false);
   const [practiceMainPhone, setPracticeMainPhone] = useState<string | null>(null);
   const [remindersFrom, setRemindersFrom] = useState<string | null>(null);
+  /** Avoid sending before backup-line lookup finishes (API would fall through to reminders). */
+  const [fromLineLookupDone, setFromLineLookupDone] = useState(false);
 
   const client = appt.client;
   const clientId = client?.id;
@@ -107,14 +109,19 @@ export function OnMyWaySmsModal({
 
   useEffect(() => {
     let cancelled = false;
+    setFromLineLookupDone(false);
     void Promise.all([
       fetchPracticeMainPhone(practiceId),
       fetchSchedulingOutreachSmsFrom(),
-    ]).then(([main, reminders]) => {
-      if (cancelled) return;
-      setPracticeMainPhone(main);
-      setRemindersFrom(reminders);
-    });
+    ])
+      .then(([main, reminders]) => {
+        if (cancelled) return;
+        setPracticeMainPhone(main);
+        setRemindersFrom(reminders);
+      })
+      .finally(() => {
+        if (!cancelled) setFromLineLookupDone(true);
+      });
     return () => {
       cancelled = true;
     };
@@ -138,6 +145,10 @@ export function OnMyWaySmsModal({
       setError('Enter how many minutes away you are.');
       return;
     }
+    if (!fromLineLookupDone) {
+      setError('Still resolving which phone line to send from. Try again in a moment.');
+      return;
+    }
     setSending(true);
     setError(null);
     try {
@@ -157,14 +168,17 @@ export function OnMyWaySmsModal({
   };
 
   const allowOverride = smsAllowsProductionOverride();
+  const sendDisabled = sending || !message.trim() || !minutesValid || !fromLineLookupDone;
 
-  const fromLineHelp = fromLineRouting.usedPracticeBackup
-    ? `Sends from the practice backup phone line${
-        fromLineRouting.fromLineLabel ? ` (${fromLineRouting.fromLineLabel})` : ''
-      } — this visit has no provider Quo line.`
-    : `Sends from the appointment provider's phone line${
-        providerLabel ? ` (${providerLabel})` : ''
-      }. Review the message before sending.`;
+  const fromLineHelp = !fromLineLookupDone
+    ? 'Resolving which phone line to send from…'
+    : fromLineRouting.usedPracticeBackup
+      ? `Sends from the practice backup phone line${
+          fromLineRouting.fromLineLabel ? ` (${fromLineRouting.fromLineLabel})` : ''
+        } — this visit has no provider Quo line.`
+      : `Sends from the appointment provider's phone line${
+          providerLabel ? ` (${providerLabel})` : ''
+        }. Review the message before sending.`;
 
   const modal = (
     <div
@@ -261,7 +275,7 @@ export function OnMyWaySmsModal({
               <button
                 type="button"
                 className="btn secondary"
-                disabled={sending || !message.trim() || !minutesValid}
+                disabled={sendDisabled}
                 onClick={() => void handleSend({ overrideNonProd: true })}
               >
                 {sending ? 'Sending…' : 'Send to actual client'}
@@ -270,7 +284,7 @@ export function OnMyWaySmsModal({
             <button
               type="button"
               className="btn"
-              disabled={sending || !message.trim() || !minutesValid}
+              disabled={sendDisabled}
               onClick={() => void handleSend({ overrideNonProd: false })}
             >
               {sending ? 'Sending…' : 'Send message'}
