@@ -15,6 +15,7 @@ import {
   effectiveWindowForScheduledStart,
   type AppointmentTypeWindowSource,
 } from './appointmentArrivalWindow';
+import { fetchDoctorDayEffectiveWindowIsosForAppointment } from './appointmentRoutedArrivalWindow';
 import { findCalmingPremedAppointmentType } from './appointmentTypeSettings';
 import {
   appointmentArrivalWindowIsosForSms,
@@ -184,13 +185,42 @@ function bookingContextFromSelfScheduledSlot(
   };
 }
 
-function bookingContextFromAppointment(
+async function bookingContextFromAppointment(
   appt: Appointment,
   practiceTz: string,
-): AppointmentRequestSmsBookingContext | null {
+): Promise<{
+  ctx: AppointmentRequestSmsBookingContext;
+  source: 'doctor_day' | 'appointment';
+} | null> {
   const doctorLast = providerLastNameFromAppointment(appt);
+  if (!doctorLast) return null;
+
+  // Prefer doctor-day effectiveWindow (depot-aware first-stop clamp). GET
+  // /appointments/:id often omits it or carries a simplistic ±60 window.
+  const doctorDayWin = await fetchDoctorDayEffectiveWindowIsosForAppointment(
+    appt,
+    practiceTz,
+  );
+  if (doctorDayWin) {
+    const booked = formatForwardBookingSmsBookedSlot(
+      doctorDayWin.startIso,
+      doctorDayWin.endIso,
+      practiceTz,
+      appt.appointmentStart,
+    );
+    return {
+      source: 'doctor_day',
+      ctx: {
+        doctorLastName: doctorLast,
+        dateLabel: booked.dateLabel,
+        windowStart: booked.windowStart,
+        windowEnd: booked.windowEnd,
+      },
+    };
+  }
+
   const windowIsos = appointmentArrivalWindowIsosForSms(appt, practiceTz);
-  if (!doctorLast || !windowIsos) return null;
+  if (!windowIsos) return null;
 
   const booked = formatForwardBookingSmsBookedSlot(
     windowIsos.startIso,
@@ -200,10 +230,13 @@ function bookingContextFromAppointment(
   );
 
   return {
-    doctorLastName: doctorLast,
-    dateLabel: booked.dateLabel,
-    windowStart: booked.windowStart,
-    windowEnd: booked.windowEnd,
+    source: 'appointment',
+    ctx: {
+      doctorLastName: doctorLast,
+      dateLabel: booked.dateLabel,
+      windowStart: booked.windowStart,
+      windowEnd: booked.windowEnd,
+    },
   };
 }
 
@@ -240,14 +273,17 @@ export async function resolveAppointmentRequestSmsMessage(
         practiceId: opts?.practiceId,
       });
       if (appt) {
-        let fromAppt = bookingContextFromAppointment(appt, practiceTz);
-        if (fromAppt) {
+        const resolved = await bookingContextFromAppointment(appt, practiceTz);
+        if (resolved) {
+          let ctx = resolved.ctx;
           const premed = await premedPromise;
           const startIso = pickStr(appt.appointmentStart);
-          if (premed && startIso) {
-            fromAppt = applyCalmingPremedWindow(fromAppt, startIso, practiceTz, premed);
+          // Keep doctor-day windows (includes first-stop depot clamp). Only apply
+          // Pre-Meds type ±N when we fell back to appointment/type fields.
+          if (premed && startIso && resolved.source !== 'doctor_day') {
+            ctx = applyCalmingPremedWindow(ctx, startIso, practiceTz, premed);
           }
-          return greet(buildAppointmentRequestSmsMessage(fromAppt));
+          return greet(buildAppointmentRequestSmsMessage(ctx));
         }
       }
     } catch {

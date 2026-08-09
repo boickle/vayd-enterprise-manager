@@ -21,8 +21,7 @@ import {
   type VeterinarianWithAppointmentTypes,
 } from '../utils/onlineBooking';
 import {
-  formatClientArrivalWindowMessage,
-  resolveClientArrivalWindowForScheduledStart,
+  resolveAvailabilitySlotArrivalWindow,
   type AppointmentTypeWindowSource,
 } from '../utils/appointmentArrivalWindow';
 import { DEFAULT_PRACTICE_TIMEZONE } from '../utils/practiceTimezone';
@@ -133,43 +132,13 @@ function resolveSlotArrivalWindow(
   practiceTz: string,
   serviceMinutes: number,
 ) {
-  const appointmentEndIso = DateTime.fromISO(slot.suggestedStartIso)
-    .plus({ minutes: serviceMinutes })
-    .toISO();
-
-  // Client-facing copy must follow the booking appointment type (e.g. Pre-Meds ±30).
-  // Slot-embedded windows often come from a default (±60) or a cached response for a
-  // different type and must not win when we know the booking type.
-  if (appointmentType) {
-    const fromType = resolveClientArrivalWindowForScheduledStart(
-      slot.suggestedStartIso,
-      appointmentType,
-      practiceTz,
-      appointmentEndIso ? { appointmentEndIso } : undefined,
-    );
-    if (fromType) return fromType;
-  }
-
-  if (slot.windowStartIso && slot.windowEndIso) {
-    const windowDisplay = formatClientArrivalWindowMessage(
-      slot.windowStartIso,
-      slot.windowEndIso,
-      practiceTz,
-    );
-    if (windowDisplay) {
-      return {
-        windowStartIso: slot.windowStartIso,
-        windowEndIso: slot.windowEndIso,
-        windowDisplay,
-      };
-    }
-  }
-
-  return resolveClientArrivalWindowForScheduledStart(
-    slot.suggestedStartIso,
+  // Prefer API effective/arrival windows (depot-aware first-stop clamp). Type ±N
+  // is only a fallback when the availability payload omits window fields.
+  return resolveAvailabilitySlotArrivalWindow(
+    slot,
     appointmentType,
     practiceTz,
-    appointmentEndIso ? { appointmentEndIso } : undefined,
+    serviceMinutes,
   );
 }
 function buildCalendarCells(month: DateTime): Array<DateTime | null> {
