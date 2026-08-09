@@ -1,6 +1,10 @@
 import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Pencil, ChevronDown, X } from 'lucide-react';
+import {
+  looksLikeHtmlFragment,
+  sanitizeCommunicationHtml,
+} from '../../utils/sanitizeCommunicationHtml';
 import './PimsExamDetailModal.css';
 
 function pickStr(v: unknown): string | null {
@@ -42,6 +46,24 @@ function formatWhen(iso: string | null): string {
     hour: 'numeric',
     minute: '2-digit',
   });
+}
+
+/**
+ * eVet stores exam narrative as HTML (`<br>`, `<strong>`, `&nbsp;`), so rendering it
+ * as text shows raw tags. Sanitize and render markup; fall back to plain text
+ * (whitespace preserved by CSS) for values that aren't HTML.
+ */
+function ExamRichText({ value, className }: { value: string; className?: string }) {
+  if (looksLikeHtmlFragment(value)) {
+    return (
+      <div
+        className={className}
+        // Sanitized above: DOMPurify strips scripts and event handlers.
+        dangerouslySetInnerHTML={{ __html: sanitizeCommunicationHtml(value) }}
+      />
+    );
+  }
+  return <div className={className}>{value}</div>;
 }
 
 function isNormalSelection(sel: string | null): boolean {
@@ -165,7 +187,13 @@ export function PimsExamDetailModal({
               </span>
             </div>
           </div>
-          <button type="button" className="pims-exam-modal__icon-btn pims-exam-modal__icon-btn--danger" title="Delete (not wired)" disabled>
+          <button
+            type="button"
+            className="pims-exam-modal__icon-btn"
+            title="Close"
+            aria-label="Close"
+            onClick={onClose}
+          >
             <X size={18} aria-hidden />
           </button>
         </div>
@@ -174,7 +202,7 @@ export function PimsExamDetailModal({
           {comments ? (
             <section className="pims-exam-modal__fieldset">
               <h3 className="pims-exam-modal__fieldset-legend">Summary</h3>
-              <p className="pims-exam-modal__summary-text">{comments}</p>
+              <ExamRichText value={comments} className="pims-exam-modal__summary-text" />
             </section>
           ) : null}
 
@@ -283,12 +311,17 @@ export function PimsExamDetailModal({
                         {normal && <span className="pims-exam-modal__badge-normal">Normal condition</span>}
                         {ne && !normal && <span className="pims-exam-modal__badge-ne">Not evaluated</span>}
                       </div>
-                      {sel && !normal && !ne ? <div className="pims-exam-modal__response-sel">{sel}</div> : null}
-                      {sel && normal ? <div className="pims-exam-modal__response-sel-muted">{sel}</div> : null}
+                      {sel && !normal && !ne ? (
+                        <ExamRichText value={sel} className="pims-exam-modal__response-sel" />
+                      ) : null}
+                      {sel && normal ? (
+                        <ExamRichText value={sel} className="pims-exam-modal__response-sel-muted" />
+                      ) : null}
                       {cm ? (
-                        <p className="pims-exam-modal__response-comments">
-                          <strong>Comments:</strong> {cm}
-                        </p>
+                        <div className="pims-exam-modal__response-comments">
+                          <strong className="pims-exam-modal__response-comments-k">Comments:</strong>
+                          <ExamRichText value={cm} />
+                        </div>
                       ) : null}
                     </div>
                   );

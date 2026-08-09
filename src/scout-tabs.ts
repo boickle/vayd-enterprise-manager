@@ -22,6 +22,7 @@ export type ScoutTabConfig = {
 export const SCHEDULE_OUTLET_EXTRA_SEGMENTS: string[] = [
   'scheduler',
   'soap',
+  'catalog',
   'inventory',
   'tasks',
   'clients',

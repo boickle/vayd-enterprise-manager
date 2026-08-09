@@ -96,6 +96,7 @@ import {
   type RoutingCalendarPreviewPayloadV1,
 } from '../utils/routingCalendarPreviewStorage';
 import { hasActiveRoutingCalendarPreview } from '../utils/routingCalendarPreviewGuard';
+import { coerceOverrunSeconds } from '../utils/depotReturnOverrun';
 import {
   buildRoutingRescheduleContextForSlotSearch,
   clearRoutingRescheduleIntent,
@@ -149,7 +150,10 @@ import {
   defaultRoutingAppointmentTypeSelection,
   resolveRoutingChosenAppointmentTypeId,
 } from '../utils/routingCalculateTimeType';
-import { applyRoutingServiceMinuteBuffers } from '../utils/routingServiceMinutes';
+import {
+  applyRoutingServiceMinuteBuffers,
+  fetchAveragedApptLengthStatsForDoctors,
+} from '../utils/routingServiceMinutes';
 import {
   appointmentRequestUsesPerPetRouting,
   appointmentRequestRoutingPatientChips,
@@ -3942,19 +3946,46 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
   }, []);
 
   useEffect(() => {
+    // Single-doctor mode: changing doctors resets Calculate Time. ASAP / multi-doctor keep
+    // the type and re-average minutes from the multi-doctor stats loader instead.
+    if (asapAllDoctorSearch || multiDoctor) return;
     setRoutingApptStatsTypeKey('');
     setRoutingPetCount(1);
     if (!form.doctorId.trim()) {
       setApptLengthsRows([]);
     }
-  }, [form.doctorId]);
+  }, [form.doctorId, asapAllDoctorSearch, multiDoctor]);
+
+  const resolveDoctorIdsForMinutesAverage = useCallback(async (): Promise<string[]> => {
+    const stored = readStoredDoctorSelection()?.doctorIds ?? [];
+    if (!asapAllDoctorSearch && multiDoctor && stored.length > 0) {
+      return [...new Set(stored.map((id) => String(id).trim()).filter(Boolean))];
+    }
+    try {
+      const providers = await fetchPrimaryProviders();
+      const ids = providers
+        .map((p) => String(p.pimsId ?? p.id ?? '').trim())
+        .filter(Boolean);
+      return [...new Set(ids)];
+    } catch {
+      const fallback = form.doctorId.trim();
+      return fallback ? [fallback] : [];
+    }
+  }, [asapAllDoctorSearch, multiDoctor, form.doctorId]);
 
   const loadApptLengthStats = useCallback(async () => {
+    const useMultiDoctorAverage = asapAllDoctorSearch || multiDoctor;
     const doctorId = form.doctorId.trim();
-    if (!doctorId) return;
+    if (!useMultiDoctorAverage && !doctorId) return;
     setApptLengthsLoading(true);
     setApptLengthsError(null);
     try {
+      if (useMultiDoctorAverage) {
+        const doctorIds = await resolveDoctorIdsForMinutesAverage();
+        const rows = await fetchAveragedApptLengthStatsForDoctors(doctorIds);
+        setApptLengthsRows(rows);
+        return;
+      }
       const end = DateTime.now().startOf('day');
       const start = end.minus({ days: 29 });
       const startStr = start.toISODate()!;
@@ -3972,12 +4003,21 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     } finally {
       setApptLengthsLoading(false);
     }
-  }, [form.doctorId]);
+  }, [
+    form.doctorId,
+    asapAllDoctorSearch,
+    multiDoctor,
+    resolveDoctorIdsForMinutesAverage,
+  ]);
 
   useEffect(() => {
+    if (asapAllDoctorSearch || multiDoctor) {
+      void loadApptLengthStats();
+      return;
+    }
     if (!form.doctorId.trim()) return;
     void loadApptLengthStats();
-  }, [form.doctorId, loadApptLengthStats]);
+  }, [form.doctorId, asapAllDoctorSearch, multiDoctor, loadApptLengthStats]);
 
   function routingAppointmentTypeForStatsKey(typeKey: string): AppointmentType | undefined {
     return appointmentTypeForRoutingStatsKey(typeKey, routingAppointmentTypes);
@@ -4067,7 +4107,12 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       if (remapFromId(ri?.appointmentTypeId)) return;
     }
 
-    if (form.doctorId.trim() && (apptLengthsLoading || routingAppointmentTypes.length === 0)) return;
+    if (
+      (form.doctorId.trim() || asapAllDoctorSearch || multiDoctor) &&
+      (apptLengthsLoading || routingAppointmentTypes.length === 0)
+    ) {
+      return;
+    }
 
     setRoutingApptStatsTypeKey('');
     setRoutingPetCount(1);
@@ -4078,6 +4123,8 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     scheduleBookTypeId,
     hasActiveRescheduleIntent,
     form.doctorId,
+    asapAllDoctorSearch,
+    multiDoctor,
     apptLengthsLoading,
   ]);
 
@@ -4596,7 +4643,13 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     setShowDoctorDropdown(false);
   }
 
+  function requiresDoctorForCalculateTime(): boolean {
+    // ASAP / multi-doctor Calculate Time averages across doctors — no single doctor required.
+    return !asapAllDoctorSearch && !multiDoctor;
+  }
+
   function promptDoctorBeforeApptType() {
+    if (!requiresDoctorForCalculateTime()) return;
     setDoctorRequiredBeforeApptType(true);
     const input = doctorBoxRef.current?.querySelector('input');
     if (input instanceof HTMLInputElement) input.focus();
@@ -4610,13 +4663,15 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     return days + 1;
   }
 
-  async function submitRoutingRequest(
+    async function submitRoutingRequest(
     endpoint: string,
     doctorIdsArray?: string[],
     opts?: {
       skipZoneConfirm?: boolean;
       skipHouseholdConfirm?: boolean;
       asapAllDoctorSearch?: boolean;
+      /** When set (e.g. after multi-doctor modal confirm), overrides form minutes for this search. */
+      serviceMinutesOverride?: number;
     }
   ) {
     const isAsapSearch = asapAllDoctorSearch || opts?.asapAllDoctorSearch === true;
@@ -4644,6 +4699,16 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
 
     // Ensure we have coords; if not, validate typed address to street-level.
     let newApptPayload = { ...form.newAppt };
+    if (
+      typeof opts?.serviceMinutesOverride === 'number' &&
+      Number.isFinite(opts.serviceMinutesOverride) &&
+      opts.serviceMinutesOverride >= 1
+    ) {
+      newApptPayload = {
+        ...newApptPayload,
+        serviceMinutes: Math.round(opts.serviceMinutesOverride),
+      };
+    }
     const hasCoords =
       Number.isFinite(newApptPayload.lat as number) &&
       Number.isFinite(newApptPayload.lon as number);
@@ -5098,9 +5163,42 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     const endpoint = pendingEndpoint || '/routing/v2';
     setPendingEndpoint(null);
     setPendingAsapAllDoctorSearch(false);
+
+    // Re-average Calculate Time minutes across the doctors included in this search.
+    let serviceMinutesOverride: number | undefined;
+    const typeKey = routingApptStatsTypeKey.trim();
+    if (typeKey && selectedDoctorIds.length > 0) {
+      try {
+        const rows = await fetchAveragedApptLengthStatsForDoctors(selectedDoctorIds);
+        setApptLengthsRows(rows);
+        const baseMins = estimateRoutingServiceMinutesForSelection(
+          typeKey,
+          routingPetCount,
+          rows,
+          routingAppointmentTypeForStatsKey
+        );
+        if (baseMins != null) {
+          const newPatientCount =
+            activeAppointmentRequestIntent?.pets?.filter((pet) => !pet.patientPimsId?.trim())
+              .length ?? 0;
+          serviceMinutesOverride = applyRoutingServiceMinuteBuffers(baseMins, {
+            newPatientCount,
+            numPets: routingPetCount,
+          });
+          setForm((f) => ({
+            ...f,
+            newAppt: { ...f.newAppt, serviceMinutes: serviceMinutesOverride! },
+          }));
+        }
+      } catch {
+        /* keep prior minutes */
+      }
+    }
+
     await submitRoutingRequest(endpoint, selectedDoctorIds, {
       skipZoneConfirm: wasAsap,
       asapAllDoctorSearch: wasAsap,
+      serviceMinutesOverride,
     });
   }
 
@@ -5570,16 +5668,18 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                     aria-invalid={Boolean(routingClientTypeConflictMessage)}
                     value={routingApptStatsTypeKey}
                     onMouseDown={(e) => {
-                      if (!form.doctorId.trim()) {
+                      if (requiresDoctorForCalculateTime() && !form.doctorId.trim()) {
                         e.preventDefault();
                         promptDoctorBeforeApptType();
                       }
                     }}
                     onFocus={() => {
-                      if (!form.doctorId.trim()) promptDoctorBeforeApptType();
+                      if (requiresDoctorForCalculateTime() && !form.doctorId.trim()) {
+                        promptDoctorBeforeApptType();
+                      }
                     }}
                     onChange={(e) => {
-                      if (!form.doctorId.trim()) {
+                      if (requiresDoctorForCalculateTime() && !form.doctorId.trim()) {
                         promptDoctorBeforeApptType();
                         return;
                       }
@@ -5643,18 +5743,20 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                     }
                     onMouseDown={(e) => {
                       if (patientsDrivePetCount) return;
-                      if (!form.doctorId.trim()) {
+                      if (requiresDoctorForCalculateTime() && !form.doctorId.trim()) {
                         e.preventDefault();
                         promptDoctorBeforeApptType();
                       }
                     }}
                     onFocus={() => {
                       if (patientsDrivePetCount) return;
-                      if (!form.doctorId.trim()) promptDoctorBeforeApptType();
+                      if (requiresDoctorForCalculateTime() && !form.doctorId.trim()) {
+                        promptDoctorBeforeApptType();
+                      }
                     }}
                     onChange={(e) => {
                       if (patientsDrivePetCount) return;
-                      if (!form.doctorId.trim()) {
+                      if (requiresDoctorForCalculateTime() && !form.doctorId.trim()) {
                         promptDoctorBeforeApptType();
                         return;
                       }
@@ -5696,14 +5798,21 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                 />
               </label>
             </div>
-            {form.doctorId.trim() && routingAppointmentTypes.length === 0 ? (
+            {(form.doctorId.trim() || asapAllDoctorSearch || multiDoctor) &&
+            routingAppointmentTypes.length === 0 ? (
               <div className="muted routing-route-hint">
                 No routable appointment types are configured (client or alternate address allowed, not
                 excluded from routing).
               </div>
-            ) : form.doctorId.trim() && apptLengthsLoading && routingApptTypePickerOptions.length === 0 ? (
-              <div className="muted routing-route-hint">Loading appointment types…</div>
-            ) : form.doctorId.trim() && apptLengthsError ? (
+            ) : (form.doctorId.trim() || asapAllDoctorSearch || multiDoctor) &&
+              apptLengthsLoading &&
+              routingApptTypePickerOptions.length === 0 ? (
+              <div className="muted routing-route-hint">
+                {asapAllDoctorSearch || multiDoctor
+                  ? 'Loading average appointment times across doctors…'
+                  : 'Loading appointment types…'}
+              </div>
+            ) : (form.doctorId.trim() || asapAllDoctorSearch || multiDoctor) && apptLengthsError ? (
               <div className="danger routing-route-hint">{apptLengthsError}</div>
             ) : null}
           </div>
@@ -6296,8 +6405,27 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                   })();
 
                 const emptyBadge = isEmptyDay(opt);
-                const shiftOverrunSec =
-                  typeof opt.overrunSeconds === 'number' ? opt.overrunSeconds : 0;
+                const apiOverrunSec = coerceOverrunSeconds(opt.overrunSeconds) ?? 0;
+                const budgetOverrunSec =
+                  endOfDayOverrunSeconds(
+                    {
+                      workStartLocal: opt.workStartLocal,
+                      effectiveEndLocal: opt.effectiveEndLocal,
+                      bookedServiceSeconds: opt.bookedServiceSeconds,
+                      projectedDriveSeconds: opt.projectedDriveSeconds,
+                      currentDriveSeconds: opt.currentDriveSeconds,
+                      addedDriveSeconds: opt.addedDriveSeconds,
+                    },
+                    form.newAppt.serviceMinutes
+                  ) ?? 0;
+                const reconciledOverrunSec = coerceOverrunSeconds(
+                  etaWindowWarningsByOptionKey[optionKey]?.reconciledOverrunSeconds
+                ) ?? 0;
+                const shiftOverrunSec = Math.max(
+                  apiOverrunSec,
+                  budgetOverrunSec,
+                  reconciledOverrunSec
+                );
                 const overtimeBadge = finite(shiftOverrunSec) && shiftOverrunSec >= 60;
                 const isEarlierFeasibleEmptyDay = opt.emptyDayStartVariant === 'earlier_feasible';
 

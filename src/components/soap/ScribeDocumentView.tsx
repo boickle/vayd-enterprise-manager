@@ -1,6 +1,4 @@
 import type { ReactNode } from 'react';
-import { useState } from 'react';
-import { Copy, Check } from 'lucide-react';
 
 type SoapField = {
   value: string;
@@ -9,8 +7,6 @@ type SoapField = {
 };
 
 type Props = {
-  patientName: string;
-  visitDate: string;
   disabled: boolean;
   subjective: string;
   onSubjectiveChange: (text: string) => void;
@@ -27,26 +23,7 @@ type Props = {
   /** Rendered directly under the Plan field — the itemized "match to catalog" plan-items UI
    * (docs/ai-scribe.md) lives here since it needs order/pricing APIs this view doesn't own. */
   planItemsSlot?: ReactNode;
-  emailSubject: string;
-  emailBody: string;
-  onEmailSubjectChange: (text: string) => void;
-  onEmailBodyChange: (text: string) => void;
-  onEmailBlur: () => void;
 };
-
-function useCopy() {
-  const [copiedKey, setCopiedKey] = useState<string | null>(null);
-  const copy = async (key: string, text: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopiedKey(key);
-      window.setTimeout(() => setCopiedKey((k) => (k === key ? null : k)), 1800);
-    } catch {
-      /* clipboard may be unavailable (e.g. insecure context); nothing to fall back to */
-    }
-  };
-  return { copiedKey, copy };
-}
 
 function SoapField({
   letter,
@@ -54,12 +31,14 @@ function SoapField({
   placeholder,
   field,
   disabled,
+  rows = 14,
 }: {
   letter: string;
   label: string;
   placeholder: string;
   field: SoapField;
   disabled: boolean;
+  rows?: number;
 }) {
   return (
     <section className="soap-doc-section">
@@ -70,7 +49,7 @@ function SoapField({
       </div>
       <textarea
         className="soap-doc-textarea"
-        rows={6}
+        rows={rows}
         placeholder={placeholder}
         value={field.value}
         disabled={disabled}
@@ -91,8 +70,6 @@ function SoapField({
  * read-only — the doctor can freely edit before/after AI content lands.
  */
 export default function ScribeDocumentView({
-  patientName,
-  visitDate,
   disabled,
   subjective,
   onSubjectiveChange,
@@ -107,34 +84,16 @@ export default function ScribeDocumentView({
   onPlanNotesChange,
   onPlanNotesBlur,
   planItemsSlot,
-  emailSubject,
-  emailBody,
-  onEmailSubjectChange,
-  onEmailBodyChange,
-  onEmailBlur,
 }: Props) {
-  const { copiedKey, copy } = useCopy();
-
-  const fullEmail =
-    emailSubject.trim() || emailBody.trim()
-      ? `Subject: ${emailSubject}\n\n${emailBody}`
-      : '';
-
   return (
     <div className="soap-doc-view">
-      <div className="soap-doc-head">
-        <div>
-          <div className="soap-doc-patient">{patientName}</div>
-          <div className="soap-doc-date">Date: {visitDate}</div>
-        </div>
-      </div>
-
       <SoapField
         letter="S"
         label="Subjective"
         placeholder={`Presenting Complaint: …\n\nPatient History:\n- …`}
         field={{ value: subjective, onChange: onSubjectiveChange, onBlur: onSubjectiveBlur }}
         disabled={disabled}
+        rows={16}
       />
       <SoapField
         letter="O"
@@ -146,6 +105,7 @@ export default function ScribeDocumentView({
           onBlur: onObjectiveNotesBlur,
         }}
         disabled={disabled}
+        rows={16}
       />
       <SoapField
         letter="A"
@@ -153,6 +113,7 @@ export default function ScribeDocumentView({
         placeholder={`Problem List:\n- …\n- … - r/o …`}
         field={{ value: assessment, onChange: onAssessmentChange, onBlur: onAssessmentBlur }}
         disabled={disabled}
+        rows={12}
       />
       <SoapField
         letter="P"
@@ -160,46 +121,10 @@ export default function ScribeDocumentView({
         placeholder={`Diagnostics:\n- …\nTreatment Plan/Medications:\n- …\nClient Communication:\n- …`}
         field={{ value: planNotes, onChange: onPlanNotesChange, onBlur: onPlanNotesBlur }}
         disabled={disabled}
+        rows={14}
       />
 
       {planItemsSlot}
-
-      <section className="soap-doc-section">
-        <div className="soap-doc-section-head">
-          <h3>Email to client</h3>
-          {fullEmail ? (
-            <button
-              type="button"
-              className="soap-btn small ghost"
-              onClick={() => void copy('email', fullEmail)}
-            >
-              {copiedKey === 'email' ? <Check size={12} /> : <Copy size={12} />}
-              {copiedKey === 'email' ? 'Copied' : 'Copy'}
-            </button>
-          ) : null}
-        </div>
-        <label className="soap-email-label">
-          Subject
-          <input
-            className="soap-input"
-            type="text"
-            placeholder="Follow-up from today's visit…"
-            value={emailSubject}
-            disabled={disabled}
-            onChange={(e) => onEmailSubjectChange(e.target.value)}
-            onBlur={onEmailBlur}
-          />
-        </label>
-        <textarea
-          className="soap-doc-textarea soap-textarea--email"
-          rows={12}
-          placeholder={`Hello,\n\nI wanted to provide a summary of our conversation today…`}
-          value={emailBody}
-          disabled={disabled}
-          onChange={(e) => onEmailBodyChange(e.target.value)}
-          onBlur={onEmailBlur}
-        />
-      </section>
     </div>
   );
 }

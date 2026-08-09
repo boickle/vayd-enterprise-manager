@@ -13,6 +13,7 @@ import { DateTime } from 'luxon';
 import {
   commitEditVisit,
   commitLinkClientFromEditVisitSelection,
+  editVisitTimesMatchAtPracticeMinute,
   resolveEditVisitAssignPatient,
   validateEditVisitAppointmentTypeClientConflict,
   validateEditVisitLinkSelection,
@@ -697,6 +698,41 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
         const linkingClient = Boolean(linkSelection?.clientId?.trim());
         setSaving(true);
         try {
+          const timesUnchangedAtMinute =
+            input.tidFromPreview != null &&
+            editVisitTimesMatchAtPracticeMinute(
+              appt.appointmentStart,
+              appt.appointmentEnd,
+              input.startUtc,
+              input.endUtc,
+              practiceTz
+            );
+          const commitStart = timesUnchangedAtMinute ? appt.appointmentStart : input.startUtc;
+          const commitEnd = timesUnchangedAtMinute ? appt.appointmentEnd : input.endUtc;
+          const targetType = appointmentTypes.find((t) => Number(t.id) === input.tid);
+          const appointmentTypeName =
+            targetType?.name?.trim() || targetType?.prettyName?.trim() || null;
+          const savedAdditionalIds = new Set(
+            (appt.additionalEmployeeIds ??
+              appt.additionalEmployees?.map((emp) => Number(emp.id)) ??
+              [])
+              .map((id) => Number(id))
+              .filter((id) => Number.isFinite(id) && id > 0)
+          );
+          const formAdditionalIds = new Set(
+            additionalEmployeeIds
+              .map((id) => Number(id))
+              .filter((id) => Number.isFinite(id) && id > 0)
+          );
+          const additionalEmployeesUnchanged =
+            savedAdditionalIds.size === formAdditionalIds.size &&
+            [...savedAdditionalIds].every((id) => formAdditionalIds.has(id));
+          const typeOnlyPatch =
+            input.tidFromPreview != null &&
+            timesUnchangedAtMinute &&
+            additionalEmployeesUnchanged &&
+            !linkingClient &&
+            !patientSelection?.patientId?.trim();
           const editChanges = detectEditVisitChanges(
             {
               description: appt.description,
@@ -709,15 +745,15 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
               description,
               instructions,
               appointmentTypeId: input.tid,
-              appointmentStart: input.startUtc,
-              appointmentEnd: input.endUtc,
+              appointmentStart: commitStart,
+              appointmentEnd: commitEnd,
             }
           );
           const updated = await commitEditVisit({
             appointmentId: Number(appt.id),
             practiceId,
-            appointmentStart: input.startUtc,
-            appointmentEnd: input.endUtc,
+            appointmentStart: commitStart,
+            appointmentEnd: commitEnd,
             form: {
               appointmentTypeId: input.tid,
               primaryProviderId: input.pid,
@@ -730,6 +766,8 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
               allDay: appt.allDay,
             },
             previewAppointmentTypeId: input.tidFromPreview,
+            appointmentTypeName,
+            typeOnlyPatch,
             editedByAudit: {
               actor: editedByActor,
               practiceTz,
@@ -748,8 +786,8 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
           if (input.siblingsToAlign?.length) {
             alignedAppointments = await alignSiblingVisitScheduledTimes({
               siblings: input.siblingsToAlign,
-              startIso: input.startUtc,
-              endIso: input.endUtc,
+              startIso: commitStart,
+              endIso: commitEnd,
               practiceId,
             });
           }
@@ -791,6 +829,7 @@ export const SchedulerEditVisitModal = forwardRef<SchedulerEditVisitModalHandle,
         typeScoreCompare,
         linkSelection,
         patientSelection,
+        appointmentTypes,
         onSaved,
         onClose,
         closeAfterSave,

@@ -189,12 +189,51 @@ const PRE_VISIT_SUBJECTIVE_PREFIX = 'Pre-Visit Check-in Information';
 /** Older prefix — treat as already polished so we don't re-summarize or double-prefix. */
 const LEGACY_PRE_VISIT_SUBJECTIVE_PREFIXES = ['Room Loader information'];
 
-function hasPreVisitSubjectivePrefix(text: string): boolean {
+function escapeForRegExp(literal: string): string {
+  return literal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** Shown in Subjective when no client-submitted pre-exam / Room Loader answers exist. */
+export const PRE_EXAM_CHECKIN_NOT_FILLED = 'Pre-Exam Check-in Form: Not filled out by client';
+
+/**
+ * True when Subjective already carries the client's check-in answers. The "not filled out"
+ * line deliberately doesn't count: the client may submit the form after the doctor first
+ * opens the chart, and the real answers should replace the line when they arrive.
+ */
+export function hasPreVisitAnswersBlock(text: string): boolean {
   const t = text.trim();
   if (new RegExp(`^${PRE_VISIT_SUBJECTIVE_PREFIX}\\b`, 'i').test(t)) return true;
   return LEGACY_PRE_VISIT_SUBJECTIVE_PREFIXES.some((p) =>
-    new RegExp(`^${p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(t)
+    new RegExp(`^${escapeForRegExp(p)}\\b`, 'i').test(t)
   );
+}
+
+function hasPreVisitSubjectivePrefix(text: string): boolean {
+  const t = text.trim();
+  if (hasPreVisitAnswersBlock(t)) return true;
+  return new RegExp(`^${escapeForRegExp(PRE_EXAM_CHECKIN_NOT_FILLED)}$`, 'i').test(t);
+}
+
+/** Drops a leading "not filled out" line so it isn't stranded above the real answers. */
+export function stripCheckinPlaceholder(text: string): string {
+  const pattern = new RegExp(`^\\s*${escapeForRegExp(PRE_EXAM_CHECKIN_NOT_FILLED)}\\s*`, 'i');
+  return text.replace(pattern, '').trim();
+}
+
+/** Header the AI scribe files visit-conversation history under, below the check-in block. */
+export const VISIT_DISCUSSION_HEADER = 'Visit discussion:';
+
+/**
+ * Puts the pre-visit check-in block back on top of Subjective. Used when a chart already
+ * has doctor- or scribe-written history but no check-in block — the block belongs first,
+ * and the existing text becomes the visit discussion under it.
+ */
+export function prependCheckinBlock(block: string, existing: string): string {
+  const rest = existing.trim();
+  if (!rest) return block;
+  if (rest.startsWith(VISIT_DISCUSSION_HEADER)) return `${block}\n\n${rest}`;
+  return `${block}\n\n${VISIT_DISCUSSION_HEADER}\n\n${rest}`;
 }
 
 /** Prefix AI (or raw) intake text so doctors can see it came from pre-visit check-in. */

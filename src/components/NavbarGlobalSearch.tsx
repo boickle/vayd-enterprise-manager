@@ -18,11 +18,9 @@ export default function NavbarGlobalSearch() {
   const { token } = useAuth() as { token: string | null };
   const practiceId = useMemo(() => resolvePracticeIdFromToken(token), [token]);
 
-  const inSchedule = pathname.startsWith('/schedule');
-  const clientsBase = inSchedule ? '/schedule/clients' : '/pims/clients';
-  const patientsBase = inSchedule ? '/schedule/patients' : '/pims/patients';
-  const onPatientsArea =
-    pathname.startsWith('/pims/patients') || pathname.startsWith('/schedule/patients');
+  const clientsBase = '/schedule/clients';
+  const patientsBase = '/schedule/patients';
+  const onPatientsArea = pathname.startsWith('/schedule/patients');
 
   const [q, setQ] = useState('');
   const [open, setOpen] = useState(false);

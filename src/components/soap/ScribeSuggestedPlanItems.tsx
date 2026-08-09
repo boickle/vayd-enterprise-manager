@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Plus, Search, StickyNote, X } from 'lucide-react';
+import { Plus, Search, Trash2 } from 'lucide-react';
 import { searchItems, type SearchableItem } from '../../api/roomLoader';
 import {
-  createNoteOrder,
   createOrderFromSearchItem,
   getCatalogLinePrice,
   type CatalogPricingItem,
 } from '../../utils/catalogItemPricing';
 import type { EncounterOrder, EncounterOrderKind } from '../../api/visitWorkflow';
+import { ensureSharpsFeeOrder, isVaccineSearchItem } from '../../utils/visitSharpsFee';
 
 export type SuggestedPlanItem = {
   key: string;
@@ -15,6 +15,8 @@ export type SuggestedPlanItem = {
   kind: EncounterOrderKind;
   note: string | null;
 };
+
+export type SoapNarrativeSection = 'subjective' | 'objective' | 'assessment' | 'plan';
 
 type Props = {
   encounterId: string;
@@ -37,12 +39,40 @@ type Props = {
   patientId?: number;
   clientId?: number;
   practiceId: number;
-  onOrderAdded: (order: EncounterOrder) => void;
+  onOrderAdded: (
+    order: EncounterOrder,
+    meta?: { isVaccine?: boolean; skipPlanNarrative?: boolean }
+  ) => void;
   onInvoiceShouldRefresh: () => void;
+  /** Freeform text that isn't a catalog charge — append as a bullet on the chosen SOAP section. */
+  onAppendToSoapSection: (section: SoapNarrativeSection, text: string) => void;
 };
 
 function norm(s: string): string {
   return s.trim().toLowerCase();
+}
+
+/** Bullets written when an inventory item is already charging — never re-offer them. */
+const RXED_BULLET = /^rx'?ed\s+/i;
+const VX_ADMINISTERED_BULLET = /^vx\s+administered:\s*/i;
+
+/**
+ * A narrative bullet and an order are the same item when one name starts with the other:
+ * `shortenForSearch` truncates at the first comma, so "Bravecto 10-22lb (3 month dose) ADD
+ * REBATE FOR 2" has to still match the order's full "… FOR 2, 3, OR 4 DOSES".
+ */
+function matchesExistingOrder(name: string, orderNames: string[]): boolean {
+  const candidate = norm(name)
+    .replace(RXED_BULLET, '')
+    .replace(VX_ADMINISTERED_BULLET, '')
+    .replace(/\s+sq\.?$/i, '')
+    .trim();
+  if (!candidate) return false;
+  return orderNames.some(
+    (order) =>
+      order === candidate ||
+      (candidate.length >= 6 && (order.startsWith(candidate) || candidate.startsWith(order)))
+  );
 }
 
 const SECTION_KIND: { pattern: RegExp; kind: EncounterOrderKind }[] = [
@@ -89,12 +119,16 @@ function extractPlanNarrativeItems(planNotes: string): SuggestedPlanItem[] {
     }
     const text = bulletMatch[1].trim();
     if (!text) continue;
+    // Auto Plan bullets for items already charging — never re-offer them as checkout rows.
+    // Freeform notes like "Administered SQF" still come through (no Vx/Rx prefix).
+    if (RXED_BULLET.test(text) || VX_ADMINISTERED_BULLET.test(text)) continue;
     const query = shortenForSearch(text);
     items.push({
       key: `narrative:${norm(text)}`,
       name: query,
       kind: currentKind,
-      note: norm(text) !== norm(query) ? text : null,
+      // Always keep the original Plan bullet for the italic quote under the search row.
+      note: text,
     });
   }
   return items;
@@ -105,6 +139,13 @@ const TYPE_LABEL: Record<string, string> = {
   procedure: 'Procedure',
   inventory: 'Inventory',
 };
+
+const SOAP_ADD_TO: { section: SoapNarrativeSection; label: string }[] = [
+  { section: 'subjective', label: 'Subjective' },
+  { section: 'objective', label: 'Objective' },
+  { section: 'assessment', label: 'Assessment' },
+  { section: 'plan', label: 'Plan' },
+];
 
 function money(n: number): string {
   return `$${(Number(n) || 0).toFixed(2)}`;
@@ -123,6 +164,7 @@ let extraRowSeq = 0;
  * the right catalog match rather than re-type it — resolving a row creates the exact same
  * priced, `accepted` order as a manual-mode search pick, so it shows up for checkout/invoice
  * immediately. "+ Add item" adds a blank row for anything the transcript didn't mention.
+ * Freeform text that isn't a charge goes to a SOAP section via "Add to", not the invoice.
  */
 export default function ScribeSuggestedPlanItems({
   encounterId,
@@ -135,14 +177,15 @@ export default function ScribeSuggestedPlanItems({
   practiceId,
   onOrderAdded,
   onInvoiceShouldRefresh,
+  onAppendToSoapSection,
 }: Props) {
   const [resolvedKeys, setResolvedKeys] = useState<Set<string>>(new Set());
   const [extraRows, setExtraRows] = useState<string[]>([]);
 
   const mergedSuggestions = useMemo(() => {
-    const existingOrderNames = new Set(orders.map((o) => norm(o.name)));
+    const existingOrderNames = orders.map((o) => norm(o.name));
     const narrativeItems = extractPlanNarrativeItems(planNotes).filter(
-      (n) => !existingOrderNames.has(norm(n.name))
+      (n) => !matchesExistingOrder(n.name, existingOrderNames)
     );
     const seen = new Set(suggestions.map((s) => norm(s.name)));
     const extra = narrativeItems.filter((n) => {
@@ -150,7 +193,10 @@ export default function ScribeSuggestedPlanItems({
       seen.add(norm(n.name));
       return true;
     });
-    return [...suggestions, ...extra];
+    const transcriptRows = suggestions.filter(
+      (s) => !matchesExistingOrder(s.name, existingOrderNames)
+    );
+    return [...transcriptRows, ...extra];
   }, [suggestions, planNotes, orders]);
 
   useEffect(() => {
@@ -184,8 +230,8 @@ export default function ScribeSuggestedPlanItems({
         )}
       </div>
       <p className="soap-scribe-planitems-hint">
-        Match each item to the catalog to add it as a priced order — the same search as Manual
-        mode&apos;s Plan tab.
+        Match a catalog item to charge at checkout. If it isn&apos;t a product/service, use Add to
+        and put a bullet on Subjective, Objective, Assessment, or Plan.
       </p>
 
       {hasAnyRows && (
@@ -200,9 +246,14 @@ export default function ScribeSuggestedPlanItems({
               patientId={patientId}
               clientId={clientId}
               practiceId={practiceId}
-              onAdded={(order) => {
-                onOrderAdded(order);
+              existingOrders={orders}
+              onAdded={(order, meta) => {
+                onOrderAdded(order, meta);
                 onInvoiceShouldRefresh();
+                setResolvedKeys((prev) => new Set(prev).add(s.key));
+              }}
+              onAppendToSoap={(section, text) => {
+                onAppendToSoapSection(section, text);
                 setResolvedKeys((prev) => new Set(prev).add(s.key));
               }}
               onDismiss={() => setResolvedKeys((prev) => new Set(prev).add(s.key))}
@@ -218,9 +269,14 @@ export default function ScribeSuggestedPlanItems({
               patientId={patientId}
               clientId={clientId}
               practiceId={practiceId}
-              onAdded={(order) => {
-                onOrderAdded(order);
+              existingOrders={orders}
+              onAdded={(order, meta) => {
+                onOrderAdded(order, meta);
                 onInvoiceShouldRefresh();
+                setExtraRows((prev) => prev.filter((k) => k !== key));
+              }}
+              onAppendToSoap={(section, text) => {
+                onAppendToSoapSection(section, text);
                 setExtraRows((prev) => prev.filter((k) => k !== key));
               }}
               onDismiss={() => setExtraRows((prev) => prev.filter((k) => k !== key))}
@@ -248,7 +304,9 @@ function PlanItemSearchRow({
   patientId,
   clientId,
   practiceId,
+  existingOrders,
   onAdded,
+  onAppendToSoap,
   onDismiss,
 }: {
   initialQuery: string;
@@ -258,14 +316,20 @@ function PlanItemSearchRow({
   patientId?: number;
   clientId?: number;
   practiceId: number;
-  onAdded: (order: EncounterOrder) => void;
+  existingOrders: EncounterOrder[];
+  onAdded: (
+    order: EncounterOrder,
+    meta?: { isVaccine?: boolean; skipPlanNarrative?: boolean }
+  ) => void;
+  onAppendToSoap: (section: SoapNarrativeSection, text: string) => void;
   onDismiss: () => void;
 }) {
   const [query, setQuery] = useState(initialQuery);
   const [results, setResults] = useState<SearchableItem[]>([]);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
-  const [open, setOpen] = useState(Boolean(initialQuery));
+  // Only open catalog / Add to for the row currently focused — not every seeded row at once.
+  const [open, setOpen] = useState(false);
   const [adding, setAdding] = useState(false);
   const boxRef = useRef<HTMLDivElement>(null);
 
@@ -320,22 +384,30 @@ function PlanItemSearchRow({
         practiceId,
         clientId,
       });
-      onAdded(order);
+      const isVaccine = isVaccineSearchItem(item);
+      onAdded(order, { isVaccine });
+      try {
+        const sharps = await ensureSharpsFeeOrder({
+          encounterId,
+          practiceId,
+          patientId,
+          clientId,
+          existingOrders: [...existingOrders, order],
+          triggerItem: item,
+        });
+        if (sharps) onAdded(sharps, { skipPlanNarrative: true });
+      } catch {
+        /* Sharps is best-effort — the vaccine/injection still charges. */
+      }
     } finally {
       setAdding(false);
     }
   };
 
-  const addAsNote = async () => {
+  const addToSection = (section: SoapNarrativeSection) => {
     const text = query.trim();
     if (!text || adding) return;
-    setAdding(true);
-    try {
-      const order = await createNoteOrder(encounterId, text);
-      onAdded(order);
-    } finally {
-      setAdding(false);
-    }
+    onAppendToSoap(section, text);
   };
 
   return (
@@ -351,25 +423,20 @@ function PlanItemSearchRow({
             setOpen(true);
           }}
           onFocus={() => setOpen(true)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && results.length === 0) {
-              e.preventDefault();
-              void addAsNote();
-            }
-          }}
           disabled={adding}
         />
         <button
           type="button"
-          className="soap-icon-btn"
-          title="Remove"
+          className="soap-icon-btn soap-scribe-planitem-trash"
+          title="Remove this item"
+          aria-label="Remove this item"
           disabled={adding}
           onClick={onDismiss}
         >
-          <X size={13} />
+          <Trash2 size={14} />
         </button>
       </div>
-      {note && <p className="soap-scribe-planitem-note">&ldquo;{note}&rdquo;</p>}
+      {note?.trim() && <p className="soap-scribe-planitem-note">&ldquo;{note.trim()}&rdquo;</p>}
       {open && query.trim().length >= 1 && (
         <div className="soap-scribe-planitem-results" role="listbox">
           {searching && <div className="soap-plan-result-empty">Searching…</div>}
@@ -394,21 +461,31 @@ function PlanItemSearchRow({
                 <span className="soap-plan-result-price">{money(displayPrice(item))}</span>
               </button>
             ))}
-          <button
-            type="button"
+          <div
+            className="soap-plan-result soap-plan-result-add-to"
             role="option"
             aria-selected={false}
-            className="soap-plan-result soap-plan-result-note"
-            disabled={adding || !query.trim()}
-            onClick={() => void addAsNote()}
           >
-            <span className="soap-tag type-note">
-              <StickyNote size={11} /> Note
-            </span>
-            <span className="soap-plan-result-name">
-              Add as note: <strong>{query.trim()}</strong>
-            </span>
-          </button>
+            <div className="soap-plan-add-to-head">
+              <span className="soap-tag type-add-to">Add to</span>
+              <span className="soap-plan-result-name">
+                <strong>{query.trim()}</strong>
+              </span>
+            </div>
+            <div className="soap-plan-add-to-sections">
+              {SOAP_ADD_TO.map(({ section, label }) => (
+                <button
+                  key={section}
+                  type="button"
+                  className="soap-btn small ghost"
+                  disabled={adding || !query.trim()}
+                  onClick={() => addToSection(section)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
       )}
     </div>

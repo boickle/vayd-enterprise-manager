@@ -1,26 +1,28 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import {
+  ArrowRight,
   ClipboardList,
+  FilePlus2,
   Lock,
   Stethoscope,
   Activity,
   ListChecks,
-  CheckCircle2,
   PawPrint,
+  SlidersHorizontal,
 } from 'lucide-react';
 import './SoapEncounterPage.css';
 import {
-  completeEncounter,
   createEncounter,
   getHouseholdRoster,
   getInvoiceByAppointment,
-  listEncounters,
   listOrders,
+  listPatientPrescriptions,
   listProblems,
   updateEncounter,
   type EncounterOrder,
   type HouseholdRosterEntry,
+  type PatientPrescription,
   type PatientProblem,
   type SoapEncounter,
   type SoapEncounterMode,
@@ -28,7 +30,7 @@ import {
   VISIT_WORKFLOW_PRACTICE_ID,
 } from '../api/visitWorkflow';
 import { summarizeIntakeHistory } from '../api/soapScribe';
-import type { ForwardBookingDisposition } from '../api/forwardBookingDisposition';
+import { fetchAppointmentById } from '../api/appointments';
 import { fetchPatientProfileForRow } from '../api/patients';
 import {
   defaultPeExamState,
@@ -38,13 +40,20 @@ import {
 import PhysicalExamSection from '../components/soap/PhysicalExamSection';
 import MasterProblemListSection from '../components/soap/MasterProblemListSection';
 import PlanOrdersSection from '../components/soap/PlanOrdersSection';
-import ForwardBookingGate from '../components/soap/ForwardBookingGate';
+import VisitDoseAndRxSection from '../components/soap/VisitDoseAndRxSection';
+import SoapAddendaSection from '../components/soap/SoapAddendaSection';
+import ProposedOrdersPanel from '../components/soap/ProposedOrdersPanel';
 import VisitCheckoutPanel from '../components/soap/VisitCheckoutPanel';
 import HouseholdInvoiceSummary from '../components/soap/HouseholdInvoiceSummary';
 import EuthanasiaPrepayModal from '../components/soap/EuthanasiaPrepayModal';
 import ScribePanel from '../components/soap/ScribePanel';
+import SoapPatientChronicSummary from '../components/soap/SoapPatientChronicSummary';
+import type { ForwardBookingDisposition } from '../api/forwardBookingDisposition';
+import CheckoutFollowUpPrompt from '../components/soap/CheckoutFollowUpPrompt';
 import ScribeDocumentView from '../components/soap/ScribeDocumentView';
+import ScribePromptOverridesModal from '../components/soap/ScribePromptOverridesModal';
 import ScribeSuggestedPlanItems, {
+  type SoapNarrativeSection,
   type SuggestedPlanItem,
 } from '../components/soap/ScribeSuggestedPlanItems';
 import type { PeSystemFinding } from '../components/soap/peTemplate';
@@ -52,20 +61,98 @@ import {
   appointmentReasonFromSentToClient,
   buildSubjectiveTextFromRoomLoaderResponse,
   findSubmittedRoomLoaderForAppointment,
+  hasPreVisitAnswersBlock,
   looksLikeRawRoomLoaderSubjective,
+  PRE_EXAM_CHECKIN_NOT_FILLED,
+  prependCheckinBlock,
+  stripCheckinPlaceholder,
   withRoomLoaderSubjectivePrefix,
 } from '../utils/roomLoaderSubjectiveText';
+import { takeDeferredPlanItems } from '../utils/deferredScribePlanItems';
+import {
+  appendTreatmentPlanMedicationBullet,
+  removeTreatmentPlanMedicationBullet,
+} from '../utils/planNotesSections';
+import { patientSexDisplayFromRecord } from '../utils/schedulerVisitDisplay';
+
+export type WeightUnit = 'lb' | 'kg';
 
 export type Vitals = {
   tempF: string;
   weight: string;
+  /** Unit for `weight`. Ignored when `weightNotTaken`. Defaults to lb. */
+  weightUnit: WeightUnit;
+  /** Explicit: weight was not taken this visit (required alternative to a value). */
+  weightNotTaken: boolean;
   hr: string;
   rr: string;
   bcs: string;
   painScore: string;
 };
 
-type SoapTabId = 'subjective' | 'objective' | 'assessment' | 'plan' | 'followup';
+/** True when the visit either recorded a weight + unit or chose "No weight taken". */
+export function isWeightAddressed(v: Vitals): boolean {
+  if (v.weightNotTaken) return true;
+  return Boolean(v.weight.trim());
+}
+
+/** Display string for header / chart review, or null if nothing recorded. */
+export function formatVitalWeight(v: Vitals): string | null {
+  if (v.weightNotTaken) return 'No weight taken';
+  const w = v.weight.trim();
+  if (!w) return null;
+  return `${w} ${v.weightUnit}`;
+}
+
+function patientField(patient: Record<string, unknown> | null, ...keys: string[]): string | null {
+  if (!patient) return null;
+  for (const key of keys) {
+    const value = patient[key];
+    if (value != null && String(value).trim()) return String(value).trim();
+  }
+  return null;
+}
+
+function patientBreed(patient: Record<string, unknown> | null): string | null {
+  const entity =
+    patient?.breedEntity && typeof patient.breedEntity === 'object'
+      ? (patient.breedEntity as Record<string, unknown>)
+      : null;
+  return patientField(entity, 'name') ?? patientField(patient, 'breed', 'breedDescription');
+}
+
+function patientAge(
+  patient: Record<string, unknown> | null,
+  onDate?: string | null
+): string | null {
+  const raw = patientField(patient, 'dob', 'dateOfBirth');
+  if (!raw) return null;
+  const born = new Date(raw);
+  const at = onDate ? new Date(onDate) : new Date();
+  if (Number.isNaN(born.getTime()) || Number.isNaN(at.getTime()) || born > at) return null;
+  let months = (at.getFullYear() - born.getFullYear()) * 12 + at.getMonth() - born.getMonth();
+  if (at.getDate() < born.getDate()) months -= 1;
+  if (months < 0) return null;
+  if (months < 24) return `${months} mo`;
+  const years = Math.floor(months / 12);
+  const remainingMonths = months % 12;
+  return remainingMonths ? `${years} yr ${remainingMonths} mo` : `${years} yr`;
+}
+
+function examDayLabel(iso: string | null): string {
+  const date = iso ? new Date(iso) : new Date();
+  if (Number.isNaN(date.getTime())) return new Date().toLocaleDateString();
+  return date.toLocaleDateString(undefined, {
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  });
+}
+
+/** Forward booking is deliberately absent: it belongs to the wrap-up, which settles
+ * it for every pet on the visit rather than one chart at a time. */
+type SoapTabId = 'subjective' | 'objective' | 'assessment' | 'plan';
 
 const SOAP_TABS: {
   id: SoapTabId;
@@ -77,15 +164,17 @@ const SOAP_TABS: {
   { id: 'objective', label: 'Objective', short: 'O', icon: Activity },
   { id: 'assessment', label: 'Assessment', short: 'A', icon: ListChecks },
   { id: 'plan', label: 'Plan', short: 'P', icon: ClipboardList },
-  { id: 'followup', label: 'Follow-up', short: 'FB', icon: CheckCircle2 },
 ];
 
 export function vitalsFromValue(v: unknown): Vitals {
   const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>;
   const s = (k: string) => (o[k] == null ? '' : String(o[k]));
+  const unitRaw = String(o.weightUnit ?? '').toLowerCase();
   return {
     tempF: s('tempF'),
     weight: s('weight'),
+    weightUnit: unitRaw === 'kg' ? 'kg' : 'lb',
+    weightNotTaken: o.weightNotTaken === true || o.weightNotTaken === 'true',
     hr: s('hr'),
     rr: s('rr'),
     bcs: s('bcs'),
@@ -124,14 +213,29 @@ export default function SoapEncounterPage() {
   const clientIdParam = searchParams.get('clientId');
 
   const [encounter, setEncounter] = useState<SoapEncounter | null>(null);
+  const encounterRef = useRef(encounter);
+  encounterRef.current = encounter;
   const [problems, setProblems] = useState<PatientProblem[]>([]);
+  const [chronicMedications, setChronicMedications] = useState<PatientPrescription[]>([]);
   const [orders, setOrders] = useState<EncounterOrder[]>([]);
   const [invoice, setInvoice] = useState<VisitInvoice | null>(null);
   const [patientName, setPatientName] = useState<string>('');
+  const [patientProfile, setPatientProfile] = useState<Record<string, unknown> | null>(null);
+  const [appointmentStart, setAppointmentStart] = useState<string | null>(null);
+  const [primaryProviderId, setPrimaryProviderId] = useState<number | null>(null);
+  const [primaryProviderName, setPrimaryProviderName] = useState<string | null>(null);
+  const [showPromptOverrides, setShowPromptOverrides] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showEuthanasia, setShowEuthanasia] = useState(false);
-  const [completing, setCompleting] = useState(false);
+  const [planToast, setPlanToast] = useState<string | null>(null);
+  const planToastTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (planToastTimerRef.current != null) window.clearTimeout(planToastTimerRef.current);
+    };
+  }, []);
 
   const [subjective, setSubjective] = useState('');
   const [vitals, setVitals] = useState<Vitals>(vitalsFromValue(null));
@@ -139,10 +243,11 @@ export default function SoapEncounterPage() {
   const [objectiveNotes, setObjectiveNotes] = useState('');
   const [reasoning, setReasoning] = useState('');
   const [planNotes, setPlanNotes] = useState('');
+  const planNotesRef = useRef(planNotes);
+  planNotesRef.current = planNotes;
   const [linkedProblemIds, setLinkedProblemIds] = useState<string[]>([]);
-  const [visitCompleted, setVisitCompleted] = useState(false);
   const [activeTab, setActiveTab] = useState<SoapTabId>('subjective');
-  const [entryMode, setEntryMode] = useState<'manual' | 'scribe'>('manual');
+  const [entryMode, setEntryMode] = useState<'manual' | 'scribe'>('scribe');
   const [emailDraft, setEmailDraft] = useState<{
     subject: string;
     body: string;
@@ -150,12 +255,60 @@ export default function SoapEncounterPage() {
   const emailDraftRef = useRef(emailDraft);
   emailDraftRef.current = emailDraft;
   const [scribePlanItems, setScribePlanItems] = useState<SuggestedPlanItem[]>([]);
+  /** Parked by a multi-pet Process on another pet's tab — shown when this chart opens. */
+  const [deferredScribePlanItems, setDeferredScribePlanItems] = useState<SuggestedPlanItem[]>([]);
+  /** Opens the bottom addendum composer (also triggered from the header). */
+  const [writingAddendum, setWritingAddendum] = useState(false);
   const [roster, setRoster] = useState<HouseholdRosterEntry[]>([]);
   const [householdRefreshTick, setHouseholdRefreshTick] = useState(0);
+  /** Room Loader–originated order ids — Accept goes to Checkout only, not the left Plan list. */
+  const [roomLoaderOrderIds, setRoomLoaderOrderIds] = useState<ReadonlySet<string>>(
+    () => new Set()
+  );
+
+  const rememberRoomLoaderOrderIds = useCallback((ids: string[]) => {
+    if (ids.length === 0) return;
+    setRoomLoaderOrderIds((prev) => {
+      let changed = false;
+      const next = new Set(prev);
+      for (const id of ids) {
+        if (!next.has(id)) {
+          next.add(id);
+          changed = true;
+        }
+      }
+      if (!changed) return prev;
+      const encounterId = encounterRef.current?.id;
+      if (encounterId) {
+        try {
+          sessionStorage.setItem(
+            `soap-room-loader-order-ids:${encounterId}`,
+            JSON.stringify([...next])
+          );
+        } catch {
+          /* ignore quota / private mode */
+        }
+      }
+      return next;
+    });
+  }, []);
 
   const locked = encounter?.status === 'completed';
   const mode: SoapEncounterMode = encounter?.mode ?? 'comprehensive';
   const scribeEnabled = String(import.meta.env.VITE_ENABLE_SCRIBE ?? '').toLowerCase() === 'true';
+
+  // Keep pet tab order stable when switching charts (name, then id) — don't float "current" first.
+  const petTabs = useMemo(
+    () =>
+      [...roster].sort((a, b) => {
+        const byName = a.patientName.localeCompare(b.patientName, undefined, {
+          sensitivity: 'base',
+        });
+        if (byName !== 0) return byName;
+        return a.patientId - b.patientId;
+      }),
+    [roster]
+  );
 
   const refreshInvoice = useCallback(async () => {
     try {
@@ -210,62 +363,87 @@ export default function SoapEncounterPage() {
       // loaded encounter below.
       setEmailDraft({ subject: '', body: '' });
       setScribePlanItems([]);
-      setVisitCompleted(false);
+      setDeferredScribePlanItems([]);
+      setWritingAddendum(false);
+      setPrimaryProviderId(null);
+      setPrimaryProviderName(null);
+      setPatientProfile(null);
+      setAppointmentStart(null);
+      setShowPromptOverrides(false);
       setShowEuthanasia(false);
+      setRoomLoaderOrderIds(new Set());
       try {
-        const existing = await listEncounters({ appointmentId, patientId });
-        let enc = existing[0] ?? null;
-        if (!enc) {
-          enc = await createEncounter({
-            appointmentId,
-            patientId,
-            clientId: clientIdParam ? Number(clientIdParam) : undefined,
-          });
-        }
+        // Get-or-create: also backfills Room Loader proposed orders on an existing draft
+        // that predates the import (client-accepted estimate, with codes and prices).
+        let enc = await createEncounter({
+          appointmentId,
+          patientId,
+          clientId: clientIdParam ? Number(clientIdParam) : undefined,
+        });
         if (canceled) return;
+
+        // Multi-pet scribe may have parked plan-item suggestions for this chart — hold them
+        // separately so ScribePanel's onPlanItemsChange([]) doesn't wipe them on mount.
+        setDeferredScribePlanItems(takeDeferredPlanItems(enc.id));
 
         let subjectiveHistory =
           typeof enc.subjective?.history === 'string' ? enc.subjective.history : '';
 
-        // Prefill / polish Room Loader intake into a short Subjective narrative (auto, no button).
-        try {
-          let intakeSource = '';
-          if (!subjectiveHistory.trim()) {
-            const roomLoader = await findSubmittedRoomLoaderForAppointment(appointmentId);
-            const response = roomLoader?.responseFromClient;
-            if (response) {
-              intakeSource = buildSubjectiveTextFromRoomLoaderResponse(response, patientId, {
-                appointmentReason: appointmentReasonFromSentToClient(
-                  roomLoader.sentToClient,
-                  patientId
-                ),
-              });
+        // Subjective always opens with the pre-visit check-in block: the client's answers
+        // when they filled the form out, otherwise a line saying they didn't, so the doctor
+        // knows the difference between "no answers" and "not loaded". Self-healing — a chart
+        // whose history was written without the block (scribe applied first) gets it back on
+        // the next open, above what's already there.
+        if (!hasPreVisitAnswersBlock(subjectiveHistory)) {
+          let intake = '';
+          try {
+            if (looksLikeRawRoomLoaderSubjective(subjectiveHistory)) {
+              intake = subjectiveHistory;
+            } else {
+              const roomLoader = await findSubmittedRoomLoaderForAppointment(appointmentId);
+              const response = roomLoader?.responseFromClient;
+              if (response) {
+                intake = buildSubjectiveTextFromRoomLoaderResponse(response, patientId, {
+                  appointmentReason: appointmentReasonFromSentToClient(
+                    roomLoader.sentToClient,
+                    patientId
+                  ),
+                });
+              }
             }
-          } else if (looksLikeRawRoomLoaderSubjective(subjectiveHistory)) {
-            intakeSource = subjectiveHistory;
+          } catch (err) {
+            // Falls through to the "not filled out" line rather than leaving Subjective bare.
+            console.warn('Pre-exam check-in lookup failed', err);
           }
 
-          if (intakeSource.trim()) {
-            let historyToSave = intakeSource.trim();
+          let block = PRE_EXAM_CHECKIN_NOT_FILLED;
+          if (intake.trim()) {
+            let polished = intake.trim();
             if (scribeEnabled) {
               try {
-                const summary = await summarizeIntakeHistory(enc.id, intakeSource);
-                if (summary.trim()) historyToSave = summary.trim();
+                const summary = await summarizeIntakeHistory(enc.id, intake);
+                if (summary.trim()) polished = summary.trim();
               } catch {
                 /* keep raw Room Loader text if summarize fails */
               }
             }
-            historyToSave = withRoomLoaderSubjectivePrefix(historyToSave);
-              if (historyToSave !== subjectiveHistory.trim()) {
-              subjectiveHistory = historyToSave;
-              const emailFields = emailDraftFromSubjective(enc.subjective);
+            block = withRoomLoaderSubjectivePrefix(polished);
+          }
+
+          // The raw Q&A dump is the source of the block, not history to keep under it.
+          const existing = intake === subjectiveHistory ? '' : subjectiveHistory;
+          const next = prependCheckinBlock(block, stripCheckinPlaceholder(existing));
+          if (next !== subjectiveHistory.trim()) {
+            subjectiveHistory = next;
+            const emailFields = emailDraftFromSubjective(enc.subjective);
+            try {
               enc = await updateEncounter(enc.id, {
-                subjective: buildSubjectivePayload(historyToSave, emailFields),
+                subjective: buildSubjectivePayload(next, emailFields),
               });
+            } catch (err) {
+              console.warn('Failed to save the pre-exam check-in block', err);
             }
           }
-        } catch {
-          /* Room Loader preload is best-effort */
         }
 
         setEncounter(enc);
@@ -278,22 +456,60 @@ export default function SoapEncounterPage() {
         setPlanNotes(enc.planNotes ?? '');
         setLinkedProblemIds(enc.assessmentProblemIds ?? []);
 
-        const [probs] = await Promise.all([
+        const [probs, chronicMeds] = await Promise.all([
           listProblems(patientId).catch(() => [] as PatientProblem[]),
+          listPatientPrescriptions(patientId, { activeChronicOnly: true }).catch(
+            () => [] as PatientPrescription[]
+          ),
           (async () => {
             try {
               const profile = await fetchPatientProfileForRow({ id: String(patientId) });
               if (!canceled) {
-                const name = (profile as { name?: string } | null)?.name ?? `Patient #${patientId}`;
+                const patient =
+                  profile && typeof profile === 'object'
+                    ? (profile as Record<string, unknown>)
+                    : null;
+                const name = patientField(patient, 'name') ?? `Patient #${patientId}`;
                 setPatientName(name);
+                setPatientProfile(patient);
               }
             } catch {
-              if (!canceled) setPatientName(`Patient #${patientId}`);
+              if (!canceled) {
+                setPatientName(`Patient #${patientId}`);
+                setPatientProfile(null);
+              }
+            }
+          })(),
+          (async () => {
+            try {
+              const appt = await fetchAppointmentById(appointmentId, {
+                practiceId: VISIT_WORKFLOW_PRACTICE_ID,
+              });
+              if (canceled) return;
+              setAppointmentStart(
+                typeof appt?.appointmentStart === 'string' ? appt.appointmentStart : null
+              );
+              const provider = appt?.primaryProvider;
+              if (provider?.id != null) {
+                setPrimaryProviderId(Number(provider.id));
+                const full = [provider.firstName, provider.lastName]
+                  .map((p) => (typeof p === 'string' ? p.trim() : ''))
+                  .filter(Boolean)
+                  .join(' ');
+                if (!full) {
+                  setPrimaryProviderName(`Provider #${provider.id}`);
+                } else {
+                  setPrimaryProviderName(/^dr\.?\b/i.test(full) ? full : `Dr. ${full}`);
+                }
+              }
+            } catch {
+              /* provider label is optional for the Prompt link */
             }
           })(),
         ]);
         if (canceled) return;
         setProblems(probs);
+        setChronicMedications(chronicMeds);
 
         const [ords] = await Promise.all([
           listOrders(enc.id).catch(() => [] as EncounterOrder[]),
@@ -301,6 +517,22 @@ export default function SoapEncounterPage() {
         ]);
         if (canceled) return;
         setOrders(ords);
+        const fromPending = ords
+          .filter((o) => o.state === 'proposed' || o.state === 'declined')
+          .map((o) => o.id);
+        let fromStore: string[] = [];
+        try {
+          const raw = sessionStorage.getItem(`soap-room-loader-order-ids:${enc.id}`);
+          if (raw) {
+            const parsed = JSON.parse(raw) as unknown;
+            if (Array.isArray(parsed)) {
+              fromStore = parsed.filter((x): x is string => typeof x === 'string');
+            }
+          }
+        } catch {
+          /* ignore */
+        }
+        rememberRoomLoaderOrderIds([...fromPending, ...fromStore]);
       } catch (e) {
         if (!canceled) {
           setError(e instanceof Error ? e.message : 'Failed to load the encounter');
@@ -315,17 +547,21 @@ export default function SoapEncounterPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appointmentId, patientId]);
 
+  // Reads the encounter through a ref so saving doesn't change this function's identity. The
+  // scribe auto-apply effects take the handlers built on `save` as dependencies, so a new `save`
+  // after every PATCH would re-fire them against their own writes.
   const save = useCallback(
     async (patch: Parameters<typeof updateEncounter>[1]) => {
-      if (!encounter || locked) return;
+      const id = encounterRef.current?.id;
+      if (!id || locked) return;
       try {
-        const updated = await updateEncounter(encounter.id, patch);
+        const updated = await updateEncounter(id, patch);
         setEncounter(updated);
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Failed to save');
       }
     },
-    [encounter, locked]
+    [locked]
   );
 
   const effectiveEntryMode = scribeEnabled ? entryMode : 'manual';
@@ -343,21 +579,6 @@ export default function SoapEncounterPage() {
       void saveSubjective(text);
     },
     [saveSubjective]
-  );
-
-  const onNarrativeUpdate = useCallback(
-    (n: { emailSubject: string | null; emailBody: string | null }) => {
-      const next = {
-        subject: n.emailSubject ?? '',
-        body: n.emailBody ?? '',
-      };
-      setEmailDraft(next);
-      emailDraftRef.current = next;
-      void save({
-        subjective: buildSubjectivePayload(subjective, next),
-      });
-    },
-    [save, subjective]
   );
 
   const applyScribeVitals = useCallback(
@@ -406,6 +627,77 @@ export default function SoapEncounterPage() {
     [save]
   );
 
+  const appendBulletToSoapSection = useCallback(
+    (section: SoapNarrativeSection, text: string) => {
+      const trimmed = text.trim();
+      if (!trimmed) return;
+      const bullet = trimmed.startsWith('-') ? trimmed : `- ${trimmed}`;
+      const append = (existing: string) => {
+        const cur = existing.trim();
+        return cur ? `${cur}\n${bullet}` : bullet;
+      };
+      if (section === 'subjective') {
+        const next = append(subjective);
+        setSubjective(next);
+        void saveSubjective(next);
+      } else if (section === 'objective') {
+        const next = append(objectiveNotes);
+        setObjectiveNotes(next);
+        void save({ objectiveNotes: next });
+      } else if (section === 'assessment') {
+        const next = append(reasoning);
+        setReasoning(next);
+        void save({ assessmentReasoning: next });
+      } else {
+        const next = append(planNotes);
+        setPlanNotes(next);
+        void save({ planNotes: next });
+      }
+    },
+    [subjective, objectiveNotes, reasoning, planNotes, save, saveSubjective]
+  );
+
+  const showPlanToast = useCallback((message: string) => {
+    setPlanToast(message);
+    if (planToastTimerRef.current != null) window.clearTimeout(planToastTimerRef.current);
+    planToastTimerRef.current = window.setTimeout(() => {
+      setPlanToast(null);
+      planToastTimerRef.current = null;
+    }, 2800);
+  }, []);
+
+  /**
+   * Inventory catalog picks also land under Treatment Plan/Medications in the Plan narrative
+   * so the charted plan stays in sync with checkout — whether the doctor used Plan search or
+   * "Plan items for checkout". Vaccines get "Vx administered: … SQ"; meds get "Rx'ed …".
+   */
+  const appendInventoryToTreatmentPlan = useCallback(
+    (item: { name: string; isVaccine?: boolean }) => {
+      const next = appendTreatmentPlanMedicationBullet(planNotesRef.current, item.name, {
+        kind: item.isVaccine ? 'vaccine' : 'medication',
+      });
+      if (next === planNotesRef.current) return;
+      planNotesRef.current = next;
+      setPlanNotes(next);
+      void save({ planNotes: next });
+      const short = item.name.trim().replace(/\s+/g, ' ');
+      showPlanToast(item.isVaccine ? `Added vaccine to the plan` : `Added ${short} to the plan`);
+    },
+    [save, showPlanToast]
+  );
+
+  const removeInventoryFromTreatmentPlan = useCallback(
+    (itemName: string) => {
+      const next = removeTreatmentPlanMedicationBullet(planNotesRef.current, itemName);
+      if (next === planNotesRef.current) return;
+      planNotesRef.current = next;
+      setPlanNotes(next);
+      void save({ planNotes: next });
+    },
+    [save]
+  );
+
+  /** Follow-up choice recorded for this visit, from whichever surface asked. */
   const dispositionValue = useMemo<ForwardBookingDisposition | null>(() => {
     const d = encounter?.forwardBookingDisposition;
     if (d && typeof d === 'object' && typeof (d as { mode?: unknown }).mode === 'string') {
@@ -414,20 +706,15 @@ export default function SoapEncounterPage() {
     return null;
   }, [encounter?.forwardBookingDisposition]);
 
-  const gateSatisfied = Boolean(dispositionValue?.mode);
+  const clientQuery = clientIdParam ? `?clientId=${encodeURIComponent(clientIdParam)}` : '';
+  const soapPath = `/schedule/soap/${appointmentId}/${patientId}${clientQuery}`;
 
-  const onCompleteEncounter = async () => {
-    if (!encounter) return;
-    setCompleting(true);
-    setError(null);
-    try {
-      const updated = await completeEncounter(encounter.id);
-      setEncounter(updated);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not complete the encounter');
-    } finally {
-      setCompleting(false);
-    }
+  /**
+   * Hand off to the wrap-up, which owns forward booking, the client recap, and
+   * locking the record for every pet on the visit.
+   */
+  const goToWrapUp = () => {
+    navigate(`/schedule/soap/${appointmentId}/${patientId}/wrap-up${clientQuery}`);
   };
 
   const toggleProblemLink = (problemId: string, linked: boolean) => {
@@ -445,9 +732,42 @@ export default function SoapEncounterPage() {
     toggleProblemLink(problem.id, true);
   };
 
+  const onScribeProblemUpdated = (problem: PatientProblem) => {
+    setProblems((prev) => prev.map((p) => (p.id === problem.id ? problem : p)));
+  };
+
+  const onChronicMedicationUpdated = (rx: PatientPrescription) => {
+    setChronicMedications((prev) =>
+      rx.discontinuedAt
+        ? prev.filter((m) => m.id !== rx.id)
+        : prev.map((m) => (m.id === rx.id ? rx : m))
+    );
+  };
+
+  const onChronicMedicationCreated = (rx: PatientPrescription) => {
+    setChronicMedications((prev) => [rx, ...prev.filter((m) => m.id !== rx.id)]);
+  };
+
+  const refreshChronicMedications = useCallback(() => {
+    void listPatientPrescriptions(patientId, { activeChronicOnly: true })
+      .then(setChronicMedications)
+      .catch(() => undefined);
+  }, [patientId]);
+
   const onScribeOrderCreated = (order: EncounterOrder) => {
     setOrders((prev) => [...prev, order]);
   };
+
+  const signalment = useMemo(() => {
+    const sex = patientProfile ? patientSexDisplayFromRecord(patientProfile) : null;
+    const age = patientAge(patientProfile, appointmentStart);
+    const breed = patientBreed(patientProfile);
+    const visitWeight = formatVitalWeight(vitals);
+    const profileWeight = patientField(patientProfile, 'weight', 'weightLbs');
+    const weight =
+      visitWeight ?? (profileWeight ? `${profileWeight} lb` : null);
+    return [age, sex, breed, weight].filter((part): part is string => Boolean(part));
+  }, [appointmentStart, patientProfile, vitals]);
 
   if (loading) {
     return <div className="soap-page soap-loading">Loading encounter…</div>;
@@ -458,26 +778,53 @@ export default function SoapEncounterPage() {
 
   return (
     <div className="soap-page">
+      {planToast && (
+        <div className="soap-plan-toast" role="status" aria-live="polite">
+          {planToast}
+        </div>
+      )}
       <header className="soap-header">
         <div className="soap-header-main">
           <Stethoscope size={20} />
-          <div>
-            <h1>{patientName || `Patient #${patientId}`}</h1>
+          <div className="soap-header-patient">
+            <h1>
+              <Link
+                className="soap-header-patient-link"
+                to={`/schedule/patients?patientId=${encodeURIComponent(String(patientId))}`}
+                title="Open patient medical record"
+              >
+                {patientName || `Patient #${patientId}`}
+              </Link>
+            </h1>
+            {signalment.length > 0 && (
+              <span className="soap-header-signalment">{signalment.join(' · ')}</span>
+            )}
+            {patientField(patientProfile, 'microchip') && (
+              <span className="soap-header-signalment">
+                Microchip {patientField(patientProfile, 'microchip')}
+              </span>
+            )}
             <span className="soap-header-sub">
-              Visit #{appointmentId} · {mode === 'quick' ? 'Quick' : 'Comprehensive'} SOAP
+              Exam: {examDayLabel(appointmentStart)} · Visit #{appointmentId} ·{' '}
+              {mode === 'quick' ? 'Quick' : 'Comprehensive'} SOAP
             </span>
           </div>
         </div>
         <div className="soap-header-actions">
+          {scribeEnabled && primaryProviderId != null && (
+            <button
+              type="button"
+              className="soap-provider-prompt-btn"
+              onClick={() => setShowPromptOverrides(true)}
+              title={`Edit provider-wide AI scribe instructions for ${
+                primaryProviderName ?? `Provider #${primaryProviderId}`
+              }`}
+            >
+              <SlidersHorizontal size={13} /> Scribe prompt
+            </button>
+          )}
           {!locked && scribeEnabled && (
             <div className="soap-mode-switch">
-              <button
-                type="button"
-                className={effectiveEntryMode === 'manual' ? 'active' : ''}
-                onClick={() => setEntryMode('manual')}
-              >
-                Manual
-              </button>
               <button
                 type="button"
                 className={effectiveEntryMode === 'scribe' ? 'active' : ''}
@@ -485,25 +832,39 @@ export default function SoapEncounterPage() {
               >
                 AI Scribe
               </button>
+              <button
+                type="button"
+                className={effectiveEntryMode === 'manual' ? 'active' : ''}
+                onClick={() => setEntryMode('manual')}
+              >
+                Manual
+              </button>
             </div>
           )}
           {locked ? (
-            <span className="soap-locked-badge">
-              <Lock size={14} /> Completed
-            </span>
+            <>
+              <span className="soap-locked-badge" title="Signed and locked — no further edits">
+                <Lock size={14} /> SOAP signed
+              </span>
+              <button
+                type="button"
+                className="soap-btn"
+                title="Append a dated note without unlocking the signed SOAP"
+                onClick={() => setWritingAddendum(true)}
+              >
+                <FilePlus2 size={15} /> Write addendum
+              </button>
+            </>
           ) : (
+            /* Signing happens in the wrap-up, where forward booking and the client
+               recap are settled for the whole household rather than this chart alone. */
             <button
               type="button"
               className="soap-btn primary"
-              disabled={!gateSatisfied || completing}
-              title={
-                gateSatisfied
-                  ? 'Lock the medical record'
-                  : 'Select a forward-booking disposition first'
-              }
-              onClick={onCompleteEncounter}
+              title="Review the charts, set follow-up, and send the client recap"
+              onClick={goToWrapUp}
             >
-              <CheckCircle2 size={15} /> {completing ? 'Completing…' : 'Mark Completed'}
+              <ArrowRight size={15} /> Wrap up visit
             </button>
           )}
         </div>
@@ -511,9 +872,9 @@ export default function SoapEncounterPage() {
 
       {error && <div className="soap-error soap-error-banner">{error}</div>}
 
-      {roster.length > 1 && (
+      {petTabs.length > 1 && (
         <div className="soap-pet-tabs" role="tablist" aria-label="Pets at this visit">
-          {roster.map((r) => (
+          {petTabs.map((r) => (
             <button
               key={r.patientId}
               type="button"
@@ -527,6 +888,19 @@ export default function SoapEncounterPage() {
           ))}
         </div>
       )}
+
+      <SoapPatientChronicSummary
+        patientId={patientId}
+        practiceId={VISIT_WORKFLOW_PRACTICE_ID}
+        createdInEncounterId={encounter?.id}
+        problems={problems}
+        chronicMedications={chronicMedications}
+        disabled={locked}
+        onProblemCreated={onScribeProblemCreated}
+        onProblemUpdated={onScribeProblemUpdated}
+        onMedicationCreated={onChronicMedicationCreated}
+        onMedicationUpdated={onChronicMedicationUpdated}
+      />
 
       {effectiveEntryMode === 'scribe' && encounter && (
         <ScribePanel
@@ -555,9 +929,16 @@ export default function SoapEncounterPage() {
           onApplyPlanNotes={applyScribePlanNotes}
           onProblemCreated={onScribeProblemCreated}
           onOrderCreated={onScribeOrderCreated}
-          onNarrativeUpdate={onNarrativeUpdate}
           onPlanItemsChange={setScribePlanItems}
           onHouseholdOrdersChanged={() => setHouseholdRefreshTick((t) => t + 1)}
+        />
+      )}
+
+      {showPromptOverrides && primaryProviderId != null && (
+        <ScribePromptOverridesModal
+          providerId={primaryProviderId}
+          providerName={primaryProviderName?.trim() || `Provider #${primaryProviderId}`}
+          onClose={() => setShowPromptOverrides(false)}
         />
       )}
 
@@ -565,12 +946,6 @@ export default function SoapEncounterPage() {
         <main className="soap-main">
           {effectiveEntryMode === 'scribe' ? (
             <ScribeDocumentView
-              patientName={patientName || `Patient #${patientId}`}
-              visitDate={
-                encounter?.created
-                  ? new Date(encounter.created).toLocaleDateString()
-                  : new Date().toLocaleDateString()
-              }
               disabled={locked}
               subjective={subjective}
               onSubjectiveChange={setSubjective}
@@ -590,15 +965,28 @@ export default function SoapEncounterPage() {
                     <ScribeSuggestedPlanItems
                       key={`plan-items-${encounter.id}`}
                       encounterId={encounter.id}
-                      suggestions={scribePlanItems}
+                      suggestions={[...deferredScribePlanItems, ...scribePlanItems]}
                       planNotes={planNotes}
                       orders={orders}
                       disabled={locked}
                       patientId={patientId}
                       clientId={clientIdParam ? Number(clientIdParam) : undefined}
                       practiceId={VISIT_WORKFLOW_PRACTICE_ID}
-                      onOrderAdded={onScribeOrderCreated}
+                      onOrderAdded={(order, meta) => {
+                        onScribeOrderCreated(order);
+                        if (
+                          order.catalogItemType === 'inventory' &&
+                          !meta?.skipPlanNarrative &&
+                          !/sharps/i.test(order.name)
+                        ) {
+                          appendInventoryToTreatmentPlan({
+                            name: order.name,
+                            isVaccine: meta?.isVaccine,
+                          });
+                        }
+                      }}
                       onInvoiceShouldRefresh={() => void refreshInvoice()}
+                      onAppendToSoapSection={appendBulletToSoapSection}
                     />
                     <PlanOrdersSection
                       key={`plan-orders-${encounter.id}`}
@@ -608,25 +996,30 @@ export default function SoapEncounterPage() {
                       patientId={patientId}
                       clientId={clientIdParam ? Number(clientIdParam) : undefined}
                       practiceId={VISIT_WORKFLOW_PRACTICE_ID}
+                      excludeOrderIds={roomLoaderOrderIds}
                       onChange={setOrders}
                       onInvoiceShouldRefresh={() => void refreshInvoice()}
+                      onInventoryItemAdded={appendInventoryToTreatmentPlan}
+                      onInventoryItemRemoved={removeInventoryFromTreatmentPlan}
+                    />
+                    <VisitDoseAndRxSection
+                      key={`dose-rx-${encounter.id}`}
+                      encounterId={encounter.id}
+                      orders={orders}
+                      disabled={locked}
+                      patientId={patientId}
+                      clientId={clientIdParam ? Number(clientIdParam) : undefined}
+                      practiceId={VISIT_WORKFLOW_PRACTICE_ID}
+                      providerId={primaryProviderId}
+                      onOrderUpdated={(updated) =>
+                        setOrders((prev) => prev.map((o) => (o.id === updated.id ? updated : o)))
+                      }
+                      onInvoiceShouldRefresh={() => void refreshInvoice()}
+                      onChronicMedicationsMaybeChanged={refreshChronicMedications}
                     />
                   </>
                 )
               }
-              emailSubject={emailDraft.subject}
-              emailBody={emailDraft.body}
-              onEmailSubjectChange={(text) => {
-                const next = { ...emailDraftRef.current, subject: text };
-                emailDraftRef.current = next;
-                setEmailDraft(next);
-              }}
-              onEmailBodyChange={(text) => {
-                const next = { ...emailDraftRef.current, body: text };
-                emailDraftRef.current = next;
-                setEmailDraft(next);
-              }}
-              onEmailBlur={() => void saveSubjective(subjective)}
             />
           ) : (
             <>
@@ -637,9 +1030,7 @@ export default function SoapEncounterPage() {
                     type="button"
                     role="tab"
                     aria-selected={activeTab === id}
-                    className={`soap-tab${activeTab === id ? ' active' : ''}${
-                      id === 'followup' && !gateSatisfied && !locked ? ' needs-attention' : ''
-                    }`}
+                    className={`soap-tab${activeTab === id ? ' active' : ''}`}
                     onClick={() => setActiveTab(id)}
                   >
                     <Icon size={15} aria-hidden />
@@ -656,7 +1047,7 @@ export default function SoapEncounterPage() {
                       <ClipboardList size={16} /> Subjective
                     </h2>
                     <p className="soap-section-hint">
-                      Pre-visit check-in is summarized automatically. Confirm or edit — don't
+                      Pre-visit check-in is summarized automatically. Confirm or edit — don&apos;t
                       re-key what the client already provided.
                     </p>
                     <textarea
@@ -677,16 +1068,114 @@ export default function SoapEncounterPage() {
                       <Activity size={16} /> Objective
                     </h2>
                     <div className="soap-subhead">Vitals (TPR, weight, BCS /9, FAS /5)</div>
+                    <div
+                      className={
+                        isWeightAddressed(vitals)
+                          ? 'soap-weight'
+                          : 'soap-weight soap-weight--required'
+                      }
+                    >
+                      <div className="soap-weight__row">
+                        <label className="soap-vital soap-weight__value">
+                          <span>
+                            Weight <span className="soap-weight__req" aria-hidden>*</span>
+                          </span>
+                          <input
+                            className="soap-input"
+                            inputMode="decimal"
+                            placeholder="e.g. 12.4"
+                            value={vitals.weightNotTaken ? '' : vitals.weight}
+                            disabled={locked || vitals.weightNotTaken}
+                            onChange={(e) => {
+                              const weight = e.target.value;
+                              setVitals((v) => ({
+                                ...v,
+                                weight,
+                                weightNotTaken: false,
+                              }));
+                            }}
+                            onBlur={(e) => {
+                              if (vitals.weightNotTaken) return;
+                              const weight = e.currentTarget.value;
+                              setVitals((v) => {
+                                const next = { ...v, weight, weightNotTaken: false as const };
+                                void save({ objectiveVitals: { ...next } });
+                                return next;
+                              });
+                            }}
+                          />
+                        </label>
+                        <fieldset className="soap-weight__units" disabled={locked || vitals.weightNotTaken}>
+                          <legend className="soap-sr-only">Weight unit</legend>
+                          {(
+                            [
+                              ['lb', 'Lb'],
+                              ['kg', 'kg'],
+                            ] as const
+                          ).map(([unit, label]) => (
+                            <label
+                              key={unit}
+                              className={
+                                vitals.weightUnit === unit && !vitals.weightNotTaken
+                                  ? 'soap-weight__unit is-selected'
+                                  : 'soap-weight__unit'
+                              }
+                            >
+                              <input
+                                type="radio"
+                                name="soap-weight-unit"
+                                value={unit}
+                                checked={vitals.weightUnit === unit && !vitals.weightNotTaken}
+                                disabled={locked || vitals.weightNotTaken}
+                                onChange={() => {
+                                  const next = {
+                                    ...vitals,
+                                    weightUnit: unit,
+                                    weightNotTaken: false,
+                                  };
+                                  setVitals(next);
+                                  void save({ objectiveVitals: { ...next } });
+                                }}
+                              />
+                              {label}
+                            </label>
+                          ))}
+                        </fieldset>
+                      </div>
+                      <label className="soap-weight__none">
+                        <input
+                          type="checkbox"
+                          checked={vitals.weightNotTaken}
+                          disabled={locked}
+                          onChange={(e) => {
+                            const weightNotTaken = e.target.checked;
+                            const next: Vitals = {
+                              ...vitals,
+                              weightNotTaken,
+                              weight: weightNotTaken ? '' : vitals.weight,
+                            };
+                            setVitals(next);
+                            void save({ objectiveVitals: { ...next } });
+                          }}
+                        />
+                        No weight taken
+                      </label>
+                      {!isWeightAddressed(vitals) && !locked && (
+                        <p className="soap-weight__hint">
+                          Enter a weight and choose Lb or kg, or select &ldquo;No weight taken.&rdquo;
+                          Required before signing.
+                        </p>
+                      )}
+                    </div>
                     <div className="soap-vitals">
                       {(
                         [
                           ['tempF', 'Temp °F'],
                           ['hr', 'HR (bpm)'],
                           ['rr', 'RR (rpm)'],
-                          ['weight', 'Weight (lb)'],
                           ['bcs', 'BCS /9'],
                           ['painScore', 'FAS /5'],
-                        ] as [keyof Vitals, string][]
+                        ] as const
                       ).map(([key, label]) => (
                         <label key={key} className="soap-vital">
                           <span>{label}</span>
@@ -784,8 +1273,28 @@ export default function SoapEncounterPage() {
                         patientId={patientId}
                         clientId={clientIdParam ? Number(clientIdParam) : undefined}
                         practiceId={VISIT_WORKFLOW_PRACTICE_ID}
+                        excludeOrderIds={roomLoaderOrderIds}
                         onChange={setOrders}
                         onInvoiceShouldRefresh={() => void refreshInvoice()}
+                        onInventoryItemAdded={appendInventoryToTreatmentPlan}
+                        onInventoryItemRemoved={removeInventoryFromTreatmentPlan}
+                      />
+                    )}
+                    {encounter && (
+                      <VisitDoseAndRxSection
+                        key={`dose-rx-manual-${encounter.id}`}
+                        encounterId={encounter.id}
+                        orders={orders}
+                        disabled={locked}
+                        patientId={patientId}
+                        clientId={clientIdParam ? Number(clientIdParam) : undefined}
+                        practiceId={VISIT_WORKFLOW_PRACTICE_ID}
+                        providerId={primaryProviderId}
+                        onOrderUpdated={(updated) =>
+                          setOrders((prev) => prev.map((o) => (o.id === updated.id ? updated : o)))
+                        }
+                        onInvoiceShouldRefresh={() => void refreshInvoice()}
+                        onChronicMedicationsMaybeChanged={refreshChronicMedications}
                       />
                     )}
 
@@ -799,75 +1308,38 @@ export default function SoapEncounterPage() {
                       onChange={(e) => setPlanNotes(e.target.value)}
                       onBlur={() => save({ planNotes })}
                     />
-
-                    <div className="soap-subhead">Email to client</div>
-                    <p className="soap-section-hint">
-                      Draft follow-up email (filled by AI Scribe when you process a visit). Edit
-                      freely — it saves with this encounter.
-                    </p>
-                    <label className="soap-email-label">
-                      Subject
-                      <input
-                        className="soap-input"
-                        type="text"
-                        placeholder="Follow-up from today's visit…"
-                        value={emailDraft.subject}
-                        disabled={locked}
-                        onChange={(e) => {
-                          const next = { ...emailDraftRef.current, subject: e.target.value };
-                          emailDraftRef.current = next;
-                          setEmailDraft(next);
-                        }}
-                        onBlur={() => void saveSubjective(subjective)}
-                      />
-                    </label>
-                    <textarea
-                      className="soap-textarea soap-textarea--email"
-                      rows={12}
-                      placeholder={`Hello,\n\nI wanted to provide a summary of our conversation today…`}
-                      value={emailDraft.body}
-                      disabled={locked}
-                      onChange={(e) => {
-                        const next = { ...emailDraftRef.current, body: e.target.value };
-                        emailDraftRef.current = next;
-                        setEmailDraft(next);
-                      }}
-                      onBlur={() => void saveSubjective(subjective)}
-                    />
-                  </section>
-                )}
-
-                {activeTab === 'followup' && (
-                  <section className="soap-section soap-gate">
-                    <h2>
-                      <CheckCircle2 size={16} /> Forward booking (required to complete)
-                    </h2>
-                    {encounter && (
-                      <ForwardBookingGate
-                        appointmentId={appointmentId}
-                        patientId={patientId}
-                        clientId={encounter.clientId}
-                        disabled={locked}
-                        value={dispositionValue}
-                        onSave={async (disposition, entryId) => {
-                          await save({
-                            forwardBookingDisposition: disposition as unknown as Record<
-                              string,
-                              unknown
-                            >,
-                            forwardBookingEntryId: entryId ?? undefined,
-                          });
-                        }}
-                      />
-                    )}
                   </section>
                 )}
               </div>
             </>
           )}
+
+          {locked && encounter && (
+            <SoapAddendaSection
+              key={`addenda-${encounter.id}`}
+              encounterId={encounter.id}
+              writing={writingAddendum}
+              onWritingChange={setWritingAddendum}
+              scrollIntoViewOnWrite
+            />
+          )}
         </main>
 
         <aside className="soap-aside">
+          {encounter && (
+            <ProposedOrdersPanel
+              key={`proposed-orders-${encounter.id}`}
+              encounterId={encounter.id}
+              orders={orders}
+              disabled={locked}
+              patientId={patientId}
+              clientId={clientIdParam ? Number(clientIdParam) : undefined}
+              practiceId={VISIT_WORKFLOW_PRACTICE_ID}
+              onChange={setOrders}
+              onInvoiceShouldRefresh={() => void refreshInvoice()}
+              onRoomLoaderOrderIds={rememberRoomLoaderOrderIds}
+            />
+          )}
           <HouseholdInvoiceSummary
             roster={roster}
             currentInvoice={invoice}
@@ -875,12 +1347,53 @@ export default function SoapEncounterPage() {
             onSwitchPet={switchToPet}
           />
           <VisitCheckoutPanel
-            appointmentId={appointmentId}
+            encounterId={encounter?.id}
             invoice={invoice}
-            visitCompleted={visitCompleted}
+            orders={orders}
+            disabled={locked}
             onInvoiceChange={setInvoice}
-            onVisitCompleted={() => setVisitCompleted(true)}
+            onOrdersChange={(next) => {
+              setOrders(next);
+              void refreshInvoice();
+            }}
             onOpenEuthanasiaPrepay={() => setShowEuthanasia(true)}
+            onOrderRemoved={(orderId) => {
+              const removed = orders.find((o) => o.id === orderId);
+              setOrders((prev) => prev.filter((o) => o.id !== orderId));
+              void refreshInvoice();
+              if (removed?.catalogItemType === 'inventory') {
+                removeInventoryFromTreatmentPlan(removed.name);
+              }
+            }}
+            followUpSlot={
+              encounter && (
+                <CheckoutFollowUpPrompt
+                  appointmentId={appointmentId}
+                  patientId={patientId}
+                  patientName={patientName}
+                  clientId={encounter.clientId}
+                  soapEncounterId={encounter.id}
+                  providerId={primaryProviderId}
+                  disposition={dispositionValue}
+                  forwardBookingEntryId={encounter.forwardBookingEntryId}
+                  disabled={locked}
+                  returnTo={soapPath}
+                  onSaved={(disposition) =>
+                    setEncounter((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            forwardBookingDisposition: disposition as unknown as Record<
+                              string,
+                              unknown
+                            >,
+                          }
+                        : prev
+                    )
+                  }
+                />
+              )
+            }
           />
         </aside>
       </div>

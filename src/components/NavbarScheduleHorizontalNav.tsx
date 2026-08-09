@@ -13,8 +13,7 @@ import TasksNavLabel from './TasksNavLabel';
 import { useTaskNavBadges } from '../hooks/useTaskNavBadges';
 import '../pages/ScheduleLayout.css';
 
-/** Hide Inventory tab until the module is ready for general staff. */
-const SHOW_NAV_INVENTORY = false;
+const SHOW_NAV_CATALOG = true;
 
 const SCHED_NAV_GAP_PX = 6;
 /** Reserve width for “More” summary (tab padding + label + chevron) */
@@ -26,7 +25,7 @@ type SchedNavItemKey =
   | 'patients'
   | 'scheduling'
   | 'visits'
-  | 'inventory'
+  | 'catalog'
   | 'tasks'
   | 'settings'
   | 'admin';
@@ -37,7 +36,7 @@ const MEASURE_LABEL: Record<SchedNavItemKey, string> = {
   patients: 'Patients',
   scheduling: 'Scheduling',
   visits: 'Visits',
-  inventory: 'Inventory',
+  catalog: 'Catalog',
   tasks: 'Tasks',
   settings: 'Settings',
   admin: 'Admin',
@@ -267,7 +266,7 @@ export default function NavbarScheduleHorizontalNav() {
     const keys: SchedNavItemKey[] = [];
     if (homeTab) keys.push('home');
     keys.push('clients', 'patients', 'scheduling', 'visits');
-    if (SHOW_NAV_INVENTORY) keys.push('inventory');
+    if (SHOW_NAV_CATALOG) keys.push('catalog');
     keys.push('tasks');
     if (showAdminTab) keys.push('settings', 'admin');
     return keys;
@@ -400,8 +399,11 @@ export default function NavbarScheduleHorizontalNav() {
         return location.pathname.startsWith('/schedule/clients');
       case 'patients':
         return location.pathname.startsWith('/schedule/patients');
-      case 'inventory':
-        return location.pathname.startsWith('/schedule/inventory');
+      case 'catalog':
+        return (
+          location.pathname.startsWith('/schedule/catalog') ||
+          location.pathname.startsWith('/schedule/inventory')
+        );
       case 'tasks':
         return location.pathname.startsWith('/schedule/tasks');
       case 'scheduling':
@@ -470,14 +472,14 @@ export default function NavbarScheduleHorizontalNav() {
             Visits
           </NavLink>
         );
-      case 'inventory':
+      case 'catalog':
         return (
           <NavLink
-            key="inventory"
-            to="/schedule/inventory"
+            key="catalog"
+            to="/schedule/catalog"
             className={({ isActive }) => `schedule-app__tab${isActive ? ' schedule-app__tab--active' : ''}`}
           >
-            Inventory
+            Catalog
           </NavLink>
         );
       case 'tasks':
@@ -635,11 +637,11 @@ export default function NavbarScheduleHorizontalNav() {
                         Patients
                       </NavLink>
                     );
-                  case 'inventory':
+                  case 'catalog':
                     return (
                       <NavLink
-                        key="more-inventory"
-                        to="/schedule/inventory"
+                        key="more-catalog"
+                        to="/schedule/catalog"
                         className={({ isActive }) =>
                           `schedule-app__settings-link${isActive ? ' schedule-app__settings-link--active' : ''}`
                         }
@@ -649,7 +651,7 @@ export default function NavbarScheduleHorizontalNav() {
                           closeMoreMenu();
                         }}
                       >
-                        Inventory
+                        Catalog
                       </NavLink>
                     );
                   case 'tasks':

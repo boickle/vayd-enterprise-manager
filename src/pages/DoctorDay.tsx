@@ -21,11 +21,12 @@ import { etaHouseholdArrivalWindowPayload, fetchEtas } from '../api/routing';
 import {
   buildEtaCandidateSlot,
   orderHouseholdsWithCandidateAtInsertion,
-  resolveRoutingEtaInsertionIndex,
+  routingEtaCandidateInsertionIndexInOrder,
 } from '../utils/routingEtaCandidateSlot';
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import { fetchAllAppointmentTypes } from '../api/appointmentSettings';
 import { householdGroupKey } from '../utils/doctorDayHouseholdGroup';
+import { formatDoctorDayApptAddress } from '../utils/doctorDayAddress';
 import {
   appointmentNotesFromDoctorDayRow,
   petAlertsFromDoctorDayRow,
@@ -139,24 +140,7 @@ function addressKeyForAppt(a: DoctorDayAppt): string | null {
   return free ? `free:${free}` : null;
 }
 function formatAddress(a: DoctorDayAppt) {
-  const address1 = str(a, 'address1');
-  const city = str(a, 'city');
-  const state = str(a, 'state');
-  const zip = str(a, 'zip');
-  const line = [address1, [city, state].filter(Boolean).join(', '), zip]
-    .filter(Boolean)
-    .join(', ')
-    .replace(/\s+,/g, ',');
-  if (line) return line;
-  const freeForm =
-    str(a as any, 'address') ?? str(a as any, 'addressStr') ?? str(a as any, 'fullAddress');
-  if (freeForm) return freeForm;
-  const lat = num(a as any, 'lat');
-  const lon = num(a as any, 'lon');
-  if (typeof lat === 'number' && typeof lon === 'number') {
-    return `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
-  }
-  return 'Address not available';
+  return formatDoctorDayApptAddress(a);
 }
 function keyFor(lat: number, lon: number, d = 6): string {
   const m = Math.pow(10, d);
@@ -720,18 +704,22 @@ export default function DoctorDay({
 
       if (households.length === 0) return;
 
-      // Visit order for ETA: when we have a selected routing candidate (virtualAppt), put existing
-      // households first (by firstApptIndex) and the candidate at insertionIndex so the backend
-      // gets the correct order (e.g. [existing1..4, candidate] for POST-LAST).
+      // Visit order for ETA: map slot-search insertionIndex across meetings/blocks so
+      // end-of-day candidates stay after existing morning client stops.
       const hasVirtual = virtualAppt && virtualAppt.date === date;
-      const insertionIndex = hasVirtual
-        ? resolveRoutingEtaInsertionIndex(virtualAppt.insertionIndex, households.length)
-        : 0;
       const keyToHouseholdIndex = new Map(households.map((h, i) => [h.key, i]));
 
       let ordered: { h: Household; viewIdx: number }[];
+      let mappedInsertionIndex = 0;
       if (hasVirtual) {
-        const inVisitOrder = orderHouseholdsWithCandidateAtInsertion(households, insertionIndex);
+        const inVisitOrder = orderHouseholdsWithCandidateAtInsertion(
+          households,
+          virtualAppt.insertionIndex
+        );
+        mappedInsertionIndex = routingEtaCandidateInsertionIndexInOrder(
+          inVisitOrder,
+          virtualAppt.insertionIndex
+        );
         ordered = inVisitOrder.map((h) => ({
           h,
           viewIdx: keyToHouseholdIndex.get(h.key) ?? 0,
@@ -789,18 +777,15 @@ export default function DoctorDay({
         hasVirtual && virtualAppt
           ? buildEtaCandidateSlot(
               {
-                insertionIndex: virtualAppt.insertionIndex,
+                insertionIndex: mappedInsertionIndex,
                 positionInDay: virtualAppt.positionInDay,
                 suggestedStartIso: virtualAppt.suggestedStartIso,
                 lat: virtualAppt.lat,
                 lon: virtualAppt.lon,
                 serviceMinutes: virtualAppt.serviceMinutes,
-                overrunSeconds: virtualAppt.overrunSeconds,
-                validationLastEtdSec: virtualAppt.validationLastEtdSec,
-                validationReturnSec: virtualAppt.validationReturnSec,
                 arrivalWindow: virtualAppt.arrivalWindow,
               },
-              { householdCount: households.length }
+              { householdCount: ordered.length }
             )
           : undefined;
 

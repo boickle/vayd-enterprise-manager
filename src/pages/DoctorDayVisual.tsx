@@ -21,6 +21,7 @@ import {
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import { fetchAllAppointmentTypes } from '../api/appointmentSettings';
 import { householdGroupKey } from '../utils/doctorDayHouseholdGroup';
+import { formatDoctorDayApptAddress } from '../utils/doctorDayAddress';
 import {
   buildAppointmentTypeCatalog,
   sumHouseholdPoints,
@@ -30,7 +31,7 @@ import { etaHouseholdArrivalWindowPayload, fetchEtas } from '../api/routing';
 import {
   buildEtaCandidateSlot,
   orderHouseholdsWithCandidateAtInsertion,
-  resolveRoutingEtaInsertionIndex,
+  routingEtaCandidateInsertionIndexInOrder,
 } from '../utils/routingEtaCandidateSlot';
 import { useAuth } from '../auth/useAuth';
 import { buildGoogleMapsLinksForDay, type Stop } from '../utils/maps';
@@ -287,21 +288,7 @@ function blockLabelMetaForDisplay(
 }
 
 function formatAddress(a: DoctorDayAppt) {
-  const address1 = str(a, 'address1');
-  const city = str(a, 'city');
-  const state = str(a, 'state');
-  const zip = str(a, 'zip');
-  const line = [address1, [city, state].filter(Boolean).join(', '), zip]
-    .filter(Boolean)
-    .join(', ')
-    .replace(/\s+,/g, ',');
-  return (
-    line ||
-    str(a as any, 'address') ||
-    str(a as any, 'addressStr') ||
-    str(a as any, 'fullAddress') ||
-    'Address not available'
-  );
+  return formatDoctorDayApptAddress(a);
 }
 
 function stripZipFromAddressLine(line: string): string {
@@ -1015,18 +1002,22 @@ export default function DoctorDayVisual({
 
       if (households.length === 0) return;
 
-      // Visit order for ETA: when we have a selected routing candidate (virtualAppt), put existing
-      // households first (by firstApptIndex) and the candidate at insertionIndex so the backend
-      // gets the correct order (e.g. [existing1..4, candidate] for POST-LAST).
+      // Visit order for ETA: map slot-search insertionIndex across meetings/blocks so
+      // end-of-day candidates stay after existing morning client stops.
       const hasVirtual = virtualAppt && virtualAppt.date === date;
-      const insertionIndex = hasVirtual
-        ? resolveRoutingEtaInsertionIndex(virtualAppt.insertionIndex, households.length)
-        : 0;
       const keyToHouseholdIndex = new Map(households.map((h, i) => [h.key, i]));
 
       let ordered: { h: Household; viewIdx: number }[];
+      let mappedInsertionIndex = 0;
       if (hasVirtual) {
-        const inVisitOrder = orderHouseholdsWithCandidateAtInsertion(households, insertionIndex);
+        const inVisitOrder = orderHouseholdsWithCandidateAtInsertion(
+          households,
+          virtualAppt.insertionIndex
+        );
+        mappedInsertionIndex = routingEtaCandidateInsertionIndexInOrder(
+          inVisitOrder,
+          virtualAppt.insertionIndex
+        );
         ordered = inVisitOrder.map((h) => ({
           h,
           viewIdx: keyToHouseholdIndex.get(h.key) ?? 0,
@@ -1072,18 +1063,15 @@ export default function DoctorDayVisual({
         hasVirtual && virtualAppt
           ? buildEtaCandidateSlot(
               {
-                insertionIndex: virtualAppt.insertionIndex,
+                insertionIndex: mappedInsertionIndex,
                 positionInDay: virtualAppt.positionInDay,
                 suggestedStartIso: virtualAppt.suggestedStartIso,
                 lat: virtualAppt.lat,
                 lon: virtualAppt.lon,
                 serviceMinutes: virtualAppt.serviceMinutes,
-                overrunSeconds: (virtualAppt as { overrunSeconds?: number }).overrunSeconds,
-                validationLastEtdSec: (virtualAppt as { validationLastEtdSec?: number }).validationLastEtdSec,
-                validationReturnSec: virtualAppt.validationReturnSec,
                 arrivalWindow: virtualAppt.arrivalWindow,
               },
-              { householdCount: households.length }
+              { householdCount: ordered.length }
             )
           : undefined;
 
@@ -2352,8 +2340,8 @@ export default function DoctorDayVisual({
 
       const backToDepotIsoFinal =
         backToDepotArrivalDisplayIso ??
-        (previewReturnIso && DateTime.fromISO(previewReturnIso).isValid ? previewReturnIso : null) ??
         backToDepotIso ??
+        (previewReturnIso && DateTime.fromISO(previewReturnIso).isValid ? previewReturnIso : null) ??
         null;
 
       return {
@@ -2458,8 +2446,8 @@ export default function DoctorDayVisual({
 
     const backToDepotIsoFinal =
       backToDepotArrivalDisplayIso ??
-      (previewReturnIso && DateTime.fromISO(previewReturnIso).isValid ? previewReturnIso : null) ??
       backToDepotIso ??
+      (previewReturnIso && DateTime.fromISO(previewReturnIso).isValid ? previewReturnIso : null) ??
       (shiftEndMs > 0 ? DateTime.fromMillis(shiftEndMs).toISO() : null);
 
     const scheduleSec =

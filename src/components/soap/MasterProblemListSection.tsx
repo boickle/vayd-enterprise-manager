@@ -5,6 +5,7 @@ import {
   deleteProblem,
   updateProblem,
   type PatientProblem,
+  type PatientProblemAcuity,
   type PatientProblemKind,
   type PatientProblemStatus,
 } from '../../api/visitWorkflow';
@@ -27,6 +28,12 @@ const KIND_LABEL: Record<PatientProblemKind, string> = {
 
 const STATUS_OPTIONS: PatientProblemStatus[] = ['open', 'active', 'resolved'];
 
+const ACUITY_OPTIONS: { value: '' | PatientProblemAcuity; label: string }[] = [
+  { value: '', label: 'Unclassified' },
+  { value: 'acute', label: 'Acute' },
+  { value: 'chronic', label: 'Chronic' },
+];
+
 /**
  * Master Problem List (spec §5.3). A presenting complaint or rule-out is a valid
  * entry on its own — no final diagnosis required. Active problems carry forward.
@@ -43,6 +50,9 @@ export default function MasterProblemListSection({
   const [label, setLabel] = useState('');
   const [kind, setKind] = useState<PatientProblemKind>('presenting_complaint');
   const [busy, setBusy] = useState(false);
+  /** In-flight wording edits, keyed by problem id. These labels print on the medical record,
+   * so they stay editable after the problem is on the list. */
+  const [labelDrafts, setLabelDrafts] = useState<Record<string, string>>({});
 
   const add = async () => {
     const trimmed = label.trim();
@@ -64,9 +74,32 @@ export default function MasterProblemListSection({
     }
   };
 
+  const replace = (updated: PatientProblem) =>
+    onChange(problems.map((x) => (x.id === updated.id ? updated : x)));
+
   const changeStatus = async (p: PatientProblem, status: PatientProblemStatus) => {
-    const updated = await updateProblem(p.id, { status });
-    onChange(problems.map((x) => (x.id === p.id ? updated : x)));
+    replace(await updateProblem(p.id, { status }));
+  };
+
+  const changeAcuity = async (p: PatientProblem, acuity: PatientProblemAcuity | null) => {
+    replace(await updateProblem(p.id, { acuity }));
+  };
+
+  const clearDraft = (id: string) =>
+    setLabelDrafts((prev) => {
+      if (!(id in prev)) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+
+  const commitLabel = async (p: PatientProblem) => {
+    const draft = labelDrafts[p.id];
+    if (draft === undefined) return;
+    const trimmed = draft.trim();
+    clearDraft(p.id);
+    if (!trimmed || trimmed === p.label) return;
+    replace(await updateProblem(p.id, { label: trimmed }));
   };
 
   const remove = async (p: PatientProblem) => {
@@ -121,14 +154,44 @@ export default function MasterProblemListSection({
                   {linked ? <Check size={14} /> : null}
                 </button>
                 <span className={`soap-tag kind-${p.kind}`}>{KIND_LABEL[p.kind]}</span>
-                <span className="soap-mpl-label">{p.label}</span>
+                {disabled ? (
+                  <span className="soap-mpl-label">{p.label}</span>
+                ) : (
+                  <input
+                    className="soap-mpl-label soap-mpl-label-input"
+                    aria-label="Problem wording"
+                    value={labelDrafts[p.id] ?? p.label}
+                    onChange={(e) =>
+                      setLabelDrafts((prev) => ({ ...prev, [p.id]: e.target.value }))
+                    }
+                    onBlur={() => void commitLabel(p)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') e.currentTarget.blur();
+                      if (e.key === 'Escape') clearDraft(p.id);
+                    }}
+                  />
+                )}
+                <select
+                  value={p.acuity ?? ''}
+                  disabled={disabled}
+                  className="soap-input soap-select soap-mpl-acuity"
+                  aria-label="Acute or chronic"
+                  title="Chronic problems pin to the top of the patient record"
+                  onChange={(e) =>
+                    void changeAcuity(p, (e.target.value || null) as PatientProblemAcuity | null)
+                  }
+                >
+                  {ACUITY_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
                 <select
                   value={p.status}
                   disabled={disabled}
                   className="soap-input soap-select soap-mpl-status"
-                  onChange={(e) =>
-                    changeStatus(p, e.target.value as PatientProblemStatus)
-                  }
+                  onChange={(e) => changeStatus(p, e.target.value as PatientProblemStatus)}
                 >
                   {STATUS_OPTIONS.map((s) => (
                     <option key={s} value={s}>

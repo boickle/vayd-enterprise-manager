@@ -1,5 +1,6 @@
 /** Build unified chart rows from GET /patients/:id/medical-record payload. */
 
+import type { PatientProblem, PostedVisitCharge } from '../api/visitWorkflow';
 import {
   htmlToPlainText,
   looksLikeHtmlFragment,
@@ -43,10 +44,13 @@ export type ChartRow = {
   /** Sanitized HTML body for communication rows when the source payload is HTML email. */
   detailHtml?: string;
   hasResult?: boolean;
+  /** Membership-covered visit charge — show a heart next to the description. */
+  isCovered?: boolean;
 };
 
 export type ChartRowSource =
   | 'complaint'
+  | 'problem'
   | 'diagnosis'
   | 'medication'
   | 'lab'
@@ -57,7 +61,8 @@ export type ChartRowSource =
   | 'monitoring'
   | 'communication'
   | 'reminder'
-  | 'vaccination';
+  | 'vaccination'
+  | 'visitCharge';
 
 export type MedicalRecordBundle = {
   labOrders?: unknown[];
@@ -118,19 +123,113 @@ function vaccinationLogSummary(o: Record<string, unknown>): string {
   );
 }
 
-export function buildChartRowsFromMedicalRecord(mr: MedicalRecordBundle | null | undefined): ChartRow[] {
-  if (!mr) return [];
+const PROBLEM_TYPE_LABEL: Record<string, string> = {
+  acute: 'Acute problem',
+  chronic: 'Chronic problem',
+};
+
+function visitChargeTypeLabel(c: PostedVisitCharge): string {
+  if (c.isVaccine) return 'Vaccination';
+  if (c.isMed) return 'Prescription';
+  if (c.kind === 'diagnostic') return 'Diagnostic';
+  if (c.kind === 'exam') return 'Exam';
+  return 'Treatment';
+}
+
+function visitChargeDetail(c: PostedVisitCharge): string {
+  const bits: string[] = [];
+  if (c.qty > 1) bits.push(`Qty ${c.qty}`);
+  if (c.isCovered) bits.push('Membership covered');
+  else if (c.unitPrice > 0) bits.push(`$${c.unitPrice.toFixed(2)}`);
+
+  if (c.isMed) {
+    if (c.prescriptionPending) {
+      bits.push('Prescription details pending');
+    } else if (c.prescription) {
+      if (c.prescription.acuity) {
+        bits.push(c.prescription.acuity === 'chronic' ? 'Chronic' : 'Acute');
+      }
+      if (c.prescription.strength) bits.push(`Strength ${c.prescription.strength}`);
+      if (c.prescription.instructions) bits.push(c.prescription.instructions);
+      if (c.prescription.refill != null) bits.push(`${c.prescription.refill} refills`);
+    }
+  }
+
+  if (c.isVaccine) {
+    if (c.vaccinationPending) {
+      bits.push('Dose details pending');
+    } else if (c.vaccination) {
+      if (c.vaccination.lotNumber) bits.push(`Lot ${c.vaccination.lotNumber}`);
+      if (c.vaccination.nextVaccinationDate) {
+        bits.push(`Next due ${new Date(c.vaccination.nextVaccinationDate).toLocaleDateString()}`);
+      }
+    }
+  }
+
+  return bits.join('\n');
+}
+
+function visitChargeChartRow(c: PostedVisitCharge): ChartRow {
+  return {
+    id: `visitCharge:${c.id}`,
+    source: 'visitCharge',
+    typeLabel: visitChargeTypeLabel(c),
+    description: c.name,
+    provider: '—',
+    serviceDateIso: c.postedToRecordAt,
+    sortTime: parseSortTime(c.postedToRecordAt),
+    detailText: visitChargeDetail(c),
+    isCovered: c.isCovered,
+    hasResult: !(c.prescriptionPending || c.vaccinationPending),
+  };
+}
+
+/**
+ * @param problems Master Problem List entries for this patient. Only those already published to
+ *   the record (`postedToRecordAt`) get a row, so a chart still being drafted leaves no trace.
+ * @param visitCharges Finalized Scout visit charges (Trip Fee, Solensia, Revolution, …).
+ */
+export function buildChartRowsFromMedicalRecord(
+  mr: MedicalRecordBundle | null | undefined,
+  problems?: PatientProblem[] | null,
+  visitCharges?: PostedVisitCharge[] | null
+): ChartRow[] {
+  if (!mr && !problems?.length && !visitCharges?.length) return [];
   const out: ChartRow[] = [];
+
+  for (const p of problems ?? []) {
+    if (!p.postedToRecordAt) continue;
+    const resolvedAt = p.status === 'resolved' ? p.resolvedAt : null;
+    out.push({
+      id: `problem:${p.id}`,
+      source: 'problem',
+      typeLabel: (p.acuity && PROBLEM_TYPE_LABEL[p.acuity]) ?? 'Problem',
+      description: p.label,
+      provider: '—',
+      serviceDateIso: p.postedToRecordAt,
+      sortTime: parseSortTime(p.postedToRecordAt),
+      detailText: [
+        resolvedAt && `Resolved ${new Date(resolvedAt).toLocaleDateString()}`,
+        p.status !== 'resolved' && `Status: ${p.status}`,
+        p.note,
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    });
+  }
+
+  for (const c of visitCharges ?? []) {
+    out.push(visitChargeChartRow(c));
+  }
+
+  if (!mr) return out.sort((a, b) => b.sortTime - a.sortTime);
 
   for (const log of mr.communicationLogs ?? []) {
     const o = asObj(log);
     if (!o) continue;
     const id = o.id != null ? String(o.id) : `cc-${out.length}`;
     const serviceDateIso =
-      pickStr(o.serviceDate) ??
-      pickStr(o.sentAt) ??
-      pickStr(o.createdAt) ??
-      pickStr(o.deliveredAt);
+      pickStr(o.serviceDate) ?? pickStr(o.sentAt) ?? pickStr(o.createdAt) ?? pickStr(o.deliveredAt);
     const summary = communicationLogSummary(o);
     const status = (pickStr(o.status) ?? pickStr(o.deliveryStatus) ?? '').toLowerCase();
     const detailBits = [
@@ -170,7 +269,8 @@ export function buildChartRowsFromMedicalRecord(mr: MedicalRecordBundle | null |
       pickStr(o.serviceDate) ??
       pickStr(o.createdAt);
     const title = pickStr(o.title) ?? pickStr(o.name) ?? pickStr(o.description) ?? 'Reminder';
-    const desc = pickStr(o.description) && pickStr(o.description) !== title ? pickStr(o.description) : null;
+    const desc =
+      pickStr(o.description) && pickStr(o.description) !== title ? pickStr(o.description) : null;
     out.push({
       id: `reminder:${id}`,
       source: 'reminder',
@@ -213,8 +313,7 @@ export function buildChartRowsFromMedicalRecord(mr: MedicalRecordBundle | null |
     const o = asObj(c);
     if (!o) continue;
     const id = o.id != null ? String(o.id) : `c-${out.length}`;
-    const serviceDateIso =
-      pickStr(o.serviceDate) ?? pickStr(o.createdAt) ?? pickStr(o.recordDate);
+    const serviceDateIso = pickStr(o.serviceDate) ?? pickStr(o.createdAt) ?? pickStr(o.recordDate);
     const name = pickStr(o.complaintName) ?? 'Complaint';
     const comments = pickStr(o.customComments);
     out.push({
@@ -244,7 +343,10 @@ export function buildChartRowsFromMedicalRecord(mr: MedicalRecordBundle | null |
       provider: employeeName(o.employee),
       serviceDateIso,
       sortTime: parseSortTime(serviceDateIso),
-      detailText: [comments && `Comments: ${comments}`, pickStr(o.pimsId) && `PIMS: ${pickStr(o.pimsId)}`]
+      detailText: [
+        comments && `Comments: ${comments}`,
+        pickStr(o.pimsId) && `PIMS: ${pickStr(o.pimsId)}`,
+      ]
         .filter(Boolean)
         .join('\n'),
     });
@@ -290,10 +392,13 @@ export function buildChartRowsFromMedicalRecord(mr: MedicalRecordBundle | null |
       serviceDateIso: rpt ?? submitted,
       sortTime: parseSortTime(rpt ?? submitted),
       detailText: result
-        ? [rComments && `Result: ${rComments}`, pickStr(result.externalData) && 'Raw data available']
+        ? [
+            rComments && `Result: ${rComments}`,
+            pickStr(result.externalData) && 'Raw data available',
+          ]
             .filter(Boolean)
             .join('\n')
-        : notes ?? '',
+        : (notes ?? ''),
       hasResult: Boolean(result),
     });
   }
@@ -365,7 +470,10 @@ export function buildChartRowsFromMedicalRecord(mr: MedicalRecordBundle | null |
     if (!o) continue;
     const id = o.id != null ? String(o.id) : `img-${out.length}`;
     const serviceDateIso =
-      pickStr(o.serviceDate) ?? pickStr(o.studyDate) ?? pickStr(o.createdAt) ?? pickStr(o.recordDate);
+      pickStr(o.serviceDate) ??
+      pickStr(o.studyDate) ??
+      pickStr(o.createdAt) ??
+      pickStr(o.recordDate);
     const acc = pickStr(o.accessionId) ?? pickStr(o.name) ?? 'Imaging';
     out.push({
       id: `imaging:${id}`,
@@ -413,8 +521,10 @@ export function buildChartRowsFromMedicalRecord(mr: MedicalRecordBundle | null |
       serviceDateIso,
       sortTime: parseSortTime(serviceDateIso),
       detailText: [
-        pickStr(o.anesthesiaStart) && `Anesthesia: ${pickStr(o.anesthesiaStart)} – ${pickStr(o.anesthesiaEnd) ?? ''}`,
-        pickStr(o.ivFluidType) && `Fluids: ${pickStr(o.ivFluidType)} ${pickStr(o.ivFluidRate) ?? ''}`,
+        pickStr(o.anesthesiaStart) &&
+          `Anesthesia: ${pickStr(o.anesthesiaStart)} – ${pickStr(o.anesthesiaEnd) ?? ''}`,
+        pickStr(o.ivFluidType) &&
+          `Fluids: ${pickStr(o.ivFluidType)} ${pickStr(o.ivFluidRate) ?? ''}`,
       ]
         .filter(Boolean)
         .join('\n'),
@@ -425,14 +535,20 @@ export function buildChartRowsFromMedicalRecord(mr: MedicalRecordBundle | null |
 }
 
 /** Group already-filtered rows by calendar day in the browser locale. */
-export function groupChartRowsByLocalDate(rows: ChartRow[]): { dateKey: string; rows: ChartRow[] }[] {
+export function groupChartRowsByLocalDate(
+  rows: ChartRow[]
+): { dateKey: string; rows: ChartRow[] }[] {
   const map = new Map<string, ChartRow[]>();
   for (const row of rows) {
     let key = 'Unknown date';
     if (row.serviceDateIso) {
       const d = new Date(row.serviceDateIso);
       if (!Number.isNaN(d.getTime())) {
-        key = d.toLocaleDateString(undefined, { year: 'numeric', month: 'numeric', day: 'numeric' });
+        key = d.toLocaleDateString(undefined, {
+          year: 'numeric',
+          month: 'numeric',
+          day: 'numeric',
+        });
       }
     }
     if (!map.has(key)) map.set(key, []);

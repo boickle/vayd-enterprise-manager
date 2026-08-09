@@ -18,6 +18,14 @@ import {
   upsertEmployeeWorkdayActual,
   type EmployeeWorkdayActual,
 } from '../api/employeeWorkdayActuals';
+import {
+  getEmployeeBranches,
+  listInventoryBranchLocations,
+  listPracticeBranches,
+  setEmployeeBranches,
+  type InventoryBranchLocation,
+  type PracticeBranch,
+} from '../api/branchInventory';
 import type { Appointment } from '../api/roomLoader';
 import {
   buildMyWeekDriveSegmentsFromLayout,
@@ -70,6 +78,7 @@ type Props = {
   onClose: () => void;
   date: string;
   employeeId: string;
+  practiceId: number;
   practiceTz: string;
   /** Cached drive-day from scheduler when available. */
   predictedDayData?: DayData | null;
@@ -923,6 +932,7 @@ function ReconcileColumnHeader({
   predictedDayStartIso,
   predictedDayEndIso,
   dateIso,
+  inventoryContext,
   saveAction,
 }: {
   title: string;
@@ -936,6 +946,15 @@ function ReconcileColumnHeader({
   predictedDayStartIso?: string | null;
   predictedDayEndIso?: string | null;
   dateIso: string;
+  inventoryContext?: {
+    branches: PracticeBranch[];
+    locations: InventoryBranchLocation[];
+    branchId: number | null;
+    locationId: number | null;
+    onBranchChange: (id: number | null) => void;
+    onLocationChange: (id: number | null) => void;
+    disabled?: boolean;
+  };
   saveAction?: {
     saving: boolean;
     onSave: () => void;
@@ -958,6 +977,56 @@ function ReconcileColumnHeader({
         predictedDayEndIso={predictedDayEndIso}
         dateIso={dateIso}
       />
+      {inventoryContext ? (
+        <div className="scheduler-reconcile-inventory-context">
+          <p className="scheduler-reconcile-inventory-hint">
+            Working from — checkout stock draws from here
+          </p>
+          <label className="scheduler-reconcile-inventory-field">
+            <span>Branch</span>
+            <select
+              value={inventoryContext.branchId ?? ''}
+              disabled={inventoryContext.disabled}
+              onChange={(e) => {
+                const v = e.target.value === '' ? null : Number(e.target.value);
+                inventoryContext.onBranchChange(
+                  v != null && Number.isFinite(v) ? v : null
+                );
+              }}
+            >
+              <option value="">Select branch…</option>
+              {inventoryContext.branches.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="scheduler-reconcile-inventory-field">
+            <span>Location</span>
+            <select
+              value={inventoryContext.locationId ?? ''}
+              disabled={
+                inventoryContext.disabled || inventoryContext.branchId == null
+              }
+              onChange={(e) => {
+                const v = e.target.value === '' ? null : Number(e.target.value);
+                inventoryContext.onLocationChange(
+                  v != null && Number.isFinite(v) ? v : null
+                );
+              }}
+            >
+              <option value="">Select location…</option>
+              {inventoryContext.locations.map((loc) => (
+                <option key={loc.id} value={loc.id}>
+                  {loc.name}
+                  {loc.isDefault ? ' (default)' : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      ) : null}
       {saveAction ? (
         <div className="scheduler-reconcile-column-save">
           {saveAction.saveError ? (
@@ -987,6 +1056,7 @@ export function SchedulerReconcileModal({
   onClose,
   date,
   employeeId,
+  practiceId,
   practiceTz,
   predictedDayData,
   appointments,
@@ -1004,6 +1074,10 @@ export function SchedulerReconcileModal({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
   const [employeeDayTimes, setEmployeeDayTimes] = useState<EmployeeDayTimes>({ start: '', end: '' });
+  const [branches, setBranches] = useState<PracticeBranch[]>([]);
+  const [locations, setLocations] = useState<InventoryBranchLocation[]>([]);
+  const [inventoryBranchId, setInventoryBranchId] = useState<number | null>(null);
+  const [inventoryLocationId, setInventoryLocationId] = useState<number | null>(null);
   const [contextMenu, setContextMenu] = useState<{
     appt: Appointment;
     x: number;
@@ -1030,17 +1104,65 @@ export function SchedulerReconcileModal({
     setLoading(true);
     setPredicted(predictedDayData ?? null);
     setWorkday(null);
+    setInventoryBranchId(null);
+    setInventoryLocationId(null);
 
     (async () => {
       try {
-        const [workdayRow, driveResult] = await Promise.all([
+        const empIdNum = Number(employeeId);
+        const [workdayRow, driveResult, branchList, empBranches] = await Promise.all([
           fetchEmployeeWorkdayActualByDate(employeeId, date),
           predictedDayData
             ? Promise.resolve(null)
             : fetchSchedulerDriveContextForDate(date, employeeId),
+          listPracticeBranches(practiceId),
+          Number.isFinite(empIdNum)
+            ? getEmployeeBranches(practiceId, empIdNum).catch(() => [])
+            : Promise.resolve([]),
         ]);
         if (cancelled) return;
         setWorkday(workdayRow);
+        setBranches(branchList.filter((b) => b.isActive !== false));
+
+        const primary =
+          empBranches.find((b) => b.isPrimary) ?? empBranches[0] ?? null;
+        const defaultBranch =
+          branchList.find((b) => b.isDefault && b.isActive !== false) ??
+          branchList.find((b) => b.isActive !== false) ??
+          null;
+
+        let seedBranchId: number | null =
+          workdayRow.inventoryBranchId != null
+            ? Number(workdayRow.inventoryBranchId)
+            : primary?.branchId ?? defaultBranch?.id ?? null;
+        let seedLocationId: number | null =
+          workdayRow.inventoryLocationId != null
+            ? Number(workdayRow.inventoryLocationId)
+            : primary?.defaultInventoryLocationId ?? null;
+
+        if (seedBranchId != null) {
+          try {
+            const locs = await listInventoryBranchLocations(practiceId, seedBranchId);
+            if (cancelled) return;
+            setLocations(locs.filter((l) => l.isActive !== false));
+            if (seedLocationId == null) {
+              const preferred =
+                locs.find((l) => l.isDefault) ??
+                locs.find((l) => l.code === 'main') ??
+                locs[0] ??
+                null;
+              seedLocationId = preferred?.id ?? null;
+            }
+          } catch {
+            if (!cancelled) setLocations([]);
+          }
+        } else {
+          setLocations([]);
+        }
+
+        setInventoryBranchId(seedBranchId);
+        setInventoryLocationId(seedLocationId);
+
         let predictedRow: DayData | null = null;
         if (predictedDayData) {
           predictedRow = predictedDayData;
@@ -1070,7 +1192,31 @@ export function SchedulerReconcileModal({
     return () => {
       cancelled = true;
     };
-  }, [open, date, employeeId, predictedDayData]);
+  }, [open, date, employeeId, practiceId, predictedDayData]);
+
+  const onInventoryBranchChange = (id: number | null) => {
+    setInventoryBranchId(id);
+    setInventoryLocationId(null);
+    if (id == null) {
+      setLocations([]);
+      return;
+    }
+    void listInventoryBranchLocations(practiceId, id)
+      .then((locs) => {
+        const active = locs.filter((l) => l.isActive !== false);
+        setLocations(active);
+        const preferred =
+          active.find((l) => l.isDefault) ??
+          active.find((l) => l.code === 'main') ??
+          active[0] ??
+          null;
+        setInventoryLocationId(preferred?.id ?? null);
+      })
+      .catch(() => {
+        setLocations([]);
+        setInventoryLocationId(null);
+      });
+  };
 
   const predictedTz = practiceTimeZoneOrDefault(predicted?.timezone ?? practiceTz);
 
@@ -1234,16 +1380,42 @@ export function SchedulerReconcileModal({
       setSaveError('Day end must be after day start.');
       return;
     }
+    if (inventoryBranchId == null || inventoryLocationId == null) {
+      setSaveError('Choose the branch and location you are working from today.');
+      return;
+    }
     setSavingWorkday(true);
     try {
       const updated = await upsertEmployeeWorkdayActual(employeeId, {
         date,
         workdayStartActual: startIso,
         workdayEndActual: endIso,
+        inventoryBranchId,
+        inventoryLocationId,
       });
       setWorkday(updated);
       onWorkdaySaved?.(updated);
-      setSaveSuccess('Day times saved.');
+
+      // Keep employee defaults in sync so future days seed from today's choice.
+      const empIdNum = Number(employeeId);
+      if (Number.isFinite(empIdNum)) {
+        try {
+          const existing = await getEmployeeBranches(practiceId, empIdNum);
+          const branchIds =
+            existing.length > 0
+              ? [...new Set([...existing.map((b) => b.branchId), inventoryBranchId])]
+              : [inventoryBranchId];
+          await setEmployeeBranches(practiceId, empIdNum, {
+            branchIds,
+            primaryBranchId: inventoryBranchId,
+            defaultInventoryLocationId: inventoryLocationId,
+          });
+        } catch {
+          // Day times still saved; defaults are best-effort.
+        }
+      }
+
+      setSaveSuccess('Day times and working location saved.');
     } catch (e: unknown) {
       const ax = e as { response?: { data?: { message?: string | string[] } }; message?: string };
       const m = ax?.response?.data?.message;
@@ -1322,6 +1494,15 @@ export function SchedulerReconcileModal({
                   predictedDayStartIso={plannedDayStartIso}
                   predictedDayEndIso={plannedDayEndIso}
                   dateIso={date}
+                  inventoryContext={{
+                    branches,
+                    locations,
+                    branchId: inventoryBranchId,
+                    locationId: inventoryLocationId,
+                    onBranchChange: onInventoryBranchChange,
+                    onLocationChange: setInventoryLocationId,
+                    disabled: savingWorkday,
+                  }}
                   saveAction={{
                     saving: savingWorkday,
                     onSave: () => void handleSaveWorkdayTimes(),
