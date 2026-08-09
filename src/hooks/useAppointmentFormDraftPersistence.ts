@@ -31,6 +31,11 @@ type UseAppointmentFormDraftPersistenceArgs = {
   getSnapshotInput: () => AppointmentFormDraftSnapshotInput;
   getStepName: (step: string) => string;
   trackGaAbandon: (reason: string) => void;
+  /**
+   * Changes whenever the user edits the form (e.g. the form state object).
+   * Drives the debounced save and the idle-abandon timer reset.
+   */
+  activityKey?: unknown;
 };
 
 /**
@@ -42,6 +47,7 @@ export function useAppointmentFormDraftPersistence({
   getSnapshotInput,
   getStepName,
   trackGaAbandon,
+  activityKey,
 }: UseAppointmentFormDraftPersistenceArgs) {
   const location = useLocation();
   const formSessionIdRef = useRef(createAppointmentFormSessionId());
@@ -246,13 +252,19 @@ export function useAppointmentFormDraftPersistence({
       if (draftSaveTimeoutRef.current) clearTimeout(draftSaveTimeoutRef.current);
       clearIdleAbandonTimer();
     };
-  }, [scheduleDraftSave, scheduleIdleAbandon, clearIdleAbandonTimer, currentPage, getSnapshotInput]);
+  }, [scheduleDraftSave, scheduleIdleAbandon, clearIdleAbandonTimer, currentPage, activityKey]);
+
+  /** Allow a later abandon after a prior zone_not_serviced report if the user fixes their address. */
+  const resetAbandonSent = useCallback(() => {
+    abandonApiSentRef.current = false;
+  }, []);
 
   return {
     formSessionIdRef,
     markFormCompleted,
     flushDraftSave,
     sendAbandon,
+    resetAbandonSent,
     shouldPersistDraft,
   };
 }
