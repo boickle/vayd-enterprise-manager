@@ -21,7 +21,7 @@ import { etaHouseholdArrivalWindowPayload, fetchEtas } from '../api/routing';
 import {
   buildEtaCandidateSlot,
   orderHouseholdsWithCandidateAtInsertion,
-  resolveRoutingEtaInsertionIndex,
+  routingEtaCandidateInsertionIndexInOrder,
 } from '../utils/routingEtaCandidateSlot';
 import { useAuth } from '../auth/useAuth';
 import { buildGoogleMapsLinksForDay, type Stop } from '../utils/maps';
@@ -1852,20 +1852,26 @@ export default function MyWeek(props: MyWeekProps = {}) {
           list.map(async (day) => {
             if (day.households.length === 0)
               return day;
-            // Visit order for ETA: when this day has the selected routing candidate (virtualAppt), put
-            // existing households first and the candidate at insertionIndex so the backend gets correct order.
+            // Visit order for ETA: map slot-search insertionIndex across meetings/blocks, then
+            // put the candidate there so morning client stops are not pushed under end-of-day.
             const hasVirtual = virtualAppt && virtualAppt.date === day.date;
-            const insertionIndex = hasVirtual
-              ? resolveRoutingEtaInsertionIndex(virtualAppt.insertionIndex, day.households.length)
-              : 0;
             const householdsInVisitOrder = hasVirtual
-              ? orderHouseholdsWithCandidateAtInsertion(day.households, insertionIndex)
+              ? orderHouseholdsWithCandidateAtInsertion(
+                  day.households,
+                  virtualAppt.insertionIndex
+                )
               : day.households;
+            const mappedInsertionIndex = hasVirtual
+              ? routingEtaCandidateInsertionIndexInOrder(
+                  householdsInVisitOrder,
+                  virtualAppt.insertionIndex
+                )
+              : 0;
             const candidateSlot =
               hasVirtual && virtualAppt
                 ? buildEtaCandidateSlot(
                     {
-                      insertionIndex: virtualAppt.insertionIndex,
+                      insertionIndex: mappedInsertionIndex,
                       positionInDay: virtualAppt.positionInDay,
                       suggestedStartIso: virtualAppt.suggestedStartIso,
                       lat: virtualAppt.lat,
@@ -1873,7 +1879,7 @@ export default function MyWeek(props: MyWeekProps = {}) {
                       serviceMinutes: virtualAppt.serviceMinutes,
                       arrivalWindow: virtualAppt.arrivalWindow,
                     },
-                    { householdCount: day.households.length }
+                    { householdCount: householdsInVisitOrder.length }
                   )
                 : undefined;
             const payload = {
