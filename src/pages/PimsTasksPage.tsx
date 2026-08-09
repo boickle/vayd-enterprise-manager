@@ -958,14 +958,14 @@ function TaskLinkInline({
   const label = taskLinkDisplayLabel(link, labels);
   if (link.entityType === 'patient') {
     return (
-      <Link className="pims-task-card__link" to={`/pims/patients?patientId=${encodeURIComponent(String(link.entityId))}`}>
+      <Link className="pims-task-card__link" to={`/schedule/patients?patientId=${encodeURIComponent(String(link.entityId))}`}>
         {label}
       </Link>
     );
   }
   if (link.entityType === 'client') {
     return (
-      <Link className="pims-task-card__link" to={`/pims/clients?clientId=${encodeURIComponent(String(link.entityId))}`}>
+      <Link className="pims-task-card__link" to={`/schedule/clients?clientId=${encodeURIComponent(String(link.entityId))}`}>
         {label}
       </Link>
     );

@@ -306,3 +306,73 @@ export async function setEmployeeBranches(
   await http.put(`/practice/${practiceId}/employees/${employeeId}/branches`, body);
 }
 
+/** Lot / serial balance at a branch location. */
+export type InventoryLotBalance = {
+  id: number;
+  inventoryItemId: number;
+  branchId: number;
+  branchName: string | null;
+  branchLocationId: number;
+  locationCode: string | null;
+  locationName: string | null;
+  lotNumber: string;
+  serialNumber: string | null;
+  expirationDate: string | null;
+  quantityOnHand: number;
+};
+
+export async function listInventoryLots(
+  practiceId: number,
+  inventoryItemId: number,
+  opts?: { branchId?: number; includeZero?: boolean }
+): Promise<InventoryLotBalance[]> {
+  const { data } = await http.get<InventoryLotBalance[]>(
+    `/practice/${practiceId}/inventory-items/${inventoryItemId}/lots`,
+    {
+      params: {
+        ...(opts?.branchId != null ? { branchId: opts.branchId } : {}),
+        ...(opts?.includeZero ? { includeZero: '1' } : {}),
+      },
+    }
+  );
+  return Array.isArray(data) ? data : [];
+}
+
+export async function addInventoryLot(
+  practiceId: number,
+  body: {
+    inventoryItemId: number;
+    branchId: number;
+    branchLocationId: number;
+    lotNumber: string;
+    serialNumber?: string | null;
+    expirationDate?: string | null;
+    quantityOnHand?: number;
+  }
+): Promise<InventoryLotBalance> {
+  const { data } = await http.post<InventoryLotBalance>(
+    `/practice/${practiceId}/inventory-lots`,
+    body
+  );
+  return data;
+}
+
+/** Setting quantityOnHand records an adjustment so branch counts move with the lot. */
+export async function updateInventoryLot(
+  practiceId: number,
+  lotId: number,
+  body: {
+    lotNumber?: string;
+    serialNumber?: string | null;
+    expirationDate?: string | null;
+    quantityOnHand?: number;
+    isActive?: boolean;
+  }
+): Promise<InventoryLotBalance> {
+  const { data } = await http.patch<InventoryLotBalance>(
+    `/practice/${practiceId}/inventory-lots/${lotId}`,
+    body
+  );
+  return data;
+}
+

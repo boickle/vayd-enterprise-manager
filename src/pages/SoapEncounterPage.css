@@ -490,6 +490,94 @@
   color: var(--soap-muted);
 }
 
+.soap-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.soap-weight {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--soap-border);
+  border-radius: 8px;
+  background: #fff;
+}
+.soap-weight--required {
+  border-color: #f59e0b;
+  background: #fffbeb;
+}
+.soap-weight__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+}
+.soap-weight__value {
+  flex: 1 1 120px;
+  min-width: 100px;
+  max-width: 180px;
+}
+.soap-weight__req {
+  color: #b45309;
+}
+.soap-weight__units {
+  display: flex;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+.soap-weight__unit {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border: 1px solid var(--soap-border);
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--soap-text, #0f172a);
+  background: #f8fafc;
+  cursor: pointer;
+  user-select: none;
+}
+.soap-weight__unit input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.soap-weight__unit.is-selected {
+  border-color: #2563eb;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+.soap-weight__units:disabled .soap-weight__unit,
+.soap-weight__unit:has(input:disabled) {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.soap-weight__none {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--soap-text, #0f172a);
+  cursor: pointer;
+}
+.soap-weight__hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #b45309;
+}
+
 /* PE template */
 .soap-pe {
   display: flex;
@@ -2150,6 +2238,26 @@
   color: #475569;
   font-size: 11.5px;
 }
+.soap-dose-stock strong {
+  font-weight: 700;
+  color: #0f172a;
+}
+.soap-dose-lot-picker {
+  display: grid;
+  gap: 8px;
+}
+.soap-dose-lot-picker label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--soap-muted);
+}
+.soap-dose-lot-picker__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
 .soap-dose-error {
   color: #b91c1c;
   font-size: 12px;
@@ -2174,3 +2282,6 @@
   gap: 4px;
   cursor: not-allowed;
 }
+
+/* Addenda styles live with the component (SoapAddendaSection.css) so the section
+   also renders inside the patient chart's SOAP note modal. */

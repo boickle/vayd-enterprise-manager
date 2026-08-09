@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link, useLocation } from 'react-router';
+import { Link } from 'react-router';
 import {
   ArrowLeft,
   ExternalLink,
@@ -252,7 +252,6 @@ type Props = {
 };
 
 export default function PimsClientDetailView({ clientId, onBack }: Props) {
-  const location = useLocation();
   const [payload, setPayload] = useState<Record<string, unknown> | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -260,10 +259,7 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
   const [busy, setBusy] = useState(false);
   const [invoiceDetail, setInvoiceDetail] = useState<NormalizedInvoice | null>(null);
 
-  const patientsBasePath = useMemo(
-    () => (location.pathname.startsWith('/schedule/') ? '/schedule/patients' : '/pims/patients'),
-    [location.pathname],
-  );
+  const patientsBasePath = '/schedule/patients';
 
   useEffect(() => {
     let cancelled = false;

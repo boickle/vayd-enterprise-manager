@@ -74,6 +74,8 @@ export type EncounterOrder = {
   kind: EncounterOrderKind;
   name: string;
   note: string | null;
+  clientNote?: string | null;
+  microchipNumber?: string | null;
   qty: number;
   unitPrice: number;
   state: EncounterOrderState;
@@ -83,6 +85,15 @@ export type EncounterOrder = {
   dischargeInstruction: string | null;
   created: string;
   updated: string;
+  catalogFlags?: {
+    allowPriceChange: boolean;
+    hasClientNotes: boolean;
+    isMicrochip: boolean;
+    isDispensable: boolean;
+    requireExpirationOnLots: boolean;
+    trackLots: boolean;
+    excludeFromProduction: boolean;
+  } | null;
 };
 
 export type VisitInvoiceLine = {
@@ -249,6 +260,35 @@ export async function completeEncounter(id: string): Promise<SoapEncounter> {
   return data;
 }
 
+/** Dated clinical note appended after a SOAP is signed — does not unlock S/O/A/P. */
+export type SoapAddendum = {
+  id: string;
+  soapEncounterId: string;
+  body: string;
+  created: string;
+  createdByEmployeeId: number | null;
+  createdByName: string | null;
+};
+
+export async function listSoapAddenda(encounterId: string): Promise<SoapAddendum[]> {
+  const { data } = await http.get<SoapAddendum[]>(
+    `/soap-encounters/${encodeURIComponent(encounterId)}/addenda`,
+    { params: { practiceId: pid() } }
+  );
+  return data;
+}
+
+export async function createSoapAddendum(
+  encounterId: string,
+  body: string
+): Promise<SoapAddendum> {
+  const { data } = await http.post<SoapAddendum>(
+    `/soap-encounters/${encodeURIComponent(encounterId)}/addenda`,
+    { practiceId: pid(), body }
+  );
+  return data;
+}
+
 // --- Orders (order = charge) ---
 
 export async function listOrders(encounterId: string): Promise<EncounterOrder[]> {
@@ -288,6 +328,8 @@ export async function updateOrder(
   body: {
     name?: string;
     note?: string | null;
+    clientNote?: string | null;
+    microchipNumber?: string | null;
     qty?: number;
     unitPrice?: number;
     isCovered?: boolean;
@@ -346,6 +388,8 @@ export type OrderVaccination = {
   animalControlLicensingMonths: number | null;
   veterinarianName: string | null;
   veterinarianLicense: string | null;
+  /** Chosen lot balance — checkout decrements this specific lot. */
+  inventoryLotBalanceId: number | null;
 };
 
 /** A prescription written against an order. A real `prescriptions` row. */
@@ -376,7 +420,17 @@ export type PatientPrescription = {
   discontinuedAt: string | null;
   /** Catalog item for future refills when the pin was matched to inventory. */
   inventoryItemId: number | null;
+  /** Set when the Rx was written from a SOAP order. eVet rows link through a treatment item. */
+  encounterOrderId: string | null;
+  /** Set on freeform pin rows that belong to the patient directly (no order, no treatment). */
+  patientId: number | null;
+  rxNumber: number | null;
 };
+
+/** True for prescriptions Scout wrote (SOAP order or EMR pin) rather than eVet-imported ones. */
+export function isScoutWrittenPrescription(rx: PatientPrescription): boolean {
+  return rx.encounterOrderId != null || rx.patientId != null;
+}
 
 /**
  * The stock an order consumes, which is often not the item charged: DAPP1, DAPP3 and DAPPBOOST
@@ -388,6 +442,9 @@ export type StockDraw = {
   inventoryItemName: string;
   inventoryItemCode: string | null;
   quantity: number;
+  /** Display hint when known (provider branch / location). */
+  branchName?: string | null;
+  locationName?: string | null;
 };
 
 export type OrderClinicalDetails = {
@@ -470,6 +527,7 @@ export async function saveOrderVaccination(
     usdaLicensingMonths?: number;
     animalControlLicensingMonths?: number;
     employeeId?: number;
+    inventoryLotBalanceId?: number | null;
   }
 ): Promise<OrderVaccination> {
   const { data } = await http.put<OrderVaccination>(

@@ -14,6 +14,10 @@ export function inventoryCategoryName(item: SearchableItem): string | null {
 }
 
 export function isVaccineSearchItem(item: SearchableItem): boolean {
+  if (item.itemType === 'inventory') {
+    const inv = item.inventoryItem as { isVaccine?: boolean } | null | undefined;
+    if (inv?.isVaccine === true) return true;
+  }
   return isVaccineInventoryCategory(inventoryCategoryName(item));
 }
 

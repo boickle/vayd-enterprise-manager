@@ -41,6 +41,7 @@ import {
 } from '../utils/visitRecapSender';
 import WrapUpForwardBooking from '../components/soap/WrapUpForwardBooking';
 import { reconcileBookedFollowUp } from '../components/forwardBooking/bookFollowUpNow';
+import { isWeightAddressed, vitalsFromValue } from './SoapEncounterPage';
 
 /** `Name <a@b.com>` → `a@b.com`, for the address we hand back to the recorder. */
 function bareAddress(value: string): string {
@@ -312,7 +313,21 @@ export default function VisitWrapUpPage() {
     }
     return names;
   }, [pets]);
-  const canComplete = followUpComplete && emailDecided && clinicalComplete && !allLocked;
+  const weightComplete = useMemo(
+    () =>
+      pets.length > 0 &&
+      pets.every((p) => isWeightAddressed(vitalsFromValue(p.objectiveVitals))),
+    [pets]
+  );
+  const missingWeightPets = useMemo(
+    () =>
+      pets
+        .filter((p) => !isWeightAddressed(vitalsFromValue(p.objectiveVitals)))
+        .map((p) => p.patientName),
+    [pets]
+  );
+  const canComplete =
+    followUpComplete && emailDecided && clinicalComplete && weightComplete && !allLocked;
 
   const backToSoap = (pet: VisitWrapUpPet) => {
     const qs = clientIdParam ? `?clientId=${encodeURIComponent(clientIdParam)}` : '';
@@ -482,13 +497,15 @@ export default function VisitWrapUpPage() {
               className="soap-btn primary"
               disabled={!canComplete || completing}
               title={
-                !clinicalComplete
-                  ? `Record prescription/dose details first: ${outstandingClinicalLabels.join(', ')}`
-                  : !followUpComplete
-                    ? 'Every pet needs a complete follow-up choice first'
-                    : !emailDecided
-                      ? 'Send the client recap, or choose not to email'
-                      : 'Sign and lock the medical record for every pet on this visit'
+                !weightComplete
+                  ? `Record weight (or No weight taken) first: ${missingWeightPets.join(', ')}`
+                  : !clinicalComplete
+                    ? `Record prescription/dose details first: ${outstandingClinicalLabels.join(', ')}`
+                    : !followUpComplete
+                      ? 'Every pet needs a complete follow-up choice first'
+                      : !emailDecided
+                        ? 'Send the client recap, or choose not to email'
+                        : 'Sign and lock the medical record for every pet on this visit'
               }
               onClick={onSignAndLock}
             >
@@ -526,6 +543,10 @@ export default function VisitWrapUpPage() {
                     (pet.outstandingClinical?.missingVaccines.length ?? 0) > 0) &&
                     pet.status !== 'completed' && (
                       <span className="soap-wrapup-chart-pending">Rx/dose details needed</span>
+                    )}
+                  {!isWeightAddressed(vitalsFromValue(pet.objectiveVitals)) &&
+                    pet.status !== 'completed' && (
+                      <span className="soap-wrapup-chart-pending">Weight needed</span>
                     )}
                   {pet.status === 'completed' && (
                     <span className="soap-wrapup-chart-locked">
@@ -744,6 +765,9 @@ export default function VisitWrapUpPage() {
               </span>
               <span className={clinicalComplete ? 'ok' : ''}>
                 {clinicalComplete ? <Check size={14} /> : <Syringe size={14} />} Dose &amp; Rx
+              </span>
+              <span className={weightComplete ? 'ok' : ''}>
+                {weightComplete ? <Check size={14} /> : <PawPrint size={14} />} Weight
               </span>
             </div>
             <button

@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import {
   ArrowRight,
   ClipboardList,
+  FilePlus2,
   Lock,
   Stethoscope,
   Activity,
@@ -40,6 +41,7 @@ import PhysicalExamSection from '../components/soap/PhysicalExamSection';
 import MasterProblemListSection from '../components/soap/MasterProblemListSection';
 import PlanOrdersSection from '../components/soap/PlanOrdersSection';
 import VisitDoseAndRxSection from '../components/soap/VisitDoseAndRxSection';
+import SoapAddendaSection from '../components/soap/SoapAddendaSection';
 import ProposedOrdersPanel from '../components/soap/ProposedOrdersPanel';
 import VisitCheckoutPanel from '../components/soap/VisitCheckoutPanel';
 import HouseholdInvoiceSummary from '../components/soap/HouseholdInvoiceSummary';
@@ -73,14 +75,34 @@ import {
 } from '../utils/planNotesSections';
 import { patientSexDisplayFromRecord } from '../utils/schedulerVisitDisplay';
 
+export type WeightUnit = 'lb' | 'kg';
+
 export type Vitals = {
   tempF: string;
   weight: string;
+  /** Unit for `weight`. Ignored when `weightNotTaken`. Defaults to lb. */
+  weightUnit: WeightUnit;
+  /** Explicit: weight was not taken this visit (required alternative to a value). */
+  weightNotTaken: boolean;
   hr: string;
   rr: string;
   bcs: string;
   painScore: string;
 };
+
+/** True when the visit either recorded a weight + unit or chose "No weight taken". */
+export function isWeightAddressed(v: Vitals): boolean {
+  if (v.weightNotTaken) return true;
+  return Boolean(v.weight.trim());
+}
+
+/** Display string for header / chart review, or null if nothing recorded. */
+export function formatVitalWeight(v: Vitals): string | null {
+  if (v.weightNotTaken) return 'No weight taken';
+  const w = v.weight.trim();
+  if (!w) return null;
+  return `${w} ${v.weightUnit}`;
+}
 
 function patientField(patient: Record<string, unknown> | null, ...keys: string[]): string | null {
   if (!patient) return null;
@@ -147,9 +169,12 @@ const SOAP_TABS: {
 export function vitalsFromValue(v: unknown): Vitals {
   const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>;
   const s = (k: string) => (o[k] == null ? '' : String(o[k]));
+  const unitRaw = String(o.weightUnit ?? '').toLowerCase();
   return {
     tempF: s('tempF'),
     weight: s('weight'),
+    weightUnit: unitRaw === 'kg' ? 'kg' : 'lb',
+    weightNotTaken: o.weightNotTaken === true || o.weightNotTaken === 'true',
     hr: s('hr'),
     rr: s('rr'),
     bcs: s('bcs'),
@@ -232,6 +257,8 @@ export default function SoapEncounterPage() {
   const [scribePlanItems, setScribePlanItems] = useState<SuggestedPlanItem[]>([]);
   /** Parked by a multi-pet Process on another pet's tab — shown when this chart opens. */
   const [deferredScribePlanItems, setDeferredScribePlanItems] = useState<SuggestedPlanItem[]>([]);
+  /** Opens the bottom addendum composer (also triggered from the header). */
+  const [writingAddendum, setWritingAddendum] = useState(false);
   const [roster, setRoster] = useState<HouseholdRosterEntry[]>([]);
   const [householdRefreshTick, setHouseholdRefreshTick] = useState(0);
   /** Room Loader–originated order ids — Accept goes to Checkout only, not the left Plan list. */
@@ -337,6 +364,7 @@ export default function SoapEncounterPage() {
       setEmailDraft({ subject: '', body: '' });
       setScribePlanItems([]);
       setDeferredScribePlanItems([]);
+      setWritingAddendum(false);
       setPrimaryProviderId(null);
       setPrimaryProviderName(null);
       setPatientProfile(null);
@@ -734,12 +762,12 @@ export default function SoapEncounterPage() {
     const sex = patientProfile ? patientSexDisplayFromRecord(patientProfile) : null;
     const age = patientAge(patientProfile, appointmentStart);
     const breed = patientBreed(patientProfile);
+    const visitWeight = formatVitalWeight(vitals);
     const profileWeight = patientField(patientProfile, 'weight', 'weightLbs');
-    const weight = vitals.weight.trim() || profileWeight;
-    return [age, sex, breed, weight ? `${weight} lb` : null].filter((part): part is string =>
-      Boolean(part)
-    );
-  }, [appointmentStart, patientProfile, vitals.weight]);
+    const weight =
+      visitWeight ?? (profileWeight ? `${profileWeight} lb` : null);
+    return [age, sex, breed, weight].filter((part): part is string => Boolean(part));
+  }, [appointmentStart, patientProfile, vitals]);
 
   if (loading) {
     return <div className="soap-page soap-loading">Loading encounter…</div>;
@@ -762,7 +790,7 @@ export default function SoapEncounterPage() {
             <h1>
               <Link
                 className="soap-header-patient-link"
-                to={`/pims/patients?patientId=${encodeURIComponent(String(patientId))}`}
+                to={`/schedule/patients?patientId=${encodeURIComponent(String(patientId))}`}
                 title="Open patient medical record"
               >
                 {patientName || `Patient #${patientId}`}
@@ -770,6 +798,11 @@ export default function SoapEncounterPage() {
             </h1>
             {signalment.length > 0 && (
               <span className="soap-header-signalment">{signalment.join(' · ')}</span>
+            )}
+            {patientField(patientProfile, 'microchip') && (
+              <span className="soap-header-signalment">
+                Microchip {patientField(patientProfile, 'microchip')}
+              </span>
             )}
             <span className="soap-header-sub">
               Exam: {examDayLabel(appointmentStart)} · Visit #{appointmentId} ·{' '}
@@ -809,9 +842,19 @@ export default function SoapEncounterPage() {
             </div>
           )}
           {locked ? (
-            <span className="soap-locked-badge" title="Signed and locked — no further edits">
-              <Lock size={14} /> SOAP signed
-            </span>
+            <>
+              <span className="soap-locked-badge" title="Signed and locked — no further edits">
+                <Lock size={14} /> SOAP signed
+              </span>
+              <button
+                type="button"
+                className="soap-btn"
+                title="Append a dated note without unlocking the signed SOAP"
+                onClick={() => setWritingAddendum(true)}
+              >
+                <FilePlus2 size={15} /> Write addendum
+              </button>
+            </>
           ) : (
             /* Signing happens in the wrap-up, where forward booking and the client
                recap are settled for the whole household rather than this chart alone. */
@@ -967,6 +1010,7 @@ export default function SoapEncounterPage() {
                       patientId={patientId}
                       clientId={clientIdParam ? Number(clientIdParam) : undefined}
                       practiceId={VISIT_WORKFLOW_PRACTICE_ID}
+                      providerId={primaryProviderId}
                       onOrderUpdated={(updated) =>
                         setOrders((prev) => prev.map((o) => (o.id === updated.id ? updated : o)))
                       }
@@ -1024,16 +1068,114 @@ export default function SoapEncounterPage() {
                       <Activity size={16} /> Objective
                     </h2>
                     <div className="soap-subhead">Vitals (TPR, weight, BCS /9, FAS /5)</div>
+                    <div
+                      className={
+                        isWeightAddressed(vitals)
+                          ? 'soap-weight'
+                          : 'soap-weight soap-weight--required'
+                      }
+                    >
+                      <div className="soap-weight__row">
+                        <label className="soap-vital soap-weight__value">
+                          <span>
+                            Weight <span className="soap-weight__req" aria-hidden>*</span>
+                          </span>
+                          <input
+                            className="soap-input"
+                            inputMode="decimal"
+                            placeholder="e.g. 12.4"
+                            value={vitals.weightNotTaken ? '' : vitals.weight}
+                            disabled={locked || vitals.weightNotTaken}
+                            onChange={(e) => {
+                              const weight = e.target.value;
+                              setVitals((v) => ({
+                                ...v,
+                                weight,
+                                weightNotTaken: false,
+                              }));
+                            }}
+                            onBlur={(e) => {
+                              if (vitals.weightNotTaken) return;
+                              const weight = e.currentTarget.value;
+                              setVitals((v) => {
+                                const next = { ...v, weight, weightNotTaken: false as const };
+                                void save({ objectiveVitals: { ...next } });
+                                return next;
+                              });
+                            }}
+                          />
+                        </label>
+                        <fieldset className="soap-weight__units" disabled={locked || vitals.weightNotTaken}>
+                          <legend className="soap-sr-only">Weight unit</legend>
+                          {(
+                            [
+                              ['lb', 'Lb'],
+                              ['kg', 'kg'],
+                            ] as const
+                          ).map(([unit, label]) => (
+                            <label
+                              key={unit}
+                              className={
+                                vitals.weightUnit === unit && !vitals.weightNotTaken
+                                  ? 'soap-weight__unit is-selected'
+                                  : 'soap-weight__unit'
+                              }
+                            >
+                              <input
+                                type="radio"
+                                name="soap-weight-unit"
+                                value={unit}
+                                checked={vitals.weightUnit === unit && !vitals.weightNotTaken}
+                                disabled={locked || vitals.weightNotTaken}
+                                onChange={() => {
+                                  const next = {
+                                    ...vitals,
+                                    weightUnit: unit,
+                                    weightNotTaken: false,
+                                  };
+                                  setVitals(next);
+                                  void save({ objectiveVitals: { ...next } });
+                                }}
+                              />
+                              {label}
+                            </label>
+                          ))}
+                        </fieldset>
+                      </div>
+                      <label className="soap-weight__none">
+                        <input
+                          type="checkbox"
+                          checked={vitals.weightNotTaken}
+                          disabled={locked}
+                          onChange={(e) => {
+                            const weightNotTaken = e.target.checked;
+                            const next: Vitals = {
+                              ...vitals,
+                              weightNotTaken,
+                              weight: weightNotTaken ? '' : vitals.weight,
+                            };
+                            setVitals(next);
+                            void save({ objectiveVitals: { ...next } });
+                          }}
+                        />
+                        No weight taken
+                      </label>
+                      {!isWeightAddressed(vitals) && !locked && (
+                        <p className="soap-weight__hint">
+                          Enter a weight and choose Lb or kg, or select &ldquo;No weight taken.&rdquo;
+                          Required before signing.
+                        </p>
+                      )}
+                    </div>
                     <div className="soap-vitals">
                       {(
                         [
                           ['tempF', 'Temp °F'],
                           ['hr', 'HR (bpm)'],
                           ['rr', 'RR (rpm)'],
-                          ['weight', 'Weight (lb)'],
                           ['bcs', 'BCS /9'],
                           ['painScore', 'FAS /5'],
-                        ] as [keyof Vitals, string][]
+                        ] as const
                       ).map(([key, label]) => (
                         <label key={key} className="soap-vital">
                           <span>{label}</span>
@@ -1147,6 +1289,7 @@ export default function SoapEncounterPage() {
                         patientId={patientId}
                         clientId={clientIdParam ? Number(clientIdParam) : undefined}
                         practiceId={VISIT_WORKFLOW_PRACTICE_ID}
+                        providerId={primaryProviderId}
                         onOrderUpdated={(updated) =>
                           setOrders((prev) => prev.map((o) => (o.id === updated.id ? updated : o)))
                         }
@@ -1169,6 +1312,16 @@ export default function SoapEncounterPage() {
                 )}
               </div>
             </>
+          )}
+
+          {locked && encounter && (
+            <SoapAddendaSection
+              key={`addenda-${encounter.id}`}
+              encounterId={encounter.id}
+              writing={writingAddendum}
+              onWritingChange={setWritingAddendum}
+              scrollIntoViewOnWrite
+            />
           )}
         </main>
 
@@ -1196,8 +1349,13 @@ export default function SoapEncounterPage() {
           <VisitCheckoutPanel
             encounterId={encounter?.id}
             invoice={invoice}
+            orders={orders}
             disabled={locked}
             onInvoiceChange={setInvoice}
+            onOrdersChange={(next) => {
+              setOrders(next);
+              void refreshInvoice();
+            }}
             onOpenEuthanasiaPrepay={() => setShowEuthanasia(true)}
             onOrderRemoved={(orderId) => {
               const removed = orders.find((o) => o.id === orderId);

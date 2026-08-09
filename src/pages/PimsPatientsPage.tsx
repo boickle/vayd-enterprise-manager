@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useLocation, useSearchParams } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 import { FileText } from 'lucide-react';
 import { useAuth } from '../auth/useAuth';
 import { searchPatientsStaff, type PatientSearchRow } from '../api/patients';
@@ -83,13 +83,8 @@ function patientListStatus(row: PatientSearchRow): { active: boolean; text: stri
 }
 
 export default function PimsPatientsPage() {
-  const location = useLocation();
-  const patientsBasePath = location.pathname.startsWith('/schedule/patients')
-    ? '/schedule/patients'
-    : '/pims/patients';
-  const clientsBasePath = location.pathname.startsWith('/schedule/patients')
-    ? '/schedule/clients'
-    : '/pims/clients';
+  const patientsBasePath = '/schedule/patients';
+  const clientsBasePath = '/schedule/clients';
 
   const { token } = useAuth() as { token: string | null };
   const practiceId = useMemo(() => resolvePracticeIdFromToken(token), [token]);

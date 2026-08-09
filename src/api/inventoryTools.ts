@@ -11,7 +11,28 @@ export type SellUnitType =
   | 'each'
   | 'other';
 
+export type InventoryVaccineDetails = {
+  name?: string | null;
+  manufacturer?: string | null;
+  vaccineType?: string | null;
+  dosageType?: 'initial' | 'booster' | string | null;
+  createRabiesCertificate?: boolean;
+  createVaccinationLog?: boolean;
+  usdaLicensingMonths?: number | null;
+  animalControlLicensingMonths?: number | null;
+  tagIssuePeriodMonths?: number | null;
+  defaultSerial?: string | null;
+};
+
 export type InventoryItemCatalogPatch = {
+  name?: string;
+  code?: string | null;
+  price?: number | null;
+  cost?: number | null;
+  serviceFee?: number | null;
+  minimumPrice?: number | null;
+  isMedication?: boolean;
+  isActive?: boolean;
   description?: string | null;
   shippable?: boolean;
   /** Set null to clear; prefer uploadInventoryItemImage for files. */
@@ -30,6 +51,28 @@ export type InventoryItemCatalogPatch = {
   linkedInventoryItemId?: number | null;
   /** Units of the stock item consumed per unit sold (100 for a bottle of 100). */
   linkedInventoryItemDefaultQuantity?: number | null;
+  manufacturer?: string | null;
+  vendorName?: string | null;
+  vendorDrugNumber?: string | null;
+  barcode?: string | null;
+  requireExpirationOnLots?: boolean;
+  trackLots?: boolean;
+  isVaccine?: boolean;
+  isDispensable?: boolean;
+  dispenseNote?: string | null;
+  isControlled?: boolean;
+  isMicrochip?: boolean;
+  hasClientNotes?: boolean;
+  clientNote?: string | null;
+  hideOnInvoice?: boolean;
+  hideOnMedicalRecordView?: boolean;
+  hideOnMedicalRecordPrint?: boolean;
+  excludeFromProduction?: boolean;
+  allowPriceChange?: boolean;
+  changePatientStatusTo?: string | null;
+  changePatientSex?: boolean;
+  defaultQuantity?: number | null;
+  vaccineDetails?: InventoryVaccineDetails | null;
 };
 
 export async function patchPracticeInventoryItem(

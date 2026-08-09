@@ -539,6 +539,19 @@
   background: #f8fafc;
 }
 
+.pims-detail__btn-secondary[aria-disabled='true'] {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.pims-detail__photo-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
 .pims-detail__btn-quiet {
   padding: 5px 10px;
   border: 1px solid var(--pims-line);

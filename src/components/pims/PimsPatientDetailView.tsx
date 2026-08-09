@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link, useLocation } from 'react-router';
+import { Link } from 'react-router';
 import {
   PawPrint,
   AlertTriangle,
@@ -18,6 +18,8 @@ import {
   UserCheck,
   Activity,
   Pill,
+  Lock,
+  Camera,
 } from 'lucide-react';
 import {
   deactivatePatient,
@@ -25,6 +27,7 @@ import {
   fetchPatientMedicalRecordStaff,
   patchPatient,
   reactivatePatient,
+  uploadPetImage,
   type ScoutPatientWrite,
 } from '../../api/patients';
 import {
@@ -33,6 +36,8 @@ import {
   type TreatmentWithItems,
 } from '../../api/treatments';
 import {
+  isScoutWrittenPrescription,
+  listEncounters,
   listProblems,
   listPatientPrescriptions,
   listPatientVisitCharges,
@@ -41,6 +46,7 @@ import {
   type PatientProblem,
   type PatientPrescription,
   type PostedVisitCharge,
+  type SoapEncounter,
 } from '../../api/visitWorkflow';
 import {
   buildChartRowsFromMedicalRecord,
@@ -52,6 +58,7 @@ import {
 import { apiBaseUrl } from '../../api/http';
 import { htmlToPlainText, looksLikeHtmlFragment } from '../../utils/sanitizeCommunicationHtml';
 import { PimsExamDetailModal } from './PimsExamDetailModal';
+import PimsSoapNoteModal from './PimsSoapNoteModal';
 import PimsAppointmentsSection from './PimsAppointmentsSection';
 import { scoutManagedState } from '../../utils/pimsScoutManaged';
 import { evetPatientLink } from '../../utils/evet';
@@ -382,6 +389,7 @@ const GROUP_KEYS = [
   'visits',
   'communications',
   'histories',
+  'soapNotes',
   'exams',
   'diagnoses',
   'treatments',
@@ -392,7 +400,7 @@ const GROUP_KEYS = [
 export default function PimsPatientDetailView({
   patientId,
   onBack,
-  patientsListPath = '/pims/patients',
+  patientsListPath = '/schedule/patients',
 }: Props) {
   const [payload, setPayload] = useState<Record<string, unknown> | null>(null);
   const [medicalRecord, setMedicalRecord] = useState<MedicalRecordBundle | null>(null);
@@ -400,7 +408,8 @@ export default function PimsPatientDetailView({
   const [rxItems, setRxItems] = useState<unknown[]>([]);
   const [problems, setProblems] = useState<PatientProblem[]>([]);
   const [visitCharges, setVisitCharges] = useState<PostedVisitCharge[]>([]);
-  const [chronicMedications, setChronicMedications] = useState<PatientPrescription[]>([]);
+  /** Every prescription on this patient — Scout-written (SOAP orders, EMR pins) and eVet. */
+  const [prescriptions, setPrescriptions] = useState<PatientPrescription[]>([]);
   const [resolvingProblemId, setResolvingProblemId] = useState<string | null>(null);
   const [discontinuingRxId, setDiscontinuingRxId] = useState<number | null>(null);
   const [treatments, setTreatments] = useState<TreatmentWithItems[] | null>(null);
@@ -413,23 +422,32 @@ export default function PimsPatientDetailView({
   const [expandedChartRowIds, setExpandedChartRowIds] = useState<Set<string>>(() => new Set());
   const [groupOpen, setGroupOpen] = useState<Record<string, boolean>>({});
   const [selectedExam, setSelectedExam] = useState<Record<string, unknown> | null>(null);
+  /** Scout-native SOAP notes for this patient (separate from eVet-imported exams). */
+  const [soapNotes, setSoapNotes] = useState<SoapEncounter[]>([]);
+  const [selectedSoapNote, setSelectedSoapNote] = useState<SoapEncounter | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [photoFailed, setPhotoFailed] = useState(false);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
 
   const practiceId = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
   const speciesOptions = useSpeciesCatalog(practiceId);
 
-  const location = useLocation();
-  const clientsBasePath = location.pathname.startsWith('/schedule/')
-    ? '/schedule/clients'
-    : '/pims/clients';
+  const clientsBasePath = '/schedule/clients';
 
   const reloadChartData = useCallback(
     async (isStale?: () => boolean) => {
       const id = patientId;
       setMrLoadError(null);
-      const [patientData, mrData, rxData, problemRows, chronicMedRows, chargeRows] =
-        await Promise.all([
+      const [
+        patientData,
+        mrData,
+        rxData,
+        problemRows,
+        prescriptionRows,
+        chargeRows,
+        soapRows,
+      ] = await Promise.all([
           fetchPatientByIdStaff(id),
           fetchPatientMedicalRecordStaff(id).catch((e: unknown) => {
             if (!isStale?.()) {
@@ -441,10 +459,13 @@ export default function PimsPatientDetailView({
           // Master Problem List, the source of both the chronic problems box and the problem rows on
           // the timeline. A patient never charted in Scout simply has none.
           listProblems(Number(id)).catch(() => [] as PatientProblem[]),
-          listPatientPrescriptions(Number(id), { activeChronicOnly: true }).catch(
-            () => [] as PatientPrescription[]
-          ),
+          // Every Rx, not just active chronic ones: acute meds written on a SOAP have to show
+          // up in the Prescriptions tab, which otherwise only lists eVet treatment lines.
+          listPatientPrescriptions(Number(id)).catch(() => [] as PatientPrescription[]),
           listPatientVisitCharges(Number(id)).catch(() => [] as PostedVisitCharge[]),
+          // Scout-native SOAP notes. Separate from eVet-imported `exams`, which carry no
+          // signed/open state and cannot take addenda.
+          listEncounters({ patientId: Number(id) }).catch(() => [] as SoapEncounter[]),
         ]);
       if (isStale?.()) return;
       if (patientData && typeof patientData === 'object') {
@@ -455,8 +476,9 @@ export default function PimsPatientDetailView({
       setMedicalRecord(mrData);
       setRxItems(rxData);
       setProblems(problemRows);
-      setChronicMedications(chronicMedRows);
+      setPrescriptions(prescriptionRows);
       setVisitCharges(chargeRows);
+      setSoapNotes(soapRows);
     },
     [patientId]
   );
@@ -471,8 +493,11 @@ export default function PimsPatientDetailView({
     setMrLoadError(null);
     setRxItems([]);
     setProblems([]);
+    setPrescriptions([]);
     setVisitCharges([]);
+    setSoapNotes([]);
     setTreatments(null);
+    setPhotoFailed(false);
     (async () => {
       try {
         await reloadChartData(stale);
@@ -490,6 +515,7 @@ export default function PimsPatientDetailView({
 
   useEffect(() => {
     setSelectedExam(null);
+    setSelectedSoapNote(null);
   }, [patientId]);
 
   useEffect(() => {
@@ -548,11 +574,7 @@ export default function PimsPatientDetailView({
     setDiscontinuingRxId(rx.id);
     try {
       const updated = await updatePatientPrescription(rx.id, { discontinued: true });
-      setChronicMedications((prev) =>
-        updated.discontinuedAt
-          ? prev.filter((m) => m.id !== rx.id)
-          : prev.map((m) => (m.id === rx.id ? updated : m))
-      );
+      setPrescriptions((prev) => prev.map((m) => (m.id === rx.id ? updated : m)));
     } finally {
       setDiscontinuingRxId(null);
     }
@@ -577,7 +599,20 @@ export default function PimsPatientDetailView({
   const monitoringForms = medicalRecord?.anestheticMonitorForms ?? [];
   const monitoringCount = monitoringForms.length;
   const prescriptionGroups = useMemo(() => groupPrescriptionTreatmentRows(rxItems), [rxItems]);
-  const prescriptionCount = rxItems.length;
+
+  const chronicMedications = useMemo(
+    () => prescriptions.filter((rx) => rx.acuity === 'chronic' && !rx.discontinuedAt),
+    [prescriptions]
+  );
+  /**
+   * Rx written in Scout. eVet rows are excluded because they already appear in
+   * `prescriptionGroups`, which is built from the imported treatment lines.
+   */
+  const scoutPrescriptions = useMemo(
+    () => prescriptions.filter(isScoutWrittenPrescription),
+    [prescriptions]
+  );
+  const prescriptionCount = rxItems.length + scoutPrescriptions.length;
 
   const complaints = medicalRecord?.complaints ?? [];
   const communicationLogs = medicalRecord?.communicationLogs ?? [];
@@ -691,6 +726,33 @@ export default function PimsPatientDetailView({
 
   async function saveFields(body: ScoutPatientWrite) {
     await applyWriteResult(await patchPatient(patientId, body));
+  }
+
+  async function handlePhotoUpload(file: File | null) {
+    if (!file || uploadingPhoto) return;
+    const validTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+    if (!validTypes.includes(file.type)) {
+      setSaveError('Choose a JPEG, PNG, GIF, or WebP image.');
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setSaveError('The image must be 5 MB or smaller.');
+      return;
+    }
+
+    setUploadingPhoto(true);
+    setSaveError(null);
+    try {
+      const result = await uploadPetImage(patientId, file);
+      setPayload((current) =>
+        current ? { ...current, imageUrl: result.imageUrl } : current
+      );
+      setPhotoFailed(false);
+    } catch (e: unknown) {
+      setSaveError(e instanceof Error ? e.message : 'Could not upload the patient photo.');
+    } finally {
+      setUploadingPhoto(false);
+    }
   }
 
   async function handleToggleActive() {
@@ -809,19 +871,16 @@ export default function PimsPatientDetailView({
 
       <DetailHeader
         avatar={
-          petPhoto ? (
+          petPhoto && !photoFailed ? (
             <img
               className="pims-detail__avatar pims-detail__avatar--img"
               src={petPhoto}
-              alt=""
+              alt={`${pname}`}
               width={56}
               height={56}
+              onError={() => setPhotoFailed(true)}
             />
-          ) : (
-            <div className="pims-detail__avatar" aria-hidden>
-              <PawPrint size={26} strokeWidth={1.6} />
-            </div>
-          )
+          ) : undefined
         }
         title={pname}
         badges={
@@ -861,6 +920,24 @@ export default function PimsPatientDetailView({
         }
         actions={
           <>
+            <label
+              className="pims-detail__btn-secondary"
+              aria-disabled={uploadingPhoto}
+            >
+              <Camera size={14} aria-hidden />
+              {uploadingPhoto ? 'Uploading…' : petPhoto && !photoFailed ? 'Change photo' : 'Add photo'}
+              <input
+                className="pims-detail__photo-input"
+                type="file"
+                accept="image/jpeg,image/png,image/gif,image/webp"
+                disabled={uploadingPhoto}
+                onChange={(e) => {
+                  const file = e.currentTarget.files?.[0] ?? null;
+                  void handlePhotoUpload(file);
+                  e.currentTarget.value = '';
+                }}
+              />
+            </label>
             <a
               className="pims-detail__btn-secondary"
               href={evetPatientLink(patientPimsId)}
@@ -1384,7 +1461,8 @@ export default function PimsPatientDetailView({
                   false,
                 ],
                 ['histories', 'History', histories.length, histories, false],
-                ['exams', 'Exams', exams.length, exams, false],
+                ['soapNotes', 'SOAP notes (Scout)', soapNotes.length, soapNotes, false],
+                ['exams', 'Exams (eVet)', exams.length, exams, false],
                 ['diagnoses', 'Diagnoses', diagnoses.length, diagnoses, false],
                 ['treatments', 'Treatments', treatments?.length ?? 0, [], true],
                 ['labs', 'Lab orders', labPairs.length, labPairs, false],
@@ -1495,6 +1573,44 @@ export default function PimsPatientDetailView({
                             </div>
                           );
                         })}
+                      {key === 'soapNotes' && soapNotes.length === 0 && (
+                        <p className="pims-patient-detail__muted">
+                          No SOAP notes charted in Scout for this patient.
+                        </p>
+                      )}
+                      {key === 'soapNotes' &&
+                        soapNotes.map((note) => {
+                          const signed = note.status === 'completed';
+                          const when = signed ? note.completedAt : note.created;
+                          return (
+                            <button
+                              key={note.id}
+                              type="button"
+                              className="pims-patient-detail__exam-row"
+                              onClick={() => setSelectedSoapNote(note)}
+                            >
+                              <span className="pims-patient-detail__exam-row-icons" aria-hidden>
+                                {signed ? <Lock size={13} /> : <ChevronRight size={14} />}
+                              </span>
+                              <span className="pims-patient-detail__exam-row-name">
+                                {note.mode === 'quick' ? 'Quick SOAP' : 'Comprehensive SOAP'}
+                                <span
+                                  className={`pims-patient-detail__soap-badge${
+                                    signed ? '' : ' pims-patient-detail__soap-badge--open'
+                                  }`}
+                                >
+                                  {signed ? 'Signed & locked' : 'Open'}
+                                </span>
+                              </span>
+                              <span className="pims-patient-detail__exam-row-visit">
+                                Visit #{note.appointmentId}
+                              </span>
+                              <span className="pims-patient-detail__exam-row-date">
+                                {formatChartDateTime(when)}
+                              </span>
+                            </button>
+                          );
+                        })}
                       {key === 'exams' &&
                         exams.map((row) => {
                           const o = row as Record<string, unknown>;
@@ -1601,7 +1717,65 @@ export default function PimsPatientDetailView({
         {mrTab === 'prescriptions' && (
           <div className="pims-patient-detail__rx">
             <h3 className="pims-patient-detail__rx-title">Prescriptions</h3>
-            {prescriptionGroups.length === 0 ? (
+
+            {scoutPrescriptions.length > 0 && (
+              <div className="pims-patient-detail__rx-group">
+                <div className="pims-patient-detail__rx-group-head">
+                  <span className="pims-patient-detail__rx-code">SCOUT</span>
+                  <span>Written in Scout</span>
+                </div>
+                <table className="pims-patient-detail__mr-table">
+                  <thead>
+                    <tr>
+                      <th>Start date</th>
+                      <th>Name</th>
+                      <th>Strength</th>
+                      <th>Sig</th>
+                      <th>Type</th>
+                      <th>Refills</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {scoutPrescriptions.map((rx) => (
+                      <tr key={`scout-rx-${rx.id}`}>
+                        <td>{formatChartDateShort(rx.startDate)}</td>
+                        <td>{rx.name}</td>
+                        <td>{rx.strength ?? '—'}</td>
+                        <td>{rx.instructions ?? '—'}</td>
+                        <td>
+                          {rx.acuity === 'chronic'
+                            ? 'Chronic'
+                            : rx.acuity === 'acute'
+                              ? 'Acute'
+                              : '—'}
+                        </td>
+                        <td>
+                          {rx.refill != null ? `${rx.refill} allowed` : '—'}
+                          {rx.refillExpiration ? (
+                            <span className="pims-patient-detail__muted">
+                              {' '}
+                              (exp {formatChartDateShort(rx.refillExpiration)})
+                            </span>
+                          ) : null}
+                        </td>
+                        <td>
+                          {rx.discontinuedAt ? (
+                            <span className="pims-patient-detail__muted">
+                              Stopped {formatChartDateShort(rx.discontinuedAt)}
+                            </span>
+                          ) : (
+                            'Active'
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {prescriptionGroups.length === 0 && scoutPrescriptions.length === 0 ? (
               <p className="pims-patient-detail__muted">No prescriptions recorded for this pet.</p>
             ) : (
               prescriptionGroups.map((g) => (
@@ -1822,6 +1996,14 @@ export default function PimsPatientDetailView({
           patientAgeLabel={ageStr}
           patientWeightDisplay={weightLine}
           onClose={() => setSelectedExam(null)}
+        />
+      ) : null}
+
+      {selectedSoapNote ? (
+        <PimsSoapNoteModal
+          encounter={selectedSoapNote}
+          patientName={pname || null}
+          onClose={() => setSelectedSoapNote(null)}
         />
       ) : null}
     </div>

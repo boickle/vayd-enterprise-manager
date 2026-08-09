@@ -162,6 +162,8 @@ export default function PlanOrdersSection({
     body: {
       name?: string;
       note?: string | null;
+      clientNote?: string | null;
+      microchipNumber?: string | null;
       qty?: number;
       unitPrice?: number;
       isCovered?: boolean;
@@ -309,6 +311,7 @@ export default function PlanOrdersSection({
                 order={o}
                 disabled={disabled}
                 onQtyChange={repriceAndPatch}
+                onPatch={patch}
                 onChangeState={changeState}
                 onRemove={remove}
               />
@@ -410,18 +413,38 @@ function CatalogRow({
   order: o,
   disabled,
   onQtyChange,
+  onPatch,
   onChangeState,
   onRemove,
 }: {
   order: EncounterOrder;
   disabled?: boolean;
   onQtyChange: (order: EncounterOrder, qty: number) => Promise<void>;
+  onPatch: (
+    order: EncounterOrder,
+    body: {
+      clientNote?: string | null;
+      microchipNumber?: string | null;
+      unitPrice?: number;
+    }
+  ) => Promise<void>;
   onChangeState: (order: EncounterOrder, state: 'accepted' | 'declined') => void;
   onRemove: (order: EncounterOrder) => void;
 }) {
   const qty = Number(o.qty) || 1;
   const editable = !disabled && o.state !== 'declined';
+  const flags = o.catalogFlags;
+  const allowPrice = flags?.allowPriceChange === true;
   const [repricing, setRepricing] = useState(false);
+  const [priceDraft, setPriceDraft] = useState(String(Number(o.unitPrice) || 0));
+  const [clientNoteDraft, setClientNoteDraft] = useState(o.clientNote ?? '');
+  const [microchipDraft, setMicrochipDraft] = useState(o.microchipNumber ?? '');
+
+  useEffect(() => {
+    setPriceDraft(String(Number(o.unitPrice) || 0));
+    setClientNoteDraft(o.clientNote ?? '');
+    setMicrochipDraft(o.microchipNumber ?? '');
+  }, [o.id, o.unitPrice, o.clientNote, o.microchipNumber]);
 
   const setQty = (next: number) => {
     const q = Math.max(1, Math.round(next));
@@ -430,77 +453,141 @@ function CatalogRow({
     void onQtyChange(o, q).finally(() => setRepricing(false));
   };
 
+  const commitPrice = () => {
+    if (!allowPrice || !editable) return;
+    const n = Number(priceDraft);
+    if (!Number.isFinite(n) || n < 0) {
+      setPriceDraft(String(Number(o.unitPrice) || 0));
+      return;
+    }
+    if (Math.abs(n - Number(o.unitPrice)) < 0.0001) return;
+    void onPatch(o, { unitPrice: n });
+  };
+
   return (
     <div className={`soap-order ${o.state}`}>
-      <span className="soap-order-name">
-        {o.kind === 'med' && <Pill size={13} />} {o.name}
-        {o.state === 'declined' && <span className="soap-tag declined">declined</span>}
-        {o.isCovered && <span className="soap-tag covered">covered</span>}
-      </span>
-      {editable ? (
-        <span className="soap-qty-stepper">
-          <button
-            type="button"
-            className="soap-icon-btn"
-            title="Decrease"
-            disabled={qty <= 1 || repricing}
-            onClick={() => setQty(qty - 1)}
-          >
-            <Minus size={13} />
-          </button>
-          <input
-            className="soap-qty-input"
-            type="number"
-            min={1}
-            value={qty}
-            disabled={repricing}
-            onChange={(e) => setQty(Number(e.target.value))}
-          />
-          <button
-            type="button"
-            className="soap-icon-btn"
-            title="Increase"
-            disabled={repricing}
-            onClick={() => setQty(qty + 1)}
-          >
-            <Plus size={13} />
-          </button>
-        </span>
-      ) : (
-        <span className="soap-order-qty">×{qty}</span>
-      )}
-      <span className="soap-order-price">
-        {o.isCovered ? '—' : money(qty * Number(o.unitPrice))}
-      </span>
-      {!disabled && (
-        <div className="soap-order-actions">
-          {o.state === 'declined' ? (
-            <button
-              type="button"
-              className="soap-btn small ok"
-              onClick={() => void onChangeState(o, 'accepted')}
-            >
-              Re-add
-            </button>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1, minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <span className="soap-order-name">
+            {o.kind === 'med' && <Pill size={13} />} {o.name}
+            {o.state === 'declined' && <span className="soap-tag declined">declined</span>}
+            {o.isCovered && <span className="soap-tag covered">covered</span>}
+          </span>
+          {editable ? (
+            <span className="soap-qty-stepper">
+              <button
+                type="button"
+                className="soap-icon-btn"
+                title="Decrease"
+                disabled={qty <= 1 || repricing}
+                onClick={() => setQty(qty - 1)}
+              >
+                <Minus size={13} />
+              </button>
+              <input
+                className="soap-qty-input"
+                type="number"
+                min={1}
+                value={qty}
+                disabled={repricing}
+                onChange={(e) => setQty(Number(e.target.value))}
+              />
+              <button
+                type="button"
+                className="soap-icon-btn"
+                title="Increase"
+                disabled={repricing}
+                onClick={() => setQty(qty + 1)}
+              >
+                <Plus size={13} />
+              </button>
+            </span>
           ) : (
-            <button
-              type="button"
-              className="soap-btn small danger"
-              onClick={() => void onChangeState(o, 'declined')}
-            >
-              <X size={13} /> Decline
-            </button>
+            <span className="soap-order-qty">×{qty}</span>
           )}
-          <button
-            type="button"
-            className="soap-icon-btn"
-            title="Remove"
-            onClick={() => onRemove(o)}
-          >
-            <Trash2 size={13} />
-          </button>
+          {allowPrice && editable ? (
+            <label className="soap-order-price" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              $
+              <input
+                className="soap-input"
+                style={{ width: 72, padding: '2px 6px' }}
+                type="number"
+                min={0}
+                step="0.01"
+                value={priceDraft}
+                onChange={(e) => setPriceDraft(e.target.value)}
+                onBlur={commitPrice}
+              />
+            </label>
+          ) : (
+            <span className="soap-order-price">
+              {o.isCovered ? '—' : money(qty * Number(o.unitPrice))}
+            </span>
+          )}
+          {!disabled && (
+            <div className="soap-order-actions">
+              {o.state === 'declined' ? (
+                <button
+                  type="button"
+                  className="soap-btn small ok"
+                  onClick={() => void onChangeState(o, 'accepted')}
+                >
+                  Re-add
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="soap-btn small danger"
+                  onClick={() => void onChangeState(o, 'declined')}
+                >
+                  <X size={13} /> Decline
+                </button>
+              )}
+              <button
+                type="button"
+                className="soap-icon-btn"
+                title="Remove"
+                onClick={() => onRemove(o)}
+              >
+                <Trash2 size={13} />
+              </button>
+            </div>
+          )}
         </div>
-      )}
+        {flags?.hasClientNotes && editable && (
+          <label style={{ fontSize: 12, color: '#475569', display: 'block' }}>
+            Client note
+            <textarea
+              className="soap-input"
+              rows={2}
+              value={clientNoteDraft}
+              onChange={(e) => setClientNoteDraft(e.target.value)}
+              onBlur={() => {
+                if ((o.clientNote ?? '') === clientNoteDraft) return;
+                void onPatch(o, { clientNote: clientNoteDraft.trim() || null });
+              }}
+              style={{ marginTop: 4, width: '100%', resize: 'vertical' }}
+            />
+          </label>
+        )}
+        {flags?.isMicrochip && editable && (
+          <label style={{ fontSize: 12, color: '#475569', display: 'block', maxWidth: 320 }}>
+            Microchip number
+            <input
+              className="soap-input"
+              value={microchipDraft}
+              onChange={(e) => setMicrochipDraft(e.target.value)}
+              onBlur={() => {
+                const next = microchipDraft.trim() || null;
+                if ((o.microchipNumber ?? null) === next) return;
+                void onPatch(o, { microchipNumber: next });
+              }}
+              placeholder="Required when implanting"
+              style={{ marginTop: 4, width: '100%' }}
+            />
+          </label>
+        )}
+      </div>
     </div>
   );
 }

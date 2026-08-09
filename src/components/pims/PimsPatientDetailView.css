@@ -475,6 +475,35 @@
   color: #475569;
 }
 
+/* Scout SOAP note rows: wider middle column for the visit number, plus the
+   open / signed state badge. */
+.pims-patient-detail__exam-row-visit {
+  flex-shrink: 0;
+  color: #64748b;
+  font-weight: 600;
+}
+
+.pims-patient-detail__soap-badge {
+  display: inline-block;
+  margin-left: 8px;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  vertical-align: 1px;
+  background: #ecfdf5;
+  color: #047857;
+  border: 1px solid #a7f3d0;
+}
+
+.pims-patient-detail__soap-badge--open {
+  background: #eff6ff;
+  color: #1d4ed8;
+  border-color: #bfdbfe;
+}
+
 /* ---------- Prescriptions ---------- */
 
 .pims-patient-detail__rx-title {

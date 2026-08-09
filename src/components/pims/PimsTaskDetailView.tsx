@@ -77,9 +77,9 @@ function scheduleChangeDetail(eventType: string, payload: unknown): string | nul
 function linkHref(entityType: string, entityId: number): string | null {
   switch (entityType) {
     case 'patient':
-      return `/pims/patients?patientId=${encodeURIComponent(String(entityId))}`;
+      return `/schedule/patients?patientId=${encodeURIComponent(String(entityId))}`;
     case 'client':
-      return `/pims/clients?clientId=${encodeURIComponent(String(entityId))}`;
+      return `/schedule/clients?clientId=${encodeURIComponent(String(entityId))}`;
     case 'appointment':
       return buildSchedulerFocusAppointmentUrl(entityId);
     default:

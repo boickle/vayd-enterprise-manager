@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useLocation, useSearchParams } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 import { ChevronRight, FileText } from 'lucide-react';
 import { searchClientsStaff, type ClientSearchRow } from '../api/clientsStaff';
 import PimsClientDetailView from '../components/pims/PimsClientDetailView';
@@ -92,10 +92,7 @@ function classificationLine(row: ClientSearchRow): string {
 }
 
 export default function PimsClientsPage() {
-  const location = useLocation();
-  const clientsBasePath = location.pathname.startsWith('/schedule/clients')
-    ? '/schedule/clients'
-    : '/pims/clients';
+  const clientsBasePath = '/schedule/clients';
 
   const [searchParams, setSearchParams] = useSearchParams();
   const qParam = searchParams.get('q') ?? '';
@@ -313,7 +310,7 @@ export default function PimsClientsPage() {
                       pets.map((pet, i) => (
                         <span key={String(pet.id)}>
                           {i > 0 ? ', ' : ''}
-                          <Link className="pims-clients__link" to={`/pims/patients?patientId=${encodeURIComponent(String(pet.id))}`}>
+                          <Link className="pims-clients__link" to={`/schedule/patients?patientId=${encodeURIComponent(String(pet.id))}`}>
                             {pet.name}
                           </Link>
                         </span>

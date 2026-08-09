@@ -24,6 +24,8 @@ export type ScribeSuggestion = {
   vitals: {
     tempF: string | null;
     weight: string | null;
+    weightUnit?: 'lb' | 'kg' | null;
+    weightNotTaken?: boolean | null;
     hr: string | null;
     rr: string | null;
     bcs: string | null;

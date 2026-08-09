@@ -76,7 +76,7 @@ const WORK_QUEUE_ROWS: QueueRow[] = [
   { label: 'Pending Checkout', count: 2, title: 'Coming soon', icon: ShoppingCart },
   { label: 'Lab Reviews', count: 1, title: 'Coming soon', icon: FlaskConical },
   { label: 'Pending Count Reviews', count: 2, title: 'Coming soon', icon: Calculator },
-  { label: 'Expiring Inventory', count: 4, to: '/schedule/inventory', icon: PackageSearch },
+  { label: 'Expiring Inventory', count: 4, to: '/schedule/catalog', icon: PackageSearch },
 ];
 
 export default function ScheduleLayout() {
@@ -277,7 +277,7 @@ export default function ScheduleLayout() {
             </NavLink>
             {SHOW_RAIL_RESTOCK_LOCATION ? (
               <NavLink
-                to="/schedule/inventory"
+                to="/schedule/catalog"
                 className="schedule-app__quick-link"
                 title={railCollapsedEffective ? 'Restock Location' : undefined}
               >

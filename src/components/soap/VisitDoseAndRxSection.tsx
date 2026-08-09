@@ -29,6 +29,8 @@ import {
   getCatalogLinePrice,
   type CatalogPricingItem,
 } from '../../utils/catalogItemPricing';
+import VaccineLotPicker from './VaccineLotPicker';
+import type { InventoryLotBalance } from '../../api/branchInventory';
 
 type Props = {
   encounterId: string;
@@ -38,6 +40,8 @@ type Props = {
   patientId?: number;
   clientId?: number;
   practiceId: number;
+  /** Visit primary provider — used to default lot picker to their branch. */
+  providerId?: number | null;
   /** Qty changes reprice the charge — bubble the updated order up so Checkout stays in sync. */
   onOrderUpdated: (order: EncounterOrder) => void;
   onInvoiceShouldRefresh: () => void;
@@ -109,6 +113,7 @@ export default function VisitDoseAndRxSection({
   patientId,
   clientId,
   practiceId,
+  providerId,
   onOrderUpdated,
   onInvoiceShouldRefresh,
   onChronicMedicationsMaybeChanged,
@@ -233,6 +238,8 @@ export default function VisitDoseAndRxSection({
           order={order}
           recorded={vaccinations[order.id] ?? null}
           stockDraw={stockDraws[order.id] ?? null}
+          practiceId={practiceId}
+          providerId={providerId}
           disabled={disabled}
           open={expanded === order.id}
           onToggle={() => setExpanded(expanded === order.id ? null : order.id)}
@@ -250,6 +257,7 @@ export default function VisitDoseAndRxSection({
           encounterId={encounterId}
           order={order}
           recorded={prescriptions[order.id] ?? null}
+          stockDraw={stockDraws[order.id] ?? null}
           disabled={disabled}
           open={expanded === order.id}
           onToggle={() => setExpanded(expanded === order.id ? null : order.id)}
@@ -361,11 +369,33 @@ function DymoLink({ label }: { label: string }) {
   );
 }
 
+function StockDrawBanner({ stockDraw }: { stockDraw: StockDraw }) {
+  const where = [stockDraw.branchName, stockDraw.locationName].filter(Boolean).join(' / ');
+  return (
+    <p className="soap-dose-stock">
+      At checkout, will decrement <strong>{stockDraw.quantity}</strong> ×{' '}
+      <strong>{stockDraw.inventoryItemName}</strong>
+      {stockDraw.inventoryItemCode ? ` (${stockDraw.inventoryItemCode})` : ''}
+      {where ? (
+        <>
+          {' '}
+          from <strong>{where}</strong>
+        </>
+      ) : (
+        <> from the provider&apos;s assigned branch/location</>
+      )}
+      .
+    </p>
+  );
+}
+
 function VaccineRow({
   encounterId,
   order,
   recorded,
   stockDraw,
+  practiceId,
+  providerId,
   disabled,
   open,
   onToggle,
@@ -376,6 +406,8 @@ function VaccineRow({
   order: EncounterOrder;
   recorded: OrderVaccination | null;
   stockDraw: StockDraw | null;
+  practiceId: number;
+  providerId?: number | null;
   disabled?: boolean;
   open: boolean;
   onToggle: () => void;
@@ -383,6 +415,7 @@ function VaccineRow({
   onSaved: (saved: OrderVaccination) => void;
 }) {
   const [lotNumber, setLotNumber] = useState('');
+  const [lotBalanceId, setLotBalanceId] = useState<number | null>(null);
   const [serialNumber, setSerialNumber] = useState('');
   const [vaccineExpiration, setVaccineExpiration] = useState('');
   const [dateVaccinated, setDateVaccinated] = useState(today());
@@ -396,10 +429,12 @@ function VaccineRow({
   const [prefilled, setPrefilled] = useState(false);
 
   const isRabies = /rabies/i.test(order.name);
+  const lotInventoryItemId = stockDraw?.inventoryItemId ?? order.catalogItemId ?? null;
 
   useEffect(() => {
     if (recorded) {
       setLotNumber(recorded.lotNumber ?? '');
+      setLotBalanceId(recorded.inventoryLotBalanceId ?? null);
       setSerialNumber(recorded.serialNumber ?? '');
       setVaccineExpiration(toDateInput(recorded.vaccineExpiration));
       setDateVaccinated(toDateInput(recorded.dateVaccinated) || today());
@@ -425,6 +460,7 @@ function VaccineRow({
         }
         if (defaults.manufacturer) setManufacturer(defaults.manufacturer);
         if (defaults.vaccineType) setVaccineType(defaults.vaccineType);
+        if (defaults.serialNumber) setSerialNumber(defaults.serialNumber);
         setPrefilled(true);
       })
       .catch(() => {
@@ -434,6 +470,17 @@ function VaccineRow({
       canceled = true;
     };
   }, [open, prefilled, recorded, encounterId, order.id, order.catalogItemId]);
+
+  function applyLot(lot: InventoryLotBalance | null) {
+    if (!lot) {
+      setLotBalanceId(null);
+      return;
+    }
+    setLotBalanceId(lot.id);
+    setLotNumber(lot.lotNumber);
+    if (lot.serialNumber) setSerialNumber(lot.serialNumber);
+    if (lot.expirationDate) setVaccineExpiration(lot.expirationDate.slice(0, 10));
+  }
 
   const save = async () => {
     if (!nextDue) {
@@ -454,6 +501,7 @@ function VaccineRow({
         manufacturer: manufacturer.trim() || undefined,
         vaccineType: vaccineType || undefined,
         dosageType: dosageType || undefined,
+        inventoryLotBalanceId: lotBalanceId,
       });
       onSaved(saved);
     } catch (e) {
@@ -478,24 +526,36 @@ function VaccineRow({
       />
       {open && (
         <div className="soap-dose-body">
-          {stockDraw && (
-            <p className="soap-dose-stock">
-              Draws {stockDraw.quantity} × {stockDraw.inventoryItemName}
-              {stockDraw.inventoryItemCode ? ` (${stockDraw.inventoryItemCode})` : ''} — not
-              decremented yet.
-            </p>
-          )}
+          {stockDraw && <StockDrawBanner stockDraw={stockDraw} />}
           <div className="soap-dose-grid">
             <QtyField order={order} disabled={disabled} onQtyChange={onQtyChange} />
-            <label>
-              Lot number
-              <input
-                className="soap-input"
-                value={lotNumber}
-                disabled={disabled || saving}
-                onChange={(e) => setLotNumber(e.target.value)}
-              />
-            </label>
+            {lotInventoryItemId != null ? (
+              <div style={{ gridColumn: '1 / -1' }}>
+                <VaccineLotPicker
+                  practiceId={practiceId}
+                  inventoryItemId={lotInventoryItemId}
+                  providerId={providerId}
+                  disabled={disabled || saving}
+                  selectedLotId={lotBalanceId}
+                  lotNumber={lotNumber}
+                  onSelectLot={applyLot}
+                  onLotNumberChange={(v) => {
+                    setLotBalanceId(null);
+                    setLotNumber(v);
+                  }}
+                />
+              </div>
+            ) : (
+              <label>
+                Lot number
+                <input
+                  className="soap-input"
+                  value={lotNumber}
+                  disabled={disabled || saving}
+                  onChange={(e) => setLotNumber(e.target.value)}
+                />
+              </label>
+            )}
             <label>
               Serial number
               <input
@@ -609,6 +669,7 @@ function PrescriptionRow({
   encounterId,
   order,
   recorded,
+  stockDraw,
   disabled,
   open,
   onToggle,
@@ -618,6 +679,7 @@ function PrescriptionRow({
   encounterId: string;
   order: EncounterOrder;
   recorded: OrderPrescription | null;
+  stockDraw: StockDraw | null;
   disabled?: boolean;
   open: boolean;
   onToggle: () => void;
@@ -723,6 +785,7 @@ function PrescriptionRow({
       />
       {open && (
         <div className="soap-dose-body">
+          {stockDraw && <StockDrawBanner stockDraw={stockDraw} />}
           {(strength || sigSource) && (
             <p className="soap-dose-stock">
               {strength ? `Strength ${strength}` : ''}

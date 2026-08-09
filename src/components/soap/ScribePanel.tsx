@@ -46,6 +46,17 @@ import { VISIT_DISCUSSION_HEADER } from '../../utils/roomLoaderSubjectiveText';
 import { stashDeferredPlanItems } from '../../utils/deferredScribePlanItems';
 import { vitalsFromValue, type Vitals } from '../../pages/SoapEncounterPage';
 
+type NumericVitalKey = 'tempF' | 'weight' | 'hr' | 'rr' | 'bcs' | 'painScore';
+
+const VITAL_LABELS: Record<NumericVitalKey, string> = {
+  tempF: 'Temp °F',
+  weight: 'Weight',
+  hr: 'HR (bpm)',
+  rr: 'RR (rpm)',
+  bcs: 'BCS /9',
+  painScore: 'FAS /5',
+};
+
 type Props = {
   soapEncounterId: string;
   patientId: number;
@@ -76,15 +87,6 @@ type Props = {
    * since that write happens directly against the other pet's encounter/orders with no other
    * signal back to this page. */
   onHouseholdOrdersChanged?: () => void;
-};
-
-const VITAL_LABELS: Record<keyof Vitals, string> = {
-  tempF: 'Temp °F',
-  weight: 'Weight (lb)',
-  hr: 'HR (bpm)',
-  rr: 'RR (rpm)',
-  bcs: 'BCS /9',
-  painScore: 'FAS /5',
 };
 
 const PE_LABEL_BY_KEY = Object.fromEntries(PE_SYSTEMS.map((s) => [s.key, s.label]));
@@ -208,15 +210,37 @@ function mergeSubjectiveHistory(existing: string, aiHistory: string): string {
 
 /** Only fills vitals the doctor hasn't already entered — never overwrites (mirrors the live
  * auto-apply rule above, reused for multi-pet review-and-apply). */
+/** Only fills vitals the doctor hasn't already entered — never overwrites (mirrors the live
+ * auto-apply rule above, reused for multi-pet review-and-apply). */
 function fillEmptyVitals(
   current: Vitals,
   suggested: MultiPatientSuggestionEntry['vitals']
 ): Partial<Vitals> {
   const patch: Partial<Vitals> = {};
-  (Object.keys(VITAL_LABELS) as (keyof Vitals)[]).forEach((k) => {
+
+  // Explicit "not weighed" from the transcript — only when the chart has no weight yet.
+  if (
+    suggested.weightNotTaken === true &&
+    !current.weight.trim() &&
+    !current.weightNotTaken
+  ) {
+    patch.weightNotTaken = true;
+    patch.weight = '';
+    return patch;
+  }
+
+  (Object.keys(VITAL_LABELS) as NumericVitalKey[]).forEach((k) => {
+    if (k === 'weight' && current.weightNotTaken) return;
     const suggestedVal = suggested[k]?.trim();
     const existing = current[k]?.trim();
-    if (suggestedVal && !existing) patch[k] = suggestedVal;
+    if (suggestedVal && !existing) {
+      patch[k] = suggestedVal;
+      if (k === 'weight') {
+        patch.weightNotTaken = false;
+        const unit = suggested.weightUnit;
+        patch.weightUnit = unit === 'kg' || unit === 'lb' ? unit : current.weightUnit || 'lb';
+      }
+    }
   });
   return patch;
 }
@@ -460,17 +484,44 @@ export default function ScribePanel({
     prevSuggestionRef.current = suggestion;
 
     const vitalsPatch: Partial<Vitals> = {};
-    (Object.keys(VITAL_LABELS) as (keyof Vitals)[]).forEach((k) => {
-      const suggested = suggestion.vitals[k]?.trim();
-      const existing = currentVitalsRef.current[k]?.trim();
-      if (suggested && !existing) vitalsPatch[k] = suggested;
-    });
+    const current = currentVitalsRef.current;
+    if (
+      suggestion.vitals.weightNotTaken === true &&
+      !current.weight.trim() &&
+      !current.weightNotTaken
+    ) {
+      vitalsPatch.weightNotTaken = true;
+      vitalsPatch.weight = '';
+    } else {
+      (Object.keys(VITAL_LABELS) as NumericVitalKey[]).forEach((k) => {
+        if (k === 'weight' && current.weightNotTaken) return;
+        const suggested = suggestion.vitals[k]?.trim();
+        const existing = current[k]?.trim();
+        if (suggested && !existing) {
+          vitalsPatch[k] = suggested;
+          if (k === 'weight') {
+            vitalsPatch.weightNotTaken = false;
+            const unit = suggestion.vitals.weightUnit;
+            vitalsPatch.weightUnit =
+              unit === 'kg' || unit === 'lb' ? unit : current.weightUnit || 'lb';
+          }
+        }
+      });
+    }
     if (Object.keys(vitalsPatch).length > 0) {
       onApplyVitals(vitalsPatch);
       logApplied(
-        `Vitals filled in: ${Object.entries(vitalsPatch)
-          .map(([k, v]) => `${VITAL_LABELS[k as keyof Vitals]} ${v}`)
-          .join(', ')}`
+        vitalsPatch.weightNotTaken
+          ? 'Vitals filled in: No weight taken'
+          : `Vitals filled in: ${Object.entries(vitalsPatch)
+              .filter(([k]) => k in VITAL_LABELS)
+              .map(([k, v]) => {
+                if (k === 'weight' && vitalsPatch.weightUnit) {
+                  return `${VITAL_LABELS.weight} ${v} ${vitalsPatch.weightUnit}`;
+                }
+                return `${VITAL_LABELS[k as NumericVitalKey]} ${v}`;
+              })
+              .join(', ')}`
       );
     }
 

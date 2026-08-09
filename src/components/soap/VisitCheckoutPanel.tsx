@@ -5,7 +5,9 @@ import {
   createTerminalPaymentIntent,
   deleteOrder,
   reopenInvoice,
+  updateOrder,
   voidInvoice,
+  type EncounterOrder,
   type VisitInvoice,
   type VisitInvoiceLine,
 } from '../../api/visitWorkflow';
@@ -14,6 +16,8 @@ type Props = {
   /** Needed to delete the encounter order behind an invoice line. */
   encounterId?: string | null;
   invoice: VisitInvoice | null;
+  /** Used to show / edit client notes and price overrides on checkout lines. */
+  orders?: EncounterOrder[];
   disabled?: boolean;
   /** Rendered below the payment actions — the follow-up question, asked while
    * the client is still here (see CheckoutFollowUpPrompt). */
@@ -22,6 +26,7 @@ type Props = {
   onOpenEuthanasiaPrepay: () => void;
   /** After removing a line's order, drop it from local order state and refresh the invoice. */
   onOrderRemoved?: (orderId: string) => void;
+  onOrdersChange?: (orders: EncounterOrder[]) => void;
 };
 
 function money(n: number | null | undefined): string {
@@ -40,11 +45,13 @@ function money(n: number | null | undefined): string {
 export default function VisitCheckoutPanel({
   encounterId,
   invoice,
+  orders = [],
   disabled,
   followUpSlot,
   onInvoiceChange,
   onOpenEuthanasiaPrepay,
   onOrderRemoved,
+  onOrdersChange,
 }: Props) {
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -132,37 +139,111 @@ export default function VisitCheckoutPanel({
           <div className="soap-invoice-lines">
             {(invoice.lines ?? [])
               .filter((l) => !l.isDeleted)
-              .map((l) => (
-                <div key={l.id} className="soap-invoice-line">
-                  <span className="soap-invoice-line-desc">
-                    {l.isCovered ? (
-                      <span
-                        className="soap-invoice-heart"
-                        title="Membership covered"
-                        aria-label="Membership covered"
+              .map((l) => {
+                const order =
+                  l.orderId != null
+                    ? orders.find((o) => o.id === l.orderId) ?? null
+                    : null;
+                const showClientNote = order?.catalogFlags?.hasClientNotes === true;
+                const allowPrice = order?.catalogFlags?.allowPriceChange === true;
+                return (
+                  <div key={l.id} className="soap-invoice-line" style={{ flexWrap: 'wrap' }}>
+                    <span className="soap-invoice-line-desc">
+                      {l.isCovered ? (
+                        <span
+                          className="soap-invoice-heart"
+                          title="Membership covered"
+                          aria-label="Membership covered"
+                        >
+                          ❤️{' '}
+                        </span>
+                      ) : null}
+                      {l.description}
+                      {Number(l.qty) > 1 ? ` ×${Number(l.qty)}` : ''}
+                    </span>
+                    <span className="soap-invoice-line-amt">
+                      {l.isCovered ? 'covered' : money(l.amount)}
+                    </span>
+                    {canEditLines && l.orderId && (
+                      <button
+                        type="button"
+                        className="soap-invoice-line-remove"
+                        title="Remove from checkout"
+                        disabled={disabled || busy != null}
+                        onClick={() => removeLine(l)}
                       >
-                        ❤️{' '}
-                      </span>
-                    ) : null}
-                    {l.description}
-                    {Number(l.qty) > 1 ? ` ×${Number(l.qty)}` : ''}
-                  </span>
-                  <span className="soap-invoice-line-amt">
-                    {l.isCovered ? 'covered' : money(l.amount)}
-                  </span>
-                  {canEditLines && l.orderId && (
-                    <button
-                      type="button"
-                      className="soap-invoice-line-remove"
-                      title="Remove from checkout"
-                      disabled={disabled || busy != null}
-                      onClick={() => removeLine(l)}
-                    >
-                      <X size={14} />
-                    </button>
-                  )}
-                </div>
-              ))}
+                        <X size={14} />
+                      </button>
+                    )}
+                    {showClientNote && order && encounterId && canEditLines && (
+                      <label
+                        style={{
+                          flex: '1 1 100%',
+                          fontSize: 12,
+                          color: '#475569',
+                          marginTop: 4,
+                        }}
+                      >
+                        Client note
+                        <textarea
+                          className="soap-input"
+                          rows={2}
+                          defaultValue={order.clientNote ?? ''}
+                          disabled={disabled || busy != null}
+                          onBlur={(e) => {
+                            const next = e.target.value.trim() || null;
+                            if ((order.clientNote ?? null) === next) return;
+                            void (async () => {
+                              const updated = await updateOrder(encounterId, order.id, {
+                                clientNote: next,
+                              });
+                              onOrdersChange?.(
+                                orders.map((o) => (o.id === order.id ? updated : o))
+                              );
+                            })();
+                          }}
+                          style={{ marginTop: 4, width: '100%', resize: 'vertical' }}
+                        />
+                      </label>
+                    )}
+                    {allowPrice && order && encounterId && canEditLines && !l.isCovered && (
+                      <label
+                        style={{
+                          flex: '1 1 100%',
+                          fontSize: 12,
+                          color: '#475569',
+                          marginTop: 4,
+                          maxWidth: 160,
+                        }}
+                      >
+                        Unit price
+                        <input
+                          className="soap-input"
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          defaultValue={Number(order.unitPrice) || 0}
+                          disabled={disabled || busy != null}
+                          onBlur={(e) => {
+                            const n = Number(e.target.value);
+                            if (!Number.isFinite(n) || n < 0) return;
+                            if (Math.abs(n - Number(order.unitPrice)) < 0.0001) return;
+                            void (async () => {
+                              const updated = await updateOrder(encounterId, order.id, {
+                                unitPrice: n,
+                              });
+                              onOrdersChange?.(
+                                orders.map((o) => (o.id === order.id ? updated : o))
+                              );
+                            })();
+                          }}
+                          style={{ marginTop: 4, width: '100%' }}
+                        />
+                      </label>
+                    )}
+                  </div>
+                );
+              })}
           </div>
           <div className="soap-invoice-totals">
             {Number(invoice.membershipAdjustments) !== 0 && (
