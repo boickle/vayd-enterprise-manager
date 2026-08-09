@@ -2280,7 +2280,70 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  cursor: pointer;
+}
+.soap-dose-dymo:hover:not(:disabled) {
+  color: var(--soap-accent);
+}
+.soap-dose-dymo:disabled {
   cursor: not-allowed;
+  opacity: 0.55;
+}
+.soap-rx-label-modal {
+  width: min(760px, calc(100vw - 32px));
+  max-width: 760px;
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+}
+.soap-rx-label-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 12px;
+}
+.soap-rx-label-grid label,
+.soap-rx-label-printer label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--soap-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.soap-rx-label-wide {
+  grid-column: 1 / -1;
+}
+.soap-rx-label-printer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--soap-border);
+}
+.soap-rx-label-note,
+.soap-rx-label-help,
+.soap-rx-label-success {
+  margin: 8px 0 0;
+  font-size: 12px;
+}
+.soap-rx-label-note {
+  color: #92400e;
+}
+.soap-rx-label-help {
+  color: var(--soap-muted);
+}
+.soap-rx-label-success {
+  color: #166534;
+  font-weight: 600;
+}
+@media (max-width: 640px) {
+  .soap-rx-label-grid {
+    grid-template-columns: 1fr;
+  }
+  .soap-rx-label-wide {
+    grid-column: auto;
+  }
 }
 
 /* Addenda styles live with the component (SoapAddendaSection.css) so the section

@@ -30,6 +30,7 @@ import {
   type CatalogPricingItem,
 } from '../../utils/catalogItemPricing';
 import VaccineLotPicker from './VaccineLotPicker';
+import RxLabelModal, { type RxLabelPrescriptionInput } from './RxLabelModal';
 import type { InventoryLotBalance } from '../../api/branchInventory';
 
 type Props = {
@@ -42,6 +43,11 @@ type Props = {
   practiceId: number;
   /** Visit primary provider — used to default lot picker to their branch. */
   providerId?: number | null;
+  patientName: string;
+  patientSpecies?: string | null;
+  ownerName?: string | null;
+  providerName?: string | null;
+  providerLicense?: string | null;
   /** Qty changes reprice the charge — bubble the updated order up so Checkout stays in sync. */
   onOrderUpdated: (order: EncounterOrder) => void;
   onInvoiceShouldRefresh: () => void;
@@ -114,6 +120,11 @@ export default function VisitDoseAndRxSection({
   clientId,
   practiceId,
   providerId,
+  patientName,
+  patientSpecies,
+  ownerName,
+  providerName,
+  providerLicense,
   onOrderUpdated,
   onInvoiceShouldRefresh,
   onChronicMedicationsMaybeChanged,
@@ -259,6 +270,11 @@ export default function VisitDoseAndRxSection({
           recorded={prescriptions[order.id] ?? null}
           stockDraw={stockDraws[order.id] ?? null}
           disabled={disabled}
+          patientName={patientName}
+          patientSpecies={patientSpecies}
+          ownerName={ownerName}
+          providerName={providerName}
+          providerLicense={providerLicense}
           open={expanded === order.id}
           onToggle={() => setExpanded(expanded === order.id ? null : order.id)}
           onQtyChange={repriceQty}
@@ -355,14 +371,24 @@ function RowHeader({
   );
 }
 
-/** Dead until label printing is wired up. */
-function DymoLink({ label }: { label: string }) {
+function DymoLink({
+  label,
+  disabled = true,
+  title,
+  onClick,
+}: {
+  label: string;
+  disabled?: boolean;
+  title?: string;
+  onClick?: () => void;
+}) {
   return (
     <button
       type="button"
       className="soap-dose-dymo"
-      disabled
-      title="Label printing isn't wired up yet"
+      disabled={disabled}
+      title={title}
+      onClick={onClick}
     >
       <Printer size={12} /> {label}
     </button>
@@ -671,6 +697,11 @@ function PrescriptionRow({
   recorded,
   stockDraw,
   disabled,
+  patientName,
+  patientSpecies,
+  ownerName,
+  providerName,
+  providerLicense,
   open,
   onToggle,
   onQtyChange,
@@ -681,6 +712,11 @@ function PrescriptionRow({
   recorded: OrderPrescription | null;
   stockDraw: StockDraw | null;
   disabled?: boolean;
+  patientName: string;
+  patientSpecies?: string | null;
+  ownerName?: string | null;
+  providerName?: string | null;
+  providerLicense?: string | null;
   open: boolean;
   onToggle: () => void;
   onQtyChange: (order: EncounterOrder, qty: number) => Promise<void>;
@@ -697,6 +733,7 @@ function PrescriptionRow({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [prefilled, setPrefilled] = useState(false);
+  const [showLabel, setShowLabel] = useState(false);
 
   useEffect(() => {
     if (!recorded) return;
@@ -741,28 +778,40 @@ function PrescriptionRow({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, prefilled, recorded, encounterId, order.id, order.catalogItemId]);
 
-  const save = async () => {
+  const save = async (
+    labelValues?: RxLabelPrescriptionInput
+  ): Promise<OrderPrescription | null> => {
     if (!acuity) {
       setError('Choose acute or chronic for this prescription.');
-      return;
+      return null;
     }
     setSaving(true);
     setError(null);
     try {
       const saved = await saveOrderPrescription(encounterId, order.id, {
-        name: name.trim() || order.name,
+        name: labelValues?.name.trim() || name.trim() || order.name,
         // Not collected on the form any more — it comes off the catalog drug record, and the
         // label needs it stored on the prescription.
-        strength: recorded?.strength ?? strength ?? undefined,
-        instructions: instructions.trim() || undefined,
-        refill: Number(refill) || 0,
-        refillExpiration: refillExpiration || undefined,
-        startDate: startDate || undefined,
+        strength: labelValues?.strength.trim() || recorded?.strength || strength || undefined,
+        instructions: labelValues?.instructions.trim() || instructions.trim() || undefined,
+        refill: labelValues?.refill ?? (Number(refill) || 0),
+        refillExpiration: labelValues?.refillExpiration || refillExpiration || undefined,
+        startDate: labelValues?.startDate || startDate || undefined,
         acuity,
       });
+      if (labelValues) {
+        setName(labelValues.name);
+        setStrength(labelValues.strength);
+        setInstructions(labelValues.instructions);
+        setRefill(String(labelValues.refill));
+        setRefillExpiration(labelValues.refillExpiration);
+        setStartDate(labelValues.startDate);
+      }
       onSaved(saved);
+      return saved;
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not save this prescription.');
+      return null;
     } finally {
       setSaving(false);
     }
@@ -902,9 +951,46 @@ function PrescriptionRow({
             >
               {saving ? 'Saving…' : recorded ? 'Update Rx' : 'Save Rx'}
             </button>
-            <DymoLink label="Send Rx label to DYMO" />
+            <DymoLink
+              label="Send Rx label to DYMO"
+              disabled={disabled || saving}
+              title="Review and print a prescription label"
+              onClick={() => {
+                if (!acuity) {
+                  setError('Choose acute or chronic before printing this prescription.');
+                  return;
+                }
+                setError(null);
+                setShowLabel(true);
+              }}
+            />
           </div>
         </div>
+      )}
+      {showLabel && (
+        <RxLabelModal
+          patientName={patientName}
+          species={patientSpecies ?? ''}
+          ownerName={ownerName ?? ''}
+          veterinarianName={providerName ?? ''}
+          veterinarianLicense={providerLicense ?? ''}
+          quantity={Number(order.qty) || 1}
+          prescription={{
+            name,
+            strength: recorded?.strength ?? strength ?? '',
+            instructions,
+            refill: Number(refill) || 0,
+            refillExpiration,
+            startDate,
+            rxNumber: recorded?.rxNumber,
+          }}
+          onSavePrescription={async (value) => {
+            const saved = await save(value);
+            if (!saved) throw new Error('Could not save the prescription before printing.');
+            return { rxNumber: saved.rxNumber };
+          }}
+          onClose={() => setShowLabel(false)}
+        />
       )}
     </div>
   );

@@ -31,6 +31,7 @@ import {
 } from '../api/visitWorkflow';
 import { summarizeIntakeHistory } from '../api/soapScribe';
 import { fetchAppointmentById } from '../api/appointments';
+import { fetchEmployee } from '../api/appointmentSettings';
 import { fetchPatientProfileForRow } from '../api/patients';
 import {
   defaultPeExamState,
@@ -221,9 +222,11 @@ export default function SoapEncounterPage() {
   const [invoice, setInvoice] = useState<VisitInvoice | null>(null);
   const [patientName, setPatientName] = useState<string>('');
   const [patientProfile, setPatientProfile] = useState<Record<string, unknown> | null>(null);
+  const [clientName, setClientName] = useState<string>('');
   const [appointmentStart, setAppointmentStart] = useState<string | null>(null);
   const [primaryProviderId, setPrimaryProviderId] = useState<number | null>(null);
   const [primaryProviderName, setPrimaryProviderName] = useState<string | null>(null);
+  const [primaryProviderLicense, setPrimaryProviderLicense] = useState<string | null>(null);
   const [showPromptOverrides, setShowPromptOverrides] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -367,6 +370,8 @@ export default function SoapEncounterPage() {
       setWritingAddendum(false);
       setPrimaryProviderId(null);
       setPrimaryProviderName(null);
+      setPrimaryProviderLicense(null);
+      setClientName('');
       setPatientProfile(null);
       setAppointmentStart(null);
       setShowPromptOverrides(false);
@@ -489,6 +494,15 @@ export default function SoapEncounterPage() {
               setAppointmentStart(
                 typeof appt?.appointmentStart === 'string' ? appt.appointmentStart : null
               );
+              const client = appt?.client;
+              if (client) {
+                setClientName(
+                  [client.firstName, client.lastName]
+                    .map((part) => (typeof part === 'string' ? part.trim() : ''))
+                    .filter(Boolean)
+                    .join(' ')
+                );
+              }
               const provider = appt?.primaryProvider;
               if (provider?.id != null) {
                 setPrimaryProviderId(Number(provider.id));
@@ -500,6 +514,18 @@ export default function SoapEncounterPage() {
                   setPrimaryProviderName(`Provider #${provider.id}`);
                 } else {
                   setPrimaryProviderName(/^dr\.?\b/i.test(full) ? full : `Dr. ${full}`);
+                }
+                try {
+                  const employee = (await fetchEmployee(Number(provider.id))) as unknown as Record<
+                    string,
+                    unknown
+                  >;
+                  const license = employee.licenseNumber;
+                  if (!canceled && typeof license === 'string' && license.trim()) {
+                    setPrimaryProviderLicense(license.trim());
+                  }
+                } catch {
+                  /* The label modal will ask for a missing license number. */
                 }
               }
             } catch {
@@ -764,8 +790,7 @@ export default function SoapEncounterPage() {
     const breed = patientBreed(patientProfile);
     const visitWeight = formatVitalWeight(vitals);
     const profileWeight = patientField(patientProfile, 'weight', 'weightLbs');
-    const weight =
-      visitWeight ?? (profileWeight ? `${profileWeight} lb` : null);
+    const weight = visitWeight ?? (profileWeight ? `${profileWeight} lb` : null);
     return [age, sex, breed, weight].filter((part): part is string => Boolean(part));
   }, [appointmentStart, patientProfile, vitals]);
 
@@ -1011,6 +1036,11 @@ export default function SoapEncounterPage() {
                       clientId={clientIdParam ? Number(clientIdParam) : undefined}
                       practiceId={VISIT_WORKFLOW_PRACTICE_ID}
                       providerId={primaryProviderId}
+                      patientName={patientName}
+                      patientSpecies={patientField(patientProfile, 'species')}
+                      ownerName={clientName}
+                      providerName={primaryProviderName}
+                      providerLicense={primaryProviderLicense}
                       onOrderUpdated={(updated) =>
                         setOrders((prev) => prev.map((o) => (o.id === updated.id ? updated : o)))
                       }
@@ -1290,6 +1320,11 @@ export default function SoapEncounterPage() {
                         clientId={clientIdParam ? Number(clientIdParam) : undefined}
                         practiceId={VISIT_WORKFLOW_PRACTICE_ID}
                         providerId={primaryProviderId}
+                        patientName={patientName}
+                        patientSpecies={patientField(patientProfile, 'species')}
+                        ownerName={clientName}
+                        providerName={primaryProviderName}
+                        providerLicense={primaryProviderLicense}
                         onOrderUpdated={(updated) =>
                           setOrders((prev) => prev.map((o) => (o.id === updated.id ? updated : o)))
                         }
