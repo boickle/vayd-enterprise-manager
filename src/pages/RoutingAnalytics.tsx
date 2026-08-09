@@ -48,6 +48,10 @@ import {
   type AppointmentRequestSubmissionItem,
   type AppointmentRequestSubmissionConversions,
 } from '../api/appointmentRequestSubmissions';
+import {
+  fetchServiceAreaInterestAnalytics,
+  type ServiceAreaInterestAnalyticsResponse,
+} from '../api/serviceAreaInterest';
 import { useCommittedDateRange } from '../hooks/useCommittedDateRange';
 
 function toLocalDateStr(d: Dayjs) {
@@ -169,6 +173,10 @@ function isCompletedSubmission(item: AppointmentRequestSubmissionItem): boolean 
 
 function isAbandonedSubmission(item: AppointmentRequestSubmissionItem): boolean {
   return item.kind === 'abandoned';
+}
+
+function isOutOfServiceAreaAbandon(item: AppointmentRequestSubmissionItem): boolean {
+  return item.kind === 'abandoned' && item.abandonReason === 'zone_not_serviced';
 }
 
 function classifyClientType(requestData: Record<string, unknown>): 'new' | 'existing' | 'unknown' {
@@ -432,6 +440,10 @@ export default function RoutingAnalyticsPage() {
     useState<AppointmentRequestSubmissionConversions | null>(null);
   const [requestSubmissionsLoading, setRequestSubmissionsLoading] = useState(false);
   const [requestSubmissionsError, setRequestSubmissionsError] = useState<string | null>(null);
+  const [serviceAreaInterest, setServiceAreaInterest] =
+    useState<ServiceAreaInterestAnalyticsResponse | null>(null);
+  const [serviceAreaInterestLoading, setServiceAreaInterestLoading] = useState(false);
+  const [serviceAreaInterestError, setServiceAreaInterestError] = useState<string | null>(null);
 
   const start = range.from.startOf('day');
   const end = range.to.startOf('day');
@@ -555,6 +567,33 @@ export default function RoutingAnalyticsPage() {
     };
   }, [startStr, endStr]);
 
+  useEffect(() => {
+    let alive = true;
+    setServiceAreaInterestLoading(true);
+    setServiceAreaInterestError(null);
+    fetchServiceAreaInterestAnalytics({
+      startDate: startStr,
+      endDate: endStr,
+      practiceId: APPOINTMENT_REQUEST_PRACTICE_ID,
+    })
+      .then((res) => {
+        if (!alive) return;
+        setServiceAreaInterest(res);
+      })
+      .catch((e) => {
+        if (!alive) return;
+        console.error('Service area interest analytics fetch failed:', e);
+        setServiceAreaInterestError('Failed to load out-of-service-area interest');
+        setServiceAreaInterest(null);
+      })
+      .finally(() => {
+        if (alive) setServiceAreaInterestLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [startStr, endStr]);
+
   const requestSubmissionStats = useMemo(() => {
     const items = requestSubmissions ?? [];
     const byDay = new Map<string, { total: number; euth: number; nonEuth: number }>();
@@ -564,10 +603,15 @@ export default function RoutingAnalyticsPage() {
     let newClient = 0;
     let existingClient = 0;
     let abandoned = 0;
+    let outOfServiceAreaAbandoned = 0;
     const howDidYouHearCounts = new Map<string, number>();
     const howDidYouHearOtherCounts = new Map<string, number>();
     for (const item of items) {
       const { isEuth, clientType, localDay } = classifySubmission(item);
+      if (isOutOfServiceAreaAbandon(item)) {
+        outOfServiceAreaAbandoned += 1;
+        continue;
+      }
       if (isAbandonedSubmission(item)) {
         abandoned += 1;
         continue;
@@ -611,6 +655,7 @@ export default function RoutingAnalyticsPage() {
       newClient,
       existingClient,
       abandoned,
+      outOfServiceAreaAbandoned,
       attempted,
       completionRate,
       chartRows,
@@ -1844,9 +1889,10 @@ export default function RoutingAnalyticsPage() {
           GET /appointments/request-submissions (practiceId={APPOINTMENT_REQUEST_PRACTICE_ID}, from / to in
           ISO UTC derived from the selected local dates). Completed submissions (<code>kind: submission</code>)
           are counted for totals, client type, euthanasia breakdown, and how-did-you-hear-about-us answers;
-          abandoned form sessions (<code>kind: abandoned</code>) are counted separately. Attempted = completed +
-          abandoned; completion rate = completed ÷ attempted. “How did you hear about us” is asked on new-client
-          submissions only.
+          abandoned form sessions (<code>kind: abandoned</code>) are counted separately, excluding out-of-service-area
+          blocks (<code>abandonReason: zone_not_serviced</code>). Attempted = completed + abandoned; completion rate =
+          completed ÷ attempted. “How did you hear about us” is asked on new-client submissions only. Out-of-service-area
+          city/state demand comes from GET /analytics/appointment-service-area-interest.
         </Typography>
 
         {requestSubmissionsError && (
@@ -1869,7 +1915,11 @@ export default function RoutingAnalyticsPage() {
                 {requestSubmissionStats.completionRate != null
                   ? `${requestSubmissionStats.completionRate.toFixed(1)}%`
                   : '—'}
-                ), <strong>{requestSubmissionStats.abandoned}</strong> abandoned.{' '}
+                ), <strong>{requestSubmissionStats.abandoned}</strong> abandoned
+                {requestSubmissionStats.outOfServiceAreaAbandoned > 0
+                  ? `, ${requestSubmissionStats.outOfServiceAreaAbandoned} out of service area`
+                  : ''}
+                .{' '}
                 <strong>{requestSubmissionStats.newClient}</strong> new client,{' '}
                 <strong>{requestSubmissionStats.existingClient}</strong> existing client —{' '}
                 <strong>{requestSubmissionStats.nonEuth}</strong> non-euthanasia,{' '}
@@ -2022,6 +2072,12 @@ export default function RoutingAnalyticsPage() {
                         <TableCell align="right">{requestSubmissionStats.abandoned}</TableCell>
                       </TableRow>
                       <TableRow>
+                        <TableCell>Out of service area (blocked)</TableCell>
+                        <TableCell align="right">
+                          {requestSubmissionStats.outOfServiceAreaAbandoned}
+                        </TableCell>
+                      </TableRow>
+                      <TableRow>
                         <TableCell>New client requests</TableCell>
                         <TableCell align="right">{requestSubmissionStats.newClient}</TableCell>
                       </TableRow>
@@ -2040,6 +2096,64 @@ export default function RoutingAnalyticsPage() {
                     </TableBody>
                   </Table>
                 </TableContainer>
+              </CardContent>
+            </Card>
+
+            <Card sx={{ mb: 3 }}>
+              <CardHeader
+                title="Out of service area — cities requested"
+                subheader="Addresses entered on the public appointment form that are outside the service area, grouped by city/state. Waitlist signups are visitors who asked to be notified when coverage expands."
+              />
+              <CardContent>
+                {serviceAreaInterestError && (
+                  <Alert severity="error" sx={{ mb: 2 }}>
+                    {serviceAreaInterestError}
+                  </Alert>
+                )}
+                {serviceAreaInterestLoading ? (
+                  <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
+                    <CircularProgress size={24} />
+                  </Box>
+                ) : (
+                  <>
+                    <Typography variant="body2" sx={{ mb: 2 }}>
+                      <strong>{serviceAreaInterest?.totalAttempts ?? 0}</strong> out-of-area attempts ·{' '}
+                      <strong>{serviceAreaInterest?.totalWaitlistSignups ?? 0}</strong> notify-me signups
+                    </Typography>
+                    <TableContainer component={Paper} variant="outlined">
+                      <Table size="small">
+                        <TableHead>
+                          <TableRow>
+                            <TableCell>City</TableCell>
+                            <TableCell>State</TableCell>
+                            <TableCell align="right">Attempts</TableCell>
+                            <TableCell align="right">Notify-me signups</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {(serviceAreaInterest?.byCityState?.length ?? 0) === 0 ? (
+                            <TableRow>
+                              <TableCell colSpan={4}>
+                                <Typography color="text.secondary">
+                                  No out-of-service-area attempts in this range
+                                </Typography>
+                              </TableCell>
+                            </TableRow>
+                          ) : (
+                            serviceAreaInterest!.byCityState.map((row) => (
+                              <TableRow key={`${row.state}-${row.city}`}>
+                                <TableCell>{row.city}</TableCell>
+                                <TableCell>{row.state}</TableCell>
+                                <TableCell align="right">{row.attempts}</TableCell>
+                                <TableCell align="right">{row.waitlistSignups}</TableCell>
+                              </TableRow>
+                            ))
+                          )}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                  </>
+                )}
               </CardContent>
             </Card>
 

@@ -99,6 +99,7 @@ import {
   APPOINTMENT_PROMO_CODE_QUERY_PARAM,
   type PublicAppointmentRequestPromotion,
 } from '../api/appointmentRequestPromotions';
+import { upsertServiceAreaInterest } from '../api/serviceAreaInterest';
 
 /** Set to true to show doctor selection. Code preserved for potential re-enable. */
 const SHOW_DOCTOR_SELECTION = false;
@@ -558,6 +559,8 @@ const ZONE_NOT_SERVICED_CALL_TEXT = 'call or text us at ';
 const ZONE_NOT_SERVICED_PHONE = '(207) 536-8387';
 const ZONE_NOT_SERVICED_TEL = 'tel:+12075368387';
 const ZONE_NOT_SERVICED_SMS = 'sms:+12075368387';
+const ZONE_NOT_SERVICED_MESSAGE =
+  "We're sorry—we don't currently serve your area. Please check back periodically at www.vetatyourdoor.com/service-area to see if our coverage has expanded. You can also call or text us at (207) 536-8387, and we'll take a look to see if your location may still be within reach.";
 
 /** Renders zone-not-serviced copy with blue links for service area, call, text, and phone number. */
 function renderZoneNotServicedMessage(message: string): ReactNode {
@@ -749,10 +752,15 @@ export default function AppointmentRequestForm() {
   const [emailCheckForModal, setEmailCheckForModal] = useState<{ exists: boolean; hasAccount: boolean } | null>(null); // Store email check result for modal
   const [existingClientModalView, setExistingClientModalView] = useState<'message' | 'login'>('message');
   const lastCheckedAddressRef = useRef<string>(''); // Track last checked address to avoid duplicate zone checks
+  const lastRecordedOosaAddressRef = useRef<string>(''); // Dedupe out-of-area interest POSTs
   const clientLocationRef = useRef<{ lat?: number; lon?: number; address?: string }>({}); // Store client location for veterinarian lookup
   const [speciesList, setSpeciesList] = useState<Array<{ id: number; name: string; prettyName?: string; showInUi?: boolean }>>([]); // List of available species
   const [loadingSpecies, setLoadingSpecies] = useState(false);
   const [clientLocationReady, setClientLocationReady] = useState(false); // Track when client location is available for veterinarian fetch
+  const [serviceAreaNotifyEmail, setServiceAreaNotifyEmail] = useState('');
+  const [serviceAreaNotifySubmitting, setServiceAreaNotifySubmitting] = useState(false);
+  const [serviceAreaNotifyError, setServiceAreaNotifyError] = useState<string | null>(null);
+  const [serviceAreaNotifySuccess, setServiceAreaNotifySuccess] = useState(false);
   const openExistingClientModal = (
     result: { exists: boolean; hasAccount: boolean },
     view: 'message' | 'login' = 'message',
@@ -904,14 +912,234 @@ export default function AppointmentRequestForm() {
     [trackFormEvent]
   );
 
-  const { formSessionIdRef, markFormCompleted, sendAbandon, shouldPersistDraft } =
+  /** Stable identity: the draft hook keys its debounced save / abandon callbacks off this. */
+  const getDraftStepName = useCallback((step: string) => getAppointmentFormStepName(step as Page), []);
+
+  const { formSessionIdRef, markFormCompleted, sendAbandon, resetAbandonSent, shouldPersistDraft } =
     useAppointmentFormDraftPersistence({
       practiceId,
       currentPage,
       getSnapshotInput: getDraftSnapshotInput,
-      getStepName: (step) => getAppointmentFormStepName(step as Page),
+      getStepName: getDraftStepName,
       trackGaAbandon,
+      activityKey: formData,
     });
+
+  const clearOutOfServiceAreaUi = useCallback(() => {
+    setServiceAreaNotifyError(null);
+    setServiceAreaNotifySuccess(false);
+    setServiceAreaNotifySubmitting(false);
+    resetAbandonSent();
+  }, [resetAbandonSent]);
+
+  const recordOutOfServiceAreaInterest = useCallback(
+    async (
+      address: {
+        line1?: string;
+        city?: string;
+        state?: string;
+        zip?: string;
+        lat?: number;
+        lon?: number;
+      },
+      options?: { notifyRequested?: boolean; emailOverride?: string },
+    ) => {
+      const city = address.city?.trim();
+      const state = address.state?.trim();
+      if (!city || !state) return null;
+
+      const addressKey = `${address.line1 ?? ''}|${city}|${state}|${address.zip ?? ''}`.toLowerCase();
+      const notifyRequested = !!options?.notifyRequested;
+      if (!notifyRequested && lastRecordedOosaAddressRef.current === addressKey) {
+        return null;
+      }
+
+      const fd = formDataRef.current;
+      const email =
+        (options?.emailOverride ?? fd.email ?? userEmailRef.current ?? '')?.trim() || undefined;
+      const phone = (fd.phoneNumbers || fd.bestPhoneNumber || '')?.trim() || undefined;
+      const fullName = [fd.fullName?.first, fd.fullName?.last].filter(Boolean).join(' ').trim() || undefined;
+
+      const result = await upsertServiceAreaInterest({
+        practiceId,
+        formSessionId: formSessionIdRef.current,
+        city,
+        state,
+        zip: address.zip?.trim() || undefined,
+        addressLine1: address.line1?.trim() || undefined,
+        latitude: address.lat,
+        longitude: address.lon,
+        email,
+        phone,
+        fullName,
+        notifyRequested,
+        source: 'appointment_form',
+      });
+
+      lastRecordedOosaAddressRef.current = addressKey;
+      return result;
+    },
+    [practiceId, formSessionIdRef],
+  );
+
+  const handleOutOfServiceArea = useCallback(
+    async (address: {
+      line1?: string;
+      city?: string;
+      state?: string;
+      zip?: string;
+      lat?: number;
+      lon?: number;
+    }) => {
+      setErrors((prev) => ({ ...prev, zoneNotServiced: ZONE_NOT_SERVICED_MESSAGE }));
+      setServiceAreaNotifySuccess(false);
+      setServiceAreaNotifyError(null);
+      const fd = formDataRef.current;
+      const defaultEmail = (fd.email || userEmailRef.current || '').trim();
+      if (defaultEmail) setServiceAreaNotifyEmail(defaultEmail);
+
+      trackFormEvent('appointment_form_zone_not_serviced', {
+        city: address.city?.trim() || undefined,
+        state: address.state?.trim() || undefined,
+      });
+
+      try {
+        await recordOutOfServiceAreaInterest(address);
+      } catch (err) {
+        console.warn('[AppointmentForm] Failed to record out-of-service-area interest:', err);
+      }
+
+      // Attribute this session as zone_not_serviced rather than a generic abandon.
+      void sendAbandon('zone_not_serviced', { awaitPutThenPost: true });
+    },
+    [recordOutOfServiceAreaInterest, sendAbandon, trackFormEvent],
+  );
+
+  // Called from the address / zone-check effects, which must not re-run when these handlers change.
+  const handleOutOfServiceAreaRef = useRef(handleOutOfServiceArea);
+  const clearOutOfServiceAreaUiRef = useRef(clearOutOfServiceAreaUi);
+  handleOutOfServiceAreaRef.current = handleOutOfServiceArea;
+  clearOutOfServiceAreaUiRef.current = clearOutOfServiceAreaUi;
+
+  const handleServiceAreaNotifySubmit = useCallback(async () => {
+    const email = serviceAreaNotifyEmail.trim();
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setServiceAreaNotifyError('Please enter a valid email so we can notify you.');
+      return;
+    }
+
+    const addr =
+      formDataRef.current.isThisTheAddressWhereWeWillCome === 'No'
+        ? formDataRef.current.newPhysicalAddress
+        : formDataRef.current.physicalAddress;
+    if (!addr?.city?.trim() || !addr?.state?.trim()) {
+      setServiceAreaNotifyError('We need the city and state from your address to notify you.');
+      return;
+    }
+
+    setServiceAreaNotifySubmitting(true);
+    setServiceAreaNotifyError(null);
+    try {
+      await recordOutOfServiceAreaInterest(
+        {
+          line1: addr.line1,
+          city: addr.city,
+          state: addr.state,
+          zip: addr.zip,
+          lat: (addr as { lat?: number }).lat,
+          lon: (addr as { lon?: number }).lon,
+        },
+        { notifyRequested: true, emailOverride: email },
+      );
+      setServiceAreaNotifySuccess(true);
+      trackFormEvent('appointment_form_service_area_notify', {
+        city: addr.city.trim(),
+        state: addr.state.trim(),
+      });
+      markFormCompleted();
+    } catch (err: any) {
+      const msg =
+        err?.response?.data?.message ||
+        err?.message ||
+        'Something went wrong. Please try again or call us.';
+      setServiceAreaNotifyError(typeof msg === 'string' ? msg : 'Something went wrong. Please try again.');
+    } finally {
+      setServiceAreaNotifySubmitting(false);
+    }
+  }, [
+    serviceAreaNotifyEmail,
+    recordOutOfServiceAreaInterest,
+    trackFormEvent,
+    markFormCompleted,
+  ]);
+
+  const renderServiceAreaNotifyPanel = (city?: string, state?: string) => {
+    const areaLabel = [city, state].filter(Boolean).join(', ');
+    return (
+      <div
+        style={{
+          marginTop: '12px',
+          padding: '12px',
+          borderRadius: '8px',
+          border: '1px solid #fecaca',
+          background: '#fff7f7',
+          color: '#374151',
+        }}
+      >
+        {serviceAreaNotifySuccess ? (
+          <div style={{ fontSize: '13px', color: '#065f46' }}>
+            Thanks — we&apos;ll email you if we expand service to {areaLabel || 'your area'}.
+          </div>
+        ) : (
+          <>
+            <div style={{ fontSize: '13px', fontWeight: 600, marginBottom: '8px', color: '#111827' }}>
+              Want a heads-up when we serve your area?
+            </div>
+            <div style={{ fontSize: '12px', marginBottom: '8px', color: '#4b5563' }}>
+              Join our notify list and we&apos;ll reach out when coverage opens near {areaLabel || 'you'}.
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
+              <input
+                type="email"
+                value={serviceAreaNotifyEmail}
+                onChange={(e) => setServiceAreaNotifyEmail(e.target.value)}
+                placeholder="Email for updates"
+                style={{
+                  flex: '1 1 180px',
+                  padding: '8px 10px',
+                  border: `1px solid ${serviceAreaNotifyError ? '#ef4444' : '#d1d5db'}`,
+                  borderRadius: '6px',
+                  fontSize: '14px',
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => void handleServiceAreaNotifySubmit()}
+                disabled={serviceAreaNotifySubmitting}
+                style={{
+                  padding: '8px 14px',
+                  borderRadius: '6px',
+                  border: 'none',
+                  background: serviceAreaNotifySubmitting ? '#9ca3af' : '#111827',
+                  color: '#fff',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  cursor: serviceAreaNotifySubmitting ? 'default' : 'pointer',
+                }}
+              >
+                {serviceAreaNotifySubmitting ? 'Saving…' : 'Notify me'}
+              </button>
+            </div>
+            {serviceAreaNotifyError && (
+              <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '6px' }}>
+                {serviceAreaNotifyError}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    );
+  };
 
   useEffect(() => {
     trackFormEvent('appointment_form_started', {
@@ -2399,6 +2627,7 @@ export default function AppointmentRequestForm() {
           delete next.zoneNotServiced;
           return next;
         });
+        clearOutOfServiceAreaUiRef.current();
         lastCheckedAddressRef.current = ''; // Reset last checked address when address is incomplete
         return;
       }
@@ -2452,19 +2681,27 @@ export default function AppointmentRequestForm() {
                   delete next.zoneNotServiced;
                   return next;
                 });
+                clearOutOfServiceAreaUiRef.current();
                 lastCheckedAddressRef.current = currentAddress;
               }
             } catch (zoneError: any) {
               if (zoneError?.response?.status === 404) {
                 // Zone not serviced - set error and don't fetch veterinarians
                 if (alive) {
-                  setErrors(prev => ({ ...prev, zoneNotServiced: "We're sorry—we don't currently serve your area. Please check back periodically at www.vetatyourdoor.com/service-area to see if our coverage has expanded. You can also call or text us at (207) 536-8387, and we'll take a look to see if your location may still be within reach." }));
                   setPublicProviders([]);
                   setProviders([]);
                   setRawPublicVeterinarians([]);
                   setLoadingVeterinarians(false);
                   setVeterinariansFetchResolved(true);
                   lastCheckedAddressRef.current = currentAddress;
+                  void handleOutOfServiceAreaRef.current({
+                    line1: formData.physicalAddress?.line1,
+                    city: formData.physicalAddress?.city,
+                    state: formData.physicalAddress?.state,
+                    zip: formData.physicalAddress?.zip,
+                    lat: formData.physicalAddress?.lat,
+                    lon: formData.physicalAddress?.lon,
+                  });
                 }
                 return;
               }
@@ -2793,6 +3030,7 @@ export default function AppointmentRequestForm() {
         delete next.zoneNotServiced;
         return next;
       });
+      clearOutOfServiceAreaUiRef.current();
       lastCheckedAddressRef.current = ''; // Reset last checked address when address is incomplete
       return;
       }
@@ -2847,17 +3085,25 @@ export default function AppointmentRequestForm() {
                 delete next.zoneNotServiced;
                 return next;
               });
+              clearOutOfServiceAreaUiRef.current();
               lastCheckedAddressRef.current = currentAddress; // Update last checked address
             }
           } catch (zoneError: any) {
             if (zoneError?.response?.status === 404) {
               // Zone not serviced - set error and don't fetch veterinarians
               if (alive) {
-                setErrors(prev => ({ ...prev, zoneNotServiced: "We're sorry—we don't currently serve your area. Please check back periodically at www.vetatyourdoor.com/service-area to see if our coverage has expanded. You can also call or text us at (207) 536-8387, and we'll take a look to see if your location may still be within reach." }));
                 setProviders([]);
                 setLoadingVeterinarians(false);
                 setVeterinariansFetchResolved(true);
                 lastCheckedAddressRef.current = currentAddress; // Update last checked address even on error
+                void handleOutOfServiceAreaRef.current({
+                  line1: formData.newPhysicalAddress?.line1,
+                  city: formData.newPhysicalAddress?.city,
+                  state: formData.newPhysicalAddress?.state,
+                  zip: formData.newPhysicalAddress?.zip,
+                  lat: formData.newPhysicalAddress?.lat,
+                  lon: formData.newPhysicalAddress?.lon,
+                });
               }
               return;
             }
@@ -5167,6 +5413,10 @@ export default function AppointmentRequestForm() {
               {errors.zoneNotServiced && (
                 <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '8px' }}>
                   {renderZoneNotServicedMessage(errors.zoneNotServiced)}
+                  {renderServiceAreaNotifyPanel(
+                    formData.physicalAddress.city,
+                    formData.physicalAddress.state,
+                  )}
                 </div>
               )}
             </div>
@@ -6510,6 +6760,10 @@ export default function AppointmentRequestForm() {
                   {errors.zoneNotServiced && (
                     <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '8px' }}>
                       {renderZoneNotServicedMessage(errors.zoneNotServiced)}
+                      {renderServiceAreaNotifyPanel(
+                        formData.newPhysicalAddress?.city,
+                        formData.newPhysicalAddress?.state,
+                      )}
                     </div>
                   )}
                 </div>
