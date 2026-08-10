@@ -11919,6 +11919,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         <OnMyWaySmsModal
           appt={onMyWaySmsAppt}
           defaultMinutes={onMyWaySmsDefaultMinutes}
+          providers={providers}
+          practiceId={PRACTICE_ID}
           onClose={() => setOnMyWaySmsAppt(null)}
         />
       ) : null}
