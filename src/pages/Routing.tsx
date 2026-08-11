@@ -153,6 +153,8 @@ import {
 import {
   applyRoutingServiceMinuteBuffers,
   fetchAveragedApptLengthStatsForDoctors,
+  resolveServiceMinutesAfterDoctorConfirm,
+  shouldPreserveManualRoutingMinutes,
 } from '../utils/routingServiceMinutes';
 import {
   appointmentRequestUsesPerPetRouting,
@@ -1813,6 +1815,8 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
   const routingMinutesPulseClearRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Last type|pets combo applied by the auto-minutes effect (flash when combo changes even if minutes stay the same). */
   const routingCalcComboKeyRef = useRef<string | null>(null);
+  /** User typed Minutes — block passive stats sync and ASAP/multi-doctor re-average overwrites. */
+  const routingMinutesManualOverrideRef = useRef(false);
 
   const [routingPrefillFlash, setRoutingPrefillFlash] = useState<
     Partial<Record<RoutingPrefillFlashField, true>>
@@ -2240,6 +2244,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     setSelectedClientAlerts(null);
     setRoutingApptStatsTypeKey('');
     setScheduleBookTypeId(null);
+    routingMinutesManualOverrideRef.current = false;
     setResult(null);
     setFeedbackError(null);
     setFeedbackToast(null);
@@ -2264,6 +2269,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     setSelectedClientAlerts(null);
     setRoutingApptStatsTypeKey('');
     setScheduleBookTypeId(null);
+    routingMinutesManualOverrideRef.current = false;
     setRescheduleScope('');
     setResult(null);
     setFeedbackError(null);
@@ -2420,6 +2426,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     async function mergeRescheduleIntentFromCalendar() {
       const intent = readRoutingRescheduleIntent();
       if (!intent || intent.appliedToRoutingForm) return;
+      routingMinutesManualOverrideRef.current = false;
 
       let resolvedDoctor = resolveRescheduleIntentDoctorPimsId(intent, []);
       if (!resolvedDoctor) {
@@ -2637,6 +2644,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       const intent = readRoutingForwardBookingIntent();
       if (!intent || !intent.workspaceActive || intent.appliedToRoutingForm) return;
       if (readRoutingRescheduleIntent()) return;
+      routingMinutesManualOverrideRef.current = false;
 
       let resolvedDoctor = resolveRescheduleIntentDoctorPimsId(intent, []);
       if (!resolvedDoctor) {
@@ -2792,6 +2800,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     async function mergeAppointmentRequestIntentFromList() {
       const intent = readRoutingAppointmentRequestIntent();
       if (!intent || !intent.workspaceActive || intent.appliedToRoutingForm) return;
+      routingMinutesManualOverrideRef.current = false;
       // Appointment-request Book wins over leftover reschedule / forward-booking
       // session state (otherwise hydrate is skipped and Book becomes a PATCH).
       if (readRoutingRescheduleIntent()) {
@@ -3954,6 +3963,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     if (asapAllDoctorSearch || multiDoctor) return;
     setRoutingApptStatsTypeKey('');
     setRoutingPetCount(1);
+    routingMinutesManualOverrideRef.current = false;
     if (!form.doctorId.trim()) {
       setApptLengthsRows([]);
     }
@@ -4190,6 +4200,8 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
           triggerRoutingPrefillFlash(['pets']);
         }
         if (routingApptStatsTypeKey.trim()) {
+          // User-driven pet selection should refresh minutes from type stats.
+          routingMinutesManualOverrideRef.current = false;
           applyRoutingServiceMinutes(routingApptStatsTypeKey, count, {
             pulse: opts?.pulse !== false,
           });
@@ -4399,6 +4411,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
   useEffect(() => {
     if (hasActiveRescheduleIntent) return;
     if (appointmentRequestPerPetRouting) return;
+    if (shouldPreserveManualRoutingMinutes(routingMinutesManualOverrideRef.current)) return;
     if (!routingApptStatsTypeKey.trim()) {
       routingCalcComboKeyRef.current = null;
       return;
@@ -4417,6 +4430,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
   useEffect(() => {
     if (!appointmentRequestPerPetRouting || !activeAppointmentRequestIntent) return;
     if (hasActiveRescheduleIntent) return;
+    if (shouldPreserveManualRoutingMinutes(routingMinutesManualOverrideRef.current)) return;
     const doctorId = form.doctorId.trim();
     if (!doctorId || routingAppointmentTypes.length === 0) return;
 
@@ -4437,6 +4451,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     })
       .then((result) => {
         if (cancelled) return;
+        if (shouldPreserveManualRoutingMinutes(routingMinutesManualOverrideRef.current)) return;
         setForm((f) => {
           if (f.newAppt.serviceMinutes === result.serviceMinutes) return f;
           return { ...f, newAppt: { ...f.newAppt, serviceMinutes: result.serviceMinutes } };
@@ -4508,6 +4523,9 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     key: K,
     value: RouteRequest['newAppt'][K]
   ) {
+    if (key === 'serviceMinutes') {
+      routingMinutesManualOverrideRef.current = true;
+    }
     setForm((f) => ({ ...f, newAppt: { ...f.newAppt, [key]: value } }));
   }
 
@@ -5167,10 +5185,14 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     setPendingEndpoint(null);
     setPendingAsapAllDoctorSearch(false);
 
-    // Re-average Calculate Time minutes across the doctors included in this search.
+    // Re-average Calculate Time minutes across the doctors included in this search,
+    // unless the user already typed a Minutes override (keep their value for the search).
     let serviceMinutesOverride: number | undefined;
     const typeKey = routingApptStatsTypeKey.trim();
-    if (typeKey && selectedDoctorIds.length > 0) {
+    const preserveManualMinutes = shouldPreserveManualRoutingMinutes(
+      routingMinutesManualOverrideRef.current
+    );
+    if (!preserveManualMinutes && typeKey && selectedDoctorIds.length > 0) {
       try {
         const rows = await fetchAveragedApptLengthStatsForDoctors(selectedDoctorIds);
         setApptLengthsRows(rows);
@@ -5184,14 +5206,20 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
           const newPatientCount =
             activeAppointmentRequestIntent?.pets?.filter((pet) => !pet.patientPimsId?.trim())
               .length ?? 0;
-          serviceMinutesOverride = applyRoutingServiceMinuteBuffers(baseMins, {
+          const averaged = applyRoutingServiceMinuteBuffers(baseMins, {
             newPatientCount,
             numPets: routingPetCount,
           });
-          setForm((f) => ({
-            ...f,
-            newAppt: { ...f.newAppt, serviceMinutes: serviceMinutesOverride! },
-          }));
+          serviceMinutesOverride = resolveServiceMinutesAfterDoctorConfirm({
+            minutesManuallyOverridden: false,
+            averagedServiceMinutes: averaged,
+          });
+          if (serviceMinutesOverride != null) {
+            setForm((f) => ({
+              ...f,
+              newAppt: { ...f.newAppt, serviceMinutes: serviceMinutesOverride! },
+            }));
+          }
         }
       } catch {
         /* keep prior minutes */
@@ -5687,6 +5715,8 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                         return;
                       }
                       const next = e.target.value;
+                      // Changing type clears a typed Minutes override so autofill can run.
+                      routingMinutesManualOverrideRef.current = false;
                       setRoutingApptStatsTypeKey(next);
                       if (!next.trim()) {
                         setRoutingPetCount(1);
@@ -5763,6 +5793,8 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                         promptDoctorBeforeApptType();
                         return;
                       }
+                      // Changing pets clears a typed Minutes override so autofill can run.
+                      routingMinutesManualOverrideRef.current = false;
                       const raw = e.target.value;
                       if (raw === '') {
                         setRoutingPetCount(1);

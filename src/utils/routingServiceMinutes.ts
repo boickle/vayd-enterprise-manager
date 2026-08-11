@@ -11,6 +11,29 @@ import { normalizeAppointmentType } from '../analytics/appointmentTypeTimeStats'
 export const ROUTING_FALLBACK_SERVICE_MINUTES = 45;
 const ROUTING_MIN_APPT_TYPE_INSTANCES_FOR_STATS = 5;
 
+/**
+ * Passive Calculate Time sync (stats load / ASAP multi-doctor re-average) must not
+ * overwrite Minutes after the user types an override. Type/pet changes clear the
+ * override in the Routing form handlers so autofill can run again.
+ */
+export function shouldPreserveManualRoutingMinutes(minutesManuallyOverridden: boolean): boolean {
+  return Boolean(minutesManuallyOverridden);
+}
+
+/**
+ * After ASAP / multi-doctor modal confirm: only replace Minutes from averaged stats
+ * when the user has not typed a manual override. Returns undefined to keep the form value.
+ */
+export function resolveServiceMinutesAfterDoctorConfirm(opts: {
+  minutesManuallyOverridden: boolean;
+  averagedServiceMinutes: number | null | undefined;
+}): number | undefined {
+  if (shouldPreserveManualRoutingMinutes(opts.minutesManuallyOverridden)) return undefined;
+  const mins = Number(opts.averagedServiceMinutes);
+  if (!Number.isFinite(mins) || mins < 1) return undefined;
+  return Math.round(mins);
+}
+
 function parseEnvNonNegativeInt(raw: unknown, fallback: number): number {
   const parsed = Number(raw);
   return Number.isFinite(parsed) && parsed >= 0 ? Math.round(parsed) : fallback;
