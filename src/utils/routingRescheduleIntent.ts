@@ -97,6 +97,7 @@ export type RoutingRescheduleIntentV1 = {
   appliedToRoutingForm?: boolean;
   appointmentId: number;
   clientId: string;
+  /** Empty for client-linked no-patient visits (e.g. ash drop-off). */
   patientId: string;
   appointmentTypeId?: number;
   /** Display name for routing "Appointment Type" select (prettyName or name from PIMS). */
@@ -274,7 +275,8 @@ export function readRoutingRescheduleIntent(): RoutingRescheduleIntentV1 | null 
     if (!raw) return null;
     const o = JSON.parse(raw) as RoutingRescheduleIntentV1;
     if (o?.v !== 1 || typeof o.appointmentId !== 'number') return null;
-    const hasClient = Boolean(o.clientId) && Boolean(o.patientId);
+    /** Linked client is enough (ash drop-off / no-patient visits leave `patientId` empty). */
+    const hasClient = Boolean(o.clientId?.trim());
     const hasAddressOnly =
       Boolean(o.isAlternateStop) && Boolean(o.address?.trim() || o.alternateAddressText?.trim());
     if (!hasClient && !hasAddressOnly) return null;
@@ -608,9 +610,10 @@ export type BuildRoutingRescheduleIntentOpts = {
     lastName?: string | null;
   }>;
   /**
-   * Allow an address-only reschedule intent (empty client/patient) when the visit has no
-   * linked client but carries a routing/alternate address — e.g. an on-hold visit placed by
+   * Allow an address-only reschedule intent (empty client) when the visit has no linked
+   * client but carries a routing/alternate address — e.g. an on-hold visit placed by
    * address. Routing then searches by that address instead of a client home.
+   * Not needed for client-linked no-patient visits (ash drop-off); those build with clientId.
    */
   allowAddressOnly?: boolean;
   /** Build an "explore alternatives" intent — keep the original, create a new appointment. */
@@ -850,7 +853,9 @@ export function buildRoutingRescheduleIntentFromAppointment(
   const c = appt.client as Client | undefined;
   const patients = patientsForAppointment(appt);
   const p0 = patients[0];
-  if (!c || c.id == null || !p0 || p0.id == null) {
+  // Client-linked no-patient visits (e.g. ash drop-off) are reschedulable — patient is optional.
+  // Only fall back to address-only when there is no linked client at all.
+  if (!c || c.id == null) {
     if (!opts?.allowAddressOnly) return null;
     return buildAddressOnlyRescheduleIntent(appt, opts);
   }
@@ -912,6 +917,7 @@ export function buildRoutingRescheduleIntentFromAppointment(
   const alternateAddressText =
     appointmentAlternateAddressText(appt) ?? visitAddressFromAppointmentRow(appt);
   const isAlternateStop = appointmentHasAlternateLocation(appt);
+  const patientId = p0?.id != null ? String(p0.id) : '';
 
   return {
     v: 1,
@@ -920,7 +926,7 @@ export function buildRoutingRescheduleIntentFromAppointment(
     originalStartIso,
     originalEndIso,
     clientId: String(c.id),
-    patientId: String(p0.id),
+    patientId,
     appointmentTypeId: Number.isFinite(appointmentTypeId) ? appointmentTypeId : undefined,
     appointmentTypeName,
     primaryProviderInternalId,

@@ -100,7 +100,7 @@ export async function startRescheduleFromBookedAppointmentRequest(args: {
   });
   if (!built) {
     return {
-      error: 'This visit cannot be rescheduled here (needs client and patient, not a block).',
+      error: 'This visit cannot be rescheduled here (needs a linked client or a visit address, not a block).',
     };
   }
 
