@@ -2611,11 +2611,17 @@ function buildRoutingPreviewSyntheticAppointment(
   if (previewPatientRows.length === 0) {
     const ri = readRoutingRescheduleIntent();
     if (ri) {
+      // A no-patient client visit (ash drop-off) has no anchor pet — do not borrow a household
+      // pet from the same day, or the preview ghost claims the wrong patient.
+      const anchorPatientId = ri.patientId?.trim() ?? '';
       const visits: RescheduleSameDayVisit[] =
         ri.rescheduleScope === 'household_day'
           ? (ri.sameDayVisits ?? [])
-          : ri.sameDayVisits?.length
-            ? [ri.sameDayVisits.find((v) => v.patientId === ri.patientId) ?? ri.sameDayVisits[0]!]
+          : anchorPatientId && ri.sameDayVisits?.length
+            ? [
+                ri.sameDayVisits.find((v) => v.patientId === anchorPatientId) ??
+                  ri.sameDayVisits[0]!,
+              ]
             : [];
       previewPatientRows = visits.map((v) => ({
         id: v.patientId,

@@ -61,6 +61,26 @@ function defaultRescheduleSelectedPatientIds(intent) {
   return primary ? [primary] : [];
 }
 
+/** Mirror of the Routing preview payload chip filter (src/pages/Routing.tsx). */
+function previewPatientsForPayload(visits) {
+  return visits
+    .filter((v) => String(v.patientId ?? '').trim())
+    .map((v) => ({ id: v.patientId, name: v.patientName?.trim() || `Pet ${v.patientId}` }));
+}
+
+/** Mirror of the calendar ghost fallback rows (src/pages/Scheduler.tsx). */
+function previewPatientRowsFromIntent(intent) {
+  const anchorPatientId = intent.patientId?.trim() ?? '';
+  const sameDay = intent.sameDayVisits ?? [];
+  const visits =
+    intent.rescheduleScope === 'household_day'
+      ? sameDay
+      : anchorPatientId && sameDay.length
+        ? [sameDay.find((v) => v.patientId === anchorPatientId) ?? sameDay[0]]
+        : [];
+  return visits.map((v) => ({ id: v.patientId, name: v.patientName?.trim() || `Pet ${v.patientId}` }));
+}
+
 function assert(cond, msg) {
   if (!cond) throw new Error(msg);
 }
@@ -138,6 +158,36 @@ assert(
 assert(
   JSON.stringify(defaultRescheduleSelectedPatientIds({ patientId: '55' })) === '["55"]',
   'normal reschedule still selects the visit patient'
+);
+
+assert(
+  previewPatientsForPayload([{ appointmentId: 4242, patientId: '' }]).length === 0,
+  'no-patient anchor must not become a preview pet chip'
+);
+
+assert(
+  JSON.stringify(previewPatientsForPayload([{ appointmentId: 7, patientId: '55', patientName: 'Rex' }])) ===
+    '[{"id":"55","name":"Rex"}]',
+  'normal reschedule still previews its pet'
+);
+
+assert(
+  previewPatientRowsFromIntent({
+    patientId: '',
+    sameDayVisits: [{ appointmentId: 88, patientId: '55', patientName: 'Rex' }],
+  }).length === 0,
+  'no-patient anchor must not borrow a household pet for the calendar ghost'
+);
+
+assert(
+  JSON.stringify(
+    previewPatientRowsFromIntent({
+      patientId: '',
+      rescheduleScope: 'household_day',
+      sameDayVisits: [{ appointmentId: 88, patientId: '55', patientName: 'Rex' }],
+    })
+  ) === '[{"id":"55","name":"Rex"}]',
+  'household_day scope still previews every selected pet'
 );
 
 console.log('routingNoPatientRescheduleSmoke: ok');

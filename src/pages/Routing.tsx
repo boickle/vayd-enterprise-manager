@@ -3356,8 +3356,11 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
         payload.exploreAlternatives = true;
       }
       payload.reschedulePatientId = targets.patientId;
-      if (targets.visits.length > 0) {
-        payload.previewPatients = targets.visits.map((v) => ({
+      // Client-linked no-patient visits (ash drop-off) have a blank anchor patient — never
+      // send it through as a preview chip or the calendar ghost renders an empty pet.
+      const previewVisits = targets.visits.filter((v) => String(v.patientId ?? '').trim());
+      if (previewVisits.length > 0) {
+        payload.previewPatients = previewVisits.map((v) => ({
           id: v.patientId,
           name: v.patientName?.trim() || `Pet ${v.patientId}`,
         }));
