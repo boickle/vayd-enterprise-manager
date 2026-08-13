@@ -1,15 +1,23 @@
 /**
  * Max routing score for slots offered to clients (texted offers + standard online self-schedule).
  * Lower score = better fit. Must stay aligned with vayd-api `ROUTING_OFFERABLE_MAX_SCORE`.
+ *
+ * Only a fallback: the API returns `offerableMaxScore` on availability responses
+ * and that always wins (see `resolveOfferableMaxScoreFromApi`). It matters when a
+ * response predates the field or the call fails.
+ *
+ * 141 under goal-aware density, which is the API default. It was 175 under the
+ * legacy density weights — the same cutoff, since goal-aware shifts every score
+ * down. Both admit the best ~57% of candidate slots.
  */
-export const ROUTING_OFFERABLE_MAX_SCORE = 175;
+export const ROUTING_OFFERABLE_MAX_SCORE = 141;
 
 /** Standard (non-member) online self-schedule — same cutoff as texted offers. */
 export const ONLINE_BOOKING_OFFERABLE_BASE_SCORE = ROUTING_OFFERABLE_MAX_SCORE;
 
-/** Member elevated online self-schedule cutoff (+25 vs standard). */
+/** Member elevated online self-schedule cutoff. Scales with the gate: 22, was 25. */
 export const ROUTING_OFFERABLE_MEMBER_MAX_SCORE =
-  ROUTING_OFFERABLE_MAX_SCORE + 25;
+  ROUTING_OFFERABLE_MAX_SCORE + 22;
 
 export type OnlineBookingOfferTier = 'member' | 'standard';
 
