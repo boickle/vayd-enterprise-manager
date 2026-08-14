@@ -27,7 +27,7 @@ import {
   sumHouseholdPoints,
   type AppointmentTypeCatalog,
 } from '../utils/appointmentTypeSettings';
-import { etaHouseholdArrivalWindowPayload, fetchEtas } from '../api/routing';
+import { DEFAULT_APPOINTMENT_BUFFER_MINUTES, etaHouseholdArrivalWindowPayload, fetchEtas } from '../api/routing';
 import {
   buildEtaCandidateSlot,
   orderHouseholdsWithCandidateAtInsertion,
@@ -629,7 +629,9 @@ export default function DoctorDayVisual({
   const [depotToFirstSec, setDepotToFirstSec] = useState<number | null>(null);
   const [backToDepotSec, setBackToDepotSec] = useState<number | null>(null);
   const [backToDepotIso, setBackToDepotIso] = useState<string | null>(null);
-  const [appointmentBufferMinutes, setAppointmentBufferMinutes] = useState<number>(5);
+  const [appointmentBufferMinutes, setAppointmentBufferMinutes] = useState<number>(
+    DEFAULT_APPOINTMENT_BUFFER_MINUTES
+  );
   const [etaErr, setEtaErr] = useState<string | null>(null);
   /** When set, render in positionInDay order. From ETA response. */
   const [routingOrderIndices, setRoutingOrderIndices] = useState<number[] | null>(null);
@@ -1329,7 +1331,9 @@ export default function DoctorDayVisual({
         );
         setBackToDepotIso(result?.backToDepotIso ?? null);
         setAppointmentBufferMinutes(
-          typeof result?.appointmentBufferMinutes === 'number' ? result.appointmentBufferMinutes : 5
+          typeof result?.appointmentBufferMinutes === 'number'
+            ? result.appointmentBufferMinutes
+            : DEFAULT_APPOINTMENT_BUFFER_MINUTES
         );
 
         // Render in positionInDay order from ETA byIndex (routeOrder computed above for flex snap).
@@ -1558,7 +1562,7 @@ export default function DoctorDayVisual({
     const L = driveSecondsForLayout.length;
     const g0 = dayVisualGrid.gridStartMinutesFromMidnight;
     const gTot = dayVisualGrid.totalMinutes;
-    const apptBufDefault = appointmentBufferMinutes ?? 5;
+    const apptBufDefault = appointmentBufferMinutes ?? DEFAULT_APPOINTMENT_BUFFER_MINUTES;
     const bufferMinAfter = (idx: number) => {
       const v = displayTimeline[idx]?.bufferAfterMinutes;
       if (typeof v === 'number' && Number.isFinite(v)) return Math.max(0, v);
@@ -1643,7 +1647,7 @@ export default function DoctorDayVisual({
   // Geometry of each appointment block (top + height). Use ETA/ETD when available. Consecutive same-address stops are placed back-to-back (prev ETD + buffer only).
   // Offsets computed sequentially (prev block's shifted end + drive) so end-of-day blocks (e.g. 3–4 PM) don't get over-shifted (same fix as My Week).
   const blockGeom = useMemo(() => {
-    const bufferMin = appointmentBufferMinutes ?? 5;
+    const bufferMin = appointmentBufferMinutes ?? DEFAULT_APPOINTMENT_BUFFER_MINUTES;
     const N = displayHouseholds.length;
     const baseTops: number[] = [];
     const heights: number[] = [];
@@ -1708,7 +1712,16 @@ export default function DoctorDayVisual({
       } else {
         const prevEndShiftedPx = baseTops[idx - 1] + driveOffsetsPx[idx - 1] + heights[idx - 1];
         const minsJ = driveBetweenMinForLayout[idx - 1] ?? 0;
-        let off = Math.max(0, prevEndShiftedPx + minsJ * PPM - baseTop);
+        // API contract (fleetRouting ETA): "next available" = ETD + appointmentBufferMinutes + drive.
+        // vConnectors carves the buffer out of this same gap, so reserving only the drive leaves the
+        // two bands splitting the drive time instead of stacking (same fix as My Week).
+        const prevBufRaw = displayTimeline[idx - 1]?.bufferAfterMinutes;
+        const prevBufMin =
+          typeof prevBufRaw === 'number' && Number.isFinite(prevBufRaw)
+            ? Math.max(0, prevBufRaw)
+            : Math.max(0, bufferMin);
+        const reservePx = minsJ > 0 ? (prevBufMin + minsJ) * PPM : 0;
+        let off = Math.max(0, prevEndShiftedPx + reservePx - baseTop);
         const flexRow =
           h.isPersonalBlock === true &&
           (isFlexBlockItem(labelMeta) ||
@@ -1746,7 +1759,7 @@ export default function DoctorDayVisual({
       title: string;
       segKey: string;
     }> = [];
-    const apptBufDefault = appointmentBufferMinutes ?? 5;
+    const apptBufDefault = appointmentBufferMinutes ?? DEFAULT_APPOINTMENT_BUFFER_MINUTES;
     const bufferMinAfterStop = (i: number) => {
       const v = displayTimeline[i]?.bufferAfterMinutes;
       if (typeof v === 'number' && Number.isFinite(v)) return Math.max(0, v);
@@ -1980,7 +1993,7 @@ export default function DoctorDayVisual({
     const startY = lastBlock.top + lastBlock.height;
     const g0 = dayVisualGrid.gridStartMinutesFromMidnight;
     const gTot = dayVisualGrid.totalMinutes;
-    const apptBufDefault = appointmentBufferMinutes ?? 5;
+    const apptBufDefault = appointmentBufferMinutes ?? DEFAULT_APPOINTMENT_BUFFER_MINUTES;
     const rawLast = displayTimeline[lastAddressIdx]?.bufferAfterMinutes;
     const bufMinLast =
       typeof rawLast === 'number' && Number.isFinite(rawLast)

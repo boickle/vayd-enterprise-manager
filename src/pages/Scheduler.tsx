@@ -99,6 +99,7 @@ import {
   openUrlInNewTab,
   type Stop,
 } from '../utils/maps';
+import { DEFAULT_APPOINTMENT_BUFFER_MINUTES } from '../api/routing';
 import { colorForDrive } from '../utils/statsFormat';
 import { formatIsoInPracticeZone, formatIsoTimeShortInPracticeZone } from '../utils/practiceTimezone';
 import {
@@ -10660,7 +10661,10 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                             weekGridMetrics,
                             key,
                             showByDriveTime,
-                            dayDataCol.appointmentBufferMinutes ?? 5
+                            dayDataCol.appointmentBufferMinutes ?? DEFAULT_APPOINTMENT_BUFFER_MINUTES,
+                            // Events here are positioned from the clock, not from the layout, so
+                            // shifted rows would put the bands somewhere the appointments are not.
+                            { shiftRowsForDrive: false }
                           );
                           if (!layout) return null;
                           const segs = buildMyWeekDriveSegmentsFromLayout(
