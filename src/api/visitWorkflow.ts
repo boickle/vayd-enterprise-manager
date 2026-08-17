@@ -793,6 +793,42 @@ export async function createTerminalPaymentIntent(invoiceId: string): Promise<{
   return data;
 }
 
+export type TerminalCheckoutSession = {
+  checkoutId: string;
+  invoiceId: string;
+  appointmentId: number;
+  practiceId: number;
+  paymentIntentId: string;
+  clientSecret: string;
+  amountCents: number;
+  currency: string;
+  status: string;
+  clientLabel: string | null;
+  expiresAt: string;
+  targetDeviceId: string | null;
+  invoice?: VisitInvoice;
+};
+
+/** Start Scout Terminal handoff: creates PI + checkout job and notifies devices. */
+export async function startTerminalCheckout(
+  invoiceId: string,
+  opts?: { targetDeviceId?: string }
+): Promise<TerminalCheckoutSession> {
+  const { data } = await http.post<TerminalCheckoutSession>(
+    `/visit-payments/${encodeURIComponent(invoiceId)}/terminal/checkout`,
+    { practiceId: pid(), targetDeviceId: opts?.targetDeviceId }
+  );
+  return data;
+}
+
+export async function cancelTerminalCheckout(checkoutId: string): Promise<TerminalCheckoutSession> {
+  const { data } = await http.post<TerminalCheckoutSession>(
+    `/visit-payments/terminal/checkouts/${encodeURIComponent(checkoutId)}/cancel`,
+    { practiceId: pid() }
+  );
+  return data;
+}
+
 export async function confirmTerminalPayment(
   invoiceId: string,
   paymentIntentId: string

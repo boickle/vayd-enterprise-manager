@@ -1,16 +1,20 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { CreditCard, Receipt, RotateCcw, Smartphone, ShieldCheck, X } from 'lucide-react';
 import {
+  VISIT_WORKFLOW_PRACTICE_ID,
+  cancelTerminalCheckout,
   chargeSavedCard,
-  createTerminalPaymentIntent,
   deleteOrder,
+  getInvoice,
   reopenInvoice,
+  startTerminalCheckout,
   updateOrder,
   voidInvoice,
   type EncounterOrder,
   type VisitInvoice,
   type VisitInvoiceLine,
 } from '../../api/visitWorkflow';
+import { subscribeTerminalCheckout } from '../../utils/terminalCheckoutRealtime';
 
 type Props = {
   /** Needed to delete the encounter order behind an invoice line. */
@@ -33,6 +37,15 @@ function money(n: number | null | undefined): string {
   return `$${(Number(n) || 0).toFixed(2)}`;
 }
 
+/** Nest returns the useful text in `response.data.message`, not `Error.message`. */
+function apiErrorMessage(e: unknown): string {
+  const res = (e as { response?: { data?: { message?: string | string[] } } })?.response;
+  const message = res?.data?.message;
+  if (Array.isArray(message)) return message.join(', ');
+  if (message) return message;
+  return e instanceof Error ? e.message : 'Action failed';
+}
+
 /**
  * Tech-run checkout (spec §7). Runs off the invoice and is independent of SOAP
  * completion — the tech can check the client out before the doctor finishes
@@ -41,6 +54,9 @@ function money(n: number | null | undefined): string {
  * Payment is the invoice's lock: it finalizes and publishes charges to the chart,
  * so there is no separate Finalize step. Checkout never marks the visit completed
  * (that is End Visit on the schedule) and never mutates the visit (spec §2).
+ *
+ * Tap to Pay starts a Scout Terminal checkout job; the reader app collects.
+ * Invoice is marked paid via Stripe webhook (socket `invoice.paid` refreshes UI).
  */
 export default function VisitCheckoutPanel({
   encounterId,
@@ -56,6 +72,56 @@ export default function VisitCheckoutPanel({
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [activeCheckoutId, setActiveCheckoutId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!invoice?.id) return;
+    const invoiceId = invoice.id;
+    return subscribeTerminalCheckout({
+      practiceId: VISIT_WORKFLOW_PRACTICE_ID,
+      onInvoicePaid: (payload) => {
+        if (payload.invoiceId !== invoiceId) return;
+        setActiveCheckoutId(null);
+        setNote('Payment received on Scout Terminal — invoice marked paid.');
+        onInvoiceChange({
+          ...invoice,
+          status: 'paid',
+          amountPaid: invoice.total,
+          paidAt: new Date().toISOString(),
+          stripePaymentIntentId: payload.paymentIntentId,
+          lastChargeStatus: 'succeeded',
+        });
+      },
+    });
+    // Re-subscribe when the open invoice id changes, not on every invoice field update.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [invoice?.id]);
+
+  // Socket fallback: while a reader job is live, poll until the invoice settles
+  // so a dropped `invoice.paid` cannot leave this panel showing an open invoice.
+  useEffect(() => {
+    if (!activeCheckoutId || !invoice?.id) return;
+    const invoiceId = invoice.id;
+    let stopped = false;
+
+    const timer = window.setInterval(async () => {
+      try {
+        const fresh = await getInvoice(invoiceId);
+        if (stopped || fresh.status !== 'paid') return;
+        setActiveCheckoutId(null);
+        setNote('Payment received on Scout Terminal — invoice marked paid.');
+        onInvoiceChange(fresh);
+      } catch {
+        /* keep polling; a transient failure should not end the wait */
+      }
+    }, 3000);
+
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeCheckoutId, invoice?.id]);
 
   const run = async (key: string, fn: () => Promise<void>) => {
     setBusy(key);
@@ -64,7 +130,7 @@ export default function VisitCheckoutPanel({
     try {
       await fn();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Action failed');
+      setError(apiErrorMessage(e));
     } finally {
       setBusy(null);
     }
@@ -77,6 +143,10 @@ export default function VisitCheckoutPanel({
         'Void this whole invoice? Every charge comes off the bill and no payment can be taken until it is reopened. Nothing has been collected yet.'
       );
       if (!ok) return;
+      if (activeCheckoutId) {
+        await cancelTerminalCheckout(activeCheckoutId).catch(() => undefined);
+        setActiveCheckoutId(null);
+      }
       onInvoiceChange(await voidInvoice(invoice.id));
       setNote('Invoice voided. Reopen it to take payment.');
     });
@@ -98,11 +168,30 @@ export default function VisitCheckoutPanel({
   const tapToPay = () =>
     run('terminal', async () => {
       if (!invoice) return;
-      const pi = await createTerminalPaymentIntent(invoice.id);
-      if (pi.invoice) onInvoiceChange(pi.invoice);
-      setNote(
-        `Tap to Pay ready (PaymentIntent ${pi.id}). Connect the Stripe reader to collect at card-present rates.`
-      );
+      try {
+        const session = await startTerminalCheckout(invoice.id);
+        setActiveCheckoutId(session.checkoutId);
+        if (session.invoice) onInvoiceChange(session.invoice);
+        const dollars = (session.amountCents / 100).toFixed(2);
+        setNote(
+          `Sent $${dollars} to Scout Terminal. Present the card on the reader — this screen updates when payment succeeds.`
+        );
+      } catch (e) {
+        // The reader may have collected while this panel still showed the
+        // invoice as open (missed `invoice.paid`). Re-sync instead of erroring.
+        if (!/already paid/i.test(apiErrorMessage(e))) throw e;
+        setActiveCheckoutId(null);
+        onInvoiceChange(await getInvoice(invoice.id));
+        setNote('This invoice was already paid on Scout Terminal.');
+      }
+    });
+
+  const cancelReader = () =>
+    run('cancel-terminal', async () => {
+      if (!activeCheckoutId) return;
+      await cancelTerminalCheckout(activeCheckoutId);
+      setActiveCheckoutId(null);
+      setNote('Canceled the Terminal checkout job.');
     });
 
   const status = invoice?.status ?? 'open';
@@ -296,6 +385,16 @@ export default function VisitCheckoutPanel({
                 >
                   <Smartphone size={14} /> Tap to Pay
                 </button>
+                {activeCheckoutId ? (
+                  <button
+                    type="button"
+                    className="soap-btn ghost"
+                    disabled={disabled || busy != null}
+                    onClick={cancelReader}
+                  >
+                    Cancel reader
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   className="soap-btn"
