@@ -12,7 +12,7 @@ import {
   type ReactNode,
 } from 'react';
 import { useAuth } from '../auth/AuthProvider';
-import { fetchDoctorMonth, type MiniZone } from '../api/appointments';
+import { fetchDoctorDay, fetchDoctorMonth, type MiniZone } from '../api/appointments';
 import { fetchAllAppointmentTypes, fetchEmployee, type AppointmentType } from '../api/appointmentSettings';
 import {
   appointmentTypeAllowsClient,
@@ -96,7 +96,7 @@ import {
   type RoutingCalendarPreviewPayloadV1,
 } from '../utils/routingCalendarPreviewStorage';
 import { hasActiveRoutingCalendarPreview } from '../utils/routingCalendarPreviewGuard';
-import { coerceOverrunSeconds } from '../utils/depotReturnOverrun';
+import { coerceOverrunSeconds, startPastWorkdayEndSeconds } from '../utils/depotReturnOverrun';
 import {
   buildRoutingRescheduleContextForSlotSearch,
   clearRoutingRescheduleIntent,
@@ -456,7 +456,10 @@ type Winner = {
 
   // NEW — day facts for computing remaining non-drive time
   workStartLocal?: string; // "HH:mm" or "HH:mm:ss"
+  workEndLocal?: string; // "HH:mm" or "HH:mm:ss"
   effectiveEndLocal?: string; // "HH:mm" or "HH:mm:ss"
+  /** Scheduled depot / workday end ("HH:mm"), same clock as the calendar red line. */
+  depotEndLocal?: string;
   bookedServiceSeconds?: number; // seconds of booked service (no driving)
   _emptyDay?: boolean;
   dayIsEmpty?: boolean;
@@ -2016,6 +2019,8 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
   const [etaWindowWarningsByOptionKey, setEtaWindowWarningsByOptionKey] = useState<
     Record<string, RoutingPreviewEtaWindowWarningsDetail>
   >({});
+  /** Calendar red-line end ("HH:mm") by `pimsId:YYYY-MM-DD` from GET /appointments/doctor. */
+  const [endDepotByDoctorDate, setEndDepotByDoctorDate] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (!calendarWorkspaceMode) return;
@@ -5410,6 +5415,57 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     return { zoneClassRaw, polyLine };
   }, [result, displayOptions]);
 
+  const depotLookupKey = useMemo(
+    () =>
+      displayOptions
+        .map((o) => `${String(o.doctorPimsId ?? '').trim()}:${String(o.date ?? '').slice(0, 10)}`)
+        .filter((k) => !k.startsWith(':') && !k.endsWith(':'))
+        .sort()
+        .join('|'),
+    [displayOptions]
+  );
+
+  useEffect(() => {
+    if (!depotLookupKey) {
+      setEndDepotByDoctorDate({});
+      return;
+    }
+    let cancelled = false;
+    const pairs = depotLookupKey.split('|').filter(Boolean);
+    void (async () => {
+      const next: Record<string, string> = {};
+      for (const pair of pairs) {
+        const sep = pair.lastIndexOf(':');
+        const pims = pair.slice(0, sep);
+        const date = pair.slice(sep + 1);
+        if (!pims || !date) continue;
+        try {
+          let internalId = doctorIdByPims[pims];
+          if (!internalId) {
+            const { data } = await http.get(`/employees/pims/${encodeURIComponent(pims)}`);
+            const resolved = data?.id != null ? String(data.id) : '';
+            if (!resolved) continue;
+            internalId = resolved;
+            if (!cancelled) {
+              setDoctorIdByPims((m) => (m[pims] ? m : { ...m, [pims]: resolved }));
+            }
+          }
+          const day = await fetchDoctorDay(date, internalId);
+          const end = typeof day.endDepotTime === 'string' ? day.endDepotTime.trim() : '';
+          if (end) next[pair] = end;
+        } catch {
+          /* keep search results usable if doctor-day fails */
+        }
+      }
+      if (!cancelled) setEndDepotByDoctorDate(next);
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // doctorIdByPims is read for cache only; listing it would refetch after each pims resolve.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [depotLookupKey]);
+
   // =========================
   // Render
   // =========================
@@ -6456,10 +6512,19 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                 const reconciledOverrunSec = coerceOverrunSeconds(
                   etaWindowWarningsByOptionKey[optionKey]?.reconciledOverrunSeconds
                 ) ?? 0;
+                const depotKey = `${String(opt.doctorPimsId ?? '').trim()}:${String(opt.date ?? '').slice(0, 10)}`;
+                const calendarEndHms = endDepotByDoctorDate[depotKey];
+                const apiEndHms = opt.effectiveEndLocal ?? opt.depotEndLocal ?? opt.workEndLocal;
+                const startPastEndSec =
+                  startPastWorkdayEndSeconds(
+                    opt.suggestedStartIso,
+                    calendarEndHms || apiEndHms
+                  ) ?? 0;
                 const shiftOverrunSec = Math.max(
                   apiOverrunSec,
                   budgetOverrunSec,
-                  reconciledOverrunSec
+                  reconciledOverrunSec,
+                  startPastEndSec
                 );
                 const overtimeBadge = finite(shiftOverrunSec) && shiftOverrunSec >= 60;
                 const isEarlierFeasibleEmptyDay = opt.emptyDayStartVariant === 'earlier_feasible';
