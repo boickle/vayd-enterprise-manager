@@ -2691,11 +2691,17 @@ function buildRoutingPreviewSyntheticAppointment(
   if (previewPatientRows.length === 0) {
     const ri = readRoutingRescheduleIntent();
     if (ri) {
+      // A no-patient client visit (ash drop-off) has no anchor pet — do not borrow a household
+      // pet from the same day, or the preview ghost claims the wrong patient.
+      const anchorPatientId = ri.patientId?.trim() ?? '';
       const visits: RescheduleSameDayVisit[] =
         ri.rescheduleScope === 'household_day'
           ? (ri.sameDayVisits ?? [])
-          : ri.sameDayVisits?.length
-            ? [ri.sameDayVisits.find((v) => v.patientId === ri.patientId) ?? ri.sameDayVisits[0]!]
+          : anchorPatientId && ri.sameDayVisits?.length
+            ? [
+                ri.sameDayVisits.find((v) => v.patientId === anchorPatientId) ??
+                  ri.sameDayVisits[0]!,
+              ]
             : [];
       previewPatientRows = visits.map((v) => ({
         id: v.patientId,
@@ -9763,8 +9769,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             if (!intent) {
               fail(
                 explore
-                  ? 'This visit cannot explore alternatives here (needs a linked client/patient or a visit address, not a block).'
-                  : 'This visit cannot be rescheduled here (needs a linked client/patient or a visit address, not a block).'
+                  ? 'This visit cannot explore alternatives here (needs a linked client or a visit address, not a block).'
+                  : 'This visit cannot be rescheduled here (needs a linked client or a visit address, not a block).'
               );
               return;
             }
@@ -10024,7 +10030,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       return 'Visits before today cannot be rescheduled here.';
     }
     if (!contextMenuRescheduleIntent && !contextMenuMayAddressOnlyReschedule) {
-      return 'Needs a linked client/patient or a visit address. Blocks cannot be rescheduled here.';
+      return 'Needs a linked client or a visit address. Blocks cannot be rescheduled here.';
     }
     return undefined;
   }, [contextMenu, contextMenuRescheduleIntent, contextMenuMayAddressOnlyReschedule]);
@@ -12034,6 +12040,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         <OnMyWaySmsModal
           appt={onMyWaySmsAppt}
           defaultMinutes={onMyWaySmsDefaultMinutes}
+          providers={providers}
+          practiceId={PRACTICE_ID}
           onClose={() => setOnMyWaySmsAppt(null)}
         />
       ) : null}

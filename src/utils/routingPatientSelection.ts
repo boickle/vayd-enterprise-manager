@@ -30,13 +30,14 @@ export function defaultRescheduleSelectedPatientIds(
   intent: RoutingRescheduleIntentV1
 ): string[] {
   const sameDay = intent.sameDayVisits ?? [];
+  const primary = intent.patientId?.trim() ?? '';
   if (sameDay.length > 1) {
     if (intent.rescheduleScope === 'selected_pet') {
-      return [String(intent.patientId)];
+      return primary ? [primary] : [];
     }
-    return sameDay.map((v) => String(v.patientId));
+    return sameDay.map((v) => String(v.patientId)).filter((id) => id.trim());
   }
-  return [String(intent.patientId)];
+  return primary ? [primary] : [];
 }
 
 /** Match request pets to routing chips by internal id, then by name. */
