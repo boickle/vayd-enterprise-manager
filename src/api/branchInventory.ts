@@ -59,7 +59,15 @@ export type InventoryMovementType =
   | 'sold'
   | 'visit_use'
   | 'adjustment_increase'
-  | 'adjustment_decrease';
+  | 'adjustment_decrease'
+  | 'expired';
+
+export type InventoryMovementParty = {
+  id: number;
+  firstName?: string | null;
+  lastName?: string | null;
+  email?: string | null;
+};
 
 export type PostInventoryMovementBody = {
   movementType: InventoryMovementType;
@@ -68,14 +76,12 @@ export type PostInventoryMovementBody = {
   fromBranchLocationId?: number | null;
   toBranchLocationId?: number | null;
   note?: string | null;
-  movedByEmployeeId?: number | null;
   /** Unbox / receiving metadata — persist on backend when supported (else echoed in audit only). */
   vendorName?: string | null;
   invoiceNumber?: string | null;
   lotNumber?: string | null;
   expirationDate?: string | null;
   unpackedAt?: string | null;
-  unpackedByEmployeeId?: number | null;
 };
 
 export type InventoryStockMovement = {
@@ -88,6 +94,12 @@ export type InventoryStockMovement = {
   note?: string | null;
   movedByUserId?: number | null;
   movedByEmployeeId?: number | null;
+  movedByEmployee?: InventoryMovementParty | null;
+  movedByUser?: InventoryMovementParty | null;
+  inventoryItem?: { id: number; name: string } | null;
+  branch?: { id: number; name: string } | null;
+  fromBranchLocation?: { id: number; name: string } | null;
+  toBranchLocation?: { id: number; name: string } | null;
   created?: string;
   fromQuantityBefore?: number | null;
   fromQuantityAfter?: number | null;

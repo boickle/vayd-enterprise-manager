@@ -2,12 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router';
 import { useAuth } from '../auth/useAuth';
 import {
-  clientPimsIdFromSearchRow,
   searchPimsClientsAndPatients,
   type PimsPatientSearchHit,
 } from '../api/pimsSearch';
 import type { ClientSearchRow } from '../api/clientsStaff';
-import { evetClientLink, evetPatientLink } from '../utils/evet';
 import { resolvePracticeIdFromToken } from '../utils/practiceIdFromToken';
 import { blockRoutingCalendarPreviewNavigation } from '../utils/routingCalendarPreviewGuard';
 import './NavbarGlobalSearch.css';
@@ -71,17 +69,25 @@ export default function NavbarGlobalSearch() {
     return () => document.removeEventListener('mousedown', onDoc);
   }, []);
 
-  const openEvetClient = useCallback((c: ClientSearchRow) => {
-    setOpen(false);
-    setQ('');
-    window.open(evetClientLink(clientPimsIdFromSearchRow(c)), '_blank', 'noopener,noreferrer');
-  }, []);
+  const openScoutClient = useCallback(
+    (c: ClientSearchRow) => {
+      if (blockRoutingCalendarPreviewNavigation()) return;
+      setOpen(false);
+      setQ('');
+      navigate(`${clientsBase}?clientId=${encodeURIComponent(String(c.id))}`);
+    },
+    [navigate, clientsBase]
+  );
 
-  const openEvetPatient = useCallback((p: PimsPatientSearchHit) => {
-    setOpen(false);
-    setQ('');
-    window.open(evetPatientLink(p.patientPimsId), '_blank', 'noopener,noreferrer');
-  }, []);
+  const openScoutPatient = useCallback(
+    (p: PimsPatientSearchHit) => {
+      if (blockRoutingCalendarPreviewNavigation()) return;
+      setOpen(false);
+      setQ('');
+      navigate(`${patientsBase}?patientId=${encodeURIComponent(String(p.id))}`);
+    },
+    [navigate, patientsBase]
+  );
 
   function patientHitLabel(p: PimsPatientSearchHit): string {
     return p.clientLabel ? `${p.name} (${p.clientLabel})` : p.name;
@@ -150,13 +156,13 @@ export default function NavbarGlobalSearch() {
                     <button
                       type="button"
                       className="navbar-global-search__hit"
-                      title="Open client in eVet"
-                      onClick={() => openEvetClient(c)}
+                      title="Open client in Scout"
+                      onClick={() => openScoutClient(c)}
                     >
                       <span className="navbar-global-search__hit-name">
                         {[c.firstName, c.lastName].filter(Boolean).join(' ') || `Client #${c.id}`}
                       </span>
-                      <span className="navbar-global-search__hit-meta">#{clientPimsIdFromSearchRow(c)}</span>
+                      <span className="navbar-global-search__hit-meta">#{c.id}</span>
                     </button>
                   </li>
                 ))}
@@ -172,11 +178,11 @@ export default function NavbarGlobalSearch() {
                     <button
                       type="button"
                       className="navbar-global-search__hit"
-                      title="Open patient in eVet"
-                      onClick={() => openEvetPatient(p)}
+                      title="Open patient in Scout"
+                      onClick={() => openScoutPatient(p)}
                     >
                       <span className="navbar-global-search__hit-name">{patientHitLabel(p)}</span>
-                      <span className="navbar-global-search__hit-meta">#{p.patientPimsId}</span>
+                      <span className="navbar-global-search__hit-meta">#{p.id}</span>
                     </button>
                   </li>
                 ))}
@@ -185,17 +191,17 @@ export default function NavbarGlobalSearch() {
           )}
           <div className="navbar-global-search__footer">
             <button type="button" className="navbar-global-search__see-all" onClick={goClientsSearch}>
-              See all in Clients…
+              See all clients…
             </button>
             <button type="button" className="navbar-global-search__see-all" onClick={goPatientsSearch}>
-              See all in Patients…
+              See all patients…
             </button>
           </div>
         </div>
         )}
       </div>
       <p className="navbar-global-search__evet-hint">
-        Search to connect to patient or client in eVet/Pulse
+        Search opens clients and patients in Scout
       </p>
     </div>
   );

@@ -22,6 +22,8 @@ export type InventoryItem = {
   cost?: string;
   isMedication?: boolean;
   minimumPrice?: string;
+  /** Percentage over cost: price = cost * (1 + markup / 100). */
+  markup?: string | number | null;
   /** Online store listing (backend may add). */
   showOnOnlineStore?: boolean;
   onlineStorePrice?: string | number | null;

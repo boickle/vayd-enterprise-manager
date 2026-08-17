@@ -45,6 +45,14 @@ import LegacySchedulingToolsRedirect from './components/LegacySchedulingToolsRed
 import Catalog from './pages/Catalog';
 import CatalogLayout from './pages/CatalogLayout';
 import CatalogEntityPage from './pages/CatalogEntityPage';
+import InventoryLayout from './pages/InventoryLayout';
+import ReceiveShipmentPage from './pages/ReceiveShipmentPage';
+import MoveItemsPage from './pages/MoveItemsPage';
+import WasteAdjustPage from './pages/WasteAdjustPage';
+import InventoryActivityPage from './pages/InventoryActivityPage';
+import InventoryCostReviewsPage from './pages/InventoryCostReviewsPage';
+import SuppliersAdminPage from './pages/SuppliersAdminPage';
+import WasteAdminPage from './pages/WasteAdminPage';
 import PimsClientsPage from './pages/PimsClientsPage';
 import PimsPatientsPage from './pages/PimsPatientsPage';
 import PimsTasksPage from './pages/PimsTasksPage';
@@ -583,8 +591,17 @@ export default function App() {
                     </Route>
                     <Route
                       path="inventory"
-                      element={<Navigate to="/schedule/catalog/inventory" replace />}
-                    />
+                      element={<InventoryLayout basePath="/schedule/inventory" />}
+                    >
+                      <Route index element={<Navigate to="receive" replace />} />
+                      <Route path="receive" element={<ReceiveShipmentPage />} />
+                      <Route path="move" element={<MoveItemsPage />} />
+                      <Route path="waste" element={<WasteAdjustPage />} />
+                      <Route path="activity" element={<InventoryActivityPage />} />
+                      <Route path="cost-reviews" element={<InventoryCostReviewsPage />} />
+                      <Route path="suppliers" element={<SuppliersAdminPage />} />
+                      <Route path="waste-admin" element={<WasteAdminPage />} />
+                    </Route>
                     <Route path="tasks" element={<PimsTasksPage />} />
                     <Route path="settings" element={<Settings />} />
                     <Route path="clients" element={<PimsClientsPage />} />
@@ -619,7 +636,10 @@ export default function App() {
                       path="care-outreach"
                       element={<Navigate to="/schedule/scheduling-tools/care-outreach" replace />}
                     />
-                    <Route path="inventory" element={<Navigate to="/schedule/catalog" replace />} />
+                    <Route
+                      path="inventory"
+                      element={<Navigate to="/schedule/inventory/receive" replace />}
+                    />
                     <Route index element={<Navigate to={EXIT_SURVEY_PATH} replace />} />
                     {getToolsTabPages().map((tab) => (
                       <Route

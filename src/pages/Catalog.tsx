@@ -1,4 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router';
 import { useAuth } from '../auth/useAuth';
 import {
   searchItems,
@@ -239,6 +240,7 @@ const EMPTY_INVENTORY_CREATE = {
   code: '',
   price: '',
   cost: '',
+  markup: '',
   serviceFee: '',
   minimumPrice: '',
   isMedication: false,
@@ -253,7 +255,6 @@ const EMPTY_INVENTORY_CREATE = {
   requireExpirationOnLots: false,
   trackLots: false,
   isVaccine: false,
-  isDispensable: false,
   dispenseNote: '',
   isControlled: false,
   isMicrochip: false,
@@ -283,6 +284,22 @@ function optionalNumber(value: string): number | null {
   if (!trimmed) return null;
   const n = Number(trimmed);
   return Number.isFinite(n) ? n : null;
+}
+
+/** Markup % over cost, blank when cost is missing or not positive. */
+function markupPctFromCostPrice(costStr: string, priceStr: string): string {
+  const cost = optionalNumber(costStr);
+  const price = optionalNumber(priceStr);
+  if (cost === null || price === null || cost <= 0) return '';
+  return (((price - cost) / cost) * 100).toFixed(2);
+}
+
+/** Price implied by cost and markup %, blank when either is missing. */
+function priceFromCostMarkup(costStr: string, markupStr: string): string {
+  const cost = optionalNumber(costStr);
+  const markup = optionalNumber(markupStr);
+  if (cost === null || markup === null) return '';
+  return (cost * (1 + markup / 100)).toFixed(2);
 }
 
 function movementNeedsFrom(t: InventoryMovementType): boolean {
@@ -321,6 +338,7 @@ export default function Catalog() {
     code: '',
     price: '',
     cost: '',
+    markup: '',
     serviceFee: '',
     minimumPrice: '',
     isMedication: false,
@@ -353,7 +371,7 @@ export default function Catalog() {
   const [stockSaving, setStockSaving] = useState(false);
   const [stockError, setStockError] = useState<string | null>(null);
 
-  /** Page-level locations (unbox / cost summary branch). */
+  /** Page-level locations (cost summary branch). */
   const [branchLocations, setBranchLocations] = useState<InventoryBranchLocation[]>([]);
 
   /** Branch used inside the item modal for record movement + history. */
@@ -365,7 +383,6 @@ export default function Catalog() {
   const [movementFromId, setMovementFromId] = useState('');
   const [movementToId, setMovementToId] = useState('');
   const [movementNote, setMovementNote] = useState('');
-  const [movementEmployeeId, setMovementEmployeeId] = useState('');
   const [movementSubmitting, setMovementSubmitting] = useState(false);
   const [movementError, setMovementError] = useState<string | null>(null);
 
@@ -441,22 +458,6 @@ export default function Catalog() {
   const [itemImageVersion, setItemImageVersion] = useState(0);
   const [imageUploading, setImageUploading] = useState(false);
   const itemImageInputRef = useRef<HTMLInputElement | null>(null);
-
-  const [unboxVendor, setUnboxVendor] = useState('');
-  const [unboxInvoice, setUnboxInvoice] = useState('');
-  const [unboxLot, setUnboxLot] = useState('');
-  const [unboxExp, setUnboxExp] = useState('');
-  const [unboxUnpackedAt, setUnboxUnpackedAt] = useState(() => new Date().toISOString().slice(0, 10));
-  const [unboxUnpackedBy, setUnboxUnpackedBy] = useState('');
-  const [unboxQty, setUnboxQty] = useState('1');
-  const [unboxItemQuery, setUnboxItemQuery] = useState('');
-  const [unboxItemResults, setUnboxItemResults] = useState<SearchResultItem[]>([]);
-  const [unboxSearching, setUnboxSearching] = useState(false);
-  const [unboxSelectedItem, setUnboxSelectedItem] = useState<{ id: number; name: string } | null>(null);
-  const [unboxToLocId, setUnboxToLocId] = useState('');
-  const [unboxSubmitting, setUnboxSubmitting] = useState(false);
-  const [unboxError, setUnboxError] = useState<string | null>(null);
-  const unboxSearchSeq = useRef(0);
 
   const reloadMovements = useCallback(async () => {
     if (
@@ -600,6 +601,13 @@ export default function Catalog() {
       code: item.code != null ? String(item.code) : '',
       price: item.price != null && item.price !== '' ? String(item.price) : '',
       cost: item.cost != null && item.cost !== '' ? String(item.cost) : '',
+      markup:
+        detail.itemType === 'inventory' && (item as InventoryItem).markup != null
+          ? String((item as InventoryItem).markup)
+          : markupPctFromCostPrice(
+              item.cost != null ? String(item.cost) : '',
+              item.price != null ? String(item.price) : ''
+            ),
       serviceFee:
         (item as Procedure | InventoryItem).serviceFee != null &&
         (item as Procedure | InventoryItem).serviceFee !== ''
@@ -734,28 +742,6 @@ export default function Catalog() {
   }, [practiceId, movementBranchId]);
 
   useEffect(() => {
-    const q = unboxItemQuery.trim();
-    if (!q) {
-      setUnboxItemResults([]);
-      return;
-    }
-    const seq = ++unboxSearchSeq.current;
-    const t = window.setTimeout(async () => {
-      setUnboxSearching(true);
-      try {
-        const rows = await searchItems(q, practiceId, 40);
-        if (unboxSearchSeq.current !== seq) return;
-        setUnboxItemResults(rows.filter((r) => r.itemType === 'inventory'));
-      } catch {
-        if (unboxSearchSeq.current === seq) setUnboxItemResults([]);
-      } finally {
-        if (unboxSearchSeq.current === seq) setUnboxSearching(false);
-      }
-    }, 300);
-    return () => window.clearTimeout(t);
-  }, [unboxItemQuery, practiceId]);
-
-  useEffect(() => {
     if (!movementLocations.length) {
       setMovementFromId('');
       setMovementToId('');
@@ -765,17 +751,6 @@ export default function Catalog() {
     setMovementFromId(String(def.id));
     setMovementToId(String(def.id));
   }, [movementBranchId, movementLocations]);
-
-  useEffect(() => {
-    if (!branchLocations.length) {
-      setUnboxToLocId('');
-      return;
-    }
-    const def = branchLocations.find((l) => l.code === 'main') ?? branchLocations[0];
-    setUnboxToLocId((prev) =>
-      prev && branchLocations.some((l) => String(l.id) === prev) ? prev : String(def.id)
-    );
-  }, [branchId, branchLocations]);
 
   useEffect(() => {
     void reloadMovements();
@@ -1188,15 +1163,6 @@ export default function Catalog() {
       if (movementNeedsTo(movementType)) body.toBranchLocationId = toId;
       const n = movementNote.trim();
       if (n) body.note = n;
-      const emp = movementEmployeeId.trim();
-      if (emp) {
-        const eid = Number(emp);
-        if (!Number.isFinite(eid)) {
-          setMovementError('Employee ID must be a number');
-          return;
-        }
-        body.movedByEmployeeId = eid;
-      }
       await postInventoryMovement(practiceId, movementBranchId, body);
       setToast('Movement recorded');
       window.setTimeout(() => setToast(null), 3500);
@@ -1284,6 +1250,8 @@ export default function Catalog() {
       if (selected.itemType === 'inventory') {
         body.minimumPrice =
           coreDraft.minimumPrice.trim() === '' ? null : Number(coreDraft.minimumPrice);
+        body.markup =
+          coreDraft.markup.trim() === '' ? null : Number(coreDraft.markup);
         body.taxLevelValue = coreDraft.taxLevelValue;
         body.category =
           coreDraft.category.trim() === '' ? null : Number(coreDraft.category);
@@ -1321,6 +1289,7 @@ export default function Catalog() {
         cost: optionalNumber(createForm.cost),
         serviceFee: optionalNumber(createForm.serviceFee),
         minimumPrice: optionalNumber(createForm.minimumPrice),
+        markup: optionalNumber(createForm.markup),
         isMedication: createForm.isMedication,
         excludePercentageDiscount: createForm.excludePercentageDiscount,
         taxLevelValue: createForm.taxLevelValue,
@@ -1334,8 +1303,8 @@ export default function Catalog() {
         requireExpirationOnLots: createForm.requireExpirationOnLots,
         trackLots: createForm.isVaccine ? true : createForm.trackLots,
         isVaccine: createForm.isVaccine,
-        isDispensable: createForm.isDispensable,
-        dispenseNote: createForm.isDispensable
+        isDispensable: createForm.isMedication,
+        dispenseNote: createForm.isMedication
           ? createForm.dispenseNote.trim() || null
           : null,
         isControlled: createForm.isControlled,
@@ -1565,86 +1534,21 @@ export default function Catalog() {
     }
   }
 
-  async function submitUnboxReceive() {
-    if (branchId == null || !unboxSelectedItem) {
-      setUnboxError('Choose a branch, inventory item, and receiving location.');
-      return;
-    }
-    const toId = Number(unboxToLocId);
-    if (!Number.isFinite(toId)) {
-      setUnboxError('Choose destination location');
-      return;
-    }
-    const qty = Number(unboxQty);
-    if (!Number.isFinite(qty) || qty <= 0) {
-      setUnboxError('Quantity must be a positive number');
-      return;
-    }
-    setUnboxSubmitting(true);
-    setUnboxError(null);
-    const refreshedItemId = unboxSelectedItem.id;
-    try {
-      const metaBits: string[] = [];
-      if (unboxVendor.trim()) metaBits.push(`Vendor: ${unboxVendor.trim()}`);
-      if (unboxInvoice.trim()) metaBits.push(`Invoice: ${unboxInvoice.trim()}`);
-      if (unboxLot.trim()) metaBits.push(`Lot: ${unboxLot.trim()}`);
-      if (unboxExp.trim()) metaBits.push(`Exp: ${unboxExp.trim()}`);
-      if (unboxUnpackedAt.trim()) metaBits.push(`Unpacked date: ${unboxUnpackedAt.trim()}`);
-      const unpackedRaw = unboxUnpackedBy.trim();
-      if (unpackedRaw) {
-        const eid = Number(unpackedRaw);
-        if (Number.isFinite(eid)) metaBits.push(`Unpacked by employee: ${eid}`);
-        else metaBits.push(`Unpacked by: ${unpackedRaw}`);
-      }
-      const note = metaBits.length ? `Unbox — ${metaBits.join('; ')}` : 'Unbox — receive';
-
-      const body: PostInventoryMovementBody = {
-        movementType: 'receive',
-        inventoryItemId: refreshedItemId,
-        quantity: qty,
-        toBranchLocationId: toId,
-        note,
-        vendorName: unboxVendor.trim() || null,
-        invoiceNumber: unboxInvoice.trim() || null,
-        lotNumber: unboxLot.trim() || null,
-        expirationDate: unboxExp.trim() || null,
-        unpackedAt: unboxUnpackedAt.trim()
-          ? `${unboxUnpackedAt.trim().replace(/T.*/, '')}T12:00:00.000Z`
-          : null,
-      };
-      if (unpackedRaw) {
-        const eid = Number(unpackedRaw);
-        if (Number.isFinite(eid)) body.unpackedByEmployeeId = eid;
-      }
-      await postInventoryMovement(practiceId, branchId, body);
-      setToast('Unbox receive recorded');
-      window.setTimeout(() => setToast(null), 3500);
-      setUnboxVendor('');
-      setUnboxInvoice('');
-      setUnboxLot('');
-      setUnboxExp('');
-      setUnboxUnpackedAt(new Date().toISOString().slice(0, 10));
-      setUnboxUnpackedBy('');
-      setUnboxQty('1');
-      setUnboxItemQuery('');
-      setUnboxItemResults([]);
-      setUnboxSelectedItem(null);
-      if (selected?.itemType === 'inventory' && selected.itemId === refreshedItemId) {
-        await refreshDetailBundle(selected);
-        await reloadMovements();
-      }
-    } catch (e: unknown) {
-      setUnboxError(e instanceof Error ? e.message : 'Record failed');
-    } finally {
-      setUnboxSubmitting(false);
-    }
-  }
-
   function resolveLocationName(id: number | null | undefined): string {
     if (id == null) return '—';
     const loc =
       movementLocations.find((l) => l.id === id) ?? branchLocations.find((l) => l.id === id);
     return loc ? locationLabel(loc) : `#${id}`;
+  }
+
+  function movementActorName(movement: InventoryStockMovement): string {
+    const employee = movement.movedByEmployee;
+    const name = [employee?.firstName, employee?.lastName].filter(Boolean).join(' ');
+    if (name) return name;
+    if (movement.movedByEmployeeId != null) return `Employee #${movement.movedByEmployeeId}`;
+    if (movement.movedByUser?.email) return movement.movedByUser.email;
+    if (movement.movedByUserId != null) return `User #${movement.movedByUserId}`;
+    return 'System';
   }
 
   const practiceMoney: ResolvedMoney | null = detail
@@ -2014,166 +1918,14 @@ export default function Catalog() {
 
       {branchId != null && (
         <div className="settings-card" style={{ marginBottom: 24 }}>
-          <h3 className="settings-card-title">Unbox / receive shipment</h3>
+          <h3 className="settings-card-title">Receive shipment</h3>
           <p className="settings-muted" style={{ marginBottom: 12 }}>
-            Record vendor, invoice, lot, expiry, and who unpacked—then receive quantity into a bucket
-            (e.g. staging, Brunswick office, VAYD vehicle AM). Use <strong>Transfer</strong> in branch
-            details to move stock between buckets; use <strong>Adjustment decrease</strong> for expired
-            or disposed units.
+            Invoice-based receiving (scan at the box, lot/exp, supplier) moved to Inventory Control
+            Tower. Use Transfer and adjustments on the item detail for stock moves after receive.
           </p>
-          {unboxError && (
-            <div className="settings-message settings-error-message" style={{ marginBottom: 8 }}>
-              {unboxError}
-            </div>
-          )}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, maxWidth: 520 }}>
-            <label className="settings-label">
-              Search inventory to receive
-              <input
-                className="settings-input"
-                value={unboxItemQuery}
-                onChange={(e) => setUnboxItemQuery(e.target.value)}
-                placeholder="e.g. Gabapentin"
-                style={{ paddingRight: unboxSearching ? 36 : 12 }}
-              />
-            </label>
-            {unboxSelectedItem && (
-              <p style={{ margin: 0, fontSize: 14 }}>
-                Selected: <strong>{unboxSelectedItem.name}</strong>{' '}
-                <button
-                  type="button"
-                  className="btn secondary"
-                  style={{ fontSize: 12, padding: '2px 8px' }}
-                  onClick={() => setUnboxSelectedItem(null)}
-                >
-                  Clear
-                </button>
-              </p>
-            )}
-            {!unboxSelectedItem && unboxItemResults.length > 0 && (
-              <div className="settings-table-container" style={{ maxHeight: 200, overflow: 'auto' }}>
-                <table className="settings-table">
-                  <tbody>
-                    {unboxItemResults.map((row, i) => {
-                      const id = row.inventoryItem?.id;
-                      return (
-                        <tr key={`ub-${id}-${i}`}>
-                          <td>{row.name}</td>
-                          <td>
-                            <button
-                              type="button"
-                              className="btn secondary"
-                              style={{ fontSize: 12, padding: '4px 10px' }}
-                              disabled={id == null}
-                              onClick={() => {
-                                if (id == null) return;
-                                setUnboxSelectedItem({ id, name: row.name });
-                              }}
-                            >
-                              Use
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
-                gap: 10,
-              }}
-            >
-              <label className="settings-label">
-                Vendor / company (invoice from)
-                <input
-                  className="settings-input"
-                  value={unboxVendor}
-                  onChange={(e) => setUnboxVendor(e.target.value)}
-                />
-              </label>
-              <label className="settings-label">
-                Invoice number
-                <input
-                  className="settings-input"
-                  value={unboxInvoice}
-                  onChange={(e) => setUnboxInvoice(e.target.value)}
-                />
-              </label>
-              <label className="settings-label">
-                Lot number
-                <input
-                  className="settings-input"
-                  value={unboxLot}
-                  onChange={(e) => setUnboxLot(e.target.value)}
-                />
-              </label>
-              <label className="settings-label">
-                Expiration date
-                <input
-                  type="date"
-                  className="settings-input"
-                  value={unboxExp}
-                  onChange={(e) => setUnboxExp(e.target.value)}
-                />
-              </label>
-              <label className="settings-label">
-                Date unpacked
-                <input
-                  type="date"
-                  className="settings-input"
-                  value={unboxUnpackedAt}
-                  onChange={(e) => setUnboxUnpackedAt(e.target.value)}
-                />
-              </label>
-              <label className="settings-label">
-                Unpacked by (employee ID or name)
-                <input
-                  className="settings-input"
-                  value={unboxUnpackedBy}
-                  onChange={(e) => setUnboxUnpackedBy(e.target.value)}
-                  placeholder="ID from PIMS or free-text name"
-                />
-              </label>
-            </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'flex-end' }}>
-              <label className="settings-label" style={{ flex: '0 1 120px', marginBottom: 0 }}>
-                Quantity
-                <input
-                  type="number"
-                  min={1}
-                  className="settings-input"
-                  value={unboxQty}
-                  onChange={(e) => setUnboxQty(e.target.value)}
-                />
-              </label>
-              <label className="settings-label" style={{ flex: '1 1 220px', marginBottom: 0 }}>
-                Receive into location
-                <select
-                  className="settings-input"
-                  value={unboxToLocId}
-                  onChange={(e) => setUnboxToLocId(e.target.value)}
-                >
-                  {branchLocations.map((loc) => (
-                    <option key={loc.id} value={loc.id} disabled={loc.isActive === false}>
-                      {locationLabel(loc)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <button
-                type="button"
-                className="btn primary"
-                disabled={unboxSubmitting || !unboxSelectedItem || !branchLocations.length}
-                onClick={() => void submitUnboxReceive()}
-              >
-                {unboxSubmitting ? 'Recording…' : 'Record unbox (receive)'}
-              </button>
-            </div>
-          </div>
+          <Link className="btn primary" to="/schedule/inventory/receive">
+            Open Receive Shipment
+          </Link>
         </div>
       )}
 
@@ -2293,7 +2045,14 @@ export default function Catalog() {
                       step="0.01"
                       className="settings-input"
                       value={coreDraft.price}
-                      onChange={(e) => setCoreDraft((d) => ({ ...d, price: e.target.value }))}
+                      onChange={(e) => {
+                        const price = e.target.value;
+                        setCoreDraft((d) => ({
+                          ...d,
+                          price,
+                          markup: markupPctFromCostPrice(d.cost, price) || d.markup,
+                        }));
+                      }}
                     />
                   </label>
                   <label className="settings-label">
@@ -2304,7 +2063,30 @@ export default function Catalog() {
                       step="0.01"
                       className="settings-input"
                       value={coreDraft.cost}
-                      onChange={(e) => setCoreDraft((d) => ({ ...d, cost: e.target.value }))}
+                      onChange={(e) => {
+                        const cost = e.target.value;
+                        setCoreDraft((d) => ({
+                          ...d,
+                          cost,
+                          markup: markupPctFromCostPrice(cost, d.price) || d.markup,
+                        }));
+                      }}
+                    />
+                  </label>
+                  <label className="settings-label">
+                    Markup %
+                    <input
+                      type="number"
+                      step="0.01"
+                      className="settings-input"
+                      value={coreDraft.markup}
+                      onChange={(e) => {
+                        const markup = e.target.value;
+                        setCoreDraft((d) => {
+                          const price = priceFromCostMarkup(d.cost, markup);
+                          return { ...d, markup, price: price !== '' ? price : d.price };
+                        });
+                      }}
                     />
                   </label>
                   {(detail.itemType === 'procedure' || detail.itemType === 'inventory') && (
@@ -3224,15 +3006,9 @@ export default function Catalog() {
                           placeholder="Invoice #, reason, etc."
                         />
                       </label>
-                      <label className="settings-label">
-                        Moved by employee ID (optional override)
-                        <input
-                          className="settings-input"
-                          value={movementEmployeeId}
-                          onChange={(e) => setMovementEmployeeId(e.target.value)}
-                          placeholder="Leave blank for JWT default"
-                        />
-                      </label>
+                      <p className="settings-muted" style={{ margin: 0 }}>
+                        Your signed-in account and the current time are logged automatically.
+                      </p>
                       <button
                         type="button"
                         className="btn primary"
@@ -3265,6 +3041,7 @@ export default function Catalog() {
                                 <th>Qty</th>
                                 <th>From</th>
                                 <th>To</th>
+                                <th>Who</th>
                                 <th>Note</th>
                               </tr>
                             </thead>
@@ -3284,6 +3061,7 @@ export default function Catalog() {
                                   <td style={{ fontSize: 12 }}>
                                     {resolveLocationName(m.toBranchLocationId as number)}
                                   </td>
+                                  <td style={{ fontSize: 12 }}>{movementActorName(m)}</td>
                                   <td
                                     style={{ fontSize: 12, maxWidth: 160 }}
                                     title={String(m.note ?? '')}
@@ -3408,7 +3186,14 @@ export default function Catalog() {
                     step="0.01"
                     className="settings-input"
                     value={createForm.price}
-                    onChange={(e) => setCreateForm((f) => ({ ...f, price: e.target.value }))}
+                    onChange={(e) => {
+                      const price = e.target.value;
+                      setCreateForm((f) => ({
+                        ...f,
+                        price,
+                        markup: markupPctFromCostPrice(f.cost, price) || f.markup,
+                      }));
+                    }}
                   />
                 </label>
                 <label className="settings-label">
@@ -3419,7 +3204,30 @@ export default function Catalog() {
                     step="0.01"
                     className="settings-input"
                     value={createForm.cost}
-                    onChange={(e) => setCreateForm((f) => ({ ...f, cost: e.target.value }))}
+                    onChange={(e) => {
+                      const cost = e.target.value;
+                      setCreateForm((f) => ({
+                        ...f,
+                        cost,
+                        markup: markupPctFromCostPrice(cost, f.price) || f.markup,
+                      }));
+                    }}
+                  />
+                </label>
+                <label className="settings-label">
+                  Markup %
+                  <input
+                    type="number"
+                    step="0.01"
+                    className="settings-input"
+                    value={createForm.markup}
+                    onChange={(e) => {
+                      const markup = e.target.value;
+                      setCreateForm((f) => {
+                        const price = priceFromCostMarkup(f.cost, markup);
+                        return { ...f, markup, price: price !== '' ? price : f.price };
+                      });
+                    }}
                   />
                 </label>
                 <label className="settings-label">
@@ -3478,69 +3286,35 @@ export default function Catalog() {
               </div>
 
               <h4 style={{ fontSize: 14, fontWeight: 600, margin: '0 0 6px' }}>
-                Medication vs dispensable
+                Medication
               </h4>
-              <p className="settings-muted" style={{ fontSize: 13, marginBottom: 10 }}>
-                Most prescription products need both. Medication opens a prescription form on
-                the SOAP; Dispensable is the default directions text for that form.
-              </p>
               <div
                 style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-                  gap: 12,
+                  border: '1px solid #e2e8f0',
+                  borderRadius: 8,
+                  padding: 12,
+                  background: '#f8fafc',
                   marginBottom: 12,
                 }}
               >
-                <div
-                  style={{
-                    border: '1px solid #e2e8f0',
-                    borderRadius: 8,
-                    padding: 12,
-                    background: '#f8fafc',
-                  }}
-                >
-                  <label className="settings-checkbox-item">
-                    <input
-                      type="checkbox"
-                      checked={createForm.isMedication}
-                      onChange={(e) =>
-                        setCreateForm((f) => ({ ...f, isMedication: e.target.checked }))
-                      }
-                    />
-                    <span>Medication</span>
-                  </label>
-                  <p className="settings-muted" style={{ fontSize: 12, margin: '8px 0 0' }}>
-                    Opens Dose &amp; Rx (sig, refills, start date) and goes on the patient’s
-                    prescription history.
-                  </p>
-                </div>
-                <div
-                  style={{
-                    border: '1px solid #e2e8f0',
-                    borderRadius: 8,
-                    padding: 12,
-                    background: '#f8fafc',
-                  }}
-                >
-                  <label className="settings-checkbox-item">
-                    <input
-                      type="checkbox"
-                      checked={createForm.isDispensable}
-                      onChange={(e) =>
-                        setCreateForm((f) => ({ ...f, isDispensable: e.target.checked }))
-                      }
-                    />
-                    <span>Dispensable</span>
-                  </label>
-                  <p className="settings-muted" style={{ fontSize: 12, margin: '8px 0 0' }}>
-                    Default prescription note / label directions. Prefills the sig on SOAP.
-                  </p>
-                </div>
+                <label className="settings-checkbox-item">
+                  <input
+                    type="checkbox"
+                    checked={createForm.isMedication}
+                    onChange={(e) =>
+                      setCreateForm((f) => ({ ...f, isMedication: e.target.checked }))
+                    }
+                  />
+                  <span>Medication</span>
+                </label>
+                <p className="settings-muted" style={{ fontSize: 12, margin: '8px 0 0' }}>
+                  Opens Dose &amp; Rx on the SOAP and adds it to the patient’s prescription
+                  history.
+                </p>
               </div>
-              {createForm.isDispensable && (
+              {createForm.isMedication && (
                 <label className="settings-label" style={{ marginBottom: 16 }}>
-                  Default prescription note
+                  Default directions
                   <textarea
                     className="settings-input"
                     rows={2}

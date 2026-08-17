@@ -21,7 +21,6 @@ type ClinicalDraft = {
   requireExpirationOnLots: boolean;
   trackLots: boolean;
   isVaccine: boolean;
-  isDispensable: boolean;
   dispenseNote: string;
   isControlled: boolean;
   isMicrochip: boolean;
@@ -60,9 +59,7 @@ const VACCINE_TYPES = [
 
 const FLAG_HELP: Record<string, string> = {
   isMedication:
-    'This line opens as a prescription on the SOAP (Dose & Rx), with sig, refills, and start date.',
-  isDispensable:
-    'This item can be handed to a client with label directions. Set a default prescription note below; staff can edit it on the SOAP.',
+    'Something you prescribe or hand to the client. The SOAP opens Dose & Rx (directions, refills, start date), it goes on the prescription history, and the directions below prefill the label.',
   isVaccine:
     'Marks this as a vaccine so SOAP captures dose details and lot when administered.',
   isControlled: 'Controlled substance — track carefully for DEA / state reporting.',
@@ -100,11 +97,13 @@ function fromItem(item: InventoryItem): ClinicalDraft {
     vendorDrugNumber: strField(item.vendorDrugNumber),
     barcode: strField(item.barcode),
     defaultQuantity: strField(item.defaultQuantity),
-    isMedication: item.isMedication === true,
+    // eVet imports can mark an item dispensable without marking it a medication; both mean
+    // "prescribed product" here, so either one checks the single Medication box and keeps
+    // the saved directions visible instead of silently dropping them.
+    isMedication: item.isMedication === true || item.isDispensable === true,
     requireExpirationOnLots: item.requireExpirationOnLots === true,
     trackLots: item.trackLots === true,
     isVaccine: item.isVaccine === true,
-    isDispensable: item.isDispensable === true,
     dispenseNote: strField(item.dispenseNote),
     isControlled: item.isControlled === true,
     isMicrochip: item.isMicrochip === true,
@@ -264,7 +263,6 @@ function FlagCheckbox({
 function summaryChips(draft: ClinicalDraft): string[] {
   const chips: string[] = [];
   if (draft.isMedication) chips.push('Medication');
-  if (draft.isDispensable) chips.push('Dispensable');
   if (draft.isVaccine) chips.push('Vaccine');
   if (draft.trackLots) chips.push('Lots');
   if (draft.requireExpirationOnLots) chips.push('Lot expiration required');
@@ -287,7 +285,6 @@ export default function CatalogInventoryClinicalFields({
     vaccineFromItem(item)
   );
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const [vaccineOpen, setVaccineOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -296,7 +293,7 @@ export default function CatalogInventoryClinicalFields({
     setVaccineDraft(vaccineFromItem(item));
   }, [item]);
 
-  async function save(extra?: { vaccineDetails?: InventoryVaccineDetails | null }) {
+  async function save() {
     setSaving(true);
     setError(null);
     try {
@@ -310,8 +307,10 @@ export default function CatalogInventoryClinicalFields({
         requireExpirationOnLots: draft.requireExpirationOnLots,
         trackLots: draft.trackLots,
         isVaccine: draft.isVaccine,
-        isDispensable: draft.isDispensable,
-        dispenseNote: draft.isDispensable
+        // Dispensable is no longer a separate switch: a medication is what you hand to a
+        // client, and the directions below are its label text.
+        isDispensable: draft.isMedication,
+        dispenseNote: draft.isMedication
           ? draft.dispenseNote.trim() || null
           : null,
         isControlled: draft.isControlled,
@@ -325,26 +324,24 @@ export default function CatalogInventoryClinicalFields({
         allowPriceChange: draft.allowPriceChange,
         changePatientStatusTo: draft.changePatientStatusTo.trim() || null,
         changePatientSex: draft.changePatientSex,
-        ...(extra && 'vaccineDetails' in extra
-          ? { vaccineDetails: extra.vaccineDetails }
-          : draft.isVaccine
-            ? {
-                vaccineDetails: {
-                  name: vaccineDraft.name.trim() || null,
-                  manufacturer: vaccineDraft.manufacturer.trim() || null,
-                  vaccineType: vaccineDraft.vaccineType || null,
-                  dosageType: vaccineDraft.dosageType || null,
-                  createRabiesCertificate: vaccineDraft.createRabiesCertificate,
-                  createVaccinationLog: vaccineDraft.createVaccinationLog,
-                  usdaLicensingMonths: numOrNull(vaccineDraft.usdaLicensingMonths),
-                  animalControlLicensingMonths: numOrNull(
-                    vaccineDraft.animalControlLicensingMonths
-                  ),
-                  tagIssuePeriodMonths: numOrNull(vaccineDraft.tagIssuePeriodMonths),
-                  defaultSerial: vaccineDraft.defaultSerial.trim() || null,
-                },
-              }
-            : {}),
+        ...(draft.isVaccine
+          ? {
+              vaccineDetails: {
+                name: vaccineDraft.name.trim() || null,
+                manufacturer: vaccineDraft.manufacturer.trim() || null,
+                vaccineType: vaccineDraft.vaccineType || null,
+                dosageType: vaccineDraft.dosageType || null,
+                createRabiesCertificate: vaccineDraft.createRabiesCertificate,
+                createVaccinationLog: vaccineDraft.createVaccinationLog,
+                usdaLicensingMonths: numOrNull(vaccineDraft.usdaLicensingMonths),
+                animalControlLicensingMonths: numOrNull(
+                  vaccineDraft.animalControlLicensingMonths
+                ),
+                tagIssuePeriodMonths: numOrNull(vaccineDraft.tagIssuePeriodMonths),
+                defaultSerial: vaccineDraft.defaultSerial.trim() || null,
+              } satisfies InventoryVaccineDetails,
+            }
+          : {}),
       });
       setDetailsOpen(false);
       onSaved();
@@ -353,25 +350,6 @@ export default function CatalogInventoryClinicalFields({
     } finally {
       setSaving(false);
     }
-  }
-
-  async function saveVaccineDetails() {
-    const details: InventoryVaccineDetails = {
-      name: vaccineDraft.name.trim() || null,
-      manufacturer: vaccineDraft.manufacturer.trim() || null,
-      vaccineType: vaccineDraft.vaccineType || null,
-      dosageType: vaccineDraft.dosageType || null,
-      createRabiesCertificate: vaccineDraft.createRabiesCertificate,
-      createVaccinationLog: vaccineDraft.createVaccinationLog,
-      usdaLicensingMonths: numOrNull(vaccineDraft.usdaLicensingMonths),
-      animalControlLicensingMonths: numOrNull(
-        vaccineDraft.animalControlLicensingMonths
-      ),
-      tagIssuePeriodMonths: numOrNull(vaccineDraft.tagIssuePeriodMonths),
-      defaultSerial: vaccineDraft.defaultSerial.trim() || null,
-    };
-    await save({ vaccineDetails: details });
-    setVaccineOpen(false);
   }
 
   const chips = summaryChips(fromItem(item));
@@ -449,21 +427,6 @@ export default function CatalogInventoryClinicalFields({
         </p>
       )}
 
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-        {savedDraft.isVaccine && (
-          <button
-            type="button"
-            className="btn"
-            onClick={() => {
-              setVaccineDraft(vaccineFromItem(item));
-              setVaccineOpen(true);
-            }}
-          >
-            Edit vaccine details…
-          </button>
-        )}
-      </div>
-
       {detailsOpen && (
         <ModalShell
           title="Edit supply & clinical details"
@@ -510,78 +473,222 @@ export default function CatalogInventoryClinicalFields({
             ))}
           </div>
 
-          <SectionTitle>Medication vs dispensable</SectionTitle>
-          <p className="settings-muted" style={{ fontSize: 13, marginBottom: 10 }}>
-            Most prescription products need both. Medication decides whether the SOAP
-            opens a prescription form; Dispensable is the default directions text for that form.
-          </p>
+          <SectionTitle>Medication</SectionTitle>
           <div
             style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-              gap: 12,
+              border: '1px solid #e2e8f0',
+              borderRadius: 8,
+              padding: 12,
+              background: '#f8fafc',
               marginBottom: 16,
             }}
           >
-            <div
-              style={{
-                border: '1px solid #e2e8f0',
-                borderRadius: 8,
-                padding: 12,
-                background: '#f8fafc',
-              }}
-            >
-              <FlagCheckbox
-                checked={draft.isMedication}
-                label="Medication"
-                help={FLAG_HELP.isMedication}
-                onChange={(checked) =>
-                  setDraft((d) => ({ ...d, isMedication: checked }))
-                }
-              />
-              <p className="settings-muted" style={{ fontSize: 12, margin: '8px 0 0' }}>
-                Opens Dose &amp; Rx on the SOAP (sig, refills, start date) and goes on the
-                patient’s prescription history.
-              </p>
-            </div>
-            <div
-              style={{
-                border: '1px solid #e2e8f0',
-                borderRadius: 8,
-                padding: 12,
-                background: '#f8fafc',
-              }}
-            >
-              <FlagCheckbox
-                checked={draft.isDispensable}
-                label="Dispensable"
-                help={FLAG_HELP.isDispensable}
-                onChange={(checked) =>
-                  setDraft((d) => ({ ...d, isDispensable: checked }))
-                }
-              />
-              <p className="settings-muted" style={{ fontSize: 12, margin: '8px 0 0' }}>
-                Default prescription note / label directions. Prefills the sig; staff can
-                edit it on the SOAP.
-              </p>
-            </div>
+            <FlagCheckbox
+              checked={draft.isMedication}
+              label="Medication"
+              help={FLAG_HELP.isMedication}
+              onChange={(checked) =>
+                setDraft((d) => ({ ...d, isMedication: checked }))
+              }
+            />
+            <p className="settings-muted" style={{ fontSize: 12, margin: '8px 0 0' }}>
+              Opens Dose &amp; Rx on the SOAP and adds it to the patient’s prescription
+              history.
+            </p>
+            {draft.isMedication && (
+              <label className="settings-label" style={{ margin: '12px 0 0' }}>
+                Default directions
+                <FlagHelp text="Prefills the directions (sig) on the SOAP and the dispensing label. Staff can edit them per patient." />
+                <textarea
+                  className="settings-input"
+                  rows={3}
+                  value={draft.dispenseNote}
+                  onChange={(e) =>
+                    setDraft((d) => ({ ...d, dispenseNote: e.target.value }))
+                  }
+                  placeholder="e.g. Give 1 tablet by mouth every 12 hours with food"
+                  style={NOTE_TEXTAREA_STYLE}
+                />
+              </label>
+            )}
           </div>
-          {draft.isDispensable && (
-            <label className="settings-label" style={{ marginBottom: 16 }}>
-              Default prescription note
-              <FlagHelp text="Prefills the prescription directions (sig) when this med is ordered on a SOAP." />
-              <textarea
-                className="settings-input"
-                rows={3}
-                value={draft.dispenseNote}
-                onChange={(e) =>
-                  setDraft((d) => ({ ...d, dispenseNote: e.target.value }))
-                }
-                placeholder="e.g. Give 1 tablet by mouth every 12 hours with food"
-                style={NOTE_TEXTAREA_STYLE}
-              />
-            </label>
-          )}
+
+          <SectionTitle>Vaccine</SectionTitle>
+          <div
+            style={{
+              border: '1px solid #e2e8f0',
+              borderRadius: 8,
+              padding: 12,
+              background: '#f8fafc',
+              marginBottom: 16,
+            }}
+          >
+            <FlagCheckbox
+              checked={draft.isVaccine}
+              label="Vaccine"
+              help={FLAG_HELP.isVaccine}
+              onChange={(checked) =>
+                setDraft((d) => ({
+                  ...d,
+                  isVaccine: checked,
+                  ...(checked ? { trackLots: true } : {}),
+                }))
+              }
+            />
+            {draft.isVaccine && (
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 1fr',
+                  gap: 10,
+                  margin: '12px 0 0',
+                }}
+              >
+                <label className="settings-label" style={{ gridColumn: '1 / -1' }}>
+                  Name
+                  <input
+                    className="settings-input"
+                    value={vaccineDraft.name}
+                    onChange={(e) =>
+                      setVaccineDraft((d) => ({ ...d, name: e.target.value }))
+                    }
+                  />
+                </label>
+                <label className="settings-label">
+                  Manufacturer
+                  <input
+                    className="settings-input"
+                    value={vaccineDraft.manufacturer}
+                    onChange={(e) =>
+                      setVaccineDraft((d) => ({ ...d, manufacturer: e.target.value }))
+                    }
+                  />
+                </label>
+                <label className="settings-label">
+                  Vaccine type
+                  <select
+                    className="settings-input"
+                    value={vaccineDraft.vaccineType}
+                    onChange={(e) =>
+                      setVaccineDraft((d) => ({ ...d, vaccineType: e.target.value }))
+                    }
+                  >
+                    <option value="">—</option>
+                    {(VACCINE_TYPES.includes(vaccineDraft.vaccineType) ||
+                    !vaccineDraft.vaccineType
+                      ? VACCINE_TYPES
+                      : [...VACCINE_TYPES, vaccineDraft.vaccineType]
+                    ).map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="settings-label">
+                  Dosage type
+                  <select
+                    className="settings-input"
+                    value={vaccineDraft.dosageType}
+                    onChange={(e) =>
+                      setVaccineDraft((d) => ({ ...d, dosageType: e.target.value }))
+                    }
+                  >
+                    <option value="">—</option>
+                    <option value="initial">Initial</option>
+                    <option value="booster">Booster</option>
+                  </select>
+                </label>
+                <label className="settings-label">
+                  Default serial (optional)
+                  <input
+                    className="settings-input"
+                    value={vaccineDraft.defaultSerial}
+                    onChange={(e) =>
+                      setVaccineDraft((d) => ({ ...d, defaultSerial: e.target.value }))
+                    }
+                  />
+                </label>
+                <label className="settings-label">
+                  USDA licensing (months)
+                  <input
+                    className="settings-input"
+                    type="number"
+                    min={0}
+                    value={vaccineDraft.usdaLicensingMonths}
+                    onChange={(e) =>
+                      setVaccineDraft((d) => ({
+                        ...d,
+                        usdaLicensingMonths: e.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <label className="settings-label">
+                  Animal control licensing (months)
+                  <input
+                    className="settings-input"
+                    type="number"
+                    min={0}
+                    value={vaccineDraft.animalControlLicensingMonths}
+                    onChange={(e) =>
+                      setVaccineDraft((d) => ({
+                        ...d,
+                        animalControlLicensingMonths: e.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <label className="settings-label">
+                  Tag issue period (months)
+                  <input
+                    className="settings-input"
+                    type="number"
+                    min={0}
+                    value={vaccineDraft.tagIssuePeriodMonths}
+                    onChange={(e) =>
+                      setVaccineDraft((d) => ({
+                        ...d,
+                        tagIssuePeriodMonths: e.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <label
+                  className="settings-checkbox-item"
+                  style={{ gridColumn: '1 / -1' }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={vaccineDraft.createRabiesCertificate}
+                    onChange={(e) =>
+                      setVaccineDraft((d) => ({
+                        ...d,
+                        createRabiesCertificate: e.target.checked,
+                      }))
+                    }
+                  />
+                  <span>Create rabies certificate</span>
+                </label>
+                <label
+                  className="settings-checkbox-item"
+                  style={{ gridColumn: '1 / -1' }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={vaccineDraft.createVaccinationLog}
+                    onChange={(e) =>
+                      setVaccineDraft((d) => ({
+                        ...d,
+                        createVaccinationLog: e.target.checked,
+                      }))
+                    }
+                  />
+                  <span>Create vaccination log</span>
+                </label>
+              </div>
+            )}
+          </div>
 
           <SectionTitle>Other clinical behavior</SectionTitle>
           <div
@@ -592,18 +699,6 @@ export default function CatalogInventoryClinicalFields({
               marginBottom: 12,
             }}
           >
-            <FlagCheckbox
-              checked={draft.isVaccine}
-              label="Is vaccine"
-              help={FLAG_HELP.isVaccine}
-              onChange={(checked) =>
-                setDraft((d) => ({
-                  ...d,
-                  isVaccine: checked,
-                  ...(checked ? { trackLots: true } : {}),
-                }))
-              }
-            />
             <FlagCheckbox
               checked={draft.isControlled}
               label="Controlled"
@@ -743,180 +838,6 @@ export default function CatalogInventoryClinicalFields({
         </ModalShell>
       )}
 
-      {vaccineOpen && (
-        <ModalShell
-          title="Edit vaccine"
-          onClose={() => setVaccineOpen(false)}
-          width={520}
-        >
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: '1fr 1fr',
-              gap: 10,
-              marginBottom: 12,
-            }}
-          >
-            <label className="settings-label" style={{ gridColumn: '1 / -1' }}>
-              Name
-              <input
-                className="settings-input"
-                value={vaccineDraft.name}
-                onChange={(e) =>
-                  setVaccineDraft((d) => ({ ...d, name: e.target.value }))
-                }
-              />
-            </label>
-            <label className="settings-label">
-              Manufacturer
-              <input
-                className="settings-input"
-                value={vaccineDraft.manufacturer}
-                onChange={(e) =>
-                  setVaccineDraft((d) => ({ ...d, manufacturer: e.target.value }))
-                }
-              />
-            </label>
-            <label className="settings-label">
-              Vaccine type
-              <select
-                className="settings-input"
-                value={vaccineDraft.vaccineType}
-                onChange={(e) =>
-                  setVaccineDraft((d) => ({ ...d, vaccineType: e.target.value }))
-                }
-              >
-                <option value="">—</option>
-                {(VACCINE_TYPES.includes(vaccineDraft.vaccineType) ||
-                !vaccineDraft.vaccineType
-                  ? VACCINE_TYPES
-                  : [...VACCINE_TYPES, vaccineDraft.vaccineType]
-                ).map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="settings-label">
-              Dosage type
-              <select
-                className="settings-input"
-                value={vaccineDraft.dosageType}
-                onChange={(e) =>
-                  setVaccineDraft((d) => ({ ...d, dosageType: e.target.value }))
-                }
-              >
-                <option value="">—</option>
-                <option value="initial">Initial</option>
-                <option value="booster">Booster</option>
-              </select>
-            </label>
-            <label className="settings-label">
-              USDA licensing (months)
-              <input
-                className="settings-input"
-                type="number"
-                min={0}
-                value={vaccineDraft.usdaLicensingMonths}
-                onChange={(e) =>
-                  setVaccineDraft((d) => ({
-                    ...d,
-                    usdaLicensingMonths: e.target.value,
-                  }))
-                }
-              />
-            </label>
-            <label className="settings-label">
-              Animal control licensing (months)
-              <input
-                className="settings-input"
-                type="number"
-                min={0}
-                value={vaccineDraft.animalControlLicensingMonths}
-                onChange={(e) =>
-                  setVaccineDraft((d) => ({
-                    ...d,
-                    animalControlLicensingMonths: e.target.value,
-                  }))
-                }
-              />
-            </label>
-            <label className="settings-label">
-              Tag issue period (months)
-              <input
-                className="settings-input"
-                type="number"
-                min={0}
-                value={vaccineDraft.tagIssuePeriodMonths}
-                onChange={(e) =>
-                  setVaccineDraft((d) => ({
-                    ...d,
-                    tagIssuePeriodMonths: e.target.value,
-                  }))
-                }
-              />
-            </label>
-            <label className="settings-label">
-              Default serial (optional)
-              <input
-                className="settings-input"
-                value={vaccineDraft.defaultSerial}
-                onChange={(e) =>
-                  setVaccineDraft((d) => ({ ...d, defaultSerial: e.target.value }))
-                }
-              />
-            </label>
-          </div>
-          <label className="settings-checkbox-item" style={{ marginBottom: 6 }}>
-            <input
-              type="checkbox"
-              checked={vaccineDraft.createRabiesCertificate}
-              onChange={(e) =>
-                setVaccineDraft((d) => ({
-                  ...d,
-                  createRabiesCertificate: e.target.checked,
-                }))
-              }
-            />
-            <span>Create rabies certificate</span>
-          </label>
-          <label className="settings-checkbox-item" style={{ marginBottom: 14 }}>
-            <input
-              type="checkbox"
-              checked={vaccineDraft.createVaccinationLog}
-              onChange={(e) =>
-                setVaccineDraft((d) => ({
-                  ...d,
-                  createVaccinationLog: e.target.checked,
-                }))
-              }
-            />
-            <span>Create vaccination log</span>
-          </label>
-          {error && (
-            <div
-              className="settings-message settings-error-message"
-              style={{ marginBottom: 10 }}
-            >
-              {error}
-            </div>
-          )}
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-            <button type="button" className="btn" onClick={() => setVaccineOpen(false)}>
-              Cancel
-            </button>
-            <button
-              type="button"
-              className="btn primary"
-              disabled={saving}
-              onClick={() => void saveVaccineDetails()}
-            >
-              {saving ? 'Saving…' : 'Save vaccine'}
-            </button>
-          </div>
-        </ModalShell>
-      )}
     </div>
   );
 }

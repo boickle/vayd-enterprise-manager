@@ -31,6 +31,8 @@ export type InventoryItemCatalogPatch = {
   cost?: number | null;
   serviceFee?: number | null;
   minimumPrice?: number | null;
+  /** Percentage over cost: price = cost * (1 + markup / 100). */
+  markup?: number | null;
   isMedication?: boolean;
   isActive?: boolean;
   description?: string | null;
