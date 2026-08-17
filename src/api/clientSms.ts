@@ -5,11 +5,11 @@ export type SendClientSmsPayload = {
   overrideNonProd?: boolean;
   /** Send from this line (e.g. practice `phone1`). When omitted, API picks receptionist or default. */
   from?: string;
-  /** Send from the visit assignee provider's Quo/OpenPhone line (`quoLinePhone`). */
+  /** Send from the visit assignee provider's phone line (`quoLinePhone`). */
   primaryProviderId?: number;
   /** Use server `SMS_REMINDERS_FROM` (scheduling tools outreach). Do not pass `from` with this — the API picks the line. */
   useRemindersFrom?: boolean;
-  /** Mark the Quo/OpenPhone conversation as done after send. */
+  /** Mark the provider conversation as done after send (Quo; no-op on Schultz until wired). */
   markInboxDone?: boolean;
   /** Label for delivery-failure alerts (e.g. care_outreach, forward_booking). */
   source?: string;
@@ -36,7 +36,7 @@ export async function sendClientSms(
   await http.post(`/sms/client/${encodeURIComponent(String(clientId))}`, payload);
 }
 
-/** `SMS_REMINDERS_FROM` (or OpenPhone default) for scheduling-tools compose modals. */
+/** `SMS_REMINDERS_FROM` (or active phone-provider default) for scheduling-tools compose modals. */
 export async function fetchSchedulingOutreachSmsFrom(): Promise<string | null> {
   try {
     const { data } = await http.get<{ from?: string | null }>('/sms/scheduling-outreach-from');
@@ -47,7 +47,23 @@ export async function fetchSchedulingOutreachSmsFrom(): Promise<string | null> {
   }
 }
 
-/** Undelivered staff SMS that Quo reported failed and staff have not dismissed. */
+export type ActivePhoneProviderResponse = {
+  provider: 'quo' | 'schultz';
+  displayName: string;
+};
+
+/** API `PHONE_PROVIDER` — source of truth after an env switch + API restart. */
+export async function fetchActivePhoneProvider(): Promise<ActivePhoneProviderResponse | null> {
+  try {
+    const { data } = await http.get<ActivePhoneProviderResponse>('/sms/active-provider');
+    if (data?.provider === 'quo' || data?.provider === 'schultz') return data;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/** Undelivered staff SMS that the phone provider reported failed and staff have not dismissed. */
 export async function fetchStaffSmsDeliveryFailures(
   limit = 25,
 ): Promise<StaffSmsDeliveryFailure[]> {

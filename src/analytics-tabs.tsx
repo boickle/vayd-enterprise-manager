@@ -3,6 +3,7 @@
 import React, { type JSX } from 'react';
 import PaymentsAnalyticsPage from './pages/PaymentAnalytics';
 import RoutingAnalyticsPage from './pages/RoutingAnalytics';
+import { isQuoPhoneProvider } from './config/phoneProvider';
 
 const VeterinaryServicesDeliveredPage = React.lazy(
   () => import('./pages/VeterinaryServicesDelivered')
@@ -70,5 +71,7 @@ export const ANALYTICS_TAB_PAGES: AnalyticsTabPage[] = [
 ];
 
 export function getAnalyticsTabPages(): AnalyticsTabPage[] {
-  return ANALYTICS_TAB_PAGES;
+  if (isQuoPhoneProvider()) return ANALYTICS_TAB_PAGES;
+  const quoOnly = new Set(['openphone-calls']);
+  return ANALYTICS_TAB_PAGES.filter((tab) => !quoOnly.has(tab.path));
 }

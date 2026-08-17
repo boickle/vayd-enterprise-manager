@@ -26,7 +26,7 @@ function sourceLabel(source: string | null): string {
 }
 
 /**
- * Global alert when Quo reports a staff-sent SMS failed to deliver (e.g. landline).
+ * Global alert when the phone provider reports a staff-sent SMS failed to deliver (e.g. landline).
  * Polls while an employee is signed in.
  */
 export default function SmsDeliveryFailureBanner() {

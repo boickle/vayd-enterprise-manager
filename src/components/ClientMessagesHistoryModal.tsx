@@ -17,6 +17,7 @@ import {
   useOpenPhoneLineDirectory,
 } from '../hooks/useOpenPhoneLineDirectory';
 import { phonesMatchForQuo } from '../utils/quoContact';
+import { phoneProviderDisplayName } from '../config/phoneProvider';
 
 type Props = {
   open: boolean;
@@ -255,7 +256,7 @@ export function ClientMessagesHistoryModal({
             ) : null}
             {data ? (
               <p style={{ margin: 0, color: '#6b7280', fontSize: 14 }}>
-                {lineCount} Quo {lineCount === 1 ? 'line' : 'lines'} · {totalMessages}{' '}
+                {lineCount} {phoneProviderDisplayName()} {lineCount === 1 ? 'line' : 'lines'} · {totalMessages}{' '}
                 {totalMessages === 1 ? 'message' : 'messages'} total · up to {CLIENT_MESSAGES_PER_LINE}{' '}
                 per line
                 {refreshing ? ' · refreshing…' : ''}

@@ -7,6 +7,7 @@ import SurveyResults from './pages/SurveyResults';
 import AdminUsers from './pages/AdminUsers';
 import RoutingScoreThresholdsPage from './pages/RoutingScoreThresholds';
 import { getFrontendPaymentProvider } from './config/paymentProvider';
+import { isQuoPhoneProvider } from './config/phoneProvider';
 
 export type AdminTabPage = {
   path: string;
@@ -57,6 +58,12 @@ export const ADMIN_TAB_PAGES: AdminTabPage[] = [
 /** Admin tabs visible to the current environment. */
 export function getAdminTabPages(): AdminTabPage[] {
   const stripeOnlyPaths = new Set(['membership-promotions']);
+  const quoOnlyPaths = new Set(['open-phone-coaching']);
   const useStripe = getFrontendPaymentProvider() === 'stripe';
-  return ADMIN_TAB_PAGES.filter((tab) => useStripe || !stripeOnlyPaths.has(tab.path));
+  const useQuo = isQuoPhoneProvider();
+  return ADMIN_TAB_PAGES.filter((tab) => {
+    if (!useStripe && stripeOnlyPaths.has(tab.path)) return false;
+    if (!useQuo && quoOnlyPaths.has(tab.path)) return false;
+    return true;
+  });
 }

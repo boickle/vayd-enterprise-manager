@@ -1,6 +1,7 @@
-/** Click-to-call / SMS links for Quo (OpenPhone) and browser fallbacks. */
+/** Click-to-call / SMS links for the active phone provider and browser fallbacks. */
 
 import type { Provider } from '../api/employee';
+import { getFrontendPhoneProvider } from '../config/phoneProvider';
 
 const DEFAULT_QUO_CALL_URL_TEMPLATE = 'openphone://dial?number={digits}&action=call';
 const DEFAULT_QUO_SMS_URL_TEMPLATE = 'openphone://message?number={digits}';
@@ -55,19 +56,25 @@ function appendQuoFromParam(url: string, fromLine?: string | null): string {
   return `${url}${sep}from=${encodeURIComponent(fromDigits)}`;
 }
 
-function quoCallTemplate(): string {
+function callUrlTemplate(): string {
+  if (getFrontendPhoneProvider() === 'schultz') {
+    return (import.meta.env.VITE_SCHULTZ_CALL_URL_TEMPLATE as string | undefined)?.trim() || '';
+  }
   const fromEnv = (import.meta.env.VITE_QUO_CALL_URL_TEMPLATE as string | undefined)?.trim();
   return fromEnv || DEFAULT_QUO_CALL_URL_TEMPLATE;
 }
 
-function quoSmsTemplate(): string {
+function smsUrlTemplate(): string {
+  if (getFrontendPhoneProvider() === 'schultz') {
+    return (import.meta.env.VITE_SCHULTZ_SMS_URL_TEMPLATE as string | undefined)?.trim() || '';
+  }
   const fromEnv = (import.meta.env.VITE_QUO_SMS_URL_TEMPLATE as string | undefined)?.trim();
   return fromEnv || DEFAULT_QUO_SMS_URL_TEMPLATE;
 }
 
 export function buildPhoneDialHref(phone: string, opts?: QuoContactLinkOpts): string {
   const e164 = phoneToE164(phone);
-  const tpl = quoCallTemplate();
+  const tpl = callUrlTemplate();
   const fromTpl = applyQuoUrlTemplate(tpl, phone, opts?.fromLine);
   if (fromTpl) return appendQuoFromParam(fromTpl, opts?.fromLine);
   if (e164) return `tel:${e164}`;
@@ -76,7 +83,7 @@ export function buildPhoneDialHref(phone: string, opts?: QuoContactLinkOpts): st
 
 export function buildPhoneSmsHref(phone: string, opts?: QuoContactLinkOpts): string {
   const e164 = phoneToE164(phone);
-  const tpl = quoSmsTemplate();
+  const tpl = smsUrlTemplate();
   const fromTpl = applyQuoUrlTemplate(tpl, phone, opts?.fromLine);
   if (fromTpl) return appendQuoFromParam(fromTpl, opts?.fromLine);
   if (e164) return `sms:${e164}`;

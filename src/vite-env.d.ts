@@ -6,6 +6,12 @@ interface ImportMetaEnv {
   readonly VITE_PAYMENT_PROVIDER?: string;
   /** Stripe publishable key (pk_test_… / pk_live_…). Required when VITE_PAYMENT_PROVIDER=stripe. */
   readonly VITE_STRIPE_PUBLISHABLE_KEY?: string;
+  /** `quo` (default) or `schultz` — keep in sync with API `PHONE_PROVIDER`. */
+  readonly VITE_PHONE_PROVIDER?: string;
+  readonly VITE_QUO_CALL_URL_TEMPLATE?: string;
+  readonly VITE_QUO_SMS_URL_TEMPLATE?: string;
+  readonly VITE_SCHULTZ_CALL_URL_TEMPLATE?: string;
+  readonly VITE_SCHULTZ_SMS_URL_TEMPLATE?: string;
   readonly VITE_MOCK_AUTH: string;
   readonly VITE_IS_PROD: string;
   readonly VITE_GA_MEASUREMENT_ID?: string;
