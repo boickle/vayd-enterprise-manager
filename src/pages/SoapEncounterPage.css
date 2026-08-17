@@ -1,0 +1,2350 @@
+.soap-page {
+  --soap-accent: #2563eb;
+  --soap-border: #e5e7eb;
+  --soap-muted: #6b7280;
+  --soap-bg: #f8fafc;
+  /* App chrome above this page's scroll container (`.schedule-app__outlet`): the fixed Scout
+     header, plus the nonprod banner when present (styles.css). The aside is sized against
+     this, not the full viewport — otherwise the sticky column is taller than the area that can
+     actually be seen, which puts its top and its own scrollbar out of reach. */
+  --soap-chrome-top: calc(
+    var(--app-nonprod-banner-height, 0px) + var(--scout-schedule-navbar-height, 120px)
+  );
+  padding: 16px 20px 64px;
+  max-width: 1280px;
+  margin: 0 auto;
+  color: #111827;
+}
+
+.soap-loading,
+.soap-error-page {
+  padding: 48px;
+  text-align: center;
+  color: var(--soap-muted);
+}
+
+/* Header */
+.soap-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--soap-border);
+  margin-bottom: 18px;
+  flex-wrap: wrap;
+}
+.soap-header-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.soap-header-main h1 {
+  font-size: 20px;
+  margin: 0;
+  line-height: 1.1;
+}
+.soap-header-patient {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.soap-header-patient-link {
+  color: #0f172a;
+  text-decoration: none;
+}
+.soap-header-patient-link:hover {
+  color: #2563eb;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.soap-header-signalment {
+  color: #334155;
+  font-size: 13px;
+  font-weight: 600;
+}
+.soap-header-sub {
+  color: var(--soap-muted);
+  font-size: 13px;
+}
+.soap-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.soap-plan-toast {
+  position: fixed;
+  left: 50%;
+  bottom: max(24px, env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  z-index: 2400;
+  max-width: min(420px, calc(100vw - 24px));
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid #93c5fd;
+  background: #eff6ff;
+  color: #1e3a8a;
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: 0 10px 28px rgba(30, 58, 138, 0.18);
+  pointer-events: none;
+}
+.soap-provider-prompt-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  background: transparent;
+  color: var(--soap-accent);
+  padding: 5px 2px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.soap-provider-prompt-btn:hover {
+  text-decoration: underline;
+}
+.soap-mode-switch {
+  display: inline-flex;
+  border: 1px solid var(--soap-border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.soap-mode-switch button {
+  border: none;
+  background: #fff;
+  padding: 7px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--soap-muted);
+}
+.soap-mode-switch button.active {
+  background: var(--soap-accent);
+  color: #fff;
+}
+
+/* Multi-pet visit tab bar (household visits — docs/ai-scribe.md "Multi-pet visits") */
+.soap-pet-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: -4px 0 14px;
+}
+.soap-pet-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--soap-border);
+  background: #fff;
+  color: var(--soap-muted);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.soap-pet-tab:hover {
+  border-color: var(--soap-accent);
+}
+.soap-pet-tab.active {
+  background: var(--soap-accent);
+  border-color: var(--soap-accent);
+  color: #fff;
+  cursor: default;
+}
+.soap-locked-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #ecfdf5;
+  color: #047857;
+  border: 1px solid #a7f3d0;
+  border-radius: 8px;
+  padding: 7px 12px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* Layout */
+.soap-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 20px;
+  align-items: start;
+}
+@media (max-width: 980px) {
+  .soap-body {
+    grid-template-columns: 1fr;
+  }
+}
+.soap-main {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-width: 0;
+}
+
+/* SOAP section tabs */
+.soap-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px;
+  background: #fff;
+  border: 1px solid var(--soap-border);
+  border-radius: 12px 12px 0 0;
+  border-bottom: none;
+}
+.soap-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--soap-muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.soap-tab:hover:not(.active) {
+  background: var(--soap-bg);
+  color: #111827;
+}
+.soap-tab.active {
+  background: var(--soap-accent);
+  color: #fff;
+}
+.soap-tab.needs-attention:not(.active) {
+  color: #b45309;
+  box-shadow: inset 0 0 0 1px #fcd34d;
+}
+.soap-tab-short {
+  display: none;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+@media (max-width: 720px) {
+  .soap-tab-label {
+    display: none;
+  }
+  .soap-tab-short {
+    display: inline;
+  }
+}
+.soap-tab-panel {
+  background: #fff;
+  border: 1px solid var(--soap-border);
+  border-radius: 0 0 12px 12px;
+  min-height: 280px;
+}
+.soap-tab-panel .soap-section {
+  border: none;
+  border-radius: 0;
+  margin: 0;
+}
+.soap-tab-panel .soap-section:last-child {
+  border-radius: 0 0 12px 12px;
+}
+/* Proposed + checkout pin beside the left column and scroll on their own when taller than the
+   space available, so they stay reachable while the doctor works down the left column. The
+   max-height has to stay inside the visible scrollport (viewport minus app chrome, minus the
+   16px sticky offset top and bottom) or the column's own scrollbar sits off-screen. */
+.soap-aside {
+  position: sticky;
+  top: 16px;
+  align-self: start;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 0;
+  max-height: calc(100vh - var(--soap-chrome-top) - 32px);
+  max-height: calc(100dvh - var(--soap-chrome-top) - 32px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding-bottom: 4px;
+}
+/* Single column: no separate scrollport — the aside flows with the page. */
+@media (max-width: 980px) {
+  .soap-aside {
+    position: static;
+    max-height: none;
+    overflow: visible;
+  }
+}
+.soap-aside-proposed {
+  background: #fff;
+  border: 1px solid var(--soap-border);
+  border-radius: 12px;
+  padding: 14px;
+}
+.soap-aside-proposed .soap-subhead {
+  margin-top: 0;
+}
+.soap-aside-proposed-hint {
+  margin: 0 0 10px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--soap-muted);
+}
+.soap-aside-proposed .soap-order {
+  flex-wrap: wrap;
+}
+.soap-aside-proposed .soap-order-actions {
+  flex-basis: 100%;
+  justify-content: flex-end;
+  margin-top: 2px;
+}
+
+/* Sections */
+.soap-section {
+  background: #fff;
+  border: 1px solid var(--soap-border);
+  border-radius: 12px;
+  padding: 16px;
+}
+.soap-section h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  margin: 0 0 8px;
+}
+.soap-section-hint {
+  color: var(--soap-muted);
+  font-size: 12.5px;
+  margin: 0 0 10px;
+}
+.soap-subhead {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--soap-muted);
+  margin: 14px 0 8px;
+}
+.soap-gate {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+}
+
+/* Inputs */
+.soap-input,
+.soap-textarea,
+.soap-select {
+  width: 100%;
+  border: 1px solid var(--soap-border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 14px;
+  font-family: inherit;
+  background: #fff;
+  box-sizing: border-box;
+}
+.soap-textarea {
+  resize: vertical;
+}
+.soap-textarea--subjective {
+  min-height: 280px;
+}
+.soap-textarea--email {
+  min-height: 220px;
+  margin-top: 8px;
+}
+.soap-email-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--soap-muted, #6b7280);
+  margin-top: 4px;
+}
+.soap-email-label .soap-input {
+  font-weight: 500;
+  color: #111827;
+}
+.soap-input:focus,
+.soap-textarea:focus,
+.soap-select:focus {
+  outline: none;
+  border-color: var(--soap-accent);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+}
+.soap-select {
+  width: auto;
+  min-width: 120px;
+}
+
+/* Buttons */
+.soap-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--soap-border);
+  background: #fff;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  color: #111827;
+  white-space: nowrap;
+}
+.soap-btn:hover:not(:disabled) {
+  background: #f3f4f6;
+}
+.soap-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.soap-btn.primary {
+  background: var(--soap-accent);
+  border-color: var(--soap-accent);
+  color: #fff;
+}
+.soap-btn.primary:hover:not(:disabled) {
+  background: #1d4ed8;
+}
+.soap-btn.ghost {
+  background: #fff;
+}
+.soap-btn.small {
+  padding: 5px 9px;
+  font-size: 12px;
+}
+.soap-btn.ok {
+  border-color: #a7f3d0;
+  color: #047857;
+}
+.soap-btn.danger {
+  border-color: #fecaca;
+  color: #b91c1c;
+}
+.soap-icon-btn {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: var(--soap-muted);
+  padding: 4px;
+  border-radius: 6px;
+  display: inline-flex;
+}
+.soap-icon-btn:hover {
+  background: #f3f4f6;
+  color: #111827;
+}
+
+.soap-empty {
+  color: var(--soap-muted);
+  font-size: 13px;
+  padding: 10px 0;
+}
+.soap-error {
+  color: #b91c1c;
+  font-size: 13px;
+  margin: 8px 0;
+}
+.soap-error-banner {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+.soap-note-banner {
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  color: #1e40af;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  margin: 8px 0;
+}
+.soap-hint {
+  color: var(--soap-muted);
+  font-size: 11.5px;
+  margin: 8px 0 0;
+}
+
+/* Vitals */
+.soap-vitals {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+@media (max-width: 560px) {
+  .soap-vitals {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+.soap-vital {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--soap-muted);
+}
+
+.soap-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.soap-weight {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--soap-border);
+  border-radius: 8px;
+  background: #fff;
+}
+.soap-weight--required {
+  border-color: #f59e0b;
+  background: #fffbeb;
+}
+.soap-weight__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+}
+.soap-weight__value {
+  flex: 1 1 120px;
+  min-width: 100px;
+  max-width: 180px;
+}
+.soap-weight__req {
+  color: #b45309;
+}
+.soap-weight__units {
+  display: flex;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+.soap-weight__unit {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border: 1px solid var(--soap-border);
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--soap-text, #0f172a);
+  background: #f8fafc;
+  cursor: pointer;
+  user-select: none;
+}
+.soap-weight__unit input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.soap-weight__unit.is-selected {
+  border-color: #2563eb;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+.soap-weight__units:disabled .soap-weight__unit,
+.soap-weight__unit:has(input:disabled) {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.soap-weight__none {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--soap-text, #0f172a);
+  cursor: pointer;
+}
+.soap-weight__hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #b45309;
+}
+
+/* PE template */
+.soap-pe {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.soap-pe-row {
+  border: 1px solid var(--soap-border);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.soap-pe-row.is-abnormal {
+  border-color: #fcd34d;
+  background: #fffbeb;
+}
+.soap-pe-row-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.soap-pe-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.soap-pe-toggle {
+  display: inline-flex;
+  gap: 4px;
+}
+.soap-pe-chip {
+  border: 1px solid var(--soap-border);
+  background: #fff;
+  border-radius: 6px;
+  padding: 3px 9px;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--soap-muted);
+}
+.soap-pe-chip.active {
+  background: #e5edff;
+  border-color: var(--soap-accent);
+  color: var(--soap-accent);
+}
+.soap-pe-chip.active.abnormal {
+  background: #fef3c7;
+  border-color: #f59e0b;
+  color: #b45309;
+}
+.soap-pe-normal-text {
+  color: var(--soap-muted);
+  font-size: 12px;
+  margin-top: 4px;
+}
+.soap-pe-note {
+  width: 100%;
+  margin-top: 8px;
+  border: 1px solid #fcd34d;
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 13px;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+
+/* Master problem list */
+.soap-mpl-add,
+.soap-plan-add {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+.soap-mpl-add .soap-input {
+  flex: 1;
+  min-width: 160px;
+}
+.soap-mpl-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.soap-mpl-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--soap-border);
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+.soap-mpl-item.status-resolved {
+  opacity: 0.6;
+}
+.soap-mpl-label {
+  flex: 1;
+  font-size: 13.5px;
+}
+.soap-mpl-label-input {
+  min-width: 0;
+  padding: 3px 6px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  font: inherit;
+  font-size: 13.5px;
+  color: inherit;
+}
+.soap-mpl-label-input:hover {
+  border-color: var(--soap-border);
+  background: #fff;
+}
+.soap-mpl-label-input:focus {
+  outline: none;
+  border-color: var(--soap-accent);
+  background: #fff;
+}
+.soap-mpl-status {
+  min-width: 96px;
+}
+.soap-mpl-acuity {
+  min-width: 116px;
+}
+.soap-mpl-link {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  border: 1px solid var(--soap-border);
+  background: #fff;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+}
+.soap-mpl-link.linked {
+  background: var(--soap-accent);
+  border-color: var(--soap-accent);
+}
+.soap-tag {
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  border-radius: 4px;
+  padding: 2px 6px;
+  background: #f3f4f6;
+  color: var(--soap-muted);
+}
+.soap-tag.kind-diagnosis {
+  background: #ede9fe;
+  color: #6d28d9;
+}
+.soap-tag.kind-rule_out {
+  background: #fef3c7;
+  color: #b45309;
+}
+.soap-tag.covered {
+  background: #ecfdf5;
+  color: #047857;
+}
+.soap-tag.declined {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+/* Plan / orders */
+.soap-order {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--soap-border);
+  border-radius: 8px;
+  padding: 7px 10px;
+  margin-bottom: 6px;
+}
+.soap-order.declined {
+  opacity: 0.55;
+}
+.soap-order.proposed {
+  border-style: dashed;
+  background: var(--soap-bg);
+}
+.soap-order-name {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13.5px;
+}
+.soap-order-qty {
+  color: var(--soap-muted);
+  font-size: 12px;
+}
+.soap-order-price {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  min-width: 64px;
+  text-align: right;
+}
+.soap-order-actions {
+  display: inline-flex;
+  gap: 4px;
+}
+.soap-plan-add .soap-input {
+  flex: 1;
+  min-width: 140px;
+}
+.soap-price {
+  max-width: 90px;
+}
+
+/* Plan catalog typeahead */
+.soap-plan-search {
+  position: relative;
+  margin-top: 10px;
+}
+.soap-plan-search-input {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.soap-plan-search-icon {
+  position: absolute;
+  left: 10px;
+  color: var(--soap-muted);
+  pointer-events: none;
+}
+.soap-plan-search-input .soap-input {
+  padding-left: 32px;
+}
+.soap-plan-results {
+  position: absolute;
+  z-index: 30;
+  left: 0;
+  right: 0;
+  top: calc(100% + 4px);
+  background: #fff;
+  border: 1px solid var(--soap-border);
+  border-radius: 10px;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.16);
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 4px;
+}
+.soap-plan-result-empty {
+  padding: 12px;
+  font-size: 13px;
+  color: var(--soap-muted);
+}
+.soap-plan-result-empty.error {
+  color: #b91c1c;
+}
+.soap-plan-result {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  border: none;
+  background: #fff;
+  border-radius: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+  text-align: left;
+}
+.soap-plan-result:hover:not(:disabled) {
+  background: #f3f4f6;
+}
+.soap-plan-result:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.soap-plan-result-name {
+  flex: 1;
+  font-size: 13.5px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.soap-plan-result-code {
+  font-size: 11px;
+  color: var(--soap-muted);
+}
+.soap-plan-result-price {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.soap-plan-result-was {
+  color: var(--soap-muted);
+  text-decoration: line-through;
+  font-weight: 400;
+  margin-right: 6px;
+}
+.soap-tag.type-lab {
+  background: #ecfeff;
+  color: #0e7490;
+}
+.soap-tag.type-procedure {
+  background: #eef2ff;
+  color: #4338ca;
+}
+.soap-tag.type-inventory {
+  background: #f0fdf4;
+  color: #15803d;
+}
+.soap-tag.type-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: #fef9c3;
+  color: #854d0e;
+}
+
+/* Pinned "Add as note" option */
+.soap-plan-result-note {
+  border-top: 1px solid var(--soap-border);
+  border-radius: 0 0 8px 8px;
+}
+
+/* Quantity stepper on catalog rows */
+.soap-qty-stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  border: 1px solid var(--soap-border);
+  border-radius: 8px;
+  padding: 1px;
+}
+.soap-qty-stepper .soap-icon-btn {
+  padding: 2px;
+}
+.soap-qty-input {
+  width: 38px;
+  border: none;
+  text-align: center;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  padding: 2px 0;
+  background: transparent;
+  -moz-appearance: textfield;
+}
+.soap-qty-input::-webkit-outer-spin-button,
+.soap-qty-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.soap-qty-input:focus {
+  outline: none;
+}
+
+/* Note row */
+.soap-order.note {
+  align-items: flex-start;
+  background: #fffdf5;
+  border-color: #fde68a;
+}
+.soap-order-note-icon {
+  color: #b45309;
+  margin-top: 4px;
+}
+.soap-note-text {
+  flex: 1;
+  border: 1px solid var(--soap-border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 13.5px;
+  font-family: inherit;
+  resize: vertical;
+  min-height: 32px;
+  box-sizing: border-box;
+}
+.soap-note-text:focus {
+  outline: none;
+  border-color: var(--soap-accent);
+}
+.soap-note-price-wrap {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--soap-border);
+  border-radius: 6px;
+  padding: 0 6px;
+}
+.soap-note-price-dollar {
+  color: var(--soap-muted);
+  font-size: 13px;
+}
+.soap-note-price {
+  width: 60px;
+  border: none;
+  padding: 6px 2px;
+  font-size: 13px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.soap-note-price:focus {
+  outline: none;
+}
+
+/* Checkout */
+/* Household checkout summary — read-only rollup of every pet's invoice on a multi-pet visit
+   (HouseholdInvoiceSummary.tsx). VisitCheckoutPanel below it is unchanged and always acts on
+   whichever pet's tab is currently open. */
+.soap-household-checkout {
+  background: #fff;
+  border: 1px solid var(--soap-border);
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+.soap-household-checkout-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  font-size: 13.5px;
+  margin-bottom: 10px;
+  color: #374151;
+}
+.soap-household-pets {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.soap-household-pet {
+  border: 1px solid var(--soap-border);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.soap-household-pet.current {
+  border-color: var(--soap-accent);
+  background: #f5f8ff;
+}
+.soap-household-pet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.soap-household-pet-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.soap-household-pet-total {
+  font-variant-numeric: tabular-nums;
+}
+.soap-household-pet-lines {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.soap-household-pet-line {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--soap-muted);
+}
+.soap-household-pet-empty {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--soap-muted);
+}
+.soap-household-pet-switch {
+  margin-top: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: none;
+  background: none;
+  color: var(--soap-accent);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+}
+.soap-household-checkout-total {
+  display: flex;
+  justify-content: space-between;
+  border-top: 1px solid var(--soap-border);
+  margin-top: 10px;
+  padding-top: 10px;
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.soap-checkout {
+  background: #fff;
+  border: 1px solid var(--soap-border);
+  border-radius: 12px;
+  padding: 16px;
+}
+.soap-checkout-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  font-size: 15px;
+  margin-bottom: 12px;
+}
+.soap-invoice-badge {
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  border-radius: 4px;
+  padding: 2px 6px;
+  background: #f3f4f6;
+  color: var(--soap-muted);
+}
+.soap-invoice-badge.status-paid {
+  background: #ecfdf5;
+  color: #047857;
+}
+.soap-invoice-badge.status-finalized {
+  background: #eff6ff;
+  color: #1e40af;
+}
+.soap-invoice-badge.status-void {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+.soap-invoice-badge.euthanasia {
+  background: #f5f3ff;
+  color: #6d28d9;
+}
+.soap-invoice-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+.soap-invoice-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.soap-invoice-line-desc {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.soap-invoice-line-amt {
+  white-space: nowrap;
+  color: #374151;
+}
+.soap-invoice-line-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #9ca3af;
+  cursor: pointer;
+}
+.soap-invoice-line-remove:hover:not(:disabled) {
+  color: #b91c1c;
+  background: #fef2f2;
+}
+.soap-invoice-line-remove:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.soap-invoice-totals {
+  border-top: 1px solid var(--soap-border);
+  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.soap-invoice-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+}
+.soap-invoice-row.total {
+  font-weight: 700;
+  font-size: 15px;
+}
+.soap-invoice-row.covered {
+  color: #047857;
+}
+.soap-checkout-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+/* Follow-up prompt at checkout — asked while the client is still here. */
+.soap-checkout-followup {
+  margin-top: 16px;
+  border-top: 1px solid var(--soap-border);
+  padding-top: 14px;
+}
+.soap-checkout-followup-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #1f2937;
+  margin-bottom: 4px;
+}
+.soap-checkout-followup-saved {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: 6px 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #15803d;
+}
+.soap-checkout-followup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.soap-visit-complete {
+  margin-top: 16px;
+  border-top: 1px solid var(--soap-border);
+  padding-top: 14px;
+}
+
+/* Modal */
+.soap-modal {
+  /* Modals render through a portal on document.body, outside `.soap-page`, so they have to
+     carry the theme tokens themselves or every `var(--soap-*)` below resolves to nothing —
+     which made the primary button white-on-white until hovered. */
+  --soap-accent: #2563eb;
+  --soap-border: #e5e7eb;
+  --soap-muted: #6b7280;
+  --soap-bg: #f8fafc;
+  max-width: 460px;
+  width: calc(100% - 32px);
+  background: #fff;
+  border-radius: 14px;
+  padding: 20px;
+  color: #111827;
+}
+.soap-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.soap-modal-head h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 16px;
+  margin: 0;
+}
+.soap-modal-sub {
+  color: var(--soap-muted);
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 10px 0 16px;
+}
+.soap-scribe-prompt-modal {
+  max-width: 560px;
+  width: min(560px, calc(100vw - 32px));
+}
+.soap-scribe-prompt-textarea {
+  width: 100%;
+  min-height: 220px;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.45;
+  margin-bottom: 8px;
+}
+.soap-scribe-prompt-error {
+  color: #b91c1c;
+  font-size: 13px;
+  margin: 0 0 8px;
+}
+.soap-card-element {
+  border: 1px solid var(--soap-border);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+.soap-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* AI scribe */
+.soap-scribe-panel {
+  border: 1px solid var(--soap-border);
+  background: #fafaff;
+  border-radius: 10px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+}
+.soap-scribe-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.soap-scribe-record-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--soap-accent);
+  color: var(--soap-accent);
+  background: #fff;
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.soap-scribe-record-btn:hover:not(:disabled) {
+  background: #eef2ff;
+}
+.soap-scribe-record-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.soap-scribe-record-btn.recording {
+  background: #fef2f2;
+  border-color: #ef4444;
+  color: #b91c1c;
+}
+.soap-scribe-live-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #ef4444;
+  animation: soap-scribe-pulse 1.4s ease-in-out infinite;
+}
+@keyframes soap-scribe-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.4;
+    transform: scale(0.75);
+  }
+}
+.soap-scribe-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: #ede9fe;
+  color: #6d28d9;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.soap-scribe-transcript-toggle {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: none;
+  background: transparent;
+  color: var(--soap-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+.soap-scribe-paste-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px dashed var(--soap-border);
+  color: var(--soap-muted);
+  background: transparent;
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.soap-scribe-paste-toggle:hover:not(:disabled) {
+  background: #f3f4f6;
+  color: #374151;
+}
+.soap-scribe-paste-toggle:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.soap-scribe-paste-toggle.active {
+  border-style: solid;
+  border-color: var(--soap-accent);
+  color: var(--soap-accent);
+  background: #eef2ff;
+}
+.soap-scribe-paste {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.soap-scribe-paste-textarea {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid var(--soap-border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  font-family: inherit;
+  color: #374151;
+}
+.soap-scribe-paste-textarea:disabled {
+  opacity: 0.6;
+}
+.soap-scribe-paste-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.soap-scribe-delete-transcript {
+  margin-left: auto;
+}
+.soap-scribe-error {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #b91c1c;
+  font-size: 12.5px;
+  margin-top: 8px;
+}
+.soap-scribe-transcript {
+  margin-top: 8px;
+  max-height: 220px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid var(--soap-border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #374151;
+  white-space: pre-wrap;
+}
+.soap-scribe-transcript-meta {
+  margin: 0 0 6px;
+  font-size: 11.5px;
+  color: var(--soap-muted);
+  font-style: italic;
+}
+.soap-scribe-interim {
+  color: var(--soap-muted);
+  font-style: italic;
+}
+.soap-scribe-suggestions {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 10px;
+}
+.soap-scribe-problems {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.soap-scribe-chronic-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.soap-patient-chronic-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  margin: 0 0 14px;
+}
+.soap-scribe-chronic {
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.soap-scribe-chronic-head {
+  font-weight: 700;
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: #b45309;
+  margin-bottom: 6px;
+}
+.soap-scribe-chronic-empty {
+  margin: 0;
+  font-size: 13px;
+  color: var(--soap-muted);
+}
+.soap-scribe-chronic-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.soap-scribe-chronic-list li {
+  font-size: 13px;
+  font-weight: 600;
+  color: #0f172a;
+  background: #fff;
+  border: 1px solid #fde68a;
+  border-radius: 999px;
+  padding: 2px 10px;
+}
+.soap-scribe-chronic-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 8px !important;
+  padding: 4px 6px 4px 10px !important;
+  max-width: 100%;
+}
+.soap-scribe-chronic-item-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.soap-scribe-chronic-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  color: #334155;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 4px 7px;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.soap-scribe-chronic-action:hover:not(:disabled) {
+  border-color: #16a34a;
+  color: #15803d;
+  background: #f0fdf4;
+}
+.soap-scribe-chronic-action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+/* Takes the entry off the active chronic list (problem resolved / med stopped). */
+.soap-scribe-chronic-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  color: #64748b;
+  border-radius: 6px;
+  padding: 0;
+  cursor: pointer;
+}
+.soap-scribe-chronic-remove:hover:not(:disabled) {
+  border-color: #dc2626;
+  color: #b91c1c;
+  background: #fef2f2;
+}
+.soap-scribe-chronic-remove:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.soap-scribe-chronic--meds {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+}
+.soap-scribe-chronic--meds .soap-scribe-chronic-head {
+  color: #1d4ed8;
+}
+.soap-scribe-chronic--meds .soap-scribe-chronic-list li {
+  border-color: #bfdbfe;
+}
+.soap-scribe-add-problem {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.soap-patient-chronic-add {
+  margin-top: 8px;
+}
+.soap-patient-chronic-med-search {
+  position: relative;
+  margin-top: 8px;
+}
+.soap-patient-chronic-med-search .soap-patient-chronic-add {
+  margin-top: 0;
+}
+.soap-patient-chronic-med-input {
+  position: relative;
+  flex: 1 1 180px;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+.soap-patient-chronic-med-icon {
+  position: absolute;
+  left: 10px;
+  color: var(--soap-muted);
+  pointer-events: none;
+}
+.soap-patient-chronic-med-input .soap-input {
+  width: 100%;
+  padding-left: 30px;
+}
+.soap-patient-chronic-med-hint {
+  margin: 4px 0 0;
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: var(--soap-muted);
+}
+.soap-patient-chronic-med-results {
+  position: absolute;
+  z-index: 20;
+  left: 0;
+  right: 0;
+  top: calc(100% + 4px);
+  max-height: 220px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid var(--soap-border);
+  border-radius: 8px;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.12);
+}
+.soap-scribe-chronic-catalog {
+  font-weight: 500;
+  font-size: 11px;
+  color: #1d4ed8;
+}
+.soap-scribe-add-problem .soap-input {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+@media (max-width: 760px) {
+  .soap-scribe-chronic-grid,
+  .soap-patient-chronic-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.soap-scribe-card {
+  background: #fff;
+  border: 1px solid #ddd6fe;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 13px;
+}
+.soap-scribe-card-head {
+  font-weight: 700;
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: #6d28d9;
+  margin-bottom: 6px;
+}
+.soap-scribe-card p {
+  margin: 0 0 8px;
+  line-height: 1.4;
+  color: #111827;
+}
+.soap-scribe-card-hint {
+  color: var(--soap-muted) !important;
+  font-size: 11.5px !important;
+}
+.soap-scribe-problem-label {
+  display: block;
+  margin-bottom: 8px;
+}
+.soap-scribe-problem-label-text {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--soap-muted);
+  margin-bottom: 4px;
+}
+.soap-scribe-problem-label input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 13px;
+  color: #111827;
+  background: #fff;
+}
+.soap-scribe-problem-label input:focus {
+  outline: none;
+  border-color: #8b5cf6;
+  box-shadow: 0 0 0 2px #ede9fe;
+}
+.soap-scribe-problem-label input:disabled {
+  background: #f9fafb;
+  color: var(--soap-muted);
+}
+.soap-scribe-list {
+  margin: 0 0 8px;
+  padding-left: 16px;
+  font-size: 12.5px;
+}
+.soap-scribe-tag {
+  display: inline-block;
+  background: #f3f4f6;
+  color: var(--soap-muted);
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 11px;
+  margin-left: 4px;
+  text-transform: capitalize;
+}
+.soap-scribe-card-actions {
+  display: flex;
+  gap: 6px;
+}
+.soap-scribe-consent-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.4;
+  margin-bottom: 4px;
+}
+.soap-scribe-consent-check input {
+  margin-top: 3px;
+}
+.soap-scribe-paste-hint {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--soap-muted);
+}
+.soap-scribe-autolog {
+  margin-top: 8px;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+.soap-scribe-autolog-hint {
+  margin: 0 0 6px;
+  font-size: 11.5px;
+  color: var(--soap-muted);
+}
+.soap-scribe-autolog ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.soap-scribe-autolog li {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 12.5px;
+  color: #166534;
+}
+
+.soap-scribe-roster {
+  background: #f8fafc;
+  border: 1px solid var(--soap-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.soap-scribe-roster-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  font-size: 12.5px;
+  color: #374151;
+  margin-bottom: 8px;
+}
+.soap-scribe-roster-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+}
+.soap-scribe-roster-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: #374151;
+  cursor: pointer;
+}
+.soap-scribe-roster-item input {
+  margin: 0;
+}
+.soap-scribe-roster-hint {
+  margin: 6px 0 0;
+  font-size: 11.5px;
+  color: var(--soap-muted);
+}
+
+.soap-scribe-multi {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.soap-scribe-multi-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 13px;
+  color: #374151;
+}
+.soap-scribe-multi-head > span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.soap-scribe-multi-card {
+  background: #fff;
+  border: 1px solid #ddd6fe;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 12.5px;
+}
+.soap-scribe-multi-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #111827;
+  margin-bottom: 8px;
+}
+.soap-scribe-multi-block {
+  margin-bottom: 8px;
+  line-height: 1.5;
+  color: #374151;
+}
+.soap-scribe-multi-label {
+  display: inline-block;
+  font-weight: 700;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: #6d28d9;
+  margin-right: 6px;
+}
+.soap-scribe-multi-pre {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+  font-family: inherit;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #374151;
+}
+.soap-scribe-multi-empty {
+  margin: 0 0 8px;
+  color: var(--soap-muted);
+  font-style: italic;
+}
+.soap-scribe-multi-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+}
+.soap-scribe-multi-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--soap-accent);
+  text-decoration: none;
+}
+.soap-scribe-multi-link:hover {
+  text-decoration: underline;
+}
+
+.soap-doc-view {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.soap-doc-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--soap-border);
+  padding-bottom: 10px;
+}
+.soap-doc-patient {
+  font-size: 16px;
+  font-weight: 700;
+  color: #111827;
+}
+.soap-doc-date {
+  margin-top: 2px;
+  font-size: 12.5px;
+  color: var(--soap-muted);
+}
+.soap-doc-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.soap-doc-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.soap-doc-section-head h3 {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #111827;
+}
+.soap-doc-letter {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: var(--soap-accent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+}
+.soap-doc-textarea {
+  width: 100%;
+  min-height: 220px;
+  resize: vertical;
+  border: 1px solid var(--soap-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.55;
+  font-family: inherit;
+  color: #374151;
+}
+.soap-doc-textarea:disabled {
+  opacity: 0.6;
+  background: var(--soap-bg);
+}
+.soap-doc-email-subject {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 4px;
+}
+.soap-doc-text {
+  margin: 0;
+  white-space: pre-wrap;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #374151;
+  background: var(--soap-bg);
+  border: 1px solid var(--soap-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+/* AI Scribe — itemized "match to catalog" plan items, below the Plan text box
+   (ScribeSuggestedPlanItems.tsx) */
+.soap-scribe-planitems {
+  margin: -8px 0 16px;
+  padding: 12px 14px;
+  background: #fafaf9;
+  border: 1px dashed var(--soap-border);
+  border-radius: 10px;
+}
+.soap-scribe-planitems-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #374151;
+}
+.soap-scribe-planitems-hint {
+  margin: 4px 0 10px;
+  font-size: 11.5px;
+  color: var(--soap-muted);
+}
+.soap-scribe-planitems-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.soap-scribe-planitem-row {
+  position: relative;
+  background: #fff;
+  border: 1px solid var(--soap-border);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.soap-scribe-planitem-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.soap-scribe-planitem-search-icon {
+  position: absolute;
+  left: 10px;
+  color: var(--soap-muted);
+  pointer-events: none;
+}
+.soap-scribe-planitem-search .soap-input {
+  flex: 1;
+  padding-left: 30px;
+}
+.soap-scribe-planitem-trash {
+  flex-shrink: 0;
+  color: #9ca3af;
+}
+.soap-scribe-planitem-trash:hover:not(:disabled) {
+  color: #b91c1c;
+  background: #fef2f2;
+}
+.soap-scribe-planitem-note {
+  margin: 6px 0 0;
+  font-size: 11.5px;
+  font-style: italic;
+  color: var(--soap-muted);
+}
+.soap-scribe-planitem-results {
+  position: absolute;
+  z-index: 20;
+  left: 0;
+  right: 0;
+  top: calc(100% + 4px);
+  max-height: 280px;
+  overflow: auto;
+  background: #fff;
+  border: 1px solid var(--soap-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+}
+.soap-plan-result-add-to {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--soap-border);
+  background: #fffbeb;
+  cursor: default;
+}
+.soap-plan-add-to-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.soap-plan-add-to-sections {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.soap-tag.type-add-to {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+/* Doses given & prescriptions — what the visit actually produced */
+.soap-dose-rx {
+  margin-top: 14px;
+  border: 1px solid var(--soap-border);
+  border-radius: 10px;
+  background: #fff;
+  overflow: hidden;
+}
+.soap-dose-rx-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 12px;
+  background: #f8fafc;
+  border-bottom: 1px solid var(--soap-border);
+}
+.soap-dose-rx-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 700;
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: #334155;
+}
+.soap-dose-rx-missing,
+.soap-dose-rx-done {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+.soap-dose-rx-missing {
+  background: #fef3c7;
+  color: #92400e;
+}
+.soap-dose-rx-done {
+  background: #dcfce7;
+  color: #166534;
+}
+.soap-dose-row + .soap-dose-row {
+  border-top: 1px solid var(--soap-border);
+}
+.soap-dose-row-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 12px;
+  background: none;
+  border: 0;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+.soap-dose-row-head:hover {
+  background: #f8fafc;
+}
+.soap-dose-row-name {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 600;
+}
+.soap-dose-row-status {
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.soap-dose-row-status.ok {
+  color: #166534;
+}
+.soap-dose-row-status.pending {
+  color: #b45309;
+}
+.soap-dose-body {
+  padding: 4px 12px 12px;
+  border-top: 1px dashed var(--soap-border);
+}
+.soap-dose-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+@media (max-width: 720px) {
+  .soap-dose-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.soap-dose-grid label,
+.soap-dose-sig {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--soap-muted);
+}
+.soap-dose-sig {
+  margin-top: 10px;
+}
+.soap-dose-date-field {
+  position: relative;
+}
+.soap-dose-date-label {
+  display: block;
+}
+.soap-dose-date-chips {
+  position: absolute;
+  top: -3px;
+  right: 0;
+  display: flex;
+  gap: 4px;
+}
+.soap-dose-date-chip {
+  border: 1px solid var(--soap-border);
+  background: #fff;
+  color: #475569;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 4px 7px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.soap-dose-date-chip:hover:not(:disabled) {
+  border-color: #94a3b8;
+  color: #0f172a;
+}
+.soap-dose-date-chip.is-active {
+  border-color: #2563eb;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+.soap-dose-date-chip:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.soap-dose-qty {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--soap-muted);
+}
+.soap-dose-qty .soap-qty-stepper {
+  align-self: flex-start;
+}
+.soap-dose-qty-price {
+  font-size: 12px;
+  font-weight: 700;
+  color: #334155;
+}
+.soap-dose-stock {
+  margin: 10px 0 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 11.5px;
+}
+.soap-dose-stock strong {
+  font-weight: 700;
+  color: #0f172a;
+}
+.soap-dose-lot-picker {
+  display: grid;
+  gap: 8px;
+}
+.soap-dose-lot-picker label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--soap-muted);
+}
+.soap-dose-lot-picker__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.soap-dose-error {
+  color: #b91c1c;
+  font-size: 12px;
+  margin: 8px 0 0;
+}
+.soap-dose-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+}
+.soap-dose-dymo {
+  font-size: 11.5px;
+  color: var(--soap-muted);
+  background: none;
+  border: 0;
+  padding: 0;
+  font-family: inherit;
+  text-decoration: underline;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+.soap-dose-dymo:hover:not(:disabled) {
+  color: var(--soap-accent);
+}
+.soap-dose-dymo:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.soap-rx-label-modal {
+  width: min(760px, calc(100vw - 32px));
+  max-width: 760px;
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+}
+.soap-rx-label-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 12px;
+}
+.soap-rx-label-grid label,
+.soap-rx-label-printer label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--soap-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.soap-rx-label-wide {
+  grid-column: 1 / -1;
+}
+.soap-rx-label-printer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--soap-border);
+}
+.soap-rx-label-note,
+.soap-rx-label-help,
+.soap-rx-label-success {
+  margin: 8px 0 0;
+  font-size: 12px;
+}
+.soap-rx-label-note {
+  color: #92400e;
+}
+.soap-rx-label-help {
+  color: var(--soap-muted);
+}
+.soap-rx-label-success {
+  color: #166534;
+  font-weight: 600;
+}
+@media (max-width: 640px) {
+  .soap-rx-label-grid {
+    grid-template-columns: 1fr;
+  }
+  .soap-rx-label-wide {
+    grid-column: auto;
+  }
+}
+
+/* Addenda styles live with the component (SoapAddendaSection.css) so the section
+   also renders inside the patient chart's SOAP note modal. */

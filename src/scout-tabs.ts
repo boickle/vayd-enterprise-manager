@@ -1,6 +1,13 @@
 // Sub-routes under /schedule (was /scout): Home dashboard, Routing, My Day, My Week, Scheduling Tools, Room Loader.
 
-export type ScoutTabId = 'home' | 'routing' | 'my-day' | 'my-week' | 'scheduling-tools' | 'room-loader';
+export type ScoutTabId =
+  | 'home'
+  | 'routing'
+  | 'my-day'
+  | 'my-week'
+  | 'scheduling-tools'
+  | 'room-loader'
+  | 'soap';
 
 export type ScoutTabConfig = {
   id: ScoutTabId;
@@ -14,6 +21,8 @@ export type ScoutTabConfig = {
 /** Valid `/schedule/:segment` outlets not listed in SCOUT_TABS (e.g. calendar only). */
 export const SCHEDULE_OUTLET_EXTRA_SEGMENTS: string[] = [
   'scheduler',
+  'soap',
+  'catalog',
   'inventory',
   'tasks',
   'clients',
@@ -34,6 +43,7 @@ export const SCOUT_TABS: ScoutTabConfig[] = [
   { id: 'my-week', path: 'my-week', label: 'My Week', permission: 'canSeeDoctorDay' },
   { id: 'scheduling-tools', path: 'scheduling-tools', label: 'Scheduling Tools' },
   { id: 'room-loader', path: 'room-loader', label: 'Room Loader' },
+  { id: 'soap', path: 'soap', label: 'Visits', permission: 'canSeeDoctorDay' },
 ];
 
 function matchesRole(userRoles: string[]): boolean {

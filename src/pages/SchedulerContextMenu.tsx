@@ -24,8 +24,8 @@ export type SchedulerContextMenuAction =
   | { kind: 'view' }
   | { kind: 'edit' }
   | { kind: 'visitTimes' }
+  | { kind: 'openSoap' }
   | { kind: 'onMyWayText' }
-  | { kind: 'addCharges' }
   | { kind: 'remove' }
   | { kind: 'viewChart' }
   | { kind: 'writeMedicalNote' }
@@ -58,6 +58,8 @@ type Props = {
   showEditAppointment?: boolean;
   visitTimesDisabled?: boolean;
   visitTimesDisabledTitle?: string;
+  /** True when this visit's SOAP has been signed & locked. */
+  soapLocked?: boolean;
   /** Progress modal: only "View Chart" (patient EMR in eVet). */
   patientChartOnly?: boolean;
 };
@@ -80,6 +82,7 @@ export function SchedulerAppointmentContextMenu({
   showEditAppointment,
   visitTimesDisabled,
   visitTimesDisabledTitle,
+  soapLocked = false,
   patientChartOnly = false,
 }: Props) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -216,12 +219,15 @@ export function SchedulerAppointmentContextMenu({
           onPick={() => onAction({ kind: 'visitTimes' })}
         />
         <CtxSubRow
+          label={soapLocked ? 'View Locked SOAP' : 'Open Visit (SOAP)'}
+          onPick={() => onAction({ kind: 'openSoap' })}
+        />
+        <CtxSubRow
           label="Send On My Way Text"
           disabled={!phone1}
           title={!phone1 ? 'Client has no mobile number on file.' : undefined}
           onPick={() => phone1 && onAction({ kind: 'onMyWayText' })}
         />
-        <CtxSubRow label="Add Charges" onPick={() => onAction({ kind: 'addCharges' })} />
       </CtxParentRow>
 
       <CtxParentRow
@@ -232,8 +238,14 @@ export function SchedulerAppointmentContextMenu({
         onCloseSub={() => setOpenGroup(null)}
       >
         <CtxSubRow label="View Chart" onPick={() => onAction({ kind: 'viewChart' })} />
-        <CtxSubRow label="Write Medical Note" onPick={() => onAction({ kind: 'writeMedicalNote' })} />
-        <CtxSubRow label="Add Communication" onPick={() => onAction({ kind: 'addCommunication' })} />
+        <CtxSubRow
+          label="Write Medical Note"
+          onPick={() => onAction({ kind: 'writeMedicalNote' })}
+        />
+        <CtxSubRow
+          label="Add Communication"
+          onPick={() => onAction({ kind: 'addCommunication' })}
+        />
       </CtxParentRow>
 
       <CtxParentRow
@@ -249,7 +261,10 @@ export function SchedulerAppointmentContextMenu({
           onPick={() => phone1 && onAction({ kind: 'call', phone: 'phone1' })}
         />
         {phone2 ? (
-          <CtxSubRow label={`Call ${phone2}`} onPick={() => onAction({ kind: 'call', phone: 'phone2' })} />
+          <CtxSubRow
+            label={`Call ${phone2}`}
+            onPick={() => onAction({ kind: 'call', phone: 'phone2' })}
+          />
         ) : null}
         <CtxSubRow
           label={phone1 ? `Text ${phone1}` : 'Text (no number)'}
@@ -257,7 +272,10 @@ export function SchedulerAppointmentContextMenu({
           onPick={() => phone1 && onAction({ kind: 'text', phone: 'phone1' })}
         />
         {phone2 ? (
-          <CtxSubRow label={`Text ${phone2}`} onPick={() => onAction({ kind: 'text', phone: 'phone2' })} />
+          <CtxSubRow
+            label={`Text ${phone2}`}
+            onPick={() => onAction({ kind: 'text', phone: 'phone2' })}
+          />
         ) : null}
         <CtxSubRow label="View Client Info" onPick={() => onAction({ kind: 'viewClientInfo' })} />
         <CtxSubRow label="Checkout" onPick={() => onAction({ kind: 'checkout' })} />

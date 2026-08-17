@@ -12,7 +12,7 @@ import {
   type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
-import { useNavigate, useSearchParams } from 'react-router';
+import { Link, useNavigate, useSearchParams } from 'react-router';
 import { DateTime } from 'luxon';
 import { AlertTriangle, Cat, Dog, Heart, Printer, X } from 'lucide-react';
 import {
@@ -47,6 +47,7 @@ import {
   type EmployeeGoalsResponseDto,
 } from '../api/employeeGoals';
 import { fetchForwardBookingCalendarIndex } from '../api/forwardBooking';
+import { fetchSoapCalendarLockIndex } from '../api/visitWorkflow';
 import {
   fetchAllAppointmentTypes,
   fetchEmployee,
@@ -121,7 +122,6 @@ import {
   evetClientLink,
   evetMedicalNoteLink,
   evetPatientLink,
-  evetQuickInvoicingLink,
 } from '../utils/evet';
 import { buildPhoneDialHref, buildPhoneSmsHref } from '../utils/quoContact';
 import {
@@ -1101,6 +1101,34 @@ function SchedulerApptVisitTimesBadge({
   );
 }
 
+/** Lock when this visit's SOAP has been signed (wrap-up). Sits next to the visit-times clock. */
+function SchedulerApptSoapLockedBadge({
+  appt,
+  soapLockedAppointmentIds,
+  variant = 'card',
+}: {
+  appt: Appointment;
+  soapLockedAppointmentIds: ReadonlySet<number>;
+  variant?: 'card' | 'hover';
+}) {
+  if (!soapLockedAppointmentIds.has(Number(appt.id))) return null;
+  const title = 'SOAP signed & locked';
+  return (
+    <span
+      className={[
+        'scheduler-appt-soap-locked-badge',
+        variant === 'hover' ? 'scheduler-appt-soap-locked-badge--hover' : '',
+      ]
+        .filter(Boolean)
+        .join(' ')}
+      title={title}
+      aria-label={title}
+    >
+      🔒
+    </span>
+  );
+}
+
 function workdayActualTimesTitle(
   row: EmployeeWorkdayActual | undefined,
   practiceTz: string
@@ -1178,10 +1206,12 @@ function SchedulerEventTitleBlock({
   appt,
   variant = 'timed',
   forwardBookingSourceAppointmentIds,
+  soapLockedAppointmentIds,
 }: {
   appt: Appointment;
   variant?: 'timed' | 'allDay';
   forwardBookingSourceAppointmentIds?: ReadonlySet<number>;
+  soapLockedAppointmentIds?: ReadonlySet<number>;
 }) {
   const visitTimesBadge =
     forwardBookingSourceAppointmentIds != null ? (
@@ -1189,6 +1219,20 @@ function SchedulerEventTitleBlock({
         appt={appt}
         forwardBookingSourceAppointmentIds={forwardBookingSourceAppointmentIds}
       />
+    ) : null;
+  const soapLockedBadge =
+    soapLockedAppointmentIds != null ? (
+      <SchedulerApptSoapLockedBadge
+        appt={appt}
+        soapLockedAppointmentIds={soapLockedAppointmentIds}
+      />
+    ) : null;
+  const statusBadges =
+    visitTimesBadge || soapLockedBadge ? (
+      <>
+        {visitTimesBadge}
+        {soapLockedBadge}
+      </>
     ) : null;
   const c = appt.client;
   const member = appointmentPatientMember(appt);
@@ -1214,7 +1258,7 @@ function SchedulerEventTitleBlock({
         {member.isMember ? <SchedulerMemberHeartInline membershipName={member.membershipName} /> : null}
         <span className="scheduler-event-title-fallback">{desc}</span>
         {zoneInTitle && zone ? <SchedulerZoneBadgeInline zoneShort={zone} title={zoneTitle} compact /> : null}
-        {visitTimesBadge}
+        {statusBadges}
       </Shell>
     );
   }
@@ -1227,7 +1271,7 @@ function SchedulerEventTitleBlock({
         {member.isMember ? <SchedulerMemberHeartInline membershipName={member.membershipName} /> : null}
         <span className="scheduler-event-title-fallback">{fallback}</span>
         {zoneInTitle && zone ? <SchedulerZoneBadgeInline zoneShort={zone} title={zoneTitle} compact /> : null}
-        {visitTimesBadge}
+        {statusBadges}
       </Shell>
     );
   }
@@ -1248,10 +1292,10 @@ function SchedulerEventTitleBlock({
       {clientLast ? (
         <>
           <span className="scheduler-event-title-client-last"> {clientLast}</span>
-          {visitTimesBadge}
+          {statusBadges}
         </>
       ) : (
-        visitTimesBadge
+        statusBadges
       )}
     </Shell>
   );
@@ -1994,12 +2038,14 @@ export function SchedulerHoverContent({
   driveHint,
   providers,
   forwardBookingSourceAppointmentIds,
+  soapLockedAppointmentIds,
 }: {
   appt: Appointment;
   driveHint?: SchedulerHoverDriveHint | null;
   /** Practice provider list (`/employees/providers`) — used to resolve chart Primary Provider by id. */
   providers?: readonly Provider[] | null;
   forwardBookingSourceAppointmentIds: ReadonlySet<number>;
+  soapLockedAppointmentIds: ReadonlySet<number>;
 }) {
   const c = appt.client;
   const patients = patientsForAppointment(appt);
@@ -2033,13 +2079,14 @@ export function SchedulerHoverContent({
     appt,
     forwardBookingSourceAppointmentIds
   );
+  const soapLocked = soapLockedAppointmentIds.has(Number(appt.id));
 
   return (
     <>
       <div className="scheduler-tooltip-vh-header">Visit Highlights</div>
       <div className="scheduler-tooltip-vh-body">
         <div className="scheduler-tooltip-vh-preamble">
-          {typeRaw || appointmentTypeIsArchived(appt) || showVisitTimesClock ? (
+          {typeRaw || appointmentTypeIsArchived(appt) || showVisitTimesClock || soapLocked ? (
             <div className="scheduler-tooltip-vh-type-row">
               {typeRaw ? <div className="scheduler-tooltip-vh-type">{typeRaw}</div> : null}
               {appointmentTypeIsArchived(appt) ? <SchedulerTypeArchivedPill /> : null}
@@ -2050,7 +2097,17 @@ export function SchedulerHoverContent({
                   variant="hover"
                 />
               ) : null}
+              {soapLocked ? (
+                <SchedulerApptSoapLockedBadge
+                  appt={appt}
+                  soapLockedAppointmentIds={soapLockedAppointmentIds}
+                  variant="hover"
+                />
+              ) : null}
             </div>
+          ) : null}
+          {soapLocked ? (
+            <div className="scheduler-tooltip-vh-soap-locked">🔒 SOAP signed &amp; locked</div>
           ) : null}
           {desc ? <div className="scheduler-tooltip-vh-desc">{desc}</div> : null}
           {instr ? (
@@ -2284,14 +2341,23 @@ function SchedulerAppointmentModal({
   accentColor,
   onClose,
   providers,
+  soapLocked = false,
 }: {
   appt: Appointment;
   driveHint?: SchedulerHoverDriveHint | null;
   accentColor: string;
   onClose: () => void;
   providers?: readonly Provider[] | null;
+  /** True when this visit's SOAP has been signed & locked. */
+  soapLocked?: boolean;
 }) {
   const c = appt.client;
+  const patients = patientsForAppointment(appt);
+  const firstPatient = patients[0];
+  const soapPath =
+    firstPatient?.id != null
+      ? `/schedule/soap/${appt.id}/${firstPatient.id}${c?.id != null ? `?clientId=${c.id}` : ''}`
+      : null;
   const start = DateTime.fromISO(appt.appointmentStart, { zone: 'utc' }).setZone(PRACTICE_TZ);
   const end = DateTime.fromISO(appt.appointmentEnd, { zone: 'utc' }).setZone(PRACTICE_TZ);
   const typeName = appt.appointmentType?.name || appt.appointmentType?.prettyName || 'Appointment';
@@ -2375,6 +2441,20 @@ function SchedulerAppointmentModal({
               />
               <SchedulerModalKvCondensed label="Status" value={pickStr(appt.statusName)} />
               <SchedulerModalKvCondensed label="Confirm status" value={pickStr(appt.confirmStatusName)} />
+              {soapLocked || soapPath ? (
+                <SchedulerModalKvCondensed
+                  label="SOAP"
+                  value={
+                    soapPath ? (
+                      <Link to={soapPath} className="scheduler-modal-soap-link" onClick={onClose}>
+                        {soapLocked ? '🔒 View locked SOAP' : 'Open Visit (SOAP)'}
+                      </Link>
+                    ) : (
+                      '🔒 Signed & locked'
+                    )
+                  }
+                />
+              ) : null}
               {etaLine ? (
                 <SchedulerModalKvCondensed label="ETA/ETD" value={etaLine} />
               ) : null}
@@ -3498,6 +3578,9 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   const [forwardBookingSavedPatientIds, setForwardBookingSavedPatientIds] = useState<
     ReadonlySet<number>
   >(() => new Set());
+  const [soapLockedAppointmentIds, setSoapLockedAppointmentIds] = useState<ReadonlySet<number>>(
+    () => new Set()
+  );
 
   const refreshForwardBookingSourceIds = useCallback(async () => {
     try {
@@ -3505,6 +3588,15 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       const sets = buildForwardBookingCalendarIndexSets(index);
       setForwardBookingSourceAppointmentIds(sets.sourceAppointmentIds);
       setForwardBookingSavedPatientIds(sets.patientIds);
+    } catch {
+      /* keep prior set */
+    }
+  }, []);
+
+  const refreshSoapLockedAppointmentIds = useCallback(async () => {
+    try {
+      const index = await fetchSoapCalendarLockIndex(PRACTICE_ID);
+      setSoapLockedAppointmentIds(new Set(index.lockedAppointmentIds));
     } catch {
       /* keep prior set */
     }
@@ -4545,6 +4637,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           setDriveRefreshNonce((n) => n + 1);
         }
         void refreshForwardBookingSourceIds();
+        void refreshSoapLockedAppointmentIds();
         void loadRoomLoaderStatusesForRange();
       } catch (e: unknown) {
         const msg = e && typeof e === 'object' && 'message' in e ? String((e as Error).message) : 'Failed to load';
@@ -4565,13 +4658,15 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       providersLoadState,
       refreshForwardBookingSourceIds,
       loadRoomLoaderStatusesForRange,
+      refreshSoapLockedAppointmentIds,
     ]
   );
 
   useEffect(() => {
     if (providers.length === 0) return;
     void refreshForwardBookingSourceIds();
-  }, [providers.length, refreshForwardBookingSourceIds]);
+    void refreshSoapLockedAppointmentIds();
+  }, [providers.length, refreshForwardBookingSourceIds, refreshSoapLockedAppointmentIds]);
 
   const applyRealtimeCalendarBatch = useCallback(
     async (batch: AppointmentCalendarPayload[]) => {
@@ -9549,12 +9644,21 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       showToast(message);
       await loadRange({ refreshDrive: true });
       await refreshForwardBookingSourceIds();
+      await refreshSoapLockedAppointmentIds();
       const apptId = typeof updated.id === 'number' ? updated.id : Number(updated.id);
       if (Number.isFinite(apptId) && apptId > 0) {
         pulseEditVisitHighlight(apptId, 3000);
       }
     },
-    [loadRange, modalAppt?.id, contextMenu?.appt.id, showToast, pulseEditVisitHighlight, refreshForwardBookingSourceIds]
+    [
+      loadRange,
+      modalAppt?.id,
+      contextMenu?.appt.id,
+      showToast,
+      pulseEditVisitHighlight,
+      refreshForwardBookingSourceIds,
+      refreshSoapLockedAppointmentIds,
+    ]
   );
 
   const handleAppointmentMenuAction = useCallback(
@@ -9574,8 +9678,18 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               return;
             }
             void refreshForwardBookingSourceIds();
+            void refreshSoapLockedAppointmentIds();
             setActualVisitModal(appt);
             return;
+          case 'openSoap': {
+            if (!firstPatient) {
+              fail('No patient on this appointment to open a SOAP for.');
+              return;
+            }
+            const clientQs = client?.id != null ? `?clientId=${client.id}` : '';
+            navigate(`/schedule/soap/${appt.id}/${firstPatient.id}${clientQs}`);
+            return;
+          }
           case 'onMyWayText': {
             if (!client) {
               fail('No client on this appointment.');
@@ -9752,15 +9866,6 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             setBookSlot({ start, end });
             return;
           }
-          case 'addCharges': {
-            const cid = pickStr(client?.pimsId);
-            if (!cid) {
-              fail('Client has no PIMS id (eVet link unavailable).');
-              return;
-            }
-            window.open(evetQuickInvoicingLink(cid), '_blank', 'noopener,noreferrer');
-            return;
-          }
           case 'viewChart': {
             const pid = pickStr(firstPatient?.pimsId);
             if (!pid) {
@@ -9884,6 +9989,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       applyActualVisitTimeUpdate,
       applyRescheduleCalendarFocusFromIntent,
       refreshForwardBookingSourceIds,
+      refreshSoapLockedAppointmentIds,
       editAppt?.id,
       providers,
       resolvedPrimaryProviderId,
@@ -10487,6 +10593,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                             appt={appt}
                             variant="allDay"
                             forwardBookingSourceAppointmentIds={forwardBookingSourceAppointmentIds}
+                            soapLockedAppointmentIds={soapLockedAppointmentIds}
                           />
                         </span>
                       </div>
@@ -10938,6 +11045,10 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                                       appt={appt}
                                       forwardBookingSourceAppointmentIds={forwardBookingSourceAppointmentIds}
                                     />
+                                    <SchedulerApptSoapLockedBadge
+                                      appt={appt}
+                                      soapLockedAppointmentIds={soapLockedAppointmentIds}
+                                    />
                                     {windowWarning ? <SchedulerWindowWarningBadge compact /> : null}
                                   </>
                                 ) : null}
@@ -10947,6 +11058,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                                   <SchedulerEventTitleBlock
                                     appt={appt}
                                     forwardBookingSourceAppointmentIds={forwardBookingSourceAppointmentIds}
+                                    soapLockedAppointmentIds={soapLockedAppointmentIds}
                                   />
                                   {windowWarning ? <SchedulerWindowWarningBadge compact /> : null}
                                 </div>
@@ -11419,6 +11531,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               driveHint={hoverDriveHint}
               providers={providers}
               forwardBookingSourceAppointmentIds={forwardBookingSourceAppointmentIds}
+              soapLockedAppointmentIds={soapLockedAppointmentIds}
             />
           </div>,
           document.body
@@ -11793,6 +11906,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             accentColor={colorsForAppointment(modalApptResolved, typeList, typeFillMap).fill}
             onClose={() => setModalAppt(null)}
             providers={providers}
+            soapLocked={soapLockedAppointmentIds.has(Number(modalApptResolved.id))}
           />,
           document.body
         )}
@@ -11918,6 +12032,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               ? 'Start / End Visit is not available for future visits.'
               : undefined
           }
+          soapLocked={soapLockedAppointmentIds.has(Number(contextMenu.appt.id))}
         />
       ) : null}
 
@@ -12223,6 +12338,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           onClose={() => setReconcileModal({ open: false })}
           date={reconcileModal.date}
           employeeId={resolvedPrimaryProviderId.trim()}
+          practiceId={PRACTICE_ID}
           practiceTz={PRACTICE_TZ}
           predictedDayData={driveDayByDate?.get(reconcileModal.date) ?? null}
           appointments={appointmentsByDay.get(reconcileModal.date) ?? []}
@@ -12233,6 +12349,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               driveHint={driveHint}
               providers={providers}
               forwardBookingSourceAppointmentIds={forwardBookingSourceAppointmentIds}
+              soapLockedAppointmentIds={soapLockedAppointmentIds}
             />
           )}
           onWorkdaySaved={(row) => {

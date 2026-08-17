@@ -330,7 +330,8 @@
   border: 2px solid rgba(185, 28, 28, 0.55) !important;
 }
 
-.scheduler-page--routing-preview-focus .scheduler-event.scheduler-routing-preview-slot.scheduler-manual-book-preview-slot {
+.scheduler-page--routing-preview-focus
+  .scheduler-event.scheduler-routing-preview-slot.scheduler-manual-book-preview-slot {
   outline-width: 3px;
   outline-color: rgba(239, 68, 68, 0.98);
   box-shadow:
@@ -508,7 +509,9 @@
   border: 2px solid #8b5cf6;
   border-radius: 10px;
   background: #faf5ff;
-  box-shadow: 0 0 0 1px rgba(139, 92, 246, 0.2), 0 4px 18px rgba(91, 33, 182, 0.14);
+  box-shadow:
+    0 0 0 1px rgba(139, 92, 246, 0.2),
+    0 4px 18px rgba(91, 33, 182, 0.14);
 }
 
 /** Routing workspace: reschedule source visit — green bar + frame around calendar */
@@ -516,7 +519,9 @@
   border: 2px solid #10a37f;
   border-radius: 10px;
   background: #f0fdf4;
-  box-shadow: 0 0 0 1px rgba(16, 163, 127, 0.22), 0 4px 18px rgba(5, 120, 87, 0.14);
+  box-shadow:
+    0 0 0 1px rgba(16, 163, 127, 0.22),
+    0 4px 18px rgba(5, 120, 87, 0.14);
 }
 
 .scheduler-embedded-reschedule-bar {
@@ -577,7 +582,9 @@
   border: 2px solid #f97316;
   border-radius: 10px;
   background: #fff7ed;
-  box-shadow: 0 0 0 1px rgba(249, 115, 22, 0.22), 0 4px 18px rgba(194, 65, 12, 0.14);
+  box-shadow:
+    0 0 0 1px rgba(249, 115, 22, 0.22),
+    0 4px 18px rgba(194, 65, 12, 0.14);
 }
 
 .scheduler-embedded-forward-booking-bar {
@@ -1142,7 +1149,8 @@ label.scheduler-go-date-heading {
   overflow: visible;
 }
 
-.scheduler-page:not(.scheduler-page--embedded) .scheduler-calendar-shell:not(.scheduler-calendar-shell--sticky-week) {
+.scheduler-page:not(.scheduler-page--embedded)
+  .scheduler-calendar-shell:not(.scheduler-calendar-shell--sticky-week) {
   overflow: visible;
 }
 
@@ -1413,13 +1421,7 @@ label.scheduler-go-date-heading {
   inset: 0;
   z-index: 0;
   pointer-events: none;
-  background: repeating-linear-gradient(
-    -45deg,
-    #e2e8f0,
-    #e2e8f0 8px,
-    #d1d5db 8px,
-    #d1d5db 9px
-  );
+  background: repeating-linear-gradient(-45deg, #e2e8f0, #e2e8f0 8px, #d1d5db 8px, #d1d5db 9px);
 }
 
 .scheduler-day-body--off .scheduler-grid-line {
@@ -2128,6 +2130,48 @@ label.scheduler-go-date-heading {
   font-size: 12px;
   border-color: rgba(15, 23, 42, 0.12);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.scheduler-appt-soap-locked-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-left: 2px;
+  padding: 0 2px;
+  border-radius: 2px;
+  background: #ffffff;
+  border: 1px solid rgba(15, 23, 42, 0.14);
+  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.06);
+  vertical-align: middle;
+  line-height: 1;
+  font-size: 10px;
+}
+
+.scheduler-appt-soap-locked-badge--hover {
+  margin-left: 0;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  border-color: rgba(15, 23, 42, 0.12);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.scheduler-tooltip-vh-soap-locked {
+  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #334155;
+}
+
+.scheduler-modal-soap-link {
+  color: #1d4ed8;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.scheduler-modal-soap-link:hover {
+  text-decoration: underline;
 }
 
 .scheduler-event-title-client-last + .scheduler-appt-visit-times-badge {
@@ -3680,123 +3724,10 @@ label.scheduler-household-pet-row {
   white-space: nowrap;
 }
 
-.scheduler-forward-booking-saved-lead {
-  margin: 0 0 10px;
-  font-size: 13px;
-  color: #64748b;
-}
-
-.scheduler-forward-booking-mode-row--readonly {
-  cursor: default;
-}
-
-.scheduler-forward-booking-mode-option--readonly {
-  pointer-events: none;
-}
-
-.scheduler-forward-booking-saved-details {
-  margin: 0;
-  padding: 0 12px 12px;
-  display: grid;
-  gap: 10px;
-}
-
-.scheduler-forward-booking-saved-details > div {
-  display: grid;
-  gap: 2px;
-}
-
-.scheduler-forward-booking-saved-details dt {
-  margin: 0;
-  font-size: 12px;
-  font-weight: 600;
-  color: #64748b;
-  text-transform: uppercase;
-  letter-spacing: 0.02em;
-}
-
-.scheduler-forward-booking-saved-details dd {
-  margin: 0;
-  font-size: 14px;
-  color: #0f172a;
-  white-space: pre-wrap;
-}
-
-.scheduler-forward-booking-mode-fieldset {
-  margin: 0;
-  padding: 0;
-  border: 0;
-  min-width: 0;
-}
-
-.scheduler-forward-booking-mode-legend {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
-}
-
-.scheduler-forward-booking-mode-stack {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.scheduler-forward-booking-mode-option {
-  border: 1px solid #e2e8f0;
-  border-radius: 10px;
-  background: #fff;
-  overflow: hidden;
-}
-
-.scheduler-forward-booking-mode-option--active {
-  border-color: color-mix(in srgb, var(--scheduler-accent, #0d9488) 45%, #cbd5e1);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--scheduler-accent, #0d9488) 18%, transparent);
-}
-
-.scheduler-forward-booking-mode-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 10px 12px;
-  cursor: pointer;
-}
-
-.scheduler-forward-booking-mode-row input[type='radio'] {
-  flex-shrink: 0;
-  width: 18px;
-  height: 18px;
-  margin: 2px 0 0;
-}
-
-.scheduler-forward-booking-mode-copy {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.scheduler-forward-booking-mode-label {
-  font-size: 14px;
-  font-weight: 600;
-  color: #0f172a;
-  line-height: 1.35;
-}
-
-.scheduler-forward-booking-mode-hint {
-  font-size: 12px;
-  line-height: 1.45;
-  color: #64748b;
-}
-
-.scheduler-forward-booking-mode-panel {
-  padding: 0 12px 12px 40px;
-}
+/* The follow-up prompt's own styles live with the shared component
+   (src/components/forwardBooking/ForwardBookingDecisionFields.css) so the same
+   prompt can render at checkout and on the visit wrap-up. The scheduler-only
+   modifiers for that prompt are still below. */
 
 .scheduler-forward-booking-task-preview {
   margin-top: 10px;
@@ -3825,14 +3756,6 @@ label.scheduler-household-pet-row {
   margin: 6px 0 0;
   font-size: 12px;
   line-height: 1.4;
-}
-
-.scheduler-forward-booking-field-hint {
-  display: block;
-  margin-top: 4px;
-  font-size: 12px;
-  line-height: 1.4;
-  font-weight: 400;
 }
 
 .scheduler-forward-booking-section-actions {
@@ -4242,7 +4165,10 @@ label.scheduler-household-pet-row {
   margin-top: 6px;
 }
 
-.scheduler-modal--edit .scheduler-modal-header .scheduler-visit-context-block .scheduler-tooltip-vh-block-title {
+.scheduler-modal--edit
+  .scheduler-modal-header
+  .scheduler-visit-context-block
+  .scheduler-tooltip-vh-block-title {
   font-size: 9px;
   margin-bottom: 4px;
 }
@@ -4258,36 +4184,58 @@ label.scheduler-household-pet-row {
   font-weight: 600;
 }
 
-.scheduler-modal--edit .scheduler-modal-header .scheduler-visit-context-block .scheduler-tooltip-vh-patient-details-row .scheduler-book-patient-details-btn {
+.scheduler-modal--edit
+  .scheduler-modal-header
+  .scheduler-visit-context-block
+  .scheduler-tooltip-vh-patient-details-row
+  .scheduler-book-patient-details-btn {
   font-size: 11px;
 }
 
-.scheduler-modal--edit .scheduler-modal-header .scheduler-visit-context-block .scheduler-tooltip-vh-patient-line {
+.scheduler-modal--edit
+  .scheduler-modal-header
+  .scheduler-visit-context-block
+  .scheduler-tooltip-vh-patient-line {
   font-size: 12px;
   line-height: 1.3;
 }
 
-.scheduler-modal--edit .scheduler-modal-header .scheduler-visit-context-block .scheduler-tooltip-vh-row {
+.scheduler-modal--edit
+  .scheduler-modal-header
+  .scheduler-visit-context-block
+  .scheduler-tooltip-vh-row {
   font-size: 11px;
   line-height: 1.3;
   margin-bottom: 2px;
   grid-template-columns: minmax(72px, 88px) 1fr;
 }
 
-.scheduler-modal--edit .scheduler-modal-header .scheduler-visit-context-block .scheduler-tooltip-vh-k {
+.scheduler-modal--edit
+  .scheduler-modal-header
+  .scheduler-visit-context-block
+  .scheduler-tooltip-vh-k {
   font-size: 9px;
 }
 
-.scheduler-modal--edit .scheduler-modal-header .scheduler-visit-context-block .scheduler-tooltip-vh-v {
+.scheduler-modal--edit
+  .scheduler-modal-header
+  .scheduler-visit-context-block
+  .scheduler-tooltip-vh-v {
   font-size: 11px;
 }
 
-.scheduler-modal--edit .scheduler-modal-header .scheduler-visit-context-block .scheduler-tooltip-vh-patient-highlight {
+.scheduler-modal--edit
+  .scheduler-modal-header
+  .scheduler-visit-context-block
+  .scheduler-tooltip-vh-patient-highlight {
   padding: 6px 8px;
   border-radius: 8px;
 }
 
-.scheduler-modal--edit .scheduler-modal-header .scheduler-visit-context-block .scheduler-tooltip-vh-alerts {
+.scheduler-modal--edit
+  .scheduler-modal-header
+  .scheduler-visit-context-block
+  .scheduler-tooltip-vh-alerts {
   margin-top: 4px;
   font-size: 11px;
   padding: 6px 8px;
@@ -4296,7 +4244,10 @@ label.scheduler-household-pet-row {
   line-height: 1.3;
 }
 
-.scheduler-modal--edit .scheduler-modal-header .scheduler-visit-context-block .scheduler-tooltip-vh-alerts-title {
+.scheduler-modal--edit
+  .scheduler-modal-header
+  .scheduler-visit-context-block
+  .scheduler-tooltip-vh-alerts-title {
   font-size: 8px;
   margin-bottom: 2px;
 }
@@ -6093,6 +6044,36 @@ label.scheduler-household-pet-row {
   width: 100%;
 }
 
+.scheduler-reconcile-inventory-context {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+  width: 100%;
+}
+
+.scheduler-reconcile-inventory-hint {
+  margin: 0;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.scheduler-reconcile-inventory-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: #334155;
+}
+
+.scheduler-reconcile-inventory-field select {
+  font-size: 13px;
+  padding: 6px 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #fff;
+}
+
 .scheduler-reconcile-column-save .scheduler-reconcile-error,
 .scheduler-reconcile-column-save .scheduler-reconcile-success {
   margin: 0;
@@ -6257,7 +6238,9 @@ label.scheduler-household-pet-row {
     touch-action: pan-x pan-y;
   }
 
-  .scheduler-page:not(.scheduler-page--embedded) .scheduler-calendar-shell--sticky-week .scheduler-scroll {
+  .scheduler-page:not(.scheduler-page--embedded)
+    .scheduler-calendar-shell--sticky-week
+    .scheduler-scroll {
     overflow-x: auto;
     overflow-y: visible;
   }

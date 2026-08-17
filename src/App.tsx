@@ -36,11 +36,23 @@ import {
 import { HOLDS_PATH, holdsPathWithHighlight } from './holds-nav';
 import ExitSurveyPage from './pages/ExitSurveyPage';
 import RoomLoaderPage from './pages/RoomLoader';
+import SoapEncounterPage from './pages/SoapEncounterPage';
+import VisitWrapUpPage from './pages/VisitWrapUpPage';
+import DoctorWorklistPage from './pages/DoctorWorklistPage';
 import { ScheduleIndexRedirect } from './pages/ScheduleLayout';
 import ScheduleHomePage from './pages/ScheduleHomePage';
 import LegacySchedulingToolsRedirect from './components/LegacySchedulingToolsRedirect';
-import InventoryManagement from './pages/InventoryManagement';
-import PimsPlaceholder from './pages/PimsPlaceholder';
+import Catalog from './pages/Catalog';
+import CatalogLayout from './pages/CatalogLayout';
+import CatalogEntityPage from './pages/CatalogEntityPage';
+import InventoryLayout from './pages/InventoryLayout';
+import ReceiveShipmentPage from './pages/ReceiveShipmentPage';
+import MoveItemsPage from './pages/MoveItemsPage';
+import WasteAdjustPage from './pages/WasteAdjustPage';
+import InventoryActivityPage from './pages/InventoryActivityPage';
+import InventoryCostReviewsPage from './pages/InventoryCostReviewsPage';
+import SuppliersAdminPage from './pages/SuppliersAdminPage';
+import WasteAdminPage from './pages/WasteAdminPage';
 import PimsClientsPage from './pages/PimsClientsPage';
 import PimsPatientsPage from './pages/PimsPatientsPage';
 import PimsTasksPage from './pages/PimsTasksPage';
@@ -324,7 +336,6 @@ export default function App() {
   const mainClassName = useMemo(() => {
     if (isClient && location.pathname.startsWith('/client-portal')) return '';
     const path = location.pathname;
-    if (path.startsWith('/pims')) return 'pims-main-wrapper';
     if (path.startsWith('/schedule')) return 'schedule-main-wrapper';
     return 'container';
   }, [isClient, location.pathname]);
@@ -556,8 +567,41 @@ export default function App() {
                     <Route path="holds" element={<HoldsPage />} />
                     <Route path="exit-survey" element={<ExitSurveyPage />} />
                     <Route path="room-loader" element={<RoomLoaderPage />} />
+                    <Route path="soap" element={<DoctorWorklistPage />} />
+                    <Route
+                      path="soap/:appointmentId/:patientId"
+                      element={<SoapEncounterPage />}
+                    />
+                    <Route
+                      path="soap/:appointmentId/:patientId/wrap-up"
+                      element={<VisitWrapUpPage />}
+                    />
                     <Route path="scheduler" element={<Scheduler />} />
-                    <Route path="inventory" element={<InventoryManagement />} />
+                    <Route
+                      path="catalog"
+                      element={<CatalogLayout basePath="/schedule/catalog" />}
+                    >
+                      <Route index element={<Navigate to="inventory" replace />} />
+                      <Route path="inventory" element={<Catalog />} />
+                      <Route
+                        path="procedures"
+                        element={<CatalogEntityPage itemType="procedure" />}
+                      />
+                      <Route path="labs" element={<CatalogEntityPage itemType="lab" />} />
+                    </Route>
+                    <Route
+                      path="inventory"
+                      element={<InventoryLayout basePath="/schedule/inventory" />}
+                    >
+                      <Route index element={<Navigate to="receive" replace />} />
+                      <Route path="receive" element={<ReceiveShipmentPage />} />
+                      <Route path="move" element={<MoveItemsPage />} />
+                      <Route path="waste" element={<WasteAdjustPage />} />
+                      <Route path="activity" element={<InventoryActivityPage />} />
+                      <Route path="cost-reviews" element={<InventoryCostReviewsPage />} />
+                      <Route path="suppliers" element={<SuppliersAdminPage />} />
+                      <Route path="waste-admin" element={<WasteAdminPage />} />
+                    </Route>
                     <Route path="tasks" element={<PimsTasksPage />} />
                     <Route path="settings" element={<Settings />} />
                     <Route path="clients" element={<PimsClientsPage />} />
@@ -585,39 +629,17 @@ export default function App() {
                     </Route>
                   </Route>
                 ) : p.path === '/pims' ? (
-                  <Route key={p.path} path={p.path} element={p.element}>
-                    <Route index element={<Navigate to="/pims/scheduler" replace />} />
-                    <Route path="overview" element={<PimsPlaceholder title="Overview" />} />
-                    <Route path="scheduler" element={<Scheduler />} />
-                    <Route path="tasks" element={<PimsTasksPage />} />
-                    <Route path="clients" element={<PimsClientsPage />} />
-                    <Route path="patients" element={<PimsPatientsPage />} />
-                    <Route path="labs" element={<PimsPlaceholder title="Labs" />} />
-                    <Route path="inventory" element={<InventoryManagement />} />
-                    <Route
-                      path="reports/summary"
-                      element={<PimsPlaceholder title="Reports — Summary" />}
-                    />
-                    <Route
-                      path="reports/activity"
-                      element={<PimsPlaceholder title="Reports — Activity" />}
-                    />
-                    <Route
-                      path="settings/practice"
-                      element={<PimsPlaceholder title="Settings — Practice" />}
-                    />
-                    <Route
-                      path="settings/users"
-                      element={<PimsPlaceholder title="Settings — Users" />}
-                    />
-                  </Route>
+                  <Route key={p.path} path="/pims/*" element={p.element} />
                 ) : p.path === '/tools' ? (
                   <Route key={p.path} path={p.path} element={p.element}>
                     <Route
                       path="care-outreach"
                       element={<Navigate to="/schedule/scheduling-tools/care-outreach" replace />}
                     />
-                    <Route path="inventory" element={<Navigate to="/pims/inventory" replace />} />
+                    <Route
+                      path="inventory"
+                      element={<Navigate to="/schedule/inventory/receive" replace />}
+                    />
                     <Route index element={<Navigate to={EXIT_SURVEY_PATH} replace />} />
                     {getToolsTabPages().map((tab) => (
                       <Route
