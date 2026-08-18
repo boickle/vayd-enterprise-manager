@@ -265,3 +265,157 @@ export async function fetchClientRevenueSeries(params: {
     })),
   };
 }
+
+export type VsdPaymentsMatchDay = {
+  date: string;
+  vsd: number;
+  practicePayments: number;
+  pharmacyPayments: number;
+  membershipPayments: number;
+};
+
+export type VsdPaymentsMatchInvoice = {
+  invoiceNumber: number;
+  status: 'open' | 'closed' | 'paid';
+  serviceDate: string;
+  client: string;
+  remaining: number;
+  vsd: number;
+  doctor: string;
+  billedBy: string;
+  billedRole: string;
+  paymentType: string;
+  age: string;
+};
+
+export type VsdPaymentsMatchReport = {
+  start: string;
+  end: string;
+  timezone: string;
+  totals: {
+    vsd: number;
+    practicePayments: number;
+    pharmacyPayments: number;
+    membershipPayments: number;
+    gap: number;
+    paidVsd: number;
+    openVsd: number;
+    closedVsd: number;
+    membershipDiscount: number;
+    membershipCoveredVsd: number;
+    memberVsd: number;
+    memberBilled: number;
+    billed: number;
+  };
+  daily: VsdPaymentsMatchDay[];
+  doctors: {
+    doctor: string;
+    vsd: number;
+    paidVsd: number;
+    openVsd: number;
+    closedVsd: number;
+    openInvoices: number;
+  }[];
+  billers: { name: string; role: string; invoices: number; remaining: number }[];
+  openInvoices: VsdPaymentsMatchInvoice[];
+  closedInvoices: VsdPaymentsMatchInvoice[];
+  paymentTypes: {
+    type: string;
+    count: number;
+    total: number;
+    inPracticeCompare: boolean;
+  }[];
+};
+
+/**
+ * GET /analytics/ops/revenue/vsd-payments-match
+ * Practice-wide VSD vs practice payments for a date range (admins).
+ */
+export async function fetchVsdPaymentsMatch(params: {
+  start: string;
+  end: string;
+}): Promise<VsdPaymentsMatchReport> {
+  const { data } = await http.get('/analytics/ops/revenue/vsd-payments-match', {
+    params: { start: params.start, end: params.end },
+  });
+  const resp = data ?? {};
+  const n = (v: unknown) => Number(v) || 0;
+  return {
+    start: String(resp.start ?? params.start),
+    end: String(resp.end ?? params.end),
+    timezone: String(resp.timezone ?? 'America/New_York'),
+    totals: {
+      vsd: n(resp.totals?.vsd),
+      practicePayments: n(resp.totals?.practicePayments),
+      pharmacyPayments: n(resp.totals?.pharmacyPayments),
+      membershipPayments: n(resp.totals?.membershipPayments),
+      gap: n(resp.totals?.gap),
+      paidVsd: n(resp.totals?.paidVsd),
+      openVsd: n(resp.totals?.openVsd),
+      closedVsd: n(resp.totals?.closedVsd),
+      membershipDiscount: n(resp.totals?.membershipDiscount),
+      membershipCoveredVsd: n(resp.totals?.membershipCoveredVsd),
+      memberVsd: n(resp.totals?.memberVsd),
+      memberBilled: n(resp.totals?.memberBilled),
+      billed: n(resp.totals?.billed),
+    },
+    daily: Array.isArray(resp.daily)
+      ? resp.daily.map((r: any) => ({
+          date: String(r?.date ?? ''),
+          vsd: n(r?.vsd),
+          practicePayments: n(r?.practicePayments),
+          pharmacyPayments: n(r?.pharmacyPayments),
+          membershipPayments: n(r?.membershipPayments),
+        }))
+      : [],
+    doctors: Array.isArray(resp.doctors)
+      ? resp.doctors.map((r: any) => ({
+          doctor: String(r?.doctor ?? 'Not specified'),
+          vsd: n(r?.vsd),
+          paidVsd: n(r?.paidVsd),
+          openVsd: n(r?.openVsd),
+          closedVsd: n(r?.closedVsd),
+          openInvoices: n(r?.openInvoices),
+        }))
+      : [],
+    billers: Array.isArray(resp.billers)
+      ? resp.billers.map((r: any) => ({
+          name: String(r?.name ?? '—'),
+          role: String(r?.role ?? '—'),
+          invoices: n(r?.invoices),
+          remaining: n(r?.remaining),
+        }))
+      : [],
+    openInvoices: Array.isArray(resp.openInvoices)
+      ? resp.openInvoices.map(mapMatchInvoice)
+      : [],
+    closedInvoices: Array.isArray(resp.closedInvoices)
+      ? resp.closedInvoices.map(mapMatchInvoice)
+      : [],
+    paymentTypes: Array.isArray(resp.paymentTypes)
+      ? resp.paymentTypes.map((r: any) => ({
+          type: String(r?.type ?? '(none)'),
+          count: n(r?.count),
+          total: n(r?.total),
+          inPracticeCompare: r?.inPracticeCompare !== false,
+        }))
+      : [],
+  };
+}
+
+function mapMatchInvoice(r: any): VsdPaymentsMatchInvoice {
+  const status = r?.status;
+  return {
+    invoiceNumber: Number(r?.invoiceNumber) || 0,
+    status: status === 'closed' || status === 'paid' ? status : 'open',
+    serviceDate: String(r?.serviceDate ?? '').slice(0, 10),
+    client: String(r?.client ?? '—'),
+    remaining: Number(r?.remaining) || 0,
+    vsd: Number(r?.vsd) || 0,
+    doctor: String(r?.doctor ?? 'Not specified'),
+    billedBy: String(r?.billedBy ?? '—'),
+    billedRole: String(r?.billedRole ?? '—'),
+    paymentType: String(r?.paymentType ?? 'None on file'),
+    age: String(r?.age ?? '—'),
+  };
+}
