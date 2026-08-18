@@ -20,3 +20,19 @@ export function appointmentRequestNeedsStaffConfirmation(
 ): boolean {
   return appointmentRequestAutoBookedOnline(item) && !item.staffConfirmedAt?.trim();
 }
+
+/**
+ * Manual Book / Link appointment actions are only for requests that still need
+ * scheduling. Online auto-books awaiting liaison Confirm must not use those
+ * buttons — including while `bookedApptMeta` is still hydrating (so
+ * `hasLinkedAppointment` is temporarily false).
+ */
+export function appointmentRequestNeedsManualBookActions(args: {
+  item: AppointmentRequestSubmissionItem;
+  isDismissed: boolean;
+  isBooked: boolean;
+  hasLinkedAppointment: boolean;
+}): boolean {
+  if (appointmentRequestNeedsStaffConfirmation(args.item)) return false;
+  return !args.isDismissed && !args.isBooked && !args.hasLinkedAppointment;
+}
