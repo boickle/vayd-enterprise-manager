@@ -131,7 +131,10 @@ import {
 } from '../utils/appointmentRequestHouseholdHold';
 import {
   appointmentRequestAutoBookedOnline,
+  appointmentRequestNeedsManualBookActions,
   appointmentRequestNeedsStaffConfirmation,
+  appointmentRequestShouldShowConfirmAction,
+  appointmentRequestShowsLinkedVisitActions,
 } from '../utils/appointmentRequestStaffConfirm';
 import { beginAppointmentRequestStaffConfirmFlow } from '../utils/appointmentRequestStaffConfirmFlow';
 import {
@@ -2306,9 +2309,19 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
             // Only true when the client self-scheduled a slot and it was auto-booked online —
             // not for ordinary appointment requests that staff book later.
             const autoBookedOnline = appointmentRequestAutoBookedOnline(item);
-            const needsStaffConfirmation =
-              hasLinkedAppointment && appointmentRequestNeedsStaffConfirmation(item);
-            const needsManualBook = !isDismissed && !isBooked && !hasLinkedAppointment;
+            // Confirm must not wait for bookedApptMeta — hydration lag flashed Book/Link.
+            const needsStaffConfirmation = appointmentRequestShouldShowConfirmAction(item);
+            const needsManualBook = appointmentRequestNeedsManualBookActions({
+              item,
+              isDismissed,
+              isBooked,
+              hasLinkedAppointment,
+            });
+            const showLinkedVisitActions = appointmentRequestShowsLinkedVisitActions({
+              item,
+              isBooked,
+              hasLinkedAppointment,
+            });
             const linkedAppointment = linkedEvetIdsFromBookedApptSummary(bookedSummary);
             const requestTypeName = requestDataAppointmentTypeLabel(rd);
             const displayBookedSummary =
@@ -2789,7 +2802,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                           Not booked
                         </button>
                       </>
-                    ) : isBooked || hasLinkedAppointment ? (
+                    ) : showLinkedVisitActions ? (
                       <>
                         {needsStaffConfirmation ? (
                           <button
