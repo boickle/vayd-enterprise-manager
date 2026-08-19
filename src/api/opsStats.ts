@@ -306,6 +306,7 @@ export type VsdPaymentsMatchReport = {
     memberVsd: number;
     memberBilled: number;
     billed: number;
+    openToCollect: number;
   };
   daily: VsdPaymentsMatchDay[];
   doctors: {
@@ -314,6 +315,10 @@ export type VsdPaymentsMatchReport = {
     paidVsd: number;
     openVsd: number;
     closedVsd: number;
+    openMemberVsd: number;
+    openMembershipDiscount: number;
+    membershipDiscount: number;
+    openToCollect: number;
     openInvoices: number;
   }[];
   billers: { name: string; role: string; invoices: number; remaining: number }[];
@@ -358,6 +363,7 @@ export async function fetchVsdPaymentsMatch(params: {
       memberVsd: n(resp.totals?.memberVsd),
       memberBilled: n(resp.totals?.memberBilled),
       billed: n(resp.totals?.billed),
+      openToCollect: n(resp.totals?.openToCollect),
     },
     daily: Array.isArray(resp.daily)
       ? resp.daily.map((r: any) => ({
@@ -369,14 +375,25 @@ export async function fetchVsdPaymentsMatch(params: {
         }))
       : [],
     doctors: Array.isArray(resp.doctors)
-      ? resp.doctors.map((r: any) => ({
-          doctor: String(r?.doctor ?? 'Not specified'),
-          vsd: n(r?.vsd),
-          paidVsd: n(r?.paidVsd),
-          openVsd: n(r?.openVsd),
-          closedVsd: n(r?.closedVsd),
-          openInvoices: n(r?.openInvoices),
-        }))
+      ? resp.doctors.map((r: any) => {
+          const openVsd = n(r?.openVsd);
+          const openMemberVsd = n(r?.openMemberVsd);
+          const openMembershipDiscount = n(r?.openMembershipDiscount);
+          const membershipDiscount = n(r?.membershipDiscount);
+          const openToCollect = Math.max(0, openVsd - openMembershipDiscount);
+          return {
+            doctor: String(r?.doctor ?? 'Not specified'),
+            vsd: n(r?.vsd),
+            paidVsd: n(r?.paidVsd),
+            openVsd,
+            closedVsd: n(r?.closedVsd),
+            openMemberVsd: n(r?.openMemberVsd),
+            openMembershipDiscount,
+            membershipDiscount,
+            openToCollect,
+            openInvoices: n(r?.openInvoices),
+          };
+        })
       : [],
     billers: Array.isArray(resp.billers)
       ? resp.billers.map((r: any) => ({
