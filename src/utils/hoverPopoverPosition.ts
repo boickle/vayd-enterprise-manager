@@ -248,29 +248,47 @@ export function computeEditPreviewPopoverPosition(args: {
   const width = cardW;
   const H = clamp(cardEstH, 200, vwH - 2 * pad);
   const column = dayColumnAnchor ?? slotAnchor;
-  const top = clamp(slotAnchor.top, pad, vwH - pad - H);
+  /** Keep Book/Save reachable: never allow a card shorter than the chrome + primary action. */
+  const minReadable = 220;
 
+  let left = pad;
+  let finalWidth = width;
   const leftOfColumn = column.left - gutter - width;
   if (leftOfColumn >= pad) {
-    return { left: leftOfColumn, top, maxCardH: Math.min(H, vwH - pad - top), width };
+    left = leftOfColumn;
+  } else {
+    const rightOfColumn = column.right + gutter;
+    if (rightOfColumn + width <= vwW - pad) {
+      left = rightOfColumn;
+    } else {
+      const leftOfSlot = slotAnchor.left - gutter - width;
+      if (leftOfSlot >= pad) {
+        left = leftOfSlot;
+      } else {
+        left = pad;
+        finalWidth = Math.min(width, vwW - 2 * pad);
+      }
+    }
   }
 
-  const rightOfColumn = column.right + gutter;
-  if (rightOfColumn + width <= vwW - pad) {
-    return { left: rightOfColumn, top, maxCardH: Math.min(H, vwH - pad - top), width };
+  const spaceBelow = vwH - pad - slotAnchor.top;
+  const spaceAbove = slotAnchor.top - pad;
+  /** Flip above when the slot sits too low for the estimated card (Book was clipping off-screen). */
+  if (spaceBelow < Math.min(H, minReadable + 80) && spaceAbove > spaceBelow) {
+    const bottom = clamp(vwH - slotAnchor.top + gutter, pad, vwH - pad - minReadable);
+    const maxCardH = Math.max(minReadable, Math.min(H, vwH - pad - bottom));
+    return { left, top: 0, bottom, maxCardH, width: finalWidth };
   }
 
-  const leftOfSlot = slotAnchor.left - gutter - width;
-  if (leftOfSlot >= pad) {
-    return { left: leftOfSlot, top, maxCardH: Math.min(H, vwH - pad - top), width };
+  let top = clamp(slotAnchor.top, pad, vwH - pad - minReadable);
+  let maxCardH = Math.max(minReadable, Math.min(H, vwH - pad - top));
+  if (maxCardH < minReadable) {
+    top = Math.max(pad, vwH - pad - minReadable);
+    maxCardH = Math.max(minReadable, vwH - pad - top);
   }
-
-  return {
-    left: pad,
-    top,
-    maxCardH: Math.min(H, vwH - pad - top),
-    width: Math.min(width, vwW - 2 * pad),
-  };
+  top = Math.max(pad, Math.min(top, vwH - pad - maxCardH));
+  maxCardH = Math.max(minReadable, vwH - pad - top);
+  return { left, top, maxCardH, width: finalWidth };
 }
 
 /** When the preview slot is not painted yet, park the popover on the right edge. */
@@ -283,10 +301,12 @@ export function fallbackEditPreviewPopoverPosition(args: {
 }): HoverPopoverPositionResult {
   const pad = args.padding ?? 12;
   const width = args.cardW ?? 300;
+  const minReadable = 220;
   const H = clamp(args.cardEstH ?? 340, 200, args.vwH - 2 * pad);
-  const top = clamp(args.vwH * 0.22, pad, args.vwH - pad - H);
+  const top = clamp(args.vwH * 0.22, pad, args.vwH - pad - minReadable);
   const left = clamp(args.vwW - width - pad, pad, args.vwW - pad - width);
-  return { left, top, maxCardH: Math.min(H, args.vwH - pad - top), width };
+  const maxCardH = Math.max(minReadable, Math.min(H, args.vwH - pad - top));
+  return { left, top, maxCardH, width };
 }
 
 /** Visit Highlights popover placement (scheduler calendar + Progress modal). */

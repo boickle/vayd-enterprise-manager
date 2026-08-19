@@ -131,7 +131,11 @@ export function RoutingPreviewSlotPopover({
     (isExplore ? 'Add Alternative Appointment' : isReschedule ? 'Reschedule' : 'Book');
 
   return (
-    <div className="scheduler-edit-preview-popover" role="dialog" aria-label={title}>
+    <div
+      className="scheduler-edit-preview-popover scheduler-edit-preview-popover--book-action"
+      role="dialog"
+      aria-label={title}
+    >
       <div className="scheduler-edit-preview-popover-head">
         <strong className="scheduler-edit-preview-popover-title">{title}</strong>
         <button
@@ -145,58 +149,60 @@ export function RoutingPreviewSlotPopover({
         </button>
       </div>
 
-      <div className="scheduler-edit-preview-popover-meta">
-        {doctorName}
-        {clientLabel ? ` · ${clientLabel}` : ''}
-      </div>
-
-      <PreviewPopoverClientContact contact={clientContact} />
-
-      {originalRangeLabel || rangeLabel ? (
-        <div className="scheduler-edit-preview-popover-change">
-          {originalRangeLabel ? (
-            <p className="scheduler-edit-preview-popover-change-line scheduler-edit-preview-popover-change-line--was">
-              <span className="scheduler-edit-preview-popover-change-k">
-                {isExplore ? 'Current' : 'Was'}
-              </span>
-              {originalRangeLabel}
-            </p>
-          ) : null}
-          {rangeLabel ? (
-            <p className="scheduler-edit-preview-popover-change-line scheduler-edit-preview-popover-change-line--now">
-              {isReschedule && originalRangeLabel ? (
-                <span className="scheduler-edit-preview-popover-change-k">
-                  {isExplore ? 'Alternative' : 'Now'}
-                </span>
-              ) : null}
-              {rangeLabel}
-            </p>
-          ) : null}
+      <div className="scheduler-edit-preview-popover-scroll">
+        <div className="scheduler-edit-preview-popover-meta">
+          {doctorName}
+          {clientLabel ? ` · ${clientLabel}` : ''}
         </div>
-      ) : null}
 
-      <div className="scheduler-edit-preview-popover-body" role="status" aria-live="polite">
-        {scoreLine ? (
-          <p
-            className={`scheduler-edit-preview-popover-line${
-              scoreLineIsUnavailable
-                ? ' scheduler-edit-preview-popover-line--warn'
-                : isReschedule
-                  ? ' scheduler-edit-preview-popover-line--strong'
-                  : ' scheduler-edit-preview-popover-line--muted'
-            }`}
-          >
-            {scoreLine}
-          </p>
-        ) : (
-          <p className="scheduler-edit-preview-popover-line scheduler-edit-preview-popover-line--muted">
-            {isManualBook
-              ? 'Hover the red slot to see where this visit would land on the routed timeline.'
-              : isScheduleLoader
-                ? 'Hover the purple slot to see where this client would land.'
-                : 'Hover the purple slot or any visit for full details.'}
-          </p>
-        )}
+        <PreviewPopoverClientContact contact={clientContact} />
+
+        {originalRangeLabel || rangeLabel ? (
+          <div className="scheduler-edit-preview-popover-change">
+            {originalRangeLabel ? (
+              <p className="scheduler-edit-preview-popover-change-line scheduler-edit-preview-popover-change-line--was">
+                <span className="scheduler-edit-preview-popover-change-k">
+                  {isExplore ? 'Current' : 'Was'}
+                </span>
+                {originalRangeLabel}
+              </p>
+            ) : null}
+            {rangeLabel ? (
+              <p className="scheduler-edit-preview-popover-change-line scheduler-edit-preview-popover-change-line--now">
+                {isReschedule && originalRangeLabel ? (
+                  <span className="scheduler-edit-preview-popover-change-k">
+                    {isExplore ? 'Alternative' : 'Now'}
+                  </span>
+                ) : null}
+                {rangeLabel}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+
+        <div className="scheduler-edit-preview-popover-body" role="status" aria-live="polite">
+          {scoreLine ? (
+            <p
+              className={`scheduler-edit-preview-popover-line${
+                scoreLineIsUnavailable
+                  ? ' scheduler-edit-preview-popover-line--warn'
+                  : isReschedule
+                    ? ' scheduler-edit-preview-popover-line--strong'
+                    : ' scheduler-edit-preview-popover-line--muted'
+              }`}
+            >
+              {scoreLine}
+            </p>
+          ) : (
+            <p className="scheduler-edit-preview-popover-line scheduler-edit-preview-popover-line--muted">
+              {isManualBook
+                ? 'Hover the red slot to see where this visit would land on the routed timeline.'
+                : isScheduleLoader
+                  ? 'Hover the purple slot to see where this client would land.'
+                  : 'Hover the purple slot or any visit for full details.'}
+            </p>
+          )}
+        </div>
       </div>
 
       <div className="scheduler-edit-preview-popover-actions">
