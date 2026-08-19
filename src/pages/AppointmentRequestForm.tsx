@@ -8683,11 +8683,45 @@ export default function AppointmentRequestForm() {
           <h1 style={{ fontSize: '24px', fontWeight: 700, color: '#111827', marginBottom: '12px' }}>
             Thank You!
           </h1>
-          <p style={{ fontSize: '16px', color: '#6b7280', marginBottom: isExploreMembershipsVisible ? '16px' : (isLoggedIn ? '32px' : 0) }}>
+          <p style={{ fontSize: '16px', color: '#6b7280', marginBottom: '16px' }}>
             {submitSuccessKind === 'online_confirmed'
               ? 'Your appointment has been booked successfully. Please check your email for confirmation details.'
               : 'We are working on booking your appointment and will be in touch shortly.'}
           </p>
+          <style>{`
+            .appt-form-view-pricing-btn:hover {
+              transform: scale(1.02);
+              box-shadow: 0 0 20px 4px rgba(15, 118, 110, 0.35);
+            }
+          `}</style>
+          <a
+            href="https://www.vetatyourdoor.com/pay-as-you-go"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="appt-form-view-pricing-btn"
+            onClick={() => {
+              trackFormEvent('appointment_form_confirmation_pricing_cta_clicked', {
+                eligible_pet_count: membershipEligiblePets.length,
+                membership_interest: formData.membershipInterest ?? undefined,
+              });
+            }}
+            style={{
+              padding: '10px 24px',
+              backgroundColor: '#fff',
+              color: '#0f766e',
+              border: '2px solid #0f766e',
+              borderRadius: '8px',
+              fontSize: '15px',
+              fontWeight: 700,
+              cursor: 'pointer',
+              textDecoration: 'none',
+              display: 'inline-block',
+              marginBottom: isExploreMembershipsVisible || isLoggedIn ? '24px' : 0,
+              transition: 'transform 0.2s ease, box-shadow 0.2s ease',
+            }}
+          >
+            Review Our Pricing
+          </a>
           {isExploreMembershipsVisible && (
             <div
               style={{
