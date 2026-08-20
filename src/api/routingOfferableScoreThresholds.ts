@@ -10,6 +10,8 @@ import {
   defaultRoutingOfferableScoreConfig,
   parseRoutingOfferableScoreConfig,
   serializeRoutingOfferableScoreConfig,
+  type OfferableScoreCalibration,
+  type OfferableScoreDayBucket,
   type RoutingOfferableScoreConfig,
 } from '../utils/routingOfferableScoreConfig';
 
@@ -19,6 +21,31 @@ export {
   parseRoutingOfferableScoreConfig,
   type RoutingOfferableScoreConfig,
 };
+
+export type RoutingScoreCalibrationResponse = {
+  calibration: OfferableScoreCalibration;
+  /** False when the sample was too thin to trust; the UI must not apply it. */
+  sufficient: boolean;
+  warnings: string[];
+  /** What the saved thresholds work out to as percentages on the fresh curve. */
+  currentPercentiles: Partial<Record<OfferableScoreDayBucket, number>>;
+  currentScores: Record<OfferableScoreDayBucket, number>;
+};
+
+/**
+ * Measure the live score distribution. Read-only: nothing changes until the
+ * resulting config is saved, so this is safe to run to preview an effect.
+ */
+export async function fetchRoutingScoreCalibration(
+  practiceId: number,
+  options?: { windowDays?: number },
+): Promise<RoutingScoreCalibrationResponse> {
+  const { data } = await http.get(
+    `/practice/${practiceId}/routing-score-calibration`,
+    { params: options?.windowDays ? { windowDays: options.windowDays } : {} },
+  );
+  return data as RoutingScoreCalibrationResponse;
+}
 
 /** Authenticated admin load (practice settings). */
 export async function fetchRoutingOfferableScoreThresholds(

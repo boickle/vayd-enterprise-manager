@@ -3,6 +3,7 @@
  */
 import { DateTime } from 'luxon';
 import { blockDisplayLabel } from '../api/appointments';
+import { DEFAULT_APPOINTMENT_BUFFER_MINUTES } from '../api/routing';
 import type { DayData } from '../pages/MyWeek';
 
 function keyFor(lat: number, lon: number, d = 6) {
@@ -143,7 +144,9 @@ export function mergeEtaFetchIntoDayData(day: DayBundleIn, result: any): DayData
   const backToDepotSec = typeof result?.backToDepotSec === 'number' ? result.backToDepotSec : null;
   const backToDepotIso = result?.backToDepotIso ?? null;
   const appointmentBufferMinutes =
-    typeof result?.appointmentBufferMinutes === 'number' ? result.appointmentBufferMinutes : 5;
+    typeof result?.appointmentBufferMinutes === 'number'
+      ? result.appointmentBufferMinutes
+      : DEFAULT_APPOINTMENT_BUFFER_MINUTES;
 
   const N = day.households.length;
   let routingOrderIndices: number[];

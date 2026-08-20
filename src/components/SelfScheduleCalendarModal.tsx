@@ -182,30 +182,62 @@ function monthHasBookableCandidates(
   return candidatesInCalendarMonth(candidates, month).length > 0;
 }
 
-const MAX_AUTO_ADVANCE_MONTHS = 12;
+/** Backend cap on POST /public/appointments/availability `numDays`. */
+const AVAILABILITY_MAX_DAYS = 45;
+/** How many 45-day windows to walk when the first one has no bookable day. */
+const MAX_AUTO_ADVANCE_WINDOWS = 4;
 
-async function fetchMonthCandidatesForDoctor(
-  month: DateTime,
-  args: {
-    practiceId: number;
-    address: string;
-    lat?: number;
-    lon?: number;
-    serviceMinutes?: number;
-    visitPets?: RoutingVisitPetInput[];
-    patientIds?: number[];
-    doctorId: string | number;
-    appointmentTypeId?: number;
-    isNewPatientRequest: boolean;
-    rawVeterinarians?: VeterinarianWithAppointmentTypes[];
-  },
+type MonthAvailabilityFetchArgs = {
+  practiceId: number;
+  address: string;
+  lat?: number;
+  lon?: number;
+  serviceMinutes?: number;
+  visitPets?: RoutingVisitPetInput[];
+  patientIds?: number[];
+  doctorId: string | number;
+  appointmentTypeId?: number;
+  isNewPatientRequest: boolean;
+  rawVeterinarians?: VeterinarianWithAppointmentTypes[];
+};
+
+function doctorMonthCacheKey(doctorId: string | number, month: DateTime): string {
+  return `${doctorId}|${month.toFormat('yyyy-MM')}`;
+}
+
+function storeCandidatesByMonth(
+  cache: Map<string, MonthAvailabilityCandidate[]>,
+  doctorId: string | number,
+  candidates: MonthAvailabilityCandidate[],
+  rangeStart: DateTime,
+  rangeEnd: DateTime,
+) {
+  const byMonth = new Map<string, MonthAvailabilityCandidate[]>();
+  for (const c of candidates) {
+    const ym = c.date.slice(0, 7);
+    const list = byMonth.get(ym) ?? [];
+    list.push(c);
+    byMonth.set(ym, list);
+  }
+  let cursor = rangeStart.startOf('month');
+  const last = rangeEnd.startOf('month');
+  while (cursor <= last) {
+    const ym = cursor.toFormat('yyyy-MM');
+    cache.set(`${doctorId}|${ym}`, byMonth.get(ym) ?? []);
+    cursor = cursor.plus({ months: 1 });
+  }
+}
+
+async function fetchAvailabilityRange(
+  rangeStart: DateTime,
+  rangeEnd: DateTime,
+  args: MonthAvailabilityFetchArgs,
 ): Promise<MonthAvailabilityCandidate[]> {
-  const today = DateTime.now().startOf('day');
-  const monthStart = month.startOf('month');
-  const rangeStart = today > monthStart ? today : monthStart;
   const startDate = rangeStart.toISODate() as string;
-  const monthEnd = month.endOf('month');
-  const numDays = Math.max(1, Math.ceil(monthEnd.diff(rangeStart, 'days').days) + 1);
+  const numDays = Math.max(
+    1,
+    Math.min(AVAILABILITY_MAX_DAYS, Math.ceil(rangeEnd.diff(rangeStart, 'days').days) + 1),
+  );
 
   let candidates = await fetchPublicMonthAvailability({
     practiceId: args.practiceId,
@@ -809,6 +841,8 @@ export function SelfScheduleCalendarModal({
   const skipMonthEffectRef = useRef(false);
   /** User clicked prev/next — do not auto-advance to a later month. */
   const manualMonthNavRef = useRef(false);
+  /** Per-doctor calendar-month slots from the last 45-day browse (avoids a second routing call). */
+  const monthAvailabilityCacheRef = useRef(new Map<string, MonthAvailabilityCandidate[]>());
   /** Scroll the times list into view after the client picks a calendar day. */
   const timesSectionRef = useRef<HTMLDivElement>(null);
 
@@ -860,6 +894,8 @@ export function SelfScheduleCalendarModal({
 
   const [serviceMinutes, setServiceMinutes] = useState<number>(fallbackServiceMinutes);
   const [loadingServiceMinutes, setLoadingServiceMinutes] = useState(false);
+  const serviceMinutesRef = useRef(serviceMinutes);
+  serviceMinutesRef.current = serviceMinutes;
 
   useEffect(() => {
     if (selectedDoctorId == null || !visitPets?.length) {
@@ -976,6 +1012,22 @@ export function SelfScheduleCalendarModal({
     }
   }, [prioritizedDoctorId, requestDoctors, doctors]);
 
+  // Address / visit identity — drop cached months when the search itself changed.
+  const availabilitySearchKey = [
+    practiceId,
+    address,
+    lat,
+    lon,
+    appointmentTypeId,
+    isNewPatientRequest,
+    (patientIds ?? []).join(','),
+    (visitPets ?? []).map((p) => `${p.appointmentTypeId}:${p.isNewPatient ? 1 : 0}`).join(','),
+  ].join('|');
+
+  useEffect(() => {
+    monthAvailabilityCacheRef.current.clear();
+  }, [availabilitySearchKey]);
+
   // ── 2. Load month availability when doctor or month changes ──────────────
   const loadMonthAvailability = useCallback(
     async (
@@ -984,6 +1036,47 @@ export function SelfScheduleCalendarModal({
       opts?: { autoAdvance?: boolean },
     ) => {
       const key = ++monthFetchKey.current;
+      const cache = monthAvailabilityCacheRef.current;
+      const startMonth = month.startOf('month');
+
+      const applyMonth = (
+        scanMonth: DateTime,
+        candidates: MonthAvailabilityCandidate[],
+        noteAdvance: boolean,
+      ) => {
+        if (noteAdvance && candidates.length > 0 && !scanMonth.hasSame(startMonth, 'month')) {
+          setSoonestAvailabilityNote(
+            `Earliest open times are in ${scanMonth.toFormat('MMMM yyyy')}.`,
+          );
+        }
+        if (!scanMonth.hasSame(month, 'month')) {
+          skipMonthEffectRef.current = true;
+          setCurrentMonth(scanMonth);
+        }
+        setMonthCandidates(candidates);
+      };
+
+      const cachedStart = cache.get(doctorMonthCacheKey(doctorId, startMonth));
+      let resumeFrom: DateTime | null = null;
+      if (cachedStart) {
+        if (!opts?.autoAdvance || monthHasBookableCandidates(cachedStart, startMonth)) {
+          applyMonth(startMonth, candidatesInCalendarMonth(cachedStart, startMonth), false);
+          return;
+        }
+        for (let i = 1; i < 12; i++) {
+          const later = startMonth.plus({ months: i });
+          const cachedLater = cache.get(doctorMonthCacheKey(doctorId, later));
+          if (!cachedLater) {
+            resumeFrom = later;
+            break;
+          }
+          if (monthHasBookableCandidates(cachedLater, later)) {
+            applyMonth(later, candidatesInCalendarMonth(cachedLater, later), true);
+            return;
+          }
+        }
+      }
+
       setLoadingMonth(true);
       setAvailabilityError(null);
       setSelectedDay(null);
@@ -991,12 +1084,12 @@ export function SelfScheduleCalendarModal({
       setSelectedSlotIso(null);
       setSoonestAvailabilityNote(null);
 
-      const fetchArgs = {
+      const fetchArgs: MonthAvailabilityFetchArgs = {
         practiceId,
         address,
         lat,
         lon,
-        serviceMinutes,
+        serviceMinutes: serviceMinutesRef.current,
         visitPets,
         patientIds,
         doctorId,
@@ -1006,33 +1099,45 @@ export function SelfScheduleCalendarModal({
       };
 
       try {
-        let scanMonth = month.startOf('month');
-        const startMonth = scanMonth;
+        const today = DateTime.now().startOf('day');
+        const resumeMonth = resumeFrom ?? startMonth;
+        let windowStart = today > resumeMonth ? today : resumeMonth;
+        let scanMonth = startMonth;
         let candidates: MonthAvailabilityCandidate[] = [];
 
-        for (let attempt = 0; attempt < MAX_AUTO_ADVANCE_MONTHS; attempt++) {
-          candidates = await fetchMonthCandidatesForDoctor(scanMonth, fetchArgs);
+        const windowCount = opts?.autoAdvance ? MAX_AUTO_ADVANCE_WINDOWS : 1;
+        for (let attempt = 0; attempt < windowCount; attempt++) {
+          const windowEnd = windowStart.plus({ days: AVAILABILITY_MAX_DAYS - 1 });
+          const fetched = await fetchAvailabilityRange(windowStart, windowEnd, fetchArgs);
           if (key !== monthFetchKey.current) return;
-          if (monthHasBookableCandidates(candidates, scanMonth) || !opts?.autoAdvance) break;
-          scanMonth = scanMonth.plus({ months: 1 });
+          storeCandidatesByMonth(cache, doctorId, fetched, windowStart, windowEnd);
+
+          if (!opts?.autoAdvance) {
+            candidates = candidatesInCalendarMonth(fetched, startMonth);
+            scanMonth = startMonth;
+            break;
+          }
+
+          let found: DateTime | null = null;
+          for (let i = 0; i < 12; i++) {
+            const m = startMonth.plus({ months: i });
+            if (m.startOf('day') > windowEnd) break;
+            const monthSlots = cache.get(doctorMonthCacheKey(doctorId, m));
+            if (monthSlots && monthHasBookableCandidates(monthSlots, m)) {
+              found = m;
+              candidates = candidatesInCalendarMonth(monthSlots, m);
+              break;
+            }
+          }
+          if (found) {
+            scanMonth = found;
+            break;
+          }
+          windowStart = windowEnd.plus({ days: 1 });
         }
 
         if (key !== monthFetchKey.current) return;
-
-        candidates = candidatesInCalendarMonth(candidates, scanMonth);
-
-        if (opts?.autoAdvance && candidates.length > 0 && !scanMonth.hasSame(startMonth, 'month')) {
-          setSoonestAvailabilityNote(
-            `Earliest open times are in ${scanMonth.toFormat('MMMM yyyy')}.`,
-          );
-        }
-
-        if (!scanMonth.hasSame(month, 'month')) {
-          skipMonthEffectRef.current = true;
-          setCurrentMonth(scanMonth);
-        }
-
-        setMonthCandidates(candidates);
+        applyMonth(scanMonth, candidates, Boolean(opts?.autoAdvance));
       } catch (err: unknown) {
         if (key !== monthFetchKey.current) return;
         const ax = err as { response?: { status?: number; data?: { message?: string } } };
@@ -1058,19 +1163,19 @@ export function SelfScheduleCalendarModal({
       address,
       lat,
       lon,
-      serviceMinutes,
       visitPets,
       patientIds,
       appointmentTypeId,
       isNewPatientRequest,
       rawVeterinarians,
-      numPets,
     ],
   );
 
   useEffect(() => {
     if (selectedDoctorId == null) return;
-    if (loadingServiceMinutes) return;
+    // Server resolves duration from visitPets; waiting on the extra minutes call
+    // just delayed the (much slower) month browse.
+    if (loadingServiceMinutes && !(visitPets && visitPets.length > 0)) return;
     if (skipMonthEffectRef.current) {
       skipMonthEffectRef.current = false;
       return;
@@ -1081,7 +1186,14 @@ export function SelfScheduleCalendarModal({
     const autoAdvance = !manualMonthNavRef.current;
     manualMonthNavRef.current = false;
     loadMonthAvailability(selectedDoctorId, currentMonth, { autoAdvance });
-  }, [selectedDoctorId, currentMonth, loadMonthAvailability, doctors, loadingServiceMinutes]);
+  }, [
+    selectedDoctorId,
+    currentMonth,
+    loadMonthAvailability,
+    doctors,
+    loadingServiceMinutes,
+    visitPets,
+  ]);
 
   // ── 3. Derive day slots ──────────────────────────────────────────────────
   useEffect(() => {
@@ -1122,8 +1234,13 @@ export function SelfScheduleCalendarModal({
     setAvailabilityError(null);
     setRequestPreferredTimes('');
     setSoonestAvailabilityNote(null);
-    manualMonthNavRef.current = false;
-    setCurrentMonth(DateTime.now().startOf('month'));
+    setSelectedDay(null);
+    setDayCandidates([]);
+    setSelectedSlotIso(null);
+    // Keep the month the client is looking at. Resetting to "now" re-ran August
+    // then auto-advanced back to September on every doctor tap.
+    const thisMonth = DateTime.now().startOf('month');
+    if (currentMonth < thisMonth) setCurrentMonth(thisMonth);
   };
 
   const handlePrevMonth = () => {

@@ -17,7 +17,7 @@ import {
 } from '../api/appointments';
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import { getZonePercentagesForProvider } from '../api/patients';
-import { etaHouseholdArrivalWindowPayload, fetchEtas } from '../api/routing';
+import { DEFAULT_APPOINTMENT_BUFFER_MINUTES, etaHouseholdArrivalWindowPayload, fetchEtas } from '../api/routing';
 import {
   buildEtaCandidateSlot,
   orderHouseholdsWithCandidateAtInsertion,
@@ -625,8 +625,16 @@ export function computeMyWeekDayColumnLayout(
   weekGrid: WeekGridMetrics,
   dateIso: string,
   showByDriveTime: boolean,
-  bufferMin: number
+  bufferMin: number,
+  /**
+   * My Week and the reconcile modal position rows at `topMin + driveOffset`, so a day whose gaps
+   * are too small for buffer + drive stretches and the bands stay visible. The Scheduler paints
+   * rows on a shared clock grid and cannot move them, so it opts out — otherwise the offsets slide
+   * the bands down over the following appointment.
+   */
+  opts?: { shiftRowsForDrive?: boolean }
 ): MyWeekDayColumnLayout | null {
+  const shiftRowsForDrive = opts?.shiftRowsForDrive !== false;
   const practiceTz = practiceTimeZoneOrDefault(dayData.timezone);
   const households = dayData.households ?? [];
   const tl = dayData.timeline ?? [];
@@ -753,12 +761,17 @@ export function computeMyWeekDayColumnLayout(
         }
       }
 
-      let off = Math.max(0, prevEndShifted + driveSecJ / 60 - tMin);
+      // API contract (fleetRouting ETA): "next available" = ETD + appointmentBufferMinutes + drive.
+      // Reserving only the drive leaves the drive band sharing space with the buffer band, so the
+      // two together paint the drive time instead of buffer + drive. Legs the barrier rules zeroed
+      // are left alone — those deliberately keep the row on its ETA rather than pushing it down.
+      const reserveMin = driveSecJ > 0 ? bufferMinAfterStopK(i - 1) + driveSecJ / 60 : 0;
+      let off = Math.max(0, prevEndShifted + reserveMin - tMin);
       const flexRow =
         hi?.isPersonalBlock === true &&
         (isFlexBlockItem(hi.primary) ||
           isFlexBlockItem({ blockLabel: hi.client, title: hi.client }));
-      if (flexRow) off = 0;
+      if (flexRow || !shiftRowsForDrive) off = 0;
       driveOffsets.push(off);
     }
   }
@@ -778,7 +791,7 @@ export function buildMyWeekDriveSegmentsFromLayout(
   const practiceTz = practiceTimeZoneOrDefault(dayData.timezone);
   const segs: { top: number; height: number; title: string; kind: 'buffer' | 'drive' }[] = [];
   const { topMinByIdx, durMinByIdx, driveOffsets, ds, N, displayHouseholds, displayTimeline } = layout;
-  const apptBufDefault = dayData.appointmentBufferMinutes ?? 5;
+  const apptBufDefault = dayData.appointmentBufferMinutes ?? DEFAULT_APPOINTMENT_BUFFER_MINUTES;
   const bufferMinAfterStop = (i: number) => {
     const v = displayTimeline[i]?.bufferAfterMinutes;
     if (typeof v === 'number' && Number.isFinite(v)) return Math.max(0, v);
@@ -925,10 +938,16 @@ export function buildMyWeekDriveSegmentsFromLayout(
     const yBuf = toPx(bottomMin);
     if (bufPx > 1) {
       const bm = Math.max(1, Math.round(bufPx / PPM));
+      const bufWanted = Math.round(bufMin);
+      // A gap under the buffer clamps this band and drops the drive band entirely, so the tightest
+      // legs would otherwise be the ones showing no warning at all.
       segs.push({
         top: yBuf,
         height: Math.max(4, bufPx),
-        title: `Buffer after visit: ${bm} min`,
+        title:
+          bm < bufWanted
+            ? `Buffer after visit: ${bufWanted} min · only ${bm} min before the next visit`
+            : `Buffer after visit: ${bm} min`,
         kind: 'buffer',
       });
     }
@@ -1002,19 +1021,25 @@ export function buildMyWeekDriveSegmentsFromLayout(
       i === 0 && prevBarrier && !nextBarrier && ds0 === 0 && ds1 > 0
         ? (displayHouseholds[1]?.client || '').trim() || 'visit'
         : '';
+    // The band is clamped to the space that exists, so a leg that does not fit would otherwise
+    // label the full drive over a band painted shorter than it, and the day would read as feasible.
+    const legDoesNotFit = routeMinFromLeg > 0 && routeMinFromLeg > gapRound + 1e-6;
+    const nextStopLabel = legDoesNotFit
+      ? `Drive to next stop: ${routeMinFromLeg} min · only ${gapRound} min before the next visit`
+      : routeMinFromLeg > 0 && gapRound > routeMinFromLeg + 1e-6
+        ? `Drive to next stop: ${routeMinFromLeg} min · ${gapRound} min until next stop`
+        : routeMinFromLeg > 0
+          ? `Drive to next stop: ${routeMinFromLeg} min`
+          : `Drive to next stop: ${dm} min`;
     const legTitle = duplicateFullLegInGap
       ? driveLabel(dm, 'Drive from depot')
       : driveBeforeVisitName && routeMinFromLeg > 0 && gapRound > routeMinFromLeg + 1e-6
         ? `Drive before ${driveBeforeVisitName}: ${routeMinFromLeg} min route (${gapRound} min gap)`
         : driveBeforeVisitName && routeMinFromLeg > 0
           ? `Drive before ${driveBeforeVisitName}: ${routeMinFromLeg} min`
-        : driveBeforeVisitName
-          ? `Drive before ${driveBeforeVisitName}: ${dm} min`
-          : routeMinFromLeg > 0 && gapRound > routeMinFromLeg + 1e-6
-            ? `Drive to next stop: ${routeMinFromLeg} min · ${gapRound} min until next stop`
-            : routeMinFromLeg > 0
-              ? `Drive to next stop: ${routeMinFromLeg} min`
-              : `Drive to next stop: ${dm} min`;
+          : driveBeforeVisitName
+            ? `Drive before ${driveBeforeVisitName}: ${dm} min`
+            : nextStopLabel;
     segs.push({
       top: driveTopPx,
       height: Math.max(4, driveH),
@@ -1421,7 +1446,7 @@ export function computeDepotReturnTrailingBlockOverrunLayers(
 ): DepotReturnTrailingBlockOverrunLayer[] {
   const practiceTz = practiceTimeZoneOrDefault(dayData.timezone);
   const { displayHouseholds, displayTimeline, topMinByIdx, durMinByIdx, driveOffsets, ds, N } = layout;
-  const apptBufDefault = dayData.appointmentBufferMinutes ?? 5;
+  const apptBufDefault = dayData.appointmentBufferMinutes ?? DEFAULT_APPOINTMENT_BUFFER_MINUTES;
 
   const toMin = (iso: string) =>
     minutesFromDayStart(
@@ -2008,7 +2033,9 @@ export default function MyWeek(props: MyWeekProps = {}) {
               typeof result?.backToDepotSec === 'number' ? result.backToDepotSec : null;
             const backToDepotIso = result?.backToDepotIso ?? null;
             const appointmentBufferMinutes =
-              typeof result?.appointmentBufferMinutes === 'number' ? result.appointmentBufferMinutes : 5;
+              typeof result?.appointmentBufferMinutes === 'number'
+                ? result.appointmentBufferMinutes
+                : DEFAULT_APPOINTMENT_BUFFER_MINUTES;
             // Display in positionInDay order from ETA byIndex; keyToPositionInDay uses all key variants so lookup works across precision differences
             const N = day.households.length;
             let routingOrderIndices: number[];
@@ -2892,7 +2919,7 @@ export default function MyWeek(props: MyWeekProps = {}) {
                   {!isDoctorDayOff &&
                   (() => {
                     if (!dayData?.households?.length) return null;
-                    const bufferMin = dayData.appointmentBufferMinutes ?? 5;
+                    const bufferMin = dayData.appointmentBufferMinutes ?? DEFAULT_APPOINTMENT_BUFFER_MINUTES;
                     const layout = computeMyWeekDayColumnLayout(
                       dayData,
                       weekGrid,
