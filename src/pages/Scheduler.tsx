@@ -123,7 +123,7 @@ import {
   evetPatientLink,
   evetQuickInvoicingLink,
 } from '../utils/evet';
-import { buildPhoneDialHref, buildPhoneSmsHref } from '../utils/quoContact';
+import { buildPhoneDialHref, buildPhoneSmsHref, resolveQuoFromLine } from '../utils/quoContact';
 import {
   loadRoutingPreviewClientContact,
   previewClientContactFromAppointment,
@@ -9846,7 +9846,13 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               fail('No phone number on file.');
               return;
             }
-            window.location.href = buildPhoneDialHref(phone);
+            // Match preview Call/Text: pin Quo `from` to the visit doctor's line so the
+            // deep link does not inherit whatever inbox is currently active in Quo.
+            const fromLine = resolveQuoFromLine({
+              appointmentPrimaryProvider: appt.primaryProvider,
+              providers,
+            });
+            window.location.href = buildPhoneDialHref(phone, { fromLine });
             return;
           }
           case 'text': {
@@ -9859,7 +9865,11 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               fail('No phone number on file.');
               return;
             }
-            window.location.href = buildPhoneSmsHref(phone);
+            const fromLine = resolveQuoFromLine({
+              appointmentPrimaryProvider: appt.primaryProvider,
+              providers,
+            });
+            window.location.href = buildPhoneSmsHref(phone, { fromLine });
             return;
           }
           default:
