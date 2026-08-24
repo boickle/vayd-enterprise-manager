@@ -5826,7 +5826,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         vwW,
         vwH,
         cardW: 300,
-        cardEstH: 340,
+        cardEstH: 420,
         padding: 12,
         gutter: 10,
       });
@@ -5835,7 +5835,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       vwW,
       vwH,
       cardW: 300,
-      cardEstH: 340,
+      cardEstH: 420,
       padding: 12,
     });
   }, [editTimePreview, editPreviewAnchorRect, editPreviewDayColumnRect, editPreviewScoreCompare]);
@@ -5893,7 +5893,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       vwW,
       vwH,
       cardW: 300,
-      cardEstH: 280,
+      cardEstH: 360,
       padding: 12,
       gutter: 10,
     });
@@ -11434,7 +11434,11 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               position: 'fixed',
               left: routingPreviewPopoverPos.left,
               width: routingPreviewPopoverPos.width,
+              maxHeight: routingPreviewPopoverPos.maxCardH,
               zIndex: 2050,
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
               ...(routingPreviewPopoverPos.bottom != null
                 ? { top: 'auto', bottom: routingPreviewPopoverPos.bottom }
                 : { top: routingPreviewPopoverPos.top }),
@@ -11474,7 +11478,11 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               position: 'fixed',
               left: editPreviewPopoverPos.left,
               width: editPreviewPopoverPos.width,
+              maxHeight: editPreviewPopoverPos.maxCardH,
               zIndex: 2050,
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
               ...(editPreviewPopoverPos.bottom != null
                 ? { top: 'auto', bottom: editPreviewPopoverPos.bottom }
                 : { top: editPreviewPopoverPos.top }),
