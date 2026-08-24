@@ -122,4 +122,40 @@ const api = coerceOverrunSeconds(180) ?? 0;
 const reconciled = coerceOverrunSeconds(30 * 60) ?? 0;
 assert(Math.max(api, reconciled) === 30 * 60, 'reconciled overrun wins for badge');
 
+function startPastWorkdayEndSeconds(suggestedStartIso, endDepotTime) {
+  const endSec = localHmsToSeconds(endDepotTime);
+  if (endSec == null) return undefined;
+  const raw = typeof suggestedStartIso === 'string' ? suggestedStartIso.trim() : '';
+  if (!raw) return undefined;
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return undefined;
+  const startSec = /[zZ]|[+\-]\d{2}:\d{2}$/.test(raw)
+    ? (() => {
+        const m = raw.match(/T(\d{2}):(\d{2})(?::(\d{2}))?/);
+        if (!m) return undefined;
+        return Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3] || 0);
+      })()
+    : d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds();
+  if (startSec == null) return undefined;
+  return Math.max(0, startSec - endSec);
+}
+
+assert(
+  startPastWorkdayEndSeconds('2026-09-23T17:05:00.000-04:00', '16:00') === 65 * 60,
+  '5:05 PM start is +65m past 4:00 line'
+);
+assert(
+  startPastWorkdayEndSeconds('2026-09-23T12:40:00.000-04:00', '16:00') === 0,
+  'in-hours start is not past the line'
+);
+assert(
+  startPastWorkdayEndSeconds('2026-09-23T16:00:00.000-04:00', '16:00') === 0,
+  'start on the line is not overflow'
+);
+const startPast = startPastWorkdayEndSeconds('2026-09-23T17:05:00.000-04:00', '16:00') ?? 0;
+assert(
+  Math.max(0, startPast) >= 60,
+  'start-after-line badges when depot-return overrun is 0'
+);
+
 console.log('depotReturnOverrunSmoke: ok');
