@@ -115,6 +115,7 @@ import {
   computeSchedulerTimelineWindowWarning,
   schedulerHouseholdUsesDoctorDayClockForLayout,
 } from '../utils/schedulerWindowWarning';
+import { arrivalWindowIsZeroWidth } from '../utils/windowWarning';
 import {
   evetAddCommunicationLink,
   evetCheckoutLink,
@@ -1941,31 +1942,56 @@ function visitDetailsWindowLine(
   appt: Appointment,
   driveHint: SchedulerHoverDriveHint | null | undefined
 ): string | null {
+  const practiceTz = driveHint?.practiceTz ?? PRACTICE_TZ;
+  const scheduledRange = () => {
+    const a = formatIsoTimeShortInPracticeZone(appt.appointmentStart, practiceTz);
+    const b = formatIsoTimeShortInPracticeZone(appt.appointmentEnd, practiceTz);
+    if (!a || !b) return null;
+    return `${a} – ${b}`;
+  };
+
   if (driveHint) {
     const showWindow =
       !!(driveHint.windowStartIso || driveHint.windowEndIso) ||
       (driveHint.isFixedTime && !driveHint.isPersonalBlock && !!(driveHint.schedStartIso || driveHint.schedEndIso));
     if (showWindow && !(driveHint.isPersonalBlock && driveHint.isFixedTime)) {
+      // Zero-width (HOLD in-office / Fixed Time 0±0): show booked visit span, not "3:30 – 3:30".
+      if (
+        driveHint.windowStartIso &&
+        driveHint.windowEndIso &&
+        arrivalWindowIsZeroWidth(driveHint.windowStartIso, driveHint.windowEndIso)
+      ) {
+        return scheduledRange();
+      }
       return formatSchedulerArrivalWindowLine(driveHint);
     }
   }
   const ew = appt.effectiveWindow;
   if (ew?.startIso && ew?.endIso) {
+    if (arrivalWindowIsZeroWidth(ew.startIso, ew.endIso)) {
+      return scheduledRange();
+    }
     return `${formatIsoTimeShortInPracticeZone(ew.startIso, PRACTICE_TZ)} – ${formatIsoTimeShortInPracticeZone(ew.endIso, PRACTICE_TZ)}`;
   }
   const aw = appt.arrivalWindow;
   if (aw?.windowStartLocal && aw?.windowEndLocal) {
+    if (aw.windowStartLocal === aw.windowEndLocal) {
+      return scheduledRange();
+    }
     return `${aw.windowStartLocal} – ${aw.windowEndLocal}`;
   }
   const ws = pickStr(aw?.windowStartIso);
   const we = pickStr(aw?.windowEndIso);
   if (ws && we) {
+    if (arrivalWindowIsZeroWidth(ws, we)) {
+      return scheduledRange();
+    }
     return `${formatIsoTimeShortInPracticeZone(ws, PRACTICE_TZ)} – ${formatIsoTimeShortInPracticeZone(we, PRACTICE_TZ)}`;
   }
   return null;
 }
 
-/** Compact appointment-card header: `🪟 8:50 AM – 10:50 AM`. */
+/** Compact appointment-card header: `🪟 8:50 AM – 10:50 AM` (or booked span when window is 0±0). */
 function schedulerEventWindowCardLabel(
   appt: Appointment,
   driveHint: SchedulerHoverDriveHint | null | undefined
@@ -1984,6 +2010,11 @@ function schedulerEventWindowCardLabel(
     practiceTz,
   });
   if (resolved?.startIso && resolved?.endIso) {
+    if (arrivalWindowIsZeroWidth(resolved.startIso, resolved.endIso)) {
+      const a = formatIsoTimeShortInPracticeZone(appt.appointmentStart, practiceTz);
+      const b = formatIsoTimeShortInPracticeZone(appt.appointmentEnd, practiceTz);
+      if (a && b) return `🪟 ${a} – ${b}`;
+    }
     return `🪟 ${formatIsoTimeShortInPracticeZone(resolved.startIso, practiceTz)} – ${formatIsoTimeShortInPracticeZone(resolved.endIso, practiceTz)}`;
   }
   return null;
