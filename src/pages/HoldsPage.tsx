@@ -58,6 +58,7 @@ import {
 } from '../utils/gmailAppointmentRequestLabels';
 import {
   buildHoldExitSnapshotGroup,
+  filterHoldHouseholdGroupsByOwner,
   groupHoldsByClientHousehold,
   holdHouseholdAnyStale,
   holdHouseholdEarliestPlacedAt,
@@ -241,7 +242,12 @@ export default function HoldsPage() {
 
   const searchQuery = search.trim();
   const searchActive = searchQuery.length > 0;
-  const fetchOwner: HoldOwnerFilter = searchActive ? 'all' : owner;
+  /**
+   * Always load the full holds list, then filter groups client-side so sibling
+   * holds for the same client/patient stay attached even when ownership differs
+   * (e.g. Mine + an unassigned autobook hold after Explore alternatives).
+   */
+  const fetchOwner: HoldOwnerFilter = 'all';
 
   const [smsGroup, setSmsGroup] = useState<HoldHouseholdGroup | null>(null);
   const [smsMessage, setSmsMessage] = useState('');
@@ -365,12 +371,21 @@ export default function HoldsPage() {
           const exitGroupKey =
             pending.groupKey?.trim() || pendingDepartGroupKeyRef.current?.trim() || null;
           const freshGrouped = sortHoldHouseholdGroupsByAppointmentStart(
-            groupHoldsByClientHousehold(res.holds, PRACTICE_TZ),
+            filterHoldHouseholdGroupsByOwner(
+              groupHoldsByClientHousehold(res.holds, PRACTICE_TZ),
+              owner,
+            ),
           );
-          const match =
+          const remaining =
             (exitGroupKey ? freshGrouped.find((g) => g.key === exitGroupKey) : undefined) ??
-            freshGrouped.find((g) => g.holds.some((h) => idSet.has(h.id))) ??
-            buildHoldExitSnapshotGroup(
+            freshGrouped.find((g) => g.holds.some((h) => idSet.has(h.id)));
+          if (remaining) {
+            // Sibling hold(s) for this client/patient still on the board — keep the
+            // card visible and highlight it instead of animating a full-row exit.
+            setHighlightGroupKey(remaining.key);
+            pendingDepartGroupKeyRef.current = remaining.key;
+          } else {
+            const match = buildHoldExitSnapshotGroup(
               pending.appointmentIds,
               pending.clientLabel ?? null,
               exitGroupKey,
@@ -378,7 +393,8 @@ export default function HoldsPage() {
                 appointmentStart: pending.snapshotAppointmentStart ?? null,
               },
             );
-          setPendingHoldsBoardExit({ group: match, exitKind: pending.exitKind });
+            setPendingHoldsBoardExit({ group: match, exitKind: pending.exitKind });
+          }
         }
       }
     } catch (e) {
@@ -387,7 +403,7 @@ export default function HoldsPage() {
     } finally {
       if (gen === loadGenRef.current && !silent) setLoading(false);
     }
-  }, [fetchOwner]);
+  }, [fetchOwner, owner]);
 
   const beginGroupExit = useCallback(
     (group: HoldHouseholdGroup, exitKind: HoldsBoardReturnExitKind) => {
@@ -742,9 +758,12 @@ export default function HoldsPage() {
   const grouped = useMemo(
     () =>
       sortHoldHouseholdGroupsByAppointmentStart(
-        groupHoldsByClientHousehold(holds, PRACTICE_TZ),
+        filterHoldHouseholdGroupsByOwner(
+          groupHoldsByClientHousehold(holds, PRACTICE_TZ),
+          searchActive ? 'all' : owner,
+        ),
       ),
-    [holds]
+    [holds, owner, searchActive]
   );
 
   const filteredGroups = useMemo(() => {
