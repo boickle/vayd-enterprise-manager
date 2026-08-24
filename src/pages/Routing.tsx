@@ -169,6 +169,7 @@ import {
   readRoutingUiBootstrap,
   ROUTING_DISMISS_RESCHEDULE_EVENT,
   ROUTING_DISMISS_FORWARD_BOOKING_EVENT,
+  ROUTING_NEW_APPOINTMENT_CLEAR_EVENT,
   ROUTING_REQUEST_ID_SESSION_KEY,
   ROUTING_WORKSPACE_SCHEDULER_BOOKED_EVENT,
   writeAuthDoctorCache,
@@ -2320,6 +2321,29 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     setFeedbackToast(null);
   }, []);
 
+  /** "+ Appointment" / New appointment — blank Get Best Route form (keep doctor). */
+  const resetRoutingFormForNewAppointment = useCallback(() => {
+    resetRoutingFormAfterRescheduleDismiss();
+    setHasActiveRescheduleIntent(false);
+    setHasActiveAppointmentRequestWorkspace(false);
+    setHasActiveForwardBookingWorkspace(false);
+    setSelectedRoutingPatientIds([]);
+    setRoutingClientPatients([]);
+    setAddressError(null);
+    setError(null);
+    setScheduleBookedKeys({});
+    setFeedbackSuccessKey(null);
+    setFeedbackSubmittingKey(null);
+    setLatestRoutingRequestId(null);
+    if (typeof window !== 'undefined') {
+      try {
+        sessionStorage.removeItem(ROUTING_REQUEST_ID_SESSION_KEY);
+      } catch {
+        /* ignore */
+      }
+    }
+  }, [resetRoutingFormAfterRescheduleDismiss]);
+
   const rescheduleOriginalVisitForCompare = useMemo(() => {
     if (!hasActiveRescheduleIntent) return null;
     return resolveRescheduleOriginalVisitForCompare(
@@ -3157,6 +3181,15 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     return () =>
       window.removeEventListener(ROUTING_DISMISS_APPOINTMENT_REQUEST_EVENT, onDismissAppointmentRequest);
   }, [calendarWorkspaceMode, resetRoutingFormAfterForwardBookingDismiss]);
+
+  useEffect(() => {
+    function onNewAppointmentClear() {
+      resetRoutingFormForNewAppointment();
+    }
+    window.addEventListener(ROUTING_NEW_APPOINTMENT_CLEAR_EVENT, onNewAppointmentClear);
+    return () =>
+      window.removeEventListener(ROUTING_NEW_APPOINTMENT_CLEAR_EVENT, onNewAppointmentClear);
+  }, [resetRoutingFormForNewAppointment]);
 
   /** Clear stale routing results when the search doctor changes; calendar stays on the source visit. */
   const prevRescheduleSearchDoctorRef = useRef<string | null>(null);
