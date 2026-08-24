@@ -6810,6 +6810,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                       const etaReconciled = etaRow
                         ? {
                             hasAnyWarning: etaRow.hasWindowWarning,
+                            hasPlacementRelevantWarning: etaRow.hasWindowWarning,
                             warningStopCount: etaRow.warningStopCount,
                             candidateHasWarning: etaRow.candidateHasWarning,
                           }

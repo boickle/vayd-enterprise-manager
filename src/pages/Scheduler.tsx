@@ -112,10 +112,9 @@ import {
   type WeekGridMetrics,
 } from './MyWeek';
 import {
-  computeSchedulerTimelineWindowWarning,
   schedulerHouseholdUsesDoctorDayClockForLayout,
 } from '../utils/schedulerWindowWarning';
-import { arrivalWindowIsZeroWidth } from '../utils/windowWarning';
+import { arrivalWindowIsZeroWidth, computeDriveTimeWindowWarning } from '../utils/windowWarning';
 import {
   evetAddCommunicationLink,
   evetCheckoutLink,
@@ -1834,9 +1833,18 @@ function buildSchedulerDriveHintForAppt(
   });
   const windowStartIso = resolvedWindow?.startIso ?? null;
   const windowEndIso = resolvedWindow?.endIso ?? null;
-  const windowWarning = computeSchedulerTimelineWindowWarning(h, slot, showByDriveTime, (p) =>
-    isFlexBlockItem(p as { blockLabel?: string; title?: string } | null | undefined)
-  );
+  // Match Visit Highlights promised window vs ETA (same sources as the displayed times).
+  // Household/slot-only lookup can miss type-fallback windows and hide a deserved badge.
+  const windowWarning =
+    showByDriveTime && !h.isPersonalBlock
+      ? computeDriveTimeWindowWarning({
+          etaIso,
+          windowEndIso,
+          windowStartIso,
+          isClientFixedTime: isFixedTime,
+          scheduledStartIso: h.startIso ?? appt.appointmentStart,
+        })
+      : false;
   return {
     practiceTz,
     etaIso,
@@ -4913,7 +4921,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                 optionKey:
                   routingPreview.listOptionKey?.trim() ||
                   routingCalendarPreviewOptionKey(routingPreview),
-                hasWindowWarning: etaWindowSummary.hasAnyWarning,
+                // Placement-relevant only (candidate or at/after it) — not upstream pre-existing.
+                hasWindowWarning: etaWindowSummary.hasPlacementRelevantWarning,
                 warningStopCount: etaWindowSummary.warningStopCount,
                 candidateHasWarning: etaWindowSummary.candidateHasWarning,
                 reconciledOverrunSeconds,
