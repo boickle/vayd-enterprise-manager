@@ -13,6 +13,8 @@ type Props = {
   recommendedLength?: StaffConfirmRecommendedLength | null;
   recommendedLengthLoading?: boolean;
   onBack: () => void;
+  /** Dismiss popover and stay on the schedule (do not return to Holds). */
+  onDone: () => void;
   /** Re-open edit modal (e.g. resize block after converting hold → standard). */
   onEdit?: () => void;
 };
@@ -48,6 +50,7 @@ export default function OnHoldVisitConvertedPopover({
   recommendedLength,
   recommendedLengthLoading = false,
   onBack,
+  onDone,
   onEdit,
 }: Props) {
   const typeLabel = appointmentTypeLabel(appt);
@@ -56,8 +59,8 @@ export default function OnHoldVisitConvertedPopover({
   const title = exitKind === 'booked' ? 'Appointment booked' : 'Hold removed';
   const body =
     exitKind === 'booked'
-      ? 'This hold is now a standard appointment. Resize the calendar block if needed, then go back to finish.'
-      : 'This calendar hold was removed. When you are ready, go back to Holds to finish.';
+      ? 'This hold is now a standard appointment. Resize the calendar block if needed, then choose Done to stay on the schedule or go back to Holds.'
+      : 'This calendar hold was removed. Choose Done to stay on the schedule, or go back to Holds.';
 
   return (
     <div
@@ -113,10 +116,13 @@ export default function OnHoldVisitConvertedPopover({
           Back to Holds
         </button>
         {onEdit ? (
-          <button type="button" className="btn primary" onClick={onEdit}>
+          <button type="button" className="btn secondary" onClick={onEdit}>
             Edit
           </button>
         ) : null}
+        <button type="button" className="btn primary" onClick={onDone}>
+          Done
+        </button>
       </div>
     </div>
   );

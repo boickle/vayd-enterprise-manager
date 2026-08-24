@@ -8401,52 +8401,64 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     [onHoldVisitPreview, onHoldVisitApptForPopover, clearEditVisitHighlightTimer, navigate],
   );
 
+  const finishOnHoldVisitConverted = useCallback(
+    (opts?: { navigateBack?: boolean }) => {
+      const navigateBack = opts?.navigateBack !== false;
+      const preview = onHoldVisitPreview;
+      const exitKind = onHoldVisitConvertedExitKind;
+      if (!preview || !exitKind) {
+        dismissOnHoldVisitPreview();
+        return;
+      }
+      if (isHoldsBoardReturnPath(preview.returnPath)) {
+        const householdIds = onHoldVisitHouseholdAppts
+          .map((a) => Number(a.id))
+          .filter((id) => Number.isFinite(id) && id > 0);
+        writeHoldsBoardReturnSession({
+          appointmentIds:
+            householdIds.length > 0 ? householdIds : [preview.bookedAppointmentId],
+          exitKind: exitKind === 'removed' ? 'removed' : 'booked',
+          clientLabel: preview.clientLabel,
+          groupKey: preview.groupKey,
+          snapshotAppointmentStart: onHoldVisitApptForPopover?.appointmentStart ?? null,
+        });
+      } else {
+        writeOnHoldVisitEditReturnSession({
+          listEntryId: preview.listEntryId,
+          listKind: preview.listKind,
+          exitKind,
+        });
+      }
+      clearOnHoldVisitEditSession();
+      clearEditVisitHighlightTimer();
+      setEditVisitHighlightIds(new Set());
+      setOnHoldVisitPreview(null);
+      setOnHoldVisitConvertedExitKind(null);
+      setOnHoldVisitEditing(false);
+      setOnHoldVisitEditingApptId(null);
+      setOnHoldVisitLinkSelection(null);
+      setEditVisitPatientSelection(null);
+      notifySchedulingToolsNavCountsRefresh();
+      if (navigateBack) navigate(preview.returnPath);
+    },
+    [
+      onHoldVisitPreview,
+      onHoldVisitConvertedExitKind,
+      onHoldVisitHouseholdAppts,
+      onHoldVisitApptForPopover,
+      dismissOnHoldVisitPreview,
+      clearEditVisitHighlightTimer,
+      navigate,
+    ],
+  );
+
   const completeOnHoldVisitReturn = useCallback(() => {
-    const preview = onHoldVisitPreview;
-    const exitKind = onHoldVisitConvertedExitKind;
-    if (!preview || !exitKind) {
-      dismissOnHoldVisitPreview();
-      return;
-    }
-    if (isHoldsBoardReturnPath(preview.returnPath)) {
-      const householdIds = onHoldVisitHouseholdAppts
-        .map((a) => Number(a.id))
-        .filter((id) => Number.isFinite(id) && id > 0);
-      writeHoldsBoardReturnSession({
-        appointmentIds:
-          householdIds.length > 0 ? householdIds : [preview.bookedAppointmentId],
-        exitKind: exitKind === 'removed' ? 'removed' : 'booked',
-        clientLabel: preview.clientLabel,
-        groupKey: preview.groupKey,
-        snapshotAppointmentStart: onHoldVisitApptForPopover?.appointmentStart ?? null,
-      });
-    } else {
-      writeOnHoldVisitEditReturnSession({
-        listEntryId: preview.listEntryId,
-        listKind: preview.listKind,
-        exitKind,
-      });
-    }
-    clearOnHoldVisitEditSession();
-    clearEditVisitHighlightTimer();
-    setEditVisitHighlightIds(new Set());
-    setOnHoldVisitPreview(null);
-    setOnHoldVisitConvertedExitKind(null);
-    setOnHoldVisitEditing(false);
-    setOnHoldVisitEditingApptId(null);
-    setOnHoldVisitLinkSelection(null);
-    setEditVisitPatientSelection(null);
-    notifySchedulingToolsNavCountsRefresh();
-    navigate(preview.returnPath);
-  }, [
-    onHoldVisitPreview,
-    onHoldVisitConvertedExitKind,
-    onHoldVisitHouseholdAppts,
-    onHoldVisitApptForPopover,
-    dismissOnHoldVisitPreview,
-    clearEditVisitHighlightTimer,
-    navigate,
-  ]);
+    finishOnHoldVisitConverted({ navigateBack: true });
+  }, [finishOnHoldVisitConverted]);
+
+  const completeOnHoldVisitStayOnSchedule = useCallback(() => {
+    finishOnHoldVisitConverted({ navigateBack: false });
+  }, [finishOnHoldVisitConverted]);
 
   const dismissNotBookedRemoveGate = useCallback(() => {
     const returnPath = notBookedRemoveGate?.returnPath;
@@ -8607,12 +8619,12 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     if (!onHoldVisitPreview || !onHoldVisitConvertedExitKind) return;
 
     const onKeyDown = (ev: KeyboardEvent) => {
-      if (ev.key === 'Escape') completeOnHoldVisitReturn();
+      if (ev.key === 'Escape') completeOnHoldVisitStayOnSchedule();
     };
 
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [onHoldVisitPreview, onHoldVisitConvertedExitKind, completeOnHoldVisitReturn]);
+  }, [onHoldVisitPreview, onHoldVisitConvertedExitKind, completeOnHoldVisitStayOnSchedule]);
 
   const handleOnHoldVisitEditSaved = useCallback(
     (updated?: Appointment, detail?: { alignedAppointments?: Appointment[] }) => {
@@ -11738,6 +11750,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                 recommendedLength={onHoldVisitConvertedRecommendedLength}
                 recommendedLengthLoading={onHoldVisitConvertedRecommendedLengthLoading}
                 onBack={completeOnHoldVisitReturn}
+                onDone={completeOnHoldVisitStayOnSchedule}
                 onEdit={
                   onHoldVisitConvertedExitKind === 'booked'
                     ? handleOnHoldVisitEditFromConverted
