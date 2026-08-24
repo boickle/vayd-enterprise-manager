@@ -97,6 +97,7 @@ import {
 } from '../utils/routingCalendarPreviewStorage';
 import { hasActiveRoutingCalendarPreview } from '../utils/routingCalendarPreviewGuard';
 import { coerceOverrunSeconds, startPastWorkdayEndSeconds } from '../utils/depotReturnOverrun';
+import { arrivalWindowIsZeroWidth } from '../utils/windowWarning';
 import {
   buildRoutingRescheduleContextForSlotSearch,
   clearRoutingRescheduleIntent,
@@ -715,6 +716,9 @@ function routingVisitWindowDiffersFromDefault60(opt: {
   const endIso = opt.arrivalWindow?.windowEndIso;
   if (!startIso || !endIso) return false;
 
+  // Intentional no-window types (HOLD – In Office / Fixed Time 0±0) — not a "weird" window.
+  if (arrivalWindowIsZeroWidth(startIso, endIso)) return false;
+
   const winStart = DateTime.fromISO(startIso);
   const winEnd = DateTime.fromISO(endIso);
   if (!winStart.isValid || !winEnd.isValid) return false;
@@ -748,6 +752,41 @@ function routingVisitWindowDiffersFromDefault60(opt: {
 
   if (!apptIso) return false;
   return true;
+}
+
+/** Result-card time range: real arrival windows as-is; zero-width → visit start + service minutes. */
+function routingResultVisitTimeLabel(
+  opt: {
+    suggestedStartIso?: string;
+    arrivalWindow?: { windowStartIso?: string; windowEndIso?: string };
+  },
+  serviceMinutes: number
+): { label: string; timeText: string; zeroWidthWindow: boolean } {
+  const awStart = opt.arrivalWindow?.windowStartIso;
+  const awEnd = opt.arrivalWindow?.windowEndIso;
+  const zeroWidth = Boolean(awStart && awEnd && arrivalWindowIsZeroWidth(awStart, awEnd));
+  if (awStart && awEnd && !zeroWidth) {
+    return {
+      label: 'Arrival Window',
+      timeText: `${isoToTime(awStart)} – ${isoToTime(awEnd)}`,
+      zeroWidthWindow: false,
+    };
+  }
+  const startIso = opt.suggestedStartIso?.trim() || awStart || '';
+  if (!startIso) {
+    return { label: 'Visit time', timeText: '-', zeroWidthWindow: zeroWidth };
+  }
+  const start = DateTime.fromISO(startIso);
+  if (!start.isValid) {
+    return { label: 'Visit time', timeText: isoToTime(startIso), zeroWidthWindow: zeroWidth };
+  }
+  const mins = Math.max(1, Math.floor(Number(serviceMinutes)) || 30);
+  const endIso = start.plus({ minutes: mins }).toISO();
+  return {
+    label: 'Visit time',
+    timeText: endIso ? `${isoToTime(startIso)} – ${isoToTime(endIso)}` : isoToTime(startIso),
+    zeroWidthWindow: zeroWidth,
+  };
 }
 
 function colorForAddedDrive(seconds?: number): string {
@@ -6544,11 +6583,12 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                     (candidateScoutRow.scoutLiaisonLabels ?? []).some(Boolean) ||
                     (candidateScoutRow.scoutLiaisonLabelIds ?? []).some(Boolean));
                 const metricsRow = scoutDayMetricsForCandidate(opt);
-                const visitWindowTime =
-                  opt.arrivalWindow?.windowStartIso && opt.arrivalWindow?.windowEndIso
-                    ? `${isoToTime(opt.arrivalWindow.windowStartIso)} – ${isoToTime(opt.arrivalWindow.windowEndIso)}`
-                    : isoToTime(opt.suggestedStartIso);
-                const visitWindowNonDefault = routingVisitWindowDiffersFromDefault60(opt);
+                const visitTimeDisplay = routingResultVisitTimeLabel(
+                  opt,
+                  form.newAppt.serviceMinutes
+                );
+                const visitWindowNonDefault =
+                  !visitTimeDisplay.zeroWidthWindow && routingVisitWindowDiffersFromDefault60(opt);
 
                 const isCalendarPreviewCard =
                   calendarWorkspaceMode &&
@@ -6839,7 +6879,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                         v={String((opt as any).positionInDay ?? (opt as any).displayInsertionIndex ?? opt.insertionIndex + 1)}
                       />
                       <KeyValue
-                        k="Arrival Window"
+                        k={visitTimeDisplay.label}
                         v={
                           <strong
                             className={
@@ -6848,7 +6888,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                                 : undefined
                             }
                           >
-                            {visitWindowTime}
+                            {visitTimeDisplay.timeText}
                           </strong>
                         }
                       />

@@ -48,7 +48,7 @@ import {
 } from '../utils/myDayVisualPatientDetails';
 import { myDayVisualAlternateAddressPdfFields } from '../utils/myDayVisualAlternateAddress';
 import {
-  clientFixedTimeUsesDoctorDayClockForDriveLayout,
+  clientVisitUsesDoctorDayClockForDriveLayout,
   computeDriveTimeWindowWarning,
 } from '../utils/windowWarning';
 import {
@@ -480,7 +480,6 @@ function visualHouseholdUsesDoctorDayClockForLayout(
   const flexSource = blockMetaForFlex ?? h.primary;
   const flexBlock = Boolean(h.isPersonalBlock && isFlexBlockItem(flexSource));
   if (h.isPersonalBlock && !flexBlock) return true;
-  if (!visualHouseholdIsClientFixedTime(h)) return false;
   const windowStartIso =
     (slot?.windowStartIso != null && slot?.windowEndIso != null ? slot.windowStartIso : null) ??
     h.windowStartIso ??
@@ -491,7 +490,8 @@ function visualHouseholdUsesDoctorDayClockForLayout(
     h.windowEndIso ??
     h.effectiveWindow?.endIso ??
     null;
-  return clientFixedTimeUsesDoctorDayClockForDriveLayout({
+  return clientVisitUsesDoctorDayClockForDriveLayout({
+    isClientFixedTime: visualHouseholdIsClientFixedTime(h),
     schedStartIso: h.startIso,
     etaIso: slot?.eta,
     windowStartIso,

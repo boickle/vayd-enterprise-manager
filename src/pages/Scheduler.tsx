@@ -115,6 +115,7 @@ import {
   computeSchedulerTimelineWindowWarning,
   schedulerHouseholdUsesDoctorDayClockForLayout,
 } from '../utils/schedulerWindowWarning';
+import { arrivalWindowIsZeroWidth } from '../utils/windowWarning';
 import {
   evetAddCommunicationLink,
   evetCheckoutLink,
@@ -123,7 +124,7 @@ import {
   evetPatientLink,
   evetQuickInvoicingLink,
 } from '../utils/evet';
-import { buildPhoneDialHref, buildPhoneSmsHref } from '../utils/quoContact';
+import { buildPhoneDialHref, buildPhoneSmsHref, resolveQuoFromLine } from '../utils/quoContact';
 import {
   loadRoutingPreviewClientContact,
   previewClientContactFromAppointment,
@@ -1941,31 +1942,56 @@ function visitDetailsWindowLine(
   appt: Appointment,
   driveHint: SchedulerHoverDriveHint | null | undefined
 ): string | null {
+  const practiceTz = driveHint?.practiceTz ?? PRACTICE_TZ;
+  const scheduledRange = () => {
+    const a = formatIsoTimeShortInPracticeZone(appt.appointmentStart, practiceTz);
+    const b = formatIsoTimeShortInPracticeZone(appt.appointmentEnd, practiceTz);
+    if (!a || !b) return null;
+    return `${a} – ${b}`;
+  };
+
   if (driveHint) {
     const showWindow =
       !!(driveHint.windowStartIso || driveHint.windowEndIso) ||
       (driveHint.isFixedTime && !driveHint.isPersonalBlock && !!(driveHint.schedStartIso || driveHint.schedEndIso));
     if (showWindow && !(driveHint.isPersonalBlock && driveHint.isFixedTime)) {
+      // Zero-width (HOLD in-office / Fixed Time 0±0): show booked visit span, not "3:30 – 3:30".
+      if (
+        driveHint.windowStartIso &&
+        driveHint.windowEndIso &&
+        arrivalWindowIsZeroWidth(driveHint.windowStartIso, driveHint.windowEndIso)
+      ) {
+        return scheduledRange();
+      }
       return formatSchedulerArrivalWindowLine(driveHint);
     }
   }
   const ew = appt.effectiveWindow;
   if (ew?.startIso && ew?.endIso) {
+    if (arrivalWindowIsZeroWidth(ew.startIso, ew.endIso)) {
+      return scheduledRange();
+    }
     return `${formatIsoTimeShortInPracticeZone(ew.startIso, PRACTICE_TZ)} – ${formatIsoTimeShortInPracticeZone(ew.endIso, PRACTICE_TZ)}`;
   }
   const aw = appt.arrivalWindow;
   if (aw?.windowStartLocal && aw?.windowEndLocal) {
+    if (aw.windowStartLocal === aw.windowEndLocal) {
+      return scheduledRange();
+    }
     return `${aw.windowStartLocal} – ${aw.windowEndLocal}`;
   }
   const ws = pickStr(aw?.windowStartIso);
   const we = pickStr(aw?.windowEndIso);
   if (ws && we) {
+    if (arrivalWindowIsZeroWidth(ws, we)) {
+      return scheduledRange();
+    }
     return `${formatIsoTimeShortInPracticeZone(ws, PRACTICE_TZ)} – ${formatIsoTimeShortInPracticeZone(we, PRACTICE_TZ)}`;
   }
   return null;
 }
 
-/** Compact appointment-card header: `🪟 8:50 AM – 10:50 AM`. */
+/** Compact appointment-card header: `🪟 8:50 AM – 10:50 AM` (or booked span when window is 0±0). */
 function schedulerEventWindowCardLabel(
   appt: Appointment,
   driveHint: SchedulerHoverDriveHint | null | undefined
@@ -1984,6 +2010,11 @@ function schedulerEventWindowCardLabel(
     practiceTz,
   });
   if (resolved?.startIso && resolved?.endIso) {
+    if (arrivalWindowIsZeroWidth(resolved.startIso, resolved.endIso)) {
+      const a = formatIsoTimeShortInPracticeZone(appt.appointmentStart, practiceTz);
+      const b = formatIsoTimeShortInPracticeZone(appt.appointmentEnd, practiceTz);
+      if (a && b) return `🪟 ${a} – ${b}`;
+    }
     return `🪟 ${formatIsoTimeShortInPracticeZone(resolved.startIso, practiceTz)} – ${formatIsoTimeShortInPracticeZone(resolved.endIso, practiceTz)}`;
   }
   return null;
@@ -5826,7 +5857,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         vwW,
         vwH,
         cardW: 300,
-        cardEstH: 340,
+        cardEstH: 420,
         padding: 12,
         gutter: 10,
       });
@@ -5835,7 +5866,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       vwW,
       vwH,
       cardW: 300,
-      cardEstH: 340,
+      cardEstH: 420,
       padding: 12,
     });
   }, [editTimePreview, editPreviewAnchorRect, editPreviewDayColumnRect, editPreviewScoreCompare]);
@@ -5893,7 +5924,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       vwW,
       vwH,
       cardW: 300,
-      cardEstH: 280,
+      cardEstH: 360,
       padding: 12,
       gutter: 10,
     });
@@ -9846,7 +9877,13 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               fail('No phone number on file.');
               return;
             }
-            window.location.href = buildPhoneDialHref(phone);
+            // Match preview Call/Text: pin Quo `from` to the visit doctor's line so the
+            // deep link does not inherit whatever inbox is currently active in Quo.
+            const fromLine = resolveQuoFromLine({
+              appointmentPrimaryProvider: appt.primaryProvider,
+              providers,
+            });
+            window.location.href = buildPhoneDialHref(phone, { fromLine });
             return;
           }
           case 'text': {
@@ -9859,7 +9896,11 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               fail('No phone number on file.');
               return;
             }
-            window.location.href = buildPhoneSmsHref(phone);
+            const fromLine = resolveQuoFromLine({
+              appointmentPrimaryProvider: appt.primaryProvider,
+              providers,
+            });
+            window.location.href = buildPhoneSmsHref(phone, { fromLine });
             return;
           }
           default:
@@ -11434,7 +11475,11 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               position: 'fixed',
               left: routingPreviewPopoverPos.left,
               width: routingPreviewPopoverPos.width,
+              maxHeight: routingPreviewPopoverPos.maxCardH,
               zIndex: 2050,
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
               ...(routingPreviewPopoverPos.bottom != null
                 ? { top: 'auto', bottom: routingPreviewPopoverPos.bottom }
                 : { top: routingPreviewPopoverPos.top }),
@@ -11474,7 +11519,11 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               position: 'fixed',
               left: editPreviewPopoverPos.left,
               width: editPreviewPopoverPos.width,
+              maxHeight: editPreviewPopoverPos.maxCardH,
               zIndex: 2050,
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
               ...(editPreviewPopoverPos.bottom != null
                 ? { top: 'auto', bottom: editPreviewPopoverPos.bottom }
                 : { top: editPreviewPopoverPos.top }),
