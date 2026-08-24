@@ -119,22 +119,27 @@ export default function VsdPaymentsMatchAnalyticsPage() {
     [report]
   );
 
-  const remainingGap = report
-    ? Math.max(0, report.totals.gap - report.totals.membershipDiscount)
-    : 0;
+  const stillOpen =
+    report != null
+      ? report.totals.openToCollect ||
+        report.doctors.reduce((s, d) => s + d.openToCollect, 0)
+      : 0;
+  const remainingGap = stillOpen;
   const gapPct =
     report && report.totals.vsd > 0 ? (100 * remainingGap) / report.totals.vsd : 0;
   const vsdMinusPayments = report?.totals.gap ?? 0;
+  const membershipAndOpen =
+    report != null ? report.totals.membershipDiscount + remainingGap : 0;
   const membershipShareOfDiff =
-    vsdMinusPayments > 0 && report
-      ? (100 * report.totals.membershipDiscount) / vsdMinusPayments
+    membershipAndOpen > 0 && report
+      ? (100 * report.totals.membershipDiscount) / membershipAndOpen
       : 0;
   const remainingShareOfDiff =
-    vsdMinusPayments > 0 ? (100 * remainingGap) / vsdMinusPayments : 0;
+    membershipAndOpen > 0 ? (100 * remainingGap) / membershipAndOpen : 0;
   const gapBreakdown = report
     ? [
         { name: 'Membership discounts', value: report.totals.membershipDiscount, color: '#7b6bb0' },
-        { name: 'Uncollected / timing', value: remainingGap, color: '#c47b3a' },
+        { name: 'Still open', value: remainingGap, color: '#c47b3a' },
       ].filter((d) => d.value > 0)
     : [];
 
@@ -146,8 +151,9 @@ export default function VsdPaymentsMatchAnalyticsPage() {
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
           VSD is treatment value on the visit date. Practice payments are cash deposited
-          that day (excluding membership plan and online pharmacy). The gap is uncollected
-          invoices and payment timing on billed work, after membership discounts.
+          that day (excluding membership plan and online pharmacy). The gap is still-open
+          billed work — the same total as Still open by doctor. Member write-downs are
+          excluded; amounts a member still owes are included.
         </Typography>
 
         <Card sx={{ mb: 3 }}>
@@ -255,7 +261,7 @@ export default function VsdPaymentsMatchAnalyticsPage() {
                       {fmtUSD(remainingGap)}
                     </Typography>
                     <Typography variant="caption" color="text.secondary">
-                      Uncollected / timing on billed work
+                      Still open billed work · same as doctor total
                       {report.totals.vsd > 0 ? ` · ${gapPct.toFixed(1)}% of VSD` : ''}
                     </Typography>
                   </CardContent>
@@ -301,7 +307,7 @@ export default function VsdPaymentsMatchAnalyticsPage() {
                 <Card variant="outlined">
                   <CardHeader
                     titleTypographyProps={{ variant: 'subtitle2', color: 'text.secondary' }}
-                    title="VSD − payments"
+                    title="What’s in production not collected"
                   />
                   <CardContent>
                     <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -342,20 +348,20 @@ export default function VsdPaymentsMatchAnalyticsPage() {
                                 {fmtUSD(report.totals.membershipDiscount)}
                               </TableCell>
                               <TableCell align="right">
-                                {vsdMinusPayments > 0
+                                {membershipAndOpen > 0
                                   ? `${membershipShareOfDiff.toFixed(1)}%`
                                   : '—'}
                               </TableCell>
                             </TableRow>
                             <TableRow>
                               <TableCell>
-                                <strong>Gap (uncollected / timing on billed work)</strong>
+                                <strong>Gap (still open billed work)</strong>
                               </TableCell>
                               <TableCell align="right">
                                 <strong>{fmtUSD(remainingGap)}</strong>
                               </TableCell>
                               <TableCell align="right">
-                                {vsdMinusPayments > 0
+                                {membershipAndOpen > 0
                                   ? `${remainingShareOfDiff.toFixed(1)}%`
                                   : '—'}
                               </TableCell>
@@ -365,7 +371,7 @@ export default function VsdPaymentsMatchAnalyticsPage() {
                               <TableCell align="right">
                                 {fmtUSD(vsdMinusPayments)}
                               </TableCell>
-                              <TableCell align="right">100%</TableCell>
+                              <TableCell align="right">—</TableCell>
                             </TableRow>
                           </TableBody>
                         </Table>
@@ -412,7 +418,10 @@ export default function VsdPaymentsMatchAnalyticsPage() {
             </Card>
 
             <Card sx={{ mb: 3 }}>
-              <CardHeader title="Open VSD by doctor" subheader="Production employee on the treatment items" />
+              <CardHeader
+                title="Open VSD by doctor"
+                subheader="Membership production is member write-downs (free or discounted). Still open is cash still owed on open invoices, including unpaid member charges."
+              />
               <CardContent sx={{ overflowX: 'auto' }}>
                 <Table size="small">
                   <TableHead>
@@ -420,6 +429,7 @@ export default function VsdPaymentsMatchAnalyticsPage() {
                       <TableCell>Doctor</TableCell>
                       <TableCell align="right">VSD</TableCell>
                       <TableCell align="right">Collected</TableCell>
+                      <TableCell align="right">Membership production</TableCell>
                       <TableCell align="right">Still open</TableCell>
                       <TableCell align="right">Open invoices</TableCell>
                     </TableRow>
@@ -430,10 +440,45 @@ export default function VsdPaymentsMatchAnalyticsPage() {
                         <TableCell>{d.doctor}</TableCell>
                         <TableCell align="right">{fmtUSD(d.vsd)}</TableCell>
                         <TableCell align="right">{fmtUSD(d.paidVsd)}</TableCell>
-                        <TableCell align="right">{fmtUSD(d.openVsd)}</TableCell>
+                        <TableCell align="right">{fmtUSD(d.membershipDiscount)}</TableCell>
+                        <TableCell align="right">{fmtUSD(d.openToCollect)}</TableCell>
                         <TableCell align="right">{d.openInvoices}</TableCell>
                       </TableRow>
                     ))}
+                    {report.doctors.length > 0 && (
+                      <TableRow>
+                        <TableCell>
+                          <strong>Total</strong>
+                        </TableCell>
+                        <TableCell align="right">
+                          <strong>
+                            {fmtUSD(report.doctors.reduce((s, d) => s + d.vsd, 0))}
+                          </strong>
+                        </TableCell>
+                        <TableCell align="right">
+                          <strong>
+                            {fmtUSD(report.doctors.reduce((s, d) => s + d.paidVsd, 0))}
+                          </strong>
+                        </TableCell>
+                        <TableCell align="right">
+                          <strong>
+                            {fmtUSD(
+                              report.doctors.reduce((s, d) => s + d.membershipDiscount, 0)
+                            )}
+                          </strong>
+                        </TableCell>
+                        <TableCell align="right">
+                          <strong>
+                            {fmtUSD(report.doctors.reduce((s, d) => s + d.openToCollect, 0))}
+                          </strong>
+                        </TableCell>
+                        <TableCell align="right">
+                          <strong>
+                            {report.doctors.reduce((s, d) => s + d.openInvoices, 0)}
+                          </strong>
+                        </TableCell>
+                      </TableRow>
+                    )}
                   </TableBody>
                 </Table>
               </CardContent>
