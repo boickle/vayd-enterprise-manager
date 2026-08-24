@@ -80,6 +80,14 @@ import {
   resolveRescheduleOriginalVisitForCompare,
 } from '../utils/routingRescheduleScoreCompare';
 import {
+  ASAP_RESULTS_SORT_MODE_PREFERRED,
+  asapResultsHeading,
+  asapResultsSortToggleLabel,
+  resolveAsapResultsSortComparatorKind,
+  toggleAsapResultsSortMode,
+  type AsapResultsSortMode,
+} from '../utils/asapResultsSort';
+import {
   routingCardWindowWarningMessage,
   routingCardWindowWarningReasons,
 } from '../utils/routingCardWindowWarning';
@@ -1815,7 +1823,9 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
   );
   const [asapAllDoctorSearch, setAsapAllDoctorSearch] = useState(() => bootstrap.asapAllDoctorSearch);
   const [resultsSortedByDateTime, setResultsSortedByDateTime] = useState(false);
-  const [asapResultsSortMode, setAsapResultsSortMode] = useState<'datetime' | 'score'>('datetime');
+  const [asapResultsSortMode, setAsapResultsSortMode] = useState<AsapResultsSortMode>(
+    ASAP_RESULTS_SORT_MODE_PREFERRED
+  );
   /** Last committed client — prefs reset when routing for a different household. */
   const lastRoutingClientIdRef = useRef<string | null>(
     bootstrap.form.newAppt.clientId?.trim() || null
@@ -4780,7 +4790,8 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
   ) {
     const isAsapSearch = asapAllDoctorSearch || opts?.asapAllDoctorSearch === true;
     setResultsSortedByDateTime(isAsapSearch);
-    if (isAsapSearch) setAsapResultsSortMode('datetime');
+    // Score is Preferred (button label); earliest-first remains available via toggle.
+    if (isAsapSearch) setAsapResultsSortMode(ASAP_RESULTS_SORT_MODE_PREFERRED);
     setError(null);
     setResult(null);
     setAddressError(null);
@@ -5350,7 +5361,10 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     };
 
     const sortRows =
-      resultsSortedByDateTime && asapResultsSortMode === 'datetime' ? sortByDateTime : sortByScore;
+      resolveAsapResultsSortComparatorKind(resultsSortedByDateTime, asapResultsSortMode) ===
+      'datetime'
+        ? sortByDateTime
+        : sortByScore;
 
     if (result?.doctors?.length) {
       // Multi-doctor mode: flatten all doctors' top slots
@@ -6486,27 +6500,20 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
           }}
         >
           <h3 style={{ marginTop: 0, marginBottom: 0 }}>
-            {result
-              ? resultsSortedByDateTime
-                ? asapResultsSortMode === 'datetime'
-                  ? 'Results (earliest first)'
-                  : 'Results (lower score is better)'
-                : hasActiveRescheduleIntent
-                  ? 'Results (lower score is better — vs. original booking)'
-                  : 'Results (lower score is better)'
-              : 'Results'}
+            {asapResultsHeading({
+              hasResult: Boolean(result),
+              resultsSortedByDateTime,
+              asapResultsSortMode,
+              hasActiveRescheduleIntent,
+            })}
           </h3>
           {result && resultsSortedByDateTime ? (
             <button
               type="button"
               className="btn secondary routing-asap-results-sort-btn"
-              onClick={() =>
-                setAsapResultsSortMode((mode) => (mode === 'datetime' ? 'score' : 'datetime'))
-              }
+              onClick={() => setAsapResultsSortMode((mode) => toggleAsapResultsSortMode(mode))}
             >
-              {asapResultsSortMode === 'datetime'
-                ? 'Sort by Score (Preferred)'
-                : 'Sort by Date & Time'}
+              {asapResultsSortToggleLabel(asapResultsSortMode)}
             </button>
           ) : null}
           {rescheduleOriginalScoreSummaryLine ? (
