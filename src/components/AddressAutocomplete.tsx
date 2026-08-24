@@ -100,10 +100,8 @@ export function AddressAutocomplete({
       return;
     }
     const formatted = formatDisplayValue(value, singleLine);
-    if (formatted) {
-      setInputValue(formatted);
-      setPlaceSelected(isAddressComplete(value, singleLine));
-    }
+    setInputValue(formatted);
+    setPlaceSelected(isAddressComplete(value, singleLine));
   }, [value.line1, value.line2, value.city, value.state, value.zip, value.lat, value.lon, singleLine]);
 
   const ensureSessionToken = useCallback(() => {
