@@ -2329,6 +2329,12 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     setHasActiveForwardBookingWorkspace(false);
     setSelectedRoutingPatientIds([]);
     setRoutingClientPatients([]);
+    linkedClientHomeAddressRef.current = null;
+    routingAddressGeocodeKeyRef.current = null;
+    setRoutingAddressFields({ ...EMPTY_ADDRESS_FIELDS });
+    setAddressZone(null);
+    setAddressZoneLoading(false);
+    setDoctorZoneWarning(null);
     setAddressError(null);
     setError(null);
     setScheduleBookedKeys({});
