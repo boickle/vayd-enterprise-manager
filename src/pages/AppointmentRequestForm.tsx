@@ -209,6 +209,12 @@ function formatAddressForZoneCheck(addr: AddressFields | undefined): string {
   return [addr?.line1, addr?.city, addr?.state, addr?.zip].filter(Boolean).join(', ');
 }
 
+/** Client API uses `zipcode`; some appointment payloads use `zip`. */
+function clientRecordZip(client: { zip?: unknown; zipcode?: unknown } | null | undefined): string {
+  const raw = client?.zipcode ?? client?.zip;
+  return raw != null ? String(raw).trim() : '';
+}
+
 type ZoneCheckStatus = 'idle' | 'pending' | 'in_service' | 'out_of_service' | 'failed';
 
 const ZONE_CHECK_PENDING_MESSAGE = 'Please wait while we confirm we serve your area.';
@@ -2996,7 +3002,7 @@ export default function AppointmentRequestForm() {
             client.address1 || client.address_1,
             client.city,
             client.state,
-            client.zip ? String(client.zip) : undefined,
+            clientRecordZip(client) || undefined,
           ].filter(Boolean);
           if (addressParts.length >= 3) {
             clientAddress = addressParts.join(', ');
@@ -3032,7 +3038,7 @@ export default function AppointmentRequestForm() {
               line2: client.address2 || client.address_2 || prev.physicalAddress?.line2 || undefined,
               city: client.city || prev.physicalAddress?.city || '',
               state: client.state || prev.physicalAddress?.state || '',
-              zip: client.zip ? String(client.zip) : (prev.physicalAddress?.zip || ''),
+              zip: clientRecordZip(client) || prev.physicalAddress?.zip || '',
               country: prev.physicalAddress?.country || 'United States',
             } : prev.physicalAddress;
             
