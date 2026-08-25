@@ -39,9 +39,16 @@ export function routingCandidateSuggestedStartWindowWarning(
 }
 
 export type RoutingEtaReconciledWindowSummary = {
+  /** Any client stop on the day is tight to its window end (includes upstream pre-existing). */
   hasAnyWarning: boolean;
   warningStopCount: number;
   candidateHasWarning: boolean;
+  /**
+   * Preview candidate itself, or a stop at/after it in route order, is tight to window end.
+   * Upstream-only tightness (e.g. Belle already near window end when placing a later slot)
+   * must not light the new result card — staff already see that on the calendar visit.
+   */
+  hasPlacementRelevantWarning: boolean;
 };
 
 /** After POST /routing/eta — same rules as Scheduler / My Week drive-time badges. */
@@ -49,14 +56,37 @@ export function summarizeReconciledDayWindowWarnings(
   dayData: DayData | null | undefined
 ): RoutingEtaReconciledWindowSummary {
   if (!dayData?.households?.length) {
-    return { hasAnyWarning: false, warningStopCount: 0, candidateHasWarning: false };
+    return {
+      hasAnyWarning: false,
+      warningStopCount: 0,
+      candidateHasWarning: false,
+      hasPlacementRelevantWarning: false,
+    };
+  }
+
+  const households = dayData.households;
+  const n = households.length;
+  const order =
+    Array.isArray(dayData.routingOrderIndices) && dayData.routingOrderIndices.length === n
+      ? dayData.routingOrderIndices
+      : Array.from({ length: n }, (_, i) => i);
+
+  let previewOrderPos = -1;
+  for (let p = 0; p < order.length; p++) {
+    if (households[order[p]]?.isPreview) {
+      previewOrderPos = p;
+      break;
+    }
   }
 
   let warningStopCount = 0;
   let candidateHasWarning = false;
+  let hasPlacementRelevantWarning = false;
 
-  dayData.households.forEach((h, idx) => {
-    if (h.isPersonalBlock) return;
+  for (let orderPos = 0; orderPos < order.length; orderPos++) {
+    const idx = order[orderPos]!;
+    const h = households[idx];
+    if (!h || h.isPersonalBlock) continue;
     const slot = dayData.timeline[idx];
     const etaIso = slot?.eta ?? null;
     const windowEndIso =
@@ -81,13 +111,18 @@ export function summarizeReconciledDayWindowWarnings(
     if (warns) {
       warningStopCount += 1;
       if (h.isPreview) candidateHasWarning = true;
+      // No preview row → keep prior "any warning" behavior for non-preview callers.
+      if (previewOrderPos < 0 || orderPos >= previewOrderPos) {
+        hasPlacementRelevantWarning = true;
+      }
     }
-  });
+  }
 
   return {
     hasAnyWarning: warningStopCount > 0,
     warningStopCount,
     candidateHasWarning,
+    hasPlacementRelevantWarning,
   };
 }
 
@@ -103,7 +138,8 @@ export function routingCardWindowWarningReasons(
   const reasons: RoutingCardWindowWarningReason[] = [];
   if (routingCandidateDownstreamScoreWarning(opt)) reasons.push('downstream-score');
   // suggested-start is computed for scoring but not shown on routing cards.
-  if (etaReconciled?.hasAnyWarning) reasons.push('eta-reconciled');
+  // Only candidate / downstream reconciled tightness — not upstream pre-existing warnings.
+  if (etaReconciled?.hasPlacementRelevantWarning) reasons.push('eta-reconciled');
   return reasons;
 }
 

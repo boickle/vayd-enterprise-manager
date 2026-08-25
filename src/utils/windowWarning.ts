@@ -93,8 +93,10 @@ export function fixedTimeRouteEtaMeaningfullyAfterScheduledStart(
 }
 
 /**
- * True when projected ETA is less than WINDOW_WARNING_MINUTES_FROM_END minutes before window end,
- * or at/after window end (minutes remaining less than threshold).
+ * True when projected ETA is within WINDOW_WARNING_MINUTES_FROM_END minutes of window end
+ * (inclusive), or at/after window end (minutes remaining ≤ threshold).
+ *
+ * "Within 20 minutes" includes the exact boundary — e.g. ETA 12:15 with window end 12:35 warns.
  *
  * Zero-width windows (fixed time: windowBefore=0 and windowAfter=0) only warn when ETA is
  * meaningfully after the window end — not when arrival is on time at the scheduled instant.
@@ -121,7 +123,7 @@ export function shouldShowEtaWindowWarning(
   }
 
   const minutesRemaining = wEnd.diff(eta, 'minutes').minutes;
-  return minutesRemaining < WINDOW_WARNING_MINUTES_FROM_END;
+  return minutesRemaining <= WINDOW_WARNING_MINUTES_FROM_END;
 }
 
 /**
