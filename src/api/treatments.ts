@@ -59,6 +59,8 @@ export type TreatmentItem = {
   tierPrice?: number | null;
   ignoreTierPricing?: boolean;
   isDeclined?: boolean;
+  isDeleted?: boolean;
+  isActive?: boolean;
   excludeProductionOnItem?: boolean;
   serviceDate: string;
   lab?: TreatmentItemLab | null;
