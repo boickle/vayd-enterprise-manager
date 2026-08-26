@@ -4,7 +4,7 @@ import { normalizeForwardBookingCreatedVia } from '../api/forwardBooking';
 /** Chips shown on On Hold rows — subset of {@link ForwardBookingCreatedVia}. */
 export type ForwardBookingSourceChip = Extract<
   ForwardBookingCreatedVia,
-  'care_outreach' | 'schedule_loader' | 'end_visit' | 'appointment_request'
+  'care_outreach' | 'schedule_loader' | 'waitlist' | 'end_visit' | 'appointment_request'
 >;
 
 export function isForwardBookingCareOutreachEntry(
@@ -30,6 +30,8 @@ export function forwardBookingSourceChipLabel(chip: ForwardBookingSourceChip): s
       return 'Care Outreach';
     case 'schedule_loader':
       return 'Schedule loader';
+    case 'waitlist':
+      return 'Waitlist';
     case 'appointment_request':
       return 'Appointments';
     default:
@@ -46,6 +48,8 @@ export function forwardBookingSourceChipColors(chip: ForwardBookingSourceChip): 
       return { background: '#f5f3ff', color: '#6d28d9' };
     case 'schedule_loader':
       return { background: '#ecfdf5', color: '#047857' };
+    case 'waitlist':
+      return { background: '#fff7ed', color: '#c2410c' };
     case 'appointment_request':
       return { background: '#fce7f3', color: '#9d174d' };
     default:
@@ -62,6 +66,7 @@ export function parseForwardBookingSourceChipFilter(
   if (
     raw === 'care_outreach' ||
     raw === 'schedule_loader' ||
+    raw === 'waitlist' ||
     raw === 'end_visit' ||
     raw === 'appointment_request'
   ) {
@@ -82,7 +87,7 @@ export function forwardBookingEntryBelongsOnForwardBookingPage(
   entry: Pick<ForwardBookingEntry, 'createdVia'>
 ): boolean {
   const via = normalizeForwardBookingCreatedVia(entry.createdVia);
-  return via !== 'care_outreach' && via !== 'schedule_loader';
+  return via !== 'care_outreach' && via !== 'schedule_loader' && via !== 'waitlist';
 }
 
 export function forwardBookingSourceBookingNotesLabel(
@@ -94,6 +99,8 @@ export function forwardBookingSourceBookingNotesLabel(
       return 'Care outreach note';
     case 'schedule_loader':
       return 'Schedule loader note';
+    case 'waitlist':
+      return 'Waitlist note';
     case 'appointment_request':
       return 'Appointment note';
     default:
@@ -112,7 +119,7 @@ export function forwardBookingListNoteText(
   if (
     opts?.reminderOutreachNotesByPatientId &&
     entry.patientId != null &&
-    (chip === 'care_outreach' || chip === 'schedule_loader')
+    (chip === 'care_outreach' || chip === 'schedule_loader' || chip === 'waitlist')
   ) {
     return opts.reminderOutreachNotesByPatientId.get(entry.patientId)?.trim() ?? '';
   }

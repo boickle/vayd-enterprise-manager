@@ -10,6 +10,7 @@ export type ForwardBookingStatus = 'pending' | 'booked' | 'complete' | 'removed'
 export type ForwardBookingCreatedVia =
   | 'care_outreach'
   | 'schedule_loader'
+  | 'waitlist'
   | 'end_visit'
   | 'manual'
   | 'appointment_request'
@@ -18,6 +19,7 @@ export type ForwardBookingCreatedVia =
 const FORWARD_BOOKING_CREATED_VIA_VALUES = new Set<string>([
   'care_outreach',
   'schedule_loader',
+  'waitlist',
   'end_visit',
   'manual',
   'appointment_request',
@@ -39,13 +41,15 @@ export type CreatableForwardBookingCreatedVia =
   | 'care_outreach'
   | 'end_visit'
   | 'manual'
-  | 'schedule_loader';
+  | 'schedule_loader'
+  | 'waitlist';
 
 const CREATABLE_FORWARD_BOOKING_CREATED_VIA = new Set<CreatableForwardBookingCreatedVia>([
   'care_outreach',
   'end_visit',
   'manual',
   'schedule_loader',
+  'waitlist',
 ]);
 
 export type ForwardBookingClientRef = {

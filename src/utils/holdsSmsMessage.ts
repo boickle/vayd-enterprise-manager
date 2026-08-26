@@ -2,6 +2,7 @@ import type { HoldListItem } from '../api/holds';
 import { buildCareOutreachSmsMessage, careOutreachClientHasSmsPhone } from './careOutreachSmsMessage';
 import { formatForwardBookingSmsBookedSlot } from './forwardBookingSmsMessage';
 import { appendHoldSpotReleaseClause } from './holdSpotReleaseSmsClause';
+import { buildWaitlistBookedSmsMessage } from './waitlistSmsMessage';
 import {
   holdHouseholdEarliestAppointmentStart,
   holdHouseholdPatientNames,
@@ -65,6 +66,15 @@ export function buildHoldSmsMessage(
 
   if (multiVisit) {
     const visitCount = group.visitSlots.length;
+    if (source === 'waitlist') {
+      return buildWaitlistBookedSmsMessage({
+        clientFirstName: hold.client?.firstName,
+        clientDisplayName: clientDisplayName(hold),
+        petNames,
+        providerLastName: hold.primaryProvider?.lastName,
+        holdRelease,
+      });
+    }
     if (source === 'care_outreach' || source === 'schedule_loader') {
       return buildCareOutreachSmsMessage({
         clientFirstName: hold.client?.firstName,
@@ -93,6 +103,16 @@ export function buildHoldSmsMessage(
       ? { practiceTz, appointmentStartIso: slotHold.appointmentStart.trim() }
       : holdRelease;
 
+  if (source === 'waitlist') {
+    return buildWaitlistBookedSmsMessage({
+      clientFirstName: hold.client?.firstName,
+      clientDisplayName: clientDisplayName(hold),
+      petNames,
+      providerLastName: hold.primaryProvider?.lastName,
+      bookedSlot,
+      holdRelease: slotHoldRelease,
+    });
+  }
   if (source === 'care_outreach' || source === 'schedule_loader') {
     return buildCareOutreachSmsMessage({
       clientFirstName: hold.client?.firstName,

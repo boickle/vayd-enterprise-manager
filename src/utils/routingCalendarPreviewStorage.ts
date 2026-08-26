@@ -85,9 +85,14 @@ export type RoutingCalendarPreviewPayloadV1 = {
    */
   listOptionKey?: string;
   /** Preview opened from Schedule Loader (Fill Day) rather than Get Best Route. */
-  previewSource?: 'routing' | 'schedule-loader' | 'manual-book';
+  previewSource?: 'routing' | 'schedule-loader' | 'waitlist' | 'manual-book';
   /** Return navigation when dismissing preview from Schedule Loader. */
   scheduleLoaderReturn?: {
+    clientId: number;
+    returnHref: string;
+  };
+  waitlistReturn?: {
+    entryId: number;
     clientId: number;
     returnHref: string;
   };
@@ -141,10 +146,23 @@ export function isManualBookCalendarPreview(
   return preview?.previewSource === 'manual-book';
 }
 
+export function isWaitlistCalendarPreview(
+  preview: RoutingCalendarPreviewPayloadV1 | null | undefined,
+): boolean {
+  return preview?.previewSource === 'waitlist';
+}
+
 export function scheduleLoaderReturnHref(
   preview: RoutingCalendarPreviewPayloadV1 | null | undefined,
 ): string | null {
   const href = preview?.scheduleLoaderReturn?.returnHref?.trim();
+  return href || null;
+}
+
+export function waitlistReturnHref(
+  preview: RoutingCalendarPreviewPayloadV1 | null | undefined,
+): string | null {
+  const href = preview?.waitlistReturn?.returnHref?.trim();
   return href || null;
 }
 
