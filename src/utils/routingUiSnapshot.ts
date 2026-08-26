@@ -16,6 +16,9 @@ export const ROUTING_DISMISS_RESCHEDULE_EVENT = 'vayd:routing-dismiss-reschedule
 /** Exit forward-booking mode from routing workspace — clear intent, preview, and form prefill. */
 export const ROUTING_DISMISS_FORWARD_BOOKING_EVENT = 'vayd:routing-dismiss-forward-booking';
 
+/** "+ Appointment" / New appointment — clear Get Best Route form for a fresh search. */
+export const ROUTING_NEW_APPOINTMENT_CLEAR_EVENT = 'vayd:routing-new-appointment-clear';
+
 const SNAPSHOT_VERSION = 1 as const;
 
 /** localStorage: last resolved PIMS id + label for the logged-in user's linked doctor (avoids empty-doctor flash on cold load). */

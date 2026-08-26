@@ -15,7 +15,7 @@ import {
 import type { Appointment } from '../api/roomLoader';
 import { dayPoints, dayTotalDriveSeconds, type DayData, type WeekHousehold } from '../pages/MyWeek';
 import {
-  clientFixedTimeUsesDoctorDayClockForDriveLayout,
+  clientVisitUsesDoctorDayClockForDriveLayout,
   computeDriveTimeWindowWarning,
 } from './windowWarning';
 import {
@@ -62,7 +62,6 @@ function weekHouseholdUsesDoctorDayClockForLayout(
   if (!showByDriveTime) return true;
   const flexBlock = Boolean(h.isPersonalBlock && isFlexBlockItem(h.primary));
   if (h.isPersonalBlock && !flexBlock) return true;
-  if (!weekHouseholdIsClientFixedTime(h)) return false;
   const windowStartIso =
     (slot?.windowStartIso != null && slot?.windowEndIso != null ? slot.windowStartIso : null) ??
     h.windowStartIso ??
@@ -73,7 +72,8 @@ function weekHouseholdUsesDoctorDayClockForLayout(
     h.windowEndIso ??
     h.effectiveWindow?.endIso ??
     null;
-  return clientFixedTimeUsesDoctorDayClockForDriveLayout({
+  return clientVisitUsesDoctorDayClockForDriveLayout({
+    isClientFixedTime: weekHouseholdIsClientFixedTime(h),
     schedStartIso: h.startIso,
     etaIso: slot?.eta,
     windowStartIso,

@@ -57,10 +57,38 @@ import { isCreateClientEnabled, isProduction } from './utils/env';
 import { savePostLoginRedirect } from './utils/postLoginRedirect';
 import { isPublicClientLinkPath } from './utils/publicClientLinkPaths';
 import { blockRoutingCalendarPreviewNavigation } from './utils/routingCalendarPreviewGuard';
+import { markSchedulerHandoffPreferRoutingDoctor } from './utils/schedulerCalendarHandoff';
+import { startFreshNewAppointmentRouting } from './utils/routingNewAppointment';
 import { evetCreateClientLink } from './utils/evet';
 import { scoutTabPermissionOk } from './scout-tabs';
 import { useGmailInboxAccess } from './hooks/useGmailInboxAccess';
 import SmsDeliveryFailureBanner from './components/SmsDeliveryFailureBanner';
+
+/** + Appointment in global navbar when viewing /schedule/* */
+function NavbarScheduleAddAppointment() {
+  const { abilities } = useAuth() as { abilities?: string[] };
+  const location = useLocation();
+  const navigate = useNavigate();
+  if (!location.pathname.startsWith('/schedule')) return null;
+  const toRouting = !abilities || abilities.includes('canSeeRouting');
+  return (
+    <button
+      type="button"
+      className="navbar-appointment-btn"
+      onClick={() => {
+        if (!toRouting) {
+          navigate('/schedule/home');
+          return;
+        }
+        if (!startFreshNewAppointmentRouting()) return;
+        markSchedulerHandoffPreferRoutingDoctor();
+        navigate('/schedule/routing');
+      }}
+    >
+      + Appointment
+    </button>
+  );
+}
 
 /** Old `/scout/*` URLs → `/schedule/*` */
 function ScoutLegacyRedirect() {
@@ -406,6 +434,7 @@ export default function App() {
               </div>
             )}
             {token && !isClient && <NavbarGlobalSearch />}
+            {token && !isClient && <NavbarScheduleAddAppointment />}
             {token && <UserMenu menuExtras={isClient ? [] : menuExtras} />}
           </header>
         )}

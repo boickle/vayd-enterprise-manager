@@ -12,7 +12,7 @@ import {
   type ReactNode,
 } from 'react';
 import { useAuth } from '../auth/AuthProvider';
-import { fetchDoctorMonth, type MiniZone } from '../api/appointments';
+import { fetchDoctorDay, fetchDoctorMonth, type MiniZone } from '../api/appointments';
 import { fetchAllAppointmentTypes, fetchEmployee, type AppointmentType } from '../api/appointmentSettings';
 import {
   appointmentTypeAllowsClient,
@@ -96,7 +96,8 @@ import {
   type RoutingCalendarPreviewPayloadV1,
 } from '../utils/routingCalendarPreviewStorage';
 import { hasActiveRoutingCalendarPreview } from '../utils/routingCalendarPreviewGuard';
-import { coerceOverrunSeconds } from '../utils/depotReturnOverrun';
+import { coerceOverrunSeconds, startPastWorkdayEndSeconds } from '../utils/depotReturnOverrun';
+import { arrivalWindowIsZeroWidth } from '../utils/windowWarning';
 import {
   buildRoutingRescheduleContextForSlotSearch,
   clearRoutingRescheduleIntent,
@@ -168,6 +169,7 @@ import {
   readRoutingUiBootstrap,
   ROUTING_DISMISS_RESCHEDULE_EVENT,
   ROUTING_DISMISS_FORWARD_BOOKING_EVENT,
+  ROUTING_NEW_APPOINTMENT_CLEAR_EVENT,
   ROUTING_REQUEST_ID_SESSION_KEY,
   ROUTING_WORKSPACE_SCHEDULER_BOOKED_EVENT,
   writeAuthDoctorCache,
@@ -456,7 +458,10 @@ type Winner = {
 
   // NEW — day facts for computing remaining non-drive time
   workStartLocal?: string; // "HH:mm" or "HH:mm:ss"
+  workEndLocal?: string; // "HH:mm" or "HH:mm:ss"
   effectiveEndLocal?: string; // "HH:mm" or "HH:mm:ss"
+  /** Scheduled depot / workday end ("HH:mm"), same clock as the calendar red line. */
+  depotEndLocal?: string;
   bookedServiceSeconds?: number; // seconds of booked service (no driving)
   _emptyDay?: boolean;
   dayIsEmpty?: boolean;
@@ -712,6 +717,9 @@ function routingVisitWindowDiffersFromDefault60(opt: {
   const endIso = opt.arrivalWindow?.windowEndIso;
   if (!startIso || !endIso) return false;
 
+  // Intentional no-window types (HOLD – In Office / Fixed Time 0±0) — not a "weird" window.
+  if (arrivalWindowIsZeroWidth(startIso, endIso)) return false;
+
   const winStart = DateTime.fromISO(startIso);
   const winEnd = DateTime.fromISO(endIso);
   if (!winStart.isValid || !winEnd.isValid) return false;
@@ -745,6 +753,41 @@ function routingVisitWindowDiffersFromDefault60(opt: {
 
   if (!apptIso) return false;
   return true;
+}
+
+/** Result-card time range: real arrival windows as-is; zero-width → visit start + service minutes. */
+function routingResultVisitTimeLabel(
+  opt: {
+    suggestedStartIso?: string;
+    arrivalWindow?: { windowStartIso?: string; windowEndIso?: string };
+  },
+  serviceMinutes: number
+): { label: string; timeText: string; zeroWidthWindow: boolean } {
+  const awStart = opt.arrivalWindow?.windowStartIso;
+  const awEnd = opt.arrivalWindow?.windowEndIso;
+  const zeroWidth = Boolean(awStart && awEnd && arrivalWindowIsZeroWidth(awStart, awEnd));
+  if (awStart && awEnd && !zeroWidth) {
+    return {
+      label: 'Arrival Window',
+      timeText: `${isoToTime(awStart)} – ${isoToTime(awEnd)}`,
+      zeroWidthWindow: false,
+    };
+  }
+  const startIso = opt.suggestedStartIso?.trim() || awStart || '';
+  if (!startIso) {
+    return { label: 'Visit time', timeText: '-', zeroWidthWindow: zeroWidth };
+  }
+  const start = DateTime.fromISO(startIso);
+  if (!start.isValid) {
+    return { label: 'Visit time', timeText: isoToTime(startIso), zeroWidthWindow: zeroWidth };
+  }
+  const mins = Math.max(1, Math.floor(Number(serviceMinutes)) || 30);
+  const endIso = start.plus({ minutes: mins }).toISO();
+  return {
+    label: 'Visit time',
+    timeText: endIso ? `${isoToTime(startIso)} – ${isoToTime(endIso)}` : isoToTime(startIso),
+    zeroWidthWindow: zeroWidth,
+  };
 }
 
 function colorForAddedDrive(seconds?: number): string {
@@ -2016,6 +2059,8 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
   const [etaWindowWarningsByOptionKey, setEtaWindowWarningsByOptionKey] = useState<
     Record<string, RoutingPreviewEtaWindowWarningsDetail>
   >({});
+  /** Calendar red-line end ("HH:mm") by `pimsId:YYYY-MM-DD` from GET /appointments/doctor. */
+  const [endDepotByDoctorDate, setEndDepotByDoctorDate] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (!calendarWorkspaceMode) return;
@@ -2275,6 +2320,35 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     setFeedbackError(null);
     setFeedbackToast(null);
   }, []);
+
+  /** "+ Appointment" / New appointment — blank Get Best Route form (keep doctor). */
+  const resetRoutingFormForNewAppointment = useCallback(() => {
+    resetRoutingFormAfterRescheduleDismiss();
+    setHasActiveRescheduleIntent(false);
+    setHasActiveAppointmentRequestWorkspace(false);
+    setHasActiveForwardBookingWorkspace(false);
+    setSelectedRoutingPatientIds([]);
+    setRoutingClientPatients([]);
+    linkedClientHomeAddressRef.current = null;
+    routingAddressGeocodeKeyRef.current = null;
+    setRoutingAddressFields({ ...EMPTY_ADDRESS_FIELDS });
+    setAddressZone(null);
+    setAddressZoneLoading(false);
+    setDoctorZoneWarning(null);
+    setAddressError(null);
+    setError(null);
+    setScheduleBookedKeys({});
+    setFeedbackSuccessKey(null);
+    setFeedbackSubmittingKey(null);
+    setLatestRoutingRequestId(null);
+    if (typeof window !== 'undefined') {
+      try {
+        sessionStorage.removeItem(ROUTING_REQUEST_ID_SESSION_KEY);
+      } catch {
+        /* ignore */
+      }
+    }
+  }, [resetRoutingFormAfterRescheduleDismiss]);
 
   const rescheduleOriginalVisitForCompare = useMemo(() => {
     if (!hasActiveRescheduleIntent) return null;
@@ -3113,6 +3187,15 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     return () =>
       window.removeEventListener(ROUTING_DISMISS_APPOINTMENT_REQUEST_EVENT, onDismissAppointmentRequest);
   }, [calendarWorkspaceMode, resetRoutingFormAfterForwardBookingDismiss]);
+
+  useEffect(() => {
+    function onNewAppointmentClear() {
+      resetRoutingFormForNewAppointment();
+    }
+    window.addEventListener(ROUTING_NEW_APPOINTMENT_CLEAR_EVENT, onNewAppointmentClear);
+    return () =>
+      window.removeEventListener(ROUTING_NEW_APPOINTMENT_CLEAR_EVENT, onNewAppointmentClear);
+  }, [resetRoutingFormForNewAppointment]);
 
   /** Clear stale routing results when the search doctor changes; calendar stays on the source visit. */
   const prevRescheduleSearchDoctorRef = useRef<string | null>(null);
@@ -5410,6 +5493,57 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     return { zoneClassRaw, polyLine };
   }, [result, displayOptions]);
 
+  const depotLookupKey = useMemo(
+    () =>
+      displayOptions
+        .map((o) => `${String(o.doctorPimsId ?? '').trim()}:${String(o.date ?? '').slice(0, 10)}`)
+        .filter((k) => !k.startsWith(':') && !k.endsWith(':'))
+        .sort()
+        .join('|'),
+    [displayOptions]
+  );
+
+  useEffect(() => {
+    if (!depotLookupKey) {
+      setEndDepotByDoctorDate({});
+      return;
+    }
+    let cancelled = false;
+    const pairs = depotLookupKey.split('|').filter(Boolean);
+    void (async () => {
+      const next: Record<string, string> = {};
+      for (const pair of pairs) {
+        const sep = pair.lastIndexOf(':');
+        const pims = pair.slice(0, sep);
+        const date = pair.slice(sep + 1);
+        if (!pims || !date) continue;
+        try {
+          let internalId = doctorIdByPims[pims];
+          if (!internalId) {
+            const { data } = await http.get(`/employees/pims/${encodeURIComponent(pims)}`);
+            const resolved = data?.id != null ? String(data.id) : '';
+            if (!resolved) continue;
+            internalId = resolved;
+            if (!cancelled) {
+              setDoctorIdByPims((m) => (m[pims] ? m : { ...m, [pims]: resolved }));
+            }
+          }
+          const day = await fetchDoctorDay(date, internalId);
+          const end = typeof day.endDepotTime === 'string' ? day.endDepotTime.trim() : '';
+          if (end) next[pair] = end;
+        } catch {
+          /* keep search results usable if doctor-day fails */
+        }
+      }
+      if (!cancelled) setEndDepotByDoctorDate(next);
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // doctorIdByPims is read for cache only; listing it would refetch after each pims resolve.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [depotLookupKey]);
+
   // =========================
   // Render
   // =========================
@@ -6456,10 +6590,19 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                 const reconciledOverrunSec = coerceOverrunSeconds(
                   etaWindowWarningsByOptionKey[optionKey]?.reconciledOverrunSeconds
                 ) ?? 0;
+                const depotKey = `${String(opt.doctorPimsId ?? '').trim()}:${String(opt.date ?? '').slice(0, 10)}`;
+                const calendarEndHms = endDepotByDoctorDate[depotKey];
+                const apiEndHms = opt.effectiveEndLocal ?? opt.depotEndLocal ?? opt.workEndLocal;
+                const startPastEndSec =
+                  startPastWorkdayEndSeconds(
+                    opt.suggestedStartIso,
+                    calendarEndHms || apiEndHms
+                  ) ?? 0;
                 const shiftOverrunSec = Math.max(
                   apiOverrunSec,
                   budgetOverrunSec,
-                  reconciledOverrunSec
+                  reconciledOverrunSec,
+                  startPastEndSec
                 );
                 const overtimeBadge = finite(shiftOverrunSec) && shiftOverrunSec >= 60;
                 const isEarlierFeasibleEmptyDay = opt.emptyDayStartVariant === 'earlier_feasible';
@@ -6479,11 +6622,12 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                     (candidateScoutRow.scoutLiaisonLabels ?? []).some(Boolean) ||
                     (candidateScoutRow.scoutLiaisonLabelIds ?? []).some(Boolean));
                 const metricsRow = scoutDayMetricsForCandidate(opt);
-                const visitWindowTime =
-                  opt.arrivalWindow?.windowStartIso && opt.arrivalWindow?.windowEndIso
-                    ? `${isoToTime(opt.arrivalWindow.windowStartIso)} – ${isoToTime(opt.arrivalWindow.windowEndIso)}`
-                    : isoToTime(opt.suggestedStartIso);
-                const visitWindowNonDefault = routingVisitWindowDiffersFromDefault60(opt);
+                const visitTimeDisplay = routingResultVisitTimeLabel(
+                  opt,
+                  form.newAppt.serviceMinutes
+                );
+                const visitWindowNonDefault =
+                  !visitTimeDisplay.zeroWidthWindow && routingVisitWindowDiffersFromDefault60(opt);
 
                 const isCalendarPreviewCard =
                   calendarWorkspaceMode &&
@@ -6666,6 +6810,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                       const etaReconciled = etaRow
                         ? {
                             hasAnyWarning: etaRow.hasWindowWarning,
+                            hasPlacementRelevantWarning: etaRow.hasWindowWarning,
                             warningStopCount: etaRow.warningStopCount,
                             candidateHasWarning: etaRow.candidateHasWarning,
                           }
@@ -6774,7 +6919,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                         v={String((opt as any).positionInDay ?? (opt as any).displayInsertionIndex ?? opt.insertionIndex + 1)}
                       />
                       <KeyValue
-                        k="Arrival Window"
+                        k={visitTimeDisplay.label}
                         v={
                           <strong
                             className={
@@ -6783,7 +6928,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                                 : undefined
                             }
                           >
-                            {visitWindowTime}
+                            {visitTimeDisplay.timeText}
                           </strong>
                         }
                       />

@@ -112,9 +112,9 @@ import {
   type WeekGridMetrics,
 } from './MyWeek';
 import {
-  computeSchedulerTimelineWindowWarning,
   schedulerHouseholdUsesDoctorDayClockForLayout,
 } from '../utils/schedulerWindowWarning';
+import { arrivalWindowIsZeroWidth, computeDriveTimeWindowWarning } from '../utils/windowWarning';
 import {
   evetAddCommunicationLink,
   evetCheckoutLink,
@@ -123,7 +123,7 @@ import {
   evetPatientLink,
   evetQuickInvoicingLink,
 } from '../utils/evet';
-import { buildPhoneDialHref, buildPhoneSmsHref } from '../utils/quoContact';
+import { buildPhoneDialHref, buildPhoneSmsHref, resolveQuoFromLine } from '../utils/quoContact';
 import {
   loadRoutingPreviewClientContact,
   previewClientContactFromAppointment,
@@ -1833,9 +1833,18 @@ function buildSchedulerDriveHintForAppt(
   });
   const windowStartIso = resolvedWindow?.startIso ?? null;
   const windowEndIso = resolvedWindow?.endIso ?? null;
-  const windowWarning = computeSchedulerTimelineWindowWarning(h, slot, showByDriveTime, (p) =>
-    isFlexBlockItem(p as { blockLabel?: string; title?: string } | null | undefined)
-  );
+  // Match Visit Highlights promised window vs ETA (same sources as the displayed times).
+  // Household/slot-only lookup can miss type-fallback windows and hide a deserved badge.
+  const windowWarning =
+    showByDriveTime && !h.isPersonalBlock
+      ? computeDriveTimeWindowWarning({
+          etaIso,
+          windowEndIso,
+          windowStartIso,
+          isClientFixedTime: isFixedTime,
+          scheduledStartIso: h.startIso ?? appt.appointmentStart,
+        })
+      : false;
   return {
     practiceTz,
     etaIso,
@@ -1941,31 +1950,56 @@ function visitDetailsWindowLine(
   appt: Appointment,
   driveHint: SchedulerHoverDriveHint | null | undefined
 ): string | null {
+  const practiceTz = driveHint?.practiceTz ?? PRACTICE_TZ;
+  const scheduledRange = () => {
+    const a = formatIsoTimeShortInPracticeZone(appt.appointmentStart, practiceTz);
+    const b = formatIsoTimeShortInPracticeZone(appt.appointmentEnd, practiceTz);
+    if (!a || !b) return null;
+    return `${a} – ${b}`;
+  };
+
   if (driveHint) {
     const showWindow =
       !!(driveHint.windowStartIso || driveHint.windowEndIso) ||
       (driveHint.isFixedTime && !driveHint.isPersonalBlock && !!(driveHint.schedStartIso || driveHint.schedEndIso));
     if (showWindow && !(driveHint.isPersonalBlock && driveHint.isFixedTime)) {
+      // Zero-width (HOLD in-office / Fixed Time 0±0): show booked visit span, not "3:30 – 3:30".
+      if (
+        driveHint.windowStartIso &&
+        driveHint.windowEndIso &&
+        arrivalWindowIsZeroWidth(driveHint.windowStartIso, driveHint.windowEndIso)
+      ) {
+        return scheduledRange();
+      }
       return formatSchedulerArrivalWindowLine(driveHint);
     }
   }
   const ew = appt.effectiveWindow;
   if (ew?.startIso && ew?.endIso) {
+    if (arrivalWindowIsZeroWidth(ew.startIso, ew.endIso)) {
+      return scheduledRange();
+    }
     return `${formatIsoTimeShortInPracticeZone(ew.startIso, PRACTICE_TZ)} – ${formatIsoTimeShortInPracticeZone(ew.endIso, PRACTICE_TZ)}`;
   }
   const aw = appt.arrivalWindow;
   if (aw?.windowStartLocal && aw?.windowEndLocal) {
+    if (aw.windowStartLocal === aw.windowEndLocal) {
+      return scheduledRange();
+    }
     return `${aw.windowStartLocal} – ${aw.windowEndLocal}`;
   }
   const ws = pickStr(aw?.windowStartIso);
   const we = pickStr(aw?.windowEndIso);
   if (ws && we) {
+    if (arrivalWindowIsZeroWidth(ws, we)) {
+      return scheduledRange();
+    }
     return `${formatIsoTimeShortInPracticeZone(ws, PRACTICE_TZ)} – ${formatIsoTimeShortInPracticeZone(we, PRACTICE_TZ)}`;
   }
   return null;
 }
 
-/** Compact appointment-card header: `🪟 8:50 AM – 10:50 AM`. */
+/** Compact appointment-card header: `🪟 8:50 AM – 10:50 AM` (or booked span when window is 0±0). */
 function schedulerEventWindowCardLabel(
   appt: Appointment,
   driveHint: SchedulerHoverDriveHint | null | undefined
@@ -1984,6 +2018,11 @@ function schedulerEventWindowCardLabel(
     practiceTz,
   });
   if (resolved?.startIso && resolved?.endIso) {
+    if (arrivalWindowIsZeroWidth(resolved.startIso, resolved.endIso)) {
+      const a = formatIsoTimeShortInPracticeZone(appt.appointmentStart, practiceTz);
+      const b = formatIsoTimeShortInPracticeZone(appt.appointmentEnd, practiceTz);
+      if (a && b) return `🪟 ${a} – ${b}`;
+    }
     return `🪟 ${formatIsoTimeShortInPracticeZone(resolved.startIso, practiceTz)} – ${formatIsoTimeShortInPracticeZone(resolved.endIso, practiceTz)}`;
   }
   return null;
@@ -4882,7 +4921,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                 optionKey:
                   routingPreview.listOptionKey?.trim() ||
                   routingCalendarPreviewOptionKey(routingPreview),
-                hasWindowWarning: etaWindowSummary.hasAnyWarning,
+                // Placement-relevant only (candidate or at/after it) — not upstream pre-existing.
+                hasWindowWarning: etaWindowSummary.hasPlacementRelevantWarning,
                 warningStopCount: etaWindowSummary.warningStopCount,
                 candidateHasWarning: etaWindowSummary.candidateHasWarning,
                 reconciledOverrunSeconds,
@@ -5826,7 +5866,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         vwW,
         vwH,
         cardW: 300,
-        cardEstH: 340,
+        cardEstH: 420,
         padding: 12,
         gutter: 10,
       });
@@ -5835,7 +5875,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       vwW,
       vwH,
       cardW: 300,
-      cardEstH: 340,
+      cardEstH: 420,
       padding: 12,
     });
   }, [editTimePreview, editPreviewAnchorRect, editPreviewDayColumnRect, editPreviewScoreCompare]);
@@ -5893,7 +5933,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       vwW,
       vwH,
       cardW: 300,
-      cardEstH: 280,
+      cardEstH: 360,
       padding: 12,
       gutter: 10,
     });
@@ -8370,52 +8410,64 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     [onHoldVisitPreview, onHoldVisitApptForPopover, clearEditVisitHighlightTimer, navigate],
   );
 
+  const finishOnHoldVisitConverted = useCallback(
+    (opts?: { navigateBack?: boolean }) => {
+      const navigateBack = opts?.navigateBack !== false;
+      const preview = onHoldVisitPreview;
+      const exitKind = onHoldVisitConvertedExitKind;
+      if (!preview || !exitKind) {
+        dismissOnHoldVisitPreview();
+        return;
+      }
+      if (isHoldsBoardReturnPath(preview.returnPath)) {
+        const householdIds = onHoldVisitHouseholdAppts
+          .map((a) => Number(a.id))
+          .filter((id) => Number.isFinite(id) && id > 0);
+        writeHoldsBoardReturnSession({
+          appointmentIds:
+            householdIds.length > 0 ? householdIds : [preview.bookedAppointmentId],
+          exitKind: exitKind === 'removed' ? 'removed' : 'booked',
+          clientLabel: preview.clientLabel,
+          groupKey: preview.groupKey,
+          snapshotAppointmentStart: onHoldVisitApptForPopover?.appointmentStart ?? null,
+        });
+      } else {
+        writeOnHoldVisitEditReturnSession({
+          listEntryId: preview.listEntryId,
+          listKind: preview.listKind,
+          exitKind,
+        });
+      }
+      clearOnHoldVisitEditSession();
+      clearEditVisitHighlightTimer();
+      setEditVisitHighlightIds(new Set());
+      setOnHoldVisitPreview(null);
+      setOnHoldVisitConvertedExitKind(null);
+      setOnHoldVisitEditing(false);
+      setOnHoldVisitEditingApptId(null);
+      setOnHoldVisitLinkSelection(null);
+      setEditVisitPatientSelection(null);
+      notifySchedulingToolsNavCountsRefresh();
+      if (navigateBack) navigate(preview.returnPath);
+    },
+    [
+      onHoldVisitPreview,
+      onHoldVisitConvertedExitKind,
+      onHoldVisitHouseholdAppts,
+      onHoldVisitApptForPopover,
+      dismissOnHoldVisitPreview,
+      clearEditVisitHighlightTimer,
+      navigate,
+    ],
+  );
+
   const completeOnHoldVisitReturn = useCallback(() => {
-    const preview = onHoldVisitPreview;
-    const exitKind = onHoldVisitConvertedExitKind;
-    if (!preview || !exitKind) {
-      dismissOnHoldVisitPreview();
-      return;
-    }
-    if (isHoldsBoardReturnPath(preview.returnPath)) {
-      const householdIds = onHoldVisitHouseholdAppts
-        .map((a) => Number(a.id))
-        .filter((id) => Number.isFinite(id) && id > 0);
-      writeHoldsBoardReturnSession({
-        appointmentIds:
-          householdIds.length > 0 ? householdIds : [preview.bookedAppointmentId],
-        exitKind: exitKind === 'removed' ? 'removed' : 'booked',
-        clientLabel: preview.clientLabel,
-        groupKey: preview.groupKey,
-        snapshotAppointmentStart: onHoldVisitApptForPopover?.appointmentStart ?? null,
-      });
-    } else {
-      writeOnHoldVisitEditReturnSession({
-        listEntryId: preview.listEntryId,
-        listKind: preview.listKind,
-        exitKind,
-      });
-    }
-    clearOnHoldVisitEditSession();
-    clearEditVisitHighlightTimer();
-    setEditVisitHighlightIds(new Set());
-    setOnHoldVisitPreview(null);
-    setOnHoldVisitConvertedExitKind(null);
-    setOnHoldVisitEditing(false);
-    setOnHoldVisitEditingApptId(null);
-    setOnHoldVisitLinkSelection(null);
-    setEditVisitPatientSelection(null);
-    notifySchedulingToolsNavCountsRefresh();
-    navigate(preview.returnPath);
-  }, [
-    onHoldVisitPreview,
-    onHoldVisitConvertedExitKind,
-    onHoldVisitHouseholdAppts,
-    onHoldVisitApptForPopover,
-    dismissOnHoldVisitPreview,
-    clearEditVisitHighlightTimer,
-    navigate,
-  ]);
+    finishOnHoldVisitConverted({ navigateBack: true });
+  }, [finishOnHoldVisitConverted]);
+
+  const completeOnHoldVisitStayOnSchedule = useCallback(() => {
+    finishOnHoldVisitConverted({ navigateBack: false });
+  }, [finishOnHoldVisitConverted]);
 
   const dismissNotBookedRemoveGate = useCallback(() => {
     const returnPath = notBookedRemoveGate?.returnPath;
@@ -8576,12 +8628,12 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     if (!onHoldVisitPreview || !onHoldVisitConvertedExitKind) return;
 
     const onKeyDown = (ev: KeyboardEvent) => {
-      if (ev.key === 'Escape') completeOnHoldVisitReturn();
+      if (ev.key === 'Escape') completeOnHoldVisitStayOnSchedule();
     };
 
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [onHoldVisitPreview, onHoldVisitConvertedExitKind, completeOnHoldVisitReturn]);
+  }, [onHoldVisitPreview, onHoldVisitConvertedExitKind, completeOnHoldVisitStayOnSchedule]);
 
   const handleOnHoldVisitEditSaved = useCallback(
     (updated?: Appointment, detail?: { alignedAppointments?: Appointment[] }) => {
@@ -9846,7 +9898,13 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               fail('No phone number on file.');
               return;
             }
-            window.location.href = buildPhoneDialHref(phone);
+            // Match preview Call/Text: pin Quo `from` to the visit doctor's line so the
+            // deep link does not inherit whatever inbox is currently active in Quo.
+            const fromLine = resolveQuoFromLine({
+              appointmentPrimaryProvider: appt.primaryProvider,
+              providers,
+            });
+            window.location.href = buildPhoneDialHref(phone, { fromLine });
             return;
           }
           case 'text': {
@@ -9859,7 +9917,11 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               fail('No phone number on file.');
               return;
             }
-            window.location.href = buildPhoneSmsHref(phone);
+            const fromLine = resolveQuoFromLine({
+              appointmentPrimaryProvider: appt.primaryProvider,
+              providers,
+            });
+            window.location.href = buildPhoneSmsHref(phone, { fromLine });
             return;
           }
           default:
@@ -11434,7 +11496,11 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               position: 'fixed',
               left: routingPreviewPopoverPos.left,
               width: routingPreviewPopoverPos.width,
+              maxHeight: routingPreviewPopoverPos.maxCardH,
               zIndex: 2050,
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
               ...(routingPreviewPopoverPos.bottom != null
                 ? { top: 'auto', bottom: routingPreviewPopoverPos.bottom }
                 : { top: routingPreviewPopoverPos.top }),
@@ -11474,7 +11540,11 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               position: 'fixed',
               left: editPreviewPopoverPos.left,
               width: editPreviewPopoverPos.width,
+              maxHeight: editPreviewPopoverPos.maxCardH,
               zIndex: 2050,
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
               ...(editPreviewPopoverPos.bottom != null
                 ? { top: 'auto', bottom: editPreviewPopoverPos.bottom }
                 : { top: editPreviewPopoverPos.top }),
@@ -11689,6 +11759,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                 recommendedLength={onHoldVisitConvertedRecommendedLength}
                 recommendedLengthLoading={onHoldVisitConvertedRecommendedLengthLoading}
                 onBack={completeOnHoldVisitReturn}
+                onDone={completeOnHoldVisitStayOnSchedule}
                 onEdit={
                   onHoldVisitConvertedExitKind === 'booked'
                     ? handleOnHoldVisitEditFromConverted

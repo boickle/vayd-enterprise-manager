@@ -340,11 +340,21 @@ function itemNameMatch(name: string, ...substrings: string[]): boolean {
   return substrings.some((s) => n.includes(s.toLowerCase()));
 }
 
+/** Cancelled/deleted invoice lines must not count as “already done” for lab lookbacks. */
+function treatmentHistoryItemCountsForLookback(item: {
+  isDeclined?: boolean;
+  isDeleted?: boolean;
+  isActive?: boolean;
+}): boolean {
+  if (item.isDeclined || item.isDeleted === true || item.isActive === false) return false;
+  return true;
+}
+
 function hadInLast8Months(history: TreatmentWithItems[], ...nameSubstrings: string[]): boolean {
   const cutoff = DateTime.now().minus({ months: 8 });
   for (const tx of history ?? []) {
     for (const item of tx.treatmentItems ?? []) {
-      if (item.isDeclined) continue;
+      if (!treatmentHistoryItemCountsForLookback(item)) continue;
       const name = item.lab?.name ?? item.procedure?.name ?? item.inventoryItem?.name ?? '';
       if (!itemNameMatch(name, ...nameSubstrings)) continue;
       const serviceDate = item.serviceDate ? DateTime.fromISO(item.serviceDate) : null;
