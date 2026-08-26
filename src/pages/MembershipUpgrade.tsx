@@ -1,6 +1,6 @@
 // src/pages/MembershipUpgrade.tsx
 import React, { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router';
 import {
   fetchSubscriptionPlanCatalog,
   type SubscriptionPlanCatalog,
@@ -164,102 +164,12 @@ export default function MembershipUpgrade() {
         currentPlan,
       });
       
-      // 1. Show Plus upgrade ONLY if they have Foundations base (NOT Plus)
-      // If they already have Plus, skip this section entirely
-      if (!hasFoundationsPlus) {
-        // Find Foundations Plus plans
-        formattedPlans.forEach((plan) => {
-          const planNameLower = plan.planName.toLowerCase();
-          
-          const isFoundations = planNameLower.includes('foundations') || planNameLower.includes('foundation');
-          const hasPlus = planNameLower.includes('plus');
-          
-          // Exclude Starter Plus plans (we only want base Foundations Plus)
-          const hasStarter = planNameLower.includes('starter') || 
-                            planNameLower.includes('puppy') || 
-                            planNameLower.includes('kitten');
-          
-          if (isFoundations && hasPlus && !hasStarter) {
-            // Check if species matches
-            let speciesMatches = true;
-            if (species) {
-              const hasCat = planNameLower.includes('cat') || planNameLower.includes('feline');
-              const hasDog = planNameLower.includes('dog') || planNameLower.includes('canine');
-              const isCat = species === 'cat' || species === 'feline';
-              const isDog = species === 'dog' || species === 'canine';
-              speciesMatches = 
-                (isCat && hasCat) ||
-                (isDog && hasDog) ||
-                (!hasCat && !hasDog);
-            }
-            
-            if (speciesMatches) {
-              // Add all variations of this Plus plan
-              plan.variations.forEach((variation) => {
-                if (variation.price?.amount) {
-                  const price = variation.price.amount / 100;
-                  const varNameLower = variation.name.toLowerCase();
-                  const isMonthly = varNameLower.includes('monthly') || varNameLower.includes('month');
-                  const cadence = isMonthly ? 'monthly' : 'annual';
-                  
-                  const exists = upgrades.some(
-                    (u) => u.planId === plan.planId && u.pricingOption === cadence
-                  );
-                  
-                  if (!exists) {
-                    upgrades.push({
-                      planId: plan.planId,
-                      planName: plan.planName,
-                      pricingOption: cadence,
-                      price,
-                      description: `Upgrade to ${plan.planName}`,
-                    });
-                  }
-                }
-                
-                variation.phases?.forEach((phase) => {
-                  let priceAmount: number | null = null;
-                  if (phase.pricing?.amount) {
-                    priceAmount = phase.pricing.amount;
-                  } else if ((phase.pricing as any)?.price_money?.amount) {
-                    priceAmount = (phase.pricing as any).price_money.amount;
-                  } else if (typeof phase.pricing === 'number') {
-                    priceAmount = phase.pricing;
-                  }
-                  
-                  if (priceAmount) {
-                    const price = priceAmount / 100;
-                    const isMonthly = phase.cadence === 'MONTHLY';
-                    const cadence = isMonthly ? 'monthly' : 'annual';
-                    
-                    const exists = upgrades.some(
-                      (u) => u.planId === plan.planId && u.pricingOption === cadence
-                    );
-                    
-                    if (!exists) {
-                      upgrades.push({
-                        planId: plan.planId,
-                        planName: plan.planName,
-                        pricingOption: cadence,
-                        price,
-                        description: `Upgrade to ${plan.planName}`,
-                      });
-                    }
-                  }
-                });
-              });
-            }
-          }
-        });
-      }
-      
+      // 1. PLUS add-on is retired — do not offer Foundations Plus upgrades.
       // 2. Show Puppy/Kitten options if criteria is met (pet < 1 year old, no past appointments)
       // Note: The eligibility check is done in canUpgradeMembership, so if we're here, criteria is met
-      // If they have Foundations Plus, ONLY show Puppy/Kitten (no Plus options)
-      // If they have Foundations base, show both Plus and Puppy/Kitten options
       console.log('MembershipUpgrade: Processing upgrades for Foundations plan', {
         hasFoundationsPlus,
-        willShowPlus: !hasFoundationsPlus,
+        willShowPlus: false,
         willShowPuppyKitten: true,
       });
       
@@ -371,179 +281,9 @@ export default function MembershipUpgrade() {
       return []; // Can't determine base plan type
     }
 
-    // Find Plus upgrade options ONLY for the specific base plan (no other modifiers)
-    formattedPlans.forEach((plan) => {
-      const planNameLower = plan.planName.toLowerCase();
-      
-      // Look for Plus plans matching the base plan type
-      // Must contain base plan type AND "plus" (in that order, or at least both present)
-      const hasBasePlan = planNameLower.includes(basePlanType);
-      const hasPlus = planNameLower.includes('plus');
-      
-      // Exclude plans with other modifiers (starter, puppy, kitten, etc.)
-      const hasStarter = planNameLower.includes('starter') || 
-                        planNameLower.includes('puppy') || 
-                        planNameLower.includes('kitten');
-      
-      // Ensure it's the Plus version of the base plan (e.g., "Foundations Plus", "Golden Plus", "Comfort Care Plus")
-      // Pattern should be: [basePlanType] + "plus" (with possible words in between like "care")
-      const basePlanPlusPattern = basePlanType === 'comfort' 
-        ? /comfort.*care.*plus|comfort.*plus/  // "Comfort Care Plus" or "Comfort Plus"
-        : new RegExp(`${basePlanType}.*plus`, 'i'); // "Foundations Plus" or "Golden Plus"
-      
-      const matchesBasePlanPlusPattern = basePlanPlusPattern.test(planNameLower);
-      
-      console.log('MembershipUpgrade: Checking plan for Plus upgrade', {
-        planName: plan.planName,
-        basePlanType,
-        hasBasePlan,
-        hasPlus,
-        hasStarter,
-        matchesBasePlanPlusPattern,
-      });
-      
-      // Only show Plus plans that:
-      // 1. Match the base plan type (foundations, golden, or comfort)
-      // 2. Have "plus" in the name
-      // 3. Don't have starter/puppy/kitten modifiers
-      // 4. Match the base plan + plus pattern
-      // 5. Match the species (if species is known)
-      if (hasBasePlan && hasPlus && !hasStarter && matchesBasePlanPlusPattern) {
-        // Check if species matches (if we have species info)
-        // For Plus upgrades, we MUST match the species - no wildcards
-        let speciesMatches = true;
-        if (species) {
-          const hasCat = planNameLower.includes('cat') || planNameLower.includes('feline');
-          const hasDog = planNameLower.includes('dog') || planNameLower.includes('canine');
-          
-          const isCat = species === 'cat' || species === 'feline';
-          const isDog = species === 'dog' || species === 'canine';
-          
-          // Strict species matching: must match exactly
-          // If plan specifies cat, pet must be cat. If plan specifies dog, pet must be dog.
-          // Only allow plans without species if pet species is unknown
-          if (hasCat || hasDog) {
-            speciesMatches = (isCat && hasCat) || (isDog && hasDog);
-          } else {
-            // Plan doesn't specify species - only allow if pet species is also unknown
-            speciesMatches = false; // Don't allow plans without species if we know the pet's species
-          }
-          
-          console.log('MembershipUpgrade: Species check (strict)', {
-            species,
-            isCat,
-            isDog,
-            hasCat,
-            hasDog,
-            speciesMatches,
-            planName: plan.planName,
-          });
-        } else {
-          // No species info - only allow plans that don't specify species
-          const hasCat = planNameLower.includes('cat') || planNameLower.includes('feline');
-          const hasDog = planNameLower.includes('dog') || planNameLower.includes('canine');
-          speciesMatches = !hasCat && !hasDog; // Only allow plans without species specification
-        }
-
-        if (!speciesMatches) {
-          console.log('MembershipUpgrade: Species mismatch, skipping', {
-            planName: plan.planName,
-            species,
-          });
-          return; // Skip if species doesn't match
-        }
-
-        // Add all variations of this Plus plan
-        plan.variations.forEach((variation) => {
-          console.log('MembershipUpgrade: Processing variation', {
-            variationName: variation.name,
-            hasPhases: !!variation.phases,
-            phasesCount: variation.phases?.length || 0,
-            hasPrice: !!variation.price,
-            price: variation.price,
-            phases: variation.phases,
-          });
-          
-          // Check if variation has direct price
-          if (variation.price?.amount) {
-            const price = variation.price.amount / 100; // Convert cents to dollars
-            // Try to determine cadence from variation name or use default
-            const varNameLower = variation.name.toLowerCase();
-            const isMonthly = varNameLower.includes('monthly') || varNameLower.includes('month');
-            const cadence = isMonthly ? 'monthly' : 'annual';
-            
-            const exists = upgrades.some(
-              (u) => u.planId === plan.planId && u.pricingOption === cadence
-            );
-            
-            if (!exists) {
-              console.log('MembershipUpgrade: Adding upgrade from variation price', {
-                planId: plan.planId,
-                planName: plan.planName,
-                cadence,
-                price,
-              });
-              upgrades.push({
-                planId: plan.planId,
-                planName: plan.planName,
-                pricingOption: cadence,
-                price,
-                description: `Upgrade to ${plan.planName}`,
-              });
-            }
-          }
-          
-          // Also check phases
-          variation.phases?.forEach((phase) => {
-            console.log('MembershipUpgrade: Processing phase', {
-              cadence: phase.cadence,
-              pricing: phase.pricing,
-              hasAmount: !!phase.pricing?.amount,
-            });
-            
-            // Try different pricing structures
-            let priceAmount: number | null = null;
-            if (phase.pricing?.amount) {
-              priceAmount = phase.pricing.amount;
-            } else if ((phase.pricing as any)?.price_money?.amount) {
-              priceAmount = (phase.pricing as any).price_money.amount;
-            } else if (typeof phase.pricing === 'number') {
-              priceAmount = phase.pricing;
-            }
-            
-            if (priceAmount) {
-              const price = priceAmount / 100; // Convert cents to dollars
-              const isMonthly = phase.cadence === 'MONTHLY';
-              const cadence = isMonthly ? 'monthly' : 'annual';
-              
-              // Check if we already added this exact upgrade
-              const exists = upgrades.some(
-                (u) => u.planId === plan.planId && u.pricingOption === cadence
-              );
-              
-              if (!exists) {
-                console.log('MembershipUpgrade: Adding upgrade from phase', {
-                  planId: plan.planId,
-                  planName: plan.planName,
-                  cadence,
-                  price,
-                });
-                upgrades.push({
-                  planId: plan.planId,
-                  planName: plan.planName,
-                  pricingOption: cadence,
-                  price,
-                  description: `Upgrade to ${plan.planName}`,
-                });
-              }
-            }
-          });
-        });
-      }
-    });
-
-    console.log('MembershipUpgrade: Final upgrades', upgrades);
-    return upgrades;
+    // PLUS add-on is retired — no Plus upgrades for Golden / Comfort Care.
+    console.log('MembershipUpgrade: PLUS add-on retired; no upgrades for', basePlanType);
+    return [];
   }, [state?.currentPlanName, state?.petSpecies, formattedPlans]);
 
   const totalPrice = useMemo(() => {

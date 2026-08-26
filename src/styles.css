@@ -19,6 +19,9 @@
   --tab-active-ring: #11a36a;
   --tab-text: #0f4c3a;
   --tab-muted: #2f6b58;
+
+  /** Reserve space below fixed Scout header — desktop: one row; mobile overrides below. */
+  --scout-schedule-navbar-height: 120px;
 }
 
 * {
@@ -91,8 +94,525 @@ a:hover {
   padding: 24px;
 }
 
-/* Ensure main element fills screen for client portal */
-main:not(.container) {
+/**
+ * `.app-root` is a fixed-height (100dvh) flex column with overflow:hidden at every
+ * breakpoint, and the app shell (html/body/#root) is likewise capped to the viewport.
+ * The general scroll rule below excludes `.container`, so a `container` page taller
+ * than the viewport (e.g. the login page) gets clipped with no scrollbar on both
+ * mobile and short desktop windows.
+ *
+ * Make `main.container` a FULL-WIDTH scroll container that fills the shell, and push
+ * the 1100px centering down onto its child content. Keeping the scroller full width
+ * means the scrollbar sits at the window edge (and the whole viewport responds to the
+ * wheel), instead of floating at the right edge of a centered 1100px box.
+ */
+main.container {
+  max-width: none;
+  margin: 0;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+main.container > * {
+  max-width: 1100px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.app-root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  height: 100dvh;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+/** Dev/staging environment warning — stays visible while the page scrolls. */
+.app-root--nonprod {
+  --app-nonprod-banner-height: 32px;
+  padding-top: var(--app-nonprod-banner-height);
+}
+
+.app-nonprod-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 10001;
+  background: linear-gradient(90deg, #b45309 0%, #d97706 100%);
+  color: #fff;
+  text-align: center;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1.35;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+
+/** Quo undelivered staff SMS — floating so it does not cover the navbar. */
+.sms-delivery-failure-stack {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 10050;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: min(420px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
+.sms-delivery-failure-banner {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  background: #7f1d1d;
+  color: #fff;
+  padding: 12px 14px;
+  font-size: 13px;
+  line-height: 1.4;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+}
+
+.sms-delivery-failure-banner__body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.sms-delivery-failure-banner__body strong {
+  font-weight: 700;
+}
+
+.sms-delivery-failure-banner__dismiss {
+  flex-shrink: 0;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  background: transparent;
+  color: #fff;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.sms-delivery-failure-banner__dismiss:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.sms-delivery-failure-banner__dismiss:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.app-root--nonprod .navbar {
+  top: var(--app-nonprod-banner-height);
+}
+
+/* Full-width content under global header (PIMS sidebar layout). */
+main.pims-main-wrapper {
+  max-width: none;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  min-height: calc(100vh - 76px);
+}
+
+main.schedule-main-wrapper {
+  max-width: none;
+  width: 100%;
+  margin: 0;
+  padding-left: 0;
+  padding-right: 0;
+  padding-bottom: 0;
+  flex: 1 1 0;
+  min-height: 0;
+  height: auto;
+  max-height: none;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  /* padding-top set below with --scout-schedule-navbar-height for fixed header */
+}
+
+main.schedule-main-wrapper > * {
+  flex: 1 1 0;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+/** Let the schedule outlet scroll the full calendar (filters + grid), not a flex-trapped inner pane. */
+main.schedule-main-wrapper .scheduler-page:not(.scheduler-page--embedded) {
+  flex: none;
+  min-height: auto;
+  display: block;
+}
+
+.navbar__center-block {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.navbar__mid {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.navbar-schedule-tab-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.15em;
+  height: 1.15em;
+  padding: 0 4px;
+  margin-left: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  color: #fff !important;
+  background: #dc2626;
+  border-radius: 3px;
+  vertical-align: super;
+  box-sizing: border-box;
+}
+
+.schedule-app__tab--active .navbar-schedule-tab-badge {
+  color: #fff !important;
+  background: #dc2626;
+}
+
+.navbar-schedule-tab-badge--watching {
+  background: #7c3aed;
+}
+
+.schedule-app__tab--active .navbar-schedule-tab-badge--watching {
+  color: #fff !important;
+  background: #7c3aed;
+}
+
+.navbar-schedule-horizontal-nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+/** Collapsible schedule nav: single row + “More” instead of wrapping Admin to a second line */
+.navbar-schedule-horizontal-nav.navbar-schedule-horizontal-nav--collapse {
+  flex-wrap: nowrap;
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.navbar-schedule-nav-measure {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+  pointer-events: none;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 6px;
+  box-sizing: border-box;
+}
+
+.navbar-schedule-nav-inline {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  width: 100%;
+}
+
+.navbar-schedule-more {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.navbar-schedule-more > summary {
+  list-style: none;
+  cursor: pointer;
+  /* Do not put display:flex/inline-flex on <summary> — iOS WebKit (iPhone Chrome/Safari)
+     fails to toggle <details> when summary is a flex container. */
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.navbar-schedule-more > summary::-webkit-details-marker {
+  display: none;
+}
+
+.navbar-schedule-more-summary-inner {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  pointer-events: none;
+}
+
+.navbar-schedule-more-chevron {
+  flex-shrink: 0;
+  opacity: 0.75;
+}
+
+.navbar-schedule-more-panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 60;
+  min-width: 240px;
+  max-width: min(320px, 90vw);
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.12);
+  padding: 8px;
+  box-sizing: border-box;
+}
+
+.navbar-schedule-more-section {
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.navbar-schedule-more-section:last-child {
+  padding-bottom: 0;
+  margin-bottom: 0;
+  border-bottom: none;
+}
+
+.navbar-schedule-more-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #64748b;
+  margin: 0 0 6px 4px;
+}
+
+.navbar-schedule-more .schedule-app__settings-link {
+  margin: 0;
+}
+
+.navbar-schedule-more-admin {
+  display: block;
+  padding: 9px 12px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #334155;
+  text-decoration: none;
+}
+
+.navbar-schedule-more-admin:hover {
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+.navbar-schedule-more-admin--active {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.navbar__spacer {
+  flex: 1;
+  min-width: 0;
+}
+
+@media (max-width: 900px) {
+  .navbar {
+    flex-wrap: nowrap;
+    row-gap: 0;
+    padding: 8px 12px;
+    gap: 8px;
+  }
+
+  .navbar .brand,
+  .navbar .brand.brand--home-link {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .navbar .brand.brand--home-link img {
+    height: 44px;
+  }
+
+  .navbar .brand.brand--home-link span {
+    font-size: 22px;
+    line-height: 44px;
+  }
+
+  .navbar__center-block {
+    flex: 1 1 100%;
+    order: 3;
+    min-width: 0;
+    width: 100%;
+    overflow: visible;
+    padding-top: 4px;
+    margin: 0 -4px;
+    padding-left: 4px;
+    padding-right: 4px;
+    border-top: 1px solid rgba(17, 163, 106, 0.1);
+  }
+
+  .navbar-schedule-nav-inline {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding-bottom: 2px;
+  }
+
+  .navbar-schedule-nav-inline::-webkit-scrollbar {
+    display: none;
+  }
+
+  .navbar-schedule-more-panel,
+  .schedule-app__settings-dropdown {
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    top: calc(
+      var(--app-nonprod-banner-height, 0px) + var(--scout-schedule-navbar-height, 120px)
+    );
+    width: auto;
+    max-width: none;
+    z-index: 200;
+  }
+
+  .navbar__mid {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .navbar__spacer {
+    display: none;
+  }
+
+  .navbar-appointment-btn {
+    margin-left: 0;
+    flex-shrink: 0;
+    padding: 8px 12px;
+    font-size: 13px;
+  }
+
+  .navbar-global-search {
+    display: none;
+  }
+
+  .navbar.navbar--schedule-shell {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-rows: auto auto;
+    align-items: stretch;
+    column-gap: 8px;
+    row-gap: 0;
+  }
+
+  .navbar.navbar--schedule-shell .brand.brand--home-link {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .navbar.navbar--schedule-shell > .navbar-appointment-btn {
+    grid-column: 2;
+    grid-row: 1;
+    align-self: center;
+  }
+
+  .navbar.navbar--schedule-shell .user-menu-container {
+    grid-column: 3;
+    grid-row: 1;
+  }
+
+  .navbar.navbar--schedule-shell .navbar__center-block {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    order: unset;
+    display: flex;
+    align-items: center;
+  }
+
+  .schedule-app__tab {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+}
+
+.navbar-global-search {
+  flex: 0 1 300px;
+  max-width: 320px;
+  min-width: 170px;
+  position: relative;
+}
+
+.navbar-global-search input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 9px 14px 9px 38px;
+  border-radius: 10px;
+  border: 1px solid #cbd5e1;
+  background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='m21 21-4.3-4.3'/%3E%3C/svg%3E")
+    11px center no-repeat;
+  font-size: 15px;
+}
+
+.navbar-appointment-btn {
+  flex-shrink: 0;
+  white-space: nowrap;
+  border: 1px solid #15803d;
+  background: #16a34a;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  padding: 8px 14px;
+  border-radius: 10px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.navbar-appointment-btn:hover {
+  background: #15803d;
+  border-color: #166534;
+}
+
+/* Scheduler tab only: nearly full viewport width */
+.container.container--scheduler {
+  max-width: calc(100vw - 24px);
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* Client portal and other full-bleed mains — not schedule/PIMS shell layouts */
+main:not(.container):not(.schedule-main-wrapper):not(.pims-main-wrapper) {
   width: 100%;
   height: 100%;
   margin: 0;
@@ -111,6 +631,108 @@ main:not(.container) {
   background: #f8fdfa;
   border-bottom: 1px solid rgba(17, 163, 106, 0.1);
   backdrop-filter: saturate(120%) blur(6px);
+  flex-shrink: 0;
+}
+
+/**
+ * Schedule shell: pin header and pad main so email chips / page titles never sit underneath.
+ * (Applies at all viewport widths — desktop one-row nav, mobile two-row nav.)
+ */
+.navbar.navbar--schedule-shell {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: var(--app-nonprod-banner-height, 0px);
+  z-index: 100;
+}
+
+main.schedule-main-wrapper {
+  padding-top: var(--scout-schedule-navbar-height);
+  box-sizing: border-box;
+}
+
+.brand.brand--home-link {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 0 0 auto;
+  text-decoration: none;
+  color: inherit;
+  border-radius: 8px;
+}
+
+.brand.brand--home-link:hover {
+  text-decoration: none;
+  background: rgba(17, 163, 106, 0.06);
+}
+
+.brand.brand--home-link:focus-visible {
+  outline: 2px solid #11a36a;
+  outline-offset: 2px;
+}
+
+@media (min-width: 901px) {
+  .navbar.navbar--schedule-shell {
+    display: grid;
+    /* First column must fit logo + “Scout™”; a capped clamp caused overflow into the nav column. */
+    grid-template-columns: max-content minmax(0, 1fr) auto auto auto;
+    column-gap: 14px;
+    align-items: center;
+    row-gap: 8px;
+    /* Room for eVet hint under global search (positioned absolute, does not affect row height). */
+    padding-bottom: 26px;
+  }
+
+  .navbar.navbar--schedule-shell > .brand {
+    grid-column: 1;
+    min-width: min-content;
+    justify-self: start;
+    align-self: center;
+  }
+
+  .navbar.navbar--schedule-shell > .navbar__center-block {
+    grid-column: 2;
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    flex: initial;
+    align-self: center;
+  }
+
+  /* Don’t let the flex spacer eat the whole column — tabs need this width for “More” math */
+  .navbar.navbar--schedule-shell .navbar__spacer {
+    flex: 0 0 0;
+    width: 0;
+    min-width: 0;
+    overflow: hidden;
+    margin: 0;
+    padding: 0;
+  }
+
+  .navbar.navbar--schedule-shell > .navbar-global-search {
+    grid-column: 3;
+    justify-self: end;
+    align-self: center;
+  }
+
+  .navbar.navbar--schedule-shell > .navbar-appointment-btn {
+    grid-column: 4;
+    align-self: center;
+  }
+
+  .navbar.navbar--schedule-shell > .user-menu-container {
+    grid-column: 5;
+    align-self: center;
+  }
+
+  .navbar.navbar--schedule-shell .navbar__mid {
+    padding-left: 16px;
+    box-sizing: border-box;
+    /* Fill grid column 2 so schedule tabs measure against real width, not “More”-only shrink-wrap */
+    flex: 1 1 auto;
+    min-width: 0;
+    width: 100%;
+  }
 }
 
 .brand {
@@ -339,10 +961,81 @@ label > .label {
   }
 }
 
+/**
+ * Mobile: contain scroll in the app shell; two-row schedule header needs more offset.
+ */
+@media (max-width: 900px) {
+  :root {
+    --scout-navbar-height: calc(60px + env(safe-area-inset-top, 0px));
+    --scout-schedule-navbar-height: calc(116px + env(safe-area-inset-top, 0px));
+  }
+
+  html,
+  body {
+    overflow: hidden;
+    height: 100%;
+    height: 100dvh;
+  }
+
+  body {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+  }
+
+  #root,
+  .app-root {
+    height: 100%;
+    height: 100dvh;
+    overflow: hidden;
+  }
+
+  .navbar:not(.navbar--schedule-shell) {
+    position: fixed;
+    left: 0;
+    right: 0;
+    top: var(--app-nonprod-banner-height, 0px);
+    z-index: 100;
+    flex-shrink: 0;
+  }
+
+  main.container,
+  main.pims-main-wrapper,
+  main:not(.container):not(.schedule-main-wrapper):not(.pims-main-wrapper) {
+    padding-top: var(--scout-navbar-height, calc(60px + env(safe-area-inset-top, 0px)));
+    box-sizing: border-box;
+    flex: 1 1 auto;
+    min-height: 0;
+    height: auto;
+    max-height: none;
+  }
+}
+
 :root {
   --ok: #1a7f37; /* green */
   --warn: #b38600; /* yellow */
   --bad: #c52828; /* red */
+}
+
+/* CL seat day overrides — week grid in Settings */
+.cl-seat-day-override-scroll {
+  overflow-x: auto;
+  max-width: 100%;
+}
+.cl-seat-day-override-table th,
+.cl-seat-day-override-table td {
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.cl-seat-day-override-table select {
+  min-width: 6.5rem;
+  font-size: 0.85rem;
+}
+.cl-seat-day-cell--off {
+  background: #f8d7da;
+}
+.cl-seat-day-cell--swap {
+  background: #e8f0ea;
 }
 .dd-meta span b,
 .dd-meta span strong {

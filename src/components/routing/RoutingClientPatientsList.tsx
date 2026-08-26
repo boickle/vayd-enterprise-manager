@@ -1,0 +1,439 @@
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FocusEvent,
+  type MouseEvent,
+} from 'react';
+import { createPortal } from 'react-dom';
+import { PatientChartSummaryPanel } from '../PatientChartSummaryPanel';
+import { fetchClientByIdStaff } from '../../api/clientsStaff';
+import { Heart } from 'lucide-react';
+import {
+  enrichRoutingClientPatientsMembership,
+  extractActivePatientsFromClientStaffRecord,
+  loadRoutingPatientHoverSummary,
+  patientAlertsFromRecord,
+  type RoutingClientPatientRow,
+  type RoutingPatientHoverSummary,
+} from '../../utils/routingPatientHoverData';
+import { fetchPatientProfileForRow } from '../../api/patients';
+import { computeVisitHighlightsPopoverPosition } from '../../utils/hoverPopoverPosition';
+import '../PatientChartSummary.css';
+
+type HoverState = {
+  patient: RoutingClientPatientRow;
+  chipEl: HTMLElement;
+  x: number;
+  y: number;
+};
+
+type Props = {
+  clientId: string | null | undefined;
+  practiceId: number;
+  practiceTz: string;
+  /** When set, skip client fetch and show these chips (e.g. appointment request alternate address). */
+  staticPatients?: RoutingClientPatientRow[];
+  selectedPatientIds?: ReadonlySet<string>;
+  onTogglePatientSelect?: (patient: RoutingClientPatientRow) => void;
+  onPatientsLoaded?: (patients: RoutingClientPatientRow[]) => void;
+};
+
+export default function RoutingClientPatientsList({
+  clientId,
+  practiceId,
+  practiceTz,
+  staticPatients,
+  selectedPatientIds,
+  onTogglePatientSelect,
+  onPatientsLoaded,
+}: Props) {
+  const [patients, setPatients] = useState<RoutingClientPatientRow[]>([]);
+  const [loadingPatients, setLoadingPatients] = useState(false);
+  const [hover, setHover] = useState<HoverState | null>(null);
+  const [layout, setLayout] = useState<{
+    pos: ReturnType<typeof computeVisitHighlightsPopoverPosition>;
+    ready: boolean;
+  } | null>(null);
+  const [summary, setSummary] = useState<RoutingPatientHoverSummary | null>(null);
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
+  const summaryCacheRef = useRef(new Map<string, RoutingPatientHoverSummary>());
+  const alertsCacheRef = useRef(new Map<string, string | null>());
+  const alertsLoadingRef = useRef(new Set<string>());
+  const [resolvedAlertsById, setResolvedAlertsById] = useState<Record<string, string | null>>({});
+  const [alertsLoadingIds, setAlertsLoadingIds] = useState<Set<string>>(() => new Set());
+  const hoverTimerRef = useRef<number | null>(null);
+  const hideTimerRef = useRef<number | null>(null);
+  const chipsContainerRef = useRef<HTMLDivElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (staticPatients != null) {
+      setPatients(staticPatients);
+      setLoadingPatients(false);
+      onPatientsLoaded?.(staticPatients);
+      return;
+    }
+
+    const id = clientId?.trim();
+    if (!id) {
+      setPatients([]);
+      setLoadingPatients(false);
+      return;
+    }
+
+    let cancelled = false;
+    setLoadingPatients(true);
+    void fetchClientByIdStaff(id)
+      .then((raw) => {
+        if (cancelled) return;
+        const rows = extractActivePatientsFromClientStaffRecord(raw);
+        setPatients(rows);
+        return enrichRoutingClientPatientsMembership(rows);
+      })
+      .then((enriched) => {
+        if (cancelled || !enriched) return;
+        setPatients(enriched);
+        onPatientsLoaded?.(enriched);
+      })
+      .catch(() => {
+        if (!cancelled) setPatients([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingPatients(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [clientId, staticPatients, onPatientsLoaded]);
+
+  useEffect(() => {
+    if (!selectedPatientIds?.size) return;
+    let cancelled = false;
+
+    for (const rawId of selectedPatientIds) {
+      const id = String(rawId);
+      const patient = patients.find((p) => String(p.id) === id);
+      if (!patient) continue;
+
+      const inline = patient.alerts?.trim();
+      if (inline) {
+        alertsCacheRef.current.set(id, inline);
+        setResolvedAlertsById((prev) => (prev[id] === inline ? prev : { ...prev, [id]: inline }));
+        continue;
+      }
+
+      const cached = alertsCacheRef.current.get(id);
+      if (cached !== undefined) {
+        setResolvedAlertsById((prev) => (prev[id] === cached ? prev : { ...prev, [id]: cached }));
+        continue;
+      }
+
+      if (alertsLoadingRef.current.has(id)) continue;
+      alertsLoadingRef.current.add(id);
+      setAlertsLoadingIds((prev) => new Set(prev).add(id));
+
+      void fetchPatientProfileForRow({ id: patient.id })
+        .then((profile) => {
+          if (cancelled) return;
+          const text = patientAlertsFromRecord(profile);
+          alertsCacheRef.current.set(id, text);
+          setResolvedAlertsById((prev) => ({ ...prev, [id]: text }));
+        })
+        .catch(() => {
+          if (cancelled) return;
+          alertsCacheRef.current.set(id, null);
+          setResolvedAlertsById((prev) => ({ ...prev, [id]: null }));
+        })
+        .finally(() => {
+          alertsLoadingRef.current.delete(id);
+          setAlertsLoadingIds((prev) => {
+            const next = new Set(prev);
+            next.delete(id);
+            return next;
+          });
+        });
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [patients, selectedPatientIds]);
+
+  const selectedPatientAlerts = useMemo(() => {
+    if (!selectedPatientIds?.size) return [];
+    return patients
+      .filter((p) => selectedPatientIds.has(String(p.id)))
+      .map((p) => {
+        const id = String(p.id);
+        const alerts = p.alerts?.trim() || resolvedAlertsById[id] || null;
+        return alerts ? { id, name: p.name, alerts } : null;
+      })
+      .filter((row): row is { id: string; name: string; alerts: string } => row != null);
+  }, [patients, selectedPatientIds, resolvedAlertsById]);
+
+  const selectedAlertsLoading = useMemo(() => {
+    if (!selectedPatientIds?.size) return false;
+    return [...selectedPatientIds].some((rawId) => alertsLoadingIds.has(String(rawId)));
+  }, [selectedPatientIds, alertsLoadingIds]);
+
+  const clearHoverTimers = useCallback(() => {
+    if (hoverTimerRef.current != null) {
+      window.clearTimeout(hoverTimerRef.current);
+      hoverTimerRef.current = null;
+    }
+    if (hideTimerRef.current != null) {
+      window.clearTimeout(hideTimerRef.current);
+      hideTimerRef.current = null;
+    }
+  }, []);
+
+  const hoverAnchorEl = useCallback(
+    (chipEl: HTMLElement | null | undefined): HTMLElement | null =>
+      chipsContainerRef.current ?? chipEl ?? null,
+    []
+  );
+
+  const computeLayout = useCallback(
+    (state: HoverState, measuredCardH?: number) =>
+      computeVisitHighlightsPopoverPosition({
+        anchorEl: hoverAnchorEl(state.chipEl),
+        x: state.x,
+        y: state.y,
+        measuredCardH,
+        preferSide: 'right',
+      }),
+    [hoverAnchorEl]
+  );
+
+  const loadSummary = useCallback(
+    async (patient: RoutingClientPatientRow) => {
+      const cached = summaryCacheRef.current.get(patient.id);
+      if (cached) {
+        setSummary(cached);
+        setSummaryLoading(false);
+        setSummaryError(null);
+        return;
+      }
+      setSummaryLoading(true);
+      setSummaryError(null);
+      setSummary(null);
+      try {
+        const loaded = await loadRoutingPatientHoverSummary(patient.id, practiceId, practiceTz, {
+          alerts: patient.alerts,
+        });
+        summaryCacheRef.current.set(patient.id, loaded);
+        setSummary(loaded);
+      } catch {
+        setSummaryError('Could not load patient details.');
+      } finally {
+        setSummaryLoading(false);
+      }
+    },
+    [practiceId, practiceTz]
+  );
+
+  const showHover = useCallback(
+    (patient: RoutingClientPatientRow, ev: MouseEvent<HTMLElement> | FocusEvent<HTMLElement>) => {
+      clearHoverTimers();
+      const chipEl = ev.currentTarget;
+      const x = 'clientX' in ev ? ev.clientX : 0;
+      const y = 'clientY' in ev ? ev.clientY : 0;
+      hoverTimerRef.current = window.setTimeout(() => {
+        setHover({ patient, chipEl, x, y });
+        void loadSummary(patient);
+      }, 120);
+    },
+    [clearHoverTimers, loadSummary]
+  );
+
+  const scheduleHideHover = useCallback(() => {
+    clearHoverTimers();
+    hideTimerRef.current = window.setTimeout(() => {
+      setHover(null);
+      setLayout(null);
+      setSummary(null);
+      setSummaryLoading(false);
+      setSummaryError(null);
+    }, 180);
+  }, [clearHoverTimers]);
+
+  const hideHover = useCallback(() => {
+    clearHoverTimers();
+    setHover(null);
+    setLayout(null);
+    setSummary(null);
+    setSummaryLoading(false);
+    setSummaryError(null);
+  }, [clearHoverTimers]);
+
+  const cancelHideHover = useCallback(() => {
+    if (hideTimerRef.current != null) {
+      window.clearTimeout(hideTimerRef.current);
+      hideTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => () => clearHoverTimers(), [clearHoverTimers]);
+
+  useLayoutEffect(() => {
+    if (!hover) {
+      setLayout(null);
+      return;
+    }
+    setLayout({
+      pos: computeLayout(hover),
+      ready: false,
+    });
+  }, [hover?.patient.id, hover?.chipEl, computeLayout]);
+
+  useLayoutEffect(() => {
+    if (!hover || !layout || layout.ready) return;
+    const el = popoverRef.current;
+    const measuredH = el ? Math.max(el.scrollHeight, el.getBoundingClientRect().height) : 0;
+    setLayout({
+      pos: computeLayout(hover, measuredH > 0 ? measuredH : undefined),
+      ready: true,
+    });
+  }, [hover, layout?.ready, computeLayout, summary, summaryLoading, summaryError]);
+
+  useEffect(() => {
+    if (!hover || !layout?.ready) return;
+    const recompute = () => {
+      const el = popoverRef.current;
+      const measuredH = el ? Math.max(el.scrollHeight, el.getBoundingClientRect().height) : 0;
+      setLayout({
+        pos: computeLayout(hover, measuredH > 0 ? measuredH : undefined),
+        ready: true,
+      });
+    };
+    window.addEventListener('scroll', recompute, true);
+    window.addEventListener('resize', recompute);
+    return () => {
+      window.removeEventListener('scroll', recompute, true);
+      window.removeEventListener('resize', recompute);
+    };
+  }, [hover, layout?.ready, computeLayout]);
+
+  if (!staticPatients?.length && !clientId?.trim()) return null;
+
+  return (
+    <div className="routing-client-patients routing-span-full">
+      <div className="routing-client-patients-label">
+        {onTogglePatientSelect
+          ? 'Which patients are you booking? (optional)'
+          : 'Active patients'}
+      </div>
+      {loadingPatients ? (
+        <p className="routing-client-patients-hint">Loading patients…</p>
+      ) : patients.length === 0 ? (
+        <p className="routing-client-patients-hint">No active patients on file for this client.</p>
+      ) : (
+        <div className="routing-client-patients-chips" role="list" ref={chipsContainerRef}>
+          {patients.map((patient) => {
+            const isSelected = selectedPatientIds?.has(String(patient.id)) ?? false;
+            return (
+            <div
+              key={patient.id}
+              className="routing-client-patient-chip-wrap"
+              role="listitem"
+              onMouseEnter={(e) => showHover(patient, e)}
+              onMouseLeave={scheduleHideHover}
+              onFocus={(e) => showHover(patient, e)}
+              onBlur={scheduleHideHover}
+            >
+              <button
+                type="button"
+                className={`routing-client-patient-chip${
+                  isSelected ? ' routing-client-patient-chip--selected' : ''
+                }`}
+                tabIndex={0}
+                aria-pressed={onTogglePatientSelect ? isSelected : undefined}
+                onClick={() => {
+                  hideHover();
+                  onTogglePatientSelect?.(patient);
+                }}
+              >
+                <span className="routing-client-patient-chip-label">
+                  {patient.isMember ? (
+                    <span
+                      className="routing-client-patient-member-heart"
+                      title={patient.membershipName?.trim() || 'Member'}
+                      aria-hidden
+                    >
+                      <Heart size={10} fill="#dc2626" color="#dc2626" strokeWidth={1.5} />
+                    </span>
+                  ) : null}
+                  {patient.name}
+                </span>
+              </button>
+            </div>
+            );
+          })}
+        </div>
+      )}
+
+      {onTogglePatientSelect && selectedPatientIds && selectedPatientIds.size > 0 ? (
+        <div className="routing-client-patient-alerts">
+          {selectedAlertsLoading ? (
+            <p className="routing-client-patients-hint routing-client-patient-alerts-loading">
+              Loading patient alerts…
+            </p>
+          ) : null}
+          {selectedPatientAlerts.map((row) => (
+            <div
+              key={row.id}
+              className="routing-client-patient-alert-banner"
+              role="alert"
+            >
+              <strong>{row.name}:</strong> {row.alerts}
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {hover && layout
+        ? createPortal(
+            <div
+              ref={popoverRef}
+              className="routing-patient-hover-popover"
+              style={{
+                position: 'fixed',
+                left: layout.pos.left,
+                width: layout.pos.width,
+                zIndex: 12000,
+                visibility: layout.ready ? 'visible' : 'hidden',
+                pointerEvents: layout.ready ? 'auto' : 'none',
+                ...(layout.pos.bottom != null
+                  ? { top: 'auto', bottom: layout.pos.bottom }
+                  : { top: layout.pos.top }),
+                maxWidth: layout.pos.width,
+                maxHeight: layout.pos.maxCardH,
+                overflow: 'auto',
+              }}
+              onMouseEnter={cancelHideHover}
+              onMouseLeave={scheduleHideHover}
+            >
+              <div className="routing-patient-hover-card" role="tooltip">
+                <PatientChartSummaryPanel
+                  patientName={hover.patient.name}
+                  summary={summary}
+                  loading={summaryLoading}
+                  error={summaryError}
+                  showAlerts
+                  isMember={hover.patient.isMember}
+                  membershipName={hover.patient.membershipName}
+                />
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
+    </div>
+  );
+}

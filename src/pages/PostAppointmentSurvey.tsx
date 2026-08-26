@@ -1,10 +1,9 @@
 // src/pages/PostAppointmentSurvey.tsx
 import React, { useState, useEffect, useMemo } from 'react';
-import { useSearchParams, Link, useParams } from 'react-router-dom';
+import { useSearchParams, Link, useParams } from 'react-router';
 import {
   getSurveyForm,
   submitSurvey,
-  submitSurveyReferral,
   type SurveyFormResponse,
   type SurveyFormQuestion,
   type SurveyFormSection,
@@ -24,7 +23,8 @@ const FALLBACK_IMAGE =
 type Block = { order: number; type: 'section'; section: SurveyFormSection } | { order: number; type: 'question'; question: SurveyFormQuestion };
 
 const GOOGLE_REVIEW_URL = 'https://g.page/r/CdUqd2ODZtQ4EBM/review';
-
+const SERVICE_AREA_URL = 'https://www.vetatyourdoor.com/service-area';
+const SHARE_PAGE_PATH = '/share';
 function questionsSortedByOrder(questions: SurveyFormQuestion[]) {
   return [...questions].sort((a, b) => a.order - b.order);
 }
@@ -445,13 +445,6 @@ export default function PostAppointmentSurvey() {
   /** True when form load failed because the survey was already submitted (show review + referral again). */
   const [surveyReplay, setSurveyReplay] = useState(false);
   const [copiedStandout, setCopiedStandout] = useState(false);
-  const [referrerEmail, setReferrerEmail] = useState('');
-  const [friendEmail, setFriendEmail] = useState('');
-  const [friendName, setFriendName] = useState('');
-  const [referralSubmitting, setReferralSubmitting] = useState(false);
-  const [referralError, setReferralError] = useState<string | null>(null);
-  const [referralSuccess, setReferralSuccess] = useState(false);
-  const [referralExpanded, setReferralExpanded] = useState(false);
 
   useEffect(() => {
     if (!surveySlug) {
@@ -467,12 +460,6 @@ export default function PostAppointmentSurvey() {
     setPromoterThankYou(null);
     setSurveyReplay(false);
     setCopiedStandout(false);
-    setReferrerEmail('');
-    setFriendEmail('');
-    setFriendName('');
-    setReferralError(null);
-    setReferralSuccess(false);
-    setReferralExpanded(false);
     getSurveyForm(surveySlug, token)
       .then((data) => {
         if (!cancelled) {
@@ -649,14 +636,11 @@ export default function PostAppointmentSurvey() {
       .then(() => {
         setSurveyReplay(false);
         if (isPostAppointmentSurvey) {
-          setPromoterThankYou(isPromoter ? { standoutText } : null);
+          setPromoterThankYou({ standoutText: isPromoter ? standoutText : '' });
         } else {
           setPromoterThankYou(null);
         }
         setCopiedStandout(false);
-        setReferralSuccess(false);
-        setReferralError(null);
-        setReferralExpanded(false);
         setState('success');
       })
       .catch((err: any) => {
@@ -725,18 +709,6 @@ export default function PostAppointmentSurvey() {
       const { standoutText } = promoterThankYou;
       const hasStandout = standoutText.length > 0;
 
-      const promoterLead = hasStandout ? (
-        <>
-          Reviews help other pet owners discover in-home veterinary care. If you&apos;re willing, you can share what you
-          wrote as a Google review.
-        </>
-      ) : (
-        <>
-          Reviews help other pet owners discover in-home veterinary care. If you&apos;re willing, we&apos;d appreciate a
-          Google review.
-        </>
-      );
-
       const handleCopyStandout = async () => {
         try {
           await navigator.clipboard.writeText(standoutText);
@@ -746,45 +718,22 @@ export default function PostAppointmentSurvey() {
         }
       };
 
-      const handleReferralSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
-        const refEmail = referrerEmail.trim();
-        const fEmail = friendEmail.trim();
-        const fName = friendName.trim();
-        if (!refEmail) {
-          setReferralError('Please enter your email so we can credit your account.');
-          return;
-        }
-        if (!fEmail) {
-          setReferralError("Please enter your friend's email.");
-          return;
-        }
-        setReferralError(null);
-        setReferralSubmitting(true);
-        try {
-          await submitSurveyReferral({
-            token,
-            referrerEmail: refEmail,
-            friendEmail: fEmail,
-            friendName: fName || undefined,
-          });
-          setReferralSuccess(true);
-        } catch (err: any) {
-          const message = err?.response?.data?.message ?? err?.message;
-          setReferralError(typeof message === 'string' ? message : 'Something went wrong. Please try again.');
-        } finally {
-          setReferralSubmitting(false);
-        }
-      };
-
       return (
         <div className="survey-page">
           <div className="survey-card survey-success survey-success-promoter">
             {surveyReplay && (
               <p className="survey-replay-banner">You&apos;ve already submitted this survey—thanks again!</p>
             )}
-            <h1 className="survey-promoter-heading">Thank you for sharing this.</h1>
-            <p className="survey-promoter-lead">{promoterLead}</p>
+            <h1 className="survey-promoter-heading">Thank you for sharing your feedback.</h1>
+            <p className="survey-promoter-lead">
+              Your thoughts help us continue delivering calmer, more personal veterinary care for pets and their
+              families.
+            </p>
+
+            <p className="survey-compliment-lead">
+              One of the greatest compliments we receive is when a client chooses to share Vet at Your Door with another
+              pet owner.
+            </p>
 
             {hasStandout && (
               <>
@@ -818,7 +767,11 @@ export default function PostAppointmentSurvey() {
               </>
             )}
 
-            <div className="survey-google-review-wrap">
+            <div className="survey-action-card">
+              <h2 className="survey-action-card-title">Help More Pet Owners Discover Vet at Your Door</h2>
+              <p className="survey-action-card-copy">
+                Sharing your experience on Google helps other families learn about in-home veterinary care.
+              </p>
               <a
                 href={GOOGLE_REVIEW_URL}
                 target="_blank"
@@ -829,82 +782,20 @@ export default function PostAppointmentSurvey() {
               </a>
             </div>
 
-            <div className="survey-referral-section">
-              <p className="survey-referral-heading">Know someone who would love in-home veterinary care?</p>
-              <p className="survey-success-blurb survey-referral-copy">
-                Most of our new clients come from referrals from happy pet owners like you.
+            <div className="survey-action-card">
+              <h2 className="survey-action-card-title">Know a Pet Who Deserves a Team?</h2>
+              <p className="survey-action-card-copy">
+                If someone comes to mind whose pet would benefit from calmer visits, familiar faces, and
+                relationship-based care, we&apos;d be honored if you shared Vet at Your Door.{' '}
+                <a href={SERVICE_AREA_URL} target="_blank" rel="noopener noreferrer">
+                  Check our service area
+                </a>
+                .
               </p>
-              <p className="survey-success-blurb survey-referral-copy">
-                When a friend books their first visit using your referral, both of you receive a $50 Vet At Your Door
-                credit. If they become a member, you each get another $25 credit.
-              </p>
-
-              {referralSuccess ? (
-                <p className="survey-referral-success">Thank you! We&apos;ve recorded your referral.</p>
-              ) : !referralExpanded ? (
-                <div className="survey-referral-cta-wrap">
-                  <button
-                    type="button"
-                    className="btn survey-btn-refer-friend"
-                    onClick={() => setReferralExpanded(true)}
-                  >
-                    Refer a Friend
-                  </button>
-                </div>
-              ) : (
-                <form className="survey-referral-form survey-referral-form-expanded" onSubmit={handleReferralSubmit}>
-                  <label className="survey-referral-label">
-                    Your email
-                    <span className="survey-referral-hint">
-                      Use the same address this survey link was sent to so we can credit your account.
-                    </span>
-                    <input
-                      type="email"
-                      className="survey-input"
-                      value={referrerEmail}
-                      onChange={(e) => setReferrerEmail(e.target.value)}
-                      autoComplete="email"
-                      placeholder="you@example.com"
-                      disabled={referralSubmitting}
-                      required
-                    />
-                  </label>
-                  <label className="survey-referral-label">
-                    Friend&apos;s email
-                    <input
-                      type="email"
-                      className="survey-input"
-                      value={friendEmail}
-                      onChange={(e) => setFriendEmail(e.target.value)}
-                      autoComplete="off"
-                      placeholder="friend@example.com"
-                      disabled={referralSubmitting}
-                      required
-                    />
-                  </label>
-                  <label className="survey-referral-label">
-                    Friend&apos;s name <span className="survey-muted">(optional)</span>
-                    <input
-                      type="text"
-                      className="survey-input"
-                      value={friendName}
-                      onChange={(e) => setFriendName(e.target.value)}
-                      autoComplete="name"
-                      placeholder="First name"
-                      disabled={referralSubmitting}
-                    />
-                  </label>
-                  {referralError && <p className="survey-error survey-referral-error">{referralError}</p>}
-                  <div className="survey-referral-actions">
-                    <button type="submit" className="btn survey-btn-send-referral" disabled={referralSubmitting}>
-                      {referralSubmitting ? 'Sending…' : 'Send referral'}
-                    </button>
-                    <Link to="/client-portal" className="btn secondary survey-btn-referral-alt">
-                      Refer from client portal
-                    </Link>
-                  </div>
-                </form>
-              )}
+              <p className="survey-action-card-copy">As a warm welcome, their first trip fee is on us.</p>
+              <Link to={SHARE_PAGE_PATH} className="btn survey-btn-refer-friend">
+                Share Vet at Your Door
+              </Link>
             </div>
 
             <p className="survey-success-footer-blurb">
@@ -922,13 +813,12 @@ export default function PostAppointmentSurvey() {
           {surveyReplay && (
             <p className="survey-replay-banner">You&apos;ve already submitted this survey—thanks again!</p>
           )}
-          <h1>Thank you for your feedback</h1>
-          <p>Your responses have been submitted. You can close this window.</p>
-          <p className="survey-success-blurb">
-            Please log in to your client portal for all the most up-to-date information.
+          <h1>Thank you for sharing your feedback.</h1>
+          <p>
+            Your thoughts help us continue delivering calmer, more personal veterinary care for pets and their families.
           </p>
           <p className="survey-success-blurb">
-            You can also refer a friend directly from the client portal—we’d love to help more people and their four-legged loved ones.
+            Please log in to your client portal for all the most up-to-date information.
           </p>
           <Link to="/client-portal" className="btn survey-success-cta">
             Go to Client Portal

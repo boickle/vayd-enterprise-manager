@@ -2,11 +2,16 @@ import { http } from './http';
 
 /** Single booked visit row (nested under each day). One row = one booked visit; requires clientId + patientId on the server. */
 export type AppointmentBookingDetail = {
+  /** When the booking was created (PIMS externalCreated or row created). Used for CL lead-time scoring. */
+  bookedAt?: string;
   appointmentStart?: string;
   appointmentTypeName?: string;
   appointmentTypePrettyName?: string;
   primaryProviderId?: number | null;
   primaryProviderName?: string | null;
+  points?: number;
+  potentialRevenue?: number;
+  potentialRevenueSampleSize?: number;
   /** True when this is the first qualifying visit for this pet at this practice (per patientId + practiceId). */
   newPatient?: boolean;
 };
@@ -17,6 +22,8 @@ export type AppointmentBookingsDayRow = {
   totalBooked: number;
   existingPatientBooked: number;
   newPatientBooked: number;
+  totalPoints?: number;
+  totalPotentialRevenue?: number;
   bookings?: AppointmentBookingDetail[];
 };
 
@@ -27,6 +34,8 @@ export type AppointmentBookingsAnalyticsUser = {
   totalBooked?: number;
   totalExistingPatientBooked?: number;
   totalNewPatientBooked?: number;
+  totalPoints?: number;
+  totalPotentialRevenue?: number;
 };
 
 export type AppointmentBookingsAnalyticsResponse = {

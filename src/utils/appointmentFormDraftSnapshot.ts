@@ -49,6 +49,7 @@ export type AppointmentFormDraftSnapshotInput = {
   selectedDateTimeSlotsVisit?: Record<string, number>;
   membershipInterest?: string;
   howDidYouHearAboutUs?: string;
+  howDidYouHearAboutUsOther?: string;
   anythingElse?: string;
   isLoggedIn?: boolean;
 };
@@ -176,6 +177,9 @@ export function buildAppointmentFormDraftSnapshot(
   }
   if (trimStr(input.membershipInterest)) draft.membershipInterest = input.membershipInterest;
   if (trimStr(input.howDidYouHearAboutUs)) draft.howDidYouHearAboutUs = input.howDidYouHearAboutUs;
+  if (trimStr(input.howDidYouHearAboutUsOther)) {
+    draft.howDidYouHearAboutUsOther = input.howDidYouHearAboutUsOther;
+  }
   if (trimStr(input.anythingElse)) draft.anythingElse = input.anythingElse;
   if (input.isLoggedIn != null) draft.isLoggedIn = input.isLoggedIn;
 

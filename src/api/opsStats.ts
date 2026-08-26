@@ -130,7 +130,28 @@ export type DoctorRevenueSeriesItem = {
   description: string | null;
   patientName?: string | null;
   clientName?: string | null;
+  clientId?: number | null;
+  appointmentId?: number | string | null;
+  isMember?: boolean;
 };
+
+function mapRevenueSeriesItem(i: any): DoctorRevenueSeriesItem {
+  return {
+    treatmentItemId: Number(i?.treatmentItemId ?? 0),
+    cost: Number(i?.cost ?? 0),
+    description: i?.description ?? null,
+    patientName: i?.patientName ?? null,
+    clientName: i?.clientName ?? null,
+    clientId:
+      i?.clientId != null
+        ? Number(i.clientId)
+        : i?.client?.id != null
+          ? Number(i.client.id)
+          : null,
+    appointmentId: i?.appointmentId ?? i?.appointment?.id ?? null,
+    isMember: i?.isMember === true,
+  };
+}
 
 export type DoctorRevenuePoint = {
   date: string;
@@ -185,14 +206,233 @@ export async function fetchDoctorRevenueSeries(params: {
       date: String(r?.date ?? ''),
       total: Number(r?.total ?? 0),
       items: Array.isArray(r?.items)
-        ? (r.items as any[]).map((i: any) => ({
-            treatmentItemId: Number(i?.treatmentItemId ?? 0),
-            cost: Number(i?.cost ?? 0),
-            description: i?.description ?? null,
-            patientName: i?.patientName ?? null,
-            clientName: i?.clientName ?? null,
-          }))
+        ? (r.items as any[]).map(mapRevenueSeriesItem)
         : undefined,
     })),
+  };
+}
+
+/* =========================
+ * One client's revenue series over a date range
+ * GET /analytics/ops/revenue/client/series
+ * ========================= */
+
+export type ClientRevenuePoint = {
+  date: string;
+  total: number;
+  items?: DoctorRevenueSeriesItem[];
+};
+
+export type ClientRevenueSeriesResponse = {
+  clientId: number;
+  start: string;
+  end: string;
+  total: number;
+  series: ClientRevenuePoint[];
+};
+
+/**
+ * GET /analytics/ops/revenue/client/series
+ * Treatment-item revenue for one client by day.
+ * Query: clientId, start (YYYY-MM-DD), end (YYYY-MM-DD).
+ */
+export async function fetchClientRevenueSeries(params: {
+  clientId: number | string;
+  start: string;
+  end: string;
+}): Promise<ClientRevenueSeriesResponse> {
+  const { data } = await http.get('/analytics/ops/revenue/client/series', {
+    params: {
+      clientId: String(params.clientId),
+      start: params.start,
+      end: params.end,
+    },
+  });
+
+  const resp = data ?? {};
+  const series = Array.isArray(resp.series) ? resp.series : [];
+  return {
+    clientId: Number(resp.clientId ?? params.clientId),
+    start: String(resp.start ?? params.start),
+    end: String(resp.end ?? params.end),
+    total: Number(
+      resp.total ?? series.reduce((s: number, r: any) => s + Number(r?.total ?? 0), 0)
+    ),
+    series: series.map((r: any) => ({
+      date: String(r?.date ?? ''),
+      total: Number(r?.total ?? 0),
+      items: Array.isArray(r?.items) ? r.items.map(mapRevenueSeriesItem) : undefined,
+    })),
+  };
+}
+
+export type VsdPaymentsMatchDay = {
+  date: string;
+  vsd: number;
+  practicePayments: number;
+  pharmacyPayments: number;
+  membershipPayments: number;
+};
+
+export type VsdPaymentsMatchInvoice = {
+  invoiceNumber: number;
+  status: 'open' | 'closed' | 'paid';
+  serviceDate: string;
+  client: string;
+  remaining: number;
+  vsd: number;
+  doctor: string;
+  billedBy: string;
+  billedRole: string;
+  paymentType: string;
+  age: string;
+};
+
+export type VsdPaymentsMatchReport = {
+  start: string;
+  end: string;
+  timezone: string;
+  totals: {
+    vsd: number;
+    practicePayments: number;
+    pharmacyPayments: number;
+    membershipPayments: number;
+    gap: number;
+    paidVsd: number;
+    openVsd: number;
+    closedVsd: number;
+    membershipDiscount: number;
+    membershipCoveredVsd: number;
+    memberVsd: number;
+    memberBilled: number;
+    billed: number;
+    openToCollect: number;
+  };
+  daily: VsdPaymentsMatchDay[];
+  doctors: {
+    doctor: string;
+    vsd: number;
+    paidVsd: number;
+    openVsd: number;
+    closedVsd: number;
+    openMemberVsd: number;
+    openMembershipDiscount: number;
+    membershipDiscount: number;
+    openToCollect: number;
+    openInvoices: number;
+  }[];
+  billers: { name: string; role: string; invoices: number; remaining: number }[];
+  openInvoices: VsdPaymentsMatchInvoice[];
+  closedInvoices: VsdPaymentsMatchInvoice[];
+  paymentTypes: {
+    type: string;
+    count: number;
+    total: number;
+    inPracticeCompare: boolean;
+  }[];
+};
+
+/**
+ * GET /analytics/ops/revenue/vsd-payments-match
+ * Practice-wide VSD vs practice payments for a date range (admins).
+ */
+export async function fetchVsdPaymentsMatch(params: {
+  start: string;
+  end: string;
+}): Promise<VsdPaymentsMatchReport> {
+  const { data } = await http.get('/analytics/ops/revenue/vsd-payments-match', {
+    params: { start: params.start, end: params.end },
+  });
+  const resp = data ?? {};
+  const n = (v: unknown) => Number(v) || 0;
+  return {
+    start: String(resp.start ?? params.start),
+    end: String(resp.end ?? params.end),
+    timezone: String(resp.timezone ?? 'America/New_York'),
+    totals: {
+      vsd: n(resp.totals?.vsd),
+      practicePayments: n(resp.totals?.practicePayments),
+      pharmacyPayments: n(resp.totals?.pharmacyPayments),
+      membershipPayments: n(resp.totals?.membershipPayments),
+      gap: n(resp.totals?.gap),
+      paidVsd: n(resp.totals?.paidVsd),
+      openVsd: n(resp.totals?.openVsd),
+      closedVsd: n(resp.totals?.closedVsd),
+      membershipDiscount: n(resp.totals?.membershipDiscount),
+      membershipCoveredVsd: n(resp.totals?.membershipCoveredVsd),
+      memberVsd: n(resp.totals?.memberVsd),
+      memberBilled: n(resp.totals?.memberBilled),
+      billed: n(resp.totals?.billed),
+      openToCollect: n(resp.totals?.openToCollect),
+    },
+    daily: Array.isArray(resp.daily)
+      ? resp.daily.map((r: any) => ({
+          date: String(r?.date ?? ''),
+          vsd: n(r?.vsd),
+          practicePayments: n(r?.practicePayments),
+          pharmacyPayments: n(r?.pharmacyPayments),
+          membershipPayments: n(r?.membershipPayments),
+        }))
+      : [],
+    doctors: Array.isArray(resp.doctors)
+      ? resp.doctors.map((r: any) => {
+          const openVsd = n(r?.openVsd);
+          const openMemberVsd = n(r?.openMemberVsd);
+          const openMembershipDiscount = n(r?.openMembershipDiscount);
+          const membershipDiscount = n(r?.membershipDiscount);
+          const openToCollect = Math.max(0, openVsd - openMembershipDiscount);
+          return {
+            doctor: String(r?.doctor ?? 'Not specified'),
+            vsd: n(r?.vsd),
+            paidVsd: n(r?.paidVsd),
+            openVsd,
+            closedVsd: n(r?.closedVsd),
+            openMemberVsd: n(r?.openMemberVsd),
+            openMembershipDiscount,
+            membershipDiscount,
+            openToCollect,
+            openInvoices: n(r?.openInvoices),
+          };
+        })
+      : [],
+    billers: Array.isArray(resp.billers)
+      ? resp.billers.map((r: any) => ({
+          name: String(r?.name ?? '—'),
+          role: String(r?.role ?? '—'),
+          invoices: n(r?.invoices),
+          remaining: n(r?.remaining),
+        }))
+      : [],
+    openInvoices: Array.isArray(resp.openInvoices)
+      ? resp.openInvoices.map(mapMatchInvoice)
+      : [],
+    closedInvoices: Array.isArray(resp.closedInvoices)
+      ? resp.closedInvoices.map(mapMatchInvoice)
+      : [],
+    paymentTypes: Array.isArray(resp.paymentTypes)
+      ? resp.paymentTypes.map((r: any) => ({
+          type: String(r?.type ?? '(none)'),
+          count: n(r?.count),
+          total: n(r?.total),
+          inPracticeCompare: r?.inPracticeCompare !== false,
+        }))
+      : [],
+  };
+}
+
+function mapMatchInvoice(r: any): VsdPaymentsMatchInvoice {
+  const status = r?.status;
+  return {
+    invoiceNumber: Number(r?.invoiceNumber) || 0,
+    status: status === 'closed' || status === 'paid' ? status : 'open',
+    serviceDate: String(r?.serviceDate ?? '').slice(0, 10),
+    client: String(r?.client ?? '—'),
+    remaining: Number(r?.remaining) || 0,
+    vsd: Number(r?.vsd) || 0,
+    doctor: String(r?.doctor ?? 'Not specified'),
+    billedBy: String(r?.billedBy ?? '—'),
+    billedRole: String(r?.billedRole ?? '—'),
+    paymentType: String(r?.paymentType ?? 'None on file'),
+    age: String(r?.age ?? '—'),
   };
 }

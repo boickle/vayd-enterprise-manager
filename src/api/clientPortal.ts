@@ -1,5 +1,6 @@
 // src/api/clientPortal.ts
 import { apiBaseUrl, http } from './http';
+import { pickPracticeMainPhone } from '../utils/practicePhone';
 
 /** ---------- Types ---------- **/
 export type Vaccination = {
@@ -31,6 +32,8 @@ export type Pet = {
   sex?: string; // e.g., "MaleNeutered", "FemaleSpayed"
   subscription?: { id?: string; name?: string; status: 'active' | 'pending' | 'canceled' };
   primaryProviderName?: string | null;
+  /** Provider/employee id for the pet's primary provider (db id, pimsId, or employeeId). */
+  primaryProviderId?: string | number | null;
   /** Pet image URL (uploaded by user) */
   photoUrl?: string | null;
   /** Vaccinations for this pet */
@@ -39,6 +42,61 @@ export type Pet = {
   /** Optional: attached from /wellness-plans?patientId=<DB id> */
   wellnessPlans?: WellnessPlan[];
 };
+
+/** Patient chart primary provider — NOT the appointment visit assignee. */
+function chartPrimaryProviderSource(raw: any): any | null {
+  if (!raw || typeof raw !== 'object') return null;
+
+  // Appointment rows: chart vet lives on patientPrimaryProvider / patient.primaryProvider.
+  // Top-level primaryProvider is the visit assignee — do not use it here.
+  if (raw.patient != null || raw.patientPrimaryProvider != null) {
+    return raw.patientPrimaryProvider ?? raw.patient?.primaryProvider ?? null;
+  }
+
+  return (
+    raw.primaryProvider ??
+    raw.primary_provider ??
+    raw.primaryCareProvider ??
+    raw.primaryVet ??
+    raw.primaryDoctor ??
+    raw.provider ??
+    raw.doctor ??
+    raw.vet ??
+    raw.assignedDoctor ??
+    raw.assignedProvider ??
+    null
+  );
+}
+
+function providerNameFromRef(src: any): string | undefined {
+  if (!src || typeof src !== 'object') return undefined;
+
+  const nameLike =
+    typeof src.name === 'string' ? src.name :
+    typeof src.fullName === 'string' ? src.fullName :
+    typeof src.displayName === 'string' ? src.displayName :
+    typeof src.full_name === 'string' ? src.full_name :
+    typeof src.display_name === 'string' ? src.display_name :
+    undefined;
+  if (nameLike?.trim()) return nameLike.trim();
+
+  const first =
+    src.firstName ??
+    src.first_name ??
+    src.givenName ??
+    src.given_name ??
+    src.first ??
+    undefined;
+  const last =
+    src.lastName ??
+    src.last_name ??
+    src.familyName ??
+    src.family_name ??
+    src.last ??
+    undefined;
+  const combined = [first, last].filter(Boolean).join(' ').trim();
+  return combined || undefined;
+}
 
 function normalizeProviderName(raw: any): string | undefined {
   // Check direct string fields first
@@ -50,49 +108,28 @@ function normalizeProviderName(raw: any): string | undefined {
     typeof raw?.vetName === 'string' ? raw.vetName :
     undefined;
 
-  if (direct && direct.trim()) return direct.trim();
+  if (direct?.trim()) return direct.trim();
 
-  // Check nested object structures
-  const src =
-    raw?.primaryProvider ?? 
-    raw?.provider ?? 
-    raw?.primaryVet ?? 
-    raw?.primaryDoctor ?? 
-    raw?.doctor ?? 
-    raw?.vet ??
-    raw?.assignedDoctor ??
-    raw?.assignedProvider ??
-    null;
+  const fromChart = providerNameFromRef(chartPrimaryProviderSource(raw));
+  if (fromChart) return fromChart;
 
-  if (src) {
-    // Try name fields
-    const nameLike =
-      typeof src?.name === 'string' ? src.name :
-      typeof src?.fullName === 'string' ? src.fullName :
-      typeof src?.displayName === 'string' ? src.displayName :
-      typeof src?.full_name === 'string' ? src.full_name :
-      typeof src?.display_name === 'string' ? src.display_name :
-      undefined;
-    if (nameLike && nameLike.trim()) return nameLike.trim();
+  return undefined;
+}
 
-    // Try constructing from first/last name
-    const first =
-      src?.firstName ?? 
-      src?.first_name ?? 
-      src?.givenName ?? 
-      src?.given_name ?? 
-      src?.first ??
-      undefined;
-    const last = 
-      src?.lastName ?? 
-      src?.last_name ?? 
-      src?.familyName ?? 
-      src?.family_name ?? 
-      src?.last ??
-      undefined;
-    const combined = [first, last].filter(Boolean).join(' ').trim();
-    if (combined) return combined;
-  }
+/** Pull a provider/employee id from the pet's primary-provider data, if present. */
+function normalizeProviderId(raw: any): string | number | undefined {
+  const direct =
+    raw?.primaryProviderId ??
+    raw?.providerId ??
+    raw?.primaryVetId ??
+    raw?.doctorId ??
+    raw?.vetId ??
+    undefined;
+  if (direct != null && String(direct).trim()) return direct;
+
+  const src = chartPrimaryProviderSource(raw);
+  const nested = src?.id ?? src?.employeeId ?? src?.pimsId ?? src?.pimsUserId ?? undefined;
+  if (nested != null && String(nested).trim()) return nested;
 
   return undefined;
 }
@@ -270,8 +307,9 @@ function normalizeWellnessPlan(p: any): WellnessPlan {
  * Controller: GET /appointments/client
  */
 export async function fetchClientAppointments(): Promise<ClientAppointment[]> {
-  const { data } = await http.get('/appointments/client');
-  const rows: any[] = Array.isArray(data) ? data : (data?.appointments ?? data ?? []);
+  try {
+    const { data } = await http.get('/appointments/client');
+    const rows: any[] = Array.isArray(data) ? data : (data?.appointments ?? data ?? []);
 
   return rows
     .map((a) => {
@@ -351,6 +389,10 @@ export async function fetchClientAppointments(): Promise<ClientAppointment[]> {
       } as ClientAppointment;
     })
     .filter(Boolean) as ClientAppointment[];
+  } catch (err) {
+    console.warn('Failed to fetch client appointments:', err);
+    return [];
+  }
 }
 
 /** ---------- Pets for the logged-in client ----------
@@ -387,6 +429,7 @@ export async function fetchClientPets(): Promise<Pet[]> {
             }
           : undefined,
         primaryProviderName: normalizeProviderName(p) ?? null,
+        primaryProviderId: normalizeProviderId(p) ?? null,
         photoUrl: p?.photoUrl ?? p?.imageUrl ?? p?.image_url ?? null,
         vaccinations: Array.isArray(p?.vaccinations) ? p.vaccinations.map((v: any) => ({
           id: v?.id ?? 0,
@@ -430,6 +473,7 @@ export async function fetchClientPets(): Promise<Pet[]> {
         name: a.patientName ?? 'Pet',
         _pimsId: pimsId,
         primaryProviderName: normalizeProviderName(a) ?? null,
+        primaryProviderId: normalizeProviderId(a) ?? null,
         clientId: a.client?.id ?? a.clientId ?? a.clientPimsId ?? null,
       });
     } else {
@@ -442,6 +486,10 @@ export async function fetchClientPets(): Promise<Pet[]> {
       const appointProvider = normalizeProviderName(a);
       if (!cur.primaryProviderName && appointProvider) {
         cur.primaryProviderName = appointProvider;
+      }
+      const appointProviderId = normalizeProviderId(a);
+      if (!cur.primaryProviderId && appointProviderId != null) {
+        cur.primaryProviderId = appointProviderId;
       }
        const appointClientId = a.client?.id ?? a.clientId ?? a.clientPimsId ?? null;
        if (!cur.clientId && appointClientId != null) {
@@ -477,6 +525,7 @@ export async function fetchClientPets(): Promise<Pet[]> {
           dbId, // <- capture real DB id
           clientId: clientId ?? p.clientId ?? null,
           primaryProviderName: normalizeProviderName(data) ?? normalizeProviderName(p) ?? null,
+          primaryProviderId: normalizeProviderId(data) ?? normalizeProviderId(p) ?? p.primaryProviderId ?? null,
           photoUrl: data?.photoUrl ?? data?.imageUrl ?? data?.image_url ?? p.photoUrl ?? null,
         });
       } catch {
@@ -543,6 +592,8 @@ export type PracticeInfo = {
   state?: string;
   zip?: string;
   phone?: string;
+  phone1?: string;
+  phone2?: string;
   email?: string;
   website?: string;
   chatHoursOfOperation?: any;
@@ -553,6 +604,20 @@ export async function fetchPracticeInfo(): Promise<PracticeInfo | null> {
   try {
     const { data } = await http.get('/practice/info');
     return data || null;
+  } catch {
+    return null;
+  }
+}
+
+/** Main practice SMS/call line — from GET /practice/info (not hardcoded). */
+export async function fetchPracticeMainPhone(practiceId?: number): Promise<string | null> {
+  try {
+    const path =
+      practiceId != null && Number.isFinite(practiceId)
+        ? `/practice/info/${practiceId}`
+        : '/practice/info';
+    const { data } = await http.get(path);
+    return pickPracticeMainPhone(data);
   } catch {
     return null;
   }

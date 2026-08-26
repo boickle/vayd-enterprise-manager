@@ -1,0 +1,552 @@
+import { DateTime } from 'luxon';
+import { truthyApiFlag } from '../api/appointments';
+import type { Provider } from '../api/employee';
+import type { Appointment, Client, Patient } from '../api/roomLoader';
+import { patientsForAppointment } from './schedulerAddPet';
+
+export function pickStr(v: unknown): string | null {
+  if (v == null) return null;
+  const s = String(v).trim();
+  return s || null;
+}
+
+export function clientLabel(c: Appointment['client']): string {
+  if (!c) return '—';
+  const parts = [c.firstName, c.lastName].filter(Boolean);
+  return parts.join(' ').trim() || '—';
+}
+
+export function fullClientHouseholdName(c: Client | undefined): string {
+  if (!c) return '—';
+  const primary = [c.firstName, c.lastName].filter(Boolean).join(' ').trim();
+  const second = [c.secondFirstName, c.secondLastName].filter(Boolean).join(' ').trim();
+  if (primary && second) return `${primary} · ${second}`;
+  return primary || second || '—';
+}
+
+/** Client / household label from a booked appointment (after linking in scheduler). */
+export function appointmentLinkedClientLabel(appt: Appointment | null | undefined): string | null {
+  if (!appt) return null;
+  const household = fullClientHouseholdName(appt.client);
+  if (household && household !== '—') return household;
+  const pats = patientsForAppointment(appt);
+  const petNames = pats.map((p) => pickStr(p.name)).filter((s): s is string => Boolean(s));
+  if (petNames.length === 0) return null;
+  if (petNames.length === 1) return petNames[0];
+  if (petNames.length === 2) return `${petNames[0]} · ${petNames[1]}`;
+  return `${petNames[0]} +${petNames.length - 1}`;
+}
+
+function normalizeClientLabelKey(label: string): string {
+  return label.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+/** When a HOLD was linked to a different client than the original request name. */
+export function staffConfirmClientNameChange(
+  requestClientLabel: string | null | undefined,
+  linkedClientLabel: string | null | undefined,
+): { previous: string; current: string } | null {
+  const previous = pickStr(requestClientLabel);
+  const current = pickStr(linkedClientLabel);
+  if (!previous || !current) return null;
+  if (normalizeClientLabelKey(previous) === normalizeClientLabelKey(current)) return null;
+  return { previous, current };
+}
+
+export function providerLabel(p: Appointment['primaryProvider']): string {
+  if (!p) return '—';
+  const fromParts = [p.firstName, p.lastName].filter(Boolean).join(' ').trim();
+  if (fromParts) return fromParts;
+  const o = p as { name?: string | null };
+  return pickStr(o.name) || '—';
+}
+
+export function clientAddressOneLine(c: Client | undefined): string | null {
+  if (!c) return null;
+  const line1 = pickStr(c.address1);
+  const line2 = pickStr(c.address2);
+  const cityState = [pickStr(c.city), pickStr(c.state)].filter(Boolean).join(', ');
+  const zip = pickStr(c.zipcode);
+  const tail = [cityState, zip].filter(Boolean).join(cityState && zip ? ' ' : '');
+  const parts = [line1, line2, tail].filter(Boolean);
+  return parts.length ? parts.join(', ') : null;
+}
+
+export function clientPhonesLine(c: Client | undefined): string | null {
+  if (!c) return null;
+  const parts = [pickStr(c.phone1), pickStr(c.phone2)].filter(Boolean);
+  return parts.length ? parts.join(' · ') : null;
+}
+
+export function clientEmailsLine(c: Client | undefined): string | null {
+  if (!c) return null;
+  const parts = [pickStr(c.email), pickStr(c.secondEmail)].filter(Boolean);
+  return parts.length ? parts.join(' · ') : null;
+}
+
+export function clientAddressMultiline(c: Client | undefined): string | null {
+  if (!c) return null;
+  const line1 = pickStr(c.address1);
+  const line2 = pickStr(c.address2);
+  const cityState = [pickStr(c.city), pickStr(c.state)].filter(Boolean).join(', ');
+  const zip = pickStr(c.zipcode);
+  const line3 = [cityState, zip].filter(Boolean).join(cityState && zip ? ' ' : '');
+  const lines = [line1, line2, line3].filter(Boolean);
+  return lines.length ? lines.join('\n') : null;
+}
+
+export function googleMapsUrlForAppointment(a: Appointment): string | null {
+  const c = a.client;
+  if (!c) return null;
+  if (typeof c.lat === 'number' && typeof c.lon === 'number') {
+    return `https://www.google.com/maps?q=${c.lat},${c.lon}`;
+  }
+  const line = clientAddressOneLine(c);
+  if (!line) return null;
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(line)}`;
+}
+
+export function patientBreedDisplayOnly(p: Patient): string | null {
+  return pickStr(p.breedEntity?.name) ?? pickStr(p.breed) ?? null;
+}
+
+const PATIENT_SEX_SOURCE_KEYS = [
+  'sex',
+  'gender',
+  'sexDescription',
+  'sexAndNeuter',
+  'sexAndNeuterStatus',
+] as const;
+
+const PATIENT_ALTERED_STATUS_KEYS = [
+  'neuterStatus',
+  'spayNeuterStatus',
+  'alteredStatus',
+  'altered',
+  'sexStatus',
+] as const;
+
+function patientRecordFields(p: Patient): Record<string, unknown> {
+  return p as unknown as Record<string, unknown>;
+}
+
+function nestedRecord(v: unknown): Record<string, unknown> | null {
+  return v != null && typeof v === 'object' && !Array.isArray(v)
+    ? (v as Record<string, unknown>)
+    : null;
+}
+
+/** Collect sex / altered strings from a raw patient API object (nested entities included). */
+export function sexSourceStringsFromRecord(o: Record<string, unknown>): string[] {
+  const out: string[] = [];
+  const push = (v: unknown) => {
+    if (typeof v === 'string' || typeof v === 'number') {
+      const s = pickStr(v);
+      if (s) out.push(s);
+      return;
+    }
+    const nested = nestedRecord(v);
+    if (nested) {
+      const name =
+        pickStr(nested.name) ??
+        pickStr(nested.description) ??
+        pickStr(nested.label) ??
+        pickStr(nested.value) ??
+        pickStr(nested.code);
+      if (name) out.push(name);
+    }
+  };
+
+  for (const k of PATIENT_SEX_SOURCE_KEYS) push(o[k]);
+  for (const k of ['sexEntity', 'sex_entity', 'patientSex', 'sexName', 'sexAndNeuterStatus'] as const) {
+    push(o[k]);
+  }
+
+  for (const k of ['sexValue', 'sexType', 'sexLabel'] as const) {
+    push(o[k]);
+  }
+
+  const sexPart =
+    pickStr(o.sex) ??
+    pickStr(o.gender) ??
+    (() => {
+      const nested = nestedRecord(o.sex) ?? nestedRecord(o.sexEntity);
+      return nested ? pickStr(nested.name) ?? pickStr(nested.description) : null;
+    })();
+  const alteredPart = PATIENT_ALTERED_STATUS_KEYS.map((k) => pickStr(o[k]))
+    .filter(Boolean)
+    .join(' ')
+    .trim();
+  if (sexPart && alteredPart) out.push(`${sexPart} ${alteredPart}`);
+  else if (alteredPart) out.push(alteredPart);
+
+  const nestedPatient = nestedRecord(o.patient);
+  if (nestedPatient) out.push(...sexSourceStringsFromRecord(nestedPatient));
+
+  return [...new Set(out)];
+}
+
+/** Collect sex / altered strings from all common PIMS patient field shapes. */
+export function patientSexSourceStrings(p: Patient): string[] {
+  return sexSourceStringsFromRecord(patientRecordFields(p));
+}
+
+function patientSexAbbrevFromString(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const compact = trimmed.replace(/[\s._-]+/g, '').toLowerCase();
+  if (compact === 'fs' || compact === 'sf') return 'FS';
+  if (compact === 'fi') return 'FI';
+  if (compact === 'mn') return 'MN';
+  if (compact === 'mi') return 'MI';
+  if (compact === 'cm') return 'CM';
+  if (compact === 'f') return 'F';
+  if (compact === 'm') return 'M';
+  if (/^femalespayed$/i.test(compact) || /^spayedfemale$/i.test(compact)) return 'FS';
+  if (/^femaleintact$/i.test(compact) || /^intactfemale$/i.test(compact)) return 'FI';
+  if (/^maleneutered$/i.test(compact) || /^neuteredmale$/i.test(compact) || /^malecastrated$/i.test(compact)) {
+    return 'MN';
+  }
+  if (/^maleintact$/i.test(compact) || /^intactmale$/i.test(compact)) return 'MI';
+  const s = trimmed.toLowerCase();
+  const spayed = s.includes('spayed') || /\bspay\b/.test(s);
+  const neutered = s.includes('neutered') || s.includes('castrat') || /\bneuter\b/.test(s);
+  const intact = s.includes('intact');
+  if (s.includes('female') || s.includes('bitch') || s.includes('queen')) {
+    if (spayed || neutered) return 'FS';
+    if (intact) return 'FI';
+    return spayed ? 'FS' : neutered ? 'FS' : 'FI';
+  }
+  if (s.includes('male') && !s.includes('female')) {
+    if (neutered || spayed) return 'MN';
+    if (intact) return 'MI';
+    return neutered ? 'MN' : 'MI';
+  }
+  if (spayed && !s.includes('male')) return 'FS';
+  if (neutered && !s.includes('female')) return 'MN';
+  if (intact && !s.includes('male')) return 'FI';
+  if (intact && s.includes('male')) return 'MI';
+  if (trimmed.length <= 4 && /^[A-Za-z]+$/i.test(trimmed)) return trimmed.toUpperCase();
+  return null;
+}
+
+export function patientSexAbbrevDisplay(p: Patient): string | null {
+  for (const raw of patientSexSourceStrings(p)) {
+    const abbr = patientSexAbbrevFromString(raw);
+    if (abbr) return abbr;
+  }
+  return null;
+}
+
+/** Full sex label for lists and profiles (handles nested sexEntity / patientSex shapes). */
+export function patientSexListDisplayFromRecord(o: Record<string, unknown>): string | null {
+  const sources = sexSourceStringsFromRecord(o);
+  if (!sources.length) return null;
+  const unique = [...new Set(sources.map((s) => s.trim()).filter(Boolean))];
+  unique.sort((a, b) => b.length - a.length);
+  for (const candidate of unique) {
+    if (!/^(m|f|mn|mi|fs|fi|cm)$/i.test(candidate.trim())) return candidate;
+  }
+  return unique[0] ?? null;
+}
+
+export function patientSexListDisplay(p: Patient): string | null {
+  return patientSexListDisplayFromRecord(patientRecordFields(p));
+}
+
+const PATIENT_SEX_MERGE_KEYS = [
+  'sex',
+  'gender',
+  'sexDescription',
+  'sexAndNeuter',
+  'sexAndNeuterStatus',
+  'sexEntity',
+  'sex_entity',
+  'patientSex',
+  'sexName',
+  'sexValue',
+  'sexType',
+  'sexLabel',
+  'neuterStatus',
+  'spayNeuterStatus',
+  'alteredStatus',
+  'altered',
+  'sexStatus',
+] as const;
+
+/** Sex-related fields to merge from a full patient chart onto a search row. */
+export function sexFieldsFromProfile(profile: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const key of PATIENT_SEX_MERGE_KEYS) {
+    if (profile[key] != null) out[key] = profile[key];
+  }
+  return out;
+}
+
+/** Preferred list/detail label — full eVet text when available, otherwise MN/FS/etc. */
+export function patientSexDisplayFromRecord(o: Record<string, unknown>): string | null {
+  const listLabel = patientSexListDisplayFromRecord(o);
+  if (listLabel) return listLabel;
+  return patientSexAbbrevDisplay(o as Patient);
+}
+
+export function patientAgeYearsMonthsDisplay(p: Patient, practiceTz: string): string | null {
+  const dobIso = pickStr(p.dob);
+  if (!dobIso) return null;
+  const birth = DateTime.fromISO(dobIso);
+  if (!birth.isValid) return null;
+  const ref = DateTime.now().setZone(practiceTz).startOf('day');
+  const b = birth.setZone(practiceTz).startOf('day');
+  if (!b.isValid || ref < b) return null;
+  let years = ref.year - b.year;
+  let months = ref.month - b.month;
+  const dayDiff = ref.day - b.day;
+  if (dayDiff < 0) months -= 1;
+  if (months < 0) {
+    years -= 1;
+    months += 12;
+  }
+  if (years < 0 || (years === 0 && months < 0)) return null;
+  const parts: string[] = [];
+  if (years > 0) parts.push(`${years}y`);
+  if (months > 0) parts.push(`${months}m`);
+  if (parts.length > 0) return parts.join(' ');
+  const ageDays = Math.floor(ref.diff(b, 'days').days);
+  if (ageDays < 0) return null;
+  if (ageDays < 7) return ageDays <= 0 ? '<1d' : `${ageDays}d`;
+  const w = Math.floor(ageDays / 7);
+  return `${Math.max(1, w)}w`;
+}
+
+export function patientSpeciesIconKind(p: Patient): 'dog' | 'cat' | null {
+  const spec = (pickStr(p.speciesEntity?.name) ?? pickStr(p.species) ?? '').toLowerCase();
+  if (!spec) return null;
+  if (spec.includes('canine') || spec.includes('dog')) return 'dog';
+  if (spec.includes('feline') || spec.includes('cat')) return 'cat';
+  return null;
+}
+
+export function patientSexHighlightTone(p: Patient): 'male' | 'female' | 'neutral' {
+  for (const raw of patientSexSourceStrings(p)) {
+    const compact = raw.replace(/[\s._-]+/g, '').toLowerCase();
+    if (compact === 'fs' || compact === 'fi' || compact === 'sf' || compact === 'f') return 'female';
+    if (compact === 'mn' || compact === 'mi' || compact === 'm') return 'male';
+    if (/^femalespayed$/i.test(compact) || /^femaleintact$/i.test(compact) || /^spayedfemale$/i.test(compact)) {
+      return 'female';
+    }
+    if (/^maleneutered$/i.test(compact) || /^maleintact$/i.test(compact) || /^neuteredmale$/i.test(compact)) {
+      return 'male';
+    }
+    const s = raw.toLowerCase();
+    if (s.includes('female') || s.includes('bitch') || s.includes('queen')) return 'female';
+    if (s.includes('male') && !s.includes('female')) return 'male';
+    if (s.includes('spayed') || /\bspay\b/.test(s)) return 'female';
+    if (s.includes('neutered') || s.includes('castrat') || /\bneuter\b/.test(s)) return 'male';
+  }
+  return 'neutral';
+}
+
+export function patientLastWeightDisplay(p: Patient): string | null {
+  const o = p as unknown as Record<string, unknown>;
+  const raw =
+    p.weight ??
+    p.lastWeight ??
+    p.weightLbs ??
+    p.lastWeightLbs ??
+    o.lastRecordedWeight ??
+    o.last_weight ??
+    o.weight_lbs;
+  if (raw == null) return null;
+  const s = String(raw).trim();
+  if (s === '') return null;
+  const hasUnit = /\b(kg|lbs?)\b/i.test(s) || s.includes('/');
+  const weightPart = hasUnit ? s : `${s} lbs`;
+  const dateRaw =
+    pickStr(p.lastWeightDate ?? undefined) ??
+    pickStr(p.weightDate ?? undefined) ??
+    pickStr(o.lastWeightDate as string | undefined) ??
+    pickStr(o.last_weight_date as string | undefined);
+  if (dateRaw) {
+    const d = DateTime.fromISO(dateRaw);
+    if (d.isValid) return `${weightPart} (${d.toFormat('M/d/yyyy')})`;
+  }
+  return weightPart;
+}
+
+function providerNameWithSignatorySuffix(args: {
+  firstName?: string | null;
+  lastName?: string | null;
+  designation?: string | null;
+  title?: string | null;
+}): string | null {
+  const name = [pickStr(args.firstName), pickStr(args.lastName)].filter(Boolean).join(' ').trim();
+  if (!name) return null;
+  const suffix = pickStr(args.designation) ?? pickStr(args.title);
+  return suffix ? `${name}, ${suffix}` : name;
+}
+
+export function primaryProviderFromPatientRecord(p: unknown): string | null {
+  if (!p || typeof p !== 'object') return null;
+  const o = p as Record<string, unknown>;
+  const flat =
+    pickStr(o.primaryProviderName) ??
+    pickStr(o.primaryProviderFullName) ??
+    pickStr(o.primaryCareProviderName) ??
+    pickStr(o.pimsPrimaryProviderName) ??
+    pickStr(o.primary_provider_name);
+  if (flat) return flat;
+
+  const raw =
+    o.primaryProvider ??
+    o.primary_provider ??
+    o.primaryCareProvider ??
+    o.employee;
+  if (!raw || typeof raw !== 'object') return null;
+  const pr = raw as Record<string, unknown>;
+  const first = pickStr(pr.firstName);
+  const last = pickStr(pr.lastName);
+  const byParts = [first, last].filter(Boolean).join(' ').trim();
+  if (byParts) {
+    return providerNameWithSignatorySuffix({
+      firstName: first,
+      lastName: last,
+      designation: pickStr(pr.designation),
+      title: pickStr(pr.title),
+    });
+  }
+  const composed =
+    pickStr(pr.name) ?? pickStr(pr.fullName) ?? pickStr(pr.displayName) ?? '';
+  if (!composed) return null;
+  const suffix = pickStr(pr.designation) ?? pickStr(pr.credentials) ?? pickStr(pr.title);
+  if (suffix && !composed.toLowerCase().includes(suffix.toLowerCase())) return `${composed}, ${suffix}`;
+  return composed;
+}
+
+function patientPrimaryProviderDisplay(p: Patient, appt: Appointment): string | null {
+  const fromPet = primaryProviderFromPatientRecord(p);
+  if (fromPet) return fromPet;
+  const sing = appt.patient;
+  if (sing && String(sing.id) === String(p.id)) {
+    return primaryProviderFromPatientRecord(sing);
+  }
+  return null;
+}
+
+function labelFromAppointmentPatientPrimaryProvider(
+  ref: Appointment['patientPrimaryProvider'] | null | undefined
+): string | null {
+  if (!ref) return null;
+  return providerNameWithSignatorySuffix({
+    firstName: ref.firstName,
+    lastName: ref.lastName,
+    designation: ref.designation,
+    title: ref.title,
+  });
+}
+
+function findProviderRowForChartPcp(
+  providers: readonly Provider[] | undefined,
+  ref: NonNullable<Appointment['patientPrimaryProvider']>
+): Provider | null {
+  if (!providers?.length) return null;
+  const rid = ref.id;
+  if (rid == null || !Number.isFinite(Number(rid))) return null;
+  const n = Number(rid);
+  return (
+    providers.find((p) => Number(p.id) === n) ??
+    providers.find((p) => p.pimsId != null && Number(p.pimsId) === n) ??
+    providers.find((p) => String(p.id) === String(rid)) ??
+    null
+  );
+}
+
+function providerLabelFormalFromProviderRow(p: Provider): string | null {
+  const name =
+    [pickStr(p.firstName), pickStr(p.lastName)].filter(Boolean).join(' ').trim() || pickStr(p.name);
+  if (!name) return null;
+  const suffix = pickStr(p.designation) ?? pickStr(p.title);
+  return suffix ? `${name}, ${suffix}` : name;
+}
+
+function chartPrimaryProviderLabelFromRefAndProviders(
+  ref: Appointment['patientPrimaryProvider'] | null | undefined,
+  providers: readonly Provider[] | undefined
+): string | null {
+  if (!ref) return null;
+  const row = findProviderRowForChartPcp(providers, ref);
+  if (!row) return null;
+  return providerLabelFormalFromProviderRow(row);
+}
+
+export function appointmentPatientChartPrimaryProviderLabel(
+  appt: Appointment,
+  providers?: readonly Provider[] | null
+): string | null {
+  const fromEmployees = chartPrimaryProviderLabelFromRefAndProviders(
+    appt.patientPrimaryProvider,
+    providers ?? undefined
+  );
+  if (fromEmployees) return fromEmployees;
+  const fromDoctor = labelFromAppointmentPatientPrimaryProvider(appt.patientPrimaryProvider);
+  if (fromDoctor) return fromDoctor;
+  for (const p of patientsForAppointment(appt)) {
+    const v = patientPrimaryProviderDisplay(p, appt);
+    if (v) return v;
+  }
+  return null;
+}
+
+function primaryProviderLabelNameOnlyForCompare(label: string): string {
+  const idx = label.indexOf(',');
+  return (idx >= 0 ? label.slice(0, idx) : label).trim();
+}
+
+function appointmentNamesRoughlyEqual(a: string, b: string): boolean {
+  return a.trim().toLowerCase().replace(/\s+/g, ' ') === b.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+export function appointmentChartPrimaryProviderDiffersFromAssignee(
+  appt: Appointment,
+  chartLabel: string
+): boolean {
+  const assignee = providerLabel(appt.primaryProvider);
+  if (!assignee || assignee === '—') return false;
+  if (appointmentNamesRoughlyEqual(assignee, primaryProviderLabelNameOnlyForCompare(chartLabel)))
+    return false;
+  const aid = appt.primaryProvider?.id;
+  const pref = appt.patientPrimaryProvider;
+  if (aid != null && pref && Number(pref.id) === Number(aid)) return false;
+  return true;
+}
+
+export function appointmentPatientMember(appt: Appointment): {
+  isMember: boolean;
+  membershipName: string | null;
+} {
+  const clin = appt.client as { isMember?: unknown; membershipName?: string | null } | undefined;
+
+  let membershipName: string | null = null;
+  let isMember = false;
+
+  const consider = (flag: unknown, raw: unknown) => {
+    if (truthyApiFlag(flag)) isMember = true;
+    const name =
+      typeof raw === 'string' && raw.trim()
+        ? raw.trim()
+        : raw != null && String(raw).trim()
+          ? String(raw).trim()
+          : null;
+    if (name) {
+      isMember = true;
+      if (!membershipName) membershipName = name;
+    }
+  };
+
+  consider(appt.isMember, appt.membershipName);
+  consider(clin?.isMember, clin?.membershipName);
+  for (const p of patientsForAppointment(appt)) {
+    consider(p.isMember, p.membershipName);
+  }
+
+  return { isMember, membershipName };
+}

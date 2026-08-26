@@ -46,7 +46,7 @@ import {
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import {
   fetchEmployeeGoals,
-  getGoalForDay,
+  getGoalForDate,
   hasAnyGoal,
   type EmployeeGoalsResponseDto,
 } from '../api/employeeGoals';
@@ -60,11 +60,26 @@ import {
   fetchDoctorMonth,
   type DoctorMonthDay,
 } from '../api/appointments';
-import { fetchEmployee, type EmployeeWeeklySchedule } from '../api/appointmentSettings';
+import {
+  fetchAllAppointmentTypes,
+  fetchEmployee,
+  scheduleOverrideIsOff,
+  type EmployeeWeeklySchedule,
+  type ScheduleOverride,
+} from '../api/appointmentSettings';
+import {
+  buildAppointmentTypeCatalog,
+  pointsFromAppointmentRows,
+  type AppointmentTypeCatalog,
+} from '../utils/appointmentTypeSettings';
+import { fetchScheduleOverridesByDate } from '../utils/scheduleOverrideMerge';
 import { useAuth } from '../auth/useAuth';
+import { useCommittedDateRange } from '../hooks/useCommittedDateRange';
 import { isEmployeeAnalyticsRestricted, normalizeAuthRoles } from '../utils/analyticsAccess';
 
 dayjs.extend(utc);
+
+const VSD_PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
 
 const PRACTICE_TOTAL_ID = '__practice__';
 const NOT_SPECIFIED_DOCTOR_ID = '__not_specified__';
@@ -92,8 +107,27 @@ function dateRange(start: Dayjs, end: Dayjs): string[] {
   return out;
 }
 
+/** True if provider list row has goal defaults configured. */
+function providerHasConfiguredGoals(p: Provider): boolean {
+  return (
+    Number(p.dailyPointGoal) > 0 ||
+    Number(p.dailyRevenueGoal) > 0 ||
+    Number(p.weeklyPointGoal) > 0 ||
+    Number(p.bonusRevenueGoal) > 0
+  );
+}
+
+type EmployeeWithGoals = {
+  id: string;
+  name: string;
+  goals: EmployeeGoalsResponseDto;
+  weeklySchedules: EmployeeWeeklySchedule[];
+  /** Per-date schedule overrides for the loaded goal period (OFF / custom shifts). */
+  scheduleOverridesByDate: Map<string, ScheduleOverride>;
+};
+
 /** True if the employee is scheduled to work on the given date (by day of week). */
-function isWorkingDay(
+function isWeeklyWorkday(
   emp: { weeklySchedules?: EmployeeWeeklySchedule[] },
   dateStr: string
 ): boolean {
@@ -101,6 +135,27 @@ function isWorkingDay(
   const dayOfWeek = dayjs(dateStr).day();
   const schedule = schedules.find((s) => s.dayOfWeek === dayOfWeek);
   return schedule?.isWorkday ?? false;
+}
+
+/**
+ * Whether a date counts toward goals vs actual.
+ * Schedule OFF overrides win; otherwise trust goals breakdown isWorkday (API already
+ * applies weekly + overrides when fetched with startDate/endDate); else weekly schedule.
+ * Do not use doctor/month workStart/workEnd — those are often empty on real workdays.
+ */
+function dayCountsForGoals(
+  emp: EmployeeWithGoals,
+  dateStr: string,
+  resolvedIsWorkday?: boolean | null
+): boolean {
+  const override = emp.scheduleOverridesByDate.get(dateStr);
+  if (override) {
+    return !scheduleOverrideIsOff(override);
+  }
+  if (resolvedIsWorkday != null) {
+    return resolvedIsWorkday;
+  }
+  return isWeeklyWorkday(emp, dateStr);
 }
 
 /** Sum series by date into a map; missing dates are 0. */
@@ -191,28 +246,15 @@ function addLinearTrend<T extends { total: number }>(
   }));
 }
 
-/** Points from appointments (same rules as My Day: 1 normal, 0.5 tech, 2 euthanasia; skip personal blocks; Ash Drop Off excluded). */
-function pointsFromAppts(
-  appts: { appointmentType?: string; isPersonalBlock?: boolean }[]
-): number {
-  return (appts ?? []).reduce((total, a) => {
-    if ((a as any)?.isPersonalBlock) return total;
-    const type = (a?.appointmentType || '').toLowerCase().replace(/-/g, ' ');
-    if (type.includes('ash drop off')) return total;
-    if (type === 'euthanasia') return total + 2;
-    if (type.includes('tech appointment')) return total + 0.5;
-    return total + 1;
-  }, 0);
-}
-
 /** Points for one day from month API: appts (with appointmentType) + blocks (counted as personal). */
-function pointsFromMonthDay(day: DoctorMonthDay): number {
+function pointsFromMonthDay(day: DoctorMonthDay, catalog?: AppointmentTypeCatalog): number {
   const apptsWithType = (day.appts ?? []).map((a) => ({
     appointmentType: a.appointmentType,
+    appointmentTypeId: (a as { appointmentTypeId?: number }).appointmentTypeId,
     isPersonalBlock: false,
   }));
   const blocksAsPersonal = (day.blocks ?? []).map(() => ({ isPersonalBlock: true }));
-  return pointsFromAppts([...apptsWithType, ...blocksAsPersonal]);
+  return pointsFromAppointmentRows([...apptsWithType, ...blocksAsPersonal], catalog);
 }
 
 /** Time at appointments for one day: sum of (end - start) in minutes; uses serviceMinutes when present. */
@@ -292,7 +334,8 @@ const PRESETS: Record<string, () => { from: Dayjs; to: Dayjs }> = {
 const VSD_ESTIMATE_LOOKBACK_DAYS = 30;
 
 export default function VeterinaryServicesDeliveredPage() {
-  const [range, setRange] = useState<{ from: Dayjs; to: Dayjs }>(() => PRESETS['Today']());
+  const { range, draftRange, applyRange, onCustomFromChange, onCustomToChange } =
+    useCommittedDateRange(PRESETS['Today']());
   const [preset, setPreset] = useState<string>('Today');
   const [providers, setProviders] = useState<Provider[]>([]);
   const [doctorResponses, setDoctorResponses] = useState<
@@ -309,6 +352,7 @@ export default function VeterinaryServicesDeliveredPage() {
     Record<string, Record<string, number>>
   >({});
   const [pointsLoading, setPointsLoading] = useState(false);
+  const [typeCatalog, setTypeCatalog] = useState<AppointmentTypeCatalog | undefined>();
   const [itemsModalOpen, setItemsModalOpen] = useState(false);
   const [itemsModalDoctor, setItemsModalDoctor] = useState<{ id: string; name: string } | null>(null);
   const [itemsModalData, setItemsModalData] = useState<DoctorRevenueSeriesResponse | null>(null);
@@ -325,9 +369,7 @@ export default function VeterinaryServicesDeliveredPage() {
 
   // Goals summary (whole company vs per-doctor)
   const [goalScope, setGoalScope] = useState<string>(PRACTICE_TOTAL_ID);
-  const [employeesWithGoals, setEmployeesWithGoals] = useState<
-    { id: string; name: string; goals: EmployeeGoalsResponseDto; weeklySchedules?: EmployeeWeeklySchedule[] }[]
-  >([]);
+  const [employeesWithGoals, setEmployeesWithGoals] = useState<EmployeeWithGoals[]>([]);
   const [goalsLoading, setGoalsLoading] = useState(false);
 
   const start = range.from.startOf('day');
@@ -381,7 +423,7 @@ export default function VeterinaryServicesDeliveredPage() {
     };
   }, []);
 
-  // Load goals and weekly schedules for each provider; keep only those with at least one goal set
+  // Load goals, weekly schedules, and schedule overrides; keep only those with at least one goal set
   useEffect(() => {
     if (!providersForApi.length) {
       setEmployeesWithGoals([]);
@@ -391,30 +433,37 @@ export default function VeterinaryServicesDeliveredPage() {
     setGoalsLoading(true);
     (async () => {
       try {
+        const goalPeriod = { startDate: startStr, endDate: endStr };
+        const periodDates = dateRange(start, end);
         const results = await Promise.allSettled(
           providersForApi.map(async (p) => {
             const id = String(p.id);
             const empId = Number(p.id);
             if (!Number.isFinite(empId)) return null;
-            const [goals, employee] = await Promise.all([
-              fetchEmployeeGoals(empId),
+            const [goals, employee, scheduleOverridesByDate] = await Promise.all([
+              fetchEmployeeGoals(empId, goalPeriod),
               fetchEmployee(empId),
+              fetchScheduleOverridesByDate(empId, periodDates).catch(
+                () => new Map<string, ScheduleOverride>()
+              ),
             ]);
-            if (!hasAnyGoal(goals)) return null;
+            if (!hasAnyGoal(goals) && !providerHasConfiguredGoals(p)) {
+              return null;
+            }
             return {
               id,
               name: p.name,
               goals,
               weeklySchedules: employee?.weeklySchedules ?? [],
-            };
+              scheduleOverridesByDate,
+            } satisfies EmployeeWithGoals;
           })
         );
         if (!alive) return;
         const withGoals = results
-          .filter((r): r is PromiseFulfilledResult<{ id: string; name: string; goals: EmployeeGoalsResponseDto; weeklySchedules: EmployeeWeeklySchedule[] } | null> =>
-            r.status === 'fulfilled')
+          .filter((r): r is PromiseFulfilledResult<EmployeeWithGoals | null> => r.status === 'fulfilled')
           .map((r) => r.value)
-          .filter((v): v is { id: string; name: string; goals: EmployeeGoalsResponseDto; weeklySchedules: EmployeeWeeklySchedule[] } => v != null);
+          .filter((v): v is EmployeeWithGoals => v != null);
         setEmployeesWithGoals(withGoals);
         setGoalScope((prev) => {
           if (restrictEmployeeAnalytics) {
@@ -437,7 +486,7 @@ export default function VeterinaryServicesDeliveredPage() {
     return () => {
       alive = false;
     };
-  }, [providersForApi, restrictEmployeeAnalytics, assignedDoctorIdSet]);
+  }, [providersForApi, restrictEmployeeAnalytics, assignedDoctorIdSet, startStr, endStr]);
 
   // Load each doctor's revenue series for the date range, plus "Not Specified" (doctorId null/empty)
   useEffect(() => {
@@ -485,6 +534,20 @@ export default function VeterinaryServicesDeliveredPage() {
     };
   }, [providersForApi, startStr, endStr, restrictEmployeeAnalytics]);
 
+  useEffect(() => {
+    let alive = true;
+    void fetchAllAppointmentTypes(VSD_PRACTICE_ID, { activeOnly: false })
+      .then((rows) => {
+        if (alive) setTypeCatalog(buildAppointmentTypeCatalog(Array.isArray(rows) ? rows : []));
+      })
+      .catch(() => {
+        if (alive) setTypeCatalog(undefined);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   // Load appointments per doctor per month for points (one request per doctor per month in range; includes single-day)
   useEffect(() => {
     if (!providersForApi.length) {
@@ -516,7 +579,7 @@ export default function VeterinaryServicesDeliveredPage() {
           for (const day of days) {
             const date = day?.date?.slice(0, 10);
             if (date) {
-              byDoctorByDate[doctorId][date] = pointsFromMonthDay(day);
+              byDoctorByDate[doctorId][date] = pointsFromMonthDay(day, typeCatalog);
               serviceMinByDoctorByDate[doctorId][date] = serviceMinutesFromMonthDay(day);
             }
           }
@@ -535,7 +598,7 @@ export default function VeterinaryServicesDeliveredPage() {
     return () => {
       alive = false;
     };
-  }, [providersForApi, startStr, endStr]);
+  }, [providersForApi, startStr, endStr, typeCatalog]);
 
   // Trailing history for "estimated day revenue" when the selected day is calendar today
   useEffect(() => {
@@ -597,7 +660,7 @@ export default function VeterinaryServicesDeliveredPage() {
           for (const day of days) {
             const date = day?.date?.slice(0, 10);
             if (date) {
-              byDoctorByDate[doctorId][date] = pointsFromMonthDay(day);
+              byDoctorByDate[doctorId][date] = pointsFromMonthDay(day, typeCatalog);
             }
           }
         }
@@ -617,7 +680,7 @@ export default function VeterinaryServicesDeliveredPage() {
     return () => {
       alive = false;
     };
-  }, [isViewingCalendarToday, providersForApi, restrictEmployeeAnalytics]);
+  }, [isViewingCalendarToday, providersForApi, restrictEmployeeAnalytics, typeCatalog]);
 
   const practiceSeries = useMemo(() => {
     if (loading) return [];
@@ -843,16 +906,16 @@ export default function VeterinaryServicesDeliveredPage() {
     for (const dateStr of dates) {
       const dayOfWeek = dayjs(dateStr).day();
       for (const emp of emps) {
-        if (!isWorkingDay(emp, dateStr)) continue;
-        const { pointGoal, revenueGoal } = getGoalForDay(emp.goals, dayOfWeek);
-        totalPointGoal += pointGoal;
-        totalRevenueGoal += revenueGoal;
+        const resolved = getGoalForDate(emp.goals, dateStr, dayOfWeek);
+        if (!dayCountsForGoals(emp, dateStr, resolved.isWorkday)) continue;
+        totalPointGoal += resolved.pointGoal;
+        totalRevenueGoal += resolved.revenueGoal;
       }
     }
     return { totalPointGoal, totalRevenueGoal };
   }, [goalScope, employeesWithGoals, employeesForGoalScopeSelect, restrictEmployeeAnalytics, start, end]);
 
-  /** Actual points and revenue for the selected scope (only on days the doctor(s) are working). */
+  /** Actual points and VSD for the selected scope (only on days the doctor(s) are working). */
   const actualsForGoalScope = useMemo(() => {
     const dates = dateRange(start, end);
     let actualPoints = 0;
@@ -860,8 +923,10 @@ export default function VeterinaryServicesDeliveredPage() {
     if (goalScope === PRACTICE_TOTAL_ID) {
       const empsForActuals = restrictEmployeeAnalytics ? employeesForGoalScopeSelect : employeesWithGoals;
       for (const dateStr of dates) {
+        const dayOfWeek = dayjs(dateStr).day();
         for (const emp of empsForActuals) {
-          if (!isWorkingDay(emp, dateStr)) continue;
+          const resolved = getGoalForDate(emp.goals, dateStr, dayOfWeek);
+          if (!dayCountsForGoals(emp, dateStr, resolved.isWorkday)) continue;
           const id = emp.id;
           actualPoints += pointsByDoctorByDate[id]?.[dateStr] ?? 0;
           const dr = doctorResponses.find((r) => String(r.doctorId) === id);
@@ -873,7 +938,9 @@ export default function VeterinaryServicesDeliveredPage() {
       const emp = employeesWithGoals.find((e) => e.id === goalScope);
       if (!emp) return { actualPoints: 0, actualRevenue: 0 };
       for (const dateStr of dates) {
-        if (!isWorkingDay(emp, dateStr)) continue;
+        const dayOfWeek = dayjs(dateStr).day();
+        const resolved = getGoalForDate(emp.goals, dateStr, dayOfWeek);
+        if (!dayCountsForGoals(emp, dateStr, resolved.isWorkday)) continue;
         actualPoints += pointsByDoctorByDate[emp.id]?.[dateStr] ?? 0;
         const dr = doctorResponses.find((r) => String(r.doctorId) === emp.id);
         const dayRevenue = (dr?.response.series ?? []).find((p) => String(p?.date ?? '').slice(0, 10) === dateStr);
@@ -1026,7 +1093,7 @@ export default function VeterinaryServicesDeliveredPage() {
                     type="button"
                     onClick={() => {
                       setPreset(key);
-                      setRange(PRESETS[key]());
+                      applyRange(PRESETS[key]());
                     }}
                     style={{
                       padding: '6px 12px',
@@ -1049,22 +1116,22 @@ export default function VeterinaryServicesDeliveredPage() {
                   aria-label="Previous day"
                   onClick={() => {
                     setPreset('');
-                    setRange((r) => ({
-                      from: r.from.subtract(1, 'day').startOf('day'),
-                      to: r.to.subtract(1, 'day').startOf('day'),
-                    }));
+                    applyRange({
+                      from: range.from.subtract(1, 'day').startOf('day'),
+                      to: range.to.subtract(1, 'day').startOf('day'),
+                    });
                   }}
                 >
                   <ChevronLeft />
                 </IconButton>
                 <DatePicker
                   label="Date"
-                  value={range.from}
+                  value={draftRange.from}
                   onChange={(d) => {
                     if (d) {
                       setPreset('');
                       const day = d.startOf('day');
-                      setRange({ from: day, to: day });
+                      applyRange({ from: day, to: day });
                     }
                   }}
                   slotProps={{ textField: { size: 'small', sx: { minWidth: 160 } } }}
@@ -1075,10 +1142,10 @@ export default function VeterinaryServicesDeliveredPage() {
                   onClick={() => {
                     if (!canGoNext) return;
                     setPreset('');
-                    setRange((r) => ({
-                      from: r.from.add(1, 'day').startOf('day'),
-                      to: r.to.add(1, 'day').startOf('day'),
-                    }));
+                    applyRange({
+                      from: range.from.add(1, 'day').startOf('day'),
+                      to: range.to.add(1, 'day').startOf('day'),
+                    });
                   }}
                 >
                   <ChevronRight />
@@ -1088,14 +1155,24 @@ export default function VeterinaryServicesDeliveredPage() {
               <>
                 <DatePicker
                   label="From"
-                  value={range.from}
-                  onChange={(d) => d && setRange((r) => ({ ...r, from: d.startOf('day') }))}
+                  value={draftRange.from}
+                  onChange={(d) => {
+                    if (d) {
+                      setPreset('');
+                      onCustomFromChange(d);
+                    }
+                  }}
                   slotProps={{ textField: { size: 'small' } }}
                 />
                 <DatePicker
                   label="To"
-                  value={range.to}
-                  onChange={(d) => d && setRange((r) => ({ ...r, to: d.startOf('day') }))}
+                  value={draftRange.to}
+                  onChange={(d) => {
+                    if (d) {
+                      setPreset('');
+                      onCustomToChange(d);
+                    }
+                  }}
                   slotProps={{ textField: { size: 'small' } }}
                 />
               </>
@@ -1177,7 +1254,7 @@ export default function VeterinaryServicesDeliveredPage() {
                       </Box>
                       <Box>
                         <Typography variant="subtitle2" color="text.secondary">
-                          Revenue goal
+                          VSD goal
                         </Typography>
                         <Typography variant="body1">
                           {goalsSummary.totalRevenueGoal > 0 ? (
@@ -1191,7 +1268,7 @@ export default function VeterinaryServicesDeliveredPage() {
                             </>
                           ) : (
                             <Typography component="span" variant="body2" color="text.secondary">
-                              No revenue goal set
+                              No VSD goal set
                             </Typography>
                           )}
                         </Typography>
@@ -1274,7 +1351,7 @@ export default function VeterinaryServicesDeliveredPage() {
                 </ResponsiveContainer>
               </Box>
               <Typography variant="subtitle2" color="text.secondary" sx={{ mt: 2, mb: 1 }}>
-                VSD per point (revenue ÷ points; points: 1 normal, 0.5 tech, 2 euthanasia)
+                VSD per point (revenue ÷ points; uses appointment type settings or legacy rules)
               </Typography>
               <Box sx={{ width: '100%', height: 320 }}>
                 <ResponsiveContainer width="100%" height="100%">

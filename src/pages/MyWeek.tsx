@@ -18,13 +18,30 @@ import {
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import { getZonePercentagesForProvider } from '../api/patients';
 import { etaHouseholdArrivalWindowPayload, fetchEtas } from '../api/routing';
+import {
+  buildEtaCandidateSlot,
+  orderHouseholdsWithCandidateAtInsertion,
+  routingEtaCandidateInsertionIndexInOrder,
+} from '../utils/routingEtaCandidateSlot';
 import { useAuth } from '../auth/useAuth';
 import { buildGoogleMapsLinksForDay, type Stop } from '../utils/maps';
+import { householdGroupKey } from '../utils/doctorDayHouseholdGroup';
+import { formatDoctorDayApptAddress } from '../utils/doctorDayAddress';
+import {
+  appointmentNotesFromDoctorDayRow,
+  petAlertsFromDoctorDayRow,
+  sexFromDoctorDayRow,
+  staffNotesFromDoctorDayRow,
+} from '../utils/myDayVisualPatientDetails';
 import { AlertTriangle, Heart } from 'lucide-react';
 import {
-  fixedTimeRouteEtaMeaningfullyAfterScheduledStart,
-  shouldShowEtaWindowWarning,
+  clientVisitUsesDoctorDayClockForDriveLayout,
+  computeDriveTimeWindowWarning,
 } from '../utils/windowWarning';
+import {
+  type AppointmentTypeCatalog,
+  sumHouseholdPoints,
+} from '../utils/appointmentTypeSettings';
 import {
   computeHoverPopoverPosition,
   rectFromElement,
@@ -58,7 +75,7 @@ const DEFAULT_GRID_START_MINUTES = 6 * 60 + 30;
 const BUFFER_MINUTES_BEFORE_START = 30;
 
 /** Parse "HH:mm" or "HH:mm:ss" to minutes from midnight. */
-function timeStrToMinutesFromMidnight(s: string): number {
+export function timeStrToMinutesFromMidnight(s: string): number {
   const parts = s.trim().split(':');
   const h = parseInt(parts[0], 10);
   const m = parts.length >= 2 ? parseInt(parts[1], 10) : 0;
@@ -113,21 +130,7 @@ function keyVariantsForKeyString(s: string): string[] {
 }
 
 function formatAddress(a: DoctorDayAppt) {
-  const address1 = str(a, 'address1');
-  const city = str(a, 'city');
-  const state = str(a, 'state');
-  const zip = str(a, 'zip');
-  const line = [address1, [city, state].filter(Boolean).join(', '), zip]
-    .filter(Boolean)
-    .join(', ')
-    .replace(/\s+,/g, ',');
-  return (
-    line ||
-    str(a as any, 'address') ||
-    str(a as any, 'addressStr') ||
-    str(a as any, 'fullAddress') ||
-    'Address not available'
-  );
+  return formatDoctorDayApptAddress(a);
 }
 
 /** Hover: drop trailing US ZIP so street + city + state stay on one line with client. */
@@ -153,14 +156,22 @@ function addressKeyForAppt(a: DoctorDayAppt): string | null {
   return free ? `free:${free}` : null;
 }
 
-type PatientBadge = {
+export type PatientBadge = {
   name: string;
+  sourceApptId?: string | number | null;
+  pimsId?: string | null;
   type?: string | null;
+  /** @deprecated use appointmentNotes */
   desc?: string | null;
+  appointmentNotes?: string | null;
+  staffNotes?: string | null;
+  sex?: string | null;
+  petAlerts?: string | null;
   /** confirmStatusName — pre-exam / check-in */
   status?: string | null;
   /** statusName — records status (PIMS) */
   recordStatus?: string | null;
+  /** @deprecated use petAlerts */
   alerts?: string | null;
   isMember?: boolean;
   membershipName?: string | null;
@@ -169,10 +180,12 @@ function makePatientBadge(a: any): PatientBadge {
   const name =
     str(a, 'patientName') || str(a, 'petName') || str(a, 'animalName') || str(a, 'name') || 'Patient';
   const type = str(a, 'appointmentType') || str(a, 'appointmentTypeName') || str(a, 'serviceName') || null;
-  const desc = str(a, 'description') || str(a, 'visitReason') || null;
+  const appointmentNotes = appointmentNotesFromDoctorDayRow(a);
+  const staffNotes = staffNotesFromDoctorDayRow(a);
+  const petAlerts = petAlertsFromDoctorDayRow(a);
+  const sex = sexFromDoctorDayRow(a);
   const status = str(a, 'confirmStatusName') ?? null;
   const recordStatus = str(a, 'statusName') ?? null;
-  const alerts = str(a, 'alerts') || null;
   const pat = a?.patient;
   const isMember = Boolean(a?.isMember ?? pat?.isMember);
   const rawMem = a?.membershipName ?? pat?.membershipName;
@@ -182,7 +195,22 @@ function makePatientBadge(a: any): PatientBadge {
       : rawMem != null && String(rawMem).trim()
         ? String(rawMem).trim()
         : null;
-  return { name, type, desc, status, recordStatus, alerts, isMember, membershipName };
+  return {
+    name,
+    sourceApptId: (a as { id?: string | number | null })?.id ?? null,
+    pimsId: str(a, 'patientPimsId') ?? null,
+    type,
+    desc: appointmentNotes,
+    appointmentNotes,
+    staffNotes,
+    sex,
+    petAlerts,
+    status,
+    recordStatus,
+    alerts: petAlerts,
+    isMember,
+    membershipName,
+  };
 }
 
 function statusPillStyle(text: string): CSSProperties {
@@ -224,6 +252,8 @@ export type WeekHousehold = {
   primary: DoctorDayAppt;
   /** Backend effectiveWindow when available (from primary) */
   effectiveWindow?: { startIso: string; endIso: string };
+  /** Every doctor-day appointment id merged into this household (for ETA mapping / cancel). */
+  sourceAppointmentIds?: (string | number)[];
   /** Min index in appts array (for visit-order sort when preview is present) */
   firstApptIndex?: number;
 };
@@ -264,35 +294,34 @@ function weekHouseholdIsFixedTimeAppointment(h: WeekHousehold): boolean {
 
 /**
  * When true, block position (and matching hover arrive times) use doctor-day startIso/endIso.
- * Client Fixed Time uses ETA when routing arrival is after the booked start (slippage); otherwise calendar start
- * (e.g. early clamp). Non-flex personal blocks always use doctor day.
+ * Client Fixed Time with an arrival window uses routed ETA/ETD; legacy no-window rows may stay on calendar start.
+ * Non-flex personal blocks always use doctor day.
  */
 function weekHouseholdUsesDoctorDayClockForLayout(
   h: WeekHousehold,
-  slot: { eta?: string | null; etd?: string | null } | undefined,
+  slot: { eta?: string | null; etd?: string | null; windowStartIso?: string | null; windowEndIso?: string | null } | undefined,
   showByDriveTime: boolean
 ): boolean {
   if (!showByDriveTime) return true;
   const flexBlock = Boolean(h.isPersonalBlock && isFlexBlockItem(h.primary));
   if (h.isPersonalBlock && !flexBlock) return true;
-  if (!weekHouseholdIsClientFixedTime(h)) return false;
-  const eta = slot?.eta;
-  const schedStart = h.startIso;
-  if (!eta || !schedStart) return true;
-  const etaDt = DateTime.fromISO(eta);
-  const schedDt = DateTime.fromISO(schedStart);
-  if (!etaDt.isValid || !schedDt.isValid) return true;
-  if (fixedTimeRouteEtaMeaningfullyAfterScheduledStart(schedStart, eta)) return false;
-  return true;
-}
-
-/** Household grouping key: same client at same location = one stop; different clients at same address = separate stops. */
-function householdGroupKey(a: DoctorDayAppt, lat: number, lon: number, addrKey: string | null, idPart: string, hasGeo: boolean): string {
-  const clientId = (a as any)?.clientPimsId ?? (a as any)?.clientId;
-  const clientPart = clientId != null ? String(clientId) : (str(a, 'clientName') ?? '').trim();
-  if (hasGeo) return `${lat}_${lon}_${clientPart}`;
-  if (addrKey) return `addr:${addrKey}_${clientPart}`;
-  return `noloc:${idPart}`;
+  const windowStartIso =
+    (slot?.windowStartIso != null && slot?.windowEndIso != null ? slot.windowStartIso : null) ??
+    h.windowStartIso ??
+    h.effectiveWindow?.startIso ??
+    null;
+  const windowEndIso =
+    (slot?.windowStartIso != null && slot?.windowEndIso != null ? slot.windowEndIso : null) ??
+    h.windowEndIso ??
+    h.effectiveWindow?.endIso ??
+    null;
+  return clientVisitUsesDoctorDayClockForDriveLayout({
+    isClientFixedTime: weekHouseholdIsClientFixedTime(h),
+    schedStartIso: h.startIso,
+    etaIso: slot?.eta,
+    windowStartIso,
+    windowEndIso,
+  });
 }
 
 /** Assign unique ETA keys: first at (lat,lon) gets "lat,lon", second "lat,lon:2", etc., so ETA API returns one entry per stop. */
@@ -397,7 +426,7 @@ function buildHouseholds(appts: DoctorDayAppt[]): WeekHousehold[] {
   return list;
 }
 
-type DayData = {
+export type DayData = {
   date: string;
   /** IANA practice timezone for wall times on this day (from doctor-day API). */
   timezone: string;
@@ -412,6 +441,8 @@ type DayData = {
   }[];
   startDepot: Depot | null;
   endDepot: Depot | null;
+  /** From GET /appointments/doctor — e.g. "Office: Brunswick" without reverse-geocoding startDepot. */
+  startDepotTown?: string | null;
   /** Time-of-day "HH:mm" or "HH:mm:ss" when doctor leaves depot */
   startDepotTime: string | null;
   /** Time-of-day "HH:mm" or "HH:mm:ss" when doctor returns to depot */
@@ -462,6 +493,8 @@ export type MyWeekVirtualAppt = {
     windowEndIso?: string;
   };
   validationReturnSec?: number;
+  validationLastEtdSec?: number;
+  overrunSeconds?: number;
   /** From routing / geocode so preview matches `clientDisplayName` zone suffix, e.g. (3E). */
   clientZone?: MiniZone;
   effectiveZone?: MiniZone;
@@ -473,6 +506,25 @@ export type MyWeekProps = {
   initialDoctorId?: string;
   virtualAppt?: MyWeekVirtualAppt;
 };
+
+/** Both depot shift times empty — doctor is not scheduled this day (GET /appointments/doctor). */
+export function doctorDayIsOff(dayData: DayData | null | undefined): boolean {
+  if (!dayData) return false;
+  return !String(dayData.startDepotTime ?? '').trim() && !String(dayData.endDepotTime ?? '').trim();
+}
+
+/** At least one household with routable coordinates (not a no-location / block-only day). */
+export function dayHasLocatedAppointments(dayData: DayData | null | undefined): boolean {
+  if (!dayData?.households?.length) return false;
+  return dayData.households.some(
+    (h) =>
+      !h.isNoLocation &&
+      Number.isFinite(h.lat) &&
+      Number.isFinite(h.lon) &&
+      Math.abs(h.lat) > 1e-6 &&
+      Math.abs(h.lon) > 1e-6
+  );
+}
 
 /** Seven dates Sun..Sat for the week containing the given date. */
 function weekDates(weekStart: string): string[] {
@@ -489,21 +541,13 @@ function zoneKeyFrom(z: MiniZone | null): string {
   return `${z.id}|${z.name ?? ''}`;
 }
 
-/** Points for one day (exclude personal blocks and "Note To Staff"). Per patient: 1 standard, 0.5 tech, 2 euthanasia. */
-function dayPoints(households: WeekHousehold[]): number {
-  return households.reduce((total, h) => {
-    if (h.isPersonalBlock) return total;
-    const type = (str(h.primary, 'appointmentType') || '').toLowerCase();
-    if (type.includes('note to staff')) return total;
-    const n = Math.max(1, h.patients?.length ?? 1);
-    if (type === 'euthanasia') return total + 2 * n;
-    if (type.includes('tech appointment')) return total + 0.5 * n;
-    return total + 1 * n;
-  }, 0);
+/** Points for one day; uses appointment type catalog when provided (configured points or legacy name rules). */
+export function dayPoints(households: WeekHousehold[], typeCatalog?: AppointmentTypeCatalog): number {
+  return sumHouseholdPoints(households, typeCatalog);
 }
 
 /** Total driving time in seconds for the day (driveSeconds + backToDepot when separate). */
-function dayTotalDriveSeconds(day: DayData): number {
+export function dayTotalDriveSeconds(day: DayData): number {
   const ds = day.driveSeconds ?? [];
   const sum = ds.reduce((a, b) => a + (typeof b === 'number' ? b : 0), 0);
   const back = day.backToDepotSec ?? 0;
@@ -563,7 +607,7 @@ function depotTimeToPx(
   return clamped * PPM;
 }
 
-type WeekGridMetrics = { gridStartMinutesFromMidnight: number; totalMinutes: number };
+export type WeekGridMetrics = { gridStartMinutesFromMidnight: number; totalMinutes: number };
 
 /** Block tops/durations and Y-offsets so visits stack with drive gaps (matches appointment div layout). */
 type MyWeekDayColumnLayout = {
@@ -576,7 +620,7 @@ type MyWeekDayColumnLayout = {
   N: number;
 };
 
-function computeMyWeekDayColumnLayout(
+export function computeMyWeekDayColumnLayout(
   dayData: DayData,
   weekGrid: WeekGridMetrics,
   dateIso: string,
@@ -725,7 +769,7 @@ function computeMyWeekDayColumnLayout(
  * Paint drive bands in the same minute-space as appointment blocks (driveOffsets).
  * The old path used raw clock minutes + cumOffsetMin, which left white gaps and stretched return past backToDepotIso.
  */
-function buildMyWeekDriveSegmentsFromLayout(
+export function buildMyWeekDriveSegmentsFromLayout(
   layout: MyWeekDayColumnLayout,
   dayData: DayData,
   weekGrid: WeekGridMetrics,
@@ -899,13 +943,12 @@ function buildMyWeekDriveSegmentsFromLayout(
     }
 
     const gapAvailMin = Math.max(0, afterBufPx / PPM);
+    const hasNumericLeg = typeof driveSecLeg === 'number' && Number.isFinite(driveSecLeg);
     const routeMinFromLeg =
-      typeof driveSecLeg === 'number' && Number.isFinite(driveSecLeg) && driveSecLeg > 0
-        ? Math.max(1, Math.round(driveSecLeg / 60))
-        : 0;
-    // Hatched band = route time when API gives it; remainder of the ETA clock gap is idle (not drive).
-    const paintDriveMin =
-      routeMinFromLeg > 0 ? Math.min(gapAvailMin, routeMinFromLeg) : gapAvailMin;
+      hasNumericLeg && driveSecLeg > 0 ? Math.max(1, Math.round(driveSecLeg / 60)) : 0;
+    // API 0 = no driving on this leg (e.g. visit → office block); do not fill the clock gap with hatched "drive".
+    // Missing / non-numeric leg: do not infer drive from idle gap (was incorrectly painting the full gap).
+    const paintDriveMin = hasNumericLeg ? Math.min(gapAvailMin, routeMinFromLeg) : 0;
     const driveH = paintDriveMin * PPM;
     if (driveH <= 1) continue;
 
@@ -1077,11 +1120,6 @@ function buildMyWeekDriveSegmentsFromLayout(
           });
         }
 
-        const dMin =
-          backSec > 0 ? backSec / 60 : Math.max(1, Math.round(arrivalMin - winStartMin));
-        const maxAvailMin = Math.max(0, arrivalMin - winStartMin);
-        const dMinCap = Math.min(dMin, maxAvailMin);
-
         const kTrail = lastAddressIdx + 1;
         const hasTrailingBlock =
           kTrail < N && isDriveBarrier(displayHouseholds[kTrail]);
@@ -1094,6 +1132,37 @@ function buildMyWeekDriveSegmentsFromLayout(
         const blockBottomMin =
           hasTrailingBlock && blockTopMin != null ? blockTopMin + durMinByIdx[kTrail] : null;
 
+        const hopBeforeFixedBlockMin =
+          hasTrailingBlock &&
+          blockTopMin != null &&
+          blockBottomMin != null &&
+          !firstTrailIsFlex &&
+          hopToTrailSec != null &&
+          Number.isFinite(hopToTrailSec) &&
+          hopToTrailSec > 0
+            ? Math.max(1, Math.round(hopToTrailSec / 60))
+            : 0;
+
+        let dMin: number;
+        if (backSec > 0) {
+          dMin = backSec / 60;
+        } else if (
+          hasTrailingBlock &&
+          blockTopMin != null &&
+          blockBottomMin != null &&
+          !firstTrailIsFlex
+        ) {
+          // Visit → fixed office/personal block: driveSeconds[k] is the routed leg; 0 = idle gap (not "drive to 5pm").
+          dMin = hopBeforeFixedBlockMin;
+        } else {
+          dMin = Math.max(1, Math.round(arrivalMin - winStartMin));
+        }
+        const maxAvailMin = Math.max(0, arrivalMin - winStartMin);
+        const dMinCap = Math.min(dMin, maxAvailMin);
+
+        if (dMinCap <= 1e-6) {
+          // No API drive leg (or nothing to paint): skip hatched "back to depot" — gap is idle / at office.
+        } else {
         let driveStartMin: number;
         let driveEndMin: number;
 
@@ -1206,14 +1275,15 @@ function buildMyWeekDriveSegmentsFromLayout(
         }
 
         if (drivePx > 1) {
-          const routeDm = Math.max(1, Math.round(dMin));
-          const titleBase = `Drive back to depot: ${routeDm} min`;
+          const paintedRouteMin = Math.max(1, Math.round((driveEndMin - driveStartMin)));
+          const titleBase = `Drive back to depot: ${paintedRouteMin} min`;
           segs.push({
             top: driveTopPx,
             height: Math.max(4, drivePx),
             title: `${titleBase} — Arrival: ${formatIsoInPracticeZone(arrivalIso, practiceTz)}`,
             kind: 'drive',
           });
+        }
         }
       } else {
         const bufUsePx = bufMinLast * PPM;
@@ -1288,6 +1358,172 @@ function buildMyWeekDriveSegmentsFromLayout(
   }
 
   return segs;
+}
+
+/** Transparent red diagonal hash where hatched drive overlaps a visit / personal block (drive intrudes on scheduled time). */
+const DRIVE_BLOCK_OVERLAP_HASH_FILL =
+  'repeating-linear-gradient(135deg, rgba(220, 38, 38, 0.3) 0px, rgba(220, 38, 38, 0.3) 4px, rgba(255, 255, 255, 0.12) 4px, rgba(255, 255, 255, 0.12) 8px)';
+
+function computeDriveBlockOverlapOverlays(
+  driveSegs: { top: number; height: number; kind: string }[],
+  layout: {
+    displayHouseholds: unknown[];
+    topMinByIdx: number[];
+    durMinByIdx: number[];
+    driveOffsets: number[];
+  },
+  ppm: number
+): { top: number; height: number; key: string }[] {
+  const rects: { top: number; height: number; key: string }[] = [];
+  const { displayHouseholds, topMinByIdx, durMinByIdx, driveOffsets } = layout;
+  const n = displayHouseholds.length;
+  const minOverlapPx = 2;
+  for (let si = 0; si < driveSegs.length; si++) {
+    const seg = driveSegs[si];
+    if (seg.kind !== 'drive') continue;
+    const s0 = seg.top;
+    const s1 = seg.top + seg.height;
+    for (let idx = 0; idx < n; idx++) {
+      const topMin = topMinByIdx[idx] ?? 0;
+      const durMin = durMinByIdx[idx] ?? 1;
+      const driveOffsetMin = driveOffsets[idx] ?? 0;
+      const b0 = topMin * ppm + driveOffsetMin * ppm;
+      const b1 = b0 + Math.max(14, durMin * ppm);
+      const o0 = Math.max(s0, b0);
+      const o1 = Math.min(s1, b1);
+      const h = o1 - o0;
+      if (h >= minOverlapPx) {
+        rects.push({ top: o0, height: h, key: `drive-overlap-${si}-${idx}-${Math.round(o0)}` });
+      }
+    }
+  }
+  return rects;
+}
+
+/** Slate diagonal hash on a trailing fixed (non-flex) personal **block** when depot arrival is **after** the block’s scheduled start (drive paint is clipped away from blocks, so pixel overlap never fires). */
+const DRIVE_DEPOT_RETURN_OVERRUN_HASH =
+  'repeating-linear-gradient(135deg, rgba(71, 85, 105, 0.4) 0px, rgba(71, 85, 105, 0.4) 5px, rgba(255, 255, 255, 0.14) 5px, rgba(255, 255, 255, 0.14) 10px)';
+
+/** In-column hatch drawn inside the trailing household row so it stacks above the block fill (sibling overlays can sit under in-flow content). */
+export type DepotReturnTrailingBlockOverrunLayer = {
+  householdIdx: number;
+  heightPx: number;
+  key: string;
+  background: string;
+};
+
+export function computeDepotReturnTrailingBlockOverrunLayers(
+  layout: MyWeekDayColumnLayout,
+  dayData: DayData,
+  weekGrid: WeekGridMetrics,
+  dateIso: string,
+  ppm: number
+): DepotReturnTrailingBlockOverrunLayer[] {
+  const practiceTz = practiceTimeZoneOrDefault(dayData.timezone);
+  const { displayHouseholds, displayTimeline, topMinByIdx, durMinByIdx, driveOffsets, ds, N } = layout;
+  const apptBufDefault = dayData.appointmentBufferMinutes ?? 5;
+
+  const toMin = (iso: string) =>
+    minutesFromDayStart(
+      weekGrid.gridStartMinutesFromMidnight,
+      weekGrid.totalMinutes,
+      iso,
+      dateIso,
+      practiceTz
+    );
+
+  const isDriveBarrier = (h: WeekHousehold | undefined) => h?.isPersonalBlock === true;
+
+  let lastAddressIdx = -1;
+  for (let i = N - 1; i >= 0; i--) {
+    if (!displayHouseholds[i]?.isPersonalBlock) {
+      lastAddressIdx = i;
+      break;
+    }
+  }
+  if (N <= 0 || lastAddressIdx < 0) return [];
+
+  const lastH = displayHouseholds[lastAddressIdx];
+  const lastIsNoAddressBlock = (lastH as { isNoLocation?: boolean }).isNoLocation === true;
+  if (lastIsNoAddressBlock) return [];
+
+  const vrIsoForBack =
+    typeof dayData.validationReturnSec === 'number' && Number.isFinite(dayData.validationReturnSec)
+      ? isoFromSecondsSincePracticeMidnight(dateIso, dayData.validationReturnSec, practiceTz)
+      : null;
+  const returnWeekClockIso =
+    dayData.backToDepotIso && DateTime.fromISO(dayData.backToDepotIso).isValid
+      ? dayData.backToDepotIso
+      : vrIsoForBack && DateTime.fromISO(vrIsoForBack).isValid
+        ? vrIsoForBack
+        : null;
+  if (!returnWeekClockIso || !DateTime.fromISO(returnWeekClockIso).isValid) return [];
+
+  const kTrailEarly = lastAddressIdx + 1;
+  const trailHEarly = kTrailEarly < N ? displayHouseholds[kTrailEarly] : null;
+  const firstTrailIsFlexEarly =
+    kTrailEarly < N &&
+    isDriveBarrier(trailHEarly ?? undefined) &&
+    (isFlexBlockItem(trailHEarly?.primary) ||
+      isFlexBlockItem({ blockLabel: trailHEarly?.client, title: trailHEarly?.client }));
+  const flexEtaEarly =
+    firstTrailIsFlexEarly && displayTimeline[kTrailEarly]?.eta
+      ? displayTimeline[kTrailEarly]!.eta!
+      : null;
+  const hopToTrailSec =
+    Array.isArray(ds) &&
+    ds.length > lastAddressIdx + 1 &&
+    typeof ds[lastAddressIdx + 1] === 'number'
+      ? ds[lastAddressIdx + 1]
+      : null;
+  const skipReturnDupToFlex =
+    (firstTrailIsFlexEarly &&
+      flexEtaEarly != null &&
+      returnWeekClockIso != null &&
+      DateTime.fromISO(flexEtaEarly).isValid &&
+      DateTime.fromISO(returnWeekClockIso).isValid &&
+      Math.abs(
+        DateTime.fromISO(returnWeekClockIso).diff(DateTime.fromISO(flexEtaEarly), 'seconds').seconds
+      ) <= 180) ||
+    (firstTrailIsFlexEarly &&
+      typeof dayData.backToDepotSec === 'number' &&
+      Number.isFinite(dayData.backToDepotSec) &&
+      hopToTrailSec != null &&
+      Math.abs(hopToTrailSec - dayData.backToDepotSec) <= 2);
+  if (skipReturnDupToFlex) return [];
+
+  const kTrail = lastAddressIdx + 1;
+  const hasTrailingBlock = kTrail < N && isDriveBarrier(displayHouseholds[kTrail]);
+  if (!hasTrailingBlock) return [];
+
+  const trailH = displayHouseholds[kTrail];
+  const firstTrailIsFlex =
+    hasTrailingBlock &&
+    (isFlexBlockItem(trailH?.primary) ||
+      isFlexBlockItem({ blockLabel: trailH?.client, title: trailH?.client }));
+  if (firstTrailIsFlex) return [];
+
+  const blockTopMin = topMinByIdx[kTrail] + driveOffsets[kTrail];
+  const blockBottomMin = blockTopMin + durMinByIdx[kTrail];
+
+  const arrivalMin = toMin(returnWeekClockIso);
+  const EPS = 1 / 60;
+  if (arrivalMin <= blockTopMin + EPS) return [];
+
+  const ovEnd = Math.min(arrivalMin, blockBottomMin);
+  const heightMin = ovEnd - blockTopMin;
+  if (heightMin * ppm < 2) return [];
+
+  const heightPx = Math.max(2, heightMin * ppm);
+
+  return [
+    {
+      householdIdx: kTrail,
+      heightPx,
+      key: `depot-return-overrun-${dateIso}-${kTrail}`,
+      background: DRIVE_DEPOT_RETURN_OVERRUN_HASH,
+    },
+  ];
 }
 
 export const MYWEEK_STORAGE_KEY = 'myweek-state';
@@ -1572,6 +1808,7 @@ export default function MyWeek(props: MyWeekProps = {}) {
             timeline: households.map(() => ({ eta: null, etd: null })),
             startDepot: resp?.startDepot ?? null,
             endDepot: resp?.endDepot ?? null,
+            startDepotTown: str(resp as any, 'startDepotTown')?.trim() || null,
             startDepotTime: str(resp as any, 'startDepotTime') ?? null,
             endDepotTime: str(resp as any, 'endDepotTime') ?? null,
           };
@@ -1615,31 +1852,36 @@ export default function MyWeek(props: MyWeekProps = {}) {
           list.map(async (day) => {
             if (day.households.length === 0)
               return day;
-            // Visit order for ETA: when this day has the selected routing candidate (virtualAppt), put
-            // existing households first and the candidate at insertionIndex so the backend gets correct order.
+            // Visit order for ETA: map slot-search insertionIndex across meetings/blocks, then
+            // put the candidate there so morning client stops are not pushed under end-of-day.
             const hasVirtual = virtualAppt && virtualAppt.date === day.date;
-            const insertionIndex = Math.max(
-              0,
-              Math.min(day.households.length - 1, virtualAppt?.insertionIndex ?? day.households.length - 1)
-            );
-            let householdsInVisitOrder: typeof day.households;
-            if (hasVirtual) {
-              const existing = day.households.filter((h) => !h.isPreview);
-              const virtualH = day.households.find((h) => h.isPreview);
-              const sortedExisting = [...existing].sort(
-                (a, b) => (a.firstApptIndex ?? 999) - (b.firstApptIndex ?? 999)
-              );
-              householdsInVisitOrder =
-                virtualH != null
-                  ? [
-                      ...sortedExisting.slice(0, insertionIndex),
-                      virtualH,
-                      ...sortedExisting.slice(insertionIndex),
-                    ]
-                  : sortedExisting;
-            } else {
-              householdsInVisitOrder = day.households;
-            }
+            const householdsInVisitOrder = hasVirtual
+              ? orderHouseholdsWithCandidateAtInsertion(
+                  day.households,
+                  virtualAppt.insertionIndex
+                )
+              : day.households;
+            const mappedInsertionIndex = hasVirtual
+              ? routingEtaCandidateInsertionIndexInOrder(
+                  householdsInVisitOrder,
+                  virtualAppt.insertionIndex
+                )
+              : 0;
+            const candidateSlot =
+              hasVirtual && virtualAppt
+                ? buildEtaCandidateSlot(
+                    {
+                      insertionIndex: mappedInsertionIndex,
+                      positionInDay: virtualAppt.positionInDay,
+                      suggestedStartIso: virtualAppt.suggestedStartIso,
+                      lat: virtualAppt.lat,
+                      lon: virtualAppt.lon,
+                      serviceMinutes: virtualAppt.serviceMinutes,
+                      arrivalWindow: virtualAppt.arrivalWindow,
+                    },
+                    { householdCount: householdsInVisitOrder.length }
+                  )
+                : undefined;
             const payload = {
               doctorId: selectedDoctorId || '',
               date: day.date,
@@ -1662,29 +1904,7 @@ export default function MyWeek(props: MyWeekProps = {}) {
               startDepot: day.startDepot ? { lat: day.startDepot.lat, lon: day.startDepot.lon } : undefined,
               endDepot: day.endDepot ? { lat: day.endDepot.lat, lon: day.endDepot.lon } : undefined,
               useTraffic: false,
-              ...(hasVirtual &&
-              virtualAppt &&
-              Number.isFinite(virtualAppt.lat) &&
-              Number.isFinite(virtualAppt.lon)
-                ? {
-                    candidateSlot: {
-                      insertionIndex,
-                      positionInDay: virtualAppt.positionInDay ?? insertionIndex + 1,
-                      suggestedStartIso: virtualAppt.suggestedStartIso,
-                      lat: virtualAppt.lat,
-                      lon: virtualAppt.lon,
-                      serviceMinutes: virtualAppt.serviceMinutes,
-                      overrunSeconds: (virtualAppt as any).overrunSeconds,
-                      arrivalWindow:
-                        virtualAppt.arrivalWindow?.windowStartIso && virtualAppt.arrivalWindow?.windowEndIso
-                          ? {
-                              windowStartIso: virtualAppt.arrivalWindow.windowStartIso,
-                              windowEndIso: virtualAppt.arrivalWindow.windowEndIso,
-                            }
-                          : undefined,
-                    },
-                  }
-                : {}),
+              ...(candidateSlot ? { candidateSlot } : {}),
             } as any;
             const result: any = await fetchEtas(payload);
             const valid = (s?: string | null) => !!(s && DateTime.fromISO(s).isValid);
@@ -2479,15 +2699,17 @@ export default function MyWeek(props: MyWeekProps = {}) {
             );
             const dt = DateTime.fromISO(dateIso, { zone: practiceTzCol });
             const isToday = dateIso === DateTime.local().toISODate();
-            const hasApptsOrBlocks = (dayData?.households?.length ?? 0) > 0;
+            const isDoctorDayOff = doctorDayIsOff(dayData);
+            const hasLocatedAppts = dayHasLocatedAppointments(dayData);
             return (
               <div
                 key={dateIso}
+                className={isDoctorDayOff ? 'my-week-day-col my-week-day-col--off' : 'my-week-day-col'}
                 style={{
-                  flex: hasApptsOrBlocks ? '2 1 0' : '1 1 0',
-                  minWidth: 72,
+                  flex: hasLocatedAppts ? '2 1 0' : '1 1 0',
+                  minWidth: hasLocatedAppts ? 72 : 48,
                   borderLeft: '1px solid #e5e7eb',
-                  background: isToday ? '#fefce8' : undefined,
+                  background: isDoctorDayOff ? undefined : isToday ? '#fefce8' : undefined,
                 }}
               >
                 <div
@@ -2504,6 +2726,11 @@ export default function MyWeek(props: MyWeekProps = {}) {
                 >
                   <span>{dt.toFormat('ccc')}</span>
                   <span style={{ fontSize: 11, color: '#6b7280', fontWeight: 500 }}>{dt.toFormat('M/d')}</span>
+                  {isDoctorDayOff ? (
+                    <span className="my-week-day-off-badge" title="No shift scheduled (no depot start/end time)">
+                      Off
+                    </span>
+                  ) : null}
                 </div>
                 {/* Points and total driving time at top of each day; fixed height so all day columns align (no column sits higher) */}
                 <div
@@ -2522,7 +2749,9 @@ export default function MyWeek(props: MyWeekProps = {}) {
                     gap: 4,
                   }}
                 >
-                  {dayData ? (
+                  {isDoctorDayOff ? (
+                    <span className="my-week-day-off-caption">Not scheduled</span>
+                  ) : dayData ? (
                     (() => {
                       const pts = dayPoints(dayData.households);
                       const driveSec = dayTotalDriveSeconds(dayData);
@@ -2550,7 +2779,7 @@ export default function MyWeek(props: MyWeekProps = {}) {
                           })()
                         : [];
                       const scheduleLoaderHref = selectedDoctorId && hasAppts
-                        ? `/scheduling-tools/schedule-loader?targetDate=${dateIso}&doctorId=${encodeURIComponent(selectedDoctorId)}`
+                        ? `/schedule/scheduling-tools/schedule-loader?targetDate=${dateIso}&doctorId=${encodeURIComponent(selectedDoctorId)}`
                         : null;
                       return (
                         <>
@@ -2569,9 +2798,9 @@ export default function MyWeek(props: MyWeekProps = {}) {
                                   href={scheduleLoaderHref}
                                   className="btn"
                                   style={{ fontSize: 10, padding: '4px 8px', whiteSpace: 'nowrap' }}
-                                  title={`Open Schedule Loader for ${dateIso}`}
+                                  title={`Open Fill for ${dateIso}`}
                                 >
-                                  Schedule Loader
+                                  Fill
                                 </a>
                               )}
                               {mapsLinks.length > 0 && (
@@ -2598,38 +2827,10 @@ export default function MyWeek(props: MyWeekProps = {}) {
                     </>
                   )}
                 </div>
-                <div style={{ position: 'relative', height: weekGrid.totalMinutes * PPM, padding: '0 4px' }}>
-                  {/* Thick horizontal lines at this day's startDepotTime and endDepotTime */}
-                  {dayData?.startDepotTime && (
-                    <div
-                      style={{
-                        position: 'absolute',
-                        left: 0,
-                        right: 0,
-                        top: depotTimeToPx(weekGrid.gridStartMinutesFromMidnight, weekGrid.totalMinutes, dayData.startDepotTime) - DEPOT_LINE_OFFSET,
-                        height: 0,
-                        borderTop: `${DEPOT_LINE_PX}px solid ${DEPOT_LINE_COLOR}`,
-                        pointerEvents: 'none',
-                        zIndex: 1,
-                      }}
-                      aria-hidden
-                    />
-                  )}
-                  {dayData?.endDepotTime && (
-                    <div
-                      style={{
-                        position: 'absolute',
-                        left: 0,
-                        right: 0,
-                        top: depotTimeToPx(weekGrid.gridStartMinutesFromMidnight, weekGrid.totalMinutes, dayData.endDepotTime) - DEPOT_LINE_OFFSET,
-                        height: 0,
-                        borderTop: `${DEPOT_LINE_PX}px solid ${DEPOT_LINE_COLOR}`,
-                        pointerEvents: 'none',
-                        zIndex: 1,
-                      }}
-                      aria-hidden
-                    />
-                  )}
+                <div
+                  className="my-week-day-grid"
+                  style={{ position: 'relative', height: weekGrid.totalMinutes * PPM, padding: '0 4px' }}
+                >
                   {/* Hour and half-hour lines (full width across column) */}
                   {timeTicks.map((tick, i) => (
                     <div
@@ -2647,8 +2848,49 @@ export default function MyWeek(props: MyWeekProps = {}) {
                       aria-hidden
                     />
                   ))}
+                  {isDoctorDayOff ? (
+                    <div
+                      className="my-week-day-off-overlay"
+                      role="status"
+                      aria-label={`${dt.toFormat('cccc, MMMM d')}: not scheduled`}
+                    >
+                      <span className="my-week-day-off-overlay-label">Off</span>
+                    </div>
+                  ) : null}
+                  {/* Thick horizontal lines at this day's startDepotTime and endDepotTime */}
+                  {!isDoctorDayOff && dayData?.startDepotTime && (
+                    <div
+                      style={{
+                        position: 'absolute',
+                        left: 0,
+                        right: 0,
+                        top: depotTimeToPx(weekGrid.gridStartMinutesFromMidnight, weekGrid.totalMinutes, dayData.startDepotTime) - DEPOT_LINE_OFFSET,
+                        height: 0,
+                        borderTop: `${DEPOT_LINE_PX}px solid ${DEPOT_LINE_COLOR}`,
+                        pointerEvents: 'none',
+                        zIndex: 1,
+                      }}
+                      aria-hidden
+                    />
+                  )}
+                  {!isDoctorDayOff && dayData?.endDepotTime && (
+                    <div
+                      style={{
+                        position: 'absolute',
+                        left: 0,
+                        right: 0,
+                        top: depotTimeToPx(weekGrid.gridStartMinutesFromMidnight, weekGrid.totalMinutes, dayData.endDepotTime) - DEPOT_LINE_OFFSET,
+                        height: 0,
+                        borderTop: `${DEPOT_LINE_PX}px solid ${DEPOT_LINE_COLOR}`,
+                        pointerEvents: 'none',
+                        zIndex: 1,
+                      }}
+                      aria-hidden
+                    />
+                  )}
                   {/* Drive + appointments share one layout so hatched drive bands align with blocks */}
-                  {(() => {
+                  {!isDoctorDayOff &&
+                  (() => {
                     if (!dayData?.households?.length) return null;
                     const bufferMin = dayData.appointmentBufferMinutes ?? 5;
                     const layout = computeMyWeekDayColumnLayout(
@@ -2659,15 +2901,32 @@ export default function MyWeek(props: MyWeekProps = {}) {
                       bufferMin
                     );
                     if (!layout) return null;
-                    const dayDataForDrive =
-                      virtualAppt?.date === dateIso &&
-                      typeof virtualAppt.validationReturnSec === 'number' &&
-                      Number.isFinite(virtualAppt.validationReturnSec)
-                        ? { ...dayData, validationReturnSec: virtualAppt.validationReturnSec }
-                        : dayData;
+                    // Use live ETA return (backToDepot*), not slot-search validationReturnSec —
+                    // pinning search return hid post-book depot overflow during View Placement.
                     const driveSegs = showByDriveTime
-                      ? buildMyWeekDriveSegmentsFromLayout(layout, dayDataForDrive, weekGrid, dateIso)
+                      ? buildMyWeekDriveSegmentsFromLayout(layout, dayData, weekGrid, dateIso)
                       : [];
+                    const driveBlockOverlapOverlays =
+                      showByDriveTime && driveSegs.length > 0
+                        ? computeDriveBlockOverlapOverlays(driveSegs, layout, PPM).map((r) => ({
+                            ...r,
+                            background: DRIVE_BLOCK_OVERLAP_HASH_FILL,
+                          }))
+                        : [];
+                    const depotReturnOverrunLayers =
+                      showByDriveTime
+                        ? computeDepotReturnTrailingBlockOverrunLayers(
+                            layout,
+                            dayData,
+                            weekGrid,
+                            dateIso,
+                            PPM
+                          )
+                        : [];
+                    const depotOverrunByIdx = new Map(
+                      depotReturnOverrunLayers.map((L) => [L.householdIdx, L])
+                    );
+                    const scheduleDriveOverlays = [...driveBlockOverlapOverlays];
                     const { displayHouseholds, displayTimeline, topMinByIdx, durMinByIdx, driveOffsets } =
                       layout;
                     return (
@@ -2735,21 +2994,28 @@ export default function MyWeek(props: MyWeekProps = {}) {
                             h.windowEndIso ??
                             h.effectiveWindow?.endIso ??
                             null;
-                          // Client Fixed Time: booked start should hold; ETA after start = route forced the stop off schedule.
-                          const clientFixedRoutePushedPastSchedule =
-                            showByDriveTime &&
-                            weekHouseholdIsClientFixedTime(h) &&
-                            !doctorDayClock;
+                          const windowStartForWarn =
+                            (slot?.windowStartIso != null && slot?.windowEndIso != null
+                              ? slot.windowStartIso
+                              : null) ??
+                            h.windowStartIso ??
+                            h.effectiveWindow?.startIso ??
+                            null;
                           const windowWarning =
                             showByDriveTime &&
                             !h.isPersonalBlock &&
-                            ((!isFixedTime &&
-                              shouldShowEtaWindowWarning(etaIso, windowEndForWarn)) ||
-                              clientFixedRoutePushedPastSchedule);
+                            computeDriveTimeWindowWarning({
+                              etaIso,
+                              windowEndIso: windowEndForWarn,
+                              windowStartIso: windowStartForWarn,
+                              isClientFixedTime: weekHouseholdIsClientFixedTime(h),
+                              scheduledStartIso: h.startIso,
+                            });
                           const isLastStopOfDay = idx === displayHouseholds.length - 1;
                           const endDepotTimeFormatted = isLastStopOfDay
                             ? formatDepotWallClockOnDate(dayData.endDepotTime, dateIso, dayData.timezone)
                             : null;
+                          const depotLayer = depotOverrunByIdx.get(idx);
                           return (
                             <div
                               key={h.key}
@@ -2927,9 +3193,46 @@ export default function MyWeek(props: MyWeekProps = {}) {
                               {isFixedTime && !h.isPersonalBlock && (
                                 <span style={{ fontSize: 10, color: '#b91c1c', fontWeight: 600 }}>Fixed</span>
                               )}
+                              {depotLayer && (
+                                <div
+                                  key={depotLayer.key}
+                                  aria-hidden
+                                  style={{
+                                    position: 'absolute',
+                                    left: 0,
+                                    right: 0,
+                                    top: 0,
+                                    height: depotLayer.heightPx,
+                                    zIndex: 3,
+                                    pointerEvents: 'none',
+                                    background: depotLayer.background,
+                                    borderTopLeftRadius: 6,
+                                    borderTopRightRadius: 6,
+                                    boxSizing: 'border-box',
+                                  }}
+                                />
+                              )}
                             </div>
                           );
                         })}
+                        {scheduleDriveOverlays.map((r) => (
+                          <div
+                            key={r.key}
+                            aria-hidden
+                            style={{
+                              position: 'absolute',
+                              left: 4,
+                              right: 4,
+                              top: r.top,
+                              height: r.height,
+                              zIndex: 20,
+                              pointerEvents: 'none',
+                              background: r.background,
+                              borderRadius: 4,
+                              boxSizing: 'border-box',
+                            }}
+                          />
+                        ))}
                       </>
                     );
                   })()}
@@ -2962,7 +3265,7 @@ export default function MyWeek(props: MyWeekProps = {}) {
               offset: OFFSET,
               preferSide: 'left',
             });
-            const { left, top, maxCardH, width: popoverW } = pos;
+            const { left, top, bottom, maxCardH, width: popoverW } = pos;
             const practiceTzHover = practiceTimeZoneOrDefault(hoverCard.practiceTimeZone);
             const addrNoZip = stripZipFromAddressLine(hoverCard.address);
             return (
@@ -2981,7 +3284,7 @@ export default function MyWeek(props: MyWeekProps = {}) {
                 style={{
                   position: 'fixed',
                   left,
-                  top,
+                  ...(bottom != null ? { top: 'auto', bottom } : { top }),
                   zIndex: 9999,
                   width: popoverW,
                   maxWidth: CARD_MAX_W,
@@ -3095,13 +3398,7 @@ export default function MyWeek(props: MyWeekProps = {}) {
                       {showWindow && (
                         <span>
                           <b>Window of arrival:</b>{' '}
-                          {hoverCard.isFixedTime ? (
-                            <>
-                              {formatIsoTimeShortInPracticeZone(hoverCard.startIso, practiceTzHover)}
-                              {' – '}
-                              {formatIsoTimeShortInPracticeZone(hoverCard.endIso, practiceTzHover)}
-                            </>
-                          ) : (
+                          {hoverCard.windowStartIso || hoverCard.windowEndIso ? (
                             <>
                               {hoverCard.windowStartIso
                                 ? formatIsoTimeShortInPracticeZone(hoverCard.windowStartIso, practiceTzHover)
@@ -3110,6 +3407,16 @@ export default function MyWeek(props: MyWeekProps = {}) {
                               {hoverCard.windowEndIso
                                 ? formatIsoTimeShortInPracticeZone(hoverCard.windowEndIso, practiceTzHover)
                                 : '—'}
+                            </>
+                          ) : hoverCard.isFixedTime ? (
+                            <>
+                              {formatIsoTimeShortInPracticeZone(hoverCard.startIso, practiceTzHover)}
+                              {' – '}
+                              {formatIsoTimeShortInPracticeZone(hoverCard.endIso, practiceTzHover)}
+                            </>
+                          ) : (
+                            <>
+                              {'— – —'}
                             </>
                           )}
                         </span>

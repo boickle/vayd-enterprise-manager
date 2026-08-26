@@ -1,6 +1,8 @@
 // src/pages/Settings.tsx
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useSearchParams } from 'react-router';
 import { useAuth } from '../auth/useAuth';
+import ScheduleOverrideModal from '../components/ScheduleOverrideModal';
 import {
   fetchAllAppointmentTypes,
   fetchAllEmployees,
@@ -8,20 +10,15 @@ import {
   fetchEmployee,
   updateEmployeeAppointmentTypes,
   updateEmployeeScheduleZones,
-  updateAppointmentType,
   updateWeeklySchedule,
   uploadEmployeeImage,
-  fetchScheduleOverrides,
-  fetchScheduleOverrideByDate,
-  createScheduleOverride,
-  updateScheduleOverride,
-  deleteScheduleOverride,
   type AppointmentType,
   type Employee,
+  type EmployeeAppointmentTypeAssignment,
   type EmployeeWeeklySchedule,
-  type ScheduleOverride,
   type Zone,
 } from '../api/appointmentSettings';
+import { clearVeterinariansZoneLookupCache } from '../utils/veterinarianZoneLookup';
 import {
   getPracticeSettings,
   updatePracticeSettings,
@@ -50,6 +47,12 @@ import {
   type DailyGoalOverride,
 } from '../api/employeeGoals';
 import {
+  defaultAppointmentBookingsGoalsByDow,
+  fetchAppointmentBookingsGoalsByDow,
+  saveAppointmentBookingsGoalsByDow,
+  type AppointmentBookingsGoalsByDow,
+} from '../api/appointmentBookingsGoals';
+import {
   fetchStaffDoctorAssignments,
   fetchDoctorAssignmentDoctors,
   saveUserDoctorAssignments,
@@ -58,6 +61,36 @@ import {
 } from '../api/doctorAssignments';
 import { DepotLocationField } from '../components/DepotLocationField';
 import './Settings.css';
+import SettingsEmployeeDirectory from '../components/settings/SettingsEmployeeDirectory';
+import SettingsAppointmentTypes from '../components/settings/SettingsAppointmentTypes';
+import SettingsRoleManualBooking from '../components/settings/SettingsRoleManualBooking';
+import SettingsClSeatAssignment from '../components/settings/SettingsClSeatAssignment';
+import SettingsGmailMailboxPermissions from '../components/settings/SettingsGmailMailboxPermissions';
+import { appointmentTypeIsArchived } from '../utils/appointmentTypeSettings';
+
+const SETTINGS_TAB_IDS = [
+  'appointment-types',
+  'role-manual-booking',
+  'employee-types',
+  'employee-zones',
+  'employee-schedule',
+  'inventory',
+  'employee-images',
+  'employee-goals',
+  'doctor-settings',
+  'employee-directory',
+  'cl-seat-assignment',
+  'gmail-mailboxes',
+  'reminders',
+] as const;
+type SettingsTabId = (typeof SETTINGS_TAB_IDS)[number];
+
+function parseSettingsTabParam(tab: string | null): SettingsTabId {
+  if (tab && (SETTINGS_TAB_IDS as readonly string[]).includes(tab)) {
+    return tab as SettingsTabId;
+  }
+  return 'appointment-types';
+}
 
 /** Practice ID for reminder settings (default 1; override via env if needed) */
 const REMINDERS_PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
@@ -82,30 +115,6 @@ function formatEmployeeName(emp: Employee): string {
     : `${emp.firstName || ''} ${emp.lastName || ''}`.trim() || `Employee ${emp.id}`;
 }
 
-type SettingsTab =
-  | 'appointment-types'
-  | 'employee-types'
-  | 'employee-zones'
-  | 'employee-schedule'
-  | 'inventory'
-  | 'employee-images'
-  | 'employee-goals'
-  | 'doctor-settings'
-  | 'reminders';
-
-const EMPLOYEE_SETTINGS_TABS: { id: SettingsTab; label: string }[] = [
-  { id: 'employee-types', label: 'Employee Appointment Types' },
-  { id: 'employee-zones', label: 'Employee Zones' },
-  { id: 'employee-schedule', label: 'Employee Schedule' },
-  { id: 'employee-images', label: 'Employee Images' },
-  { id: 'employee-goals', label: 'Employee Goals' },
-  { id: 'doctor-settings', label: 'Doctor Settings' },
-];
-
-function isEmployeeSettingsTab(tab: SettingsTab): boolean {
-  return EMPLOYEE_SETTINGS_TABS.some((t) => t.id === tab);
-}
-
 function formatDoctorAssignmentName(doc: DoctorAssignmentPerson): string {
   return (
     doc.fullName?.trim() ||
@@ -118,30 +127,86 @@ function formatStaffDoctorAssignmentLabel(row: StaffDoctorAssignments): string {
   return row.employeeName?.trim() || row.email?.trim() || `User ${row.userId}`;
 }
 
+type EmployeeZoneEditorRow = {
+  zoneId: number;
+  isAssigned: boolean;
+  acceptingNewPatients: boolean;
+  transitioningOutOfZone: boolean;
+};
+
+function zoneEditorRowsFromSchedule(
+  allZones: Zone[],
+  scheduleZones?: EmployeeWeeklySchedule['zones']
+): EmployeeZoneEditorRow[] {
+  const assignedByZoneId = new Map<
+    number,
+    { acceptingNewPatients: boolean; transitioningOutOfZone: boolean }
+  >();
+  for (const z of scheduleZones ?? []) {
+    assignedByZoneId.set(z.zoneId, {
+      acceptingNewPatients: z.acceptingNewPatients === true,
+      transitioningOutOfZone: z.transitioningOutOfZone === true,
+    });
+  }
+  return allZones.map((zone) => {
+    const assigned = assignedByZoneId.get(zone.id);
+    const isAssigned = assigned != null;
+    return {
+      zoneId: zone.id,
+      isAssigned,
+      acceptingNewPatients: isAssigned ? assigned.acceptingNewPatients : false,
+      transitioningOutOfZone: isAssigned ? assigned.transitioningOutOfZone : false,
+    };
+  });
+}
+
 export default function Settings() {
   const { role } = useAuth() as any;
-  const [activeTab, setActiveTab] = useState<SettingsTab>('appointment-types');
-  const [employeeMenuOpen, setEmployeeMenuOpen] = useState(false);
-  const employeeMenuRef = useRef<HTMLDivElement>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab = useMemo(
+    () => parseSettingsTabParam(searchParams.get('tab')),
+    [searchParams]
+  );
+  const goToTab = useCallback(
+    (tab: SettingsTabId) => {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          if (tab === 'appointment-types') next.delete('tab');
+          else next.set('tab', tab);
+          return next;
+        },
+        { replace: true }
+      );
+    },
+    [setSearchParams]
+  );
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  // Appointment Types state
+  // Appointment Types state (shared with employee-types tab)
   const [appointmentTypes, setAppointmentTypes] = useState<AppointmentType[]>([]);
-  const [editingAppointmentType, setEditingAppointmentType] = useState<AppointmentType | null>(null);
+
+  /** Types available for new bookings / admin pickers (excludes archived). */
+  const activeAppointmentTypes = useMemo(
+    () => appointmentTypes.filter((t) => t.isActive !== false && !appointmentTypeIsArchived(t)),
+    [appointmentTypes]
+  );
 
   // Employee Appointment Types state
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
-  const [selectedAppointmentTypeIds, setSelectedAppointmentTypeIds] = useState<number[]>([]);
+  const [employeeApptTypeAssignments, setEmployeeApptTypeAssignments] = useState<
+    EmployeeAppointmentTypeAssignment[]
+  >([]);
 
   // Employee Zones state
   const [allZones, setAllZones] = useState<Zone[]>([]);
   const [selectedEmployeeForZones, setSelectedEmployeeForZones] = useState<Employee | null>(null);
   const [selectedSchedule, setSelectedSchedule] = useState<EmployeeWeeklySchedule | null>(null);
-  const [zoneUpdates, setZoneUpdates] = useState<Array<{ zoneId: number; isAssigned: boolean; acceptingNewPatients: boolean }>>([]);
+  const [zoneUpdates, setZoneUpdates] = useState<EmployeeZoneEditorRow[]>([]);
 
   // Employee Schedule state
   const [selectedEmployeeForSchedule, setSelectedEmployeeForSchedule] = useState<Employee | null>(null);
@@ -165,15 +230,11 @@ export default function Settings() {
   } | null>(null);
   const [priceManuallyEdited, setPriceManuallyEdited] = useState(false);
 
-  // Schedule overrides calendar (per-date overrides for routing)
-  const [showOverrideCalendar, setShowOverrideCalendar] = useState(false);
-  const [overrideCalendarEmployeeId, setOverrideCalendarEmployeeId] = useState<number | null>(null);
-  const [overrideCalendarMonth, setOverrideCalendarMonth] = useState(() => dayjs().startOf('month'));
-  const [overridesInRange, setOverridesInRange] = useState<ScheduleOverride[]>([]);
-  const [selectedOverrideDate, setSelectedOverrideDate] = useState<string | null>(null);
-  const [overrideForm, setOverrideForm] = useState<ScheduleOverride | Partial<ScheduleOverride> & { date: string } | null>(null);
-  const [overrideFormLoading, setOverrideFormLoading] = useState(false);
-  const [overrideFormSaving, setOverrideFormSaving] = useState(false);
+  const [overrideModalOpen, setOverrideModalOpen] = useState(false);
+  const [overrideModalInitial, setOverrideModalInitial] = useState<{
+    employeeId?: number;
+    date?: string;
+  }>({});
 
   // Employee Images state
   const [uploadingEmployeeId, setUploadingEmployeeId] = useState<number | null>(null);
@@ -187,6 +248,12 @@ export default function Settings() {
   const [goalsLoading, setGoalsLoading] = useState(false);
   const [goalsSaving, setGoalsSaving] = useState(false);
   const [goalsLoadError, setGoalsLoadError] = useState<string | null>(null);
+  const [bookingsGoalsByDow, setBookingsGoalsByDow] = useState<AppointmentBookingsGoalsByDow>(
+    defaultAppointmentBookingsGoalsByDow
+  );
+  const [bookingsGoalsLoading, setBookingsGoalsLoading] = useState(false);
+  const [bookingsGoalsSaving, setBookingsGoalsSaving] = useState(false);
+  const [bookingsGoalsLoadError, setBookingsGoalsLoadError] = useState<string | null>(null);
 
   // Doctor settings tab state
   const [doctorAssignmentStaff, setDoctorAssignmentStaff] = useState<StaffDoctorAssignments[]>([]);
@@ -217,22 +284,6 @@ export default function Settings() {
   // Normalize roles
   const roles = Array.isArray(role) ? role : role ? [String(role)] : [];
   const isAdmin = roles.some((r) => ['admin', 'superadmin'].includes(String(r).toLowerCase()));
-
-  useEffect(() => {
-    if (!employeeMenuOpen) return;
-    function handleClickOutside(event: MouseEvent) {
-      if (employeeMenuRef.current && !employeeMenuRef.current.contains(event.target as Node)) {
-        setEmployeeMenuOpen(false);
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [employeeMenuOpen]);
-
-  const selectSettingsTab = (tab: SettingsTab) => {
-    setActiveTab(tab);
-    setEmployeeMenuOpen(false);
-  };
 
   // Sort employees: providers first, then by name
   const sortedEmployees = useMemo(() => {
@@ -268,22 +319,6 @@ export default function Settings() {
     [doctorAssignmentStaff, selectedStaffUserId]
   );
 
-  // Sort appointment types: first by showInApptRequestForm (true first), then by formListOrder
-  const sortedAppointmentTypes = useMemo(() => {
-    return [...appointmentTypes].sort((a, b) => {
-      // First, sort by showInApptRequestForm (true first)
-      const aShowInForm = a.showInApptRequestForm === true ? 0 : 1;
-      const bShowInForm = b.showInApptRequestForm === true ? 0 : 1;
-      if (aShowInForm !== bShowInForm) {
-        return aShowInForm - bShowInForm;
-      }
-      // Then sort by formListOrder (ascending, null values at the end)
-      const aOrder = a.formListOrder ?? Number.MAX_SAFE_INTEGER;
-      const bOrder = b.formListOrder ?? Number.MAX_SAFE_INTEGER;
-      return aOrder - bOrder;
-    });
-  }, [appointmentTypes]);
-
   useEffect(() => {
     if (!isAdmin) return;
     loadData();
@@ -312,6 +347,125 @@ export default function Settings() {
     };
   }, [isAdmin, activeTab]);
 
+  const loadData = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [types, emps, zones] = await Promise.all([
+        fetchAllAppointmentTypes(practiceId, { activeOnly: false }),
+        fetchAllEmployees(),
+        fetchAllZones(),
+      ]);
+      setAppointmentTypes(types);
+      setEmployees(emps);
+      setAllZones(zones);
+    } catch (err: any) {
+      setError(err?.response?.data?.message || err?.message || 'Failed to load data');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLoadEmployee = async (employeeId: number) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const employee = await fetchEmployee(employeeId);
+      setSelectedEmployee(employee);
+      setEmployeeApptTypeAssignments(
+        employee.appointmentTypes && Array.isArray(employee.appointmentTypes)
+          ? employee.appointmentTypes.map((at) => ({
+              appointmentTypeId: at.id,
+              allowOnlineBooking: at.allowOnlineBooking === true,
+            }))
+          : []
+      );
+    } catch (err: any) {
+      setError(err?.response?.data?.message || err?.message || 'Failed to load employee');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLoadEmployeeForZones = async (employeeId: number) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const employee = await fetchEmployee(employeeId);
+      setSelectedEmployeeForZones(employee);
+      if (employee.weeklySchedules && employee.weeklySchedules.length > 0) {
+        // Find first workday schedule, or first schedule if no workdays
+        const firstSchedule = employee.weeklySchedules.find((s) => s.isWorkday) || employee.weeklySchedules[0];
+        setSelectedSchedule(firstSchedule);
+        
+        // Merge all zones with employee's zones
+        setZoneUpdates(zoneEditorRowsFromSchedule(allZones, firstSchedule.zones));
+      } else {
+        // No schedules - show all zones as unassigned
+        setZoneUpdates(zoneEditorRowsFromSchedule(allZones));
+        setSelectedSchedule(null);
+      }
+    } catch (err: any) {
+      setError(err?.response?.data?.message || err?.message || 'Failed to load employee');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLoadEmployeeGoals = async (employeeId: number) => {
+    setGoalsLoadError(null);
+    setGoalsLoading(true);
+    try {
+      const goals = await fetchEmployeeGoals(employeeId);
+      setGoalsForm({
+        ...goals,
+        dailyGoals: goals.dailyGoals ? [...goals.dailyGoals] : [],
+      });
+    } catch (err: any) {
+      setGoalsLoadError(err?.response?.data?.message || err?.message || 'Failed to load goals');
+      setGoalsForm({});
+    } finally {
+      setGoalsLoading(false);
+    }
+  };
+
+  const handleLoadAppointmentBookingsGoals = useCallback(async () => {
+    setBookingsGoalsLoadError(null);
+    setBookingsGoalsLoading(true);
+    try {
+      const goals = await fetchAppointmentBookingsGoalsByDow(REMINDERS_PRACTICE_ID);
+      setBookingsGoalsByDow(goals);
+    } catch (err: any) {
+      setBookingsGoalsLoadError(
+        err?.response?.data?.message || err?.message || 'Failed to load appointment bookings goals'
+      );
+      setBookingsGoalsByDow(defaultAppointmentBookingsGoalsByDow());
+    } finally {
+      setBookingsGoalsLoading(false);
+    }
+  }, []);
+
+  const handleSaveAppointmentBookingsGoals = async () => {
+    setBookingsGoalsSaving(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const saved = await saveAppointmentBookingsGoalsByDow(REMINDERS_PRACTICE_ID, bookingsGoalsByDow);
+      setBookingsGoalsByDow(saved);
+      setSuccess('Appointment bookings goals updated successfully');
+      setTimeout(() => setSuccess(null), 3000);
+    } catch (err: any) {
+      setError(err?.response?.data?.message || err?.message || 'Failed to update appointment bookings goals');
+    } finally {
+      setBookingsGoalsSaving(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!isAdmin || activeTab !== 'employee-goals') return;
+    void handleLoadAppointmentBookingsGoals();
+  }, [isAdmin, activeTab, handleLoadAppointmentBookingsGoals]);
+
   useEffect(() => {
     if (!isAdmin || activeTab !== 'doctor-settings') return;
     let cancelled = false;
@@ -338,144 +492,6 @@ export default function Settings() {
       cancelled = true;
     };
   }, [isAdmin, activeTab]);
-
-  const loadData = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const [types, emps, zones] = await Promise.all([
-        fetchAllAppointmentTypes(),
-        fetchAllEmployees(),
-        fetchAllZones(),
-      ]);
-      setAppointmentTypes(types);
-      setEmployees(emps);
-      setAllZones(zones);
-    } catch (err: any) {
-      setError(err?.response?.data?.message || err?.message || 'Failed to load data');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleLoadEmployee = async (employeeId: number) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const employee = await fetchEmployee(employeeId);
-      setSelectedEmployee(employee);
-      setSelectedAppointmentTypeIds(
-        employee.appointmentTypes && Array.isArray(employee.appointmentTypes)
-          ? employee.appointmentTypes.map((at) => at.id)
-          : []
-      );
-    } catch (err: any) {
-      setError(err?.response?.data?.message || err?.message || 'Failed to load employee');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleLoadEmployeeForZones = async (employeeId: number) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const employee = await fetchEmployee(employeeId);
-      setSelectedEmployeeForZones(employee);
-      if (employee.weeklySchedules && employee.weeklySchedules.length > 0) {
-        // Find first workday schedule, or first schedule if no workdays
-        const firstSchedule = employee.weeklySchedules.find((s) => s.isWorkday) || employee.weeklySchedules[0];
-        setSelectedSchedule(firstSchedule);
-        
-        // Create a map of employee's current zones
-        const employeeZonesMap = new Map<number, boolean>();
-        if (firstSchedule.zones) {
-          firstSchedule.zones.forEach((z) => {
-            employeeZonesMap.set(z.zoneId, z.acceptingNewPatients);
-          });
-        }
-        
-        // Merge all zones with employee's zones
-        // isAssigned: true if employee has this zone, false otherwise
-        // acceptingNewPatients: employee's setting if assigned, false otherwise
-        const allZoneUpdates = allZones.map((zone) => {
-          const isAssigned = employeeZonesMap.has(zone.id);
-          return {
-            zoneId: zone.id,
-            isAssigned,
-            acceptingNewPatients: isAssigned ? (employeeZonesMap.get(zone.id) ?? false) : false,
-          };
-        });
-        
-        setZoneUpdates(allZoneUpdates);
-      } else {
-        // No schedules - show all zones as unassigned
-        const allZoneUpdates = allZones.map((zone) => ({
-          zoneId: zone.id,
-          isAssigned: false,
-          acceptingNewPatients: false,
-        }));
-        setSelectedSchedule(null);
-        setZoneUpdates(allZoneUpdates);
-      }
-    } catch (err: any) {
-      setError(err?.response?.data?.message || err?.message || 'Failed to load employee');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleLoadEmployeeGoals = async (employeeId: number) => {
-    setGoalsLoadError(null);
-    setGoalsLoading(true);
-    try {
-      const goals = await fetchEmployeeGoals(employeeId);
-      setGoalsForm({
-        ...goals,
-        dailyGoals: goals.dailyGoals ? [...goals.dailyGoals] : [],
-      });
-    } catch (err: any) {
-      setGoalsLoadError(err?.response?.data?.message || err?.message || 'Failed to load goals');
-      setGoalsForm({});
-    } finally {
-      setGoalsLoading(false);
-    }
-  };
-
-  const handleSaveEmployeeGoals = async () => {
-    if (!selectedEmployeeForGoals) return;
-    setGoalsSaving(true);
-    setError(null);
-    setSuccess(null);
-    try {
-      const payload: Parameters<typeof updateEmployeeGoals>[1] = {};
-      if (goalsForm.defaultWorkStartLocal !== undefined) payload.defaultWorkStartLocal = goalsForm.defaultWorkStartLocal || undefined;
-      if (goalsForm.defaultWorkEndLocal !== undefined) payload.defaultWorkEndLocal = goalsForm.defaultWorkEndLocal || undefined;
-      if (goalsForm.defaultStartDepotLat !== undefined) payload.defaultStartDepotLat = goalsForm.defaultStartDepotLat;
-      if (goalsForm.defaultStartDepotLon !== undefined) payload.defaultStartDepotLon = goalsForm.defaultStartDepotLon;
-      if (goalsForm.defaultEndDepotLat !== undefined) payload.defaultEndDepotLat = goalsForm.defaultEndDepotLat;
-      if (goalsForm.defaultEndDepotLon !== undefined) payload.defaultEndDepotLon = goalsForm.defaultEndDepotLon;
-      if (goalsForm.dailyRevenueGoal !== undefined) payload.dailyRevenueGoal = goalsForm.dailyRevenueGoal;
-      if (goalsForm.bonusRevenueGoal !== undefined) payload.bonusRevenueGoal = goalsForm.bonusRevenueGoal;
-      if (goalsForm.dailyPointGoal !== undefined) payload.dailyPointGoal = goalsForm.dailyPointGoal;
-      if (goalsForm.weeklyPointGoal !== undefined) payload.weeklyPointGoal = goalsForm.weeklyPointGoal;
-      if (goalsForm.dailyGoals !== undefined) {
-        payload.dailyGoals = goalsForm.dailyGoals.map((d) => ({
-          dayOfWeek: d.dayOfWeek,
-          dailyPointGoal: d.dailyPointGoal,
-          dailyRevenueGoal: d.dailyRevenueGoal,
-        }));
-      }
-      const updated = await updateEmployeeGoals(selectedEmployeeForGoals.id, payload);
-      setGoalsForm({ ...updated, dailyGoals: updated.dailyGoals ? [...updated.dailyGoals] : [] });
-      setSuccess('Employee goals updated successfully');
-      setTimeout(() => setSuccess(null), 3000);
-    } catch (err: any) {
-      setError(err?.response?.data?.message || err?.message || 'Failed to update goals');
-    } finally {
-      setGoalsSaving(false);
-    }
-  };
 
   const handleSelectStaffForDoctorSettings = (userId: number) => {
     setSelectedStaffUserId(userId);
@@ -521,28 +537,44 @@ export default function Settings() {
     }
   };
 
-  const handleSaveAppointmentType = async () => {
-    if (!editingAppointmentType) return;
-    setSaving(true);
+  const handleSaveEmployeeGoals = async () => {
+    if (!selectedEmployeeForGoals) return;
+    setGoalsSaving(true);
     setError(null);
     setSuccess(null);
     try {
-      const updated = await updateAppointmentType(editingAppointmentType.id, {
-        prettyName: editingAppointmentType.prettyName,
-        showInApptRequestForm: editingAppointmentType.showInApptRequestForm,
-        newPatientAllowed: editingAppointmentType.newPatientAllowed,
-        formListOrder: editingAppointmentType.formListOrder ?? null,
-      });
-      setAppointmentTypes((prev) =>
-        prev.map((at) => (at.id === updated.id ? updated : at))
-      );
-      setEditingAppointmentType(null);
-      setSuccess('Appointment type updated successfully');
+      const payload: Parameters<typeof updateEmployeeGoals>[1] = {};
+      if (goalsForm.defaultWorkStartLocal !== undefined) payload.defaultWorkStartLocal = goalsForm.defaultWorkStartLocal || undefined;
+      if (goalsForm.defaultWorkEndLocal !== undefined) payload.defaultWorkEndLocal = goalsForm.defaultWorkEndLocal || undefined;
+      if (goalsForm.defaultStartDepotLat !== undefined) payload.defaultStartDepotLat = goalsForm.defaultStartDepotLat;
+      if (goalsForm.defaultStartDepotLon !== undefined) payload.defaultStartDepotLon = goalsForm.defaultStartDepotLon;
+      if (goalsForm.defaultEndDepotLat !== undefined) payload.defaultEndDepotLat = goalsForm.defaultEndDepotLat;
+      if (goalsForm.defaultEndDepotLon !== undefined) payload.defaultEndDepotLon = goalsForm.defaultEndDepotLon;
+      if (goalsForm.dailyRevenueGoal !== undefined) payload.dailyRevenueGoal = goalsForm.dailyRevenueGoal;
+      if (goalsForm.bonusRevenueGoal !== undefined) payload.bonusRevenueGoal = goalsForm.bonusRevenueGoal;
+      if (goalsForm.dailyPointGoal !== undefined) payload.dailyPointGoal = goalsForm.dailyPointGoal;
+      if (goalsForm.weeklyPointGoal !== undefined) payload.weeklyPointGoal = goalsForm.weeklyPointGoal;
+      if (goalsForm.maxVariableVsdPerPoint !== undefined) {
+        payload.maxVariableVsdPerPoint = goalsForm.maxVariableVsdPerPoint;
+      }
+      if (goalsForm.minVariableVsdPerPoint !== undefined) {
+        payload.minVariableVsdPerPoint = goalsForm.minVariableVsdPerPoint;
+      }
+      if (goalsForm.dailyGoals !== undefined) {
+        payload.dailyGoals = goalsForm.dailyGoals.map((d) => ({
+          dayOfWeek: d.dayOfWeek,
+          dailyPointGoal: d.dailyPointGoal,
+          dailyRevenueGoal: d.dailyRevenueGoal,
+        }));
+      }
+      const updated = await updateEmployeeGoals(selectedEmployeeForGoals.id, payload);
+      setGoalsForm({ ...updated, dailyGoals: updated.dailyGoals ? [...updated.dailyGoals] : [] });
+      setSuccess('Employee goals updated successfully');
       setTimeout(() => setSuccess(null), 3000);
     } catch (err: any) {
-      setError(err?.response?.data?.message || err?.message || 'Failed to update appointment type');
+      setError(err?.response?.data?.message || err?.message || 'Failed to update goals');
     } finally {
-      setSaving(false);
+      setGoalsSaving(false);
     }
   };
 
@@ -552,7 +584,7 @@ export default function Settings() {
     setError(null);
     setSuccess(null);
     try {
-      await updateEmployeeAppointmentTypes(selectedEmployee.id, selectedAppointmentTypeIds);
+      await updateEmployeeAppointmentTypes(selectedEmployee.id, employeeApptTypeAssignments);
       setSuccess('Employee appointment types updated successfully');
       setTimeout(() => setSuccess(null), 3000);
       // Reload employee data
@@ -615,8 +647,10 @@ export default function Settings() {
         .map((z) => ({
           zoneId: z.zoneId,
           acceptingNewPatients: z.acceptingNewPatients,
+          transitioningOutOfZone: z.transitioningOutOfZone,
         }));
       await updateEmployeeScheduleZones(selectedSchedule.id, zonesToSave);
+      clearVeterinariansZoneLookupCache();
       setSuccess('Employee zones updated successfully');
       setTimeout(() => setSuccess(null), 3000);
       
@@ -632,33 +666,10 @@ export default function Settings() {
             || employee.weeklySchedules[0];
           setSelectedSchedule(scheduleToSelect);
           
-          // Create a map of employee's current zones for the selected schedule
-          const employeeZonesMap = new Map<number, boolean>();
-          if (scheduleToSelect.zones) {
-            scheduleToSelect.zones.forEach((z) => {
-              employeeZonesMap.set(z.zoneId, z.acceptingNewPatients);
-            });
-          }
-          
-          // Merge all zones with employee's zones
-          const allZoneUpdates = allZones.map((zone) => {
-            const isAssigned = employeeZonesMap.has(zone.id);
-            return {
-              zoneId: zone.id,
-              isAssigned,
-              acceptingNewPatients: isAssigned ? (employeeZonesMap.get(zone.id) ?? false) : false,
-            };
-          });
-          
-          setZoneUpdates(allZoneUpdates);
+          setZoneUpdates(zoneEditorRowsFromSchedule(allZones, scheduleToSelect.zones));
         } else {
           setSelectedSchedule(null);
-          const allZoneUpdates = allZones.map((zone) => ({
-            zoneId: zone.id,
-            isAssigned: false,
-            acceptingNewPatients: false,
-          }));
-          setZoneUpdates(allZoneUpdates);
+          setZoneUpdates(zoneEditorRowsFromSchedule(allZones));
         }
       } catch (err: any) {
         setError(err?.response?.data?.message || err?.message || 'Failed to reload employee');
@@ -717,136 +728,47 @@ export default function Settings() {
     return { lat, lon };
   };
 
-  // Load overrides for the calendar month when modal is open and employee/month change
-  useEffect(() => {
-    if (!showOverrideCalendar || !overrideCalendarEmployeeId) {
-      setOverridesInRange([]);
-      return;
-    }
-    const start = overrideCalendarMonth.format('YYYY-MM-DD');
-    const end = overrideCalendarMonth.endOf('month').format('YYYY-MM-DD');
-    fetchScheduleOverrides(overrideCalendarEmployeeId, { startDate: start, endDate: end })
-      .then(setOverridesInRange)
-      .catch(() => setOverridesInRange([]));
-  }, [showOverrideCalendar, overrideCalendarEmployeeId, overrideCalendarMonth]);
-
   const handleOpenOverrideCalendar = () => {
-    setOverrideCalendarEmployeeId(selectedEmployeeForSchedule?.id ?? sortedEmployees.find((e) => e.isProvider)?.id ?? null);
-    setOverrideCalendarMonth(dayjs().startOf('month'));
-    setSelectedOverrideDate(null);
-    setOverrideForm(null);
-    setShowOverrideCalendar(true);
+    setOverrideModalInitial({
+      employeeId:
+        selectedEmployeeForSchedule?.id ?? sortedEmployees.find((e) => e.isProvider)?.id ?? undefined,
+    });
+    setOverrideModalOpen(true);
   };
 
-  const handleOverrideDayClick = async (dateStr: string) => {
-    if (!overrideCalendarEmployeeId) return;
-    setSelectedOverrideDate(dateStr);
-    setOverrideFormLoading(true);
-    setOverrideForm(null);
-    try {
-      const [existing, employee] = await Promise.all([
-        fetchScheduleOverrideByDate(overrideCalendarEmployeeId, dateStr),
-        fetchEmployee(overrideCalendarEmployeeId),
-      ]);
-      const dayOfWeek = dayjs(dateStr).day();
-      const defaultSchedule = employee.weeklySchedules?.find((s) => s.dayOfWeek === dayOfWeek);
+  const scheduleOverrideDeepLinkRef = useRef<string | null>(null);
 
-      const defaultLatLon = {
-        startDepotLat: defaultSchedule?.startDepotLat ?? undefined,
-        startDepotLon: defaultSchedule?.startDepotLon ?? undefined,
-        endDepotLat: defaultSchedule?.endDepotLat ?? undefined,
-        endDepotLon: defaultSchedule?.endDepotLon ?? undefined,
-      };
+  useEffect(() => {
+    if (!isAdmin || employees.length === 0) return;
+    const open = searchParams.get('openScheduleOverride') === '1';
+    const empRaw = searchParams.get('overrideEmployeeId');
+    const dateStr = searchParams.get('overrideDate');
+    if (!open || !empRaw || !dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return;
+    const empId = Number(empRaw);
+    if (!Number.isFinite(empId) || !employees.some((e) => e.id === empId)) return;
 
-      if (existing) {
-        setOverrideForm({
-          ...existing,
-          startDepotLat: existing.startDepotLat ?? defaultLatLon.startDepotLat,
-          startDepotLon: existing.startDepotLon ?? defaultLatLon.startDepotLon,
-          endDepotLat: existing.endDepotLat ?? defaultLatLon.endDepotLat,
-          endDepotLon: existing.endDepotLon ?? defaultLatLon.endDepotLon,
-        });
-      } else {
-        setOverrideForm({
-          date: dateStr,
-          workStartLocal: defaultSchedule?.workStartLocal ?? '',
-          workEndLocal: defaultSchedule?.workEndLocal ?? '',
-          ...defaultLatLon,
-        });
-      }
-    } catch (err: any) {
-      setError(err?.response?.data?.message || err?.message || 'Failed to load override');
-    } finally {
-      setOverrideFormLoading(false);
+    const sig = `${empId}:${dateStr}`;
+    if (scheduleOverrideDeepLinkRef.current === sig) return;
+    scheduleOverrideDeepLinkRef.current = sig;
+
+    if (activeTab !== 'employee-schedule') {
+      goToTab('employee-schedule');
     }
-  };
+    setOverrideModalInitial({ employeeId: empId, date: dateStr });
+    setOverrideModalOpen(true);
+    void handleLoadEmployeeForSchedule(empId);
 
-  const handleOverrideSave = async () => {
-    if (!overrideCalendarEmployeeId || !overrideForm?.date) return;
-    setOverrideFormSaving(true);
-    setError(null);
-    try {
-      const payload = {
-        workStartLocal: overrideForm.workStartLocal || undefined,
-        workEndLocal: overrideForm.workEndLocal || undefined,
-        startDepotLat: overrideForm.startDepotLat ?? undefined,
-        startDepotLon: overrideForm.startDepotLon ?? undefined,
-        endDepotLat: overrideForm.endDepotLat ?? undefined,
-        endDepotLon: overrideForm.endDepotLon ?? undefined,
-      };
-      if ('id' in overrideForm && overrideForm.id) {
-        await updateScheduleOverride(overrideCalendarEmployeeId, overrideForm.id, payload);
-      } else {
-        await createScheduleOverride(overrideCalendarEmployeeId, {
-          date: overrideForm.date,
-          ...payload,
-        });
-      }
-      setSuccess('Schedule override saved');
-      setTimeout(() => setSuccess(null), 3000);
-      const start = overrideCalendarMonth.format('YYYY-MM-DD');
-      const end = overrideCalendarMonth.endOf('month').format('YYYY-MM-DD');
-      const list = await fetchScheduleOverrides(overrideCalendarEmployeeId, { startDate: start, endDate: end });
-      setOverridesInRange(list);
-      const updated = list.find((o) => o.date === overrideForm.date) ?? { ...overrideForm, date: overrideForm.date };
-      setOverrideForm(updated as ScheduleOverride);
-    } catch (err: any) {
-      setError(err?.response?.data?.message || err?.message || 'Failed to save override');
-    } finally {
-      setOverrideFormSaving(false);
-    }
-  };
-
-  const handleOverrideRemove = async () => {
-    if (!overrideCalendarEmployeeId || !overrideForm || !('id' in overrideForm) || !overrideForm.id) return;
-    setOverrideFormSaving(true);
-    setError(null);
-    try {
-      await deleteScheduleOverride(overrideCalendarEmployeeId, overrideForm.id);
-      setSuccess('Override removed; default schedule will be used for that day');
-      setTimeout(() => setSuccess(null), 3000);
-      const start = overrideCalendarMonth.format('YYYY-MM-DD');
-      const end = overrideCalendarMonth.endOf('month').format('YYYY-MM-DD');
-      const list = await fetchScheduleOverrides(overrideCalendarEmployeeId, { startDate: start, endDate: end });
-      setOverridesInRange(list);
-      const employee = await fetchEmployee(overrideCalendarEmployeeId);
-      const dayOfWeek = dayjs(overrideForm.date).day();
-      const defaultSchedule = employee.weeklySchedules?.find((s) => s.dayOfWeek === dayOfWeek);
-      setOverrideForm({
-        date: overrideForm.date,
-        workStartLocal: defaultSchedule?.workStartLocal ?? '',
-        workEndLocal: defaultSchedule?.workEndLocal ?? '',
-        startDepotLat: defaultSchedule?.startDepotLat ?? undefined,
-        startDepotLon: defaultSchedule?.startDepotLon ?? undefined,
-        endDepotLat: defaultSchedule?.endDepotLat ?? undefined,
-        endDepotLon: defaultSchedule?.endDepotLon ?? undefined,
-      });
-    } catch (err: any) {
-      setError(err?.response?.data?.message || err?.message || 'Failed to remove override');
-    } finally {
-      setOverrideFormSaving(false);
-    }
-  };
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete('openScheduleOverride');
+        next.delete('overrideEmployeeId');
+        next.delete('overrideDate');
+        return next;
+      },
+      { replace: true }
+    );
+  }, [isAdmin, employees, searchParams, activeTab, goToTab, setSearchParams]);
 
   const handleSaveEmployeeSchedule = async () => {
     if (!selectedEmployeeForSchedule) return;
@@ -908,10 +830,40 @@ export default function Settings() {
     }
   };
 
+  const isEmployeeAppointmentTypeAssigned = (typeId: number) =>
+    employeeApptTypeAssignments.some((a) => a.appointmentTypeId === typeId);
+
   const toggleAppointmentTypeSelection = (typeId: number) => {
-    setSelectedAppointmentTypeIds((prev) =>
-      prev.includes(typeId) ? prev.filter((id) => id !== typeId) : [...prev, typeId]
+    setEmployeeApptTypeAssignments((prev) => {
+      if (prev.some((a) => a.appointmentTypeId === typeId)) {
+        return prev.filter((a) => a.appointmentTypeId !== typeId);
+      }
+      return [...prev, { appointmentTypeId: typeId, allowOnlineBooking: false }];
+    });
+  };
+
+  const toggleEmployeeAppointmentTypeOnlineBooking = (typeId: number, allowOnlineBooking: boolean) => {
+    setEmployeeApptTypeAssignments((prev) =>
+      prev.map((a) =>
+        a.appointmentTypeId === typeId ? { ...a, allowOnlineBooking } : a
+      )
     );
+  };
+
+  const selectAllEmployeeAppointmentTypes = () => {
+    const activeIds = activeAppointmentTypes.map((t) => t.id);
+    const archivedKept = employeeApptTypeAssignments.filter(
+      (a) => !activeIds.includes(a.appointmentTypeId)
+    );
+    const activeAssignments = activeIds.map((id) => {
+      const existing = employeeApptTypeAssignments.find((a) => a.appointmentTypeId === id);
+      return existing ?? { appointmentTypeId: id, allowOnlineBooking: false };
+    });
+    setEmployeeApptTypeAssignments([...activeAssignments, ...archivedKept]);
+  };
+
+  const unselectAllEmployeeAppointmentTypes = () => {
+    setEmployeeApptTypeAssignments([]);
   };
 
   const toggleZoneAssignment = (zoneId: number, isAssigned: boolean) => {
@@ -920,11 +872,19 @@ export default function Settings() {
       if (existing) {
         return prev.map((z) => 
           z.zoneId === zoneId 
-            ? { ...z, isAssigned, acceptingNewPatients: isAssigned ? z.acceptingNewPatients : false }
+            ? {
+                ...z,
+                isAssigned,
+                acceptingNewPatients: isAssigned ? z.acceptingNewPatients : false,
+                transitioningOutOfZone: isAssigned ? z.transitioningOutOfZone : false,
+              }
             : z
         );
       } else {
-        return [...prev, { zoneId, isAssigned, acceptingNewPatients: false }];
+        return [
+          ...prev,
+          { zoneId, isAssigned, acceptingNewPatients: false, transitioningOutOfZone: false },
+        ];
       }
     });
   };
@@ -935,7 +895,31 @@ export default function Settings() {
       if (existing) {
         return prev.map((z) => (z.zoneId === zoneId ? { ...z, acceptingNewPatients: accepting } : z));
       } else {
-        return [...prev, { zoneId, isAssigned: true, acceptingNewPatients: accepting }];
+        return [
+          ...prev,
+          { zoneId, isAssigned: true, acceptingNewPatients: accepting, transitioningOutOfZone: false },
+        ];
+      }
+    });
+  };
+
+  const updateZoneTransitioningOut = (zoneId: number, transitioning: boolean) => {
+    setZoneUpdates((prev) => {
+      const existing = prev.find((z) => z.zoneId === zoneId);
+      if (existing) {
+        return prev.map((z) =>
+          z.zoneId === zoneId ? { ...z, transitioningOutOfZone: transitioning } : z
+        );
+      } else {
+        return [
+          ...prev,
+          {
+            zoneId,
+            isAssigned: true,
+            acceptingNewPatients: false,
+            transitioningOutOfZone: transitioning,
+          },
+        ];
       }
     });
   };
@@ -1245,50 +1229,79 @@ export default function Settings() {
         <div className="settings-tabs">
           <button
             className={`settings-tab ${activeTab === 'appointment-types' ? 'active' : ''}`}
-            onClick={() => selectSettingsTab('appointment-types')}
+            onClick={() => goToTab('appointment-types')}
           >
             Appointment Types
           </button>
-          <div className="settings-tab-dropdown" ref={employeeMenuRef}>
-            <button
-              type="button"
-              className={`settings-tab settings-tab-dropdown-trigger ${
-                isEmployeeSettingsTab(activeTab) ? 'active' : ''
-              }`}
-              onClick={() => setEmployeeMenuOpen((open) => !open)}
-              aria-expanded={employeeMenuOpen}
-              aria-haspopup="true"
-            >
-              Employees
-              <span className={`settings-tab-chevron ${employeeMenuOpen ? 'open' : ''}`} aria-hidden>
-                ▾
-              </span>
-            </button>
-            {employeeMenuOpen && (
-              <div className="settings-tab-dropdown-menu" role="menu">
-                {EMPLOYEE_SETTINGS_TABS.map((tab) => (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    role="menuitem"
-                    className={`settings-tab-dropdown-item ${activeTab === tab.id ? 'active' : ''}`}
-                    onClick={() => selectSettingsTab(tab.id)}
-                  >
-                    {tab.label}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+          <button
+            className={`settings-tab ${activeTab === 'role-manual-booking' ? 'active' : ''}`}
+            onClick={() => goToTab('role-manual-booking')}
+          >
+            Role Manual Booking
+          </button>
+          <button
+            className={`settings-tab ${activeTab === 'employee-types' ? 'active' : ''}`}
+            onClick={() => goToTab('employee-types')}
+          >
+            Employee Appointment Types
+          </button>
+          <button
+            className={`settings-tab ${activeTab === 'employee-zones' ? 'active' : ''}`}
+            onClick={() => goToTab('employee-zones')}
+          >
+            Employee Zones
+          </button>
+          <button
+            className={`settings-tab ${activeTab === 'employee-schedule' ? 'active' : ''}`}
+            onClick={() => goToTab('employee-schedule')}
+          >
+            Employee Schedule
+          </button>
           <button
             className={`settings-tab ${activeTab === 'inventory' ? 'active' : ''}`}
-            onClick={() => selectSettingsTab('inventory')}
+            onClick={() => goToTab('inventory')}
           >
             Inventory
           </button>
           <button
+            className={`settings-tab ${activeTab === 'employee-images' ? 'active' : ''}`}
+            onClick={() => goToTab('employee-images')}
+          >
+            Employee Images
+          </button>
+          <button
+            className={`settings-tab ${activeTab === 'employee-goals' ? 'active' : ''}`}
+            onClick={() => goToTab('employee-goals')}
+          >
+            Employee Goals
+          </button>
+          <button
+            className={`settings-tab ${activeTab === 'doctor-settings' ? 'active' : ''}`}
+            onClick={() => goToTab('doctor-settings')}
+          >
+            Doctor Settings
+          </button>
+          <button
+            className={`settings-tab ${activeTab === 'employee-directory' ? 'active' : ''}`}
+            onClick={() => goToTab('employee-directory')}
+          >
+            Employees
+          </button>
+          <button
+            className={`settings-tab ${activeTab === 'cl-seat-assignment' ? 'active' : ''}`}
+            onClick={() => goToTab('cl-seat-assignment')}
+          >
+            CL Seat Assignment
+          </button>
+          <button
+            className={`settings-tab ${activeTab === 'gmail-mailboxes' ? 'active' : ''}`}
+            onClick={() => goToTab('gmail-mailboxes')}
+          >
+            Gmail Mailboxes
+          </button>
+          <button
             className={`settings-tab ${activeTab === 'reminders' ? 'active' : ''}`}
-            onClick={() => selectSettingsTab('reminders')}
+            onClick={() => goToTab('reminders')}
           >
             Reminders
           </button>
@@ -1318,128 +1331,51 @@ export default function Settings() {
         {/* Appointment Types Tab */}
         {activeTab === 'appointment-types' && (
           <div className="settings-section">
-            <h2 className="settings-section-title">Appointment Form Settings</h2>
+            <h2 className="settings-section-title">Appointment Types</h2>
             <p className="settings-section-description">
-              Configure which appointment types appear in the appointment request form and whether they allow new patients.
+              Manage display names, scheduler colors, arrival windows, and appointment request form options for each
+              appointment type. Add new types or archive existing ones to hide them from new bookings.
             </p>
+            <SettingsAppointmentTypes
+              types={appointmentTypes}
+              practiceId={practiceId}
+              onTypesChange={setAppointmentTypes}
+              onMessage={(msg, kind) => {
+                if (kind === 'success') {
+                  setSuccess(msg);
+                  setError(null);
+                  window.setTimeout(() => setSuccess(null), 4000);
+                } else {
+                  setError(msg);
+                  setSuccess(null);
+                }
+              }}
+            />
+          </div>
+        )}
 
-            <div className="settings-table-container">
-              <table className="settings-table">
-                <thead>
-                  <tr>
-                    <th>Name</th>
-                    <th>Pretty Name</th>
-                    <th>Show in Form</th>
-                    <th>New Patients Allowed</th>
-                    <th>Form List Order</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {sortedAppointmentTypes.map((type) => (
-                    <tr key={type.id}>
-                      <td>{type.name}</td>
-                      <td>
-                        {editingAppointmentType?.id === type.id ? (
-                          <input
-                            type="text"
-                            value={editingAppointmentType.prettyName}
-                            onChange={(e) =>
-                              setEditingAppointmentType({
-                                ...editingAppointmentType,
-                                prettyName: e.target.value,
-                              })
-                            }
-                            className="settings-input"
-                          />
-                        ) : (
-                          type.prettyName || type.name
-                        )}
-                      </td>
-                      <td>
-                        {editingAppointmentType?.id === type.id ? (
-                          <input
-                            type="checkbox"
-                            checked={editingAppointmentType.showInApptRequestForm}
-                            onChange={(e) =>
-                              setEditingAppointmentType({
-                                ...editingAppointmentType,
-                                showInApptRequestForm: e.target.checked,
-                              })
-                            }
-                          />
-                        ) : (
-                          type.showInApptRequestForm ? 'Yes' : 'No'
-                        )}
-                      </td>
-                      <td>
-                        {editingAppointmentType?.id === type.id ? (
-                          <input
-                            type="checkbox"
-                            checked={editingAppointmentType.newPatientAllowed}
-                            onChange={(e) =>
-                              setEditingAppointmentType({
-                                ...editingAppointmentType,
-                                newPatientAllowed: e.target.checked,
-                              })
-                            }
-                          />
-                        ) : (
-                          type.newPatientAllowed ? 'Yes' : 'No'
-                        )}
-                      </td>
-                      <td>
-                        {editingAppointmentType?.id === type.id ? (
-                          <input
-                            type="number"
-                            value={editingAppointmentType.formListOrder ?? ''}
-                            onChange={(e) =>
-                              setEditingAppointmentType({
-                                ...editingAppointmentType,
-                                formListOrder: e.target.value === '' ? null : Number(e.target.value),
-                              })
-                            }
-                            className="settings-input"
-                            placeholder="Order (1 = top)"
-                            min="1"
-                            style={{ width: '100px' }}
-                          />
-                        ) : (
-                          type.formListOrder ?? '—'
-                        )}
-                      </td>
-                      <td>
-                        {editingAppointmentType?.id === type.id ? (
-                          <div className="settings-action-buttons">
-                            <button
-                              className="btn"
-                              onClick={handleSaveAppointmentType}
-                              disabled={saving}
-                            >
-                              {saving ? 'Saving...' : 'Save'}
-                            </button>
-                            <button
-                              className="btn secondary"
-                              onClick={() => setEditingAppointmentType(null)}
-                              disabled={saving}
-                            >
-                              Cancel
-                            </button>
-                          </div>
-                        ) : (
-                          <button
-                            className="btn secondary"
-                            onClick={() => setEditingAppointmentType(type)}
-                          >
-                            Edit
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+        {activeTab === 'role-manual-booking' && (
+          <div className="settings-section">
+            <h2 className="settings-section-title">Role manual booking</h2>
+            <p className="settings-section-description">
+              Configure which appointment types each employee role may book manually from the
+              scheduler calendar. Choose a role by name (for example, Business Manager or
+              Receptionist). Routing booking is not restricted by these settings.
+            </p>
+            <SettingsRoleManualBooking
+              appointmentTypes={activeAppointmentTypes}
+              allAppointmentTypes={appointmentTypes}
+              onMessage={(msg, kind) => {
+                if (kind === 'success') {
+                  setSuccess(msg);
+                  setError(null);
+                  window.setTimeout(() => setSuccess(null), 4000);
+                } else {
+                  setError(msg);
+                  setSuccess(null);
+                }
+              }}
+            />
           </div>
         )}
 
@@ -1448,7 +1384,8 @@ export default function Settings() {
           <div className="settings-section">
             <h2 className="settings-section-title">Employee Appointment Types</h2>
             <p className="settings-section-description">
-              Configure which appointment types each employee can see and handle.
+              Configure which appointment types each employee can see and handle, and whether clients may
+              book each type online through the appointment request form.
             </p>
 
             <div className="settings-form-group">
@@ -1462,7 +1399,7 @@ export default function Settings() {
                     handleLoadEmployee(empId);
                   } else {
                     setSelectedEmployee(null);
-                    setSelectedAppointmentTypeIds([]);
+                    setEmployeeApptTypeAssignments([]);
                   }
                 }}
               >
@@ -1480,24 +1417,84 @@ export default function Settings() {
                 <h3 className="settings-card-title">
                   {formatEmployeeName(selectedEmployee)}
                 </h3>
-                <p className="settings-card-subtitle">Select appointment types this employee can handle:</p>
+                <p className="settings-card-subtitle">
+                  Select appointment types this employee can handle. When enabled, online booking lets
+                  clients pick an available slot on the appointment request form for that doctor and type.
+                </p>
+
+                {activeAppointmentTypes.length > 0 ? (
+                  <div className="settings-checkbox-bulk-actions">
+                    <button
+                      type="button"
+                      className="settings-checkbox-bulk-action"
+                      onClick={selectAllEmployeeAppointmentTypes}
+                    >
+                      Select all
+                    </button>
+                    <span className="settings-checkbox-bulk-sep" aria-hidden>
+                      ·
+                    </span>
+                    <button
+                      type="button"
+                      className="settings-checkbox-bulk-action"
+                      onClick={unselectAllEmployeeAppointmentTypes}
+                    >
+                      Unselect all
+                    </button>
+                  </div>
+                ) : null}
 
                 <div className="settings-checkbox-list">
-                  {appointmentTypes.map((type) => (
-                    <label key={type.id} className="settings-checkbox-item">
-                      <input
-                        type="checkbox"
-                        checked={selectedAppointmentTypeIds.includes(type.id)}
-                        onChange={() => toggleAppointmentTypeSelection(type.id)}
-                      />
-                      <span>
-                        {type.prettyName || type.name}
-                        {!type.showInApptRequestForm && (
-                          <span className="settings-muted"> (not shown in form)</span>
+                  {activeAppointmentTypes.map((type) => {
+                    const assigned = isEmployeeAppointmentTypeAssigned(type.id);
+                    const allowOnline =
+                      employeeApptTypeAssignments.find((a) => a.appointmentTypeId === type.id)
+                        ?.allowOnlineBooking === true;
+                    return (
+                      <div key={type.id} className="settings-checkbox-item settings-checkbox-item--stacked">
+                        <label className="settings-checkbox-item">
+                          <input
+                            type="checkbox"
+                            checked={assigned}
+                            onChange={() => toggleAppointmentTypeSelection(type.id)}
+                          />
+                          <span>
+                            {type.name}
+                            {!type.showInApptRequestForm && (
+                              <span className="settings-muted"> (not shown in form)</span>
+                            )}
+                          </span>
+                        </label>
+                        {assigned && (
+                          <label
+                            className="settings-checkbox-item settings-checkbox-item--nested"
+                            style={{ marginLeft: '1.75rem', marginTop: '4px' }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={allowOnline}
+                              onChange={(e) =>
+                                toggleEmployeeAppointmentTypeOnlineBooking(type.id, e.target.checked)
+                              }
+                            />
+                            <span>Allow online booking on appointment request form</span>
+                          </label>
                         )}
-                      </span>
-                    </label>
-                  ))}
+                      </div>
+                    );
+                  })}
+                  {appointmentTypes
+                    .filter((t) => appointmentTypeIsArchived(t) && isEmployeeAppointmentTypeAssigned(t.id))
+                    .map((type) => (
+                      <label key={type.id} className="settings-checkbox-item settings-checkbox-item--disabled">
+                        <input type="checkbox" checked disabled readOnly />
+                        <span>
+                          {type.name}
+                          <span className="settings-appt-type-archived-badge">Archived</span>
+                          <span className="settings-muted"> — remove from employee or restore the type</span>
+                        </span>
+                      </label>
+                    ))}
                 </div>
 
                 <div className="settings-action-bar">
@@ -1562,28 +1559,7 @@ export default function Settings() {
                         );
                         if (schedule) {
                           setSelectedSchedule(schedule);
-                          
-                          // Create a map of employee's current zones for this schedule
-                          const employeeZonesMap = new Map<number, boolean>();
-                          if (schedule.zones) {
-                            schedule.zones.forEach((z) => {
-                              employeeZonesMap.set(z.zoneId, z.acceptingNewPatients);
-                            });
-                          }
-                          
-                          // Merge all zones with employee's zones
-                          // isAssigned: true if employee has this zone, false otherwise
-                          // acceptingNewPatients: employee's setting if assigned, false otherwise
-                          const allZoneUpdates = allZones.map((zone) => {
-                            const isAssigned = employeeZonesMap.has(zone.id);
-                            return {
-                              zoneId: zone.id,
-                              isAssigned,
-                              acceptingNewPatients: isAssigned ? (employeeZonesMap.get(zone.id) ?? false) : false,
-                            };
-                          });
-                          
-                          setZoneUpdates(allZoneUpdates);
+                          setZoneUpdates(zoneEditorRowsFromSchedule(allZones, schedule.zones));
                         }
                       }}
                     >
@@ -1611,8 +1587,7 @@ export default function Settings() {
                           return (
                             <div key={zoneUpdate.zoneId} className="settings-zone-item">
                               <div className="settings-zone-info">
-                                <strong>Zone {zoneUpdate.zoneId}</strong>
-                                {zone?.name && <span className="settings-muted"> - {zone.name}</span>}
+                                <strong>{zone?.name?.trim() || 'Unknown zone'}</strong>
                               </div>
                               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                                 <label className="settings-checkbox-item">
@@ -1635,6 +1610,20 @@ export default function Settings() {
                                     }
                                   />
                                   <span>Accepting New Patients</span>
+                                </label>
+                                <label
+                                  className="settings-checkbox-item"
+                                  style={{ opacity: zoneUpdate.isAssigned ? 1 : 0.5 }}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={zoneUpdate.transitioningOutOfZone}
+                                    disabled={!zoneUpdate.isAssigned}
+                                    onChange={(e) =>
+                                      updateZoneTransitioningOut(zoneUpdate.zoneId, e.target.checked)
+                                    }
+                                  />
+                                  <span>Transitioning Out of Zone</span>
                                 </label>
                               </div>
                             </div>
@@ -1673,8 +1662,7 @@ export default function Settings() {
                           return (
                             <div key={zoneUpdate.zoneId} className="settings-zone-item">
                               <div className="settings-zone-info">
-                                <strong>Zone {zoneUpdate.zoneId}</strong>
-                                {zone?.name && <span className="settings-muted"> - {zone.name}</span>}
+                                <strong>{zone?.name?.trim() || 'Unknown zone'}</strong>
                               </div>
                               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                                 <label className="settings-checkbox-item" style={{ opacity: 0.5, cursor: 'not-allowed' }}>
@@ -1692,6 +1680,14 @@ export default function Settings() {
                                     disabled={true}
                                   />
                                   <span>Accepting New Patients</span>
+                                </label>
+                                <label className="settings-checkbox-item" style={{ opacity: 0.5, cursor: 'not-allowed' }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={zoneUpdate.transitioningOutOfZone}
+                                    disabled={true}
+                                  />
+                                  <span>Transitioning Out of Zone</span>
                                 </label>
                               </div>
                             </div>
@@ -1772,6 +1768,65 @@ export default function Settings() {
             <p className="settings-section-description">
               Set default work times, depot locations, and revenue/point goals per employee. Use per-day overrides to set different daily goals by day of week (e.g. higher goals on weekdays).
             </p>
+
+            <div className="settings-card" style={{ marginBottom: 20 }}>
+              <h3 className="settings-card-title">Practice appointment bookings goals</h3>
+              <p className="settings-muted" style={{ marginBottom: 12 }}>
+                Total appointments the practice needs booked each day of the week (Routing Analytics).
+                Previously hardcoded at 37.
+              </p>
+              {bookingsGoalsLoadError && (
+                <div className="settings-message settings-error-message">
+                  {bookingsGoalsLoadError}
+                  <button onClick={() => setBookingsGoalsLoadError(null)} className="settings-close">×</button>
+                </div>
+              )}
+              {bookingsGoalsLoading ? (
+                <div className="settings-loading">
+                  <div className="settings-spinner"></div>
+                  <span>Loading bookings goals...</span>
+                </div>
+              ) : (
+                <>
+                  <div
+                    className="settings-form-group"
+                    style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 12 }}
+                  >
+                    {dayNames.map((name, dow) => (
+                      <div key={dow}>
+                        <label className="settings-label">{name}</label>
+                        <input
+                          type="number"
+                          min={0}
+                          step={1}
+                          className="settings-input"
+                          value={bookingsGoalsByDow[dow] ?? ''}
+                          onChange={(e) => {
+                            const next =
+                              e.target.value === ''
+                                ? 0
+                                : Number(e.target.value);
+                            setBookingsGoalsByDow((prev) => ({
+                              ...prev,
+                              [dow]: Number.isFinite(next) && next >= 0 ? next : 0,
+                            }));
+                          }}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    className="settings-btn settings-btn-primary"
+                    disabled={bookingsGoalsSaving}
+                    onClick={() => void handleSaveAppointmentBookingsGoals()}
+                    style={{ marginTop: 12 }}
+                  >
+                    {bookingsGoalsSaving ? 'Saving...' : 'Save bookings goals'}
+                  </button>
+                </>
+              )}
+            </div>
 
             <div className="settings-form-group">
               <label className="settings-label">Select Employee</label>
@@ -1863,6 +1918,48 @@ export default function Settings() {
                           value={goalsForm.weeklyPointGoal ?? ''}
                           onChange={(e) => setGoalsForm((f) => ({ ...f, weeklyPointGoal: e.target.value === '' ? undefined : Number(e.target.value) }))}
                         />
+                      </div>
+                      <div>
+                        <label className="settings-label">Min variable VSD / pt (baseline)</label>
+                        <input
+                          type="number"
+                          min={0}
+                          step={1}
+                          className="settings-input"
+                          value={goalsForm.minVariableVsdPerPoint ?? ''}
+                          onChange={(e) =>
+                            setGoalsForm((f) => ({
+                              ...f,
+                              minVariableVsdPerPoint:
+                                e.target.value === '' ? null : Number(e.target.value),
+                            }))
+                          }
+                          title="Floor for calendar VSD/pt on busy days (revenue goal ÷ scheduled points). Leave blank for no baseline."
+                        />
+                        <p className="settings-muted" style={{ marginTop: 4, fontSize: 12 }}>
+                          Floor on busy days. Blank = no baseline.
+                        </p>
+                      </div>
+                      <div>
+                        <label className="settings-label">Max variable VSD / pt</label>
+                        <input
+                          type="number"
+                          min={0}
+                          step={1}
+                          className="settings-input"
+                          value={goalsForm.maxVariableVsdPerPoint ?? ''}
+                          onChange={(e) =>
+                            setGoalsForm((f) => ({
+                              ...f,
+                              maxVariableVsdPerPoint:
+                                e.target.value === '' ? null : Number(e.target.value),
+                            }))
+                          }
+                          title="Caps the calendar VSD/pt target (revenue goal ÷ scheduled points). Leave blank for no cap."
+                        />
+                        <p className="settings-muted" style={{ marginTop: 4, fontSize: 12 }}>
+                          Caps calendar VSD/pt. Blank = no cap.
+                        </p>
                       </div>
                     </div>
 
@@ -1981,169 +2078,6 @@ export default function Settings() {
                         disabled={goalsSaving}
                       >
                         {goalsSaving ? 'Saving...' : 'Save Goals'}
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </>
-            )}
-          </div>
-        )}
-
-        {/* Doctor Settings Tab */}
-        {activeTab === 'doctor-settings' && (
-          <div className="settings-section">
-            <h2 className="settings-section-title">Doctor Settings</h2>
-            <p className="settings-section-description">
-              Assign staff users to one or more doctors. The first doctor is the primary contact for client
-              emails and SMS; all assigned doctors receive internal notifications for that staff member.
-            </p>
-
-            {doctorAssignmentsLoadError && (
-              <div className="settings-message settings-error-message">
-                {doctorAssignmentsLoadError}
-                <button onClick={() => setDoctorAssignmentsLoadError(null)} className="settings-close">
-                  ×
-                </button>
-              </div>
-            )}
-
-            {doctorAssignmentsLoading ? (
-              <div className="settings-loading">
-                <div className="settings-spinner"></div>
-                <span>Loading staff and doctors...</span>
-              </div>
-            ) : (
-              <>
-                <div className="settings-form-group">
-                  <label className="settings-label">Select staff member</label>
-                  <select
-                    className="settings-select"
-                    value={selectedStaffUserId ?? ''}
-                    onChange={(e) => {
-                      const userId = Number(e.target.value);
-                      if (userId) {
-                        handleSelectStaffForDoctorSettings(userId);
-                      } else {
-                        setSelectedStaffUserId(null);
-                        setDraftDoctorIds([]);
-                      }
-                    }}
-                  >
-                    <option value="">-- Select a staff member --</option>
-                    {sortedDoctorAssignmentStaff.map((row) => (
-                      <option key={row.userId} value={row.userId}>
-                        {formatStaffDoctorAssignmentLabel(row)}
-                        {row.email && row.employeeName ? ` (${row.email})` : ''}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {selectedStaffDoctorAssignment && (
-                  <div className="settings-card">
-                    <h3 className="settings-card-title">
-                      {formatStaffDoctorAssignmentLabel(selectedStaffDoctorAssignment)}
-                    </h3>
-                    {selectedStaffDoctorAssignment.email && (
-                      <p className="settings-card-subtitle">{selectedStaffDoctorAssignment.email}</p>
-                    )}
-
-                    <h4 className="settings-card-title" style={{ marginTop: '16px', fontSize: '16px' }}>
-                      Assigned doctors
-                    </h4>
-                    <p className="settings-muted" style={{ marginBottom: '12px' }}>
-                      Order matters: the first doctor is the primary contact for client emails and SMS.
-                    </p>
-
-                    {draftDoctorIds.length === 0 ? (
-                      <p className="settings-muted" style={{ marginBottom: '16px' }}>
-                        No doctors assigned. Add a doctor below.
-                      </p>
-                    ) : (
-                      <div className="settings-doctor-assignment-list">
-                        {draftDoctorIds.map((doctorId, index) => {
-                          const doctor = doctorAssignmentDoctorsById.get(doctorId);
-                          const label = doctor
-                            ? formatDoctorAssignmentName(doctor)
-                            : `Doctor ${doctorId}`;
-                          return (
-                            <div key={doctorId} className="settings-doctor-assignment-row">
-                              <div className="settings-doctor-assignment-info">
-                                <strong>{label}</strong>
-                                {index === 0 && (
-                                  <span className="settings-doctor-assignment-badge">Primary</span>
-                                )}
-                              </div>
-                              <div className="settings-action-buttons">
-                                <button
-                                  type="button"
-                                  className="btn secondary"
-                                  onClick={() => moveDoctorAssignment(index, -1)}
-                                  disabled={index === 0}
-                                  aria-label={`Move ${label} up`}
-                                >
-                                  ↑
-                                </button>
-                                <button
-                                  type="button"
-                                  className="btn secondary"
-                                  onClick={() => moveDoctorAssignment(index, 1)}
-                                  disabled={index === draftDoctorIds.length - 1}
-                                  aria-label={`Move ${label} down`}
-                                >
-                                  ↓
-                                </button>
-                                <button
-                                  type="button"
-                                  className="btn secondary"
-                                  onClick={() => handleRemoveDoctorAssignment(doctorId)}
-                                >
-                                  Remove
-                                </button>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-
-                    <div className="settings-form-group" style={{ marginTop: '20px' }}>
-                      <label className="settings-label">Add doctor</label>
-                      <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
-                        <select
-                          className="settings-select"
-                          style={{ flex: '1 1 280px', maxWidth: '100%' }}
-                          defaultValue=""
-                          key={draftDoctorIds.join(',')}
-                          onChange={(e) => {
-                            const doctorId = Number(e.target.value);
-                            if (doctorId) handleAddDoctorAssignment(doctorId);
-                            e.target.value = '';
-                          }}
-                          disabled={availableDoctorsToAdd.length === 0}
-                        >
-                          <option value="">
-                            {availableDoctorsToAdd.length === 0
-                              ? 'All doctors assigned'
-                              : '-- Select a doctor to add --'}
-                          </option>
-                          {availableDoctorsToAdd.map((doc) => (
-                            <option key={doc.id} value={doc.id}>
-                              {formatDoctorAssignmentName(doc)}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    </div>
-
-                    <div className="settings-action-bar">
-                      <button
-                        className="btn"
-                        onClick={handleSaveDoctorAssignments}
-                        disabled={doctorAssignmentsSaving}
-                      >
-                        {doctorAssignmentsSaving ? 'Saving...' : 'Save Assignments'}
                       </button>
                     </div>
                   </div>
@@ -2335,199 +2269,12 @@ export default function Settings() {
           </div>
         )}
 
-        {/* Schedule overrides calendar modal */}
-        {showOverrideCalendar && (
-          <div
-            className="settings-modal-overlay"
-            onClick={(e) => e.target === e.currentTarget && setShowOverrideCalendar(false)}
-          >
-            <div className="settings-modal settings-modal-wide">
-              <div className="settings-modal-header">
-                <h3>Schedule overrides by day</h3>
-                <button
-                  type="button"
-                  className="settings-modal-close"
-                  onClick={() => setShowOverrideCalendar(false)}
-                  aria-label="Close"
-                >
-                  ×
-                </button>
-              </div>
-              <div className="settings-modal-body">
-                <div className="settings-form-group">
-                  <label className="settings-label">Employee (doctor)</label>
-                  <select
-                    className="settings-select"
-                    value={overrideCalendarEmployeeId ?? ''}
-                    onChange={(e) => {
-                      const id = e.target.value ? Number(e.target.value) : null;
-                      setOverrideCalendarEmployeeId(id);
-                      setSelectedOverrideDate(null);
-                      setOverrideForm(null);
-                    }}
-                  >
-                    <option value="">-- Select employee --</option>
-                    {sortedEmployees.map((emp) => (
-                      <option key={emp.id} value={emp.id}>
-                        {formatEmployeeName(emp)}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {!overrideCalendarEmployeeId ? (
-                  <p className="settings-muted" style={{ marginTop: 16 }}>
-                    Please select a provider above to view and set schedule overrides by day.
-                  </p>
-                ) : (
-                  <>
-                    <div className="settings-override-calendar-nav">
-                      <button
-                        type="button"
-                        className="btn secondary"
-                        onClick={() => setOverrideCalendarMonth((m) => m.subtract(1, 'month'))}
-                      >
-                        ← Prev
-                      </button>
-                      <span className="settings-override-calendar-month">
-                        {overrideCalendarMonth.format('MMMM YYYY')}
-                      </span>
-                      <button
-                        type="button"
-                        className="btn secondary"
-                        onClick={() => setOverrideCalendarMonth((m) => m.add(1, 'month'))}
-                      >
-                        Next →
-                      </button>
-                    </div>
-
-                    <div className="settings-override-calendar-grid">
-                      {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d) => (
-                        <div key={d} className="settings-override-calendar-weekday">
-                          {d}
-                        </div>
-                      ))}
-                      {(() => {
-                        const start = overrideCalendarMonth.startOf('month');
-                        const end = overrideCalendarMonth.endOf('month');
-                        const startDay = start.day();
-                        const daysInMonth = end.date();
-                        const cells: React.ReactNode[] = [];
-                        for (let i = 0; i < startDay; i++) {
-                          cells.push(<div key={`pad-${i}`} className="settings-override-calendar-day settings-override-calendar-day-pad" />);
-                        }
-                        const overrideDates = new Set(overridesInRange.map((o) => o.date));
-                        for (let d = 1; d <= daysInMonth; d++) {
-                          const date = start.date(d);
-                          const dateStr = date.format('YYYY-MM-DD');
-                          const hasOverride = overrideDates.has(dateStr);
-                          const isSelected = selectedOverrideDate === dateStr;
-                          cells.push(
-                            <button
-                              key={dateStr}
-                              type="button"
-                              className={`settings-override-calendar-day ${hasOverride ? 'settings-override-calendar-day-has-override' : ''} ${isSelected ? 'settings-override-calendar-day-selected' : ''}`}
-                              onClick={() => handleOverrideDayClick(dateStr)}
-                            >
-                              {d}
-                            </button>
-                          );
-                        }
-                        return cells;
-                      })()}
-                    </div>
-
-                    {overrideFormLoading && (
-                      <div className="settings-loading" style={{ padding: 24 }}>
-                        <span className="settings-spinner" />
-                        <span>Loading day…</span>
-                      </div>
-                    )}
-
-                    {!overrideFormLoading && overrideForm && (
-                      <div className="settings-override-form">
-                        <h4 className="settings-schedule-subtitle">
-                          {overrideForm.date} {dayjs(overrideForm.date).format('dddd')}
-                        </h4>
-                        <p className="settings-muted" style={{ marginBottom: 12 }}>
-                          Set start/end time and depot locations for this day. Routing will use these values instead of the weekly schedule.
-                        </p>
-                        <div className="settings-schedule-row">
-                          <div className="settings-schedule-field">
-                            <label className="settings-label">Start time</label>
-                            <input
-                              type="time"
-                              className="settings-input"
-                              value={overrideForm.workStartLocal ?? ''}
-                              onChange={(e) => setOverrideForm((f) => (f ? { ...f, workStartLocal: e.target.value } : null))}
-                            />
-                          </div>
-                          <div className="settings-schedule-field">
-                            <label className="settings-label">End time</label>
-                            <input
-                              type="time"
-                              className="settings-input"
-                              value={overrideForm.workEndLocal ?? ''}
-                              onChange={(e) => setOverrideForm((f) => (f ? { ...f, workEndLocal: e.target.value } : null))}
-                            />
-                          </div>
-                        </div>
-                        <div className="settings-schedule-section">
-                          <h4 className="settings-schedule-subtitle">Start depot</h4>
-                          <DepotLocationField
-                            id={`override-start-depot-${overrideForm.date}`}
-                            lat={overrideForm.startDepotLat}
-                            lon={overrideForm.startDepotLon}
-                            onChange={(lat, lon) =>
-                              setOverrideForm((f) =>
-                                f ? { ...f, startDepotLat: lat, startDepotLon: lon } : null
-                              )
-                            }
-                            placeholder="Start typing start depot address"
-                          />
-                        </div>
-                        <div className="settings-schedule-section">
-                          <h4 className="settings-schedule-subtitle">End depot</h4>
-                          <DepotLocationField
-                            id={`override-end-depot-${overrideForm.date}`}
-                            lat={overrideForm.endDepotLat}
-                            lon={overrideForm.endDepotLon}
-                            onChange={(lat, lon) =>
-                              setOverrideForm((f) =>
-                                f ? { ...f, endDepotLat: lat, endDepotLon: lon } : null
-                              )
-                            }
-                            placeholder="Start typing end depot address"
-                          />
-                        </div>
-                        <div className="settings-action-bar" style={{ marginTop: 16 }}>
-                          <button
-                            type="button"
-                            className="btn"
-                            onClick={handleOverrideSave}
-                            disabled={overrideFormSaving}
-                          >
-                            {overrideFormSaving ? 'Saving…' : 'Save override'}
-                          </button>
-                          {'id' in overrideForm && overrideForm.id && (
-                            <button
-                              type="button"
-                              className="btn secondary"
-                              onClick={handleOverrideRemove}
-                              disabled={overrideFormSaving}
-                            >
-                              Remove override (use default)
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                  </>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
+        <ScheduleOverrideModal
+          open={overrideModalOpen}
+          onClose={() => setOverrideModalOpen(false)}
+          initialEmployeeId={overrideModalInitial.employeeId}
+          initialDate={overrideModalInitial.date}
+        />
 
         {/* Inventory Tab */}
         {activeTab === 'inventory' && (
@@ -3044,6 +2791,240 @@ export default function Settings() {
               </div>
             </div>
           )}
+          </div>
+        )}
+
+        {activeTab === 'doctor-settings' && (
+          <div className="settings-section">
+            <h2 className="settings-section-title">Doctor Settings</h2>
+            <p className="settings-section-description">
+              Assign staff users to one or more doctors. The first doctor is the primary contact for client
+              emails and SMS; all assigned doctors receive internal notifications for that staff member.
+            </p>
+
+            {doctorAssignmentsLoadError && (
+              <div className="settings-message settings-error-message">
+                {doctorAssignmentsLoadError}
+                <button onClick={() => setDoctorAssignmentsLoadError(null)} className="settings-close">
+                  ×
+                </button>
+              </div>
+            )}
+
+            {doctorAssignmentsLoading ? (
+              <div className="settings-loading">
+                <div className="settings-spinner"></div>
+                <span>Loading staff and doctors...</span>
+              </div>
+            ) : (
+              <>
+                <div className="settings-form-group">
+                  <label className="settings-label">Select staff member</label>
+                  <select
+                    className="settings-select"
+                    value={selectedStaffUserId ?? ''}
+                    onChange={(e) => {
+                      const userId = Number(e.target.value);
+                      if (userId) {
+                        handleSelectStaffForDoctorSettings(userId);
+                      } else {
+                        setSelectedStaffUserId(null);
+                        setDraftDoctorIds([]);
+                      }
+                    }}
+                  >
+                    <option value="">-- Select a staff member --</option>
+                    {sortedDoctorAssignmentStaff.map((row) => (
+                      <option key={row.userId} value={row.userId}>
+                        {formatStaffDoctorAssignmentLabel(row)}
+                        {row.email && row.employeeName ? ` (${row.email})` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {selectedStaffDoctorAssignment && (
+                  <div className="settings-card">
+                    <h3 className="settings-card-title">
+                      {formatStaffDoctorAssignmentLabel(selectedStaffDoctorAssignment)}
+                    </h3>
+                    {selectedStaffDoctorAssignment.email && (
+                      <p className="settings-card-subtitle">{selectedStaffDoctorAssignment.email}</p>
+                    )}
+
+                    <h4 className="settings-card-title" style={{ marginTop: '16px', fontSize: '16px' }}>
+                      Assigned doctors
+                    </h4>
+                    <p className="settings-muted" style={{ marginBottom: '12px' }}>
+                      Order matters: the first doctor is the primary contact for client emails and SMS.
+                    </p>
+
+                    {draftDoctorIds.length === 0 ? (
+                      <p className="settings-muted" style={{ marginBottom: '16px' }}>
+                        No doctors assigned. Add a doctor below.
+                      </p>
+                    ) : (
+                      <div className="settings-doctor-assignment-list">
+                        {draftDoctorIds.map((doctorId, index) => {
+                          const doctor = doctorAssignmentDoctorsById.get(doctorId);
+                          const label = doctor
+                            ? formatDoctorAssignmentName(doctor)
+                            : `Doctor ${doctorId}`;
+                          return (
+                            <div key={doctorId} className="settings-doctor-assignment-row">
+                              <div className="settings-doctor-assignment-info">
+                                <strong>{label}</strong>
+                                {index === 0 && (
+                                  <span className="settings-doctor-assignment-badge">Primary</span>
+                                )}
+                              </div>
+                              <div className="settings-action-buttons">
+                                <button
+                                  type="button"
+                                  className="btn secondary"
+                                  onClick={() => moveDoctorAssignment(index, -1)}
+                                  disabled={index === 0}
+                                  aria-label={`Move ${label} up`}
+                                >
+                                  ↑
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn secondary"
+                                  onClick={() => moveDoctorAssignment(index, 1)}
+                                  disabled={index === draftDoctorIds.length - 1}
+                                  aria-label={`Move ${label} down`}
+                                >
+                                  ↓
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn secondary"
+                                  onClick={() => handleRemoveDoctorAssignment(doctorId)}
+                                >
+                                  Remove
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    <div className="settings-form-group" style={{ marginTop: '20px' }}>
+                      <label className="settings-label">Add doctor</label>
+                      <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
+                        <select
+                          className="settings-select"
+                          style={{ flex: '1 1 280px', maxWidth: '100%' }}
+                          defaultValue=""
+                          key={draftDoctorIds.join(',')}
+                          onChange={(e) => {
+                            const doctorId = Number(e.target.value);
+                            if (doctorId) handleAddDoctorAssignment(doctorId);
+                            e.target.value = '';
+                          }}
+                          disabled={availableDoctorsToAdd.length === 0}
+                        >
+                          <option value="">
+                            {availableDoctorsToAdd.length === 0
+                              ? 'All doctors assigned'
+                              : '-- Select a doctor to add --'}
+                          </option>
+                          {availableDoctorsToAdd.map((doc) => (
+                            <option key={doc.id} value={doc.id}>
+                              {formatDoctorAssignmentName(doc)}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="settings-action-bar">
+                      <button
+                        className="btn"
+                        onClick={handleSaveDoctorAssignments}
+                        disabled={doctorAssignmentsSaving}
+                      >
+                        {doctorAssignmentsSaving ? 'Saving...' : 'Save Assignments'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Employees directory (CRUD via POST /employees, upsert, DELETE) */}
+        {activeTab === 'employee-directory' && (
+          <div className="settings-section">
+            <h2 className="settings-section-title">Employees</h2>
+            <p className="settings-section-description">
+              View staff, assign employee roles (for manual booking permissions), and edit VAYD-managed bios.
+              Click an employee name to edit roles, or use <strong>Edit bio</strong> for profile copy.
+            </p>
+            <SettingsEmployeeDirectory
+              onMessage={(msg, kind) => {
+                if (kind === 'success') {
+                  setSuccess(msg);
+                  setError(null);
+                  window.setTimeout(() => setSuccess(null), 4000);
+                } else {
+                  setError(msg);
+                  setSuccess(null);
+                }
+              }}
+            />
+          </div>
+        )}
+
+        {/* Shared Gmail mailbox ACL — which staff see info@ / field@ */}
+        {activeTab === 'gmail-mailboxes' && (
+          <div className="settings-section">
+            <h2 className="settings-section-title">Gmail Mailboxes</h2>
+            <p className="settings-section-description">
+              Choose which shared practice mailboxes each staff member can open in Scout Email.
+              <strong> Show</strong> controls the mailbox tab; <strong>Send</strong> allows composing
+              from that address. Personal mailboxes are still connected by each user via OAuth.
+            </p>
+            <SettingsGmailMailboxPermissions
+              onMessage={(msg, kind) => {
+                if (kind === 'success') {
+                  setSuccess(msg);
+                  setError(null);
+                  window.setTimeout(() => setSuccess(null), 4000);
+                } else {
+                  setError(msg);
+                  setSuccess(null);
+                }
+              }}
+            />
+          </div>
+        )}
+
+        {/* CL Seat Assignment — weekly Phones / Outreach / Email rotation + par */}
+        {activeTab === 'cl-seat-assignment' && (
+          <div className="settings-section">
+            <h2 className="settings-section-title">CL Seat Assignment</h2>
+            <p className="settings-section-description">
+              Assign each Client Liaison to Phones, Outreach, or Email for the week, set weekly seat par
+              targets, and add day overrides (OFF / one-day seat swaps) used by Analytics → CL Performance
+              (normalized score = points ÷ prorated par).
+            </p>
+            <SettingsClSeatAssignment
+              practiceId={REMINDERS_PRACTICE_ID}
+              onMessage={(msg, kind) => {
+                if (kind === 'success') {
+                  setSuccess(msg);
+                  setError(null);
+                  window.setTimeout(() => setSuccess(null), 4000);
+                } else {
+                  setError(msg);
+                  setSuccess(null);
+                }
+              }}
+            />
           </div>
         )}
 

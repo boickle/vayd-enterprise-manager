@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router';
 import dayjs from 'dayjs';
 import {
   fetchUnscheduledReminders,
@@ -8,14 +9,104 @@ import {
   type CareOutreachPatientRef,
   type UnscheduledReminder,
 } from '../api/careOutreach';
-import './Settings.css';
+import {
+  CareOutreachHouseholdProvider,
+  CareOutreachOtherHouseholdPets,
+  clearCareOutreachHouseholdCache,
+} from '../components/CareOutreachClientHousehold';
+import { ClientContactComposeModal } from '../components/ClientContactComposeModal';
+import { ClientMessagesHistoryModal } from '../components/ClientMessagesHistoryModal';
+import { ClientEmailHistoryModal } from '../components/ClientEmailHistoryModal';
+import { fetchSchedulingOutreachSmsFrom } from '../api/clientSms';
+import {
+  CareOutreachPetDetailsButton,
+  PatientMembershipHeart,
+  type CareOutreachPetDetailsReminderLine,
+} from '../components/CareOutreachPetDetailsButton';
+import {
+  buildRoutingForwardBookingIntentFromEntries,
+  buildRoutingForwardBookingIntentFromEntry,
+  forwardBookingIdsFromRoutingIntent,
+  readRoutingForwardBookingIntent,
+  writeRoutingForwardBookingIntent,
+} from '../utils/routingForwardBookingIntent';
+import { workingNotesFromReminders } from '../utils/reminderWorkingNotes';
+import {
+  careOutreachClientBookTargetFromBucket,
+  careOutreachClientBookTargetWithAdditionalPatients,
+  careOutreachRoutingSearchDateRange,
+  createForwardBookingsFromCareOutreach,
+  careOutreachTargetHasPastDueReminders,
+  petNamesFromCareOutreachTarget,
+} from '../utils/careOutreachForwardBooking';
+import {
+  calendarDayDiffFromToday,
+  careOutreachChipCountFetchRange,
+  careOutreachReminderClientKey,
+  careOutreachReminderInPastDue30DayBucket,
+  countCareOutreachPriorityChipClients,
+  dayDiffsForDueIn21DayBucket,
+  type CareOutreachPriorityChipCounts,
+} from '../utils/careOutreachPriorityFilters';
+import { careOutreachReminderIsHidden } from '../utils/careOutreachReminderVisibility';
+import { fetchForwardBookings } from '../api/forwardBooking';
+import { fetchAllAppointmentTypes } from '../api/appointmentSettings';
+import SchedulingToolsListPagination, {
+  paginateSchedulingToolsList,
+  schedulingToolsListTotalPages,
+  SCHEDULING_TOOLS_LIST_PAGE_SIZE,
+} from '../components/SchedulingToolsListPagination';
+import {
+  cleanupOrphanedListOriginatedForwardBookings,
+  filterCareOutreachRemindersForForwardBooking,
+  forwardBookingPatientIdsActiveInQueue,
+} from '../utils/careOutreachForwardBookingExclude';
+import {
+  buildAppointmentTypeCatalogFromTypes,
+  buildBookedAppointmentMetaMap,
+  forwardBookingEntryVisibleOnList,
+} from '../utils/forwardBookingListVisibility';
+import {
+  notifySchedulingToolsNavCountsRefresh,
+  SCHEDULING_TOOLS_PAGE_REFRESH_EVENT,
+} from '../hooks/useSchedulingToolsNavCounts';
+import {
+  careOutreachListCacheKey,
+  clearCareOutreachListCache,
+  readCareOutreachListCache,
+  writeCareOutreachListCache,
+} from '../utils/careOutreachListCache';
+import {
+  readCareOutreachFilterSession,
+  writeCareOutreachFilterSession,
+} from '../utils/careOutreachFilterSession';
+import {
+  clearCareOutreachFocusClient,
+  readCareOutreachFocusClient,
+} from '../utils/careOutreachFocusSession';
+import {
+  clearForwardBookingReturnSession,
+  readForwardBookingReturnSession,
+  type ForwardBookingReturnSessionV1,
+} from '../utils/forwardBookingReturnSession';
 import { evetClientLink, evetPatientLink } from '../utils/evet';
+import { buildPhoneDialHref, resolveQuoFromLine } from '../utils/quoContact';
+import { practiceTimeZoneOrDefault } from '../utils/practiceTimezone';
+import {
+  buildCareOutreachSmsMessage,
+  careOutreachClientHasSmsPhone,
+} from '../utils/careOutreachSmsMessage';
+import { useGmailInboxAccess } from '../hooks/useGmailInboxAccess';
+import { resolveScheduleLoaderSmsBookedSlot } from '../utils/scheduleLoaderSmsMessage';
+import { holdReleaseOptsForAppointment } from '../utils/forwardBookingSmsMessage';
+import './Settings.css';
 
 const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_TZ = practiceTimeZoneOrDefault(undefined);
 
 const NOTES_DEBOUNCE_MS = 750;
 
-type PriorityFilter = 'all' | 'overdue_today' | 'due_21';
+type PriorityFilter = 'range' | 'overdue_today' | 'past_due_30' | 'due_21';
 
 const PRIORITY_TABS: { key: PriorityFilter; label: string; title?: string }[] = [
   { key: 'overdue_today', label: 'Newly overdue today' },
@@ -25,7 +116,12 @@ const PRIORITY_TABS: { key: PriorityFilter; label: string; title?: string }[] = 
     title:
       'Reminders due 21 calendar days from today. If that day is a Friday, Saturday and Sunday are included (21–23 days out).',
   },
-  { key: 'all', label: 'All in range' },
+  {
+    key: 'past_due_30',
+    label: 'Past due last 30 days',
+    title: 'Unhidden reminders with due dates from the last 30 days through yesterday.',
+  },
+  { key: 'range', label: 'Choose Date Range', title: 'Choose a custom due date range.' },
 ];
 
 function formatEmployeeName(emp: UnscheduledReminder['employee']): string {
@@ -50,6 +146,7 @@ function extractClient(r: UnscheduledReminder) {
   return {
     id: raw?.id ?? null,
     displayName: name || 'Unknown client',
+    firstName: raw?.firstName?.trim() || null,
     phone: raw?.phone1?.trim() || null,
     isMember,
     clientPimsId,
@@ -87,42 +184,10 @@ function EvetInlineLink({
   );
 }
 
-function calendarDayDiffFromToday(dueIso: string | null | undefined): number | null {
-  if (!dueIso) return null;
-  const due = dayjs(dueIso).startOf('day');
-  if (!due.isValid()) return null;
-  return due.diff(dayjs().startOf('day'), 'day');
-}
-
-/**
- * "Due in 21 days" bucket: calendar day-diff from today to due date.
- * Anchor = today + 21 days. If that anchor is a Friday, include Sat/Sun too (diff 22 and 23).
- * dayjs: 0 Sun … 5 Fri, 6 Sat.
- */
-function dayDiffsForDueIn21DayBucket(todayStart: dayjs.Dayjs): Set<number> {
-  const anchor = todayStart.add(21, 'day');
-  if (anchor.day() === 5) {
-    return new Set([21, 22, 23]);
-  }
-  return new Set([21]);
-}
-
 function dueSortTime(dueIso: string | null | undefined): number {
   if (!dueIso) return Number.MAX_SAFE_INTEGER;
   const t = new Date(dueIso).getTime();
   return Number.isNaN(t) ? Number.MAX_SAFE_INTEGER : t;
-}
-
-function buildPhoneDialHref(phone: string): string {
-  const digits = phone.replace(/\D/g, '');
-  if (!digits) return '#';
-  const e164 = digits.length === 10 ? `+1${digits}` : `+${digits}`;
-  const tpl = (import.meta.env.VITE_QUO_CALL_URL_TEMPLATE as string | undefined)?.trim();
-  if (tpl && (tpl.includes('{e164}') || tpl.includes('{digits}'))) {
-    return tpl.replace(/\{e164\}/g, encodeURIComponent(e164)).replace(/\{digits\}/g, digits);
-  }
-  // Quo (OpenPhone) and other apps commonly register for tel: when set as default calling app.
-  return `tel:${e164}`;
 }
 
 function formatDisplayDate(iso: string | null | undefined): string {
@@ -146,9 +211,7 @@ function initialNotes(r: UnscheduledReminder): string {
 }
 
 function reminderIsHidden(r: UnscheduledReminder): boolean {
-  const any = r as Record<string, unknown>;
-  if (typeof any.is_hidden === 'boolean') return any.is_hidden;
-  return r.isHidden === true;
+  return careOutreachReminderIsHidden(r);
 }
 
 function patientHasListableId(p: UnscheduledReminder['patient']): p is NonNullable<
@@ -192,6 +255,85 @@ function reminderAssignedProvider(r: UnscheduledReminder): UnscheduledReminder['
   return employeeFromPatientPrimary(r.patient);
 }
 
+function reminderProviderFilterId(r: UnscheduledReminder): string | null {
+  const provider = reminderAssignedProvider(r);
+  const id = provider?.id;
+  if (id != null && Number.isFinite(Number(id))) return String(Number(id));
+  return null;
+}
+
+type CareOutreachProviderOption = {
+  id: string;
+  label: string;
+};
+
+function buildCareOutreachProviderOptions(
+  reminders: readonly UnscheduledReminder[]
+): CareOutreachProviderOption[] {
+  const byId = new Map<string, string>();
+  let hasUnassigned = false;
+  for (const r of reminders) {
+    const pid = reminderProviderFilterId(r);
+    if (pid == null) {
+      hasUnassigned = true;
+      continue;
+    }
+    if (!byId.has(pid)) {
+      byId.set(pid, formatEmployeeName(reminderAssignedProvider(r)));
+    }
+  }
+  const options = [...byId.entries()]
+    .map(([id, label]) => ({ id, label }))
+    .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }));
+  if (hasUnassigned) {
+    options.push({ id: 'unassigned', label: 'Unassigned provider' });
+  }
+  return options;
+}
+
+type CareOutreachClientBucket = {
+  clientKey: string;
+  clientId: number | null;
+  clientPimsId: string | null;
+  displayName: string;
+  clientFirstName: string | null;
+  phone: string | null;
+  isMember: boolean;
+  patients: Map<
+    number,
+    {
+      patientName: string;
+      isMember: boolean;
+      membershipName: string | null;
+      patientPimsId: string | null;
+      reminders: UnscheduledReminder[];
+    }
+  >;
+};
+
+function clientBucketPrimaryProviderId(client: CareOutreachClientBucket): number | undefined {
+  for (const pg of client.patients.values()) {
+    for (const r of pg.reminders) {
+      if (reminderIsHidden(r)) continue;
+      const provider = reminderAssignedProvider(r);
+      const id = provider?.id;
+      if (id != null && Number.isFinite(Number(id))) return Number(id);
+    }
+  }
+  return undefined;
+}
+
+function clientBucketQuoFromLine(client: CareOutreachClientBucket): string | null {
+  for (const pg of client.patients.values()) {
+    for (const r of pg.reminders) {
+      const provider = reminderAssignedProvider(r);
+      const fromLine = resolveQuoFromLine({ appointmentPrimaryProvider: provider });
+      if (fromLine) return fromLine;
+    }
+  }
+  return null;
+}
+
 /** Earliest due first (most overdue first), then provider, then service name. */
 function compareRemindersForDisplay(a: UnscheduledReminder, b: UnscheduledReminder): number {
   const td = dueSortTime(a.dueDate) - dueSortTime(b.dueDate);
@@ -203,6 +345,25 @@ function compareRemindersForDisplay(a: UnscheduledReminder, b: UnscheduledRemind
   return String(a.description ?? '').localeCompare(String(b.description ?? ''), undefined, {
     sensitivity: 'base',
   });
+}
+
+function buildOutreachReminderDetailLines(
+  reminders: readonly UnscheduledReminder[],
+  showHidden: boolean
+): CareOutreachPetDetailsReminderLine[] {
+  return reminders
+    .filter((r) => showHidden || !reminderIsHidden(r))
+    .map((r) => {
+      const diff = calendarDayDiffFromToday(r.dueDate ?? null);
+      return {
+        id: r.id,
+        description: r.description?.trim() || 'Reminder',
+        providerLabel: formatEmployeeName(reminderAssignedProvider(r)),
+        dueLabel: formatDisplayDate(r.dueDate ?? undefined),
+        overdue: diff !== null && diff < 0,
+        hidden: reminderIsHidden(r),
+      };
+    });
 }
 
 /**
@@ -232,6 +393,8 @@ function mergePatientForReminder(
     ...up,
     clients: mergedClients,
     client: mergedClient,
+    isMember: up.isMember ?? rp?.isMember,
+    membershipName: up.membershipName ?? rp?.membershipName,
   };
 }
 
@@ -278,13 +441,26 @@ function mergeReminderAfterPatch(
 }
 
 export default function CareOutreachPage() {
-  const [dueDateFrom, setDueDateFrom] = useState(() =>
-    dayjs().subtract(2, 'month').format('YYYY-MM-DD')
+  const navigate = useNavigate();
+  const practiceTz = practiceTimeZoneOrDefault(undefined);
+  const persistedFilter = useRef(readCareOutreachFilterSession()).current;
+  const [dueDateFrom, setDueDateFrom] = useState(
+    () => persistedFilter?.dueDateFrom ?? dayjs().format('YYYY-MM-DD'),
   );
-  const [dueDateTo, setDueDateTo] = useState(() => dayjs().add(2, 'month').format('YYYY-MM-DD'));
-  const [priority, setPriority] = useState<PriorityFilter>('overdue_today');
+  const [dueDateTo, setDueDateTo] = useState(
+    () => persistedFilter?.dueDateTo ?? dayjs().add(1, 'month').format('YYYY-MM-DD'),
+  );
+  const [priority, setPriority] = useState<PriorityFilter>(
+    () => persistedFilter?.priority ?? 'overdue_today',
+  );
+  const [listPage, setListPage] = useState(1);
   const [search, setSearch] = useState('');
   const [rows, setRows] = useState<UnscheduledReminder[]>([]);
+  const [priorityChipCounts, setPriorityChipCounts] = useState<CareOutreachPriorityChipCounts>({
+    overdue_today: 0,
+    due_21: 0,
+    past_due_30: 0,
+  });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [noteDrafts, setNoteDrafts] = useState<Record<number, string>>({});
@@ -293,20 +469,123 @@ export default function CareOutreachPage() {
   const debounceTimers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
 
   const [showHiddenReminders, setShowHiddenReminders] = useState(false);
+  const [providerFilterId, setProviderFilterId] = useState<string>(
+    () => persistedFilter?.providerFilterId ?? 'all',
+  );
+  const [bookIncludeOtherPets, setBookIncludeOtherPets] = useState<
+    Record<string, Map<number, string>>
+  >({});
   const [reminderHiddenSaving, setReminderHiddenSaving] = useState<Record<number, boolean>>({});
   const [reminderHiddenError, setReminderHiddenError] = useState<Record<number, string | null>>({});
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [bookingClientKey, setBookingClientKey] = useState<string | null>(null);
+  const [postHoldReturn, setPostHoldReturn] = useState<ForwardBookingReturnSessionV1 | null>(null);
+  const postHoldReturnHandledRef = useRef(false);
+  const [exitingClientKeys, setExitingClientKeys] = useState<Set<string>>(() => new Set());
+  const [holdExitSnapshot, setHoldExitSnapshot] = useState<CareOutreachClientBucket | null>(null);
+  const exitClientTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const [contactOpen, setContactOpen] = useState(false);
+  const [contactClientId, setContactClientId] = useState<number | null>(null);
+  const [contactClientLabel, setContactClientLabel] = useState('');
+  const [contactSmsMessage, setContactSmsMessage] = useState('');
+  const [contactProviderLastName, setContactProviderLastName] = useState<string | null>(null);
+  const [contactCanText, setContactCanText] = useState(false);
+  const [smsFromLine, setSmsFromLine] = useState<string | null>(null);
+  const [messagesClientId, setMessagesClientId] = useState<number | null>(null);
+  const [messagesClientLabel, setMessagesClientLabel] = useState('');
+  const [emailHistoryClientId, setEmailHistoryClientId] = useState<number | null>(null);
+  const [emailHistoryClientLabel, setEmailHistoryClientLabel] = useState('');
+  const { allowed: canAccessGmailInbox } = useGmailInboxAccess();
+  const [focusClientKey, setFocusClientKey] = useState<string | null>(() =>
+    readCareOutreachFocusClient(),
+  );
+  const [highlightClientKey, setHighlightClientKey] = useState<string | null>(null);
+  const clientSectionRefs = useRef<Map<string, HTMLElement>>(new Map());
+  const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  /** API fetch window. Priority tabs filter client-side; use the same wide span as chip counts so list and badges stay aligned. */
+  const effectiveDueRange = useMemo(() => {
+    if (priority === 'range') {
+      return { from: dueDateFrom, to: dueDateTo };
+    }
+    return careOutreachChipCountFetchRange();
+  }, [priority, dueDateFrom, dueDateTo]);
+
+  const load = useCallback(async (opts?: { force?: boolean }) => {
+    const cacheKey = careOutreachListCacheKey(priority, effectiveDueRange.from, effectiveDueRange.to);
+    const cached = opts?.force ? null : readCareOutreachListCache(cacheKey);
+    if (cached) {
+      setRows(cached.rows);
+      setPriorityChipCounts(cached.priorityChipCounts);
+      const drafts: Record<number, string> = {};
+      for (const r of cached.rows) {
+        drafts[r.id] = initialNotes(r);
+      }
+      setNoteDrafts(drafts);
+      setLoading(false);
+      setError(null);
+    } else {
+      setLoading(true);
+      setError(null);
+    }
     try {
-      const list = await fetchUnscheduledReminders({
-        dueDateFrom,
-        dueDateTo,
-        practiceId: PRACTICE_ID,
-        limit: 2000,
-      });
+      const chipCountRange = careOutreachChipCountFetchRange();
+      const [types, forwardBookings, rawList, chipCountRawList] = await Promise.all([
+        fetchAllAppointmentTypes(PRACTICE_ID, { activeOnly: false }),
+        fetchForwardBookings({ practiceId: PRACTICE_ID, limit: 2000, includeRemoved: true }),
+        fetchUnscheduledReminders({
+          dueDateFrom: effectiveDueRange.from,
+          dueDateTo: effectiveDueRange.to,
+          practiceId: PRACTICE_ID,
+          limit: 2000,
+        }),
+        priority === 'range'
+          ? fetchUnscheduledReminders({
+              dueDateFrom: chipCountRange.from,
+              dueDateTo: chipCountRange.to,
+              practiceId: PRACTICE_ID,
+              limit: 2000,
+            })
+          : Promise.resolve(null),
+      ]);
+      const catalog = buildAppointmentTypeCatalogFromTypes(types);
+      const visibleForwardBookings = forwardBookings.filter((r) => forwardBookingEntryVisibleOnList(r));
+      const routingIntent = readRoutingForwardBookingIntent();
+      const activeRoutingForwardBookingIds =
+        routingIntent?.workspaceActive &&
+        (routingIntent.origin === 'care_outreach' || routingIntent.origin === 'schedule_loader')
+          ? new Set(forwardBookingIdsFromRoutingIntent(routingIntent))
+          : undefined;
+      void cleanupOrphanedListOriginatedForwardBookings(
+        visibleForwardBookings,
+        PRACTICE_ID,
+        activeRoutingForwardBookingIds,
+      );
+      const metaMap = await buildBookedAppointmentMetaMap(visibleForwardBookings, PRACTICE_ID, catalog);
+      const blockedPatientIds = forwardBookingPatientIdsActiveInQueue(
+        visibleForwardBookings,
+        practiceTz,
+        metaMap,
+        catalog,
+        { activeRoutingForwardBookingIds },
+      );
+      const afterForwardBookingFilter = filterCareOutreachRemindersForForwardBooking(
+        rawList,
+        blockedPatientIds,
+      );
+      const list = afterForwardBookingFilter;
+      const chipCountSource = chipCountRawList
+        ? filterCareOutreachRemindersForForwardBooking(chipCountRawList, blockedPatientIds)
+        : list;
+      const nextChipCounts = countCareOutreachPriorityChipClients(chipCountSource);
       setRows(list);
+      setPriorityChipCounts(nextChipCounts);
+      writeCareOutreachListCache({
+        rows: list,
+        priorityChipCounts: nextChipCounts,
+        cacheKey,
+        cachedAt: Date.now(),
+      });
       const drafts: Record<number, string> = {};
       for (const r of list) {
         drafts[r.id] = initialNotes(r);
@@ -314,30 +593,81 @@ export default function CareOutreachPage() {
       setNoteDrafts(drafts);
       setReminderHiddenSaving({});
       setReminderHiddenError({});
+      setBookIncludeOtherPets({});
     } catch (e: unknown) {
       const msg =
         (e as { response?: { data?: { message?: string } } })?.response?.data?.message ??
         (e as Error)?.message ??
         'Failed to load unscheduled reminders';
       setError(String(msg));
-      setRows([]);
+      if (!cached) setRows([]);
     } finally {
       setLoading(false);
+      clearCareOutreachHouseholdCache();
     }
-  }, [dueDateFrom, dueDateTo]);
+  }, [effectiveDueRange.from, effectiveDueRange.to, priority, practiceTz]);
+
+  useEffect(() => {
+    void fetchSchedulingOutreachSmsFrom().then((phone) => {
+      if (phone) setSmsFromLine(phone);
+    });
+  }, []);
+
+  const beginClientExit = useCallback((clientKey: string) => {
+    setExitingClientKeys((prev) => new Set(prev).add(clientKey));
+    const existing = exitClientTimers.current.get(clientKey);
+    if (existing) window.clearTimeout(existing);
+    const timer = setTimeout(() => {
+      exitClientTimers.current.delete(clientKey);
+      setExitingClientKeys((prev) => {
+        const next = new Set(prev);
+        next.delete(clientKey);
+        return next;
+      });
+      setHoldExitSnapshot((snap) => (snap?.clientKey === clientKey ? null : snap));
+    }, 1100);
+    exitClientTimers.current.set(clientKey, timer);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      for (const t of exitClientTimers.current.values()) window.clearTimeout(t);
+      exitClientTimers.current.clear();
+    };
+  }, []);
+
+  useEffect(() => {
+    const pending = readForwardBookingReturnSession();
+    if (!pending || pending.returnOrigin !== 'care_outreach') return;
+    postHoldReturnHandledRef.current = false;
+    setPostHoldReturn(pending);
+  }, []);
+
+  useEffect(() => {
+    writeCareOutreachFilterSession({ priority, dueDateFrom, dueDateTo, providerFilterId });
+  }, [priority, dueDateFrom, dueDateTo, providerFilterId]);
 
   useEffect(() => {
     void load();
+  }, [load]);
+
+  useEffect(() => {
+    const onPageRefresh = () => {
+      void load({ force: true });
+    };
+    window.addEventListener(SCHEDULING_TOOLS_PAGE_REFRESH_EVENT, onPageRefresh);
+    return () => window.removeEventListener(SCHEDULING_TOOLS_PAGE_REFRESH_EVENT, onPageRefresh);
   }, [load]);
 
   const filteredByPriority = useMemo(() => {
     const todayStart = dayjs().startOf('day');
     const due21Allowed = dayDiffsForDueIn21DayBucket(todayStart);
     return rows.filter((r) => {
-      if (priority === 'all') return true;
+      if (priority === 'range') return true;
       const diff = calendarDayDiffFromToday(r.dueDate ?? null);
       if (diff === null) return false;
       if (priority === 'overdue_today') return diff === -1;
+      if (priority === 'past_due_30') return careOutreachReminderInPastDue30DayBucket(r, todayStart);
       if (priority === 'due_21') return due21Allowed.has(diff);
       return true;
     });
@@ -348,10 +678,36 @@ export default function CareOutreachPage() {
     [filteredByPriority, showHiddenReminders]
   );
 
+  const providerOptions = useMemo(
+    () => buildCareOutreachProviderOptions(filteredByHidden),
+    [filteredByHidden]
+  );
+
+  useEffect(() => {
+    if (providerFilterId === 'all') return;
+    // Don't clear a (possibly restored) provider until the list has loaded and options exist,
+    // otherwise the empty initial render would wipe the remembered selection.
+    if (loading || providerOptions.length === 0) return;
+    const valid =
+      providerFilterId === 'unassigned'
+        ? providerOptions.some((o) => o.id === 'unassigned')
+        : providerOptions.some((o) => o.id === providerFilterId);
+    if (!valid) setProviderFilterId('all');
+  }, [providerFilterId, providerOptions, loading]);
+
+  const filteredByProvider = useMemo(() => {
+    if (providerFilterId === 'all') return filteredByHidden;
+    return filteredByHidden.filter((r) => {
+      const pid = reminderProviderFilterId(r);
+      if (providerFilterId === 'unassigned') return pid == null;
+      return pid === providerFilterId;
+    });
+  }, [filteredByHidden, providerFilterId]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return filteredByHidden;
-    return filteredByHidden.filter((r) => {
+    if (!q) return filteredByProvider;
+    return filteredByProvider.filter((r) => {
       const c = extractClient(r);
       const pet = r.patient?.name ?? '';
       const desc = r.description ?? '';
@@ -360,35 +716,17 @@ export default function CareOutreachPage() {
       const hay = [c.displayName, c.phone ?? '', pet, desc, prov, notes].join(' ').toLowerCase();
       return hay.includes(q);
     });
-  }, [filteredByHidden, search, noteDrafts]);
+  }, [filteredByProvider, search, noteDrafts]);
 
   const sortedForDisplay = useMemo(() => {
     return [...filtered].sort(compareRemindersForDisplay);
   }, [filtered]);
 
-  type ClientBucket = {
-    clientKey: string;
-    clientId: number | null;
-    clientPimsId: string | null;
-    displayName: string;
-    phone: string | null;
-    isMember: boolean;
-    patients: Map<
-      number,
-      {
-        patientName: string;
-        isMember: boolean;
-        patientPimsId: string | null;
-        reminders: UnscheduledReminder[];
-      }
-    >;
-  };
-
   const grouped = useMemo(() => {
-    const clients = new Map<string, ClientBucket>();
+    const clients = new Map<string, CareOutreachClientBucket>();
     for (const r of sortedForDisplay) {
       const c = extractClient(r);
-      const clientKey = c.id != null ? `c-${c.id}` : `orphan-p-${r.patient?.id ?? r.id}`;
+      const clientKey = careOutreachReminderClientKey(r);
       let bucket = clients.get(clientKey);
       if (!bucket) {
         bucket = {
@@ -396,6 +734,7 @@ export default function CareOutreachPage() {
           clientId: c.id,
           clientPimsId: c.clientPimsId,
           displayName: c.displayName,
+          clientFirstName: c.firstName,
           phone: c.phone,
           isMember: c.isMember,
           patients: new Map(),
@@ -416,6 +755,7 @@ export default function CareOutreachPage() {
         pg = {
           patientName: r.patient?.name?.trim() || `Patient #${pid}`,
           isMember: Boolean(r.patient?.isMember || bucket.isMember),
+          membershipName: r.patient?.membershipName?.trim() || null,
           patientPimsId,
           reminders: [],
         };
@@ -427,6 +767,12 @@ export default function CareOutreachPage() {
             ? String(r.patient.pimsId).trim()
             : null;
         if (nextPims) pg.patientPimsId = nextPims;
+      }
+      if (!pg.membershipName && r.patient?.membershipName?.trim()) {
+        pg.membershipName = r.patient.membershipName.trim();
+      }
+      if (!pg.isMember && r.patient?.isMember) {
+        pg.isMember = true;
       }
       pg.reminders.push(r);
     }
@@ -445,8 +791,169 @@ export default function CareOutreachPage() {
       );
       b.patients = new Map(parr);
     }
+    if (
+      holdExitSnapshot &&
+      exitingClientKeys.has(holdExitSnapshot.clientKey) &&
+      !clients.has(holdExitSnapshot.clientKey)
+    ) {
+      list.push(holdExitSnapshot);
+      list.sort((a, b) =>
+        a.displayName.localeCompare(b.displayName, undefined, { sensitivity: 'base' })
+      );
+    }
     return list;
-  }, [sortedForDisplay]);
+  }, [sortedForDisplay, holdExitSnapshot, exitingClientKeys]);
+
+  useEffect(() => {
+    if (!postHoldReturn || loading || postHoldReturnHandledRef.current) return;
+
+    const pending = postHoldReturn;
+    const clientKey = pending.careOutreachClientKey?.trim();
+    const isHold = pending.targetWorkflowTab === 'onHold';
+
+    postHoldReturnHandledRef.current = true;
+    clearForwardBookingReturnSession();
+    setPostHoldReturn(null);
+
+    if (!clientKey || !isHold) return;
+
+    if (pending.careOutreachClientDisplayName?.trim()) {
+      setHoldExitSnapshot({
+        clientKey,
+        clientId: pending.careOutreachClientId ?? null,
+        clientPimsId: null,
+        displayName: pending.careOutreachClientDisplayName.trim(),
+        clientFirstName: null,
+        phone: null,
+        isMember: false,
+        patients: new Map(),
+      });
+    }
+
+    beginClientExit(clientKey);
+
+    void (async () => {
+      const clientId = pending.careOutreachClientId;
+      if (clientId == null) return;
+
+      const phone = pending.careOutreachClientPhone;
+      const canText = careOutreachClientHasSmsPhone(phone);
+      if (!canText && !canAccessGmailInbox) return;
+
+      const bookedSlot = await resolveScheduleLoaderSmsBookedSlot(
+        pending.bookedAppointmentId,
+        PRACTICE_ID,
+        practiceTz,
+        {
+          startIso: pending.bookedAppointmentStart,
+          endIso: pending.bookedAppointmentEnd ?? pending.bookedAppointmentStart,
+        },
+      );
+
+      const petNames =
+        pending.careOutreachPetNames?.map((name) => name.trim()).filter(Boolean) ?? [];
+
+      setContactCanText(canText);
+      setContactProviderLastName(pending.careOutreachProviderLastName ?? null);
+      setContactSmsMessage(
+        buildCareOutreachSmsMessage({
+          clientFirstName: pending.careOutreachClientFirstName,
+          clientDisplayName: pending.careOutreachClientDisplayName,
+          petNames,
+          providerLastName: pending.careOutreachProviderLastName,
+          anyPastDue: pending.careOutreachAnyPastDue === true,
+          ...(bookedSlot ? { bookedSlot } : {}),
+          holdRelease: holdReleaseOptsForAppointment(
+            pending.bookedAppointmentStart,
+            practiceTz,
+          ),
+        }),
+      );
+      setContactClientId(clientId);
+      setContactClientLabel(pending.careOutreachClientDisplayName?.trim() || 'Client');
+      setContactOpen(true);
+    })();
+  }, [postHoldReturn, loading, beginClientExit, practiceTz, canAccessGmailInbox]);
+
+  const listTotalPages = useMemo(
+    () => schedulingToolsListTotalPages(grouped.length),
+    [grouped.length],
+  );
+
+  const groupedForDisplay = useMemo(
+    () => paginateSchedulingToolsList(grouped, listPage),
+    [grouped, listPage],
+  );
+
+  useEffect(() => {
+    setListPage(1);
+  }, [search, providerFilterId, priority]);
+
+  useEffect(() => {
+    if (listPage > listTotalPages) {
+      setListPage(listTotalPages);
+    }
+  }, [listPage, listTotalPages]);
+
+  useEffect(() => {
+    clearCareOutreachFocusClient();
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+    };
+  }, []);
+
+  // After returning from a routed/offered client, scroll that client back into view (and
+  // briefly highlight it) instead of leaving the user at the top of the list.
+  useEffect(() => {
+    if (!focusClientKey || loading) return;
+    const index = grouped.findIndex((c) => c.clientKey === focusClientKey);
+    if (index < 0) {
+      setFocusClientKey(null);
+      return;
+    }
+    const targetPage = Math.floor(index / SCHEDULING_TOOLS_LIST_PAGE_SIZE) + 1;
+    if (listPage !== targetPage) {
+      setListPage(targetPage);
+      return;
+    }
+    const raf = requestAnimationFrame(() => {
+      const el = clientSectionRefs.current.get(focusClientKey);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        setHighlightClientKey(focusClientKey);
+        if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+        highlightTimerRef.current = setTimeout(() => setHighlightClientKey(null), 2600);
+      }
+      setFocusClientKey(null);
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [focusClientKey, loading, grouped, listPage]);
+
+  const changeListPage = useCallback((page: number) => {
+    setListPage(page);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, []);
+
+  const closeContactModal = useCallback(() => {
+    setContactOpen(false);
+    setContactClientId(null);
+    setContactClientLabel('');
+    setContactSmsMessage('');
+    setContactProviderLastName(null);
+    setContactCanText(false);
+  }, []);
+
+  const listPaginationBar = (
+    <SchedulingToolsListPagination
+      listPage={listPage}
+      totalItems={grouped.length}
+      onPageChange={changeListPage}
+      itemLabel="clients"
+    />
+  );
 
   const flushSave = useCallback(async (reminderId: number, value: string) => {
     setNoteSaving((s) => ({ ...s, [reminderId]: true }));
@@ -542,6 +1049,8 @@ export default function CareOutreachPage() {
           Number(r.id) === Number(reminderId) || String(r.id) === String(reminderId) ? mergedRow : r
         );
       });
+      notifySchedulingToolsNavCountsRefresh();
+      clearCareOutreachListCache();
     } catch (e: unknown) {
       const msg =
         (e as { response?: { data?: { message?: string } } })?.response?.data?.message ??
@@ -553,6 +1062,101 @@ export default function CareOutreachPage() {
     }
   }, []);
 
+  const toggleBookIncludeOtherPet = useCallback(
+    (clientKey: string, patientId: number, patientName: string, included: boolean) => {
+      setBookIncludeOtherPets((prev) => {
+        const next = { ...prev };
+        const map = new Map(next[clientKey] ?? []);
+        if (included) map.set(patientId, patientName);
+        else map.delete(patientId);
+        if (map.size === 0) delete next[clientKey];
+        else next[clientKey] = map;
+        return next;
+      });
+    },
+    []
+  );
+
+  const bookTargetForClient = useCallback(
+    (client: CareOutreachClientBucket) => {
+      const providerId = clientBucketPrimaryProviderId(client);
+      const base = careOutreachClientBookTargetFromBucket(
+        client.clientId,
+        client.displayName,
+        client.phone,
+        client.patients,
+        providerId
+      );
+      const extrasMap = bookIncludeOtherPets[client.clientKey];
+      if (!extrasMap?.size || client.clientId == null) return base;
+      const additional = [...extrasMap.entries()].map(([patientId, patientName]) => ({
+        patientId,
+        patientName,
+      }));
+      return careOutreachClientBookTargetWithAdditionalPatients(
+        base,
+        client.clientId,
+        client.displayName,
+        client.phone,
+        providerId,
+        additional
+      );
+    },
+    [bookIncludeOtherPets]
+  );
+
+  const onBookClient = useCallback(
+    async (client: CareOutreachClientBucket) => {
+      setActionError(null);
+      const target = bookTargetForClient(client);
+      if (!target) {
+        setActionError('No pets selected to route for this client.');
+        return;
+      }
+      setBookingClientKey(client.clientKey);
+      try {
+        const entries = await createForwardBookingsFromCareOutreach(target, PRACTICE_ID);
+        const anchor = entries[0];
+        if (!anchor) throw new Error('Could not create forward booking rows.');
+        const petNames = petNamesFromCareOutreachTarget(target);
+        const intent =
+          entries.length > 1
+            ? buildRoutingForwardBookingIntentFromEntries(anchor, entries)
+            : buildRoutingForwardBookingIntentFromEntry(anchor);
+        if (!intent) throw new Error('This client is missing data needed for routing.');
+        const routingSearch = careOutreachRoutingSearchDateRange(PRACTICE_TZ);
+        const outreachNotes = workingNotesFromReminders(
+          target.patients.flatMap((p) => p.reminders),
+        );
+        writeRoutingForwardBookingIntent({
+          ...intent,
+          reminderOutreachNotes: outreachNotes,
+          returnToListAfterBook: true,
+          workspaceActive: true,
+          origin: 'care_outreach',
+          careOutreachPetNames: petNames,
+          careOutreachAnyPastDue: careOutreachTargetHasPastDueReminders(target),
+          careOutreachClientKey: client.clientKey,
+          careOutreachClientDisplayName: client.displayName,
+          careOutreachClientId: client.clientId ?? null,
+          careOutreachClientPhone: client.phone,
+          careOutreachClientFirstName: client.clientFirstName,
+          routingSearch,
+        });
+        navigate('/schedule/routing');
+      } catch (e: unknown) {
+        const msg =
+          (e as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+          (e as Error)?.message ??
+          'Could not start routing.';
+        setActionError(String(msg));
+      } finally {
+        setBookingClientKey(null);
+      }
+    },
+    [bookTargetForClient, navigate]
+  );
+
   return (
     <div>
       <h2 className="settings-title" style={{ fontSize: '1.25rem', marginTop: 8 }}>
@@ -560,46 +1164,16 @@ export default function CareOutreachPage() {
       </h2>
       <p className="settings-muted" style={{ marginBottom: 16, maxWidth: 800 }}>
         Clients and patients who still need preventive or recommended care scheduled with their
-        assigned provider. Reminders disappear from this list once a future appointment exists with
-        that provider.
+        assigned provider. A pet is removed once they have a visit on the calendar today or
+        later (even if reminders are still past due). Other pets in the same household stay on
+        the list. Use Route to send a visit (hold or booked) into forward booking.
       </p>
 
-      <div
-        style={{
-          display: 'flex',
-          flexWrap: 'wrap',
-          gap: 10,
-          alignItems: 'center',
-          marginBottom: 16,
-        }}
-      >
-        <span className="settings-muted" style={{ marginRight: 4 }}>
-          Due between
-        </span>
-        <input
-          type="date"
-          value={dueDateFrom}
-          onChange={(e) => setDueDateFrom(e.target.value)}
-          className="settings-input"
-          style={{ maxWidth: 160 }}
-        />
-        <span className="settings-muted">and</span>
-        <input
-          type="date"
-          value={dueDateTo}
-          onChange={(e) => setDueDateTo(e.target.value)}
-          className="settings-input"
-          style={{ maxWidth: 160 }}
-        />
-        <button
-          type="button"
-          className="btn primary"
-          onClick={() => void load()}
-          disabled={loading}
-        >
-          Refresh
-        </button>
-      </div>
+      {actionError ? (
+        <p className="settings-muted" style={{ color: '#b91c1c', marginBottom: 12 }}>
+          {actionError}
+        </p>
+      ) : null}
 
       <div style={{ marginBottom: 14, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
         <span className="settings-muted" style={{ alignSelf: 'center', marginRight: 4 }}>
@@ -615,14 +1189,70 @@ export default function CareOutreachPage() {
               border: '1px solid var(--border)',
               borderRadius: 8,
               padding: '8px 14px',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
             }}
             title={title}
             onClick={() => setPriority(key)}
           >
-            {label}
+            <span>{label}</span>
+            {key !== 'range' ? (
+              <span
+                className="settings-muted"
+                style={{
+                  fontSize: 12,
+                  fontWeight: 600,
+                  lineHeight: 1,
+                  opacity: priority === key ? 1 : 0.85,
+                }}
+                aria-hidden
+              >
+                ({priorityChipCounts[key]})
+              </span>
+            ) : null}
           </button>
         ))}
       </div>
+
+      {priority === 'range' ? (
+        <div
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: 10,
+            alignItems: 'center',
+            marginBottom: 16,
+          }}
+        >
+          <span className="settings-muted" style={{ marginRight: 4 }}>
+            Due between
+          </span>
+          <input
+            type="date"
+            value={dueDateFrom}
+            onChange={(e) => setDueDateFrom(e.target.value)}
+            className="settings-input"
+            style={{ maxWidth: 160 }}
+          />
+          <span className="settings-muted">and</span>
+          <input
+            type="date"
+            value={dueDateTo}
+            onChange={(e) => setDueDateTo(e.target.value)}
+            className="settings-input"
+            style={{ maxWidth: 160 }}
+          />
+          <button
+            type="button"
+            className="btn primary"
+            onClick={() => void load({ force: true })}
+            disabled={loading}
+          >
+            Refresh
+          </button>
+        </div>
+      ) : null}
 
       <div
         style={{
@@ -630,14 +1260,45 @@ export default function CareOutreachPage() {
           display: 'flex',
           flexWrap: 'wrap',
           gap: 16,
-          alignItems: 'center',
+          alignItems: 'flex-end',
         }}
       >
+        <div style={{ flex: '0 1 220px', minWidth: 180 }}>
+          <label
+            htmlFor="care-outreach-provider-filter"
+            className="settings-muted"
+            style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 6 }}
+          >
+            Provider
+          </label>
+          <select
+            id="care-outreach-provider-filter"
+            className="settings-input"
+            value={providerFilterId}
+            onChange={(e) => setProviderFilterId(e.target.value)}
+            style={{ width: '100%' }}
+          >
+            <option value="all">All</option>
+            {providerOptions.map((option) => (
+              <option key={option.id} value={option.id}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </div>
         <div style={{ flex: '1 1 280px', maxWidth: 420 }}>
+          <label
+            htmlFor="care-outreach-search"
+            className="settings-muted"
+            style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 6 }}
+          >
+            Search
+          </label>
           <input
+            id="care-outreach-search"
             type="search"
             className="settings-input"
-            placeholder="Search client, patient, phone, service, provider, notes…"
+            placeholder="Client, patient, phone, service, notes…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             aria-label="Search outreach list"
@@ -663,7 +1324,7 @@ export default function CareOutreachPage() {
         </p>
       )}
 
-      {loading ? (
+      {loading && rows.length === 0 ? (
         <div className="settings-loading">
           <span className="settings-spinner" aria-hidden />
           Loading reminders…
@@ -672,16 +1333,47 @@ export default function CareOutreachPage() {
         <p className="settings-muted">No reminders match the current filters.</p>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-          {grouped.map((client) => (
-            <section
+          {listPaginationBar}
+          {groupedForDisplay.map((client) => {
+            const rowExiting = exitingClientKeys.has(client.clientKey);
+            return (
+            <CareOutreachHouseholdProvider
               key={client.clientKey}
+              clientId={client.clientId}
+              practiceTz={practiceTz}
+              outreachPatientIds={Array.from(client.patients.keys())}
+            >
+            <section
+              ref={(el) => {
+                if (el) clientSectionRefs.current.set(client.clientKey, el);
+                else clientSectionRefs.current.delete(client.clientKey);
+              }}
+              className={
+                rowExiting
+                  ? 'appt-request-row--exiting appt-request-row--exiting-onHold'
+                  : undefined
+              }
               style={{
-                border: '1px solid var(--border)',
+                border:
+                  client.clientKey === highlightClientKey
+                    ? '2px solid var(--accent-strong, #2563eb)'
+                    : '1px solid var(--border)',
                 borderRadius: 12,
                 overflow: 'hidden',
                 background: 'var(--panel, #fff)',
+                position: rowExiting ? 'relative' : undefined,
+                boxShadow:
+                  client.clientKey === highlightClientKey
+                    ? '0 0 0 3px rgba(37, 99, 235, 0.15)'
+                    : undefined,
+                transition: 'border-color 0.3s ease, box-shadow 0.3s ease',
               }}
             >
+              {rowExiting ? (
+                <div className="appt-request-row-exit-badge" aria-live="polite">
+                  Moved to hold
+                </div>
+              ) : null}
               <header
                 style={{
                   padding: '12px 16px',
@@ -690,9 +1382,11 @@ export default function CareOutreachPage() {
                   display: 'flex',
                   flexWrap: 'wrap',
                   gap: 12,
-                  alignItems: 'baseline',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
                 }}
               >
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'baseline' }}>
                 <strong style={{ fontSize: '1.05rem' }}>
                   {client.clientPimsId ? (
                     <EvetInlineLink href={evetClientLink(client.clientPimsId)}>
@@ -704,7 +1398,9 @@ export default function CareOutreachPage() {
                 </strong>
                 {client.phone ? (
                   <a
-                    href={buildPhoneDialHref(client.phone)}
+                    href={buildPhoneDialHref(client.phone, {
+                      fromLine: clientBucketQuoFromLine(client),
+                    })}
                     style={{ fontWeight: 600, color: 'var(--accent-strong, #2563eb)' }}
                   >
                     {client.phone}
@@ -712,6 +1408,41 @@ export default function CareOutreachPage() {
                 ) : (
                   <span className="settings-muted">No phone on file</span>
                 )}
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  <button
+                    type="button"
+                    className="btn secondary"
+                    disabled={client.clientId == null}
+                    onClick={() => {
+                      if (client.clientId == null) return;
+                      setEmailHistoryClientId(client.clientId);
+                      setEmailHistoryClientLabel(client.displayName);
+                    }}
+                  >
+                    Email history
+                  </button>
+                  <button
+                    type="button"
+                    className="btn secondary"
+                    disabled={client.clientId == null}
+                    onClick={() => {
+                      if (client.clientId == null) return;
+                      setMessagesClientId(client.clientId);
+                      setMessagesClientLabel(client.displayName);
+                    }}
+                  >
+                    Messages history
+                  </button>
+                  <button
+                    type="button"
+                    className="btn primary"
+                    disabled={bookingClientKey === client.clientKey || !bookTargetForClient(client)}
+                    onClick={() => void onBookClient(client)}
+                  >
+                    {bookingClientKey === client.clientKey ? 'Routing…' : 'Route'}
+                  </button>
+                </div>
               </header>
               <div style={{ padding: '8px 0' }}>
                 {Array.from(client.patients.entries()).map(([patientId, pg]) => (
@@ -719,18 +1450,37 @@ export default function CareOutreachPage() {
                     <div
                       style={{
                         padding: '8px 16px 4px',
+                        display: 'flex',
+                        flexWrap: 'wrap',
+                        alignItems: 'center',
+                        gap: '8px 12px',
                         fontWeight: 600,
                         color: 'var(--text)',
                       }}
                     >
-                      {pg.patientPimsId ? (
-                        <EvetInlineLink href={evetPatientLink(pg.patientPimsId)}>
-                          {pg.patientName}
-                        </EvetInlineLink>
-                      ) : (
-                        pg.patientName
-                      )}
-                      {pg.isMember ? ' ❤️' : ''}
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                        {pg.patientPimsId ? (
+                          <EvetInlineLink href={evetPatientLink(pg.patientPimsId)}>
+                            {pg.patientName}
+                          </EvetInlineLink>
+                        ) : (
+                          pg.patientName
+                        )}
+                        {pg.isMember ? (
+                          <PatientMembershipHeart membershipName={pg.membershipName} />
+                        ) : null}
+                      </span>
+                      <CareOutreachPetDetailsButton
+                        patientId={patientId}
+                        patientName={pg.patientName}
+                        practiceTz={practiceTz}
+                        isMember={pg.isMember}
+                        membershipName={pg.membershipName}
+                        outreachReminders={buildOutreachReminderDetailLines(
+                          pg.reminders,
+                          showHiddenReminders
+                        )}
+                      />
                     </div>
                     <div style={{ overflowX: 'auto' }}>
                       <table
@@ -749,7 +1499,7 @@ export default function CareOutreachPage() {
                               Visibility
                             </th>
                             <th style={{ padding: '6px 16px', fontWeight: 600, minWidth: 220 }}>
-                              Outreach notes
+                              Contact log
                             </th>
                           </tr>
                         </thead>
@@ -846,7 +1596,7 @@ export default function CareOutreachPage() {
                                     onChange={(e) => onNotesChange(r.id, e.target.value)}
                                     onBlur={(e) => void onNotesBlur(r.id, e.currentTarget.value)}
                                     placeholder="e.g. 11/14/2026 DF – LMOM"
-                                    aria-label={`Outreach notes for ${r.description}`}
+                                    aria-label={`Contact log for ${r.description}`}
                                   />
                                   {noteSaving[r.id] && (
                                     <span className="settings-muted" style={{ fontSize: 12 }}>
@@ -867,11 +1617,67 @@ export default function CareOutreachPage() {
                     </div>
                   </div>
                 ))}
+                <CareOutreachOtherHouseholdPets
+                  outreachPatientIds={Array.from(client.patients.keys())}
+                  selectedPatientIds={
+                    new Set(bookIncludeOtherPets[client.clientKey]?.keys() ?? [])
+                  }
+                  onToggleIncludeInBook={(patientId, patientName, included) =>
+                    toggleBookIncludeOtherPet(client.clientKey, patientId, patientName, included)
+                  }
+                  practiceTz={practiceTz}
+                />
               </div>
             </section>
-          ))}
+            </CareOutreachHouseholdProvider>
+          );
+          })}
+          {listPaginationBar}
         </div>
       )}
+
+      {contactOpen && contactClientId != null ? (
+        <ClientContactComposeModal
+          open
+          clientId={contactClientId}
+          clientLabel={contactClientLabel}
+          initialSmsMessage={contactSmsMessage}
+          providerLastName={contactProviderLastName}
+          canText={contactCanText}
+          onClose={closeContactModal}
+          smsFromLine={smsFromLine}
+          smsSource="care_outreach"
+          onOpenMessagesHistory={() => {
+            setMessagesClientId(contactClientId);
+            setMessagesClientLabel(contactClientLabel);
+          }}
+          onOpenEmailHistory={() => {
+            setEmailHistoryClientId(contactClientId);
+            setEmailHistoryClientLabel(contactClientLabel);
+          }}
+        />
+      ) : null}
+
+      <ClientMessagesHistoryModal
+        open={messagesClientId != null}
+        clientId={messagesClientId}
+        clientLabel={messagesClientLabel}
+        openPhoneLine={smsFromLine}
+        onClose={() => {
+          setMessagesClientId(null);
+          setMessagesClientLabel('');
+        }}
+      />
+
+      <ClientEmailHistoryModal
+        open={emailHistoryClientId != null}
+        clientId={emailHistoryClientId}
+        clientLabel={emailHistoryClientLabel}
+        onClose={() => {
+          setEmailHistoryClientId(null);
+          setEmailHistoryClientLabel('');
+        }}
+      />
     </div>
   );
 }

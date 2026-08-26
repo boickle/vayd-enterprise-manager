@@ -1,5 +1,5 @@
-import { useLocation, useNavigate, Link } from 'react-router-dom';
-import type { NavigateFunction } from 'react-router-dom';
+import { useLocation, useNavigate, Link } from 'react-router';
+import type { NavigateFunction } from 'react-router';
 import type { CSSProperties } from 'react';
 
 export type ErrorPageState = {

@@ -55,7 +55,9 @@
 @media (max-width: 768px) {
   .user-menu-dropdown {
     position: fixed;
-    top: 80px; /* Position below navbar with safe spacing */
+    top: calc(
+      var(--app-nonprod-banner-height, 0px) + var(--scout-schedule-navbar-height, 120px) + 8px
+    );
     right: 12px;
     left: auto;
     min-width: 200px;

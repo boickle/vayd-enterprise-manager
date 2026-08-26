@@ -18,7 +18,24 @@ import {
 import { useAuth } from '../auth/useAuth';
 import './DoctorDay.css';
 import { etaHouseholdArrivalWindowPayload, fetchEtas } from '../api/routing';
+import {
+  buildEtaCandidateSlot,
+  orderHouseholdsWithCandidateAtInsertion,
+  routingEtaCandidateInsertionIndexInOrder,
+} from '../utils/routingEtaCandidateSlot';
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
+import { fetchAllAppointmentTypes } from '../api/appointmentSettings';
+import { householdGroupKey } from '../utils/doctorDayHouseholdGroup';
+import { formatDoctorDayApptAddress } from '../utils/doctorDayAddress';
+import {
+  appointmentNotesFromDoctorDayRow,
+  petAlertsFromDoctorDayRow,
+} from '../utils/myDayVisualPatientDetails';
+import {
+  buildAppointmentTypeCatalog,
+  sumHouseholdPoints,
+  type AppointmentTypeCatalog,
+} from '../utils/appointmentTypeSettings';
 import { reverseGeocode } from '../api/geo';
 import { formatHM, colorForWhitespace, colorForHDRatio, colorForDrive } from '../utils/statsFormat';
 import {
@@ -27,6 +44,8 @@ import {
   formatIsoInPracticeZone,
 } from '../utils/practiceTimezone';
 import { Heart } from 'lucide-react';
+
+const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
 
 /* =========================================================================
    Public props
@@ -63,6 +82,8 @@ export type DoctorDayProps = {
     };
     /** Routing-v2: wall-clock return to depot (sec since local midnight on `date`). */
     validationReturnSec?: number;
+    validationLastEtdSec?: number;
+    overrunSeconds?: number;
     clientZone?: MiniZone;
     effectiveZone?: MiniZone;
   };
@@ -119,24 +140,7 @@ function addressKeyForAppt(a: DoctorDayAppt): string | null {
   return free ? `free:${free}` : null;
 }
 function formatAddress(a: DoctorDayAppt) {
-  const address1 = str(a, 'address1');
-  const city = str(a, 'city');
-  const state = str(a, 'state');
-  const zip = str(a, 'zip');
-  const line = [address1, [city, state].filter(Boolean).join(', '), zip]
-    .filter(Boolean)
-    .join(', ')
-    .replace(/\s+,/g, ',');
-  if (line) return line;
-  const freeForm =
-    str(a as any, 'address') ?? str(a as any, 'addressStr') ?? str(a as any, 'fullAddress');
-  if (freeForm) return freeForm;
-  const lat = num(a as any, 'lat');
-  const lon = num(a as any, 'lon');
-  if (typeof lat === 'number' && typeof lon === 'number') {
-    return `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
-  }
-  return 'Address not available';
+  return formatDoctorDayApptAddress(a);
 }
 function keyFor(lat: number, lon: number, d = 6): string {
   const m = Math.pow(10, d);
@@ -155,15 +159,6 @@ function keyVariantsForKeyString(s: string): string[] {
   const k6 = keyFor(lat, lon, 6) + suffix;
   const k5 = keyFor(lat, lon, 5) + suffix;
   return [s, k6, k5].filter((x, i, arr) => arr.indexOf(x) === i);
-}
-
-/** Same client at same location = one stop; different clients at same address = separate stops. */
-function householdGroupKey(a: DoctorDayAppt, lat: number, lon: number, addrKey: string | null, idPart: string, hasGeo: boolean): string {
-  const clientId = (a as any)?.clientPimsId ?? (a as any)?.clientId;
-  const clientPart = clientId != null ? String(clientId) : (str(a, 'clientName') ?? '').trim();
-  if (hasGeo) return `${lat}_${lon}_${clientPart}`;
-  if (addrKey) return `addr:${addrKey}_${clientPart}`;
-  return `noloc:${idPart}`;
 }
 
 /** Assign unique ETA keys: first at (lat,lon) gets "lat,lon", second "lat,lon:2", etc. */
@@ -309,6 +304,7 @@ export default function DoctorDay({
   const didInitDoctor = useRef(false);
   const [providersLoading, setProvidersLoading] = useState(false);
   const [providersErr, setProvidersErr] = useState<string | null>(null);
+  const [typeCatalog, setTypeCatalog] = useState<AppointmentTypeCatalog | undefined>();
 
   // schedule bounds (optional)
   const [schedStartIso, setSchedStartIso] = useState<string | null>(null);
@@ -319,17 +315,12 @@ export default function DoctorDay({
   const [startDepotAddr, setStartDepotAddr] = useState<string | null>(null);
   const [endDepotAddr, setEndDepotAddr] = useState<string | null>(null);
 
-  /* ---------- Depot reverse geocode ---------- */
+  /* ---------- End depot reverse geocode (start office town comes from doctor-day startDepotTown) ---------- */
   useEffect(() => {
     let on = true;
     (async () => {
-      setStartDepotAddr(null);
       setEndDepotAddr(null);
       try {
-        if (startDepot) {
-          const addr = await reverseGeocode(startDepot.lat, startDepot.lon);
-          if (on) setStartDepotAddr(addr);
-        }
         if (endDepot) {
           const addr = await reverseGeocode(endDepot.lat, endDepot.lon);
           if (on) setEndDepotAddr(addr);
@@ -341,7 +332,7 @@ export default function DoctorDay({
     return () => {
       on = false;
     };
-  }, [startDepot, endDepot]);
+  }, [endDepot]);
 
   /* ---------- Load providers ---------- */
   useEffect(() => {
@@ -370,6 +361,20 @@ export default function DoctorDay({
       on = false;
     };
   }, [userEmail]);
+
+  useEffect(() => {
+    let on = true;
+    void fetchAllAppointmentTypes(PRACTICE_ID, { activeOnly: false })
+      .then((rows) => {
+        if (on) setTypeCatalog(buildAppointmentTypeCatalog(Array.isArray(rows) ? rows : []));
+      })
+      .catch(() => {
+        if (on) setTypeCatalog(undefined);
+      });
+    return () => {
+      on = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (didInitDoctor.current || !providers.length || initialDoctorId) return;
@@ -477,6 +482,7 @@ export default function DoctorDay({
         setAppts(finalAppts);
         setStartDepot(resp.startDepot ?? null);
         setEndDepot(resp.endDepot ?? null);
+        setStartDepotAddr(str(resp, 'startDepotTown')?.trim() || null);
         setPracticeTimeZone(resp.timezone);
 
         const schedStart =
@@ -581,9 +587,9 @@ export default function DoctorDay({
           str(a, 'serviceName') ??
           str(a as any, 'apptTypeName') ??
           'Appointment',
-        description: str(a as any, 'description') ?? str(a as any, 'visitReason') ?? null,
+        description: appointmentNotesFromDoctorDayRow(a),
         recordStatus: str(a, 'statusName') ?? null,
-        alerts: str(a, 'alerts') ?? null,
+        alerts: petAlertsFromDoctorDayRow(a),
         isMember: Boolean(
           a.isMember ?? (a as any).patient?.isMember
         ),
@@ -698,31 +704,22 @@ export default function DoctorDay({
 
       if (households.length === 0) return;
 
-      // Visit order for ETA: when we have a selected routing candidate (virtualAppt), put existing
-      // households first (by firstApptIndex) and the candidate at insertionIndex so the backend
-      // gets the correct order (e.g. [existing1..4, candidate] for POST-LAST).
+      // Visit order for ETA: map slot-search insertionIndex across meetings/blocks so
+      // end-of-day candidates stay after existing morning client stops.
       const hasVirtual = virtualAppt && virtualAppt.date === date;
-      const insertionIndex = Math.max(
-        0,
-        Math.min(households.length - 1, virtualAppt?.insertionIndex ?? households.length - 1)
-      );
       const keyToHouseholdIndex = new Map(households.map((h, i) => [h.key, i]));
 
       let ordered: { h: Household; viewIdx: number }[];
+      let mappedInsertionIndex = 0;
       if (hasVirtual) {
-        const existing = households.filter((h) => !(h as any).isPreview);
-        const virtualH = households.find((h) => (h as any).isPreview);
-        const sortedExisting = [...existing].sort(
-          (a, b) => (a.firstApptIndex ?? 999) - (b.firstApptIndex ?? 999)
+        const inVisitOrder = orderHouseholdsWithCandidateAtInsertion(
+          households,
+          virtualAppt.insertionIndex
         );
-        const inVisitOrder =
-          virtualH != null
-            ? [
-                ...sortedExisting.slice(0, insertionIndex),
-                virtualH,
-                ...sortedExisting.slice(insertionIndex),
-              ]
-            : sortedExisting;
+        mappedInsertionIndex = routingEtaCandidateInsertionIndexInOrder(
+          inVisitOrder,
+          virtualAppt.insertionIndex
+        );
         ordered = inVisitOrder.map((h) => ({
           h,
           viewIdx: keyToHouseholdIndex.get(h.key) ?? 0,
@@ -776,6 +773,22 @@ export default function DoctorDay({
         } as any; // keeps compile-time happy if EtaHouseholdInput isn't imported here
       });
 
+      const candidateSlot =
+        hasVirtual && virtualAppt
+          ? buildEtaCandidateSlot(
+              {
+                insertionIndex: mappedInsertionIndex,
+                positionInDay: virtualAppt.positionInDay,
+                suggestedStartIso: virtualAppt.suggestedStartIso,
+                lat: virtualAppt.lat,
+                lon: virtualAppt.lon,
+                serviceMinutes: virtualAppt.serviceMinutes,
+                arrivalWindow: virtualAppt.arrivalWindow,
+              },
+              { householdCount: ordered.length }
+            )
+          : undefined;
+
       const payload = {
         doctorId: inferredDoctorId,
         date,
@@ -783,29 +796,7 @@ export default function DoctorDay({
         startDepot: startDepot ? { lat: startDepot.lat, lon: startDepot.lon } : undefined,
         endDepot: endDepot ? { lat: endDepot.lat, lon: endDepot.lon } : undefined,
         useTraffic: false,
-        ...(hasVirtual &&
-        virtualAppt &&
-        Number.isFinite(virtualAppt.lat) &&
-        Number.isFinite(virtualAppt.lon)
-          ? {
-              candidateSlot: {
-                insertionIndex,
-                positionInDay: virtualAppt.positionInDay ?? insertionIndex + 1,
-                suggestedStartIso: virtualAppt.suggestedStartIso,
-                lat: virtualAppt.lat,
-                lon: virtualAppt.lon,
-                serviceMinutes: virtualAppt.serviceMinutes,
-                overrunSeconds: (virtualAppt as any).overrunSeconds,
-                arrivalWindow:
-                  virtualAppt.arrivalWindow?.windowStartIso && virtualAppt.arrivalWindow?.windowEndIso
-                    ? {
-                        windowStartIso: virtualAppt.arrivalWindow.windowStartIso,
-                        windowEndIso: virtualAppt.arrivalWindow.windowEndIso,
-                      }
-                    : undefined,
-              },
-            }
-          : {}),
+        ...(candidateSlot ? { candidateSlot } : {}),
       } as any; // or `as EtaRequest` if you can import the type
 
       try {
@@ -1128,16 +1119,7 @@ export default function DoctorDay({
       return sum + durSec(h.startIso, h.endIso);
     }, 0);
 
-    // Points per patient (exclude personal blocks and "Note To Staff"): 1 standard, 0.5 tech, 2 euthanasia
-    const points = displayHouseholds.reduce((total, h) => {
-      if ((h as any)?.isPersonalBlock) return total;
-      const type = (h.primary?.appointmentType || '').toLowerCase();
-      if (type.includes('note to staff')) return total;
-      const n = Math.max(1, h.patients?.length ?? 1);
-      if (type === 'euthanasia') return total + 2 * n;
-      if (type.includes('tech appointment')) return total + 0.5 * n;
-      return total + 1 * n;
-    }, 0);
+    const points = sumHouseholdPoints(displayHouseholds, typeCatalog);
 
     // ---------- Prefer authoritative fields from Routing winner ----------
     const winnerDriveSec = Number.isFinite(virtualAppt?.projectedDriveSeconds as number)
@@ -1345,6 +1327,7 @@ export default function DoctorDay({
     schedEndIso,
     virtualAppt, // <-- important for winner fields
     date,
+    typeCatalog,
   ]);
 
   /* ---------- UI helpers ---------- */
@@ -1388,16 +1371,7 @@ export default function DoctorDay({
 
   const whitePctText = Number.isFinite(whitePct) ? `${whitePct.toFixed(0)}%` : '—';
 
-  // Points per patient: 1 standard, 0.5 tech, 2 euthanasia
-  const points = displayHouseholds.reduce((total, h) => {
-    if ((h as any)?.isPersonalBlock) return total;
-    const type = (h.primary?.appointmentType || '').toLowerCase();
-    if (type.includes('note to staff')) return total;
-    const n = Math.max(1, h.patients?.length ?? 1);
-    if (type === 'euthanasia') return total + 2 * n;
-    if (type.includes('tech appointment')) return total + 0.5 * n;
-    return total + 1 * n;
-  }, 0);
+  const points = sumHouseholdPoints(displayHouseholds, typeCatalog);
 
   /* ---------- Render ---------- */
   return (
@@ -1757,11 +1731,7 @@ export default function DoctorDay({
                               str(h.primary, 'appointmentTypeName') ??
                               str(h.primary, 'serviceName') ??
                               'Appointment';
-                            const apptDesc =
-                              (p as any)?.description ??
-                              str(h.primary, 'description') ??
-                              str(h.primary, 'visitReason') ??
-                              '';
+                            const apptDesc = p.description ?? '';
                             return (
                               <li key={`${p.pimsId || p.name}-${idx2}`} className="dd-patient-item">
                                 <span style={{ display: 'inline-flex', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>

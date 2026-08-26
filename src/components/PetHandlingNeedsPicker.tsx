@@ -82,6 +82,24 @@ export function hasHandlingNeedsAnswer(pet: PetHandlingFields): boolean {
   );
 }
 
+/** True when calming meds, muzzle, or additional handling support is selected. */
+export function hasSpecialHandlingNeeds(pet: PetHandlingFields): boolean {
+  return (
+    pet.needsCalmingMedications === 'Yes' ||
+    pet.needsMuzzleOrSpecialHandling === 'Yes' ||
+    pet.needsExtraHandling === 'Yes'
+  );
+}
+
+/**
+ * Online self-scheduling is only offered when every pet with a handling question
+ * explicitly chose "None" (not unanswered, not calming/muzzle/extra).
+ */
+export function petsAllowOnlineScheduling(pets: PetHandlingFields[]): boolean {
+  if (pets.length === 0) return true;
+  return pets.every((p) => p.handlingNeedsExplicitNone === true);
+}
+
 function HandlingNeedCard({
   label,
   active,
@@ -154,12 +172,12 @@ export function PetHandlingNeedsPicker({
     <div
       data-handling-needs-picker
       style={{
-        marginTop: 10,
-        paddingTop: 10,
-        borderTop: '1px solid #f3f4f6',
+        marginTop: 24,
+        paddingTop: 20,
+        borderTop: '1px solid #d1d5db',
       }}
     >
-      <p style={{ fontSize: '13px', fontWeight: 700, color: '#111827', margin: '0 0 4px' }}>
+      <p style={{ fontSize: '15px', fontWeight: 700, color: '#111827', margin: '0 0 4px' }}>
         Anything we should know to help make the visit as smooth and stress-free as possible for{' '}
         {petName}?
       </p>
@@ -169,9 +187,9 @@ export function PetHandlingNeedsPicker({
 
       <p
         style={{
-          fontSize: '13px',
+          fontSize: '14px',
           fontWeight: 600,
-          color: '#374151',
+          color: '#111827',
           margin: `0 0 ${labelMb}px`,
         }}
       >

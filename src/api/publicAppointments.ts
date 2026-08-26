@@ -1,5 +1,18 @@
 import { http } from './http';
 import { DateTime } from 'luxon';
+import {
+  ROUTING_OFFERABLE_MAX_SCORE,
+  resolveOfferableMaxScoreFromApi,
+} from '../utils/routingOfferableScore';
+
+export {
+  ROUTING_OFFERABLE_MAX_SCORE,
+  isRoutingScoreOfferable,
+  /** @deprecated Use {@link ROUTING_OFFERABLE_MAX_SCORE}. */
+  SELF_SCHEDULE_MAX_ROUTING_SCORE,
+  /** @deprecated Use {@link isRoutingScoreOfferable}. */
+  isRoutingScoreEligibleForSelfSchedule,
+} from '../utils/routingOfferableScore';
 
 export type EmailCheckResult = {
   exists: boolean;
@@ -11,17 +24,77 @@ export type PublicProvider = {
   id: string | number;
   name: string;
   email?: string;
+  imageUrl?: string | null;
+  employeeId?: number | null;
+  /** VAYD-managed profile copy from GET /employees (when included on vet payloads). */
+  bio?: string | null;
+};
+
+/** A confirmed self-scheduled appointment slot chosen by the client. */
+export type SelfScheduledSlot = {
+  /** Doctor/provider ID (pimsId or internal id). */
+  doctorId: string | number;
+  doctorName: string;
+  /** ISO 8601 start datetime. */
+  appointmentStart: string;
+  /** Human-readable display string (e.g. "Monday, June 16 at 10:00 AM"). */
+  display: string;
+  /** Appointment duration in minutes. */
+  serviceMinutes: number;
+  /** Customer arrival window start (ISO). */
+  windowStartIso?: string;
+  /** Customer arrival window end (ISO). */
+  windowEndIso?: string;
+  /** Client-facing window copy (e.g. "We will come between 10:00 AM and 12:00 PM"). */
+  windowDisplay?: string;
 };
 
 export type AvailabilityRequest = {
   practiceId: number;
   startDate: string; // YYYY-MM-DD
   numDays: number;
-  serviceMinutes: number;
+  /** Legacy — omit when visitPets + doctorId are sent; server computes duration. */
+  serviceMinutes?: number;
   address: string;
+  /** Pre-geocoded latitude — preferred over address for routing accuracy. */
+  lat?: number;
+  /** Pre-geocoded longitude — preferred over address for routing accuracy. */
+  lon?: number;
   allowOtherDoctors?: boolean;
   doctorId?: string | number; // Optional: specific doctor
+  /** Required for online booking validation on POST /public/appointments/availability */
+  appointmentTypeId?: number;
+  /** Per-pet types for server-side routing duration (preferred over serviceMinutes). */
+  visitPets?: RoutingVisitPetInput[];
+  /** Selected existing pets (DB patients.id) — member elevated offer tier when any is a member. */
+  patientIds?: number[];
 };
+
+export type RoutingVisitPetInput = {
+  appointmentTypeId: number;
+  isNewPatient?: boolean;
+};
+
+export type RoutingServiceMinutesResponse = {
+  serviceMinutes: number;
+  baseMinutes: number;
+  newPatientBufferMinutes: number;
+  householdBufferMinutes: number;
+  source: 'stats' | 'default' | 'fallback' | 'mixed';
+};
+
+/**
+ * Resolve routing service minutes for a household visit (doctor stats + buffers).
+ * POST /public/appointments/routing-service-minutes
+ */
+export async function fetchRoutingServiceMinutes(request: {
+  practiceId: number;
+  doctorId: string | number;
+  visitPets: RoutingVisitPetInput[];
+}): Promise<RoutingServiceMinutesResponse> {
+  const { data } = await http.post('/public/appointments/routing-service-minutes', request);
+  return data as RoutingServiceMinutesResponse;
+}
 
 export type AvailabilitySlot = {
   date: string; // YYYY-MM-DD
@@ -78,7 +151,10 @@ export async function fetchPublicVeterinarians(
   practiceId: number = 1, 
   address?: string, 
   lat?: number, 
-  lon?: number
+  lon?: number,
+  /** When true, filter out vets that are not accepting new patients in the client's zone.
+   *  Pass false for existing/returning clients — the new-patient restriction does not apply. */
+  onlyAcceptingNew: boolean = false,
 ): Promise<PublicProvider[]> {
   const params: any = { practiceId };
   if (lat != null && lon != null && Number.isFinite(lat) && Number.isFinite(lon)) {
@@ -91,34 +167,24 @@ export async function fetchPublicVeterinarians(
   const { data } = await http.get('/public/appointments/veterinarians', { params });
   const veterinarians: any[] = Array.isArray(data) ? data : (data?.items ?? data?.veterinarians ?? []);
   
-  // Filter veterinarians based on acceptingNewPatients
-  // For new clients, we should only include veterinarians where acceptingNewPatients is true for the relevant zone
-  // When lat/lon are passed, only one zone will be returned (the one the lat/lon is in)
-  // When address is passed, the backend will return the relevant zone(s)
-  const filteredVeterinarians = veterinarians.filter((v) => {
-    // Check if veterinarian has weeklySchedules with zones
-    if (!v.weeklySchedules || !Array.isArray(v.weeklySchedules)) {
-      // If no schedules/zones data, include the veterinarian (backwards compatibility)
-      return true;
-    }
-    
-    // Check all zones across all schedules
-    // Exclude veterinarian if ANY zone has acceptingNewPatients === false
-    // When lat/lon are passed, only one zone will be returned, so we check that specific zone
-    // When address is passed, the backend should return only relevant zones
-    const hasNonAcceptingZone = v.weeklySchedules.some((schedule: any) => {
-      if (!schedule.zones || !Array.isArray(schedule.zones)) {
-        return false;
-      }
-      
-      // Check if any zone in this schedule has acceptingNewPatients === false
-      return schedule.zones.some((zone: any) => zone.acceptingNewPatients === false);
-    });
-    
-    // Exclude veterinarians that have at least one zone not accepting new patients
-    // Include veterinarians where all zones accept new patients (or don't have the field set)
-    return !hasNonAcceptingZone;
-  });
+  // For existing/returning clients the new-patient restriction does not apply — skip the filter.
+  // For new clients, only include vets where the zone returned by the backend (already filtered
+  // to the client's location) is accepting new patients. We require at least one zone to
+  // explicitly accept new patients; vets with no zone data are included for backwards compat.
+  const filteredVeterinarians = onlyAcceptingNew
+    ? veterinarians.filter((v) => {
+        if (!v.weeklySchedules || !Array.isArray(v.weeklySchedules)) {
+          return true; // no zone data — include (backwards compat)
+        }
+        // Keep the vet only if at least one returned zone has acceptingNewPatients !== false
+        return v.weeklySchedules.some((schedule: any) => {
+          if (!schedule.zones || !Array.isArray(schedule.zones)) {
+            return true; // schedule with no zone data — allow
+          }
+          return schedule.zones.some((zone: any) => zone.acceptingNewPatients !== false);
+        });
+      })
+    : veterinarians;
   
   return filteredVeterinarians.map((v) => {
     const id = v.id ?? v.pimsId ?? v.employeeId;
@@ -138,8 +204,95 @@ export async function fetchPublicVeterinarians(
       id: id,
       name: name,
       email: v?.email,
+      imageUrl: v?.imageUrl ?? null,
+      employeeId: typeof id === 'number' ? id : (v.employeeId ?? null),
+      bio: typeof v?.bio === 'string' && v.bio.trim() ? v.bio.trim() : null,
     };
   });
+}
+
+export type MonthAvailabilityCandidate = {
+  date: string; // YYYY-MM-DD
+  /** Exact ISO from availability API — use for form submit without reformatting */
+  suggestedStartIso: string;
+  /** Normalized ISO for calendar/time matching fallback */
+  iso: string;
+  display: string;
+  doctorId?: string | number;
+  doctorName?: string;
+  windowStartIso?: string;
+  windowEndIso?: string;
+};
+
+/**
+ * Fetch all available slots for a doctor over a date range (for month calendar view).
+ * Unlike fetchAvailability, this does not cap at 3 results.
+ * POST /public/appointments/availability
+ */
+export async function fetchPublicMonthAvailability(request: AvailabilityRequest): Promise<MonthAvailabilityCandidate[]> {
+  const { data } = await http.post('/public/appointments/availability', request);
+
+  const rawCandidates: any[] = [];
+
+  if (data?.candidates && Array.isArray(data.candidates)) {
+    rawCandidates.push(...data.candidates);
+  } else if (data?.slots && Array.isArray(data.slots)) {
+    rawCandidates.push(...data.slots);
+  } else {
+    if (data?.winner) rawCandidates.push(data.winner);
+    if (Array.isArray(data?.alternates)) rawCandidates.push(...data.alternates);
+  }
+
+  const maxScore = resolveOfferableMaxScoreFromApi(data ?? {});
+
+  const results: MonthAvailabilityCandidate[] = [];
+  for (const c of rawCandidates) {
+    const score = c.score;
+    if (score != null) {
+      const n = Number(score);
+      if (!Number.isFinite(n) || n > maxScore) continue;
+    }
+
+    const dt = c.suggestedStartIso
+      ? DateTime.fromISO(c.suggestedStartIso)
+      : c.iso
+      ? DateTime.fromISO(c.iso)
+      : null;
+    if (!dt || !dt.isValid) continue;
+
+    const suggestedStartIso =
+      typeof c.suggestedStartIso === 'string' && c.suggestedStartIso.trim()
+        ? c.suggestedStartIso.trim()
+        : typeof c.iso === 'string' && c.iso.trim()
+          ? c.iso.trim()
+          : (dt.toISO() as string);
+
+    const arrivalWindow = c.arrivalWindow ?? c.effectiveWindow;
+    const windowStartIso =
+      typeof arrivalWindow?.windowStartIso === 'string'
+        ? arrivalWindow.windowStartIso.trim()
+        : typeof arrivalWindow?.startIso === 'string'
+          ? arrivalWindow.startIso.trim()
+          : undefined;
+    const windowEndIso =
+      typeof arrivalWindow?.windowEndIso === 'string'
+        ? arrivalWindow.windowEndIso.trim()
+        : typeof arrivalWindow?.endIso === 'string'
+          ? arrivalWindow.endIso.trim()
+          : undefined;
+
+    results.push({
+      date: dt.toISODate() as string,
+      suggestedStartIso,
+      iso: dt.toISO() as string,
+      display: dt.toFormat("cccc, LLLL d 'at' h:mm a"),
+      doctorId: c.doctorId,
+      doctorName: c.doctorName,
+      windowStartIso,
+      windowEndIso,
+    });
+  }
+  return results;
 }
 
 /**
@@ -224,6 +377,9 @@ export type AppointmentType = {
   showInApptRequestForm: boolean;
   newPatientAllowed: boolean;
   formListOrder?: number | null;
+  windowBeforeMinutes?: number | null;
+  windowAfterMinutes?: number | null;
+  isCalmingPremedType?: boolean;
   practice?: {
     id: number;
     isActive: boolean;
@@ -277,6 +433,11 @@ export async function fetchAppointmentTypes(
     showInApptRequestForm: type.showInApptRequestForm || false,
     newPatientAllowed: type.newPatientAllowed || false,
     formListOrder: type.formListOrder ?? null,
+    windowBeforeMinutes: type.windowBeforeMinutes ?? type.window_before_minutes ?? null,
+    windowAfterMinutes: type.windowAfterMinutes ?? type.window_after_minutes ?? null,
+    isCalmingPremedType:
+      type.isCalmingPremedType === true ||
+      type.is_calming_premed_type === true,
     practice: type.practice,
   }));
 }

@@ -2,6 +2,15 @@ import type { AppointmentTypeCardOption } from '../components/NewClientAppointme
 
 export const NEW_CLIENT_SOMETHING_ELSE_LABEL = 'Something else';
 
+export const EUTHANASIA_AFTERCARE_LABEL = 'What are your preferences for aftercare?';
+
+export const EUTHANASIA_AFTERCARE_OPTIONS = [
+  "I will handle my pet's remains (e.g. bury at home)",
+  'Private Cremation (Cremation WITH return of ashes)',
+  'Burial At Sea (Cremation WITHOUT return of ashes)',
+  'I am not sure yet.',
+] as const;
+
 export function appointmentTypeMatchesPatterns(
   option: AppointmentTypeCardOption,
   patterns: string[],

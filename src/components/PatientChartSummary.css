@@ -1,0 +1,107 @@
+.patient-chart-summary-panel {
+  font-size: 13px;
+  line-height: 1.4;
+  color: #0f172a;
+}
+
+.patient-chart-summary-panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  font-size: 14px;
+  font-weight: 700;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.patient-chart-summary-panel-name {
+  flex: 0 1 auto;
+}
+
+.patient-chart-summary-panel-membership {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+}
+
+.patient-chart-summary-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.patient-chart-summary-section-title {
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.patient-chart-summary-section-body {
+  margin: 0;
+}
+
+.patient-chart-summary-section--overdue .patient-chart-summary-section-title,
+.patient-chart-summary-section--overdue .patient-chart-summary-line,
+.patient-chart-summary-list--overdue {
+  color: #dc2626;
+}
+
+.patient-chart-summary-alert-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+}
+
+.patient-chart-summary-alert-icon {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  color: #ca8a04;
+}
+
+.patient-chart-summary-line {
+  margin: 0;
+}
+
+.patient-chart-summary-list {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.patient-chart-summary-list li + li {
+  margin-top: 4px;
+}
+
+.patient-chart-summary-muted {
+  margin: 0;
+  color: #64748b;
+}
+
+.patient-chart-summary-error {
+  margin: 0;
+  color: #dc2626;
+}
+
+/* Hover card shell (Get Best Route) */
+.routing-patient-hover-popover .routing-patient-hover-card {
+  max-height: none;
+}
+
+.routing-patient-hover-card {
+  background: #fff;
+  border: 1px solid #dbeafe;
+  border-radius: 12px;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.14);
+  padding: 12px 14px;
+  max-height: min(70vh, 520px);
+  overflow: auto;
+}

@@ -15,6 +15,16 @@ export type MembershipPurchaseWeek = {
   count: number;
 };
 
+/** Conversion stats for the 24-hour sign-up card given to clients. */
+export type SignUpCardConversion = {
+  cardItemName: string;
+  cardsGiven: number;
+  clientsGivenCard: number;
+  clientsConverted: number;
+  /** Fraction in [0, 1]; multiply by 100 for a percentage. */
+  conversionRate: number;
+};
+
 export type MembershipPurchasesAnalytics = {
   totalMemberships: number;
   membershipsByType: Record<string, number>;
@@ -25,6 +35,8 @@ export type MembershipPurchasesAnalytics = {
   purchasesByDay: MembershipPurchaseDay[];
   /** Weekly aggregates from API when provided; otherwise empty (UI may roll up from daily). */
   weekly: MembershipPurchaseWeek[];
+  /** Sign-up card conversion stats; null if not provided by the API. */
+  signUpCardConversion: SignUpCardConversion | null;
 };
 
 function emptyAnalytics(): MembershipPurchasesAnalytics {
@@ -35,6 +47,7 @@ function emptyAnalytics(): MembershipPurchasesAnalytics {
     heardAboutUs: {},
     purchasesByDay: [],
     weekly: [],
+    signUpCardConversion: null,
   };
 }
 
@@ -101,6 +114,18 @@ function weeklyFromArray(arr: unknown): MembershipPurchaseWeek[] {
   return out;
 }
 
+function parseSignUpCardConversion(x: unknown): SignUpCardConversion | null {
+  if (!x || typeof x !== 'object') return null;
+  const o = x as Record<string, unknown>;
+  return {
+    cardItemName: String(o.cardItemName ?? o.itemName ?? o.name ?? '').trim(),
+    cardsGiven: num(o.cardsGiven),
+    clientsGivenCard: num(o.clientsGivenCard),
+    clientsConverted: num(o.clientsConverted),
+    conversionRate: num(o.conversionRate),
+  };
+}
+
 function getStr(o: Record<string, unknown>, keys: string[]): string | undefined {
   for (const k of keys) {
     const v = o[k];
@@ -156,6 +181,7 @@ function aggregateFromPurchases(rows: unknown[]): MembershipPurchasesAnalytics {
     heardAboutUs: byChannel,
     purchasesByDay,
     weekly: [],
+    signUpCardConversion: null,
   };
 }
 
@@ -237,6 +263,10 @@ export function normalizeMembershipPurchasesResponse(data: unknown): MembershipP
 
   let weekly = weeklyFromArray(src.weekly ?? root.weekly);
 
+  const signUpCardConversion = parseSignUpCardConversion(
+    src.signUpCardConversion ?? root.signUpCardConversion
+  );
+
   if (!purchasesByDay.length && Array.isArray(purchasesRaw)) {
     const agg = aggregateFromPurchases(purchasesRaw);
     purchasesByDay = agg.purchasesByDay;
@@ -262,6 +292,7 @@ export function normalizeMembershipPurchasesResponse(data: unknown): MembershipP
     heardAboutUs,
     purchasesByDay,
     weekly,
+    signUpCardConversion,
   };
 }
 

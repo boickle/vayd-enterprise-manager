@@ -1,6 +1,4 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { useAuth } from '../auth/useAuth';
-import { isEmployeeAnalyticsRestricted, normalizeAuthRoles } from '../utils/analyticsAccess';
 import {
   Box,
   Card,
@@ -48,10 +46,20 @@ import {
 import {
   fetchAllAppointmentRequestSubmissions,
   type AppointmentRequestSubmissionItem,
+  type AppointmentRequestSubmissionConversions,
 } from '../api/appointmentRequestSubmissions';
+import {
+  fetchServiceAreaInterestAnalytics,
+  type ServiceAreaInterestAnalyticsResponse,
+} from '../api/serviceAreaInterest';
+import { useCommittedDateRange } from '../hooks/useCommittedDateRange';
 
 function toLocalDateStr(d: Dayjs) {
   return d.format('YYYY-MM-DD');
+}
+
+function formatUsd(n: number) {
+  return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(n);
 }
 
 function dateRange(start: Dayjs, end: Dayjs): string[] {
@@ -142,12 +150,33 @@ function isEuthanasiaRequestSubmission(requestData: Record<string, unknown>): bo
   );
 }
 
+/**
+ * Formats the request → appointment conversion rate as a percentage string.
+ * Prefers deriving the rate from the raw counts; falls back to the API-provided
+ * `conversionRate` (treated as a fraction when ≤ 1, otherwise as a percentage).
+ */
+function formatConversionRate(conversions: AppointmentRequestSubmissionConversions): string {
+  const { totalRequests, converted, conversionRate } = conversions;
+  if (totalRequests > 0) {
+    return `${((converted / totalRequests) * 100).toFixed(1)}%`;
+  }
+  if (typeof conversionRate === 'number' && Number.isFinite(conversionRate)) {
+    const pct = conversionRate <= 1 ? conversionRate * 100 : conversionRate;
+    return `${pct.toFixed(1)}%`;
+  }
+  return '—';
+}
+
 function isCompletedSubmission(item: AppointmentRequestSubmissionItem): boolean {
   return item.kind == null || item.kind === 'submission';
 }
 
 function isAbandonedSubmission(item: AppointmentRequestSubmissionItem): boolean {
   return item.kind === 'abandoned';
+}
+
+function isOutOfServiceAreaAbandon(item: AppointmentRequestSubmissionItem): boolean {
+  return item.kind === 'abandoned' && item.abandonReason === 'zone_not_serviced';
 }
 
 function classifyClientType(requestData: Record<string, unknown>): 'new' | 'existing' | 'unknown' {
@@ -160,6 +189,20 @@ function classifyClientType(requestData: Record<string, unknown>): 'new' | 'exis
     if (startedAsExisting === false) return 'new';
   }
   return 'unknown';
+}
+
+/** Select answer from new-client public form (`howDidYouHearAboutUs`). */
+function requestDataHowDidYouHearAboutUs(requestData: Record<string, unknown>): string | null {
+  const v = requestData.howDidYouHearAboutUs;
+  if (typeof v === 'string' && v.trim()) return v.trim();
+  return null;
+}
+
+/** Free-text follow-up when select answer is "Other". */
+function requestDataHowDidYouHearAboutUsOther(requestData: Record<string, unknown>): string | null {
+  const v = requestData.howDidYouHearAboutUsOther;
+  if (typeof v === 'string' && v.trim()) return v.trim();
+  return null;
 }
 
 function classifySubmission(item: AppointmentRequestSubmissionItem): {
@@ -367,20 +410,9 @@ function collectBookingDetails(
 }
 
 export default function RoutingAnalyticsPage() {
-  const { userEmail, role, assignedDoctorIds } = useAuth() as {
-    userEmail?: string | null;
-    role?: string[];
-    assignedDoctorIds?: string[];
-  };
-  const normalizedRoles = normalizeAuthRoles(role);
-  const restrictEmployeeAnalytics = isEmployeeAnalyticsRestricted(normalizedRoles);
-  const assignedDoctorIdSet = useMemo(
-    () => new Set((assignedDoctorIds ?? []).map((x) => String(x).trim()).filter(Boolean)),
-    [assignedDoctorIds]
-  );
-
   const [preset, setPreset] = useState<string>('1D');
-  const [range, setRange] = useState<{ from: Dayjs; to: Dayjs }>(() => PRESETS['1D']());
+  const { range, draftRange, applyRange, onCustomFromChange, onCustomToChange } =
+    useCommittedDateRange(PRESETS['1D']());
   const [selectedOverviewUserEmail, setSelectedOverviewUserEmail] = useState<string>(ALL_USERS);
   const [overviewLinesVisible, setOverviewLinesVisible] =
     useState<Record<OverviewLineKey, boolean>>(OVERVIEW_LINE_DEFAULTS);
@@ -404,8 +436,14 @@ export default function RoutingAnalyticsPage() {
   const [requestSubmissions, setRequestSubmissions] = useState<AppointmentRequestSubmissionItem[] | null>(
     null
   );
+  const [requestSubmissionConversions, setRequestSubmissionConversions] =
+    useState<AppointmentRequestSubmissionConversions | null>(null);
   const [requestSubmissionsLoading, setRequestSubmissionsLoading] = useState(false);
   const [requestSubmissionsError, setRequestSubmissionsError] = useState<string | null>(null);
+  const [serviceAreaInterest, setServiceAreaInterest] =
+    useState<ServiceAreaInterestAnalyticsResponse | null>(null);
+  const [serviceAreaInterestLoading, setServiceAreaInterestLoading] = useState(false);
+  const [serviceAreaInterestError, setServiceAreaInterestError] = useState<string | null>(null);
 
   const start = range.from.startOf('day');
   const end = range.to.startOf('day');
@@ -417,10 +455,10 @@ export default function RoutingAnalyticsPage() {
   const shiftRange = (direction: -1 | 1) => {
     const days = end.diff(start, 'day') + 1;
     const shift = days * direction;
-    setRange((r) => ({
-      from: r.from.add(shift, 'day'),
-      to: r.to.add(shift, 'day'),
-    }));
+    applyRange({
+      from: range.from.add(shift, 'day'),
+      to: range.to.add(shift, 'day'),
+    });
   };
 
   useEffect(() => {
@@ -506,19 +544,50 @@ export default function RoutingAnalyticsPage() {
       practiceId: APPOINTMENT_REQUEST_PRACTICE_ID,
       from: fromIso,
       to: toIso,
+      includeConversions: true,
+      includeAbandoned: true,
     })
-      .then((items) => {
+      .then((res) => {
         if (!alive) return;
-        setRequestSubmissions(items);
+        setRequestSubmissions(res.items);
+        setRequestSubmissionConversions(res.conversions);
       })
       .catch((e) => {
         if (!alive) return;
         console.error('Appointment request submissions fetch failed:', e);
         setRequestSubmissionsError('Failed to load public appointment request submissions');
         setRequestSubmissions(null);
+        setRequestSubmissionConversions(null);
       })
       .finally(() => {
         if (alive) setRequestSubmissionsLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [startStr, endStr]);
+
+  useEffect(() => {
+    let alive = true;
+    setServiceAreaInterestLoading(true);
+    setServiceAreaInterestError(null);
+    fetchServiceAreaInterestAnalytics({
+      startDate: startStr,
+      endDate: endStr,
+      practiceId: APPOINTMENT_REQUEST_PRACTICE_ID,
+    })
+      .then((res) => {
+        if (!alive) return;
+        setServiceAreaInterest(res);
+      })
+      .catch((e) => {
+        if (!alive) return;
+        console.error('Service area interest analytics fetch failed:', e);
+        setServiceAreaInterestError('Failed to load out-of-service-area interest');
+        setServiceAreaInterest(null);
+      })
+      .finally(() => {
+        if (alive) setServiceAreaInterestLoading(false);
       });
     return () => {
       alive = false;
@@ -534,8 +603,15 @@ export default function RoutingAnalyticsPage() {
     let newClient = 0;
     let existingClient = 0;
     let abandoned = 0;
+    let outOfServiceAreaAbandoned = 0;
+    const howDidYouHearCounts = new Map<string, number>();
+    const howDidYouHearOtherCounts = new Map<string, number>();
     for (const item of items) {
       const { isEuth, clientType, localDay } = classifySubmission(item);
+      if (isOutOfServiceAreaAbandon(item)) {
+        outOfServiceAreaAbandoned += 1;
+        continue;
+      }
       if (isAbandonedSubmission(item)) {
         abandoned += 1;
         continue;
@@ -545,6 +621,17 @@ export default function RoutingAnalyticsPage() {
       if (isEuth) euth += 1;
       if (clientType === 'new') newClient += 1;
       else if (clientType === 'existing') existingClient += 1;
+      const rd = item.requestData ?? {};
+      const hearAbout = requestDataHowDidYouHearAboutUs(rd);
+      if (hearAbout) {
+        howDidYouHearCounts.set(hearAbout, (howDidYouHearCounts.get(hearAbout) ?? 0) + 1);
+        if (hearAbout === 'Other') {
+          const other = requestDataHowDidYouHearAboutUsOther(rd);
+          if (other) {
+            howDidYouHearOtherCounts.set(other, (howDidYouHearOtherCounts.get(other) ?? 0) + 1);
+          }
+        }
+      }
       const row = byDay.get(localDay);
       if (row) {
         row.total += 1;
@@ -559,6 +646,8 @@ export default function RoutingAnalyticsPage() {
       const r = byDay.get(date) ?? { total: 0, euth: 0, nonEuth: 0 };
       return { date, totalBookedRequests: r.total, euthRequests: r.euth, nonEuthRequests: r.nonEuth };
     });
+    const howDidYouHearRows = [...howDidYouHearCounts.entries()].sort((a, b) => b[1] - a[1]);
+    const howDidYouHearOtherRows = [...howDidYouHearOtherCounts.entries()].sort((a, b) => b[1] - a[1]);
     return {
       total,
       euth,
@@ -566,9 +655,12 @@ export default function RoutingAnalyticsPage() {
       newClient,
       existingClient,
       abandoned,
+      outOfServiceAreaAbandoned,
       attempted,
       completionRate,
       chartRows,
+      howDidYouHearRows,
+      howDidYouHearOtherRows,
     };
   }, [requestSubmissions, dates]);
 
@@ -607,23 +699,8 @@ export default function RoutingAnalyticsPage() {
       if (u.userEmail && !labels.has(u.userEmail)) labels.set(u.userEmail, displayNameFillDay(u));
     }
     const sorted = [...labels.entries()].sort((a, b) => a[1].localeCompare(b[1]));
-    const full = [{ value: ALL_USERS, label: 'Entire practice' }, ...sorted.map(([value, label]) => ({ value, label }))];
-    if (!restrictEmployeeAnalytics) return full;
-    const selfEmail = userEmail ? String(userEmail).trim().toLowerCase() : '';
-    const selfEntry = selfEmail
-      ? sorted.find(([email]) => String(email).trim().toLowerCase() === selfEmail)
-      : undefined;
-    return [
-      { value: ALL_USERS, label: 'Entire practice' },
-      ...(selfEntry ? [{ value: selfEntry[0], label: selfEntry[1] }] : []),
-    ];
-  }, [bookingsData, data, fillDayData, restrictEmployeeAnalytics, userEmail]);
-
-  useEffect(() => {
-    if (!restrictEmployeeAnalytics) return;
-    const allowed = new Set(overviewUserOptions.map((o) => o.value));
-    if (!allowed.has(selectedOverviewUserEmail)) setSelectedOverviewUserEmail(ALL_USERS);
-  }, [restrictEmployeeAnalytics, overviewUserOptions, selectedOverviewUserEmail]);
+    return [{ value: ALL_USERS, label: 'Entire practice' }, ...sorted.map(([value, label]) => ({ value, label }))];
+  }, [bookingsData, data, fillDayData]);
 
   /** Per-employee routing, schedule loader, and booking counts summed over the selected date range. */
   const employeeBookingTableRows = useMemo(() => {
@@ -639,6 +716,8 @@ export default function RoutingAnalyticsPage() {
       let totalBooked = 0;
       let existingPatientBooked = 0;
       let newPatientBooked = 0;
+      let totalPoints = 0;
+      let totalPotentialRevenue = 0;
       let routingRequests = 0;
       let scheduleLoaderRequests = 0;
       for (const d of bu?.bookingsByDay ?? []) {
@@ -647,6 +726,8 @@ export default function RoutingAnalyticsPage() {
         totalBooked += d.totalBooked ?? 0;
         existingPatientBooked += d.existingPatientBooked ?? 0;
         newPatientBooked += d.newPatientBooked ?? 0;
+        totalPoints += d.totalPoints ?? 0;
+        totalPotentialRevenue += d.totalPotentialRevenue ?? 0;
       }
       for (const d of ru?.requestsByDay ?? []) {
         const date = d?.date?.slice(0, 10);
@@ -671,6 +752,8 @@ export default function RoutingAnalyticsPage() {
         totalBooked,
         existingPatientBooked,
         newPatientBooked,
+        totalPoints,
+        totalPotentialRevenue,
         routingRequests,
         scheduleLoaderRequests,
       };
@@ -714,6 +797,8 @@ export default function RoutingAnalyticsPage() {
           newPatientBooked: acc.newPatientBooked + r.newPatientBooked,
           existingPatientBooked: acc.existingPatientBooked + r.existingPatientBooked,
           totalBooked: acc.totalBooked + r.totalBooked,
+          totalPoints: acc.totalPoints + r.totalPoints,
+          totalPotentialRevenue: acc.totalPotentialRevenue + r.totalPotentialRevenue,
         }),
         {
           routingRequests: 0,
@@ -721,6 +806,8 @@ export default function RoutingAnalyticsPage() {
           newPatientBooked: 0,
           existingPatientBooked: 0,
           totalBooked: 0,
+          totalPoints: 0,
+          totalPotentialRevenue: 0,
         }
       ),
     [employeeBookingTableRows]
@@ -760,16 +847,8 @@ export default function RoutingAnalyticsPage() {
       if (prev) prev.count += 1;
       else map.set(key, { label, count: 1, providerKey: key });
     }
-    let rows = [...map.values()].sort((a, b) => b.count - a.count);
-    if (restrictEmployeeAnalytics && assignedDoctorIdSet.size > 0) {
-      rows = rows.filter((row) => {
-        if (!row.providerKey.startsWith('id:')) return false;
-        const id = row.providerKey.slice(3);
-        return assignedDoctorIdSet.has(id);
-      });
-    }
-    return rows;
-  }, [overviewBookingDetails, restrictEmployeeAnalytics, assignedDoctorIdSet]);
+    return [...map.values()].sort((a, b) => b.count - a.count);
+  }, [overviewBookingDetails]);
 
   const appointmentTypeBreakdownRows = useMemo(() => {
     const map = new Map<string, number>();
@@ -871,54 +950,24 @@ export default function RoutingAnalyticsPage() {
     for (const u of data?.users ?? []) {
       if (u.userEmail) list.push({ value: u.userEmail, label: displayName(u) });
     }
-    if (!restrictEmployeeAnalytics) return list;
-    const selfEmail = userEmail ? String(userEmail).trim().toLowerCase() : '';
-    if (!selfEmail) return [list[0]];
-    const self = list.find((o) => String(o.value).trim().toLowerCase() === selfEmail);
-    return [list[0], ...(self ? [self] : [])];
-  }, [data, restrictEmployeeAnalytics, userEmail]);
+    return list;
+  }, [data]);
 
   const fillDayUserOptions = useMemo(() => {
     const list: { value: string; label: string }[] = [{ value: ALL_USERS, label: 'All users' }];
     for (const u of fillDayData?.users ?? []) {
       if (u.userEmail) list.push({ value: u.userEmail, label: displayNameFillDay(u) });
     }
-    if (!restrictEmployeeAnalytics) return list;
-    const selfEmail = userEmail ? String(userEmail).trim().toLowerCase() : '';
-    if (!selfEmail) return [list[0]];
-    const self = list.find((o) => String(o.value).trim().toLowerCase() === selfEmail);
-    return [list[0], ...(self ? [self] : [])];
-  }, [fillDayData, restrictEmployeeAnalytics, userEmail]);
+    return list;
+  }, [fillDayData]);
 
   const careOutreachUserOptions = useMemo(() => {
     const list: { value: string; label: string }[] = [{ value: ALL_USERS, label: 'All users' }];
     for (const u of careOutreachUsageData?.users ?? []) {
       if (u.userEmail) list.push({ value: u.userEmail, label: displayNameFillDay(u) });
     }
-    if (!restrictEmployeeAnalytics) return list;
-    const selfEmail = userEmail ? String(userEmail).trim().toLowerCase() : '';
-    if (!selfEmail) return [list[0]];
-    const self = list.find((o) => String(o.value).trim().toLowerCase() === selfEmail);
-    return [list[0], ...(self ? [self] : [])];
-  }, [careOutreachUsageData, restrictEmployeeAnalytics, userEmail]);
-
-  useEffect(() => {
-    if (!restrictEmployeeAnalytics) return;
-    const allowed = new Set(userOptions.map((o) => o.value));
-    if (!allowed.has(selectedUserEmail)) setSelectedUserEmail(ALL_USERS);
-  }, [restrictEmployeeAnalytics, userOptions, selectedUserEmail]);
-
-  useEffect(() => {
-    if (!restrictEmployeeAnalytics) return;
-    const allowed = new Set(fillDayUserOptions.map((o) => o.value));
-    if (!allowed.has(selectedFillDayUserEmail)) setSelectedFillDayUserEmail(ALL_USERS);
-  }, [restrictEmployeeAnalytics, fillDayUserOptions, selectedFillDayUserEmail]);
-
-  useEffect(() => {
-    if (!restrictEmployeeAnalytics) return;
-    const allowed = new Set(careOutreachUserOptions.map((o) => o.value));
-    if (!allowed.has(selectedCareOutreachUserEmail)) setSelectedCareOutreachUserEmail(ALL_USERS);
-  }, [restrictEmployeeAnalytics, careOutreachUserOptions, selectedCareOutreachUserEmail]);
+    return list;
+  }, [careOutreachUsageData]);
 
   const chartDataWithTrend = useMemo(() => addLinearTrend(chartData), [chartData]);
   const fillDayChartDataWithTrend = useMemo(() => addLinearTrend(fillDayChartData), [fillDayChartData]);
@@ -959,7 +1008,7 @@ export default function RoutingAnalyticsPage() {
                     type="button"
                     onClick={() => {
                       setPreset(key);
-                      setRange(PRESETS[key]());
+                      applyRange(PRESETS[key]());
                     }}
                     style={{
                       padding: '6px 12px',
@@ -992,7 +1041,10 @@ export default function RoutingAnalyticsPage() {
                 aria-label={isSingleDay ? 'Previous day' : 'Previous period'}
                 onClick={() =>
                   isSingleDay
-                    ? setRange((r) => ({ from: r.from.subtract(1, 'day'), to: r.from.subtract(1, 'day') }))
+                    ? applyRange({
+                        from: range.from.subtract(1, 'day'),
+                        to: range.from.subtract(1, 'day'),
+                      })
                     : shiftRange(-1)
                 }
                 size="small"
@@ -1008,7 +1060,10 @@ export default function RoutingAnalyticsPage() {
                 aria-label={isSingleDay ? 'Next day' : 'Next period'}
                 onClick={() =>
                   isSingleDay
-                    ? setRange((r) => ({ from: r.from.add(1, 'day'), to: r.from.add(1, 'day') }))
+                    ? applyRange({
+                        from: range.from.add(1, 'day'),
+                        to: range.from.add(1, 'day'),
+                      })
                     : shiftRange(1)
                 }
                 size="small"
@@ -1019,18 +1074,14 @@ export default function RoutingAnalyticsPage() {
                 label="Start date"
                 type="date"
                 size="small"
-                value={startStr}
+                value={toLocalDateStr(draftRange.from.startOf('day'))}
                 onChange={(e) => {
                   const v = e.target.value;
                   if (!v) return;
                   const next = dayjs(v, 'YYYY-MM-DD', true);
                   if (!next.isValid()) return;
                   setPreset('');
-                  setRange((r) => {
-                    const to = r.to.startOf('day');
-                    const from = next.startOf('day');
-                    return { from, to: from.isAfter(to) ? from : to };
-                  });
+                  onCustomFromChange(next);
                 }}
                 InputLabelProps={{ shrink: true }}
                 inputProps={{ 'aria-label': 'Custom range start date' }}
@@ -1040,18 +1091,14 @@ export default function RoutingAnalyticsPage() {
                 label="End date"
                 type="date"
                 size="small"
-                value={endStr}
+                value={toLocalDateStr(draftRange.to.startOf('day'))}
                 onChange={(e) => {
                   const v = e.target.value;
                   if (!v) return;
                   const next = dayjs(v, 'YYYY-MM-DD', true);
                   if (!next.isValid()) return;
                   setPreset('');
-                  setRange((r) => {
-                    const from = r.from.startOf('day');
-                    const to = next.startOf('day');
-                    return { from: to.isBefore(from) ? to : from, to };
-                  });
+                  onCustomToChange(next);
                 }}
                 InputLabelProps={{ shrink: true }}
                 inputProps={{ 'aria-label': 'Custom range end date' }}
@@ -1114,12 +1161,14 @@ export default function RoutingAnalyticsPage() {
                         <TableCell align="right">New patient</TableCell>
                         <TableCell align="right">Existing patient</TableCell>
                         <TableCell align="right">Total appointments</TableCell>
+                        <TableCell align="right">Points</TableCell>
+                        <TableCell align="right">Potential revenue</TableCell>
                       </TableRow>
                     </TableHead>
                     <TableBody>
                       {employeeBookingTableRows.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={6} align="center">
+                          <TableCell colSpan={8} align="center">
                             <Typography variant="body2" color="text.secondary">
                               {selectedOverviewUserEmail !== ALL_USERS
                                 ? 'No data for this employee in this date range.'
@@ -1136,6 +1185,10 @@ export default function RoutingAnalyticsPage() {
                             <TableCell align="right">{row.newPatientBooked}</TableCell>
                             <TableCell align="right">{row.existingPatientBooked}</TableCell>
                             <TableCell align="right">{row.totalBooked}</TableCell>
+                            <TableCell align="right">{row.totalPoints}</TableCell>
+                            <TableCell align="right">
+                              {formatUsd(row.totalPotentialRevenue)}
+                            </TableCell>
                           </TableRow>
                         ))
                       )}
@@ -1176,6 +1229,12 @@ export default function RoutingAnalyticsPage() {
                             ) : (
                               employeeBookingTableColumnTotals.totalBooked
                             )}
+                          </TableCell>
+                          <TableCell align="right" sx={{ fontWeight: 600 }}>
+                            {employeeBookingTableColumnTotals.totalPoints}
+                          </TableCell>
+                          <TableCell align="right" sx={{ fontWeight: 600 }}>
+                            {formatUsd(employeeBookingTableColumnTotals.totalPotentialRevenue)}
                           </TableCell>
                         </TableRow>
                       </TableFooter>
@@ -1829,9 +1888,11 @@ export default function RoutingAnalyticsPage() {
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
           GET /appointments/request-submissions (practiceId={APPOINTMENT_REQUEST_PRACTICE_ID}, from / to in
           ISO UTC derived from the selected local dates). Completed submissions (<code>kind: submission</code>)
-          are counted for totals, client type, and euthanasia breakdown; abandoned form sessions (
-          <code>kind: abandoned</code>) are counted separately. Attempted = completed + abandoned; completion
-          rate = completed ÷ attempted.
+          are counted for totals, client type, euthanasia breakdown, and how-did-you-hear-about-us answers;
+          abandoned form sessions (<code>kind: abandoned</code>) are counted separately, excluding out-of-service-area
+          blocks (<code>abandonReason: zone_not_serviced</code>). Attempted = completed + abandoned; completion rate =
+          completed ÷ attempted. “How did you hear about us” is asked on new-client submissions only. Out-of-service-area
+          city/state demand comes from GET /analytics/appointment-service-area-interest.
         </Typography>
 
         {requestSubmissionsError && (
@@ -1854,12 +1915,67 @@ export default function RoutingAnalyticsPage() {
                 {requestSubmissionStats.completionRate != null
                   ? `${requestSubmissionStats.completionRate.toFixed(1)}%`
                   : '—'}
-                ), <strong>{requestSubmissionStats.abandoned}</strong> abandoned.{' '}
+                ), <strong>{requestSubmissionStats.abandoned}</strong> abandoned
+                {requestSubmissionStats.outOfServiceAreaAbandoned > 0
+                  ? `, ${requestSubmissionStats.outOfServiceAreaAbandoned} out of service area`
+                  : ''}
+                .{' '}
                 <strong>{requestSubmissionStats.newClient}</strong> new client,{' '}
                 <strong>{requestSubmissionStats.existingClient}</strong> existing client —{' '}
                 <strong>{requestSubmissionStats.nonEuth}</strong> non-euthanasia,{' '}
                 <strong>{requestSubmissionStats.euth}</strong> euthanasia-related.
               </Typography>
+            )}
+
+            {requestSubmissionConversions != null && (
+              <Card sx={{ mb: 3 }}>
+                <CardHeader
+                  title="Request → appointment conversions"
+                  subheader="Public appointment requests that were converted into actual appointments for the selected date range."
+                />
+                <CardContent>
+                  <TableContainer component={Paper} variant="outlined">
+                    <Table size="small">
+                      <TableHead>
+                        <TableRow>
+                          <TableCell>Category</TableCell>
+                          <TableCell align="right">Count</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        <TableRow>
+                          <TableCell>Total requests</TableCell>
+                          <TableCell align="right">
+                            {requestSubmissionConversions.totalRequests}
+                          </TableCell>
+                        </TableRow>
+                        <TableRow>
+                          <TableCell>Converted to appointment</TableCell>
+                          <TableCell align="right">
+                            <Typography variant="body2" component="span" color="success.main">
+                              {requestSubmissionConversions.converted}
+                            </Typography>
+                          </TableCell>
+                        </TableRow>
+                        <TableRow>
+                          <TableCell>Not converted</TableCell>
+                          <TableCell align="right">
+                            <Typography variant="body2" component="span" color="warning.main">
+                              {requestSubmissionConversions.notConverted}
+                            </Typography>
+                          </TableCell>
+                        </TableRow>
+                        <TableRow>
+                          <TableCell>Conversion rate</TableCell>
+                          <TableCell align="right">
+                            {formatConversionRate(requestSubmissionConversions)}
+                          </TableCell>
+                        </TableRow>
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                </CardContent>
+              </Card>
             )}
 
             {!isSingleDay && (
@@ -1920,7 +2036,7 @@ export default function RoutingAnalyticsPage() {
               </Card>
             )}
 
-            <Card>
+            <Card sx={{ mb: 3 }}>
               <CardHeader
                 title={isSingleDay ? 'Submissions for this day' : 'Submissions for selected range'}
                 subheader="Completed submissions and abandoned sessions for the selected date range."
@@ -1956,6 +2072,12 @@ export default function RoutingAnalyticsPage() {
                         <TableCell align="right">{requestSubmissionStats.abandoned}</TableCell>
                       </TableRow>
                       <TableRow>
+                        <TableCell>Out of service area (blocked)</TableCell>
+                        <TableCell align="right">
+                          {requestSubmissionStats.outOfServiceAreaAbandoned}
+                        </TableCell>
+                      </TableRow>
+                      <TableRow>
                         <TableCell>New client requests</TableCell>
                         <TableCell align="right">{requestSubmissionStats.newClient}</TableCell>
                       </TableRow>
@@ -1974,6 +2096,125 @@ export default function RoutingAnalyticsPage() {
                     </TableBody>
                   </Table>
                 </TableContainer>
+              </CardContent>
+            </Card>
+
+            <Card sx={{ mb: 3 }}>
+              <CardHeader
+                title="Out of service area — cities requested"
+                subheader="Addresses entered on the public appointment form that are outside the service area, grouped by city/state. Waitlist signups are visitors who asked to be notified when coverage expands."
+              />
+              <CardContent>
+                {serviceAreaInterestError && (
+                  <Alert severity="error" sx={{ mb: 2 }}>
+                    {serviceAreaInterestError}
+                  </Alert>
+                )}
+                {serviceAreaInterestLoading ? (
+                  <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
+                    <CircularProgress size={24} />
+                  </Box>
+                ) : (
+                  <>
+                    <Typography variant="body2" sx={{ mb: 2 }}>
+                      <strong>{serviceAreaInterest?.totalAttempts ?? 0}</strong> out-of-area attempts ·{' '}
+                      <strong>{serviceAreaInterest?.totalWaitlistSignups ?? 0}</strong> notify-me signups
+                    </Typography>
+                    <TableContainer component={Paper} variant="outlined">
+                      <Table size="small">
+                        <TableHead>
+                          <TableRow>
+                            <TableCell>City</TableCell>
+                            <TableCell>State</TableCell>
+                            <TableCell align="right">Attempts</TableCell>
+                            <TableCell align="right">Notify-me signups</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {(serviceAreaInterest?.byCityState?.length ?? 0) === 0 ? (
+                            <TableRow>
+                              <TableCell colSpan={4}>
+                                <Typography color="text.secondary">
+                                  No out-of-service-area attempts in this range
+                                </Typography>
+                              </TableCell>
+                            </TableRow>
+                          ) : (
+                            serviceAreaInterest!.byCityState.map((row) => (
+                              <TableRow key={`${row.state}-${row.city}`}>
+                                <TableCell>{row.city}</TableCell>
+                                <TableCell>{row.state}</TableCell>
+                                <TableCell align="right">{row.attempts}</TableCell>
+                                <TableCell align="right">{row.waitlistSignups}</TableCell>
+                              </TableRow>
+                            ))
+                          )}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                  </>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader
+                title="How did you hear about us"
+                subheader="Answers from completed new-client public appointment requests for the selected date range."
+              />
+              <CardContent>
+                <TableContainer component={Paper} variant="outlined">
+                  <Table size="small">
+                    <TableHead>
+                      <TableRow>
+                        <TableCell>Answer</TableCell>
+                        <TableCell align="right">Count</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {requestSubmissionStats.howDidYouHearRows.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={2}>
+                            <Typography color="text.secondary">No answers in this range</Typography>
+                          </TableCell>
+                        </TableRow>
+                      ) : (
+                        requestSubmissionStats.howDidYouHearRows.map(([answer, count]) => (
+                          <TableRow key={answer}>
+                            <TableCell>{answer}</TableCell>
+                            <TableCell align="right">{count}</TableCell>
+                          </TableRow>
+                        ))
+                      )}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+
+                {requestSubmissionStats.howDidYouHearOtherRows.length > 0 && (
+                  <Box sx={{ mt: 3 }}>
+                    <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                      “Other” details
+                    </Typography>
+                    <TableContainer component={Paper} variant="outlined">
+                      <Table size="small">
+                        <TableHead>
+                          <TableRow>
+                            <TableCell>Write-in</TableCell>
+                            <TableCell align="right">Count</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {requestSubmissionStats.howDidYouHearOtherRows.map(([answer, count]) => (
+                            <TableRow key={answer}>
+                              <TableCell>{answer}</TableCell>
+                              <TableCell align="right">{count}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                  </Box>
+                )}
               </CardContent>
             </Card>
           </>

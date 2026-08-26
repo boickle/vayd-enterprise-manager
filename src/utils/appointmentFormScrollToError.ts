@@ -3,24 +3,159 @@ export function scrollToFirstAppointmentFormError(errors: Record<string, string>
   const keys = Object.keys(errors);
   if (keys.length === 0 || typeof document === 'undefined') return;
 
-  window.requestAnimationFrame(() => {
-    window.setTimeout(() => {
-      for (const key of keys) {
-        const target = findScrollTargetForErrorKey(key);
-        if (!target) continue;
+  const scroll = () => {
+    const target =
+      findFirstErrorTargetInDomOrder(errors) ?? findFirstErrorTargetByKeyFallback(errors);
+    if (!target) return;
 
-        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    scrollElementIntoView(target);
 
-        const focusable = target.querySelector<HTMLElement>(
-          'input:not([type="hidden"]):not([disabled]), select:not([disabled]), textarea:not([disabled]), button[data-handling-need], button[data-pet-sex-option], button[data-how-soon], button[data-appointment-type-id], button[data-species-choice]',
-        );
-        if (focusable && typeof focusable.focus === 'function') {
-          focusable.focus({ preventScroll: true });
-        }
-        return;
-      }
-    }, 150);
+    const focusable = target.querySelector<HTMLElement>(
+      'input:not([type="hidden"]):not([disabled]), select:not([disabled]), textarea:not([disabled]), button[data-handling-need], button[data-pet-sex-option], button[data-how-soon], button[data-appointment-type-id], button[data-species-choice]',
+    );
+    if (focusable && typeof focusable.focus === 'function') {
+      focusable.focus({ preventScroll: true });
+    }
+  };
+
+  // Wait for React to paint error messages, then scroll (retries for layout / fixed-body scroll).
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      scroll();
+      window.setTimeout(scroll, 120);
+      window.setTimeout(scroll, 320);
+    });
   });
+}
+
+function findFirstErrorTargetInDomOrder(errors: Record<string, string>): HTMLElement | null {
+  const errorKeys = new Set(Object.keys(errors));
+  const formRoot = document.querySelector('.appt-request-form') ?? document;
+
+  let topmost: HTMLElement | null = null;
+  let topmostY = Infinity;
+
+  const consider = (field: HTMLElement) => {
+    const y = field.getBoundingClientRect().top;
+    if (y < topmostY) {
+      topmostY = y;
+      topmost = field;
+    }
+  };
+
+  for (const field of formRoot.querySelectorAll<HTMLElement>('[data-form-field]')) {
+    const key = field.getAttribute('data-form-field');
+    if (key && errorKeys.has(key)) consider(field);
+  }
+
+  for (const anchor of formRoot.querySelectorAll<HTMLElement>('[data-form-error-for]')) {
+    const key = anchor.getAttribute('data-form-error-for');
+    if (key && errorKeys.has(key)) consider(anchor);
+  }
+
+  return topmost;
+}
+
+function findFirstErrorTargetByKeyFallback(errors: Record<string, string>): HTMLElement | null {
+  for (const key of sortErrorKeysByVisualPriority(Object.keys(errors))) {
+    const target = findScrollTargetForErrorKey(key);
+    if (target) return target;
+  }
+  return null;
+}
+
+/** Top-to-bottom priority when DOM markers are missing. */
+const VISUAL_FIELD_PRIORITY: string[] = [
+  'email',
+  'phoneNumbers',
+  'fullName.first',
+  'fullName.last',
+  'physicalAddress.line1',
+  'bestPhoneNumber',
+  'isThisTheAddressWhereWeWillCome',
+  'newPhysicalAddress.line1',
+  'zoneNotServiced',
+  'whatPets',
+  'newClientPets',
+  'selectedPetIds',
+  'howSoon',
+  'preferredDoctorExisting',
+  'preferredDoctor',
+  'preferredDateTime',
+  'selectedDateTimeSlotsVisit',
+  'selfScheduledSlot',
+  'euthanasiaReason',
+  'interestedInOtherOptions',
+  'aftercarePreference',
+];
+
+function sortErrorKeysByVisualPriority(keys: string[]): string[] {
+  const priorityIndex = (key: string): number => {
+    const exact = VISUAL_FIELD_PRIORITY.indexOf(key);
+    if (exact >= 0) return exact;
+
+    if (key.startsWith('newClientPet.')) return 50;
+    if (key.startsWith('existingClientNewPet.')) return 51;
+    if (key.startsWith('needsToday.')) return 52;
+    if (key.startsWith('euthanasiaReason.')) return 53;
+    if (key.startsWith('interestedInOtherOptions.')) return 54;
+    if (key.startsWith('aftercarePreference.')) return 55;
+
+    return 1000;
+  };
+
+  return [...keys].sort((a, b) => {
+    const diff = priorityIndex(a) - priorityIndex(b);
+    if (diff !== 0) return diff;
+    return a.localeCompare(b);
+  });
+}
+
+function scrollElementIntoView(element: HTMLElement): void {
+  const offset = getStickyHeaderOffset();
+
+  // Native API scrolls all scrollable ancestors; respects scroll-margin on [data-form-field].
+  element.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+
+  // App layout uses body/main as scroll roots (html overflow hidden) — window.scrollTo is a no-op.
+  for (const root of getDocumentScrollRoots()) {
+    const elRect = element.getBoundingClientRect();
+    const rootRect = root.getBoundingClientRect();
+    const top = elRect.top - rootRect.top + root.scrollTop - offset;
+    if (Math.abs(elRect.top - offset) > 16) {
+      root.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+    }
+  }
+}
+
+function getStickyHeaderOffset(): number {
+  const header = document.querySelector('header');
+  if (header) {
+    const style = getComputedStyle(header);
+    if (style.position === 'sticky' || style.position === 'fixed') {
+      return header.getBoundingClientRect().height + 12;
+    }
+  }
+  return 12;
+}
+
+function getDocumentScrollRoots(): HTMLElement[] {
+  const roots: HTMLElement[] = [];
+  const main = document.querySelector('main');
+  if (main instanceof HTMLElement) roots.push(main);
+  roots.push(document.body);
+  if (document.documentElement !== document.body) {
+    roots.push(document.documentElement);
+  }
+  return roots.filter(isVerticallyScrollable);
+}
+
+function isVerticallyScrollable(el: HTMLElement): boolean {
+  const { overflowY } = getComputedStyle(el);
+  if (overflowY !== 'auto' && overflowY !== 'scroll' && overflowY !== 'overlay') {
+    return false;
+  }
+  return el.scrollHeight > el.clientHeight + 1;
 }
 
 function findScrollTargetForErrorKey(key: string): HTMLElement | null {
@@ -66,36 +201,25 @@ function findScrollTargetForErrorKey(key: string): HTMLElement | null {
     );
   }
 
-  const simpleSelectors: Record<string, string> = {
-    email: '[data-form-field="email"]',
-    phoneNumbers: '[data-form-field="phoneNumbers"]',
-    howSoon: '[data-form-field="howSoon"]',
-    preferredDateTime: '[data-form-field="preferredDateTime"]',
-    bestPhoneNumber: '[data-form-field="bestPhoneNumber"]',
-    selectedPetIds: '[data-form-field="selectedPetIds"]',
-    newClientPets: '[data-form-field="newClientPets"]',
-    whatPets: '[data-form-field="whatPets"]',
-    'fullName.first': '[data-form-field="fullName.first"]',
-    'fullName.last': '[data-form-field="fullName.last"]',
-    'physicalAddress.line1': '[data-form-field="physicalAddress.line1"]',
-    'newPhysicalAddress.line1': '[data-form-field="newPhysicalAddress.line1"]',
-    isThisTheAddressWhereWeWillCome: '[data-form-field="isThisTheAddressWhereWeWillCome"]',
-    euthanasiaReason: '[data-form-field="euthanasiaReason"]',
-    interestedInOtherOptions: '[data-form-field="interestedInOtherOptions"]',
-    preferredDoctorExisting: '[data-form-field="preferredDoctorExisting"]',
-    selectedDateTimeSlotsVisit: '[data-form-field="selectedDateTimeSlotsVisit"]',
-    zoneNotServiced: '[data-form-field="zoneNotServiced"]',
-  };
-
-  const simple = simpleSelectors[key];
-  if (simple) {
-    return document.querySelector<HTMLElement>(simple);
+  const aftercarePreference = key.match(/^aftercarePreference\.(.+)$/);
+  if (aftercarePreference) {
+    return document.querySelector<HTMLElement>(
+      `[data-pet-id="${CSS.escape(aftercarePreference[1])}"] [data-form-field="aftercarePreference.${CSS.escape(aftercarePreference[1])}"]`,
+    );
   }
 
-  return (
-    document.querySelector<HTMLElement>(`input[name="${escaped}"], textarea[name="${escaped}"], select[name="${escaped}"]`) ||
-    document.querySelector<HTMLElement>(`#${escaped}`)
+  const namedInput = document.querySelector<HTMLElement>(
+    `input[name="${escaped}"], textarea[name="${escaped}"], select[name="${escaped}"]`,
   );
+  if (namedInput) {
+    return (
+      namedInput.closest<HTMLElement>('[data-form-field]') ??
+      namedInput.closest<HTMLElement>('div') ??
+      namedInput
+    );
+  }
+
+  return document.querySelector<HTMLElement>(`#${escaped}`);
 }
 
 function findPetFieldTarget(petId: string, field: string): HTMLElement | null {

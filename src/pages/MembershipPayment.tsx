@@ -1,15 +1,19 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { loadStripe, type Stripe, type StripeCardElement } from '@stripe/stripe-js';
+import { useLocation, useNavigate } from 'react-router';
 import {
   createPayment,
   type PaymentResponse,
   PaymentIntent,
+  type MembershipCheckoutDiscount,
   type MembershipTransactionPayload,
   type MembershipPaymentRequestOrigin,
   upgradeMembership,
   type MembershipUpgradeRequest,
+  resolveMembershipDiscountByCode,
 } from '../api/payments';
 import { useAuth } from '../auth/useAuth';
+import { getFrontendPaymentProvider, getStripePublishableKey } from '../config/paymentProvider';
 import { trackPurchase } from '../utils/analytics';
 
 declare global {
@@ -45,6 +49,18 @@ const squareScriptUrl =
   squareEnvironment === 'production'
     ? 'https://web.squarecdn.com/v1/square.js'
     : 'https://sandbox.web.squarecdn.com/v1/square.js';
+
+const paymentProvider = getFrontendPaymentProvider();
+
+function extractPaymentIntentClientSecret(providerResponse: Record<string, unknown> | undefined): string | null {
+  if (!providerResponse || typeof providerResponse !== 'object') return null;
+  if (typeof providerResponse.client_secret === 'string') return providerResponse.client_secret;
+  const pi = providerResponse.payment_intent;
+  if (pi && typeof pi === 'object' && typeof (pi as { client_secret?: string }).client_secret === 'string') {
+    return (pi as { client_secret: string }).client_secret;
+  }
+  return null;
+}
 
 function formatMoney(amountCents: number, currency = 'USD') {
   return (amountCents / 100).toLocaleString(undefined, {
@@ -118,6 +134,12 @@ type PaymentNavigationState = {
   formResponseEmail?: string;
   /** Public room-loader membership: omit client-portal NOTE on payment success. */
   fromRoomLoaderPublicForm?: boolean;
+  /** Stripe promo link — applied on subscription; code never shown to client. */
+  membershipDiscount?: MembershipCheckoutDiscount;
+  membershipDiscountToken?: string;
+  /** Human-readable promo code pre-applied before reaching this screen (e.g. from signup flow). */
+  membershipDiscountCode?: string;
+  originalAmountCents?: number;
 };
 
 export type { PaymentNavigationState };
@@ -175,6 +197,15 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
   const [paymentResponse, setPaymentResponse] = useState<PaymentResponse | null>(null);
   const [enrollmentComplete, setEnrollmentComplete] = useState(false);
   const [formResetKey, setFormResetKey] = useState(0);
+  const [stripeCardReady, setStripeCardReady] = useState(false);
+  const stripeRef = useRef<Stripe | null>(null);
+  const stripeCardRef = useRef<StripeCardElement | null>(null);
+
+  // Promo code entered by the client at checkout
+  const [promoCodeInput, setPromoCodeInput] = useState('');
+  const [promoCodeApplying, setPromoCodeApplying] = useState(false);
+  const [promoCodeError, setPromoCodeError] = useState<string | null>(null);
+  const [appliedCodeDiscount, setAppliedCodeDiscount] = useState<MembershipCheckoutDiscount | null>(null);
 
   const locationId = state?.enrollmentPayload?.locationId ?? defaultSquareLocationId;
 
@@ -186,6 +217,10 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
 
   useEffect(() => {
     if (!state) return;
+    if (paymentProvider === 'stripe') {
+      setLoadingScript(false);
+      return;
+    }
 
     if (window.Square) {
       setLoadingScript(false);
@@ -215,10 +250,10 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
       script.onload = null;
       script.onerror = null;
     };
-  }, [state]);
+  }, [state, paymentProvider]);
 
   useEffect(() => {
-    if (!state || loadingScript) return;
+    if (paymentProvider !== 'square' || !state || loadingScript) return;
     if (!squareAppId || !locationId) {
       setError('Square is not fully configured. Please contact support.');
       return;
@@ -259,7 +294,93 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state, loadingScript, locationId, formResetKey]);
 
+  useEffect(() => {
+    if (paymentProvider !== 'stripe' || !state) return;
+
+    let canceled = false;
+
+    async function initStripe() {
+      setInitializingPaymentForm(true);
+      // Do NOT clear error here — a payment failure may have just set it and
+      // triggered this re-init via formResetKey. Errors before a new payment
+      // attempt are cleared inside handlePaymentSubmit instead.
+      const pk = getStripePublishableKey();
+      if (!pk) {
+        setError('Stripe is not fully configured. Please contact support.');
+        setInitializingPaymentForm(false);
+        return;
+      }
+      try {
+        const stripe = await loadStripe(pk);
+        if (canceled || !stripe) return;
+        const elements = stripe.elements();
+        const cardEl = elements.create('card', {
+          style: {
+            base: {
+              fontSize: '16px',
+              color: '#111827',
+              '::placeholder': { color: '#9ca3af' },
+            },
+            invalid: { color: '#b91c1c' },
+          },
+        });
+        const mountTarget = document.querySelector('#card-container');
+        if (!(mountTarget instanceof HTMLElement)) {
+          throw new Error('Payment form container not found.');
+        }
+        cardEl.mount(mountTarget);
+        stripeRef.current = stripe;
+        stripeCardRef.current = cardEl;
+        if (!canceled) setStripeCardReady(true);
+      } catch (err: any) {
+        if (!canceled) {
+          setError(err?.message || 'Failed to initialise payment form.');
+        }
+      } finally {
+        if (!canceled) setInitializingPaymentForm(false);
+      }
+    }
+
+    void initStripe();
+
+    return () => {
+      canceled = true;
+      setStripeCardReady(false);
+      try {
+        stripeCardRef.current?.unmount();
+      } catch {
+        /* ignore */
+      }
+      stripeCardRef.current = null;
+      stripeRef.current = null;
+    };
+  }, [state, formResetKey]);
+
   const costSummaryItems = useMemo(() => state?.costSummary?.items ?? [], [state]);
+
+  /**
+   * Display-only discount preview for a code entered directly on this page.
+   * The backend applies the discount at the Stripe subscription level; this is purely
+   * for showing the client an accurate "due today" before they hit Pay.
+   */
+  const codeDiscountPreview = useMemo(() => {
+    if (!appliedCodeDiscount || !state) return null;
+    const base = state.amountCents;
+    let discountCents = 0;
+    if (appliedCodeDiscount.percentOff != null && appliedCodeDiscount.percentOff > 0) {
+      discountCents = Math.round((base * appliedCodeDiscount.percentOff) / 100);
+    } else if (appliedCodeDiscount.amountOffCents != null && appliedCodeDiscount.amountOffCents > 0) {
+      discountCents = Math.min(appliedCodeDiscount.amountOffCents, base);
+    }
+    return {
+      discountCents,
+      dueTodayCents: Math.max(0, base - discountCents),
+      duration: appliedCodeDiscount.duration,
+      displayLabel: appliedCodeDiscount.displayLabel,
+    };
+  // appliedCodeDiscount reference changes when set/cleared
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appliedCodeDiscount, state?.amountCents]);
 
   const prefilledCustomerEmail = useMemo(
     () => resolveCustomerEmailFromNavigationState(state),
@@ -288,7 +409,9 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
 
   async function handlePaymentSubmit(event: React.FormEvent) {
     event.preventDefault();
-    if (!state || !card) return;
+    if (!state) return;
+    if (paymentProvider === 'square' && !card) return;
+    if (paymentProvider === 'stripe' && (!stripeCardReady || !stripeRef.current || !stripeCardRef.current)) return;
     if (!cardholderName.trim()) {
       setError('Please enter the cardholder name.');
       return;
@@ -297,15 +420,23 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
       setError('Please complete the billing address.');
       return;
     }
+    const trimmedPromoCode = promoCodeInput.trim();
+    if (
+      paymentProvider === 'stripe' &&
+      !state.membershipDiscount &&
+      !state.isUpgrade &&
+      trimmedPromoCode &&
+      (!appliedCodeDiscount ||
+        appliedCodeDiscount.code?.trim().toUpperCase() !== trimmedPromoCode.toUpperCase())
+    ) {
+      setPromoCodeError('Please click Apply to validate your promo code before continuing.');
+      return;
+    }
     setProcessing(true);
     setError(null);
+    setPromoCodeError(null);
 
     try {
-      const tokenResult = await card.tokenize();
-      if (tokenResult.status !== 'OK') {
-        throw new Error(tokenResult.errors?.[0]?.message || 'Unable to tokenize card.');
-      }
-
       const emailForSquare =
         contactEmail.trim() ||
         prefilledCustomerEmail ||
@@ -318,60 +449,191 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
       ) {
         setProcessing(false);
         setError(
-          'A valid email address is required (Square needs it on your customer profile for subscriptions and upgrades).'
+          paymentProvider === 'stripe'
+            ? 'A valid email address is required for billing and receipts.'
+            : 'A valid email address is required (Square needs it on your customer profile for subscriptions and upgrades).'
         );
         return;
       }
 
-      // Handle upgrade flow
-      if (state.isUpgrade && state.patientId && state.selectedUpgrades) {
-        const upgradeRequest: MembershipUpgradeRequest = {
-          patientId: state.patientId,
-          newPlansSelected: state.selectedUpgrades,
-          sourceId: tokenResult.token,
-          customerEmail: emailForSquare || userEmail || '',
-          // Include prorated calculation if available
-          proratedRefundAmount: state.proratedCalculation?.refundAmount,
-          proratedChargeAmount: state.proratedCalculation?.chargeAmount,
-          upgradeDate: state.proratedCalculation?.upgradeDate,
-          nextBillingDate: state.proratedCalculation?.nextBillingDate,
-          currentMembershipId: state.currentMembership?.id,
-        };
-
-        const upgradeResponse = await upgradeMembership(upgradeRequest);
-        
-        if (!upgradeResponse.success) {
-          throw new Error(upgradeResponse.message || 'Upgrade was not successful.');
+      if (paymentProvider === 'square') {
+        const tokenResult = await card!.tokenize();
+        if (tokenResult.status !== 'OK') {
+          throw new Error(tokenResult.errors?.[0]?.message || 'Unable to tokenize card.');
         }
 
-        // Track purchase completion for upgrade
-        const upgradeTransactionId = `upgrade-${Date.now()}-${state.patientId}`;
-        const upgradeItems = state.selectedUpgrades?.map((upgrade) => ({
-          item_id: upgrade.planId,
-          item_name: upgrade.planName,
-          price: upgrade.price,
-          quantity: 1,
-        })) || [];
+        // Handle upgrade flow
+        if (state.isUpgrade && state.patientId && state.selectedUpgrades) {
+          const upgradeRequest: MembershipUpgradeRequest = {
+            patientId: state.patientId,
+            newPlansSelected: state.selectedUpgrades,
+            sourceId: tokenResult.token,
+            customerEmail: emailForSquare || userEmail || '',
+            proratedRefundAmount: state.proratedCalculation?.refundAmount,
+            proratedChargeAmount: state.proratedCalculation?.chargeAmount,
+            upgradeDate: state.proratedCalculation?.upgradeDate,
+            nextBillingDate: state.proratedCalculation?.nextBillingDate,
+            currentMembershipId: state.currentMembership?.id,
+          };
 
-        trackPurchase(
-          upgradeTransactionId,
-          state.amountCents / 100,
-          state.currency,
-          upgradeItems,
-          {
-            pet_id: state.petId,
-            pet_name: state.petName,
-            is_upgrade: true,
-            upgrade_type: 'membership_upgrade',
+          const upgradeResponse = await upgradeMembership(upgradeRequest);
+
+          if (!upgradeResponse.success) {
+            throw new Error(upgradeResponse.message || 'Upgrade was not successful.');
           }
-        );
+
+          const upgradeTransactionId = `upgrade-${Date.now()}-${state.patientId}`;
+          const upgradeItems =
+            state.selectedUpgrades?.map((upgrade) => ({
+              item_id: upgrade.planId,
+              item_name: upgrade.planName,
+              price: upgrade.price,
+              quantity: 1,
+            })) || [];
+
+          trackPurchase(
+            upgradeTransactionId,
+            state.amountCents / 100,
+            state.currency,
+            upgradeItems,
+            {
+              pet_id: state.petId,
+              pet_name: state.petName,
+              is_upgrade: true,
+              upgrade_type: 'membership_upgrade',
+            }
+          );
+
+          setEnrollmentComplete(true);
+          onEnrollmentSucceeded?.(state.petId);
+          return;
+        }
+
+        const idempotencyKey =
+          typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+            ? crypto.randomUUID()
+            : `membership-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+        if (state.intent === PaymentIntent.SUBSCRIPTION && !state.subscriptionPlanId) {
+          throw new Error('Subscription plan ID is missing for this selection.');
+        }
+
+        const petNameForPayload =
+          (state.petName && String(state.petName).trim()) ||
+          (state.membershipTransaction?.metadata?.petName &&
+            String(state.membershipTransaction.metadata.petName).trim()) ||
+          '';
+
+        const isNewClientMembership = fromModal && !userId;
+        const petIdForPayload =
+          isNewClientMembership && petNameForPayload !== '' ? petNameForPayload : state.petId ?? '';
+
+        const membershipTransactionPayload = state.membershipTransaction
+          ? {
+              ...state.membershipTransaction,
+              requestOrigin:
+                state.membershipTransaction.requestOrigin ??
+                resolveMembershipRequestOriginForPayment(state),
+              metadata: {
+                ...(state.membershipTransaction.metadata ?? {}),
+                ...(petIdForPayload !== '' && { petId: petIdForPayload }),
+                ...(petNameForPayload !== '' && { petName: petNameForPayload }),
+              },
+            }
+          : undefined;
+
+        const payment = await createPayment({
+          provider: 'square',
+          sourceId: tokenResult.token,
+          idempotencyKey,
+          amount: state.amountCents,
+          currency: state.currency,
+          locationId,
+          note: state.note,
+          intent: state.intent,
+          subscriptionPlanId: state.subscriptionPlanId,
+          subscriptionPlanVariationId: state.subscriptionPlanVariationId,
+          subscriptionStartDate: state.subscriptionStartDate,
+          customerEmail: emailForSquare || undefined,
+          customerName: state.customerName ?? undefined,
+          metadata: {
+            ...(state.metadata ?? {}),
+            ...(petIdForPayload !== '' && { petId: petIdForPayload }),
+            ...(petNameForPayload !== '' && { petName: petNameForPayload }),
+            ...(emailForSquare && { customerEmail: emailForSquare }),
+            cardholderName: cardholderName.trim(),
+            billingAddress: {
+              addressLine1: addressLine1.trim(),
+              addressLine2: addressLine2.trim() || undefined,
+              locality: locality.trim(),
+              administrativeDistrictLevel1: administrativeDistrictLevel1.trim(),
+              postalCode: postalCode.trim(),
+              country: 'US',
+            },
+          },
+          membershipTransaction: membershipTransactionPayload,
+        });
+
+        setPaymentResponse(payment);
+
+        if (!payment.success) {
+          throw new Error(payment.status || 'Payment was not successful.');
+        }
+
+        const transactionId =
+          payment.providerPaymentId ||
+          payment.providerResponse?.payment?.id ||
+          payment.providerResponse?.id ||
+          `membership-${Date.now()}`;
+
+        const purchaseItems =
+          state.costSummary?.items.map((item) => {
+            const price =
+              state.billingPreference === 'annual' && item.annual != null ? item.annual : item.monthly ?? 0;
+            return {
+              item_id: item.label.toLowerCase().replace(/\s+/g, '-'),
+              item_name: item.label,
+              price: price,
+              quantity: 1,
+            };
+          }) || [];
+
+        trackPurchase(transactionId, state.amountCents / 100, state.currency, purchaseItems, {
+          pet_id: state.petId,
+          pet_name: state.petName,
+          plan_name: state.planName,
+          billing_preference: state.billingPreference,
+          addons: state.addOns || [],
+          has_addons: (state.addOns?.length || 0) > 0,
+          is_upgrade: state.isUpgrade || false,
+        });
 
         setEnrollmentComplete(true);
         onEnrollmentSucceeded?.(state.petId);
         return;
       }
 
-      // Regular payment flow
+      // Stripe: same intent as navigation state (membership enrollments use SUBSCRIPTION)
+      const { error: pmError, paymentMethod } = await stripeRef.current!.createPaymentMethod({
+        type: 'card',
+        card: stripeCardRef.current!,
+        billing_details: {
+          name: cardholderName.trim(),
+          email: emailForSquare || undefined,
+          address: {
+            line1: addressLine1.trim(),
+            line2: addressLine2.trim() || undefined,
+            city: locality.trim(),
+            state: administrativeDistrictLevel1.trim(),
+            postal_code: postalCode.trim(),
+            country: 'US',
+          },
+        },
+      });
+      if (pmError || !paymentMethod) {
+        throw new Error(pmError?.message || 'Unable to tokenize card.');
+      }
+
       const idempotencyKey =
         typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
           ? crypto.randomUUID()
@@ -381,18 +643,15 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
         throw new Error('Subscription plan ID is missing for this selection.');
       }
 
-      // Use pet name from form (state.petName or from membershipTransaction.metadata as set by MembershipSignup)
       const petNameForPayload =
         (state.petName && String(state.petName).trim()) ||
-        (state.membershipTransaction?.metadata?.petName && String(state.membershipTransaction.metadata.petName).trim()) ||
+        (state.membershipTransaction?.metadata?.petName &&
+          String(state.membershipTransaction.metadata.petName).trim()) ||
         '';
 
       const isNewClientMembership = fromModal && !userId;
-      // For new clients, petId field must contain the pet's name (from the appointment form)
       const petIdForPayload =
-        isNewClientMembership && petNameForPayload !== ''
-          ? petNameForPayload
-          : state.petId ?? '';
+        isNewClientMembership && petNameForPayload !== '' ? petNameForPayload : state.petId ?? '';
 
       const membershipTransactionPayload = state.membershipTransaction
         ? {
@@ -408,14 +667,14 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
           }
         : undefined;
 
-      const payment = await createPayment({
-        sourceId: tokenResult.token,
+      let payment = await createPayment({
+        provider: 'stripe',
+        sourceId: paymentMethod.id,
         idempotencyKey,
         amount: state.amountCents,
         currency: state.currency,
-        locationId,
         note: state.note,
-        intent: state.intent,
+        intent: state.intent ?? PaymentIntent.SUBSCRIPTION,
         subscriptionPlanId: state.subscriptionPlanId,
         subscriptionPlanVariationId: state.subscriptionPlanVariationId,
         subscriptionStartDate: state.subscriptionStartDate,
@@ -437,7 +696,40 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
           },
         },
         membershipTransaction: membershipTransactionPayload,
+        ...(state.membershipDiscountToken || state.membershipDiscount
+          ? {
+              membershipDiscountToken:
+                state.membershipDiscountToken ?? state.membershipDiscount?.token,
+              stripePromotionCodeId: state.membershipDiscount?.stripePromotionCodeId,
+            }
+          : appliedCodeDiscount || state.membershipDiscountCode
+          ? {
+              membershipDiscountCode:
+                appliedCodeDiscount?.code ?? state.membershipDiscountCode,
+              stripePromotionCodeId: appliedCodeDiscount?.stripePromotionCodeId,
+            }
+          : {}),
       });
+
+      if (!payment.success && payment.status === 'requires_action' && stripeRef.current) {
+        const secret = extractPaymentIntentClientSecret(payment.providerResponse);
+        if (secret) {
+          const { error: confirmErr, paymentIntent } = await stripeRef.current.confirmCardPayment(secret);
+          if (confirmErr) {
+            throw new Error(confirmErr.message || 'Authentication failed.');
+          }
+          payment = {
+            ...payment,
+            success: paymentIntent?.status === 'succeeded',
+            status: paymentIntent?.status,
+            providerPaymentId: paymentIntent?.id ?? payment.providerPaymentId,
+            providerResponse: {
+              ...payment.providerResponse,
+              paymentIntent,
+            },
+          };
+        }
+      }
 
       setPaymentResponse(payment);
 
@@ -445,74 +737,89 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
         throw new Error(payment.status || 'Payment was not successful.');
       }
 
-      // Track purchase completion
-      const transactionId = payment.providerPaymentId || 
-                           payment.providerResponse?.payment?.id || 
-                           payment.providerResponse?.id ||
-                           `membership-${Date.now()}`;
-      
-      const purchaseItems = state.costSummary?.items.map((item) => {
-        const price = state.billingPreference === 'annual' && item.annual != null
-          ? item.annual
-          : item.monthly ?? 0;
-        return {
-          item_id: item.label.toLowerCase().replace(/\s+/g, '-'),
-          item_name: item.label,
-          price: price,
-          quantity: 1,
-        };
-      }) || [];
+      const transactionId =
+        payment.providerPaymentId ||
+        payment.providerResponse?.payment?.id ||
+        payment.providerResponse?.paymentIntent?.id ||
+        payment.providerResponse?.id ||
+        `membership-${Date.now()}`;
 
-      trackPurchase(
-        transactionId,
-        state.amountCents / 100,
-        state.currency,
-        purchaseItems,
-        {
-          pet_id: state.petId,
-          pet_name: state.petName,
-          plan_name: state.planName,
-          billing_preference: state.billingPreference,
-          addons: state.addOns || [],
-          has_addons: (state.addOns?.length || 0) > 0,
-          is_upgrade: state.isUpgrade || false,
-        }
-      );
+      const purchaseItems =
+        state.costSummary?.items.map((item) => {
+          const price =
+            state.billingPreference === 'annual' && item.annual != null ? item.annual : item.monthly ?? 0;
+          return {
+            item_id: item.label.toLowerCase().replace(/\s+/g, '-'),
+            item_name: item.label,
+            price: price,
+            quantity: 1,
+          };
+        }) || [];
+
+      trackPurchase(transactionId, state.amountCents / 100, state.currency, purchaseItems, {
+        pet_id: state.petId,
+        pet_name: state.petName,
+        plan_name: state.planName,
+        billing_preference: state.billingPreference,
+        addons: state.addOns || [],
+        has_addons: (state.addOns?.length || 0) > 0,
+        is_upgrade: state.isUpgrade || false,
+      });
 
       setEnrollmentComplete(true);
       onEnrollmentSucceeded?.(state.petId);
     } catch (err: any) {
       const status = err?.response?.status;
-      const serverMessage = err?.response?.data?.message ?? err?.response?.data?.error;
-      const isPaymentFailure =
-        status === 500 ||
-        status === 502 ||
-        status === 503 ||
-        /request failed with status code \d+/i.test(String(err?.message ?? '')) ||
-        /network error/i.test(String(err?.message ?? ''));
+      const serverMessage: string | undefined = err?.response?.data?.message ?? err?.response?.data?.error;
+      // Stripe embeds the card error inside providerResponse.error
+      const stripeError = err?.response?.data?.providerResponse?.error;
+      const stripeMessage: string | undefined = stripeError?.message;
+      const declineCode: string | undefined = stripeError?.decline_code ?? stripeError?.code;
+      const adviceCode: string | undefined = stripeError?.advice_code;
 
-      const friendlyMessage = isPaymentFailure
-        ? "We couldn't process your payment. This can happen if your card was declined, has insufficient funds, or there was a temporary issue. Please try entering your information again."
-        : (serverMessage && typeof serverMessage === 'string' ? serverMessage : err?.message) || 'Unable to process payment. Please try entering your information again.';
+      const isCardError = stripeError?.type === 'card_error' || declineCode != null;
+
+      // Map common decline codes to plain-English guidance
+      const declineHint = (() => {
+        if (!declineCode) return '';
+        if (declineCode === 'insufficient_funds') return ' Please use a card with sufficient funds or try a different card.';
+        if (declineCode === 'lost_card' || declineCode === 'stolen_card') return ' Please use a different card.';
+        if (declineCode === 'expired_card') return ' Your card appears to be expired. Please use a different card.';
+        if (declineCode === 'incorrect_cvc') return ' The security code (CVC) was incorrect. Please check and try again.';
+        if (declineCode === 'incorrect_number' || declineCode === 'invalid_number') return ' The card number is invalid. Please check and try again.';
+        if (adviceCode === 'try_again_later') return ' You may try again later, or use a different card.';
+        return ' Please check your card details or try a different card.';
+      })();
+
+      const friendlyMessage = isCardError && stripeMessage
+        ? `${stripeMessage}${declineHint}`
+        : stripeMessage ??
+          (serverMessage && typeof serverMessage === 'string' ? serverMessage : undefined) ??
+          err?.message ??
+          'Unable to process payment. Please try again.';
 
       setError(friendlyMessage);
 
-      // Reset the form so the user can try again
-      setCardholderName('');
-      setAddressLine1('');
-      setAddressLine2('');
-      setLocality('');
-      setAdministrativeDistrictLevel1('');
-      setPostalCode('');
-      try {
-        if (card && typeof (card as any).destroy === 'function') {
-          (card as any).destroy();
-        }
-      } catch (_) {
-        // ignore destroy errors
+      // For card errors only reset the card element — billing info is still valid
+      if (!isCardError) {
+        setCardholderName('');
+        setAddressLine1('');
+        setAddressLine2('');
+        setLocality('');
+        setAdministrativeDistrictLevel1('');
+        setPostalCode('');
       }
-      setCard(null);
-      setPaymentsInstance(null);
+      if (paymentProvider === 'square') {
+        try {
+          if (card && typeof (card as any).destroy === 'function') {
+            (card as any).destroy();
+          }
+        } catch (_) {
+          // ignore destroy errors
+        }
+        setCard(null);
+        setPaymentsInstance(null);
+      }
       setFormResetKey((k) => k + 1);
     } finally {
       setProcessing(false);
@@ -524,6 +831,41 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
     return null;
   }
 
+  if (state.isUpgrade && paymentProvider === 'stripe') {
+    return (
+      <div className="cp-wrap" style={{ maxWidth: 720, margin: '32px auto', padding: '0 16px' }}>
+        <button
+          type="button"
+          onClick={() => {
+            if (fromModal && props?.onBack) props.onBack();
+            else navigate(-1);
+          }}
+          style={{
+            background: 'transparent',
+            border: 'none',
+            color: '#4FB128',
+            cursor: 'pointer',
+            fontSize: 14,
+            fontWeight: 600,
+            marginBottom: 16,
+            padding: 0,
+          }}
+        >
+          ← Back
+        </button>
+        <div className="cp-card" style={{ padding: 24, borderLeft: '4px solid #b45309' }}>
+          <h1 className="cp-title" style={{ margin: '0 0 12px' }}>Membership upgrade</h1>
+          <p className="cp-muted" style={{ lineHeight: 1.6, margin: 0 }}>
+            Upgrading a membership still uses Square on the server. To complete an upgrade, set{' '}
+            <code style={{ fontSize: 13 }}>VITE_PAYMENT_PROVIDER</code> to <code style={{ fontSize: 13 }}>square</code>{' '}
+            (or unset it), restart the app, and try again. New enrollments can use Stripe when that variable is set to{' '}
+            <code style={{ fontSize: 13 }}>stripe</code>.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   const onSuccess = props?.onSuccess;
   const onBack = props?.onBack;
   const onSignUpAnother = props?.onSignUpAnother;
@@ -532,6 +874,7 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
     const providerPaymentId =
       paymentResponse?.providerPaymentId ??
       paymentResponse?.providerResponse?.payment?.id ??
+      (paymentResponse?.providerResponse?.paymentIntent as { id?: string } | undefined)?.id ??
       paymentResponse?.providerResponse?.id ??
       null;
     return (
@@ -559,7 +902,35 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
               <strong>Billing preference:</strong> {state.billingPreference === 'annual' ? 'Annual' : 'Monthly'}
             </div>
             <div>
-              <strong>Total paid today:</strong> {formatMoney(state.amountCents, state.currency)}
+              <strong>Total paid today:</strong>{' '}
+              {/* Link-based promo: originalAmountCents already set */}
+              {state.originalAmountCents != null && state.originalAmountCents > state.amountCents && !codeDiscountPreview ? (
+                <span style={{ textDecoration: 'line-through', color: '#6b7280', marginRight: 8 }}>
+                  {formatMoney(state.originalAmountCents, state.currency)}
+                </span>
+              ) : null}
+              {/* Code-based promo: show strikethrough base and discounted amount */}
+              {codeDiscountPreview && codeDiscountPreview.discountCents > 0 ? (
+                <>
+                  <span style={{ textDecoration: 'line-through', color: '#6b7280', marginRight: 8 }}>
+                    {formatMoney(state.amountCents, state.currency)}
+                  </span>
+                  <span style={{ fontWeight: 700, color: '#065f46' }}>
+                    {formatMoney(codeDiscountPreview.dueTodayCents, state.currency)}
+                  </span>
+                  {codeDiscountPreview.duration === 'once' && (
+                    <span style={{ fontSize: 13, color: '#6b7280', marginLeft: 8, fontStyle: 'italic' }}>
+                      (then {formatMoney(state.amountCents, state.currency)}/
+                      {state.billingPreference === 'annual' ? 'year' : 'mo'} after)
+                    </span>
+                  )}
+                </>
+              ) : (
+                formatMoney(
+                  codeDiscountPreview ? codeDiscountPreview.dueTodayCents : state.amountCents,
+                  state.currency,
+                )
+              )}
             </div>
             {state.addOns && state.addOns.length > 0 && (
               <div>
@@ -582,7 +953,9 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
                 {costSummaryItems.map((item) => {
                   // Only show the price for the selected billing preference
                   const showPrice = state.billingPreference === 'annual' 
-                    ? (item.annual != null ? `${formatMoney(item.annual * 100, state.currency)} annually (10% discount!)` : null)
+                    ? (item.annual != null
+                        ? `${(item.annual / 12).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/mo equivalent · ${formatMoney(item.annual * 100, state.currency)} billed today`
+                        : null)
                     : (item.monthly != null ? `${formatMoney(item.monthly * 100, state.currency)}/mo` : null);
                   return (
                     <li
@@ -602,6 +975,30 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
                   );
                 })}
               </ul>
+              {/* Discount line in breakdown */}
+              {codeDiscountPreview && codeDiscountPreview.discountCents > 0 && (
+                <li
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    fontSize: 14,
+                    borderBottom: '1px solid rgba(0,0,0,0.06)',
+                    paddingBottom: 6,
+                    color: '#065f46',
+                  }}
+                >
+                  <span>
+                    {codeDiscountPreview.displayLabel}
+                    {codeDiscountPreview.duration === 'once' && (
+                      <span style={{ fontSize: 11, color: '#6b7280', marginLeft: 4 }}>(first charge only)</span>
+                    )}
+                  </span>
+                  <span style={{ fontWeight: 600 }}>
+                    −{formatMoney(codeDiscountPreview.discountCents, state.currency)}
+                  </span>
+                </li>
+              )}
               <div
                 style={{
                   display: 'flex',
@@ -613,7 +1010,12 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
                 }}
               >
                 <span>Total</span>
-                <span>{formatMoney(state.amountCents, state.currency)}</span>
+                <span>
+                  {formatMoney(
+                    codeDiscountPreview ? codeDiscountPreview.dueTodayCents : state.amountCents,
+                    state.currency,
+                  )}
+                </span>
               </div>
             </div>
           </section>
@@ -761,6 +1163,22 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
         </p>
       </div>
 
+      {state.membershipDiscount && paymentProvider === 'stripe' && (
+        <div
+          className="cp-card"
+          style={{
+            marginBottom: 16,
+            padding: 14,
+            borderLeft: '4px solid var(--brand, #0f766e)',
+            background: '#ecfdf5',
+          }}
+        >
+          <p style={{ margin: 0, fontSize: 14, color: '#065f46', fontWeight: 600 }}>
+            {state.membershipDiscount.displayLabel}
+          </p>
+        </div>
+      )}
+
       <section className="cp-section">
         <div className="cp-card" style={{ padding: 20 }}>
           <h3 style={{ marginTop: 0, marginBottom: 12 }}>
@@ -835,22 +1253,104 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
                     </li>
                   );
                 })}
+                {/* Discount line for code entered on this page */}
+                {codeDiscountPreview && codeDiscountPreview.discountCents > 0 && (
+                  <li
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      fontSize: 14,
+                      borderBottom: '1px solid rgba(0,0,0,0.06)',
+                      paddingBottom: 6,
+                      color: '#065f46',
+                    }}
+                  >
+                    <span>
+                      {codeDiscountPreview.displayLabel}
+                      {codeDiscountPreview.duration === 'once' && (
+                        <span style={{ fontSize: 11, color: '#6b7280', marginLeft: 4 }}>(first charge only)</span>
+                      )}
+                      {codeDiscountPreview.duration === 'repeating' && (
+                        <span style={{ fontSize: 11, color: '#6b7280', marginLeft: 4 }}>(limited time)</span>
+                      )}
+                    </span>
+                    <span style={{ fontWeight: 600 }}>
+                      −{formatMoney(codeDiscountPreview.discountCents, state.currency)}
+                    </span>
+                  </li>
+                )}
               </ul>
             </>
           )}
+
+          {/* Total Due Today */}
           <div
             style={{
               display: 'flex',
               justifyContent: 'space-between',
-              alignItems: 'center',
+              alignItems: 'flex-start',
               fontWeight: 700,
               fontSize: 16,
               marginTop: 16,
             }}
           >
             <span>Total Due Today</span>
-            <span>{formatMoney(state.amountCents, state.currency)}</span>
+            <span style={{ textAlign: 'right' }}>
+              {/* Link-based promo already adjusted amountCents — show original struck through */}
+              {state.originalAmountCents != null &&
+              state.originalAmountCents > state.amountCents &&
+              !codeDiscountPreview ? (
+                <span
+                  className="cp-muted"
+                  style={{
+                    display: 'block',
+                    fontSize: 13,
+                    textDecoration: 'line-through',
+                    fontWeight: 400,
+                  }}
+                >
+                  {formatMoney(state.originalAmountCents, state.currency)}
+                </span>
+              ) : null}
+              {/* Code-based promo: strike through base price, show discounted */}
+              {codeDiscountPreview && codeDiscountPreview.discountCents > 0 ? (
+                <>
+                  <span
+                    className="cp-muted"
+                    style={{
+                      display: 'block',
+                      fontSize: 13,
+                      textDecoration: 'line-through',
+                      fontWeight: 400,
+                    }}
+                  >
+                    {formatMoney(state.amountCents, state.currency)}
+                  </span>
+                  {formatMoney(codeDiscountPreview.dueTodayCents, state.currency)}
+                </>
+              ) : (
+                formatMoney(state.amountCents, state.currency)
+              )}
+            </span>
           </div>
+
+          {/* Recurring billing note for once/repeating discounts */}
+          {(codeDiscountPreview?.duration === 'once' || state.membershipDiscount?.duration === 'once') && (
+            <p style={{ margin: '10px 0 0', fontSize: 13, color: '#065f46', fontStyle: 'italic' }}>
+              {state.billingPreference === 'annual'
+                ? `Then ${formatMoney(state.amountCents, state.currency)} annually after this first charge.`
+                : `Then ${formatMoney(state.amountCents, state.currency)}/mo starting your next billing cycle.`}
+            </p>
+          )}
+          {codeDiscountPreview?.duration === 'repeating' && (
+            <p style={{ margin: '10px 0 0', fontSize: 13, color: '#065f46', fontStyle: 'italic' }}>
+              Discount applies for a limited time, then regular pricing resumes at{' '}
+              {state.billingPreference === 'annual'
+                ? `${formatMoney(state.amountCents, state.currency)}/year.`
+                : `${formatMoney(state.amountCents, state.currency)}/mo.`}
+            </p>
+          )}
         </div>
       </section>
 
@@ -874,7 +1374,9 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
                     required
                   />
                   <p className="cp-muted" style={{ margin: '6px 0 0', fontSize: 13 }}>
-                    Required so we can attach it to your Square customer for billing and receipts.
+                    {paymentProvider === 'stripe'
+                      ? 'Required for billing and receipts.'
+                      : 'Required so we can attach it to your Square customer for billing and receipts.'}
                   </p>
                 </div>
               )}
@@ -941,25 +1443,192 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
               </div>
             </div>
 
-            {!squareAppId || !locationId ? (
+            {paymentProvider === 'square' && (!squareAppId || !locationId) ? (
               <p className="cp-muted" style={{ color: '#b91c1c' }}>
                 Square configuration is missing. Please contact support.
+              </p>
+            ) : paymentProvider === 'stripe' && !getStripePublishableKey() ? (
+              <p className="cp-muted" style={{ color: '#b91c1c' }}>
+                Stripe configuration is missing (publishable key). Please contact support.
               </p>
             ) : (
               <>
                 <div key={formResetKey}>
                   <div id="card-container" style={{ border: '1px solid rgba(0,0,0,0.08)', borderRadius: 8, padding: 12 }} />
                 </div>
+                {paymentProvider === 'stripe' && !state.membershipDiscount && !state.isUpgrade && (
+                  <div style={{ marginTop: 4 }}>
+                    {appliedCodeDiscount ? (
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: 8,
+                          padding: '10px 12px',
+                          background: '#ecfdf5',
+                          border: '1px solid #6ee7b7',
+                          borderRadius: 8,
+                        }}
+                      >
+                        <div>
+                          <p style={{ margin: 0, fontSize: 14, color: '#065f46', fontWeight: 600 }}>
+                            ✓ {appliedCodeDiscount.displayLabel}
+                          </p>
+                          <p style={{ margin: '2px 0 0', fontSize: 12, color: '#6b7280' }}>
+                            Code{' '}
+                            <span style={{ fontFamily: 'monospace', fontWeight: 700 }}>{appliedCodeDiscount.code}</span>{' '}
+                            applied
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAppliedCodeDiscount(null);
+                            setPromoCodeInput('');
+                            setPromoCodeError(null);
+                          }}
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            cursor: 'pointer',
+                            fontSize: 12,
+                            color: '#6b7280',
+                            textDecoration: 'underline',
+                            padding: 0,
+                            flexShrink: 0,
+                          }}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <p style={{ margin: '0 0 8px', fontSize: 13, fontWeight: 600, color: '#374151' }}>
+                          Have a promo code?
+                        </p>
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <input
+                            type="text"
+                            placeholder="e.g. VAYDH7K2MQ"
+                            value={promoCodeInput}
+                            onChange={(e) => {
+                              setPromoCodeInput(e.target.value.toUpperCase());
+                              setPromoCodeError(null);
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                void (async () => {
+                                  if (!promoCodeInput.trim()) return;
+                                  setPromoCodeApplying(true);
+                                  setPromoCodeError(null);
+                                  try {
+                                    const res = await resolveMembershipDiscountByCode(promoCodeInput);
+                                    if (res.valid && res.discount) {
+                                      if (res.discount.duration === 'once' && state.billingPreference === 'annual') {
+                                        setPromoCodeError('This code is for monthly plans only and cannot be applied to an annual plan.');
+                                      } else {
+                                        setAppliedCodeDiscount(res.discount);
+                                      }
+                                    } else {
+                                      setPromoCodeError(res.message || 'Code not found or no longer valid.');
+                                    }
+                                  } catch {
+                                    setPromoCodeError('Code not found or no longer valid.');
+                                  } finally {
+                                    setPromoCodeApplying(false);
+                                  }
+                                })();
+                              }
+                            }}
+                            style={{
+                              flex: 1,
+                              padding: '8px 10px',
+                              border: `1px solid ${promoCodeError ? '#ef4444' : '#d1d5db'}`,
+                              borderRadius: 6,
+                              fontSize: 13,
+                              fontFamily: 'monospace',
+                              letterSpacing: '0.05em',
+                              textTransform: 'uppercase',
+                              outline: 'none',
+                            }}
+                            disabled={promoCodeApplying}
+                            autoComplete="off"
+                            spellCheck={false}
+                          />
+                          <button
+                            type="button"
+                            disabled={promoCodeApplying || !promoCodeInput.trim()}
+                            onClick={() => {
+                              void (async () => {
+                                setPromoCodeApplying(true);
+                                setPromoCodeError(null);
+                                try {
+                                  const res = await resolveMembershipDiscountByCode(promoCodeInput);
+                                  if (res.valid && res.discount) {
+                                    if (res.discount.duration === 'once' && state.billingPreference === 'annual') {
+                                      setPromoCodeError('This code is for monthly plans only and cannot be applied to an annual plan.');
+                                    } else {
+                                      setAppliedCodeDiscount(res.discount);
+                                    }
+                                  } else {
+                                    setPromoCodeError(res.message || 'Code not found or no longer valid.');
+                                  }
+                                } catch {
+                                  setPromoCodeError('Code not found or no longer valid.');
+                                } finally {
+                                  setPromoCodeApplying(false);
+                                }
+                              })();
+                            }}
+                            style={{
+                              padding: '8px 16px',
+                              background: '#0f766e',
+                              color: '#fff',
+                              border: 'none',
+                              borderRadius: 6,
+                              fontSize: 13,
+                              fontWeight: 600,
+                              cursor: promoCodeApplying || !promoCodeInput.trim() ? 'not-allowed' : 'pointer',
+                              opacity: promoCodeApplying || !promoCodeInput.trim() ? 0.6 : 1,
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {promoCodeApplying ? 'Applying…' : 'Apply'}
+                          </button>
+                        </div>
+                        {promoCodeError && (
+                          <p style={{ margin: '6px 0 0', fontSize: 12, color: '#ef4444' }}>{promoCodeError}</p>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
                 <button
                   type="submit"
                   className="btn"
-                  disabled={processing || initializingPaymentForm || !card}
+                  disabled={
+                    processing ||
+                    initializingPaymentForm ||
+                    (paymentProvider === 'square' ? !card : !stripeCardReady)
+                  }
                   style={{
                     minWidth: 200,
                     background: '#4FB128',
                     color: '#fff',
-                    opacity: processing || initializingPaymentForm || !card ? 0.6 : 1,
-                    cursor: processing || initializingPaymentForm || !card ? 'not-allowed' : 'pointer',
+                    opacity:
+                      processing ||
+                      initializingPaymentForm ||
+                      (paymentProvider === 'square' ? !card : !stripeCardReady)
+                        ? 0.6
+                        : 1,
+                    cursor:
+                      processing ||
+                      initializingPaymentForm ||
+                      (paymentProvider === 'square' ? !card : !stripeCardReady)
+                        ? 'not-allowed'
+                        : 'pointer',
                   }}
                 >
                   {processing ? 'Processing…' : state.isUpgrade ? 'Complete Upgrade' : 'Pay & Enroll'}

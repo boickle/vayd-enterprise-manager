@@ -1,5 +1,6 @@
 // src/api/careOutreach.ts
 import { http } from './http';
+import { normalizeCareOutreachReminder } from '../utils/careOutreachReminderVisibility';
 
 /** Client row as nested on patient (household) — shape aligns with reminder list payloads. */
 export type CareOutreachClientRef = {
@@ -29,6 +30,7 @@ export type CareOutreachEmployeeRef = {
   lastName?: string | null;
   title?: string | null;
   designation?: string | null;
+  quoLinePhone?: string | null;
 };
 
 export type UnscheduledReminder = {
@@ -50,19 +52,29 @@ export type FetchUnscheduledRemindersParams = {
   dueDateTo?: string;
   practiceId?: number;
   limit?: number;
-  /** ISO datetime — appointments with start >= asOf count as “future”; default server now. */
+  /** ISO datetime — appointments starting on/after the practice-local start of that day count; default server now. */
   asOf?: string;
+  /** When set, scopes the query to these patients (avoids practice-wide 2000-row truncation). */
+  patientIds?: number[];
 };
 
 /**
- * GET /reminders/unscheduled — reminders still needing a visit with the assigned provider
- * (excluded when patient already has a future non-canceled appointment with that provider).
+ * GET /reminders/unscheduled — reminders still needing a visit.
+ * Excludes patients with a non-canceled appointment starting today or later (any provider) within 2 years.
  */
 export async function fetchUnscheduledReminders(
   params: FetchUnscheduledRemindersParams
 ): Promise<UnscheduledReminder[]> {
-  const { data } = await http.get<UnscheduledReminder[]>('/reminders/unscheduled', { params });
-  return Array.isArray(data) ? data : [];
+  const { patientIds, ...rest } = params;
+  const query: Record<string, string | number> = { ...rest };
+  if (patientIds?.length) {
+    query.patientIds = patientIds.filter((id) => Number.isFinite(id) && id > 0).join(',');
+  }
+  const { data } = await http.get<UnscheduledReminder[]>('/reminders/unscheduled', {
+    params: query,
+  });
+  const rows = Array.isArray(data) ? data : [];
+  return rows.map(normalizeCareOutreachReminder);
 }
 
 /**

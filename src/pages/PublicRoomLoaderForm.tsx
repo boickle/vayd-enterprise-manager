@@ -1,7 +1,7 @@
 // src/pages/PublicRoomLoaderForm.tsx
 import { useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef } from 'react';
 import type { ReactNode } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router';
 import { apiBaseUrl, http } from '../api/http';
 import { getEcwidProducts, type EcwidProduct, type EcwidChoice } from '../api/ecwid';
 import {
@@ -130,12 +130,78 @@ function getAgeYears(patient: { dob?: string | null }): number | null {
   }
 }
 
+const TECH_VISIT_PROCEDURE_CODE = 'TECHSERVICES';
+
+function roomLoaderLineNameCodeLooksLikeTechVisit(name: string, code: string): boolean {
+  const c = (code ?? '').trim().toUpperCase();
+  if (c === TECH_VISIT_PROCEDURE_CODE) return true;
+  const n = (name ?? '').toLowerCase();
+  if (/\btech(nician)?\s*(visit|appointment|appt)\b/.test(n)) return true;
+  if (/quick\s*\(\s*tech\s*\)/.test(n)) return true;
+  return false;
+}
+
+function roomLoaderAppointmentIsTechVisit(appt: any | undefined): boolean {
+  const t = (appt?.appointmentType?.prettyName ?? appt?.appointmentType?.name ?? '').toString().toLowerCase();
+  if (!t.trim()) return false;
+  return /\btech(nician)?\s*(visit|appointment)\b/.test(t) || t.includes('tech appointment');
+}
+
+function patientCarePlanHasTechVisitLine(patient: any): boolean {
+  for (const r of patient?.reminders ?? []) {
+    const { name, code } = getPublicFormLineNameCode(r?.item ?? r);
+    if (roomLoaderLineNameCodeLooksLikeTechVisit(name, code)) return true;
+  }
+  for (const item of patient?.addedItems ?? []) {
+    const { name, code } = getPublicFormLineNameCode(item);
+    if (roomLoaderLineNameCodeLooksLikeTechVisit(name, code)) return true;
+  }
+  return false;
+}
+
+function lineNameCodeLooksLikeWellnessVisitType(name: string, code: string): boolean {
+  const c = (code ?? '').trim().toUpperCase();
+  if (c === 'WELLNESS') return true;
+  const blob = `${name ?? ''} ${code ?? ''}`.toLowerCase();
+  if (!blob.includes('wellness')) return false;
+  return blob.includes('visit') || blob.includes('consult') || blob.includes('exam');
+}
+
+/** Wellness visit-type line on the care plan (not tech visit, pedicure, or lab-only rows). */
+function carePlanHasWellnessVisitTypeLine(patient: any, roomLoaderRootReminders?: any[] | null): boolean {
+  for (const item of patient?.addedItems ?? []) {
+    const { name, code } = getPublicFormLineNameCode(item);
+    if (roomLoaderLineNameCodeLooksLikeTechVisit(name, code)) continue;
+    if (lineNameCodeLooksLikeWellnessVisitType(name, code)) return true;
+  }
+  const rows = roomLoaderReminderRowsForPatient(patient, roomLoaderRootReminders);
+  for (const r of rows) {
+    const { name, code } = getRoomLoaderReminderLineNameCode(r);
+    if (roomLoaderLineNameCodeLooksLikeTechVisit(name, code)) continue;
+    if (lineNameCodeLooksLikeWellnessVisitType(name, code)) return true;
+    const rt = String(r?.reminderType ?? r?.reminder?.reminderType ?? '').toLowerCase();
+    if (rt !== 'wellness') continue;
+    const blob = [
+      name,
+      code,
+      r?.reminderText,
+      r?.description,
+      r?.reminder?.description,
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+    if (blob.includes('visit') || blob.includes('consult') || blob.includes('exam')) return true;
+  }
+  return false;
+}
+
 /**
- * True when this visit is treated as routine wellness for lab recommendations.
+ * Any wellness signal on the visit list (including reminderType Wellness on labs/vaccines without "wellness" in the item name).
  * PIMS often tags reminders with `reminderType: "Wellness"` without the word "wellness" in the inventory/lab name
  * (e.g. F4DX + vaccines only on the packaged care plan).
  */
-function isWellnessVisit(patient: any, roomLoaderRootReminders?: any[] | null): boolean {
+function carePlanHasAnyWellnessSignal(patient: any, roomLoaderRootReminders?: any[] | null): boolean {
   const rows = roomLoaderReminderRowsForPatient(patient, roomLoaderRootReminders);
   for (const r of rows) {
     const rt = String(r?.reminderType ?? r?.reminder?.reminderType ?? '').toLowerCase();
@@ -162,6 +228,24 @@ function isWellnessVisit(patient: any, roomLoaderRootReminders?: any[] | null): 
     if (String(item?.code ?? '').trim().toUpperCase() === 'WELLNESS') return true;
   }
   return false;
+}
+
+/**
+ * True when this visit is treated as routine wellness for age-based lab recommendations.
+ * Quick (Tech) Visit / technician appointments require an explicit wellness visit line on the care plan;
+ * otherwise only staff "medical concern → lab work = Yes" should surface Senior Screen.
+ */
+function isWellnessVisit(
+  patient: any,
+  roomLoaderRootReminders?: any[] | null,
+  appt?: any
+): boolean {
+  const techOnPlan = patientCarePlanHasTechVisitLine(patient);
+  const techAppt = roomLoaderAppointmentIsTechVisit(appt);
+  if (techOnPlan || techAppt) {
+    return carePlanHasWellnessVisitTypeLine(patient, roomLoaderRootReminders);
+  }
+  return carePlanHasAnyWellnessSignal(patient, roomLoaderRootReminders);
 }
 
 function getLineItemNames(patient: any): string {
@@ -256,11 +340,21 @@ function itemNameMatch(name: string, ...substrings: string[]): boolean {
   return substrings.some((s) => n.includes(s.toLowerCase()));
 }
 
+/** Cancelled/deleted invoice lines must not count as “already done” for lab lookbacks. */
+function treatmentHistoryItemCountsForLookback(item: {
+  isDeclined?: boolean;
+  isDeleted?: boolean;
+  isActive?: boolean;
+}): boolean {
+  if (item.isDeclined || item.isDeleted === true || item.isActive === false) return false;
+  return true;
+}
+
 function hadInLast8Months(history: TreatmentWithItems[], ...nameSubstrings: string[]): boolean {
   const cutoff = DateTime.now().minus({ months: 8 });
   for (const tx of history ?? []) {
     for (const item of tx.treatmentItems ?? []) {
-      if (item.isDeclined) continue;
+      if (!treatmentHistoryItemCountsForLookback(item)) continue;
       const name = item.lab?.name ?? item.procedure?.name ?? item.inventoryItem?.name ?? '';
       if (!itemNameMatch(name, ...nameSubstrings)) continue;
       const serviceDate = item.serviceDate ? DateTime.fromISO(item.serviceDate) : null;
@@ -280,33 +374,45 @@ const VACCINE_SEARCH_QUERIES = {
 
 type VaccineOptKey = keyof typeof VACCINE_SEARCH_QUERIES;
 
+const MEMBERSHIP_SHARED_BENEFITS = [
+  'A dedicated "One-Team" that gets to know your pet over time',
+  'Priority scheduling with your One-Team',
+  '7-day support from VAYD staff',
+  '50% off exams on additional visits',
+  'Member pricing (10% off) in our online store',
+];
+
 /** Plan card content for room-loader info popover (same as MembershipSignup). Key by base plan id (e.g. foundations, golden). */
 const MEMBERSHIP_PLAN_CARD_DETAILS: Record<string, { name: string; tagLine: string; includes: string[] }> = {
   foundations: {
     name: 'Foundations',
     tagLine: 'Annual Membership Plan',
     includes: [
-      'One Comprehensive Wellness Exam & Trip Fee',
-      'Annual Vaccinations Recommended for Age and Lifestyle',
-      'Annual "Basic" Lab Panel (CBC, Abbreviated Chemistry)',
-      'Annual Fecal Test',
-      'Heartworm/Tick Test (Dogs)',
-      'FIV / FeLV / Heartworm test (Cats)',
-      'After-hours Online Chat Support via VAYD Client Portal',
+      'One comprehensive wellness exam & trip fee',
+      'Annual vaccinations recommended for age and lifestyle',
+      'Annual "basic" lab panel (CBC, abbreviated chemistry)',
+      'Annual fecal test',
+      'Heartworm/Tick test (dogs)',
+      'FIV/FeLV/heartworm test (cats)',
+      ...MEMBERSHIP_SHARED_BENEFITS,
     ],
   },
   golden: {
     name: 'Golden',
     tagLine: 'Annual Membership Plan',
     includes: [
-      'Two Comprehensive Wellness Exams & Trip Fees',
-      'Annual Vaccinations Recommended for Age and Lifestyle',
-      'Annual "Advanced" Lab Panel (CBC, Chemistry, Thyroid, Urinalysis)',
-      'Annual Fecal Test',
-      'FeLV/FIV/Heartworm test (Cats)',
-      'Pancreatitis Screening (Cats)',
-      '"4dx" Heartworm/Tick test (Dogs)',
-      'After-hours Online Chat Support via VAYD Client Portal',
+      'Two comprehensive wellness exams & trip fees',
+      'Annual vaccinations recommended for age and lifestyle',
+      'Annual "advanced" lab panel (CBC, chemistry, thyroid, urinalysis)',
+      'Annual fecal test',
+      'FeLV/FIV/heartworm test (cats)',
+      'Pancreatitis screening (cats)',
+      '"4dx" Heartworm/Tick test (dogs)',
+      'A team that gets to know your pet over time',
+      'Priority scheduling with your One-Team',
+      '7-day support from VAYD staff',
+      '50% off exams on additional visits',
+      'Member pricing (10% off) in our online store',
     ],
   },
   'comfort-care': {
@@ -315,17 +421,8 @@ const MEMBERSHIP_PLAN_CARD_DETAILS: Record<string, { name: string; tagLine: stri
     includes: [
       'One Comprehensive Exam & Trip Fee per month',
       'One office-hours tele-health consult via phone or video',
-      'After-hours Online Chat Support via VAYD Client Portal',
+      'Priority 7-day support from VAYD staff',
       '15% off total euthanasia and after-care cost',
-    ],
-  },
-  'plus-addon': {
-    name: 'PLUS Add-on',
-    tagLine: 'Annual Membership Plan',
-    includes: [
-      '50% off all Additional Exams',
-      '10% off Everything We Offer (e.g. Lab Work, Services, Medications)',
-      'One Free Nail Trim Per Year',
     ],
   },
   'starter-addon': {
@@ -345,7 +442,7 @@ function getMembershipPlanCardDetails(planId: string): { name: string; tagLine: 
 }
 
 /** All plan IDs used in membership flow (base + add-ons). Filter per pet using same logic as MembershipSignup. */
-const ALL_MEMBERSHIP_PLAN_IDS = ['foundations', 'golden', 'comfort-care', 'plus-addon', 'starter-addon'] as const;
+const ALL_MEMBERSHIP_PLAN_IDS = ['foundations', 'golden', 'comfort-care', 'starter-addon'] as const;
 
 /** When species fields are empty, infer from reminders/added items (e.g. canine vaccines on the visit list). */
 function inferMembershipKindFromLineItems(p: any): 'dog' | 'cat' | null {
@@ -380,7 +477,6 @@ function getPlanIdsForPet(petDetails: { kind: 'dog' | 'cat' | null; ageYears: nu
   const planIds: string[] = ['foundations'];
   if (meetsGolden) planIds.push('golden');
   planIds.push('comfort-care');
-  planIds.push('plus-addon');
   if (shouldShowStarter) planIds.push('starter-addon');
   return planIds;
 }
@@ -389,7 +485,7 @@ function normalizePlanBaseId(planId: string): string {
   return (planId || '').replace(/-cat|-dog$/i, '');
 }
 
-const MEMBERSHIP_ADDON_PLAN_BASE_IDS = new Set(['plus-addon', 'starter-addon']);
+const MEMBERSHIP_ADDON_PLAN_BASE_IDS = new Set(['starter-addon']);
 
 /**
  * Primary wellness plan for recommendation copy (excludes add-ons).
@@ -674,7 +770,8 @@ function getRoomLoaderMembershipDetailText(p: any, appointments: any[] | undefin
 }
 
 /**
- * Foundations wellness members (not on Golden) — used where plan tier affects pricing copy (e.g. catalog footnotes).
+ * Foundations wellness members (not on Golden): routine senior-age labs use Early Detection unless staff
+ * answered Yes to “medical concern / lab work” (then the Senior Screen path via 8659999 applies).
  */
 function roomLoaderPatientMembershipIsFoundationsNotGolden(p: any, appointments: any[] | undefined): boolean {
   const detail = getRoomLoaderMembershipDetailText(p, appointments);
@@ -682,6 +779,19 @@ function roomLoaderPatientMembershipIsFoundationsNotGolden(p: any, appointments:
   const s = detail.toLowerCase();
   if (s.includes('golden')) return false;
   return s.includes('foundations');
+}
+
+/** Foundations (non-Golden) with staff lab-work = No → Early Detection replaces Senior Screen at senior age. */
+function roomLoaderFoundationsUsesEarlyDetectionOverSenior(
+  patient: any,
+  appointments: any[] | undefined,
+  formData: Record<string, unknown>,
+  petKey: string
+): boolean {
+  return (
+    roomLoaderPatientMembershipIsFoundationsNotGolden(patient, appointments) &&
+    !publicFormPetLabWorkConcernYes(formData, petKey, patient)
+  );
 }
 
 function RoomLoaderPatientMemberBadge({
@@ -2239,6 +2349,33 @@ function rowIsFelineBundledSeniorScreenVisitLine(row: any): boolean {
     return true;
   }
   return false;
+}
+
+function visitRowIsSeniorScreenForFoundationsSuppression(row: any): boolean {
+  if (row._panelDeclineInjected) return false;
+  const code = (getCodeFromDisplayItem(row) ?? '').trim().toUpperCase();
+  if (code === 'FIL25659999' || code === 'FIL45129999' || code === 'FIL8659999' || code === '8659999') {
+    return true;
+  }
+  if (rowIsCanineBundledSeniorScreenVisitLine(row) || rowIsFelineBundledSeniorScreenVisitLine(row)) {
+    return true;
+  }
+  if (rowLooksLikeGenericSeniorChemScreen(row)) return true;
+  const n = (row?.name ?? '').toLowerCase();
+  return n.includes('senior screen') && !n.includes('early detection');
+}
+
+/** Foundations members at senior age (labs = No): hide Senior Screen visit rows so Early Detection is shown instead. */
+function filterSeniorScreenVisitRowsForFoundationsEarlyDetection(rows: any[], suppressSenior: boolean): any[] {
+  if (!suppressSenior) return rows;
+  return rows.filter((row) => !visitRowIsSeniorScreenForFoundationsSuppression(row));
+}
+
+function stripSeniorLabRecommendationCodes<T extends { code: string }>(recs: T[]): T[] {
+  return recs.filter((r) => {
+    const c = r.code;
+    return c !== '8659999' && c !== 'FIL8659999' && c !== 'FIL25659999' && c !== 'FIL45129999';
+  });
 }
 
 /** Senior bundled visit panels (and merged senior screen rows) that include urinalysis — excludes Early Detection FIL481/FIL487. */
@@ -3873,7 +4010,7 @@ export default function PublicRoomLoaderForm() {
     enrollmentOrder: number[];
     multiPetCreditPatientIds: Record<number, true>;
   }>({ enrollmentOrder: [], multiPetCreditPatientIds: {} });
-  /** Collapsible "See how a membership could change your bill" section on summary (only for non-members). */
+  /** Collapsible "Expand to see how membership could change your bill" section on summary (only for non-members). */
   const [membershipBillSectionExpanded, setMembershipBillSectionExpanded] = useState(false);
   /** Public membership enrollment modal (same flow as appointment request form). */
   const [showMembershipEnrollmentModal, setShowMembershipEnrollmentModal] = useState(false);
@@ -3949,7 +4086,6 @@ export default function PublicRoomLoaderForm() {
             initialFormData[`${petKey}_preMedsMailOrPickup`] = '';
           });
           initialFormData['anythingElseNotes'] = '';
-          initialFormData['ongoingCareInterest'] = '';
           if (savedForm && typeof savedForm === 'object') {
             const {
               optedInVaccineItems: _ovi,
@@ -6207,22 +6343,6 @@ export default function PublicRoomLoaderForm() {
       if (questions.length > 0) {
         labSectionsForThisPet.push({ sectionLabel: petName, patientId, patientName: petName, questions });
       }
-      const isLastLabPetPdf = idx === patientsData.length - 1;
-      if (isLastLabPetPdf && patientsData.length > 0) {
-        const og = formData['ongoingCareInterest'];
-        const ogLabel =
-          og === 'yes' ? 'Yes, I would like that.' : og === 'no' ? 'No, thank you.' : og === 'unsure' ? 'I am not sure.' : null;
-        labSectionsForThisPet.push({
-          sectionLabel: 'Dedicated veterinary team',
-          questions: [
-            {
-              question: 'Are you looking for ongoing care with a consistent, dedicated veterinary team?',
-              answer: og ?? null,
-              answerLabel: ogLabel,
-            },
-          ],
-        });
-      }
       if (labSectionsForThisPet.length > 0) {
         const labPageNum = 2 * nPdfPets + 1 + idx;
         formAnswersPages.push({
@@ -6630,11 +6750,6 @@ export default function PublicRoomLoaderForm() {
         }
       });
     });
-    const ongoing = formData['ongoingCareInterest'];
-    if (ongoing !== 'yes' && ongoing !== 'no' && ongoing !== 'unsure') {
-      errors['ongoingCareInterest'] =
-        "Please answer whether you're interested in ongoing care with a dedicated veterinary team.";
-    }
 
     if (Object.keys(errors).length > 0) {
       return { valid: false, message: Object.values(errors)[0], errors };
@@ -6642,10 +6757,9 @@ export default function PublicRoomLoaderForm() {
     return { valid: true };
   }
 
-  /** Validate required fields when leaving a Labs page for one pet; ongoing-care question only when `requireOngoing` (last pet’s labs page). */
+  /** Validate required fields when leaving a Labs page for one pet. */
   function validateRequiredForLabsPetPage(
-    labsPetIndex: number,
-    requireOngoing: boolean
+    labsPetIndex: number
   ): { valid: boolean; message?: string; errors?: Record<string, string> } {
     const errors: Record<string, string> = {};
     const labRecs = labRecommendationsByPet ?? [];
@@ -6721,13 +6835,6 @@ export default function PublicRoomLoaderForm() {
           }
         }
       });
-    }
-    if (requireOngoing) {
-      const ongoingLabs = formData['ongoingCareInterest'];
-      if (ongoingLabs !== 'yes' && ongoingLabs !== 'no' && ongoingLabs !== 'unsure') {
-        errors['ongoingCareInterest'] =
-          "Please answer whether you're interested in ongoing care with a dedicated veterinary team.";
-      }
     }
     if (Object.keys(errors).length > 0) {
       return { valid: false, message: Object.values(errors)[0], errors };
@@ -6932,7 +7039,6 @@ export default function PublicRoomLoaderForm() {
       const N = (data?.patients ?? []).length;
       const firstCarePlanPage = N > 0 ? N + 1 : 1;
       const firstLabPage = N > 0 ? 2 * N + 1 : 1;
-      const lastLabPage = N > 0 ? 3 * N : 1;
       if (firstErrorKey.startsWith('lab_')) {
         const m = firstErrorKey.match(/_(\d+)$/);
         const idStr = m?.[1];
@@ -6942,8 +7048,6 @@ export default function PublicRoomLoaderForm() {
           if (ix >= 0) labIdx = ix;
         }
         setCurrentPage(N > 0 ? firstLabPage + labIdx : 1);
-      } else if (firstErrorKey.includes('ongoingCareInterest')) {
-        setCurrentPage(N > 0 ? lastLabPage : 1);
       } else if (firstErrorKey.startsWith('pet')) {
         const petNum = firstErrorKey.match(/pet(\d+)/)?.[1];
         const piRaw = petNum != null ? Number(petNum) : 0;
@@ -7006,9 +7110,9 @@ export default function PublicRoomLoaderForm() {
   const labRecommendationsByPet = useMemo(() => {
     const result: { patientId: number | undefined; patientName: string; recommendations: LabRec[] }[] = [];
     patients.forEach((patient: any, idx: number) => {
-      const patientId = patient.patientId ?? patient.patient?.id;
-      const history = patientId != null ? treatmentHistoryByPatientId[patientId] ?? [] : [];
       const appt = getAppointmentForRoomLoaderPet(appointments, patient, idx);
+      const patientId = patient.patientId ?? patient.patient?.id ?? patient.id;
+      const history = patientId != null ? treatmentHistoryByPatientId[patientId] ?? [] : [];
       const petKey = `pet${idx}`;
       const labWorkYes = publicFormPetLabWorkConcernYes(formData, petKey, patient);
       const isQOLExam = publicRoomLoaderAppointmentIsQOLExam(appt);
@@ -7062,7 +7166,7 @@ export default function PublicRoomLoaderForm() {
       const isDog = isDogSpeciesTokens(speciesLower);
       const dob = patient?.dob ?? patient?.patient?.dob ?? appt?.patient?.dob;
       const age = dob != null ? getAgeYears({ dob }) : null;
-      const standard = isWellnessVisit(patient, data?.reminders);
+      const standard = isWellnessVisit(patient, data?.reminders, appt);
       const listHasSenior = listContains(patient, 'senior screen');
       /**
        * For senior-age pets, only count species-matching FIL481/FIL487 as “early on visit” — staff sometimes schedules
@@ -7096,8 +7200,10 @@ export default function PublicRoomLoaderForm() {
       const treatAsNewWhenNoReminders = patient.isNewPatient !== false && appt?.isNewPatient !== false;
       const isNewPatient = !explicitlyNotNew && (markedNewByApi || (!hasReminders && treatAsNewWhenNoReminders));
 
-      /** Senior Screen age-based recs always use the same path (Foundations seniors get Senior Screen on Labs, not catalog Early Detection). */
-      const ageBasedSeniorScreenForMember = true;
+      const foundationsNotGoldenMember = roomLoaderPatientMembershipIsFoundationsNotGolden(patient, appointments);
+      const foundationsUsesEarlyDetection = foundationsNotGoldenMember && !labWorkYes;
+      /** Age-based Senior Screen recs: skip for Foundations when staff did not flag lab work (Early Detection is offered instead). */
+      const ageBasedSeniorScreenForMember = !foundationsUsesEarlyDetection;
 
       if (labWorkYes) {
         recs.push({
@@ -7155,8 +7261,43 @@ export default function PublicRoomLoaderForm() {
         }
       }
 
+      // Foundations (non-Golden) members at senior age: routine care → Early Detection, unless staff flagged lab work (8659999 above).
+      if (
+        foundationsNotGoldenMember &&
+        !labWorkYes &&
+        age != null &&
+        isCat &&
+        standard &&
+        shouldRecommendYoungOrEarly &&
+        !hadYoungEarly8Mo &&
+        age > 1 &&
+        age >= MEMBERSHIP_GOLDEN_MIN_AGE_YEARS
+      ) {
+        const msg = listHasFIVOrFecal
+          ? "We recommend our Early Detection Panel - Feline (Chem 10, lytes, CBC, Fecal Dx, FeLV/FIV/HWT). Since you already have FIV or fecal on the list, it isn't much more to add on a lot more info."
+          : 'We recommend our Early Detection Panel - Feline (Chem 10, lytes, CBC, Fecal Dx, FeLV/FIV/HWT).';
+        recs.push({ code: 'FIL48119999', title: 'Early Detection Panel - Feline', message: msg });
+      }
+      if (
+        foundationsNotGoldenMember &&
+        !labWorkYes &&
+        age != null &&
+        isDog &&
+        standard &&
+        shouldRecommendYoungOrEarly &&
+        !hadYoungEarly8Mo &&
+        age > 1 &&
+        age >= MEMBERSHIP_GOLDEN_MIN_AGE_YEARS
+      ) {
+        const msg = listHas4dxOrFecal
+          ? "We recommend our Early Detection Panel - Canine (Chem 10, lytes, CBC, Fecal Dx, 4Dx). Since you already have 4Dx or fecal on the list, it isn't much more to add on a lot more info."
+          : 'We recommend our Early Detection Panel - Canine (Chem 10, lytes, CBC, Fecal Dx, 4Dx).';
+        recs.push({ code: 'FIL48719999', title: 'Early Detection Panel - Canine', message: msg });
+      }
+
       // Staff room loader: Senior Screen (FIL8659999 / 8659999) plus 4Dx, triple (IL3755), or fecal → recommend bundled senior panel
       if (
+        !foundationsUsesEarlyDetection &&
         standard &&
         patientVisitHasSeniorScreen865Generic(patient) &&
         patientVisitHasStaffBundlingLabCompanion(patient)
@@ -7268,6 +7409,12 @@ export default function PublicRoomLoaderForm() {
         }
       }
 
+      if (foundationsUsesEarlyDetection) {
+        const stripped = stripSeniorLabRecommendationCodes(recs);
+        recs.length = 0;
+        recs.push(...stripped);
+      }
+
       result.push({
         patientId,
         patientName: patient.patientName || `Pet ${idx + 1}`,
@@ -7299,16 +7446,31 @@ export default function PublicRoomLoaderForm() {
       const age = dob != null ? getAgeYears({ dob }) : null;
       const sp = publicSpeciesLowerForPet(p, appts, idx);
       const sk = publicPatientIsSeniorAgeForLabPanels(age, sp);
+      const petKey = `pet${idx}`;
+      const foundationsUsesEarlyDetection = roomLoaderFoundationsUsesEarlyDetectionOverSenior(
+        p,
+        appts,
+        formData,
+        petKey
+      );
       if (sk === 'cat' && (patientVisitHasItemCode(p, 'FIL48119999') || patientVisitHasItemCode(p, 'FIL48719999'))) {
-        hasEarlyFeline = false;
-        hasEarlyCanine = false;
-        hasSeniorFeline = true;
-        hasFIL45129999 = true;
+        if (foundationsUsesEarlyDetection && patientVisitHasItemCode(p, 'FIL48119999')) {
+          hasEarlyFeline = true;
+        } else {
+          hasEarlyFeline = false;
+          hasEarlyCanine = false;
+          hasSeniorFeline = true;
+          hasFIL45129999 = true;
+        }
       }
       if (sk === 'dog' && (patientVisitHasItemCode(p, 'FIL48719999') || patientVisitHasItemCode(p, 'FIL48119999'))) {
-        hasEarlyCanine = false;
-        hasEarlyFeline = false;
-        hasSeniorCanine = true;
+        if (foundationsUsesEarlyDetection && patientVisitHasItemCode(p, 'FIL48719999')) {
+          hasEarlyCanine = true;
+        } else {
+          hasEarlyCanine = false;
+          hasEarlyFeline = false;
+          hasSeniorCanine = true;
+        }
       }
     });
     const needStandard = hasSeniorCanine || has8659999 || hasFIL45129999 || hasSeniorFeline;
@@ -7950,7 +8112,7 @@ export default function PublicRoomLoaderForm() {
             Want to spread out the cost of care while getting even more support and benefits?
           </p>
           <p style={{ margin: '0 0 12px', fontSize: '14px', color: '#555', lineHeight: 1.4, textAlign: 'left' }}>
-            Memberships allow you to turn wellness care into easy monthly payments while giving you priority access to your dedicated One Team and after-hours triage support. You can explore membership options in your Client Portal. To apply membership benefits to this visit, enrollment should be completed before your appointment.
+            Memberships allow you to turn wellness care into easy monthly payments while giving you priority scheduling with your dedicated One Team and priority 7-day support from VAYD staff. Members also save 50% on additional exams and get member pricing in our online store. You can explore membership options in your Client Portal. To apply membership benefits to this visit, enrollment should be completed before your appointment.
           </p>
           <div className="public-room-loader-thank-you-actions" style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', justifyContent: 'center', alignItems: 'center' }}>
             {token && (
@@ -8064,14 +8226,24 @@ export default function PublicRoomLoaderForm() {
       isDogSpeciesTokens(speciesLowerPet) ||
       (speciesLowerPet.trim() === '' && !isCatSpeciesTokens(speciesLowerPet));
     const isCatPetItems = isCatSpeciesTokens(speciesLowerPet);
-    petItems = mergeStaffSeniorComprehensiveTrioRows(
-      petItems,
-      isDogPetItems,
-      isCatPetItems,
-      seniorCanineExtendedItem,
-      seniorFelineExtendedItem
+    const foundationsUsesEarlyDetection = roomLoaderFoundationsUsesEarlyDetectionOverSenior(
+      patient,
+      appointments,
+      formData,
+      `pet${petIdx}`
     );
-    petItems = filterEarlyDetectionVisitRowsForSeniorPetDisplay(petItems, seniorKindForPanels);
+    if (foundationsUsesEarlyDetection) {
+      petItems = filterSeniorScreenVisitRowsForFoundationsEarlyDetection(petItems, true);
+    } else {
+      petItems = mergeStaffSeniorComprehensiveTrioRows(
+        petItems,
+        isDogPetItems,
+        isCatPetItems,
+        seniorCanineExtendedItem,
+        seniorFelineExtendedItem
+      );
+      petItems = filterEarlyDetectionVisitRowsForSeniorPetDisplay(petItems, seniorKindForPanels);
+    }
     const bundledActive = bundledLabPanelActiveOnClient({
       patientId,
       formData,
@@ -9357,10 +9529,7 @@ export default function PublicRoomLoaderForm() {
               {buildLabsWeRecommendIntro(formData, patients)}
             </p>
           </div>
-          {Object.keys(fieldValidationErrors).some(
-            (k) =>
-              k.startsWith('lab_') || (isLastLabsPet && k === 'ongoingCareInterest')
-          ) && (
+          {Object.keys(fieldValidationErrors).some((k) => k.startsWith('lab_')) && (
             <p style={{ marginBottom: '10px', padding: '12px', backgroundColor: '#f8d7da', border: '1px solid #f5c6cb', borderRadius: '6px', color: '#721c24', fontSize: '14px' }}>
               Please complete all required lab questions below before continuing.
             </p>
@@ -9525,6 +9694,12 @@ export default function PublicRoomLoaderForm() {
                   const foundationsNotGoldenLab = roomLoaderPatientMembershipIsFoundationsNotGolden(
                     patientForEntry,
                     appointments
+                  );
+                  const foundationsEarlyDetectionInsteadOfSenior = roomLoaderFoundationsUsesEarlyDetectionOverSenior(
+                    patientForEntry,
+                    appointments,
+                    formData,
+                    `pet${idx}`
                   );
                   const standardPricingSenior = getClientPricing(patientIdForPricing, seniorCanineStandardItem);
                   const extendedCaninePricingSenior = getClientPricing(patientIdForPricing, seniorCanineExtendedItem);
@@ -9914,6 +10089,7 @@ export default function PublicRoomLoaderForm() {
                   }
 
                   if (isSeniorCanine) {
+                    if (foundationsEarlyDetectionInsteadOfSenior) return null;
                     if (carePlanShowsMergedSeniorCanineComprehensive(entryDisplayItems)) return null;
                     if (rec.code === 'FIL8659999' && hasLabWorkYesSeniorCanine) return null;
                     const extendedMinusFecal = extendedPrice != null && fecalPrice != null ? extendedPrice - fecalPrice : null;
@@ -10228,6 +10404,7 @@ export default function PublicRoomLoaderForm() {
                   }
 
                   if (isSeniorFelineFullPanel) {
+                    if (foundationsEarlyDetectionInsteadOfSenior) return null;
                     if (carePlanShowsMergedSeniorFelineComprehensive(entryDisplayItems)) return null;
                     // When 8659999 is present we already show "Senior Screen — Feline" (symptom / lab-work path). Skip age-based FIL45129999 and FIL8659999 so the same two-panel choice isn't shown twice.
                     const hasLabWorkYesSeniorFeline = entry.recommendations.some((r: any) => r.code === '8659999');
@@ -10422,94 +10599,6 @@ export default function PublicRoomLoaderForm() {
             );
           })()}
 
-          {isLastLabsPet && (
-          <div
-            style={{
-              marginTop: '18px',
-              padding: '16px',
-              backgroundColor: '#f9f9f9',
-              border: '1px solid #ddd',
-              borderRadius: '8px',
-            }}
-          >
-            <p style={{ fontSize: '16px', fontWeight: 600, color: '#111827', marginBottom: '12px' }}>
-              Are you looking for ongoing care with a consistent, dedicated veterinary team?{' '}
-              <span style={{ color: '#ef4444' }} aria-hidden>*</span>
-            </p>
-            <div
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '8px',
-                padding: fieldValidationErrors.ongoingCareInterest ? '12px' : undefined,
-                borderRadius: '8px',
-                border: fieldValidationErrors.ongoingCareInterest ? '1px solid #ef4444' : undefined,
-                backgroundColor: fieldValidationErrors.ongoingCareInterest ? '#fef2f2' : undefined,
-              }}
-            >
-              <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: readOnly ? 'default' : 'pointer', fontSize: '15px' }}>
-                <input
-                  type="radio"
-                  name="ongoingCareInterest"
-                  checked={formData.ongoingCareInterest === 'yes'}
-                  onChange={() => {
-                    handleInputChange('ongoingCareInterest', 'yes');
-                    setFieldValidationErrors((prev) => {
-                      const next = { ...prev };
-                      delete next.ongoingCareInterest;
-                      return next;
-                    });
-                  }}
-                  disabled={readOnly}
-                  style={{ width: '18px', height: '18px', accentColor: '#0f766e' }}
-                />
-                Yes, I would like that.
-              </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: readOnly ? 'default' : 'pointer', fontSize: '15px' }}>
-                <input
-                  type="radio"
-                  name="ongoingCareInterest"
-                  checked={formData.ongoingCareInterest === 'no'}
-                  onChange={() => {
-                    handleInputChange('ongoingCareInterest', 'no');
-                    setFieldValidationErrors((prev) => {
-                      const next = { ...prev };
-                      delete next.ongoingCareInterest;
-                      return next;
-                    });
-                  }}
-                  disabled={readOnly}
-                  style={{ width: '18px', height: '18px', accentColor: '#0f766e' }}
-                />
-                No, thank you.
-              </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: readOnly ? 'default' : 'pointer', fontSize: '15px' }}>
-                <input
-                  type="radio"
-                  name="ongoingCareInterest"
-                  checked={formData.ongoingCareInterest === 'unsure'}
-                  onChange={() => {
-                    handleInputChange('ongoingCareInterest', 'unsure');
-                    setFieldValidationErrors((prev) => {
-                      const next = { ...prev };
-                      delete next.ongoingCareInterest;
-                      return next;
-                    });
-                  }}
-                  disabled={readOnly}
-                  style={{ width: '18px', height: '18px', accentColor: '#0f766e' }}
-                />
-                I am not sure.
-              </label>
-            </div>
-            {fieldValidationErrors.ongoingCareInterest && (
-              <div style={{ fontSize: '14px', color: '#ef4444', marginTop: '8px' }} role="alert">
-                {fieldValidationErrors.ongoingCareInterest}
-              </div>
-            )}
-          </div>
-          )}
-
           <div className="public-room-loader-nav-buttons">
             <button
               type="button"
@@ -10528,7 +10617,7 @@ export default function PublicRoomLoaderForm() {
               type="button"
               className="public-room-loader-btn"
               onClick={() => {
-                const v = validateRequiredForLabsPetPage(labsPetIndex, isLastLabsPet);
+                const v = validateRequiredForLabsPetPage(labsPetIndex);
                 if (!v.valid) {
                   setFieldValidationErrors(v.errors || {});
                   return;
@@ -12061,11 +12150,11 @@ export default function PublicRoomLoaderForm() {
                     }
                     style={{
                       padding: '10px 16px',
-                      fontSize: '14px',
-                      fontWeight: 600,
-                      color: '#084298',
-                      backgroundColor: '#f0f7ff',
-                      border: '1px solid #b6d4fe',
+                      fontSize: '15px',
+                      fontWeight: 700,
+                      color: '#166534',
+                      backgroundColor: '#ecfdf5',
+                      border: '2px solid #166534',
                       borderRadius: '8px',
                       cursor: 'pointer',
                       display: 'inline-flex',
@@ -12077,7 +12166,9 @@ export default function PublicRoomLoaderForm() {
                     <span aria-hidden style={{ fontSize: '12px', width: '1em', flexShrink: 0 }}>
                       {membershipBillSectionExpanded ? '▼' : '▶'}
                     </span>
-                    See how a membership could change your bill
+                    {membershipBillSectionExpanded
+                      ? 'Hide membership bill comparison'
+                      : 'Expand to see how membership could change your bill'}
                   </button>
                 </div>
               )}

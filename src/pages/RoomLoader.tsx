@@ -1,5 +1,7 @@
 // src/pages/RoomLoader.tsx
 import { useState, useEffect, useMemo, useRef, useCallback, Fragment } from 'react';
+import { createPortal } from 'react-dom';
+import { useLocation, useNavigate } from 'react-router';
 import { DateTime } from 'luxon';
 import {
   searchRoomLoaders,
@@ -23,6 +25,7 @@ import { Heart } from 'lucide-react';
 import { KeyValue } from '../components/KeyValue';
 import { RoomLoaderReconciliationModal } from '../components/RoomLoaderReconciliationModal';
 import { roomLoaderAppointmentsHaveHappened } from '../utils/roomLoaderReconciliation';
+import { notifyRoomLoaderSentStatusChanged } from '../utils/roomLoaderPreApptDisplay';
 import { evetPatientLink, evetClientLink } from '../utils/evet';
 import {
   inventoryCategoryRequiresSharpsDisposal,
@@ -365,7 +368,19 @@ function roomLoaderListDefaultLookbackIso(): string {
   return DateTime.now().minus({ days: ROOM_LOADER_LIST_LOOKBACK_DEFAULT_DAYS }).toISODate() ?? '';
 }
 
-export default function RoomLoaderPage() {
+export type RoomLoaderEmbeddedConfig = {
+  roomLoaderId: number;
+  onClose: () => void;
+};
+
+type RoomLoaderPageProps = {
+  /** Open Room Loader Details on top of another page (e.g. practice scheduler). */
+  embedded?: RoomLoaderEmbeddedConfig;
+};
+
+export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
+  const location = useLocation();
+  const navigate = useNavigate();
   const [roomLoaders, setRoomLoaders] = useState<RoomLoader[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -452,10 +467,25 @@ export default function RoomLoaderPage() {
     }
   }, [filters, useAppointmentDateFilter, filterAppointmentFrom, filterAppointmentTo]);
 
+  // Open a specific room loader when navigated from Scheduler (legacy navigation)
+  useEffect(() => {
+    if (embedded) return;
+    const id = (location.state as { openRoomLoaderId?: number } | null)?.openRoomLoaderId;
+    if (id == null || !Number.isFinite(id)) return;
+    setSelectedRoomLoaderId(id);
+    navigate(location.pathname, { replace: true, state: {} });
+  }, [embedded, location.state, location.pathname, navigate]);
+
+  useEffect(() => {
+    if (!embedded?.roomLoaderId) return;
+    setSelectedRoomLoaderId(embedded.roomLoaderId);
+  }, [embedded?.roomLoaderId]);
+
   // Load room loaders
   useEffect(() => {
+    if (embedded) return;
     void loadRoomLoaders();
-  }, [loadRoomLoaders]);
+  }, [embedded, loadRoomLoaders]);
 
   // Load selected room loader details
   useEffect(() => {
@@ -1199,6 +1229,12 @@ export default function RoomLoaderPage() {
     setAppointmentReasons({});
     setVaccineCheckboxes({});
     setNotesToClient({});
+    setRemovedReminders(new Set());
+    setConfirmedMatchReminders(new Set());
+    setReminderToRemove(null);
+    setConfirmAction(null);
+    setSendWarningReasons([]);
+    embedded?.onClose();
   }
 
   function handleOpenReconcile(roomLoaderId: number, e: React.MouseEvent) {
@@ -2414,12 +2450,12 @@ export default function RoomLoaderPage() {
       if (options?.sendViaSms) payload.sendViaSms = true;
       if (options?.smsMessage) payload.smsMessage = options.smsMessage;
       await http.post('/room-loader/send-to-client', payload);
-      await loadRoomLoaders();
+      notifyRoomLoaderSentStatusChanged();
+      if (!embedded) await loadRoomLoaders();
       if (selectedRoomLoaderId) {
         await loadRoomLoaderDetails(selectedRoomLoaderId);
       }
-      setIsModalOpen(false);
-      setSelectedRoomLoaderId(null);
+      handleCloseModal();
     } catch (error: any) {
       console.error('Error sending to client:', error);
       alert(`Failed to send to client: ${error?.message || 'Please try again.'}`);
@@ -2473,12 +2509,11 @@ export default function RoomLoaderPage() {
         roomLoaderId: selectedRoomLoader.id,
         formData: formDataToSave,
       });
-      await loadRoomLoaders();
+      if (!embedded) await loadRoomLoaders();
       if (selectedRoomLoaderId) {
         await loadRoomLoaderDetails(selectedRoomLoaderId);
       }
-      setIsModalOpen(false);
-      setSelectedRoomLoaderId(null);
+      handleCloseModal();
     } catch (error: any) {
       console.error('Error saving form:', error);
       alert(`Failed to save form: ${error?.message || 'Please try again.'}`);
@@ -2743,8 +2778,20 @@ export default function RoomLoaderPage() {
     });
   }, [selectedSameDayClientLink, petsWithAppointments, removedReminders, addedItems]);
 
+  const embeddedDetailsLoading =
+    Boolean(embedded) && selectedRoomLoaderId != null && selectedRoomLoader == null;
+
   return (
-    <div className="room-loader-page">
+    <div className={embedded ? 'room-loader-embedded-host' : 'room-loader-page'}>
+      {embeddedDetailsLoading ? (
+        <div className="room-loader-modal-overlay" role="status" aria-live="polite">
+          <div className="card" style={{ padding: '24px 32px' }}>
+            Loading Room Loader…
+          </div>
+        </div>
+      ) : null}
+      {!embedded ? (
+        <>
       <style>{`
         .room-loader-qty-input::-webkit-outer-spin-button,
         .room-loader-qty-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
@@ -3174,6 +3221,8 @@ export default function RoomLoaderPage() {
           })
         )}
       </div>
+        </>
+      ) : null}
 
       {/* Room Loader Details Modal */}
       {isModalOpen && selectedRoomLoader && (
@@ -5286,75 +5335,78 @@ export default function RoomLoaderPage() {
         </div>
       )}
 
-      {/* Confirmation Modal for Removing Reminder */}
-      {reminderToRemove && (
-        <div
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.5)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 10000,
-          }}
-          onClick={cancelRemoveReminder}
-        >
-          <div
-            style={{
-              backgroundColor: 'white',
-              padding: '30px',
-              borderRadius: '8px',
-              maxWidth: '500px',
-              width: '90%',
-              boxShadow: '0 4px 6px rgba(0, 0, 0, 0.3)',
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 style={{ marginTop: 0, marginBottom: '15px', color: '#333', fontSize: '20px' }}>
-              Remove Reminder?
-            </h2>
-            <p style={{ marginBottom: '20px', color: '#666', fontSize: '16px', lineHeight: '1.5' }}>
-              Are you sure you want to remove <strong>"{reminderToRemove.description}"</strong>?
-            </p>
-            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-              <button
-                onClick={cancelRemoveReminder}
+      {/* Confirmation Modal for Removing Reminder — portaled so embedded scheduler host pointer-events:none does not block clicks */}
+      {reminderToRemove
+        ? createPortal(
+            <div
+              className="room-loader-modal-overlay"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="room-loader-remove-reminder-title"
+              style={{ zIndex: 10050 }}
+              onClick={cancelRemoveReminder}
+            >
+              <div
+                className="room-loader-confirm-modal"
                 style={{
-                  padding: '10px 20px',
-                  fontSize: '14px',
-                  fontWeight: 500,
-                  backgroundColor: '#6c757d',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '4px',
-                  cursor: 'pointer',
+                  backgroundColor: 'white',
+                  borderRadius: '8px',
+                  maxWidth: '500px',
+                  boxShadow: '0 4px 6px rgba(0, 0, 0, 0.3)',
                 }}
+                onClick={(e) => e.stopPropagation()}
               >
-                Cancel
-              </button>
-              <button
-                onClick={confirmRemoveReminder}
-                style={{
-                  padding: '10px 20px',
-                  fontSize: '14px',
-                  fontWeight: 500,
-                  backgroundColor: '#f44336',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '4px',
-                  cursor: 'pointer',
-                }}
-              >
-                Remove
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+                <h2
+                  id="room-loader-remove-reminder-title"
+                  style={{ marginTop: 0, marginBottom: '15px', color: '#333', fontSize: '20px' }}
+                >
+                  Remove Reminder?
+                </h2>
+                <p style={{ marginBottom: '20px', color: '#666', fontSize: '16px', lineHeight: '1.5' }}>
+                  Are you sure you want to remove <strong>"{reminderToRemove.description}"</strong>?
+                </p>
+                <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+                  <button
+                    type="button"
+                    onClick={cancelRemoveReminder}
+                    style={{
+                      padding: '10px 20px',
+                      fontSize: '14px',
+                      fontWeight: 500,
+                      backgroundColor: '#6c757d',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '4px',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      confirmRemoveReminder();
+                    }}
+                    style={{
+                      padding: '10px 20px',
+                      fontSize: '14px',
+                      fontWeight: 500,
+                      backgroundColor: '#f44336',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '4px',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Remove
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
 
       {reconcileRoomLoaderId != null ? (
         <RoomLoaderReconciliationModal

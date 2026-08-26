@@ -29,8 +29,17 @@ type AuthContextType = {
   userId: string | null;
   role: string[];
   clientInfo: any | null; // Store client information for clients
-  /** Doctor/provider id from users table (when set). Used to default provider selection in My Day / My Week. */
+  /**
+   * Doctor/provider id from users.doctorId (the doctor this user works for).
+   * Used to default provider selection and to show doctor-private calendar metrics
+   * (e.g. variable VSD/pt) for assigned staff.
+   */
   doctorId: string | null;
+  /**
+   * User's own employee record id from users.employeeId / JWT (when they are an employee).
+   * Doctors typically match the calendar via this id.
+   */
+  employeeId: string | null;
   /** All doctor/provider ids linked to this user (for analytics scoping). Includes `doctorId`. */
   assignedDoctorIds: string[];
   // ⬅️ now returns a LoginResult instead of void
@@ -102,6 +111,34 @@ function decodeJwt(token: string): any | null {
   }
 }
 
+function claimIdToString(v: unknown): string | null {
+  if (v == null) return null;
+  const s = String(v).trim();
+  return s && s !== 'null' && s !== 'undefined' ? s : null;
+}
+
+/** users.doctorId — doctor this staff user works for (also present on JWT). */
+function extractDoctorIdFromToken(token: string | null): string | null {
+  if (!token) return null;
+  try {
+    const payload = decodeJwt(token);
+    return claimIdToString(payload?.doctorId ?? payload?.doctor_id);
+  } catch {
+    return null;
+  }
+}
+
+/** users.employeeId — this user's own employee record (also present on JWT). */
+function extractEmployeeIdFromToken(token: string | null): string | null {
+  if (!token) return null;
+  try {
+    const payload = decodeJwt(token);
+    return claimIdToString(payload?.employeeId ?? payload?.employee_id);
+  } catch {
+    return null;
+  }
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [tokenState, setTokenState] = useState<string | null>(() => {
     try {
@@ -145,8 +182,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return null;
     }
   });
-  const [doctorId, setDoctorId] = useState<string | null>(null);
-  const [assignedDoctorIds, setAssignedDoctorIds] = useState<string[]>([]);
+  const [doctorId, setDoctorId] = useState<string | null>(() => {
+    try {
+      const token = localStorage.getItem('accessToken') || localStorage.getItem('vayd_token');
+      return extractDoctorIdFromToken(token);
+    } catch {
+      return null;
+    }
+  });
+  const [employeeId, setEmployeeId] = useState<string | null>(() => {
+    try {
+      const token = localStorage.getItem('accessToken') || localStorage.getItem('vayd_token');
+      return extractEmployeeIdFromToken(token);
+    } catch {
+      return null;
+    }
+  });
+  const [assignedDoctorIds, setAssignedDoctorIds] = useState<string[]>(() => {
+    try {
+      const token = localStorage.getItem('accessToken') || localStorage.getItem('vayd_token');
+      const fromJwt = extractDoctorIdFromToken(token);
+      return fromJwt ? [fromJwt] : [];
+    } catch {
+      return [];
+    }
+  });
   const [clientInfo, setClientInfo] = useState<any | null>(() => {
     try {
       const stored = localStorage.getItem('vayd_clientInfo');
@@ -184,9 +244,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           } catch {}
         }
       }
+      const jwtDoctorId = extractDoctorIdFromToken(tokenState);
+      if (jwtDoctorId) {
+        setDoctorId(jwtDoctorId);
+        setAssignedDoctorIds((prev) => {
+          const next = new Set(prev);
+          next.add(jwtDoctorId);
+          return [...next];
+        });
+      }
+      const jwtEmployeeId = extractEmployeeIdFromToken(tokenState);
+      if (jwtEmployeeId) {
+        setEmployeeId(jwtEmployeeId);
+      }
     } else {
       setRole([]);
       setUserId(null);
+      setDoctorId(null);
+      setEmployeeId(null);
+      setAssignedDoctorIds([]);
       try {
         localStorage.removeItem('vayd_clientId');
       } catch {}
@@ -322,8 +398,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const userDoctorId = (user as any)?.doctorId;
         if (userDoctorId != null && String(userDoctorId).trim() !== '') {
           setDoctorId(String(userDoctorId));
+        } else {
+          const fromJwt = extractDoctorIdFromToken(accessToken);
+          if (fromJwt) setDoctorId(fromJwt);
+        }
+        const userEmployeeId = (user as any)?.employeeId;
+        if (userEmployeeId != null && String(userEmployeeId).trim() !== '') {
+          setEmployeeId(String(userEmployeeId));
+        } else {
+          const fromJwt = extractEmployeeIdFromToken(accessToken);
+          if (fromJwt) setEmployeeId(fromJwt);
         }
         setAssignedDoctorIds(collectAssignedDoctorIds((user ?? {}) as Record<string, unknown>));
+        const jwtDoctorForAssigned = extractDoctorIdFromToken(accessToken);
+        if (jwtDoctorForAssigned) {
+          setAssignedDoctorIds((prev) =>
+            prev.includes(jwtDoctorForAssigned) ? prev : [...prev, jwtDoctorForAssigned]
+          );
+        }
         
         // Extract and set role from login response immediately
         const roles: string[] = Array.isArray((user as any)?.role)
@@ -377,6 +469,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setTokenState(null);
       setEmail(null);
       setUserId(null);
+      setDoctorId(null);
+      setEmployeeId(null);
+      setAssignedDoctorIds([]);
       setClientInfo(null);
     }
 
@@ -420,6 +515,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setToken(null);
     setUserId(null);
     setDoctorId(null);
+    setEmployeeId(null);
     setAssignedDoctorIds([]);
     setClientInfo(null);
   }
@@ -458,14 +554,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setToken(null);
     setUserId(null);
     setDoctorId(null);
+    setEmployeeId(null);
     setAssignedDoctorIds([]);
     setClientInfo(null);
   }
 
-  // Fetch current user (for doctorId from users table) when we have a token
+  // Fetch current user (for doctorId / employeeId from users table) when we have a token
   useEffect(() => {
     if (!tokenState) {
       setDoctorId(null);
+      setEmployeeId(null);
       setAssignedDoctorIds([]);
       return;
     }
@@ -473,18 +571,41 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     getCurrentUser()
       .then((res: any) => {
         const data = res?.data ?? res;
+        if (!on) return;
         const id = data?.doctorId;
-        if (on && id != null && String(id).trim() !== '') {
+        if (id != null && String(id).trim() !== '') {
           setDoctorId(String(id));
+        } else {
+          // Keep JWT doctorId if the user row has none (don't wipe assigned staff/doctor link).
+          const fromJwt = extractDoctorIdFromToken(tokenState);
+          if (fromJwt) setDoctorId(fromJwt);
         }
-        if (on) {
-          setAssignedDoctorIds(collectAssignedDoctorIds((data ?? {}) as Record<string, unknown>));
+        const empId = data?.employeeId;
+        if (empId != null && String(empId).trim() !== '') {
+          setEmployeeId(String(empId));
+        } else {
+          const fromJwt = extractEmployeeIdFromToken(tokenState);
+          if (fromJwt) setEmployeeId(fromJwt);
+        }
+        const collected = collectAssignedDoctorIds((data ?? {}) as Record<string, unknown>);
+        if (collected.length > 0) {
+          setAssignedDoctorIds(collected);
+        } else {
+          const fromJwt = extractDoctorIdFromToken(tokenState);
+          setAssignedDoctorIds(fromJwt ? [fromJwt] : []);
         }
       })
       .catch(() => {
-        if (on) {
-          setDoctorId(null);
-          setAssignedDoctorIds([]);
+        // Keep JWT-derived ids on failure — do not clear visibility for assigned staff.
+        if (!on) return;
+        const fromJwtDoctor = extractDoctorIdFromToken(tokenState);
+        const fromJwtEmployee = extractEmployeeIdFromToken(tokenState);
+        if (fromJwtDoctor) setDoctorId(fromJwtDoctor);
+        if (fromJwtEmployee) setEmployeeId(fromJwtEmployee);
+        if (fromJwtDoctor) {
+          setAssignedDoctorIds((prev) =>
+            prev.includes(fromJwtDoctor) ? prev : [...prev, fromJwtDoctor]
+          );
         }
       });
     return () => {
@@ -500,12 +621,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       role,
       clientInfo,
       doctorId,
+      employeeId,
       assignedDoctorIds,
       login,
       logout,
       logoutAll,
     }),
-    [tokenState, email, userId, role, clientInfo, doctorId, assignedDoctorIds]
+    [tokenState, email, userId, role, clientInfo, doctorId, employeeId, assignedDoctorIds]
   );
 
 

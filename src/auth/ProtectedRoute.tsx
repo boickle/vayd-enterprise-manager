@@ -1,7 +1,8 @@
 // src/auth/ProtectedRoute.tsx
 import { ReactNode, useMemo } from 'react';
-import { Navigate, useLocation } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router';
 import { useAuth } from './useAuth';
+import { savePostLoginRedirect } from '../utils/postLoginRedirect';
 
 type ProtectedRouteProps = {
   children: ReactNode;
@@ -13,14 +14,14 @@ type ProtectedRouteProps = {
 /**
  * Determines the appropriate redirect destination based on user role
  * - Clients go to /client-portal
- * - Employees go to /routing
+ * - Employees go to /schedule (Schedule hub)
  */
 function getDefaultRedirect(roles: string[]): string {
   const normalizedRoles = roles.map((r) => String(r).toLowerCase().trim());
   if (normalizedRoles.includes('client')) {
     return '/client-portal';
   }
-  return '/routing';
+  return '/schedule';
 }
 
 export function ProtectedRoute({
@@ -33,8 +34,9 @@ export function ProtectedRoute({
   const location = useLocation();
   const roles: string[] = Array.isArray(role) ? role : role ? [String(role)] : [];
 
-  // Not logged in - redirect to login
+  // Not logged in - redirect to login (preserve deep links e.g. ?promo= on membership signup)
   if (!token) {
+    savePostLoginRedirect(location.pathname, location.search, location.hash);
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
