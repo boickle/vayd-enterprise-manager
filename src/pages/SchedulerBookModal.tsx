@@ -679,6 +679,7 @@ export function SchedulerBookModal({
   );
   const [scheduleOverrideDayOff, setScheduleOverrideDayOff] = useState(false);
   const [scheduleOverrideLoading, setScheduleOverrideLoading] = useState(false);
+  const [joinWaitlistIfSooner, setJoinWaitlistIfSooner] = useState(false);
   const scheduleOverrideUserTouchedRef = useRef(false);
   const scheduleOverrideBaselineRef = useRef<ScheduleOverrideDraft | null>(null);
   const scheduleOverrideDayOffRef = useRef(false);
@@ -739,6 +740,9 @@ export function SchedulerBookModal({
   const isRescheduleBook = prefill?.rescheduleAppointmentId != null;
 
   const isRoutingPreviewBook = Boolean(prefill?.routingPreviewBook && !isRescheduleBook);
+  const isWaitlistOriginBook =
+    prefill?.forwardBookingCreatedVia === 'waitlist' ||
+    readRoutingForwardBookingIntent()?.origin === 'waitlist';
   const showSlotOfferActions = slotOfferFlowActive(prefill, routingLinkPreview);
 
   useEffect(() => {
@@ -848,6 +852,17 @@ export function SchedulerBookModal({
         : null;
 
   const perVisitRoutingBook = isRoutingPreviewBook && routingBookVisitEdits.length > 0;
+  const waitlistPatientReady = perVisitRoutingBook
+    ? routingBookVisitEdits.some(
+        (v) => v.selected && Boolean(v.patientId?.trim()) && !v.isNoPatient
+      )
+    : Boolean(selectedPatientId?.trim());
+  const showJoinWaitlistSooner =
+    open &&
+    !isRescheduleBook &&
+    !isWaitlistOriginBook &&
+    Boolean(selectedClientId?.trim()) &&
+    waitlistPatientReady;
 
   const showAllDayFields = allDayBookSession && !isRescheduleBook;
   const showAllDayToggle = !prefill?.allDay && !isRescheduleBook && canBookAllDay;
@@ -901,6 +916,10 @@ export function SchedulerBookModal({
     if (!startLocal?.isValid) return null;
     return startLocal.plus({ minutes: durationMin });
   }, [startLocal, durationMin]);
+
+  useEffect(() => {
+    if (!open) setJoinWaitlistIfSooner(false);
+  }, [open]);
 
   useEffect(() => {
     if (!showBookScheduleOverride || !providerId.trim() || !bookOverrideAnchorDate) {
@@ -2232,6 +2251,10 @@ export function SchedulerBookModal({
           ? { forwardBookingCreatedVia: prefill.forwardBookingCreatedVia }
           : {}),
       };
+      const joinWaitlistCreateExtras =
+        showJoinWaitlistSooner && joinWaitlistIfSooner
+          ? { joinWaitlistIfSooner: true as const }
+          : {};
 
       let savedAppointmentId: number | undefined;
       let forwardBookingWarning: string | undefined;
@@ -2285,6 +2308,7 @@ export function SchedulerBookModal({
               description: descriptionForNewBook(rawDescription) || undefined,
               instructions: staffNotesForNewBook(rawInstructions) || undefined,
               ...(skipManualBookingPermissionGate ? { bookedViaRouting: true } : {}),
+              ...joinWaitlistCreateExtras,
             });
             const idRaw = created?.id;
             if (idRaw != null && Number.isFinite(Number(idRaw))) {
@@ -2346,6 +2370,7 @@ export function SchedulerBookModal({
             instructions: staffNotesForNewBook(visit.instructions) || undefined,
             ...(skipManualBookingPermissionGate ? { bookedViaRouting: true } : {}),
             ...forwardBookingCreateExtras,
+            ...joinWaitlistCreateExtras,
           });
           const idRaw = created?.id;
           if (idRaw != null && Number.isFinite(Number(idRaw))) {
@@ -2387,6 +2412,7 @@ export function SchedulerBookModal({
           instructions: staffNotesForNewBook(instructions) || undefined,
           ...(skipManualBookingPermissionGate ? { bookedViaRouting: true } : {}),
           ...forwardBookingCreateExtras,
+          ...joinWaitlistCreateExtras,
         });
         const idRaw = created?.id;
         if (idRaw != null && Number.isFinite(Number(idRaw))) {
@@ -2694,9 +2720,12 @@ export function SchedulerBookModal({
         : built.appointmentTypeId;
     const createdVia =
       prefill?.forwardBookingCreatedVia === 'care_outreach' ||
-      prefill?.forwardBookingCreatedVia === 'schedule_loader'
+      prefill?.forwardBookingCreatedVia === 'schedule_loader' ||
+      prefill?.forwardBookingCreatedVia === 'waitlist'
         ? prefill.forwardBookingCreatedVia
-        : fbi?.origin === 'care_outreach' || fbi?.origin === 'schedule_loader'
+        : fbi?.origin === 'care_outreach' ||
+            fbi?.origin === 'schedule_loader' ||
+            fbi?.origin === 'waitlist'
           ? fbi.origin
           : undefined;
     return {
@@ -3885,6 +3914,26 @@ export function SchedulerBookModal({
                 />
               </Field>
             </>
+          ) : null}
+
+          {showJoinWaitlistSooner ? (
+            <label className="scheduler-book-waitlist-optin">
+              <input
+                type="checkbox"
+                checked={joinWaitlistIfSooner}
+                onChange={(e) => setJoinWaitlistIfSooner(e.target.checked)}
+                disabled={submitting}
+              />
+              <span>
+                <span className="scheduler-book-waitlist-optin-title">
+                  Put on waitlist for a sooner appointment
+                </span>
+                <span className="scheduler-book-waitlist-optin-hint">
+                  We&apos;ll keep this time. If a cancellation opens before then, this household
+                  will be on the waitlist.
+                </span>
+              </span>
+            </label>
           ) : null}
 
           {formError ? <div className="scheduler-book-error">{formError}</div> : null}

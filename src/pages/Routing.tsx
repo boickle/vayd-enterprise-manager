@@ -3486,6 +3486,10 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       payload.previewSource = 'schedule-loader';
       payload.scheduleLoaderReturn = forwardBookingIntent.scheduleLoaderReturn;
     }
+    if (forwardBookingIntent?.origin === 'waitlist' && forwardBookingIntent.waitlistReturn) {
+      payload.previewSource = 'waitlist';
+      payload.waitlistReturn = forwardBookingIntent.waitlistReturn;
+    }
 
     writeRoutingCalendarPreview(payload);
     if (calendarWorkspaceMode) {
