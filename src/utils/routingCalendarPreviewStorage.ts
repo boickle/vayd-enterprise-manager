@@ -19,6 +19,11 @@ export type RoutingPreviewEtaWindowWarningsDetail = {
   hasWindowWarning: boolean;
   warningStopCount: number;
   candidateHasWarning: boolean;
+  /**
+   * Depot-return overrun from reconciled POST /routing/eta (seconds past endDepotTime).
+   * Used so Get Best Route OVERFLOW badges match calendar preview / post-book reality.
+   */
+  reconciledOverrunSeconds?: number | null;
 };
 
 /** Return embedded calendar to the visit being rescheduled (clear purple preview, green highlight). */

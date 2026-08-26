@@ -21,11 +21,12 @@ import { etaHouseholdArrivalWindowPayload, fetchEtas } from '../api/routing';
 import {
   buildEtaCandidateSlot,
   orderHouseholdsWithCandidateAtInsertion,
-  resolveRoutingEtaInsertionIndex,
+  routingEtaCandidateInsertionIndexInOrder,
 } from '../utils/routingEtaCandidateSlot';
 import { useAuth } from '../auth/useAuth';
 import { buildGoogleMapsLinksForDay, type Stop } from '../utils/maps';
 import { householdGroupKey } from '../utils/doctorDayHouseholdGroup';
+import { formatDoctorDayApptAddress } from '../utils/doctorDayAddress';
 import {
   appointmentNotesFromDoctorDayRow,
   petAlertsFromDoctorDayRow,
@@ -34,7 +35,7 @@ import {
 } from '../utils/myDayVisualPatientDetails';
 import { AlertTriangle, Heart } from 'lucide-react';
 import {
-  clientFixedTimeUsesDoctorDayClockForDriveLayout,
+  clientVisitUsesDoctorDayClockForDriveLayout,
   computeDriveTimeWindowWarning,
 } from '../utils/windowWarning';
 import {
@@ -129,21 +130,7 @@ function keyVariantsForKeyString(s: string): string[] {
 }
 
 function formatAddress(a: DoctorDayAppt) {
-  const address1 = str(a, 'address1');
-  const city = str(a, 'city');
-  const state = str(a, 'state');
-  const zip = str(a, 'zip');
-  const line = [address1, [city, state].filter(Boolean).join(', '), zip]
-    .filter(Boolean)
-    .join(', ')
-    .replace(/\s+,/g, ',');
-  return (
-    line ||
-    str(a as any, 'address') ||
-    str(a as any, 'addressStr') ||
-    str(a as any, 'fullAddress') ||
-    'Address not available'
-  );
+  return formatDoctorDayApptAddress(a);
 }
 
 /** Hover: drop trailing US ZIP so street + city + state stay on one line with client. */
@@ -318,7 +305,6 @@ function weekHouseholdUsesDoctorDayClockForLayout(
   if (!showByDriveTime) return true;
   const flexBlock = Boolean(h.isPersonalBlock && isFlexBlockItem(h.primary));
   if (h.isPersonalBlock && !flexBlock) return true;
-  if (!weekHouseholdIsClientFixedTime(h)) return false;
   const windowStartIso =
     (slot?.windowStartIso != null && slot?.windowEndIso != null ? slot.windowStartIso : null) ??
     h.windowStartIso ??
@@ -329,7 +315,8 @@ function weekHouseholdUsesDoctorDayClockForLayout(
     h.windowEndIso ??
     h.effectiveWindow?.endIso ??
     null;
-  return clientFixedTimeUsesDoctorDayClockForDriveLayout({
+  return clientVisitUsesDoctorDayClockForDriveLayout({
+    isClientFixedTime: weekHouseholdIsClientFixedTime(h),
     schedStartIso: h.startIso,
     etaIso: slot?.eta,
     windowStartIso,
@@ -1865,31 +1852,34 @@ export default function MyWeek(props: MyWeekProps = {}) {
           list.map(async (day) => {
             if (day.households.length === 0)
               return day;
-            // Visit order for ETA: when this day has the selected routing candidate (virtualAppt), put
-            // existing households first and the candidate at insertionIndex so the backend gets correct order.
+            // Visit order for ETA: map slot-search insertionIndex across meetings/blocks, then
+            // put the candidate there so morning client stops are not pushed under end-of-day.
             const hasVirtual = virtualAppt && virtualAppt.date === day.date;
-            const insertionIndex = hasVirtual
-              ? resolveRoutingEtaInsertionIndex(virtualAppt.insertionIndex, day.households.length)
-              : 0;
             const householdsInVisitOrder = hasVirtual
-              ? orderHouseholdsWithCandidateAtInsertion(day.households, insertionIndex)
+              ? orderHouseholdsWithCandidateAtInsertion(
+                  day.households,
+                  virtualAppt.insertionIndex
+                )
               : day.households;
+            const mappedInsertionIndex = hasVirtual
+              ? routingEtaCandidateInsertionIndexInOrder(
+                  householdsInVisitOrder,
+                  virtualAppt.insertionIndex
+                )
+              : 0;
             const candidateSlot =
               hasVirtual && virtualAppt
                 ? buildEtaCandidateSlot(
                     {
-                      insertionIndex: virtualAppt.insertionIndex,
+                      insertionIndex: mappedInsertionIndex,
                       positionInDay: virtualAppt.positionInDay,
                       suggestedStartIso: virtualAppt.suggestedStartIso,
                       lat: virtualAppt.lat,
                       lon: virtualAppt.lon,
                       serviceMinutes: virtualAppt.serviceMinutes,
-                      overrunSeconds: virtualAppt.overrunSeconds,
-                      validationLastEtdSec: virtualAppt.validationLastEtdSec,
-                      validationReturnSec: virtualAppt.validationReturnSec,
                       arrivalWindow: virtualAppt.arrivalWindow,
                     },
-                    { householdCount: day.households.length }
+                    { householdCount: householdsInVisitOrder.length }
                   )
                 : undefined;
             const payload = {
@@ -2911,14 +2901,10 @@ export default function MyWeek(props: MyWeekProps = {}) {
                       bufferMin
                     );
                     if (!layout) return null;
-                    const dayDataForDrive =
-                      virtualAppt?.date === dateIso &&
-                      typeof virtualAppt.validationReturnSec === 'number' &&
-                      Number.isFinite(virtualAppt.validationReturnSec)
-                        ? { ...dayData, validationReturnSec: virtualAppt.validationReturnSec }
-                        : dayData;
+                    // Use live ETA return (backToDepot*), not slot-search validationReturnSec —
+                    // pinning search return hid post-book depot overflow during View Placement.
                     const driveSegs = showByDriveTime
-                      ? buildMyWeekDriveSegmentsFromLayout(layout, dayDataForDrive, weekGrid, dateIso)
+                      ? buildMyWeekDriveSegmentsFromLayout(layout, dayData, weekGrid, dateIso)
                       : [];
                     const driveBlockOverlapOverlays =
                       showByDriveTime && driveSegs.length > 0
@@ -2931,7 +2917,7 @@ export default function MyWeek(props: MyWeekProps = {}) {
                       showByDriveTime
                         ? computeDepotReturnTrailingBlockOverrunLayers(
                             layout,
-                            dayDataForDrive,
+                            dayData,
                             weekGrid,
                             dateIso,
                             PPM

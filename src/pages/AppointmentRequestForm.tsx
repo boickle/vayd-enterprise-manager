@@ -34,6 +34,12 @@ import { resolveClientArrivalWindowForScheduledStart } from '../utils/appointmen
 import { DEFAULT_PRACTICE_TIMEZONE } from '../utils/practiceTimezone';
 import { formatAutobookDateTimePreferenceDisplay } from '../utils/appointmentRequestDisplay';
 import { appointmentTypeForRoutingStatsKey } from '../utils/routingCalculateTimeType';
+import { fetchPublicRoutingOfferableScoreThresholds } from '../api/routingOfferableScoreThresholds';
+import {
+  daysFromTodayForSlot,
+  defaultRoutingOfferableScoreConfig,
+  isRoutingScoreOfferableForConfig,
+} from '../utils/routingOfferableScoreConfig';
 import {
   buildRoutingVisitPetsFromFormData,
   estimateRoutingServiceMinutesForVisit,
@@ -93,6 +99,7 @@ import {
   APPOINTMENT_PROMO_CODE_QUERY_PARAM,
   type PublicAppointmentRequestPromotion,
 } from '../api/appointmentRequestPromotions';
+import { upsertServiceAreaInterest } from '../api/serviceAreaInterest';
 
 /** Set to true to show doctor selection. Code preserved for potential re-enable. */
 const SHOW_DOCTOR_SELECTION = false;
@@ -196,6 +203,23 @@ function isPhysicalAddressComplete(addr: AddressFields | undefined): boolean {
       addr?.zip?.trim()
   );
 }
+
+function formatAddressForZoneCheck(addr: AddressFields | undefined): string {
+  if (!isPhysicalAddressComplete(addr)) return '';
+  return [addr?.line1, addr?.city, addr?.state, addr?.zip].filter(Boolean).join(', ');
+}
+
+/** Client API uses `zipcode`; some appointment payloads use `zip`. */
+function clientRecordZip(client: { zip?: unknown; zipcode?: unknown } | null | undefined): string {
+  const raw = client?.zipcode ?? client?.zip;
+  return raw != null ? String(raw).trim() : '';
+}
+
+type ZoneCheckStatus = 'idle' | 'pending' | 'in_service' | 'out_of_service' | 'failed';
+
+const ZONE_CHECK_PENDING_MESSAGE = 'Please wait while we confirm we serve your area.';
+const ZONE_CHECK_FAILED_MESSAGE =
+  "We couldn't confirm whether we serve your area. Please try again in a moment.";
 
 function resolvePrimaryAppointmentTypeId(
   formData: Pick<FormData, 'selectedPetIds' | 'newClientPets' | 'existingClientNewPets' | 'petSpecificData'>,
@@ -552,6 +576,8 @@ const ZONE_NOT_SERVICED_CALL_TEXT = 'call or text us at ';
 const ZONE_NOT_SERVICED_PHONE = '(207) 536-8387';
 const ZONE_NOT_SERVICED_TEL = 'tel:+12075368387';
 const ZONE_NOT_SERVICED_SMS = 'sms:+12075368387';
+const ZONE_NOT_SERVICED_MESSAGE =
+  "We're sorry—we don't currently serve your area. Please check back periodically at www.vetatyourdoor.com/service-area to see if our coverage has expanded. You can also call or text us at (207) 536-8387, and we'll take a look to see if your location may still be within reach.";
 
 /** Renders zone-not-serviced copy with blue links for service area, call, text, and phone number. */
 function renderZoneNotServicedMessage(message: string): ReactNode {
@@ -743,10 +769,19 @@ export default function AppointmentRequestForm() {
   const [emailCheckForModal, setEmailCheckForModal] = useState<{ exists: boolean; hasAccount: boolean } | null>(null); // Store email check result for modal
   const [existingClientModalView, setExistingClientModalView] = useState<'message' | 'login'>('message');
   const lastCheckedAddressRef = useRef<string>(''); // Track last checked address to avoid duplicate zone checks
+  const lastFetchedVetsAddressRef = useRef<string>(''); // Vet lookup is separate from the zone gate
+  const lastRecordedOosaAddressRef = useRef<string>(''); // Dedupe out-of-area interest POSTs
+  const [zoneCheckStatus, setZoneCheckStatus] = useState<ZoneCheckStatus>('idle');
+  const zoneCheckStatusRef = useRef<ZoneCheckStatus>('idle');
+  zoneCheckStatusRef.current = zoneCheckStatus;
   const clientLocationRef = useRef<{ lat?: number; lon?: number; address?: string }>({}); // Store client location for veterinarian lookup
   const [speciesList, setSpeciesList] = useState<Array<{ id: number; name: string; prettyName?: string; showInUi?: boolean }>>([]); // List of available species
   const [loadingSpecies, setLoadingSpecies] = useState(false);
   const [clientLocationReady, setClientLocationReady] = useState(false); // Track when client location is available for veterinarian fetch
+  const [serviceAreaNotifyEmail, setServiceAreaNotifyEmail] = useState('');
+  const [serviceAreaNotifySubmitting, setServiceAreaNotifySubmitting] = useState(false);
+  const [serviceAreaNotifyError, setServiceAreaNotifyError] = useState<string | null>(null);
+  const [serviceAreaNotifySuccess, setServiceAreaNotifySuccess] = useState(false);
   const openExistingClientModal = (
     result: { exists: boolean; hasAccount: boolean },
     view: 'message' | 'login' = 'message',
@@ -898,14 +933,376 @@ export default function AppointmentRequestForm() {
     [trackFormEvent]
   );
 
-  const { formSessionIdRef, markFormCompleted, sendAbandon, shouldPersistDraft } =
+  /** Stable identity: the draft hook keys its debounced save / abandon callbacks off this. */
+  const getDraftStepName = useCallback((step: string) => getAppointmentFormStepName(step as Page), []);
+
+  const { formSessionIdRef, markFormCompleted, sendAbandon, resetAbandonSent, shouldPersistDraft } =
     useAppointmentFormDraftPersistence({
       practiceId,
       currentPage,
       getSnapshotInput: getDraftSnapshotInput,
-      getStepName: (step) => getAppointmentFormStepName(step as Page),
+      getStepName: getDraftStepName,
       trackGaAbandon,
+      activityKey: formData,
     });
+
+  const clearOutOfServiceAreaUi = useCallback(() => {
+    setServiceAreaNotifyError(null);
+    setServiceAreaNotifySuccess(false);
+    setServiceAreaNotifySubmitting(false);
+    resetAbandonSent();
+  }, [resetAbandonSent]);
+
+  const recordOutOfServiceAreaInterest = useCallback(
+    async (
+      address: {
+        line1?: string;
+        city?: string;
+        state?: string;
+        zip?: string;
+        lat?: number;
+        lon?: number;
+      },
+      options?: { notifyRequested?: boolean; emailOverride?: string },
+    ) => {
+      const city = address.city?.trim();
+      const state = address.state?.trim();
+      if (!city || !state) return null;
+
+      const addressKey = `${address.line1 ?? ''}|${city}|${state}|${address.zip ?? ''}`.toLowerCase();
+      const notifyRequested = !!options?.notifyRequested;
+      if (!notifyRequested && lastRecordedOosaAddressRef.current === addressKey) {
+        return null;
+      }
+
+      const fd = formDataRef.current;
+      const email =
+        (options?.emailOverride ?? fd.email ?? userEmailRef.current ?? '')?.trim() || undefined;
+      const phone = (fd.phoneNumbers || fd.bestPhoneNumber || '')?.trim() || undefined;
+      const fullName = [fd.fullName?.first, fd.fullName?.last].filter(Boolean).join(' ').trim() || undefined;
+
+      const result = await upsertServiceAreaInterest({
+        practiceId,
+        formSessionId: formSessionIdRef.current,
+        city,
+        state,
+        zip: address.zip?.trim() || undefined,
+        addressLine1: address.line1?.trim() || undefined,
+        latitude: address.lat,
+        longitude: address.lon,
+        email,
+        phone,
+        fullName,
+        notifyRequested,
+        source: 'appointment_form',
+      });
+
+      lastRecordedOosaAddressRef.current = addressKey;
+      return result;
+    },
+    [practiceId, formSessionIdRef],
+  );
+
+  const handleOutOfServiceArea = useCallback(
+    async (address: {
+      line1?: string;
+      city?: string;
+      state?: string;
+      zip?: string;
+      lat?: number;
+      lon?: number;
+    }) => {
+      setErrors((prev) => ({ ...prev, zoneNotServiced: ZONE_NOT_SERVICED_MESSAGE }));
+      setServiceAreaNotifySuccess(false);
+      setServiceAreaNotifyError(null);
+      const fd = formDataRef.current;
+      const defaultEmail = (fd.email || userEmailRef.current || '').trim();
+      if (defaultEmail) setServiceAreaNotifyEmail(defaultEmail);
+
+      trackFormEvent('appointment_form_zone_not_serviced', {
+        city: address.city?.trim() || undefined,
+        state: address.state?.trim() || undefined,
+      });
+
+      try {
+        await recordOutOfServiceAreaInterest(address);
+      } catch (err) {
+        console.warn('[AppointmentForm] Failed to record out-of-service-area interest:', err);
+      }
+
+      // Attribute this session as zone_not_serviced rather than a generic abandon.
+      void sendAbandon('zone_not_serviced', { awaitPutThenPost: true });
+    },
+    [recordOutOfServiceAreaInterest, sendAbandon, trackFormEvent],
+  );
+
+  // Called from the address / zone-check effects, which must not re-run when these handlers change.
+  const handleOutOfServiceAreaRef = useRef(handleOutOfServiceArea);
+  const clearOutOfServiceAreaUiRef = useRef(clearOutOfServiceAreaUi);
+  handleOutOfServiceAreaRef.current = handleOutOfServiceArea;
+  clearOutOfServiceAreaUiRef.current = clearOutOfServiceAreaUi;
+
+  const visitAddressForZoneCheck = useMemo(() => {
+    if (isLoggedIn && formData.isThisTheAddressWhereWeWillCome === 'No') {
+      return formatAddressForZoneCheck(formData.newPhysicalAddress);
+    }
+    const fromForm = formatAddressForZoneCheck(formData.physicalAddress);
+    if (fromForm) return fromForm;
+    if (isLoggedIn && formData.isThisTheAddressWhereWeWillCome !== 'No' && clientLocationReady) {
+      return clientLocationRef.current.address?.trim() || '';
+    }
+    return '';
+  }, [
+    isLoggedIn,
+    clientLocationReady,
+    formData.isThisTheAddressWhereWeWillCome,
+    formData.newPhysicalAddress?.line1,
+    formData.newPhysicalAddress?.city,
+    formData.newPhysicalAddress?.state,
+    formData.newPhysicalAddress?.zip,
+    formData.physicalAddress?.line1,
+    formData.physicalAddress?.city,
+    formData.physicalAddress?.state,
+    formData.physicalAddress?.zip,
+  ]);
+
+  const visitAddressFieldsForZone = useCallback(() => {
+    const fd = formDataRef.current;
+    if (isLoggedIn && fd.isThisTheAddressWhereWeWillCome === 'No') {
+      return fd.newPhysicalAddress ?? {};
+    }
+    return fd.physicalAddress ?? {};
+  }, [isLoggedIn]);
+
+  const confirmVisitZone = useCallback(
+    async (address: string): Promise<Exclude<ZoneCheckStatus, 'idle' | 'pending'>> => {
+      try {
+        await http.get('/public/appointments/find-zone-by-address', {
+          params: {
+            address,
+            buffer: zoneSearchBufferMiles,
+          },
+        });
+        return 'in_service';
+      } catch (zoneError: unknown) {
+        const status = (zoneError as { response?: { status?: number } })?.response?.status;
+        if (status === 404) return 'out_of_service';
+        console.warn('[AppointmentForm] Zone check failed:', zoneError);
+        return 'failed';
+      }
+    },
+    [zoneSearchBufferMiles],
+  );
+
+  const applyZoneCheckResult = useCallback(
+    (address: string, status: Exclude<ZoneCheckStatus, 'idle' | 'pending'>) => {
+      lastCheckedAddressRef.current = address;
+      setZoneCheckStatus(status);
+      if (status === 'in_service') {
+        setErrors((prev) => {
+          const next = { ...prev };
+          delete next.zoneNotServiced;
+          return next;
+        });
+        clearOutOfServiceAreaUiRef.current();
+        return;
+      }
+      if (status === 'out_of_service') {
+        void handleOutOfServiceAreaRef.current(visitAddressFieldsForZone());
+        return;
+      }
+      setErrors((prev) => ({ ...prev, zoneNotServiced: ZONE_CHECK_FAILED_MESSAGE }));
+    },
+    [visitAddressFieldsForZone],
+  );
+
+  const ensureVisitZoneInService = useCallback(async (): Promise<boolean> => {
+    const address = visitAddressForZoneCheck;
+    if (!address) return true;
+    if (
+      zoneCheckStatusRef.current === 'in_service' &&
+      lastCheckedAddressRef.current === address
+    ) {
+      return true;
+    }
+
+    setZoneCheckStatus('pending');
+    const status = await confirmVisitZone(address);
+    applyZoneCheckResult(address, status);
+    return status === 'in_service';
+  }, [visitAddressForZoneCheck, confirmVisitZone, applyZoneCheckResult]);
+
+  useEffect(() => {
+    if (!visitAddressForZoneCheck) {
+      setZoneCheckStatus('idle');
+      lastCheckedAddressRef.current = '';
+      setErrors((prev) => {
+        if (!prev.zoneNotServiced) return prev;
+        const next = { ...prev };
+        delete next.zoneNotServiced;
+        return next;
+      });
+      clearOutOfServiceAreaUiRef.current();
+      return;
+    }
+
+    if (lastCheckedAddressRef.current === visitAddressForZoneCheck) {
+      return;
+    }
+
+    setZoneCheckStatus('pending');
+    let alive = true;
+    const timeoutId = setTimeout(() => {
+      void (async () => {
+        const status = await confirmVisitZone(visitAddressForZoneCheck);
+        if (!alive) return;
+        if (lastCheckedAddressRef.current === visitAddressForZoneCheck) return;
+        applyZoneCheckResult(visitAddressForZoneCheck, status);
+      })();
+    }, 500);
+
+    return () => {
+      alive = false;
+      clearTimeout(timeoutId);
+    };
+  }, [visitAddressForZoneCheck, confirmVisitZone, applyZoneCheckResult]);
+
+  const handleServiceAreaNotifySubmit = useCallback(async () => {
+    const email = serviceAreaNotifyEmail.trim();
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setServiceAreaNotifyError('Please enter a valid email so we can notify you.');
+      return;
+    }
+
+    const addr =
+      formDataRef.current.isThisTheAddressWhereWeWillCome === 'No'
+        ? formDataRef.current.newPhysicalAddress
+        : formDataRef.current.physicalAddress;
+    if (!addr?.city?.trim() || !addr?.state?.trim()) {
+      setServiceAreaNotifyError('We need the city and state from your address to notify you.');
+      return;
+    }
+
+    setServiceAreaNotifySubmitting(true);
+    setServiceAreaNotifyError(null);
+    try {
+      await recordOutOfServiceAreaInterest(
+        {
+          line1: addr.line1,
+          city: addr.city,
+          state: addr.state,
+          zip: addr.zip,
+          lat: (addr as { lat?: number }).lat,
+          lon: (addr as { lon?: number }).lon,
+        },
+        { notifyRequested: true, emailOverride: email },
+      );
+      setServiceAreaNotifySuccess(true);
+      trackFormEvent('appointment_form_service_area_notify', {
+        city: addr.city.trim(),
+        state: addr.state.trim(),
+      });
+      markFormCompleted();
+    } catch (err: any) {
+      const msg =
+        err?.response?.data?.message ||
+        err?.message ||
+        'Something went wrong. Please try again or call us.';
+      setServiceAreaNotifyError(typeof msg === 'string' ? msg : 'Something went wrong. Please try again.');
+    } finally {
+      setServiceAreaNotifySubmitting(false);
+    }
+  }, [
+    serviceAreaNotifyEmail,
+    recordOutOfServiceAreaInterest,
+    trackFormEvent,
+    markFormCompleted,
+  ]);
+
+  const renderServiceAreaNotifyPanel = (city?: string, state?: string) => {
+    const areaLabel = [city, state].filter(Boolean).join(', ');
+    return (
+      <div
+        style={{
+          marginTop: '12px',
+          padding: '12px',
+          borderRadius: '8px',
+          border: '1px solid #fecaca',
+          background: '#fff7f7',
+          color: '#374151',
+        }}
+      >
+        {serviceAreaNotifySuccess ? (
+          <div style={{ fontSize: '13px', color: '#065f46' }}>
+            Thanks — we&apos;ll email you if we expand service to {areaLabel || 'your area'}.
+          </div>
+        ) : (
+          <>
+            <div style={{ fontSize: '13px', fontWeight: 600, marginBottom: '8px', color: '#111827' }}>
+              Want a heads-up when we serve your area?
+            </div>
+            <div style={{ fontSize: '12px', marginBottom: '8px', color: '#4b5563' }}>
+              Join our notify list and we&apos;ll reach out when coverage opens near {areaLabel || 'you'}.
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
+              <input
+                type="email"
+                value={serviceAreaNotifyEmail}
+                onChange={(e) => setServiceAreaNotifyEmail(e.target.value)}
+                placeholder="Email for updates"
+                style={{
+                  flex: '1 1 180px',
+                  padding: '8px 10px',
+                  border: `1px solid ${serviceAreaNotifyError ? '#ef4444' : '#d1d5db'}`,
+                  borderRadius: '6px',
+                  fontSize: '14px',
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => void handleServiceAreaNotifySubmit()}
+                disabled={serviceAreaNotifySubmitting}
+                style={{
+                  padding: '8px 14px',
+                  borderRadius: '6px',
+                  border: 'none',
+                  background: serviceAreaNotifySubmitting ? '#9ca3af' : '#111827',
+                  color: '#fff',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  cursor: serviceAreaNotifySubmitting ? 'default' : 'pointer',
+                }}
+              >
+                {serviceAreaNotifySubmitting ? 'Saving…' : 'Notify me'}
+              </button>
+            </div>
+            {serviceAreaNotifyError && (
+              <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '6px' }}>
+                {serviceAreaNotifyError}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    );
+  };
+
+  const renderVisitZoneStatus = (city?: string, state?: string) => {
+    if (zoneCheckStatus === 'pending' && visitAddressForZoneCheck) {
+      return (
+        <div data-form-field="zoneNotServiced" style={{ fontSize: '12px', color: '#6b7280', marginTop: '8px' }}>
+          Confirming we serve your area…
+        </div>
+      );
+    }
+    if (!errors.zoneNotServiced) return null;
+    return (
+      <div data-form-field="zoneNotServiced" style={{ color: '#ef4444', fontSize: '12px', marginTop: '8px' }}>
+        {renderZoneNotServicedMessage(errors.zoneNotServiced)}
+        {zoneCheckStatus === 'out_of_service' && renderServiceAreaNotifyPanel(city, state)}
+      </div>
+    );
+  };
 
   useEffect(() => {
     trackFormEvent('appointment_form_started', {
@@ -1868,6 +2265,23 @@ export default function AppointmentRequestForm() {
 
       // Use public availability API for new clients, routing v2 for logged-in clients
       let data: any;
+
+      let scoreThresholdConfig = defaultRoutingOfferableScoreConfig();
+      try {
+        scoreThresholdConfig = await fetchPublicRoutingOfferableScoreThresholds(practiceId);
+      } catch (err) {
+        console.warn(
+          '[AppointmentForm] Failed to load routing score thresholds; using defaults',
+          err,
+        );
+      }
+
+      const selectedIds = formData.selectedPetIds.map(String);
+      const isMemberTier = selectedIds.some(
+        (id) =>
+          petIdsWithActiveWellnessPlan?.has(id) ||
+          petIdsWithActiveOrPendingMembership?.has(id),
+      );
       
       if (isLoggedIn) {
         // Build routing v2 request payload for logged-in clients
@@ -1929,6 +2343,25 @@ export default function AppointmentRequestForm() {
         return dt.set({ minute: roundedMinutes, second: 0, millisecond: 0 });
       };
 
+      const slotPassesOfferableScore = (opt: {
+        score?: unknown;
+        suggestedStartIso?: string;
+        iso?: string;
+        date?: string;
+      }): boolean => {
+        const slotIso =
+          opt?.suggestedStartIso || opt?.iso || opt?.date || null;
+        return isRoutingScoreOfferableForConfig(opt?.score, {
+          config: scoreThresholdConfig,
+          appointmentTypeId: primaryAppointmentTypeId,
+          daysFromToday: daysFromTodayForSlot(
+            slotIso,
+            DEFAULT_PRACTICE_TIMEZONE,
+          ),
+          isMember: isMemberTier,
+        });
+      };
+
       // Extract slots from response
       const slots: Array<{ date: string; time: string; display: string; iso: string }> = [];
       
@@ -1939,7 +2372,7 @@ export default function AppointmentRequestForm() {
       
       // If we have a slots array (from public API), use that
       if (Array.isArray(slotsArray) && slotsArray.length > 0) {
-        for (const slot of slotsArray.slice(0, 3)) {
+        for (const slot of slotsArray.filter(slotPassesOfferableScore).slice(0, 3)) {
           if (slot.iso || slot.date) {
             const slotDt = slot.iso 
               ? roundToNearest5Minutes(DateTime.fromISO(slot.iso))
@@ -1954,7 +2387,7 @@ export default function AppointmentRequestForm() {
         }
       } else {
         // Handle routing v2 format (winner + alternates)
-        // Combine winner and alternates, filter by score, then take top 3
+        // Combine winner and alternates, filter by configurable score thresholds, then take top 3
         const allOptions: any[] = [];
         
         // Add winner if available
@@ -1967,13 +2400,8 @@ export default function AppointmentRequestForm() {
           allOptions.push(...alternates);
         }
         
-        // Filter out items with score > 160, then take top 3
         const filteredOptions = allOptions
-          .filter(opt => {
-            const score = opt?.score;
-            // Include if score is undefined, null, or <= 160
-            return score == null || score <= 160;
-          })
+          .filter(slotPassesOfferableScore)
           .slice(0, 3);
         
         // Process filtered options into slots
@@ -2357,12 +2785,18 @@ export default function AppointmentRequestForm() {
         setRawPublicVeterinarians([]);
         setLoadingVeterinarians(false);
         setVeterinariansFetchResolved(false);
-        setErrors(prev => {
-          const next = { ...prev };
-          delete next.zoneNotServiced;
-          return next;
-        });
-        lastCheckedAddressRef.current = ''; // Reset last checked address when address is incomplete
+        lastFetchedVetsAddressRef.current = '';
+        return;
+      }
+
+      // Zone gate owns in-area confirmation — do not look up vets until it returns 200.
+      if (zoneCheckStatus !== 'in_service') {
+        setPublicProviders([]);
+        setProviders([]);
+        setRawPublicVeterinarians([]);
+        setLoadingVeterinarians(false);
+        setVeterinariansFetchResolved(zoneCheckStatus === 'out_of_service' || zoneCheckStatus === 'failed');
+        lastFetchedVetsAddressRef.current = '';
         return;
       }
 
@@ -2375,16 +2809,13 @@ export default function AppointmentRequestForm() {
       ].filter(Boolean);
       const address = addressParts.join(', ');
 
-      // Only proceed if address has changed from last check
-      if (lastCheckedAddressRef.current === address) {
-        return; // Address hasn't changed, skip
+      if (lastFetchedVetsAddressRef.current === address) {
+        return;
       }
 
-      // Debounce: wait 500ms after user stops typing before checking zone
       debounceTimeoutId = setTimeout(() => {
         let alive = true;
         (async () => {
-          // Double-check address hasn't changed during debounce
           const currentAddressParts = [
             formData.physicalAddress?.line1,
             formData.physicalAddress?.city,
@@ -2393,50 +2824,14 @@ export default function AppointmentRequestForm() {
           ].filter(Boolean);
           const currentAddress = currentAddressParts.join(', ');
           
-          if (lastCheckedAddressRef.current === currentAddress) {
-            return; // Address changed during debounce, skip
+          if (lastFetchedVetsAddressRef.current === currentAddress) {
+            return;
           }
 
           setLoadingVeterinarians(true);
           setVeterinariansFetchResolved(false);
           try {
-            // Check zone before fetching veterinarians
-            try {
-              await http.get('/public/appointments/find-zone-by-address', {
-                params: {
-                  address: currentAddress,
-                  buffer: zoneSearchBufferMiles,
-                },
-              });
-              // Zone exists, clear any previous error
-              if (alive) {
-                setErrors(prev => {
-                  const next = { ...prev };
-                  delete next.zoneNotServiced;
-                  return next;
-                });
-                lastCheckedAddressRef.current = currentAddress;
-              }
-            } catch (zoneError: any) {
-              if (zoneError?.response?.status === 404) {
-                // Zone not serviced - set error and don't fetch veterinarians
-                if (alive) {
-                  setErrors(prev => ({ ...prev, zoneNotServiced: "We're sorry—we don't currently serve your area. Please check back periodically at www.vetatyourdoor.com/service-area to see if our coverage has expanded. You can also call or text us at (207) 536-8387, and we'll take a look to see if your location may still be within reach." }));
-                  setPublicProviders([]);
-                  setProviders([]);
-                  setRawPublicVeterinarians([]);
-                  setLoadingVeterinarians(false);
-                  setVeterinariansFetchResolved(true);
-                  lastCheckedAddressRef.current = currentAddress;
-                }
-                return;
-              }
-              // For other errors, log but continue with veterinarian fetch
-              console.warn('[AppointmentForm] Zone check failed:', zoneError);
-              if (alive) {
-                lastCheckedAddressRef.current = currentAddress;
-              }
-            }
+            lastFetchedVetsAddressRef.current = currentAddress;
 
             if (!alive) return;
 
@@ -2502,7 +2897,7 @@ export default function AppointmentRequestForm() {
         clearTimeout(debounceTimeoutId);
       }
     };
-  }, [isLoggedIn, practiceId, formData.physicalAddress?.line1, formData.physicalAddress?.city, formData.physicalAddress?.state, formData.physicalAddress?.zip, formData.physicalAddress?.lat, formData.physicalAddress?.lon, zoneSearchBufferMiles]);
+  }, [isLoggedIn, practiceId, zoneCheckStatus, formData.physicalAddress?.line1, formData.physicalAddress?.city, formData.physicalAddress?.state, formData.physicalAddress?.zip, formData.physicalAddress?.lat, formData.physicalAddress?.lon]);
 
   // Load client data if logged in
   useEffect(() => {
@@ -2607,7 +3002,7 @@ export default function AppointmentRequestForm() {
             client.address1 || client.address_1,
             client.city,
             client.state,
-            client.zip ? String(client.zip) : undefined,
+            clientRecordZip(client) || undefined,
           ].filter(Boolean);
           if (addressParts.length >= 3) {
             clientAddress = addressParts.join(', ');
@@ -2643,7 +3038,7 @@ export default function AppointmentRequestForm() {
               line2: client.address2 || client.address_2 || prev.physicalAddress?.line2 || undefined,
               city: client.city || prev.physicalAddress?.city || '',
               state: client.state || prev.physicalAddress?.state || '',
-              zip: client.zip ? String(client.zip) : (prev.physicalAddress?.zip || ''),
+              zip: clientRecordZip(client) || prev.physicalAddress?.zip || '',
               country: prev.physicalAddress?.country || 'United States',
             } : prev.physicalAddress;
             
@@ -2746,18 +3141,21 @@ export default function AppointmentRequestForm() {
 
       // Don't fetch if address is not complete
       if (!hasValidNewAddress || !formData.newPhysicalAddress) {
-      // Clear providers and errors if address is incomplete
       setProviders([]);
       setRawVeterinarians([]);
       setLoadingVeterinarians(false);
       setVeterinariansFetchResolved(false);
-      setErrors(prev => {
-        const next = { ...prev };
-        delete next.zoneNotServiced;
-        return next;
-      });
-      lastCheckedAddressRef.current = ''; // Reset last checked address when address is incomplete
+      lastFetchedVetsAddressRef.current = '';
       return;
+      }
+
+      if (zoneCheckStatus !== 'in_service') {
+        setProviders([]);
+        setRawVeterinarians([]);
+        setLoadingVeterinarians(false);
+        setVeterinariansFetchResolved(zoneCheckStatus === 'out_of_service' || zoneCheckStatus === 'failed');
+        lastFetchedVetsAddressRef.current = '';
+        return;
       }
 
       // Build address string from form data
@@ -2770,16 +3168,13 @@ export default function AppointmentRequestForm() {
       ].filter(Boolean);
       const address = addressParts.join(', ');
 
-      // Only proceed if address has changed from last check
-      if (lastCheckedAddressRef.current === address) {
-        return; // Address hasn't changed, skip
+      if (lastFetchedVetsAddressRef.current === address) {
+        return;
       }
 
-      // Debounce: wait 500ms after user stops typing before making requests
       debounceTimeoutId = setTimeout(() => {
       let alive = true;
       (async () => {
-        // Double-check address hasn't changed during debounce
         const currentAddressParts = [
           formData.newPhysicalAddress?.line1,
           formData.newPhysicalAddress?.city,
@@ -2788,48 +3183,14 @@ export default function AppointmentRequestForm() {
         ].filter(Boolean);
         const currentAddress = currentAddressParts.join(', ');
         
-        if (lastCheckedAddressRef.current === currentAddress) {
-          return; // Address changed during debounce, skip
+        if (lastFetchedVetsAddressRef.current === currentAddress) {
+          return;
         }
 
         setLoadingVeterinarians(true);
         setVeterinariansFetchResolved(false);
         try {
-          // Check zone before fetching veterinarians
-          try {
-            await http.get('/public/appointments/find-zone-by-address', {
-              params: {
-                address: currentAddress,
-                buffer: zoneSearchBufferMiles,
-              },
-            });
-            // Zone exists, clear any previous error
-            if (alive) {
-              setErrors(prev => {
-                const next = { ...prev };
-                delete next.zoneNotServiced;
-                return next;
-              });
-              lastCheckedAddressRef.current = currentAddress; // Update last checked address
-            }
-          } catch (zoneError: any) {
-            if (zoneError?.response?.status === 404) {
-              // Zone not serviced - set error and don't fetch veterinarians
-              if (alive) {
-                setErrors(prev => ({ ...prev, zoneNotServiced: "We're sorry—we don't currently serve your area. Please check back periodically at www.vetatyourdoor.com/service-area to see if our coverage has expanded. You can also call or text us at (207) 536-8387, and we'll take a look to see if your location may still be within reach." }));
-                setProviders([]);
-                setLoadingVeterinarians(false);
-                setVeterinariansFetchResolved(true);
-                lastCheckedAddressRef.current = currentAddress; // Update last checked address even on error
-              }
-              return;
-            }
-            // For other errors, log but continue with veterinarian fetch
-            console.warn('[AppointmentForm] Zone check failed:', zoneError);
-            if (alive) {
-              lastCheckedAddressRef.current = currentAddress; // Update last checked address even on error
-            }
-          }
+          lastFetchedVetsAddressRef.current = currentAddress;
           
           if (!alive) return;
           
@@ -2884,6 +3245,7 @@ export default function AppointmentRequestForm() {
     };
   }, [
     isLoggedIn,
+    zoneCheckStatus,
     formData.isThisTheAddressWhereWeWillCome,
     formData.newPhysicalAddress?.line1,
     formData.newPhysicalAddress?.city,
@@ -2891,7 +3253,6 @@ export default function AppointmentRequestForm() {
     formData.newPhysicalAddress?.zip,
     formData.newPhysicalAddress?.lat,
     formData.newPhysicalAddress?.lon,
-    zoneSearchBufferMiles,
   ]);
 
   // Fetch veterinarians for logged-in users when client location becomes available
@@ -2901,6 +3262,11 @@ export default function AppointmentRequestForm() {
     if (!clientLocationReady) return;
     // Only fetch if using original address (not a new address)
     if (formData.isThisTheAddressWhereWeWillCome === 'No') return;
+    if (zoneCheckStatus !== 'in_service') {
+      setLoadingVeterinarians(false);
+      setVeterinariansFetchResolved(zoneCheckStatus === 'out_of_service' || zoneCheckStatus === 'failed');
+      return;
+    }
     
     const { lat, lon, address } = clientLocationRef.current;
     // Don't fetch if no location available
@@ -2914,13 +3280,6 @@ export default function AppointmentRequestForm() {
       // Fire and forget - completely async, non-blocking
       (async () => {
         try {
-          // Clear any zone error when using address on file
-          setErrors(prev => {
-            const next = { ...prev };
-            delete next.zoneNotServiced;
-            return next;
-          });
-          
           if (!alive) return;
           
           // Fetch raw veterinarian data directly from API to get appointmentTypes
@@ -2973,6 +3332,7 @@ export default function AppointmentRequestForm() {
   }, [
     isLoggedIn,
     clientLocationReady,
+    zoneCheckStatus,
     formData.isThisTheAddressWhereWeWillCome,
   ]);
 
@@ -3262,6 +3622,9 @@ export default function AppointmentRequestForm() {
       // When "No" is selected for isThisTheAddressWhereWeWillCome, clear physicalAddress and providers
       // (Reversed logic: "No" means they need a new address)
       if (field === 'isThisTheAddressWhereWeWillCome' && value === 'No') {
+        lastCheckedAddressRef.current = '';
+        lastFetchedVetsAddressRef.current = '';
+        setZoneCheckStatus('idle');
         // Store the original address before clearing it (if not already stored)
         if (!originalAddress && prev.physicalAddress && (prev.physicalAddress.line1 || prev.physicalAddress.city)) {
           setOriginalAddress(prev.physicalAddress);
@@ -3326,7 +3689,11 @@ export default function AppointmentRequestForm() {
     field: 'physicalAddress' | 'mailingAddress' | 'newPhysicalAddress',
     address: AddressFields
   ) => {
-    lastCheckedAddressRef.current = '';
+    if (field !== 'mailingAddress') {
+      lastCheckedAddressRef.current = '';
+      lastFetchedVetsAddressRef.current = '';
+      setZoneCheckStatus(isPhysicalAddressComplete(address) ? 'pending' : 'idle');
+    }
     setFormData((prev) => ({
       ...prev,
       [field]: address,
@@ -3406,7 +3773,6 @@ export default function AppointmentRequestForm() {
         if (!formData.newPhysicalAddress?.line1?.trim() || !formData.newPhysicalAddress?.city?.trim() || !formData.newPhysicalAddress?.state?.trim() || !formData.newPhysicalAddress?.zip?.trim()) {
           newErrors['newPhysicalAddress.line1'] = 'Please select your address from the suggestions';
         }
-        if (errors.zoneNotServiced) newErrors.zoneNotServiced = errors.zoneNotServiced;
       }
     }
   };
@@ -3578,7 +3944,6 @@ export default function AppointmentRequestForm() {
           if (!formData.physicalAddress.line1.trim() || !formData.physicalAddress.city.trim() || !formData.physicalAddress.state.trim() || !formData.physicalAddress.zip.trim()) {
             newErrors['physicalAddress.line1'] = 'Please select your address from the suggestions';
           }
-          if (errors.zoneNotServiced) newErrors.zoneNotServiced = errors.zoneNotServiced;
           if (!formData.howDidYouHearAboutUs) {
             newErrors.howDidYouHearAboutUs = 'Please tell us how you heard about us';
           } else if (
@@ -3624,6 +3989,16 @@ export default function AppointmentRequestForm() {
       // Add more validation as needed
     }
 
+    if (visitAddressForZoneCheck && zoneCheckStatus !== 'in_service') {
+      if (zoneCheckStatus === 'out_of_service') {
+        newErrors.zoneNotServiced = errors.zoneNotServiced || ZONE_NOT_SERVICED_MESSAGE;
+      } else if (zoneCheckStatus === 'failed') {
+        newErrors.zoneNotServiced = ZONE_CHECK_FAILED_MESSAGE;
+      } else {
+        newErrors.zoneNotServiced = ZONE_CHECK_PENDING_MESSAGE;
+      }
+    }
+
     setErrors(newErrors);
 
     if (Object.keys(newErrors).length > 0) {
@@ -3634,6 +4009,18 @@ export default function AppointmentRequestForm() {
   };
 
   const handleNext = async () => {
+    if (!(await ensureVisitZoneInService())) {
+      setErrors((prev) => ({
+        ...prev,
+        zoneNotServiced:
+          zoneCheckStatusRef.current === 'out_of_service'
+            ? prev.zoneNotServiced || ZONE_NOT_SERVICED_MESSAGE
+            : zoneCheckStatusRef.current === 'failed'
+              ? ZONE_CHECK_FAILED_MESSAGE
+              : ZONE_CHECK_PENDING_MESSAGE,
+      }));
+      return;
+    }
     if (!validatePage(currentPage)) {
       return;
     }
@@ -3892,6 +4279,18 @@ export default function AppointmentRequestForm() {
 
   const handleSubmit = async () => {
     pruneAbandonedExistingClientNewPetStubs();
+    if (!(await ensureVisitZoneInService())) {
+      setErrors((prev) => ({
+        ...prev,
+        zoneNotServiced:
+          zoneCheckStatusRef.current === 'out_of_service'
+            ? prev.zoneNotServiced || ZONE_NOT_SERVICED_MESSAGE
+            : zoneCheckStatusRef.current === 'failed'
+              ? ZONE_CHECK_FAILED_MESSAGE
+              : ZONE_CHECK_PENDING_MESSAGE,
+      }));
+      return;
+    }
     if (!validatePage(currentPage)) {
       return;
     }
@@ -5127,10 +5526,9 @@ export default function AppointmentRequestForm() {
                 showConfirmedMessage={!newClientCompactForm}
                 suppressDropdown={showExistingClientModal || showMembershipModal || !!appointmentTypeChangeModal}
               />
-              {errors.zoneNotServiced && (
-                <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '8px' }}>
-                  {renderZoneNotServicedMessage(errors.zoneNotServiced)}
-                </div>
+              {renderVisitZoneStatus(
+                formData.physicalAddress.city,
+                formData.physicalAddress.state,
               )}
             </div>
 
@@ -6444,6 +6842,11 @@ export default function AppointmentRequestForm() {
                   ))}
                 </div>
                 {errors.isThisTheAddressWhereWeWillCome && <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>{errors.isThisTheAddressWhereWeWillCome}</div>}
+                {formData.isThisTheAddressWhereWeWillCome !== 'No' &&
+                  renderVisitZoneStatus(
+                    formData.physicalAddress?.city || originalAddress?.city,
+                    formData.physicalAddress?.state || originalAddress?.state,
+                  )}
               </div>
             )}
 
@@ -6470,10 +6873,9 @@ export default function AppointmentRequestForm() {
                     placeholder="Start typing your address"
                     suppressDropdown={showExistingClientModal || showMembershipModal || !!appointmentTypeChangeModal}
                   />
-                  {errors.zoneNotServiced && (
-                    <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '8px' }}>
-                      {renderZoneNotServicedMessage(errors.zoneNotServiced)}
-                    </div>
+                  {renderVisitZoneStatus(
+                    formData.newPhysicalAddress?.city,
+                    formData.newPhysicalAddress?.state,
                   )}
                 </div>
               </>
@@ -8392,11 +8794,45 @@ export default function AppointmentRequestForm() {
           <h1 style={{ fontSize: '24px', fontWeight: 700, color: '#111827', marginBottom: '12px' }}>
             Thank You!
           </h1>
-          <p style={{ fontSize: '16px', color: '#6b7280', marginBottom: isExploreMembershipsVisible ? '16px' : (isLoggedIn ? '32px' : 0) }}>
+          <p style={{ fontSize: '16px', color: '#6b7280', marginBottom: '16px' }}>
             {submitSuccessKind === 'online_confirmed'
               ? 'Your appointment has been booked successfully. Please check your email for confirmation details.'
               : 'We are working on booking your appointment and will be in touch shortly.'}
           </p>
+          <style>{`
+            .appt-form-view-pricing-btn:hover {
+              transform: scale(1.02);
+              box-shadow: 0 0 20px 4px rgba(15, 118, 110, 0.35);
+            }
+          `}</style>
+          <a
+            href="https://www.vetatyourdoor.com/pay-as-you-go"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="appt-form-view-pricing-btn"
+            onClick={() => {
+              trackFormEvent('appointment_form_confirmation_pricing_cta_clicked', {
+                eligible_pet_count: membershipEligiblePets.length,
+                membership_interest: formData.membershipInterest ?? undefined,
+              });
+            }}
+            style={{
+              padding: '10px 24px',
+              backgroundColor: '#fff',
+              color: '#0f766e',
+              border: '2px solid #0f766e',
+              borderRadius: '8px',
+              fontSize: '15px',
+              fontWeight: 700,
+              cursor: 'pointer',
+              textDecoration: 'none',
+              display: 'inline-block',
+              marginBottom: isExploreMembershipsVisible || isLoggedIn ? '24px' : 0,
+              transition: 'transform 0.2s ease, box-shadow 0.2s ease',
+            }}
+          >
+            Review Our Pricing
+          </a>
           {isExploreMembershipsVisible && (
             <div
               style={{
@@ -8980,7 +9416,15 @@ export default function AppointmentRequestForm() {
               type="button"
               className={isOnSubmitStep ? 'appt-form-submit-btn' : undefined}
               onClick={handleNext}
-              disabled={submitting}
+              disabled={
+                submitting ||
+                Boolean(
+                  visitAddressForZoneCheck &&
+                    (zoneCheckStatus === 'pending' ||
+                      zoneCheckStatus === 'out_of_service' ||
+                      zoneCheckStatus === 'idle'),
+                )
+              }
               style={{
                 padding: '12px 24px',
                 backgroundColor: '#10b981',
@@ -8989,18 +9433,38 @@ export default function AppointmentRequestForm() {
                 borderRadius: '8px',
                 fontSize: '14px',
                 fontWeight: 600,
-                cursor: submitting ? 'not-allowed' : 'pointer',
-                opacity: submitting ? 0.6 : 1,
+                cursor:
+                  submitting ||
+                  Boolean(
+                    visitAddressForZoneCheck &&
+                      (zoneCheckStatus === 'pending' ||
+                        zoneCheckStatus === 'out_of_service' ||
+                        zoneCheckStatus === 'idle'),
+                  )
+                    ? 'not-allowed'
+                    : 'pointer',
+                opacity:
+                  submitting ||
+                  Boolean(
+                    visitAddressForZoneCheck &&
+                      (zoneCheckStatus === 'pending' ||
+                        zoneCheckStatus === 'out_of_service' ||
+                        zoneCheckStatus === 'idle'),
+                  )
+                    ? 0.6
+                    : 1,
                 transition: 'transform 0.2s ease, box-shadow 0.2s ease',
               }}
             >
               {submitting
                 ? 'Submitting...'
-                : isNewClientPetStep
-                  ? 'Submit Appointment Request'
-                  : isOnSubmitStep
-                    ? 'Submit'
-                    : 'Next'}
+                : visitAddressForZoneCheck && zoneCheckStatus === 'pending'
+                  ? 'Confirming area…'
+                  : isNewClientPetStep
+                    ? 'Submit Appointment Request'
+                    : isOnSubmitStep
+                      ? 'Submit'
+                      : 'Next'}
             </button>
           </div>
         </div>

@@ -18,6 +18,7 @@ import {
 import { etaHouseholdArrivalWindowPayload, fetchEtas } from '../api/routing';
 import type { DayData } from '../pages/MyWeek';
 import { makeMyDayVisualPatientBadge, type MyDayVisualPatientBadge } from './myDayVisualPatientDetails';
+import { formatDoctorDayApptAddress } from './doctorDayAddress';
 import { mergeEtaFetchIntoDayData, type DayBundleIn } from './schedulerEtaMerge';
 import type { AppointmentType } from '../api/appointmentSettings';
 import {
@@ -34,8 +35,9 @@ import {
 } from './routingCalendarPreviewStorage';
 import {
   buildEtaCandidateSlot,
+  mapRoutableInsertionIndexToFullIndex,
   orderHouseholdsWithCandidateAtInsertion,
-  resolveRoutingEtaInsertionIndex,
+  routingEtaCandidateInsertionIndexInOrder,
   type RoutingEtaCandidateSlotSource,
 } from './routingEtaCandidateSlot';
 import {
@@ -248,14 +250,14 @@ function injectDoctorDayAppointmentsRoutingPreview(
   if (!syn) return appts;
   const companions = buildDoctorDayCoVisitCompanionAppts(preview, syn);
   const inject = [syn, ...companions];
-  const rawIns = preview.option.insertionIndex;
-  const ins =
-    typeof rawIns === 'number' && Number.isFinite(rawIns)
-      ? Math.floor(rawIns)
-      : rawIns != null
-        ? Math.floor(Number(rawIns)) || 0
-        : 0;
-  const insertionIndex = Math.max(0, Math.min(appts.length, ins));
+  // Slot-search insertionIndex is routable-client relative; doctor-day rows also
+  // include meetings/blocks. Map before splicing so end-of-day does not land before
+  // an existing morning visit (e.g. Seaver 10–12 under a Wells last-of-day HOLD).
+  const insertionIndex = mapRoutableInsertionIndexToFullIndex(
+    appts,
+    preview.option.insertionIndex,
+    (a) => !isBlockEntry(a) && !(a as { isPreview?: boolean }).isPreview
+  );
   return [...appts.slice(0, insertionIndex), ...inject, ...appts.slice(insertionIndex)];
 }
 
@@ -302,21 +304,7 @@ function makePatientBadge(a: DoctorDayAppt): PatientBadge {
 }
 
 function formatAddress(a: DoctorDayAppt) {
-  const address1 = str(a, 'address1');
-  const city = str(a, 'city');
-  const state = str(a, 'state');
-  const zip = str(a, 'zip');
-  const line = [address1, [city, state].filter(Boolean).join(', '), zip]
-    .filter(Boolean)
-    .join(', ')
-    .replace(/\s+,/g, ',');
-  return (
-    line ||
-    str(a as any, 'address') ||
-    str(a as any, 'addressStr') ||
-    str(a as any, 'fullAddress') ||
-    'Address not available'
-  );
+  return formatDoctorDayApptAddress(a);
 }
 
 function serviceMinutesFromIsoPair(
@@ -690,8 +678,14 @@ async function fetchEtaForOneDay(
   if (hasVirtual && routingOpts?.routingPreview) {
     const rp = routingOpts.routingPreview;
     const opt = rp.option as Record<string, unknown>;
-    const insertionIndex = resolveRoutingEtaInsertionIndex(opt.insertionIndex, day.households.length);
-    householdsForPayload = orderHouseholdsWithCandidateAtInsertion(day.households, insertionIndex);
+    householdsForPayload = orderHouseholdsWithCandidateAtInsertion(
+      day.households,
+      opt.insertionIndex
+    );
+    const mappedInsertionIndex = routingEtaCandidateInsertionIndexInOrder(
+      householdsForPayload,
+      opt.insertionIndex
+    );
 
     const optArrivalWindow = opt.arrivalWindow as RoutingEtaCandidateSlotSource['arrivalWindow'];
     const fallbackArrivalWindow =
@@ -720,18 +714,15 @@ async function fetchEtaForOneDay(
         : rp.newApptMeta?.lon;
     const candidateSlot = buildEtaCandidateSlot(
       {
-        insertionIndex: opt.insertionIndex as RoutingEtaCandidateSlotSource['insertionIndex'],
+        insertionIndex: mappedInsertionIndex,
         positionInDay: opt.positionInDay as RoutingEtaCandidateSlotSource['positionInDay'],
         suggestedStartIso: opt.suggestedStartIso as string | undefined,
         lat: candidateLat,
         lon: candidateLon,
         serviceMinutes: rp.serviceMinutes,
-        overrunSeconds: opt.overrunSeconds as RoutingEtaCandidateSlotSource['overrunSeconds'],
-        validationLastEtdSec: opt.validationLastEtdSec as RoutingEtaCandidateSlotSource['validationLastEtdSec'],
-        validationReturnSec: opt.validationReturnSec as RoutingEtaCandidateSlotSource['validationReturnSec'],
         arrivalWindow: fallbackArrivalWindow,
       },
-      { householdCount: day.households.length, defaultServiceMinutes: rp.serviceMinutes }
+      { householdCount: householdsForPayload.length, defaultServiceMinutes: rp.serviceMinutes }
     );
     if (candidateSlot) {
       candidateExtras = { candidateSlot };

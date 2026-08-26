@@ -31,6 +31,17 @@ export type ReminderSettings = {
    * Shape: [{ employeeId, date, seat: 'phones'|'outreach'|'email'|'off', notes? }]
    */
   'cl.seatDayOverrides'?: string;
+  /**
+   * Practice daily appointment bookings goals by day of week (JSON string).
+   * Shape: { "0": 37, "1": 37, ... } where 0=Sunday … 6=Saturday.
+   */
+  'appointmentBookings.goalsByDayOfWeek'?: string;
+  /**
+   * Max routing scores for client-offered slots (JSON string).
+   * Shape: { defaults: { sameDay, nextDay, withinWeek, later }, memberBonus, byAppointmentTypeId }.
+   * See `routingOfferableScoreConfig.ts`.
+   */
+  'routing.offerableScoreThresholds'?: string;
 };
 
 export type ReminderSettingsForm = {

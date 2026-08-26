@@ -98,3 +98,51 @@ export function resolveClientArrivalWindowForScheduledStart(
     windowDisplay,
   };
 }
+
+export type AvailabilitySlotWindowSource = {
+  suggestedStartIso: string;
+  windowStartIso?: string | null;
+  windowEndIso?: string | null;
+};
+
+/**
+ * Client-facing window for a public availability / self-schedule candidate.
+ * Prefer the API `arrivalWindow` / `effectiveWindow` (depot-aware first-stop clamp)
+ * over recomputing type ±N, which drops that effective-window logic.
+ * Availability is requested with `appointmentTypeId`, so embedded windows should
+ * already match the booking type (including Pre-Meds).
+ */
+export function resolveAvailabilitySlotArrivalWindow(
+  slot: AvailabilitySlotWindowSource,
+  appointmentType: AppointmentTypeWindowSource | undefined,
+  practiceTz: string,
+  serviceMinutes: number,
+): {
+  windowStartIso: string;
+  windowEndIso: string;
+  windowDisplay: string;
+} | undefined {
+  const slotStart = slot.windowStartIso?.trim() || null;
+  const slotEnd = slot.windowEndIso?.trim() || null;
+  if (slotStart && slotEnd) {
+    const windowDisplay = formatClientArrivalWindowMessage(slotStart, slotEnd, practiceTz);
+    if (windowDisplay) {
+      return {
+        windowStartIso: slotStart,
+        windowEndIso: slotEnd,
+        windowDisplay,
+      };
+    }
+  }
+
+  const appointmentEndIso = DateTime.fromISO(slot.suggestedStartIso)
+    .plus({ minutes: serviceMinutes })
+    .toISO();
+
+  return resolveClientArrivalWindowForScheduledStart(
+    slot.suggestedStartIso,
+    appointmentType,
+    practiceTz,
+    appointmentEndIso ? { appointmentEndIso } : undefined,
+  );
+}

@@ -1597,6 +1597,14 @@ label.scheduler-go-date-heading {
   text-align: center;
 }
 
+.scheduler-day-header-vsd-per-point {
+  font-size: 10px;
+  color: #334155;
+  line-height: 1.35;
+  text-align: center;
+  font-weight: 500;
+}
+
 .scheduler-day-header-points--goal-met {
   color: #16a34a;
   font-weight: 600;
@@ -4998,6 +5006,12 @@ label.scheduler-household-pet-row {
   pointer-events: none;
 }
 
+.scheduler-edit-preview-popover-shell > .scheduler-edit-preview-popover {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: 100%;
+}
+
 .scheduler-staff-confirm-popover-shell {
   pointer-events: none;
   max-width: min(380px, calc(100vw - 24px));
@@ -5127,18 +5141,22 @@ label.scheduler-household-pet-row {
 
 .scheduler-edit-preview-popover {
   pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
   max-height: min(420px, calc(100vh - 24px));
-  overflow-x: hidden;
-  overflow-y: auto;
+  min-height: 0;
+  /* Scroll lives on .scheduler-edit-preview-popover-scroll so Book/Save stays pinned. */
+  overflow: hidden;
   border-radius: 10px;
   border: 1px solid #c084fc;
   background: linear-gradient(180deg, #ffffff 0%, #faf5ff 100%);
   box-shadow:
     0 14px 36px rgba(91, 33, 182, 0.22),
     0 0 0 1px rgba(255, 255, 255, 0.85) inset;
-  overflow: hidden;
 }
 
+.scheduler-edit-preview-popover--book-action,
 .scheduler-edit-preview-popover--staff-confirm {
   display: flex;
   flex-direction: column;
@@ -5252,6 +5270,9 @@ label.scheduler-household-pet-row {
   line-height: 1.4;
 }
 
+.scheduler-edit-preview-popover--book-action .scheduler-edit-preview-popover-head,
+.scheduler-edit-preview-popover--staff-confirm .scheduler-edit-preview-popover-head,
+.scheduler-edit-preview-popover--book-action .scheduler-edit-preview-popover-actions,
 .scheduler-edit-preview-popover--staff-confirm .scheduler-edit-preview-popover-actions {
   flex-shrink: 0;
 }
@@ -6435,6 +6456,10 @@ label.scheduler-household-pet-row {
   .scheduler-day-header-metrics-row {
     font-size: 9px;
     gap: 2px 4px;
+  }
+
+  .scheduler-day-header-vsd-per-point {
+    font-size: 9px;
   }
 
   .scheduler-day-header-btn {
