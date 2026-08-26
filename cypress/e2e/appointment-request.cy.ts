@@ -154,6 +154,7 @@ function fillNewClientClientInfo(options: {
   cy.get('input[type="tel"]').first().type(options.phone);
   stubGeoAddress(options.addressPreset);
   pickAddress('physical-address', options.addressQuery, GEO_ADDRESSES[options.addressPreset].suggestion.description);
+  cy.wait('@checkZone');
   cy.wait('@getPublicVeterinarians');
   cy.wait('@getAppointmentTypes');
   cy.contains('Previous Veterinarian').parent().find('textarea').type(options.previousVet);
@@ -701,6 +702,25 @@ describe('Appointment Request Form - Complete Flow Tests', () => {
       
       // Should show validation errors
       cy.contains('required').should('exist');
+    });
+
+    it('should not allow Next until the zone check returns in-area', () => {
+      cy.intercept('GET', '**/public/appointments/find-zone-by-address*', {
+        statusCode: 404,
+        body: { message: 'Address not found or address is not in any zone' },
+      }).as('checkZoneOosa');
+
+      cy.visit('/client-portal/request-appointment');
+      cy.get('input[type="email"]').should('be.visible').type('oosa@example.com');
+      cy.get('input[placeholder="First Name"]').type('Celia');
+      cy.get('input[placeholder="Last Name"]').type('Garland');
+      cy.get('input[type="tel"]').first().type('6036309910');
+      stubGeoAddress('durham');
+      pickAddress('physical-address', '24 Orchard', GEO_ADDRESSES.durham.suggestion.description);
+      cy.wait('@checkZoneOosa');
+
+      cy.contains("we don't currently serve your area").should('be.visible');
+      cy.contains('button', 'Next').should('be.disabled');
     });
   });
 });

@@ -31,8 +31,9 @@ export function parseOnlineBookingHoldDescription(
   }
 
   // "Online Booking - Jane Doe. Fluffy: reason" or "Online Booking - Jane Doe, Fluffy"
+  // Trailing reason text after "Pet:" / "Pet." is common on calendar titles.
   const newClientHold = trimmed.match(
-    /^Online Booking\s*-\s*(.+?)(?:\.\s*([A-Za-z0-9][A-Za-z0-9' -]{0,40}?)(?::|\.)|\s*,\s*([A-Za-z0-9][A-Za-z0-9' -]{0,40}?))\s*$/i
+    /^Online Booking\s*-\s*(.+?)(?:\.\s*([A-Za-z0-9][A-Za-z0-9' -]{0,40}?)(?::|\.)|\s*,\s*([A-Za-z0-9][A-Za-z0-9' -]{0,40}?))(?:\s|$)/i
   );
   if (newClientHold) {
     const clientName = newClientHold[1]?.trim() || null;

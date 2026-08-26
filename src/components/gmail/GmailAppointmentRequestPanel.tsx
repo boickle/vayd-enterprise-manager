@@ -31,7 +31,10 @@ import {
   appointmentRequestSubmissionCountsAsBooked,
   type AppointmentRequestBookedApptSummary,
 } from '../../utils/appointmentRequestOnHold';
-import { appointmentRequestNeedsStaffConfirmation } from '../../utils/appointmentRequestStaffConfirm';
+import {
+  appointmentRequestNeedsManualBookActions,
+  appointmentRequestNeedsStaffConfirmation,
+} from '../../utils/appointmentRequestStaffConfirm';
 import {
   buildRoutingAppointmentRequestIntentFromSubmission,
   writeRoutingAppointmentRequestIntent,
@@ -253,11 +256,16 @@ export default function GmailAppointmentRequestPanel({
     hasLinkedAppointment &&
     appointmentRequestSubmissionGmailOnHold(submission, bookedApptMeta, typeCatalog);
   const isDismissed = status === 'dismissed';
-  const needsStaffConfirmation =
-    hasLinkedAppointment && appointmentRequestNeedsStaffConfirmation(submission);
+  const needsStaffConfirmation = appointmentRequestNeedsStaffConfirmation(submission);
   const isBooked =
     hasLinkedAppointment &&
     appointmentRequestSubmissionCountsAsBooked(submission, bookedApptMeta, typeCatalog);
+  const needsManualBook = appointmentRequestNeedsManualBookActions({
+    item: submission,
+    isDismissed,
+    isBooked,
+    hasLinkedAppointment,
+  });
   const hasSms = appointmentRequestHasSmsPhone(submission);
 
   const bookedVisit = useMemo(
@@ -655,7 +663,7 @@ export default function GmailAppointmentRequestPanel({
             {busy ? 'Saving…' : 'Confirm'}
           </button>
         ) : null}
-        {!isBooked && !hasLinkedAppointment ? (
+        {!isBooked && !hasLinkedAppointment && needsManualBook ? (
           <button type="button" className="btn primary" disabled={busy} onClick={onBook}>
             Book
           </button>

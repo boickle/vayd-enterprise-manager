@@ -40,6 +40,7 @@ import {
   useForwardBookingWorkspaceNavigationGuard,
 } from '../utils/forwardBookingWorkspaceGuard';
 import { markSchedulerHandoffPreferRoutingDoctor } from '../utils/schedulerCalendarHandoff';
+import { startFreshNewAppointmentRouting } from '../utils/routingNewAppointment';
 import { evetCreateClientLink } from '../utils/evet';
 import { useGmailInboxAccess } from '../hooks/useGmailInboxAccess';
 import './ScheduleLayout.css';
@@ -244,6 +245,12 @@ export default function ScheduleLayout() {
                   e.preventDefault();
                   window.alert(FORWARD_BOOKING_NAVIGATION_BLOCKED_MESSAGE);
                   return;
+                }
+                if (appointmentHref === '/schedule/routing') {
+                  if (!startFreshNewAppointmentRouting()) {
+                    e.preventDefault();
+                    return;
+                  }
                 }
                 markSchedulerHandoffPreferRoutingDoctor();
               }}
