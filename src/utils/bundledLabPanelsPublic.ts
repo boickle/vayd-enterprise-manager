@@ -46,6 +46,7 @@ export function treatmentHistoryHadAnyCodeInLastMonths(
     if ((tx as { isEstimate?: boolean }).isEstimate === true) continue;
     for (const item of tx.treatmentItems ?? []) {
       if (skipDeclined && item.isDeclined) continue;
+      if (item.isDeleted === true || item.isActive === false) continue;
       const code = (item.lab?.code ?? item.procedure?.code ?? item.inventoryItem?.code ?? '').trim().toUpperCase();
       if (!code || !want.has(code)) continue;
       const serviceDate = item.serviceDate ? DateTime.fromISO(item.serviceDate) : null;

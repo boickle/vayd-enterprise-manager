@@ -530,7 +530,7 @@ main.schedule-main-wrapper .scheduler-page:not(.scheduler-page--embedded) {
 
   .navbar.navbar--schedule-shell {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) auto auto;
     grid-template-rows: auto auto;
     align-items: stretch;
     column-gap: 8px;
@@ -542,8 +542,14 @@ main.schedule-main-wrapper .scheduler-page:not(.scheduler-page--embedded) {
     grid-row: 1;
   }
 
-  .navbar.navbar--schedule-shell .user-menu-container {
+  .navbar.navbar--schedule-shell > .navbar-appointment-btn {
     grid-column: 2;
+    grid-row: 1;
+    align-self: center;
+  }
+
+  .navbar.navbar--schedule-shell .user-menu-container {
+    grid-column: 3;
     grid-row: 1;
   }
 

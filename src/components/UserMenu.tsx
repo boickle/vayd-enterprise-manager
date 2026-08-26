@@ -3,6 +3,8 @@ import { useState, useRef, useEffect, type MouseEvent as ReactMouseEvent } from 
 import { useNavigate, NavLink, useLocation } from 'react-router';
 import { useAuth } from '../auth/useAuth';
 import { blockRoutingCalendarPreviewNavigation } from '../utils/routingCalendarPreviewGuard';
+import { markSchedulerHandoffPreferRoutingDoctor } from '../utils/schedulerCalendarHandoff';
+import { startFreshNewAppointmentRouting } from '../utils/routingNewAppointment';
 import './UserMenu.css';
 
 export type UserMenuExtra =
@@ -55,7 +57,17 @@ export default function UserMenu({ menuExtras = [] }: { menuExtras?: UserMenuExt
     nav('/admin');
   };
 
-  const handlePageClick = (e: ReactMouseEvent<HTMLAnchorElement>) => {
+  const handlePageClick = (e: ReactMouseEvent<HTMLAnchorElement>, to?: string) => {
+    const toPath = (to ?? '').split('?')[0] ?? '';
+    if (toPath === '/schedule/routing') {
+      if (!startFreshNewAppointmentRouting()) {
+        e.preventDefault();
+        return;
+      }
+      markSchedulerHandoffPreferRoutingDoctor();
+      setIsOpen(false);
+      return;
+    }
     if (blockRoutingCalendarPreviewNavigation()) {
       e.preventDefault();
       return;
@@ -121,7 +133,7 @@ export default function UserMenu({ menuExtras = [] }: { menuExtras?: UserMenuExt
                     key={extra.to}
                     to={extra.to}
                     className={`user-menu-item user-menu-nav-item${isActive ? ' is-active' : ''}`}
-                    onClick={handlePageClick}
+                    onClick={(e) => handlePageClick(e, extra.to)}
                   >
                     {extra.label}
                   </NavLink>

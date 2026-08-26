@@ -52,3 +52,26 @@ export function computeDepotReturnOverrunSeconds(dayData: {
   if (returnSec == null) return null;
   return Math.max(0, returnSec - endSec);
 }
+
+/**
+ * Seconds past the workday / calendar depot line when the suggested visit starts after it.
+ * OVERFLOW on result cards is depot-return overrun; this covers a start that is already
+ * after the red end-of-day line even when return-to-depot math is still on time.
+ */
+export function startPastWorkdayEndSeconds(
+  suggestedStartIso?: string | null,
+  endDepotTime?: string | null,
+  timezone?: string | null
+): number | undefined {
+  const endSec = localHmsToSeconds(endDepotTime);
+  if (endSec == null) return undefined;
+  const raw = typeof suggestedStartIso === 'string' ? suggestedStartIso.trim() : '';
+  if (!raw) return undefined;
+  let dt = DateTime.fromISO(raw);
+  if (!dt.isValid) return undefined;
+  const zone = timezone?.trim();
+  if (zone) dt = dt.setZone(zone);
+  if (!dt.isValid) return undefined;
+  const startSec = dt.hour * 3600 + dt.minute * 60 + dt.second;
+  return Math.max(0, startSec - endSec);
+}

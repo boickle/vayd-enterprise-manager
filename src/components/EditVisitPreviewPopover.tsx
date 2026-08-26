@@ -79,7 +79,11 @@ export function EditVisitPreviewPopover({
   const showWasNowTime = preview.kind === 'time' || timeChanged;
 
   return (
-    <div className="scheduler-edit-preview-popover" role="dialog" aria-label={title}>
+    <div
+      className="scheduler-edit-preview-popover scheduler-edit-preview-popover--book-action"
+      role="dialog"
+      aria-label={title}
+    >
       <div className="scheduler-edit-preview-popover-head">
         <strong className="scheduler-edit-preview-popover-title">{title}</strong>
         <button
@@ -93,85 +97,87 @@ export function EditVisitPreviewPopover({
         </button>
       </div>
 
-      <PreviewPopoverClientContact contact={clientContact} />
+      <div className="scheduler-edit-preview-popover-scroll">
+        <PreviewPopoverClientContact contact={clientContact} />
 
-      <div className="scheduler-edit-preview-popover-change">
-        {typeChanged ? (
-          <p className="scheduler-edit-preview-popover-change-row">
-            <span className="scheduler-edit-preview-popover-change-k">Type</span>
-            <span className="scheduler-edit-preview-popover-change-was">{originalType}</span>
-            <span className="scheduler-edit-preview-popover-change-arrow" aria-hidden>
-              →
-            </span>
-            <span className="scheduler-edit-preview-popover-change-now">{newType}</span>
-          </p>
-        ) : null}
-        {showWasNowTime ? (
-          <>
-            {originalRangeLabel ? (
-              <p className="scheduler-edit-preview-popover-change-line scheduler-edit-preview-popover-change-line--was">
-                <span className="scheduler-edit-preview-popover-change-k">Was</span>
-                {originalRangeLabel}
-              </p>
-            ) : null}
-            {newRangeLabel ? (
-              <p className="scheduler-edit-preview-popover-change-line scheduler-edit-preview-popover-change-line--now">
-                <span className="scheduler-edit-preview-popover-change-k">Now</span>
-                {newRangeLabel}
-              </p>
-            ) : null}
-          </>
-        ) : newRangeLabel ? (
-          <p className="scheduler-edit-preview-popover-change-line scheduler-edit-preview-popover-change-line--now">
-            {newRangeLabel}
-          </p>
-        ) : null}
-      </div>
+        <div className="scheduler-edit-preview-popover-change">
+          {typeChanged ? (
+            <p className="scheduler-edit-preview-popover-change-row">
+              <span className="scheduler-edit-preview-popover-change-k">Type</span>
+              <span className="scheduler-edit-preview-popover-change-was">{originalType}</span>
+              <span className="scheduler-edit-preview-popover-change-arrow" aria-hidden>
+                →
+              </span>
+              <span className="scheduler-edit-preview-popover-change-now">{newType}</span>
+            </p>
+          ) : null}
+          {showWasNowTime ? (
+            <>
+              {originalRangeLabel ? (
+                <p className="scheduler-edit-preview-popover-change-line scheduler-edit-preview-popover-change-line--was">
+                  <span className="scheduler-edit-preview-popover-change-k">Was</span>
+                  {originalRangeLabel}
+                </p>
+              ) : null}
+              {newRangeLabel ? (
+                <p className="scheduler-edit-preview-popover-change-line scheduler-edit-preview-popover-change-line--now">
+                  <span className="scheduler-edit-preview-popover-change-k">Now</span>
+                  {newRangeLabel}
+                </p>
+              ) : null}
+            </>
+          ) : newRangeLabel ? (
+            <p className="scheduler-edit-preview-popover-change-line scheduler-edit-preview-popover-change-line--now">
+              {newRangeLabel}
+            </p>
+          ) : null}
+        </div>
 
-      <div className="scheduler-edit-preview-popover-body" role="status" aria-live="polite">
-        {scoreLoading ? (
-          <p className="scheduler-edit-preview-popover-line">Comparing routing scores…</p>
-        ) : scoreError ? (
-          <p className="scheduler-edit-preview-popover-line scheduler-edit-preview-popover-line--error">
-            {scoreError}
-          </p>
-        ) : (
-          <>
-            {scoreCompare?.summaryLine ? (
-              <p
-                className={`scheduler-edit-preview-popover-line${
-                  scoreCompare.summaryLine === EDIT_VISIT_PREVIEW_UNAVAILABLE_LINE
-                    ? ' scheduler-edit-preview-popover-line--warn'
-                    : ' scheduler-edit-preview-popover-line--strong'
-                }`}
-              >
-                {scoreCompare.summaryLine}
-              </p>
-            ) : null}
-            {scoreCompare?.originalScoreLine &&
-            scoreCompare.originalScoreLine !== scoreCompare.summaryLine ? (
-              <p className="scheduler-edit-preview-popover-line scheduler-edit-preview-popover-line--muted">
-                {scoreCompare.originalScoreLine}
-              </p>
-            ) : null}
-            {scoreCompare?.newTypeUnavailableLine ? (
-              <p className="scheduler-edit-preview-popover-line scheduler-edit-preview-popover-line--warn">
-                {scoreCompare.newTypeUnavailableLine}
-              </p>
-            ) : null}
-            {scoreCompare?.overflowOverrunSeconds != null ? (
-              <EditVisitOverflowTag overrunSeconds={scoreCompare.overflowOverrunSeconds} />
-            ) : null}
-            {preview.kind === 'type' && scoreCompare?.windowLine ? (
-              <p className="scheduler-edit-preview-popover-line scheduler-edit-preview-popover-line--muted">
-                {scoreCompare.windowLine}
-                {scoreCompare.windowWarningMayChange
-                  ? ' — window warnings on the calendar may change.'
-                  : null}
-              </p>
-            ) : null}
-          </>
-        )}
+        <div className="scheduler-edit-preview-popover-body" role="status" aria-live="polite">
+          {scoreLoading ? (
+            <p className="scheduler-edit-preview-popover-line">Comparing routing scores…</p>
+          ) : scoreError ? (
+            <p className="scheduler-edit-preview-popover-line scheduler-edit-preview-popover-line--error">
+              {scoreError}
+            </p>
+          ) : (
+            <>
+              {scoreCompare?.summaryLine ? (
+                <p
+                  className={`scheduler-edit-preview-popover-line${
+                    scoreCompare.summaryLine === EDIT_VISIT_PREVIEW_UNAVAILABLE_LINE
+                      ? ' scheduler-edit-preview-popover-line--warn'
+                      : ' scheduler-edit-preview-popover-line--strong'
+                  }`}
+                >
+                  {scoreCompare.summaryLine}
+                </p>
+              ) : null}
+              {scoreCompare?.originalScoreLine &&
+              scoreCompare.originalScoreLine !== scoreCompare.summaryLine ? (
+                <p className="scheduler-edit-preview-popover-line scheduler-edit-preview-popover-line--muted">
+                  {scoreCompare.originalScoreLine}
+                </p>
+              ) : null}
+              {scoreCompare?.newTypeUnavailableLine ? (
+                <p className="scheduler-edit-preview-popover-line scheduler-edit-preview-popover-line--warn">
+                  {scoreCompare.newTypeUnavailableLine}
+                </p>
+              ) : null}
+              {scoreCompare?.overflowOverrunSeconds != null ? (
+                <EditVisitOverflowTag overrunSeconds={scoreCompare.overflowOverrunSeconds} />
+              ) : null}
+              {preview.kind === 'type' && scoreCompare?.windowLine ? (
+                <p className="scheduler-edit-preview-popover-line scheduler-edit-preview-popover-line--muted">
+                  {scoreCompare.windowLine}
+                  {scoreCompare.windowWarningMayChange
+                    ? ' — window warnings on the calendar may change.'
+                    : null}
+                </p>
+              ) : null}
+            </>
+          )}
+        </div>
       </div>
 
       <div className="scheduler-edit-preview-popover-actions">

@@ -1,6 +1,9 @@
 import { DateTime } from 'luxon';
-import type { HoldListItem } from '../api/holds';
-import { resolveHoldPatientLabel } from './holdsDisplay';
+import type { HoldListItem, HoldOwnerFilter } from '../api/holds';
+import {
+  parseOnlineBookingHoldDescription,
+  resolveHoldPatientLabel,
+} from './holdsDisplay';
 
 /** Holds sharing one calendar visit window (same client, same day, overlapping slot). */
 export type HoldVisitSlotGroup = {
@@ -24,9 +27,62 @@ function holdClientId(h: HoldListItem): string | null {
   return String(id);
 }
 
+function holdPatientId(h: HoldListItem): string | null {
+  const id = h.patient?.id;
+  if (id == null) return null;
+  return String(id);
+}
+
 function holdClientLabel(h: HoldListItem): string {
   if (!h.client) return '';
   return `${h.client.firstName ?? ''} ${h.client.lastName ?? ''}`.trim();
+}
+
+/** Normalize client names for soft matching (online / unlinked holds). */
+export function normalizeHoldClientKey(label: string): string {
+  return label.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+/**
+ * Soft client identity when chart id is missing — linked name or online-booking title.
+ * Used to connect explore-alternatives holds with the original unlinked autobook hold.
+ */
+export function holdSoftClientKey(h: HoldListItem): string | null {
+  const linked = holdClientLabel(h);
+  if (linked) return normalizeHoldClientKey(linked);
+  const parsed = parseOnlineBookingHoldDescription(h.description ?? '');
+  const fromDesc = parsed?.clientName?.trim();
+  if (fromDesc) return normalizeHoldClientKey(fromDesc);
+  return null;
+}
+
+/** Whether a hold belongs in the given Holds-board owner filter. */
+export function holdMatchesOwnerFilter(
+  hold: HoldListItem,
+  owner: HoldOwnerFilter
+): boolean {
+  if (owner === 'all') return true;
+  if (owner === 'me') return hold.ownerIsCurrentUser;
+  const isUnassignedBucket =
+    hold.ownerBucket === 'unassigned' || hold.ownerBucket === 'non_cl_unassigned';
+  if (owner === 'unassigned') return isUnassignedBucket;
+  if (owner === 'me_unassigned') return hold.ownerIsCurrentUser || isUnassignedBucket;
+  return (
+    hold.effectiveOwnerEmployeeId === owner ||
+    hold.holdOwner?.id === owner
+  );
+}
+
+/**
+ * Keep household groups that have at least one hold matching the owner filter.
+ * Sibling holds outside the filter stay attached so staff do not miss them.
+ */
+export function filterHoldHouseholdGroupsByOwner(
+  groups: readonly HoldHouseholdGroup[],
+  owner: HoldOwnerFilter
+): HoldHouseholdGroup[] {
+  if (owner === 'all') return [...groups];
+  return groups.filter((g) => g.holds.some((h) => holdMatchesOwnerFilter(h, owner)));
 }
 
 function samePracticeDay(isoA: string, isoB: string, practiceTz: string): boolean {
@@ -173,9 +229,26 @@ export function groupHoldsIntoVisitSlots(
   return slots;
 }
 
+function buildHouseholdGroup(
+  key: string,
+  holds: HoldListItem[],
+  practiceTz: string
+): HoldHouseholdGroup {
+  const ordered = [...holds].sort(sortHoldsForDisplay);
+  const visitSlots = groupHoldsIntoVisitSlots(ordered, practiceTz);
+  return {
+    key,
+    holds: ordered,
+    visitSlots,
+    anchor: ordered[0]!,
+  };
+}
+
 /**
- * Group holds by linked client (all dates combined). Unlinked holds stay grouped
- * by same-day visit clump only.
+ * Group holds by linked client (all dates combined).
+ * Unlinked holds fold into a linked client group when the soft client name or
+ * patient id matches; remaining unlinked holds group by soft client name across
+ * dates (same-day clump only when no soft identity exists).
  */
 export function groupHoldsByClientHousehold(
   holds: readonly HoldListItem[],
@@ -196,23 +269,64 @@ export function groupHoldsByClientHousehold(
     }
   }
 
+  /** Soft client key → preferred linked client id (first chart wins). */
+  const softKeyToClientId = new Map<string, string>();
+  /** Patient id → linked client id. */
+  const patientIdToClientId = new Map<string, string>();
+
+  for (const [cid, clientHolds] of byClient) {
+    for (const h of clientHolds) {
+      const soft = holdSoftClientKey(h);
+      if (soft && !softKeyToClientId.has(soft)) softKeyToClientId.set(soft, cid);
+      const pid = holdPatientId(h);
+      if (pid && !patientIdToClientId.has(pid)) patientIdToClientId.set(pid, cid);
+    }
+  }
+
+  const stillUnlinked: HoldListItem[] = [];
+  for (const h of unlinked) {
+    const soft = holdSoftClientKey(h);
+    const pid = holdPatientId(h);
+    const targetCid =
+      (soft ? softKeyToClientId.get(soft) : undefined) ??
+      (pid ? patientIdToClientId.get(pid) : undefined) ??
+      null;
+    if (targetCid) {
+      const list = byClient.get(targetCid) ?? [];
+      list.push(h);
+      byClient.set(targetCid, list);
+    } else {
+      stillUnlinked.push(h);
+    }
+  }
+
   const groups: HoldHouseholdGroup[] = [];
 
   for (const [cid, clientHolds] of byClient) {
-    const ordered = [...clientHolds].sort(sortHoldsForDisplay);
-    const visitSlots = groupHoldsIntoVisitSlots(ordered, practiceTz);
-    groups.push({
-      key: `client:${cid}`,
-      holds: ordered,
-      visitSlots,
-      anchor: ordered[0]!,
-    });
+    groups.push(buildHouseholdGroup(`client:${cid}`, clientHolds, practiceTz));
+  }
+
+  const bySoftKey = new Map<string, HoldListItem[]>();
+  const noSoftIdentity: HoldListItem[] = [];
+  for (const h of stillUnlinked) {
+    const soft = holdSoftClientKey(h);
+    if (soft) {
+      const list = bySoftKey.get(soft) ?? [];
+      list.push(h);
+      bySoftKey.set(soft, list);
+    } else {
+      noSoftIdentity.push(h);
+    }
+  }
+
+  for (const [soft, softHolds] of bySoftKey) {
+    groups.push(buildHouseholdGroup(`soft:${soft}`, softHolds, practiceTz));
   }
 
   const unlinkedAssigned = new Set<number>();
-  for (const anchor of unlinked) {
+  for (const anchor of noSoftIdentity) {
     if (unlinkedAssigned.has(anchor.id)) continue;
-    const clump = resolveHoldVisitClump(anchor, unlinked, practiceTz);
+    const clump = resolveHoldVisitClump(anchor, noSoftIdentity, practiceTz);
     for (const h of clump) unlinkedAssigned.add(h.id);
     const ordered = [...clump].sort((a, b) => a.id - b.id);
     groups.push({

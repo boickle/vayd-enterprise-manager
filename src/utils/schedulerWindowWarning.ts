@@ -1,7 +1,7 @@
 import { DateTime } from 'luxon';
 import type { DayData } from '../pages/MyWeek';
 import {
-  clientFixedTimeUsesDoctorDayClockForDriveLayout,
+  clientVisitUsesDoctorDayClockForDriveLayout,
   computeDriveTimeWindowWarning,
 } from './windowWarning';
 
@@ -57,7 +57,6 @@ export function schedulerHouseholdUsesDoctorDayClockForLayout(
   if (!showByDriveTime) return true;
   const flexBlock = Boolean(h.isPersonalBlock && isFlexBlock(h.primary));
   if (h.isPersonalBlock && !flexBlock) return true;
-  if (!schedulerHouseholdIsClientFixedTime(h)) return false;
   const windowStartIso =
     (slot?.windowStartIso != null && slot?.windowEndIso != null ? slot.windowStartIso : null) ??
     (h as { windowStartIso?: string | null }).windowStartIso ??
@@ -68,7 +67,8 @@ export function schedulerHouseholdUsesDoctorDayClockForLayout(
     (h as { windowEndIso?: string | null }).windowEndIso ??
     (h as { effectiveWindow?: { endIso?: string } }).effectiveWindow?.endIso ??
     null;
-  return clientFixedTimeUsesDoctorDayClockForDriveLayout({
+  return clientVisitUsesDoctorDayClockForDriveLayout({
+    isClientFixedTime: schedulerHouseholdIsClientFixedTime(h),
     schedStartIso: h.startIso,
     etaIso: slot?.eta,
     windowStartIso,

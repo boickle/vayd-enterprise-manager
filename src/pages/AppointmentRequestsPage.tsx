@@ -131,6 +131,7 @@ import {
 } from '../utils/appointmentRequestHouseholdHold';
 import {
   appointmentRequestAutoBookedOnline,
+  appointmentRequestNeedsManualBookActions,
   appointmentRequestNeedsStaffConfirmation,
 } from '../utils/appointmentRequestStaffConfirm';
 import { beginAppointmentRequestStaffConfirmFlow } from '../utils/appointmentRequestStaffConfirmFlow';
@@ -2306,9 +2307,15 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
             // Only true when the client self-scheduled a slot and it was auto-booked online —
             // not for ordinary appointment requests that staff book later.
             const autoBookedOnline = appointmentRequestAutoBookedOnline(item);
-            const needsStaffConfirmation =
-              hasLinkedAppointment && appointmentRequestNeedsStaffConfirmation(item);
-            const needsManualBook = !isDismissed && !isBooked && !hasLinkedAppointment;
+            // Confirm from submission fields immediately — do not wait for bookedApptMeta.
+            // Gating on hasLinkedAppointment flashed Book / Link appointment while meta loaded.
+            const needsStaffConfirmation = appointmentRequestNeedsStaffConfirmation(item);
+            const needsManualBook = appointmentRequestNeedsManualBookActions({
+              item,
+              isDismissed,
+              isBooked,
+              hasLinkedAppointment,
+            });
             const linkedAppointment = linkedEvetIdsFromBookedApptSummary(bookedSummary);
             const requestTypeName = requestDataAppointmentTypeLabel(rd);
             const displayBookedSummary =
@@ -2752,7 +2759,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                           {statusUpdating[item.id] ? 'Saving…' : 'Not booked'}
                         </button>
                       </>
-                    ) : isOnHoldVisit ? (
+                    ) : isOnHoldVisit || needsStaffConfirmation ? (
                       <>
                         {needsStaffConfirmation ? (
                           <button
