@@ -94,9 +94,10 @@ const TICK_HALF_BORDER = '1px dashed #eef2f6';
 const TIMELINE_LABEL_GUTTER_PX = 60;
 const DRIVE_FILL =
   'repeating-linear-gradient(135deg, #e2e8f0 0px, #e2e8f0 6px, #cbd5e1 6px, #cbd5e1 12px)';
-/** Post-visit buffer: see-through white tint; column background shows (same as My Week) */
-const BUFFER_FILL = 'rgba(255, 255, 255, 0.35)';
-const BUFFER_BORDER = '1px dashed #d1d5db';
+/** Post-visit buffer: soft yellow horizontal stripes (distinct from diagonal gray drive). */
+const BUFFER_FILL =
+  'repeating-linear-gradient(90deg, rgba(253, 224, 71, 0.45) 0px, rgba(253, 224, 71, 0.45) 5px, rgba(254, 249, 195, 0.55) 5px, rgba(254, 249, 195, 0.55) 10px)';
+const BUFFER_BORDER = '1px dashed #ca8a04';
 
 /** Parse "HH:mm" or "HH:mm:ss" to minutes from midnight. */
 function timeStrToMinutesFromMidnight(s: string): number {
@@ -1769,11 +1770,11 @@ export default function DoctorDayVisual({
       const a = blockGeom[i];
       const b = blockGeom[i + 1];
       if (!a || !b) continue;
-      const gapPx = b.top - (a.top + a.height);
-      if (gapPx <= 1) continue;
+      // Full clock gap — buffer then drive are sequential; do not subtract buffer from drive space.
+      const clockGapPx = b.top - (a.top + a.height);
+      const clockGapMin = Math.max(0, clockGapPx / PPM);
+      const gapRound = Math.max(0, Math.round(clockGapMin));
       const bufMin = bufferMinAfterStop(i);
-      const bufPx = Math.min(gapPx, bufMin * PPM);
-      const remainingPx = gapPx - bufPx;
       let driveMinApi = driveBetweenMinForLayout[i] ?? 0;
       if (
         driveMinApi <= 0 &&
@@ -1785,11 +1786,13 @@ export default function DoctorDayVisual({
       ) {
         const d0 = driveSecondsForLayout[0] ?? 0;
         const d1 = driveSecondsForLayout[1] ?? 0;
+        // After a barrier, prefer the routed leg seconds when present (not the leftover gap).
         if (d0 > 0 && (d1 === 0 || d0 === d1)) {
-          driveMinApi = Math.max(0, Math.round(remainingPx / PPM));
+          driveMinApi = Math.max(0, Math.round(d0 / 60));
+        } else if (d1 > 0) {
+          driveMinApi = Math.max(0, Math.round(d1 / 60));
         }
       }
-      const gapAvailMin = Math.max(0, remainingPx / PPM);
       const routeMinRounded =
         driveMinApi > 0 ? Math.max(1, Math.round(driveMinApi)) : 0;
       const prevBarrier = displayHouseholds[i]?.isPersonalBlock === true;
@@ -1806,79 +1809,67 @@ export default function DoctorDayVisual({
       const paintDriveMin = skipBarrierBarrierDrive
         ? 0
         : routeMinForTitle > 0
-          ? Math.min(gapAvailMin, routeMinForTitle)
-          : gapAvailMin;
-      const drivePx = paintDriveMin * PPM;
+          ? routeMinForTitle
+          : 0;
+
+      if (bufMin <= 0 && paintDriveMin <= 0) continue;
+
       const bottomAPx = a.top + a.height;
       let yBuf = bottomAPx;
-      if (bufPx > 1) {
-        const bm = Math.max(1, Math.round(bufPx / PPM));
+      if (bufMin > 0) {
+        const bufPx = bufMin * PPM;
+        const bm = Math.max(1, Math.round(bufMin));
         out.push({
           top: yBuf,
           height: Math.max(4, bufPx),
           mins: bm,
           kind: 'buffer',
-          title: `Buffer after visit: ${bm} min`,
+          title:
+            gapRound + 1e-6 < bm
+              ? `Buffer after visit: ${bm} min (only ${Math.max(1, gapRound)} min available)`
+              : `Buffer after visit: ${bm} min`,
           segKey: `vdd-between-${i}-buf`,
         });
         yBuf += bufPx;
       }
-      if (drivePx > 1) {
-        const winStartPx = bottomAPx + bufPx;
-        const nextTopPx = b.top;
-        const placeHugNext = () => nextTopPx - drivePx >= winStartPx - 1e-6;
-        const placeHugPrev = () => winStartPx + drivePx <= nextTopPx + 1e-6;
-        let driveTopPx: number;
-        if (prevBarrier && !nextBarrier) {
-          if (placeHugNext()) driveTopPx = nextTopPx - drivePx;
-          else if (placeHugPrev()) driveTopPx = winStartPx;
-          else driveTopPx = nextTopPx - drivePx;
-        } else if (!prevBarrier && nextBarrier) {
-          if (placeHugPrev()) driveTopPx = winStartPx;
-          else if (placeHugNext()) driveTopPx = nextTopPx - drivePx;
-          else driveTopPx = winStartPx;
-        } else if (prevBarrier && nextBarrier) {
-          if (placeHugNext()) driveTopPx = nextTopPx - drivePx;
-          else if (placeHugPrev()) driveTopPx = winStartPx;
-          else driveTopPx = nextTopPx - drivePx;
-        } else {
-          if (placeHugPrev()) driveTopPx = winStartPx;
-          else if (placeHugNext()) driveTopPx = nextTopPx - drivePx;
-          else driveTopPx = winStartPx;
-        }
-        const schedMin = Math.max(1, Math.round(drivePx / PPM));
-        const gapRound = Math.max(1, Math.round(gapAvailMin));
-        const d0 =
-          Array.isArray(driveSecondsForLayout) && driveSecondsForLayout.length > 0
-            ? driveSecondsForLayout[0] ?? 0
-            : 0;
-        const visitLegOnNext =
-          i === 0 &&
-          prevBarrier &&
-          !nextBarrier &&
-          d0 === 0 &&
-          typeof dsHop === 'number' &&
-          dsHop > 0;
-        const nextName = (displayHouseholds[i + 1]?.client || '').trim() || 'visit';
-        const title = visitLegOnNext
-          ? routeMinForTitle > 0 && gapRound > routeMinForTitle + 1e-6
-            ? `Drive before ${nextName}: ${routeMinForTitle} min route (${gapRound} min gap)`
-            : routeMinForTitle > 0
-              ? `Drive before ${nextName}: ${routeMinForTitle} min`
+      if (paintDriveMin > 0) {
+        const drivePx = paintDriveMin * PPM;
+        if (drivePx > 1) {
+          // Sequential: drive starts immediately after buffer (may overrun into next stop).
+          // Leftover minutes after buffer+drive (e.g. ETA rounding) stay unpainted white.
+          const driveTopPx = yBuf;
+          const schedMin = Math.max(1, Math.round(paintDriveMin));
+          const d0 =
+            Array.isArray(driveSecondsForLayout) && driveSecondsForLayout.length > 0
+              ? driveSecondsForLayout[0] ?? 0
+              : 0;
+          const visitLegOnNext =
+            i === 0 &&
+            prevBarrier &&
+            !nextBarrier &&
+            d0 === 0 &&
+            typeof dsHop === 'number' &&
+            dsHop > 0;
+          const nextName = (displayHouseholds[i + 1]?.client || '').trim() || 'visit';
+          const neededMin = bufMin + paintDriveMin;
+          const legDoesNotFit = neededMin > clockGapMin + 1e-6;
+          const gapLabel = Math.max(1, gapRound);
+          const title = visitLegOnNext
+            ? legDoesNotFit
+              ? `Drive before ${nextName}: ${schedMin} min (only ${gapLabel} min available)`
               : `Drive before ${nextName}: ${schedMin} min`
-          : routeMinForTitle > 0 && gapRound > routeMinForTitle + 1e-6
-            ? `Drive to next stop: ${routeMinForTitle} min · ${gapRound} min until next stop`
-            : routeMinForTitle > 0
-              ? `Drive to next stop: ${routeMinForTitle} min`
+            : legDoesNotFit
+              ? `Drive to next stop: ${schedMin} min (only ${gapLabel} min available)`
               : `Drive to next stop: ${schedMin} min`;
-        out.push({
-          top: driveTopPx,
-          height: Math.max(4, drivePx),
-          mins: routeMinForTitle > 0 ? routeMinForTitle : schedMin,
-          kind: 'drive',
-          title,
-          segKey: `vdd-between-${i}-drv`,
-        });
+          out.push({
+            top: driveTopPx,
+            height: Math.max(4, drivePx),
+            mins: schedMin,
+            kind: 'drive',
+            title,
+            segKey: `vdd-between-${i}-drv`,
+          });
+        }
       }
     }
     return out;

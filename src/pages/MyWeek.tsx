@@ -94,9 +94,10 @@ const TICK_HALF_BORDER = '1px dashed #eef2f6';
 const WEEK_TIME_COL_WIDTH_PX = 64;
 /** Drive segment shading: diagonal stripes so drive vs whitespace is obvious */
 const DRIVE_FILL = 'repeating-linear-gradient(135deg, #e2e8f0 0px, #e2e8f0 6px, #cbd5e1 6px, #cbd5e1 12px)';
-/** Post-visit buffer: see-through / neutral (not blue); column background shows; outline vs hatched drive */
-const BUFFER_FILL = 'rgba(255, 255, 255, 0.35)';
-const BUFFER_BORDER = '1px dashed #d1d5db';
+/** Post-visit buffer: soft yellow horizontal stripes (distinct from diagonal gray drive). */
+const BUFFER_FILL =
+  'repeating-linear-gradient(90deg, rgba(253, 224, 71, 0.45) 0px, rgba(253, 224, 71, 0.45) 5px, rgba(254, 249, 195, 0.55) 5px, rgba(254, 249, 195, 0.55) 10px)';
+const BUFFER_BORDER = '1px dashed #ca8a04';
 
 const str = (o: any, k: string) => (typeof o?.[k] === 'string' ? o[k] : undefined);
 const num = (o: any, k: string) => {
@@ -782,14 +783,16 @@ export function computeMyWeekDayColumnLayout(
  * Paint drive bands in the same minute-space as appointment blocks (driveOffsets).
  * The old path used raw clock minutes + cumOffsetMin, which left white gaps and stretched return past backToDepotIso.
  */
+export type MyWeekDriveSegmentKind = 'buffer' | 'drive';
+
 export function buildMyWeekDriveSegmentsFromLayout(
   layout: MyWeekDayColumnLayout,
   dayData: DayData,
   weekGrid: WeekGridMetrics,
   dateIso: string
-): { top: number; height: number; title: string; kind: 'buffer' | 'drive' }[] {
+): { top: number; height: number; title: string; kind: MyWeekDriveSegmentKind }[] {
   const practiceTz = practiceTimeZoneOrDefault(dayData.timezone);
-  const segs: { top: number; height: number; title: string; kind: 'buffer' | 'drive' }[] = [];
+  const segs: { top: number; height: number; title: string; kind: MyWeekDriveSegmentKind }[] = [];
   const { topMinByIdx, durMinByIdx, driveOffsets, ds, N, displayHouseholds, displayTimeline } = layout;
   const apptBufDefault = dayData.appointmentBufferMinutes ?? DEFAULT_APPOINTMENT_BUFFER_MINUTES;
   const bufferMinAfterStop = (i: number) => {
@@ -923,90 +926,66 @@ export function buildMyWeekDriveSegmentsFromLayout(
   for (let i = 0; i < N - 1; i++) {
     const bottomMin = topMinByIdx[i] + driveOffsets[i] + durMinByIdx[i];
     const nextTopMin = topMinByIdx[i + 1] + driveOffsets[i + 1];
-    const gapMin = nextTopMin - bottomMin;
-    const gapPx = gapMin * PPM;
-    if (gapPx <= 1) continue;
+    // Full clock gap between visit end and next start — buffer and drive are sequential
+    // claims on this gap (buffer first, then drive). Never subtract buffer from drive space.
+    const clockGapMin = Math.max(0, nextTopMin - bottomMin);
+    const gapRound = Math.max(0, Math.round(clockGapMin));
     const bufMin = bufferMinAfterStop(i);
-    const bufPx = Math.min(gapPx, bufMin * PPM);
-    const afterBufPx = gapPx - bufPx;
     const driveSecLeg =
       i === 0 && skipFirstInterRowDriveSegment
         ? 0
         : i === 0 && firstGapDriveSec != null && firstGapDriveSec > 0
           ? firstGapDriveSec
           : ds[i + 1];
-    const yBuf = toPx(bottomMin);
-    if (bufPx > 1) {
-      const bm = Math.max(1, Math.round(bufPx / PPM));
-      const bufWanted = Math.round(bufMin);
-      // A gap under the buffer clamps this band and drops the drive band entirely, so the tightest
-      // legs would otherwise be the ones showing no warning at all.
-      segs.push({
-        top: yBuf,
-        height: Math.max(4, bufPx),
-        title:
-          bm < bufWanted
-            ? `Buffer after visit: ${bufWanted} min · only ${bm} min before the next visit`
-            : `Buffer after visit: ${bm} min`,
-        kind: 'buffer',
-      });
-    }
-    if (afterBufPx <= 1) continue;
 
     const prevBarrier = isDriveBarrier(displayHouseholds[i]);
     const nextBarrier = isDriveBarrier(displayHouseholds[i + 1]);
     const explicitZeroLeg =
       typeof driveSecLeg === 'number' && Number.isFinite(driveSecLeg) && driveSecLeg === 0;
-    if (prevBarrier && nextBarrier && explicitZeroLeg) {
+    if (prevBarrier && nextBarrier && explicitZeroLeg && bufMin <= 0) {
       continue;
     }
 
-    const gapAvailMin = Math.max(0, afterBufPx / PPM);
     const hasNumericLeg = typeof driveSecLeg === 'number' && Number.isFinite(driveSecLeg);
     const routeMinFromLeg =
       hasNumericLeg && driveSecLeg > 0 ? Math.max(1, Math.round(driveSecLeg / 60)) : 0;
-    // API 0 = no driving on this leg (e.g. visit → office block); do not fill the clock gap with hatched "drive".
-    // Missing / non-numeric leg: do not infer drive from idle gap (was incorrectly painting the full gap).
-    const paintDriveMin = hasNumericLeg ? Math.min(gapAvailMin, routeMinFromLeg) : 0;
+    // API 0 = no driving on this leg (e.g. visit → office block); do not fill idle gap with hatched drive.
+    // Missing / non-numeric leg: do not infer drive from the clock gap.
+    const paintDriveMin =
+      prevBarrier && nextBarrier && explicitZeroLeg
+        ? 0
+        : hasNumericLeg
+          ? routeMinFromLeg
+          : 0;
+
+    if (bufMin <= 0 && paintDriveMin <= 0) continue;
+
+    // Buffer band: full post-visit buffer, starting at visit end (may overrun a tight gap).
+    if (bufMin > 0) {
+      const bufPx = bufMin * PPM;
+      const bufWanted = Math.max(1, Math.round(bufMin));
+      segs.push({
+        top: toPx(bottomMin),
+        height: Math.max(4, bufPx),
+        title:
+          gapRound + 1e-6 < bufWanted
+            ? `Buffer after visit: ${bufWanted} min (only ${Math.max(1, gapRound)} min available)`
+            : `Buffer after visit: ${bufWanted} min`,
+        kind: 'buffer',
+      });
+    }
+
+    if (paintDriveMin <= 0) continue;
+
+    // Drive band: immediately after buffer, at full routed duration (sequential — not clamped to
+    // gap−buffer). Tight schedules overrun into the next stop; overlap overlays flag that.
+    // Leftover minutes after buffer+drive (e.g. 5-min ETA rounding) stay unpainted white.
     const driveH = paintDriveMin * PPM;
     if (driveH <= 1) continue;
 
     const winStartMin = bottomMin + bufMin;
-    const dMin = paintDriveMin;
-    const dm = Math.max(1, Math.round(dMin));
-
-    let driveTopPx: number;
-
-    const placeHugNext = () => {
-      const startMin = nextTopMin - dMin;
-      return startMin >= winStartMin - 1e-6;
-    };
-    const placeHugPrev = () => {
-      const endMin = winStartMin + dMin;
-      return endMin <= nextTopMin + 1e-6;
-    };
-
-    if (prevBarrier && !nextBarrier) {
-      // Block above, appointment below: prefer hugging appointment (below), else hug far edge of block (above in gap).
-      if (placeHugNext()) driveTopPx = toPx(nextTopMin) - driveH;
-      else if (placeHugPrev()) driveTopPx = toPx(winStartMin);
-      else driveTopPx = toPx(nextTopMin) - driveH;
-    } else if (!prevBarrier && nextBarrier) {
-      // Appointment above, block below: prefer hugging appointment (above in gap), else hug block top.
-      if (placeHugPrev()) driveTopPx = toPx(winStartMin);
-      else if (placeHugNext()) driveTopPx = toPx(nextTopMin) - driveH;
-      else driveTopPx = toPx(winStartMin);
-    } else if (prevBarrier && nextBarrier) {
-      // Block above, block below: same as block→appointment — prefer hugging lower block top, else upper block bottom.
-      if (placeHugNext()) driveTopPx = toPx(nextTopMin) - driveH;
-      else if (placeHugPrev()) driveTopPx = toPx(winStartMin);
-      else driveTopPx = toPx(nextTopMin) - driveH;
-    } else {
-      // Appointment → appointment: hug the upper visit (after buffer) so the leg sits next to the earlier stop (e.g. Amber→Allie).
-      if (placeHugPrev()) driveTopPx = toPx(winStartMin);
-      else if (placeHugNext()) driveTopPx = toPx(nextTopMin) - driveH;
-      else driveTopPx = toPx(winStartMin);
-    }
+    const driveTopPx = toPx(winStartMin);
+    const dm = Math.max(1, Math.round(paintDriveMin));
 
     const duplicateFullLegInGap =
       i === 0 &&
@@ -1016,30 +995,25 @@ export function buildMyWeekDriveSegmentsFromLayout(
       firstGapDriveSec != null &&
       firstGapDriveSec > 0 &&
       Math.abs(firstGapDriveSec - ds0) <= 2;
-    const gapRound = Math.max(1, Math.round(gapAvailMin));
     const driveBeforeVisitName =
       i === 0 && prevBarrier && !nextBarrier && ds0 === 0 && ds1 > 0
         ? (displayHouseholds[1]?.client || '').trim() || 'visit'
         : '';
-    // The band is clamped to the space that exists, so a leg that does not fit would otherwise
-    // label the full drive over a band painted shorter than it, and the day would read as feasible.
-    const legDoesNotFit = routeMinFromLeg > 0 && routeMinFromLeg > gapRound + 1e-6;
+    // Infeasible when buffer + drive need more clock time than exists until the next stop.
+    const neededMin = bufMin + paintDriveMin;
+    const legDoesNotFit = neededMin > clockGapMin + 1e-6;
+    const gapLabel = Math.max(1, gapRound);
+    // Keep titles to buffer / drive only. Mention the clock gap only when the leg does not fit.
     const nextStopLabel = legDoesNotFit
-      ? `Drive to next stop: ${routeMinFromLeg} min · only ${gapRound} min before the next visit`
-      : routeMinFromLeg > 0 && gapRound > routeMinFromLeg + 1e-6
-        ? `Drive to next stop: ${routeMinFromLeg} min · ${gapRound} min until next stop`
-        : routeMinFromLeg > 0
-          ? `Drive to next stop: ${routeMinFromLeg} min`
-          : `Drive to next stop: ${dm} min`;
+      ? `Drive to next stop: ${dm} min (only ${gapLabel} min available)`
+      : `Drive to next stop: ${dm} min`;
     const legTitle = duplicateFullLegInGap
       ? driveLabel(dm, 'Drive from depot')
-      : driveBeforeVisitName && routeMinFromLeg > 0 && gapRound > routeMinFromLeg + 1e-6
-        ? `Drive before ${driveBeforeVisitName}: ${routeMinFromLeg} min route (${gapRound} min gap)`
-        : driveBeforeVisitName && routeMinFromLeg > 0
-          ? `Drive before ${driveBeforeVisitName}: ${routeMinFromLeg} min`
-          : driveBeforeVisitName
-            ? `Drive before ${driveBeforeVisitName}: ${dm} min`
-            : nextStopLabel;
+      : driveBeforeVisitName
+        ? legDoesNotFit
+          ? `Drive before ${driveBeforeVisitName}: ${dm} min (only ${gapLabel} min available)`
+          : `Drive before ${driveBeforeVisitName}: ${dm} min`
+        : nextStopLabel;
     segs.push({
       top: driveTopPx,
       height: Math.max(4, driveH),

@@ -72,13 +72,16 @@ export function mergeEtaFetchIntoDayData(day: DayBundleIn, result: any): DayData
         typeof row.bufferAfterMinutes === 'number' && Number.isFinite(row.bufferAfterMinutes)
           ? row.bufferAfterMinutes
           : undefined;
-      keyToSlot[k] = {
+      const entry = {
         eta,
         etd,
         windowStartIso: windowStartIso ?? undefined,
         windowEndIso: windowEndIso ?? undefined,
         ...(bufferAfterMinutes !== undefined ? { bufferAfterMinutes } : {}),
       };
+      for (const variant of keyVariantsForKeyString(k)) {
+        keyToSlot[variant] = entry;
+      }
       const bl = row?.blockLabel;
       if (bl != null && String(bl).trim() !== '') {
         for (const variant of keyVariantsForKeyString(k)) {
@@ -89,7 +92,31 @@ export function mergeEtaFetchIntoDayData(day: DayBundleIn, result: any): DayData
   }
 
   let tl = day.households.map((h) => {
-    const slot = h.key ? keyToSlot[h.key] : undefined;
+    let slot = h.key ? keyToSlot[h.key] : undefined;
+    if (!slot && h.key) {
+      for (const variant of keyVariantsForKeyString(h.key)) {
+        const found = keyToSlot[variant];
+        if (found) {
+          slot = found;
+          break;
+        }
+      }
+    }
+    if (
+      !slot &&
+      Number.isFinite(h.lat) &&
+      Number.isFinite(h.lon) &&
+      Math.abs(h.lat) > 1e-6 &&
+      Math.abs(h.lon) > 1e-6
+    ) {
+      for (const d of [6, 5] as const) {
+        const found = keyToSlot[keyFor(h.lat as number, h.lon as number, d)];
+        if (found) {
+          slot = found;
+          break;
+        }
+      }
+    }
     let eta = slot?.eta ?? null;
     let etd = slot?.etd ?? null;
     if (!eta && h?.startIso) eta = h.startIso;
