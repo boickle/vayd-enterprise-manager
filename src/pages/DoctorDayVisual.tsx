@@ -21,6 +21,12 @@ import {
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import { fetchAllAppointmentTypes } from '../api/appointmentSettings';
 import { householdGroupKey } from '../utils/doctorDayHouseholdGroup';
+import {
+  appointmentIsCalendarOnlyStaffItem,
+  householdCountsAsRouteAddressStop,
+  householdPersonalBlockFlag,
+} from '../utils/calendarOnlyStaffAppointment';
+import { expandEtaDriveSecondsToHouseholds } from '../utils/schedulerEtaMerge';
 import { formatDoctorDayApptAddress } from '../utils/doctorDayAddress';
 import {
   buildAppointmentTypeCatalog,
@@ -478,6 +484,7 @@ function visualHouseholdUsesDoctorDayClockForLayout(
   blockMetaForFlex?: { blockLabel?: string; title?: string } | null
 ): boolean {
   if (!showByDriveTime) return true;
+  if (appointmentIsCalendarOnlyStaffItem(h.primary)) return true;
   const flexSource = blockMetaForFlex ?? h.primary;
   const flexBlock = Boolean(h.isPersonalBlock && isFlexBlockItem(flexSource));
   if (h.isPersonalBlock && !flexBlock) return true;
@@ -918,7 +925,7 @@ export default function DoctorDayVisual({
       const idPart = (a as any)?.id != null ? String((a as any).id) : String(idx);
       const groupKey = householdGroupKey(a, lat, lon, addrKey, idPart, hasGeo);
 
-      const isPersonalBlock = isBlockEntry({ ...a, key: groupKey });
+      const isPersonalBlock = householdPersonalBlockFlag(a, groupKey);
 
       const patient = makePatientBadge(a, practiceTimeZone);
       const apptIsPreview = (a as any)?.isPreview === true;
@@ -1037,8 +1044,10 @@ export default function DoctorDayVisual({
         selectedDoctorId ??
         '';
 
-      // Build payload: include ALL rows in visit order; always include lat/lon (0 for non-routable)
-      const householdsPayload = ordered.map(({ h }) => {
+      // Calendar-only staff items (Note To Staff) are not geographic stops.
+      const householdsPayload = ordered
+        .filter(({ h }) => h.isPreview || !appointmentIsCalendarOnlyStaffItem(h.primary))
+        .map(({ h }) => {
         const isBlock = isBlockEntry({ ...h.primary, key: h.key });
 
         const lat = Number.isFinite(h.lat) ? (h.lat as number) : 0;
@@ -1066,7 +1075,13 @@ export default function DoctorDayVisual({
         hasVirtual && virtualAppt
           ? buildEtaCandidateSlot(
               {
-                insertionIndex: mappedInsertionIndex,
+                insertionIndex: (() => {
+                  const previewIdx = householdsPayload.findIndex((row: { key?: string }) => {
+                    const h = ordered.find((o) => o.h.key === row.key)?.h;
+                    return h?.isPreview === true;
+                  });
+                  return previewIdx >= 0 ? previewIdx : mappedInsertionIndex;
+                })(),
                 positionInDay: virtualAppt.positionInDay,
                 suggestedStartIso: virtualAppt.suggestedStartIso,
                 lat: virtualAppt.lat,
@@ -1074,7 +1089,7 @@ export default function DoctorDayVisual({
                 serviceMinutes: virtualAppt.serviceMinutes,
                 arrivalWindow: virtualAppt.arrivalWindow,
               },
-              { householdCount: ordered.length }
+              { householdCount: householdsPayload.length }
             )
           : undefined;
 
@@ -1308,7 +1323,7 @@ export default function DoctorDayVisual({
         setEtaBlockLabelByKey(labelMap);
 
         // 6) store drive/depot/buffer fields. First segment = drive from depot; use normalized result.driveSeconds[0] (same logic as My Week / routing.ts).
-        const driveArr = Array.isArray(result?.driveSeconds) ? result.driveSeconds : null;
+        const driveArr = expandEtaDriveSecondsToHouseholds(households, result);
         setDriveSecondsArr(driveArr);
         const fromApiFirst =
           driveArr && driveArr.length > 0 && typeof driveArr[0] === 'number' ? driveArr[0] : null;
@@ -1971,7 +1986,7 @@ export default function DoctorDayVisual({
     const mins = backDepotMin;
     let lastAddressIdx = -1;
     for (let i = displayHouseholds.length - 1; i >= 0; i--) {
-      if (!displayHouseholds[i]?.isPersonalBlock) {
+      if (householdCountsAsRouteAddressStop(displayHouseholds[i])) {
         lastAddressIdx = i;
         break;
       }

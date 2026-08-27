@@ -24,6 +24,39 @@ function keyVariantsForKeyString(s: string): string[] {
   return [s, k6, k5].filter((x, i, arr) => arr.indexOf(x) === i);
 }
 
+/**
+ * `/routing/eta` may omit calendar-only staff items (Note To Staff, etc.).
+ * Stretch `driveSeconds` back onto the full household list (0 for omitted stops).
+ */
+export function expandEtaDriveSecondsToHouseholds(
+  households: { key?: string }[],
+  result: { driveSeconds?: number[] | null; byIndex?: { key?: string }[] | null } | null
+): number[] | null {
+  const ds = Array.isArray(result?.driveSeconds) ? result!.driveSeconds! : null;
+  if (!ds) return null;
+  const byIndex = Array.isArray(result?.byIndex) ? result!.byIndex! : [];
+  if (byIndex.length === 0 || byIndex.length === households.length) return ds;
+
+  const driveToByKey = new Map<string, number>();
+  byIndex.forEach((row, i) => {
+    if (row?.key == null) return;
+    const v = ds[i];
+    driveToByKey.set(String(row.key), typeof v === 'number' && Number.isFinite(v) ? v : 0);
+  });
+
+  const full = households.map((h) => {
+    const k = h.key != null ? String(h.key) : '';
+    if (k && driveToByKey.has(k)) return driveToByKey.get(k)!;
+    return 0;
+  });
+  const returnLegIndex = byIndex.length;
+  const returnLeg = ds.length > returnLegIndex ? ds[returnLegIndex] : undefined;
+  if (typeof returnLeg === 'number' && Number.isFinite(returnLeg)) {
+    full.push(returnLeg);
+  }
+  return full;
+}
+
 export type DayBundleIn = {
   date: string;
   timezone: string;
@@ -135,7 +168,7 @@ export function mergeEtaFetchIntoDayData(day: DayBundleIn, result: any): DayData
     };
   });
 
-  let driveSeconds: number[] | null = Array.isArray(result?.driveSeconds) ? result.driveSeconds : null;
+  let driveSeconds: number[] | null = expandEtaDriveSecondsToHouseholds(day.households, result);
   let depotToFirstRoutableSec: number | null = null;
   if (Array.isArray(result?.byIndex)) {
     const firstRoutableRow = result.byIndex.find(

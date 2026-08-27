@@ -9,7 +9,7 @@ export type Depot = { lat: number; lon: number };
  * vayd-api `APPOINTMENT_BUFFER_MINUTES` (default of ROUTING_APPOINTMENT_BUFFER_MINUTES).
  * There is no shorter clustered-stop buffer — same-address stops use this too.
  */
-export const DEFAULT_APPOINTMENT_BUFFER_MINUTES = 8;
+export const DEFAULT_APPOINTMENT_BUFFER_MINUTES = 5;
 
 export type EtaHouseholdInput = {
   key?: string;

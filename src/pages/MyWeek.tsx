@@ -26,6 +26,12 @@ import {
 import { useAuth } from '../auth/useAuth';
 import { buildGoogleMapsLinksForDay, type Stop } from '../utils/maps';
 import { householdGroupKey } from '../utils/doctorDayHouseholdGroup';
+import {
+  appointmentIsCalendarOnlyStaffItem,
+  householdCountsAsRouteAddressStop,
+  householdPersonalBlockFlag,
+} from '../utils/calendarOnlyStaffAppointment';
+import { expandEtaDriveSecondsToHouseholds } from '../utils/schedulerEtaMerge';
 import { formatDoctorDayApptAddress } from '../utils/doctorDayAddress';
 import {
   appointmentNotesFromDoctorDayRow,
@@ -304,6 +310,7 @@ function weekHouseholdUsesDoctorDayClockForLayout(
   showByDriveTime: boolean
 ): boolean {
   if (!showByDriveTime) return true;
+  if (appointmentIsCalendarOnlyStaffItem(h.primary)) return true;
   const flexBlock = Boolean(h.isPersonalBlock && isFlexBlockItem(h.primary));
   if (h.isPersonalBlock && !flexBlock) return true;
   const windowStartIso =
@@ -367,7 +374,7 @@ function buildHouseholds(appts: DoctorDayAppt[]): WeekHousehold[] {
     const addrKey = hasGeo ? null : addressKeyForAppt(a);
     const idPart = (a as any)?.id != null ? String((a as any).id) : String(idx);
     const groupKey = householdGroupKey(a, lat, lon, addrKey, idPart, hasGeo);
-    const isPersonalBlock = isBlockEntry({ ...a, key: groupKey });
+    const isPersonalBlock = householdPersonalBlockFlag(a, groupKey);
     const isPreview = (a as any)?.isPreview === true;
     const patient = makePatientBadge(a);
 
@@ -820,7 +827,8 @@ export function buildMyWeekDriveSegmentsFromLayout(
   const toPx = (min: number) => Math.max(0, Math.min(weekGrid.totalMinutes, min)) * PPM;
 
   /** Fixed blocks and flex blocks — drive cannot overlap these; placement hugs appointment or barricade edge. */
-  const isDriveBarrier = (h: WeekHousehold | undefined) => h?.isPersonalBlock === true;
+  const isDriveBarrier = (h: WeekHousehold | undefined) =>
+    h?.isPersonalBlock === true && !appointmentIsCalendarOnlyStaffItem(h?.primary);
 
   const firstTopLayoutMin = topMinByIdx[0] + driveOffsets[0];
   const ds0 = typeof ds[0] === 'number' && Number.isFinite(ds[0]) ? ds[0] : 0;
@@ -1025,7 +1033,7 @@ export function buildMyWeekDriveSegmentsFromLayout(
   /** Last stop that is not a personal/fixed/flex block — drive home applies after this visit, not after trailing BLOCK rows. */
   let lastAddressIdx = -1;
   for (let i = N - 1; i >= 0; i--) {
-    if (!displayHouseholds[i]?.isPersonalBlock) {
+    if (householdCountsAsRouteAddressStop(displayHouseholds[i])) {
       lastAddressIdx = i;
       break;
     }
@@ -1431,11 +1439,12 @@ export function computeDepotReturnTrailingBlockOverrunLayers(
       practiceTz
     );
 
-  const isDriveBarrier = (h: WeekHousehold | undefined) => h?.isPersonalBlock === true;
+  const isDriveBarrier = (h: WeekHousehold | undefined) =>
+    h?.isPersonalBlock === true && !appointmentIsCalendarOnlyStaffItem(h?.primary);
 
   let lastAddressIdx = -1;
   for (let i = N - 1; i >= 0; i--) {
-    if (!displayHouseholds[i]?.isPersonalBlock) {
+    if (householdCountsAsRouteAddressStop(displayHouseholds[i])) {
       lastAddressIdx = i;
       break;
     }
@@ -1860,11 +1869,21 @@ export default function MyWeek(props: MyWeekProps = {}) {
                   virtualAppt.insertionIndex
                 )
               : day.households;
+            const householdsForEta = householdsInVisitOrder.filter(
+              (h) =>
+                (h as { isPreview?: boolean }).isPreview ||
+                !appointmentIsCalendarOnlyStaffItem(h.primary)
+            );
+            const previewEtaIdx = householdsForEta.findIndex(
+              (h) => (h as { isPreview?: boolean }).isPreview
+            );
             const mappedInsertionIndex = hasVirtual
-              ? routingEtaCandidateInsertionIndexInOrder(
-                  householdsInVisitOrder,
-                  virtualAppt.insertionIndex
-                )
+              ? previewEtaIdx >= 0
+                ? previewEtaIdx
+                : routingEtaCandidateInsertionIndexInOrder(
+                    householdsForEta,
+                    virtualAppt.insertionIndex
+                  )
               : 0;
             const candidateSlot =
               hasVirtual && virtualAppt
@@ -1878,13 +1897,13 @@ export default function MyWeek(props: MyWeekProps = {}) {
                       serviceMinutes: virtualAppt.serviceMinutes,
                       arrivalWindow: virtualAppt.arrivalWindow,
                     },
-                    { householdCount: householdsInVisitOrder.length }
+                    { householdCount: householdsForEta.length }
                   )
                 : undefined;
             const payload = {
               doctorId: selectedDoctorId || '',
               date: day.date,
-              households: householdsInVisitOrder.map((h) => ({
+              households: householdsForEta.map((h) => ({
                 key: h.key,
                 lat: h.lat,
                 lon: h.lon,
@@ -1975,7 +1994,7 @@ export default function MyWeek(props: MyWeekProps = {}) {
                   : {}),
               };
             });
-            let driveSeconds: number[] | null = Array.isArray(result?.driveSeconds) ? result.driveSeconds : null;
+            let driveSeconds: number[] | null = expandEtaDriveSecondsToHouseholds(day.households, result);
             let depotToFirstRoutableSec: number | null = null;
             if (Array.isArray(result?.byIndex)) {
               const firstRoutableRow = result.byIndex.find(

@@ -1,5 +1,6 @@
 import { DateTime } from 'luxon';
 import type { DayData } from '../pages/MyWeek';
+import { appointmentIsCalendarOnlyStaffItem } from './calendarOnlyStaffAppointment';
 import {
   clientVisitUsesDoctorDayClockForDriveLayout,
   computeDriveTimeWindowWarning,
@@ -55,6 +56,7 @@ export function schedulerHouseholdUsesDoctorDayClockForLayout(
   isFlexBlock: (primary: unknown) => boolean
 ): boolean {
   if (!showByDriveTime) return true;
+  if (appointmentIsCalendarOnlyStaffItem(h.primary)) return true;
   const flexBlock = Boolean(h.isPersonalBlock && isFlexBlock(h.primary));
   if (h.isPersonalBlock && !flexBlock) return true;
   const windowStartIso =
