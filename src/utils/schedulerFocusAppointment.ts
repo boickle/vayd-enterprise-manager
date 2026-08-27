@@ -27,6 +27,13 @@ export type SchedulerFocusOptimizeMove = {
   clientId: number | null;
   petNames: string[];
   insertionIndex?: number;
+  fromTimeLabel?: string;
+  toTimeLabel?: string;
+  fromWindowLabel?: string | null;
+  toWindowLabel?: string | null;
+  clientPhone?: string | null;
+  originalStartIso?: string;
+  driveDeltaMin?: number;
 };
 
 export type SchedulerFocusOptimizeReturn = {

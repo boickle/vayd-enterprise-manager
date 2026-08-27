@@ -3,6 +3,8 @@
  * Read by Scheduler; written by Routing.
  */
 import type { RescheduleOriginalVisitSnapshot } from '../api/routing';
+import type { OptimizeMove } from './scheduleOptimizeMoves';
+
 /** Same id on practice `Appointment` rows and doctor-day synthetic visits so drive ETA maps line up. */
 export const SCHEDULER_ROUTING_PREVIEW_SYNTHETIC_APPT_ID = -0x7eedf00d;
 
@@ -101,6 +103,8 @@ export type RoutingCalendarPreviewPayloadV1 = {
     returnHref: string;
     /** Opened from “view current appointment”; Back should restore that view. */
     fromCurrentView?: boolean;
+    /** Full suggestion — used for Add to list and post-book SMS without auto-queueing on view. */
+    listMove?: OptimizeMove;
   };
   /** Stored manual book form — Book from preview or Back to form restores this. */
   manualBookDraft?: ManualBookPreviewDraft;

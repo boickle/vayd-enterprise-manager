@@ -35,6 +35,7 @@ import {
   previewRoutingAppointmentLabel,
   type DoctorDayPatientPrimaryProvider,
 } from '../api/appointments';
+import { fetchSchedulingOutreachSmsFrom } from '../api/clientSms';
 import { fetchClientByIdStaff } from '../api/clientsStaff';
 import { http } from '../api/http';
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
@@ -237,6 +238,7 @@ import {
   visitAddressForLinkMatching,
 } from '../utils/visitAddressMatch';
 import { OnMyWaySmsModal } from '../components/OnMyWaySmsModal';
+import { ClientContactComposeModal } from '../components/ClientContactComposeModal';
 import { WorkZonesMapModal } from '../components/WorkZonesMapModal';
 import { etaMinutesAwayFromNow } from '../utils/onMyWaySmsMessage';
 import { SchedulerActualVisitTimeModal } from './SchedulerActualVisitTimeModal';
@@ -340,14 +342,18 @@ import {
   fetchAndCacheRescheduleSourcePlacementSnapshot,
 } from '../utils/routingRescheduleScoreCompare';
 import {
+  addScheduleOptimizeToQueue,
   findScheduleOptimizeQueueItem,
   formatScheduleOptimizeQueueActionNote,
   mergeOptimizeNotesIntoStaffInstructions,
   creditScheduleOptimizeSavingsWhenOriginalRemoved,
   resolveScheduleOptimizeQueueItems,
   scheduleOptimizeNotesForAppointmentIds,
+  markScheduleOptimizeQueueTexted,
 } from '../utils/scheduleOptimizeQueue';
 import { scheduleOptimizeSavingsStaff } from '../utils/scheduleOptimizeSavings';
+import { buildScheduleOptimizeSmsMessage } from '../utils/scheduleOptimizeSmsMessage';
+import type { ScheduleOptimizeSmsKind } from '../utils/scheduleOptimizeSmsMessage';
 import {
   beginScheduleOptimizeApplyInCalendar,
   openScheduleOptimizeCurrentAppointment,
@@ -3124,6 +3130,24 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   } | null>(null);
   const [convertingExploreHold, setConvertingExploreHold] = useState(false);
   const [exploreHoldConvertError, setExploreHoldConvertError] = useState<string | null>(null);
+  const [optimizeSmsPrompt, setOptimizeSmsPrompt] = useState<{
+    kind: ScheduleOptimizeSmsKind;
+    clientId: number;
+    client: string;
+    petNames: string[];
+    fromDate: string;
+    toDate: string;
+    fromTimeLabel: string;
+    toTimeLabel: string;
+    fromWindowLabel: string | null;
+    toWindowLabel: string | null;
+    originalStartIso: string;
+    newStartIso: string;
+    doctorName: string;
+    queueItemId: string | null;
+  } | null>(null);
+  const [optimizeSmsFromLine, setOptimizeSmsFromLine] = useState<string | null>(null);
+  const [optimizePreviewListTick, setOptimizePreviewListTick] = useState(0);
   const [manualBookableTypeIds, setManualBookableTypeIds] = useState<number[] | null>(null);
   const [rawAppointments, setRawAppointments] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
@@ -3215,6 +3239,12 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   const staffConfirmTypesAppliedRef = useRef<string | null>(null);
   const [schedulerFocusReturnTick, setSchedulerFocusReturnTick] = useState(0);
   const [optimizeModalOpen, setOptimizeModalOpen] = useState(false);
+  useEffect(() => {
+    if (!optimizeSmsPrompt) return;
+    void fetchSchedulingOutreachSmsFrom().then((phone) => {
+      if (phone) setOptimizeSmsFromLine(phone);
+    });
+  }, [optimizeSmsPrompt]);
   useEffect(() => {
     const sync = () => setSchedulerFocusReturnTick((n) => n + 1);
     window.addEventListener(SCHEDULER_FOCUS_RETURN_UPDATED_EVENT, sync);
@@ -6859,6 +6889,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     if (fromCurrentView && currentView?.move && currentView.doctorId) {
       openScheduleOptimizeCurrentAppointment({
         move: currentView.move,
+        listMove: activePreview?.scheduleOptimizeReturn?.listMove,
         fromDate: currentView.move.fromDate,
         doctorId: currentView.doctorId,
         doctorName: currentView.doctorName || 'Provider',
@@ -7355,16 +7386,20 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         : {}),
       ...(forwardBookingCreatedVia ? { forwardBookingCreatedVia } : {}),
       ...(routingStatsTypeKey ? { routingStatsTypeKey } : {}),
-      ...(isReschedule &&
-      !exploreBook &&
-      isScheduleOptimizeCalendarPreview(routingPreview)
+      ...(isScheduleOptimizeCalendarPreview(routingPreview)
         ? {
             scheduleOptimizeMove: true,
-            scheduleOptimizeDriveDeltaMin:
-              findScheduleOptimizeQueueItem(
-                PRACTICE_ID,
-                routingPreview.scheduleOptimizeReturn?.queueItemId ?? ''
-              )?.driveDeltaMin ?? null,
+            ...(!exploreBook
+              ? {
+                  scheduleOptimizeDriveDeltaMin:
+                    findScheduleOptimizeQueueItem(
+                      PRACTICE_ID,
+                      routingPreview.scheduleOptimizeReturn?.queueItemId ?? ''
+                    )?.driveDeltaMin ??
+                    routingPreview.scheduleOptimizeReturn?.listMove?.driveDeltaMin ??
+                    null,
+                }
+              : {}),
           }
         : {}),
     });
@@ -7393,6 +7428,34 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     },
     [openRoutingBookForm, routingPreview]
   );
+
+  const addOptimizePreviewToList = useCallback(() => {
+    const preview = routingPreview ?? readRoutingCalendarPreview();
+    const listMove = preview?.scheduleOptimizeReturn?.listMove;
+    const doctorId = String(preview?.option.doctorPimsId ?? '').trim();
+    const doctorName = String(preview?.option.doctorName ?? '').trim() || 'Provider';
+    if (!listMove || !doctorId) {
+      setToast('Could not add this suggestion to the list.');
+      return;
+    }
+    addScheduleOptimizeToQueue({
+      move: listMove,
+      practiceId: PRACTICE_ID,
+      doctorId,
+      doctorName,
+    });
+    setOptimizePreviewListTick((n) => n + 1);
+    setToast('Added to the Schedule optimization list.');
+  }, [routingPreview]);
+
+  const optimizePreviewOnList = useMemo(() => {
+    const id =
+      routingPreview?.scheduleOptimizeReturn?.queueItemId?.trim() ||
+      routingPreview?.scheduleOptimizeReturn?.listMove?.id?.trim();
+    if (!id) return false;
+    const row = findScheduleOptimizeQueueItem(PRACTICE_ID, id);
+    return row?.status === 'queued' || row?.status === 'moved';
+  }, [routingPreview, optimizePreviewListTick]);
 
   const closeBookModal = useCallback(() => {
     setBookSlot(null);
@@ -7855,6 +7918,22 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           bookSlot?.start?.isValid
             ? bookSlot.start.setZone(PRACTICE_TZ).toFormat('ccc M/d h:mm a')
             : '';
+        const optimizePreview = isScheduleOptimizeCalendarPreview(previewAtBook)
+          ? previewAtBook
+          : null;
+        const listMove = optimizePreview?.scheduleOptimizeReturn?.listMove;
+        if (listMove) {
+          const doctorId = String(optimizePreview?.option.doctorPimsId ?? '').trim();
+          const doctorName = String(optimizePreview?.option.doctorName ?? '').trim() || 'Provider';
+          if (doctorId && !findScheduleOptimizeQueueItem(PRACTICE_ID, listMove.id)) {
+            addScheduleOptimizeToQueue({
+              move: listMove,
+              practiceId: PRACTICE_ID,
+              doctorId,
+              doctorName,
+            });
+          }
+        }
         resolveScheduleOptimizeQueueItems(PRACTICE_ID, {
           queueItemId: queueId,
           appointmentIds: relatedIds,
@@ -7873,6 +7952,55 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               }
             : {}),
         });
+        const intentClientId = Number(readRoutingRescheduleIntent()?.clientId ?? 0);
+        const smsClientIdRaw =
+          listMove?.clientId ??
+          Number(optimizePreview?.newApptMeta?.clientId ?? 0);
+        const smsClientId =
+          smsClientIdRaw != null && Number.isFinite(smsClientIdRaw) && smsClientIdRaw > 0
+            ? smsClientIdRaw
+            : Number.isFinite(intentClientId) && intentClientId > 0
+              ? intentClientId
+              : 0;
+        const smsPets =
+          listMove?.petNames?.length
+            ? listMove.petNames
+            : (optimizePreview?.previewPatients ?? [])
+                .map((p) => String(p.name ?? '').trim())
+                .filter(Boolean);
+        if (
+          Boolean(prefillAtBook?.scheduleOptimizeMove || optimizePreview) &&
+          Number.isFinite(smsClientId) &&
+          smsClientId > 0
+        ) {
+          setOptimizeSmsPrompt({
+            kind: wasExplore ? 'ask' : 'moved',
+            clientId: smsClientId,
+            client:
+              listMove?.client?.trim() ||
+              previewAtBook?.clientDisplayLabel?.trim() ||
+              'the client',
+            petNames: smsPets,
+            fromDate: listMove?.fromDate ?? '',
+            toDate:
+              listMove?.toDate ||
+              String(optimizePreview?.option.date ?? '') ||
+              '',
+            fromTimeLabel: listMove?.fromTimeLabel ?? '',
+            toTimeLabel: listMove?.toTimeLabel ?? '',
+            fromWindowLabel: listMove?.fromWindowLabel ?? null,
+            toWindowLabel: listMove?.toWindowLabel ?? null,
+            originalStartIso: listMove?.originalStartIso ?? '',
+            newStartIso:
+              listMove?.newStartIso ||
+              String(optimizePreview?.option.suggestedStartIso ?? ''),
+            doctorName: String(optimizePreview?.option.doctorName ?? ''),
+            queueItemId:
+              optimizePreview?.scheduleOptimizeReturn?.queueItemId?.trim() ||
+              listMove?.id ||
+              null,
+          });
+        }
       }
 
       if (waitlistBookReturn) {
@@ -12215,6 +12343,9 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               onAddAlternative={
                 routingPreviewIsOptimize ? () => openOptimizePreviewBook(true) : undefined
               }
+              onAddToList={routingPreviewIsOptimize ? addOptimizePreviewToList : undefined}
+              addToListDisabled={optimizePreviewOnList}
+              addToListLabel="Add to List"
               onBook={() => {
                 if (routingPreviewIsManualBook) {
                   void confirmManualBookFromPreview();
@@ -12654,6 +12785,39 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           }
         }}
       />
+
+      {optimizeSmsPrompt ? (
+        <ClientContactComposeModal
+          open
+          clientId={optimizeSmsPrompt.clientId}
+          clientLabel={optimizeSmsPrompt.client}
+          initialSmsMessage={buildScheduleOptimizeSmsMessage(optimizeSmsPrompt.kind, {
+            petNames: optimizeSmsPrompt.petNames,
+            fromDate: optimizeSmsPrompt.fromDate,
+            toDate: optimizeSmsPrompt.toDate,
+            fromTimeLabel: optimizeSmsPrompt.fromTimeLabel,
+            toTimeLabel: optimizeSmsPrompt.toTimeLabel,
+            fromWindowLabel: optimizeSmsPrompt.fromWindowLabel,
+            toWindowLabel: optimizeSmsPrompt.toWindowLabel,
+            originalStartIso: optimizeSmsPrompt.originalStartIso,
+            newStartIso: optimizeSmsPrompt.newStartIso,
+            practiceTz: PRACTICE_TZ,
+          })}
+          providerLastName={
+            optimizeSmsPrompt.doctorName.trim().split(/\s+/).filter(Boolean).slice(-1)[0] ?? null
+          }
+          canText
+          onClose={() => setOptimizeSmsPrompt(null)}
+          onSent={() => {
+            if (optimizeSmsPrompt.queueItemId) {
+              markScheduleOptimizeQueueTexted(PRACTICE_ID, optimizeSmsPrompt.queueItemId);
+            }
+            setOptimizeSmsPrompt(null);
+          }}
+          smsFromLine={optimizeSmsFromLine}
+          smsSource="schedule_optimization"
+        />
+      ) : null}
 
       {contextMenu ? (
         <SchedulerAppointmentContextMenu
