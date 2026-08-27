@@ -15,6 +15,7 @@ export const SCHEDULING_TOOL_OUTREACH_TABS: SchedulingToolTab[] = [
   { path: 'texted-offers', label: 'Texted offers' },
   { path: 'schedule-loader', label: 'Schedule loader' },
   { path: 'waitlist', label: 'Waitlist' },
+  { path: 'schedule-optimization', label: 'Schedule optimization' },
 ];
 
 /** Workflow views after outreach — booked visits. */

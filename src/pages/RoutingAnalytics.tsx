@@ -34,6 +34,8 @@ import {
   CartesianGrid,
   Tooltip,
   Legend,
+  ComposedChart,
+  Bar,
 } from 'recharts';
 import { fetchRoutingUsage, type RoutingUsageUser } from '../api/routingUsage';
 import { fetchFillDayUsage, type FillDayUsageUser } from '../api/fillDayUsage';
@@ -53,6 +55,12 @@ import {
   type ServiceAreaInterestAnalyticsResponse,
 } from '../api/serviceAreaInterest';
 import { useCommittedDateRange } from '../hooks/useCommittedDateRange';
+import { useScheduleOptimizeSavings } from '../hooks/useScheduleOptimizeSavings';
+import {
+  aggregateScheduleOptimizeSavingsByDay,
+  formatHoursMinutes,
+  summarizeScheduleOptimizeSavings,
+} from '../utils/scheduleOptimizeSavings';
 
 function toLocalDateStr(d: Dayjs) {
   return d.format('YYYY-MM-DD');
@@ -419,6 +427,7 @@ export default function RoutingAnalyticsPage() {
   const [selectedUserEmail, setSelectedUserEmail] = useState<string>(ALL_USERS);
   const [selectedFillDayUserEmail, setSelectedFillDayUserEmail] = useState<string>(ALL_USERS);
   const [selectedCareOutreachUserEmail, setSelectedCareOutreachUserEmail] = useState<string>(ALL_USERS);
+  const [selectedOptimizeStaffKey, setSelectedOptimizeStaffKey] = useState<string>(ALL_USERS);
   const [data, setData] = useState<{ users: RoutingUsageUser[] } | null>(null);
   const [bookingsData, setBookingsData] = useState<{
     users: AppointmentBookingsAnalyticsUser[];
@@ -872,6 +881,45 @@ export default function RoutingAnalyticsPage() {
       ? `Counts include only appointments booked by ${displayName(u)}.`
       : 'Counts for the selected employee.';
   }, [selectedOverviewUserEmail, bookingsData]);
+
+  const optimizeSavings = useScheduleOptimizeSavings(APPOINTMENT_REQUEST_PRACTICE_ID);
+  const optimizeStaffOptions = useMemo(() => {
+    const labels = new Map<string, string>();
+    for (const row of optimizeSavings) {
+      const key = row.staffKey.trim().toLowerCase();
+      if (!key) continue;
+      labels.set(key, row.staffName.trim() || key);
+    }
+    const sorted = [...labels.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+    return [
+      { value: ALL_USERS, label: 'All employees' },
+      ...sorted.map(([value, label]) => ({ value, label })),
+    ];
+  }, [optimizeSavings]);
+  const optimizeStaffFilter =
+    optimizeStaffOptions.some((opt) => opt.value === selectedOptimizeStaffKey)
+      ? selectedOptimizeStaffKey
+      : ALL_USERS;
+  const optimizeSavingsSummary = useMemo(
+    () =>
+      summarizeScheduleOptimizeSavings(
+        optimizeSavings,
+        range.from.startOf('day').toISOString(),
+        range.to.endOf('day').toISOString(),
+        optimizeStaffFilter || null
+      ),
+    [optimizeSavings, range.from, range.to, optimizeStaffFilter]
+  );
+  const optimizeSavingsChartData = useMemo(
+    () =>
+      aggregateScheduleOptimizeSavingsByDay(
+        optimizeSavings,
+        dates,
+        optimizeStaffFilter || null
+      ),
+    [optimizeSavings, dates, optimizeStaffFilter]
+  );
+  const optimizeSavingsHasChart = !isSingleDay && optimizeSavingsSummary.savedMin > 0;
 
   const chartData = useMemo(() => {
     if (!data?.users?.length) return [];
@@ -1412,6 +1460,127 @@ export default function RoutingAnalyticsPage() {
                           hide={!overviewLinesVisible.scheduleLoaderRequests}
                         />
                       </LineChart>
+                    </ResponsiveContainer>
+                  </Box>
+                ) : null}
+              </>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card sx={{ mb: 3 }}>
+          <CardHeader
+            title="Time saved via schedule optimization"
+            subheader={
+              isSingleDay
+                ? 'Drive time saved when a queued optimize suggestion is rescheduled, or when an alternative is booked and the original visit is later removed. Filter by employee or view the whole practice. Recorded on this browser.'
+                : 'Drive time saved when a queued optimize suggestion is rescheduled, or when an alternative is booked and the original visit is later removed — in hours and minutes over the selected range. Filter by employee or view the whole practice. The chart shows daily savings and a running total. Recorded on this browser.'
+            }
+          />
+          <CardContent>
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 2, mb: 2 }}>
+              <FormControl size="small" sx={{ minWidth: 280 }}>
+                <InputLabel id="optimize-savings-employee-label">Employee</InputLabel>
+                <Select
+                  labelId="optimize-savings-employee-label"
+                  value={optimizeStaffFilter}
+                  label="Employee"
+                  onChange={(e) => setSelectedOptimizeStaffKey(e.target.value)}
+                >
+                  {optimizeStaffOptions.map((opt) => (
+                    <MenuItem key={opt.value || 'all'} value={opt.value}>
+                      {opt.label}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Box>
+            <Typography variant="body1" sx={{ mb: 1 }}>
+              <strong>{formatHoursMinutes(optimizeSavingsSummary.savedMin)}</strong> saved
+              {optimizeSavingsSummary.moveCount > 0
+                ? ` · ${optimizeSavingsSummary.moveCount} optimized ${
+                    optimizeSavingsSummary.moveCount === 1 ? 'move' : 'moves'
+                  }`
+                : ''}
+            </Typography>
+            {optimizeSavingsSummary.savedMin <= 0 ? (
+              <Typography variant="body2" color="text.secondary">
+                No drive time saved from optimization in this range. Time is counted when a queued
+                optimize suggestion is rescheduled, or when an alternative is booked and the original
+                visit is later removed.
+              </Typography>
+            ) : (
+              <>
+                {optimizeStaffFilter === ALL_USERS && optimizeSavingsSummary.byStaff.length > 0 ? (
+                  <TableContainer component={Paper} variant="outlined" sx={{ mb: optimizeSavingsHasChart ? 3 : 0 }}>
+                    <Table size="small">
+                      <TableHead>
+                        <TableRow>
+                          <TableCell>Employee</TableCell>
+                          <TableCell align="right">Moves</TableCell>
+                          <TableCell align="right">Time saved</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {optimizeSavingsSummary.byStaff.map((row) => (
+                          <TableRow key={row.staffKey}>
+                            <TableCell>{row.staffName}</TableCell>
+                            <TableCell align="right">{row.moveCount}</TableCell>
+                            <TableCell align="right">{formatHoursMinutes(row.savedMin)}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                ) : null}
+                {optimizeSavingsHasChart ? (
+                  <Box sx={{ width: '100%', height: 360 }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <ComposedChart
+                        data={optimizeSavingsChartData}
+                        margin={{ top: 8, right: 16, left: 8, bottom: 8 }}
+                      >
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+                        <YAxis
+                          yAxisId="left"
+                          tickFormatter={(v) => formatHoursMinutes(Number(v))}
+                          tick={{ fontSize: 11 }}
+                          width={88}
+                          allowDecimals={false}
+                        />
+                        <YAxis
+                          yAxisId="right"
+                          orientation="right"
+                          tickFormatter={(v) => formatHoursMinutes(Number(v))}
+                          tick={{ fontSize: 11 }}
+                          width={88}
+                          allowDecimals={false}
+                        />
+                        <Tooltip
+                          formatter={(value: unknown, name: unknown) => [
+                            formatHoursMinutes(Number(value ?? 0)),
+                            name != null ? String(name) : '',
+                          ]}
+                        />
+                        <Legend />
+                        <Bar
+                          yAxisId="left"
+                          dataKey="savedMin"
+                          name="Saved that day"
+                          fill="#2e7d32"
+                          maxBarSize={28}
+                        />
+                        <Line
+                          yAxisId="right"
+                          type="monotone"
+                          dataKey="cumulativeSavedMin"
+                          name="Cumulative saved"
+                          stroke="#1565c0"
+                          strokeWidth={2}
+                          dot={{ r: 3 }}
+                        />
+                      </ComposedChart>
                     </ResponsiveContainer>
                   </Box>
                 ) : null}

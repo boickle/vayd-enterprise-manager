@@ -41,6 +41,7 @@ import {
   processMultiPet,
   type ApptWithDoctor,
 } from '../analytics/appointmentTypeTimeStats';
+import { pointsPerDriveHour } from '../utils/pointsPerDriveHour';
 
 dayjs.extend(utc);
 dayjs.extend(isoWeek);
@@ -275,12 +276,6 @@ function addLinearTrend<T extends Record<string, unknown>>(
     n * sumXX - sumX * sumX !== 0 ? (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX) : 0;
   const intercept = sumY / n - slope * (sumX / n);
   return data.map((row, i) => ({ ...row, trend: intercept + slope * i }));
-}
-
-/** Points ÷ drive hours. Returns null when there is no drive time. */
-function pointsPerDriveHour(points: number, driveMin: number): number | null {
-  if (!(driveMin > 0)) return null;
-  return points / (driveMin / 60);
 }
 
 type DoctorPpdhRow = {

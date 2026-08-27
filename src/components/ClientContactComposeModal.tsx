@@ -42,6 +42,8 @@ type Props = {
   markInboxDone?: boolean;
   /** Passed through for Quo delivery-failure alerts (e.g. care_outreach, forward_booking). */
   smsSource?: string;
+  /** Called after a successful text or email, before the modal closes. */
+  onSent?: () => void;
 };
 
 function smsToEmailDraft(
@@ -68,6 +70,7 @@ export function ClientContactComposeModal({
   smsFromLine,
   markInboxDone,
   smsSource,
+  onSent,
 }: Props) {
   const { allowed: canEmail, loading: gmailAccessLoading } = useGmailInboxAccess();
   const allowSmsOverride = smsAllowsProductionOverride();
@@ -239,6 +242,7 @@ export function ClientContactComposeModal({
         ...(overrideNonProd ? { overrideNonProd: true } : {}),
         ...(smsSource ? { source: smsSource } : {}),
       });
+      onSent?.();
       onClose();
     } catch (e: unknown) {
       const ax = e as { response?: { data?: { message?: string } }; message?: string };
@@ -267,6 +271,7 @@ export function ClientContactComposeModal({
         bodyText,
         bodyHtml: bodyHtml || undefined,
       });
+      onSent?.();
       onClose();
     } catch (e: unknown) {
       setSendError(gmailErrorMessage(e));

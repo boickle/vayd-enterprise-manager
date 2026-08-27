@@ -14,11 +14,41 @@ export const SCHEDULER_FOCUS_PROVIDER_PARAM = 'focusProvider';
 export const SCHEDULER_FOCUS_SESSION_KEY = 'vayd:scheduler-focus-appt-v1';
 /** Gmail thread to restore when leaving scheduler after View appointment from email. */
 export const SCHEDULER_FOCUS_RETURN_SESSION_KEY = 'vayd:scheduler-focus-return-v1';
+export const SCHEDULER_FOCUS_RETURN_UPDATED_EVENT = 'vayd:scheduler-focus-return-updated';
+
+export type SchedulerFocusOptimizeMove = {
+  id: string;
+  appointmentIds: number[];
+  newStartIso: string;
+  newEndIso: string;
+  toDate: string;
+  fromDate: string;
+  client: string;
+  clientId: number | null;
+  petNames: string[];
+  insertionIndex?: number;
+};
+
+export type SchedulerFocusOptimizeReturn = {
+  returnHref: string;
+  reopenModal?: boolean;
+  doctorId?: string;
+  doctorName?: string;
+  practiceId?: number;
+  queueItemId?: string;
+  move?: SchedulerFocusOptimizeMove;
+};
 
 export type SchedulerFocusReturnSessionV1 = {
   v: 1;
-  returnToGmail: { mailbox: string; threadId: string };
+  returnToGmail?: { mailbox: string; threadId: string };
+  returnToOptimize?: SchedulerFocusOptimizeReturn;
 };
+
+function notifySchedulerFocusReturnUpdated(): void {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new Event(SCHEDULER_FOCUS_RETURN_UPDATED_EVENT));
+}
 
 export type SchedulerFocusAppointmentHints = {
   date?: string | null;
@@ -115,6 +145,43 @@ export function writeSchedulerFocusReturnSession(mailbox: string, threadId: stri
   } catch {
     /* quota / private mode */
   }
+  notifySchedulerFocusReturnUpdated();
+}
+
+export function writeSchedulerFocusOptimizeReturnSession(
+  returnToOptimize: SchedulerFocusOptimizeReturn
+): void {
+  if (typeof sessionStorage === 'undefined') return;
+  const href = returnToOptimize.returnHref.trim();
+  if (!href) return;
+  try {
+    sessionStorage.setItem(
+      SCHEDULER_FOCUS_RETURN_SESSION_KEY,
+      JSON.stringify({
+        v: 1,
+        returnToOptimize: {
+          returnHref: href,
+          reopenModal: Boolean(returnToOptimize.reopenModal),
+          ...(returnToOptimize.doctorId?.trim()
+            ? { doctorId: returnToOptimize.doctorId.trim() }
+            : {}),
+          ...(returnToOptimize.doctorName?.trim()
+            ? { doctorName: returnToOptimize.doctorName.trim() }
+            : {}),
+          ...(returnToOptimize.practiceId != null && Number.isFinite(returnToOptimize.practiceId)
+            ? { practiceId: returnToOptimize.practiceId }
+            : {}),
+          ...(returnToOptimize.queueItemId?.trim()
+            ? { queueItemId: returnToOptimize.queueItemId.trim() }
+            : {}),
+          ...(returnToOptimize.move ? { move: returnToOptimize.move } : {}),
+        },
+      }),
+    );
+  } catch {
+    /* quota / private mode */
+  }
+  notifySchedulerFocusReturnUpdated();
 }
 
 export function readSchedulerFocusReturnSession(): SchedulerFocusReturnSessionV1 | null {
@@ -123,11 +190,41 @@ export function readSchedulerFocusReturnSession(): SchedulerFocusReturnSessionV1
     const raw = sessionStorage.getItem(SCHEDULER_FOCUS_RETURN_SESSION_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as SchedulerFocusReturnSessionV1;
-    const gmail = parsed?.returnToGmail;
-    if (parsed?.v !== 1 || !gmail?.mailbox?.trim() || !gmail.threadId?.trim()) return null;
+    if (parsed?.v !== 1) return null;
+    const gmail = parsed.returnToGmail;
+    const gmailOk = Boolean(gmail?.mailbox?.trim() && gmail.threadId?.trim());
+    const href = parsed.returnToOptimize?.returnHref?.trim() ?? '';
+    const optimizeOk = Boolean(href);
+    if (!gmailOk && !optimizeOk) return null;
     return {
       v: 1,
-      returnToGmail: { mailbox: gmail.mailbox.trim(), threadId: gmail.threadId.trim() },
+      ...(gmailOk
+        ? { returnToGmail: { mailbox: gmail!.mailbox.trim(), threadId: gmail!.threadId.trim() } }
+        : {}),
+      ...(optimizeOk
+        ? {
+            returnToOptimize: {
+              returnHref: href,
+              reopenModal: Boolean(parsed.returnToOptimize?.reopenModal),
+              ...(parsed.returnToOptimize?.doctorId?.trim()
+                ? { doctorId: parsed.returnToOptimize.doctorId.trim() }
+                : {}),
+              ...(parsed.returnToOptimize?.doctorName?.trim()
+                ? { doctorName: parsed.returnToOptimize.doctorName.trim() }
+                : {}),
+              ...(parsed.returnToOptimize?.practiceId != null &&
+              Number.isFinite(parsed.returnToOptimize.practiceId)
+                ? { practiceId: parsed.returnToOptimize.practiceId }
+                : {}),
+              ...(parsed.returnToOptimize?.queueItemId?.trim()
+                ? { queueItemId: parsed.returnToOptimize.queueItemId.trim() }
+                : {}),
+              ...(parsed.returnToOptimize?.move
+                ? { move: parsed.returnToOptimize.move }
+                : {}),
+            },
+          }
+        : {}),
     };
   } catch {
     return null;
@@ -141,6 +238,7 @@ export function clearSchedulerFocusReturnSession(): void {
   } catch {
     /* ignore */
   }
+  notifySchedulerFocusReturnUpdated();
 }
 
 /** Return to the Gmail thread that opened this scheduler focus view. */
@@ -156,6 +254,25 @@ export function returnFromSchedulerFocusToGmail(
     replace: opts?.replace,
   });
   return true;
+}
+
+/** Return from an Optimize “view current appointment” preview. */
+export function returnFromSchedulerFocusToOptimize(
+  navigate: NavigateFunction,
+  opts?: { replace?: boolean },
+): 'modal' | 'navigate' | false {
+  const opt = readSchedulerFocusReturnSession()?.returnToOptimize;
+  const href = opt?.returnHref?.trim();
+  if (!href) return false;
+  clearSchedulerFocusReturnSession();
+  if (
+    opt?.reopenModal &&
+    (href === '/schedule/scheduler' || href.startsWith('/schedule/scheduler?'))
+  ) {
+    return 'modal';
+  }
+  navigate(href, { replace: opts?.replace });
+  return 'navigate';
 }
 
 export function parseSchedulerFocusFromSearch(

@@ -27,6 +27,10 @@ import {
   forwardBookingOnHoldBelongsInSchedulingTools,
 } from '../utils/forwardBookingEntrySource';
 import { practiceTimeZoneOrDefault } from '../utils/practiceTimezone';
+import {
+  countQueuedScheduleOptimizeItems,
+  SCHEDULE_OPTIMIZE_QUEUE_EVENT,
+} from '../utils/scheduleOptimizeQueue';
 
 const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
 
@@ -43,6 +47,7 @@ export type SchedulingToolsNavCounts = {
   textedOffersNeedsFollowUp: number;
   textedOffersToConfirm: number;
   waitlistWaiting: number;
+  scheduleOptimizeQueued: number;
 };
 
 const EMPTY_COUNTS: SchedulingToolsNavCounts = {
@@ -55,6 +60,7 @@ const EMPTY_COUNTS: SchedulingToolsNavCounts = {
   textedOffersNeedsFollowUp: 0,
   textedOffersToConfirm: 0,
   waitlistWaiting: 0,
+  scheduleOptimizeQueued: 0,
 };
 
 export function useSchedulingToolsNavCounts(enabled = true) {
@@ -133,9 +139,13 @@ export function useSchedulingToolsNavCounts(enabled = true) {
         ).length,
         textedOffersToConfirm: toConfirmOffers.length,
         waitlistWaiting: waitlistWaiting.length,
+        scheduleOptimizeQueued: countQueuedScheduleOptimizeItems(PRACTICE_ID),
       });
     } catch {
-      setCounts(EMPTY_COUNTS);
+      setCounts({
+        ...EMPTY_COUNTS,
+        scheduleOptimizeQueued: countQueuedScheduleOptimizeItems(PRACTICE_ID),
+      });
     } finally {
       setLoading(false);
     }
@@ -153,6 +163,18 @@ export function useSchedulingToolsNavCounts(enabled = true) {
     window.addEventListener(SCHEDULING_TOOLS_COUNTS_REFRESH_EVENT, onRefresh);
     return () => window.removeEventListener(SCHEDULING_TOOLS_COUNTS_REFRESH_EVENT, onRefresh);
   }, [enabled, refresh]);
+
+  useEffect(() => {
+    if (!enabled) return;
+    const onQueue = () => {
+      setCounts((prev) => ({
+        ...prev,
+        scheduleOptimizeQueued: countQueuedScheduleOptimizeItems(PRACTICE_ID),
+      }));
+    };
+    window.addEventListener(SCHEDULE_OPTIMIZE_QUEUE_EVENT, onQueue);
+    return () => window.removeEventListener(SCHEDULE_OPTIMIZE_QUEUE_EVENT, onQueue);
+  }, [enabled]);
 
   return { counts, loading, refresh };
 }
