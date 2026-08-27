@@ -3,6 +3,7 @@
  */
 import { DateTime } from 'luxon';
 import { blockDisplayLabel } from '../api/appointments';
+import { DEFAULT_APPOINTMENT_BUFFER_MINUTES } from '../api/routing';
 import type { DayData } from '../pages/MyWeek';
 
 function keyFor(lat: number, lon: number, d = 6) {
@@ -21,6 +22,39 @@ function keyVariantsForKeyString(s: string): string[] {
   const k6 = keyFor(lat, lon, 6) + suffix;
   const k5 = keyFor(lat, lon, 5) + suffix;
   return [s, k6, k5].filter((x, i, arr) => arr.indexOf(x) === i);
+}
+
+/**
+ * `/routing/eta` may omit calendar-only staff items (Note To Staff, etc.).
+ * Stretch `driveSeconds` back onto the full household list (0 for omitted stops).
+ */
+export function expandEtaDriveSecondsToHouseholds(
+  households: { key?: string }[],
+  result: { driveSeconds?: number[] | null; byIndex?: { key?: string }[] | null } | null
+): number[] | null {
+  const ds = Array.isArray(result?.driveSeconds) ? result!.driveSeconds! : null;
+  if (!ds) return null;
+  const byIndex = Array.isArray(result?.byIndex) ? result!.byIndex! : [];
+  if (byIndex.length === 0 || byIndex.length === households.length) return ds;
+
+  const driveToByKey = new Map<string, number>();
+  byIndex.forEach((row, i) => {
+    if (row?.key == null) return;
+    const v = ds[i];
+    driveToByKey.set(String(row.key), typeof v === 'number' && Number.isFinite(v) ? v : 0);
+  });
+
+  const full = households.map((h) => {
+    const k = h.key != null ? String(h.key) : '';
+    if (k && driveToByKey.has(k)) return driveToByKey.get(k)!;
+    return 0;
+  });
+  const returnLegIndex = byIndex.length;
+  const returnLeg = ds.length > returnLegIndex ? ds[returnLegIndex] : undefined;
+  if (typeof returnLeg === 'number' && Number.isFinite(returnLeg)) {
+    full.push(returnLeg);
+  }
+  return full;
 }
 
 export type DayBundleIn = {
@@ -71,13 +105,16 @@ export function mergeEtaFetchIntoDayData(day: DayBundleIn, result: any): DayData
         typeof row.bufferAfterMinutes === 'number' && Number.isFinite(row.bufferAfterMinutes)
           ? row.bufferAfterMinutes
           : undefined;
-      keyToSlot[k] = {
+      const entry = {
         eta,
         etd,
         windowStartIso: windowStartIso ?? undefined,
         windowEndIso: windowEndIso ?? undefined,
         ...(bufferAfterMinutes !== undefined ? { bufferAfterMinutes } : {}),
       };
+      for (const variant of keyVariantsForKeyString(k)) {
+        keyToSlot[variant] = entry;
+      }
       const bl = row?.blockLabel;
       if (bl != null && String(bl).trim() !== '') {
         for (const variant of keyVariantsForKeyString(k)) {
@@ -88,7 +125,31 @@ export function mergeEtaFetchIntoDayData(day: DayBundleIn, result: any): DayData
   }
 
   let tl = day.households.map((h) => {
-    const slot = h.key ? keyToSlot[h.key] : undefined;
+    let slot = h.key ? keyToSlot[h.key] : undefined;
+    if (!slot && h.key) {
+      for (const variant of keyVariantsForKeyString(h.key)) {
+        const found = keyToSlot[variant];
+        if (found) {
+          slot = found;
+          break;
+        }
+      }
+    }
+    if (
+      !slot &&
+      Number.isFinite(h.lat) &&
+      Number.isFinite(h.lon) &&
+      Math.abs(h.lat) > 1e-6 &&
+      Math.abs(h.lon) > 1e-6
+    ) {
+      for (const d of [6, 5] as const) {
+        const found = keyToSlot[keyFor(h.lat as number, h.lon as number, d)];
+        if (found) {
+          slot = found;
+          break;
+        }
+      }
+    }
     let eta = slot?.eta ?? null;
     let etd = slot?.etd ?? null;
     if (!eta && h?.startIso) eta = h.startIso;
@@ -107,7 +168,7 @@ export function mergeEtaFetchIntoDayData(day: DayBundleIn, result: any): DayData
     };
   });
 
-  let driveSeconds: number[] | null = Array.isArray(result?.driveSeconds) ? result.driveSeconds : null;
+  let driveSeconds: number[] | null = expandEtaDriveSecondsToHouseholds(day.households, result);
   let depotToFirstRoutableSec: number | null = null;
   if (Array.isArray(result?.byIndex)) {
     const firstRoutableRow = result.byIndex.find(
@@ -143,7 +204,9 @@ export function mergeEtaFetchIntoDayData(day: DayBundleIn, result: any): DayData
   const backToDepotSec = typeof result?.backToDepotSec === 'number' ? result.backToDepotSec : null;
   const backToDepotIso = result?.backToDepotIso ?? null;
   const appointmentBufferMinutes =
-    typeof result?.appointmentBufferMinutes === 'number' ? result.appointmentBufferMinutes : 5;
+    typeof result?.appointmentBufferMinutes === 'number'
+      ? result.appointmentBufferMinutes
+      : DEFAULT_APPOINTMENT_BUFFER_MINUTES;
 
   const N = day.households.length;
   let routingOrderIndices: number[];

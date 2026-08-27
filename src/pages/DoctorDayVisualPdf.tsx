@@ -7,8 +7,9 @@ import { MyDayVisualPatientDetail } from '../components/MyDayVisualPatientDetail
 
 const DRIVE_FILL =
   'repeating-linear-gradient(135deg, #e2e8f0 0px, #e2e8f0 6px, #cbd5e1 6px, #cbd5e1 12px)';
-const BUFFER_FILL = 'rgba(255, 255, 255, 0.35)';
-const BUFFER_BORDER = '1px dashed #d1d5db';
+const BUFFER_FILL =
+  'repeating-linear-gradient(90deg, rgba(253, 224, 71, 0.45) 0px, rgba(253, 224, 71, 0.45) 5px, rgba(254, 249, 195, 0.55) 5px, rgba(254, 249, 195, 0.55) 10px)';
+const BUFFER_BORDER = '1px dashed #ca8a04';
 
 export type DoctorDayVisualPdfPatient = {
   name: string;

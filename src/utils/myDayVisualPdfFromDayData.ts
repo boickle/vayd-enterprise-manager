@@ -13,6 +13,7 @@ import {
   type MiniZone,
 } from '../api/appointments';
 import type { Appointment } from '../api/roomLoader';
+import { DEFAULT_APPOINTMENT_BUFFER_MINUTES } from '../api/routing';
 import { dayPoints, dayTotalDriveSeconds, type DayData, type WeekHousehold } from '../pages/MyWeek';
 import {
   clientVisitUsesDoctorDayClockForDriveLayout,
@@ -441,7 +442,7 @@ export function buildMyDayVisualPdfExportPayloadFromDayData(
   const stats = buildStats(day, ordered);
   const N = ordered.length;
   const rows: DoctorDayVisualPdfRow[] = [];
-  const apptBufDefault = day.appointmentBufferMinutes ?? 5;
+  const apptBufDefault = day.appointmentBufferMinutes ?? DEFAULT_APPOINTMENT_BUFFER_MINUTES;
 
   const fdMin = fromDepotMinutes(day, N);
   if (fdMin != null && fdMin > 0) {

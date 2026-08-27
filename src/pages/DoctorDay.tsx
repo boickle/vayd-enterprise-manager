@@ -26,6 +26,11 @@ import {
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import { fetchAllAppointmentTypes } from '../api/appointmentSettings';
 import { householdGroupKey } from '../utils/doctorDayHouseholdGroup';
+import {
+  appointmentIsCalendarOnlyStaffItem,
+  householdPersonalBlockFlag,
+} from '../utils/calendarOnlyStaffAppointment';
+import { expandEtaDriveSecondsToHouseholds } from '../utils/schedulerEtaMerge';
 import { formatDoctorDayApptAddress } from '../utils/doctorDayAddress';
 import {
   appointmentNotesFromDoctorDayRow,
@@ -602,7 +607,7 @@ export default function DoctorDay({
       };
 
       const apptIsPreview = (a as any)?.isPreview === true;
-      const isPersonalBlock = isBlockEntry({ ...a, key: groupKey });
+      const isPersonalBlock = householdPersonalBlockFlag(a, groupKey);
 
       if (!map.has(groupKey)) {
         const initialKey = hasGeo ? `${lat.toFixed(6)},${lon.toFixed(6)}` : addrKey ? `addr:${addrKey}` : `noloc:${idPart}`;
@@ -740,7 +745,9 @@ export default function DoctorDay({
         '';
 
       // Build payload: include ALL rows in visit order, but only provide lat/lon when routable
-      const householdsPayload = ordered.map(({ h }) => {
+      const householdsPayload = ordered
+        .filter(({ h }) => h.isPreview || !appointmentIsCalendarOnlyStaffItem(h.primary))
+        .map(({ h }) => {
         const isBlock = isBlockEntry({ ...h.primary, key: h.key });
         const isRoutable =
           !isBlock && !h.isNoLocation && Number.isFinite(h.lat) && Number.isFinite(h.lon);
@@ -777,7 +784,13 @@ export default function DoctorDay({
         hasVirtual && virtualAppt
           ? buildEtaCandidateSlot(
               {
-                insertionIndex: mappedInsertionIndex,
+                insertionIndex: (() => {
+                  const previewIdx = householdsPayload.findIndex((row: { key?: string }) => {
+                    const h = ordered.find((o) => o.h.key === row.key)?.h;
+                    return Boolean((h as { isPreview?: boolean } | undefined)?.isPreview);
+                  });
+                  return previewIdx >= 0 ? previewIdx : mappedInsertionIndex;
+                })(),
                 positionInDay: virtualAppt.positionInDay,
                 suggestedStartIso: virtualAppt.suggestedStartIso,
                 lat: virtualAppt.lat,
@@ -785,7 +798,7 @@ export default function DoctorDay({
                 serviceMinutes: virtualAppt.serviceMinutes,
                 arrivalWindow: virtualAppt.arrivalWindow,
               },
-              { householdCount: ordered.length }
+              { householdCount: householdsPayload.length }
             )
           : undefined;
 
@@ -955,7 +968,7 @@ export default function DoctorDay({
         }
 
         // 6) store drive/depot fields. First segment = drive from depot; use normalized result.driveSeconds[0] (same logic as My Week / routing.ts).
-        const driveArr = Array.isArray(result?.driveSeconds) ? result.driveSeconds : null;
+        const driveArr = expandEtaDriveSecondsToHouseholds(households, result);
         setDriveSecondsArr(driveArr);
         const fromApiFirst =
           driveArr && driveArr.length > 0 && typeof driveArr[0] === 'number' ? driveArr[0] : null;

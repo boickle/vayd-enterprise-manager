@@ -59,6 +59,7 @@ import {
   rolesIncludeAdminBypass,
 } from '../utils/manualBookingPermissions';
 import { buildAppointmentTypeCatalog, appointmentFormFlags } from '../utils/appointmentTypeSettings';
+import { appointmentIsCalendarOnlyStaffItem } from '../utils/calendarOnlyStaffAppointment';
 import { searchRoomLoaders, type Appointment, type Client, type Patient } from '../api/roomLoader';
 import {
   computeEditPreviewPopoverPosition,
@@ -99,6 +100,7 @@ import {
   openUrlInNewTab,
   type Stop,
 } from '../utils/maps';
+import { DEFAULT_APPOINTMENT_BUFFER_MINUTES } from '../api/routing';
 import { colorForDrive } from '../utils/statsFormat';
 import { formatIsoInPracticeZone, formatIsoTimeShortInPracticeZone } from '../utils/practiceTimezone';
 import {
@@ -248,8 +250,10 @@ import {
   clearRoutingCalendarPreview,
   isManualBookCalendarPreview,
   isScheduleLoaderCalendarPreview,
+  isWaitlistCalendarPreview,
   readRoutingCalendarPreview,
   scheduleLoaderReturnHref,
+  waitlistReturnHref,
   ROUTING_CALENDAR_PREVIEW_UPDATED_EVENT,
   ROUTING_FOCUS_RESCHEDULE_SOURCE_EVENT,
   SCHEDULER_ROUTING_PREVIEW_SYNTHETIC_APPT_ID,
@@ -355,6 +359,7 @@ import { FORWARD_BOOKING_LIST_PATH, writeForwardBookingReturnSession, CARE_OUTRE
 import { providerLastNameFromDisplayName } from '../utils/scheduleLoaderSmsMessage';
 import { slotOfferFlowActive } from '../utils/slotOfferFromRouting';
 import { notifySchedulingToolsNavCountsRefresh } from '../hooks/useSchedulingToolsNavCounts';
+import { writeWaitlistReturnSession } from '../utils/waitlistReturnSession';
 import { writeForwardBookingLocalLink } from '../utils/forwardBookingLocalLinks';
 import {
   buildForwardBookingWorkspaceContext,
@@ -1733,8 +1738,10 @@ function SchedulerModalKvCondensed({
 
 const DRIVE_STRIPE_BG =
   'repeating-linear-gradient(135deg, #e2e8f0 0px, #e2e8f0 6px, #cbd5e1 6px, #cbd5e1 12px)';
-const BUFFER_STRIPE_BG = 'rgba(255, 255, 255, 0.35)';
-const BUFFER_STRIPE_BORDER = '1px dashed #d1d5db';
+/** Match My Week — soft yellow horizontal stripes for buffer vs diagonal gray drive. */
+const BUFFER_STRIPE_BG =
+  'repeating-linear-gradient(90deg, rgba(253, 224, 71, 0.45) 0px, rgba(253, 224, 71, 0.45) 5px, rgba(254, 249, 195, 0.55) 5px, rgba(254, 249, 195, 0.55) 10px)';
+const BUFFER_STRIPE_BORDER = '1px dashed #ca8a04';
 
 function schedulerHouseholdFixedTimeApprox(h: {
   isPersonalBlock?: boolean;
@@ -2492,6 +2499,22 @@ function wallMinutes(iso: string): number {
   if (!dt.isValid) return 0;
   return dt.hour * 60 + dt.minute + dt.second / 60;
 }
+
+function snapSchedulerMinutes(rawMin: number, gridStartMin: number, gridEndMin: number, durationMin: number): number {
+  const snapped = Math.round(rawMin / SLOT_MINUTES) * SLOT_MINUTES;
+  const maxStart = Math.max(gridStartMin, gridEndMin - Math.max(SLOT_MINUTES, durationMin));
+  return Math.max(gridStartMin, Math.min(maxStart, snapped));
+}
+
+type StaffCalendarDragState = {
+  apptId: number | string;
+  dayKey: string;
+  durationMin: number;
+  grabOffsetMin: number;
+  liveStartMin: number;
+  originStartMin: number;
+  moved: boolean;
+};
 
 /** Pixels from grid top for depot HH:mm line; matches My Week `depotTimeToPx` + half-line vertical centering. */
 const SCHEDULER_DEPOT_LINE_PX = 5;
@@ -3340,6 +3363,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
 
   const armHoverPopover = useCallback(
     (appt: Appointment, ev: MouseEvent<HTMLElement>) => {
+      if (staffCalendarDragRef.current) return;
       cancelScheduledHoverPopover();
       cancelHoverDismiss();
       hoverPinnedRef.current = false;
@@ -3585,6 +3609,11 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     if (isAdminOrSuper) return true;
     return rolesLower.includes('employee');
   }, [rolesLower, isAdminOrSuper]);
+  const canDragCalendarOnlyStaffItems = canManualBookOnCalendar;
+  const [staffCalendarDrag, setStaffCalendarDrag] = useState<StaffCalendarDragState | null>(null);
+  const staffCalendarDragRef = useRef<StaffCalendarDragState | null>(null);
+  const staffCalendarDragMovedRef = useRef(false);
+  const staffCalendarDragSavingRef = useRef(false);
   const canManageScheduleOverrides = isAdminOrSuper;
   const manualBookingAppointmentTypes = useMemo(() => {
     if (isAdminOrSuper) return typeList;
@@ -4388,7 +4417,9 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             ? 'care_outreach'
             : fbi?.origin === 'schedule_loader'
               ? 'schedule_loader'
-              : undefined,
+              : fbi?.origin === 'waitlist'
+                ? 'waitlist'
+                : undefined,
       },
       routingPreview
     );
@@ -4605,6 +4636,46 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       refreshForwardBookingSourceIds,
       loadRoomLoaderStatusesForRange,
     ]
+  );
+
+  const commitStaffCalendarDrag = useCallback(
+    async (drag: StaffCalendarDragState) => {
+      if (staffCalendarDragSavingRef.current) return;
+      if (Math.abs(drag.liveStartMin - drag.originStartMin) < 0.5) return;
+      const dayStart = DateTime.fromISO(drag.dayKey, { zone: PRACTICE_TZ }).startOf('day');
+      if (!dayStart.isValid) return;
+      const start = dayStart.plus({ minutes: drag.liveStartMin });
+      const end = start.plus({ minutes: Math.max(SLOT_MINUTES, drag.durationMin) });
+      const startUtc = start.toUTC().toISO();
+      const endUtc = end.toUTC().toISO();
+      if (!startUtc || !endUtc) return;
+      staffCalendarDragSavingRef.current = true;
+      try {
+        await patchAppointment(
+          drag.apptId,
+          { appointmentStart: startUtc, appointmentEnd: endUtc },
+          { practiceId: PRACTICE_ID }
+        );
+        setRawAppointments((prev) => {
+          const idx = prev.findIndex((a) => String(a.id) === String(drag.apptId));
+          if (idx === -1) return prev;
+          const next = [...prev];
+          next[idx] = { ...next[idx], appointmentStart: startUtc, appointmentEnd: endUtc };
+          return next;
+        });
+        await loadRange({ silent: true, refreshDrive: true });
+      } catch (e: unknown) {
+        const msg =
+          (e as { response?: { data?: { message?: string | string[] } } })?.response?.data?.message ??
+          (e as Error)?.message ??
+          'Could not move the calendar item.';
+        setToast(Array.isArray(msg) ? msg.join(', ') : String(msg));
+        await loadRange({ silent: true, refreshDrive: true });
+      } finally {
+        staffCalendarDragSavingRef.current = false;
+      }
+    },
+    [loadRange]
   );
 
   useEffect(() => {
@@ -6643,6 +6714,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       return;
     }
     const returnToScheduleLoader = scheduleLoaderReturnHref(activePreview);
+    const returnToWaitlist = waitlistReturnHref(activePreview);
     const returnToRescheduleSource = embedInRoutingWorkspace && readRoutingRescheduleIntent() != null;
     clearRoutingCalendarPreview();
     setRoutingPreview(null);
@@ -6650,6 +6722,10 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     setBookPrefill(null);
     if (returnToScheduleLoader) {
       navigate(returnToScheduleLoader);
+      return;
+    }
+    if (returnToWaitlist) {
+      navigate(returnToWaitlist);
       return;
     }
     if (returnToRescheduleSource) {
@@ -6696,7 +6772,10 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         : intent?.origin === 'schedule_loader'
           ? intent.scheduleLoaderReturn?.returnHref?.trim() ||
             '/schedule/scheduling-tools/schedule-loader'
-          : FORWARD_BOOKING_LIST_PATH;
+          : intent?.origin === 'waitlist'
+            ? intent.waitlistReturn?.returnHref?.trim() ||
+              '/schedule/scheduling-tools/waitlist'
+            : FORWARD_BOOKING_LIST_PATH;
     const finishDismiss = () => {
       dismissRoutingForwardBookingWorkspace();
       setRoutingPreview(null);
@@ -6851,7 +6930,10 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         : isScheduleLoaderCalendarPreview(routingPreview) &&
             storedForwardBookingIntent?.origin === 'schedule_loader'
           ? storedForwardBookingIntent
-          : null;
+          : isWaitlistCalendarPreview(routingPreview) &&
+              storedForwardBookingIntent?.origin === 'waitlist'
+            ? storedForwardBookingIntent
+            : null;
     const previewPatientIds =
       routingPreview.previewPatients?.map((p) => String(p.id)).filter(Boolean) ?? [];
     const rescheduleTargets = ri
@@ -6991,7 +7073,9 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         ? ('care_outreach' as const)
         : routingPreview.previewSource === 'schedule-loader'
           ? ('schedule_loader' as const)
-          : undefined;
+          : routingPreview.previewSource === 'waitlist'
+            ? ('waitlist' as const)
+            : undefined;
     const insertionIndexRaw = opt.insertionIndex;
     const insertionIndex =
       typeof insertionIndexRaw === 'number' && Number.isFinite(insertionIndexRaw)
@@ -7153,6 +7237,11 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     const returnToScheduleLoader = scheduleLoaderReturnHref(previewAtSend);
     if (returnToScheduleLoader) {
       navigate(returnToScheduleLoader);
+      return;
+    }
+    const returnToWaitlist = waitlistReturnHref(previewAtSend);
+    if (returnToWaitlist) {
+      navigate(returnToWaitlist);
       return;
     }
     if (fbi?.origin === 'care_outreach') {
@@ -7488,7 +7577,9 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       const wasForwardBooking = prefillAtBook?.forwardBookingTrackingToken != null;
       const wasAppointmentRequest = prefillAtBook?.appointmentRequestSubmissionId != null;
       const fbiAtBook =
-        wasForwardBooking || isScheduleLoaderCalendarPreview(previewAtBook)
+        wasForwardBooking ||
+        isScheduleLoaderCalendarPreview(previewAtBook) ||
+        isWaitlistCalendarPreview(previewAtBook)
           ? readRoutingForwardBookingIntent()
           : null;
       const ariAtBook = wasAppointmentRequest ? readRoutingAppointmentRequestIntent() : null;
@@ -7553,6 +7644,66 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               isHold,
               origin: 'schedule_loader',
               scheduleLoaderReturnHref: scheduleLoaderReturnHref(previewAtBook),
+            }),
+          );
+          return;
+        }
+      }
+
+      const waitlistBookReturn =
+        isWaitlistCalendarPreview(previewAtBook) &&
+        savedId != null &&
+        bookSlot?.start?.isValid &&
+        !wasReschedule;
+
+      if (waitlistBookReturn) {
+        const startIso = bookSlot!.start.toUTC().toISO();
+        if (startIso) {
+          const petNames =
+            previewAtBook!.previewPatients
+              ?.map((p) => String(p.name ?? '').trim())
+              .filter(Boolean) ?? [];
+          const typeId =
+            detail?.bookedAppointmentTypeId ?? prefillAtBook?.appointmentTypeId;
+          const typeRow =
+            typeId != null ? typeList.find((t) => Number(t.id) === Number(typeId)) : undefined;
+          const typeName =
+            typeRow?.name?.trim() ||
+            typeRow?.prettyName?.trim() ||
+            null;
+          const isHold = isHoldAppointmentTypeForBook(typeCatalog, { typeId, typeName });
+          const waitlistEntryId =
+            fbiAtBook?.waitlistEntryId ?? previewAtBook!.waitlistReturn?.entryId ?? null;
+          if (waitlistEntryId != null) {
+            writeWaitlistReturnSession({
+              waitlistEntryId,
+              clientId:
+                fbiAtBook?.waitlistReturn?.clientId ??
+                previewAtBook!.waitlistReturn?.clientId ??
+                Number(fbiAtBook?.clientId) ??
+                0,
+              bookedAppointmentId: savedId!,
+              bookedAppointmentStart: startIso,
+              bookedAppointmentEnd: bookSlot!.end?.isValid ? bookSlot!.end.toUTC().toISO() : null,
+              petNames,
+              clientDisplayName: previewAtBook!.clientDisplayLabel?.trim() || null,
+              providerLastName: providerLastNameFromDisplayName(
+                String(previewAtBook!.option.doctorName ?? ''),
+              ),
+              isHold,
+              openSms: true,
+            });
+          }
+          clearRoutingPersistenceAfterSchedulerBook();
+          clearRoutingCalendarPreview();
+          setRoutingPreview(null);
+          clearRoutingRescheduleIntent();
+          clearRoutingForwardBookingIntent();
+          navigate(
+            schedulingReturnPathAfterBook({
+              isHold,
+              origin: 'waitlist',
+              waitlistReturnHref: waitlistReturnHref(previewAtBook),
             }),
           );
           return;
@@ -10722,7 +10873,10 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                             weekGridMetrics,
                             key,
                             showByDriveTime,
-                            dayDataCol.appointmentBufferMinutes ?? 5
+                            dayDataCol.appointmentBufferMinutes ?? DEFAULT_APPOINTMENT_BUFFER_MINUTES,
+                            // Events here are positioned from the clock, not from the layout, so
+                            // shifted rows would put the bands somewhere the appointments are not.
+                            { shiftRowsForDrive: false }
                           );
                           if (!layout) return null;
                           const segs = buildMyWeekDriveSegmentsFromLayout(
@@ -10912,6 +11066,23 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                             editAppt.id === appt.id &&
                             !isEditTimePreviewVisit &&
                             !isEditVisitJustBooked;
+                          const isCalendarOnlyStaffItem = appointmentIsCalendarOnlyStaffItem(appt);
+                          const canDragStaffItem =
+                            canDragCalendarOnlyStaffItems &&
+                            isCalendarOnlyStaffItem &&
+                            !scheduleCalendarInteractionLock &&
+                            !isEditTimePreviewVisit &&
+                            !isRescheduleSourceVisit &&
+                            !appt.allDay;
+                          const isStaffItemDragging =
+                            staffCalendarDrag != null &&
+                            String(staffCalendarDrag.apptId) === String(appt.id);
+                          const eventTop = isStaffItemDragging
+                            ? Math.max(
+                                0,
+                                (staffCalendarDrag.liveStartMin - gridBounds.gridStartMin) * PPM
+                              )
+                            : top;
                           return (
                             <div
                               key={appt.id}
@@ -10929,22 +11100,91 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                                 isEditVisitJustBooked && onHoldVisitConvertedExitKind
                                   ? 'scheduler-edit-visit-booked-slot--hold-converted'
                                   : '',
+                                canDragStaffItem ? 'scheduler-event--calendar-only-draggable' : '',
+                                isStaffItemDragging ? 'scheduler-event--staff-dragging' : '',
                               ]
                                 .filter(Boolean)
                                 .join(' ')}
                               aria-label={schedulerEventAppointmentTitle(appt)}
                               style={{
-                                top,
+                                top: eventTop,
                                 height: h,
                                 left: `${leftPct}%`,
                                 width: `${wPct}%`,
                                 background: apptColors.fill,
                                 color: apptColors.text,
+                                zIndex: isStaffItemDragging ? 30 : undefined,
                               }}
                               role="button"
                               tabIndex={0}
+                              onPointerDown={(e) => {
+                                if (e.button !== 0 || !canDragStaffItem) return;
+                                const body = (e.currentTarget as HTMLElement).closest(
+                                  '.scheduler-day-body'
+                                ) as HTMLElement | null;
+                                if (!body) return;
+                                const rect = body.getBoundingClientRect();
+                                const pointerMin =
+                                  gridBounds.gridStartMin + (e.clientY - rect.top) / PPM;
+                                const next: StaffCalendarDragState = {
+                                  apptId: appt.id,
+                                  dayKey: key,
+                                  durationMin: Math.max(SLOT_MINUTES, durationMin || SLOT_MINUTES),
+                                  grabOffsetMin: pointerMin - sm,
+                                  liveStartMin: sm,
+                                  originStartMin: sm,
+                                  moved: false,
+                                };
+                                staffCalendarDragRef.current = next;
+                                staffCalendarDragMovedRef.current = false;
+                                setStaffCalendarDrag(next);
+                                e.currentTarget.setPointerCapture(e.pointerId);
+                                dismissHoverPopover();
+                              }}
+                              onPointerMove={(e) => {
+                                const drag = staffCalendarDragRef.current;
+                                if (!drag || String(drag.apptId) !== String(appt.id)) return;
+                                const body = (e.currentTarget as HTMLElement).closest(
+                                  '.scheduler-day-body'
+                                ) as HTMLElement | null;
+                                if (!body) return;
+                                const rect = body.getBoundingClientRect();
+                                const pointerMin =
+                                  gridBounds.gridStartMin + (e.clientY - rect.top) / PPM;
+                                const liveStartMin = snapSchedulerMinutes(
+                                  pointerMin - drag.grabOffsetMin,
+                                  gridBounds.gridStartMin,
+                                  gridBounds.gridEndMin,
+                                  drag.durationMin
+                                );
+                                const moved =
+                                  drag.moved || Math.abs(liveStartMin - drag.originStartMin) >= SLOT_MINUTES / 2;
+                                const next = { ...drag, liveStartMin, moved };
+                                staffCalendarDragRef.current = next;
+                                if (moved) staffCalendarDragMovedRef.current = true;
+                                setStaffCalendarDrag(next);
+                              }}
+                              onPointerUp={(e) => {
+                                const drag = staffCalendarDragRef.current;
+                                if (!drag || String(drag.apptId) !== String(appt.id)) return;
+                                try {
+                                  e.currentTarget.releasePointerCapture(e.pointerId);
+                                } catch {
+                                  /* already released */
+                                }
+                                staffCalendarDragRef.current = null;
+                                setStaffCalendarDrag(null);
+                                if (drag.moved) {
+                                  void commitStaffCalendarDrag(drag);
+                                }
+                              }}
+                              onPointerCancel={() => {
+                                staffCalendarDragRef.current = null;
+                                setStaffCalendarDrag(null);
+                              }}
                               onDoubleClick={(e) => {
                                 e.stopPropagation();
+                                if (staffCalendarDragMovedRef.current) return;
                                 if (scheduleCalendarInteractionLock && !isEditTimePreviewVisit) {
                                   notifyScheduleCalendarLocked();
                                   return;

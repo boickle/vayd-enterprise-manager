@@ -78,8 +78,16 @@ function tabBadgesForPath(
           title={`${counts.forwardBookingPending} in queue`}
         />
       );
-    case 'booked':
+    case 'schedule-loader':
       return null;
+    case 'waitlist':
+      return (
+        <TabBadge
+          count={counts.waitlistWaiting}
+          variant="default"
+          title={`${counts.waitlistWaiting} waiting`}
+        />
+      );
     case 'texted-offers':
       return (
         <>

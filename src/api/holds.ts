@@ -12,6 +12,7 @@ export type HoldSource =
   | 'appointment_request'
   | 'care_outreach'
   | 'schedule_loader'
+  | 'waitlist'
   | 'end_visit'
   | 'texted_offer'
   | 'manual';
@@ -146,6 +147,7 @@ export const HOLD_SOURCE_LABELS: Record<HoldSource, string> = {
   appointment_request: 'Appt request',
   care_outreach: 'Care outreach',
   schedule_loader: 'Schedule loader',
+  waitlist: 'Waitlist',
   end_visit: 'Forward booking',
   texted_offer: 'Texted offer',
   manual: 'Manual',

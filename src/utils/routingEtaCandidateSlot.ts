@@ -1,4 +1,5 @@
 import type { EtaRequestCandidateSlot } from '../api/routing';
+import { appointmentIsCalendarOnlyStaffItem } from './calendarOnlyStaffAppointment';
 
 export type RoutingEtaCandidateSlotSource = {
   insertionIndex?: number | null;
@@ -54,9 +55,11 @@ export function resolveRoutingEtaInsertionIndex(
 export function householdCountsForRoutingInsertionIndex(h: {
   isPreview?: boolean;
   isPersonalBlock?: boolean;
+  primary?: unknown;
 }): boolean {
   if (h.isPreview) return false;
   if (h.isPersonalBlock) return false;
+  if (appointmentIsCalendarOnlyStaffItem(h.primary)) return false;
   return true;
 }
 

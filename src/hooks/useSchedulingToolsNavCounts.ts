@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { fetchUnscheduledReminders } from '../api/careOutreach';
 import { fetchForwardBookings } from '../api/forwardBooking';
 import { fetchSlotOffers } from '../api/slotOffers';
+import { fetchWaitlist } from '../api/waitlist';
 import { fetchAllAppointmentTypes } from '../api/appointmentSettings';
 import {
   buildAppointmentTypeCatalogFromTypes,
@@ -41,6 +42,7 @@ export type SchedulingToolsNavCounts = {
   textedOffersActive: number;
   textedOffersNeedsFollowUp: number;
   textedOffersToConfirm: number;
+  waitlistWaiting: number;
 };
 
 const EMPTY_COUNTS: SchedulingToolsNavCounts = {
@@ -52,6 +54,7 @@ const EMPTY_COUNTS: SchedulingToolsNavCounts = {
   textedOffersActive: 0,
   textedOffersNeedsFollowUp: 0,
   textedOffersToConfirm: 0,
+  waitlistWaiting: 0,
 };
 
 export function useSchedulingToolsNavCounts(enabled = true) {
@@ -63,7 +66,7 @@ export function useSchedulingToolsNavCounts(enabled = true) {
     setLoading(true);
     try {
       const careRange = careOutreachPriorityNavCountFetchRange();
-      const [types, forwardBookings, careReminders, activeOffers, toConfirmOffers] = await Promise.all([
+      const [types, forwardBookings, careReminders, activeOffers, toConfirmOffers, waitlistWaiting] = await Promise.all([
         fetchAllAppointmentTypes(PRACTICE_ID, { activeOnly: false }),
         fetchForwardBookings({ practiceId: PRACTICE_ID, limit: 2000, includeRemoved: true }),
         fetchUnscheduledReminders({
@@ -74,6 +77,7 @@ export function useSchedulingToolsNavCounts(enabled = true) {
         }),
         fetchSlotOffers({ practiceId: PRACTICE_ID, tab: 'active' }).catch(() => []),
         fetchSlotOffers({ practiceId: PRACTICE_ID, tab: 'to_confirm' }).catch(() => []),
+        fetchWaitlist({ practiceId: PRACTICE_ID, status: 'waiting', limit: 2000 }).catch(() => []),
       ]);
 
       const catalog = buildAppointmentTypeCatalogFromTypes(types);
@@ -100,7 +104,9 @@ export function useSchedulingToolsNavCounts(enabled = true) {
       const routingIntent = readRoutingForwardBookingIntent();
       const activeRoutingForwardBookingIds =
         routingIntent?.workspaceActive &&
-        (routingIntent.origin === 'care_outreach' || routingIntent.origin === 'schedule_loader')
+        (routingIntent.origin === 'care_outreach' ||
+          routingIntent.origin === 'schedule_loader' ||
+          routingIntent.origin === 'waitlist')
           ? new Set(forwardBookingIdsFromRoutingIntent(routingIntent))
           : undefined;
       const blockedPatientIds = forwardBookingPatientIdsActiveInQueue(
@@ -126,6 +132,7 @@ export function useSchedulingToolsNavCounts(enabled = true) {
           (row) => row.status === 'manual_review' && row.resolved !== true
         ).length,
         textedOffersToConfirm: toConfirmOffers.length,
+        waitlistWaiting: waitlistWaiting.length,
       });
     } catch {
       setCounts(EMPTY_COUNTS);
