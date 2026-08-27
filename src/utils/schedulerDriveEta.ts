@@ -47,6 +47,10 @@ import {
   type RoutingRescheduleIntentV1,
 } from './routingRescheduleIntent';
 import { householdGroupKey } from './doctorDayHouseholdGroup';
+import {
+  appointmentIsCalendarOnlyStaffItem,
+  householdPersonalBlockFlag,
+} from './calendarOnlyStaffAppointment';
 
 const str = (o: unknown, k: string) =>
   typeof (o as Record<string, unknown>)?.[k] === 'string' ? ((o as Record<string, unknown>)[k] as string) : undefined;
@@ -475,7 +479,7 @@ function householdFromApptClump(
   const first = clump[0]!;
   const a0 = first.appt;
   const groupKey = householdGroupKey(a0, lat, lon, addrKey, idPart, hasGeo);
-  const isPersonalBlock = isBlockEntry({ ...a0, key: groupKey });
+  const isPersonalBlock = householdPersonalBlockFlag(a0, groupKey);
   const initialKey = hasGeo ? keyFor(lat, lon, 6) : addrKey ? `addr:${addrKey}` : `noloc:${idPart}`;
 
   let startIso: string | null = null;
@@ -682,10 +686,23 @@ async function fetchEtaForOneDay(
       day.households,
       opt.insertionIndex
     );
-    const mappedInsertionIndex = routingEtaCandidateInsertionIndexInOrder(
-      householdsForPayload,
-      opt.insertionIndex
+  }
+
+  householdsForPayload = householdsForPayload.filter(
+    (h: { isPreview?: boolean; primary?: unknown }) =>
+      h.isPreview || !appointmentIsCalendarOnlyStaffItem(h.primary)
+  );
+
+  if (hasVirtual && routingOpts?.routingPreview) {
+    const rp = routingOpts.routingPreview;
+    const opt = rp.option as Record<string, unknown>;
+    const previewEtaIdx = householdsForPayload.findIndex(
+      (h: { isPreview?: boolean }) => h.isPreview === true
     );
+    const mappedInsertionIndex =
+      previewEtaIdx >= 0
+        ? previewEtaIdx
+        : routingEtaCandidateInsertionIndexInOrder(householdsForPayload, opt.insertionIndex);
 
     const optArrivalWindow = opt.arrivalWindow as RoutingEtaCandidateSlotSource['arrivalWindow'];
     const fallbackArrivalWindow =

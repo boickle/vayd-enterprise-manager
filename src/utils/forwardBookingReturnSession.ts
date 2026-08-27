@@ -15,7 +15,7 @@ export type ForwardBookingReturnSessionV1 = {
   bookedAppointmentStart: string;
   bookedAppointmentEnd?: string | null;
   /** SMS template when auto-opening text after a routing book. */
-  smsTemplate?: 'care_outreach' | 'forward_booking' | 'schedule_loader';
+  smsTemplate?: 'care_outreach' | 'forward_booking' | 'schedule_loader' | 'waitlist';
   /** Pet names for care outreach SMS when multiple patients were booked together. */
   careOutreachPetNames?: string[];
   /** Care outreach SMS uses past-due wording when any booked reminder was overdue. */
@@ -29,7 +29,7 @@ export type ForwardBookingReturnSessionV1 = {
   /** Workflow list tab to open after book (from saved appointment type). */
   targetWorkflowTab?: 'onHold' | 'booked';
   /** List the user came from — hold books return here instead of the On hold tab. */
-  returnOrigin?: 'forward_booking' | 'care_outreach' | 'schedule_loader';
+  returnOrigin?: 'forward_booking' | 'care_outreach' | 'schedule_loader' | 'waitlist';
   /** Care outreach client row key for exit animation after hold book. */
   careOutreachClientKey?: string;
   careOutreachClientDisplayName?: string | null;
