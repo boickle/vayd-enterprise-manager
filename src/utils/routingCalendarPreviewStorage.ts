@@ -85,7 +85,7 @@ export type RoutingCalendarPreviewPayloadV1 = {
    */
   listOptionKey?: string;
   /** Preview opened from Schedule Loader (Fill Day) rather than Get Best Route. */
-  previewSource?: 'routing' | 'schedule-loader' | 'waitlist' | 'manual-book';
+  previewSource?: 'routing' | 'schedule-loader' | 'waitlist' | 'manual-book' | 'schedule-optimize';
   /** Return navigation when dismissing preview from Schedule Loader. */
   scheduleLoaderReturn?: {
     clientId: number;
@@ -95,6 +95,12 @@ export type RoutingCalendarPreviewPayloadV1 = {
     entryId: number;
     clientId: number;
     returnHref: string;
+  };
+  scheduleOptimizeReturn?: {
+    queueItemId: string;
+    returnHref: string;
+    /** Opened from “view current appointment”; Back should restore that view. */
+    fromCurrentView?: boolean;
   };
   /** Stored manual book form — Book from preview or Back to form restores this. */
   manualBookDraft?: ManualBookPreviewDraft;
@@ -152,6 +158,12 @@ export function isWaitlistCalendarPreview(
   return preview?.previewSource === 'waitlist';
 }
 
+export function isScheduleOptimizeCalendarPreview(
+  preview: RoutingCalendarPreviewPayloadV1 | null | undefined,
+): boolean {
+  return preview?.previewSource === 'schedule-optimize';
+}
+
 export function scheduleLoaderReturnHref(
   preview: RoutingCalendarPreviewPayloadV1 | null | undefined,
 ): string | null {
@@ -163,6 +175,13 @@ export function waitlistReturnHref(
   preview: RoutingCalendarPreviewPayloadV1 | null | undefined,
 ): string | null {
   const href = preview?.waitlistReturn?.returnHref?.trim();
+  return href || null;
+}
+
+export function scheduleOptimizeReturnHref(
+  preview: RoutingCalendarPreviewPayloadV1 | null | undefined,
+): string | null {
+  const href = preview?.scheduleOptimizeReturn?.returnHref?.trim();
   return href || null;
 }
 

@@ -5,6 +5,7 @@ import { formatReschedulePreviewScoreLine } from '../utils/routingRescheduleScor
 import {
   isManualBookCalendarPreview,
   isScheduleLoaderCalendarPreview,
+  isScheduleOptimizeCalendarPreview,
   type RoutingCalendarPreviewPayloadV1,
 } from '../utils/routingCalendarPreviewStorage';
 import {
@@ -30,6 +31,11 @@ type Props = {
   confirmLabel?: string;
   onBook: () => void;
   onDismiss: () => void;
+  /** Shown for Optimize: leave the calendar preview and return to the Optimize list. */
+  onBack?: () => void;
+  backLabel?: string;
+  /** Shown for Optimize: keep the original visit and book a second one at the preview slot. */
+  onAddAlternative?: () => void;
 };
 
 function formatPracticeRange(startIso: string, endIso: string, practiceTz: string): string {
@@ -81,20 +87,27 @@ export function RoutingPreviewSlotPopover({
   confirmLabel,
   onBook,
   onDismiss,
+  onBack,
+  backLabel,
+  onAddAlternative,
 }: Props) {
   const opt = preview.option;
   const isScheduleLoader = isScheduleLoaderCalendarPreview(preview);
   const isManualBook = isManualBookCalendarPreview(preview);
-  const isExplore = Boolean(isReschedule && exploreAlternatives);
+  const isOptimize = isScheduleOptimizeCalendarPreview(preview);
+  const showOptimizeChooser = Boolean(isOptimize && onAddAlternative);
+  const isExplore = Boolean(isReschedule && exploreAlternatives && !showOptimizeChooser);
   const title = isExplore
     ? 'Alternatives preview'
-    : isReschedule
-      ? 'Reschedule preview'
-      : isManualBook
-        ? 'Manual booking preview'
-        : isScheduleLoader
-          ? 'Schedule loader preview'
-          : 'Routing preview';
+    : isOptimize
+      ? 'Optimize preview'
+      : isReschedule
+        ? 'Reschedule preview'
+        : isManualBook
+          ? 'Manual booking preview'
+          : isScheduleLoader
+            ? 'Schedule loader preview'
+            : 'Routing preview';
   const rangeLabel = formatPreviewRange(
     String(opt.suggestedStartIso ?? ''),
     preview.serviceMinutes,
@@ -126,9 +139,10 @@ export function RoutingPreviewSlotPopover({
         : null;
   const scoreLineIsUnavailable =
     scoreLine === 'No previous routing score available for this visit.';
-  const primaryLabel =
-    confirmLabel ??
-    (isExplore ? 'Add Alternative Appointment' : isReschedule ? 'Reschedule' : 'Book');
+  const primaryLabel = showOptimizeChooser
+    ? 'Reschedule'
+    : confirmLabel ??
+      (isExplore ? 'Add Alternative Appointment' : isReschedule ? 'Reschedule' : 'Book');
 
   return (
     <div
@@ -206,6 +220,25 @@ export function RoutingPreviewSlotPopover({
       </div>
 
       <div className="scheduler-edit-preview-popover-actions">
+        {showOptimizeChooser ? (
+          <button
+            type="button"
+            className="btn secondary scheduler-edit-preview-popover-alt"
+            disabled={bookDisabled}
+            onClick={onAddAlternative}
+          >
+            Add alternative
+          </button>
+        ) : null}
+        {onBack ? (
+          <button
+            type="button"
+            className="btn secondary scheduler-edit-preview-popover-back"
+            onClick={onBack}
+          >
+            {backLabel ?? 'Back'}
+          </button>
+        ) : null}
         <button
           type="button"
           className="btn scheduler-edit-preview-popover-confirm"

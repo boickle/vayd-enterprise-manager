@@ -5,6 +5,7 @@ import WaitlistPage from './pages/WaitlistPage';
 import CareOutreachPage from './pages/CareOutreachPage';
 import ForwardBookingPage from './pages/ForwardBookingPage';
 import TextedOffersPage from './pages/TextedOffersPage';
+import ScheduleOptimizationPage from './pages/ScheduleOptimizationPage';
 import { HOLDS_PATH } from './holds-nav';
 import {
   LEGACY_WORKFLOW_STATUS_BY_PATH,
@@ -26,6 +27,8 @@ function elementForTab(path: string): JSX.Element {
       return <FillDayPage />;
     case 'waitlist':
       return <WaitlistPage />;
+    case 'schedule-optimization':
+      return <ScheduleOptimizationPage />;
     case 'care-outreach':
       return <CareOutreachPage />;
     case 'texted-offers':
