@@ -48,7 +48,7 @@ export const ADMIN_TAB_PAGES: AdminTabPage[] = [
   },
   {
     path: 'routing-score-thresholds',
-    label: 'Routing Score Thresholds',
+    label: 'Client Offers & Auto-Book',
     element: <RoutingScoreThresholdsPage />,
     role: ['admin', 'superadmin'],
   },

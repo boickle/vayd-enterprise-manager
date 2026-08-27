@@ -1,0 +1,111 @@
+/* Quality sliders for client-offered slot thresholds. */
+
+.rst-calibration {
+  margin-bottom: 28px;
+}
+
+.rst-calibrate-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 0;
+}
+
+.rst-calibrate-row .settings-label {
+  margin: 0;
+}
+
+.rst-status {
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  border: 1px solid transparent;
+}
+
+.rst-status strong {
+  display: block;
+  margin-bottom: 2px;
+}
+
+.rst-status-ok {
+  background: rgba(34, 139, 84, 0.08);
+  border-color: rgba(34, 139, 84, 0.28);
+}
+
+.rst-status-warn {
+  background: rgba(201, 138, 16, 0.1);
+  border-color: rgba(201, 138, 16, 0.32);
+}
+
+.rst-warnings {
+  margin: 12px 0 0;
+  padding-left: 20px;
+  font-size: 13px;
+  line-height: 1.55;
+  opacity: 0.85;
+}
+
+.rst-sliders {
+  display: grid;
+  gap: 22px;
+  max-width: 640px;
+}
+
+.rst-slider-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.rst-slider-head .settings-label {
+  margin: 0;
+}
+
+.rst-slider-value {
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.rst-slider-foot {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 4px;
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.rst-score {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.rst-range {
+  width: 100%;
+  margin: 8px 0 0;
+  accent-color: #2f6fed;
+  cursor: pointer;
+}
+
+.rst-pct-input {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.rst-pct-input span {
+  font-size: 12px;
+  opacity: 0.65;
+}
+
+.rst-cell-score {
+  margin-top: 3px;
+  font-size: 11px;
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+}

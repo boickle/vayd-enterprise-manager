@@ -1478,6 +1478,18 @@ label.scheduler-go-date-heading {
   min-height: 0;
 }
 
+.scheduler-event--calendar-only-draggable {
+  cursor: grab;
+  touch-action: none;
+}
+
+.scheduler-event--staff-dragging {
+  cursor: grabbing;
+  opacity: 0.72;
+  box-shadow: none;
+  user-select: none;
+}
+
 .scheduler-event.scheduler-routing-preview-slot {
   overflow: visible;
   cursor: pointer;

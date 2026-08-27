@@ -45,6 +45,12 @@ import {
   type RescheduleVisitPatch,
 } from '../utils/routingRescheduleIntent';
 import { resolveBookModalDefaultAppointmentTypeId } from '../utils/routingCalculateTimeType';
+import {
+  appointmentTypeNameForRoutingStats,
+  estimateRoutingServiceMinutesForSelection,
+  fetchDoctorApptLengthStats,
+} from '../utils/routingServiceMinutes';
+import type { AvgMinutesByTypeRow } from '../analytics/appointmentTypeTimeStats';
 import { Field } from '../components/Field';
 import { ClientSmsComposeModal } from '../components/ClientSmsComposeModal';
 import { VerifiedAddressField } from '../components/VerifiedAddressField';
@@ -560,6 +566,14 @@ export function SchedulerBookModal({
   const [typeId, setTypeId] = useState<string>('');
   const [manualBookableTypeIds, setManualBookableTypeIds] = useState<number[] | null>(null);
 
+  /**
+   * Last-30-day visit lengths for the selected provider, used to default the
+   * duration to that doctor's own history instead of the practice-wide default.
+   */
+  const [doctorApptLengthStats, setDoctorApptLengthStats] = useState<AvgMinutesByTypeRow[]>([]);
+  /** Once staff edit the duration or end time, stop re-defaulting it under them. */
+  const [durationManuallySet, setDurationManuallySet] = useState(false);
+
   const { role, token, userEmail, doctorId } = useAuth() as {
     role?: string | string[];
     token?: string | null;
@@ -703,6 +717,30 @@ export function SchedulerBookModal({
       typesForActivePicker.find((t) => String(t.id) === typeId);
     return raw ? normalizeAppointmentTypeFromApi(raw) : undefined;
   }, [appointmentTypes, typesForActivePicker, typeId]);
+
+  useEffect(() => {
+    const id = providerId.trim();
+    if (!open || !id) {
+      setDoctorApptLengthStats([]);
+      return;
+    }
+    let cancelled = false;
+    void fetchDoctorApptLengthStats(id)
+      .then((rows) => {
+        if (!cancelled) setDoctorApptLengthStats(rows);
+      })
+      .catch(() => {
+        // No history available — the duration effect falls back to the type default.
+        if (!cancelled) setDoctorApptLengthStats([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, providerId]);
+
+  useEffect(() => {
+    if (!open) setDurationManuallySet(false);
+  }, [open]);
 
   const typeFormFlags = useMemo(() => appointmentFormFlags(selectedType), [selectedType]);
   const showClient = typeFormFlags.showClient;
@@ -1605,12 +1643,47 @@ export function SchedulerBookModal({
     });
   }, [open, prefill?.appointmentRequestVisitPatches, clientPets]);
 
+  /**
+   * Default the block to how long this doctor's visits of this type actually
+   * take, rather than the practice-wide default duration.
+   *
+   * Manual bookings were the last place still using `defaultDuration` for every
+   * doctor. That is how a doctor whose visits run short ends up with the same
+   * 45-minute block as one whose run long, and the router then plans around a
+   * block that does not match reality. Falls back to the type default when the
+   * doctor has under five visits of the type in the last 30 days.
+   */
   useEffect(() => {
     if (prefill?.preserveDurationFromSlot) return;
-    if (!selectedType?.defaultDuration || selectedType.defaultDuration <= 0) return;
-    const d = Math.round(selectedType.defaultDuration);
-    if (d >= 5) setDurationMin(DURATION_OPTIONS.includes(d) ? d : Math.min(120, Math.max(15, d)));
-  }, [selectedType?.id, selectedType?.defaultDuration, prefill?.preserveDurationFromSlot]);
+    if (durationManuallySet) return;
+
+    const typeKey = appointmentTypeNameForRoutingStats(selectedType);
+    const applyMinutes = (mins: number | null | undefined) => {
+      const d = Math.round(Number(mins));
+      if (!Number.isFinite(d) || d < 5) return;
+      setDurationMin(DURATION_OPTIONS.includes(d) ? d : Math.min(120, Math.max(15, d)));
+    };
+
+    if (!typeKey || !doctorApptLengthStats.length) {
+      applyMinutes(selectedType?.defaultDuration);
+      return;
+    }
+
+    const resolveType = (key: string) =>
+      appointmentTypes
+        .map((t) => normalizeAppointmentTypeFromApi(t))
+        .find((t) => appointmentTypeNameForRoutingStats(t) === key);
+
+    applyMinutes(
+      estimateRoutingServiceMinutesForSelection(typeKey, 1, doctorApptLengthStats, resolveType)
+    );
+  }, [
+    selectedType,
+    appointmentTypes,
+    doctorApptLengthStats,
+    durationManuallySet,
+    prefill?.preserveDurationFromSlot,
+  ]);
 
   useEffect(() => {
     const q = combinedQuery.trim();
@@ -3721,6 +3794,7 @@ export function SchedulerBookModal({
                         onChange={(e) => {
                           setFormError(null);
                           setEndTimeDraft(null);
+                          setDurationManuallySet(true);
                           setDurationMin(Number(e.target.value));
                         }}
                         disabled={Boolean(prefill?.lockSlotTimes)}
@@ -3783,6 +3857,7 @@ export function SchedulerBookModal({
                             // Incomplete / intermediate clock value — wait for a valid end.
                             return;
                           }
+                          setDurationManuallySet(true);
                           setDurationMin(mins);
                         }}
                         onBlur={() => {
@@ -3803,6 +3878,7 @@ export function SchedulerBookModal({
                               );
                               if (mins > 0) {
                                 setFormError(null);
+                                setDurationManuallySet(true);
                                 setDurationMin(mins);
                                 return;
                               }
