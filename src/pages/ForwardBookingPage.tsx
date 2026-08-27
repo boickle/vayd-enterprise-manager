@@ -191,6 +191,7 @@ const ON_HOLD_SOURCE_SEARCH_PARAM = 'source';
 const ON_HOLD_SOURCE_FILTERS: { key: ForwardBookingSourceChip; label: string }[] = [
   { key: 'care_outreach', label: 'Care outreach' },
   { key: 'schedule_loader', label: 'Schedule loader' },
+  { key: 'waitlist', label: 'Waitlist' },
   { key: 'end_visit', label: 'Forward booking' },
 ];
 
@@ -1323,6 +1324,7 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
     const counts: Record<ForwardBookingSourceChip, number> = {
       care_outreach: 0,
       schedule_loader: 0,
+      waitlist: 0,
       end_visit: 0,
       appointment_request: 0,
     };

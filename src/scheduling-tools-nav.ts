@@ -14,6 +14,7 @@ export const SCHEDULING_TOOL_OUTREACH_TABS: SchedulingToolTab[] = [
   { path: 'forward-booking', label: 'Forward booking' },
   { path: 'texted-offers', label: 'Texted offers' },
   { path: 'schedule-loader', label: 'Schedule loader' },
+  { path: 'waitlist', label: 'Waitlist' },
 ];
 
 /** Workflow views after outreach — booked visits. */
@@ -108,8 +109,9 @@ export function schedulingWorkflowListPathAfterBook(isHold: boolean): string {
 /** After book, return to the outreach list the user came from (hold) or the Booked tab (real visit). */
 export function schedulingReturnPathAfterBook(args: {
   isHold: boolean;
-  origin?: 'care_outreach' | 'schedule_loader' | 'forward_booking';
+  origin?: 'care_outreach' | 'schedule_loader' | 'waitlist' | 'forward_booking';
   scheduleLoaderReturnHref?: string | null;
+  waitlistReturnHref?: string | null;
 }): string {
   if (args.isHold) {
     if (args.origin === 'care_outreach') {
@@ -120,7 +122,17 @@ export function schedulingReturnPathAfterBook(args: {
       if (href) return href;
       return `${SCHEDULING_TOOLS_PATH_PREFIX}/schedule-loader`;
     }
+    if (args.origin === 'waitlist') {
+      const href = args.waitlistReturnHref?.trim();
+      if (href) return href;
+      return `${SCHEDULING_TOOLS_PATH_PREFIX}/waitlist`;
+    }
     return `${SCHEDULING_TOOLS_PATH_PREFIX}/forward-booking`;
+  }
+  if (args.origin === 'waitlist') {
+    const href = args.waitlistReturnHref?.trim();
+    if (href) return href;
+    return `${SCHEDULING_TOOLS_PATH_PREFIX}/waitlist`;
   }
   if (args.origin === 'forward_booking') {
     return `${SCHEDULING_TOOLS_PATH_PREFIX}/forward-booking`;

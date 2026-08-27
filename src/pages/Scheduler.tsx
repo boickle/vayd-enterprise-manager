@@ -250,8 +250,10 @@ import {
   clearRoutingCalendarPreview,
   isManualBookCalendarPreview,
   isScheduleLoaderCalendarPreview,
+  isWaitlistCalendarPreview,
   readRoutingCalendarPreview,
   scheduleLoaderReturnHref,
+  waitlistReturnHref,
   ROUTING_CALENDAR_PREVIEW_UPDATED_EVENT,
   ROUTING_FOCUS_RESCHEDULE_SOURCE_EVENT,
   SCHEDULER_ROUTING_PREVIEW_SYNTHETIC_APPT_ID,
@@ -357,6 +359,7 @@ import { FORWARD_BOOKING_LIST_PATH, writeForwardBookingReturnSession, CARE_OUTRE
 import { providerLastNameFromDisplayName } from '../utils/scheduleLoaderSmsMessage';
 import { slotOfferFlowActive } from '../utils/slotOfferFromRouting';
 import { notifySchedulingToolsNavCountsRefresh } from '../hooks/useSchedulingToolsNavCounts';
+import { writeWaitlistReturnSession } from '../utils/waitlistReturnSession';
 import { writeForwardBookingLocalLink } from '../utils/forwardBookingLocalLinks';
 import {
   buildForwardBookingWorkspaceContext,
@@ -4414,7 +4417,9 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             ? 'care_outreach'
             : fbi?.origin === 'schedule_loader'
               ? 'schedule_loader'
-              : undefined,
+              : fbi?.origin === 'waitlist'
+                ? 'waitlist'
+                : undefined,
       },
       routingPreview
     );
@@ -6709,6 +6714,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       return;
     }
     const returnToScheduleLoader = scheduleLoaderReturnHref(activePreview);
+    const returnToWaitlist = waitlistReturnHref(activePreview);
     const returnToRescheduleSource = embedInRoutingWorkspace && readRoutingRescheduleIntent() != null;
     clearRoutingCalendarPreview();
     setRoutingPreview(null);
@@ -6716,6 +6722,10 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     setBookPrefill(null);
     if (returnToScheduleLoader) {
       navigate(returnToScheduleLoader);
+      return;
+    }
+    if (returnToWaitlist) {
+      navigate(returnToWaitlist);
       return;
     }
     if (returnToRescheduleSource) {
@@ -6762,7 +6772,10 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         : intent?.origin === 'schedule_loader'
           ? intent.scheduleLoaderReturn?.returnHref?.trim() ||
             '/schedule/scheduling-tools/schedule-loader'
-          : FORWARD_BOOKING_LIST_PATH;
+          : intent?.origin === 'waitlist'
+            ? intent.waitlistReturn?.returnHref?.trim() ||
+              '/schedule/scheduling-tools/waitlist'
+            : FORWARD_BOOKING_LIST_PATH;
     const finishDismiss = () => {
       dismissRoutingForwardBookingWorkspace();
       setRoutingPreview(null);
@@ -6917,7 +6930,10 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         : isScheduleLoaderCalendarPreview(routingPreview) &&
             storedForwardBookingIntent?.origin === 'schedule_loader'
           ? storedForwardBookingIntent
-          : null;
+          : isWaitlistCalendarPreview(routingPreview) &&
+              storedForwardBookingIntent?.origin === 'waitlist'
+            ? storedForwardBookingIntent
+            : null;
     const previewPatientIds =
       routingPreview.previewPatients?.map((p) => String(p.id)).filter(Boolean) ?? [];
     const rescheduleTargets = ri
@@ -7057,7 +7073,9 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         ? ('care_outreach' as const)
         : routingPreview.previewSource === 'schedule-loader'
           ? ('schedule_loader' as const)
-          : undefined;
+          : routingPreview.previewSource === 'waitlist'
+            ? ('waitlist' as const)
+            : undefined;
     const insertionIndexRaw = opt.insertionIndex;
     const insertionIndex =
       typeof insertionIndexRaw === 'number' && Number.isFinite(insertionIndexRaw)
@@ -7219,6 +7237,11 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     const returnToScheduleLoader = scheduleLoaderReturnHref(previewAtSend);
     if (returnToScheduleLoader) {
       navigate(returnToScheduleLoader);
+      return;
+    }
+    const returnToWaitlist = waitlistReturnHref(previewAtSend);
+    if (returnToWaitlist) {
+      navigate(returnToWaitlist);
       return;
     }
     if (fbi?.origin === 'care_outreach') {
@@ -7554,7 +7577,9 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       const wasForwardBooking = prefillAtBook?.forwardBookingTrackingToken != null;
       const wasAppointmentRequest = prefillAtBook?.appointmentRequestSubmissionId != null;
       const fbiAtBook =
-        wasForwardBooking || isScheduleLoaderCalendarPreview(previewAtBook)
+        wasForwardBooking ||
+        isScheduleLoaderCalendarPreview(previewAtBook) ||
+        isWaitlistCalendarPreview(previewAtBook)
           ? readRoutingForwardBookingIntent()
           : null;
       const ariAtBook = wasAppointmentRequest ? readRoutingAppointmentRequestIntent() : null;
@@ -7619,6 +7644,66 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               isHold,
               origin: 'schedule_loader',
               scheduleLoaderReturnHref: scheduleLoaderReturnHref(previewAtBook),
+            }),
+          );
+          return;
+        }
+      }
+
+      const waitlistBookReturn =
+        isWaitlistCalendarPreview(previewAtBook) &&
+        savedId != null &&
+        bookSlot?.start?.isValid &&
+        !wasReschedule;
+
+      if (waitlistBookReturn) {
+        const startIso = bookSlot!.start.toUTC().toISO();
+        if (startIso) {
+          const petNames =
+            previewAtBook!.previewPatients
+              ?.map((p) => String(p.name ?? '').trim())
+              .filter(Boolean) ?? [];
+          const typeId =
+            detail?.bookedAppointmentTypeId ?? prefillAtBook?.appointmentTypeId;
+          const typeRow =
+            typeId != null ? typeList.find((t) => Number(t.id) === Number(typeId)) : undefined;
+          const typeName =
+            typeRow?.name?.trim() ||
+            typeRow?.prettyName?.trim() ||
+            null;
+          const isHold = isHoldAppointmentTypeForBook(typeCatalog, { typeId, typeName });
+          const waitlistEntryId =
+            fbiAtBook?.waitlistEntryId ?? previewAtBook!.waitlistReturn?.entryId ?? null;
+          if (waitlistEntryId != null) {
+            writeWaitlistReturnSession({
+              waitlistEntryId,
+              clientId:
+                fbiAtBook?.waitlistReturn?.clientId ??
+                previewAtBook!.waitlistReturn?.clientId ??
+                Number(fbiAtBook?.clientId) ??
+                0,
+              bookedAppointmentId: savedId!,
+              bookedAppointmentStart: startIso,
+              bookedAppointmentEnd: bookSlot!.end?.isValid ? bookSlot!.end.toUTC().toISO() : null,
+              petNames,
+              clientDisplayName: previewAtBook!.clientDisplayLabel?.trim() || null,
+              providerLastName: providerLastNameFromDisplayName(
+                String(previewAtBook!.option.doctorName ?? ''),
+              ),
+              isHold,
+              openSms: true,
+            });
+          }
+          clearRoutingPersistenceAfterSchedulerBook();
+          clearRoutingCalendarPreview();
+          setRoutingPreview(null);
+          clearRoutingRescheduleIntent();
+          clearRoutingForwardBookingIntent();
+          navigate(
+            schedulingReturnPathAfterBook({
+              isHold,
+              origin: 'waitlist',
+              waitlistReturnHref: waitlistReturnHref(previewAtBook),
             }),
           );
           return;

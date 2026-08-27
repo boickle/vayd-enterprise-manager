@@ -1,6 +1,7 @@
 import type { JSX } from 'react';
 import { Navigate } from 'react-router';
 import FillDayPage from './pages/FillDay';
+import WaitlistPage from './pages/WaitlistPage';
 import CareOutreachPage from './pages/CareOutreachPage';
 import ForwardBookingPage from './pages/ForwardBookingPage';
 import TextedOffersPage from './pages/TextedOffersPage';
@@ -23,6 +24,8 @@ function elementForTab(path: string): JSX.Element {
   switch (path) {
     case 'schedule-loader':
       return <FillDayPage />;
+    case 'waitlist':
+      return <WaitlistPage />;
     case 'care-outreach':
       return <CareOutreachPage />;
     case 'texted-offers':

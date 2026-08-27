@@ -32,7 +32,7 @@ export type SendSlotOfferPayload = {
     instructions?: string;
   }>;
   /** Drives staff-notes prefix on client confirm book. */
-  createdVia?: 'care_outreach' | 'schedule_loader';
+  createdVia?: 'care_outreach' | 'schedule_loader' | 'waitlist';
   /** When set, server sends this body (plus confirm link) instead of the default template. */
   smsBody?: string;
   /** Set true when replacing an existing pending offer for the same client. */
@@ -80,7 +80,7 @@ export type SlotOfferListItem = {
   smsFrom?: string | null;
   bookDescription?: string | null;
   bookInstructions?: string | null;
-  createdVia?: 'care_outreach' | 'schedule_loader' | null;
+  createdVia?: 'care_outreach' | 'schedule_loader' | 'waitlist' | null;
   serviceMinutes?: number;
   appointmentTypeId?: number;
   appointmentTypeName?: string | null;

@@ -553,7 +553,9 @@ export default function CareOutreachPage() {
       const routingIntent = readRoutingForwardBookingIntent();
       const activeRoutingForwardBookingIds =
         routingIntent?.workspaceActive &&
-        (routingIntent.origin === 'care_outreach' || routingIntent.origin === 'schedule_loader')
+        (routingIntent.origin === 'care_outreach' ||
+          routingIntent.origin === 'schedule_loader' ||
+          routingIntent.origin === 'waitlist')
           ? new Set(forwardBookingIdsFromRoutingIntent(routingIntent))
           : undefined;
       void cleanupOrphanedListOriginatedForwardBookings(
