@@ -519,6 +519,8 @@ type FormData = {
   
   // Self-scheduling: confirmed slot chosen by the client
   selfScheduledSlot?: SelfScheduledSlot | null;
+  /** Direct booking: keep this slot, but ask to be waitlisted if sooner opens. */
+  joinWaitlistIfSooner?: boolean;
 
   // Other Info
   membershipInterest?: 'Pay as you go' | 'Membership' | "I'm not sure yet";
@@ -749,6 +751,7 @@ export default function AppointmentRequestForm() {
     aftercarePreference: '',
     selectedDateTimeSlots: {},
     selectedDateTimeSlotsVisit: {},
+    joinWaitlistIfSooner: false,
   };
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -4750,6 +4753,7 @@ export default function AppointmentRequestForm() {
             windowEndIso: formData.selfScheduledSlot!.windowEndIso,
             windowDisplay: formData.selfScheduledSlot!.windowDisplay,
           },
+          ...(formData.joinWaitlistIfSooner ? { joinWaitlistIfSooner: true } : {}),
         } : {
           onlineBooking: false,
         }),
@@ -8134,6 +8138,34 @@ export default function AppointmentRequestForm() {
                         Change
                       </button>
                     </div>
+                    <label
+                      style={{
+                        display: 'flex',
+                        alignItems: 'flex-start',
+                        gap: 10,
+                        marginTop: 12,
+                        padding: '12px 14px',
+                        border: '1px solid #d1d5db',
+                        borderRadius: 10,
+                        background: '#fff',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={!!formData.joinWaitlistIfSooner}
+                        onChange={(e) => updateFormData('joinWaitlistIfSooner', e.target.checked)}
+                        style={{ marginTop: 3, width: 16, height: 16, flexShrink: 0 }}
+                      />
+                      <span>
+                        <span style={{ display: 'block', fontWeight: 700, fontSize: 14, color: '#111827' }}>
+                          I&apos;d like an earlier appointment if one opens up
+                        </span>
+                        <span style={{ display: 'block', fontSize: 13, color: '#6b7280', marginTop: 2, fontWeight: 400 }}>
+                          We&apos;ll keep this time. If a cancellation opens before then, we&apos;ll reach out.
+                        </span>
+                      </span>
+                    </label>
                     </>
                   ) : (
                     renderSelfScheduleOrPreferencesBlock({
@@ -8798,6 +8830,9 @@ export default function AppointmentRequestForm() {
             {submitSuccessKind === 'online_confirmed'
               ? 'Your appointment has been booked successfully. Please check your email for confirmation details.'
               : 'We are working on booking your appointment and will be in touch shortly.'}
+            {submitSuccessKind === 'online_confirmed' && formData.joinWaitlistIfSooner
+              ? ' We’ll also reach out if an earlier time opens up.'
+              : ''}
           </p>
           <style>{`
             .appt-form-view-pricing-btn:hover {

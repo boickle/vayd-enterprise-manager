@@ -27,6 +27,7 @@ import {
   type PracticeBranch,
 } from '../api/branchInventory';
 import type { Appointment } from '../api/roomLoader';
+import { DEFAULT_APPOINTMENT_BUFFER_MINUTES } from '../api/routing';
 import {
   buildMyWeekDriveSegmentsFromLayout,
   computeMyWeekDayColumnLayout,
@@ -750,7 +751,7 @@ function ReconcileDayGrid({
   onVisitMouseLeave: (apptId: string | number) => void;
   onVisitContextMenu: (appt: Appointment, ev: MouseEvent<HTMLElement>) => void;
 }) {
-  const bufferMin = dayData.appointmentBufferMinutes ?? 5;
+  const bufferMin = dayData.appointmentBufferMinutes ?? DEFAULT_APPOINTMENT_BUFFER_MINUTES;
   const layout = computeMyWeekDayColumnLayout(
     dayData,
     weekGrid,
@@ -1318,7 +1319,7 @@ export function SchedulerReconcileModal({
       weekGrid,
       date,
       true,
-      predicted.appointmentBufferMinutes ?? 5
+      predicted.appointmentBufferMinutes ?? DEFAULT_APPOINTMENT_BUFFER_MINUTES
     );
     if (!layout) return map;
     layout.displayHouseholds.forEach((h, idx) => {
@@ -1350,7 +1351,7 @@ export function SchedulerReconcileModal({
     : null;
 
   const gridHeightPx = weekGrid.totalMinutes * PPM;
-  const bufferMin = predicted?.appointmentBufferMinutes ?? 5;
+  const bufferMin = predicted?.appointmentBufferMinutes ?? DEFAULT_APPOINTMENT_BUFFER_MINUTES;
 
   const predictedBlocks = useMemo(() => {
     if (!predicted) return [];

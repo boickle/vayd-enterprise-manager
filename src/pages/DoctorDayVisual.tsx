@@ -21,13 +21,19 @@ import {
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import { fetchAllAppointmentTypes } from '../api/appointmentSettings';
 import { householdGroupKey } from '../utils/doctorDayHouseholdGroup';
+import {
+  appointmentIsCalendarOnlyStaffItem,
+  householdCountsAsRouteAddressStop,
+  householdPersonalBlockFlag,
+} from '../utils/calendarOnlyStaffAppointment';
+import { expandEtaDriveSecondsToHouseholds } from '../utils/schedulerEtaMerge';
 import { formatDoctorDayApptAddress } from '../utils/doctorDayAddress';
 import {
   buildAppointmentTypeCatalog,
   sumHouseholdPoints,
   type AppointmentTypeCatalog,
 } from '../utils/appointmentTypeSettings';
-import { etaHouseholdArrivalWindowPayload, fetchEtas } from '../api/routing';
+import { DEFAULT_APPOINTMENT_BUFFER_MINUTES, etaHouseholdArrivalWindowPayload, fetchEtas } from '../api/routing';
 import {
   buildEtaCandidateSlot,
   orderHouseholdsWithCandidateAtInsertion,
@@ -94,9 +100,10 @@ const TICK_HALF_BORDER = '1px dashed #eef2f6';
 const TIMELINE_LABEL_GUTTER_PX = 60;
 const DRIVE_FILL =
   'repeating-linear-gradient(135deg, #e2e8f0 0px, #e2e8f0 6px, #cbd5e1 6px, #cbd5e1 12px)';
-/** Post-visit buffer: see-through white tint; column background shows (same as My Week) */
-const BUFFER_FILL = 'rgba(255, 255, 255, 0.35)';
-const BUFFER_BORDER = '1px dashed #d1d5db';
+/** Post-visit buffer: soft yellow horizontal stripes (distinct from diagonal gray drive). */
+const BUFFER_FILL =
+  'repeating-linear-gradient(90deg, rgba(253, 224, 71, 0.45) 0px, rgba(253, 224, 71, 0.45) 5px, rgba(254, 249, 195, 0.55) 5px, rgba(254, 249, 195, 0.55) 10px)';
+const BUFFER_BORDER = '1px dashed #ca8a04';
 
 /** Parse "HH:mm" or "HH:mm:ss" to minutes from midnight. */
 function timeStrToMinutesFromMidnight(s: string): number {
@@ -477,6 +484,7 @@ function visualHouseholdUsesDoctorDayClockForLayout(
   blockMetaForFlex?: { blockLabel?: string; title?: string } | null
 ): boolean {
   if (!showByDriveTime) return true;
+  if (appointmentIsCalendarOnlyStaffItem(h.primary)) return true;
   const flexSource = blockMetaForFlex ?? h.primary;
   const flexBlock = Boolean(h.isPersonalBlock && isFlexBlockItem(flexSource));
   if (h.isPersonalBlock && !flexBlock) return true;
@@ -629,7 +637,9 @@ export default function DoctorDayVisual({
   const [depotToFirstSec, setDepotToFirstSec] = useState<number | null>(null);
   const [backToDepotSec, setBackToDepotSec] = useState<number | null>(null);
   const [backToDepotIso, setBackToDepotIso] = useState<string | null>(null);
-  const [appointmentBufferMinutes, setAppointmentBufferMinutes] = useState<number>(5);
+  const [appointmentBufferMinutes, setAppointmentBufferMinutes] = useState<number>(
+    DEFAULT_APPOINTMENT_BUFFER_MINUTES
+  );
   const [etaErr, setEtaErr] = useState<string | null>(null);
   /** When set, render in positionInDay order. From ETA response. */
   const [routingOrderIndices, setRoutingOrderIndices] = useState<number[] | null>(null);
@@ -915,7 +925,7 @@ export default function DoctorDayVisual({
       const idPart = (a as any)?.id != null ? String((a as any).id) : String(idx);
       const groupKey = householdGroupKey(a, lat, lon, addrKey, idPart, hasGeo);
 
-      const isPersonalBlock = isBlockEntry({ ...a, key: groupKey });
+      const isPersonalBlock = householdPersonalBlockFlag(a, groupKey);
 
       const patient = makePatientBadge(a, practiceTimeZone);
       const apptIsPreview = (a as any)?.isPreview === true;
@@ -1034,8 +1044,10 @@ export default function DoctorDayVisual({
         selectedDoctorId ??
         '';
 
-      // Build payload: include ALL rows in visit order; always include lat/lon (0 for non-routable)
-      const householdsPayload = ordered.map(({ h }) => {
+      // Calendar-only staff items (Note To Staff) are not geographic stops.
+      const householdsPayload = ordered
+        .filter(({ h }) => h.isPreview || !appointmentIsCalendarOnlyStaffItem(h.primary))
+        .map(({ h }) => {
         const isBlock = isBlockEntry({ ...h.primary, key: h.key });
 
         const lat = Number.isFinite(h.lat) ? (h.lat as number) : 0;
@@ -1063,7 +1075,13 @@ export default function DoctorDayVisual({
         hasVirtual && virtualAppt
           ? buildEtaCandidateSlot(
               {
-                insertionIndex: mappedInsertionIndex,
+                insertionIndex: (() => {
+                  const previewIdx = householdsPayload.findIndex((row: { key?: string }) => {
+                    const h = ordered.find((o) => o.h.key === row.key)?.h;
+                    return h?.isPreview === true;
+                  });
+                  return previewIdx >= 0 ? previewIdx : mappedInsertionIndex;
+                })(),
                 positionInDay: virtualAppt.positionInDay,
                 suggestedStartIso: virtualAppt.suggestedStartIso,
                 lat: virtualAppt.lat,
@@ -1071,7 +1089,7 @@ export default function DoctorDayVisual({
                 serviceMinutes: virtualAppt.serviceMinutes,
                 arrivalWindow: virtualAppt.arrivalWindow,
               },
-              { householdCount: ordered.length }
+              { householdCount: householdsPayload.length }
             )
           : undefined;
 
@@ -1305,7 +1323,7 @@ export default function DoctorDayVisual({
         setEtaBlockLabelByKey(labelMap);
 
         // 6) store drive/depot/buffer fields. First segment = drive from depot; use normalized result.driveSeconds[0] (same logic as My Week / routing.ts).
-        const driveArr = Array.isArray(result?.driveSeconds) ? result.driveSeconds : null;
+        const driveArr = expandEtaDriveSecondsToHouseholds(households, result);
         setDriveSecondsArr(driveArr);
         const fromApiFirst =
           driveArr && driveArr.length > 0 && typeof driveArr[0] === 'number' ? driveArr[0] : null;
@@ -1329,7 +1347,9 @@ export default function DoctorDayVisual({
         );
         setBackToDepotIso(result?.backToDepotIso ?? null);
         setAppointmentBufferMinutes(
-          typeof result?.appointmentBufferMinutes === 'number' ? result.appointmentBufferMinutes : 5
+          typeof result?.appointmentBufferMinutes === 'number'
+            ? result.appointmentBufferMinutes
+            : DEFAULT_APPOINTMENT_BUFFER_MINUTES
         );
 
         // Render in positionInDay order from ETA byIndex (routeOrder computed above for flex snap).
@@ -1558,7 +1578,7 @@ export default function DoctorDayVisual({
     const L = driveSecondsForLayout.length;
     const g0 = dayVisualGrid.gridStartMinutesFromMidnight;
     const gTot = dayVisualGrid.totalMinutes;
-    const apptBufDefault = appointmentBufferMinutes ?? 5;
+    const apptBufDefault = appointmentBufferMinutes ?? DEFAULT_APPOINTMENT_BUFFER_MINUTES;
     const bufferMinAfter = (idx: number) => {
       const v = displayTimeline[idx]?.bufferAfterMinutes;
       if (typeof v === 'number' && Number.isFinite(v)) return Math.max(0, v);
@@ -1643,7 +1663,7 @@ export default function DoctorDayVisual({
   // Geometry of each appointment block (top + height). Use ETA/ETD when available. Consecutive same-address stops are placed back-to-back (prev ETD + buffer only).
   // Offsets computed sequentially (prev block's shifted end + drive) so end-of-day blocks (e.g. 3–4 PM) don't get over-shifted (same fix as My Week).
   const blockGeom = useMemo(() => {
-    const bufferMin = appointmentBufferMinutes ?? 5;
+    const bufferMin = appointmentBufferMinutes ?? DEFAULT_APPOINTMENT_BUFFER_MINUTES;
     const N = displayHouseholds.length;
     const baseTops: number[] = [];
     const heights: number[] = [];
@@ -1708,7 +1728,16 @@ export default function DoctorDayVisual({
       } else {
         const prevEndShiftedPx = baseTops[idx - 1] + driveOffsetsPx[idx - 1] + heights[idx - 1];
         const minsJ = driveBetweenMinForLayout[idx - 1] ?? 0;
-        let off = Math.max(0, prevEndShiftedPx + minsJ * PPM - baseTop);
+        // API contract (fleetRouting ETA): "next available" = ETD + appointmentBufferMinutes + drive.
+        // vConnectors carves the buffer out of this same gap, so reserving only the drive leaves the
+        // two bands splitting the drive time instead of stacking (same fix as My Week).
+        const prevBufRaw = displayTimeline[idx - 1]?.bufferAfterMinutes;
+        const prevBufMin =
+          typeof prevBufRaw === 'number' && Number.isFinite(prevBufRaw)
+            ? Math.max(0, prevBufRaw)
+            : Math.max(0, bufferMin);
+        const reservePx = minsJ > 0 ? (prevBufMin + minsJ) * PPM : 0;
+        let off = Math.max(0, prevEndShiftedPx + reservePx - baseTop);
         const flexRow =
           h.isPersonalBlock === true &&
           (isFlexBlockItem(labelMeta) ||
@@ -1746,7 +1775,7 @@ export default function DoctorDayVisual({
       title: string;
       segKey: string;
     }> = [];
-    const apptBufDefault = appointmentBufferMinutes ?? 5;
+    const apptBufDefault = appointmentBufferMinutes ?? DEFAULT_APPOINTMENT_BUFFER_MINUTES;
     const bufferMinAfterStop = (i: number) => {
       const v = displayTimeline[i]?.bufferAfterMinutes;
       if (typeof v === 'number' && Number.isFinite(v)) return Math.max(0, v);
@@ -1756,11 +1785,11 @@ export default function DoctorDayVisual({
       const a = blockGeom[i];
       const b = blockGeom[i + 1];
       if (!a || !b) continue;
-      const gapPx = b.top - (a.top + a.height);
-      if (gapPx <= 1) continue;
+      // Full clock gap — buffer then drive are sequential; do not subtract buffer from drive space.
+      const clockGapPx = b.top - (a.top + a.height);
+      const clockGapMin = Math.max(0, clockGapPx / PPM);
+      const gapRound = Math.max(0, Math.round(clockGapMin));
       const bufMin = bufferMinAfterStop(i);
-      const bufPx = Math.min(gapPx, bufMin * PPM);
-      const remainingPx = gapPx - bufPx;
       let driveMinApi = driveBetweenMinForLayout[i] ?? 0;
       if (
         driveMinApi <= 0 &&
@@ -1772,11 +1801,13 @@ export default function DoctorDayVisual({
       ) {
         const d0 = driveSecondsForLayout[0] ?? 0;
         const d1 = driveSecondsForLayout[1] ?? 0;
+        // After a barrier, prefer the routed leg seconds when present (not the leftover gap).
         if (d0 > 0 && (d1 === 0 || d0 === d1)) {
-          driveMinApi = Math.max(0, Math.round(remainingPx / PPM));
+          driveMinApi = Math.max(0, Math.round(d0 / 60));
+        } else if (d1 > 0) {
+          driveMinApi = Math.max(0, Math.round(d1 / 60));
         }
       }
-      const gapAvailMin = Math.max(0, remainingPx / PPM);
       const routeMinRounded =
         driveMinApi > 0 ? Math.max(1, Math.round(driveMinApi)) : 0;
       const prevBarrier = displayHouseholds[i]?.isPersonalBlock === true;
@@ -1793,79 +1824,67 @@ export default function DoctorDayVisual({
       const paintDriveMin = skipBarrierBarrierDrive
         ? 0
         : routeMinForTitle > 0
-          ? Math.min(gapAvailMin, routeMinForTitle)
-          : gapAvailMin;
-      const drivePx = paintDriveMin * PPM;
+          ? routeMinForTitle
+          : 0;
+
+      if (bufMin <= 0 && paintDriveMin <= 0) continue;
+
       const bottomAPx = a.top + a.height;
       let yBuf = bottomAPx;
-      if (bufPx > 1) {
-        const bm = Math.max(1, Math.round(bufPx / PPM));
+      if (bufMin > 0) {
+        const bufPx = bufMin * PPM;
+        const bm = Math.max(1, Math.round(bufMin));
         out.push({
           top: yBuf,
           height: Math.max(4, bufPx),
           mins: bm,
           kind: 'buffer',
-          title: `Buffer after visit: ${bm} min`,
+          title:
+            gapRound + 1e-6 < bm
+              ? `Buffer after visit: ${bm} min (only ${Math.max(1, gapRound)} min available)`
+              : `Buffer after visit: ${bm} min`,
           segKey: `vdd-between-${i}-buf`,
         });
         yBuf += bufPx;
       }
-      if (drivePx > 1) {
-        const winStartPx = bottomAPx + bufPx;
-        const nextTopPx = b.top;
-        const placeHugNext = () => nextTopPx - drivePx >= winStartPx - 1e-6;
-        const placeHugPrev = () => winStartPx + drivePx <= nextTopPx + 1e-6;
-        let driveTopPx: number;
-        if (prevBarrier && !nextBarrier) {
-          if (placeHugNext()) driveTopPx = nextTopPx - drivePx;
-          else if (placeHugPrev()) driveTopPx = winStartPx;
-          else driveTopPx = nextTopPx - drivePx;
-        } else if (!prevBarrier && nextBarrier) {
-          if (placeHugPrev()) driveTopPx = winStartPx;
-          else if (placeHugNext()) driveTopPx = nextTopPx - drivePx;
-          else driveTopPx = winStartPx;
-        } else if (prevBarrier && nextBarrier) {
-          if (placeHugNext()) driveTopPx = nextTopPx - drivePx;
-          else if (placeHugPrev()) driveTopPx = winStartPx;
-          else driveTopPx = nextTopPx - drivePx;
-        } else {
-          if (placeHugPrev()) driveTopPx = winStartPx;
-          else if (placeHugNext()) driveTopPx = nextTopPx - drivePx;
-          else driveTopPx = winStartPx;
-        }
-        const schedMin = Math.max(1, Math.round(drivePx / PPM));
-        const gapRound = Math.max(1, Math.round(gapAvailMin));
-        const d0 =
-          Array.isArray(driveSecondsForLayout) && driveSecondsForLayout.length > 0
-            ? driveSecondsForLayout[0] ?? 0
-            : 0;
-        const visitLegOnNext =
-          i === 0 &&
-          prevBarrier &&
-          !nextBarrier &&
-          d0 === 0 &&
-          typeof dsHop === 'number' &&
-          dsHop > 0;
-        const nextName = (displayHouseholds[i + 1]?.client || '').trim() || 'visit';
-        const title = visitLegOnNext
-          ? routeMinForTitle > 0 && gapRound > routeMinForTitle + 1e-6
-            ? `Drive before ${nextName}: ${routeMinForTitle} min route (${gapRound} min gap)`
-            : routeMinForTitle > 0
-              ? `Drive before ${nextName}: ${routeMinForTitle} min`
+      if (paintDriveMin > 0) {
+        const drivePx = paintDriveMin * PPM;
+        if (drivePx > 1) {
+          // Sequential: drive starts immediately after buffer (may overrun into next stop).
+          // Leftover minutes after buffer+drive (e.g. ETA rounding) stay unpainted white.
+          const driveTopPx = yBuf;
+          const schedMin = Math.max(1, Math.round(paintDriveMin));
+          const d0 =
+            Array.isArray(driveSecondsForLayout) && driveSecondsForLayout.length > 0
+              ? driveSecondsForLayout[0] ?? 0
+              : 0;
+          const visitLegOnNext =
+            i === 0 &&
+            prevBarrier &&
+            !nextBarrier &&
+            d0 === 0 &&
+            typeof dsHop === 'number' &&
+            dsHop > 0;
+          const nextName = (displayHouseholds[i + 1]?.client || '').trim() || 'visit';
+          const neededMin = bufMin + paintDriveMin;
+          const legDoesNotFit = neededMin > clockGapMin + 1e-6;
+          const gapLabel = Math.max(1, gapRound);
+          const title = visitLegOnNext
+            ? legDoesNotFit
+              ? `Drive before ${nextName}: ${schedMin} min (only ${gapLabel} min available)`
               : `Drive before ${nextName}: ${schedMin} min`
-          : routeMinForTitle > 0 && gapRound > routeMinForTitle + 1e-6
-            ? `Drive to next stop: ${routeMinForTitle} min · ${gapRound} min until next stop`
-            : routeMinForTitle > 0
-              ? `Drive to next stop: ${routeMinForTitle} min`
+            : legDoesNotFit
+              ? `Drive to next stop: ${schedMin} min (only ${gapLabel} min available)`
               : `Drive to next stop: ${schedMin} min`;
-        out.push({
-          top: driveTopPx,
-          height: Math.max(4, drivePx),
-          mins: routeMinForTitle > 0 ? routeMinForTitle : schedMin,
-          kind: 'drive',
-          title,
-          segKey: `vdd-between-${i}-drv`,
-        });
+          out.push({
+            top: driveTopPx,
+            height: Math.max(4, drivePx),
+            mins: schedMin,
+            kind: 'drive',
+            title,
+            segKey: `vdd-between-${i}-drv`,
+          });
+        }
       }
     }
     return out;
@@ -1967,7 +1986,7 @@ export default function DoctorDayVisual({
     const mins = backDepotMin;
     let lastAddressIdx = -1;
     for (let i = displayHouseholds.length - 1; i >= 0; i--) {
-      if (!displayHouseholds[i]?.isPersonalBlock) {
+      if (householdCountsAsRouteAddressStop(displayHouseholds[i])) {
         lastAddressIdx = i;
         break;
       }
@@ -1980,7 +1999,7 @@ export default function DoctorDayVisual({
     const startY = lastBlock.top + lastBlock.height;
     const g0 = dayVisualGrid.gridStartMinutesFromMidnight;
     const gTot = dayVisualGrid.totalMinutes;
-    const apptBufDefault = appointmentBufferMinutes ?? 5;
+    const apptBufDefault = appointmentBufferMinutes ?? DEFAULT_APPOINTMENT_BUFFER_MINUTES;
     const rawLast = displayTimeline[lastAddressIdx]?.bufferAfterMinutes;
     const bufMinLast =
       typeof rawLast === 'number' && Number.isFinite(rawLast)

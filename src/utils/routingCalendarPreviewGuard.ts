@@ -41,6 +41,9 @@ export function getScheduleCalendarPreviewBlockedMessage(): string {
   if (preview?.previewSource === 'schedule-loader') {
     return 'Go back to Schedule Loader or dismiss the preview before using the calendar.';
   }
+  if (preview?.previewSource === 'waitlist') {
+    return 'Go back to Waitlist or dismiss the preview before using the calendar.';
+  }
   if (preview) {
     return 'Dismiss the calendar preview before using the calendar.';
   }

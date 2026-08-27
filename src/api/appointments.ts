@@ -126,6 +126,8 @@ export type CreateAppointmentPayload = {
   forwardBookingTrackingToken?: string;
   /** When the server creates/links a forward-booking row from this book (Fill Day, care outreach routing). */
   forwardBookingCreatedVia?: ForwardBookingCreatedVia;
+  /** Keep this household on the waitlist for a sooner visit than the one just booked. */
+  joinWaitlistIfSooner?: boolean;
 };
 
 export type UpdateAppointmentPayload = Record<string, unknown> & {
