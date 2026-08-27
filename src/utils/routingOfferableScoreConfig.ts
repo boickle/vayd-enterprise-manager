@@ -49,8 +49,41 @@ export type OfferableScoreThresholdsByBucket = Partial<
   Record<OfferableScoreDayBucket, number>
 >;
 
+/**
+ * Share of recently scored slots a bucket admits, 1-100. 57 means "offer the
+ * best 57%". Mirrors vayd-api `OfferableScorePercentilesByBucket`.
+ */
+export type OfferableScorePercentilesByBucket = Partial<
+  Record<OfferableScoreDayBucket, number>
+>;
+
+/** Measured score distribution, used to turn a percentage into a score ceiling. */
+export type OfferableScoreCalibration = {
+  generatedAt: string;
+  windowDays: number;
+  sampleSize: number;
+  doctorCount: number;
+  excludedDoctorCount: number;
+  /** Scoring scale the curve was measured on; a mismatch means it is stale. */
+  scoringScale: string;
+  /**
+   * `measured` reads scores the router emitted on the active scale. `replayed`
+   * reconstructs them from pre-change history to bridge the gap after a scoring
+   * change, and is an estimate rather than a direct measurement.
+   */
+  source: 'measured' | 'replayed';
+  /** curve[p] = score at percentile p. Length 101, ascending. */
+  curve: number[];
+};
+
+export const OFFERABLE_SCORE_CALIBRATION_CURVE_POINTS = 101;
+
 export type RoutingOfferableScoreConfig = {
-  /** Global defaults when an appointment type does not override a bucket. */
+  /**
+   * Resolved score ceilings — always what gating uses. Derived from
+   * `percentiles` at save time when a calibration exists, so the stored numbers
+   * and the slider positions cannot disagree.
+   */
   defaults: Record<OfferableScoreDayBucket, number>;
   /** Added to the resolved threshold for member-tier online booking. */
   memberBonus: number;
@@ -59,9 +92,17 @@ export type RoutingOfferableScoreConfig = {
    * `defaults`. Types with no entry use defaults entirely.
    */
   byAppointmentTypeId: Record<string, OfferableScoreThresholdsByBucket>;
+  /** Editing source of truth once calibrated. Empty means scores were set directly. */
+  percentiles: OfferableScorePercentilesByBucket;
+  byAppointmentTypeIdPercentiles: Record<
+    string,
+    OfferableScorePercentilesByBucket
+  >;
+  calibration: OfferableScoreCalibration | null;
 };
 
-export const DEFAULT_MEMBER_BONUS = 25;
+/** Mirrors vayd-api ROUTING_OFFERABLE_MEMBER_BONUS. Scales with the gate: 22 under goal-aware density, 25 under legacy. */
+export const DEFAULT_MEMBER_BONUS = 22;
 
 export function defaultRoutingOfferableScoreConfig(): RoutingOfferableScoreConfig {
   return {
@@ -73,6 +114,9 @@ export function defaultRoutingOfferableScoreConfig(): RoutingOfferableScoreConfi
     },
     memberBonus: DEFAULT_MEMBER_BONUS,
     byAppointmentTypeId: {},
+    percentiles: {},
+    byAppointmentTypeIdPercentiles: {},
+    calibration: null,
   };
 }
 
@@ -80,6 +124,127 @@ function parseScore(value: unknown): number | null {
   const n = Number(value);
   if (!Number.isFinite(n) || n < 0) return null;
   return Math.round(n);
+}
+
+/** Percentiles are clamped to 1-100; 0 would admit nothing and is always a mistake. */
+export function parsePercentile(value: unknown): number | null {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  const rounded = Math.round(n);
+  if (rounded < 1 || rounded > 100) return null;
+  return rounded;
+}
+
+function parsePercentileMap(raw: unknown): OfferableScorePercentilesByBucket {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const out: OfferableScorePercentilesByBucket = {};
+  for (const bucket of OFFERABLE_SCORE_DAY_BUCKETS) {
+    const n = parsePercentile((raw as Record<string, unknown>)[bucket]);
+    if (n != null) out[bucket] = n;
+  }
+  return out;
+}
+
+function parseCalibration(raw: unknown): OfferableScoreCalibration | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const obj = raw as Record<string, unknown>;
+  if (!Array.isArray(obj.curve)) return null;
+  const curve = obj.curve.map((v) => Number(v));
+  if (
+    curve.length !== OFFERABLE_SCORE_CALIBRATION_CURVE_POINTS ||
+    curve.some((v) => !Number.isFinite(v))
+  ) {
+    return null;
+  }
+  const int = (v: unknown) => {
+    const n = Number(v);
+    return Number.isFinite(n) && n >= 0 ? Math.round(n) : 0;
+  };
+  return {
+    generatedAt:
+      typeof obj.generatedAt === 'string' && obj.generatedAt.trim()
+        ? obj.generatedAt
+        : new Date(0).toISOString(),
+    windowDays: int(obj.windowDays),
+    sampleSize: int(obj.sampleSize),
+    doctorCount: int(obj.doctorCount),
+    excludedDoctorCount: int(obj.excludedDoctorCount),
+    scoringScale:
+      typeof obj.scoringScale === 'string' && obj.scoringScale.trim()
+        ? obj.scoringScale.trim()
+        : 'unknown',
+    source: obj.source === 'replayed' ? 'replayed' : 'measured',
+    curve,
+  };
+}
+
+/** Score ceiling admitting the best `percentile`% of recently scored slots. */
+export function scoreAtPercentile(
+  calibration: OfferableScoreCalibration,
+  percentile: number,
+): number {
+  const curve = calibration.curve;
+  const last = curve.length - 1;
+  const p = Math.min(100, Math.max(0, percentile));
+  const lo = Math.floor(p);
+  const hi = Math.ceil(p);
+  const loScore = curve[Math.min(last, lo)]!;
+  if (lo === hi) return Math.round(loScore);
+  const hiScore = curve[Math.min(last, hi)]!;
+  return Math.round(loScore + (hiScore - loScore) * (p - lo));
+}
+
+/** Where an absolute score sits on the curve, for showing a setting as a percentage. */
+export function percentileForScore(
+  calibration: OfferableScoreCalibration | null,
+  score: number,
+): number | null {
+  if (!calibration) return null;
+  const curve = calibration.curve;
+  if (score <= curve[0]!) return 0;
+  const last = curve.length - 1;
+  if (score >= curve[last]!) return 100;
+  for (let i = 1; i <= last; i += 1) {
+    const prev = curve[i - 1]!;
+    const cur = curve[i]!;
+    if (score <= cur) {
+      if (cur === prev) return i;
+      return Math.round(i - 1 + (score - prev) / (cur - prev));
+    }
+  }
+  return 100;
+}
+
+/** Recompute every ceiling from its percentile so scores and sliders agree. */
+export function resolveConfigFromPercentiles(
+  config: RoutingOfferableScoreConfig,
+): RoutingOfferableScoreConfig {
+  const calibration = config.calibration;
+  if (!calibration) return config;
+
+  const defaults = { ...config.defaults };
+  for (const bucket of OFFERABLE_SCORE_DAY_BUCKETS) {
+    const pct = config.percentiles[bucket];
+    if (pct != null) defaults[bucket] = scoreAtPercentile(calibration, pct);
+  }
+
+  const byAppointmentTypeId: Record<string, OfferableScoreThresholdsByBucket> =
+    {};
+  for (const [typeId, buckets] of Object.entries(config.byAppointmentTypeId)) {
+    byAppointmentTypeId[typeId] = { ...buckets };
+  }
+  for (const [typeId, pcts] of Object.entries(
+    config.byAppointmentTypeIdPercentiles,
+  )) {
+    const target = { ...(byAppointmentTypeId[typeId] ?? {}) };
+    for (const bucket of OFFERABLE_SCORE_DAY_BUCKETS) {
+      const pct = pcts[bucket];
+      if (pct != null) target[bucket] = scoreAtPercentile(calibration, pct);
+    }
+    if (Object.keys(target).length > 0) byAppointmentTypeId[typeId] = target;
+  }
+
+  return { ...config, defaults, byAppointmentTypeId };
 }
 
 function parseBucketMap(
@@ -143,11 +308,36 @@ export function parseRoutingOfferableScoreConfig(
     }
   }
 
-  return {
+  const byTypePctRaw = obj.byAppointmentTypeIdPercentiles;
+  const byAppointmentTypeIdPercentiles: Record<
+    string,
+    OfferableScorePercentilesByBucket
+  > = {};
+  if (
+    byTypePctRaw &&
+    typeof byTypePctRaw === 'object' &&
+    !Array.isArray(byTypePctRaw)
+  ) {
+    for (const [typeId, buckets] of Object.entries(
+      byTypePctRaw as Record<string, unknown>,
+    )) {
+      const id = String(typeId).trim();
+      if (!id) continue;
+      const map = parsePercentileMap(buckets);
+      if (Object.keys(map).length > 0) {
+        byAppointmentTypeIdPercentiles[id] = map;
+      }
+    }
+  }
+
+  return resolveConfigFromPercentiles({
     defaults: mergedDefaults,
     memberBonus,
     byAppointmentTypeId,
-  };
+    percentiles: parsePercentileMap(obj.percentiles),
+    byAppointmentTypeIdPercentiles,
+    calibration: parseCalibration(obj.calibration),
+  });
 }
 
 /**
@@ -252,5 +442,8 @@ export function serializeRoutingOfferableScoreConfig(
     defaults: normalized.defaults,
     memberBonus: normalized.memberBonus,
     byAppointmentTypeId: normalized.byAppointmentTypeId,
+    percentiles: normalized.percentiles,
+    byAppointmentTypeIdPercentiles: normalized.byAppointmentTypeIdPercentiles,
+    calibration: normalized.calibration,
   });
 }

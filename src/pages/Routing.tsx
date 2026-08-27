@@ -1808,10 +1808,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
   const [maxAddedDriveMinutes] = useState(20);
   // Reserve/Overflow option: 'reserve-only' | 'reserve-overflow' | null
   const [reserveOption, setReserveOption] = useState<'reserve-only' | 'reserve-overflow' | null>(
-    () =>
-      bootstrap.asapAllDoctorSearch && bootstrap.reserveOption === null
-        ? 'reserve-only'
-        : bootstrap.reserveOption
+    () => (bootstrap.asapAllDoctorSearch ? 'reserve-only' : null)
   );
   const [asapAllDoctorSearch, setAsapAllDoctorSearch] = useState(() => bootstrap.asapAllDoctorSearch);
   const [resultsSortedByDateTime, setResultsSortedByDateTime] = useState(false);
@@ -3302,7 +3299,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       preferEarliestFeasibleStart,
       edgeFirst,
       edgeLast,
-      reserveOption,
+      reserveOption: null, // not sticky — always re-opt into Use Reserve (ASAP sets it live)
       asapAllDoctorSearch,
       clientQuery,
       doctorQuery,
@@ -3485,6 +3482,10 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     ) {
       payload.previewSource = 'schedule-loader';
       payload.scheduleLoaderReturn = forwardBookingIntent.scheduleLoaderReturn;
+    }
+    if (forwardBookingIntent?.origin === 'waitlist' && forwardBookingIntent.waitlistReturn) {
+      payload.previewSource = 'waitlist';
+      payload.waitlistReturn = forwardBookingIntent.waitlistReturn;
     }
 
     writeRoutingCalendarPreview(payload);
@@ -5649,6 +5650,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
                 const checked = e.target.checked;
                 setAsapAllDoctorSearch(checked);
                 if (checked) setReserveOption('reserve-only');
+                else setReserveOption(null);
               }}
             />
             <span>ASAP All Doctors In Zone Search</span>

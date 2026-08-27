@@ -73,7 +73,7 @@ export type RoutingForwardBookingIntentV1 = {
    */
   workspaceActive?: boolean;
   /** When set, return-to-list SMS uses the care outreach template after hold book. */
-  origin?: 'care_outreach' | 'schedule_loader';
+  origin?: 'care_outreach' | 'schedule_loader' | 'waitlist';
   /** Pet names for care outreach SMS (household book from care outreach list). */
   careOutreachPetNames?: string[];
   /** When true, care outreach SMS after hold book uses past-due wording. */
@@ -99,6 +99,13 @@ export type RoutingForwardBookingIntentV1 = {
   reserveOption?: 'reserve-only' | 'reserve-overflow' | null;
   /** Return navigation when dismissing calendar preview from schedule loader → routing. */
   scheduleLoaderReturn?: {
+    clientId: number;
+    returnHref: string;
+  };
+  /** Waitlist entry that routing was started from. */
+  waitlistEntryId?: number;
+  waitlistReturn?: {
+    entryId: number;
     clientId: number;
     returnHref: string;
   };
@@ -228,7 +235,13 @@ export async function abandonListOriginatedForwardBookingWorkspace(
   intent: RoutingForwardBookingIntentV1,
   practiceId: number
 ): Promise<void> {
-  if (intent.origin !== 'care_outreach' && intent.origin !== 'schedule_loader') return;
+  if (
+    intent.origin !== 'care_outreach' &&
+    intent.origin !== 'schedule_loader' &&
+    intent.origin !== 'waitlist'
+  ) {
+    return;
+  }
   const ids = forwardBookingIdsFromRoutingIntent(intent);
   await Promise.all(
     ids.map((id) =>

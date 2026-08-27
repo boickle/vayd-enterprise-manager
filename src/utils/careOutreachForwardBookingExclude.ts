@@ -28,7 +28,7 @@ function listOriginatedForwardBookingBlocksCareOutreach(
 /** Unbooked care-outreach / schedule-loader rows left after abandoning Route (hidden on both lists). */
 export function isOrphanedListOriginatedForwardBooking(entry: ForwardBookingEntry): boolean {
   const via = normalizeForwardBookingCreatedVia(entry.createdVia);
-  if (via !== 'care_outreach' && via !== 'schedule_loader') return false;
+  if (via !== 'care_outreach' && via !== 'schedule_loader' && via !== 'waitlist') return false;
   if (entry.status === 'removed' || entry.status === 'complete') return false;
   return !forwardBookingHasLinkedVisit(entry);
 }
@@ -66,7 +66,7 @@ export function forwardBookingPatientIdsActiveInQueue(
     if (!forwardBookingEntryVisibleOnList(row)) continue;
 
     const via = normalizeForwardBookingCreatedVia(row.createdVia);
-    if (via === 'care_outreach' || via === 'schedule_loader') {
+    if (via === 'care_outreach' || via === 'schedule_loader' || via === 'waitlist') {
       if (!listOriginatedForwardBookingBlocksCareOutreach(row, opts)) continue;
       const pid = row.patientId;
       if (pid != null && Number.isFinite(Number(pid)) && Number(pid) > 0) {

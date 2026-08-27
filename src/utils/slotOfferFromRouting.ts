@@ -2,7 +2,7 @@ import { DateTime } from 'luxon';
 import type { SendSlotOfferPayload } from '../api/slotOffers';
 import type { RoutingCalendarPreviewPayloadV1 } from './routingCalendarPreviewStorage';
 import type { ForwardBookingCreatedVia } from '../api/forwardBooking';
-import { isScheduleLoaderCalendarPreview } from './routingCalendarPreviewStorage';
+import { isScheduleLoaderCalendarPreview, isWaitlistCalendarPreview } from './routingCalendarPreviewStorage';
 
 type RoutingPreviewOption = RoutingCalendarPreviewPayloadV1['option'] & {
   suggestedStartSec?: number;
@@ -24,10 +24,10 @@ export function slotOfferFlowActive(
   preview: RoutingCalendarPreviewPayloadV1 | null | undefined
 ): boolean {
   if (!prefill?.routingPreviewBook || prefill.rescheduleAppointmentId != null) return false;
-  if (prefill.forwardBookingCreatedVia === 'care_outreach' || prefill.forwardBookingCreatedVia === 'schedule_loader') {
+  if (prefill.forwardBookingCreatedVia === 'care_outreach' || prefill.forwardBookingCreatedVia === 'schedule_loader' || prefill.forwardBookingCreatedVia === 'waitlist') {
     return true;
   }
-  return isScheduleLoaderCalendarPreview(preview);
+  return isScheduleLoaderCalendarPreview(preview) || isWaitlistCalendarPreview(preview);
 }
 
 function zoneIdFromOption(opt: RoutingPreviewOption): number | null {

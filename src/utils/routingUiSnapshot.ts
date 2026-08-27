@@ -202,10 +202,9 @@ export function readRoutingUiBootstrap(): RoutingUiBootstrap {
             preferEarliestFeasibleStart: !!s.preferEarliestFeasibleStart,
             edgeFirst: !!s.edgeFirst,
             edgeLast: !!s.edgeLast,
-            reserveOption:
-              s.reserveOption === 'reserve-only' || s.reserveOption === 'reserve-overflow'
-                ? s.reserveOption
-                : null,
+            // Never restore Use Reserve from session — staff must opt in each visit
+            // (ASAP search still auto-selects it when that checkbox is on).
+            reserveOption: null,
             asapAllDoctorSearch: !!s.asapAllDoctorSearch,
             clientQuery: typeof s.clientQuery === 'string' ? s.clientQuery : '',
             doctorQuery: typeof s.doctorQuery === 'string' ? s.doctorQuery : '',
