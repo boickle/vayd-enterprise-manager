@@ -5953,6 +5953,18 @@ label.scheduler-household-pet-row {
   color: #b45309;
 }
 
+.scheduler-edit-preview-popover-line--window-warning {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #fef3c7;
+  border: 1px solid #f59e0b;
+  color: #92400e;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
 .scheduler-edit-preview-popover-line--muted {
   font-size: 11px;
   color: #64748b;

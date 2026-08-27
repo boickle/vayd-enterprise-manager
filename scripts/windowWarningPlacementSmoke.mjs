@@ -1,9 +1,12 @@
 /**
  * Smoke: window warnings (Belle/Hews thread — #bugs-scout 1787344353.605449)
+ * + Harris/Crispell thread — #bugs-scout 1787847418.954429
  *
  * 1) "Within 20 minutes of window end" is inclusive (ETA exactly 20m before end warns).
  * 2) View Placement must not attribute an *upstream* pre-existing tight visit to the new
  *    result card — only the candidate or stops at/after it in route order.
+ * 3) Card ETA summary must use the same window resolution as calendar badges (type ±N
+ *    fallback when household/slot lack effectiveWindow) so Book alerts before schedule.
  *
  * Run: node scripts/windowWarningPlacementSmoke.mjs
  */
@@ -42,6 +45,42 @@ function computeDriveTimeWindowWarning(opts) {
   return false;
 }
 
+/** Minimal mirror of resolveArrivalWindowIsos type ±N fallback (UTC minutes). */
+function resolveWindowFromHousehold(h, slot) {
+  const apptEw = h.primary?.effectiveWindow;
+  if (apptEw?.startIso && apptEw?.endIso) {
+    return { startIso: apptEw.startIso, endIso: apptEw.endIso };
+  }
+  if (h.effectiveWindow?.startIso && h.effectiveWindow?.endIso) {
+    return { startIso: h.effectiveWindow.startIso, endIso: h.effectiveWindow.endIso };
+  }
+  if (h.windowStartIso && h.windowEndIso) {
+    return { startIso: h.windowStartIso, endIso: h.windowEndIso };
+  }
+  if (slot?.windowStartIso != null && slot?.windowEndIso != null) {
+    const slotStart = String(slot.windowStartIso).trim();
+    const slotEnd = String(slot.windowEndIso).trim();
+    if (slotStart && slotEnd) return { startIso: slotStart, endIso: slotEnd };
+  }
+  const startIso = h.startIso ?? h.primary?.appointmentStart;
+  const type = h.primary?.appointmentType;
+  if (!startIso || !type) return null;
+  const before =
+    typeof type.windowBeforeMinutes === 'number' && type.windowBeforeMinutes >= 0
+      ? type.windowBeforeMinutes
+      : 60;
+  const after =
+    typeof type.windowAfterMinutes === 'number' && type.windowAfterMinutes >= 0
+      ? type.windowAfterMinutes
+      : 60;
+  const startMs = Date.parse(startIso);
+  if (!Number.isFinite(startMs)) return null;
+  return {
+    startIso: new Date(startMs - before * 60000).toISOString(),
+    endIso: new Date(startMs + after * 60000).toISOString(),
+  };
+}
+
 /** Mirrors src/utils/routingCardWindowWarning.ts summarizeReconciledDayWindowWarnings */
 function summarizeReconciledDayWindowWarnings(dayData) {
   if (!dayData?.households?.length) {
@@ -77,10 +116,11 @@ function summarizeReconciledDayWindowWarnings(dayData) {
     const h = households[idx];
     if (!h || h.isPersonalBlock) continue;
     const slot = dayData.timeline[idx] ?? {};
+    const resolved = resolveWindowFromHousehold(h, slot);
     const warns = computeDriveTimeWindowWarning({
       etaIso: slot.eta ?? null,
-      windowEndIso: h.effectiveWindow?.endIso ?? null,
-      windowStartIso: h.effectiveWindow?.startIso ?? null,
+      windowEndIso: resolved?.endIso ?? null,
+      windowStartIso: resolved?.startIso ?? null,
       isClientFixedTime: false,
       scheduledStartIso: h.startIso,
     });
@@ -242,6 +282,60 @@ assert(down.hasPlacementRelevantWarning === true, 'downstream tightness is place
 assert(
   routingCardWindowWarningReasons({}, down).includes('eta-reconciled'),
   'routing card warns when a later stop is pushed near window end'
+);
+
+// Harris/Crispell: calendar badges use type ±N when household has no effectiveWindow;
+// card summary must not stay quiet in that case (Book alert before putting on schedule).
+const dayTypeFallbackDownstream = {
+  households: [
+    {
+      isPreview: true,
+      isPersonalBlock: false,
+      startIso: `${day}T17:40:00.000Z`, // 1:40 PM EDT
+      // no effectiveWindow / windowStartIso — only type metadata on primary
+      primary: {
+        appointmentStart: `${day}T17:40:00.000Z`,
+        appointmentType: {
+          name: 'Standard',
+          windowBeforeMinutes: 60,
+          windowAfterMinutes: 60,
+        },
+      },
+    },
+    {
+      isPreview: false,
+      isPersonalBlock: false,
+      startIso: `${day}T18:30:00.000Z`, // 2:30 PM booked
+      primary: {
+        appointmentStart: `${day}T18:30:00.000Z`,
+        appointmentType: {
+          name: 'Standard',
+          windowBeforeMinutes: 60,
+          windowAfterMinutes: 60,
+        },
+      },
+    },
+  ],
+  timeline: [
+    { eta: `${day}T17:40:00.000Z` }, // candidate fine vs ±60 → end 2:40
+    { eta: `${day}T19:25:00.000Z` }, // 3:25 PM; window end 3:30 → 5m left → warn
+  ],
+  routingOrderIndices: [0, 1],
+};
+const typeFallback = summarizeReconciledDayWindowWarnings(dayTypeFallbackDownstream);
+assert(
+  typeFallback.hasPlacementRelevantWarning === true,
+  'type ±N fallback must make downstream tightness placement-relevant'
+);
+assert(
+  routingCardWindowWarningReasons({}, typeFallback).includes('eta-reconciled'),
+  'routing card / Book popover must warn when calendar would show a downstream Window Warning'
+);
+
+// Without type fallback (legacy household-only), this day would incorrectly stay quiet:
+assert(
+  !dayTypeFallbackDownstream.households[1].effectiveWindow,
+  'fixture has no household effectiveWindow (forces type path)'
 );
 
 console.log('windowWarningPlacementSmoke: ok');
