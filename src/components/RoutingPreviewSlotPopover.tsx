@@ -36,6 +36,10 @@ type Props = {
   backLabel?: string;
   /** Shown for Optimize: keep the original visit and book a second one at the preview slot. */
   onAddAlternative?: () => void;
+  /** Shown for Optimize: queue this suggestion without rescheduling yet. */
+  onAddToList?: () => void;
+  addToListDisabled?: boolean;
+  addToListLabel?: string;
 };
 
 function formatPracticeRange(startIso: string, endIso: string, practiceTz: string): string {
@@ -90,6 +94,9 @@ export function RoutingPreviewSlotPopover({
   onBack,
   backLabel,
   onAddAlternative,
+  onAddToList,
+  addToListDisabled,
+  addToListLabel,
 }: Props) {
   const opt = preview.option;
   const isScheduleLoader = isScheduleLoaderCalendarPreview(preview);
@@ -228,6 +235,16 @@ export function RoutingPreviewSlotPopover({
             onClick={onAddAlternative}
           >
             Add alternative
+          </button>
+        ) : null}
+        {isOptimize && onAddToList ? (
+          <button
+            type="button"
+            className="btn secondary scheduler-edit-preview-popover-alt"
+            disabled={bookDisabled || addToListDisabled}
+            onClick={onAddToList}
+          >
+            {addToListLabel ?? 'Add to list'}
           </button>
         ) : null}
         {onBack ? (

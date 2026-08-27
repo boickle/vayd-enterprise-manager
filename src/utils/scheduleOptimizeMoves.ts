@@ -103,12 +103,13 @@ function householdAppointmentIds(h: WeekHousehold): number[] {
 }
 
 function householdClientId(h: WeekHousehold): number | null {
+  const fromPrimary = numId((h.primary as { clientId?: unknown }).clientId);
+  if (fromPrimary != null) return fromPrimary;
   const c = h.primary.client;
   if (c && typeof c === 'object') {
-    const id = numId((c as { id?: unknown }).id);
-    if (id != null) return id;
+    return numId((c as { id?: unknown }).id);
   }
-  return numId((h.primary as { clientId?: unknown }).clientId);
+  return null;
 }
 
 function householdClientPhone(h: WeekHousehold): string | null {

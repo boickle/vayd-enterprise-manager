@@ -1,11 +1,19 @@
 import { DateTime } from 'luxon';
-import { appendCareOutreachSmsSuffix } from './careOutreachSmsMessage';
 
-function firstName(clientDisplayName?: string | null): string {
-  const full = clientDisplayName?.trim();
-  if (full) return full.split(/\s+/).filter(Boolean)[0] || 'there';
-  return 'there';
-}
+export type ScheduleOptimizeSmsKind = 'ask' | 'moved';
+
+export type ScheduleOptimizeSmsFields = {
+  petNames: readonly string[];
+  fromDate: string;
+  toDate: string;
+  practiceTz: string;
+  fromTimeLabel?: string | null;
+  toTimeLabel?: string | null;
+  fromWindowLabel?: string | null;
+  toWindowLabel?: string | null;
+  originalStartIso?: string | null;
+  newStartIso?: string | null;
+};
 
 function petPhrase(names: readonly string[]): string {
   const cleaned = names.map((n) => n.trim()).filter(Boolean);
@@ -15,38 +23,61 @@ function petPhrase(names: readonly string[]): string {
   return `${cleaned.slice(0, -1).join(', ')}, and ${cleaned[cleaned.length - 1]}`;
 }
 
-function providerLastName(doctorName?: string | null): string | null {
-  const parts = (doctorName ?? '').trim().split(/\s+/).filter(Boolean);
-  return parts.length ? parts[parts.length - 1]! : null;
+function petsAppointmentPhrase(names: readonly string[]): string {
+  const phrase = petPhrase(names);
+  if (phrase === 'your pet') return "your pet's appointment";
+  if (phrase.toLowerCase().endsWith('s')) return `${phrase}' appointment`;
+  return `${phrase}'s appointment`;
 }
 
-function slotPhrase(dateIso: string, timeLabel: string, practiceTz: string): string {
-  const dt = DateTime.fromISO(dateIso, { zone: practiceTz });
-  const day = dt.isValid ? dt.toFormat('cccc, LLL d') : dateIso;
-  const time = timeLabel.trim();
+function weekdayDate(dateIso: string, practiceTz: string, fallbackIso?: string | null): string {
+  let dt = DateTime.fromISO(dateIso, { zone: practiceTz });
+  if (!dt.isValid && fallbackIso) {
+    dt = DateTime.fromISO(fallbackIso, { zone: 'utc' }).setZone(practiceTz);
+  }
+  return dt.isValid ? dt.toFormat('cccc, LLLL d') : dateIso.trim();
+}
+
+function clockLabel(timeLabel?: string | null, startIso?: string | null, practiceTz?: string): string {
+  const labeled = timeLabel?.trim();
+  if (labeled) return labeled;
+  if (!startIso || !practiceTz) return '';
+  const dt = DateTime.fromISO(startIso, { zone: 'utc' }).setZone(practiceTz);
+  return dt.isValid ? dt.toFormat('h:mm a') : '';
+}
+
+function windowPart(windowLabel?: string | null): string {
+  const win = windowLabel?.trim();
+  if (!win) return '';
+  return win.startsWith('(') ? win : `(${win})`;
+}
+
+/** Previous slot: weekday, date, time, and effective window. */
+export function formatOptimizeSmsFromWhen(fields: ScheduleOptimizeSmsFields): string {
+  const day = weekdayDate(fields.fromDate, fields.practiceTz, fields.originalStartIso);
+  const time = clockLabel(fields.fromTimeLabel, fields.originalStartIso, fields.practiceTz);
+  const win = windowPart(fields.fromWindowLabel);
+  return [day, time ? `at ${time}` : '', win].filter(Boolean).join(' ');
+}
+
+/** New slot: weekday, date, and effective window (time as fallback if no window). */
+export function formatOptimizeSmsToWhen(fields: ScheduleOptimizeSmsFields): string {
+  const day = weekdayDate(fields.toDate, fields.practiceTz, fields.newStartIso);
+  const win = windowPart(fields.toWindowLabel);
+  if (win) return `${day} ${win}`;
+  const time = clockLabel(fields.toTimeLabel, fields.newStartIso, fields.practiceTz);
   return time ? `${day} at ${time}` : day;
 }
 
-export function buildScheduleOptimizeSmsMessage(args: {
-  client: string;
-  petNames: readonly string[];
-  doctorName: string;
-  fromDate: string;
-  toDate: string;
-  fromTimeLabel: string;
-  toTimeLabel: string;
-  practiceTz: string;
-  scope?: 'day' | 'week';
-}): string {
-  const name = firstName(args.client);
-  const pets = petPhrase(args.petNames);
-  const doctor = providerLastName(args.doctorName);
-  const who = doctor ? `Dr. ${doctor}'s team at Vet At Your Door` : `Vet At Your Door`;
-  const fromSlot = slotPhrase(args.fromDate, args.fromTimeLabel, args.practiceTz);
-  const toSlot = slotPhrase(args.toDate, args.toTimeLabel, args.practiceTz);
-  const sameDay = args.fromDate === args.toDate || args.scope === 'day';
-  const body = sameDay
-    ? `Hi ${name}, it's ${who}! We can see ${pets} at ${args.toTimeLabel.trim() || 'a better time'} instead of ${args.fromTimeLabel.trim() || 'the current time'} on ${DateTime.fromISO(args.toDate, { zone: args.practiceTz }).toFormat('cccc, LLL d')}, to stay in the neighborhood. Does that time work for you?`
-    : `Hi ${name}, it's ${who}! We can move ${pets} from ${fromSlot} to ${toSlot}, when we'll already be in your neighborhood. Does that new time work for you?`;
-  return appendCareOutreachSmsSuffix(body);
+export function buildScheduleOptimizeSmsMessage(
+  kind: ScheduleOptimizeSmsKind,
+  fields: ScheduleOptimizeSmsFields
+): string {
+  const pets = petsAppointmentPhrase(fields.petNames);
+  const toWhen = formatOptimizeSmsToWhen(fields);
+  if (kind === 'moved') {
+    return `Hi it's Vet At Your Door. We've moved ${pets} to ${toWhen}. Thank you for your flexibility!`;
+  }
+  const fromWhen = formatOptimizeSmsFromWhen(fields);
+  return `Hi it's Vet At Your Door. We were wondering if it was at all possible to move ${pets} from ${fromWhen} to ${toWhen}. Can you let us know?`;
 }

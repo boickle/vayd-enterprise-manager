@@ -247,6 +247,22 @@ export function markScheduleOptimizeQueueTexted(practiceId: number, id: string):
   );
 }
 
+export function patchScheduleOptimizeQueueItem(
+  practiceId: number,
+  id: string,
+  patch: Partial<Pick<ScheduleOptimizeQueueItem, 'clientId' | 'clientPhone'>>
+): ScheduleOptimizeQueueItem | null {
+  const list = loadScheduleOptimizeQueue(practiceId);
+  const existing = list.find((row) => row.id === id);
+  if (!existing) return null;
+  const next: ScheduleOptimizeQueueItem = { ...existing, ...patch, updatedAt: nowIso() };
+  saveScheduleOptimizeQueue(
+    practiceId,
+    list.map((row) => (row.id === next.id ? next : row))
+  );
+  return next;
+}
+
 function appendQueueNote(existing: string, line: string): string {
   const text = line.trim();
   if (!text) return existing;

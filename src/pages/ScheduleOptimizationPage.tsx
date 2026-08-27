@@ -9,13 +9,13 @@ import SchedulingToolsListPagination, {
 } from '../components/SchedulingToolsListPagination';
 import { useScheduleOptimizeQueue } from '../hooks/useScheduleOptimizeQueue';
 import { SCHEDULING_TOOLS_PAGE_REFRESH_EVENT } from '../hooks/useSchedulingToolsNavCounts';
-import { careOutreachClientHasSmsPhone } from '../utils/careOutreachSmsMessage';
 import { formatPointsPerDriveHour } from '../utils/pointsPerDriveHour';
 import { practiceTimeZoneOrDefault } from '../utils/practiceTimezone';
 import {
   addScheduleOptimizeToQueue,
   hideScheduleOptimizeSuggestion,
   markScheduleOptimizeQueueTexted,
+  patchScheduleOptimizeQueueItem,
   queueItemFromMove,
   queueItemToOptimizeMove,
   updateScheduleOptimizeQueueNotes,
@@ -32,6 +32,10 @@ import {
   formatOptimizeResimulateWarning,
   revalidateOptimizeMove,
 } from '../utils/scheduleOptimizeMoves';
+import {
+  resolveScheduleOptimizeClientId,
+  scheduleOptimizeCanAttemptText,
+} from '../utils/scheduleOptimizeClient';
 import { buildScheduleOptimizeSmsMessage } from '../utils/scheduleOptimizeSmsMessage';
 import './ScheduleOptimizationPage.css';
 import './Settings.css';
@@ -105,9 +109,10 @@ export default function ScheduleOptimizationPage() {
   const [error, setError] = useState<string | null>(null);
   const [smsFromLine, setSmsFromLine] = useState<string | null>(null);
   const [contactItem, setContactItem] = useState<ScheduleOptimizeQueueItem | null>(null);
+  const [textingId, setTextingId] = useState<string | null>(null);
   const [messagesItem, setMessagesItem] = useState<ScheduleOptimizeQueueItem | null>(null);
   const [pendingWorse, setPendingWorse] = useState<{
-    kind: 'apply' | 'text';
+    kind: 'apply';
     row: ScheduleOptimizeQueueItem;
     live: ReturnType<typeof queueItemToOptimizeMove>;
     warning: string;
@@ -203,7 +208,8 @@ export default function ScheduleOptimizationPage() {
         hidden: false,
       });
       const result = await beginScheduleOptimizeApplyInCalendar({
-        move: row,
+        move: queueItemToOptimizeMove(row),
+        listMove: queueItemToOptimizeMove(row),
         doctorId: row.doctorId,
         doctorName: row.doctorName,
         practiceId: PRACTICE_ID,
@@ -226,7 +232,7 @@ export default function ScheduleOptimizationPage() {
     }
   }
 
-  async function resimulateThen(row: ScheduleOptimizeQueueItem, kind: 'apply' | 'text') {
+  async function resimulateThen(row: ScheduleOptimizeQueueItem) {
     if (row.status === 'moved') return;
     setPendingWorse(null);
     setApplyingId(row.id);
@@ -257,7 +263,7 @@ export default function ScheduleOptimizationPage() {
       });
       if (result.driveWorse || result.windowWorse) {
         setPendingWorse({
-          kind,
+          kind: 'apply',
           row: updated,
           live: result.live,
           warning:
@@ -266,11 +272,7 @@ export default function ScheduleOptimizationPage() {
         });
         return;
       }
-      if (kind === 'apply') {
-        await applyRow(updated);
-        return;
-      }
-      setContactItem(updated);
+      await applyRow(updated);
     } catch (e) {
       setError((e as Error)?.message?.trim() || 'Could not re-check this suggestion.');
     } finally {
@@ -279,23 +281,14 @@ export default function ScheduleOptimizationPage() {
   }
 
   async function onApply(row: ScheduleOptimizeQueueItem) {
-    await resimulateThen(row, 'apply');
+    await resimulateThen(row);
   }
 
   function onViewCurrent(row: ScheduleOptimizeQueueItem) {
+    const listMove = queueItemToOptimizeMove(row);
     const ok = openScheduleOptimizeCurrentAppointment({
-      move: {
-        id: row.id,
-        appointmentIds: row.appointmentIds,
-        newStartIso: row.newStartIso,
-        newEndIso: row.newEndIso,
-        toDate: row.toDate,
-        fromDate: row.fromDate,
-        client: row.client,
-        clientId: row.clientId,
-        petNames: row.petNames,
-        insertionIndex: row.insertionIndex,
-      },
+      move: listMove,
+      listMove,
       fromDate: row.fromDate,
       doctorId: row.doctorId,
       doctorName: row.doctorName,
@@ -309,9 +302,30 @@ export default function ScheduleOptimizationPage() {
     }
   }
 
-  function openText(row: ScheduleOptimizeQueueItem) {
-    if (row.clientId == null) return;
-    void resimulateThen(row, 'text');
+  async function openText(row: ScheduleOptimizeQueueItem) {
+    setError(null);
+    setTextingId(row.id);
+    try {
+      const clientId = await resolveScheduleOptimizeClientId({
+        clientId: row.clientId,
+        appointmentIds: row.appointmentIds,
+        practiceId: PRACTICE_ID,
+      });
+      if (clientId == null) {
+        setError('This visit is not linked to a client, so it cannot be texted.');
+        return;
+      }
+      const updated =
+        patchScheduleOptimizeQueueItem(PRACTICE_ID, row.id, { clientId }) ?? {
+          ...row,
+          clientId,
+        };
+      setContactItem(updated);
+    } catch (e) {
+      setError((e as Error)?.message?.trim() || 'Could not open a text for this client.');
+    } finally {
+      setTextingId(null);
+    }
   }
 
   function onHide(row: ScheduleOptimizeQueueItem) {
@@ -388,8 +402,7 @@ export default function ScheduleOptimizationPage() {
               onClick={() => {
                 const next = pendingWorse;
                 setPendingWorse(null);
-                if (next.kind === 'apply') void applyRow(next.row);
-                else setContactItem(next.row);
+                void applyRow(next.row);
               }}
             >
               Continue anyway
@@ -414,8 +427,6 @@ export default function ScheduleOptimizationPage() {
       ) : (
         <>
           {pageRows.map((row) => {
-            const canText =
-              row.clientId != null && careOutreachClientHasSmsPhone(row.clientPhone);
             const fromSlot = slotLabel(
               row.fromDate,
               row.fromTimeLabel,
@@ -551,17 +562,15 @@ export default function ScheduleOptimizationPage() {
                   <button
                     type="button"
                     className="btn secondary"
-                    disabled={row.clientId == null}
+                    disabled={textingId != null || !scheduleOptimizeCanAttemptText(row)}
                     title={
-                      row.clientId == null
-                        ? 'No client id on this visit'
-                        : canText
-                          ? 'Text the new time'
-                          : 'No mobile number on file — email may still work'
+                      scheduleOptimizeCanAttemptText(row)
+                        ? 'Text the client about this time'
+                        : 'This visit is not linked to a client'
                     }
-                    onClick={() => openText(row)}
+                    onClick={() => void openText(row)}
                   >
-                    Text client
+                    {textingId === row.id ? 'Opening…' : 'Text client'}
                   </button>
                   {row.clientId != null ? (
                     <button
@@ -610,19 +619,22 @@ export default function ScheduleOptimizationPage() {
           open
           clientId={contactItem.clientId}
           clientLabel={contactItem.client}
-          initialSmsMessage={buildScheduleOptimizeSmsMessage({
-            client: contactItem.client,
+          initialSmsMessage={buildScheduleOptimizeSmsMessage(
+            contactItem.outcome === 'rescheduled' ? 'moved' : 'ask',
+            {
             petNames: contactItem.petNames,
-            doctorName: contactItem.doctorName,
             fromDate: contactItem.fromDate,
             toDate: contactItem.toDate,
             fromTimeLabel: contactItem.fromTimeLabel,
             toTimeLabel: contactItem.toTimeLabel,
+            fromWindowLabel: contactItem.fromWindowLabel,
+            toWindowLabel: contactItem.toWindowLabel,
+            originalStartIso: contactItem.originalStartIso,
+            newStartIso: contactItem.newStartIso,
             practiceTz: PRACTICE_TZ,
-            scope: contactItem.scope,
           })}
           providerLastName={contactItem.doctorName.trim().split(/\s+/).filter(Boolean).slice(-1)[0] ?? null}
-          canText={careOutreachClientHasSmsPhone(contactItem.clientPhone)}
+          canText={contactItem.clientId != null}
           onClose={() => setContactItem(null)}
           onSent={() => markScheduleOptimizeQueueTexted(PRACTICE_ID, contactItem.id)}
           smsFromLine={smsFromLine}

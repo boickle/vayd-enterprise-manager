@@ -153,7 +153,8 @@ function buildDoctorDaySyntheticFromRoutingPreview(
       : {}),
   };
   if (meta.clientId?.trim()) {
-    (synthetic as DoctorDayAppt & { clientId?: string }).clientId = meta.clientId.trim();
+    const cid = Number(meta.clientId.trim());
+    if (Number.isFinite(cid) && cid > 0) synthetic.clientId = cid;
   }
   const anchorAlt = coVisitAnchorRow?.isAlternateStop
     ? (coVisitAnchorRow.alternateAddressText?.trim() ||

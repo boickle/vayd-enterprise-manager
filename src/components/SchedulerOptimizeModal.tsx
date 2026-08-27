@@ -8,7 +8,6 @@ import { useScheduleOptimizeQueue } from '../hooks/useScheduleOptimizeQueue';
 import { useScheduleOptimizeMoveMeta } from '../hooks/useScheduleOptimizeMoveMeta';
 import type { DayData } from '../pages/MyWeek';
 import type { AppointmentTypeCatalog } from '../utils/appointmentTypeSettings';
-import { careOutreachClientHasSmsPhone } from '../utils/careOutreachSmsMessage';
 import { formatPointsPerDriveHour } from '../utils/pointsPerDriveHour';
 import {
   buildOptimizeBaseline,
@@ -32,6 +31,7 @@ import {
   validateOptimizeMoves,
   type OptimizeMove,
 } from '../utils/scheduleOptimizeMoves';
+import { resolveScheduleOptimizeClientId, scheduleOptimizeCanAttemptText } from '../utils/scheduleOptimizeClient';
 import { buildScheduleOptimizeSmsMessage } from '../utils/scheduleOptimizeSmsMessage';
 import { fetchSchedulerDriveContextForDate } from '../utils/schedulerDriveEta';
 import '../pages/Scheduler.css';
@@ -130,7 +130,7 @@ export function SchedulerOptimizeModal({
   const [moveTab, setMoveTab] = useState<OptimizeMoveTab>('all');
   const [windowMode, setWindowMode] = useState<OptimizeWindowMode>('rolling');
   const [pendingWorse, setPendingWorse] = useState<{
-    kind: 'apply' | 'text';
+    kind: 'apply';
     live: OptimizeMove;
     warning: string;
   } | null>(null);
@@ -364,16 +364,16 @@ export function SchedulerOptimizeModal({
     try {
       unhideMove(live);
       flushNotes(live.id);
-      const queued = addScheduleOptimizeToQueue({ move: live, practiceId, doctorId, doctorName });
       const result = await beginScheduleOptimizeApplyInCalendar({
         move: live,
+        listMove: live,
         doctorId,
         doctorName,
         practiceId,
         practiceTz,
         navigate,
         returnPath: '/schedule/scheduler',
-        queueItemId: queued.id,
+        queueItemId: live.id,
       });
       if (!result.ok) {
         setApplyError(result.reason);
@@ -391,7 +391,7 @@ export function SchedulerOptimizeModal({
     }
   }
 
-  async function resimulateThen(move: OptimizeMove, kind: 'apply' | 'text'): Promise<void> {
+  async function resimulateThen(move: OptimizeMove): Promise<void> {
     setPendingWorse(null);
     setApplyingId(move.id);
     setApplyError(null);
@@ -406,12 +406,11 @@ export function SchedulerOptimizeModal({
         setApplyError(result.unavailableReason || 'This suggestion is no longer valid.');
         return;
       }
-      addScheduleOptimizeToQueue({ move: result.live, practiceId, doctorId, doctorName });
       unhideMove(move);
       unhideMove(result.live);
       if (result.driveWorse || result.windowWorse) {
         setPendingWorse({
-          kind,
+          kind: 'apply',
           live: result.live,
           warning:
             formatOptimizeResimulateWarning(move, result.live) ??
@@ -419,11 +418,7 @@ export function SchedulerOptimizeModal({
         });
         return;
       }
-      if (kind === 'apply') {
-        await applyLiveMove(result.live);
-        return;
-      }
-      setContactMove(result.live);
+      await applyLiveMove(result.live);
     } catch (e) {
       setApplyError((e as Error)?.message?.trim() || 'Could not re-check this suggestion.');
     } finally {
@@ -432,18 +427,39 @@ export function SchedulerOptimizeModal({
   }
 
   async function onApply(move: OptimizeMove) {
-    await resimulateThen(move, 'apply');
+    await resimulateThen(move);
+  }
+
+  async function onText(move: OptimizeMove) {
+    setApplyError(null);
+    setApplyingId(move.id);
+    try {
+      const clientId = await resolveScheduleOptimizeClientId({
+        clientId: move.clientId,
+        appointmentIds: move.appointmentIds,
+        practiceId,
+      });
+      if (clientId == null) {
+        setApplyError('This visit is not linked to a client, so it cannot be texted.');
+        return;
+      }
+      setContactMove({ ...move, clientId });
+    } catch (e) {
+      setApplyError((e as Error)?.message?.trim() || 'Could not open a text for this client.');
+    } finally {
+      setApplyingId(null);
+    }
   }
 
   function onViewCurrent(move: OptimizeMove) {
-    const queued = addScheduleOptimizeToQueue({ move, practiceId, doctorId, doctorName });
     const ok = openScheduleOptimizeCurrentAppointment({
       move,
+      listMove: move,
       fromDate: move.fromDate,
       doctorId,
       doctorName,
       practiceId,
-      queueItemId: queued.id,
+      queueItemId: move.id,
       navigate,
       returnHref: '/schedule/scheduler',
       reopenModal: true,
@@ -820,13 +836,13 @@ export function SchedulerOptimizeModal({
                           <button
                             type="button"
                             className="scheduler-optimize-apply scheduler-optimize-apply--secondary"
-                            disabled={applyingId != null || m.clientId == null}
+                            disabled={applyingId != null || !scheduleOptimizeCanAttemptText(m)}
                             title={
-                              m.clientId == null
-                                ? 'No client id on this visit'
-                                : 'Text the new time to the client'
+                              scheduleOptimizeCanAttemptText(m)
+                                ? 'Text the new time to the client'
+                                : 'This visit is not linked to a client'
                             }
-                            onClick={() => void resimulateThen(m, 'text')}
+                            onClick={() => void onText(m)}
                           >
                             Text
                           </button>
@@ -872,8 +888,7 @@ export function SchedulerOptimizeModal({
                         onClick={() => {
                           const next = pendingWorse;
                           setPendingWorse(null);
-                          if (next.kind === 'apply') void applyLiveMove(next.live);
-                          else setContactMove(next.live);
+                          void applyLiveMove(next.live);
                         }}
                       >
                         Continue anyway
@@ -888,8 +903,10 @@ export function SchedulerOptimizeModal({
                 ) : null}
                 {visibleMoves.length > 0 ? (
                   <p className="scheduler-optimize-note">
-                    Text or add to the list for later. View optimized appt opens the calendar with
-                    the new time locked in preview — Reschedule there after the client agrees.{' '}
+                    Text, add to the list, or open the optimized time on the calendar. Viewing a
+                    visit does not add it to the list — use Add to list on the card or in the
+                    calendar preview. After you reschedule or add an alternative, a text draft
+                    opens so you can notify the client.{' '}
                     <Link
                       className="scheduler-optimize-list-link"
                       to="/schedule/scheduling-tools/schedule-optimization"
@@ -912,27 +929,22 @@ export function SchedulerOptimizeModal({
         open
         clientId={contactMove.clientId}
         clientLabel={contactMove.client}
-        initialSmsMessage={buildScheduleOptimizeSmsMessage({
-          client: contactMove.client,
+        initialSmsMessage={buildScheduleOptimizeSmsMessage('ask', {
           petNames: contactMove.petNames,
-          doctorName,
           fromDate: contactMove.fromDate,
           toDate: contactMove.toDate,
           fromTimeLabel: contactMove.fromTimeLabel,
           toTimeLabel: contactMove.toTimeLabel,
+          fromWindowLabel: contactMove.fromWindowLabel,
+          toWindowLabel: contactMove.toWindowLabel,
+          originalStartIso: contactMove.originalStartIso,
+          newStartIso: contactMove.newStartIso,
           practiceTz,
-          scope: contactMove.scope,
         })}
         providerLastName={doctorName.trim().split(/\s+/).filter(Boolean).slice(-1)[0] ?? null}
-        canText={careOutreachClientHasSmsPhone(contactMove.clientPhone)}
+        canText={contactMove.clientId != null}
         onClose={() => setContactMove(null)}
         onSent={() => {
-          addScheduleOptimizeToQueue({
-            move: contactMove,
-            practiceId,
-            doctorId,
-            doctorName,
-          });
           markScheduleOptimizeQueueTexted(practiceId, contactMove.id);
         }}
         smsFromLine={smsFromLine}

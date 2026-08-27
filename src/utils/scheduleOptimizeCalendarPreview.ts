@@ -5,9 +5,11 @@ import {
   appointmentHasAlternateLocation,
   fetchAppointmentById,
   fetchAppointmentsRangeForLocalDay,
+  fetchDoctorDay,
 } from '../api/appointments';
 import { fetchClientByIdStaff } from '../api/clientsStaff';
 import type { Appointment, Client } from '../api/roomLoader';
+import { geocodeRoutingAddressText } from './verifiedAddress';
 import { clearRoutingAppointmentRequestIntent } from './routingAppointmentRequestIntent';
 import type { RoutingCalendarPreviewPayloadV1 } from './routingCalendarPreviewStorage';
 import { writeRoutingCalendarPreview } from './routingCalendarPreviewStorage';
@@ -24,6 +26,7 @@ import {
   writeSchedulerFocusOptimizeReturnSession,
   writeSchedulerFocusSession,
 } from './schedulerFocusAppointment';
+import type { OptimizeMove } from './scheduleOptimizeMoves';
 
 export type ScheduleOptimizeApplyTarget = {
   id: string;
@@ -36,7 +39,51 @@ export type ScheduleOptimizeApplyTarget = {
   clientId: number | null;
   petNames: string[];
   insertionIndex?: number;
+  fromTimeLabel?: string;
+  toTimeLabel?: string;
+  fromWindowLabel?: string | null;
+  toWindowLabel?: string | null;
+  clientPhone?: string | null;
+  originalStartIso?: string;
+  driveDeltaMin?: number;
 };
+
+function coerceListMove(
+  move: ScheduleOptimizeApplyTarget,
+  explicit?: OptimizeMove
+): OptimizeMove | undefined {
+  if (explicit) return explicit;
+  if (!move.id.trim() || move.appointmentIds.length === 0) return undefined;
+  return {
+    id: move.id,
+    scope: move.fromDate === move.toDate ? 'day' : 'week',
+    client: move.client,
+    clientId: move.clientId,
+    clientPhone: move.clientPhone ?? null,
+    petNames: move.petNames,
+    appointmentType: null,
+    appointmentDescription: null,
+    roomLoaderStatus: 'Not sent',
+    roomLoaderStatusColor: '#dc2626',
+    fromDate: move.fromDate,
+    toDate: move.toDate,
+    fromTimeLabel: move.fromTimeLabel ?? '',
+    toTimeLabel: move.toTimeLabel ?? '',
+    fromWindowLabel: move.fromWindowLabel ?? null,
+    toWindowLabel: move.toWindowLabel ?? null,
+    appointmentIds: move.appointmentIds,
+    originalStartIso: move.originalStartIso ?? '',
+    newStartIso: move.newStartIso,
+    newEndIso: move.newEndIso,
+    insertionIndex: Math.max(0, Math.round(Number(move.insertionIndex) || 0)),
+    windowWarningsBefore: 0,
+    windowWarningsAfter: 0,
+    driveDeltaMin: Number.isFinite(move.driveDeltaMin) ? Number(move.driveDeltaMin) : 0,
+    ppdhBefore: null,
+    ppdhAfter: null,
+    reason: '',
+  };
+}
 
 function num(v: unknown): number | null {
   const n = typeof v === 'number' ? v : Number(v);
@@ -65,22 +112,33 @@ function formatStreetAddress(row: {
   return parts.length ? parts.join(', ') : null;
 }
 
-function appointmentCoords(appt: Appointment): { lat: number; lon: number } | null {
-  const rec = appt as Appointment & { lat?: unknown; lon?: unknown };
-  const lat = num(rec.lat) ?? num(appt.client?.lat);
-  const lon = num(rec.lon) ?? num(appt.client?.lon);
+function coordsFromUnknown(row: unknown): { lat: number; lon: number } | null {
+  if (!row || typeof row !== 'object') return null;
+  const rec = row as Record<string, unknown>;
+  const lat = num(rec.lat) ?? num(rec.latitude);
+  const lon = num(rec.lon) ?? num(rec.lng) ?? num(rec.longitude);
   if (lat == null || lon == null) return null;
   if (Math.abs(lat) < 1e-6 && Math.abs(lon) < 1e-6) return null;
   return { lat, lon };
 }
 
-function appointmentAddress(appt: Appointment): string | null {
+/** Visit-level coords (including an already-geocoded ALT stop). Never client home. */
+function appointmentVisitCoords(appt: Appointment): { lat: number; lon: number } | null {
+  const rec = appt as Appointment & Record<string, unknown>;
   return (
-    appointmentAlternateAddressText(appt)?.trim() ||
-    formatStreetAddress(appt as Appointment & { zip?: string | null }) ||
-    formatStreetAddress(appt.client ?? {}) ||
+    coordsFromUnknown(appt) ||
+    coordsFromUnknown(rec.alternateAddress) ||
+    coordsFromUnknown(rec.location) ||
     null
   );
+}
+
+function appointmentAddress(appt: Appointment, usesAlt: boolean): string | null {
+  const alt = appointmentAlternateAddressText(appt)?.trim() || null;
+  if (alt) return alt;
+  const visitStreet = formatStreetAddress(appt as Appointment & { zip?: string | null });
+  if (usesAlt) return visitStreet;
+  return visitStreet || formatStreetAddress(appt.client ?? {}) || null;
 }
 
 function clientFromUnknown(raw: unknown): Client | null {
@@ -90,34 +148,64 @@ function clientFromUnknown(raw: unknown): Client | null {
   return row as Client;
 }
 
-async function resolveStopMeta(appt: Appointment): Promise<{
+async function resolveStopMeta(
+  appt: Appointment,
+  opts?: { doctorId?: string; dateIso?: string }
+): Promise<{
   address: string;
   lat: number;
   lon: number;
+  usesAlt: boolean;
 }> {
-  let coords = appointmentCoords(appt);
-  let address = appointmentAddress(appt);
-  if ((!coords || !address) && appt.client?.id != null) {
+  let usesAlt = appointmentHasAlternateLocation(appt);
+  let coords = appointmentVisitCoords(appt);
+  let address = appointmentAddress(appt, usesAlt);
+
+  // Doctor-day rows carry the routed stop (ALT included). GET /appointments/:id often has
+  // alternate text only, with no lat/lon.
+  if ((!coords || !address) && opts?.doctorId?.trim() && opts?.dateIso?.trim()) {
+    try {
+      const day = await fetchDoctorDay(opts.dateIso.trim(), opts.doctorId.trim());
+      const row = (day.appointments ?? []).find((a) => Number(a.id) === Number(appt.id));
+      if (row) {
+        coords = coords ?? coordsFromUnknown(row);
+        const dayAlt =
+          appointmentAlternateAddressText(row as unknown as Appointment)?.trim() || null;
+        if (dayAlt || row.isAlternateStop) usesAlt = true;
+        address = address || dayAlt || formatStreetAddress(row) || null;
+      }
+    } catch {
+      /* geocode / client fallback */
+    }
+  }
+
+  if (!usesAlt && (!coords || !address) && appt.client?.id != null) {
     try {
       const client = clientFromUnknown(await fetchClientByIdStaff(appt.client.id));
       if (client) {
-        coords =
-          coords ??
-          (num(client.lat) != null && num(client.lon) != null
-            ? { lat: num(client.lat)!, lon: num(client.lon)! }
-            : null);
+        coords = coords ?? coordsFromUnknown(client);
         address = address ?? formatStreetAddress(client);
       }
     } catch {
       /* appointment row may already have enough */
     }
   }
+
+  if (address && !coords) {
+    const geo = await geocodeRoutingAddressText(address);
+    if (geo.ok) {
+      return { address: geo.address, lat: geo.lat, lon: geo.lon, usesAlt };
+    }
+  }
+
   if (!address || !coords) {
     throw new Error(
-      'This visit is missing a mapped address, so it cannot be previewed on the calendar.'
+      usesAlt
+        ? 'This visit’s alternate address could not be mapped for calendar preview.'
+        : 'This visit is missing a mapped address, so it cannot be previewed on the calendar.'
     );
   }
-  return { address, lat: coords.lat, lon: coords.lon };
+  return { address, lat: coords.lat, lon: coords.lon, usesAlt };
 }
 
 /**
@@ -134,6 +222,8 @@ export async function beginScheduleOptimizeApplyInCalendar(args: {
   returnPath: string;
   queueItemId: string;
   fromCurrentView?: boolean;
+  /** Full suggestion for Add to list / SMS; viewing preview does not add it to the queue. */
+  listMove?: OptimizeMove;
 }): Promise<{ ok: true } | { ok: false; reason: string }> {
   const {
     move,
@@ -145,6 +235,7 @@ export async function beginScheduleOptimizeApplyInCalendar(args: {
     returnPath,
     queueItemId,
     fromCurrentView,
+    listMove,
   } = args;
   const appointmentIds = [...new Set(move.appointmentIds.filter((id) => Number.isFinite(id) && id > 0))];
   const anchorId = appointmentIds[0];
@@ -199,9 +290,12 @@ export async function beginScheduleOptimizeApplyInCalendar(args: {
     returnPath: returnPath.trim() || '/schedule/scheduler',
   };
 
-  let stop: { address: string; lat: number; lon: number };
+  let stop: { address: string; lat: number; lon: number; usesAlt: boolean };
   try {
-    stop = await resolveStopMeta(appt);
+    stop = await resolveStopMeta(appt, {
+      doctorId: doctorId.trim() || undefined,
+      dateIso: move.fromDate.trim() || dateIso || undefined,
+    });
   } catch (e) {
     return { ok: false, reason: (e as Error)?.message || 'Missing visit address.' };
   }
@@ -218,7 +312,12 @@ export async function beginScheduleOptimizeApplyInCalendar(args: {
     return { ok: false, reason: 'This visit is missing an appointment type.' };
   }
 
-  const usesAlt = appointmentHasAlternateLocation(appt);
+  const usesAlt = stop.usesAlt || Boolean(intent.isAlternateStop);
+  if (usesAlt && stop.address.trim()) {
+    intent.isAlternateStop = true;
+    intent.alternateAddressText = stop.address;
+    intent.address = stop.address;
+  }
   const previewPatients =
     sameDayVisits.length > 0
       ? sameDayVisits
@@ -229,6 +328,7 @@ export async function beginScheduleOptimizeApplyInCalendar(args: {
           }))
       : move.petNames.map((name, i) => ({ id: `opt-${i}`, name }));
 
+  const storedMove = coerceListMove(move, listMove);
   const payload: RoutingCalendarPreviewPayloadV1 = {
     version: 1,
     previewSource: 'schedule-optimize',
@@ -238,6 +338,7 @@ export async function beginScheduleOptimizeApplyInCalendar(args: {
         ? '/schedule/scheduler'
         : returnPath.trim() || '/schedule/scheduler',
       ...(fromCurrentView ? { fromCurrentView: true } : {}),
+      ...(storedMove ? { listMove: storedMove } : {}),
     },
     option: {
       date: move.toDate,
@@ -292,6 +393,7 @@ export function openScheduleOptimizeCurrentAppointment(args: {
   navigate: NavigateFunction;
   returnHref: string;
   reopenModal?: boolean;
+  listMove?: OptimizeMove;
 }): boolean {
   const id = args.move.appointmentIds.find((n) => Number.isFinite(n) && n > 0);
   if (id == null) return false;
@@ -315,6 +417,17 @@ export function openScheduleOptimizeCurrentAppointment(args: {
       clientId: args.move.clientId,
       petNames: args.move.petNames,
       insertionIndex: args.move.insertionIndex,
+      ...(args.listMove
+        ? {
+            fromTimeLabel: args.listMove.fromTimeLabel,
+            toTimeLabel: args.listMove.toTimeLabel,
+            fromWindowLabel: args.listMove.fromWindowLabel,
+            toWindowLabel: args.listMove.toWindowLabel,
+            clientPhone: args.listMove.clientPhone,
+            originalStartIso: args.listMove.originalStartIso,
+            driveDeltaMin: args.listMove.driveDeltaMin,
+          }
+        : {}),
     },
   });
   writeSchedulerFocusSession({
