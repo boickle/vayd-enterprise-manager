@@ -153,7 +153,9 @@ export default function VsdPaymentsMatchAnalyticsPage() {
           VSD is treatment value on the visit date. Practice payments are cash deposited
           that day (excluding membership plan and online pharmacy). The gap is still-open
           billed work — the same total as Still open by doctor. Member write-downs are
-          excluded; amounts a member still owes are included.
+          excluded; amounts a member still owes are included. Open invoices with a future
+          appointment on the books are omitted (euthanasia is often prepaid and left open
+          until that visit is over).
         </Typography>
 
         <Card sx={{ mb: 3 }}>
@@ -393,6 +395,11 @@ export default function VsdPaymentsMatchAnalyticsPage() {
               ({fmtUSD(report.totals.practicePayments)}). Membership plan cash ({fmtUSD(report.totals.membershipPayments)})
               and online pharmacy ({fmtUSD(report.totals.pharmacyPayments)}) are excluded from the compare.
               Membership discounts ({fmtUSD(report.totals.membershipDiscount)}) are production that was never billed.
+              {report.totals.pendingFutureVisit.invoices > 0
+                ? ` ${report.totals.pendingFutureVisit.invoices} open invoice${
+                    report.totals.pendingFutureVisit.invoices === 1 ? '' : 's'
+                  } with a future appointment (${fmtUSD(report.totals.pendingFutureVisit.remaining)} remaining) are excluded until that visit is over.`
+                : ''}
             </Alert>
 
             <Card sx={{ mb: 3 }}>
@@ -420,7 +427,7 @@ export default function VsdPaymentsMatchAnalyticsPage() {
             <Card sx={{ mb: 3 }}>
               <CardHeader
                 title="Open VSD by doctor"
-                subheader="Membership production is member write-downs (free or discounted). Still open is cash still owed on open invoices, including unpaid member charges."
+                subheader="Membership production is member write-downs (free or discounted). Still open is cash still owed on open invoices with no future appointment, including unpaid member charges."
               />
               <CardContent sx={{ overflowX: 'auto' }}>
                 <Table size="small">
@@ -487,7 +494,7 @@ export default function VsdPaymentsMatchAnalyticsPage() {
             <Card sx={{ mb: 3 }}>
               <CardHeader
                 title="Who created the unpaid invoices"
-                subheader="Invoice created-by employee · remaining balance on open invoices"
+                subheader="Invoice created-by employee · remaining balance on open invoices with no future appointment"
               />
               <CardContent sx={{ overflowX: 'auto' }}>
                 <Table size="small">
@@ -516,7 +523,7 @@ export default function VsdPaymentsMatchAnalyticsPage() {
             <Card sx={{ mb: 3 }}>
               <CardHeader
                 title="Open invoices with a balance"
-                subheader={`${report.openInvoices.length} invoices · open invoices have no payment posted, so payment type is the client’s usual (or last) practice method`}
+                subheader={`${report.openInvoices.length} invoices · no future appointment on the books · open invoices have no payment posted, so payment type is the client’s usual (or last) practice method`}
               />
               <CardContent sx={{ overflowX: 'auto' }}>
                 <Table size="small">
