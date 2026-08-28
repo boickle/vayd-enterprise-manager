@@ -25,6 +25,8 @@ import {
 import ChevronLeft from '@mui/icons-material/ChevronLeft';
 import ChevronRight from '@mui/icons-material/ChevronRight';
 import dayjs, { Dayjs } from 'dayjs';
+import { DateTime } from 'luxon';
+import { DEFAULT_PRACTICE_TIMEZONE } from '../utils/practiceTimezone';
 import {
   ResponsiveContainer,
   LineChart,
@@ -64,6 +66,20 @@ import {
 
 function toLocalDateStr(d: Dayjs) {
   return d.format('YYYY-MM-DD');
+}
+
+function practiceDayStartIso(dateStr: string): string {
+  return DateTime.fromISO(dateStr, { zone: DEFAULT_PRACTICE_TIMEZONE }).startOf('day').toUTC().toISO()!;
+}
+
+function practiceDayEndIso(dateStr: string): string {
+  return DateTime.fromISO(dateStr, { zone: DEFAULT_PRACTICE_TIMEZONE }).endOf('day').toUTC().toISO()!;
+}
+
+function practiceLocalDayKey(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const dt = DateTime.fromISO(iso, { setZone: true }).setZone(DEFAULT_PRACTICE_TIMEZONE);
+  return dt.isValid ? (dt.toISODate() ?? '') : '';
 }
 
 function formatUsd(n: number) {
@@ -222,7 +238,7 @@ function classifySubmission(item: AppointmentRequestSubmissionItem): {
   return {
     isEuth: isEuthanasiaRequestSubmission(rd),
     clientType: classifyClientType(rd),
-    localDay: dayjs(item.submittedAt).format('YYYY-MM-DD'),
+    localDay: practiceLocalDayKey(item.submittedAt),
   };
 }
 
@@ -547,8 +563,8 @@ export default function RoutingAnalyticsPage() {
     let alive = true;
     setRequestSubmissionsLoading(true);
     setRequestSubmissionsError(null);
-    const fromIso = dayjs(startStr, 'YYYY-MM-DD', true).startOf('day').toISOString();
-    const toIso = dayjs(endStr, 'YYYY-MM-DD', true).endOf('day').toISOString();
+    const fromIso = practiceDayStartIso(startStr);
+    const toIso = practiceDayEndIso(endStr);
     fetchAllAppointmentRequestSubmissions({
       practiceId: APPOINTMENT_REQUEST_PRACTICE_ID,
       from: fromIso,
@@ -904,8 +920,8 @@ export default function RoutingAnalyticsPage() {
     () =>
       summarizeScheduleOptimizeSavings(
         optimizeSavings,
-        range.from.startOf('day').toISOString(),
-        range.to.endOf('day').toISOString(),
+        practiceDayStartIso(toLocalDateStr(range.from)),
+        practiceDayEndIso(toLocalDateStr(range.to)),
         optimizeStaffFilter || null
       ),
     [optimizeSavings, range.from, range.to, optimizeStaffFilter]
@@ -1041,8 +1057,11 @@ export default function RoutingAnalyticsPage() {
 
   return (
     <Box sx={{ pb: 3 }}>
-        <Typography variant="h6" sx={{ mb: 2 }}>
+        <Typography variant="h6" sx={{ mb: 1 }}>
           Appointments & routing usage
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          Day boundaries use the practice timezone ({DEFAULT_PRACTICE_TIMEZONE}), not UTC.
         </Typography>
 
         <Card sx={{ mb: 3 }}>
@@ -2056,7 +2075,7 @@ export default function RoutingAnalyticsPage() {
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
           GET /appointments/request-submissions (practiceId={APPOINTMENT_REQUEST_PRACTICE_ID}, from / to in
-          ISO UTC derived from the selected local dates). Completed submissions (<code>kind: submission</code>)
+          the practice timezone). Completed submissions (<code>kind: submission</code>)
           are counted for totals, client type, euthanasia breakdown, and how-did-you-hear-about-us answers;
           abandoned form sessions (<code>kind: abandoned</code>) are counted separately, excluding out-of-service-area
           blocks (<code>abandonReason: zone_not_serviced</code>). Attempted = completed + abandoned; completion rate =
@@ -2151,7 +2170,7 @@ export default function RoutingAnalyticsPage() {
               <Card sx={{ mb: 3 }}>
                 <CardHeader
                   title="Public appointment requests by day"
-                  subheader="Completed submissions vs euthanasia-related vs other (local calendar day of submittedAt)."
+                  subheader="Completed submissions vs euthanasia-related vs other (practice-local calendar day of submittedAt)."
                 />
                 <CardContent>
                   <Box sx={{ width: '100%', height: 360 }}>
