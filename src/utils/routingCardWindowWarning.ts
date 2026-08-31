@@ -1,4 +1,5 @@
 import type { DayData } from '../pages/MyWeek';
+import { resolveArrivalWindowIsos } from './appointmentRoutedArrivalWindow';
 import {
   computeDriveTimeWindowWarning,
   shouldShowEtaWindowWarning,
@@ -51,7 +52,11 @@ export type RoutingEtaReconciledWindowSummary = {
   hasPlacementRelevantWarning: boolean;
 };
 
-/** After POST /routing/eta — same rules as Scheduler / My Week drive-time badges. */
+/**
+ * After POST /routing/eta — same window resolution + 20-minute rule as Scheduler
+ * drive-time badges (`resolveArrivalWindowIsos`, including type ±N fallback).
+ * Household/slot-only lookup used to miss warnings the calendar already showed.
+ */
 export function summarizeReconciledDayWindowWarnings(
   dayData: DayData | null | undefined
 ): RoutingEtaReconciledWindowSummary {
@@ -66,6 +71,7 @@ export function summarizeReconciledDayWindowWarnings(
 
   const households = dayData.households;
   const n = households.length;
+  const practiceTz = dayData.timezone || 'America/New_York';
   const order =
     Array.isArray(dayData.routingOrderIndices) && dayData.routingOrderIndices.length === n
       ? dayData.routingOrderIndices
@@ -89,16 +95,30 @@ export function summarizeReconciledDayWindowWarnings(
     if (!h || h.isPersonalBlock) continue;
     const slot = dayData.timeline[idx];
     const etaIso = slot?.eta ?? null;
-    const windowEndIso =
-      (slot?.windowStartIso != null && slot?.windowEndIso != null ? slot.windowEndIso : null) ??
-      (h as { windowEndIso?: string | null }).windowEndIso ??
-      h.effectiveWindow?.endIso ??
-      null;
-    const windowStartIso =
-      (slot?.windowStartIso != null && slot?.windowEndIso != null ? slot.windowStartIso : null) ??
-      (h as { windowStartIso?: string | null }).windowStartIso ??
-      h.effectiveWindow?.startIso ??
-      null;
+    const primary = h.primary as
+      | {
+          appointmentStart?: string;
+          appointmentEnd?: string;
+          appointmentType?: {
+            name?: string;
+            prettyName?: string | null;
+            windowBeforeMinutes?: number | null;
+            windowAfterMinutes?: number | null;
+          };
+          effectiveWindow?: { startIso?: string; endIso?: string } | null;
+        }
+      | undefined;
+    const resolved = resolveArrivalWindowIsos({
+      apptEffectiveWindow: primary?.effectiveWindow ?? h.effectiveWindow ?? null,
+      household: h,
+      slot,
+      scheduledStartIso: h.startIso ?? primary?.appointmentStart ?? null,
+      appointmentType: primary?.appointmentType,
+      appointmentEndIso: h.endIso ?? primary?.appointmentEnd ?? null,
+      practiceTz,
+    });
+    const windowStartIso = resolved?.startIso ?? null;
+    const windowEndIso = resolved?.endIso ?? null;
 
     const warns = computeDriveTimeWindowWarning({
       etaIso,

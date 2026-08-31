@@ -4309,6 +4309,14 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     [routingPreview]
   );
 
+  /** Same placement-relevant window check as Get Best Route cards (View Placement → Book). */
+  const routingPreviewEtaWindowSummary = useMemo(() => {
+    if (!routingPreview || !routingPreviewColumnKey || !driveDayByDate) return null;
+    const dayData = driveDayByDate.get(routingPreviewColumnKey);
+    if (!dayData?.households?.some((h) => h.isPreview)) return null;
+    return summarizeReconciledDayWindowWarnings(dayData);
+  }, [routingPreview, routingPreviewColumnKey, driveDayByDate]);
+
   const routingPreviewFocusDim = useMemo(
     () => Boolean(routingPreview && routingPreviewColumnKey),
     [routingPreview, routingPreviewColumnKey]
@@ -11496,6 +11504,10 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                                   >
                                     <SchedulerAlternateLocationBadgeForAppt appt={appt} compact />
                                     <SchedulerClientZoneBadge appt={appt} compact />
+                                    {routingPreviewEtaWindowSummary?.candidateHasWarning ||
+                                    apptDriveHint?.windowWarning ? (
+                                      <SchedulerWindowWarningBadge compact />
+                                    ) : null}
                                     {eventWindowLabel ? (
                                       <span className="scheduler-event-time-text">{eventWindowLabel}</span>
                                     ) : null}
@@ -12324,6 +12336,9 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               originalAppointmentEnd={reschedulePreviewOriginalTimes.end}
               clientContact={routingPreviewClientContact}
               bookDisabled={bookSlot != null || manualBookPreviewCommitting}
+              hasWindowWarning={Boolean(
+                routingPreviewEtaWindowSummary?.hasPlacementRelevantWarning
+              )}
               confirmLabel={
                 routingPreviewIsOptimize
                   ? undefined

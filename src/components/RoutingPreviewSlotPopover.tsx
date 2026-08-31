@@ -27,6 +27,11 @@ type Props = {
   /** Client phone + visit doctor Quo line for call/text while reviewing a reschedule slot. */
   clientContact?: RoutingPreviewClientContact | null;
   bookDisabled?: boolean;
+  /**
+   * Reconciled POST /routing/eta: candidate or a stop at/after it is within 20 minutes of
+   * its arrival-window end (same signal as the Get Best Route card amber alert).
+   */
+  hasWindowWarning?: boolean;
   /** Override primary action label (e.g. care outreach → "Next"). */
   confirmLabel?: string;
   onBook: () => void;
@@ -88,6 +93,7 @@ export function RoutingPreviewSlotPopover({
   originalAppointmentEnd,
   clientContact,
   bookDisabled,
+  hasWindowWarning = false,
   confirmLabel,
   onBook,
   onDismiss,
@@ -202,6 +208,12 @@ export function RoutingPreviewSlotPopover({
         ) : null}
 
         <div className="scheduler-edit-preview-popover-body" role="status" aria-live="polite">
+          {hasWindowWarning ? (
+            <p className="scheduler-edit-preview-popover-line scheduler-edit-preview-popover-line--window-warning">
+              ⚠ Window warning — reconciled drive times show a visit within 20 minutes of its
+              window end. Check the calendar before booking.
+            </p>
+          ) : null}
           {scoreLine ? (
             <p
               className={`scheduler-edit-preview-popover-line${
