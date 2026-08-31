@@ -1,6 +1,9 @@
 import type { Appointment } from '../api/roomLoader';
 import type { DayData } from '../pages/MyWeek';
-import { effectiveWindowForScheduledStart } from './appointmentArrivalWindow';
+import {
+  effectiveWindowForScheduledStart,
+  type AppointmentTypeWindowSource,
+} from './appointmentArrivalWindow';
 import { appointmentPracticeDateKey } from './editVisitTimeFields';
 import {
   fetchSchedulerDoctorDayBundle,
@@ -29,7 +32,7 @@ export function resolveArrivalWindowIsos(args: {
   household?: ArrivalWindowHouseholdContext | null;
   slot?: ArrivalWindowSlotContext | null;
   scheduledStartIso?: string | null;
-  appointmentType?: Appointment['appointmentType'];
+  appointmentType?: AppointmentTypeWindowSource | Appointment['appointmentType'] | null;
   appointmentEndIso?: string | null;
   practiceTz: string;
   allowTypeFallback?: boolean;

@@ -590,6 +590,7 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
             { label: 'Email', value: pickStr(payload.email) ?? (readList(payload.emails).join(', ') || null) },
             { label: 'Phone 1', value: pickStr(payload.phone1) },
             { label: 'Phone 2', value: pickStr(payload.phone2) },
+            { label: 'Primary provider', value: providerLabel(payload) },
           ]}
         />
 
@@ -778,6 +779,10 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
                     onChange={(e) => setEditDraft({ ...editDraft, phone2: e.target.value })}
                   />
                 </label>
+                <div className="pims-client-detail__edit-field pims-client-detail__edit-field--full">
+                  <span>Primary provider</span>
+                  <p className="pims-client-detail__muted">{providerLabel(payload)}</p>
+                </div>
               </div>
 
               <h3 className="pims-client-detail__subhead">Secondary contact</h3>
