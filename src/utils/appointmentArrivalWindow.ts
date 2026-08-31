@@ -5,7 +5,7 @@ import {
 } from './practiceTimezone';
 
 export type AppointmentTypeWindowSource = {
-  name: string;
+  name?: string;
   prettyName?: string | null;
   windowBeforeMinutes?: number | null;
   windowAfterMinutes?: number | null;
