@@ -1,0 +1,136 @@
+.client-comms__err {
+  margin: 0;
+  color: #b91c1c;
+  font-size: 13px;
+}
+
+.client-comms__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: min(420px, 50vh);
+  overflow: auto;
+}
+
+.client-comms__item {
+  border-bottom: 1px solid #f3eee6;
+}
+
+.client-comms__item:last-child {
+  border-bottom: none;
+}
+
+.client-comms__row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  margin: 0;
+  padding: 8px 2px;
+  border: none;
+  background: transparent;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  color: inherit;
+}
+
+.client-comms__row:hover {
+  background: #faf8f5;
+}
+
+.client-comms__row svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: #78716c;
+}
+
+.client-comms__main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.client-comms__type {
+  font-size: 12px;
+  font-weight: 700;
+  color: #44403c;
+}
+
+.client-comms__preview {
+  font-size: 13px;
+  color: #1c1917;
+  line-height: 1.35;
+}
+
+.client-comms__meta {
+  font-size: 12px;
+  color: #78716c;
+}
+
+.client-comms__body {
+  padding: 0 2px 12px 25px;
+}
+
+.client-comms__routing {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 10px;
+  margin: 0 0 10px;
+}
+
+.client-comms__routing dt {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: #78716c;
+}
+
+.client-comms__routing dd {
+  margin: 0;
+  font-size: 12.5px;
+  color: #1c1917;
+}
+
+.client-comms__subject {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #44403c;
+}
+
+.client-comms__text {
+  margin: 0;
+  white-space: pre-wrap;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #1c1917;
+}
+
+.client-comms__html {
+  font-size: 13px;
+  line-height: 1.45;
+  color: #1c1917;
+}
+
+.client-comms__html table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 8px 0;
+  font-size: 13px;
+}
+
+.client-comms__html th,
+.client-comms__html td {
+  padding: 6px 8px;
+  border-bottom: 1px solid #e7e5e4;
+  text-align: left;
+  vertical-align: top;
+}
+
+.client-comms__html th {
+  color: #78716c;
+  font-weight: 700;
+}

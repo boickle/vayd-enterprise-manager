@@ -81,6 +81,7 @@ import {
 import { SelfScheduleCalendarModal } from '../components/SelfScheduleCalendarModal';
 import { selectedPatientDbIdsFromForm } from '../utils/onlineBookingPatientIds';
 import { trackEvent } from '../utils/analytics';
+import { appConfirm } from '../utils/appDialog';
 import { useAppointmentFormDraftPersistence } from '../hooks/useAppointmentFormDraftPersistence';
 import type { AppointmentFormDraftSnapshotInput } from '../utils/appointmentFormDraftSnapshot';
 import { ClientLoginForm } from '../components/ClientLoginForm';
@@ -431,6 +432,10 @@ type FormData = {
   mailingAddress?: AddressFields;
   /** PO Box or other mailing address not found in autocomplete */
   mailingAddressManualEntry?: boolean;
+  /** Existing-client visit location: home on file, saved extra, or a one-off address. */
+  visitAddressChoice?: 'home' | 'extra' | 'other' | '';
+  extraVisitAddress?: AddressFields;
+  extraVisitAddressLabel?: string;
   otherPersonsOnAccount?: string;
   condoApartmentInfo?: string;
   petInfo: string; // Name, Species, Age, Spayed/Neutered, Breed, Color, Weight (legacy, kept for backward compatibility)
@@ -735,6 +740,9 @@ export default function AppointmentRequestForm() {
     },
     mailingAddressSame: 'No, it is the same.',
     mailingAddressManualEntry: false,
+    visitAddressChoice: '',
+    extraVisitAddress: undefined,
+    extraVisitAddressLabel: '',
     petInfo: '',
     newClientPets: isLoggedIn ? [] : [defaultNewClientPet.pet],
     petSpecificData: isLoggedIn ? undefined : { [defaultNewClientPet.pet.id]: defaultNewClientPet.petSpecific },
@@ -2799,24 +2807,21 @@ export default function AppointmentRequestForm() {
         
         // Show warning dialog
         const message = "You will lose your data if you go back using the browser's back button. Please use the 'Previous' button in the bottom left to go back to the previous page.";
-        const userWantsToLeave = window.confirm(message);
-        
-        if (!userWantsToLeave) {
-          // User cancelled - push the current state back to prevent navigation
-          // This effectively cancels the back button press
-          window.history.pushState({ formPage: currentPage, preventBack: true }, '', window.location.href);
-        } else {
-          void (async () => {
+        window.history.pushState({ formPage: currentPage, preventBack: true }, '', window.location.href);
+        void (async () => {
+          const userWantsToLeave = await appConfirm({
+            title: 'Leave this form?',
+            message,
+            confirmLabel: 'Leave',
+            cancelLabel: 'Stay',
+            danger: true,
+          });
+          if (userWantsToLeave) {
             await sendAbandon('browser_back', { awaitPutThenPost: true });
-            // User confirmed - navigate back one more step since the browser already navigated
-            // to our pushed state (same URL), we need to go back further to the actual previous route
             window.history.back();
-          })();
-        }
-        
-        setTimeout(() => {
+          }
           isHandlingPopState = false;
-        }, 100);
+        })();
       }
     };
 
@@ -3128,6 +3133,20 @@ export default function AppointmentRequestForm() {
               setOriginalAddress(newAddress);
             }
             
+            const extraLine1 = String(client.extraAddress1 ?? '').trim();
+            const extraAddr = extraLine1
+              ? {
+                  line1: extraLine1,
+                  line2: client.extraAddress2 || undefined,
+                  city: String(client.extraCity ?? ''),
+                  state: String(client.extraState ?? ''),
+                  zip: String(client.extraZipcode ?? ''),
+                  country: 'US',
+                  lat: typeof client.extraLat === 'number' ? client.extraLat : undefined,
+                  lon: typeof client.extraLon === 'number' ? client.extraLon : undefined,
+                }
+              : undefined;
+            const mailingDifferent = client.mailingSameAsService === false && String(client.mailingAddress1 ?? '').trim();
             return {
               ...prev,
               fullName: {
@@ -3137,6 +3156,22 @@ export default function AppointmentRequestForm() {
               },
               bestPhoneNumber: phoneNumber || prev.bestPhoneNumber,
               physicalAddress: newAddress,
+              extraVisitAddress: extraAddr,
+              extraVisitAddressLabel: String(client.extraAddressLabel ?? '').trim() || 'Other address',
+              visitAddressChoice: prev.visitAddressChoice || (shouldRestoreAddress ? 'home' : prev.visitAddressChoice),
+              mailingAddressSame: mailingDifferent
+                ? 'Yes, it is different.'
+                : prev.mailingAddressSame || 'No, it is the same.',
+              mailingAddress: mailingDifferent
+                ? {
+                    line1: String(client.mailingAddress1 ?? ''),
+                    line2: client.mailingAddress2 || undefined,
+                    city: String(client.mailingCity ?? ''),
+                    state: String(client.mailingState ?? ''),
+                    zip: String(client.mailingZipcode ?? ''),
+                    country: 'US',
+                  }
+                : prev.mailingAddress,
               // Only clear newPhysicalAddress if explicitly set to "No"
               newPhysicalAddress: prev.isThisTheAddressWhereWeWillCome === 'Yes' ? undefined : prev.newPhysicalAddress,
             };
@@ -3737,6 +3772,46 @@ export default function AppointmentRequestForm() {
     }
   };
 
+  const setVisitAddressChoice = (choice: 'home' | 'extra' | 'other') => {
+    setFormData((prev) => {
+      if (choice === 'home') {
+        return {
+          ...prev,
+          visitAddressChoice: 'home',
+          isThisTheAddressWhereWeWillCome: 'Yes',
+          newPhysicalAddress: undefined,
+          physicalAddress: originalAddress ?? prev.physicalAddress,
+        };
+      }
+      if (choice === 'extra' && prev.extraVisitAddress) {
+        return {
+          ...prev,
+          visitAddressChoice: 'extra',
+          isThisTheAddressWhereWeWillCome: 'No',
+          newPhysicalAddress: prev.extraVisitAddress,
+        };
+      }
+      return {
+        ...prev,
+        visitAddressChoice: 'other',
+        isThisTheAddressWhereWeWillCome: 'No',
+        newPhysicalAddress: {
+          line1: '',
+          city: '',
+          state: '',
+          zip: '',
+          country: 'US',
+        },
+      };
+    });
+    setErrors((prev) => {
+      const next = { ...prev };
+      delete next.isThisTheAddressWhereWeWillCome;
+      delete next['newPhysicalAddress.line1'];
+      return next;
+    });
+  };
+
   const updateNestedFormData = (field: keyof FormData, nestedField: string, value: any) => {
     setFormData(prev => {
       const current = prev[field] as any;
@@ -4333,15 +4408,20 @@ export default function AppointmentRequestForm() {
 
     // For other pages, show unsaved changes warning
     const message = "You will lose your data if you leave this form. Are you sure you want to go back to the client portal?";
-    const userWantsToLeave = window.confirm(message);
-    
-    if (userWantsToLeave) {
-      void (async () => {
+    void (async () => {
+      const userWantsToLeave = await appConfirm({
+        title: 'Leave this form?',
+        message,
+        confirmLabel: 'Leave',
+        cancelLabel: 'Stay',
+        danger: true,
+      });
+      if (userWantsToLeave) {
         trackGaAbandon('exit_to_portal');
         await sendAbandon('exit_to_portal', { awaitPutThenPost: true });
         navigate('/client-portal');
-      })();
-    }
+      }
+    })();
   };
 
   const handleSubmit = async () => {
@@ -4488,14 +4568,14 @@ export default function AppointmentRequestForm() {
           return undefined;
         })(),
         
-        mailingAddress: isExistingClient && formData.differentMailingAddress === 'Yes' && formData.newMailingAddress
+        mailingAddress: isExistingClient && formData.mailingAddressSame === 'Yes, it is different.' && formData.mailingAddress
           ? {
-              line1: formData.newMailingAddress.line1 || '',
-              line2: formData.newMailingAddress.line2 || undefined,
-              city: formData.newMailingAddress.city || '',
-              state: formData.newMailingAddress.state || '',
-              zip: formData.newMailingAddress.zip || '',
-              country: formData.newMailingAddress.country || 'US',
+              line1: formData.mailingAddress.line1 || '',
+              line2: formData.mailingAddress.line2 || undefined,
+              city: formData.mailingAddress.city || '',
+              state: formData.mailingAddress.state || '',
+              zip: formData.mailingAddress.zip || '',
+              country: formData.mailingAddress.country || 'US',
             }
           : !isExistingClient && formData.mailingAddressSame === 'Yes, it is different.' && formData.mailingAddress
           ? {
@@ -6869,7 +6949,7 @@ export default function AppointmentRequestForm() {
               ) : null;
             })()}
 
-            {/* Is this the address where we will come to see you? */}
+            {/* Where should we come? Home, saved extra address, or a one-off. */}
             {(() => {
               const addressToCheck = formData.physicalAddress && (formData.physicalAddress.line1 || formData.physicalAddress.city || formData.physicalAddress.state || formData.physicalAddress.zip)
                 ? formData.physicalAddress
@@ -6878,39 +6958,33 @@ export default function AppointmentRequestForm() {
               return addressToCheck && (addressToCheck.line1 || addressToCheck.city || addressToCheck.state || addressToCheck.zip);
             })() && (
               <div style={{ marginBottom: '20px' }} data-form-field="isThisTheAddressWhereWeWillCome">
-                <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
-                  Is this the address where we will come to see you? <span style={{ color: '#ef4444' }}>*</span>
+                <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }} htmlFor="visit-address-choice">
+                  Which address should we come to? <span style={{ color: '#ef4444' }}>*</span>
                 </label>
-                <div style={{ display: 'flex', gap: '16px' }}>
-                  {['Yes', 'No'].map((option) => (
-                    <label
-                      key={option}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        cursor: 'pointer',
-                        padding: '12px',
-                        border: `1px solid ${formData.isThisTheAddressWhereWeWillCome === option ? '#10b981' : '#d1d5db'}`,
-                        borderRadius: '8px',
-                        backgroundColor: formData.isThisTheAddressWhereWeWillCome === option ? '#f0fdf4' : '#fff',
-                        flex: 1,
-                      }}
-                    >
-                      <input
-                        type="radio"
-                        name="isThisTheAddressWhereWeWillCome"
-                        value={option}
-                        checked={formData.isThisTheAddressWhereWeWillCome === option}
-                        onChange={(e) => updateFormData('isThisTheAddressWhereWeWillCome', e.target.value)}
-                        style={{ margin: 0 }}
-                      />
-                      <span>{option}</span>
-                    </label>
-                  ))}
-                </div>
+                <select
+                  id="visit-address-choice"
+                  value={formData.visitAddressChoice || (formData.isThisTheAddressWhereWeWillCome === 'No' ? 'other' : formData.isThisTheAddressWhereWeWillCome === 'Yes' ? 'home' : '')}
+                  onChange={(e) => setVisitAddressChoice(e.target.value as 'home' | 'extra' | 'other')}
+                  style={{
+                    width: '100%',
+                    padding: '12px',
+                    border: `1px solid ${errors.isThisTheAddressWhereWeWillCome ? '#ef4444' : '#d1d5db'}`,
+                    borderRadius: '8px',
+                    fontSize: '14px',
+                    backgroundColor: '#fff',
+                  }}
+                >
+                  <option value="">Select…</option>
+                  <option value="home">Home (where we show up)</option>
+                  {formData.extraVisitAddress?.line1 ? (
+                    <option value="extra">
+                      {formData.extraVisitAddressLabel || 'Other address'}
+                    </option>
+                  ) : null}
+                  <option value="other">A different address</option>
+                </select>
                 {errors.isThisTheAddressWhereWeWillCome && <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>{errors.isThisTheAddressWhereWeWillCome}</div>}
-                {formData.isThisTheAddressWhereWeWillCome !== 'No' &&
+                {formData.visitAddressChoice === 'home' &&
                   renderVisitZoneStatus(
                     formData.physicalAddress?.city || originalAddress?.city,
                     formData.physicalAddress?.state || originalAddress?.state,
@@ -6918,8 +6992,30 @@ export default function AppointmentRequestForm() {
               </div>
             )}
 
-            {/* Show new address fields if they answered "No" to "Is this the address where we will come to see you?" */}
-            {formData.isThisTheAddressWhereWeWillCome === 'No' && (
+            {formData.visitAddressChoice === 'extra' && formData.extraVisitAddress?.line1 ? (
+              <div style={{
+                marginBottom: '20px',
+                padding: '12px',
+                backgroundColor: '#f0fdf4',
+                border: '1px solid #bbf7d0',
+                borderRadius: '8px',
+                fontSize: '14px',
+                color: '#374151',
+              }}>
+                <div style={{ fontWeight: 600, marginBottom: 4 }}>{formData.extraVisitAddressLabel || 'Other address'}</div>
+                <div>{formData.extraVisitAddress.line1}</div>
+                {formData.extraVisitAddress.line2 ? <div>{formData.extraVisitAddress.line2}</div> : null}
+                <div>
+                  {[formData.extraVisitAddress.city, formData.extraVisitAddress.state, formData.extraVisitAddress.zip]
+                    .filter(Boolean)
+                    .join(', ')}
+                </div>
+                {renderVisitZoneStatus(formData.extraVisitAddress.city, formData.extraVisitAddress.state)}
+              </div>
+            ) : null}
+
+            {/* Show new address fields if they chose a one-off visit address */}
+            {formData.visitAddressChoice === 'other' && (
               <>
                 <div style={{ marginBottom: '20px' }} data-form-field="newPhysicalAddress.line1">
                   <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
@@ -6948,6 +7044,95 @@ export default function AppointmentRequestForm() {
                 </div>
               </>
             )}
+
+            <div style={{ marginBottom: '20px' }} data-form-field="mailingAddressSame">
+              <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
+                Is your mailing address the same as this location?
+              </label>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {(
+                  [
+                    { value: 'No, it is the same.', label: 'Yes — same as the visit location' },
+                    { value: 'Yes, it is different.', label: 'No — I have a different mailing address' },
+                  ] as const
+                ).map(({ value, label }) => (
+                  <label
+                    key={value}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      cursor: 'pointer',
+                      padding: '12px',
+                      border: `1px solid ${formData.mailingAddressSame === value ? '#10b981' : '#d1d5db'}`,
+                      borderRadius: '8px',
+                      backgroundColor: formData.mailingAddressSame === value ? '#f0fdf4' : '#fff',
+                    }}
+                  >
+                    <input
+                      type="radio"
+                      name="existingMailingAddressSame"
+                      value={value}
+                      checked={formData.mailingAddressSame === value}
+                      onChange={(e) => updateFormData('mailingAddressSame', e.target.value)}
+                      style={{ margin: 0 }}
+                    />
+                    <span>{label}</span>
+                  </label>
+                ))}
+              </div>
+              {formData.mailingAddressSame === 'Yes, it is different.' ? (
+                <div style={{ marginTop: '12px' }}>
+                  <label
+                    style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, fontSize: 14 }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={!!formData.mailingAddressManualEntry}
+                      onChange={(e) => {
+                        const manual = e.target.checked;
+                        setFormData((prev) => ({
+                          ...prev,
+                          mailingAddressManualEntry: manual,
+                        }));
+                      }}
+                    />
+                    PO Box or address that is not listed
+                  </label>
+                  {formData.mailingAddressManualEntry ? (
+                    <ManualAddressFields
+                      value={
+                        formData.mailingAddress ?? {
+                          line1: '',
+                          city: '',
+                          state: '',
+                          zip: '',
+                          country: 'US',
+                        }
+                      }
+                      onChange={(address) => setAddressFields('mailingAddress', address)}
+                      errorPrefix="mailingAddress"
+                    />
+                  ) : (
+                    <AddressAutocomplete
+                      id="existing-mailing-address"
+                      value={
+                        formData.mailingAddress ?? {
+                          line1: '',
+                          city: '',
+                          state: '',
+                          zip: '',
+                          country: 'US',
+                        }
+                      }
+                      onChange={(address) => setAddressFields('mailingAddress', address)}
+                      error={errors['mailingAddress.line1']}
+                      placeholder="Start typing your mailing address"
+                    />
+                  )}
+                </div>
+              ) : null}
+            </div>
 
             <div style={{ marginBottom: '20px' }}>
               <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>

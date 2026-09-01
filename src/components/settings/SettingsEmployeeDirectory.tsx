@@ -15,7 +15,16 @@ import {
   upsertEmployees,
   type EmployeeDto,
 } from '../../api/employeesMutations';
-import { PIMS_ENTITY_EDIT_ENABLED } from '../../utils/pimsEntityEditing';
+import {
+  getEmployeeBranches,
+  listInventoryBranchLocations,
+  listPracticeBranches,
+  setEmployeeBranches,
+  type InventoryBranchLocation,
+  type PracticeBranch,
+} from '../../api/branchInventory';
+import { appConfirm } from '../../utils/appDialog';
+import { EMPLOYEE_DIRECTORY_EDIT_ENABLED } from '../../utils/pimsEntityEditing';
 import {
   assignEmployeeRoleNameGroup,
   groupEmployeeRolesByName,
@@ -157,6 +166,10 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
   const [rolesEditEmployee, setRolesEditEmployee] = useState<Employee | null>(null);
   const [bioEditEmployee, setBioEditEmployee] = useState<Employee | null>(null);
   const [bioText, setBioText] = useState('');
+  const [branchOptions, setBranchOptions] = useState<PracticeBranch[]>([]);
+  const [locationOptions, setLocationOptions] = useState<InventoryBranchLocation[]>([]);
+  const [defaultBranchId, setDefaultBranchId] = useState<number | null>(null);
+  const [defaultLocationId, setDefaultLocationId] = useState<number | null>(null);
 
   const practice = useMemo(() => ({ id: DEFAULT_PRACTICE_ID }), []);
 
@@ -195,11 +208,11 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
   }, [load]);
 
   useEffect(() => {
-    if (!PIMS_ENTITY_EDIT_ENABLED) setModalMode(null);
+    if (!EMPLOYEE_DIRECTORY_EDIT_ENABLED) setModalMode(null);
   }, []);
 
   const openAdd = () => {
-    if (!PIMS_ENTITY_EDIT_ENABLED) return;
+    if (!EMPLOYEE_DIRECTORY_EDIT_ENABLED) return;
     setEditingId(null);
     setFirstName('');
     setLastName('');
@@ -223,6 +236,12 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
     setPhone1('');
     setPhone2('');
     setRoleIdsSelected([]);
+    setDefaultBranchId(null);
+    setDefaultLocationId(null);
+    setLocationOptions([]);
+    void listPracticeBranches(DEFAULT_PRACTICE_ID)
+      .then((list) => setBranchOptions(list.filter((b) => b.isActive !== false)))
+      .catch(() => setBranchOptions([]));
     setModalMode('add');
   };
 
@@ -281,18 +300,67 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
   };
 
   const openEdit = async (id: number) => {
-    if (!PIMS_ENTITY_EDIT_ENABLED) return;
+    if (!EMPLOYEE_DIRECTORY_EDIT_ENABLED) return;
     setSaving(false);
     setModalMode(null);
     try {
-      const full = await fetchEmployee(id);
+      const [full, branchList, empBranches] = await Promise.all([
+        fetchEmployee(id),
+        listPracticeBranches(DEFAULT_PRACTICE_ID),
+        getEmployeeBranches(DEFAULT_PRACTICE_ID, id).catch(() => []),
+      ]);
       setEditingId(id);
       applyRecordToForm(full);
+      setBranchOptions(branchList.filter((b) => b.isActive !== false));
+      const primary = empBranches.find((b) => b.isPrimary) ?? empBranches[0] ?? null;
+      const seedBranch =
+        primary?.branchId ??
+        branchList.find((b) => b.isDefault)?.id ??
+        branchList[0]?.id ??
+        null;
+      setDefaultBranchId(seedBranch);
+      setDefaultLocationId(primary?.defaultInventoryLocationId ?? null);
+      if (seedBranch != null) {
+        try {
+          const locs = await listInventoryBranchLocations(DEFAULT_PRACTICE_ID, seedBranch);
+          setLocationOptions(locs.filter((l) => l.isActive !== false));
+        } catch {
+          setLocationOptions([]);
+        }
+      } else {
+        setLocationOptions([]);
+      }
       setModalMode('edit');
     } catch (e) {
       onMessage?.(extractErr(e), 'error');
     }
   };
+
+  useEffect(() => {
+    if (modalMode !== 'add' && modalMode !== 'edit') return;
+    if (defaultBranchId == null) {
+      setLocationOptions([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const locs = await listInventoryBranchLocations(DEFAULT_PRACTICE_ID, defaultBranchId);
+        if (cancelled) return;
+        const active = locs.filter((l) => l.isActive !== false);
+        setLocationOptions(active);
+        setDefaultLocationId((prev) => {
+          if (prev != null && active.some((l) => l.id === prev)) return prev;
+          return active.find((l) => l.isDefault)?.id ?? active[0]?.id ?? null;
+        });
+      } catch {
+        if (!cancelled) setLocationOptions([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [modalMode, defaultBranchId]);
 
   const toggleRoleGroup = (nameKey: string, checked: boolean) => {
     const group = roleGroups.find((g) => g.nameKey === nameKey);
@@ -384,7 +452,7 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
 
   const submitModal = async (e: FormEvent) => {
     e.preventDefault();
-    if (!PIMS_ENTITY_EDIT_ENABLED) return;
+    if (!EMPLOYEE_DIRECTORY_EDIT_ENABLED) return;
     const fn = firstName.trim();
     const ln = lastName.trim();
     if (!fn || !ln) {
@@ -420,6 +488,18 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
         await updateEmployeeRoles(editingId, {
           roleIds: roleIdsSelected.length ? [...roleIdsSelected] : [],
         });
+        if (defaultBranchId != null) {
+          const existing = await getEmployeeBranches(DEFAULT_PRACTICE_ID, editingId).catch(() => []);
+          const branchIds =
+            existing.length > 0
+              ? [...new Set([...existing.map((b) => b.branchId), defaultBranchId])]
+              : [defaultBranchId];
+          await setEmployeeBranches(DEFAULT_PRACTICE_ID, editingId, {
+            branchIds,
+            primaryBranchId: defaultBranchId,
+            defaultInventoryLocationId: defaultLocationId,
+          });
+        }
         onMessage?.('Employee updated.', 'success');
       }
       setModalMode(null);
@@ -432,10 +512,14 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
   };
 
   const deactivate = async (emp: Employee) => {
-    if (!PIMS_ENTITY_EDIT_ENABLED) return;
-    if (!window.confirm(`Deactivate ${emp.firstName} ${emp.lastName}? They will be hidden from active lists.`)) {
-      return;
-    }
+    if (!EMPLOYEE_DIRECTORY_EDIT_ENABLED) return;
+    const ok = await appConfirm({
+      title: 'Deactivate employee?',
+      message: `Deactivate ${emp.firstName} ${emp.lastName}? They will be hidden from active lists.`,
+      confirmLabel: 'Deactivate',
+      danger: true,
+    });
+    if (!ok) return;
     try {
       const full = await fetchEmployee(emp.id);
       const merged = {
@@ -453,7 +537,7 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
   };
 
   const reactivate = async (emp: Employee) => {
-    if (!PIMS_ENTITY_EDIT_ENABLED) return;
+    if (!EMPLOYEE_DIRECTORY_EDIT_ENABLED) return;
     try {
       const full = await fetchEmployee(emp.id);
       const merged = {
@@ -471,14 +555,14 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
   };
 
   const removeRow = async (emp: Employee) => {
-    if (!PIMS_ENTITY_EDIT_ENABLED) return;
-    if (
-      !window.confirm(
-        `Permanently delete employee #${emp.id} from the database? This cannot be undone.`
-      )
-    ) {
-      return;
-    }
+    if (!EMPLOYEE_DIRECTORY_EDIT_ENABLED) return;
+    const ok = await appConfirm({
+      title: 'Delete employee?',
+      message: `Permanently delete employee #${emp.id} from the database? This cannot be undone.`,
+      confirmLabel: 'Delete',
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await deleteEmployees([emp.id]);
       onMessage?.('Employee deleted.', 'success');
@@ -497,7 +581,7 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
   return (
     <div className="settings-employee-directory">
       <p className="muted" style={{ marginBottom: 16, maxWidth: 900 }}>
-        {PIMS_ENTITY_EDIT_ENABLED ? (
+        {EMPLOYEE_DIRECTORY_EDIT_ENABLED ? (
           <>
             Add or edit staff using <code>POST /employees/upsert</code> (when PIMS ID is set on add) or{' '}
             <code>POST /employees</code> (save). The editor loads the same fields returned by <code>GET /employees/:id</code>{' '}
@@ -517,7 +601,7 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
       </p>
 
       <div style={{ marginBottom: 12 }}>
-        {PIMS_ENTITY_EDIT_ENABLED ? (
+        {EMPLOYEE_DIRECTORY_EDIT_ENABLED ? (
           <button type="button" className="btn" onClick={openAdd}>
             + Add employee
           </button>
@@ -525,7 +609,7 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
         <button
           type="button"
           className="btn secondary"
-          style={{ marginLeft: PIMS_ENTITY_EDIT_ENABLED ? 8 : 0 }}
+          style={{ marginLeft: EMPLOYEE_DIRECTORY_EDIT_ENABLED ? 8 : 0 }}
           onClick={() => void load()}
         >
           Refresh
@@ -617,7 +701,7 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
                       >
                         Edit bio
                       </button>
-                      {PIMS_ENTITY_EDIT_ENABLED ? (
+                      {EMPLOYEE_DIRECTORY_EDIT_ENABLED ? (
                         <>
                           <button
                             type="button"
@@ -770,7 +854,7 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
         </div>
       ) : null}
 
-      {PIMS_ENTITY_EDIT_ENABLED && (modalMode === 'add' || modalMode === 'edit') ? (
+      {EMPLOYEE_DIRECTORY_EDIT_ENABLED && (modalMode === 'add' || modalMode === 'edit') ? (
         <div className="settings-employee-modal-root" role="presentation">
           <button type="button" className="settings-employee-modal-backdrop" aria-label="Close" onClick={closeModal} />
           <div className="settings-employee-modal settings-employee-modal--wide" role="dialog" aria-modal="true">
@@ -890,6 +974,55 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
                   <label>
                     <span className="label">Phone 2</span>
                     <input className="input" type="tel" value={phone2} onChange={(e) => setPhone2(e.target.value)} />
+                  </label>
+                </div>
+              </fieldset>
+
+              <fieldset className="settings-employee-modal__fieldset">
+                <legend className="settings-employee-modal__legend">Default inventory</legend>
+                <p className="muted" style={{ fontSize: 12, margin: '0 0 8px' }}>
+                  Used for checkout stock draws when Progress has not been started for the day.
+                  Progress also updates these when you save day times.
+                </p>
+                <div className="settings-employee-modal__grid">
+                  <label>
+                    <span className="label">Default branch</span>
+                    <select
+                      className="input"
+                      value={defaultBranchId ?? ''}
+                      onChange={(e) => {
+                        const v = e.target.value === '' ? null : Number(e.target.value);
+                        setDefaultBranchId(v != null && Number.isFinite(v) ? v : null);
+                        setDefaultLocationId(null);
+                      }}
+                    >
+                      <option value="">Select branch…</option>
+                      {branchOptions.map((b) => (
+                        <option key={b.id} value={b.id}>
+                          {b.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    <span className="label">Default location</span>
+                    <select
+                      className="input"
+                      value={defaultLocationId ?? ''}
+                      disabled={defaultBranchId == null}
+                      onChange={(e) => {
+                        const v = e.target.value === '' ? null : Number(e.target.value);
+                        setDefaultLocationId(v != null && Number.isFinite(v) ? v : null);
+                      }}
+                    >
+                      <option value="">Select location…</option>
+                      {locationOptions.map((loc) => (
+                        <option key={loc.id} value={loc.id}>
+                          {loc.name}
+                          {loc.isDefault ? ' (default)' : ''}
+                        </option>
+                      ))}
+                    </select>
                   </label>
                 </div>
               </fieldset>

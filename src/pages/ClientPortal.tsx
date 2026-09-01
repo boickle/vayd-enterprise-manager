@@ -24,6 +24,7 @@ import { uploadPetImage } from '../api/patients';
 import VaccinationCertificateModal from '../components/VaccinationCertificateModal';
 import { updateCommunicationPreferences, getCurrentUser } from '../api/users';
 import { trackEvent } from '../utils/analytics';
+import { appAlert } from '../utils/appDialog';
 
 type PetWithWellness = Pet & {
   wellnessPlans?: WellnessPlan[];
@@ -213,6 +214,8 @@ export default function ClientPortal() {
   const [showPreferencesModal, setShowPreferencesModal] = useState(false);
   const [allowEmail, setAllowEmail] = useState<boolean | null>(null);
   const [allowText, setAllowText] = useState<boolean | null>(null);
+  const [preferPhone, setPreferPhone] = useState<boolean>(true);
+  const [doNotSendReminders, setDoNotSendReminders] = useState<boolean>(false);
   const [savingPreferences, setSavingPreferences] = useState(false);
   const [showReferralModal, setShowReferralModal] = useState(false);
   const [referralEmail, setReferralEmail] = useState('');
@@ -249,6 +252,8 @@ export default function ClientPortal() {
           const user = response.data;
           setAllowEmail(user?.allowEmail ?? null);
           setAllowText(user?.allowText ?? null);
+          setPreferPhone(user?.preferPhone !== false);
+          setDoNotSendReminders(user?.doNotSendReminders === true);
         })
         .catch((err) => {
           console.warn('Failed to fetch user preferences:', err);
@@ -257,6 +262,8 @@ export default function ClientPortal() {
           if (info) {
             setAllowEmail(info?.allowEmail ?? null);
             setAllowText(info?.allowText ?? null);
+            setPreferPhone(info?.preferPhone !== false);
+            setDoNotSendReminders(info?.doNotSendReminders === true);
           }
         });
     }
@@ -1018,7 +1025,8 @@ export default function ClientPortal() {
     try {
       await updateCommunicationPreferences(
         allowEmail ?? undefined,
-        allowText ?? undefined
+        allowText ?? undefined,
+        { preferPhone, doNotSendReminders },
       );
       setShowPreferencesModal(false);
       setMenuOpen(false);
@@ -2437,7 +2445,11 @@ export default function ClientPortal() {
                                 if (hasActiveWellnessPlan) {
                                   window.open('https://direct.lc.chat/19087357/', '_blank', 'noopener,noreferrer');
                                 } else {
-                                  alert('After-hours chat is only available to members. Please sign up for a membership plan to access this feature.');
+                                  void appAlert({
+                                    title: 'Members only',
+                                    message:
+                                      'After-hours chat is only available to members. Please sign up for a membership plan to access this feature.',
+                                  });
                                 }
                               }}
                               style={{
@@ -3270,6 +3282,34 @@ export default function ClientPortal() {
                       <div>Text (SMS)</div>
                       <div className="cp-preferences-checkbox-description">
                         If you uncheck this, you will no longer receive any communications via text, including appointment and service reminders, appointment request confirmations, and anything else now or in the future managed through the client portal.
+                      </div>
+                    </div>
+                  </label>
+                  <label className="cp-preferences-checkbox-item">
+                    <input
+                      type="checkbox"
+                      className="cp-preferences-checkbox"
+                      checked={preferPhone}
+                      onChange={(e) => setPreferPhone(e.target.checked)}
+                    />
+                    <div className="cp-preferences-checkbox-label">
+                      <div>Phone call</div>
+                      <div className="cp-preferences-checkbox-description">
+                        We may call this number for scheduling or medical follow-up. Uncheck if you prefer we do not call.
+                      </div>
+                    </div>
+                  </label>
+                  <label className="cp-preferences-checkbox-item">
+                    <input
+                      type="checkbox"
+                      className="cp-preferences-checkbox"
+                      checked={doNotSendReminders}
+                      onChange={(e) => setDoNotSendReminders(e.target.checked)}
+                    />
+                    <div className="cp-preferences-checkbox-label">
+                      <div>Do not send reminders</div>
+                      <div className="cp-preferences-checkbox-description">
+                        If you check this, we will not send appointment or health-care reminders by email or text.
                       </div>
                     </div>
                   </label>

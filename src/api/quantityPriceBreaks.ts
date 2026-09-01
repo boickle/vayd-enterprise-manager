@@ -22,32 +22,86 @@ export type InventoryItem = {
   cost?: string;
   isMedication?: boolean;
   minimumPrice?: string;
+  /** Percentage over cost: price = cost * (1 + markup / 100). */
+  markup?: string | number | null;
   /** Online store listing (backend may add). */
   showOnOnlineStore?: boolean;
   onlineStorePrice?: string | number | null;
+  /** When true, item can ship from the online storefront. */
+  shippable?: boolean;
+  /** S3 key for catalog image (display via GET …/image). */
+  imageUrl?: string | null;
   /** How the item is counted when selling or dispensing: capsule, bottle, ml, etc. */
   sellUnitType?: string | null;
   sellUnitTypeDetail?: string | null;
   unitsPerPackage?: number | string | null;
   alternateSellUnitType?: string | null;
   alternateUnitsPerPackage?: number | string | null;
+  /** Stock item this code draws down; null means it draws on itself. */
+  linkedInventoryItemId?: number | null;
+  linkedInventoryItemDefaultQuantity?: number | string | null;
+  manufacturer?: string | null;
+  vendorName?: string | null;
+  vendorDrugNumber?: string | null;
+  barcode?: string | null;
+  requireExpirationOnLots?: boolean;
+  trackLots?: boolean;
+  isVaccine?: boolean;
+  isDispensable?: boolean;
+  dispenseNote?: string | null;
+  isControlled?: boolean;
+  isMicrochip?: boolean;
+  hasClientNotes?: boolean;
+  clientNote?: string | null;
+  hideOnInvoice?: boolean;
+  hideOnMedicalRecordView?: boolean;
+  hideOnMedicalRecordPrint?: boolean;
+  excludeFromProduction?: boolean;
+  allowPriceChange?: boolean;
+  changePatientStatusTo?: string | null;
+  changePatientSex?: boolean;
+  defaultQuantity?: number | string | null;
+  vaccineDetails?: Record<string, unknown> | null;
   [key: string]: any; // Allow additional fields
 };
 
 export type Lab = {
   id: number;
   name: string;
-  price: string;
+  price: string | number | null;
   code: string | null;
-  [key: string]: any; // Allow additional fields
+  cost?: string | number | null;
+  category?: string | number | null;
+  taxLevelValue?: number | null;
+  excludePercentageDiscount?: boolean;
+  isActive?: boolean;
+  isDeleted?: boolean;
+  pimsId?: string | null;
+  pimsType?: string | null;
+  externalUpdated?: string | null;
+  lastPimsSyncedAt?: string | null;
+  [key: string]: any;
 };
 
 export type Procedure = {
   id: number;
   name: string;
-  price: string;
+  price: string | number | null;
   code: string | null;
-  [key: string]: any; // Allow additional fields
+  cost?: string | number | null;
+  category?: string | number | null;
+  serviceFee?: string | number | null;
+  taxLevelValue?: number | null;
+  excludePercentageDiscount?: boolean;
+  linkedInventoryItemId?: number | null;
+  linkedInventoryItemDefaultQuantity?: number | string | null;
+  isActive?: boolean;
+  isDeleted?: boolean;
+  pimsId?: string | null;
+  pimsType?: string | null;
+  externalUpdated?: string | null;
+  lastPimsSyncedAt?: string | null;
+  [key: string]: any;
 };
 
 export type SearchResultItem = {
@@ -91,13 +145,15 @@ export type ItemWithPriceBreaks = {
 export async function searchItems(
   query: string,
   practiceId: number,
-  limit: number = 50
+  limit: number = 50,
+  opts?: { includeInactive?: boolean }
 ): Promise<SearchResultItem[]> {
   const { data } = await http.get('/quantity-price-breaks/items/search', {
     params: {
       q: query,
       practiceId,
       limit,
+      includeInactive: opts?.includeInactive === true ? true : undefined,
     },
   });
   return Array.isArray(data) ? data : [];

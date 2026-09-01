@@ -2,14 +2,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router';
 import { useAuth } from '../auth/useAuth';
 import {
-  clientPimsIdFromSearchRow,
   searchPimsClientsAndPatients,
   type PimsPatientSearchHit,
 } from '../api/pimsSearch';
+import { lookupVisitInvoices, type VisitInvoiceLookupHit } from '../api/visitWorkflow';
 import type { ClientSearchRow } from '../api/clientsStaff';
-import { evetClientLink, evetPatientLink } from '../utils/evet';
+import { invoicePublicLabel } from '../utils/pimsInvoices';
 import { resolvePracticeIdFromToken } from '../utils/practiceIdFromToken';
 import { blockRoutingCalendarPreviewNavigation } from '../utils/routingCalendarPreviewGuard';
+import { pushRecentRecord } from '../utils/recentRecordsStore';
+import { formatClientDisplayName } from '../utils/clientNamePrefix';
+import NavbarRecentRecords from './NavbarRecentRecords';
 import './NavbarGlobalSearch.css';
 
 export default function NavbarGlobalSearch() {
@@ -18,17 +21,16 @@ export default function NavbarGlobalSearch() {
   const { token } = useAuth() as { token: string | null };
   const practiceId = useMemo(() => resolvePracticeIdFromToken(token), [token]);
 
-  const inSchedule = pathname.startsWith('/schedule');
-  const clientsBase = inSchedule ? '/schedule/clients' : '/pims/clients';
-  const patientsBase = inSchedule ? '/schedule/patients' : '/pims/patients';
-  const onPatientsArea =
-    pathname.startsWith('/pims/patients') || pathname.startsWith('/schedule/patients');
+  const clientsBase = '/schedule/clients';
+  const patientsBase = '/schedule/patients';
+  const onPatientsArea = pathname.startsWith('/schedule/patients');
 
   const [q, setQ] = useState('');
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [clients, setClients] = useState<ClientSearchRow[]>([]);
   const [patients, setPatients] = useState<PimsPatientSearchHit[]>([]);
+  const [invoices, setInvoices] = useState<VisitInvoiceLookupHit[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const seq = useRef(0);
@@ -38,6 +40,7 @@ export default function NavbarGlobalSearch() {
     if (!t) {
       setClients([]);
       setPatients([]);
+      setInvoices([]);
       setErr(null);
       setOpen(false);
       return;
@@ -47,15 +50,21 @@ export default function NavbarGlobalSearch() {
       setLoading(true);
       setErr(null);
       try {
-        const r = await searchPimsClientsAndPatients(t, { practiceId, activeOnly: true });
+        const looksLikeInvoice = /^#?\s*(?:s-?)?\d{1,9}$/i.test(t);
+        const [r, invoiceHits] = await Promise.all([
+          searchPimsClientsAndPatients(t, { practiceId, activeOnly: true }),
+          looksLikeInvoice ? lookupVisitInvoices(t).catch(() => []) : Promise.resolve([]),
+        ]);
         if (seq.current !== id) return;
         setClients(r.clients);
         setPatients(r.patients);
+        setInvoices(invoiceHits);
         setOpen(true);
       } catch (e: unknown) {
         if (seq.current !== id) return;
         setClients([]);
         setPatients([]);
+        setInvoices([]);
         setErr(e instanceof Error ? e.message : 'Search failed');
         setOpen(true);
       } finally {
@@ -73,17 +82,52 @@ export default function NavbarGlobalSearch() {
     return () => document.removeEventListener('mousedown', onDoc);
   }, []);
 
-  const openEvetClient = useCallback((c: ClientSearchRow) => {
-    setOpen(false);
-    setQ('');
-    window.open(evetClientLink(clientPimsIdFromSearchRow(c)), '_blank', 'noopener,noreferrer');
-  }, []);
+  const openScoutClient = useCallback(
+    (c: ClientSearchRow) => {
+      if (blockRoutingCalendarPreviewNavigation()) return;
+      const name = formatClientDisplayName(c);
+      pushRecentRecord({ kind: 'client', id: c.id, name });
+      setOpen(false);
+      setQ('');
+      navigate(`${clientsBase}?clientId=${encodeURIComponent(String(c.id))}`);
+    },
+    [navigate, clientsBase]
+  );
 
-  const openEvetPatient = useCallback((p: PimsPatientSearchHit) => {
-    setOpen(false);
-    setQ('');
-    window.open(evetPatientLink(p.patientPimsId), '_blank', 'noopener,noreferrer');
-  }, []);
+  const openScoutInvoice = useCallback(
+    (hit: VisitInvoiceLookupHit) => {
+      if (blockRoutingCalendarPreviewNavigation()) return;
+      if (hit.clientId == null) return;
+      if (hit.clientLabel) {
+        pushRecentRecord({ kind: 'client', id: hit.clientId, name: hit.clientLabel });
+      }
+      setOpen(false);
+      setQ('');
+      navigate(
+        `${clientsBase}?clientId=${encodeURIComponent(String(hit.clientId))}&tab=financial&invoice=${encodeURIComponent(hit.id)}`,
+      );
+    },
+    [navigate, clientsBase],
+  );
+
+  const openScoutPatient = useCallback(
+    (p: PimsPatientSearchHit) => {
+      if (blockRoutingCalendarPreviewNavigation()) return;
+      if (p.clientId != null && p.clientLabel) {
+        pushRecentRecord({ kind: 'client', id: p.clientId, name: p.clientLabel });
+      }
+      pushRecentRecord({
+        kind: 'patient',
+        id: p.id,
+        name: p.name,
+        subtitle: p.clientLabel,
+      });
+      setOpen(false);
+      setQ('');
+      navigate(`${patientsBase}?patientId=${encodeURIComponent(String(p.id))}`);
+    },
+    [navigate, patientsBase]
+  );
 
   function patientHitLabel(p: PimsPatientSearchHit): string {
     return p.clientLabel ? `${p.name} (${p.clientLabel})` : p.name;
@@ -118,29 +162,33 @@ export default function NavbarGlobalSearch() {
 
   return (
     <div className="navbar-global-search" ref={wrapRef}>
-      <div className="navbar-global-search__input-wrap">
-        <div className="navbar-global-search__field">
-          <input
-            type="search"
-            placeholder="Search clients, patients, phone…"
-            aria-label="Global search"
-            autoComplete="off"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            onFocus={() => q.trim() && (clients.length > 0 || patients.length > 0 || err) && setOpen(true)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                goAdvancedSearch();
+      <div className="navbar-global-search__row">
+        <NavbarRecentRecords />
+        <div className="navbar-global-search__input-wrap">
+          <div className="navbar-global-search__field">
+            <input
+              type="search"
+              placeholder="Search clients, patients, invoices…"
+              aria-label="Global search"
+              autoComplete="off"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              onFocus={() =>
+                q.trim() && (clients.length > 0 || patients.length > 0 || invoices.length > 0 || err) && setOpen(true)
               }
-            }}
-          />
-          {loading && <span className="navbar-global-search__loading">Searching…</span>}
-        </div>
-        {open && (q.trim() || err) && (
-        <div className="navbar-global-search__dropdown" role="listbox">
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  goAdvancedSearch();
+                }
+              }}
+            />
+            {loading && <span className="navbar-global-search__loading">Searching…</span>}
+          </div>
+          {open && (q.trim() || err) && (
+          <div className="navbar-global-search__dropdown" role="listbox">
           {err && <div className="navbar-global-search__msg">{err}</div>}
-          {!err && clients.length === 0 && patients.length === 0 && !loading && q.trim() && (
+          {!err && clients.length === 0 && patients.length === 0 && invoices.length === 0 && !loading && q.trim() && (
             <div className="navbar-global-search__msg">No matches.</div>
           )}
           {clients.length > 0 && (
@@ -152,13 +200,41 @@ export default function NavbarGlobalSearch() {
                     <button
                       type="button"
                       className="navbar-global-search__hit"
-                      title="Open client in eVet"
-                      onClick={() => openEvetClient(c)}
+                      title="Open client in Scout"
+                      onClick={() => openScoutClient(c)}
                     >
                       <span className="navbar-global-search__hit-name">
-                        {[c.firstName, c.lastName].filter(Boolean).join(' ') || `Client #${c.id}`}
+                        {formatClientDisplayName(c)}
                       </span>
-                      <span className="navbar-global-search__hit-meta">#{clientPimsIdFromSearchRow(c)}</span>
+                      <span className="navbar-global-search__hit-meta">#{c.id}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {invoices.length > 0 && (
+            <div className="navbar-global-search__section">
+              <div className="navbar-global-search__heading">Invoices</div>
+              <ul>
+                {invoices.slice(0, 8).map((hit) => (
+                  <li key={`inv-${hit.id}`}>
+                    <button
+                      type="button"
+                      className="navbar-global-search__hit"
+                      title="Open invoice in Scout"
+                      disabled={hit.clientId == null}
+                      onClick={() => openScoutInvoice(hit)}
+                    >
+                      <span className="navbar-global-search__hit-name">
+                        {invoicePublicLabel(hit)}
+                        {hit.clientLabel ? ` · ${hit.clientLabel}` : ''}
+                      </span>
+                      <span className="navbar-global-search__hit-meta">
+                        {hit.scoutInvoiceNumber != null && hit.evetInvoiceNumber != null
+                          ? `Scout #${hit.scoutInvoiceNumber}`
+                          : hit.status}
+                      </span>
                     </button>
                   </li>
                 ))}
@@ -174,11 +250,11 @@ export default function NavbarGlobalSearch() {
                     <button
                       type="button"
                       className="navbar-global-search__hit"
-                      title="Open patient in eVet"
-                      onClick={() => openEvetPatient(p)}
+                      title="Open patient in Scout"
+                      onClick={() => openScoutPatient(p)}
                     >
                       <span className="navbar-global-search__hit-name">{patientHitLabel(p)}</span>
-                      <span className="navbar-global-search__hit-meta">#{p.patientPimsId}</span>
+                      <span className="navbar-global-search__hit-meta">#{p.id}</span>
                     </button>
                   </li>
                 ))}
@@ -187,18 +263,16 @@ export default function NavbarGlobalSearch() {
           )}
           <div className="navbar-global-search__footer">
             <button type="button" className="navbar-global-search__see-all" onClick={goClientsSearch}>
-              See all in Clients…
+              See all clients…
             </button>
             <button type="button" className="navbar-global-search__see-all" onClick={goPatientsSearch}>
-              See all in Patients…
+              See all patients…
             </button>
           </div>
+          </div>
+          )}
         </div>
-        )}
       </div>
-      <p className="navbar-global-search__evet-hint">
-        Search to connect to patient or client in eVet/Pulse
-      </p>
     </div>
   );
 }

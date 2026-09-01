@@ -270,20 +270,67 @@ export async function getLatestModifiedPatient() {
 //   return http.post('/patients', patients);
 // }
 
-/** PATCH /patients/:id — partial update (e.g. weight). */
-export async function patchPatient(id: number | string, body: Record<string, unknown>): Promise<unknown> {
+/**
+ * Fields accepted by the Scout patient write endpoints. Anything not listed here is
+ * eVet-owned chart data and is not editable in Scout.
+ */
+export type ScoutPatientWrite = {
+  practiceId?: number;
+  name?: string | null;
+  dob?: string | null;
+  speciesId?: number | null;
+  breedId?: number | null;
+  species?: string | null;
+  breed?: string | null;
+  color?: string | null;
+  sex?: string | null;
+  neuterStatus?: string | null;
+  weight?: number | null;
+  alerts?: string | null;
+  primaryProviderId?: number | null;
+  isActive?: boolean;
+  clientIds?: number[];
+};
+
+/**
+ * PATCH /patients/:id — partial update from Scout.
+ *
+ * Saving marks the patient as Scout-edited, which stops the eVet import from overwriting
+ * these values until eVet reports a change newer than this edit.
+ */
+export async function patchPatient(
+  id: number | string,
+  body: ScoutPatientWrite,
+): Promise<unknown> {
   const { data } = await http.patch(`/patients/${encodeURIComponent(String(id))}`, body);
   return data;
 }
 
-// ---------------------------
-// Delete
-// ---------------------------
-
-// Delete by CSV list of ids
-export async function deletePatients(ids: string[]) {
-  return http.delete('/patients', { params: { ids: ids.join(',') } });
+/**
+ * POST /patients/scout — create a pet that exists only in Scout.
+ * The API assigns pimsType VAYD and a UUID pimsId so no eVet import can claim it.
+ */
+export async function createPatientScout(
+  body: ScoutPatientWrite & { practiceId: number; name: string },
+): Promise<unknown> {
+  const { data } = await http.post('/patients/scout', body);
+  return data;
 }
+
+/** POST /patients/:id/deactivate — soft deactivate, keeps medical history. */
+export async function deactivatePatient(id: number | string): Promise<unknown> {
+  const { data } = await http.post(`/patients/${encodeURIComponent(String(id))}/deactivate`);
+  return data;
+}
+
+/** POST /patients/:id/reactivate — undo a deactivation. */
+export async function reactivatePatient(id: number | string): Promise<unknown> {
+  const { data } = await http.post(`/patients/${encodeURIComponent(String(id))}/reactivate`);
+  return data;
+}
+
+// Hard delete (DELETE /patients?ids=) is intentionally not wrapped — it would drop medical
+// history. Use deactivatePatient instead.
 
 // ---------------------------
 // Analytics

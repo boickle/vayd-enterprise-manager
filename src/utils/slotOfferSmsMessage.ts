@@ -1,5 +1,7 @@
 import { DateTime } from 'luxon';
 import { appendCareOutreachSmsSuffix } from './careOutreachSmsMessage';
+import { applySystemTemplateIfCustom } from './messageTemplateCache';
+import { withClinicDefaults } from './messageTemplateFields';
 import { clientFirstNameForSms } from './clientFirstNameForSms';
 import { formatForwardBookingSmsBookedSlot } from './forwardBookingSmsMessage';
 import { providerLastNameFromDisplayName } from './scheduleLoaderSmsMessage';
@@ -58,13 +60,30 @@ export function buildSlotOfferSmsMessage(opts: {
   );
   const haveVerb = petCount === 1 ? 'has' : 'have';
   const petsAgain = petCount === 1 ? pets : 'them';
+  const values = withClinicDefaults({
+    client_first_name: firstName,
+    pets,
+    have_has: haveVerb,
+    doctor_last_name: lastName,
+    date_label: dateLabel,
+    window_start: window.windowStart,
+    window_end: window.windowEnd,
+  });
   const lead = `Hi ${firstName}, it's Vet At Your Door. Good news — Dr. ${lastName} will be in your area on ${dateLabel} and can arrive between ${window.windowStart} and ${window.windowEnd}.`;
   if (opts.anyPastDue) {
     return appendCareOutreachSmsSuffix(
-      `${lead} It looks like ${pets} ${haveVerb} a few things past due, so this is a great chance to get ${petsAgain} all caught up. Tap the link below to confirm this time`
+      applySystemTemplateIfCustom(
+        'slot_offer_past_due',
+        values,
+        `${lead} It looks like ${pets} ${haveVerb} a few things past due, so this is a great chance to get ${petsAgain} all caught up. Tap the link below to confirm this time`,
+      ),
     );
   }
   return appendCareOutreachSmsSuffix(
-    `${lead} ${pets} ${haveVerb} a few things coming due soon, so this is a great chance to get ${petsAgain} up to date. Tap the link below to confirm this time`
+    applySystemTemplateIfCustom(
+      'slot_offer_coming_due',
+      values,
+      `${lead} ${pets} ${haveVerb} a few things coming due soon, so this is a great chance to get ${petsAgain} up to date. Tap the link below to confirm this time`,
+    ),
   );
 }

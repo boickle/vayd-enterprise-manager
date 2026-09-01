@@ -1,5 +1,5 @@
 // Proposed practice-level inventory catalog endpoints (online store, units, bulk pricing, cost rollups).
-import { http } from './http';
+import { apiBaseUrl, http } from './http';
 
 export type SellUnitType =
   | 'capsule'
@@ -11,7 +11,34 @@ export type SellUnitType =
   | 'each'
   | 'other';
 
+export type InventoryVaccineDetails = {
+  name?: string | null;
+  manufacturer?: string | null;
+  vaccineType?: string | null;
+  dosageType?: 'initial' | 'booster' | string | null;
+  createRabiesCertificate?: boolean;
+  createVaccinationLog?: boolean;
+  usdaLicensingMonths?: number | null;
+  animalControlLicensingMonths?: number | null;
+  tagIssuePeriodMonths?: number | null;
+  defaultSerial?: string | null;
+};
+
 export type InventoryItemCatalogPatch = {
+  name?: string;
+  code?: string | null;
+  price?: number | null;
+  cost?: number | null;
+  serviceFee?: number | null;
+  minimumPrice?: number | null;
+  /** Percentage over cost: price = cost * (1 + markup / 100). */
+  markup?: number | null;
+  isMedication?: boolean;
+  isActive?: boolean;
+  description?: string | null;
+  shippable?: boolean;
+  /** Set null to clear; prefer uploadInventoryItemImage for files. */
+  imageUrl?: string | null;
   showOnOnlineStore?: boolean;
   onlineStorePrice?: number | null;
   sellUnitType?: SellUnitType | string | null;
@@ -22,6 +49,32 @@ export type InventoryItemCatalogPatch = {
   /** Secondary way you sell the same SKU (e.g. capsule when primary is bottle). */
   alternateSellUnitType?: SellUnitType | string | null;
   alternateUnitsPerPackage?: number | null;
+  /** Stock item this code draws down. Null means it draws on itself. */
+  linkedInventoryItemId?: number | null;
+  /** Units of the stock item consumed per unit sold (100 for a bottle of 100). */
+  linkedInventoryItemDefaultQuantity?: number | null;
+  manufacturer?: string | null;
+  vendorName?: string | null;
+  vendorDrugNumber?: string | null;
+  barcode?: string | null;
+  requireExpirationOnLots?: boolean;
+  trackLots?: boolean;
+  isVaccine?: boolean;
+  isDispensable?: boolean;
+  dispenseNote?: string | null;
+  isControlled?: boolean;
+  isMicrochip?: boolean;
+  hasClientNotes?: boolean;
+  clientNote?: string | null;
+  hideOnInvoice?: boolean;
+  hideOnMedicalRecordView?: boolean;
+  hideOnMedicalRecordPrint?: boolean;
+  excludeFromProduction?: boolean;
+  allowPriceChange?: boolean;
+  changePatientStatusTo?: string | null;
+  changePatientSex?: boolean;
+  defaultQuantity?: number | null;
+  vaccineDetails?: InventoryVaccineDetails | null;
 };
 
 export async function patchPracticeInventoryItem(
@@ -34,6 +87,42 @@ export async function patchPracticeInventoryItem(
     body
   );
   return data ?? {};
+}
+
+export async function uploadInventoryItemImage(
+  practiceId: number,
+  inventoryItemId: number,
+  file: File
+): Promise<{ success?: boolean; imageUrl?: string; s3Key?: string }> {
+  const form = new FormData();
+  form.append('file', file);
+  const { data } = await http.post<{
+    success?: boolean;
+    imageUrl?: string;
+    s3Key?: string;
+  }>(`/practice/${practiceId}/inventory-items/${inventoryItemId}/image`, form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+  return data ?? {};
+}
+
+export async function deleteInventoryItemImage(
+  practiceId: number,
+  inventoryItemId: number
+): Promise<Record<string, unknown>> {
+  const { data } = await http.delete<Record<string, unknown>>(
+    `/practice/${practiceId}/inventory-items/${inventoryItemId}/image`
+  );
+  return data ?? {};
+}
+
+export function inventoryItemImageUrl(
+  practiceId: number,
+  inventoryItemId: number,
+  cacheBust?: number | string
+): string {
+  const base = `${apiBaseUrl.replace(/\/+$/, '')}/practice/${practiceId}/inventory-items/${inventoryItemId}/image`;
+  return cacheBust != null ? `${base}?t=${cacheBust}` : base;
 }
 
 export type BulkInventoryPriceAdjustBody = {

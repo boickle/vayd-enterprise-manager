@@ -13,8 +13,8 @@ import TasksNavLabel from './TasksNavLabel';
 import { useTaskNavBadges } from '../hooks/useTaskNavBadges';
 import '../pages/ScheduleLayout.css';
 
-/** Hide Inventory tab until the module is ready for general staff. */
-const SHOW_NAV_INVENTORY = false;
+const SHOW_NAV_CATALOG = true;
+const SHOW_NAV_INVENTORY = true;
 
 const SCHED_NAV_GAP_PX = 6;
 /** Reserve width for “More” summary (tab padding + label + chevron) */
@@ -25,7 +25,10 @@ type SchedNavItemKey =
   | 'clients'
   | 'patients'
   | 'scheduling'
+  | 'epiphany'
+  | 'visits'
   | 'inventory'
+  | 'catalog'
   | 'tasks'
   | 'settings'
   | 'admin';
@@ -35,7 +38,10 @@ const MEASURE_LABEL: Record<SchedNavItemKey, string> = {
   clients: 'Clients',
   patients: 'Patients',
   scheduling: 'Scheduling',
+  epiphany: 'Epiphany',
+  visits: 'Visits',
   inventory: 'Inventory',
+  catalog: 'Catalog',
   tasks: 'Tasks',
   settings: 'Settings',
   admin: 'Admin',
@@ -264,8 +270,9 @@ export default function NavbarScheduleHorizontalNav() {
   const itemKeys = useMemo((): SchedNavItemKey[] => {
     const keys: SchedNavItemKey[] = [];
     if (homeTab) keys.push('home');
-    keys.push('clients', 'patients', 'scheduling');
+    keys.push('scheduling', 'epiphany', 'visits');
     if (SHOW_NAV_INVENTORY) keys.push('inventory');
+    if (SHOW_NAV_CATALOG) keys.push('catalog');
     keys.push('tasks');
     if (showAdminTab) keys.push('settings', 'admin');
     return keys;
@@ -398,8 +405,14 @@ export default function NavbarScheduleHorizontalNav() {
         return location.pathname.startsWith('/schedule/clients');
       case 'patients':
         return location.pathname.startsWith('/schedule/patients');
+      case 'epiphany':
+        return location.pathname.startsWith('/schedule/epiphany');
+      case 'visits':
+        return location.pathname.startsWith('/schedule/soap');
       case 'inventory':
         return location.pathname.startsWith('/schedule/inventory');
+      case 'catalog':
+        return location.pathname.startsWith('/schedule/catalog');
       case 'tasks':
         return location.pathname.startsWith('/schedule/tasks');
       case 'scheduling':
@@ -458,14 +471,50 @@ export default function NavbarScheduleHorizontalNav() {
             Patients
           </NavLink>
         );
+      case 'visits':
+        return (
+          <NavLink
+            key="visits"
+            to="/schedule/soap"
+            className={({ isActive }) => `schedule-app__tab${isActive ? ' schedule-app__tab--active' : ''}`}
+          >
+            Visits
+          </NavLink>
+        );
+      case 'epiphany':
+        return (
+          <NavLink
+            key="epiphany"
+            to="/schedule/epiphany"
+            className={({ isActive }) => `schedule-app__tab${isActive ? ' schedule-app__tab--active' : ''}`}
+          >
+            Epiphany
+          </NavLink>
+        );
       case 'inventory':
         return (
           <NavLink
             key="inventory"
-            to="/schedule/inventory"
-            className={({ isActive }) => `schedule-app__tab${isActive ? ' schedule-app__tab--active' : ''}`}
+            to="/schedule/inventory/receive"
+            className={({ isActive }) =>
+              `schedule-app__tab${
+                isActive || location.pathname.startsWith('/schedule/inventory')
+                  ? ' schedule-app__tab--active'
+                  : ''
+              }`
+            }
           >
             Inventory
+          </NavLink>
+        );
+      case 'catalog':
+        return (
+          <NavLink
+            key="catalog"
+            to="/schedule/catalog"
+            className={({ isActive }) => `schedule-app__tab${isActive ? ' schedule-app__tab--active' : ''}`}
+          >
+            Catalog
           </NavLink>
         );
       case 'tasks':
@@ -623,11 +672,11 @@ export default function NavbarScheduleHorizontalNav() {
                         Patients
                       </NavLink>
                     );
-                  case 'inventory':
+                  case 'epiphany':
                     return (
                       <NavLink
-                        key="more-inventory"
-                        to="/schedule/inventory"
+                        key="more-epiphany"
+                        to="/schedule/epiphany"
                         className={({ isActive }) =>
                           `schedule-app__settings-link${isActive ? ' schedule-app__settings-link--active' : ''}`
                         }
@@ -637,7 +686,62 @@ export default function NavbarScheduleHorizontalNav() {
                           closeMoreMenu();
                         }}
                       >
+                        Epiphany
+                      </NavLink>
+                    );
+                  case 'visits':
+                    return (
+                      <NavLink
+                        key="more-visits"
+                        to="/schedule/soap"
+                        className={({ isActive }) =>
+                          `schedule-app__settings-link${isActive ? ' schedule-app__settings-link--active' : ''}`
+                        }
+                        role="menuitem"
+                        onClick={(e) => {
+                          if (blockScheduleNavLeave(e)) return;
+                          closeMoreMenu();
+                        }}
+                      >
+                        Visits
+                      </NavLink>
+                    );
+                  case 'inventory':
+                    return (
+                      <NavLink
+                        key="more-inventory"
+                        to="/schedule/inventory/receive"
+                        className={({ isActive }) =>
+                          `schedule-app__settings-link${
+                            isActive || location.pathname.startsWith('/schedule/inventory')
+                              ? ' schedule-app__settings-link--active'
+                              : ''
+                          }`
+                        }
+                        role="menuitem"
+                        onClick={(e) => {
+                          if (blockScheduleNavLeave(e)) return;
+                          closeMoreMenu();
+                        }}
+                      >
                         Inventory
+                      </NavLink>
+                    );
+                  case 'catalog':
+                    return (
+                      <NavLink
+                        key="more-catalog"
+                        to="/schedule/catalog"
+                        className={({ isActive }) =>
+                          `schedule-app__settings-link${isActive ? ' schedule-app__settings-link--active' : ''}`
+                        }
+                        role="menuitem"
+                        onClick={(e) => {
+                          if (blockScheduleNavLeave(e)) return;
+                          closeMoreMenu();
+                        }}
+                      >
+                        Catalog
                       </NavLink>
                     );
                   case 'tasks':

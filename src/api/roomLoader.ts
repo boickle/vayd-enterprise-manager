@@ -397,6 +397,12 @@ export type RoomLoader = {
    */
   linkedPriorRoomLoaderId?: number | null;
   linkedRoomLoaderId?: number | null;
+  /** Present when the client has submitted the form (sentStatus completed). */
+  responseFromClient?: {
+    summaryForPdf?: SummaryForPdf;
+    formAnswersForPdf?: Record<string, unknown>;
+    [key: string]: unknown;
+  } | null;
   created?: string;
   updated?: string;
 };
@@ -411,6 +417,8 @@ export type RoomLoaderSearchParams = {
   appointmentFrom?: string;
   /** Inclusive upper bound for appointment date filter (`YYYY-MM-DD`). */
   appointmentTo?: string;
+  /** Limit to loaders for this pet (appointment or linked patient). */
+  patientId?: number;
 };
 
 export type CreateRoomLoaderRequest = {
@@ -439,6 +447,9 @@ export async function searchRoomLoaders(params?: RoomLoaderSearchParams): Promis
   }
   if (params?.appointmentTo != null && String(params.appointmentTo).trim() !== '') {
     queryParams.append('appointmentTo', String(params.appointmentTo).trim());
+  }
+  if (params?.patientId != null && Number.isFinite(params.patientId)) {
+    queryParams.append('patientId', String(params.patientId));
   }
 
   const queryString = queryParams.toString();
@@ -553,7 +564,10 @@ export type SearchableItem = {
   itemType: 'inventory' | 'lab' | 'procedure' | string;
   inventoryItem?: any;
   lab?: any;
+  procedure?: any;
   price: number;
+  /** Price after wellness plan + client discounts (only when patientId/clientId provided). */
+  adjustedPrice?: number | null;
   name: string;
   code?: string;
   originalPrice?: number;
@@ -606,6 +620,10 @@ export type ItemSearchParams = {
   limit?: number;
   /** If set, backend may also match items by this code (e.g. same as q to search by name or code). */
   code?: string;
+  /** Apply wellness-plan pricing for this patient. */
+  patientId?: number;
+  /** Apply client status / personal discounts for this client. */
+  clientId?: number;
 };
 
 export async function searchItems(params: ItemSearchParams): Promise<SearchableItem[]> {
@@ -617,6 +635,12 @@ export async function searchItems(params: ItemSearchParams): Promise<SearchableI
   }
   if (params.code != null && params.code !== '') {
     queryParams.append('code', params.code);
+  }
+  if (params.patientId != null) {
+    queryParams.append('patientId', String(params.patientId));
+  }
+  if (params.clientId != null) {
+    queryParams.append('clientId', String(params.clientId));
   }
 
   const { data } = await http.get<SearchableItem[]>(`/room-loader/items/search?${queryParams.toString()}`);
@@ -680,7 +704,7 @@ export async function submitReminderFeedback(request: ReminderMappingFeedbackReq
 export type CheckItemPricingRequest = {
   patientId: number;
   practiceId: number;
-  clientId: number;
+  clientId?: number;
   /** Patient species label (e.g. Canine, Feline) for membership / species-specific pricing rules. */
   species?: string;
   itemType: 'lab' | 'procedure' | 'inventory' | string;

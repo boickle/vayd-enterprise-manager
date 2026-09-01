@@ -77,6 +77,8 @@ export type Employee = {
   title?: string;
   designation?: string;
   isProvider?: boolean;
+  /** Clinical / PIMS role ids from GET /employees/:id */
+  roleIds?: number[];
   pimsId?: string | number | null;
   isActive?: boolean;
   isDeleted?: boolean;

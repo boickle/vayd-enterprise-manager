@@ -10,6 +10,7 @@ import {
   LineChart,
   ListChecks,
   Mail,
+  Mic,
   Package,
   PackageSearch,
   PanelLeft,
@@ -39,9 +40,10 @@ import {
   useForwardBookingWorkspaceLockActive,
   useForwardBookingWorkspaceNavigationGuard,
 } from '../utils/forwardBookingWorkspaceGuard';
+import { useInvoiceDirectionsNavigationGuard } from '../utils/invoiceDirectionsLeaveGuard';
 import { markSchedulerHandoffPreferRoutingDoctor } from '../utils/schedulerCalendarHandoff';
 import { startFreshNewAppointmentRouting } from '../utils/routingNewAppointment';
-import { evetCreateClientLink } from '../utils/evet';
+import { appAlert } from '../utils/appDialog';
 import { useGmailInboxAccess } from '../hooks/useGmailInboxAccess';
 import './ScheduleLayout.css';
 
@@ -77,7 +79,7 @@ const WORK_QUEUE_ROWS: QueueRow[] = [
   { label: 'Pending Checkout', count: 2, title: 'Coming soon', icon: ShoppingCart },
   { label: 'Lab Reviews', count: 1, title: 'Coming soon', icon: FlaskConical },
   { label: 'Pending Count Reviews', count: 2, title: 'Coming soon', icon: Calculator },
-  { label: 'Expiring Inventory', count: 4, to: '/schedule/inventory', icon: PackageSearch },
+  { label: 'Expiring Inventory', count: 4, to: '/schedule/catalog', icon: PackageSearch },
 ];
 
 export default function ScheduleLayout() {
@@ -116,12 +118,16 @@ export default function ScheduleLayout() {
 
   const forwardBookingWorkspaceLockActive = useForwardBookingWorkspaceLockActive();
   useForwardBookingWorkspaceNavigationGuard(forwardBookingWorkspaceLockActive);
+  useInvoiceDirectionsNavigationGuard();
 
   useEffect(() => {
     if (!hasActiveForwardBookingWorkspaceLock()) return;
     if (!location.pathname.startsWith('/schedule')) return;
     if (location.pathname === FORWARD_BOOKING_ROUTE_PATH) return;
-    window.alert(FORWARD_BOOKING_NAVIGATION_BLOCKED_MESSAGE);
+    void appAlert({
+      title: 'Forward booking in progress',
+      message: FORWARD_BOOKING_NAVIGATION_BLOCKED_MESSAGE,
+    });
     navigate(FORWARD_BOOKING_ROUTE_PATH, { replace: true });
   }, [location.pathname, navigate]);
 
@@ -166,7 +172,9 @@ export default function ScheduleLayout() {
       location.pathname === '/schedule/email' ||
       location.pathname === '/schedule/scheduler' ||
       location.pathname.startsWith('/schedule/scheduler/') ||
-      location.pathname === '/schedule/routing',
+      location.pathname === '/schedule/routing' ||
+      location.pathname === '/schedule/epiphany' ||
+      location.pathname.startsWith('/schedule/epiphany/'),
     [location.pathname]
   );
 
@@ -243,7 +251,10 @@ export default function ScheduleLayout() {
               onClick={(e) => {
                 if (forwardBookingWorkspaceLockActive) {
                   e.preventDefault();
-                  window.alert(FORWARD_BOOKING_NAVIGATION_BLOCKED_MESSAGE);
+                  void appAlert({
+                    title: 'Forward booking in progress',
+                    message: FORWARD_BOOKING_NAVIGATION_BLOCKED_MESSAGE,
+                  });
                   return;
                 }
                 if (appointmentHref === '/schedule/routing') {
@@ -260,18 +271,30 @@ export default function ScheduleLayout() {
               </span>
               <span className="schedule-app__quick-link-label">+ Appointment</span>
             </NavLink>
-            <a
-              href={evetCreateClientLink()}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="schedule-app__quick-link"
+            <NavLink
+              to="/schedule/clients?add=1"
+              className={({ isActive }) =>
+                `schedule-app__quick-link${isActive ? ' schedule-app__quick-link--active' : ''}`
+              }
               title={railCollapsedEffective ? 'New Client' : undefined}
             >
               <span className="schedule-app__quick-link-icon" aria-hidden>
                 <UserPlus size={18} strokeWidth={1.75} />
               </span>
               <span className="schedule-app__quick-link-label">+ New Client</span>
-            </a>
+            </NavLink>
+            <NavLink
+              to="/schedule/epiphany"
+              className={({ isActive }) =>
+                `schedule-app__quick-link${isActive ? ' schedule-app__quick-link--active' : ''}`
+              }
+              title={railCollapsedEffective ? 'Epiphany' : undefined}
+            >
+              <span className="schedule-app__quick-link-icon" aria-hidden>
+                <Mic size={18} strokeWidth={1.75} />
+              </span>
+              <span className="schedule-app__quick-link-label">Epiphany</span>
+            </NavLink>
             <NavLink
               to="/schedule/room-loader"
               className="schedule-app__quick-link"
@@ -284,7 +307,7 @@ export default function ScheduleLayout() {
             </NavLink>
             {SHOW_RAIL_RESTOCK_LOCATION ? (
               <NavLink
-                to="/schedule/inventory"
+                to="/schedule/catalog"
                 className="schedule-app__quick-link"
                 title={railCollapsedEffective ? 'Restock Location' : undefined}
               >
@@ -392,7 +415,10 @@ export default function ScheduleLayout() {
       >
         <div
           className={`schedule-app__outlet${outletFlush ? ' schedule-app__outlet--flush' : ''}${
-            location.pathname === '/schedule/routing' ? ' schedule-app__outlet--routing-split' : ''
+            location.pathname === '/schedule/routing' ||
+            location.pathname.startsWith('/schedule/epiphany')
+              ? ' schedule-app__outlet--routing-split'
+              : ''
           }${outletFlushVerticallyScrollable ? ' schedule-app__outlet--flush-scroll-y' : ''}${
             scheduleMainStickyCalendarChain ? ' schedule-app__outlet--practice-sticky-x' : ''
           }`}

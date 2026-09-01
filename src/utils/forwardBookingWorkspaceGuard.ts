@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { appAlert } from './appDialog';
 import {
   forwardBookingWorkspaceIsActive,
   ROUTING_FORWARD_BOOKING_INTENT_UPDATED_EVENT,
@@ -15,7 +16,10 @@ export function hasActiveForwardBookingWorkspaceLock(): boolean {
 
 export function alertAndBlockForwardBookingWorkspaceLeave(): boolean {
   if (!hasActiveForwardBookingWorkspaceLock()) return false;
-  window.alert(FORWARD_BOOKING_NAVIGATION_BLOCKED_MESSAGE);
+  void appAlert({
+    title: 'Forward booking in progress',
+    message: FORWARD_BOOKING_NAVIGATION_BLOCKED_MESSAGE,
+  });
   return true;
 }
 

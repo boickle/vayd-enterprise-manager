@@ -27,6 +27,7 @@ import { RoomLoaderReconciliationModal } from '../components/RoomLoaderReconcili
 import { roomLoaderAppointmentsHaveHappened } from '../utils/roomLoaderReconciliation';
 import { notifyRoomLoaderSentStatusChanged } from '../utils/roomLoaderPreApptDisplay';
 import { evetPatientLink, evetClientLink } from '../utils/evet';
+import { appAlert } from '../utils/appDialog';
 import {
   inventoryCategoryRequiresSharpsDisposal,
   labCodeRequiresSharpsDisposal,
@@ -1258,7 +1259,7 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
       URL.revokeObjectURL(objectUrl);
     } catch (err: any) {
       console.error('Download PDF error:', err);
-      alert(err?.response?.data?.message || err?.message || 'Failed to download PDF. Please try again.');
+      void appAlert(err?.response?.data?.message || err?.message || 'Failed to download PDF. Please try again.');
     } finally {
       setDownloadingPdfRoomLoaderId(null);
     }
@@ -1746,7 +1747,7 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
     } catch (err: any) {
       console.error('Error submitting reminder feedback:', err);
       setReminderFeedback((prev) => ({ ...prev, [key]: null }));
-      alert('Failed to submit feedback. Please try again.');
+      void appAlert('Failed to submit feedback. Please try again.');
     }
   }
 
@@ -2443,7 +2444,7 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
     try {
       const payload = packageDataForClient();
       if (!payload) {
-        alert('Error: Unable to package data. Please try again.');
+        void appAlert('Error: Unable to package data. Please try again.');
         return;
       }
       if (skipEmail) payload.skipEmail = true;
@@ -2458,7 +2459,7 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
       handleCloseModal();
     } catch (error: any) {
       console.error('Error sending to client:', error);
-      alert(`Failed to send to client: ${error?.message || 'Please try again.'}`);
+      void appAlert(`Failed to send to client: ${error?.message || 'Please try again.'}`);
     } finally {
       setSendingToClient(false);
       setUpdatingToClient(false);
@@ -2516,7 +2517,7 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
       handleCloseModal();
     } catch (error: any) {
       console.error('Error saving form:', error);
-      alert(`Failed to save form: ${error?.message || 'Please try again.'}`);
+      void appAlert(`Failed to save form: ${error?.message || 'Please try again.'}`);
     } finally {
       setSavingForm(false);
     }
@@ -4275,7 +4276,7 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
                                           });
                                         } catch (err: any) {
                                           console.error('Error submitting match:', err);
-                                          alert(err?.message || 'Failed to submit match. Please try again.');
+                                          void appAlert(err?.message || 'Failed to submit match. Please try again.');
                                         }
                                       }}
                                       style={{
@@ -5298,11 +5299,11 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
                     const ts = selectedRoomLoader?.timesSentToClient ?? 0;
                     if (ts >= 1) {
                       if (confirmSendChannel === 'email' && petsWithAppointments.some((item) => isNoEffectiveEmail(item.client?.email))) {
-                        alert('Add a client email address to send by email, or choose SMS if a phone number is on file.');
+                        void appAlert('Add a client email address to send by email, or choose SMS if a phone number is on file.');
                         return;
                       }
                       if (confirmSendChannel === 'sms' && !petsWithAppointments.some((item) => hasEffectivePhone(item.client?.phone1))) {
-                        alert('Add a client phone number to send by SMS, or choose email.');
+                        void appAlert('Add a client phone number to send by SMS, or choose email.');
                         return;
                       }
                       void executeSendToClient(false, {

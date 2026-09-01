@@ -14,6 +14,7 @@ import { fetchAllEmployees, type Employee } from '../api/appointmentSettings';
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import { formatEmployeeDisplayName } from '../utils/employeeDisplayName';
 import './Settings.css';
+import { appConfirm } from '../utils/appDialog';
 
 function extractErr(err: unknown): string {
   const e = err as {
@@ -312,9 +313,11 @@ export default function AdminUsers() {
       });
       return;
     }
-    const ok = window.confirm(
-      `Send a password reset link to ${user.email ?? `user #${user.id}`}?`,
-    );
+    const ok = await appConfirm({
+      title: 'Send password reset?',
+      message: `Send a password reset link to ${user.email ?? `user #${user.id}`}?`,
+      confirmLabel: 'Send',
+    });
     if (!ok) return;
     setResettingId(user.id);
     setMessage(null);

@@ -609,6 +609,15 @@ export async function fetchPracticeInfo(): Promise<PracticeInfo | null> {
   }
 }
 
+export async function fetchPracticeInfoById(practiceId: number): Promise<PracticeInfo | null> {
+  try {
+    const { data } = await http.get(`/practice/info/${practiceId}`);
+    return data || null;
+  } catch {
+    return null;
+  }
+}
+
 /** Main practice SMS/call line — from GET /practice/info (not hardcoded). */
 export async function fetchPracticeMainPhone(practiceId?: number): Promise<string | null> {
   try {

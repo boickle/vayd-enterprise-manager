@@ -1,14 +1,32 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { Link } from 'react-router';
 import { DateTime } from 'luxon';
-import { Calendar } from 'lucide-react';
-import type { Appointment } from '../../api/roomLoader';
+import { Calendar, ChevronDown, ChevronRight, ClipboardList } from 'lucide-react';
+import type { Appointment, RoomLoader } from '../../api/roomLoader';
+import {
+  buildSchedulerFocusAppointmentUrl,
+  writeSchedulerFocusSession,
+} from '../../utils/schedulerFocusAppointment';
+import {
+  findRoomLoaderForAppointment,
+  resolveRoomLoaderIdForAppointment,
+} from '../../utils/schedulerRoomLoaderResolve';
+import { isAppointmentCancelledOnPracticeCalendar } from '../../api/appointments';
+import { resolveArrivalWindowIsos } from '../../utils/appointmentRoutedArrivalWindow';
 import {
   appointmentMatchesPatientId,
   fetchClientAppointmentsStaff,
   fetchPatientAppointmentsStaff,
   isPatientRowActiveForListing,
 } from '../../api/pimsAppointments';
+import {
+  chartRoomLoaderAction,
+  notifyRoomLoaderSentStatusChanged,
+  ROOM_LOADER_SENT_STATUS_CHANGED_EVENT,
+} from '../../utils/roomLoaderPreApptDisplay';
+import { SchedulerRoomLoaderPdfModal } from '../../pages/SchedulerRoomLoaderModal';
+import { EmbeddedRoomLoaderModal } from './EmbeddedRoomLoaderModal';
 import './PimsAppointmentsSection.css';
 
 const DEFAULT_PRACTICE_TZ =
@@ -20,14 +38,41 @@ function pickStr(v: unknown): string | null {
   return s || null;
 }
 
-function formatApptRange(appt: Appointment, tz: string): string {
-  const s = DateTime.fromISO(appt.appointmentStart).setZone(tz);
-  const e = DateTime.fromISO(appt.appointmentEnd).setZone(tz);
-  if (!s.isValid) return appt.appointmentStart;
+function formatIsoRange(startIso: string, endIso: string, tz: string): string {
+  const s = DateTime.fromISO(startIso).setZone(tz);
+  const e = DateTime.fromISO(endIso).setZone(tz);
+  if (!s.isValid) return startIso;
   const datePart = s.toLocaleString(DateTime.DATE_MED);
   const t1 = s.toLocaleString(DateTime.TIME_SIMPLE);
   const t2 = e.isValid ? e.toLocaleString(DateTime.TIME_SIMPLE) : '—';
   return `${datePart} · ${t1}–${t2}`;
+}
+
+function visitWindow(appt: Appointment, tz: string): { startIso: string; endIso: string } {
+  return (
+    resolveArrivalWindowIsos({
+      apptEffectiveWindow: appt.effectiveWindow,
+      household: appt.arrivalWindow
+        ? {
+            windowStartIso: appt.arrivalWindow.windowStartIso,
+            windowEndIso: appt.arrivalWindow.windowEndIso,
+          }
+        : null,
+      scheduledStartIso: appt.appointmentStart,
+      appointmentType: appt.appointmentType,
+      appointmentEndIso: appt.appointmentEnd,
+      practiceTz: tz,
+    }) ?? { startIso: appt.appointmentStart, endIso: appt.appointmentEnd }
+  );
+}
+
+function formatApptRange(appt: Appointment, tz: string): string {
+  const win = visitWindow(appt, tz);
+  return formatIsoRange(win.startIso, win.endIso, tz);
+}
+
+function formatScheduledRange(appt: Appointment, tz: string): string {
+  return formatIsoRange(appt.appointmentStart, appt.appointmentEnd, tz);
 }
 
 /** Primary line for tables: pretty name, else type name. */
@@ -75,11 +120,83 @@ function patientLine(a: Appointment): string {
   return pickStr(r.patientName) ?? '—';
 }
 
+function visitWindowKey(a: Appointment, tz: string): string {
+  const s = DateTime.fromISO(a.appointmentStart).setZone(tz);
+  if (!s.isValid) return a.appointmentStart;
+  return `${s.toISODate()}|${s.toFormat('HH:mm')}`;
+}
+
+function householdVisitGroup(
+  anchor: Appointment | undefined,
+  all: Appointment[],
+  tz: string,
+): Appointment[] {
+  if (!anchor) return [];
+  const key = visitWindowKey(anchor, tz);
+  return all
+    .filter((a) => visitWindowKey(a, tz) === key)
+    .sort((a, b) => patientLine(a).localeCompare(patientLine(b)));
+}
+
+function householdVisitLabel(group: Appointment[], tz: string, includePets: boolean): string {
+  const pets = [...new Set(group.map(patientLine).filter((n) => n !== '—'))];
+  const types = [...new Set(group.map(appointmentTypeLabel))];
+  const when = formatApptRange(group[0], tz);
+  const typePart = types.length === 1 ? types[0] : types.join(' / ');
+  return `${includePets && pets.length ? `${pets.join(', ')} · ` : ''}${typePart} · ${when}`;
+}
+
 function formatDetailTimestamp(iso: unknown): string | null {
   if (typeof iso !== 'string' || !iso.trim()) return null;
   const d = DateTime.fromISO(iso);
   if (!d.isValid) return iso.trim();
   return d.toLocaleString(DateTime.DATETIME_SHORT);
+}
+
+function schedulerFocusHints(appt: Appointment, practiceTz: string): {
+  apptId: number;
+  dateKey: string | undefined;
+  providerId: string | undefined;
+} | null {
+  const apptId = Number(appt.id);
+  if (!Number.isFinite(apptId) || apptId <= 0) return null;
+  const dateKey =
+    DateTime.fromISO(appt.appointmentStart, { zone: 'utc' }).setZone(practiceTz).toISODate() ??
+    undefined;
+  const providerId =
+    appt.primaryProvider?.id != null ? String(appt.primaryProvider.id) : undefined;
+  return { apptId, dateKey, providerId };
+}
+
+function CompactVisitCalendarLink({
+  appt,
+  practiceTz,
+  children,
+}: {
+  appt: Appointment;
+  practiceTz: string;
+  children: ReactNode;
+}) {
+  const hints = schedulerFocusHints(appt, practiceTz);
+  if (!hints) return <>{children}</>;
+  return (
+    <Link
+      className="pims-appts-compact__visit-link"
+      to={buildSchedulerFocusAppointmentUrl(hints.apptId, {
+        date: hints.dateKey,
+        providerId: hints.providerId,
+      })}
+      onClick={() =>
+        writeSchedulerFocusSession({
+          appointmentId: hints.apptId,
+          dateHint: hints.dateKey ?? null,
+          providerHint: hints.providerId ?? null,
+        })
+      }
+    >
+      {children}
+    </Link>
+  );
 }
 
 function treatmentSummary(a: Appointment): string | null {
@@ -98,12 +215,22 @@ export type PimsAppointmentsSectionPatientProps = BaseProps & {
   variant: 'patient';
   patientId: string;
   patientRecord: Record<string, unknown>;
+  /** Last + next visit, with the full table behind “All visits”. */
+  compact?: boolean;
+  collapsed?: boolean;
+  onToggleCollapse?: () => void;
+  /** Book a new visit for this patient in Routing. */
+  onAddAppointment?: () => void;
 };
 
 export type PimsAppointmentsSectionClientProps = BaseProps & {
   variant: 'client';
   clientId: string;
   patients: Record<string, unknown>[];
+  /** Last + next visit, with the full table behind “All visits”. */
+  compact?: boolean;
+  collapsed?: boolean;
+  onToggleCollapse?: () => void;
 };
 
 export type PimsAppointmentsSectionProps =
@@ -127,21 +254,19 @@ function PimsAppointmentDetailModal({
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  const extra = appt as Record<string, unknown>;
-  const lastSync = formatDetailTimestamp(extra.lastPimsSyncedAt);
   const created = formatDetailTimestamp(appt.created);
-  const updated = formatDetailTimestamp(appt.updated);
-  const extCreated = formatDetailTimestamp(extra.externalCreated);
-  const extUpdated = formatDetailTimestamp(extra.externalUpdated);
   const booked = formatDetailTimestamp(appt.bookedDate);
   const treatment = treatmentSummary(appt);
   const meds = pickStr(appt.medications);
   const equip = pickStr(appt.equipment);
-  const pimsType = pickStr(appt.pimsType);
-  const apptPimsId = pickStr(appt.pimsId);
 
+  const windowLabel = formatApptRange(appt, practiceTz);
+  const scheduledLabel = formatScheduledRange(appt, practiceTz);
   const rows: { label: string; value: string }[] = [
-    { label: 'When', value: formatApptRange(appt, practiceTz) },
+    { label: 'Window', value: windowLabel },
+    ...(scheduledLabel !== windowLabel
+      ? [{ label: 'Scheduled', value: scheduledLabel }]
+      : []),
     { label: 'Appointment type', value: appointmentTypeDetail(appt) },
     { label: 'Status', value: pickStr(appt.statusName) ?? '—' },
     { label: 'Confirm status', value: pickStr(appt.confirmStatusName) ?? '—' },
@@ -158,15 +283,8 @@ function PimsAppointmentDetailModal({
     value: [appt.isComplete ? 'Complete' : 'Not complete', appt.allDay ? 'All day' : null].filter(Boolean).join(' · '),
   });
   if (booked) rows.push({ label: 'Booked', value: booked });
-  if (treatment) rows.push({ label: 'Treatment (PIMS id)', value: treatment });
-  if (lastSync) rows.push({ label: 'Last PIMS sync', value: lastSync });
-  if (extCreated) rows.push({ label: 'External created', value: extCreated });
-  if (extUpdated) rows.push({ label: 'External updated', value: extUpdated });
-  if (created) rows.push({ label: 'Record created', value: created });
-  if (updated) rows.push({ label: 'Record updated', value: updated });
-  rows.push({ label: 'Appointment id (Vayd)', value: String(appt.id) });
-  if (apptPimsId) rows.push({ label: 'Appointment PIMS id', value: apptPimsId });
-  if (pimsType) rows.push({ label: 'PIMS type', value: pimsType });
+  if (treatment) rows.push({ label: 'Treatment', value: treatment });
+  if (created) rows.push({ label: 'Recorded', value: created });
 
   const modal = (
     <div
@@ -208,7 +326,14 @@ function PimsAppointmentDetailModal({
 
 export default function PimsAppointmentsSection(props: PimsAppointmentsSectionProps) {
   const practiceTz = props.practiceTz ?? DEFAULT_PRACTICE_TZ;
+  const compact = props.compact === true;
+  const [roomLoaderBusy, setRoomLoaderBusy] = useState(false);
+  const [roomLoaderError, setRoomLoaderError] = useState<string | null>(null);
+  const [nextRoomLoader, setNextRoomLoader] = useState<RoomLoader | null>(null);
+  const [embeddedRoomLoaderId, setEmbeddedRoomLoaderId] = useState<number | null>(null);
+  const [viewPdfAppt, setViewPdfAppt] = useState<Appointment | null>(null);
   const [includeInactivePatients, setIncludeInactivePatients] = useState(false);
+  const [showAll, setShowAll] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [raw, setRaw] = useState<Appointment[]>([]);
@@ -256,43 +381,84 @@ export default function PimsAppointmentsSection(props: PimsAppointmentsSectionPr
   }, [props.practiceId, includeInactivePatients, fetchKey, props.variant]);
 
   const filtered = useMemo(() => {
+    const active = raw.filter((a) => !isAppointmentCancelledOnPracticeCalendar(a));
     if (props.variant === 'patient') {
       if (!includeInactivePatients && !currentPatientActive) return [];
-      const list = raw.filter((a) => appointmentMatchesPatientId(a, props.patientId));
+      const list = active.filter((a) => appointmentMatchesPatientId(a, props.patientId));
       return [...list].sort(
         (a, b) => Date.parse(b.appointmentStart) - Date.parse(a.appointmentStart),
       );
     }
-    return [...raw].sort(
+    return [...active].sort(
       (a, b) => Date.parse(b.appointmentStart) - Date.parse(a.appointmentStart),
     );
   }, [raw, props, includeInactivePatients, currentPatientActive]);
 
   const showPatientCol = props.variant === 'client';
+  const nextVisit = useMemo(() => {
+    const now = Date.now();
+    return [...filtered]
+      .filter((a) => Date.parse(a.appointmentStart) > now)
+      .sort((a, b) => Date.parse(a.appointmentStart) - Date.parse(b.appointmentStart))[0];
+  }, [filtered]);
+  const lastVisit = useMemo(() => {
+    const now = Date.now();
+    return filtered.find((a) => Date.parse(a.appointmentStart) <= now);
+  }, [filtered]);
+  const nextVisitId = nextVisit?.id ?? null;
+  const lastVisitGroup = useMemo(
+    () => householdVisitGroup(lastVisit, filtered, practiceTz),
+    [lastVisit, filtered, practiceTz],
+  );
+  const nextVisitGroup = useMemo(
+    () => householdVisitGroup(nextVisit, filtered, practiceTz),
+    [nextVisit, filtered, practiceTz],
+  );
 
-  return (
-    <section className="pims-appts-section" aria-labelledby="pims-appts-heading">
-      <div className="pims-appts-section__head">
-        <h2 id="pims-appts-heading" className="pims-appts-section__title">
-          <Calendar size={20} aria-hidden />
-          Appointments ({filtered.length})
-        </h2>
-        <div className="pims-appts-section__controls">
-          <label>
-            <input
-              type="checkbox"
-              checked={includeInactivePatients}
-              onChange={(e) => setIncludeInactivePatients(e.target.checked)}
-            />
-            Include inactive patients
-          </label>
-        </div>
-      </div>
-      <p className="pims-appts-section__hint">
-        Only appointments for this {props.variant === 'patient' ? 'patient' : 'client (all pets)'} are requested from
-        the server. Turn on the checkbox to ask for visits linked to inactive patients as well (when the API
-        supports that flag).
-      </p>
+  useEffect(() => {
+    if (!compact || nextVisitId == null) {
+      setNextRoomLoader(null);
+      return;
+    }
+    const appt = filtered.find((a) => a.id === nextVisitId);
+    if (!appt) {
+      setNextRoomLoader(null);
+      return;
+    }
+    let cancelled = false;
+    const load = () => {
+      void findRoomLoaderForAppointment(appt, practiceTz, filtered)
+        .then((row) => {
+          if (!cancelled) setNextRoomLoader(row);
+        })
+        .catch(() => {
+          if (!cancelled) setNextRoomLoader(null);
+        });
+    };
+    load();
+    window.addEventListener(ROOM_LOADER_SENT_STATUS_CHANGED_EVENT, load);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(ROOM_LOADER_SENT_STATUS_CHANGED_EVENT, load);
+    };
+  }, [compact, nextVisitId, practiceTz, filtered]);
+
+  const nextRlAction = chartRoomLoaderAction({
+    confirmStatusName: nextVisit?.confirmStatusName,
+    sentStatus: nextRoomLoader?.sentStatus,
+    timesSentToClient: nextRoomLoader?.timesSentToClient,
+    hasStaffForm: Boolean(
+      nextRoomLoader?.savedForm &&
+        typeof nextRoomLoader.savedForm === 'object' &&
+        Object.keys(nextRoomLoader.savedForm).length > 0
+    ),
+    hasClientResponse: Boolean(
+      nextRoomLoader?.sentStatus === 'completed' || nextRoomLoader?.responseFromClient
+    ),
+  });
+
+  const table = (
+    <>
       {error ? (
         <p className="pims-appts-section__error" role="alert">
           {error}
@@ -304,7 +470,7 @@ export default function PimsAppointmentsSection(props: PimsAppointmentsSectionPr
         <p className="pims-appts-section__empty">
           {props.variant === 'patient' && !includeInactivePatients && !currentPatientActive
             ? 'This patient is inactive. Turn on “Include inactive patients” to see their appointments.'
-            : 'No appointments found for this filter.'}
+            : 'No appointments on file.'}
         </p>
       ) : (
         <div className="pims-appts-section__table-wrap">
@@ -344,6 +510,159 @@ export default function PimsAppointmentsSection(props: PimsAppointmentsSectionPr
           </table>
         </div>
       )}
+    </>
+  );
+
+  async function openRoomLoaderForVisit(appt: Appointment) {
+    if (nextRlAction.mode === 'view') {
+      setViewPdfAppt(appt);
+      return;
+    }
+    setRoomLoaderBusy(true);
+    setRoomLoaderError(null);
+    try {
+      const id = await resolveRoomLoaderIdForAppointment(appt, practiceTz, filtered);
+      if (id == null) {
+        setRoomLoaderError('Could not open a room loader for this visit.');
+        return;
+      }
+      setEmbeddedRoomLoaderId(id);
+    } catch (e: unknown) {
+      setRoomLoaderError(e instanceof Error ? e.message : 'Could not open the room loader.');
+    } finally {
+      setRoomLoaderBusy(false);
+    }
+  }
+
+  if (compact) {
+    return (
+      <div className="pims-appts-compact">
+        <div className="pims-appts-compact__head">
+          {props.onToggleCollapse ? (
+            <button
+              type="button"
+              className="pims-emr-story__collapse"
+              onClick={props.onToggleCollapse}
+              aria-expanded={!props.collapsed}
+            >
+              {props.collapsed ? <ChevronRight size={15} aria-hidden /> : <ChevronDown size={15} aria-hidden />}
+              <Calendar size={15} aria-hidden />
+              Visits
+            </button>
+          ) : (
+            <h3 id="pims-emr-visits">
+              <Calendar size={15} aria-hidden />
+              Visits
+            </h3>
+          )}
+        </div>
+        {props.collapsed ? null : (
+        <>
+        <dl className="pims-appts-compact__facts">
+          <div>
+            <dt>Last</dt>
+            <dd>
+              {loading ? (
+                '…'
+              ) : lastVisit ? (
+                <CompactVisitCalendarLink appt={lastVisit} practiceTz={practiceTz}>
+                  {householdVisitLabel(lastVisitGroup, practiceTz, props.variant === 'client')}
+                </CompactVisitCalendarLink>
+              ) : (
+                'No prior visit'
+              )}
+            </dd>
+          </div>
+          <div>
+            <dt>Next</dt>
+            <dd>
+              {loading ? (
+                '…'
+              ) : nextVisit ? (
+                <CompactVisitCalendarLink appt={nextVisit} practiceTz={practiceTz}>
+                  {householdVisitLabel(nextVisitGroup, practiceTz, props.variant === 'client')}
+                </CompactVisitCalendarLink>
+              ) : (
+                'Nothing booked'
+              )}
+            </dd>
+            {nextVisit ? (
+              <button
+                type="button"
+                className="pims-appts-compact__action pims-appts-compact__action--rl"
+                disabled={roomLoaderBusy}
+                onClick={() => void openRoomLoaderForVisit(nextVisit)}
+              >
+                <ClipboardList size={13} aria-hidden />
+                {roomLoaderBusy ? 'Opening…' : nextRlAction.label}
+              </button>
+            ) : null}
+          </div>
+        </dl>
+        {roomLoaderError ? (
+          <p className="pims-appts-section__error" role="alert">
+            {roomLoaderError}
+          </p>
+        ) : null}
+        <button
+          type="button"
+          className="pims-appts-compact__toggle"
+          onClick={() => setShowAll((v) => !v)}
+          aria-expanded={showAll}
+        >
+          {showAll ? 'Hide visits' : `All visits (${filtered.length})`}
+        </button>
+        {showAll ? <div className="pims-appts-compact__all">{table}</div> : null}
+        {detail ? (
+          <PimsAppointmentDetailModal appt={detail} practiceTz={practiceTz} onClose={() => setDetail(null)} />
+        ) : null}
+        {embeddedRoomLoaderId != null ? (
+          <EmbeddedRoomLoaderModal
+            roomLoaderId={embeddedRoomLoaderId}
+            onClose={() => {
+              setEmbeddedRoomLoaderId(null);
+              notifyRoomLoaderSentStatusChanged();
+            }}
+          />
+        ) : null}
+        {viewPdfAppt ? (
+          <SchedulerRoomLoaderPdfModal
+            appt={viewPdfAppt}
+            practiceTz={practiceTz}
+            accentColor="#1e4d8c"
+            allAppointments={filtered}
+            onClose={() => setViewPdfAppt(null)}
+            onOpenDetails={(roomLoaderId) => {
+              setViewPdfAppt(null);
+              setEmbeddedRoomLoaderId(roomLoaderId);
+            }}
+          />
+        ) : null}
+        </>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <section className="pims-appts-section" aria-labelledby="pims-appts-heading">
+      <div className="pims-appts-section__head">
+        <h2 id="pims-appts-heading" className="pims-appts-section__title">
+          <Calendar size={20} aria-hidden />
+          Appointments ({filtered.length})
+        </h2>
+        <div className="pims-appts-section__controls">
+          <label>
+            <input
+              type="checkbox"
+              checked={includeInactivePatients}
+              onChange={(e) => setIncludeInactivePatients(e.target.checked)}
+            />
+            Include inactive patients
+          </label>
+        </div>
+      </div>
+      {table}
       {detail ? (
         <PimsAppointmentDetailModal appt={detail} practiceTz={practiceTz} onClose={() => setDetail(null)} />
       ) : null}

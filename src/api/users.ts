@@ -42,12 +42,35 @@ export async function getCurrentUser() {
   return http.get('/users');
 }
 
+export async function patchUserUiPrefs(body: { clientLayout?: Record<string, unknown> }) {
+  const { data } = await http.patch('/users/ui-prefs', body);
+  return data as { clientLayout?: Record<string, unknown> };
+}
+
 // Update communication preferences
-export async function updateCommunicationPreferences(allowEmail?: boolean, allowText?: boolean) {
-  const body: { allowEmail?: boolean; allowText?: boolean } = {};
+export async function updateCommunicationPreferences(
+  allowEmail?: boolean,
+  allowText?: boolean,
+  extras?: { preferPhone?: boolean; doNotSendReminders?: boolean }
+) {
+  const body: {
+    allowEmail?: boolean;
+    allowText?: boolean;
+    preferPhone?: boolean;
+    doNotSendReminders?: boolean;
+  } = {};
   if (allowEmail !== undefined) body.allowEmail = allowEmail;
   if (allowText !== undefined) body.allowText = allowText;
+  if (extras?.preferPhone !== undefined) body.preferPhone = extras.preferPhone;
+  if (extras?.doNotSendReminders !== undefined) body.doNotSendReminders = extras.doNotSendReminders;
   return http.post('/users/communication-preferences', body);
+}
+
+export async function sendClientPortalAccess(
+  clientId: number
+): Promise<{ ok: boolean; invited: boolean }> {
+  const { data } = await http.post('/users/send-client-portal-access', { clientId });
+  return data;
 }
 
 /** Scout login roles managed in Admin → Users. */
