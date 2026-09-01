@@ -25,6 +25,7 @@ import {
   buildOptimizeBaseline,
   type OptimizeBaseline,
 } from './scheduleOptimize';
+import { computeDepotReturnOverrunSeconds } from './depotReturnOverrun';
 import { fetchSchedulerDriveContextForDate, fetchSchedulerDriveEtasForDayBundle } from './schedulerDriveEta';
 import type { DayBundleIn } from './schedulerEtaMerge';
 import { householdsInRoutingDisplayOrder } from './maps';
@@ -35,7 +36,12 @@ const MIN_SAVE_SEC = 5 * 60;
 const MIN_SAME_DAY_SHIFT_SEC = 10 * 60;
 const ISOLATED_DRIVE_MIN = 40;
 const CLOSER_BY_KM = 8;
-const WORK_END_SLACK_MIN = 30;
+/**
+ * Max minutes past normal schedule end / depot return that Optimize may propose.
+ * Matches the usual soft overflow budget (~10 min); larger overflow requires an
+ * explicit Allow Overflow booking path, not an Optimize suggestion.
+ */
+export const OPTIMIZE_ALLOWED_OVERFLOW_MIN = 10;
 
 export type OptimizeMoveScope = 'day' | 'week';
 
@@ -498,12 +504,36 @@ function timesForMovedHousehold(
   return { startIso, endIso };
 }
 
-function pastWorkEnd(endIso: string, destDay: DayData, practiceTz: string): boolean {
+function pastWorkEnd(
+  endIso: string,
+  destDay: Pick<DayData, 'date' | 'timezone' | 'endDepotTime'>,
+  practiceTz: string,
+  slackMin: number = OPTIMIZE_ALLOWED_OVERFLOW_MIN
+): boolean {
   const tz = destDay.timezone || practiceTz;
   const workEnd = clockOnDate(destDay.date, destDay.endDepotTime || '18:00', tz);
   const etd = DateTime.fromISO(endIso);
   if (!etd.isValid || !workEnd.isValid) return false;
-  return etd > workEnd.plus({ minutes: WORK_END_SLACK_MIN });
+  return etd > workEnd.plus({ minutes: slackMin });
+}
+
+/**
+ * True when the simulated day (or moved stop ETD) exceeds the normal Optimize overflow budget.
+ * Prefers live depot-return overrun from `/routing/eta`; falls back to stop end vs endDepotTime.
+ */
+export function optimizeMoveExceedsAllowedOverflow(args: {
+  movedEndIso: string;
+  destDay: Pick<
+    DayData,
+    'date' | 'timezone' | 'endDepotTime' | 'backToDepotIso' | 'validationReturnSec'
+  >;
+  practiceTz: string;
+  maxOverflowMin?: number;
+}): boolean {
+  const maxMin = args.maxOverflowMin ?? OPTIMIZE_ALLOWED_OVERFLOW_MIN;
+  const overrunSec = computeDepotReturnOverrunSeconds(args.destDay);
+  if (overrunSec != null && overrunSec > maxMin * 60) return true;
+  return pastWorkEnd(args.movedEndIso, args.destDay, args.practiceTz, maxMin);
 }
 
 async function etaDayDrive(day: DayData, doctorId: string): Promise<DayData> {
@@ -827,7 +857,16 @@ async function validateOneProposal(args: {
 
   const times = timesForMovedHousehold(destEta, ids, serviceMin);
   if (!times) return null;
-  if (pastWorkEnd(times.endIso, toDay, practiceTz)) return null;
+  // Prefer post-move ETA day (has backToDepot*) so overflow matches calendar OVERFLOW.
+  if (
+    optimizeMoveExceedsAllowedOverflow({
+      movedEndIso: times.endIso,
+      destDay: destEta.endDepotTime ? destEta : { ...destEta, endDepotTime: toDay.endDepotTime },
+      practiceTz,
+    })
+  ) {
+    return null;
+  }
   if (p.scope === 'day') {
     const oldMs = DateTime.fromISO(startIso).toMillis();
     const newMs = DateTime.fromISO(times.startIso).toMillis();
