@@ -88,6 +88,14 @@ function tabBadgesForPath(
           title={`${counts.waitlistWaiting} waiting`}
         />
       );
+    case 'schedule-optimization':
+      return (
+        <TabBadge
+          count={counts.scheduleOptimizeQueued}
+          variant="default"
+          title={`${counts.scheduleOptimizeQueued} queued`}
+        />
+      );
     case 'texted-offers':
       return (
         <>

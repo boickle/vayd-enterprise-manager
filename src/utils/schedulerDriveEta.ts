@@ -153,7 +153,8 @@ function buildDoctorDaySyntheticFromRoutingPreview(
       : {}),
   };
   if (meta.clientId?.trim()) {
-    (synthetic as DoctorDayAppt & { clientId?: string }).clientId = meta.clientId.trim();
+    const cid = Number(meta.clientId.trim());
+    if (Number.isFinite(cid) && cid > 0) synthetic.clientId = cid;
   }
   const anchorAlt = coVisitAnchorRow?.isAlternateStop
     ? (coVisitAnchorRow.alternateAddressText?.trim() ||
@@ -768,6 +769,8 @@ async function fetchEtaForOneDay(
         startIso: h.startIso,
         endIso: h.endIso,
         effectiveWindow: h.effectiveWindow ?? (h.primary as any)?.effectiveWindow,
+        appointmentType: (h.primary as any)?.appointmentType ?? null,
+        practiceTz: day.timezone,
       }),
     })),
     startDepot: day.startDepot ? { lat: day.startDepot.lat, lon: day.startDepot.lon } : undefined,

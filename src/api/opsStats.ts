@@ -307,6 +307,11 @@ export type VsdPaymentsMatchReport = {
     memberBilled: number;
     billed: number;
     openToCollect: number;
+    pendingFutureVisit: {
+      invoices: number;
+      vsd: number;
+      remaining: number;
+    };
   };
   daily: VsdPaymentsMatchDay[];
   doctors: {
@@ -364,6 +369,11 @@ export async function fetchVsdPaymentsMatch(params: {
       memberBilled: n(resp.totals?.memberBilled),
       billed: n(resp.totals?.billed),
       openToCollect: n(resp.totals?.openToCollect),
+      pendingFutureVisit: {
+        invoices: n(resp.totals?.pendingFutureVisit?.invoices),
+        vsd: n(resp.totals?.pendingFutureVisit?.vsd),
+        remaining: n(resp.totals?.pendingFutureVisit?.remaining),
+      },
     },
     daily: Array.isArray(resp.daily)
       ? resp.daily.map((r: any) => ({

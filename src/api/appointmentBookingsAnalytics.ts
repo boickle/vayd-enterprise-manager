@@ -41,6 +41,8 @@ export type AppointmentBookingsAnalyticsUser = {
 export type AppointmentBookingsAnalyticsResponse = {
   startDate: string;
   endDate: string;
+  /** IANA zone used for day buckets (practice timezone). */
+  timezone?: string;
   /** Practice booking target for the day (entire practice). Shown in routing analytics only for single-day ranges. */
   appointmentBookingsGoal?: number;
   users: AppointmentBookingsAnalyticsUser[];

@@ -494,7 +494,8 @@ export default function CancellationsAnalytics() {
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
           Counts and the list below use the day the cancellation was recorded (
           <code>lastTouchedAt</code> / <code>externalUpdated</code>), not the scheduled appointment start.
-          Only rows with <code>confirmStatusName</code> of &quot;Canceled Appointment&quot; or &quot;Canceled&quot; are
+          Days are the practice timezone (America/New_York), not UTC. Only rows with{' '}
+          <code>confirmStatusName</code> of &quot;Canceled Appointment&quot; or &quot;Canceled&quot; are
           included.
         </Typography>
 

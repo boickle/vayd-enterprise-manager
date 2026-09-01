@@ -27,6 +27,14 @@ export type ScoutClientWrite = {
   phone2?: string | null;
   phone2Type?: string | null;
   primaryProviderId?: number | null;
+  practice?: { id: number; name?: string } | null;
+  primaryProvider?: {
+    id?: number | string;
+    firstName?: string | null;
+    lastName?: string | null;
+    title?: string | null;
+    designation?: string | null;
+  } | null;
   referralSource?: string | null;
   referralClientId?: number | null;
   noEmail?: boolean;

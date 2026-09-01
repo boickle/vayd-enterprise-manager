@@ -86,6 +86,11 @@ import { useAppointmentFormDraftPersistence } from '../hooks/useAppointmentFormD
 import type { AppointmentFormDraftSnapshotInput } from '../utils/appointmentFormDraftSnapshot';
 import { ClientLoginForm } from '../components/ClientLoginForm';
 import { getZoneSearchBufferMiles, isCreateClientEnabled, isProduction } from '../utils/env';
+import {
+  allowAppointmentRequestWhenOutOfArea,
+  isUsingAlternateVisitAddress,
+  ON_FILE_OUT_OF_AREA_REQUEST_ONLY_MESSAGE,
+} from '../utils/appointmentRequestZonePolicy';
 import { listMembershipTransactions } from '../api/membershipTransactions';
 import MembershipSignup from './MembershipSignup';
 import MembershipPayment from './MembershipPayment';
@@ -1053,6 +1058,16 @@ export default function AppointmentRequestForm() {
   handleOutOfServiceAreaRef.current = handleOutOfServiceArea;
   clearOutOfServiceAreaUiRef.current = clearOutOfServiceAreaUi;
 
+  const isExistingClientForZone =
+    isLoggedIn || formData.haveUsedServicesBefore === 'Yes';
+  const usingAlternateVisitAddress = isUsingAlternateVisitAddress(
+    formData.isThisTheAddressWhereWeWillCome,
+  );
+  const allowOnFileOutOfAreaRequest = allowAppointmentRequestWhenOutOfArea({
+    isExistingClient: isExistingClientForZone,
+    usingAlternateVisitAddress,
+  });
+
   const visitAddressForZoneCheck = useMemo(() => {
     if (isLoggedIn && formData.isThisTheAddressWhereWeWillCome === 'No') {
       return formatAddressForZoneCheck(formData.newPhysicalAddress);
@@ -1076,6 +1091,13 @@ export default function AppointmentRequestForm() {
     formData.physicalAddress?.state,
     formData.physicalAddress?.zip,
   ]);
+
+  const zoneBlocksProgress = Boolean(
+    visitAddressForZoneCheck &&
+      (zoneCheckStatus === 'pending' ||
+        zoneCheckStatus === 'idle' ||
+        (zoneCheckStatus === 'out_of_service' && !allowOnFileOutOfAreaRequest)),
+  );
 
   const visitAddressFieldsForZone = useCallback(() => {
     const fd = formDataRef.current;
@@ -1119,12 +1141,29 @@ export default function AppointmentRequestForm() {
         return;
       }
       if (status === 'out_of_service') {
+        const fd = formDataRef.current;
+        const allowRequest = allowAppointmentRequestWhenOutOfArea({
+          isExistingClient: isLoggedIn || fd.haveUsedServicesBefore === 'Yes',
+          usingAlternateVisitAddress: isUsingAlternateVisitAddress(
+            fd.isThisTheAddressWhereWeWillCome,
+          ),
+        });
+        if (allowRequest) {
+          setErrors((prev) => {
+            if (!prev.zoneNotServiced) return prev;
+            const next = { ...prev };
+            delete next.zoneNotServiced;
+            return next;
+          });
+          clearOutOfServiceAreaUiRef.current();
+          return;
+        }
         void handleOutOfServiceAreaRef.current(visitAddressFieldsForZone());
         return;
       }
       setErrors((prev) => ({ ...prev, zoneNotServiced: ZONE_CHECK_FAILED_MESSAGE }));
     },
-    [visitAddressFieldsForZone],
+    [isLoggedIn, visitAddressFieldsForZone],
   );
 
   const ensureVisitZoneInService = useCallback(async (): Promise<boolean> => {
@@ -1140,8 +1179,18 @@ export default function AppointmentRequestForm() {
     setZoneCheckStatus('pending');
     const status = await confirmVisitZone(address);
     applyZoneCheckResult(address, status);
-    return status === 'in_service';
-  }, [visitAddressForZoneCheck, confirmVisitZone, applyZoneCheckResult]);
+    if (status === 'in_service') return true;
+    if (status === 'out_of_service') {
+      const fd = formDataRef.current;
+      return allowAppointmentRequestWhenOutOfArea({
+        isExistingClient: isLoggedIn || fd.haveUsedServicesBefore === 'Yes',
+        usingAlternateVisitAddress: isUsingAlternateVisitAddress(
+          fd.isThisTheAddressWhereWeWillCome,
+        ),
+      });
+    }
+    return false;
+  }, [isLoggedIn, visitAddressForZoneCheck, confirmVisitZone, applyZoneCheckResult]);
 
   useEffect(() => {
     if (!visitAddressForZoneCheck) {
@@ -1303,6 +1352,17 @@ export default function AppointmentRequestForm() {
       return (
         <div data-form-field="zoneNotServiced" style={{ fontSize: '12px', color: '#6b7280', marginTop: '8px' }}>
           Confirming we serve your area…
+        </div>
+      );
+    }
+    if (
+      zoneCheckStatus === 'out_of_service' &&
+      allowOnFileOutOfAreaRequest &&
+      !errors.zoneNotServiced
+    ) {
+      return (
+        <div data-form-field="zoneNotServiced" style={{ fontSize: '12px', color: '#6b7280', marginTop: '8px' }}>
+          {ON_FILE_OUT_OF_AREA_REQUEST_ONLY_MESSAGE}
         </div>
       );
     }
@@ -1755,6 +1815,7 @@ export default function AppointmentRequestForm() {
   );
 
   const onlineBookingOffered = useMemo(() => {
+    if (zoneCheckStatus === 'out_of_service') return false;
     if (!handlingNeedsAllowOnlineScheduling) return false;
     if (!speciesAllowOnlineScheduling) return false;
     if (visitAppointmentTypeIds.length === 0) return false;
@@ -1766,6 +1827,7 @@ export default function AppointmentRequestForm() {
     }
     return anyDoctorCanBookOnlineForVisitTypes(rawVeterinarianList, visitAppointmentTypeIds);
   }, [
+    zoneCheckStatus,
     visitAppointmentTypeIds,
     rawVeterinarianList,
     isNewPatientRequest,
@@ -4069,7 +4131,9 @@ export default function AppointmentRequestForm() {
 
     if (visitAddressForZoneCheck && zoneCheckStatus !== 'in_service') {
       if (zoneCheckStatus === 'out_of_service') {
-        newErrors.zoneNotServiced = errors.zoneNotServiced || ZONE_NOT_SERVICED_MESSAGE;
+        if (!allowOnFileOutOfAreaRequest) {
+          newErrors.zoneNotServiced = errors.zoneNotServiced || ZONE_NOT_SERVICED_MESSAGE;
+        }
       } else if (zoneCheckStatus === 'failed') {
         newErrors.zoneNotServiced = ZONE_CHECK_FAILED_MESSAGE;
       } else {
@@ -9636,15 +9700,7 @@ export default function AppointmentRequestForm() {
               type="button"
               className={isOnSubmitStep ? 'appt-form-submit-btn' : undefined}
               onClick={handleNext}
-              disabled={
-                submitting ||
-                Boolean(
-                  visitAddressForZoneCheck &&
-                    (zoneCheckStatus === 'pending' ||
-                      zoneCheckStatus === 'out_of_service' ||
-                      zoneCheckStatus === 'idle'),
-                )
-              }
+              disabled={submitting || zoneBlocksProgress}
               style={{
                 padding: '12px 24px',
                 backgroundColor: '#10b981',
@@ -9654,23 +9710,11 @@ export default function AppointmentRequestForm() {
                 fontSize: '14px',
                 fontWeight: 600,
                 cursor:
-                  submitting ||
-                  Boolean(
-                    visitAddressForZoneCheck &&
-                      (zoneCheckStatus === 'pending' ||
-                        zoneCheckStatus === 'out_of_service' ||
-                        zoneCheckStatus === 'idle'),
-                  )
+                  submitting || zoneBlocksProgress
                     ? 'not-allowed'
                     : 'pointer',
                 opacity:
-                  submitting ||
-                  Boolean(
-                    visitAddressForZoneCheck &&
-                      (zoneCheckStatus === 'pending' ||
-                        zoneCheckStatus === 'out_of_service' ||
-                        zoneCheckStatus === 'idle'),
-                  )
+                  submitting || zoneBlocksProgress
                     ? 0.6
                     : 1,
                 transition: 'transform 0.2s ease, box-shadow 0.2s ease',

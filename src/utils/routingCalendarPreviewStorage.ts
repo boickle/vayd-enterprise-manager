@@ -3,6 +3,8 @@
  * Read by Scheduler; written by Routing.
  */
 import type { RescheduleOriginalVisitSnapshot } from '../api/routing';
+import type { OptimizeMove } from './scheduleOptimizeMoves';
+
 /** Same id on practice `Appointment` rows and doctor-day synthetic visits so drive ETA maps line up. */
 export const SCHEDULER_ROUTING_PREVIEW_SYNTHETIC_APPT_ID = -0x7eedf00d;
 
@@ -85,7 +87,7 @@ export type RoutingCalendarPreviewPayloadV1 = {
    */
   listOptionKey?: string;
   /** Preview opened from Schedule Loader (Fill Day) rather than Get Best Route. */
-  previewSource?: 'routing' | 'schedule-loader' | 'waitlist' | 'manual-book';
+  previewSource?: 'routing' | 'schedule-loader' | 'waitlist' | 'manual-book' | 'schedule-optimize';
   /** Return navigation when dismissing preview from Schedule Loader. */
   scheduleLoaderReturn?: {
     clientId: number;
@@ -95,6 +97,14 @@ export type RoutingCalendarPreviewPayloadV1 = {
     entryId: number;
     clientId: number;
     returnHref: string;
+  };
+  scheduleOptimizeReturn?: {
+    queueItemId: string;
+    returnHref: string;
+    /** Opened from “view current appointment”; Back should restore that view. */
+    fromCurrentView?: boolean;
+    /** Full suggestion — used for Add to list and post-book SMS without auto-queueing on view. */
+    listMove?: OptimizeMove;
   };
   /** Stored manual book form — Book from preview or Back to form restores this. */
   manualBookDraft?: ManualBookPreviewDraft;
@@ -152,6 +162,12 @@ export function isWaitlistCalendarPreview(
   return preview?.previewSource === 'waitlist';
 }
 
+export function isScheduleOptimizeCalendarPreview(
+  preview: RoutingCalendarPreviewPayloadV1 | null | undefined,
+): boolean {
+  return preview?.previewSource === 'schedule-optimize';
+}
+
 export function scheduleLoaderReturnHref(
   preview: RoutingCalendarPreviewPayloadV1 | null | undefined,
 ): string | null {
@@ -163,6 +179,13 @@ export function waitlistReturnHref(
   preview: RoutingCalendarPreviewPayloadV1 | null | undefined,
 ): string | null {
   const href = preview?.waitlistReturn?.returnHref?.trim();
+  return href || null;
+}
+
+export function scheduleOptimizeReturnHref(
+  preview: RoutingCalendarPreviewPayloadV1 | null | undefined,
+): string | null {
+  const href = preview?.scheduleOptimizeReturn?.returnHref?.trim();
   return href || null;
 }
 

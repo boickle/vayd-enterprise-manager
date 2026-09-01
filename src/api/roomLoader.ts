@@ -42,6 +42,13 @@ export type Client = {
   latLonValidated?: boolean;
   username?: string | null;
   alerts?: string | null;
+  primaryProvider?: {
+    id?: number;
+    firstName?: string | null;
+    lastName?: string | null;
+    title?: string | null;
+    designation?: string | null;
+  } | null;
   /** Routing zone when range/detail APIs attach it to the client. */
   clientZone?: { id?: number | string; name?: string | null } | null;
   effectiveZone?: { id?: number | string; name?: string | null } | null;

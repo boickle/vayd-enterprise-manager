@@ -716,6 +716,8 @@ export async function fetchAppointmentsRangeForLocalDay(params: {
 export type DoctorDayAppt = {
   id: number | string;
   clientName: string;
+  /** Internal Scout client id when doctor-day includes it (needed for SMS). */
+  clientId?: number;
   clientPimsId?: string;
   clientAlert?: string;
   /** Formatted client phone(s) when returned on doctor-day rows. */
@@ -988,6 +990,14 @@ export async function fetchDoctorDay(
     return {
       id: a?.id,
       clientName: a?.clientName ?? 'Client',
+      clientId:
+        typeof a?.clientId === 'number'
+          ? a.clientId
+          : typeof a?.client?.id === 'number'
+            ? a.client.id
+            : Number.isFinite(Number(a?.clientId ?? a?.client?.id))
+              ? Number(a?.clientId ?? a?.client?.id)
+              : undefined,
       clientPimsId: a?.clientPimsId,
       clientAlert: a?.clientAlert,
       clientPhone: clientPhoneLineFromDoctorDayPayload(a),

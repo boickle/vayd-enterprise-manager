@@ -144,6 +144,60 @@ export function appendLinkedClientStaffNote(
   return appendStaffNoteLine(existing, `Linked to ${who} by ${name} on ${date}`);
 }
 
+export function formatStaffNoteAppointmentWhen(
+  startIso: string | null | undefined,
+  endIso: string | null | undefined,
+  practiceTz: string
+): string | null {
+  const startRaw = startIso?.trim();
+  if (!startRaw) return null;
+  let start = DateTime.fromISO(startRaw, { zone: 'utc' }).setZone(practiceTz);
+  if (!start.isValid) start = DateTime.fromISO(startRaw);
+  if (!start.isValid) return null;
+  const startLabel = `${start.toFormat('ccc L/d')} ${start.toFormat('h:mm a')}`;
+  const endRaw = endIso?.trim();
+  if (!endRaw) return startLabel;
+  let end = DateTime.fromISO(endRaw, { zone: 'utc' }).setZone(practiceTz);
+  if (!end.isValid) end = DateTime.fromISO(endRaw);
+  if (!end.isValid) return startLabel;
+  if (end.hasSame(start, 'day')) {
+    return `${startLabel}–${end.toFormat('h:mm a')}`;
+  }
+  return `${startLabel} – ${end.toFormat('ccc L/d h:mm a')}`;
+}
+
+export function appendExploreAlternativeCreatedStaffNote(
+  existing: string | null | undefined,
+  originalWhen: string
+): string {
+  return appendStaffNoteLine(existing, `Alternative to ${originalWhen}`);
+}
+
+export function appendExploreAlternativeSourceStaffNote(
+  existing: string | null | undefined,
+  alternativeWhen: string
+): string {
+  return appendStaffNoteLine(existing, `Suggested alternative ${alternativeWhen}`);
+}
+
+export function appendOptimizedMoveStaffNote(
+  existing: string | null | undefined,
+  actor: AppointmentChangeActor,
+  practiceTz: string,
+  driveDeltaMin?: number | null
+): string {
+  const name = formatEmployeeFirstNameLastInitial(actor);
+  const date = appointmentChangeDateLabel(practiceTz);
+  const saved =
+    driveDeltaMin != null && Number.isFinite(driveDeltaMin) && driveDeltaMin < 0
+      ? ` (saved ${Math.abs(Math.round(driveDeltaMin))} min drive)`
+      : '';
+  return appendStaffNoteLine(
+    existing,
+    `Moved due to optimization by ${name} on ${date}${saved}`
+  );
+}
+
 export function appendRescheduledByStaffNote(
   existing: string | null | undefined,
   actor: AppointmentChangeActor,

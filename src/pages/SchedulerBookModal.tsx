@@ -79,8 +79,13 @@ import { buildSlotOfferSmsMessage } from '../utils/slotOfferSmsMessage';
 import { readRoutingForwardBookingIntent } from '../utils/routingForwardBookingIntent';
 import { applySlotOfferOutreachNotes } from '../utils/slotOfferOutreachNote';
 import type { SendSlotOfferPayload } from '../api/slotOffers';
+import { findScheduleOptimizeQueueItemForAppointments } from '../utils/scheduleOptimizeQueue';
 import {
+  appendExploreAlternativeCreatedStaffNote,
+  appendExploreAlternativeSourceStaffNote,
+  appendOptimizedMoveStaffNote,
   appendRescheduledByStaffNote,
+  formatStaffNoteAppointmentWhen,
   resolveAppointmentChangeActorFromAuth,
 } from '../utils/appointmentChangeAuditNote';
 import {
@@ -303,6 +308,9 @@ export type SchedulerBookPrefill = {
   forwardBookingCreatedVia?: ForwardBookingCreatedVia;
   /** Calculate Time type name from routing (for reschedule book type resolution). */
   routingStatsTypeKey?: string;
+  /** Reschedule from Schedule Optimize — staff note + savings attribution. */
+  scheduleOptimizeMove?: boolean;
+  scheduleOptimizeDriveDeltaMin?: number | null;
 };
 
 /** True when the book modal was opened from routing (not empty-slot / co-visit manual book). */
@@ -2348,6 +2356,22 @@ export function SchedulerBookModal({
       const exploreAlternatives = Boolean(prefill?.exploreAlternatives);
       const exploreCreatedIds: number[] = [];
       let exploreCreatedAppointmentTypeId: number | undefined;
+      const queuedOptimize = findScheduleOptimizeQueueItemForAppointments(
+        practiceId,
+        rescheduleIds
+      );
+      const useOptimizeMoveNote =
+        !exploreAlternatives &&
+        (Boolean(prefill?.scheduleOptimizeMove) || queuedOptimize?.status === 'queued');
+      const optimizeDriveDeltaMin =
+        prefill?.scheduleOptimizeDriveDeltaMin ?? queuedOptimize?.driveDeltaMin ?? null;
+      const staffNotesForReschedule = (
+        raw: string | null | undefined,
+        originalStartIso?: string | null
+      ) =>
+        useOptimizeMoveNote
+          ? appendOptimizedMoveStaffNote(raw, bookActor, practiceTz, optimizeDriveDeltaMin)
+          : appendRescheduledByStaffNote(raw, bookActor, practiceTz, originalStartIso);
       if (rescheduleIds.length > 0) {
         const patchBody = {
           appointmentStart: startIso,
@@ -2380,6 +2404,13 @@ export function SchedulerBookModal({
               edit?.appointmentTypeId;
           if (exploreAlternatives) {
             // Keep the source visit untouched; book a second appointment at the new slot.
+            const originalWhen =
+              formatStaffNoteAppointmentWhen(originalStartIso, null, practiceTz) ||
+              visitPatch?.scheduledTimeLabel?.trim() ||
+              'the original visit';
+            const alternativeWhen =
+              formatStaffNoteAppointmentWhen(startIso, endIso, practiceTz) ||
+              'the new time';
             const created = await createAppointment({
               practiceId,
               primaryProviderId: Number(providerId),
@@ -2392,7 +2423,10 @@ export function SchedulerBookModal({
               appointmentEnd: endIso,
               ...(bookAllDay ? { allDay: true } : {}),
               description: descriptionForNewBook(rawDescription) || undefined,
-              instructions: staffNotesForNewBook(rawInstructions) || undefined,
+              instructions:
+                staffNotesForNewBook(
+                  appendExploreAlternativeCreatedStaffNote(rawInstructions, originalWhen)
+                ) || undefined,
               ...(skipManualBookingPermissionGate ? { bookedViaRouting: true } : {}),
               ...joinWaitlistCreateExtras,
             });
@@ -2410,6 +2444,12 @@ export function SchedulerBookModal({
               }
               await saveAlternateForAppointment(apptId);
             }
+            await patchAppointment(rescheduleId, {
+              instructions: appendExploreAlternativeSourceStaffNote(
+                rawInstructions || null,
+                alternativeWhen
+              ),
+            });
             continue;
           }
           await patchAppointment(rescheduleId, {
@@ -2417,12 +2457,7 @@ export function SchedulerBookModal({
             appointmentTypeId: Number(resolvedAppointmentTypeId),
             description: rawDescription || null,
             instructions:
-              appendRescheduledByStaffNote(
-                rawInstructions || null,
-                bookActor,
-                practiceTz,
-                originalStartIso
-              ).trim() || null,
+              staffNotesForReschedule(rawInstructions || null, originalStartIso).trim() || null,
             ...(hasPatientForPatch ? { patientId: patientIdForPatch } : {}),
             ...(skipManualBookingPermissionGate ? { bookedViaRouting: true } : {}),
           });

@@ -5,6 +5,7 @@ import { formatReschedulePreviewScoreLine } from '../utils/routingRescheduleScor
 import {
   isManualBookCalendarPreview,
   isScheduleLoaderCalendarPreview,
+  isScheduleOptimizeCalendarPreview,
   type RoutingCalendarPreviewPayloadV1,
 } from '../utils/routingCalendarPreviewStorage';
 import {
@@ -26,10 +27,24 @@ type Props = {
   /** Client phone + visit doctor Quo line for call/text while reviewing a reschedule slot. */
   clientContact?: RoutingPreviewClientContact | null;
   bookDisabled?: boolean;
+  /**
+   * Reconciled POST /routing/eta: candidate or a stop at/after it is within 20 minutes of
+   * its arrival-window end (same signal as the Get Best Route card amber alert).
+   */
+  hasWindowWarning?: boolean;
   /** Override primary action label (e.g. care outreach → "Next"). */
   confirmLabel?: string;
   onBook: () => void;
   onDismiss: () => void;
+  /** Shown for Optimize: leave the calendar preview and return to the Optimize list. */
+  onBack?: () => void;
+  backLabel?: string;
+  /** Shown for Optimize: keep the original visit and book a second one at the preview slot. */
+  onAddAlternative?: () => void;
+  /** Shown for Optimize: queue this suggestion without rescheduling yet. */
+  onAddToList?: () => void;
+  addToListDisabled?: boolean;
+  addToListLabel?: string;
 };
 
 function formatPracticeRange(startIso: string, endIso: string, practiceTz: string): string {
@@ -78,23 +93,34 @@ export function RoutingPreviewSlotPopover({
   originalAppointmentEnd,
   clientContact,
   bookDisabled,
+  hasWindowWarning = false,
   confirmLabel,
   onBook,
   onDismiss,
+  onBack,
+  backLabel,
+  onAddAlternative,
+  onAddToList,
+  addToListDisabled,
+  addToListLabel,
 }: Props) {
   const opt = preview.option;
   const isScheduleLoader = isScheduleLoaderCalendarPreview(preview);
   const isManualBook = isManualBookCalendarPreview(preview);
-  const isExplore = Boolean(isReschedule && exploreAlternatives);
+  const isOptimize = isScheduleOptimizeCalendarPreview(preview);
+  const showOptimizeChooser = Boolean(isOptimize && onAddAlternative);
+  const isExplore = Boolean(isReschedule && exploreAlternatives && !showOptimizeChooser);
   const title = isExplore
     ? 'Alternatives preview'
-    : isReschedule
-      ? 'Reschedule preview'
-      : isManualBook
-        ? 'Manual booking preview'
-        : isScheduleLoader
-          ? 'Schedule loader preview'
-          : 'Routing preview';
+    : isOptimize
+      ? 'Optimize preview'
+      : isReschedule
+        ? 'Reschedule preview'
+        : isManualBook
+          ? 'Manual booking preview'
+          : isScheduleLoader
+            ? 'Schedule loader preview'
+            : 'Routing preview';
   const rangeLabel = formatPreviewRange(
     String(opt.suggestedStartIso ?? ''),
     preview.serviceMinutes,
@@ -126,9 +152,10 @@ export function RoutingPreviewSlotPopover({
         : null;
   const scoreLineIsUnavailable =
     scoreLine === 'No previous routing score available for this visit.';
-  const primaryLabel =
-    confirmLabel ??
-    (isExplore ? 'Add Alternative Appointment' : isReschedule ? 'Reschedule' : 'Book');
+  const primaryLabel = showOptimizeChooser
+    ? 'Reschedule'
+    : confirmLabel ??
+      (isExplore ? 'Add Alternative Appointment' : isReschedule ? 'Reschedule' : 'Book');
 
   return (
     <div
@@ -181,6 +208,12 @@ export function RoutingPreviewSlotPopover({
         ) : null}
 
         <div className="scheduler-edit-preview-popover-body" role="status" aria-live="polite">
+          {hasWindowWarning ? (
+            <p className="scheduler-edit-preview-popover-line scheduler-edit-preview-popover-line--window-warning">
+              ⚠ Window warning — reconciled drive times show a visit within 20 minutes of its
+              window end. Check the calendar before booking.
+            </p>
+          ) : null}
           {scoreLine ? (
             <p
               className={`scheduler-edit-preview-popover-line${
@@ -206,6 +239,35 @@ export function RoutingPreviewSlotPopover({
       </div>
 
       <div className="scheduler-edit-preview-popover-actions">
+        {showOptimizeChooser ? (
+          <button
+            type="button"
+            className="btn secondary scheduler-edit-preview-popover-alt"
+            disabled={bookDisabled}
+            onClick={onAddAlternative}
+          >
+            Add alternative
+          </button>
+        ) : null}
+        {isOptimize && onAddToList ? (
+          <button
+            type="button"
+            className="btn secondary scheduler-edit-preview-popover-alt"
+            disabled={bookDisabled || addToListDisabled}
+            onClick={onAddToList}
+          >
+            {addToListLabel ?? 'Add to list'}
+          </button>
+        ) : null}
+        {onBack ? (
+          <button
+            type="button"
+            className="btn secondary scheduler-edit-preview-popover-back"
+            onClick={onBack}
+          >
+            {backLabel ?? 'Back'}
+          </button>
+        ) : null}
         <button
           type="button"
           className="btn scheduler-edit-preview-popover-confirm"

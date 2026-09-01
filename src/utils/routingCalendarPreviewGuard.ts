@@ -46,6 +46,9 @@ export function getScheduleCalendarPreviewBlockedMessage(): string {
   if (preview?.previewSource === 'waitlist') {
     return 'Go back to Waitlist or dismiss the preview before using the calendar.';
   }
+  if (preview?.previewSource === 'schedule-optimize') {
+    return 'Book or dismiss this Optimize preview before using the calendar.';
+  }
   if (preview) {
     return 'Dismiss the calendar preview before using the calendar.';
   }
