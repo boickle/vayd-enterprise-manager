@@ -15,6 +15,7 @@ import {
   type VisitInvoiceLine,
 } from '../../api/visitWorkflow';
 import { subscribeTerminalCheckout } from '../../utils/terminalCheckoutRealtime';
+import { appConfirm } from '../../utils/appDialog';
 
 type Props = {
   /** Needed to delete the encounter order behind an invoice line. */
@@ -139,15 +140,21 @@ export default function VisitCheckoutPanel({
   const voidInv = () =>
     run('void', async () => {
       if (!invoice) return;
-      const ok = window.confirm(
-        'Void this whole invoice? Every charge comes off the bill and no payment can be taken until it is reopened. Nothing has been collected yet.'
-      );
+      const ok = await appConfirm({
+        title: 'Void invoice?',
+        message:
+          'Void this whole invoice? Every charge comes off the bill and no payment can be taken until it is reopened. Nothing has been collected yet.',
+        confirmLabel: 'Void',
+        danger: true,
+      });
       if (!ok) return;
       if (activeCheckoutId) {
         await cancelTerminalCheckout(activeCheckoutId).catch(() => undefined);
         setActiveCheckoutId(null);
       }
-      onInvoiceChange(await voidInvoice(invoice.id));
+      onInvoiceChange(
+        await voidInvoice(invoice.id, { reason: 'Voided from visit checkout' }),
+      );
       setNote('Invoice voided. Reopen it to take payment.');
     });
 

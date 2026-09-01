@@ -15,6 +15,7 @@ import { http } from './http';
  */
 export type ScoutClientWrite = {
   practiceId?: number;
+  namePrefix?: string | null;
   firstName?: string | null;
   lastName?: string | null;
   secondFirstName?: string | null;
@@ -22,7 +23,13 @@ export type ScoutClientWrite = {
   email?: string | null;
   secondEmail?: string | null;
   phone1?: string | null;
+  phone1Type?: string | null;
   phone2?: string | null;
+  phone2Type?: string | null;
+  primaryProviderId?: number | null;
+  referralSource?: string | null;
+  referralClientId?: number | null;
+  noEmail?: boolean;
   address1?: string | null;
   address2?: string | null;
   address3?: string | null;
@@ -31,8 +38,26 @@ export type ScoutClientWrite = {
   zipcode?: string | null;
   country?: string | null;
   county?: string | null;
+  mailingSameAsService?: boolean;
+  mailingAddress1?: string | null;
+  mailingAddress2?: string | null;
+  mailingCity?: string | null;
+  mailingState?: string | null;
+  mailingZipcode?: string | null;
+  mailingCountry?: string | null;
+  extraAddressLabel?: string | null;
+  extraAddress1?: string | null;
+  extraAddress2?: string | null;
+  extraCity?: string | null;
+  extraState?: string | null;
+  extraZipcode?: string | null;
+  extraCountry?: string | null;
+  extraLat?: number | null;
+  extraLon?: number | null;
+  extraLatLonValidated?: boolean;
   username?: string | null;
   alerts?: string | null;
+  connectionNotes?: string | null;
   discount?: number | null;
   clientStatusId?: number | null;
   lat?: number | null;
@@ -41,6 +66,14 @@ export type ScoutClientWrite = {
   zoneId?: number | null;
   isActive?: boolean;
   smsOptOut?: boolean;
+  doNotEmail?: boolean;
+  doNotSms?: boolean;
+  preferEmail?: boolean;
+  preferSms?: boolean;
+  preferPhone?: boolean;
+  doNotSendReminders?: boolean;
+  phone1SmsEnabled?: boolean;
+  phone2SmsEnabled?: boolean;
   patientIds?: number[];
 };
 

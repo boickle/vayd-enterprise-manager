@@ -410,6 +410,8 @@ export type RoomLoaderSearchParams = {
   appointmentFrom?: string;
   /** Inclusive upper bound for appointment date filter (`YYYY-MM-DD`). */
   appointmentTo?: string;
+  /** Limit to loaders for this pet (appointment or linked patient). */
+  patientId?: number;
 };
 
 export type CreateRoomLoaderRequest = {
@@ -438,6 +440,9 @@ export async function searchRoomLoaders(params?: RoomLoaderSearchParams): Promis
   }
   if (params?.appointmentTo != null && String(params.appointmentTo).trim() !== '') {
     queryParams.append('appointmentTo', String(params.appointmentTo).trim());
+  }
+  if (params?.patientId != null && Number.isFinite(params.patientId)) {
+    queryParams.append('patientId', String(params.patientId));
   }
 
   const queryString = queryParams.toString();

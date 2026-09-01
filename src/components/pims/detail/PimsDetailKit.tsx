@@ -17,7 +17,7 @@ export type SelectOption = { value: string; label: string };
 export type FieldSpec = {
   key: string;
   label: string;
-  type?: 'text' | 'email' | 'tel' | 'date' | 'number' | 'textarea' | 'select';
+  type?: 'text' | 'email' | 'tel' | 'date' | 'number' | 'textarea' | 'select' | 'checkbox';
   options?: SelectOption[];
   /** Span the full card width instead of one grid column. */
   full?: boolean;
@@ -66,7 +66,9 @@ export function DetailHeader({
   title,
   badges,
   summary,
+  belowTitle,
   reach,
+  afterReach,
   stat,
   actions,
 }: {
@@ -75,8 +77,12 @@ export function DetailHeader({
   badges?: ReactNode;
   /** The clinical/contact one-liner directly under the name. */
   summary?: ReactNode;
+  /** Safety notes that sit under the name, before contact lines. */
+  belowTitle?: ReactNode;
   /** Contact affordances — phone, email, address. */
   reach?: ReactNode;
+  /** Full-width row under contact — alerts sit here so they can share a column. */
+  afterReach?: ReactNode;
   /** A single prominent figure, right-aligned. */
   stat?: ReactNode;
   actions?: ReactNode;
@@ -90,7 +96,9 @@ export function DetailHeader({
           {badges}
         </div>
         {summary ? <p className="pims-detail__signalment">{summary}</p> : null}
+        {belowTitle}
         {reach ? <ul className="pims-detail__reach">{reach}</ul> : null}
+        {afterReach}
       </div>
       {stat || actions ? (
         <div className="pims-detail__header-side">
@@ -206,6 +214,21 @@ function FieldControl({
     );
   }
 
+  if (field.type === 'checkbox') {
+    const checked = value === '1' || value === 'true';
+    return (
+      <label className="pims-detail__check" htmlFor={id}>
+        <input
+          id={id}
+          type="checkbox"
+          checked={checked}
+          onChange={(e) => onChange(e.target.checked ? '1' : '0')}
+        />
+        <span>{checked ? 'Yes' : 'No'}</span>
+      </label>
+    );
+  }
+
   if (field.type === 'select') {
     return (
       <select
@@ -256,6 +279,8 @@ export function EditableCard({
   footer,
   children,
   emptyHint,
+  defaultEditing = false,
+  onCancel,
 }: {
   title: ReactNode;
   icon?: ReactNode;
@@ -270,8 +295,11 @@ export function EditableCard({
   children?: ReactNode;
   /** Shown in read mode when every field is blank. */
   emptyHint?: string;
+  /** Open already in the edit form (e.g. header pencil). */
+  defaultEditing?: boolean;
+  onCancel?: () => void;
 }) {
-  const [editing, setEditing] = useState(false);
+  const [editing, setEditing] = useState(defaultEditing);
   const [draft, setDraft] = useState<CardValues>(values);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -285,7 +313,8 @@ export function EditableCard({
   const cancel = useCallback(() => {
     setEditing(false);
     setError(null);
-  }, []);
+    onCancel?.();
+  }, [onCancel]);
 
   const setField = useCallback((key: string, next: string) => {
     setDraft((d) => ({ ...d, [key]: next }));
@@ -304,8 +333,15 @@ export function EditableCard({
       await onSave(draft);
       setEditing(false);
     } catch (err) {
-      const e2 = err as { response?: { data?: { message?: string } }; message?: string };
-      setError(e2?.response?.data?.message ?? e2?.message ?? 'Could not save.');
+      const e2 = err as { response?: { data?: { message?: unknown } }; message?: string };
+      const msg = e2?.response?.data?.message;
+      const fromNest =
+        typeof msg === 'string'
+          ? msg
+          : Array.isArray(msg)
+            ? msg.filter((m) => typeof m === 'string').join(' ')
+            : '';
+      setError(fromNest.trim() || e2?.message || 'Could not save.');
     } finally {
       setSaving(false);
     }
@@ -340,8 +376,16 @@ export function EditableCard({
                     .join(' ')}
                 >
                   <dt>{f.label}</dt>
-                  <dd className={!raw.trim() ? 'pims-detail__fact-empty' : undefined}>
-                    {raw.trim() ? (f.display ? f.display(raw) : raw) : '—'}
+                  <dd className={!raw.trim() && f.type !== 'checkbox' ? 'pims-detail__fact-empty' : undefined}>
+                    {f.type === 'checkbox'
+                      ? raw === '1' || raw === 'true'
+                        ? 'Yes'
+                        : 'No'
+                      : raw.trim()
+                        ? f.display
+                          ? f.display(raw)
+                          : raw
+                        : '—'}
                   </dd>
                 </div>
               );

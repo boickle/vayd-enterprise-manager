@@ -26,6 +26,7 @@ import {
   setCatalogItemActive,
 } from '../api/catalogItems';
 import QuantityPriceBreaksEditor from '../components/catalog/QuantityPriceBreaksEditor';
+import { appConfirm } from '../utils/appDialog';
 import CatalogInventoryClinicalFields from '../components/catalog/CatalogInventoryClinicalFields';
 import CatalogItemRemindersEditor from '../components/catalog/CatalogItemRemindersEditor';
 import CatalogItemLotsEditor from '../components/catalog/CatalogItemLotsEditor';
@@ -1367,15 +1368,15 @@ export default function Catalog() {
     if (itemId == null) return;
     const active = catalogIsActive(row);
     const key = `${row.itemType}:${itemId}`;
-    if (
-      !confirm(
-        active
-          ? `Archive “${row.name}”? It will be hidden from default search.`
-          : `Restore “${row.name}”?`
-      )
-    ) {
-      return;
-    }
+    const ok = await appConfirm({
+      title: active ? 'Archive item?' : 'Restore item?',
+      message: active
+        ? `Archive “${row.name}”? It will be hidden from default search.`
+        : `Restore “${row.name}”?`,
+      confirmLabel: active ? 'Archive' : 'Restore',
+      danger: active,
+    });
+    if (!ok) return;
     setArchiveBusyId(key);
     try {
       await setCatalogItemActive(row.itemType, practiceId, itemId, !active);

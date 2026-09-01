@@ -39,6 +39,7 @@ import RoomLoaderPage from './pages/RoomLoader';
 import SoapEncounterPage from './pages/SoapEncounterPage';
 import VisitWrapUpPage from './pages/VisitWrapUpPage';
 import DoctorWorklistPage from './pages/DoctorWorklistPage';
+import BriefWorkspacePage from './pages/BriefWorkspacePage';
 import { ScheduleIndexRedirect } from './pages/ScheduleLayout';
 import ScheduleHomePage from './pages/ScheduleHomePage';
 import LegacySchedulingToolsRedirect from './components/LegacySchedulingToolsRedirect';
@@ -71,10 +72,10 @@ import { isPublicClientLinkPath } from './utils/publicClientLinkPaths';
 import { blockRoutingCalendarPreviewNavigation } from './utils/routingCalendarPreviewGuard';
 import { markSchedulerHandoffPreferRoutingDoctor } from './utils/schedulerCalendarHandoff';
 import { startFreshNewAppointmentRouting } from './utils/routingNewAppointment';
-import { evetCreateClientLink } from './utils/evet';
 import { scoutTabPermissionOk } from './scout-tabs';
 import { useGmailInboxAccess } from './hooks/useGmailInboxAccess';
 import SmsDeliveryFailureBanner from './components/SmsDeliveryFailureBanner';
+import { listMessageTemplates } from './api/messageTemplates';
 
 /** + Appointment in global navbar when viewing /schedule/* */
 function NavbarScheduleAddAppointment() {
@@ -331,6 +332,7 @@ export default function App() {
       if (scoutTabPermissionOk('canSeeRouting', abilities)) {
         out.push({ label: '+ Appointment', to: '/schedule/routing' });
       }
+      out.push({ label: 'Epiphany', to: '/schedule/epiphany' });
       out.push({ label: 'New Task', to: '/schedule/tasks?new=1' });
       out.push({ label: 'Send Room Loader', to: '/schedule/room-loader' });
       out.push({
@@ -340,7 +342,7 @@ export default function App() {
       if (canAccessGmailInbox) {
         out.push({ label: 'Email', to: '/schedule/email' });
       }
-      out.push({ label: 'New Client', href: evetCreateClientLink(), external: true });
+      out.push({ label: 'New Client', to: '/schedule/clients?add=1' });
     }
 
     if (paths.has('/analytics')) out.push({ label: 'Analytics', to: '/analytics' });
@@ -355,6 +357,13 @@ export default function App() {
       nav('/client-portal', { replace: true });
     }
   }, [token, isClient, location.pathname, nav]);
+
+  useEffect(() => {
+    if (!token || isClient) return;
+    void listMessageTemplates().catch(() => {
+      /* local fallback hydrates itself */
+    });
+  }, [token, isClient]);
 
   // Keep-alive list for employee tabs (home + all page paths)
   const keepAlivePaths = useMemo(() => ['/home', ...pages.map((p: any) => p.path)], [pages]);
@@ -596,6 +605,8 @@ export default function App() {
                     <Route path="holds" element={<HoldsPage />} />
                     <Route path="exit-survey" element={<ExitSurveyPage />} />
                     <Route path="room-loader" element={<RoomLoaderPage />} />
+                    <Route path="epiphany" element={<BriefWorkspacePage />} />
+                    <Route path="brief" element={<Navigate to="/schedule/epiphany" replace />} />
                     <Route path="soap" element={<DoctorWorklistPage />} />
                     <Route
                       path="soap/:appointmentId/:patientId"

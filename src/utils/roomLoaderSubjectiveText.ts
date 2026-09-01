@@ -224,6 +224,98 @@ export function stripCheckinPlaceholder(text: string): string {
 /** Header the AI scribe files visit-conversation history under, below the check-in block. */
 export const VISIT_DISCUSSION_HEADER = 'Visit discussion:';
 
+/** Doctor dictation captured in Epiphany before walking in — kept separate from client discussion. */
+export const CLINICIAN_PREVISIT_HEADER = 'Clinician pre-visit notes:';
+
+export function looksLikeSpokenChatter(text: string): boolean {
+  return /starbucks|cup of coffee|can we stop|hold on i(?:'| a)?m|turn left|you hungry|need a coffee|silencia|\bon sierra\b/i.test(
+    text
+  );
+}
+
+export type SubjectiveHistoryParts = {
+  checkin: string;
+  clinicianPrevisit: string;
+  visitDiscussion: string;
+};
+
+function headerPattern(header: string): RegExp {
+  return new RegExp(`(?:^|\\n)${escapeForRegExp(header)}\\s*\\n?`, 'i');
+}
+
+/**
+ * Split Subjective into check-in (client), clinician prep notes (Epiphany), and visit discussion.
+ */
+export function splitSubjectiveHistoryParts(text: string): SubjectiveHistoryParts {
+  const raw = text.trim();
+  if (!raw) return { checkin: '', clinicianPrevisit: '', visitDiscussion: '' };
+
+  const clinicianIdx = raw.search(headerPattern(CLINICIAN_PREVISIT_HEADER));
+  const visitIdx = raw.search(headerPattern(VISIT_DISCUSSION_HEADER));
+
+  let checkin = raw;
+  let rest = '';
+  if (clinicianIdx >= 0 && (visitIdx < 0 || clinicianIdx < visitIdx)) {
+    checkin = raw.slice(0, clinicianIdx).trim();
+    rest = raw.slice(clinicianIdx).trim();
+  } else if (visitIdx >= 0) {
+    checkin = raw.slice(0, visitIdx).trim();
+    rest = raw.slice(visitIdx).trim();
+  }
+
+  let clinicianPrevisit = '';
+  let visitDiscussion = rest;
+  if (rest.toLowerCase().startsWith(CLINICIAN_PREVISIT_HEADER.toLowerCase())) {
+    const afterHeader = rest.slice(CLINICIAN_PREVISIT_HEADER.length).trim();
+    const nestedVisit = afterHeader.search(headerPattern(VISIT_DISCUSSION_HEADER));
+    if (nestedVisit >= 0) {
+      clinicianPrevisit = afterHeader.slice(0, nestedVisit).trim();
+      visitDiscussion = afterHeader.slice(nestedVisit).trim();
+    } else {
+      clinicianPrevisit = afterHeader;
+      visitDiscussion = '';
+    }
+  }
+  if (visitDiscussion.toLowerCase().startsWith(VISIT_DISCUSSION_HEADER.toLowerCase())) {
+    visitDiscussion = visitDiscussion.slice(VISIT_DISCUSSION_HEADER.length).trim();
+  }
+
+  if (
+    !clinicianPrevisit &&
+    !visitDiscussion &&
+    !hasPreVisitSubjectivePrefix(checkin) &&
+    clinicianIdx < 0 &&
+    visitIdx < 0
+  ) {
+    return { checkin: '', clinicianPrevisit: '', visitDiscussion: raw };
+  }
+
+  return { checkin, clinicianPrevisit, visitDiscussion };
+}
+
+export function joinSubjectiveHistoryParts(parts: SubjectiveHistoryParts): string {
+  const blocks: string[] = [];
+  if (parts.checkin.trim()) blocks.push(parts.checkin.trim());
+  if (parts.clinicianPrevisit.trim()) {
+    blocks.push(`${CLINICIAN_PREVISIT_HEADER}\n\n${parts.clinicianPrevisit.trim()}`);
+  }
+  if (parts.visitDiscussion.trim()) {
+    const v = parts.visitDiscussion.trim();
+    if (v.toLowerCase().startsWith(VISIT_DISCUSSION_HEADER.toLowerCase())) blocks.push(v);
+    else blocks.push(`${VISIT_DISCUSSION_HEADER}\n\n${v}`);
+  }
+  return blocks.join('\n\n').trim();
+}
+
+/** Replace doctor prep dictation without clobbering check-in or the in-room visit discussion. */
+export function mergeClinicianPrevisitNotes(existing: string, notes: string): string {
+  const incoming = notes.trim();
+  if (!incoming) return existing.trim();
+  const parts = splitSubjectiveHistoryParts(existing);
+  parts.clinicianPrevisit = incoming;
+  return joinSubjectiveHistoryParts(parts);
+}
+
 /**
  * Puts the pre-visit check-in block back on top of Subjective. Used when a chart already
  * has doctor- or scribe-written history but no check-in block — the block belongs first,
@@ -232,8 +324,19 @@ export const VISIT_DISCUSSION_HEADER = 'Visit discussion:';
 export function prependCheckinBlock(block: string, existing: string): string {
   const rest = existing.trim();
   if (!rest) return block;
-  if (rest.startsWith(VISIT_DISCUSSION_HEADER)) return `${block}\n\n${rest}`;
-  return `${block}\n\n${VISIT_DISCUSSION_HEADER}\n\n${rest}`;
+  const parts = splitSubjectiveHistoryParts(rest);
+  parts.checkin = block;
+  if (!parts.clinicianPrevisit && !parts.visitDiscussion && rest) {
+    if (rest.toLowerCase().startsWith(VISIT_DISCUSSION_HEADER.toLowerCase())) {
+      return joinSubjectiveHistoryParts({
+        checkin: block,
+        clinicianPrevisit: '',
+        visitDiscussion: rest.slice(VISIT_DISCUSSION_HEADER.length).trim(),
+      });
+    }
+    parts.visitDiscussion = rest;
+  }
+  return joinSubjectiveHistoryParts(parts);
 }
 
 /** Prefix AI (or raw) intake text so doctors can see it came from pre-visit check-in. */

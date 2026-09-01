@@ -1227,6 +1227,7 @@ export default function TextedOffersPage() {
       {smsTarget ? (
         <ClientSmsComposeModal
           open
+          clientId={smsTarget.clientId}
           clientLabel={smsTarget.clientLabel}
           fromLineLabel={smsTarget.fromLine}
           message={smsMessage}

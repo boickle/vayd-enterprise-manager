@@ -9,6 +9,7 @@ import {
   type Lab,
   type Procedure,
 } from '../../api/quantityPriceBreaks';
+import { appConfirm } from '../../utils/appDialog';
 
 type Props = {
   itemType: ItemType;
@@ -130,7 +131,13 @@ export default function QuantityPriceBreaksEditor({
   }
 
   async function removeBreak(id: number) {
-    if (!confirm('Delete this price break?')) return;
+    const ok = await appConfirm({
+      title: 'Delete price break?',
+      message: 'Delete this price break?',
+      confirmLabel: 'Delete',
+      danger: true,
+    });
+    if (!ok) return;
     setSaving(true);
     setError(null);
     setSuccess(null);

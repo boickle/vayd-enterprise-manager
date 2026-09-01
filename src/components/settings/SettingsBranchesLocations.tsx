@@ -9,6 +9,7 @@ import {
   type InventoryBranchLocation,
   type PracticeBranch,
 } from '../../api/branchInventory';
+import { appConfirm } from '../../utils/appDialog';
 
 function extractErr(err: unknown): string {
   const e = err as { response?: { data?: { message?: string | string[] } }; message?: string };
@@ -174,9 +175,13 @@ export default function SettingsBranchesLocations({ practiceId, onMessage }: Pro
       notify('Cannot archive the default branch', 'error');
       return;
     }
-    if (!window.confirm(`Archive branch “${b.name}”? It will be hidden from Inventory and day-to-day pickers.`)) {
-      return;
-    }
+    const ok = await appConfirm({
+      title: 'Archive branch?',
+      message: `Archive branch “${b.name}”? It will be hidden from Inventory and day-to-day pickers.`,
+      confirmLabel: 'Archive',
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await patchPracticeBranch(practiceId, b.id, { isActive: false });
       if (selectedBranchId === b.id) setSelectedBranchId(null);
@@ -229,7 +234,13 @@ export default function SettingsBranchesLocations({ practiceId, onMessage }: Pro
 
   async function deactivateLocation(loc: InventoryBranchLocation) {
     if (selectedBranchId == null || loc.isDefault) return;
-    if (!window.confirm(`Deactivate location “${loc.name}”?`)) return;
+    const ok = await appConfirm({
+      title: 'Deactivate location?',
+      message: `Deactivate location “${loc.name}”?`,
+      confirmLabel: 'Deactivate',
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await patchInventoryBranchLocation(practiceId, selectedBranchId, loc.id, {
         isActive: false,

@@ -1,5 +1,7 @@
 import { DateTime } from 'luxon';
 import type { Appointment } from '../api/roomLoader';
+import { applySystemTemplateIfCustom } from './messageTemplateCache';
+import { withClinicDefaults } from './messageTemplateFields';
 import { practiceTimeZoneOrDefault } from './practiceTimezone';
 
 function pickStr(v: unknown): string | null {
@@ -39,7 +41,11 @@ export function resolveTechnicianFirstNameForAppointment(appt: Appointment): str
 export function buildOnMyWaySmsMessage(technicianFirstName: string, minutes: number): string {
   const name = technicianFirstName.trim() || 'your VAYD team';
   const m = Math.max(1, Math.round(minutes));
-  return `Hi it's ${name} with Vet At Your Door. I wanted to let you know we are ${m} minutes away!`;
+  return applySystemTemplateIfCustom(
+    'on_my_way_sms',
+    withClinicDefaults({ tech_first_name: name, minutes_away: String(m) }),
+    `Hi it's ${name} with Vet At Your Door. I wanted to let you know we are ${m} minutes away!`,
+  );
 }
 
 export function etaMinutesAwayFromNow(

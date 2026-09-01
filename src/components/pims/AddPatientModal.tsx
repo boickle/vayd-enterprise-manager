@@ -1,6 +1,8 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react';
 import { createPatientScout, type ScoutPatientWrite } from '../../api/patients';
 import { searchClientsStaff, type ClientSearchRow } from '../../api/clientsStaff';
+import { fetchClientByIdStaff } from '../../api/clientsStaff';
+import { fetchPrimaryProviders, type Provider } from '../../api/employee';
 import {
   fetchBreedsForSpeciesPublic,
   fetchSpeciesListPublic,
@@ -33,13 +35,14 @@ type Props = {
   onClose: () => void;
   /** Receives the new pet's internal id so the parent can open its detail view. */
   onCreated?: (patientId: string) => void;
+  defaultOwner?: { id: string | number; name: string } | null;
 };
 
 /**
  * Creates a pet that lives only in Scout (pimsType VAYD). There is no eVet counterpart,
  * so nothing will ever overwrite it.
  */
-export default function AddPatientModal({ open, onClose, onCreated }: Props) {
+export default function AddPatientModal({ open, onClose, onCreated, defaultOwner }: Props) {
   const [name, setName] = useState('');
   const [speciesId, setSpeciesId] = useState('');
   const [breedId, setBreedId] = useState('');
@@ -49,6 +52,8 @@ export default function AddPatientModal({ open, onClose, onCreated }: Props) {
   const [color, setColor] = useState('');
   const [weight, setWeight] = useState('');
   const [alerts, setAlerts] = useState('');
+  const [primaryProviderId, setPrimaryProviderId] = useState('');
+  const [providers, setProviders] = useState<Provider[]>([]);
 
   const [owner, setOwner] = useState<{ id: string | number; name: string } | null>(null);
   const [ownerQuery, setOwnerQuery] = useState('');
@@ -60,6 +65,47 @@ export default function AddPatientModal({ open, onClose, onCreated }: Props) {
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    if (defaultOwner) {
+      setOwner(defaultOwner);
+      setOwnerQuery('');
+    }
+  }, [open, defaultOwner]);
+
+  useEffect(() => {
+    if (!open) return;
+    let on = true;
+    fetchPrimaryProviders()
+      .then((rows) => {
+        if (on) setProviders(rows || []);
+      })
+      .catch(() => {
+        if (on) setProviders([]);
+      });
+    return () => {
+      on = false;
+    };
+  }, [open]);
+
+  // Prefill primary provider from the selected owner's household default.
+  useEffect(() => {
+    if (!open || !owner?.id) return;
+    let on = true;
+    fetchClientByIdStaff(owner.id)
+      .then((full) => {
+        if (!on || !full || typeof full !== 'object') return;
+        const id = Number((full as { primaryProviderId?: unknown }).primaryProviderId);
+        if (Number.isFinite(id) && id > 0) {
+          setPrimaryProviderId((cur) => cur || String(id));
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      on = false;
+    };
+  }, [open, owner?.id]);
 
   useEffect(() => {
     if (!open || speciesOptions.length) return;
@@ -133,6 +179,7 @@ export default function AddPatientModal({ open, onClose, onCreated }: Props) {
     setColor('');
     setWeight('');
     setAlerts('');
+    setPrimaryProviderId('');
     setOwner(null);
     setOwnerQuery('');
     setOwnerResults([]);
@@ -181,6 +228,8 @@ export default function AddPatientModal({ open, onClose, onCreated }: Props) {
       const ownerId = Number(owner.id);
       if (Number.isFinite(ownerId)) body.clientIds = [ownerId];
     }
+    const ppId = Number(primaryProviderId);
+    if (Number.isFinite(ppId) && ppId > 0) body.primaryProviderId = ppId;
 
     try {
       const result = await createPatientScout(body);
@@ -326,6 +375,24 @@ export default function AddPatientModal({ open, onClose, onCreated }: Props) {
                 </>
               )}
             </div>
+
+            <label className="pims-add-client-modal__full">
+              <span className="pims-add-client-modal__label">Primary provider</span>
+              <select
+                className="input"
+                value={primaryProviderId}
+                onChange={(e) => setPrimaryProviderId(e.target.value)}
+              >
+                <option value="">Default from owner / none</option>
+                {providers.map((p) => (
+                  <option key={String(p.id)} value={String(p.id)}>
+                    {p.name?.trim() ||
+                      [p.firstName, p.lastName].filter(Boolean).join(' ').trim() ||
+                      `Provider #${p.id}`}
+                  </option>
+                ))}
+              </select>
+            </label>
 
             <label className="pims-add-client-modal__full">
               <span className="pims-add-client-modal__label">Alerts</span>

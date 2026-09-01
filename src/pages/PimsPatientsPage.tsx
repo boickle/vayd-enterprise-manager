@@ -92,6 +92,7 @@ export default function PimsPatientsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const qParam = searchParams.get('q') ?? '';
   const patientIdParam = searchParams.get('patientId') ?? '';
+  const addParam = searchParams.get('add') === '1';
 
   const [searchBy, setSearchBy] = useState('all');
   const [query, setQuery] = useState(() => initialPatientsSearchFromUrlAndSession().q);
@@ -101,6 +102,10 @@ export default function PimsPatientsPage() {
   const [error, setError] = useState<string | null>(null);
   const [addPatientOpen, setAddPatientOpen] = useState(false);
   const seq = useRef(0);
+
+  useEffect(() => {
+    if (addParam) setAddPatientOpen(true);
+  }, [addParam]);
 
   useEffect(() => {
     if (qParam !== '' || searchParams.get('patientId')) {
@@ -170,7 +175,7 @@ export default function PimsPatientsPage() {
     setSearchParams(next, { replace: false });
   }, [searchParams, setSearchParams]);
 
-  if (patientIdParam.trim()) {
+  if (patientIdParam.trim() && !addParam) {
     return (
       <div className="pims-clients pims-clients--detail">
         <PimsPatientDetailView
@@ -327,9 +332,17 @@ export default function PimsPatientsPage() {
 
       <AddPatientModal
         open={addPatientOpen}
-        onClose={() => setAddPatientOpen(false)}
+        onClose={() => {
+          setAddPatientOpen(false);
+          if (addParam) {
+            const next = new URLSearchParams(searchParams);
+            next.delete('add');
+            setSearchParams(next, { replace: true });
+          }
+        }}
         onCreated={(id) => {
           const next = new URLSearchParams(searchParams);
+          next.delete('add');
           next.set('patientId', id);
           setSearchParams(next, { replace: false });
         }}

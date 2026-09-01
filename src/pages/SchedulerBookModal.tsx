@@ -55,6 +55,13 @@ import { Field } from '../components/Field';
 import { ClientSmsComposeModal } from '../components/ClientSmsComposeModal';
 import { VerifiedAddressField } from '../components/VerifiedAddressField';
 import type { AddressFields } from '../components/AddressAutocomplete';
+import {
+  clientHasExtraAddress,
+  extraAddressLabel,
+  extraAddressParts,
+  fieldsFromParts,
+  formatAddressLine,
+} from '../utils/clientVisitAddresses';
 import { BookPatientChartButton } from '../components/BookPatientChartButton';
 import { appendBookedStaffNote } from '../utils/bookedAppointmentDescription';
 import { formatSendSlotOfferError, fetchPendingSlotOfferForClient, sendSlotOffer } from '../api/slotOffers';
@@ -556,6 +563,8 @@ export function SchedulerBookModal({
   const [selectedClientState, setSelectedClientState] = useState<string | undefined>(undefined);
   const [selectedClientZip, setSelectedClientZip] = useState<string | undefined>(undefined);
   const [selectedClientAlerts, setSelectedClientAlerts] = useState<string | null>(null);
+  const [selectedClientRecord, setSelectedClientRecord] = useState<Record<string, unknown> | null>(null);
+  const [bookVisitKey, setBookVisitKey] = useState<'home' | 'extra' | 'other'>('home');
   const [clientPets, setClientPets] = useState<PetRow[]>([]);
   const [loadingClientPets, setLoadingClientPets] = useState(false);
 
@@ -1797,6 +1806,8 @@ export function SchedulerBookModal({
     setSelectedClientState(undefined);
     setSelectedClientZip(undefined);
     setSelectedClientAlerts(null);
+    setSelectedClientRecord(null);
+    setBookVisitKey('home');
     setClientPets([]);
     setSelectedPatientId(null);
     setSelectedPatientLabel('');
@@ -1807,6 +1818,8 @@ export function SchedulerBookModal({
   }, []);
 
   function applyClientPayloadDetails(payload: unknown, fallbackAddress?: string | null) {
+    setSelectedClientRecord(payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : null);
+    setBookVisitKey('home');
     setSelectedClientFirstName(extractClientFirstNameFromPayload(payload));
     setSelectedClientAddress(extractClientAddressFromPayload(payload) ?? fallbackAddress ?? null);
     setClientPets(extractPatientsFromClientPayload(payload));
@@ -2957,6 +2970,7 @@ export function SchedulerBookModal({
       <>
         <ClientSmsComposeModal
           open={slotOfferComposeOpen}
+          clientId={selectedClientId ? Number(selectedClientId) : null}
           clientLabel={selectedClientLabel.trim() || prefill?.clientLabel?.trim() || 'Client'}
           message={slotOfferComposeMessage}
           onMessageChange={setSlotOfferComposeMessage}
@@ -3342,6 +3356,32 @@ export function SchedulerBookModal({
               ) : null}
             </>
           )
+          ) : null}
+
+          {selectedClientId && selectedClientRecord && clientHasExtraAddress(selectedClientRecord) ? (
+            <label className="scheduler-book-field scheduler-book-field--full">
+              <span className="scheduler-book-field-label">Visit address</span>
+              <select
+                className="scheduler-book-input"
+                value={bookVisitKey}
+                onChange={(e) => {
+                  const key = e.target.value as 'home' | 'extra' | 'other';
+                  setBookVisitKey(key);
+                  if (key === 'home') {
+                    setAlternateAddressFields({ ...EMPTY_ADDRESS_FIELDS });
+                    setAlternateAddressText('');
+                  } else if (key === 'extra') {
+                    const fields = fieldsFromParts(extraAddressParts(selectedClientRecord));
+                    setAlternateAddressFields(fields);
+                    setAlternateAddressText(formatAddressLine(extraAddressParts(selectedClientRecord)));
+                  }
+                }}
+              >
+                <option value="home">Home (where we show up)</option>
+                <option value="extra">{extraAddressLabel(selectedClientRecord)}</option>
+                <option value="other">Type a different address</option>
+              </select>
+            </label>
           ) : null}
 
           {showManualAlternateAddress ? (
@@ -4153,6 +4193,7 @@ export function SchedulerBookModal({
       ) : null}
       <ClientSmsComposeModal
         open={slotOfferComposeOpen}
+        clientId={selectedClientId ? Number(selectedClientId) : null}
         clientLabel={selectedClientLabel.trim() || prefill?.clientLabel?.trim() || 'Client'}
         message={slotOfferComposeMessage}
         onMessageChange={setSlotOfferComposeMessage}

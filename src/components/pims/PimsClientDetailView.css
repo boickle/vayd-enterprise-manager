@@ -1,19 +1,149 @@
 /* Client-specific pieces. Shared header/card/field chrome lives in detail/PimsDetailKit.css. */
 
-/* ---------- Household pet list ---------- */
+.pims-client-detail__comms-prefs {
+  margin: 0 0 10px;
+}
 
-.pims-client-detail__pets {
-  list-style: none;
+.pims-client-detail__comms-cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px 24px;
+}
+
+@media (max-width: 720px) {
+  .pims-client-detail__comms-cols {
+    grid-template-columns: 1fr;
+  }
+}
+
+.pims-client-detail__comms-set {
   margin: 0;
   padding: 0;
+  border: none;
+  min-width: 0;
+}
+
+.pims-client-detail__comms-set legend {
+  padding: 0;
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #475569;
+}
+
+.pims-client-detail__comms-set label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 6px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.pims-client-detail__comms-set input {
+  width: 15px;
+  height: 15px;
+  accent-color: #2563eb;
+}
+
+.pims-client-detail__comms-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #64748b;
+}
+
+/* ---------- Household pet list ---------- */
+
+.pims-client-detail__story {
+  display: grid;
+  grid-template-columns: minmax(240px, 34%) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  width: 100%;
+  margin: 14px 0 10px;
+}
+
+.pims-client-detail__story-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.pims-detail--emr > .client-comms,
+.pims-client-detail__financial {
+  width: 100%;
+}
+
+.pims-detail--emr > .client-comms {
+  margin: 4px 0 16px;
+}
+
+@media (max-width: 980px) {
+  .pims-client-detail__story {
+    grid-template-columns: 1fr;
+  }
+}
+
+.pims-client-detail__pets {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  list-style: none;
+  margin: 0 -4px;
+  padding: 0;
+}
+
+.pims-client-detail__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pims-client-detail__reach-empty {
+  color: #94a3b8;
+}
+
+.pims-client-detail__sms-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #dbeafe;
+  color: #1d4ed8;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+
+.pims-client-detail__addr-kind {
+  display: inline-block;
+  margin-right: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.pims-client-detail__header-edit {
+  margin: 0 0 12px;
+}
+
+.pims-client-detail__financial {
+  margin: 8px 0 16px;
+  scroll-margin-top: 16px;
 }
 
 .pims-client-detail__pet {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 12px;
-  padding: 11px 16px;
-  border-bottom: 1px solid #f1f5f9;
+  padding: 10px 4px;
+  border-bottom: 1px solid #f3eee6;
 }
 
 .pims-client-detail__pet:last-child {
@@ -66,14 +196,58 @@
   text-decoration: underline;
 }
 
+.pims-client-detail__pet-name .scheduler-book-patient-details-btn {
+  font-weight: 600;
+}
+
 .pims-client-detail__pet-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  margin: 6px 0 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: #b91c1c;
+  white-space: pre-wrap;
+}
+
+.pims-client-detail__pet-alert svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.pims-client-detail__reach-edit {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  font-size: 12px;
-  font-weight: 600;
-  color: #b91c1c;
-  cursor: help;
+  justify-content: center;
+  margin-left: 4px;
+  border: none;
+  background: transparent;
+  padding: 2px;
+  color: #64748b;
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.pims-client-detail__reach-edit:hover {
+  color: #1d4ed8;
+  background: #eff6ff;
+}
+
+.pims-client-detail__address-edit {
+  margin: 0 0 12px;
+}
+
+.pims-client-detail__account-balance {
+  margin: 0 0 6px;
+  font-size: 18px;
+  font-weight: 750;
+  color: #0f172a;
+}
+
+.pims-client-detail__edit-cols {
+  margin-bottom: 16px;
 }
 
 .pims-client-detail__pet-summary {
@@ -103,6 +277,27 @@
   flex-wrap: wrap;
   gap: 8px;
   margin-top: 6px;
+}
+
+.pims-detail__stat--link {
+  display: block;
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 0;
+  text-align: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.pims-detail__stat--link:hover .pims-detail__stat-value {
+  text-decoration: underline;
+}
+
+.pims-client-detail__invoice-card-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 12px 10px;
 }
 
 /* ---------- Invoice list ---------- */

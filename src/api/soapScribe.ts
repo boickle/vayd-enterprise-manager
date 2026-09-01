@@ -156,6 +156,113 @@ export async function summarizeIntakeHistory(
   return typeof data?.summary === 'string' ? data.summary.trim() : '';
 }
 
+/**
+ * Epiphany: drop car/tech chit-chat from a spoken recording and return a chart-ready note.
+ * Does not require a SOAP encounter.
+ */
+export async function polishSpokenNotes(opts: {
+  transcript: string;
+  kind: 'visit' | 'previsit' | 'callback' | 'huddle' | 'review';
+  patientName?: string | null;
+  clientName?: string | null;
+}): Promise<string> {
+  const { data } = await http.post<{ summary: string }>('/scribe/polish-transcript', {
+    practiceId: VISIT_WORKFLOW_PRACTICE_ID,
+    transcript: opts.transcript,
+    kind: opts.kind,
+    ...(opts.patientName?.trim() ? { patientName: opts.patientName.trim() } : {}),
+    ...(opts.clientName?.trim() ? { clientName: opts.clientName.trim() } : {}),
+  });
+  return typeof data?.summary === 'string' ? data.summary.trim() : '';
+}
+
+export async function summarizeChartText(opts: {
+  mode: 'outside-record' | 'case-history';
+  sourceText?: string;
+  images?: { mimeType: string; base64: string }[];
+  patientName?: string | null;
+  fileName?: string | null;
+  asOfDate?: string | null;
+}): Promise<string> {
+  const { data } = await http.post<{ summary: string }>('/scribe/summarize-chart', {
+    practiceId: VISIT_WORKFLOW_PRACTICE_ID,
+    mode: opts.mode,
+    ...(opts.sourceText?.trim() ? { sourceText: opts.sourceText.trim() } : {}),
+    ...(opts.images?.length ? { images: opts.images } : {}),
+    ...(opts.patientName?.trim() ? { patientName: opts.patientName.trim() } : {}),
+    ...(opts.fileName?.trim() ? { fileName: opts.fileName.trim() } : {}),
+    ...(opts.asOfDate?.trim() ? { asOfDate: opts.asOfDate.trim() } : {}),
+  });
+  return typeof data?.summary === 'string' ? data.summary.trim() : '';
+}
+
+export async function chatAboutChart(opts: {
+  sourceText: string;
+  question: string;
+  history?: { role: 'user' | 'assistant'; content: string }[];
+  patientName?: string | null;
+  asOfDate?: string | null;
+  clientName?: string | null;
+  staffName?: string | null;
+  staffRole?: string | null;
+  staffEmail?: string | null;
+  practiceName?: string | null;
+  practicePhone?: string | null;
+  practiceEmail?: string | null;
+  practiceAddress?: string | null;
+  practiceWebsite?: string | null;
+}): Promise<string> {
+  const trim = (v?: string | null) => (v?.trim() ? v.trim() : undefined);
+  const { data } = await http.post<{ answer: string }>('/scribe/chart-chat', {
+    practiceId: VISIT_WORKFLOW_PRACTICE_ID,
+    sourceText: opts.sourceText,
+    question: opts.question.trim(),
+    ...(opts.history?.length ? { history: opts.history } : {}),
+    ...(trim(opts.patientName) ? { patientName: trim(opts.patientName) } : {}),
+    ...(trim(opts.asOfDate) ? { asOfDate: trim(opts.asOfDate) } : {}),
+    ...(trim(opts.clientName) ? { clientName: trim(opts.clientName) } : {}),
+    ...(trim(opts.staffName) ? { staffName: trim(opts.staffName) } : {}),
+    ...(trim(opts.staffRole) ? { staffRole: trim(opts.staffRole) } : {}),
+    ...(trim(opts.staffEmail) ? { staffEmail: trim(opts.staffEmail) } : {}),
+    ...(trim(opts.practiceName) ? { practiceName: trim(opts.practiceName) } : {}),
+    ...(trim(opts.practicePhone) ? { practicePhone: trim(opts.practicePhone) } : {}),
+    ...(trim(opts.practiceEmail) ? { practiceEmail: trim(opts.practiceEmail) } : {}),
+    ...(trim(opts.practiceAddress) ? { practiceAddress: trim(opts.practiceAddress) } : {}),
+    ...(trim(opts.practiceWebsite) ? { practiceWebsite: trim(opts.practiceWebsite) } : {}),
+  });
+  return typeof data?.answer === 'string' ? data.answer.trim() : '';
+}
+
+export type CaseHistoryChatTurn = {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  createdAt: string;
+};
+
+/** Private to the signed-in user. Other staff never receive this thread. */
+export async function fetchMyCaseHistoryChat(patientId: string): Promise<CaseHistoryChatTurn[]> {
+  const { data } = await http.get<{ messages?: CaseHistoryChatTurn[] }>('/scribe/case-history-chat', {
+    params: { patientId },
+  });
+  return Array.isArray(data?.messages) ? data.messages : [];
+}
+
+export async function saveMyCaseHistoryChat(
+  patientId: string,
+  messages: CaseHistoryChatTurn[]
+): Promise<CaseHistoryChatTurn[]> {
+  const { data } = await http.put<{ messages?: CaseHistoryChatTurn[] }>('/scribe/case-history-chat', {
+    patientId,
+    messages,
+  });
+  return Array.isArray(data?.messages) ? data.messages : messages;
+}
+
+export async function deleteMyCaseHistoryChat(patientId: string): Promise<void> {
+  await http.delete('/scribe/case-history-chat', { params: { patientId } });
+}
+
 export type ScribeSocketStatus = 'idle' | 'connecting' | 'recording' | 'stopping' | 'error';
 
 export type ScribeSocketHandlers = {

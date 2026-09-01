@@ -559,9 +559,9 @@ main.schedule-main-wrapper .scheduler-page:not(.scheduler-page--embedded) {
 }
 
 .navbar-global-search {
-  flex: 0 1 300px;
-  max-width: 320px;
-  min-width: 170px;
+  flex: 0 1 560px;
+  max-width: 580px;
+  min-width: 280px;
   position: relative;
 }
 

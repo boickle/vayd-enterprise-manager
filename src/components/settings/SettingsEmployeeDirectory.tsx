@@ -23,6 +23,7 @@ import {
   type InventoryBranchLocation,
   type PracticeBranch,
 } from '../../api/branchInventory';
+import { appConfirm } from '../../utils/appDialog';
 import { EMPLOYEE_DIRECTORY_EDIT_ENABLED } from '../../utils/pimsEntityEditing';
 import {
   assignEmployeeRoleNameGroup,
@@ -512,9 +513,13 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
 
   const deactivate = async (emp: Employee) => {
     if (!EMPLOYEE_DIRECTORY_EDIT_ENABLED) return;
-    if (!window.confirm(`Deactivate ${emp.firstName} ${emp.lastName}? They will be hidden from active lists.`)) {
-      return;
-    }
+    const ok = await appConfirm({
+      title: 'Deactivate employee?',
+      message: `Deactivate ${emp.firstName} ${emp.lastName}? They will be hidden from active lists.`,
+      confirmLabel: 'Deactivate',
+      danger: true,
+    });
+    if (!ok) return;
     try {
       const full = await fetchEmployee(emp.id);
       const merged = {
@@ -551,13 +556,13 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
 
   const removeRow = async (emp: Employee) => {
     if (!EMPLOYEE_DIRECTORY_EDIT_ENABLED) return;
-    if (
-      !window.confirm(
-        `Permanently delete employee #${emp.id} from the database? This cannot be undone.`
-      )
-    ) {
-      return;
-    }
+    const ok = await appConfirm({
+      title: 'Delete employee?',
+      message: `Permanently delete employee #${emp.id} from the database? This cannot be undone.`,
+      confirmLabel: 'Delete',
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await deleteEmployees([emp.id]);
       onMessage?.('Employee deleted.', 'success');

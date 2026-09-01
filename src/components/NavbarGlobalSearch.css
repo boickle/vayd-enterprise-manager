@@ -4,22 +4,16 @@
   flex-shrink: 0;
 }
 
-.navbar-global-search__input-wrap {
-  position: relative;
+.navbar-global-search__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
-.navbar-global-search__evet-hint {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  right: 0;
-  margin: 4px 0 0;
-  font-size: 11px;
-  line-height: 1.3;
-  font-weight: 400;
-  color: var(--muted, #64748b);
-  white-space: nowrap;
-  pointer-events: none;
+.navbar-global-search__input-wrap {
+  position: relative;
+  flex: 1 1 200px;
+  min-width: 160px;
 }
 
 .navbar-global-search__field {

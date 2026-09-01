@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { SlidersHorizontal, X } from 'lucide-react';
 import {
@@ -6,26 +6,58 @@ import {
   updateScribePromptOverrides,
 } from '../../api/scribePromptOverrides';
 
+export type ScribePromptProviderOption = {
+  id: number;
+  name: string;
+};
+
 type Props = {
+  /** Provider whose instructions are being edited. */
   providerId: number;
   providerName: string;
+  /**
+   * When set (admins), allow switching which provider's instructions to edit.
+   * Providers editing themselves usually omit this.
+   */
+  providerOptions?: ScribePromptProviderOption[];
   onClose: () => void;
 };
 
+function errMessage(err: unknown, fallback: string): string {
+  const e = err as { response?: { data?: { message?: string | string[] } }; message?: string };
+  const msg = e?.response?.data?.message;
+  if (Array.isArray(msg)) return msg.join('; ');
+  if (typeof msg === 'string' && msg.trim()) return msg;
+  return err instanceof Error ? err.message : fallback;
+}
+
 /**
- * Edit AI scribe custom instructions for the appointment's primary provider.
- * Saved on the employee record and injected into the scribe system prompt for
- * every visit assigned to that provider.
+ * Edit AI scribe custom instructions for a provider.
+ * Saved on the employee record and injected into SOAP + Epiphany polish prompts.
  */
 export default function ScribePromptOverridesModal({
-  providerId,
-  providerName,
+  providerId: initialProviderId,
+  providerName: initialProviderName,
+  providerOptions,
   onClose,
 }: Props) {
+  const options = useMemo(() => {
+    if (!providerOptions?.length) return null;
+    return providerOptions;
+  }, [providerOptions]);
+
+  const [providerId, setProviderId] = useState(initialProviderId);
   const [text, setText] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const providerName =
+    options?.find((p) => p.id === providerId)?.name ?? initialProviderName;
+
+  useEffect(() => {
+    setProviderId(initialProviderId);
+  }, [initialProviderId]);
 
   useEffect(() => {
     let canceled = false;
@@ -37,7 +69,7 @@ export default function ScribePromptOverridesModal({
       })
       .catch((e) => {
         if (!canceled) {
-          setError(e instanceof Error ? e.message : 'Could not load instructions.');
+          setError(errMessage(e, 'Could not load instructions.'));
         }
       })
       .finally(() => {
@@ -57,7 +89,7 @@ export default function ScribePromptOverridesModal({
       await updateScribePromptOverrides(providerId, trimmed === '' ? null : trimmed);
       onClose();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not save instructions.');
+      setError(errMessage(e, 'Could not save instructions.'));
     } finally {
       setSaving(false);
     }
@@ -81,11 +113,29 @@ export default function ScribePromptOverridesModal({
           </button>
         </div>
         <p className="soap-modal-sub">
-          Provider-wide instructions for <strong>{providerName}</strong>. Anyone can edit them,
-          and they apply to every patient whose appointment is assigned to this provider. They
-          override or add to the shared AI scribe defaults — for example vaccine sites, or default
-          Heart wording when nothing abnormal was said.
+          Provider-wide instructions for <strong>{providerName}</strong>. They add to the shared AI
+          defaults for SOAP structuring and Epiphany note cleanup — for example vaccine sites, or
+          default Heart wording when nothing abnormal was said. Only this provider (or an admin)
+          can edit them.
         </p>
+        {options && options.length > 1 ? (
+          <label className="soap-modal-sub" style={{ display: 'block', marginBottom: 8 }}>
+            Provider
+            <select
+              className="soap-input"
+              style={{ display: 'block', width: '100%', marginTop: 4 }}
+              value={providerId}
+              disabled={saving || loading}
+              onChange={(e) => setProviderId(Number(e.target.value))}
+            >
+              {options.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
         {loading ? (
           <p className="soap-modal-sub">Loading…</p>
         ) : (

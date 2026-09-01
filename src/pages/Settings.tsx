@@ -66,6 +66,9 @@ import SettingsRoleManualBooking from '../components/settings/SettingsRoleManual
 import SettingsClSeatAssignment from '../components/settings/SettingsClSeatAssignment';
 import SettingsGmailMailboxPermissions from '../components/settings/SettingsGmailMailboxPermissions';
 import SettingsBranchesLocations from '../components/settings/SettingsBranchesLocations';
+import SettingsPaymentTypes from '../components/settings/SettingsPaymentTypes';
+import SettingsClientStatuses from '../components/settings/SettingsClientStatuses';
+import SettingsMessageTemplates from '../components/settings/SettingsMessageTemplates';
 import { appointmentTypeIsArchived } from '../utils/appointmentTypeSettings';
 
 const SETTINGS_TAB_IDS = [
@@ -82,6 +85,9 @@ const SETTINGS_TAB_IDS = [
   'cl-seat-assignment',
   'gmail-mailboxes',
   'reminders',
+  'payment-types',
+  'client-statuses',
+  'message-templates',
 ] as const;
 type SettingsTabId = (typeof SETTINGS_TAB_IDS)[number];
 
@@ -1152,6 +1158,24 @@ export default function Settings() {
             onClick={() => goToTab('reminders')}
           >
             Reminders
+          </button>
+          <button
+            className={`settings-tab ${activeTab === 'payment-types' ? 'active' : ''}`}
+            onClick={() => goToTab('payment-types')}
+          >
+            Payment Types
+          </button>
+          <button
+            className={`settings-tab ${activeTab === 'client-statuses' ? 'active' : ''}`}
+            onClick={() => goToTab('client-statuses')}
+          >
+            Client Discounts
+          </button>
+          <button
+            className={`settings-tab ${activeTab === 'message-templates' ? 'active' : ''}`}
+            onClick={() => goToTab('message-templates')}
+          >
+            Email &amp; Text Templates
           </button>
         </div>
 
@@ -2895,6 +2919,39 @@ export default function Settings() {
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {activeTab === 'payment-types' && (
+          <div className="settings-section">
+            <SettingsPaymentTypes
+              onMessage={(msg, kind) => {
+                if (kind === 'error') setError(msg);
+                else setSuccess(msg);
+              }}
+            />
+          </div>
+        )}
+
+        {activeTab === 'client-statuses' && (
+          <div className="settings-section">
+            <SettingsClientStatuses
+              onMessage={(msg, kind) => {
+                if (kind === 'error') setError(msg);
+                else setSuccess(msg);
+              }}
+            />
+          </div>
+        )}
+
+        {activeTab === 'message-templates' && (
+          <div className="settings-section">
+            <SettingsMessageTemplates
+              onMessage={(msg, kind) => {
+                if (kind === 'error') setError(msg);
+                else setSuccess(msg);
+              }}
+            />
           </div>
         )}
       </div>

@@ -29,10 +29,12 @@ import {
   type VisitInvoice,
   VISIT_WORKFLOW_PRACTICE_ID,
 } from '../api/visitWorkflow';
-import { summarizeIntakeHistory } from '../api/soapScribe';
+import { polishSpokenNotes, summarizeIntakeHistory } from '../api/soapScribe';
 import { fetchAppointmentById } from '../api/appointments';
 import { fetchEmployee } from '../api/appointmentSettings';
 import { fetchPatientProfileForRow } from '../api/patients';
+import { useAuth } from '../auth/useAuth';
+import { pushRecentRecord } from '../utils/recentRecordsStore';
 import {
   defaultPeExamState,
   peExamFromValue,
@@ -64,11 +66,15 @@ import {
   findSubmittedRoomLoaderForAppointment,
   hasPreVisitAnswersBlock,
   looksLikeRawRoomLoaderSubjective,
+  looksLikeSpokenChatter,
+  mergeClinicianPrevisitNotes,
   PRE_EXAM_CHECKIN_NOT_FILLED,
   prependCheckinBlock,
+  splitSubjectiveHistoryParts,
   stripCheckinPlaceholder,
   withRoomLoaderSubjectivePrefix,
 } from '../utils/roomLoaderSubjectiveText';
+import { markBriefsInjected, pendingPrevisitBriefs } from '../utils/briefStore';
 import { takeDeferredPlanItems } from '../utils/deferredScribePlanItems';
 import {
   appendTreatmentPlanMedicationBullet,
@@ -209,6 +215,10 @@ export default function SoapEncounterPage() {
   const params = useParams();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const { employeeId, role } = useAuth() as {
+    employeeId?: string | null;
+    role?: string[];
+  };
   const appointmentId = Number(params.appointmentId);
   const patientId = Number(params.patientId);
   const clientIdParam = searchParams.get('clientId');
@@ -239,6 +249,21 @@ export default function SoapEncounterPage() {
       if (planToastTimerRef.current != null) window.clearTimeout(planToastTimerRef.current);
     };
   }, []);
+
+  useEffect(() => {
+    if (!Number.isFinite(patientId) || patientId <= 0 || !patientName.trim()) return;
+    const ownerId = clientIdParam?.trim();
+    const ownerName = clientName.trim();
+    if (ownerId && ownerName) {
+      pushRecentRecord({ kind: 'client', id: ownerId, name: ownerName });
+    }
+    pushRecentRecord({
+      kind: 'patient',
+      id: patientId,
+      name: patientName.trim(),
+      subtitle: ownerName || undefined,
+    });
+  }, [patientId, patientName, clientName, clientIdParam]);
 
   const [subjective, setSubjective] = useState('');
   const [vitals, setVitals] = useState<Vitals>(vitalsFromValue(null));
@@ -299,6 +324,14 @@ export default function SoapEncounterPage() {
   const locked = encounter?.status === 'completed';
   const mode: SoapEncounterMode = encounter?.mode ?? 'comprehensive';
   const scribeEnabled = String(import.meta.env.VITE_ENABLE_SCRIBE ?? '').toLowerCase() === 'true';
+  const rolesLower = (Array.isArray(role) ? role : []).map((r) => String(r).toLowerCase());
+  const isAdmin = rolesLower.some((r) => r === 'admin' || r === 'superadmin');
+  const selfEmployeeId = employeeId != null && employeeId !== '' ? Number(employeeId) : NaN;
+  const canEditProviderPrompt =
+    scribeEnabled &&
+    primaryProviderId != null &&
+    (isAdmin ||
+      (Number.isFinite(selfEmployeeId) && selfEmployeeId === primaryProviderId));
 
   // Keep pet tab order stable when switching charts (name, then id) — don't float "current" first.
   const petTabs = useMemo(
@@ -448,6 +481,65 @@ export default function SoapEncounterPage() {
             } catch (err) {
               console.warn('Failed to save the pre-exam check-in block', err);
             }
+          }
+        }
+
+        const pendingPrep = pendingPrevisitBriefs({
+          patientId,
+          appointmentId,
+        });
+        if (pendingPrep.length) {
+          let notes = pendingPrep
+            .map((b) => b.transcript.trim())
+            .filter(Boolean)
+            .join('\n\n');
+          if (scribeEnabled && notes) {
+            try {
+              const cleaned = await polishSpokenNotes({
+                transcript: notes,
+                kind: 'previsit',
+              });
+              if (cleaned.trim()) notes = cleaned.trim();
+            } catch {
+              /* keep raw prep notes if polish fails */
+            }
+          }
+          const next = mergeClinicianPrevisitNotes(subjectiveHistory, notes);
+          if (next !== subjectiveHistory.trim()) {
+            subjectiveHistory = next;
+            const emailFields = emailDraftFromSubjective(enc.subjective);
+            try {
+              enc = await updateEncounter(enc.id, {
+                subjective: buildSubjectivePayload(next, emailFields),
+              });
+              markBriefsInjected(pendingPrep.map((b) => b.id));
+            } catch (err) {
+              console.warn('Failed to inject clinician prep notes from Epiphany', err);
+            }
+          }
+        }
+
+        const clinicianParts = splitSubjectiveHistoryParts(subjectiveHistory);
+        if (
+          scribeEnabled &&
+          clinicianParts.clinicianPrevisit &&
+          looksLikeSpokenChatter(clinicianParts.clinicianPrevisit)
+        ) {
+          try {
+            const cleaned = await polishSpokenNotes({
+              transcript: clinicianParts.clinicianPrevisit,
+              kind: 'previsit',
+            });
+            if (cleaned.trim() && cleaned.trim() !== clinicianParts.clinicianPrevisit.trim()) {
+              const next = mergeClinicianPrevisitNotes(subjectiveHistory, cleaned);
+              subjectiveHistory = next;
+              const emailFields = emailDraftFromSubjective(enc.subjective);
+              enc = await updateEncounter(enc.id, {
+                subjective: buildSubjectivePayload(next, emailFields),
+              });
+            }
+          } catch (err) {
+            console.warn('Failed to clean clinician prep notes', err);
           }
         }
 
@@ -836,7 +928,7 @@ export default function SoapEncounterPage() {
           </div>
         </div>
         <div className="soap-header-actions">
-          {scribeEnabled && primaryProviderId != null && (
+          {canEditProviderPrompt && primaryProviderId != null && (
             <button
               type="button"
               className="soap-provider-prompt-btn"

@@ -42,9 +42,14 @@ import { PE_SYSTEMS, peExamFromValue, type PeExamState, type PeSystemFinding } f
 import ScribeConsentModal from './ScribeConsentModal';
 import type { SuggestedPlanItem } from './ScribeSuggestedPlanItems';
 import { formatSoapSectionSpacing } from '../../utils/soapSectionSpacing';
-import { VISIT_DISCUSSION_HEADER } from '../../utils/roomLoaderSubjectiveText';
+import {
+  joinSubjectiveHistoryParts,
+  splitSubjectiveHistoryParts,
+  VISIT_DISCUSSION_HEADER,
+} from '../../utils/roomLoaderSubjectiveText';
 import { stashDeferredPlanItems } from '../../utils/deferredScribePlanItems';
 import { vitalsFromValue, type Vitals } from '../../pages/SoapEncounterPage';
+import { appConfirm } from '../../utils/appDialog';
 
 type NumericVitalKey = 'tempF' | 'weight' | 'hr' | 'rr' | 'bcs' | 'painScore';
 
@@ -175,9 +180,9 @@ function toSuggestedPlanItems(
 
 /**
  * Merge AI visit-conversation history into Subjective without clobbering Room Loader /
- * pre-visit text. Process is always a full re-derive: keep the check-in block, replace
- * (or add) the Visit discussion section. With no check-in block, replace Subjective with
- * the new AI history so Re-load SOAP doesn't stack duplicate visit notes.
+ * pre-visit text or clinician prep notes from Epiphany. Process keeps those blocks and
+ * replaces (or adds) the Visit discussion section. With neither block, replace Subjective
+ * with the new AI history so Re-load SOAP doesn't stack duplicate visit notes.
  */
 function mergeSubjectiveHistory(existing: string, aiHistory: string): string {
   const delta = formatSoapSectionSpacing(aiHistory);
@@ -187,29 +192,12 @@ function mergeSubjectiveHistory(existing: string, aiHistory: string): string {
   if (cur.includes(delta) || formatSoapSectionSpacing(cur).includes(delta)) {
     return formatSoapSectionSpacing(cur);
   }
-  const hasPreVisit =
-    /^Pre-Visit Check-in Information\b/i.test(cur) ||
-    /^Pre-Exam Check-in Form:\s*Not filled out by client\b/i.test(cur) ||
-    /^Room Loader information\b/i.test(cur);
-  if (hasPreVisit) {
-    if (
-      new RegExp(`^${VISIT_DISCUSSION_HEADER}\\s*$`, 'im').test(cur) ||
-      cur.includes(`\n${VISIT_DISCUSSION_HEADER}`)
-    ) {
-      const replaced = cur.replace(
-        /\n\nVisit discussion:\n\n[\s\S]*$/i,
-        `\n\n${VISIT_DISCUSSION_HEADER}\n\n${delta}`
-      );
-      if (replaced !== cur) return formatSoapSectionSpacing(replaced);
-      return formatSoapSectionSpacing(`${cur}\n\n${VISIT_DISCUSSION_HEADER}\n\n${delta}`);
-    }
-    return formatSoapSectionSpacing(`${cur}\n\n${VISIT_DISCUSSION_HEADER}\n\n${delta}`);
-  }
-  return delta;
+  const parts = splitSubjectiveHistoryParts(cur);
+  if (!parts.checkin && !parts.clinicianPrevisit) return delta;
+  parts.visitDiscussion = delta;
+  return formatSoapSectionSpacing(joinSubjectiveHistoryParts(parts));
 }
 
-/** Only fills vitals the doctor hasn't already entered — never overwrites (mirrors the live
- * auto-apply rule above, reused for multi-pet review-and-apply). */
 /** Only fills vitals the doctor hasn't already entered — never overwrites (mirrors the live
  * auto-apply rule above, reused for multi-pet review-and-apply). */
 function fillEmptyVitals(
@@ -679,7 +667,17 @@ export default function ScribePanel({
       currentReasoning,
       currentPlanNotes
     );
-    if (willOverwrite && !window.confirm(OVERWRITE_CONFIRM)) return;
+    if (
+      willOverwrite &&
+      !(await appConfirm({
+        title: 'Overwrite SOAP work?',
+        message: OVERWRITE_CONFIRM,
+        confirmLabel: 'Overwrite',
+        danger: true,
+      }))
+    ) {
+      return;
+    }
 
     setPasteBusy(true);
     setErrorMessage(null);
@@ -742,7 +740,16 @@ export default function ScribePanel({
    * which then came back on the next visit to this chart.
    */
   const deleteTranscript = useCallback(async () => {
-    if (!window.confirm(DELETE_TRANSCRIPT_CONFIRM)) return;
+    if (
+      !(await appConfirm({
+        title: 'Delete transcript?',
+        message: DELETE_TRANSCRIPT_CONFIRM,
+        confirmLabel: 'Delete',
+        danger: true,
+      }))
+    ) {
+      return;
+    }
     setPasteBusy(true);
     setErrorMessage(null);
     try {

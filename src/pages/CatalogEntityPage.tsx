@@ -23,6 +23,7 @@ import {
   type CatalogCategory,
 } from '../api/catalogCategories';
 import QuantityPriceBreaksEditor from '../components/catalog/QuantityPriceBreaksEditor';
+import { appConfirm } from '../utils/appDialog';
 import TaxLevelSelect, {
   taxLevelSelectValue,
 } from '../components/catalog/TaxLevelSelect';
@@ -288,7 +289,13 @@ export default function CatalogEntityPage({ itemType }: { itemType: ManagedType 
     const entity = entityFor(row);
     if (!entity) return;
     const active = entity.isActive !== false;
-    if (!confirm(`${active ? 'Archive' : 'Restore'} “${row.name}”?`)) return;
+    const ok = await appConfirm({
+      title: active ? 'Archive item?' : 'Restore item?',
+      message: `${active ? 'Archive' : 'Restore'} “${row.name}”?`,
+      confirmLabel: active ? 'Archive' : 'Restore',
+      danger: active,
+    });
+    if (!ok) return;
     setSaving(true);
     try {
       await setCatalogItemActive(itemType, practiceId, entity.id, !active);

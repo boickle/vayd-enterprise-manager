@@ -2545,7 +2545,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                             color: '#92400e',
                           }}
                         >
-                          New client — convert HOLD in scheduler
+                          On hold
                         </div>
                       ) : null}
                     </div>
@@ -2979,6 +2979,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
       {smsItem ? (
         <ClientSmsComposeModal
           open
+          clientId={requestDataClientId(smsItem.requestData ?? {}) ? Number(requestDataClientId(smsItem.requestData ?? {})) : null}
           clientLabel={clientDisplayNameFromRequestData(smsItem.requestData ?? {})}
           message={smsMessageLoading ? 'Loading message…' : smsMessage}
           onMessageChange={setSmsMessage}

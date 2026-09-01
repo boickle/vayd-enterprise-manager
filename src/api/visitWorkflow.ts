@@ -96,15 +96,32 @@ export type EncounterOrder = {
   } | null;
 };
 
+export type VisitTenderMethod = 'card' | 'cash' | 'check' | 'carecredit' | 'other';
+
 export type VisitInvoiceLine = {
   id: string;
   invoiceId: string;
   orderId: string | null;
+  patientId?: number | null;
+  providerEmployeeId?: number | null;
+  enteredByEmployeeId?: number | null;
+  enteredByName?: string | null;
+  returnOfLineId?: string | null;
   description: string;
   qty: number;
   unitPrice: number;
   amount: number;
   isCovered: boolean;
+  instructions?: string | null;
+  instructionsEnteredByEmployeeId?: number | null;
+  instructionsEnteredByName?: string | null;
+  refillCount?: number | null;
+  catalogInstructions?: string | null;
+  catalogRefill?: number | null;
+  catalogItemId?: number | null;
+  catalogItemType?: string | null;
+  listUnitPrice?: number | null;
+  patientName?: string | null;
   taxLevelValue?: number | null;
   isTaxExempt?: boolean;
   taxableAmount?: number;
@@ -113,10 +130,28 @@ export type VisitInvoiceLine = {
   isDeleted?: boolean;
 };
 
+export type VisitInvoiceTender = {
+  id: string;
+  invoiceId: string;
+  amount: number;
+  method: VisitTenderMethod;
+  paymentTypeName?: string | null;
+  cashierEmployeeId: number | null;
+  cashReceived?: number | null;
+  changeGiven?: number | null;
+  checkNumber?: string | null;
+  stripePaymentIntentId?: string | null;
+  receivedAt: string;
+  voidedAt?: string | null;
+  voidedByEmployeeId?: number | null;
+  voidReason?: string | null;
+};
+
 export type VisitInvoice = {
   id: string;
   practiceId: number;
-  appointmentId: number;
+  appointmentId: number | null;
+  patientId?: number | null;
   clientId: number | null;
   status: VisitInvoiceStatus;
   subtotal: number;
@@ -133,7 +168,20 @@ export type VisitInvoice = {
   lastChargeStatus: string | null;
   finalizedAt: string | null;
   paidAt: string | null;
+  created?: string;
+  evetInvoiceId?: number | null;
+  evetInvoiceNumber?: number | null;
+  /** Practice-scoped Scout invoice number. */
+  scoutInvoiceNumber?: number | null;
+  createdByEmployeeId?: number | null;
+  isDeleted?: boolean;
+  voidedByEmployeeId?: number | null;
+  voidReason?: string | null;
+  voidedAt?: string | null;
+  deletedByEmployeeId?: number | null;
+  deletedAt?: string | null;
   lines?: VisitInvoiceLine[];
+  tenders?: VisitInvoiceTender[];
 };
 
 export type VisitCompletedResult = {
@@ -692,6 +740,185 @@ export async function getInvoiceByAppointment(appointmentId: number): Promise<Vi
   return data;
 }
 
+export type CounterInvoiceLineInput = {
+  description: string;
+  qty?: number;
+  unitPrice?: number;
+  instructions?: string | null;
+  refillCount?: number | null;
+  catalogItemId?: number | null;
+  catalogItemType?: string | null;
+  isCovered?: boolean;
+  listUnitPrice?: number | null;
+  patientId?: number | null;
+  providerEmployeeId?: number | null;
+};
+
+export async function listClientVisitInvoices(clientId: number): Promise<VisitInvoice[]> {
+  const { data } = await http.get<VisitInvoice[]>(
+    `/visit-invoices/client/${encodeURIComponent(String(clientId))}`,
+    { params: { practiceId: pid() } }
+  );
+  return data;
+}
+
+export type VisitInvoiceLookupHit = {
+  id: string;
+  clientId: number | null;
+  clientLabel: string | null;
+  scoutInvoiceNumber: number | null;
+  evetInvoiceNumber: number | null;
+  status: VisitInvoiceStatus;
+};
+
+export async function lookupVisitInvoices(q: string): Promise<VisitInvoiceLookupHit[]> {
+  const { data } = await http.get<VisitInvoiceLookupHit[]>('/visit-invoices/lookup', {
+    params: { practiceId: pid(), q },
+  });
+  return Array.isArray(data) ? data : [];
+}
+
+export async function ensureCounterInvoice(opts: {
+  patientId?: number | null;
+  clientId?: number | null;
+  appointmentId?: number | null;
+}): Promise<VisitInvoice> {
+  const { data } = await http.post<VisitInvoice>('/visit-invoices/counter', {
+    practiceId: pid(),
+    patientId: opts.patientId ?? undefined,
+    clientId: opts.clientId ?? undefined,
+    appointmentId: opts.appointmentId ?? undefined,
+  });
+  return data;
+}
+
+export async function patchVisitInvoice(
+  invoiceId: string,
+  body: { appointmentId?: number | null }
+): Promise<VisitInvoice> {
+  const { data } = await http.patch<VisitInvoice>(
+    `/visit-invoices/${encodeURIComponent(invoiceId)}`,
+    { practiceId: pid(), ...body }
+  );
+  return data;
+}
+
+export async function addVisitTender(
+  invoiceId: string,
+  body: {
+    method: VisitTenderMethod;
+    amount: number;
+    paymentTypeName?: string | null;
+    cashierEmployeeId?: number | null;
+    cashReceived?: number | null;
+    changeGiven?: number | null;
+    checkNumber?: string | null;
+    stripePaymentIntentId?: string | null;
+  }
+): Promise<VisitInvoice> {
+  const { data } = await http.post<VisitInvoice>(
+    `/visit-invoices/${encodeURIComponent(invoiceId)}/tenders`,
+    { practiceId: pid(), ...body }
+  );
+  return data;
+}
+
+export async function voidVisitTender(
+  invoiceId: string,
+  tenderId: string,
+  opts?: { reason?: string; voidedByEmployeeId?: number | null }
+): Promise<VisitInvoice> {
+  const { data } = await http.post<VisitInvoice>(
+    `/visit-invoices/${encodeURIComponent(invoiceId)}/tenders/${encodeURIComponent(tenderId)}/void`,
+    { practiceId: pid(), ...opts }
+  );
+  return data;
+}
+
+export async function returnVisitInvoiceLines(
+  invoiceId: string,
+  items: { lineId: string; qty: number }[],
+  opts?: { cashierEmployeeId?: number | null }
+): Promise<VisitInvoice> {
+  const { data } = await http.post<VisitInvoice>(
+    `/visit-invoices/${encodeURIComponent(invoiceId)}/returns`,
+    { practiceId: pid(), items, cashierEmployeeId: opts?.cashierEmployeeId ?? null }
+  );
+  return data;
+}
+
+export type ClientPayLink = {
+  url: string;
+  amount: number;
+  invoiceIds: string[];
+  invoiceLabels: string[];
+};
+
+export async function createClientPayLink(
+  clientId: number,
+  opts?: { successUrl?: string; cancelUrl?: string }
+): Promise<ClientPayLink> {
+  const { data } = await http.post<ClientPayLink>(
+    `/visit-payments/client/${encodeURIComponent(String(clientId))}/pay-link`,
+    {
+      practiceId: pid(),
+      successUrl: opts?.successUrl,
+      cancelUrl: opts?.cancelUrl,
+    }
+  );
+  return data;
+}
+
+export async function adoptEvetInvoice(evetInvoiceId: number): Promise<VisitInvoice> {
+  const { data } = await http.post<VisitInvoice>('/visit-invoices/adopt-evet', {
+    practiceId: pid(),
+    evetInvoiceId,
+  });
+  return data;
+}
+
+export async function unlockVisitInvoice(invoiceId: string): Promise<VisitInvoice> {
+  const { data } = await http.post<VisitInvoice>(
+    `/visit-invoices/${encodeURIComponent(invoiceId)}/unlock`,
+    { practiceId: pid() }
+  );
+  return data;
+}
+
+export async function addCounterInvoiceLine(
+  invoiceId: string,
+  body: CounterInvoiceLineInput
+): Promise<VisitInvoice> {
+  const { data } = await http.post<VisitInvoice>(
+    `/visit-invoices/${encodeURIComponent(invoiceId)}/lines`,
+    { practiceId: pid(), ...body }
+  );
+  return data;
+}
+
+export async function updateCounterInvoiceLine(
+  invoiceId: string,
+  lineId: string,
+  body: Partial<CounterInvoiceLineInput>
+): Promise<VisitInvoice> {
+  const { data } = await http.patch<VisitInvoice>(
+    `/visit-invoices/${encodeURIComponent(invoiceId)}/lines/${encodeURIComponent(lineId)}`,
+    { practiceId: pid(), ...body }
+  );
+  return data;
+}
+
+export async function removeCounterInvoiceLine(
+  invoiceId: string,
+  lineId: string
+): Promise<VisitInvoice> {
+  const { data } = await http.delete<VisitInvoice>(
+    `/visit-invoices/${encodeURIComponent(invoiceId)}/lines/${encodeURIComponent(lineId)}`,
+    { params: { practiceId: pid() } }
+  );
+  return data;
+}
+
 export async function createInvoice(body: {
   appointmentId: number;
   clientId?: number;
@@ -719,11 +946,31 @@ export async function finalizeInvoice(id: string): Promise<VisitInvoice> {
   return data;
 }
 
-export async function voidInvoice(id: string): Promise<VisitInvoice> {
+export async function voidInvoice(
+  id: string,
+  opts?: { reason: string; voidedByEmployeeId?: number | null },
+): Promise<VisitInvoice> {
   const { data } = await http.post<VisitInvoice>(`/visit-invoices/${encodeURIComponent(id)}/void`, {
     practiceId: pid(),
+    reason: opts?.reason,
+    voidedByEmployeeId: opts?.voidedByEmployeeId,
   });
   return data;
+}
+
+/** Soft-delete an unused open invoice so it leaves the ledger. */
+export async function discardVisitInvoice(
+  id: string,
+  opts?: { deletedByEmployeeId?: number | null },
+): Promise<void> {
+  await http.delete(`/visit-invoices/${encodeURIComponent(id)}`, {
+    params: {
+      practiceId: pid(),
+      ...(opts?.deletedByEmployeeId != null
+        ? { deletedByEmployeeId: opts.deletedByEmployeeId }
+        : {}),
+    },
+  });
 }
 
 /** Undo a void — back to open so the bill can be corrected and collected. */
