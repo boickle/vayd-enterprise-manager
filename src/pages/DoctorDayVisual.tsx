@@ -27,6 +27,7 @@ import {
   householdPersonalBlockFlag,
 } from '../utils/calendarOnlyStaffAppointment';
 import { expandEtaDriveSecondsToHouseholds } from '../utils/schedulerEtaMerge';
+import { clampTimelineEtasToArrivalWindows } from '../utils/clampEtaToArrivalWindow';
 import { formatDoctorDayApptAddress } from '../utils/doctorDayAddress';
 import {
   buildAppointmentTypeCatalog,
@@ -1067,6 +1068,8 @@ export default function DoctorDayVisual({
             startIso: h.startIso,
             endIso: h.endIso,
             effectiveWindow: h.primary?.effectiveWindow,
+            appointmentType: (h.primary as any)?.appointmentType ?? null,
+            practiceTz: practiceTimeZone,
           }),
         } as any;
       });
@@ -1353,6 +1356,17 @@ export default function DoctorDayVisual({
         );
 
         // Render in positionInDay order from ETA byIndex (routeOrder computed above for flex snap).
+        const orderForClamp =
+          Array.isArray(result?.byIndex) && result.byIndex.length === households.length
+            ? routeOrder
+            : Array.from({ length: households.length }, (_, i) => i);
+        clampTimelineEtasToArrivalWindows({
+          households,
+          timeline: tl,
+          routingOrderIndices: orderForClamp,
+          practiceTz: practiceTimeZone,
+        });
+
         if (Array.isArray(result?.byIndex) && result.byIndex.length === households.length) {
           setRoutingOrderIndices(routeOrder);
           setByIndexRows(
@@ -1363,8 +1377,8 @@ export default function DoctorDayVisual({
               return {
                 etaIso: slot?.eta ?? r.etaIso,
                 etdIso: slot?.etd ?? r.etdIso,
-                windowStartIso: r.windowStartIso ?? undefined,
-                windowEndIso: r.windowEndIso ?? undefined,
+                windowStartIso: r.windowStartIso ?? slot?.windowStartIso ?? undefined,
+                windowEndIso: r.windowEndIso ?? slot?.windowEndIso ?? undefined,
                 ...(typeof r.bufferAfterMinutes === 'number' && Number.isFinite(r.bufferAfterMinutes)
                   ? { bufferAfterMinutes: r.bufferAfterMinutes }
                   : {}),
