@@ -9,7 +9,8 @@
 import { DateTime } from 'luxon';
 import {
   effectiveWindowForScheduledStart,
-  type AppointmentTypeWindowSource,
+  toAppointmentTypeWindowSource,
+  type AppointmentTypeWindowInput,
 } from './appointmentArrivalWindow';
 export type EtaClampHousehold = {
   isPersonalBlock?: boolean;
@@ -21,7 +22,7 @@ export type EtaClampHousehold = {
   primary?: {
     appointmentStart?: string | null;
     appointmentEnd?: string | null;
-    appointmentType?: AppointmentTypeWindowSource | null;
+    appointmentType?: AppointmentTypeWindowInput;
     effectiveWindow?: { startIso?: string; endIso?: string } | null;
   } | null;
 };
@@ -75,7 +76,7 @@ export function resolveArrivalWindowForEtaClamp(
   return (
     effectiveWindowForScheduledStart(
       scheduledStart,
-      h.primary?.appointmentType ?? undefined,
+      toAppointmentTypeWindowSource(h.primary?.appointmentType),
       practiceTz,
       {
         appointmentEndIso:
