@@ -2,7 +2,8 @@
 import type { MiniZone } from './appointments';
 import {
   effectiveWindowForScheduledStart,
-  type AppointmentTypeWindowSource,
+  toAppointmentTypeWindowSource,
+  type AppointmentTypeWindowInput,
 } from '../utils/appointmentArrivalWindow';
 import { http } from './http';
 
@@ -48,7 +49,7 @@ export function etaHouseholdArrivalWindowPayload(args: {
   endIso: string | null | undefined;
   effectiveWindow?: { startIso?: string; endIso?: string } | null;
   /** Used only when `effectiveWindow` is missing — type ±N from scheduled start. */
-  appointmentType?: AppointmentTypeWindowSource | null;
+  appointmentType?: AppointmentTypeWindowInput;
   practiceTz?: string | null;
 }): {
   isPersonalBlock?: true;
@@ -87,7 +88,7 @@ export function etaHouseholdArrivalWindowPayload(args: {
   if (isRoutable && startIso?.trim() && practiceTz?.trim()) {
     const fallback = effectiveWindowForScheduledStart(
       startIso,
-      appointmentType ?? undefined,
+      toAppointmentTypeWindowSource(appointmentType),
       practiceTz,
       { appointmentEndIso: endIso ?? undefined }
     );
