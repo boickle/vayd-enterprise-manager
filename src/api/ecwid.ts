@@ -36,6 +36,15 @@ export type EcwidCombination = {
   [key: string]: unknown;
 };
 
+/** Category assignment on an Ecwid product (API may return nameTranslated as string or map). */
+export type EcwidCategoryRef = {
+  id?: number;
+  enabled?: boolean;
+  name?: string;
+  nameTranslated?: string | { en?: string; [lang: string]: string | undefined };
+  ancestorIds?: number[];
+};
+
 export type EcwidProduct = {
   id: number | string;
   name: string;
@@ -49,6 +58,10 @@ export type EcwidProduct = {
   attributes?: EcwidAttribute[];
   /** Variants with their own option value and price (e.g. Size: 4.4-6 lb, 6.1-12 lb, ...). */
   combinations?: EcwidCombination[];
+  /** Category IDs the product belongs to. */
+  categoryIds?: number[];
+  /** Detailed categories (used to exclude subscription "Clones" from room-loader search). */
+  categories?: EcwidCategoryRef[];
   [key: string]: unknown;
 };
 
@@ -62,10 +75,48 @@ type EcwidProductsResponse = {
   products?: EcwidProduct[];
 };
 
+function ecwidCategoryDisplayName(cat: EcwidCategoryRef | null | undefined): string {
+  if (!cat || typeof cat !== 'object') return '';
+  const translated = cat.nameTranslated;
+  if (typeof translated === 'string' && translated.trim()) return translated.trim();
+  if (translated && typeof translated === 'object') {
+    const en = translated.en;
+    if (typeof en === 'string' && en.trim()) return en.trim();
+  }
+  return typeof cat.name === 'string' ? cat.name.trim() : '';
+}
+
+/**
+ * Subscription/autoship clone products live in Ecwid categories named like
+ * "Revolution Plus Topical for Cats – Clones". Those must not appear in the
+ * public room-loader additional-items search (they look like autoship + wrong SKU/price).
+ */
+export function isEcwidCloneCategoryName(name: string | null | undefined): boolean {
+  const s = (name ?? '').trim();
+  if (!s) return false;
+  return /\bclones?\b/i.test(s);
+}
+
+/** True when the product is assigned to any category whose name includes Clone/Clones. */
+export function isEcwidCloneCategoryProduct(product: EcwidProduct | null | undefined): boolean {
+  if (!product) return false;
+  const cats = product.categories;
+  if (!Array.isArray(cats) || cats.length === 0) return false;
+  return cats.some((c) => isEcwidCloneCategoryName(ecwidCategoryDisplayName(c)));
+}
+
+/** Drop subscription Clone-category products from an Ecwid search result list. */
+export function filterOutEcwidCloneProducts(products: EcwidProduct[]): EcwidProduct[] {
+  if (!Array.isArray(products) || products.length === 0) return [];
+  return products.filter((p) => !isEcwidCloneCategoryProduct(p));
+}
+
 /**
  * Search store products from Ecwid.
  * GET /public/ecwid/products?q=searchTerm
  * Response: { total, count, offset, limit, items: EcwidProduct[] }
+ *
+ * Filters out products in "Clone(s)" categories (subscription SKU mirrors).
  */
 export async function getEcwidProducts(searchQuery: string): Promise<EcwidProduct[]> {
   if (!searchQuery.trim()) return [];
@@ -73,11 +124,15 @@ export async function getEcwidProducts(searchQuery: string): Promise<EcwidProduc
     '/public/ecwid/products',
     { params: { q: searchQuery.trim() } }
   );
-  if (Array.isArray(data)) return data;
-  const obj = data as EcwidProductsResponse;
-  if (obj && typeof obj === 'object') {
-    if (Array.isArray(obj.items)) return obj.items;
-    if (Array.isArray(obj.products)) return obj.products;
+  let items: EcwidProduct[] = [];
+  if (Array.isArray(data)) {
+    items = data;
+  } else {
+    const obj = data as EcwidProductsResponse;
+    if (obj && typeof obj === 'object') {
+      if (Array.isArray(obj.items)) items = obj.items;
+      else if (Array.isArray(obj.products)) items = obj.products;
+    }
   }
-  return [];
+  return filterOutEcwidCloneProducts(items);
 }
