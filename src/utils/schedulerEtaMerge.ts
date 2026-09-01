@@ -5,6 +5,7 @@ import { DateTime } from 'luxon';
 import { blockDisplayLabel } from '../api/appointments';
 import { DEFAULT_APPOINTMENT_BUFFER_MINUTES } from '../api/routing';
 import type { DayData } from '../pages/MyWeek';
+import { clampTimelineEtasToArrivalWindows } from './clampEtaToArrivalWindow';
 
 function keyFor(lat: number, lon: number, d = 6) {
   const m = Math.pow(10, d);
@@ -268,6 +269,13 @@ export function mergeEtaFetchIntoDayData(day: DayBundleIn, result: any): DayData
       etd: newEtd.toISO()!,
     };
   }
+
+  clampTimelineEtasToArrivalWindows({
+    households: day.households,
+    timeline: tl,
+    routingOrderIndices,
+    practiceTz: day.timezone || 'America/New_York',
+  });
 
   const mergedHouseholds = day.households.map((h) => {
     if (!h.isPersonalBlock || !h.primary) return h;

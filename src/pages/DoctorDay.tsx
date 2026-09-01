@@ -18,6 +18,7 @@ import {
 import { useAuth } from '../auth/useAuth';
 import './DoctorDay.css';
 import { etaHouseholdArrivalWindowPayload, fetchEtas } from '../api/routing';
+import { clampTimelineEtasToArrivalWindows } from '../utils/clampEtaToArrivalWindow';
 import {
   buildEtaCandidateSlot,
   orderHouseholdsWithCandidateAtInsertion,
@@ -770,6 +771,8 @@ export default function DoctorDay({
             startIso: h.startIso,
             endIso: h.endIso,
             effectiveWindow: h.primary?.effectiveWindow,
+            appointmentType: (h.primary as any)?.appointmentType ?? null,
+            practiceTz: practiceTimeZone,
           }),
           isAlternateStop: (h.primary as any)?.isAlternateStop ?? undefined,
           alternateAddressText: (h.primary as any)?.alternateAddressText ?? undefined,
@@ -1011,8 +1014,20 @@ export default function DoctorDay({
           const order = Array.from({ length: households.length }, (_, i) => i).sort(
             (a, b) => getPositionInDay(a) - getPositionInDay(b)
           );
+          clampTimelineEtasToArrivalWindows({
+            households,
+            timeline: tl,
+            routingOrderIndices: order,
+            practiceTz: practiceTimeZone,
+          });
           setRoutingOrderIndices(order);
         } else {
+          clampTimelineEtasToArrivalWindows({
+            households,
+            timeline: tl,
+            routingOrderIndices: Array.from({ length: households.length }, (_, i) => i),
+            practiceTz: practiceTimeZone,
+          });
           setRoutingOrderIndices(null);
         }
 
