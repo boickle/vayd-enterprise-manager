@@ -32,7 +32,7 @@ export function resolveArrivalWindowIsos(args: {
   household?: ArrivalWindowHouseholdContext | null;
   slot?: ArrivalWindowSlotContext | null;
   scheduledStartIso?: string | null;
-  appointmentType?: AppointmentTypeWindowSource | Appointment['appointmentType'];
+  appointmentType?: AppointmentTypeWindowSource | Appointment['appointmentType'] | null;
   appointmentEndIso?: string | null;
   practiceTz: string;
   allowTypeFallback?: boolean;

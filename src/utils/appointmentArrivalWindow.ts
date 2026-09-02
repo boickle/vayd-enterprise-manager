@@ -5,11 +5,29 @@ import {
 } from './practiceTimezone';
 
 export type AppointmentTypeWindowSource = {
-  name: string;
+  name?: string;
   prettyName?: string | null;
   windowBeforeMinutes?: number | null;
   windowAfterMinutes?: number | null;
 };
+
+/** Doctor-day rows often store only the type name string. */
+export type AppointmentTypeWindowInput =
+  | AppointmentTypeWindowSource
+  | string
+  | null
+  | undefined;
+
+export function toAppointmentTypeWindowSource(
+  raw: AppointmentTypeWindowInput,
+): AppointmentTypeWindowSource | undefined {
+  if (raw == null) return undefined;
+  if (typeof raw === 'string') {
+    const name = raw.trim();
+    return name ? { name } : undefined;
+  }
+  return raw;
+}
 
 export function isFixedTimeAppointmentTypeName(name: string): boolean {
   const lower = name.trim().toLowerCase();

@@ -769,6 +769,8 @@ async function fetchEtaForOneDay(
         startIso: h.startIso,
         endIso: h.endIso,
         effectiveWindow: h.effectiveWindow ?? (h.primary as any)?.effectiveWindow,
+        appointmentType: (h.primary as any)?.appointmentType ?? null,
+        practiceTz: day.timezone,
       }),
     })),
     startDepot: day.startDepot ? { lat: day.startDepot.lat, lon: day.startDepot.lon } : undefined,

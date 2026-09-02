@@ -32,6 +32,7 @@ import {
   householdPersonalBlockFlag,
 } from '../utils/calendarOnlyStaffAppointment';
 import { expandEtaDriveSecondsToHouseholds } from '../utils/schedulerEtaMerge';
+import { clampTimelineEtasToArrivalWindows } from '../utils/clampEtaToArrivalWindow';
 import { formatDoctorDayApptAddress } from '../utils/doctorDayAddress';
 import {
   appointmentNotesFromDoctorDayRow,
@@ -1917,6 +1918,8 @@ export default function MyWeek(props: MyWeekProps = {}) {
                   startIso: h.startIso,
                   endIso: h.endIso,
                   effectiveWindow: h.effectiveWindow ?? h.primary?.effectiveWindow,
+                  appointmentType: h.primary?.appointmentType ?? null,
+                  practiceTz: day.timezone,
                 }),
               })),
               startDepot: day.startDepot ? { lat: day.startDepot.lat, lon: day.startDepot.lon } : undefined,
@@ -2094,6 +2097,13 @@ export default function MyWeek(props: MyWeekProps = {}) {
                 etd: newEtd.toISO()!,
               };
             }
+
+            clampTimelineEtasToArrivalWindows({
+              households: day.households,
+              timeline: tl,
+              routingOrderIndices,
+              practiceTz: day.timezone || 'America/New_York',
+            });
 
             const mergedHouseholds = day.households.map((h) => {
               if (!h.isPersonalBlock || !h.primary) return h;

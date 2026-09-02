@@ -7,6 +7,13 @@ export type ClientDto = Record<string, unknown> & {
   firstName?: string | null;
   lastName?: string | null;
   practice?: { id: number; name?: string } | null;
+  primaryProvider?: {
+    id?: number | string;
+    firstName?: string | null;
+    lastName?: string | null;
+    title?: string | null;
+    designation?: string | null;
+  } | null;
   isActive?: boolean;
   isDeleted?: boolean;
 };

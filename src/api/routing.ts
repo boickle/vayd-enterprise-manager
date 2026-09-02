@@ -1,5 +1,10 @@
 // src/api/routing.ts
 import type { MiniZone } from './appointments';
+import {
+  effectiveWindowForScheduledStart,
+  toAppointmentTypeWindowSource,
+  type AppointmentTypeWindowInput,
+} from '../utils/appointmentArrivalWindow';
 import { http } from './http';
 
 export type Depot = { lat: number; lon: number };
@@ -32,6 +37,8 @@ export type EtaHouseholdInput = {
  * Fields for POST /routing/eta `households[]` so computeEtasForDay gets the real arrival window.
  * Blocks: window = scheduled block span. Routable appointments: prefer `effectiveWindow` from doctor-day
  * so the server does not fall back to `endIso` (service end) as the arrival window end.
+ * When doctor-day omits `effectiveWindow`, fall back to appointment-type ±N (same as Visit Highlights)
+ * so the server can clamp ETA to window start instead of returning a raw drive arrival.
  */
 export function etaHouseholdArrivalWindowPayload(args: {
   isBlock: boolean;
@@ -41,12 +48,25 @@ export function etaHouseholdArrivalWindowPayload(args: {
   startIso: string | null | undefined;
   endIso: string | null | undefined;
   effectiveWindow?: { startIso?: string; endIso?: string } | null;
+  /** Used only when `effectiveWindow` is missing — type ±N from scheduled start. */
+  appointmentType?: AppointmentTypeWindowInput;
+  practiceTz?: string | null;
 }): {
   isPersonalBlock?: true;
   windowStartIso?: string | null;
   windowEndIso?: string | null;
 } {
-  const { isBlock, isNoLocation, lat, lon, startIso, endIso, effectiveWindow } = args;
+  const {
+    isBlock,
+    isNoLocation,
+    lat,
+    lon,
+    startIso,
+    endIso,
+    effectiveWindow,
+    appointmentType,
+    practiceTz,
+  } = args;
 
   if (isBlock) {
     return {
@@ -63,6 +83,21 @@ export function etaHouseholdArrivalWindowPayload(args: {
       windowStartIso: effectiveWindow.startIso,
       windowEndIso: effectiveWindow.endIso,
     };
+  }
+
+  if (isRoutable && startIso?.trim() && practiceTz?.trim()) {
+    const fallback = effectiveWindowForScheduledStart(
+      startIso,
+      toAppointmentTypeWindowSource(appointmentType),
+      practiceTz,
+      { appointmentEndIso: endIso ?? undefined }
+    );
+    if (fallback) {
+      return {
+        windowStartIso: fallback.startIso,
+        windowEndIso: fallback.endIso,
+      };
+    }
   }
 
   return {};
