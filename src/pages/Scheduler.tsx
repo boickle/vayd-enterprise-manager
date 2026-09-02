@@ -239,6 +239,7 @@ import {
 } from '../utils/visitAddressMatch';
 import { OnMyWaySmsModal } from '../components/OnMyWaySmsModal';
 import { ClientContactComposeModal } from '../components/ClientContactComposeModal';
+import { WaitlistAddModal } from '../components/WaitlistAddModal';
 import { WorkZonesMapModal } from '../components/WorkZonesMapModal';
 import { etaMinutesAwayFromNow } from '../utils/onMyWaySmsMessage';
 import { SchedulerActualVisitTimeModal } from './SchedulerActualVisitTimeModal';
@@ -385,6 +386,11 @@ import { providerLastNameFromDisplayName } from '../utils/scheduleLoaderSmsMessa
 import { slotOfferFlowActive } from '../utils/slotOfferFromRouting';
 import { notifySchedulingToolsNavCountsRefresh } from '../hooks/useSchedulingToolsNavCounts';
 import { writeWaitlistReturnSession } from '../utils/waitlistReturnSession';
+import {
+  buildWaitlistAddPrefillFromAppointment,
+  waitlistAddDisabledReason,
+  type WaitlistAddPrefill,
+} from '../utils/waitlistAddPrefillFromAppointment';
 import { writeForwardBookingLocalLink } from '../utils/forwardBookingLocalLinks';
 import {
   buildForwardBookingWorkspaceContext,
@@ -3309,6 +3315,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   );
   const [actualVisitModal, setActualVisitModal] = useState<Appointment | null>(null);
   const [removeVisitModal, setRemoveVisitModal] = useState<Appointment | null>(null);
+  const [waitlistAddPrefill, setWaitlistAddPrefill] = useState<WaitlistAddPrefill | null>(null);
   const [onMyWaySmsAppt, setOnMyWaySmsAppt] = useState<Appointment | null>(null);
   const [embeddedRoomLoaderId, setEmbeddedRoomLoaderId] = useState<number | null>(null);
   const [roomLoaderPdfModalAppt, setRoomLoaderPdfModalAppt] = useState<Appointment | null>(null);
@@ -10260,6 +10267,20 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           case 'view':
             setModalAppt(appt);
             return;
+          case 'addToWaitlist': {
+            const reason = waitlistAddDisabledReason(appt);
+            if (reason) {
+              fail(reason);
+              return;
+            }
+            const prefill = buildWaitlistAddPrefillFromAppointment(appt);
+            if (!prefill) {
+              fail('Needs a linked client to add to the waitlist.');
+              return;
+            }
+            setWaitlistAddPrefill(prefill);
+            return;
+          }
           case 'edit':
             setEditVisitLinkSelection(null);
             setEditVisitPatientSelection(null);
@@ -10599,6 +10620,11 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     }
     return undefined;
   }, [contextMenu, contextMenuRescheduleIntent, contextMenuMayAddressOnlyReschedule]);
+
+  const contextMenuAddToWaitlistDisabledTitle = useMemo(() => {
+    if (!contextMenu) return undefined;
+    return waitlistAddDisabledReason(contextMenu.appt);
+  }, [contextMenu]);
 
   const addAnotherPetMenuOpts = useMemo(() => {
     if (!contextMenu || !showEmployeeAddCoVisitPet) {
@@ -12854,6 +12880,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           )}
           rescheduleDisabled={!contextMenuRescheduleIntent && !contextMenuMayAddressOnlyReschedule}
           rescheduleDisabledTitle={contextMenuRescheduleDisabledTitle}
+          addToWaitlistDisabled={Boolean(contextMenuAddToWaitlistDisabledTitle)}
+          addToWaitlistDisabledTitle={contextMenuAddToWaitlistDisabledTitle}
           removeDisabled={isAppointmentCancelledOnPracticeCalendar(contextMenu.appt)}
           removeTitle={
             isAppointmentCancelledOnPracticeCalendar(contextMenu.appt)
@@ -12867,6 +12895,22 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               ? 'Start / End Visit is not available for future visits.'
               : undefined
           }
+        />
+      ) : null}
+
+      {waitlistAddPrefill ? (
+        <WaitlistAddModal
+          practiceId={PRACTICE_ID}
+          prefill={waitlistAddPrefill}
+          onClose={() => setWaitlistAddPrefill(null)}
+          onCreated={(entry) => {
+            setWaitlistAddPrefill(null);
+            notifySchedulingToolsNavCountsRefresh();
+            const petLabel =
+              entry.patients?.map((p) => p.name?.trim()).filter(Boolean).join(', ') ||
+              'household';
+            showToast(`Added ${petLabel} to the waitlist.`);
+          }}
         />
       ) : null}
 
