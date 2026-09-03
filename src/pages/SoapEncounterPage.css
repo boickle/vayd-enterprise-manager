@@ -1171,6 +1171,20 @@
 .soap-invoice-row.covered {
   color: #047857;
 }
+.soap-reader-picker {
+  margin-top: 12px;
+}
+.soap-reader-picker-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+}
+.soap-reader-picker-label select {
+  font-weight: 500;
+}
 .soap-checkout-actions {
   display: flex;
   flex-wrap: wrap;

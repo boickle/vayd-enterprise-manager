@@ -1056,6 +1056,73 @@ export type TerminalCheckoutSession = {
   invoice?: VisitInvoice;
 };
 
+export type TerminalPresence = {
+  online: boolean;
+  deviceId: string | null;
+  email: string | null;
+  lastSeen: string | null;
+};
+
+export type TerminalReaderKind = 'scout_terminal' | 'stripe_internet';
+
+export type SavedTerminalReader = {
+  kind: TerminalReaderKind;
+  deviceId?: string | null;
+  stripeReaderId?: string | null;
+  label?: string | null;
+};
+
+export type TerminalReaderOption = {
+  id: string;
+  kind: TerminalReaderKind;
+  label: string;
+  online: boolean;
+  deviceId?: string | null;
+  stripeReaderId?: string | null;
+  deviceType?: string | null;
+};
+
+export type TerminalReaderCatalog = {
+  selected: SavedTerminalReader | null;
+  selectedId: string | null;
+  readers: TerminalReaderOption[];
+};
+
+/** Scout Terminal plus registered WisePOS / internet readers, and this user's saved pick. */
+export async function getTerminalReaders(): Promise<TerminalReaderCatalog> {
+  const { data } = await http.get<TerminalReaderCatalog>(
+    `/visit-payments/terminal/readers`,
+    { params: { practiceId: pid() } },
+  );
+  return data;
+}
+
+/** Remember this reader for the signed-in user until they change it. */
+export async function selectTerminalReader(
+  reader: TerminalReaderOption
+): Promise<TerminalReaderCatalog> {
+  const { data } = await http.put<TerminalReaderCatalog>(
+    `/visit-payments/terminal/readers/selection`,
+    {
+      practiceId: pid(),
+      kind: reader.kind,
+      deviceId: reader.deviceId ?? undefined,
+      stripeReaderId: reader.stripeReaderId ?? undefined,
+      label: reader.label,
+    }
+  );
+  return data;
+}
+
+/** The signed-in staff user's live Scout Terminal phone, if any. */
+export async function getTerminalPresence(): Promise<TerminalPresence> {
+  const { data } = await http.get<TerminalPresence>(
+    `/visit-payments/terminal/presence`,
+    { params: { practiceId: pid() } },
+  );
+  return data;
+}
+
 /** Start Scout Terminal handoff: creates PI + checkout job and notifies devices. */
 export async function startTerminalCheckout(
   invoiceId: string,

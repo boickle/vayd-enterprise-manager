@@ -865,6 +865,28 @@
   font-weight: 650;
 }
 
+.client-fin__actions .soap-reader-picker {
+  flex: 1 1 100%;
+  margin-top: 0;
+}
+.client-fin__actions .soap-reader-picker-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+}
+.client-fin__actions .terminal-reader-select {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 6px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+}
+
 @media print {
   .pims-detail__back,
   .client-fin__filters,

@@ -11,11 +11,13 @@ import {
   updateOrder,
   voidInvoice,
   type EncounterOrder,
+  type TerminalReaderCatalog,
   type VisitInvoice,
   type VisitInvoiceLine,
 } from '../../api/visitWorkflow';
 import { subscribeTerminalCheckout } from '../../utils/terminalCheckoutRealtime';
 import { appConfirm } from '../../utils/appDialog';
+import TerminalReaderPicker from './TerminalReaderPicker';
 
 type Props = {
   /** Needed to delete the encounter order behind an invoice line. */
@@ -74,6 +76,7 @@ export default function VisitCheckoutPanel({
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activeCheckoutId, setActiveCheckoutId] = useState<string | null>(null);
+  const [readerCatalog, setReaderCatalog] = useState<TerminalReaderCatalog | null>(null);
 
   useEffect(() => {
     if (!invoice?.id) return;
@@ -97,6 +100,10 @@ export default function VisitCheckoutPanel({
     // Re-subscribe when the open invoice id changes, not on every invoice field update.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [invoice?.id]);
+
+  const selectedReader =
+    readerCatalog?.readers.find((r) => r.id === readerCatalog.selectedId) ?? null;
+  const readerReady = Boolean(selectedReader?.online);
 
   // Socket fallback: while a reader job is live, poll until the invoice settles
   // so a dropped `invoice.paid` cannot leave this panel showing an open invoice.
@@ -180,8 +187,9 @@ export default function VisitCheckoutPanel({
         setActiveCheckoutId(session.checkoutId);
         if (session.invoice) onInvoiceChange(session.invoice);
         const dollars = (session.amountCents / 100).toFixed(2);
+        const dest = selectedReader?.label ?? 'the selected reader';
         setNote(
-          `Sent $${dollars} to Scout Terminal. Present the card on the reader — this screen updates when payment succeeds.`
+          `Sent $${dollars} to ${dest}. Present the card on the reader — this screen updates when payment succeeds.`
         );
       } catch (e) {
         // The reader may have collected while this panel still showed the
@@ -381,13 +389,27 @@ export default function VisitCheckoutPanel({
             </p>
           )}
 
+          {!isPaid && !isVoid && (
+            <TerminalReaderPicker
+              disabled={disabled || busy != null}
+              onCatalog={setReaderCatalog}
+            />
+          )}
+
           <div className="soap-checkout-actions">
             {!isPaid && !isVoid && (
               <>
                 <button
                   type="button"
                   className="soap-btn"
-                  disabled={disabled || busy != null}
+                  disabled={disabled || busy != null || !readerReady}
+                  title={
+                    !selectedReader
+                      ? 'Select a reader first'
+                      : !readerReady
+                        ? 'That reader is offline'
+                        : ''
+                  }
                   onClick={tapToPay}
                 >
                   <Smartphone size={14} /> Tap to Pay
@@ -444,6 +466,13 @@ export default function VisitCheckoutPanel({
               </button>
             )}
           </div>
+          {!isPaid && !isVoid && (
+            <p className="soap-hint">
+              {selectedReader
+                ? `Tap to Pay goes to ${selectedReader.label} until you pick a different reader.`
+                : 'Select a reader once — Scout Terminal or a WisePOS. That choice is saved for your account.'}
+            </p>
+          )}
         </>
       )}
 

@@ -27,6 +27,7 @@ import {
   removeCounterInvoiceLine,
   returnVisitInvoiceLines,
   startTerminalCheckout,
+  type TerminalReaderCatalog,
   unlockVisitInvoice,
   updateCounterInvoiceLine,
   voidInvoice,
@@ -41,6 +42,7 @@ import {
   getCatalogLinePrice,
   pricingItemFromSearchAndCheck,
 } from '../../utils/catalogItemPricing';
+import TerminalReaderPicker from '../soap/TerminalReaderPicker';
 import {
   readFinancialPrefill,
   scoutArFromInvoices,
@@ -433,6 +435,10 @@ export default function ClientFinancialWorkspace({
   const [providers, setProviders] = useState<Provider[]>([]);
   const staffTriedRef = useRef<Set<number>>(new Set());
   const [terminalJob, setTerminalJob] = useState<string | null>(null);
+  const [readerCatalog, setReaderCatalog] = useState<TerminalReaderCatalog | null>(null);
+  const selectedReader =
+    readerCatalog?.readers.find((r) => r.id === readerCatalog.selectedId) ?? null;
+  const readerReady = Boolean(selectedReader?.online);
   const [payCompose, setPayCompose] = useState<null | { channel: 'email' | 'sms'; url: string; amount: number; labels: string[] }>(
     null
   );
@@ -1678,7 +1684,9 @@ export default function ClientFinancialWorkspace({
       const session = await startTerminalCheckout(selected.id);
       setTerminalJob(session.checkoutId);
       if (session.invoice) setSelected(session.invoice);
-      setNote(`Sent ${money(session.amountCents / 100)} to Scout Terminal.`);
+      setNote(
+        `Sent ${money(session.amountCents / 100)} to ${selectedReader?.label ?? 'the selected reader'}.`,
+      );
     } catch (e: unknown) {
       if (/already paid/i.test(apiErr(e)) && selected) {
         const fresh = await getInvoice(selected.id);
@@ -2958,6 +2966,10 @@ export default function ClientFinancialWorkspace({
                         Charge remaining on saved card
                       </button>
                     ) : null}
+                    <TerminalReaderPicker
+                      disabled={busy}
+                      onCatalog={setReaderCatalog}
+                    />
                     {terminalJob ? (
                       <button type="button" className="client-fin__btn-ghost" disabled={busy} onClick={() => void cancelTerminal()}>
                         Cancel terminal
@@ -2966,7 +2978,14 @@ export default function ClientFinancialWorkspace({
                       <button
                         type="button"
                         className="client-fin__btn-ghost"
-                        disabled={busy}
+                        disabled={busy || !readerReady}
+                        title={
+                          !selectedReader
+                            ? 'Select a reader first'
+                            : !readerReady
+                              ? 'That reader is offline'
+                              : ''
+                        }
                         onClick={() => void sendToTerminal()}
                       >
                         Send remaining to terminal
