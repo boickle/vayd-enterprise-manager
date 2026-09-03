@@ -49,6 +49,10 @@ import {
   practiceTimeZoneOrDefault,
   formatIsoInPracticeZone,
 } from '../utils/practiceTimezone';
+import {
+  adjustedArrivalWindowForScheduledStart,
+  resolveFirstStopEarlyDayArrivalWindow,
+} from '../utils/earlyDayArrivalWindow';
 import { Heart } from 'lucide-react';
 
 const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
@@ -187,53 +191,22 @@ function assignEtaKeysForSameAddress<T extends { key: string; lat: number; lon: 
   }
 }
 
-function eightThirtyIsoFor(date: string, practiceTz: string): string {
-  const tz = practiceTimeZoneOrDefault(practiceTz);
-  return DateTime.fromISO(date, { zone: tz })
-    .set({ hour: 8, minute: 30, second: 0, millisecond: 0 })
-    .toISO()!;
-}
-function tenThirtyIsoFor(date: string, practiceTz: string): string {
-  const tz = practiceTimeZoneOrDefault(practiceTz);
-  return DateTime.fromISO(date, { zone: tz })
-    .set({ hour: 10, minute: 30, second: 0, millisecond: 0 })
-    .toISO()!;
-}
-function workStartIsoFor(date: string, schedStartIso: string | null | undefined, practiceTz: string): string {
-  const tz = practiceTimeZoneOrDefault(practiceTz);
-  if (schedStartIso && /^\d{2}:\d{2}(:\d{2})?$/.test(schedStartIso)) {
-    const [hh, mm] = schedStartIso.split(':');
-    return DateTime.fromISO(date, { zone: tz })
-      .set({
-        hour: Math.min(23, Number(hh) || 0),
-        minute: Math.min(59, Number(mm) || 0),
-        second: 0,
-        millisecond: 0,
-      })
-      .toISO()!;
-  }
-  if (schedStartIso && DateTime.fromISO(schedStartIso).isValid) return schedStartIso;
-  return eightThirtyIsoFor(date, practiceTz);
-}
 function adjustedWindowForStart(
   date: string,
   startIso: string,
   schedStartIso: string | null | undefined,
-  practiceTz: string
+  practiceTz: string,
+  expectedArrivalIso?: string | null
 ): { winStartIso: string; winEndIso: string } {
-  const start = DateTime.fromISO(startIso);
-  const workStart = DateTime.fromISO(workStartIsoFor(date, schedStartIso, practiceTz));
-  const eightThirty = DateTime.fromISO(eightThirtyIsoFor(date, practiceTz));
-  const tenThirty = DateTime.fromISO(tenThirtyIsoFor(date, practiceTz));
-  const symmetricEarly = start.minus({ hours: 1 });
-  if (symmetricEarly < eightThirty && start <= tenThirty) {
-    const ws = workStart > eightThirty ? workStart : eightThirty;
-    const we = ws.plus({ hours: 2 });
-    return { winStartIso: ws.toISO()!, winEndIso: we.toISO()! };
-  }
-  const ws = DateTime.max(workStart, start.minus({ hours: 1 }));
-  const we = start.plus({ hours: 1 });
-  return { winStartIso: ws.toISO()!, winEndIso: we.toISO()! };
+  const computed = adjustedArrivalWindowForScheduledStart({
+    dateIso: date,
+    scheduledStartIso: startIso,
+    practiceTz,
+    startDepotTime: schedStartIso,
+    expectedArrivalIso,
+  });
+  if (computed) return { winStartIso: computed.startIso, winEndIso: computed.endIso };
+  return { winStartIso: startIso, winEndIso: startIso };
 }
 
 /* =========================================================================
@@ -937,7 +910,13 @@ export default function DoctorDay({
               // Prefer backend effectiveWindow when available
               const winStartIso =
                 h.primary?.effectiveWindow?.startIso ??
-                adjustedWindowForStart(date, h.startIso, schedStartIso, practiceTimeZone).winStartIso;
+                adjustedWindowForStart(
+                  date,
+                  h.startIso,
+                  schedStartIso,
+                  practiceTimeZone,
+                  (h.primary as { expectedArrivalIso?: string })?.expectedArrivalIso
+                ).winStartIso;
               tl[viewIdx].eta = winStartIso;
             }
           }
@@ -1364,8 +1343,22 @@ export default function DoctorDay({
     return formatIsoInPracticeZone(iso, practiceTimeZone);
   }
   /** Window text: prefer byIndex row window when both present, else backend effectiveWindow, else frontend-calculated. */
-  function windowTextForHousehold(h: Household, slot?: DisplaySlot | null): string {
+  function windowTextForHousehold(h: Household, slot?: DisplaySlot | null, householdIndex?: number): string {
     const tz = practiceTimeZone;
+    const isFirstRoutable =
+      householdIndex != null &&
+      displayHouseholds.findIndex((x) => !x.isPersonalBlock) === householdIndex;
+    const earlyDay = resolveFirstStopEarlyDayArrivalWindow({
+      dateIso: date,
+      practiceTz: tz,
+      startDepotTime: schedStartIso,
+      expectedArrivalIso: slot?.eta ?? h.primary?.expectedArrivalIso ?? null,
+      scheduledStartIso: h.startIso ?? null,
+      isFirstRoutableStop: isFirstRoutable,
+    });
+    if (earlyDay) {
+      return `${formatIsoInPracticeZone(earlyDay.startIso, tz)} – ${formatIsoInPracticeZone(earlyDay.endIso, tz)}`;
+    }
     if (slot?.windowStartIso && slot?.windowEndIso) {
       return `${formatIsoInPracticeZone(slot.windowStartIso, tz)} – ${formatIsoInPracticeZone(slot.windowEndIso, tz)}`;
     }
@@ -1374,7 +1367,13 @@ export default function DoctorDay({
       return `${formatIsoInPracticeZone(ew.startIso, tz)} – ${formatIsoInPracticeZone(ew.endIso, tz)}`;
     }
     if (!h.startIso) return '';
-    const { winStartIso, winEndIso } = adjustedWindowForStart(date, h.startIso, schedStartIso, practiceTimeZone);
+    const { winStartIso, winEndIso } = adjustedWindowForStart(
+      date,
+      h.startIso,
+      schedStartIso,
+      practiceTimeZone,
+      slot?.eta ?? h.primary?.expectedArrivalIso
+    );
     const start = formatIsoInPracticeZone(winStartIso, tz);
     const end = formatIsoInPracticeZone(winEndIso, tz);
     return `${start} – ${end}`;
@@ -1716,7 +1715,7 @@ export default function DoctorDay({
                                   <strong style={{ color: '#dc2626' }}>FIXED TIME</strong>
                                 ) : (
                                   <>
-                                    <strong>Window:</strong> {windowTextForHousehold(h, displayTimeline[i])}
+                                    <strong>Window:</strong> {windowTextForHousehold(h, displayTimeline[i], i)}
                                   </>
                                 )}
                               </>

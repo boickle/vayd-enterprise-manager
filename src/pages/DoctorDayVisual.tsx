@@ -77,6 +77,10 @@ import {
   dayWallClockStartIso,
   isoFromSecondsSincePracticeMidnight,
 } from '../utils/practiceTimezone';
+import {
+  adjustedArrivalWindowForScheduledStart,
+  resolveFirstStopEarlyDayArrivalWindow,
+} from '../utils/earlyDayArrivalWindow';
 import './DoctorDay.css';
 
 const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
@@ -543,57 +547,66 @@ function pickScheduleBounds(
   return { start: earliest, end: latest };
 }
 
-/* ----------------- visual window helpers (8:30–10:30 + day-start clamp) ----------------- */
-function eightThirtyIsoFor(date: string, practiceTz: string): string {
-  const tz = practiceTimeZoneOrDefault(practiceTz);
-  return DateTime.fromISO(date, { zone: tz })
-    .set({ hour: 8, minute: 30, second: 0, millisecond: 0 })
-    .toISO()!;
-}
-function tenThirtyIsoFor(date: string, practiceTz: string): string {
-  const tz = practiceTimeZoneOrDefault(practiceTz);
-  return DateTime.fromISO(date, { zone: tz })
-    .set({ hour: 10, minute: 30, second: 0, millisecond: 0 })
-    .toISO()!;
-}
-/** Return doctor's visual work start for the date (schedStartIso if valid time/ISO; else 08:30) */
-function workStartIsoFor(date: string, schedStartIso: string | null | undefined, practiceTz: string): string {
-  const tz = practiceTimeZoneOrDefault(practiceTz);
-  if (schedStartIso && /^\d{2}:\d{2}(:\d{2})?$/.test(schedStartIso)) {
-    const [hh, mm] = schedStartIso.split(':');
-    return DateTime.fromISO(date, { zone: tz })
-      .set({
-        hour: Math.min(23, Number(hh) || 0),
-        minute: Math.min(59, Number(mm) || 0),
-        second: 0,
-        millisecond: 0,
-      })
-      .toISO()!;
-  }
-  if (schedStartIso && DateTime.fromISO(schedStartIso).isValid) return schedStartIso;
-  return eightThirtyIsoFor(date, practiceTz);
-}
-/** Visual rule: given an appointment start, return [winStartIso, winEndIso] */
+/* ----------------- visual window helpers (early-day ETA→+2h / ±N fallback) ----------------- */
 function adjustedWindowForStart(
   date: string,
   startIso: string,
   schedStartIso: string | null | undefined,
-  practiceTz: string
+  practiceTz: string,
+  expectedArrivalIso?: string | null
 ): { winStartIso: string; winEndIso: string } {
-  const start = DateTime.fromISO(startIso);
-  const workStart = DateTime.fromISO(workStartIsoFor(date, schedStartIso, practiceTz));
-  const eightThirty = DateTime.fromISO(eightThirtyIsoFor(date, practiceTz));
-  const tenThirty = DateTime.fromISO(tenThirtyIsoFor(date, practiceTz));
+  const computed = adjustedArrivalWindowForScheduledStart({
+    dateIso: date,
+    scheduledStartIso: startIso,
+    practiceTz,
+    startDepotTime: schedStartIso,
+    expectedArrivalIso,
+  });
+  if (computed) return { winStartIso: computed.startIso, winEndIso: computed.endIso };
+  return { winStartIso: startIso, winEndIso: startIso };
+}
 
-  const symmetricEarly = start.minus({ hours: 1 });
-  if (symmetricEarly < eightThirty && start <= tenThirty) {
-    const ws = workStart > eightThirty ? workStart : eightThirty;
-    const we = ws.plus({ hours: 2 });
-    return { winStartIso: ws.toISO()!, winEndIso: we.toISO()! };
+/** Prefer early-day ETA→+2h for the first routable stop; else slot / effectiveWindow / adjusted. */
+function resolveVisualArrivalWindow(opts: {
+  date: string;
+  practiceTz: string;
+  schedStartIso: string | null | undefined;
+  isFixedTime: boolean;
+  isFirstRoutableStop: boolean;
+  resolvedStartIso: string;
+  resolvedEndIso: string;
+  scheduledStartIso: string | null | undefined;
+  etaIso: string | null | undefined;
+  expectedArrivalIso?: string | null;
+  slotWindowStartIso?: string | null;
+  slotWindowEndIso?: string | null;
+  effectiveWindow?: { startIso?: string; endIso?: string } | null;
+}): { winStartIso: string; winEndIso: string } {
+  if (opts.isFixedTime) {
+    return { winStartIso: opts.resolvedStartIso, winEndIso: opts.resolvedEndIso };
   }
-  const ws = DateTime.max(workStart, start.minus({ hours: 1 }));
-  const we = start.plus({ hours: 1 });
-  return { winStartIso: ws.toISO()!, winEndIso: we.toISO()! };
+  const early = resolveFirstStopEarlyDayArrivalWindow({
+    dateIso: opts.date,
+    practiceTz: opts.practiceTz,
+    startDepotTime: opts.schedStartIso,
+    expectedArrivalIso: opts.etaIso ?? opts.expectedArrivalIso ?? null,
+    scheduledStartIso: opts.scheduledStartIso ?? null,
+    isFirstRoutableStop: opts.isFirstRoutableStop,
+  });
+  if (early) return { winStartIso: early.startIso, winEndIso: early.endIso };
+  if (opts.slotWindowStartIso && opts.slotWindowEndIso) {
+    return { winStartIso: opts.slotWindowStartIso, winEndIso: opts.slotWindowEndIso };
+  }
+  if (opts.effectiveWindow?.startIso && opts.effectiveWindow?.endIso) {
+    return { winStartIso: opts.effectiveWindow.startIso, winEndIso: opts.effectiveWindow.endIso };
+  }
+  return adjustedWindowForStart(
+    opts.date,
+    opts.scheduledStartIso || opts.resolvedStartIso,
+    opts.schedStartIso,
+    opts.practiceTz,
+    opts.etaIso ?? opts.expectedArrivalIso
+  );
 }
 
 /* ----------------- ETA timeline type (aligned to households) ----------------- */
@@ -1226,7 +1239,13 @@ export default function DoctorDayVisual({
             } else {
               const winStartIso =
                 h.primary?.effectiveWindow?.startIso ??
-                adjustedWindowForStart(date, h.startIso, schedStartIso, practiceTimeZone).winStartIso;
+                adjustedWindowForStart(
+                  date,
+                  h.startIso,
+                  schedStartIso,
+                  practiceTimeZone,
+                  (h.primary as { expectedArrivalIso?: string })?.expectedArrivalIso
+                ).winStartIso;
               tl[viewIdx].eta = winStartIso;
             }
           }
@@ -2595,24 +2614,26 @@ export default function DoctorDayVisual({
       );
       const useDriveTime = showByDriveTime && !doctorDayClock && (etaIso ?? etdIso);
       const ew = h.primary?.effectiveWindow;
-      const { winStartIso, winEndIso } = isFixedTime
-        ? { winStartIso: resolvedStartIso, winEndIso: resolvedEndIso }
-        : slot?.windowStartIso && slot?.windowEndIso
-          ? { winStartIso: slot.windowStartIso, winEndIso: slot.windowEndIso }
-          : ew?.startIso && ew?.endIso
-            ? { winStartIso: ew.startIso, winEndIso: ew.endIso }
-            : adjustedWindowForStart(date, h.startIso!, schedStartIso, practiceTimeZone);
+      const isFirstRoutableStop =
+        displayHouseholds.findIndex((x) => !x.isPersonalBlock) === idx;
+      const { winStartIso, winEndIso } = resolveVisualArrivalWindow({
+        date,
+        practiceTz: practiceTimeZone,
+        schedStartIso,
+        isFixedTime,
+        isFirstRoutableStop,
+        resolvedStartIso,
+        resolvedEndIso,
+        scheduledStartIso: h.startIso,
+        etaIso,
+        expectedArrivalIso: (h.primary as { expectedArrivalIso?: string })?.expectedArrivalIso,
+        slotWindowStartIso: slot?.windowStartIso,
+        slotWindowEndIso: slot?.windowEndIso,
+        effectiveWindow: ew,
+      });
 
-      const windowEndForWarn =
-        (slot?.windowStartIso != null && slot?.windowEndIso != null ? slot.windowEndIso : null) ??
-        ew?.endIso ??
-        (h as { windowEndIso?: string | null }).windowEndIso ??
-        null;
-      const windowStartForWarn =
-        (slot?.windowStartIso != null && slot?.windowEndIso != null ? slot.windowStartIso : null) ??
-        ew?.startIso ??
-        (h as { windowStartIso?: string | null }).windowStartIso ??
-        null;
+      const windowEndForWarn = winEndIso;
+      const windowStartForWarn = winStartIso;
       const windowWarning =
         showByDriveTime &&
         !h.isPersonalBlock &&
@@ -3138,31 +3159,29 @@ export default function DoctorDayVisual({
                 ) * PPM;
             const height = geom ? geom.height : Math.max(22, durMinForHeight * PPM);
 
-            // Window: prefer byIndex row window when both present, else appointment effectiveWindow, else frontend-calculated
+            // Window: early-day first-stop ETA→+2h when applicable; else slot / effectiveWindow / adjusted
             const slotWindow = slot;
             const ew = h.primary?.effectiveWindow;
-            const { winStartIso, winEndIso } = isFixedTime
-              ? { winStartIso: resolvedStartIso, winEndIso: resolvedEndIso }
-              : slotWindow?.windowStartIso && slotWindow?.windowEndIso
-                ? { winStartIso: slotWindow.windowStartIso, winEndIso: slotWindow.windowEndIso }
-                : ew?.startIso && ew?.endIso
-                  ? { winStartIso: ew.startIso, winEndIso: ew.endIso }
-                  : adjustedWindowForStart(date, h.startIso!, schedStartIso, practiceTimeZone);
+            const isFirstRoutableStop =
+              displayHouseholds.findIndex((x) => !x.isPersonalBlock) === idx;
+            const { winStartIso, winEndIso } = resolveVisualArrivalWindow({
+              date,
+              practiceTz: practiceTimeZone,
+              schedStartIso,
+              isFixedTime,
+              isFirstRoutableStop,
+              resolvedStartIso,
+              resolvedEndIso,
+              scheduledStartIso: h.startIso,
+              etaIso,
+              expectedArrivalIso: (h.primary as { expectedArrivalIso?: string })?.expectedArrivalIso,
+              slotWindowStartIso: slotWindow?.windowStartIso,
+              slotWindowEndIso: slotWindow?.windowEndIso,
+              effectiveWindow: ew,
+            });
 
-            const windowEndForWarn =
-              (slotWindow?.windowStartIso != null && slotWindow?.windowEndIso != null
-                ? slotWindow.windowEndIso
-                : null) ??
-              ew?.endIso ??
-              (h as { windowEndIso?: string | null }).windowEndIso ??
-              null;
-            const windowStartForWarn =
-              (slotWindow?.windowStartIso != null && slotWindow?.windowEndIso != null
-                ? slotWindow.windowStartIso
-                : null) ??
-              ew?.startIso ??
-              (h as { windowStartIso?: string | null }).windowStartIso ??
-              null;
+            const windowEndForWarn = winEndIso;
+            const windowStartForWarn = winStartIso;
             const windowWarning =
               showByDriveTime &&
               !h.isPersonalBlock &&

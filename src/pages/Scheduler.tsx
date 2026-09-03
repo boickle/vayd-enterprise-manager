@@ -167,6 +167,7 @@ import {
 } from '../utils/scheduleOverrideMerge';
 import { effectiveWindowForScheduledStart } from '../utils/appointmentArrivalWindow';
 import { resolveArrivalWindowIsos } from '../utils/appointmentRoutedArrivalWindow';
+import { resolveFirstStopEarlyDayArrivalWindow } from '../utils/earlyDayArrivalWindow';
 import {
   buildEditVisitTimePreview,
   computeEditVisitTypePreviewWindowWarning,
@@ -1871,8 +1872,27 @@ function buildSchedulerDriveHintForAppt(
     appointmentEndIso: appt.appointmentEnd,
     practiceTz,
   });
-  const windowStartIso = resolvedWindow?.startIso ?? null;
-  const windowEndIso = resolvedWindow?.endIso ?? null;
+  const householdIndex = dayData.households.indexOf(h);
+  const order =
+    Array.isArray(dayData.routingOrderIndices) &&
+    dayData.routingOrderIndices.length === dayData.households.length
+      ? dayData.routingOrderIndices
+      : dayData.households.map((_, i) => i);
+  const firstRoutableOrderPos = order.findIndex((i) => !dayData.households[i]?.isPersonalBlock);
+  const isFirstRoutableStop =
+    firstRoutableOrderPos >= 0 && order[firstRoutableOrderPos] === householdIndex;
+  const earlyDay = !isFixedTime
+    ? resolveFirstStopEarlyDayArrivalWindow({
+        dateIso: dk,
+        practiceTz,
+        startDepotTime: dayData.startDepotTime,
+        expectedArrivalIso: etaIso ?? (appt as { expectedArrivalIso?: string }).expectedArrivalIso ?? null,
+        scheduledStartIso: appt.appointmentStart,
+        isFirstRoutableStop,
+      })
+    : null;
+  const windowStartIso = earlyDay?.startIso ?? resolvedWindow?.startIso ?? null;
+  const windowEndIso = earlyDay?.endIso ?? resolvedWindow?.endIso ?? null;
   // Match Visit Highlights promised window vs ETA (same sources as the displayed times).
   // Household/slot-only lookup can miss type-fallback windows and hide a deserved badge.
   const windowWarning =
