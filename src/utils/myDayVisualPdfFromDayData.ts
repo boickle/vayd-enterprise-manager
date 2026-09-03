@@ -27,6 +27,10 @@ import {
 import { myDayVisualAlternateAddressPdfFields } from './myDayVisualAlternateAddress';
 import { buildPdfPatientsFromBadges } from './myDayVisualPatientDetails';
 import { practiceTimeZoneOrDefault } from './practiceTimezone';
+import {
+  adjustedArrivalWindowForScheduledStart,
+  resolveFirstStopEarlyDayArrivalWindow,
+} from './earlyDayArrivalWindow';
 import type {
   DoctorDayVisualPdfAppointmentPayload,
   DoctorDayVisualPdfDocumentProps,
@@ -82,57 +86,22 @@ function weekHouseholdUsesDoctorDayClockForLayout(
   });
 }
 
-function eightThirtyIsoFor(date: string, practiceTz: string): string {
-  const tz = practiceTimeZoneOrDefault(practiceTz);
-  return DateTime.fromISO(date, { zone: tz })
-    .set({ hour: 8, minute: 30, second: 0, millisecond: 0 })
-    .toISO()!;
-}
-
-function tenThirtyIsoFor(date: string, practiceTz: string): string {
-  const tz = practiceTimeZoneOrDefault(practiceTz);
-  return DateTime.fromISO(date, { zone: tz })
-    .set({ hour: 10, minute: 30, second: 0, millisecond: 0 })
-    .toISO()!;
-}
-
-function workStartIsoFor(date: string, schedStartIso: string | null | undefined, practiceTz: string): string {
-  const tz = practiceTimeZoneOrDefault(practiceTz);
-  if (schedStartIso && /^\d{2}:\d{2}(:\d{2})?$/.test(schedStartIso)) {
-    const [hh, mm] = schedStartIso.split(':');
-    return DateTime.fromISO(date, { zone: tz })
-      .set({
-        hour: Math.min(23, Number(hh) || 0),
-        minute: Math.min(59, Number(mm) || 0),
-        second: 0,
-        millisecond: 0,
-      })
-      .toISO()!;
-  }
-  if (schedStartIso && DateTime.fromISO(schedStartIso).isValid) return schedStartIso;
-  return eightThirtyIsoFor(date, practiceTz);
-}
-
 function adjustedWindowForStart(
   date: string,
   startIso: string,
   schedStartIso: string | null | undefined,
-  practiceTz: string
+  practiceTz: string,
+  expectedArrivalIso?: string | null
 ): { winStartIso: string; winEndIso: string } {
-  const start = DateTime.fromISO(startIso);
-  const workStart = DateTime.fromISO(workStartIsoFor(date, schedStartIso, practiceTz));
-  const eightThirty = DateTime.fromISO(eightThirtyIsoFor(date, practiceTz));
-  const tenThirty = DateTime.fromISO(tenThirtyIsoFor(date, practiceTz));
-
-  const symmetricEarly = start.minus({ hours: 1 });
-  if (symmetricEarly < eightThirty && start <= tenThirty) {
-    const ws = workStart > eightThirty ? workStart : eightThirty;
-    const we = ws.plus({ hours: 2 });
-    return { winStartIso: ws.toISO()!, winEndIso: we.toISO()! };
-  }
-  const ws = DateTime.max(workStart, start.minus({ hours: 1 }));
-  const we = start.plus({ hours: 1 });
-  return { winStartIso: ws.toISO()!, winEndIso: we.toISO()! };
+  const computed = adjustedArrivalWindowForScheduledStart({
+    dateIso: date,
+    scheduledStartIso: startIso,
+    practiceTz,
+    startDepotTime: schedStartIso,
+    expectedArrivalIso,
+  });
+  if (computed) return { winStartIso: computed.startIso, winEndIso: computed.endIso };
+  return { winStartIso: startIso, winEndIso: startIso };
 }
 
 function alignHouseholdsAndTimeline(day: DayData): { households: WeekHousehold[]; timeline: DayData['timeline'] } {
@@ -273,7 +242,8 @@ function buildAppointmentPayload(
   dateIso: string,
   practiceTimeZone: string,
   backToDepotIso: string | null,
-  apptsById?: ReadonlyMap<string, unknown> | null
+  apptsById?: ReadonlyMap<string, unknown> | null,
+  startDepotTime?: string | null
 ): DoctorDayVisualPdfAppointmentPayload | null {
   const { startIso: s0, endIso: e0 } = householdStartEnd(h);
   const doctorDayClock = weekHouseholdUsesDoctorDayClockForLayout(h, slot, showByDriveTime);
@@ -305,24 +275,35 @@ function buildAppointmentPayload(
     firstPatientType === 'fixed time';
 
   const ew = h.effectiveWindow ?? h.primary?.effectiveWindow;
+  const isFirstRoutableStop = ordered.findIndex((x) => !x.isPersonalBlock) === idx;
+  const earlyDay = !isFixedTime
+    ? resolveFirstStopEarlyDayArrivalWindow({
+        dateIso,
+        practiceTz: practiceTimeZone,
+        startDepotTime: startDepotTime ?? null,
+        expectedArrivalIso: etaIso ?? (h.primary as { expectedArrivalIso?: string })?.expectedArrivalIso ?? null,
+        scheduledStartIso: h.startIso ?? resolvedStartIso,
+        isFirstRoutableStop,
+      })
+    : null;
   const { winStartIso, winEndIso } = isFixedTime
     ? { winStartIso: resolvedStartIso, winEndIso: resolvedEndIso }
-    : slot?.windowStartIso && slot?.windowEndIso
-      ? { winStartIso: slot.windowStartIso, winEndIso: slot.windowEndIso }
-      : ew?.startIso && ew?.endIso
-        ? { winStartIso: ew.startIso, winEndIso: ew.endIso }
-        : adjustedWindowForStart(dateIso, h.startIso ?? resolvedStartIso, undefined, practiceTimeZone);
+    : earlyDay
+      ? { winStartIso: earlyDay.startIso, winEndIso: earlyDay.endIso }
+      : slot?.windowStartIso && slot?.windowEndIso
+        ? { winStartIso: slot.windowStartIso, winEndIso: slot.windowEndIso }
+        : ew?.startIso && ew?.endIso
+          ? { winStartIso: ew.startIso, winEndIso: ew.endIso }
+          : adjustedWindowForStart(
+              dateIso,
+              h.startIso ?? resolvedStartIso,
+              startDepotTime,
+              practiceTimeZone,
+              etaIso
+            );
 
-  const windowEndForWarn =
-    (slot?.windowStartIso != null && slot?.windowEndIso != null ? slot.windowEndIso : null) ??
-    ew?.endIso ??
-    (h as { windowEndIso?: string | null }).windowEndIso ??
-    null;
-  const windowStartForWarn =
-    (slot?.windowStartIso != null && slot?.windowEndIso != null ? slot.windowStartIso : null) ??
-    ew?.startIso ??
-    (h as { windowStartIso?: string | null }).windowStartIso ??
-    null;
+  const windowEndForWarn = winEndIso;
+  const windowStartForWarn = winStartIso;
   const windowWarning =
     showByDriveTime &&
     !h.isPersonalBlock &&
@@ -464,7 +445,8 @@ export function buildMyDayVisualPdfExportPayloadFromDayData(
       dateIso,
       practiceTimeZone,
       stats.backToDepotIso,
-      apptsById
+      apptsById,
+      day.startDepotTime
     );
     if (payload) rows.push({ rowType: 'appointment', payload });
 
