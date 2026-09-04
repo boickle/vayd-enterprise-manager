@@ -28,6 +28,11 @@ type Props = {
   clientContact?: RoutingPreviewClientContact | null;
   bookDisabled?: boolean;
   /**
+   * True while View Placement is waiting on POST /routing/eta. Book stays disabled so
+   * staff cannot save before downstream Window Warnings are reconciled onto the calendar.
+   */
+  driveTimesPending?: boolean;
+  /**
    * Reconciled POST /routing/eta: candidate or a stop at/after it is within 20 minutes of
    * its arrival-window end (same signal as the Get Best Route card amber alert).
    */
@@ -93,6 +98,7 @@ export function RoutingPreviewSlotPopover({
   originalAppointmentEnd,
   clientContact,
   bookDisabled,
+  driveTimesPending = false,
   hasWindowWarning = false,
   confirmLabel,
   onBook,
@@ -104,6 +110,7 @@ export function RoutingPreviewSlotPopover({
   addToListDisabled,
   addToListLabel,
 }: Props) {
+  const actionsDisabled = Boolean(bookDisabled || driveTimesPending);
   const opt = preview.option;
   const isScheduleLoader = isScheduleLoaderCalendarPreview(preview);
   const isManualBook = isManualBookCalendarPreview(preview);
@@ -208,7 +215,11 @@ export function RoutingPreviewSlotPopover({
         ) : null}
 
         <div className="scheduler-edit-preview-popover-body" role="status" aria-live="polite">
-          {hasWindowWarning ? (
+          {driveTimesPending ? (
+            <p className="scheduler-edit-preview-popover-line scheduler-edit-preview-popover-line--muted">
+              Checking drive times for window warnings…
+            </p>
+          ) : hasWindowWarning ? (
             <p className="scheduler-edit-preview-popover-line scheduler-edit-preview-popover-line--window-warning">
               ⚠ Window warning — reconciled drive times show a visit within 20 minutes of its
               window end. Check the calendar before booking.
@@ -243,7 +254,7 @@ export function RoutingPreviewSlotPopover({
           <button
             type="button"
             className="btn secondary scheduler-edit-preview-popover-alt"
-            disabled={bookDisabled}
+            disabled={actionsDisabled}
             onClick={onAddAlternative}
           >
             Add alternative
@@ -253,7 +264,7 @@ export function RoutingPreviewSlotPopover({
           <button
             type="button"
             className="btn secondary scheduler-edit-preview-popover-alt"
-            disabled={bookDisabled || addToListDisabled}
+            disabled={actionsDisabled || addToListDisabled}
             onClick={onAddToList}
           >
             {addToListLabel ?? 'Add to list'}
@@ -271,7 +282,7 @@ export function RoutingPreviewSlotPopover({
         <button
           type="button"
           className="btn scheduler-edit-preview-popover-confirm"
-          disabled={bookDisabled}
+          disabled={actionsDisabled}
           onClick={onBook}
         >
           {primaryLabel}

@@ -3337,6 +3337,11 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   const [driveIsoByApptId, setDriveIsoByApptId] = useState<Map<string, DriveIsoPair> | null>(null);
   const [driveDayByDate, setDriveDayByDate] = useState<Map<string, DayData> | null>(null);
   const [driveEtaLoading, setDriveEtaLoading] = useState(false);
+  /**
+   * View Placement: true until POST /routing/eta for the preview column finishes so Book
+   * cannot run before downstream Window Warnings are known.
+   */
+  const [routingPreviewEtaPending, setRoutingPreviewEtaPending] = useState(false);
   /** From GET /appointments/doctor — range payload often omits `isMember` / `membershipName`. */
   const [doctorDayMembershipByApptId, setDoctorDayMembershipByApptId] = useState<
     Map<string, SchedulerDoctorDayMembership>
@@ -4951,6 +4956,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       setDoctorDayIsCompleteByApptId(new Map());
       setScheduleOverridesByDate(new Map());
       setDriveEtaLoading(false);
+      setRoutingPreviewEtaPending(false);
       return;
     }
     const dates = driveFetchKey.split(',').filter(Boolean);
@@ -4964,10 +4970,13 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       setDoctorDayIsCompleteByApptId(new Map());
       setScheduleOverridesByDate(new Map());
       setDriveEtaLoading(false);
+      setRoutingPreviewEtaPending(false);
       return;
     }
 
     const canDrive = showByDriveTime;
+    const previewColumnPending =
+      Boolean(routingPreview && routingPreviewColumnKey) && canDrive;
 
     let cancelled = false;
     let pending = dates.length;
@@ -4978,6 +4987,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     setDoctorDayPatientPcpByApptId(new Map());
     setDoctorDayEffectiveWindowByApptId(new Map());
     setDoctorDayIsCompleteByApptId(new Map());
+    setRoutingPreviewEtaPending(previewColumnPending);
 
     const softDriveUpdate = driveSoftRefreshRef.current;
     driveSoftRefreshRef.current = false;
@@ -5090,6 +5100,14 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
 
             if (!dayIn) {
               markFirstData();
+              if (
+                !cancelled &&
+                routingPreview &&
+                routingPreviewColumnKey &&
+                date === routingPreviewColumnKey
+              ) {
+                setRoutingPreviewEtaPending(false);
+              }
               return;
             }
 
@@ -5138,9 +5156,18 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                 candidateHasWarning: etaWindowSummary.candidateHasWarning,
                 reconciledOverrunSeconds,
               });
+              if (!cancelled) setRoutingPreviewEtaPending(false);
             }
           } catch {
             /* skip day — other dates may still succeed */
+            if (
+              !cancelled &&
+              routingPreview &&
+              routingPreviewColumnKey &&
+              date === routingPreviewColumnKey
+            ) {
+              setRoutingPreviewEtaPending(false);
+            }
           } finally {
             bumpDone();
           }
@@ -5151,6 +5178,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     return () => {
       cancelled = true;
       setDriveEtaLoading(false);
+      setRoutingPreviewEtaPending(false);
     };
   }, [
     driveFetchKey,
@@ -11530,7 +11558,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                                   >
                                     <SchedulerAlternateLocationBadgeForAppt appt={appt} compact />
                                     <SchedulerClientZoneBadge appt={appt} compact />
-                                    {routingPreviewEtaWindowSummary?.candidateHasWarning ||
+                                    {/* Placement-relevant: candidate OR downstream stop tight (Ginger/Om). */}
+                                    {routingPreviewEtaWindowSummary?.hasPlacementRelevantWarning ||
                                     apptDriveHint?.windowWarning ? (
                                       <SchedulerWindowWarningBadge compact />
                                     ) : null}
@@ -12362,6 +12391,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               originalAppointmentEnd={reschedulePreviewOriginalTimes.end}
               clientContact={routingPreviewClientContact}
               bookDisabled={bookSlot != null || manualBookPreviewCommitting}
+              driveTimesPending={routingPreviewEtaPending}
               hasWindowWarning={Boolean(
                 routingPreviewEtaWindowSummary?.hasPlacementRelevantWarning
               )}
