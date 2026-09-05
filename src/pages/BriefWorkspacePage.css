@@ -1,4 +1,4 @@
-/* Scout Epiphany workspace — airy two-pane, ink-blue accent (not a purple clone). */
+/* Scout Jot workspace — airy two-pane, ink-blue accent (not a purple clone). */
 
 .brief-app,
 .brief-patient,
@@ -658,13 +658,50 @@
 .brief-review__head h3,
 .brief-merge h3 {
   margin: 0 0 4px;
-  font-size: 18px;
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: 0;
+  color: inherit;
 }
 
 .brief-review__head p,
 .brief-merge p {
   margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
   color: var(--brief-muted);
+}
+
+.brief-review__loading {
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.brief-review__block h4 {
+  margin: 0 0 8px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.brief-review__summary,
+.brief-review__summary.brief-prose,
+.brief-chat__body.brief-prose {
+  font-family: inherit;
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+.brief-review__summary .brief-prose__p,
+.brief-chat__body .brief-prose__p {
+  font-size: inherit;
+  line-height: inherit;
 }
 
 .brief-review__sig {
@@ -746,11 +783,6 @@
 
 .brief-review .brief-btn.primary {
   margin-bottom: 16px;
-}
-
-.brief-review__block h4 {
-  margin: 0 0 8px;
-  font-size: 13px;
 }
 
 .brief-review__block ul {

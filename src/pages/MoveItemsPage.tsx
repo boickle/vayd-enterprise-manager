@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router';
 import { useAuth } from '../auth/AuthProvider';
 import { transferBatch } from '../api/inventoryOps';
 import {
@@ -17,6 +18,7 @@ type BatchLine = { inventoryItemId: number; name: string; quantity: string };
 export default function MoveItemsPage() {
   const { token } = useAuth() as { token: string | null };
   const practiceId = useMemo(() => resolvePracticeIdFromToken(token), [token]);
+  const [searchParams] = useSearchParams();
   const [branches, setBranches] = useState<PracticeBranch[]>([]);
   const [fromBranchId, setFromBranchId] = useState<number | ''>('');
   const [toBranchId, setToBranchId] = useState<number | ''>('');
@@ -37,13 +39,25 @@ export default function MoveItemsPage() {
     void listPracticeBranches(practiceId).then((b) => {
       const active = b.filter((x) => x.isActive !== false);
       setBranches(active);
+      const fromP = Number(searchParams.get('fromOffice'));
+      const toP = Number(searchParams.get('toOffice'));
       const def = active.find((x) => x.isDefault) ?? active[0];
-      if (def) {
-        setFromBranchId(def.id);
-        setToBranchId(def.id);
-      }
+      setFromBranchId(
+        Number.isFinite(fromP) && active.some((x) => x.id === fromP) ? fromP : (def?.id ?? '')
+      );
+      setToBranchId(
+        Number.isFinite(toP) && active.some((x) => x.id === toP) ? toP : (def?.id ?? '')
+      );
     });
-  }, [practiceId]);
+    const itemId = Number(searchParams.get('item'));
+    const name = searchParams.get('name');
+    const q = searchParams.get('qty');
+    if (Number.isFinite(itemId) && itemId > 0 && name) {
+      const qty = q && Number(q) > 0 ? q : '1';
+      setLines([{ inventoryItemId: itemId, name, quantity: qty }]);
+      setQty(qty);
+    }
+  }, [practiceId, searchParams]);
 
   useEffect(() => {
     if (fromBranchId === '') {
@@ -54,10 +68,15 @@ export default function MoveItemsPage() {
     void listInventoryBranchLocations(practiceId, Number(fromBranchId)).then((locs) => {
       const active = locs.filter((l) => l.isActive !== false);
       setFromLocations(active);
+      const pref = Number(searchParams.get('fromLoc'));
+      if (Number.isFinite(pref) && active.some((l) => l.id === pref)) {
+        setFromLoc(pref);
+        return;
+      }
       const def = active.find((l) => l.isDefault) ?? active[0];
       setFromLoc(def ? def.id : '');
     });
-  }, [practiceId, fromBranchId]);
+  }, [practiceId, fromBranchId, searchParams]);
 
   useEffect(() => {
     if (toBranchId === '') {
@@ -68,10 +87,15 @@ export default function MoveItemsPage() {
     void listInventoryBranchLocations(practiceId, Number(toBranchId)).then((locs) => {
       const active = locs.filter((l) => l.isActive !== false);
       setToLocations(active);
+      const pref = Number(searchParams.get('toLoc'));
+      if (Number.isFinite(pref) && active.some((l) => l.id === pref)) {
+        setToLoc(pref);
+        return;
+      }
       const def = active.find((l) => l.isDefault) ?? active[0];
       setToLoc(def ? def.id : '');
     });
-  }, [practiceId, toBranchId]);
+  }, [practiceId, toBranchId, searchParams]);
 
   useEffect(() => {
     const q = searchQ.trim();
@@ -165,6 +189,11 @@ export default function MoveItemsPage() {
         Move within an office or between offices. Your signed-in account and the time are logged
         automatically.
       </p>
+      {searchParams.get('item') && searchParams.get('fromOffice') ? (
+        <p className="par-transfer-hint" style={{ marginTop: 0 }}>
+          Suggested from Par Levels. Review the offices, location, and quantity, then confirm.
+        </p>
+      ) : null}
       {toast && <div className="settings-message">{toast}</div>}
       {error && (
         <div className="settings-message settings-error-message" style={{ marginBottom: 10 }}>

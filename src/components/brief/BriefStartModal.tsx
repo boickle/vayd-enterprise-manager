@@ -180,7 +180,7 @@ export default function BriefStartModal({
       <div className="brief-modal__card">
         <div className="brief-modal__head">
           <h2 id="brief-start-title">
-            {patient ? `Start an Epiphany for ${patient.name}` : 'Start an Epiphany'}
+            {patient ? `Start an Jot for ${patient.name}` : 'Start an Jot'}
           </h2>
           <button type="button" className="brief-icon-btn" onClick={onClose} aria-label="Close">
             ×
@@ -337,7 +337,7 @@ export default function BriefStartModal({
               });
             }}
           >
-            Start Epiphany
+            Start Jot
           </button>
         </div>
       </div>

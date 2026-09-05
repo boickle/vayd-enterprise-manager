@@ -12,21 +12,29 @@ function useIsInventoryAdmin(): boolean {
   return roles.includes('admin') || roles.includes('superadmin');
 }
 
-export default function InventoryLayout({ basePath = '/schedule/inventory' }: Props) {
+export default function InventoryLayout({
+  basePath = '/schedule/inventory',
+}: Props) {
   const isAdmin = useIsInventoryAdmin();
   const location = useLocation();
 
-  const onAdminPath = ['/cost-reviews', '/suppliers', '/waste-admin'].some((p) =>
-    location.pathname.includes(`/inventory${p}`)
-  );
+  const onAdminPath =
+    location.pathname.includes('/inventory/suppliers') ||
+    location.pathname.includes('/inventory/count-report');
   if (!isAdmin && onAdminPath) {
-    return <Navigate to={`${basePath}/receive`} replace />;
+    return <Navigate to={`${basePath}/items`} replace />;
   }
 
   return (
     <div className="settings-page">
       <h1 className="settings-title">Inventory</h1>
-      <div className="settings-tabs" role="navigation" aria-label="Inventory sections">
+      <div className="settings-tabs" role="navigation" aria-label="Inventory">
+        <NavLink
+          to={`${basePath}/items`}
+          className={({ isActive }) => `settings-tab${isActive ? ' active' : ''}`}
+        >
+          Items
+        </NavLink>
         <NavLink
           to={`${basePath}/receive`}
           className={({ isActive }) => `settings-tab${isActive ? ' active' : ''}`}
@@ -51,27 +59,57 @@ export default function InventoryLayout({ basePath = '/schedule/inventory' }: Pr
         >
           Activity
         </NavLink>
+        <NavLink
+          to={`${basePath}/par-levels`}
+          className={({ isActive }) => `settings-tab${isActive ? ' active' : ''}`}
+        >
+          Par Levels
+        </NavLink>
+        <NavLink
+          to={`${basePath}/counts`}
+          className={({ isActive }) => `settings-tab${isActive ? ' active' : ''}`}
+        >
+          Weekly list to count
+        </NavLink>
+        <NavLink
+          to={`${basePath}/full-count`}
+          className={({ isActive }) => `settings-tab${isActive ? ' active' : ''}`}
+        >
+          All items
+        </NavLink>
         {isAdmin && (
-          <>
-            <NavLink
-              to={`${basePath}/cost-reviews`}
-              className={({ isActive }) => `settings-tab${isActive ? ' active' : ''}`}
-            >
-              Cost Reviews
-            </NavLink>
-            <NavLink
-              to={`${basePath}/suppliers`}
-              className={({ isActive }) => `settings-tab${isActive ? ' active' : ''}`}
-            >
-              Suppliers
-            </NavLink>
-            <NavLink
-              to={`${basePath}/waste-admin`}
-              className={({ isActive }) => `settings-tab${isActive ? ' active' : ''}`}
-            >
-              Waste Admin
-            </NavLink>
-          </>
+          <NavLink
+            to={`${basePath}/count-report`}
+            className={({ isActive }) => `settings-tab${isActive ? ' active' : ''}`}
+          >
+            Count report
+          </NavLink>
+        )}
+        <NavLink
+          to={`${basePath}/fill-list`}
+          className={({ isActive }) => `settings-tab${isActive ? ' active' : ''}`}
+        >
+          Fill List
+        </NavLink>
+        <NavLink
+          to={`${basePath}/order-list`}
+          className={({ isActive }) => `settings-tab${isActive ? ' active' : ''}`}
+        >
+          Order List
+        </NavLink>
+        <NavLink
+          to={`${basePath}/transfer-list`}
+          className={({ isActive }) => `settings-tab${isActive ? ' active' : ''}`}
+        >
+          Transfer List
+        </NavLink>
+        {isAdmin && (
+          <NavLink
+            to={`${basePath}/suppliers`}
+            className={({ isActive }) => `settings-tab${isActive ? ' active' : ''}`}
+          >
+            Suppliers
+          </NavLink>
         )}
       </div>
       <Outlet />

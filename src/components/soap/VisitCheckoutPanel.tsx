@@ -18,6 +18,7 @@ import {
 import { subscribeTerminalCheckout } from '../../utils/terminalCheckoutRealtime';
 import { appConfirm } from '../../utils/appDialog';
 import TerminalReaderPicker from './TerminalReaderPicker';
+import CheckoutInventoryBranchField from './CheckoutInventoryBranchField';
 
 type Props = {
   /** Needed to delete the encounter order behind an invoice line. */
@@ -213,7 +214,9 @@ export default function VisitCheckoutPanel({
   const isPaid = status === 'paid';
   const isVoid = status === 'void';
   const hasSavedCard = Boolean(invoice?.savedPaymentMethodId);
+  const branchReady = invoice?.status !== 'open' || invoice.inventoryBranchId != null;
   const canEditLines = Boolean(encounterId) && !isPaid && !isVoid && status === 'open';
+  const payDisabled = disabled || busy != null || !branchReady;
 
   const removeLine = (line: VisitInvoiceLine) => {
     if (!encounterId || !line.orderId || !canEditLines) return;
@@ -240,6 +243,13 @@ export default function VisitCheckoutPanel({
         </div>
       ) : (
         <>
+          <CheckoutInventoryBranchField
+            invoice={invoice}
+            disabled={disabled || busy != null}
+            onInvoiceChange={onInvoiceChange}
+            className="soap-checkout-branch"
+            selectClassName="soap-select"
+          />
           <div className="soap-invoice-lines">
             {(invoice.lines ?? [])
               .filter((l) => !l.isDeleted)
@@ -402,13 +412,15 @@ export default function VisitCheckoutPanel({
                 <button
                   type="button"
                   className="soap-btn"
-                  disabled={disabled || busy != null || !readerReady}
+                  disabled={payDisabled || !readerReady}
                   title={
-                    !selectedReader
-                      ? 'Select a reader first'
-                      : !readerReady
-                        ? 'That reader is offline'
-                        : ''
+                    !branchReady
+                      ? 'Choose the branch inventory is drawn from'
+                      : !selectedReader
+                        ? 'Select a reader first'
+                        : !readerReady
+                          ? 'That reader is offline'
+                          : ''
                   }
                   onClick={tapToPay}
                 >
@@ -427,8 +439,14 @@ export default function VisitCheckoutPanel({
                 <button
                   type="button"
                   className="soap-btn"
-                  disabled={disabled || busy != null || !hasSavedCard}
-                  title={hasSavedCard ? '' : 'No card saved on file'}
+                  disabled={payDisabled || !hasSavedCard}
+                  title={
+                    !branchReady
+                      ? 'Choose the branch inventory is drawn from'
+                      : hasSavedCard
+                        ? ''
+                        : 'No card saved on file'
+                  }
                   onClick={cardOnFile}
                 >
                   <CreditCard size={14} /> Card on file

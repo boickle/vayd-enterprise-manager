@@ -5,7 +5,7 @@ export type CaseHistoryCitation = {
   date: string;
   label: string;
   href: string;
-  /** When set, Case history opens this record in place instead of leaving Epiphany. */
+  /** When set, Case history opens this record in place instead of leaving Jot. */
   kind?: CaseHistoryCiteKind;
   recordId?: string;
 };

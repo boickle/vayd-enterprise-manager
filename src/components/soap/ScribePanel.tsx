@@ -180,7 +180,7 @@ function toSuggestedPlanItems(
 
 /**
  * Merge AI visit-conversation history into Subjective without clobbering Room Loader /
- * pre-visit text or clinician prep notes from Epiphany. Process keeps those blocks and
+ * pre-visit text or clinician prep notes from Jot. Process keeps those blocks and
  * replaces (or adds) the Visit discussion section. With neither block, replace Subjective
  * with the new AI history so Re-load SOAP doesn't stack duplicate visit notes.
  */
@@ -193,7 +193,7 @@ function mergeSubjectiveHistory(existing: string, aiHistory: string): string {
     return formatSoapSectionSpacing(cur);
   }
   const parts = splitSubjectiveHistoryParts(cur);
-  if (!parts.checkin && !parts.clinicianPrevisit) return delta;
+  if (!parts.checkin && !parts.clinicianPrevisit && !parts.caseSummary) return delta;
   parts.visitDiscussion = delta;
   return formatSoapSectionSpacing(joinSubjectiveHistoryParts(parts));
 }
@@ -404,16 +404,19 @@ export default function ScribePanel({
         // Default: every household pet on this visit is included in Process — otherwise only
         // the open chart gets SOAP text and siblings look "empty" after a multi-pet visit.
         if (entries.length > 0) {
-          setSelectedPatientIds(new Set(entries.map((e) => e.patientId)));
+          setSelectedPatientIds(new Set(entries.map((e) => Number(e.patientId))));
+        } else {
+          setSelectedPatientIds(new Set([Number(patientId)]));
         }
       })
       .catch(() => {
         /* Multi-pet detection is best-effort — falls back to single-patient paste. */
+        setSelectedPatientIds(new Set([Number(patientId)]));
       });
     return () => {
       canceled = true;
     };
-  }, [soapEncounterId]);
+  }, [soapEncounterId, patientId]);
 
   // Restore the last scribe run when returning to this chart: the transcript, plus the review
   // cards (problems / plan items) that are otherwise lost with in-memory state. Sessions are
@@ -570,6 +573,8 @@ export default function ScribePanel({
   const startRecording = useCallback(async () => {
     setErrorMessage(null);
     setInterimText('');
+    // Keep pasteText / prior transcript so a second take appends on stop ("continue from where
+    // you left off"). Only clear the live capture buffer for this segment.
     setFinalTranscript('');
     setSuggestion(null);
     setDismissed(new Set());
@@ -873,9 +878,12 @@ export default function ScribePanel({
     ]
   );
 
+  /** Bumps when a new multi-pet Process result arrives — ignore stale in-flight applies. */
+  const multiApplyGenRef = useRef(0);
+
   // Multi-pet: write into every selected pet's SOAP once per Process result.
-  // Only `multiSuggestion` may re-trigger this — including applyMultiPatientEntry / roster in
-  // deps caused an append loop (problems/orders updates → new callback → re-apply → 100× notes).
+  // Do NOT abort the in-flight apply on effect cleanup (React Strict Mode) — that left sibling
+  // pets with empty O/A/P when the loop was canceled mid-household.
   const applyMultiRef = useRef(applyMultiPatientEntry);
   applyMultiRef.current = applyMultiPatientEntry;
   const rosterRef = useRef(roster);
@@ -887,7 +895,7 @@ export default function ScribePanel({
     const fingerprint = suggestion.patients
       .map(
         (p) =>
-          `${p.patientId}:${(p.objectiveNotes ?? '').length}:${(p.planNotes ?? '').length}:${(p.assessmentReasoning ?? '').length}:${(p.subjectiveHistory ?? '').length}`
+          `${Number(p.patientId)}:${(p.objectiveNotes ?? '').length}:${(p.planNotes ?? '').length}:${(p.assessmentReasoning ?? '').length}:${(p.subjectiveHistory ?? '').length}`
       )
       .join('|');
     if (multiAppliedFingerprintRef.current === fingerprint) {
@@ -895,34 +903,41 @@ export default function ScribePanel({
       return;
     }
 
-    let canceled = false;
+    const gen = ++multiApplyGenRef.current;
     (async () => {
-      const rosterById = new Map(rosterRef.current.map((r) => [r.patientId, r] as const));
+      const rosterById = new Map(
+        rosterRef.current.map((r) => [Number(r.patientId), r] as const)
+      );
+      let applied = 0;
+      let missing = 0;
       for (const p of suggestion.patients) {
-        if (canceled) return;
-        const entry = rosterById.get(p.patientId);
-        if (!entry) continue;
-        await applyMultiRef.current(entry, p);
+        if (gen !== multiApplyGenRef.current) return;
+        const entry = rosterById.get(Number(p.patientId));
+        if (!entry) {
+          missing += 1;
+          console.warn(
+            `[scribe] multi-pet apply: no roster entry for patientId=${p.patientId}`
+          );
+          continue;
+        }
+        await applyMultiRef.current(entry, { ...p, patientId: Number(p.patientId) });
+        applied += 1;
       }
-      if (canceled) return;
+      if (gen !== multiApplyGenRef.current) return;
       multiAppliedFingerprintRef.current = fingerprint;
       logApplied(
-        `Multi-pet SOAP written for ${suggestion.patients.length} pet${
-          suggestion.patients.length === 1 ? '' : 's'
+        `Multi-pet SOAP written for ${applied} pet${applied === 1 ? '' : 's'}${
+          missing ? ` (${missing} unmatched id${missing === 1 ? '' : 's'})` : ''
         }`
       );
       setMultiSuggestion(null);
     })().catch((err) => {
-      if (!canceled) {
+      if (gen === multiApplyGenRef.current) {
         setErrorMessage(
           err instanceof Error ? err.message : 'Could not auto-apply multi-pet SOAP.'
         );
       }
     });
-
-    return () => {
-      canceled = true;
-    };
     // intentionally only multiSuggestion — see comment above
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [multiSuggestion]);
@@ -1011,6 +1026,8 @@ export default function ScribePanel({
 
   if (disabled) return null;
 
+  const hasPriorTranscript = Boolean(pasteText.trim() || finalTranscript.trim());
+
   return (
     <div className="soap-scribe-panel">
       <div className="soap-scribe-bar">
@@ -1021,7 +1038,13 @@ export default function ScribePanel({
           disabled={busy || pasteBusy}
         >
           {recording ? <Square size={14} /> : <Mic size={14} />}
-          {recording ? `Stop · ${formatElapsed(elapsed)}` : busy ? 'Working…' : 'Start AI scribe'}
+          {recording
+            ? `Stop · ${formatElapsed(elapsed)}`
+            : busy
+              ? 'Working…'
+              : hasPriorTranscript
+                ? 'Continue AI scribe'
+                : 'Start AI scribe'}
         </button>
         {recording && <span className="soap-scribe-live-dot" aria-hidden />}
         {!recording && (

@@ -392,18 +392,93 @@ export async function fetchAllEmployees(): Promise<Employee[]> {
 export type EmployeeRole = {
   id: number;
   name: string;
-  roleValue: string;
+  roleValue: string | number;
   pimsType?: string;
   description?: string | null;
+  slug?: string | null;
+  isBranchSpecific?: boolean;
 };
 
 /**
  * Active non-deleted employee roles, ordered by name then roleValue.
- * GET /employees/roles
+ * GET /employees/roles?owner=scout for Scout-owned roles only.
  */
-export async function fetchEmployeeRoles(): Promise<EmployeeRole[]> {
-  const { data } = await http.get('/employees/roles');
+export async function fetchEmployeeRoles(opts?: {
+  owner?: 'scout';
+  pimsType?: string;
+}): Promise<EmployeeRole[]> {
+  const { data } = await http.get('/employees/roles', {
+    params: {
+      owner: opts?.owner,
+      pimsType: opts?.pimsType,
+    },
+  });
   return Array.isArray(data) ? data : (data?.items ?? []);
+}
+
+export type CreateScoutEmployeeRoleRequest = {
+  name: string;
+  description?: string | null;
+  slug?: string | null;
+  isBranchSpecific?: boolean;
+};
+
+export async function createScoutEmployeeRole(
+  body: CreateScoutEmployeeRoleRequest
+): Promise<EmployeeRole> {
+  const { data } = await http.post<EmployeeRole>('/employees/roles', body);
+  return data;
+}
+
+export async function patchScoutEmployeeRole(
+  roleId: number,
+  body: Partial<CreateScoutEmployeeRoleRequest>
+): Promise<EmployeeRole> {
+  const { data } = await http.patch<EmployeeRole>(`/employees/roles/${roleId}`, body);
+  return data;
+}
+
+export type ScoutRoleAssignment = {
+  id: number;
+  employeeId: number;
+  branchId: number | null;
+  employeeName: string;
+  branchName: string | null;
+};
+
+export type ScoutRoleAssignmentsResponse = {
+  role: EmployeeRole;
+  assignments: ScoutRoleAssignment[];
+};
+
+export async function fetchScoutRoleAssignments(
+  roleId: number,
+  practiceId: number
+): Promise<ScoutRoleAssignmentsResponse> {
+  const { data } = await http.get<ScoutRoleAssignmentsResponse>(
+    `/employees/roles/${roleId}/assignments`,
+    { params: { practiceId } }
+  );
+  return {
+    role: data?.role,
+    assignments: Array.isArray(data?.assignments) ? data.assignments : [],
+  };
+}
+
+export async function replaceScoutRoleAssignments(
+  roleId: number,
+  practiceId: number,
+  assignments: Array<{ employeeId: number; branchId?: number | null }>
+): Promise<ScoutRoleAssignmentsResponse> {
+  const { data } = await http.put<ScoutRoleAssignmentsResponse>(
+    `/employees/roles/${roleId}/assignments`,
+    { assignments },
+    { params: { practiceId } }
+  );
+  return {
+    role: data?.role,
+    assignments: Array.isArray(data?.assignments) ? data.assignments : [],
+  };
 }
 
 /**

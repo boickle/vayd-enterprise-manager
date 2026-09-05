@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import {
@@ -16,14 +16,12 @@ import {
   Check,
   UserX,
   UserCheck,
-  Activity,
   Pill,
   Lock,
   Camera,
   Bell,
   Heart,
-  Sparkles,
-  NotebookPen,
+  Pencil,
   X,
 } from 'lucide-react';
 import { fetchClientByIdStaff } from '../../api/clientsStaff';
@@ -91,29 +89,32 @@ import { PimsExamDetailModal } from './PimsExamDetailModal';
 import { PimsMedicalNoteModal } from './PimsMedicalNoteModal';
 import PimsSoapNoteModal from './PimsSoapNoteModal';
 import PimsAppointmentsSection from './PimsAppointmentsSection';
-import PimsChartWorkBar from './PimsChartWorkBar';
+import PimsChartWorkBar, { PimsPatientMergeButton } from './PimsChartWorkBar';
+import PimsChartCaseSummaryCard from './PimsChartCaseSummaryCard';
 import {
   buildClientFinancialHref,
   writeFinancialPrefill,
   type FinancialRefillPrefill,
 } from '../../utils/clientFinancial';
 import { EmbeddedRoomLoaderModal } from './EmbeddedRoomLoaderModal';
-import BriefPatientPanel, { type BriefPatientTab } from '../brief/BriefPatientPanel';
 import { DEFAULT_PRACTICE_TIMEZONE, practiceTimeZoneOrDefault } from '../../utils/practiceTimezone';
 import {
   parseRemindersFromMedicalRecord,
   patientMembershipFromRecord,
   splitActiveAndOverdueReminders,
 } from '../../utils/routingPatientHoverData';
-import { BRIEF_KIND_LABEL } from '../../utils/briefTypes';
-import { listLocalBriefsForPatient } from '../../utils/briefStore';
-import { listCaseHistorySummaries } from '../../utils/briefRecordStore';
 import { appConfirm } from '../../utils/appDialog';
 import { pushRecentRecord } from '../../utils/recentRecordsStore';
 import '../../pages/BriefWorkspacePage.css';
 import { scoutManagedState } from '../../utils/pimsScoutManaged';
 import { patientSexDisplayFromRecord } from '../../utils/schedulerVisitDisplay';
 import { useAuth } from '../../auth/AuthProvider';
+import {
+  readStaffPatientLayout,
+  writeStaffPatientLayout,
+  STAFF_UI_PREFS_EVENT,
+  type StaffPatientLayout,
+} from '../../utils/staffUiPrefs';
 import { startFreshNewAppointmentRouting } from '../../utils/routingNewAppointment';
 import { writeRoutingChartBookIntent } from '../../utils/routingChartBookIntent';
 import { markSchedulerHandoffPreferRoutingDoctor } from '../../utils/schedulerCalendarHandoff';
@@ -229,6 +230,28 @@ function alertFieldText(source: Record<string, unknown> | null, keys: string[]):
   return null;
 }
 
+function HeaderEditButton({
+  label,
+  expanded,
+  onClick,
+}: {
+  label: string;
+  expanded: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className="pims-emr-header-edit"
+      aria-label={label}
+      aria-expanded={expanded}
+      onClick={onClick}
+    >
+      <Pencil size={13} aria-hidden />
+    </button>
+  );
+}
+
 type StatusBadge = { label: string; variant: 'danger' | 'ok' | 'muted' };
 
 function patientDetailStatus(p: Record<string, unknown>): StatusBadge {
@@ -267,19 +290,35 @@ function formatChartDateTime(iso: string | null): string {
   }).replace(',', '');
 }
 
-function excerptText(raw: string, max = 320): string {
-  const plain = raw.replace(/[#*_`>]/g, '').replace(/\s+/g, ' ').trim();
-  if (plain.length <= max) return plain;
-  const cut = plain.slice(0, max);
-  const lastStop = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf(' '));
-  return `${(lastStop > 80 ? cut.slice(0, lastStop) : cut).trim()}…`;
-}
-
 function formatChartDateShort(iso: string | null): string {
   if (!iso) return '—';
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso.slice(0, 10);
   return d.toLocaleDateString(undefined, { year: 'numeric', month: 'numeric', day: 'numeric' });
+}
+
+function usePatientSectionOpen(
+  userId: string | null | undefined,
+  key: keyof StaffPatientLayout,
+): [boolean, () => void] {
+  const [open, setOpen] = useState(() => readStaffPatientLayout(userId)[key]);
+
+  useEffect(() => {
+    const sync = () => setOpen(readStaffPatientLayout(userId)[key]);
+    sync();
+    window.addEventListener(STAFF_UI_PREFS_EVENT, sync);
+    return () => window.removeEventListener(STAFF_UI_PREFS_EVENT, sync);
+  }, [userId, key]);
+
+  const toggle = useCallback(() => {
+    setOpen((v) => {
+      const next = !v;
+      writeStaffPatientLayout(userId, { [key]: next });
+      return next;
+    });
+  }, [userId, key]);
+
+  return [open, toggle];
 }
 
 function chartRowHasBody(r: ChartRow): boolean {
@@ -398,26 +437,10 @@ function prescriberFromRxRow(row: Record<string, unknown>): string {
   return employeeFromRow(row);
 }
 
-function weightSparklinePoints(points: { serviceDate: string; weight: number }[]): string {
-  if (points.length < 2) return '';
-  const w = 200;
-  const h = 52;
-  const pad = 4;
-  const weights = points.map((p) => p.weight);
-  const minW = Math.min(...weights);
-  const maxW = Math.max(...weights);
-  const range = maxW - minW || 1;
-  const n = points.length;
-  return points
-    .map((p, i) => {
-      const x = pad + (n === 1 ? w / 2 - pad : (i / (n - 1)) * (w - 2 * pad));
-      const y = pad + (1 - (p.weight - minW) / range) * (h - 2 * pad);
-      return `${x},${y}`;
-    })
-    .join(' ');
-}
+function WeightTrendChart({ points }: { points: { serviceDate: string; weight: number }[] }) {
+  const [hover, setHover] = useState<number | null>(null);
+  const svgRef = useRef<SVGSVGElement | null>(null);
 
-function WeightSparkline({ points }: { points: { serviceDate: string; weight: number }[] }) {
   if (points.length < 2) {
     return (
       <p className="pims-patient-detail__muted pims-patient-detail__spark-empty">
@@ -425,17 +448,163 @@ function WeightSparkline({ points }: { points: { serviceDate: string; weight: nu
       </p>
     );
   }
-  const pts = weightSparklinePoints(points);
+
+  const W = 320;
+  const H = 168;
+  const padL = 40;
+  const padR = 12;
+  const padT = 14;
+  const padB = 32;
+  const plotW = W - padL - padR;
+  const plotH = H - padT - padB;
+  const weights = points.map((p) => p.weight);
+  const minW = Math.min(...weights);
+  const maxW = Math.max(...weights);
+  const padRange = Math.max((maxW - minW) * 0.12, 0.4);
+  const yMin = Math.max(0, minW - padRange);
+  const yMax = maxW + padRange;
+  const yRange = yMax - yMin || 1;
+  const n = points.length;
+
+  const xy = points.map((p, i) => {
+    const x = padL + (n === 1 ? plotW / 2 : (i / (n - 1)) * plotW);
+    const y = padT + (1 - (p.weight - yMin) / yRange) * plotH;
+    return { x, y, ...p };
+  });
+  const line = xy.map((p) => `${p.x},${p.y}`).join(' ');
+
+  const yTicks = 3;
+  const yTickVals = Array.from({ length: yTicks }, (_, i) => yMin + (yRange * i) / (yTicks - 1));
+  const xLabelIdx =
+    n <= 3
+      ? points.map((_, i) => i)
+      : [0, Math.floor((n - 1) / 2), n - 1].filter((v, i, a) => a.indexOf(v) === i);
+
+  const nearestIndex = (clientX: number) => {
+    const svg = svgRef.current;
+    if (!svg) return null;
+    const rect = svg.getBoundingClientRect();
+    const x = ((clientX - rect.left) / rect.width) * W;
+    let best = 0;
+    let bestDist = Infinity;
+    for (let i = 0; i < xy.length; i++) {
+      const d = Math.abs(xy[i].x - x);
+      if (d < bestDist) {
+        bestDist = d;
+        best = i;
+      }
+    }
+    return best;
+  };
+
+  const tip = hover != null ? xy[hover] : null;
+
   return (
-    <svg
-      className="pims-patient-detail__spark"
-      width={200}
-      height={52}
-      viewBox="0 0 200 52"
-      aria-hidden
-    >
-      <polyline fill="none" stroke="#2563eb" strokeWidth="2" strokeLinejoin="round" points={pts} />
-    </svg>
+    <div className="pims-emr-weight-chart">
+      <svg
+        ref={svgRef}
+        className="pims-emr-weight-chart__svg"
+        viewBox={`0 0 ${W} ${H}`}
+        role="img"
+        aria-label="Weight over time"
+        onMouseLeave={() => setHover(null)}
+        onMouseMove={(e) => setHover(nearestIndex(e.clientX))}
+      >
+        {/* Y grid + labels */}
+        {yTickVals.map((val) => {
+          const y = padT + (1 - (val - yMin) / yRange) * plotH;
+          return (
+            <g key={`y-${val}`}>
+              <line
+                x1={padL}
+                y1={y}
+                x2={W - padR}
+                y2={y}
+                stroke="#e7e5e4"
+                strokeWidth="1"
+              />
+              <text x={padL - 6} y={y + 3} textAnchor="end" className="pims-emr-weight-chart__axis">
+                {val.toFixed(1)}
+              </text>
+            </g>
+          );
+        })}
+        <text
+          x={12}
+          y={padT + plotH / 2}
+          textAnchor="middle"
+          transform={`rotate(-90 12 ${padT + plotH / 2})`}
+          className="pims-emr-weight-chart__axis-title"
+        >
+          lbs
+        </text>
+
+        {/* X date labels */}
+        {xLabelIdx.map((i) => (
+          <text
+            key={`x-${i}`}
+            x={xy[i].x}
+            y={H - 8}
+            textAnchor="middle"
+            className="pims-emr-weight-chart__axis"
+          >
+            {formatChartDateShort(points[i].serviceDate)}
+          </text>
+        ))}
+
+        <polyline
+          fill="none"
+          stroke="#2563eb"
+          strokeWidth="2.25"
+          strokeLinejoin="round"
+          strokeLinecap="round"
+          points={line}
+        />
+
+        {xy.map((p, i) => (
+          <circle
+            key={`${p.serviceDate}-${i}`}
+            cx={p.x}
+            cy={p.y}
+            r={hover === i ? 4.5 : 3}
+            fill={hover === i ? '#1d4ed8' : '#2563eb'}
+            stroke="#fff"
+            strokeWidth="1.5"
+          />
+        ))}
+
+        {tip ? (
+          <g className="pims-emr-weight-chart__tip" pointerEvents="none">
+            <line
+              x1={tip.x}
+              y1={padT}
+              x2={tip.x}
+              y2={padT + plotH}
+              stroke="#93c5fd"
+              strokeWidth="1"
+              strokeDasharray="3 3"
+            />
+            <rect
+              x={Math.min(Math.max(tip.x - 52, 4), W - 108)}
+              y={Math.max(tip.y - 36, 4)}
+              width="104"
+              height="28"
+              rx="6"
+              fill="#1e3a8a"
+            />
+            <text
+              x={Math.min(Math.max(tip.x - 52, 4), W - 108) + 52}
+              y={Math.max(tip.y - 36, 4) + 18}
+              textAnchor="middle"
+              className="pims-emr-weight-chart__tip-text"
+            >
+              {`${tip.weight} lbs · ${formatChartDateShort(tip.serviceDate)}`}
+            </text>
+          </g>
+        ) : null}
+      </svg>
+      <p className="pims-emr-weight-chart__hint">Hover the line for date and weight</p>
+    </div>
   );
 }
 
@@ -602,17 +771,6 @@ const GROUP_KEYS = [
   'online',
 ] as const;
 
-type PatientChartSection = 'chart' | Exclude<BriefPatientTab, 'info'>;
-
-const PATIENT_CHART_TABS: { id: PatientChartSection; label: string }[] = [
-  { id: 'chart', label: 'Chart' },
-  { id: 'history', label: 'Case history' },
-  { id: 'sessions', label: 'Prep' },
-  { id: 'calls', label: 'Calls' },
-  { id: 'review', label: 'Record review' },
-  { id: 'merge', label: 'Merge' },
-];
-
 export default function PimsPatientDetailView({
   patientId,
   onBack,
@@ -620,11 +778,15 @@ export default function PimsPatientDetailView({
 }: Props) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { abilities } = useAuth() as { abilities?: string[] };
+  const { abilities, userId } = useAuth() as { abilities?: string[]; userId?: string | null };
   const canBookAppointment = !abilities || abilities.includes('canSeeRouting');
   const practiceTz = practiceTimeZoneOrDefault(DEFAULT_PRACTICE_TIMEZONE);
-  const [chartSection, setChartSection] = useState<PatientChartSection>('chart');
+  const [visitsOpen, toggleVisitsOpen] = usePatientSectionOpen(userId, 'visits');
+  const [remindersOpen, toggleRemindersOpen] = usePatientSectionOpen(userId, 'reminders');
+  const [casePrepOpen, toggleCasePrepOpen] = usePatientSectionOpen(userId, 'casePrep');
+  const [weightOpen, toggleWeightOpen] = usePatientSectionOpen(userId, 'weight');
   const [summarizeRequestId, setSummarizeRequestId] = useState(0);
+  const [summarizeConsumedId, setSummarizeConsumedId] = useState(0);
   const [payload, setPayload] = useState<Record<string, unknown> | null>(null);
   const [medicalRecord, setMedicalRecord] = useState<MedicalRecordBundle | null>(null);
   const [mrLoadError, setMrLoadError] = useState<string | null>(null);
@@ -639,8 +801,7 @@ export default function PimsPatientDetailView({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [mrTab, setMrTab] = useState<MrTab>('byDate');
-  const [showAbout, setShowAbout] = useState(false);
-  const [showEditPet, setShowEditPet] = useState(false);
+  const [headerEdit, setHeaderEdit] = useState<'pet' | 'alerts' | null>(null);
   const [dateStart, setDateStart] = useState('2000-01-01');
   const [dateEnd, setDateEnd] = useState(() => new Date().toISOString().slice(0, 10));
   const [expandedChartRowIds, setExpandedChartRowIds] = useState<Set<string>>(() => new Set());
@@ -970,16 +1131,6 @@ export default function PimsPatientDetailView({
     const lines = parseRemindersFromMedicalRecord(medicalRecord, practiceTz);
     return splitActiveAndOverdueReminders(lines);
   }, [medicalRecord, practiceTz]);
-  const briefs = useMemo(() => {
-    return listLocalBriefsForPatient(patientId)
-      .filter((s) => s.status !== 'archived')
-      .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
-  }, [patientId, chartSection]);
-  const latestBrief = briefs[0] ?? null;
-  const latestCaseSummary = useMemo(
-    () => listCaseHistorySummaries(patientId)[0] ?? null,
-    [patientId, chartSection]
-  );
 
   const weightHistoryPoints = useMemo(() => {
     const wh = medicalRecord?.weightHistory ?? [];
@@ -1106,12 +1257,15 @@ export default function PimsPatientDetailView({
   }
 
   function requestSummarize() {
-    setChartSection('history');
     setSummarizeRequestId((n) => n + 1);
   }
 
-  function startEpiphanyForThisPatient() {
-    navigate(`/schedule/epiphany?new=1&patientId=${encodeURIComponent(patientId)}&view=patients`);
+  function openSoapForVisit(appointmentId: number, pid: string, cid: string | null) {
+    const qs =
+      cid != null && cid !== ''
+        ? `?clientId=${encodeURIComponent(cid)}`
+        : '';
+    navigate(`/schedule/soap/${appointmentId}/${encodeURIComponent(pid)}${qs}`);
   }
 
   function startAppointmentForThisPatient() {
@@ -1356,6 +1510,11 @@ export default function PimsPatientDetailView({
                 aria-label={membershipLabel}
               />
             ) : null}
+            <HeaderEditButton
+              label="Edit pet info and alerts"
+              expanded={headerEdit === 'pet'}
+              onClick={() => setHeaderEdit((cur) => (cur === 'pet' ? null : 'pet'))}
+            />
           </span>
         }
         badges={
@@ -1439,20 +1598,29 @@ export default function PimsPatientDetailView({
           </>
         }
         afterReach={
-          patientAlert || ownerAlert || connectionNotes ? (
+          <>
             <div
               className={`pims-emr-header-alerts${
-                [patientAlert, ownerAlert, connectionNotes].filter(Boolean).length === 1
+                !ownerAlert && !connectionNotes
                   ? ' pims-emr-header-alerts--single'
-                  : ''
+                  : ' pims-emr-header-alerts--pair'
               }`}
             >
-              {patientAlert ? (
-                <div className="pims-emr-alert-box" role="alert">
+              <div className="pims-emr-alert-box" role={patientAlert ? 'alert' : undefined}>
+                <div className="pims-emr-alert-box__head">
                   <span className="pims-emr-alert-box__label">Patient alerts</span>
-                  {patientAlert}
+                  <HeaderEditButton
+                    label="Edit patient alerts"
+                    expanded={headerEdit === 'alerts'}
+                    onClick={() => setHeaderEdit((cur) => (cur === 'alerts' ? null : 'alerts'))}
+                  />
                 </div>
-              ) : null}
+                {patientAlert ? (
+                  patientAlert
+                ) : (
+                  <span className="pims-emr-alert-box__empty">No patient alerts</span>
+                )}
+              </div>
               {ownerAlert ? (
                 <div className="pims-emr-alert-box" role="alert">
                   <span className="pims-emr-alert-box__label">Client alerts</span>
@@ -1466,7 +1634,45 @@ export default function PimsPatientDetailView({
                 </div>
               ) : null}
             </div>
-          ) : null
+            <section
+              className="pims-emr-story__care-chips"
+              aria-label="Chronic problems and medications"
+            >
+              {chronicProblems.length === 0 && chronicMedications.length === 0 ? (
+                <p className="pims-emr-story__muted pims-emr-story__care-chips-empty">
+                  No chronic problems / meds
+                </p>
+              ) : (
+                <ul className="pims-emr-story__chips pims-emr-story__chips--row">
+                  {chronicProblems.map((p) => (
+                    <li key={`prob-${p.id}`} className="pims-emr-story__chip--problem">
+                      <span>{p.label}</span>
+                      <button
+                        type="button"
+                        disabled={resolvingProblemId != null}
+                        onClick={() => void resolveProblem(p)}
+                      >
+                        Resolved
+                      </button>
+                    </li>
+                  ))}
+                  {chronicMedications.map((rx) => (
+                    <li key={`rx-${rx.id}`} className="pims-emr-story__chip--med">
+                      <Pill size={12} aria-hidden />
+                      <span>{rx.name}</span>
+                      <button
+                        type="button"
+                        disabled={discontinuingRxId != null}
+                        onClick={() => void discontinueMedication(rx)}
+                      >
+                        Stop
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          </>
         }
         actions={
           <>
@@ -1496,6 +1702,7 @@ export default function PimsPatientDetailView({
               <Plus size={14} aria-hidden />
               Appointment
             </button>
+            <PimsPatientMergeButton patientId={patientId} patientName={pname} />
             <button
               type="button"
               className="pims-detail__btn-danger"
@@ -1509,328 +1716,15 @@ export default function PimsPatientDetailView({
         }
       />
 
-      <div className="brief-pills" role="tablist" aria-label="Patient record sections">
-        {PATIENT_CHART_TABS.map((t) => (
-          <button
-            key={t.id}
-            type="button"
-            role="tab"
-            aria-selected={chartSection === t.id}
-            className={`brief-pill${chartSection === t.id ? ' is-active' : ''}`}
-            onClick={() => setChartSection(t.id)}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
-
-      <PimsChartWorkBar
-        patientId={patientId}
-        patientName={pname}
-        clientId={clientId}
-        clientName={cname !== '—' ? cname : 'Client'}
-        clientPhone={clientPhone || reachPhones[0]?.phone || null}
-        onSummarize={requestSummarize}
-        onEpiphany={startEpiphanyForThisPatient}
-        onInvoice={() => openFinancial()}
-        onRecordsChanged={() => void reloadChartData()}
-        onTextClient={clientId ? () => reach.openSms(reachPhones[0]?.phone ?? clientPhone, false) : undefined}
-        onEmailClient={clientId ? () => reach.openEmail(reachEmails[0]?.email ?? clientEmail) : undefined}
-      />
-
-      {chartSection !== 'chart' ? (
-        <BriefPatientPanel
-          patientId={patientId}
-          tab={chartSection}
-          onTab={(t) => setChartSection(t === 'info' ? 'chart' : t)}
-          practiceTz={practiceTz}
-          embedded
-          summarizeRequestId={summarizeRequestId}
-          onOpenSession={(id) => navigate(`/schedule/epiphany?sessionId=${encodeURIComponent(id)}`)}
-          onNew={startEpiphanyForThisPatient}
-        />
-      ) : null}
-
-      {chartSection === 'chart' && saveError ? <p className="pims-detail__banner-error">{saveError}</p> : null}
-
-      {chartSection === 'chart' ? (
-      <>
-      <div className="pims-emr-story">
-        <section className="pims-emr-story__card pims-emr-story__card--visits">
-          <PimsAppointmentsSection
-            variant="patient"
-            compact
-            practiceId={PIMS_DETAIL_PRACTICE_ID}
-            patientId={patientId}
-            patientRecord={record}
-          />
-        </section>
-
-        <section className="pims-emr-story__card" aria-labelledby="pims-emr-reminders">
-          <h3 id="pims-emr-reminders">
-            <Bell size={15} aria-hidden />
-            Reminders
-          </h3>
-          <div className="pims-emr-story__block">
-            <h4 className="pims-emr-story__sub pims-emr-story__sub--overdue">
-              Past due ({reminderSplit.overdue.length})
-            </h4>
-            {reminderSplit.overdue.length === 0 ? (
-              <p className="pims-emr-story__muted">None</p>
-            ) : (
-              <ul className="pims-emr-story__list pims-emr-story__list--overdue">
-                {reminderSplit.overdue.map((r) => (
-                  <li key={r.id} className="pims-emr-story__reminder">
-                    <span>{r.label}</span>
-                    <button
-                      type="button"
-                      className="pims-emr-story__reminder-remove"
-                      aria-label={`Delete reminder ${r.label}`}
-                      disabled={removingReminderId === r.id}
-                      onClick={() => setPendingDeleteReminder(r)}
-                    >
-                      <X size={14} aria-hidden />
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-          <div className="pims-emr-story__block">
-            <h4 className="pims-emr-story__sub">Upcoming ({reminderSplit.active.length})</h4>
-            {reminderSplit.active.length === 0 ? (
-              <p className="pims-emr-story__muted">None</p>
-            ) : (
-              <ul className="pims-emr-story__list">
-                {reminderSplit.active.map((r) => (
-                  <li key={r.id} className="pims-emr-story__reminder">
-                    <span>{r.label}</span>
-                    <button
-                      type="button"
-                      className="pims-emr-story__reminder-remove"
-                      aria-label={`Delete reminder ${r.label}`}
-                      disabled={removingReminderId === r.id}
-                      onClick={() => setPendingDeleteReminder(r)}
-                    >
-                      <X size={14} aria-hidden />
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </section>
-
-        <section className="pims-emr-story__card" aria-labelledby="pims-emr-care">
-          <h3 id="pims-emr-care">
-            <Activity size={15} aria-hidden />
-            Ongoing care
-          </h3>
-          <div className="pims-emr-story__block">
-            <h4 className="pims-emr-story__sub">Problems</h4>
-            {chronicProblems.length === 0 ? (
-              <p className="pims-emr-story__muted">No chronic problems</p>
-            ) : (
-              <ul className="pims-emr-story__chips">
-                {chronicProblems.map((p) => (
-                  <li key={p.id}>
-                    <span>{p.label}</span>
-                    <button
-                      type="button"
-                      disabled={resolvingProblemId != null}
-                      onClick={() => void resolveProblem(p)}
-                    >
-                      Resolved
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-          <div className="pims-emr-story__block">
-            <h4 className="pims-emr-story__sub">
-              <Pill size={13} aria-hidden /> Medications
-            </h4>
-            {chronicMedications.length === 0 ? (
-              <p className="pims-emr-story__muted">No chronic medications</p>
-            ) : (
-              <ul className="pims-emr-story__chips pims-emr-story__chips--meds">
-                {chronicMedications.map((rx) => (
-                  <li key={rx.id}>
-                    <span>{rx.name}</span>
-                    <button
-                      type="button"
-                      disabled={discontinuingRxId != null}
-                      onClick={() => void discontinueMedication(rx)}
-                    >
-                      Stop
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </section>
-      </div>
-
-      <div className="pims-emr-prep">
-        <section className="pims-emr-prep__card" aria-labelledby="pims-emr-case">
-          <h3 id="pims-emr-case">
-            <Sparkles size={15} aria-hidden />
-            Case summary
-          </h3>
-          {latestCaseSummary ? (
-            <>
-              <p className="pims-emr-prep__excerpt">{excerptText(latestCaseSummary.summary)}</p>
-              <p className="pims-emr-prep__meta">
-                As of {formatChartDateShort(latestCaseSummary.asOfDate || latestCaseSummary.createdAt)}
-              </p>
-            </>
-          ) : (
-            <p className="pims-emr-story__muted">
-              No chart summary yet. Summarize as of today before you walk in.
-            </p>
-          )}
-          <div className="pims-emr-story__actions">
-            <button type="button" onClick={requestSummarize}>
-              {latestCaseSummary ? 'Open case history' : 'Summarize as of today'}
-            </button>
-          </div>
-        </section>
-
-        <section className="pims-emr-prep__card" aria-labelledby="pims-emr-epiphany">
-          <h3 id="pims-emr-epiphany">
-            <NotebookPen size={15} aria-hidden />
-            Epiphany
-          </h3>
-          {latestBrief ? (
-            <>
-              <p className="pims-emr-prep__title">{latestBrief.title}</p>
-              <p className="pims-emr-prep__meta">
-                {BRIEF_KIND_LABEL[latestBrief.kind]} · {formatChartDateShort(latestBrief.updatedAt)}
-                {briefs.length > 1 ? ` · ${briefs.length} notes` : null}
-              </p>
-              {latestBrief.transcript.trim() ? (
-                <p className="pims-emr-prep__excerpt">{excerptText(latestBrief.transcript, 220)}</p>
-              ) : null}
-            </>
-          ) : soapNotes.length > 0 ? (
-            <p className="pims-emr-story__line">{soapNotes.length} SOAP note(s) in Scout</p>
-          ) : (
-            <p className="pims-emr-story__muted">
-              No prep notes yet. Record one here and it will inject into SOAP Subjective.
-            </p>
-          )}
-          <div className="pims-emr-story__actions">
-            {latestBrief ? (
-              <button
-                type="button"
-                onClick={() =>
-                  navigate(`/schedule/epiphany?sessionId=${encodeURIComponent(latestBrief.id)}`)
-                }
-              >
-                Open last note
-              </button>
-            ) : null}
-            <button type="button" onClick={() => setChartSection('sessions')}>
-              All prep
-            </button>
-            <button
-              type="button"
-              onClick={() =>
-                navigate(
-                  `/schedule/epiphany?new=1&patientId=${encodeURIComponent(patientId)}&view=patients`
-                )
-              }
-            >
-              New prep
-            </button>
-          </div>
-        </section>
-      </div>
-
-      <div className="pims-emr-about-row">
-        <button
-          type="button"
-          className="pims-emr-about-toggle"
-          aria-expanded={showAbout}
-          onClick={() => {
-            setShowAbout((v) => !v);
-            setShowEditPet(false);
-          }}
-        >
-          {showAbout ? <ChevronDown size={15} aria-hidden /> : <ChevronRight size={15} aria-hidden />}
-          Weight
-        </button>
-        <button
-          type="button"
-          className="pims-emr-about-toggle"
-          aria-expanded={showEditPet}
-          onClick={() => {
-            setShowEditPet((v) => !v);
-            setShowAbout(false);
-          }}
-        >
-          {showEditPet ? <ChevronDown size={15} aria-hidden /> : <ChevronRight size={15} aria-hidden />}
-          Edit pet
-        </button>
-      </div>
-      {showAbout ? (
-        <div className="pims-patient-detail__weight-only">
-          <EditableCard
-            title="Weight"
-            icon={<Weight size={16} aria-hidden />}
-            fields={[
-              {
-                key: 'weight',
-                label: 'On file',
-                type: 'number',
-                display: (v) => `${v} lbs`,
-              },
-            ]}
-            values={{ weight: pickStr(record.weight) ?? '' }}
-            columns={1}
-            emptyHint="No weight on file."
-            onSave={(v) => {
-              const w = Number(v.weight.trim());
-              return saveFields({
-                weight: v.weight.trim() && Number.isFinite(w) ? w : null,
-              });
-            }}
-          >
-            <dl className="pims-detail__facts pims-detail__facts--1 pims-emr-weight-exam">
-              <div className="pims-detail__fact">
-                <dt>Last exam</dt>
-                <dd className={latestWeightPoint ? undefined : 'pims-detail__fact-empty'}>
-                  {latestWeightPoint
-                    ? `${latestWeightPoint.weight} lbs · ${formatChartDateShort(latestWeightPoint.serviceDate)}`
-                    : '—'}
-                </dd>
-              </div>
-            </dl>
-            <WeightSparkline points={weightHistoryPoints} />
-          </EditableCard>
-          <TechnicalDetails
-            note="Identifiers and implant tags. Chart edits stay in Scout."
-            rows={[
-              { label: 'Scout ID', value: String(record.id ?? patientId) },
-              { label: 'Microchip', value: pickStr(record.microchip) },
-              { label: 'Rabies tag', value: pickStr(record.rabiesTag) },
-              { label: 'Created', value: formatChartDateTime(pickStr(record.created)) },
-              { label: 'Updated', value: formatChartDateTime(pickStr(record.updated)) },
-            ]}
-          />
-        </div>
-      ) : null}
-      {showEditPet ? (
-        <div className="pims-detail__columns pims-patient-detail__summary-cols">
+      {headerEdit === 'pet' ? (
+        <div className="pims-detail__columns pims-patient-detail__summary-cols pims-emr-header-edit-panel">
           <div className="pims-detail__col">
             <EditableCard
               title="Pet details"
               icon={<PawPrint size={16} aria-hidden />}
               fields={detailFields}
               values={detailValues}
-              onSave={(v) => {
+              onSave={async (v) => {
                 const body: ScoutPatientWrite = {
                   name: v.name.trim() || null,
                   color: v.color.trim() || null,
@@ -1847,7 +1741,8 @@ export default function PimsPatientDetailView({
                 if (Number.isFinite(bid)) body.breedId = bid;
                 else body.breed = v.breed.trim() || null;
 
-                return saveFields(body);
+                await saveFields(body);
+                setHeaderEdit(null);
               }}
             />
           </div>
@@ -1868,11 +1763,256 @@ export default function PimsPatientDetailView({
               values={{ alerts: pickStr(record.alerts) ?? '' }}
               columns={1}
               emptyHint="No patient alerts."
-              onSave={(v) => saveFields({ alerts: v.alerts.trim() || null })}
+              onSave={async (v) => {
+                await saveFields({ alerts: v.alerts.trim() || null });
+                setHeaderEdit(null);
+              }}
             />
           </div>
         </div>
       ) : null}
+
+      {headerEdit === 'alerts' ? (
+        <div className="pims-emr-header-edit-panel">
+          <EditableCard
+            title="Patient alerts"
+            icon={<AlertTriangle size={16} aria-hidden />}
+            fields={[
+              {
+                key: 'alerts',
+                label: 'Patient alerts',
+                type: 'textarea',
+                full: true,
+                placeholder: 'Muzzle required, drug reaction, handling notes…',
+                hint: 'Shown in red under this pet’s name.',
+              },
+            ]}
+            values={{ alerts: pickStr(record.alerts) ?? '' }}
+            columns={1}
+            emptyHint="No patient alerts."
+            onSave={async (v) => {
+              await saveFields({ alerts: v.alerts.trim() || null });
+              setHeaderEdit(null);
+            }}
+          />
+        </div>
+      ) : null}
+
+      <PimsChartWorkBar
+        patientId={patientId}
+        patientName={pname}
+        clientId={clientId}
+        clientName={cname !== '—' ? cname : 'Client'}
+        clientPhone={clientPhone || reachPhones[0]?.phone || null}
+        practiceTz={practiceTz}
+        onSummarize={requestSummarize}
+        onStartSoap={openSoapForVisit}
+        onBookAppointment={canBookAppointment ? startAppointmentForThisPatient : undefined}
+        onInvoice={() => openFinancial()}
+        onRecordsChanged={() => void reloadChartData()}
+        onTextClient={clientId ? () => reach.openSms(reachPhones[0]?.phone ?? clientPhone, false) : undefined}
+        onEmailClient={clientId ? () => reach.openEmail(reachEmails[0]?.email ?? clientEmail) : undefined}
+        onOpenCallSession={(id) =>
+          navigate(`/schedule/jot?sessionId=${encodeURIComponent(id)}&view=patients`)
+        }
+        onStartCallNote={() =>
+          navigate(
+            `/schedule/jot?new=1&kind=callback&patientId=${encodeURIComponent(patientId)}&view=patients`,
+          )
+        }
+      />
+
+      {saveError ? <p className="pims-detail__banner-error">{saveError}</p> : null}
+
+      <>
+      <div className="pims-emr-story">
+        <section className="pims-emr-story__card pims-emr-story__card--visits">
+          <PimsAppointmentsSection
+            variant="patient"
+            compact
+            practiceId={PIMS_DETAIL_PRACTICE_ID}
+            patientId={patientId}
+            patientRecord={record}
+            collapsed={!visitsOpen}
+            onToggleCollapse={toggleVisitsOpen}
+          />
+        </section>
+
+        <section className="pims-emr-story__card" aria-labelledby="pims-emr-reminders">
+          <div className="pims-emr-story__collapse-row">
+            <button
+              type="button"
+              id="pims-emr-reminders"
+              className="pims-emr-story__collapse"
+              onClick={toggleRemindersOpen}
+              aria-expanded={remindersOpen}
+            >
+              {remindersOpen ? <ChevronDown size={15} aria-hidden /> : <ChevronRight size={15} aria-hidden />}
+              <Bell size={15} aria-hidden />
+              Reminders
+              {reminderSplit.overdue.length > 0 ? (
+                <span className="pims-emr-story__count pims-emr-story__count--overdue">
+                  ({reminderSplit.overdue.length})
+                </span>
+              ) : null}
+              {reminderSplit.active.length > 0 ? (
+                <span className="pims-emr-story__count pims-emr-story__count--upcoming">
+                  ({reminderSplit.active.length})
+                </span>
+              ) : null}
+            </button>
+          </div>
+          {remindersOpen ? (
+            <>
+              <div className="pims-emr-story__block">
+                <h4 className="pims-emr-story__sub pims-emr-story__sub--overdue">
+                  Past due ({reminderSplit.overdue.length})
+                </h4>
+                {reminderSplit.overdue.length === 0 ? (
+                  <p className="pims-emr-story__muted">None</p>
+                ) : (
+                  <ul className="pims-emr-story__list pims-emr-story__list--overdue">
+                    {reminderSplit.overdue.map((r) => (
+                      <li key={r.id} className="pims-emr-story__reminder">
+                        <span>{r.label}</span>
+                        <button
+                          type="button"
+                          className="pims-emr-story__reminder-remove"
+                          aria-label={`Delete reminder ${r.label}`}
+                          disabled={removingReminderId === r.id}
+                          onClick={() => setPendingDeleteReminder(r)}
+                        >
+                          <X size={14} aria-hidden />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+              <div className="pims-emr-story__block">
+                <h4 className="pims-emr-story__sub">Upcoming ({reminderSplit.active.length})</h4>
+                {reminderSplit.active.length === 0 ? (
+                  <p className="pims-emr-story__muted">None</p>
+                ) : (
+                  <ul className="pims-emr-story__list">
+                    {reminderSplit.active.map((r) => (
+                      <li key={r.id} className="pims-emr-story__reminder">
+                        <span>{r.label}</span>
+                        <button
+                          type="button"
+                          className="pims-emr-story__reminder-remove"
+                          aria-label={`Delete reminder ${r.label}`}
+                          disabled={removingReminderId === r.id}
+                          onClick={() => setPendingDeleteReminder(r)}
+                        >
+                          <X size={14} aria-hidden />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </>
+          ) : null}
+        </section>
+
+        <div className={`pims-emr-case-prep-wrap${casePrepOpen ? '' : ' is-collapsed'}`}>
+          <div className="pims-emr-story__collapse-row pims-emr-case-prep-wrap__head">
+            <button
+              type="button"
+              id="pims-emr-case-prep"
+              className="pims-emr-story__collapse"
+              onClick={toggleCasePrepOpen}
+              aria-expanded={casePrepOpen}
+            >
+              {casePrepOpen ? <ChevronDown size={15} aria-hidden /> : <ChevronRight size={15} aria-hidden />}
+              Case summary + chat
+            </button>
+          </div>
+          {casePrepOpen ? (
+            <PimsChartCaseSummaryCard
+              patientId={patientId}
+              patientName={pname}
+              clientName={cname !== '—' ? cname : null}
+              practiceTz={practiceTz}
+              patientRecord={record}
+              medicalRecord={medicalRecord}
+              problems={problems}
+              encounters={soapNotes}
+              enabled
+              refreshRequestId={summarizeRequestId}
+              refreshConsumedId={summarizeConsumedId}
+              onRefreshConsumed={setSummarizeConsumedId}
+            />
+          ) : null}
+        </div>
+
+        <section className="pims-emr-story__card" aria-labelledby="pims-emr-weight">
+          <div className="pims-emr-story__collapse-row">
+            <button
+              type="button"
+              id="pims-emr-weight"
+              className="pims-emr-story__collapse"
+              onClick={toggleWeightOpen}
+              aria-expanded={weightOpen}
+            >
+              {weightOpen ? <ChevronDown size={15} aria-hidden /> : <ChevronRight size={15} aria-hidden />}
+              <Weight size={15} aria-hidden />
+              Weight
+            </button>
+          </div>
+          {weightOpen ? (
+            <div className="pims-emr-story__block pims-emr-story__block--weight">
+              <EditableCard
+                title="Weight"
+                icon={<Weight size={16} aria-hidden />}
+                fields={[
+                  {
+                    key: 'weight',
+                    label: 'On file',
+                    type: 'number',
+                    display: (v) => `${v} lbs`,
+                  },
+                ]}
+                values={{ weight: pickStr(record.weight) ?? '' }}
+                columns={1}
+                emptyHint="No weight on file."
+                onSave={(v) => {
+                  const w = Number(v.weight.trim());
+                  return saveFields({
+                    weight: v.weight.trim() && Number.isFinite(w) ? w : null,
+                  });
+                }}
+              >
+                <dl className="pims-detail__facts pims-detail__facts--1 pims-emr-weight-exam">
+                  <div className="pims-detail__fact">
+                    <dt>Last exam</dt>
+                    <dd className={latestWeightPoint ? undefined : 'pims-detail__fact-empty'}>
+                      {latestWeightPoint
+                        ? `${latestWeightPoint.weight} lbs · ${formatChartDateShort(latestWeightPoint.serviceDate)}`
+                        : '—'}
+                    </dd>
+                  </div>
+                </dl>
+                <WeightTrendChart points={weightHistoryPoints} />
+              </EditableCard>
+            </div>
+          ) : null}
+        </section>
+      </div>
+
+      <div className="pims-emr-about-row">
+        <TechnicalDetails
+          note="Identifiers and implant tags. Chart edits stay in Scout."
+          rows={[
+            { label: 'Scout ID', value: String(record.id ?? patientId) },
+            { label: 'Microchip', value: pickStr(record.microchip) },
+            { label: 'Rabies tag', value: pickStr(record.rabiesTag) },
+            { label: 'Created', value: formatChartDateTime(pickStr(record.created)) },
+            { label: 'Updated', value: formatChartDateTime(pickStr(record.updated)) },
+          ]}
+        />
+      </div>
 
       <section className="pims-patient-detail__mr" aria-labelledby="pims-mr-heading">
         <h2 id="pims-mr-heading" className="pims-patient-detail__mr-heading">
@@ -2824,7 +2964,6 @@ export default function PimsPatientDetailView({
         )}
       </section>
       </>
-      ) : null}
 
       {selectedExam && medicalRecord ? (
         <PimsExamDetailModal
@@ -2881,7 +3020,7 @@ export default function PimsPatientDetailView({
           phones={reachPhones.length ? reachPhones : clientPhone ? [{ label: 'Primary', phone: clientPhone, sms: true }] : []}
           pets={reachPets}
           defaultPatientIds={defaultEmrPatientIds}
-          epiphanyPatientId={patientId}
+          jotPatientId={patientId}
           onRecordsChanged={() => void reloadChartData()}
         />
       ) : null}

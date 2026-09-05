@@ -338,4 +338,33 @@ assert(
   'fixture has no household effectiveWindow (forces type path)'
 );
 
+function schedulerRoutedRangeShouldKeepScheduledClock(opts) {
+  if (opts.doctorDayClock || opts.windowWarning) return true;
+  const routed = Date.parse(opts.routedStartIso || '');
+  const end = Date.parse(opts.scheduledEndIso || '');
+  if (!Number.isFinite(routed) || !Number.isFinite(end)) return false;
+  return routed >= end;
+}
+
+assert(
+  schedulerRoutedRangeShouldKeepScheduledClock({
+    doctorDayClock: false,
+    windowWarning: true,
+    scheduledStartIso: '2026-09-09T14:15:00.000Z',
+    scheduledEndIso: '2026-09-09T16:15:00.000Z',
+    routedStartIso: '2026-09-09T17:40:00.000Z',
+  }) === true,
+  'window-warning auto-book must stay on the booked clock (not after 12:30)'
+);
+assert(
+  schedulerRoutedRangeShouldKeepScheduledClock({
+    doctorDayClock: false,
+    windowWarning: false,
+    scheduledStartIso: '2026-09-09T14:15:00.000Z',
+    scheduledEndIso: '2026-09-09T16:15:00.000Z',
+    routedStartIso: '2026-09-09T14:20:00.000Z',
+  }) === false,
+  'feasible routed ETA may still paint on the drive timeline'
+);
+
 console.log('windowWarningPlacementSmoke: ok');

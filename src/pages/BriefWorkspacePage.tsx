@@ -85,7 +85,7 @@ function isStaffCalendarLabel(value: unknown): boolean {
 }
 
 /** Real patient visits only — not vacation, staff notes, zone assignment, or personal blocks. */
-function isEpiphanyTodayVisit(appt: DoctorDayAppt): boolean {
+function isJotTodayVisit(appt: DoctorDayAppt): boolean {
   if (isBlockEntry(appt)) return false;
   if (appointmentIsCalendarOnlyStaffItem(appt)) return false;
   const staffFields = [
@@ -116,8 +116,8 @@ function visitStartMs(appt: DoctorDayAppt): number {
   return d.isValid ? d.toMillis() : Number.POSITIVE_INFINITY;
 }
 
-function epiphanyDayVisits(rows: DoctorDayAppt[]): DoctorDayAppt[] {
-  return rows.filter(isEpiphanyTodayVisit).sort((a, b) => visitStartMs(a) - visitStartMs(b));
+function jotDayVisits(rows: DoctorDayAppt[]): DoctorDayAppt[] {
+  return rows.filter(isJotTodayVisit).sort((a, b) => visitStartMs(a) - visitStartMs(b));
 }
 
 type BriefPatientPrefill = {
@@ -278,7 +278,7 @@ export default function BriefWorkspacePage() {
           });
           if (!canceled) {
             setDayAppts(
-              epiphanyDayVisits(
+              jotDayVisits(
                 rows.filter((a) => !isPracticeCalendarBlockAppointment(a)).map(rangeApptToDayRow)
               )
             );
@@ -286,7 +286,7 @@ export default function BriefWorkspacePage() {
           return;
         }
         const res = await fetchDoctorDay(date, selfId || undefined);
-        if (!canceled) setDayAppts(epiphanyDayVisits(res.appointments ?? []));
+        if (!canceled) setDayAppts(jotDayVisits(res.appointments ?? []));
       } catch {
         if (!canceled) setDayAppts([]);
       }
@@ -383,7 +383,7 @@ export default function BriefWorkspacePage() {
   };
 
   const visibleBriefs = callsOnly ? briefs.filter((b) => b.kind === 'callback') : briefs;
-  const visibleAppts = callsOnly ? [] : dayAppts.filter(isEpiphanyTodayVisit);
+  const visibleAppts = callsOnly ? [] : dayAppts.filter(isJotTodayVisit);
 
   return (
     <div className="brief-app">
@@ -407,7 +407,7 @@ export default function BriefWorkspacePage() {
             <button
               type="button"
               className="brief-pill"
-              title="Edit AI scribe / Epiphany note instructions"
+              title="Edit AI scribe / Jot note instructions"
               onClick={() => setShowPromptOverrides(true)}
             >
               <SlidersHorizontal size={13} /> AI instructions
@@ -574,7 +574,7 @@ export default function BriefWorkspacePage() {
               </button>
             </div>
             <p className="brief-hint">
-              Search a pet or client, then start an Epiphany from their profile.
+              Search a pet or client, then start an Jot from their profile.
             </p>
             {query.trim() ? (
               <>
@@ -669,7 +669,7 @@ export default function BriefWorkspacePage() {
         ) : (
           <div className="brief-welcome">
             <p className="brief-welcome__hello">Ready when you are</p>
-            <h2>Epiphany</h2>
+            <h2>Jot</h2>
             <p>
               Capture prep notes before a visit, transcribe callbacks, or jot a staff huddle. Prep
               notes land in SOAP history as clinician notes — separate from what you talk through
@@ -680,7 +680,7 @@ export default function BriefWorkspacePage() {
               className="brief-btn primary"
               onClick={() => patchParams({ new: '1' })}
             >
-              <Mic size={15} /> Start an Epiphany
+              <Mic size={15} /> Start an Jot
             </button>
             <p className="brief-welcome__foot">
               Need the full chart? <Link to="/schedule/patients">Open Patients</Link>

@@ -33,7 +33,7 @@ function errMessage(err: unknown, fallback: string): string {
 
 /**
  * Edit AI scribe custom instructions for a provider.
- * Saved on the employee record and injected into SOAP + Epiphany polish prompts.
+ * Saved on the employee record and injected into SOAP + Jot polish prompts.
  */
 export default function ScribePromptOverridesModal({
   providerId: initialProviderId,
@@ -114,7 +114,7 @@ export default function ScribePromptOverridesModal({
         </div>
         <p className="soap-modal-sub">
           Provider-wide instructions for <strong>{providerName}</strong>. They add to the shared AI
-          defaults for SOAP structuring and Epiphany note cleanup — for example vaccine sites, or
+          defaults for SOAP structuring and Jot note cleanup — for example vaccine sites, or
           default Heart wording when nothing abnormal was said. Only this provider (or an admin)
           can edit them.
         </p>

@@ -23,6 +23,7 @@ type Draft = {
   isDiscountCategory: boolean;
   discountPercent: number;
   excludeFromIncome: boolean;
+  getsDeposited: boolean;
   isActive: boolean;
 };
 
@@ -34,6 +35,7 @@ function emptyDraft(): Draft {
     isDiscountCategory: false,
     discountPercent: 0,
     excludeFromIncome: false,
+    getsDeposited: false,
     isActive: true,
   };
 }
@@ -46,6 +48,7 @@ function toDraft(row: PracticePaymentType): Draft {
     isDiscountCategory: row.isDiscountCategory,
     discountPercent: Number(row.discountPercent) || 0,
     excludeFromIncome: row.excludeFromIncome,
+    getsDeposited: row.getsDeposited === true,
     isActive: row.isActive !== false,
   };
 }
@@ -177,6 +180,7 @@ export default function SettingsPaymentTypes({ onMessage }: Props) {
               <th>Discount</th>
               <th>%</th>
               <th>Exclude from income</th>
+              <th>Gets deposited</th>
               <th>Status</th>
               <th />
             </tr>
@@ -192,6 +196,7 @@ export default function SettingsPaymentTypes({ onMessage }: Props) {
                 <td>{row.isDiscountCategory ? 'Yes' : '—'}</td>
                 <td>{row.isDiscountCategory ? `${Number(row.discountPercent) || 0}%` : '—'}</td>
                 <td>{row.excludeFromIncome ? 'Yes' : '—'}</td>
+                <td>{row.getsDeposited ? 'Yes' : '—'}</td>
                 <td>{inactive ? 'Inactive' : 'Active'}</td>
                 <td>
                   <button
@@ -354,6 +359,14 @@ export default function SettingsPaymentTypes({ onMessage }: Props) {
                     onChange={(e) => setDraft((d) => ({ ...d, excludeFromIncome: e.target.checked }))}
                   />
                   Exclude from Income Calculations on Sales Report
+                </label>
+                <label style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 10 }}>
+                  <input
+                    type="checkbox"
+                    checked={draft.getsDeposited}
+                    onChange={(e) => setDraft((d) => ({ ...d, getsDeposited: e.target.checked }))}
+                  />
+                  Gets deposited (cash/check — appears in Bank deposits queue)
                 </label>
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 22 }}>
                   <button type="button" className="btn secondary" disabled={saving} onClick={() => setEditor(null)}>

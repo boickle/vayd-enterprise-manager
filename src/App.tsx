@@ -40,20 +40,22 @@ import SoapEncounterPage from './pages/SoapEncounterPage';
 import VisitWrapUpPage from './pages/VisitWrapUpPage';
 import DoctorWorklistPage from './pages/DoctorWorklistPage';
 import BriefWorkspacePage from './pages/BriefWorkspacePage';
+import PracticeChatPage from './pages/PracticeChatPage';
 import { ScheduleIndexRedirect } from './pages/ScheduleLayout';
 import ScheduleHomePage from './pages/ScheduleHomePage';
 import LegacySchedulingToolsRedirect from './components/LegacySchedulingToolsRedirect';
 import Catalog from './pages/Catalog';
-import CatalogLayout from './pages/CatalogLayout';
-import CatalogEntityPage from './pages/CatalogEntityPage';
+import { LegacyCatalogRedirect } from './pages/CatalogLayout';
 import InventoryLayout from './pages/InventoryLayout';
 import ReceiveShipmentPage from './pages/ReceiveShipmentPage';
 import MoveItemsPage from './pages/MoveItemsPage';
 import WasteAdjustPage from './pages/WasteAdjustPage';
 import InventoryActivityPage from './pages/InventoryActivityPage';
-import InventoryCostReviewsPage from './pages/InventoryCostReviewsPage';
+import InventoryParLevelsPage from './pages/InventoryParLevelsPage';
+import InventoryCountsPage from './pages/InventoryCountsPage';
+import InventoryCountReportPage from './pages/InventoryCountReportPage';
+import InventoryStockRequestsPage from './pages/InventoryStockRequestsPage';
 import SuppliersAdminPage from './pages/SuppliersAdminPage';
-import WasteAdminPage from './pages/WasteAdminPage';
 import PimsClientsPage from './pages/PimsClientsPage';
 import PimsPatientsPage from './pages/PimsPatientsPage';
 import PimsTasksPage from './pages/PimsTasksPage';
@@ -332,7 +334,8 @@ export default function App() {
       if (scoutTabPermissionOk('canSeeRouting', abilities)) {
         out.push({ label: '+ Appointment', to: '/schedule/routing' });
       }
-      out.push({ label: 'Epiphany', to: '/schedule/epiphany' });
+      out.push({ label: 'Jot', to: '/schedule/jot' });
+      out.push({ label: 'Chat', to: '/schedule/chat' });
       out.push({ label: 'New Task', to: '/schedule/tasks?new=1' });
       out.push({ label: 'Send Room Loader', to: '/schedule/room-loader' });
       out.push({
@@ -605,8 +608,10 @@ export default function App() {
                     <Route path="holds" element={<HoldsPage />} />
                     <Route path="exit-survey" element={<ExitSurveyPage />} />
                     <Route path="room-loader" element={<RoomLoaderPage />} />
-                    <Route path="epiphany" element={<BriefWorkspacePage />} />
-                    <Route path="brief" element={<Navigate to="/schedule/epiphany" replace />} />
+                    <Route path="jot" element={<BriefWorkspacePage />} />
+                    <Route path="epiphany" element={<Navigate to="/schedule/jot" replace />} />
+                    <Route path="brief" element={<Navigate to="/schedule/jot" replace />} />
+                    <Route path="chat" element={<PracticeChatPage />} />
                     <Route path="soap" element={<DoctorWorklistPage />} />
                     <Route
                       path="soap/:appointmentId/:patientId"
@@ -618,30 +623,57 @@ export default function App() {
                     />
                     <Route path="scheduler" element={<Scheduler />} />
                     <Route
-                      path="catalog"
-                      element={<CatalogLayout basePath="/schedule/catalog" />}
-                    >
-                      <Route index element={<Navigate to="inventory" replace />} />
-                      <Route path="inventory" element={<Catalog />} />
-                      <Route
-                        path="procedures"
-                        element={<CatalogEntityPage itemType="procedure" />}
-                      />
-                      <Route path="labs" element={<CatalogEntityPage itemType="lab" />} />
-                    </Route>
-                    <Route
                       path="inventory"
                       element={<InventoryLayout basePath="/schedule/inventory" />}
                     >
-                      <Route index element={<Navigate to="receive" replace />} />
+                      <Route index element={<Navigate to="items" replace />} />
+                      <Route path="items" element={<Catalog />} />
                       <Route path="receive" element={<ReceiveShipmentPage />} />
                       <Route path="move" element={<MoveItemsPage />} />
                       <Route path="waste" element={<WasteAdjustPage />} />
                       <Route path="activity" element={<InventoryActivityPage />} />
-                      <Route path="cost-reviews" element={<InventoryCostReviewsPage />} />
+                      <Route
+                        path="totals"
+                        element={<Navigate to="/schedule/analytics/inventory-totals" replace />}
+                      />
+                      <Route path="par-levels" element={<InventoryParLevelsPage />} />
+                      <Route path="counts" element={<InventoryCountsPage kind="weekly" />} />
+                      <Route path="full-count" element={<InventoryCountsPage kind="full" />} />
+                      <Route path="count-report" element={<InventoryCountReportPage />} />
+                      <Route
+                        path="fill-list"
+                        element={<InventoryStockRequestsPage kind="fill" />}
+                      />
+                      <Route
+                        path="order-list"
+                        element={<InventoryStockRequestsPage kind="order" />}
+                      />
+                      <Route
+                        path="transfer-list"
+                        element={<InventoryStockRequestsPage kind="transfer" />}
+                      />
+                      <Route
+                        path="cost-reviews"
+                        element={
+                          <Navigate to="/schedule/admin/inventory/cost-reviews" replace />
+                        }
+                      />
                       <Route path="suppliers" element={<SuppliersAdminPage />} />
-                      <Route path="waste-admin" element={<WasteAdminPage />} />
+                      <Route
+                        path="waste-admin"
+                        element={<Navigate to="/schedule/settings?tab=inventory" replace />}
+                      />
                     </Route>
+                    <Route
+                      path="procedures"
+                      element={<Navigate to="/schedule/inventory/items?type=procedure" replace />}
+                    />
+                    <Route
+                      path="labs"
+                      element={<Navigate to="/schedule/inventory/items?type=lab" replace />}
+                    />
+                    <Route path="catalog" element={<LegacyCatalogRedirect />} />
+                    <Route path="catalog/*" element={<LegacyCatalogRedirect />} />
                     <Route path="tasks" element={<PimsTasksPage />} />
                     <Route path="settings" element={<Settings />} />
                     <Route path="clients" element={<PimsClientsPage />} />

@@ -47,6 +47,28 @@ export function schedulerHouseholdIsFixedTimeAppointment(
 }
 
 /**
+ * Routed ETA that misses the booked window (or lands after the visit would already
+ * have ended) must not move the calendar card off the booked clock — otherwise a
+ * morning auto-book paints after afternoon stops.
+ */
+export function schedulerRoutedRangeShouldKeepScheduledClock(opts: {
+  doctorDayClock: boolean;
+  windowWarning: boolean;
+  scheduledStartIso?: string | null;
+  scheduledEndIso?: string | null;
+  routedStartIso?: string | null;
+}): boolean {
+  if (opts.doctorDayClock || opts.windowWarning) return true;
+  const routed = opts.routedStartIso?.trim();
+  const schedEnd = opts.scheduledEndIso?.trim();
+  if (!routed || !schedEnd) return false;
+  const eta = DateTime.fromISO(routed);
+  const end = DateTime.fromISO(schedEnd);
+  if (!eta.isValid || !end.isValid) return false;
+  return eta >= end;
+}
+
+/**
  * When true, layout/hover use doctor-day booked times. Mirrors My Week `weekHouseholdUsesDoctorDayClockForLayout`.
  */
 export function schedulerHouseholdUsesDoctorDayClockForLayout(

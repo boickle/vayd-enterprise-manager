@@ -11,7 +11,14 @@ function assert(cond, msg) {
 }
 
 function parseOnlineBookingHoldDescription(text) {
-  const trimmed = String(text ?? '').trim();
+  const stripped = String(text ?? '')
+    .trim()
+    .replace(
+      /^Online Booking\s*-\s*(?:NEW|EXISTING)\s+client\s+and\s+(?:NEW|EXISTING)\s+patient(?:\.\s*|\s+)/i,
+      ''
+    )
+    .trim();
+  const trimmed = stripped ? `Online Booking - ${stripped}` : String(text ?? '').trim();
   if (!/^Online Booking/i.test(trimmed)) return null;
 
   const existingClientHold = trimmed.match(

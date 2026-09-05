@@ -1,4 +1,5 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router';
 import { Field } from '../components/Field';
 import { useAuth } from '../auth/useAuth';
 import {
@@ -85,7 +86,9 @@ export default function AdminUsers() {
   const [editEmployeeId, setEditEmployeeId] = useState('');
   const [editDoctorId, setEditDoctorId] = useState('');
   const [editIsActive, setEditIsActive] = useState(true);
+  const [editEmail, setEditEmail] = useState('');
   const [saving, setSaving] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
   const [resettingId, setResettingId] = useState<number | null>(null);
 
   const [creating, setCreating] = useState(false);
@@ -116,6 +119,26 @@ export default function AdminUsers() {
   useEffect(() => {
     void loadUsers();
   }, [loadUsers]);
+
+  useEffect(() => {
+    if (loading || users.length === 0) return;
+    const raw = Number(searchParams.get('user'));
+    if (!Number.isFinite(raw) || raw <= 0) return;
+    const match = users.find((u) => u.id === raw);
+    if (!match) return;
+    if (editing?.id === match.id) return;
+    openEdit(match);
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete('user');
+        return next;
+      },
+      { replace: true }
+    );
+    // openEdit is stable enough for this deep link
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, users, searchParams]);
 
   useEffect(() => {
     let cancelled = false;
@@ -195,6 +218,7 @@ export default function AdminUsers() {
     setEditEmployeeId(user.employeeId != null ? String(user.employeeId) : '');
     setEditDoctorId(user.doctorId != null ? String(user.doctorId) : '');
     setEditIsActive(user.isActive !== false);
+    setEditEmail(user.email ?? '');
     setMessage(null);
   };
 
@@ -263,12 +287,17 @@ export default function AdminUsers() {
       const nextEmployeeId = editEmployeeId ? Number(editEmployeeId) : null;
       const nextDoctorId = editDoctorId ? Number(editDoctorId) : null;
       const payload: {
+        email?: string;
         role?: string;
         employeeId?: number | null;
         doctorId?: number | null;
         isActive?: boolean;
       } = {};
 
+      const nextEmail = editEmail.trim().toLowerCase();
+      if (nextEmail && nextEmail !== String(editing.email ?? '').trim().toLowerCase()) {
+        payload.email = nextEmail;
+      }
       if (editRole !== String(editing.role || '')) {
         payload.role = editRole;
       }
@@ -554,7 +583,18 @@ export default function AdminUsers() {
             <form onSubmit={onSave}>
               <div className="settings-modal-body" style={{ display: 'grid', gap: 12 }}>
                 <Field label="Email">
-                  <input className="input" value={editing.email ?? ''} disabled />
+                  <input
+                    className="input"
+                    type="email"
+                    value={editEmail}
+                    onChange={(e) => setEditEmail(e.target.value)}
+                    required
+                    autoComplete="off"
+                  />
+                  <p className="settings-muted" style={{ margin: '6px 0 0', fontSize: 12 }}>
+                    Login email. Must be unique. If this user is linked to staff, their
+                    staff email updates too.
+                  </p>
                 </Field>
                 <Field label="Role">
                   <select

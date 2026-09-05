@@ -231,10 +231,16 @@ type Props = {
   patientId: string;
   patientName?: string | null;
   practiceTz: string;
-  onNewEpiphany?: () => void;
+  onNewJot?: () => void;
   /** Increment to start (or queue) a today-as-of summary from the chart work bar. */
   summarizeRequestId?: number;
-  /** When the chart work bar already has Summarize / Epiphany. */
+  /**
+   * Highest request id already handled (kept in the parent so remounting Case history
+   * does not re-run Summarize).
+   */
+  summarizeConsumedId?: number;
+  onSummarizeConsumed?: (requestId: number) => void;
+  /** When the chart work bar already has Summarize / Jot. */
   hideChromeActions?: boolean;
 };
 
@@ -242,8 +248,10 @@ export default function BriefCaseHistoryPanel({
   patientId,
   patientName,
   practiceTz,
-  onNewEpiphany,
+  onNewJot,
   summarizeRequestId = 0,
+  summarizeConsumedId = 0,
+  onSummarizeConsumed,
   hideChromeActions = false,
 }: Props) {
   const auth = useAuth();
@@ -459,10 +467,10 @@ export default function BriefCaseHistoryPanel({
   runRef.current = run;
 
   useEffect(() => {
-    if (summarizeRequestId > 0) {
-      void runRef.current();
-    }
-  }, [summarizeRequestId]);
+    if (summarizeRequestId <= 0 || summarizeRequestId <= summarizeConsumedId) return;
+    onSummarizeConsumed?.(summarizeRequestId);
+    void runRef.current();
+  }, [summarizeRequestId, summarizeConsumedId, onSummarizeConsumed]);
 
   useEffect(() => {
     if (pendingRun.current && source?.text.trim() && !busy) {
@@ -493,6 +501,9 @@ export default function BriefCaseHistoryPanel({
         history: prior,
         patientName,
         asOfDate,
+        patientId,
+        clientId: patientRecord ? clientIdFromPatientRow(patientRecord) : undefined,
+        chatScope: 'patient',
         ...identity,
       });
       const answer = fillLetterheadPlaceholders(rawAnswer, identity);
@@ -563,12 +574,12 @@ export default function BriefCaseHistoryPanel({
               onClick={() => void run()}
             >
               <Sparkles size={15} aria-hidden />
-              {busy ? 'Summarizing…' : `Summarize as of ${asOfLabel}`}
+              {busy ? '…Loading' : `Summarize as of ${asOfLabel}`}
             </button>
-            {onNewEpiphany ? (
-              <button type="button" className="brief-btn" onClick={onNewEpiphany}>
+            {onNewJot ? (
+              <button type="button" className="brief-btn" onClick={onNewJot}>
                 <Plus size={15} aria-hidden />
-                Epiphany
+                Jot
               </button>
             ) : null}
           </div>
@@ -578,12 +589,19 @@ export default function BriefCaseHistoryPanel({
       {error ? <p className="brief-error">{error}</p> : null}
       {sourceError ? <p className="brief-error">{sourceError}</p> : null}
 
+      {busy ? (
+        <p className="brief-review__loading" role="status" aria-live="polite">
+          …Loading
+        </p>
+      ) : null}
+
       {rows.length === 0 && !busy ? (
         <div className="brief-review__empty">
           <Sparkles size={22} aria-hidden />
           <h4>Create a case summary</h4>
           <p>
-            One snapshot of this chart as of today. You can still ask follow-up questions below.
+            One snapshot of this chart as of today. Click Summarize when you want it — nothing runs
+            until then. You can still ask follow-up questions below.
           </p>
           <div className="brief-review__empty-actions">
             <button
@@ -594,7 +612,7 @@ export default function BriefCaseHistoryPanel({
               onClick={() => void run()}
             >
               <Sparkles size={15} aria-hidden />
-              {busy ? 'Summarizing…' : `Summarize as of ${asOfLabel}`}
+              {busy ? '…Loading' : `Summarize as of ${asOfLabel}`}
             </button>
           </div>
         </div>

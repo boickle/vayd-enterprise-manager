@@ -224,8 +224,11 @@ export function stripCheckinPlaceholder(text: string): string {
 /** Header the AI scribe files visit-conversation history under, below the check-in block. */
 export const VISIT_DISCUSSION_HEADER = 'Visit discussion:';
 
-/** Doctor dictation captured in Epiphany before walking in — kept separate from client discussion. */
+/** Doctor dictation captured in Jot before walking in — kept separate from client discussion. */
 export const CLINICIAN_PREVISIT_HEADER = 'Clinician pre-visit notes:';
+
+/** Prior-chart case summary (Jot / auto on SOAP open) — above visit discussion. */
+export const CASE_SUMMARY_HEADER = 'Case summary:';
 
 export function looksLikeSpokenChatter(text: string): boolean {
   return /starbucks|cup of coffee|can we stop|hold on i(?:'| a)?m|turn left|you hungry|need a coffee|silencia|\bon sierra\b/i.test(
@@ -235,6 +238,7 @@ export function looksLikeSpokenChatter(text: string): boolean {
 
 export type SubjectiveHistoryParts = {
   checkin: string;
+  caseSummary: string;
   clinicianPrevisit: string;
   visitDiscussion: string;
 };
@@ -243,59 +247,89 @@ function headerPattern(header: string): RegExp {
   return new RegExp(`(?:^|\\n)${escapeForRegExp(header)}\\s*\\n?`, 'i');
 }
 
+type SectionKey = 'caseSummary' | 'clinicianPrevisit' | 'visitDiscussion';
+
+function firstHeaderIndex(
+  raw: string,
+  headers: { key: SectionKey; header: string }[]
+): { key: SectionKey; index: number; header: string } | null {
+  let best: { key: SectionKey; index: number; header: string } | null = null;
+  for (const h of headers) {
+    const idx = raw.search(headerPattern(h.header));
+    if (idx < 0) continue;
+    if (!best || idx < best.index) best = { key: h.key, index: idx, header: h.header };
+  }
+  return best;
+}
+
 /**
- * Split Subjective into check-in (client), clinician prep notes (Epiphany), and visit discussion.
+ * Split Subjective into check-in (client), case summary, clinician prep, and visit discussion.
  */
 export function splitSubjectiveHistoryParts(text: string): SubjectiveHistoryParts {
+  const empty: SubjectiveHistoryParts = {
+    checkin: '',
+    caseSummary: '',
+    clinicianPrevisit: '',
+    visitDiscussion: '',
+  };
   const raw = text.trim();
-  if (!raw) return { checkin: '', clinicianPrevisit: '', visitDiscussion: '' };
+  if (!raw) return empty;
 
-  const clinicianIdx = raw.search(headerPattern(CLINICIAN_PREVISIT_HEADER));
-  const visitIdx = raw.search(headerPattern(VISIT_DISCUSSION_HEADER));
+  const sectionHeaders: { key: SectionKey; header: string }[] = [
+    { key: 'caseSummary', header: CASE_SUMMARY_HEADER },
+    { key: 'clinicianPrevisit', header: CLINICIAN_PREVISIT_HEADER },
+    { key: 'visitDiscussion', header: VISIT_DISCUSSION_HEADER },
+  ];
 
+  const first = firstHeaderIndex(raw, sectionHeaders);
   let checkin = raw;
   let rest = '';
-  if (clinicianIdx >= 0 && (visitIdx < 0 || clinicianIdx < visitIdx)) {
-    checkin = raw.slice(0, clinicianIdx).trim();
-    rest = raw.slice(clinicianIdx).trim();
-  } else if (visitIdx >= 0) {
-    checkin = raw.slice(0, visitIdx).trim();
-    rest = raw.slice(visitIdx).trim();
+  if (first) {
+    checkin = raw.slice(0, first.index).trim();
+    rest = raw.slice(first.index).trim();
   }
 
-  let clinicianPrevisit = '';
-  let visitDiscussion = rest;
-  if (rest.toLowerCase().startsWith(CLINICIAN_PREVISIT_HEADER.toLowerCase())) {
-    const afterHeader = rest.slice(CLINICIAN_PREVISIT_HEADER.length).trim();
-    const nestedVisit = afterHeader.search(headerPattern(VISIT_DISCUSSION_HEADER));
-    if (nestedVisit >= 0) {
-      clinicianPrevisit = afterHeader.slice(0, nestedVisit).trim();
-      visitDiscussion = afterHeader.slice(nestedVisit).trim();
-    } else {
-      clinicianPrevisit = afterHeader;
-      visitDiscussion = '';
+  const parts: SubjectiveHistoryParts = {
+    checkin,
+    caseSummary: '',
+    clinicianPrevisit: '',
+    visitDiscussion: '',
+  };
+
+  let cursor = rest;
+  while (cursor) {
+    const hit = firstHeaderIndex(cursor, sectionHeaders);
+    if (!hit || hit.index !== 0) {
+      // Unlabeled remainder → visit discussion
+      parts.visitDiscussion = [parts.visitDiscussion, cursor].filter(Boolean).join('\n\n').trim();
+      break;
     }
-  }
-  if (visitDiscussion.toLowerCase().startsWith(VISIT_DISCUSSION_HEADER.toLowerCase())) {
-    visitDiscussion = visitDiscussion.slice(VISIT_DISCUSSION_HEADER.length).trim();
+    const afterHeader = cursor.slice(hit.header.length).trim();
+    const next = firstHeaderIndex(afterHeader, sectionHeaders);
+    const body = (next ? afterHeader.slice(0, next.index) : afterHeader).trim();
+    parts[hit.key] = body;
+    cursor = next ? afterHeader.slice(next.index).trim() : '';
   }
 
   if (
-    !clinicianPrevisit &&
-    !visitDiscussion &&
-    !hasPreVisitSubjectivePrefix(checkin) &&
-    clinicianIdx < 0 &&
-    visitIdx < 0
+    !parts.caseSummary &&
+    !parts.clinicianPrevisit &&
+    !parts.visitDiscussion &&
+    !hasPreVisitSubjectivePrefix(parts.checkin) &&
+    !first
   ) {
-    return { checkin: '', clinicianPrevisit: '', visitDiscussion: raw };
+    return { ...empty, visitDiscussion: raw };
   }
 
-  return { checkin, clinicianPrevisit, visitDiscussion };
+  return parts;
 }
 
 export function joinSubjectiveHistoryParts(parts: SubjectiveHistoryParts): string {
   const blocks: string[] = [];
   if (parts.checkin.trim()) blocks.push(parts.checkin.trim());
+  if (parts.caseSummary.trim()) {
+    blocks.push(`${CASE_SUMMARY_HEADER}\n\n${parts.caseSummary.trim()}`);
+  }
   if (parts.clinicianPrevisit.trim()) {
     blocks.push(`${CLINICIAN_PREVISIT_HEADER}\n\n${parts.clinicianPrevisit.trim()}`);
   }
@@ -317,6 +351,53 @@ export function mergeClinicianPrevisitNotes(existing: string, notes: string): st
 }
 
 /**
+ * True when a Case summary block looks like it describes a different pet than `patientName`
+ * (e.g. "Charlie is a cat…" on Simon's chart).
+ */
+export function caseSummaryLooksWrongForPatient(
+  summary: string,
+  patientName: string
+): boolean {
+  const name = patientName.trim();
+  if (!name || /^Patient #\d+$/i.test(name)) return false;
+  const text = summary.trim();
+  if (!text) return false;
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const namesSelf = new RegExp(`\\b${escaped}\\b`, 'i').test(text);
+  if (namesSelf) return false;
+  // Opens with "OtherName is a …" or otherwise narrates a named subject without this pet.
+  if (/^[A-Z][a-zA-Z'’-]+\s+is\b/m.test(text)) return true;
+  if (/\b(is a|presents as|patient of)\b/i.test(text)) return true;
+  return false;
+}
+
+/**
+ * Seed or replace the prior-chart case summary block (Process leaves this alone).
+ * Pass `patientName` to overwrite a summary that names the wrong pet.
+ */
+export function mergeCaseSummaryNotes(
+  existing: string,
+  summary: string,
+  opts?: { patientName?: string }
+): string {
+  const incoming = summary.trim();
+  if (!incoming) return existing.trim();
+  const parts = splitSubjectiveHistoryParts(existing);
+  const existingSummary = parts.caseSummary.trim();
+  if (
+    existingSummary &&
+    !(
+      opts?.patientName &&
+      caseSummaryLooksWrongForPatient(existingSummary, opts.patientName)
+    )
+  ) {
+    return existing.trim();
+  }
+  parts.caseSummary = incoming;
+  return joinSubjectiveHistoryParts(parts);
+}
+
+/**
  * Puts the pre-visit check-in block back on top of Subjective. Used when a chart already
  * has doctor- or scribe-written history but no check-in block — the block belongs first,
  * and the existing text becomes the visit discussion under it.
@@ -326,10 +407,11 @@ export function prependCheckinBlock(block: string, existing: string): string {
   if (!rest) return block;
   const parts = splitSubjectiveHistoryParts(rest);
   parts.checkin = block;
-  if (!parts.clinicianPrevisit && !parts.visitDiscussion && rest) {
+  if (!parts.caseSummary && !parts.clinicianPrevisit && !parts.visitDiscussion && rest) {
     if (rest.toLowerCase().startsWith(VISIT_DISCUSSION_HEADER.toLowerCase())) {
       return joinSubjectiveHistoryParts({
         checkin: block,
+        caseSummary: '',
         clinicianPrevisit: '',
         visitDiscussion: rest.slice(VISIT_DISCUSSION_HEADER.length).trim(),
       });

@@ -16,6 +16,10 @@ import {
 } from '../api/zoneLookup';
 import { DateTime } from 'luxon';
 import { practiceTimeZoneOrDefault } from './practiceTimezone';
+import {
+  daysToRequireZoneAssignment,
+  resolveScheduleZonesForDay,
+} from './employeeWeekZones';
 
 const LOOKUP_CACHE_MS = 5 * 60 * 1000;
 
@@ -54,13 +58,12 @@ function employeeHasZoneOnScheduleDay(
   dayOfWeek: number,
   zoneLabel?: string | null
 ): boolean {
-  const schedule = employee.weeklySchedules?.find((s) => s.dayOfWeek === dayOfWeek);
-  const zones = schedule?.zones;
-  if (!Array.isArray(zones) || zones.length === 0) return false;
+  const zones = resolveScheduleZonesForDay(employee, dayOfWeek);
+  if (zones.length === 0) return false;
   return zones.some((z) => scheduleZoneMatchesTarget(z, zoneId, zoneLabel));
 }
 
-/** Same rules as Settings → Employee Zones (assigned rows only). */
+/** Same rules as Settings → Staff → Schedule (assigned rows only). */
 export function isEmployeeAssignedToZoneId(
   employee: Employee,
   zoneId: number,
@@ -70,16 +73,16 @@ export function isEmployeeAssignedToZoneId(
   const schedules = employee.weeklySchedules ?? [];
   if (schedules.length === 0) return false;
 
-  if (daysOfWeek?.length) {
-    const targetDays = daysOfWeek.filter((d) => Number.isFinite(d) && d >= 0 && d <= 6);
-    if (targetDays.length === 0) return false;
-    return targetDays.every((dow) =>
+  const requiredDays = daysToRequireZoneAssignment(employee, daysOfWeek);
+  if (requiredDays) {
+    if (requiredDays.length === 0) return false;
+    return requiredDays.every((dow) =>
       employeeHasZoneOnScheduleDay(employee, zoneId, dow, zoneLabel)
     );
   }
 
   for (const schedule of schedules) {
-    for (const zone of schedule.zones ?? []) {
+    for (const zone of resolveScheduleZonesForDay(employee, schedule.dayOfWeek)) {
       if (scheduleZoneMatchesTarget(zone, zoneId, zoneLabel)) return true;
     }
   }
@@ -92,9 +95,8 @@ function employeeHasTransitioningZoneOnScheduleDay(
   dayOfWeek: number,
   zoneLabel?: string | null
 ): boolean {
-  const schedule = employee.weeklySchedules?.find((s) => s.dayOfWeek === dayOfWeek);
-  const zones = schedule?.zones;
-  if (!Array.isArray(zones) || zones.length === 0) return false;
+  const zones = resolveScheduleZonesForDay(employee, dayOfWeek);
+  if (zones.length === 0) return false;
   return zones.some(
     (z) => scheduleZoneMatchesTarget(z, zoneId, zoneLabel) && z.transitioningOutOfZone === true
   );
@@ -109,16 +111,16 @@ export function isEmployeeTransitioningOutOfZoneId(
 ): boolean {
   if (!isEmployeeAssignedToZoneId(employee, zoneId, daysOfWeek, zoneLabel)) return false;
 
-  if (daysOfWeek?.length) {
-    const targetDays = daysOfWeek.filter((d) => Number.isFinite(d) && d >= 0 && d <= 6);
-    if (targetDays.length === 0) return false;
-    return targetDays.every((dow) =>
+  const requiredDays = daysToRequireZoneAssignment(employee, daysOfWeek);
+  if (requiredDays) {
+    if (requiredDays.length === 0) return false;
+    return requiredDays.every((dow) =>
       employeeHasTransitioningZoneOnScheduleDay(employee, zoneId, dow, zoneLabel)
     );
   }
 
   for (const schedule of employee.weeklySchedules ?? []) {
-    for (const zone of schedule.zones ?? []) {
+    for (const zone of resolveScheduleZonesForDay(employee, schedule.dayOfWeek)) {
       if (scheduleZoneMatchesTarget(zone, zoneId, zoneLabel) && zone.transitioningOutOfZone === true) {
         return true;
       }

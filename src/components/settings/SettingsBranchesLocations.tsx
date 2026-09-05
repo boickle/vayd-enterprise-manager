@@ -8,8 +8,52 @@ import {
   patchPracticeBranch,
   type InventoryBranchLocation,
   type PracticeBranch,
+  type PracticeBranchAddressBody,
 } from '../../api/branchInventory';
+import { formatAddressFields } from '../../api/geo';
+import { AddressAutocomplete, type AddressFields } from '../AddressAutocomplete';
+import { EMPTY_ADDRESS_FIELDS } from '../../utils/verifiedAddress';
 import { appConfirm } from '../../utils/appDialog';
+
+function branchToAddress(b: PracticeBranch): AddressFields {
+  return {
+    line1: b.address1 ?? '',
+    line2: b.address2 ?? '',
+    city: b.city ?? '',
+    state: b.state ?? '',
+    zip: b.zipcode ?? '',
+    country: b.country ?? 'US',
+    ...(b.latitude != null ? { lat: Number(b.latitude) } : {}),
+    ...(b.longitude != null ? { lon: Number(b.longitude) } : {}),
+  };
+}
+
+function formatBranchAddress(b: PracticeBranch): string {
+  return formatAddressFields({
+    line1: b.address1 ?? '',
+    line2: b.address2 ?? undefined,
+    city: b.city ?? '',
+    state: b.state ?? '',
+    zip: b.zipcode ?? '',
+  }).trim();
+}
+
+function addressPayload(a: AddressFields): PracticeBranchAddressBody {
+  return {
+    address1: a.line1.trim(),
+    address2: a.line2?.trim() || null,
+    city: a.city.trim(),
+    state: a.state.trim(),
+    zipcode: a.zip.trim(),
+    country: a.country?.trim() || 'US',
+    latitude: a.lat ?? null,
+    longitude: a.lon ?? null,
+  };
+}
+
+function isAddressComplete(a: AddressFields): boolean {
+  return Boolean(a.line1.trim() && a.city.trim() && a.state.trim() && a.zip.trim());
+}
 
 function extractErr(err: unknown): string {
   const e = err as { response?: { data?: { message?: string | string[] } }; message?: string };
@@ -36,14 +80,13 @@ export default function SettingsBranchesLocations({ practiceId, onMessage }: Pro
   const [locations, setLocations] = useState<InventoryBranchLocation[]>([]);
   const [locLoading, setLocLoading] = useState(false);
 
-  const [newBranchName, setNewBranchName] = useState('');
-  const [newBranchPimsId, setNewBranchPimsId] = useState('');
+  const [branchFormName, setBranchFormName] = useState('');
+  const [branchFormPimsId, setBranchFormPimsId] = useState('');
+  const [branchFormAddress, setBranchFormAddress] = useState<AddressFields>({
+    ...EMPTY_ADDRESS_FIELDS,
+  });
   const [branchSaving, setBranchSaving] = useState(false);
-
   const [editingBranchId, setEditingBranchId] = useState<number | null>(null);
-  const [editBranchName, setEditBranchName] = useState('');
-  const [editBranchPimsId, setEditBranchPimsId] = useState('');
-  const [editBranchSaving, setEditBranchSaving] = useState(false);
 
   const [newLocCode, setNewLocCode] = useState('');
   const [newLocName, setNewLocName] = useState('');
@@ -116,24 +159,45 @@ export default function SettingsBranchesLocations({ practiceId, onMessage }: Pro
   );
   const selectedBranch = activeBranches.find((b) => b.id === selectedBranchId) ?? null;
 
-  async function addBranch() {
-    const name = newBranchName.trim();
+  function resetBranchForm() {
+    setEditingBranchId(null);
+    setBranchFormName('');
+    setBranchFormPimsId('');
+    setBranchFormAddress({ ...EMPTY_ADDRESS_FIELDS });
+  }
+
+  async function saveBranch() {
+    const name = branchFormName.trim();
     if (!name) {
       notify('Branch name is required', 'error');
       return;
     }
+    if (!isAddressComplete(branchFormAddress)) {
+      notify('Street, city, state, and ZIP are required', 'error');
+      return;
+    }
     setBranchSaving(true);
     try {
-      const pims = newBranchPimsId.trim();
-      const created = await createPracticeBranch(practiceId, {
-        name,
-        ...(pims ? { pimsLocationId: pims } : {}),
-      });
-      setNewBranchName('');
-      setNewBranchPimsId('');
-      notify(`Branch “${created.name}” created`, 'success');
+      const pims = branchFormPimsId.trim();
+      const address = addressPayload(branchFormAddress);
+      if (editingBranchId != null) {
+        await patchPracticeBranch(practiceId, editingBranchId, {
+          name,
+          pimsLocationId: pims || null,
+          ...address,
+        });
+        notify('Branch updated', 'success');
+      } else {
+        const created = await createPracticeBranch(practiceId, {
+          name,
+          ...(pims ? { pimsLocationId: pims } : {}),
+          ...address,
+        });
+        setSelectedBranchId(created.id);
+        notify(`Branch “${created.name}” created`, 'success');
+      }
+      resetBranchForm();
       await loadBranches();
-      setSelectedBranchId(created.id);
     } catch (e) {
       notify(extractErr(e), 'error');
     } finally {
@@ -143,31 +207,9 @@ export default function SettingsBranchesLocations({ practiceId, onMessage }: Pro
 
   function startEditBranch(b: PracticeBranch) {
     setEditingBranchId(b.id);
-    setEditBranchName(b.name);
-    setEditBranchPimsId(b.pimsLocationId ?? '');
-  }
-
-  async function saveEditBranch() {
-    if (editingBranchId == null) return;
-    const name = editBranchName.trim();
-    if (!name) {
-      notify('Branch name is required', 'error');
-      return;
-    }
-    setEditBranchSaving(true);
-    try {
-      await patchPracticeBranch(practiceId, editingBranchId, {
-        name,
-        pimsLocationId: editBranchPimsId.trim() || null,
-      });
-      setEditingBranchId(null);
-      notify('Branch updated', 'success');
-      await loadBranches();
-    } catch (e) {
-      notify(extractErr(e), 'error');
-    } finally {
-      setEditBranchSaving(false);
-    }
+    setBranchFormName(b.name);
+    setBranchFormPimsId(b.pimsLocationId ?? '');
+    setBranchFormAddress(branchToAddress(b));
   }
 
   async function archiveBranch(b: PracticeBranch) {
@@ -289,7 +331,8 @@ export default function SettingsBranchesLocations({ practiceId, onMessage }: Pro
         <h3 className="settings-card-title">Branches (offices)</h3>
         <p className="settings-muted" style={{ marginBottom: 12 }}>
           A branch is a practice site or office. Inventory, tasks, and stock movements are scoped to
-          a branch. Creating a branch also creates a default <code>main</code> location bucket.
+          a branch. Each branch needs a street address. Creating a branch also creates a default{' '}
+          <code>main</code> location bucket.
         </p>
 
         {branchesLoading ? (
@@ -301,6 +344,7 @@ export default function SettingsBranchesLocations({ practiceId, onMessage }: Pro
                 <thead>
                   <tr>
                     <th>Name</th>
+                    <th>Address</th>
                     <th>Default</th>
                     <th>Status</th>
                     <th>PIMS location id</th>
@@ -310,7 +354,7 @@ export default function SettingsBranchesLocations({ practiceId, onMessage }: Pro
                 <tbody>
                   {branches.length === 0 ? (
                     <tr>
-                      <td colSpan={5} className="settings-muted">
+                      <td colSpan={6} className="settings-muted">
                         No branches yet.
                       </td>
                     </tr>
@@ -318,92 +362,60 @@ export default function SettingsBranchesLocations({ practiceId, onMessage }: Pro
                     branches.map((b) => {
                       const archived = b.isActive === false;
                       const editing = editingBranchId === b.id;
+                      const addressText = formatBranchAddress(b);
                       return (
-                        <tr key={b.id} style={archived ? { opacity: 0.72 } : undefined}>
+                        <tr
+                          key={b.id}
+                          style={{
+                            opacity: archived ? 0.72 : undefined,
+                            background: editing ? '#f0fdf4' : undefined,
+                          }}
+                        >
                           <td>
-                            {editing ? (
-                              <input
-                                className="settings-input"
-                                value={editBranchName}
-                                onChange={(e) => setEditBranchName(e.target.value)}
-                                style={{ maxWidth: 260 }}
-                              />
+                            <strong>{b.name}</strong>
+                          </td>
+                          <td>
+                            {addressText ? (
+                              addressText
                             ) : (
-                              <strong>{b.name}</strong>
+                              <span className="settings-muted">Add address</span>
                             )}
                           </td>
                           <td>{b.isDefault ? 'Yes' : '—'}</td>
                           <td>{archived ? 'Archived' : 'Active'}</td>
                           <td>
-                            {editing ? (
-                              <input
-                                className="settings-input"
-                                value={editBranchPimsId}
-                                onChange={(e) => setEditBranchPimsId(e.target.value)}
-                                placeholder="Optional"
-                                style={{ maxWidth: 160 }}
-                              />
-                            ) : b.pimsLocationId ? (
-                              <code>{b.pimsLocationId}</code>
-                            ) : (
-                              '—'
-                            )}
+                            {b.pimsLocationId ? <code>{b.pimsLocationId}</code> : '—'}
                           </td>
                           <td>
                             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                              {editing ? (
-                                <>
-                                  <button
-                                    type="button"
-                                    className="btn primary"
-                                    style={{ fontSize: 12, padding: '4px 10px' }}
-                                    disabled={editBranchSaving}
-                                    onClick={() => void saveEditBranch()}
-                                  >
-                                    {editBranchSaving ? 'Saving…' : 'Save'}
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="btn secondary"
-                                    style={{ fontSize: 12, padding: '4px 10px' }}
-                                    disabled={editBranchSaving}
-                                    onClick={() => setEditingBranchId(null)}
-                                  >
-                                    Cancel
-                                  </button>
-                                </>
+                              <button
+                                type="button"
+                                className="btn secondary"
+                                style={{ fontSize: 12, padding: '4px 10px' }}
+                                onClick={() => startEditBranch(b)}
+                              >
+                                Edit
+                              </button>
+                              {archived ? (
+                                <button
+                                  type="button"
+                                  className="btn secondary"
+                                  style={{ fontSize: 12, padding: '4px 10px' }}
+                                  onClick={() => void restoreBranch(b)}
+                                >
+                                  Restore
+                                </button>
                               ) : (
-                                <>
+                                !b.isDefault && (
                                   <button
                                     type="button"
                                     className="btn secondary"
                                     style={{ fontSize: 12, padding: '4px 10px' }}
-                                    onClick={() => startEditBranch(b)}
+                                    onClick={() => void archiveBranch(b)}
                                   >
-                                    Edit
+                                    Archive
                                   </button>
-                                  {archived ? (
-                                    <button
-                                      type="button"
-                                      className="btn secondary"
-                                      style={{ fontSize: 12, padding: '4px 10px' }}
-                                      onClick={() => void restoreBranch(b)}
-                                    >
-                                      Restore
-                                    </button>
-                                  ) : (
-                                    !b.isDefault && (
-                                      <button
-                                        type="button"
-                                        className="btn secondary"
-                                        style={{ fontSize: 12, padding: '4px 10px' }}
-                                        onClick={() => void archiveBranch(b)}
-                                      >
-                                        Archive
-                                      </button>
-                                    )
-                                  )}
-                                </>
+                                )
                               )}
                             </div>
                           </td>
@@ -415,47 +427,115 @@ export default function SettingsBranchesLocations({ practiceId, onMessage }: Pro
               </table>
             </div>
 
-            <div
-              style={{
-                display: 'flex',
-                flexWrap: 'wrap',
-                gap: 10,
-                alignItems: 'flex-end',
-                maxWidth: 720,
-              }}
-            >
-              <label className="settings-label" style={{ flex: '1 1 200px', marginBottom: 0 }}>
-                New branch name
-                <input
-                  className="settings-input"
-                  value={newBranchName}
-                  onChange={(e) => setNewBranchName(e.target.value)}
-                  placeholder="e.g. Brunswick office"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      void addBranch();
+            <div className="settings-branch-form">
+              <h4 className="settings-branch-form-title">
+                {editingBranchId != null ? 'Edit branch' : 'Add branch'}
+              </h4>
+              <div className="settings-branch-form-row">
+                <label className="settings-label" style={{ marginBottom: 0 }}>
+                  Branch name
+                  <input
+                    className="settings-input"
+                    value={branchFormName}
+                    onChange={(e) => setBranchFormName(e.target.value)}
+                    placeholder="e.g. Brunswick office"
+                  />
+                </label>
+                <label className="settings-label" style={{ marginBottom: 0 }}>
+                  PIMS location id (optional)
+                  <input
+                    className="settings-input"
+                    value={branchFormPimsId}
+                    onChange={(e) => setBranchFormPimsId(e.target.value)}
+                    placeholder="eVet / PIMS id"
+                  />
+                </label>
+              </div>
+              <label className="settings-label settings-branch-address-street">
+                Address
+                <AddressAutocomplete
+                  value={branchFormAddress}
+                  onChange={setBranchFormAddress}
+                  placeholder="Start typing the office address"
+                  inputClassName="settings-input"
+                  compact
+                  showConfirmedMessage
+                />
+              </label>
+              <div className="settings-branch-address-grid">
+                <label className="settings-label" style={{ marginBottom: 0 }}>
+                  City
+                  <input
+                    className="settings-input"
+                    value={branchFormAddress.city}
+                    onChange={(e) =>
+                      setBranchFormAddress((prev) => ({
+                        ...prev,
+                        city: e.target.value,
+                        lat: undefined,
+                        lon: undefined,
+                      }))
                     }
-                  }}
-                />
-              </label>
-              <label className="settings-label" style={{ flex: '1 1 160px', marginBottom: 0 }}>
-                PIMS location id (optional)
-                <input
-                  className="settings-input"
-                  value={newBranchPimsId}
-                  onChange={(e) => setNewBranchPimsId(e.target.value)}
-                  placeholder="eVet / PIMS id"
-                />
-              </label>
-              <button
-                type="button"
-                className="btn primary"
-                disabled={branchSaving}
-                onClick={() => void addBranch()}
-              >
-                {branchSaving ? 'Adding…' : 'Add branch'}
-              </button>
+                    placeholder="City"
+                  />
+                </label>
+                <label className="settings-label" style={{ marginBottom: 0 }}>
+                  State
+                  <input
+                    className="settings-input"
+                    value={branchFormAddress.state}
+                    onChange={(e) =>
+                      setBranchFormAddress((prev) => ({
+                        ...prev,
+                        state: e.target.value,
+                        lat: undefined,
+                        lon: undefined,
+                      }))
+                    }
+                    placeholder="ME"
+                  />
+                </label>
+                <label className="settings-label" style={{ marginBottom: 0 }}>
+                  ZIP
+                  <input
+                    className="settings-input"
+                    value={branchFormAddress.zip}
+                    onChange={(e) =>
+                      setBranchFormAddress((prev) => ({
+                        ...prev,
+                        zip: e.target.value,
+                        lat: undefined,
+                        lon: undefined,
+                      }))
+                    }
+                    placeholder="04011"
+                  />
+                </label>
+              </div>
+              <div className="settings-branch-form-actions">
+                <button
+                  type="button"
+                  className="btn primary"
+                  disabled={branchSaving}
+                  onClick={() => void saveBranch()}
+                >
+                  {branchSaving
+                    ? 'Saving…'
+                    : editingBranchId != null
+                      ? 'Save branch'
+                      : 'Add branch'}
+                </button>
+                {editingBranchId != null ? (
+                  <button
+                    type="button"
+                    className="btn secondary"
+                    disabled={branchSaving}
+                    onClick={resetBranchForm}
+                  >
+                    Cancel
+                  </button>
+                ) : null}
+              </div>
             </div>
           </>
         )}

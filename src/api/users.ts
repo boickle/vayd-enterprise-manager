@@ -42,9 +42,15 @@ export async function getCurrentUser() {
   return http.get('/users');
 }
 
-export async function patchUserUiPrefs(body: { clientLayout?: Record<string, unknown> }) {
+export async function patchUserUiPrefs(body: {
+  clientLayout?: Record<string, unknown>;
+  patientLayout?: Record<string, unknown>;
+}) {
   const { data } = await http.patch('/users/ui-prefs', body);
-  return data as { clientLayout?: Record<string, unknown> };
+  return data as {
+    clientLayout?: Record<string, unknown>;
+    patientLayout?: Record<string, unknown>;
+  };
 }
 
 // Update communication preferences
@@ -99,6 +105,7 @@ export type AdminManagedUser = {
 };
 
 export type UpdateAdminUserPayload = {
+  email?: string;
   role?: ScoutUserRole | string;
   employeeId?: number | null;
   doctorId?: number | null;
@@ -109,6 +116,7 @@ export type ListAdminUsersParams = {
   q?: string;
   role?: string;
   isActive?: boolean;
+  employeeId?: number;
 };
 
 export async function fetchAdminUsers(
@@ -118,6 +126,7 @@ export async function fetchAdminUsers(
     params: {
       q: params.q || undefined,
       role: params.role || undefined,
+      employeeId: params.employeeId,
       isActive:
         params.isActive === undefined ? undefined : params.isActive ? 'true' : 'false',
     },

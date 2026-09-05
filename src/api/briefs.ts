@@ -17,7 +17,7 @@ function isNotImplemented(err: unknown): boolean {
 }
 
 /**
- * Epiphany sessions are stored locally until the practice API exposes `/briefs`.
+ * Jot sessions are stored locally until the practice API exposes `/briefs`.
  * Create/update still attempt the server so a later backend can take over without a UI rewrite.
  */
 export async function listBriefs(): Promise<BriefSession[]> {

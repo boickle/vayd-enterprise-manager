@@ -4,6 +4,36 @@
   margin: 0 0 10px;
 }
 
+.pims-emr-alert-add {
+  align-self: start;
+  margin: 0;
+  padding: 6px 2px;
+  border: none;
+  background: transparent;
+  color: #57534e;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pims-emr-alert-add:hover {
+  color: #1d4ed8;
+  text-decoration: underline;
+}
+
+.pims-client-detail__household {
+  margin: 0 0 10px;
+}
+
+.pims-client-detail__autosave {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 600;
+  color: #059669;
+}
+
 .pims-client-detail__comms-cols {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);

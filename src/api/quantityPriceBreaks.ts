@@ -62,6 +62,9 @@ export type InventoryItem = {
   changePatientSex?: boolean;
   defaultQuantity?: number | string | null;
   vaccineDetails?: Record<string, unknown> | null;
+  recommendedAbc?: 'A' | 'B' | 'C' | string | null;
+  recommendedAbcAt?: string | null;
+  assignedAbc?: 'A' | 'B' | 'C' | string | null;
   [key: string]: any; // Allow additional fields
 };
 

@@ -93,12 +93,19 @@ export default function WasteAdminPage() {
   }
 
   if (!config) {
-    return <div className="settings-card" style={{ padding: 16 }}>Loading…</div>;
+    return (
+      <div className="settings-card">
+        <p className="settings-muted">Loading waste settings…</p>
+      </div>
+    );
   }
 
   return (
-    <div className="settings-card" style={{ maxWidth: 720, margin: '0 auto', padding: 16 }}>
-      <h2 style={{ marginTop: 0 }}>Waste + Disposal (Admin)</h2>
+    <div className="settings-card">
+      <h3 className="settings-card-title">Waste + disposal</h3>
+      <p className="settings-muted" style={{ marginBottom: 12, fontSize: 13 }}>
+        Reasons, disposal methods, and waste alerts for Waste / Adjust.
+      </p>
       {toast && <div className="settings-message">{toast}</div>}
       {error && (
         <div className="settings-message settings-error-message">{error}</div>

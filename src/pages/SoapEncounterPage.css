@@ -1085,6 +1085,23 @@
   font-size: 15px;
   margin-bottom: 12px;
 }
+.soap-checkout-branch {
+  margin: 0 0 12px;
+}
+.soap-checkout-branch label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #475569;
+}
+.soap-checkout-branch .soap-select {
+  flex: 1;
+  min-width: 0;
+  font-weight: 500;
+  color: #111827;
+}
 .soap-invoice-badge {
   font-size: 10.5px;
   font-weight: 700;
@@ -1924,6 +1941,10 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 10px;
+}
+.soap-doc-copy-all {
+  flex-shrink: 0;
 }
 .soap-doc-section-head h3 {
   margin: 0;
@@ -1962,6 +1983,66 @@
   opacity: 0.6;
   background: var(--soap-bg);
 }
+
+.soap-rich {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.soap-rich.is-disabled {
+  opacity: 0.65;
+}
+.soap-rich__bar {
+  display: flex;
+  gap: 6px;
+}
+.soap-rich__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--soap-border);
+  background: #fff;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #374151;
+  cursor: pointer;
+}
+.soap-rich__btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.soap-rich__editor {
+  width: 100%;
+  resize: vertical;
+  overflow: auto;
+  border: 1px solid var(--soap-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.55;
+  font-family: inherit;
+  color: #374151;
+  background: #fff;
+  white-space: pre-wrap;
+}
+.soap-rich__editor:focus {
+  outline: 2px solid rgba(59, 130, 246, 0.35);
+  outline-offset: 1px;
+}
+.soap-rich__editor strong,
+.soap-rich__editor b {
+  font-weight: 700;
+  color: #111827;
+}
+.soap-rich__editor:empty:before {
+  content: attr(data-placeholder);
+  white-space: pre-wrap;
+  color: #9ca3af;
+  pointer-events: none;
+}
+
 .soap-doc-email-subject {
   font-size: 12.5px;
   font-weight: 600;

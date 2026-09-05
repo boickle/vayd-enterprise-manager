@@ -27,6 +27,7 @@ export type PracticePaymentType = {
   isDiscountCategory: boolean;
   discountPercent: number;
   excludeFromIncome: boolean;
+  getsDeposited: boolean;
   isActive: boolean;
   sortOrder: number;
 };
@@ -38,6 +39,7 @@ export type PaymentTypeWrite = {
   isDiscountCategory?: boolean;
   discountPercent?: number;
   excludeFromIncome?: boolean;
+  getsDeposited?: boolean;
   isActive?: boolean;
 };
 
@@ -54,6 +56,7 @@ function normalizeRow(row: PracticePaymentType): PracticePaymentType {
     isDiscountCategory: row.isDiscountCategory === true,
     discountPercent: Number(row.discountPercent) || 0,
     excludeFromIncome: row.excludeFromIncome === true,
+    getsDeposited: row.getsDeposited === true,
     isActive: row.isActive !== false,
   };
 }

@@ -1,4 +1,4 @@
-/** Scout Epiphany — voice notes, callbacks, huddles, and visit prep. */
+/** Scout Jot — voice notes, callbacks, huddles, and visit prep. */
 
 export const BRIEF_KIND_VALUES = ['visit', 'previsit', 'callback', 'huddle', 'review'] as const;
 export type BriefKind = (typeof BRIEF_KIND_VALUES)[number];
@@ -33,7 +33,7 @@ export type BriefSession = {
 export const BRIEF_KIND_LABEL: Record<BriefKind, string> = {
   visit: 'Visit SOAP',
   previsit: 'Prep notes',
-  callback: 'Callback',
+  callback: 'Call',
   huddle: 'Staff huddle',
   review: 'Record review',
 };
@@ -42,7 +42,8 @@ export const BRIEF_KIND_HINT: Record<BriefKind, string> = {
   visit: 'Open the visit chart for an upcoming or unfinished appointment.',
   previsit:
     'Talk through history before you walk in. Injected into SOAP, separate from the visit discussion.',
-  callback: 'Call the client on Quo and transcribe the conversation.',
+  callback:
+    'Call the client on Quo and transcribe. The transcript is saved with the call; add it to the medical record only if you choose.',
   huddle: 'Meeting notes with no patient. Email the transcript when you are done.',
   review: 'Upload previous records and summarize them for prep.',
 };

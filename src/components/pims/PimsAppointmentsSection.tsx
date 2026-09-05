@@ -547,12 +547,12 @@ export default function PimsAppointmentsSection(props: PimsAppointmentsSectionPr
             >
               {props.collapsed ? <ChevronRight size={15} aria-hidden /> : <ChevronDown size={15} aria-hidden />}
               <Calendar size={15} aria-hidden />
-              Visits
+              Visits{loading ? '' : ` (${filtered.length})`}
             </button>
           ) : (
             <h3 id="pims-emr-visits">
               <Calendar size={15} aria-hidden />
-              Visits
+              Visits{loading ? '' : ` (${filtered.length})`}
             </h3>
           )}
         </div>

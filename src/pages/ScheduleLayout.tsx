@@ -11,6 +11,7 @@ import {
   ListChecks,
   Mail,
   Mic,
+  MessageSquare,
   Package,
   PackageSearch,
   PanelLeft,
@@ -20,6 +21,7 @@ import {
   ShoppingCart,
   Calculator,
   UserPlus,
+  Banknote,
 } from 'lucide-react';
 import { useAuth } from '../auth/useAuth';
 import {
@@ -79,7 +81,7 @@ const WORK_QUEUE_ROWS: QueueRow[] = [
   { label: 'Pending Checkout', count: 2, title: 'Coming soon', icon: ShoppingCart },
   { label: 'Lab Reviews', count: 1, title: 'Coming soon', icon: FlaskConical },
   { label: 'Pending Count Reviews', count: 2, title: 'Coming soon', icon: Calculator },
-  { label: 'Expiring Inventory', count: 4, to: '/schedule/catalog', icon: PackageSearch },
+  { label: 'Expiring Inventory', count: 4, to: '/schedule/inventory/items', icon: PackageSearch },
 ];
 
 export default function ScheduleLayout() {
@@ -173,8 +175,10 @@ export default function ScheduleLayout() {
       location.pathname === '/schedule/scheduler' ||
       location.pathname.startsWith('/schedule/scheduler/') ||
       location.pathname === '/schedule/routing' ||
-      location.pathname === '/schedule/epiphany' ||
-      location.pathname.startsWith('/schedule/epiphany/'),
+      location.pathname === '/schedule/jot' ||
+      location.pathname.startsWith('/schedule/jot/') ||
+      location.pathname === '/schedule/chat' ||
+      location.pathname.startsWith('/schedule/chat/'),
     [location.pathname]
   );
 
@@ -284,16 +288,28 @@ export default function ScheduleLayout() {
               <span className="schedule-app__quick-link-label">+ New Client</span>
             </NavLink>
             <NavLink
-              to="/schedule/epiphany"
+              to="/schedule/jot"
               className={({ isActive }) =>
                 `schedule-app__quick-link${isActive ? ' schedule-app__quick-link--active' : ''}`
               }
-              title={railCollapsedEffective ? 'Epiphany' : undefined}
+              title={railCollapsedEffective ? 'Jot' : undefined}
             >
               <span className="schedule-app__quick-link-icon" aria-hidden>
                 <Mic size={18} strokeWidth={1.75} />
               </span>
-              <span className="schedule-app__quick-link-label">Epiphany</span>
+              <span className="schedule-app__quick-link-label">Jot</span>
+            </NavLink>
+            <NavLink
+              to="/schedule/chat"
+              className={({ isActive }) =>
+                `schedule-app__quick-link${isActive ? ' schedule-app__quick-link--active' : ''}`
+              }
+              title={railCollapsedEffective ? 'Chat' : undefined}
+            >
+              <span className="schedule-app__quick-link-icon" aria-hidden>
+                <MessageSquare size={18} strokeWidth={1.75} />
+              </span>
+              <span className="schedule-app__quick-link-label">Chat</span>
             </NavLink>
             <NavLink
               to="/schedule/room-loader"
@@ -307,7 +323,7 @@ export default function ScheduleLayout() {
             </NavLink>
             {SHOW_RAIL_RESTOCK_LOCATION ? (
               <NavLink
-                to="/schedule/catalog"
+                to="/schedule/inventory/items"
                 className="schedule-app__quick-link"
                 title={railCollapsedEffective ? 'Restock Location' : undefined}
               >
@@ -338,18 +354,32 @@ export default function ScheduleLayout() {
               <span className="schedule-app__quick-link-label">+ Forward Booking</span>
             </NavLink>
             {canAccessScheduleAnalytics ? (
-              <NavLink
-                to="/schedule/analytics"
-                className={({ isActive }) =>
-                  `schedule-app__quick-link${isActive ? ' schedule-app__quick-link--active' : ''}`
-                }
-                title={railCollapsedEffective ? 'Analytics' : undefined}
-              >
-                <span className="schedule-app__quick-link-icon" aria-hidden>
-                  <LineChart size={18} strokeWidth={1.75} />
-                </span>
-                <span className="schedule-app__quick-link-label">Analytics</span>
-              </NavLink>
+              <>
+                <NavLink
+                  to="/schedule/analytics/bank-deposits"
+                  className={({ isActive }) =>
+                    `schedule-app__quick-link${isActive ? ' schedule-app__quick-link--active' : ''}`
+                  }
+                  title={railCollapsedEffective ? 'Create deposit' : undefined}
+                >
+                  <span className="schedule-app__quick-link-icon" aria-hidden>
+                    <Banknote size={18} strokeWidth={1.75} />
+                  </span>
+                  <span className="schedule-app__quick-link-label">Create deposit</span>
+                </NavLink>
+                <NavLink
+                  to="/schedule/analytics"
+                  className={({ isActive }) =>
+                    `schedule-app__quick-link${isActive ? ' schedule-app__quick-link--active' : ''}`
+                  }
+                  title={railCollapsedEffective ? 'Analytics' : undefined}
+                >
+                  <span className="schedule-app__quick-link-icon" aria-hidden>
+                    <LineChart size={18} strokeWidth={1.75} />
+                  </span>
+                  <span className="schedule-app__quick-link-label">Analytics</span>
+                </NavLink>
+              </>
             ) : null}
             {canAccessGmailInbox ? (
               <NavLink
@@ -416,7 +446,7 @@ export default function ScheduleLayout() {
         <div
           className={`schedule-app__outlet${outletFlush ? ' schedule-app__outlet--flush' : ''}${
             location.pathname === '/schedule/routing' ||
-            location.pathname.startsWith('/schedule/epiphany')
+            location.pathname.startsWith('/schedule/jot')
               ? ' schedule-app__outlet--routing-split'
               : ''
           }${outletFlushVerticallyScrollable ? ' schedule-app__outlet--flush-scroll-y' : ''}${

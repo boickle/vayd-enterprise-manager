@@ -8,6 +8,25 @@ export type PracticeBranch = {
   isDefault: boolean;
   isActive: boolean;
   pimsLocationId?: string | null;
+  address1?: string | null;
+  address2?: string | null;
+  city?: string | null;
+  state?: string | null;
+  zipcode?: string | null;
+  country?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+};
+
+export type PracticeBranchAddressBody = {
+  address1: string;
+  address2?: string | null;
+  city: string;
+  state: string;
+  zipcode: string;
+  country?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
 };
 
 export type BranchPriceOverrideEntityType = 'inventory_item' | 'procedure' | 'lab';
@@ -31,16 +50,55 @@ export type InventoryStockLocationRow = {
   branchLocationId: number;
   code: string;
   name: string;
+  isDefault?: boolean;
   quantityOnHand: number | null;
+  parLevel?: number | null;
 };
 
-/** GET …/inventory-items/:id/stock — totals + per-bucket breakdown; reorder only (no quantity on stock row). */
+/** GET …/inventory-items/:id/stock — totals + per-bucket breakdown. */
 export type InventoryBranchStock = {
   inventoryItemId: number;
   branchId: number;
   quantityOnHandTotal: number | null;
   reorderPoint: number | null;
+  parLevel?: number | null;
   locations: InventoryStockLocationRow[];
+};
+
+export type BranchParLocation = {
+  id: number;
+  code: string;
+  name: string;
+  isDefault?: boolean;
+};
+
+export type BranchParItemLocation = {
+  branchLocationId: number;
+  code: string;
+  name: string;
+  isDefault?: boolean;
+  quantityOnHand: number;
+  parLevel: number | null;
+  belowPar: boolean;
+};
+
+export type BranchParItem = {
+  inventoryItemId: number;
+  name: string;
+  code: string | null;
+  category?: number | null;
+  categoryName?: string | null;
+  reorderPoint: number | null;
+  parLevel: number | null;
+  quantityOnHandTotal: number;
+  belowPar: boolean;
+  locations: BranchParItemLocation[];
+};
+
+export type BranchParLevels = {
+  branchId: number;
+  locations: BranchParLocation[];
+  items: BranchParItem[];
 };
 
 export type InventoryBranchLocation = {
@@ -121,17 +179,21 @@ export async function listPracticeBranches(
 /** Create an office/site branch. Default inventory location (`main`) is created server-side. */
 export async function createPracticeBranch(
   practiceId: number,
-  body: { name: string; pimsLocationId?: string | null }
+  body: { name: string; pimsLocationId?: string | null } & PracticeBranchAddressBody
 ): Promise<PracticeBranch> {
   const { data } = await http.post<PracticeBranch>(`/practice/${practiceId}/branches`, body);
   return data;
 }
 
-/** Update name / PIMS id, or archive (`isActive: false`) / restore (`isActive: true`). */
+/** Update name / address / PIMS id, or archive (`isActive: false`) / restore (`isActive: true`). */
 export async function patchPracticeBranch(
   practiceId: number,
   branchId: number,
-  body: { name?: string; pimsLocationId?: string | null; isActive?: boolean }
+  body: {
+    name?: string;
+    pimsLocationId?: string | null;
+    isActive?: boolean;
+  } & Partial<PracticeBranchAddressBody>
 ): Promise<PracticeBranch> {
   const { data } = await http.patch<PracticeBranch>(
     `/practice/${practiceId}/branches/${branchId}`,
@@ -186,16 +248,30 @@ export async function getInventoryBranchStock(
   return data;
 }
 
-/** Reorder point only; quantity changes use `postInventoryMovement`. */
+/** Reorder / par; quantity changes use `postInventoryMovement`. */
 export async function upsertInventoryBranchStock(
   practiceId: number,
   branchId: number,
   inventoryItemId: number,
-  body: { reorderPoint?: number | null }
+  body: {
+    reorderPoint?: number | null;
+    parLevel?: number | null;
+    locations?: { branchLocationId: number; parLevel?: number | null }[];
+  }
 ): Promise<InventoryBranchStock> {
   const { data } = await http.put<InventoryBranchStock>(
     `/practice/${practiceId}/branches/${branchId}/inventory-items/${inventoryItemId}/stock`,
     body
+  );
+  return data;
+}
+
+export async function listBranchParLevels(
+  practiceId: number,
+  branchId: number
+): Promise<BranchParLevels> {
+  const { data } = await http.get<BranchParLevels>(
+    `/practice/${practiceId}/branches/${branchId}/inventory-pars`
   );
   return data;
 }

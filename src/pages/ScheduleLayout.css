@@ -355,6 +355,36 @@
   color: #1d4ed8;
 }
 
+.schedule-app__settings-submenu-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.schedule-app__settings-submenu-trigger svg {
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+
+.schedule-app__settings-submenu-chevron--open {
+  transform: rotate(180deg);
+}
+
+.schedule-app__settings-submenu-children {
+  display: flex;
+  flex-direction: column;
+  margin: 2px 0 4px 10px;
+  padding: 2px 0 2px 6px;
+  border-left: 2px solid #e2e8f0;
+}
+
 .schedule-app__outlet {
   flex: 1;
   min-height: 0;

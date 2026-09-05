@@ -24,6 +24,7 @@ export type SchedulerContextMenuAction =
   | { kind: 'view' }
   | { kind: 'edit' }
   | { kind: 'visitTimes' }
+  | { kind: 'openJot' }
   | { kind: 'openSoap' }
   | { kind: 'onMyWayText' }
   | { kind: 'remove' }
@@ -58,6 +59,9 @@ type Props = {
   showEditAppointment?: boolean;
   visitTimesDisabled?: boolean;
   visitTimesDisabledTitle?: string;
+  /** No patient (or other reason) — Jot Prep is unavailable. */
+  jotDisabled?: boolean;
+  jotDisabledTitle?: string;
   /** True when this visit's SOAP has been signed & locked. */
   soapLocked?: boolean;
   /** Progress modal: only "View Chart" (patient EMR in eVet). */
@@ -82,6 +86,8 @@ export function SchedulerAppointmentContextMenu({
   showEditAppointment,
   visitTimesDisabled,
   visitTimesDisabledTitle,
+  jotDisabled,
+  jotDisabledTitle,
   soapLocked = false,
   patientChartOnly = false,
 }: Props) {
@@ -212,6 +218,12 @@ export function SchedulerAppointmentContextMenu({
         onOpen={() => setOpenGroup('visit')}
         onCloseSub={() => setOpenGroup(null)}
       >
+        <CtxSubRow
+          label="Jot Prep"
+          disabled={Boolean(jotDisabled)}
+          title={jotDisabled ? jotDisabledTitle : undefined}
+          onPick={() => onAction({ kind: 'openJot' })}
+        />
         <CtxSubRow
           label="Start / End Visit"
           disabled={Boolean(visitTimesDisabled)}

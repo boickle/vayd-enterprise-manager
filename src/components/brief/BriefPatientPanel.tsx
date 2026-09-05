@@ -25,7 +25,7 @@ const TABS: { id: BriefPatientTab; label: string }[] = [
   { id: 'info', label: 'Patient info' },
   { id: 'sessions', label: 'Sessions' },
   { id: 'calls', label: 'Calls' },
-  { id: 'review', label: 'Record review' },
+  { id: 'review', label: 'Upload File' },
   { id: 'history', label: 'Case history' },
   { id: 'merge', label: 'Merge patients' },
 ];
@@ -47,6 +47,10 @@ type Props = {
   embedded?: boolean;
   /** Increment to start a today-as-of case summary. */
   summarizeRequestId?: number;
+  summarizeConsumedId?: number;
+  onSummarizeConsumed?: (requestId: number) => void;
+  clientId?: string | null;
+  onRecordsChanged?: () => void;
 };
 
 export default function BriefPatientPanel({
@@ -58,6 +62,10 @@ export default function BriefPatientPanel({
   onNew,
   embedded = false,
   summarizeRequestId = 0,
+  summarizeConsumedId = 0,
+  onSummarizeConsumed,
+  clientId: clientIdProp,
+  onRecordsChanged,
 }: Props) {
   const [record, setRecord] = useState<Record<string, unknown> | null>(null);
   const [sessions, setSessions] = useState<BriefSession[]>([]);
@@ -92,7 +100,7 @@ export default function BriefPatientPanel({
 
   const name = record ? patientDisplayName(record) : `Patient #${patientId}`;
   const clientName = record ? clientNameFromPatientRow(record) : null;
-  const clientId = record ? clientIdFromPatientRow(record) : null;
+  const clientId = clientIdProp ?? (record ? clientIdFromPatientRow(record) : null);
   const phone = record ? clientPhoneFromRecord(record) : null;
   const firstName = record ? (pickStr(record.firstName) ?? pickStr(record.name) ?? name) : name;
   const lastName = record ? (pickStr(record.lastName) ?? '') : '';
@@ -119,13 +127,13 @@ export default function BriefPatientPanel({
             {clientName ? <p className="brief-muted">{clientName}</p> : null}
           </div>
           <button type="button" className="brief-btn primary" onClick={() => onNew(prefill)}>
-            <Plus size={15} aria-hidden /> New Epiphany
+            <Plus size={15} aria-hidden /> New Jot
           </button>
         </div>
       ) : null}
 
       {!embedded ? (
-        <div className="brief-pills" role="tablist" aria-label="Patient Epiphany sections">
+        <div className="brief-pills" role="tablist" aria-label="Patient Jot sections">
           {TABS.map((t) => (
             <button
               key={t.id}
@@ -165,7 +173,7 @@ export default function BriefPatientPanel({
       {tab === 'sessions' ? (
         <ul className="brief-entry-list">
           {sessions.length === 0 && encounters.length === 0 ? (
-            <li className="brief-empty-row">No Epiphany sessions or SOAP visits yet.</li>
+            <li className="brief-empty-row">No Jot sessions or SOAP visits yet.</li>
           ) : null}
           {sessions.map((s) => (
             <li key={s.id}>
@@ -211,7 +219,7 @@ export default function BriefPatientPanel({
       {tab === 'calls' ? (
         <ul className="brief-entry-list">
           {callSessions.length === 0 ? (
-            <li className="brief-empty-row">No callbacks recorded yet.</li>
+            <li className="brief-empty-row">No calls recorded yet.</li>
           ) : (
             callSessions.map((s) => (
               <li key={s.id}>
@@ -229,15 +237,24 @@ export default function BriefPatientPanel({
         </ul>
       ) : null}
 
-      {tab === 'review' ? <BriefRecordReview patientId={patientId} patientName={name} /> : null}
+      {tab === 'review' ? (
+        <BriefRecordReview
+          patientId={patientId}
+          patientName={name}
+          clientId={clientId != null ? String(clientId) : null}
+          onAccepted={onRecordsChanged}
+        />
+      ) : null}
 
       {tab === 'history' ? (
         <BriefCaseHistoryPanel
           patientId={patientId}
           patientName={name}
           practiceTz={practiceTz}
-          onNewEpiphany={() => onNew(prefill)}
+          onNewJot={() => onNew(prefill)}
           summarizeRequestId={summarizeRequestId}
+          summarizeConsumedId={summarizeConsumedId}
+          onSummarizeConsumed={onSummarizeConsumed}
           hideChromeActions={embedded}
         />
       ) : null}

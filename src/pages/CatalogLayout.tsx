@@ -1,33 +1,30 @@
-import { NavLink, Outlet } from 'react-router';
-import './Settings.css';
+import { Navigate, useLocation } from 'react-router';
 
-type Props = { basePath?: string };
-
-export default function CatalogLayout({ basePath = '/schedule/catalog' }: Props) {
-  return (
-    <div className="settings-page">
-      <h1 className="settings-title">Catalog</h1>
-      <div className="settings-tabs" role="navigation" aria-label="Catalog sections">
-        <NavLink
-          to={`${basePath}/inventory`}
-          className={({ isActive }) => `settings-tab${isActive ? ' active' : ''}`}
-        >
-          Inventory
-        </NavLink>
-        <NavLink
-          to={`${basePath}/procedures`}
-          className={({ isActive }) => `settings-tab${isActive ? ' active' : ''}`}
-        >
-          Procedures
-        </NavLink>
-        <NavLink
-          to={`${basePath}/labs`}
-          className={({ isActive }) => `settings-tab${isActive ? ' active' : ''}`}
-        >
-          Labs
-        </NavLink>
-      </div>
-      <Outlet />
-    </div>
-  );
+/** Old /schedule/catalog/... URLs. */
+export function LegacyCatalogRedirect() {
+  const { pathname, search, hash } = useLocation();
+  const rest = pathname.replace(/^\/schedule\/catalog\/?/, '');
+  if (rest.startsWith('inventory')) {
+    const after = rest.replace(/^inventory\/?/, '') || 'items';
+    return <Navigate to={{ pathname: `/schedule/inventory/${after}`, search, hash }} replace />;
+  }
+  if (rest.startsWith('procedures')) {
+    return (
+      <Navigate
+        to={{ pathname: '/schedule/inventory/items', search: '?type=procedure', hash }}
+        replace
+      />
+    );
+  }
+  if (rest.startsWith('labs')) {
+    return (
+      <Navigate
+        to={{ pathname: '/schedule/inventory/items', search: '?type=lab', hash }}
+        replace
+      />
+    );
+  }
+  return <Navigate to={{ pathname: '/schedule/inventory/items', search, hash }} replace />;
 }
+
+export default LegacyCatalogRedirect;

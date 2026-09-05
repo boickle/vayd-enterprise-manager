@@ -7,6 +7,7 @@ import { useBriefRecorder } from '../../hooks/useBriefRecorder';
 import { patchBrief, removeBrief } from '../../api/briefs';
 import { createEncounter, updateEncounter } from '../../api/visitWorkflow';
 import { polishSpokenNotes } from '../../api/soapScribe';
+import { createScoutChartNote, finalizeScoutChartNote } from '../../api/scoutChart';
 import { mergeClinicianPrevisitNotes } from '../../utils/roomLoaderSubjectiveText';
 import { markBriefsInjected } from '../../utils/briefStore';
 import { buildPhoneDialHref } from '../../utils/quoContact';
@@ -97,6 +98,44 @@ export default function BriefSessionView({ session, quoFromLine, onChange, onDel
     [persist, session]
   );
 
+  const offerAddCallToRecord = useCallback(
+    async (text: string) => {
+      if (session.kind !== 'callback' || !text.trim() || session.patientId == null) return;
+      const ok = await appConfirm({
+        title: 'Add call to medical record?',
+        message:
+          'The transcript is already saved with this call. Add it to the pet’s medical record (Timeline) now? You can also add it later from this note.',
+        confirmLabel: 'Add to record',
+      });
+      if (!ok) {
+        setHint('Transcript saved with this call — not on the medical record.');
+        return;
+      }
+      try {
+        const pid = Number(session.patientId);
+        const cid =
+          session.clientId != null && Number.isFinite(Number(session.clientId))
+            ? Number(session.clientId)
+            : null;
+        const body = `Call transcript · ${session.title}\n\n${text.trim()}`;
+        const draft = await createScoutChartNote({
+          patientId: pid,
+          clientId: cid,
+          body,
+        });
+        await finalizeScoutChartNote(draft.id);
+        setHint('Call transcript added to the medical record.');
+      } catch (err) {
+        setHint(
+          err instanceof Error
+            ? err.message
+            : 'Could not add the transcript to the medical record.',
+        );
+      }
+    },
+    [session],
+  );
+
   const polishAndSave = async (raw: string) => {
     const source = raw.trim();
     if (!source) {
@@ -141,7 +180,8 @@ export default function BriefSessionView({ session, quoFromLine, onChange, onDel
   const stopAndSave = async () => {
     const text = await recorder.stop();
     const combined = text.trim() || recorder.transcript;
-    await polishAndSave(combined);
+    const next = await polishAndSave(combined);
+    if (next?.trim()) await offerAddCallToRecord(next);
   };
 
   const callClient = () => {
@@ -259,7 +299,7 @@ export default function BriefSessionView({ session, quoFromLine, onChange, onDel
               if (!file) return;
               void persist({ audioFileName: file.name });
               setHint(
-                `Attached ${file.name}. Paste or record a transcript to capture the words — uploaded files are stored with this Epiphany.`
+                `Attached ${file.name}. Paste or record a transcript to capture the words — uploaded files are stored with this Jot.`
               );
               e.currentTarget.value = '';
             }}
@@ -271,6 +311,16 @@ export default function BriefSessionView({ session, quoFromLine, onChange, onDel
         <button type="button" className="brief-btn" onClick={() => setEmailOpen(true)}>
           <Mail size={14} aria-hidden /> Email transcript
         </button>
+        {session.kind === 'callback' && session.patientId != null ? (
+          <button
+            type="button"
+            className="brief-btn"
+            disabled={cleaning || recorder.recording || !recorder.transcript.trim()}
+            onClick={() => void offerAddCallToRecord(recorder.transcript)}
+          >
+            Add to medical record
+          </button>
+        ) : null}
         {soapHref ? (
           <Link className="brief-btn" to={soapHref}>
             <ExternalLink size={14} aria-hidden /> Open SOAP
@@ -282,8 +332,8 @@ export default function BriefSessionView({ session, quoFromLine, onChange, onDel
           onClick={() => {
             void (async () => {
               const next = await appPrompt({
-                title: 'Rename Epiphany',
-                message: 'New name for this Epiphany.',
+                title: 'Rename Jot',
+                message: 'New name for this Jot.',
                 defaultValue: session.title,
                 confirmLabel: 'Save',
               });
@@ -303,8 +353,8 @@ export default function BriefSessionView({ session, quoFromLine, onChange, onDel
           onClick={() => {
             void (async () => {
               const ok = await appConfirm({
-                title: 'Delete Epiphany?',
-                message: 'Delete this Epiphany? The transcript cannot be recovered.',
+                title: 'Delete Jot?',
+                message: 'Delete this Jot? The transcript cannot be recovered.',
                 confirmLabel: 'Delete',
                 danger: true,
               });

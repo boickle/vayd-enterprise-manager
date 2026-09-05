@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router';
+import { useSearchParams } from 'react-router';
 import { useAuth } from '../auth/useAuth';
 import {
   searchItems,
@@ -12,13 +12,11 @@ import {
   type Procedure,
 } from '../api/quantityPriceBreaks';
 import {
-  getInventoryCostSummary,
   patchPracticeInventoryItem,
   postBulkInventoryPriceAdjust,
   uploadInventoryItemImage,
   deleteInventoryItemImage,
   inventoryItemImageUrl,
-  type InventoryCostSummary,
 } from '../api/inventoryTools';
 import {
   createCatalogItem,
@@ -48,6 +46,8 @@ import {
   type InventoryStockMovement,
   type PostInventoryMovementBody,
 } from '../api/branchInventory';
+import { resolveDefaultLocationId } from '../utils/inventoryLocationTargets';
+import { refreshInventoryAbc } from '../api/inventoryCounts';
 import {
   getPracticeSettings,
   isOnlineStoreImplemented,
@@ -189,6 +189,42 @@ function catalogSellUnit(row: SearchResultItem): string {
   return u ?? 'each';
 }
 
+type CatalogTypeFilter = ItemType | 'all';
+
+function defaultStockLocation(stock?: InventoryBranchStock | null) {
+  const locs = stock?.locations ?? [];
+  const id = resolveDefaultLocationId(locs);
+  if (id == null) return null;
+  return locs.find((l) => l.branchLocationId === id) ?? null;
+}
+
+function typeFilterFromSearch(search: string): CatalogTypeFilter {
+  const t = new URLSearchParams(search).get('type');
+  if (t === 'procedure' || t === 'lab' || t === 'inventory') return t;
+  return 'all';
+}
+
+function applyCatalogTypeFilter(
+  rows: SearchResultItem[],
+  typeFilter: CatalogTypeFilter
+): SearchResultItem[] {
+  if (typeFilter === 'all') return rows;
+  return rows.filter((r) => r.itemType === typeFilter);
+}
+
+function catalogTypeLabel(itemType: ItemType): string {
+  if (itemType === 'inventory') return 'Product';
+  if (itemType === 'lab') return 'Lab';
+  return 'Procedure';
+}
+
+function addItemLabel(typeFilter: CatalogTypeFilter): string {
+  if (typeFilter === 'procedure') return 'Add procedure';
+  if (typeFilter === 'lab') return 'Add lab';
+  if (typeFilter === 'inventory') return 'Add product';
+  return 'Add item';
+}
+
 function catalogIsActive(row: SearchResultItem): boolean {
   const e = catalogEntity(row);
   if (!e) return true;
@@ -321,16 +357,16 @@ export default function Catalog() {
 
   const [branches, setBranches] = useState<PracticeBranch[]>([]);
   const [branchId, setBranchId] = useState<number | null>(null);
-  const [branchesError, setBranchesError] = useState<string | null>(null);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SearchResultItem[]>([]);
   const [searching, setSearching] = useState(false);
   const searchSeq = useRef(0);
-  const typeFilter: ItemType = 'inventory';
+  const [searchParams, setSearchParams] = useSearchParams();
+  const typeFilter = typeFilterFromSearch(searchParams.toString());
   const [showArchived, setShowArchived] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
-  const createType: ItemType = 'inventory';
+  const [createType, setCreateType] = useState<ItemType>('inventory');
   const [createSaving, setCreateSaving] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [createForm, setCreateForm] = useState(EMPTY_INVENTORY_CREATE);
@@ -346,9 +382,33 @@ export default function Catalog() {
     excludePercentageDiscount: false,
     taxLevelValue: 1,
     category: '',
+    assignedAbc: '',
   });
   const [taxSettings, setTaxSettings] = useState<PracticeTaxSettings | null>(null);
   const [categories, setCategories] = useState<CatalogCategory[]>([]);
+
+  function setTypeFilter(next: CatalogTypeFilter) {
+    const nextParams = new URLSearchParams(searchParams);
+    if (next === 'all') nextParams.delete('type');
+    else nextParams.set('type', next);
+    setSearchParams(nextParams, { replace: true });
+  }
+
+  useEffect(() => {
+    if (!createOpen) return;
+    let cancelled = false;
+    listCatalogCategories(practiceId, createType)
+      .then((cats) => {
+        if (!cancelled) setCategories(cats);
+      })
+      .catch(() => {
+        if (!cancelled) setCategories([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [createOpen, createType, practiceId]);
+
   const [coreSaving, setCoreSaving] = useState(false);
   const [coreError, setCoreError] = useState<string | null>(null);
   const [archiveBusyId, setArchiveBusyId] = useState<string | null>(null);
@@ -359,6 +419,30 @@ export default function Catalog() {
     label: string;
   } | null>(null);
 
+  // Deep-link from counts / other pages: /inventory/items?itemId=123&name=...
+  useEffect(() => {
+    const raw = searchParams.get('itemId');
+    if (raw == null || String(raw).trim() === '') return;
+    const itemId = Number(raw);
+    if (!Number.isFinite(itemId) || itemId <= 0) return;
+    const name = searchParams.get('name')?.trim() || 'Item';
+    setSelected((prev) => {
+      if (prev?.itemType === 'inventory' && prev.itemId === itemId) {
+        return prev.label === name ? prev : { ...prev, label: name };
+      }
+      return { itemType: 'inventory', itemId, label: name };
+    });
+  }, [searchParams]);
+
+  function closeItemDetailModal() {
+    setSelected(null);
+    if (!searchParams.has('itemId') && !searchParams.has('name')) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete('itemId');
+    next.delete('name');
+    setSearchParams(next, { replace: true });
+  }
+
   const [detail, setDetail] = useState<ItemWithPriceBreaks | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
@@ -368,6 +452,8 @@ export default function Catalog() {
   const [stockItemId, setStockItemId] = useState<number | null>(null);
   const [countsExpandedBranchId, setCountsExpandedBranchId] = useState<number | null>(null);
   const [reorderDraftByBranchId, setReorderDraftByBranchId] = useState<Record<number, string>>({});
+  const [parDraftByBranchId, setParDraftByBranchId] = useState<Record<number, string>>({});
+  const [parDraftByLocationKey, setParDraftByLocationKey] = useState<Record<string, string>>({});
   const [stockLoading, setStockLoading] = useState(false);
   const [stockSaving, setStockSaving] = useState(false);
   const [stockError, setStockError] = useState<string | null>(null);
@@ -412,9 +498,6 @@ export default function Catalog() {
 
   const [toast, setToast] = useState<string | null>(null);
 
-  const [costSummary, setCostSummary] = useState<InventoryCostSummary | null>(null);
-  const [costSummaryLoading, setCostSummaryLoading] = useState(false);
-  const [costSummaryError, setCostSummaryError] = useState<string | null>(null);
 
   const [bulkSelectMode, setBulkSelectMode] = useState(false);
   const [bulkSelected, setBulkSelected] = useState<Record<number, string>>({});
@@ -488,21 +571,9 @@ export default function Catalog() {
     }
   }, [selected, movementBranchId, practiceId, stockItemId]);
 
-  const persistBranch = useCallback(
-    (id: number) => {
-      try {
-        localStorage.setItem(`${BRANCH_STORAGE_PREFIX}${practiceId}`, String(id));
-      } catch {
-        /* ignore */
-      }
-    },
-    [practiceId]
-  );
-
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      setBranchesError(null);
       try {
         const [list, settings, tax, cats] = await Promise.all([
           listPracticeBranches(practiceId),
@@ -531,9 +602,8 @@ export default function Catalog() {
           initial = def?.id ?? active[0]?.id ?? null;
         }
         setBranchId(initial);
-      } catch (e: unknown) {
+      } catch {
         if (!cancelled) {
-          setBranchesError(e instanceof Error ? e.message : 'Failed to load branches');
           setBranches([]);
           setBranchId(null);
         }
@@ -556,37 +626,6 @@ export default function Catalog() {
         if (!cancelled) setBranchLocations(Array.isArray(list) ? list : []);
       } catch {
         if (!cancelled) setBranchLocations([]);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [practiceId, branchId]);
-
-  useEffect(() => {
-    if (branchId == null) {
-      setCostSummary(null);
-      setCostSummaryError(null);
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      setCostSummaryLoading(true);
-      setCostSummaryError(null);
-      try {
-        const s = await getInventoryCostSummary(practiceId, branchId);
-        if (!cancelled) setCostSummary(s);
-      } catch (e: unknown) {
-        if (!cancelled) {
-          setCostSummary(null);
-          setCostSummaryError(
-            e instanceof Error
-              ? e.message
-              : 'Could not load branch cost summary (backend may not expose this endpoint yet).'
-          );
-        }
-      } finally {
-        if (!cancelled) setCostSummaryLoading(false);
       }
     })();
     return () => {
@@ -631,6 +670,10 @@ export default function Catalog() {
       category: categorySelectValue(
         (item as InventoryItem | Lab | Procedure).category
       ),
+      assignedAbc:
+        detail.itemType === 'inventory' && (item as InventoryItem).assignedAbc
+          ? String((item as InventoryItem).assignedAbc)
+          : '',
     });
   }, [detail]);
 
@@ -771,7 +814,7 @@ export default function Catalog() {
           includeInactive: showArchived,
         });
         if (searchSeq.current !== seq) return;
-        setSearchResults(rows.filter((r) => r.itemType === typeFilter));
+        setSearchResults(applyCatalogTypeFilter(rows, typeFilter));
       } catch {
         if (searchSeq.current === seq) setSearchResults([]);
       } finally {
@@ -797,6 +840,8 @@ export default function Catalog() {
         );
         const stockMap: Record<number, InventoryBranchStock> = {};
         const reorderMap: Record<number, string> = {};
+        const parMap: Record<number, string> = {};
+        const locParMap: Record<string, string> = {};
         for (const row of stockSettled) {
           if (row.ok && row.stock) {
             stockMap[row.id] = row.stock;
@@ -804,13 +849,27 @@ export default function Catalog() {
               row.stock.reorderPoint == null || Number.isNaN(Number(row.stock.reorderPoint))
                 ? ''
                 : String(row.stock.reorderPoint);
+            parMap[row.id] =
+              row.stock.parLevel == null || Number.isNaN(Number(row.stock.parLevel))
+                ? ''
+                : String(row.stock.parLevel);
+            for (const loc of row.stock.locations ?? []) {
+              locParMap[`${row.id}:${loc.branchLocationId}`] =
+                loc.parLevel == null || Number.isNaN(Number(loc.parLevel))
+                  ? ''
+                  : String(loc.parLevel);
+            }
           }
         }
         setStockByBranchId(stockMap);
         setReorderDraftByBranchId(reorderMap);
+        setParDraftByBranchId(parMap);
+        setParDraftByLocationKey((prev) => ({ ...prev, ...locParMap }));
       } catch {
         setStockByBranchId({});
         setReorderDraftByBranchId({});
+        setParDraftByBranchId({});
+        setParDraftByLocationKey({});
       } finally {
         setStockLoading(false);
       }
@@ -825,6 +884,13 @@ export default function Catalog() {
       setStockError(null);
       setBranchPricesError(null);
       try {
+        if (sel.itemType === 'inventory') {
+          try {
+            await refreshInventoryAbc(practiceId);
+          } catch {
+            /* recommended class stays stale until next successful refresh */
+          }
+        }
         const item = await getItemWithPriceBreaks(sel.itemType, sel.itemId, practiceId);
         setDetail(item);
 
@@ -926,11 +992,11 @@ export default function Catalog() {
       if (e.key !== 'Escape') return;
       if (priceModalOpen || bulkModalOpen) return;
       e.preventDefault();
-      setSelected(null);
+      closeItemDetailModal();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [selected, priceModalOpen, bulkModalOpen]);
+  }, [selected, priceModalOpen, bulkModalOpen, searchParams, setSearchParams]);
 
   function openPriceModal(opts?: {
     seedBranchId?: number | null;
@@ -1085,25 +1151,54 @@ export default function Catalog() {
     }
   }
 
+  function parseOptionalQty(raw: string, label: string): number | null | undefined {
+    const draft = raw.trim();
+    if (draft === '') return null;
+    const n = Number(draft);
+    if (!Number.isFinite(n) || n < 0) {
+      setStockError(`${label} must be a number 0 or greater`);
+      return undefined;
+    }
+    return n;
+  }
+
   async function saveReorderPoint(forBranchId: number) {
     if (!selected || selected.itemType !== 'inventory' || stockItemId == null) return;
     setStockSaving(true);
     setStockError(null);
     try {
-      const draft = reorderDraftByBranchId[forBranchId] ?? '';
-      const reorderPoint = draft.trim() === '' ? null : Number(draft.trim());
-      if (draft.trim() !== '' && !Number.isFinite(reorderPoint as number)) {
-        setStockError('Reorder point must be a number');
+      const reorderPoint = parseOptionalQty(reorderDraftByBranchId[forBranchId] ?? '', 'Re-order point');
+      if (reorderPoint === undefined) return;
+      const stock = stockByBranchId[forBranchId];
+      const defaultLoc = defaultStockLocation(stock);
+      const locations = (stock?.locations ?? []).map((loc) => {
+        const isDefault = defaultLoc?.branchLocationId === loc.branchLocationId;
+        const raw = parDraftByLocationKey[`${forBranchId}:${loc.branchLocationId}`] ?? '';
+        const locPar = parseOptionalQty(raw, isDefault ? 'Max' : `${loc.name} par`);
+        return { loc, locPar, isDefault };
+      });
+      if (locations.some((l) => l.locPar === undefined)) return;
+      const defaultMax = locations.find((l) => l.isDefault)?.locPar ?? null;
+      if (
+        reorderPoint != null &&
+        defaultMax != null &&
+        reorderPoint > defaultMax
+      ) {
+        setStockError('Re-order point cannot be greater than max');
         return;
       }
       const updated = await upsertInventoryBranchStock(
         practiceId,
         forBranchId,
         stockItemId,
-        { reorderPoint }
+        {
+          reorderPoint,
+          locations: locations.map((l) => ({
+            branchLocationId: l.loc.branchLocationId,
+            parLevel: l.locPar ?? null,
+          })),
+        }
       );
-      // The reorder upsert answers with the stock row alone, so keep the counts we
-      // already have instead of blanking on-hand for that branch.
       setStockByBranchId((prev) => ({
         ...prev,
         [forBranchId]: { ...prev[forBranchId], ...updated },
@@ -1115,7 +1210,24 @@ export default function Catalog() {
             ? ''
             : String(updated.reorderPoint),
       }));
-      setToast('Reorder point saved');
+      setParDraftByBranchId((prev) => ({
+        ...prev,
+        [forBranchId]:
+          updated.parLevel == null || Number.isNaN(Number(updated.parLevel))
+            ? ''
+            : String(updated.parLevel),
+      }));
+      setParDraftByLocationKey((prev) => {
+        const next = { ...prev };
+        for (const loc of updated.locations ?? []) {
+          next[`${forBranchId}:${loc.branchLocationId}`] =
+            loc.parLevel == null || Number.isNaN(Number(loc.parLevel))
+              ? ''
+              : String(loc.parLevel);
+        }
+        return next;
+      });
+      setToast('Re-order point, max, and par saved');
       window.setTimeout(() => setToast(null), 3500);
     } catch (e: unknown) {
       setStockError(e instanceof Error ? e.message : 'Save failed');
@@ -1256,6 +1368,12 @@ export default function Catalog() {
         body.taxLevelValue = coreDraft.taxLevelValue;
         body.category =
           coreDraft.category.trim() === '' ? null : Number(coreDraft.category);
+        body.assignedAbc =
+          coreDraft.assignedAbc === 'A' ||
+          coreDraft.assignedAbc === 'B' ||
+          coreDraft.assignedAbc === 'C'
+            ? coreDraft.assignedAbc
+            : null;
       }
       if (selected.itemType === 'lab' || selected.itemType === 'procedure') {
         body.excludePercentageDiscount = coreDraft.excludePercentageDiscount;
@@ -1341,12 +1459,28 @@ export default function Catalog() {
           defaultSerial: createForm.defaultSerial.trim() || null,
         };
       }
-      const created = await createCatalogItem(createType, practiceId, body);
+      const created = await createCatalogItem(
+        createType,
+        practiceId,
+        createType === 'inventory'
+          ? body
+          : {
+              name: createForm.name.trim(),
+              code: createForm.code.trim() || null,
+              price: optionalNumber(createForm.price),
+              cost: optionalNumber(createForm.cost),
+              serviceFee: optionalNumber(createForm.serviceFee),
+              minimumPrice: optionalNumber(createForm.minimumPrice),
+              excludePercentageDiscount: createForm.excludePercentageDiscount,
+              taxLevelValue: createForm.taxLevelValue,
+              category: createForm.category.trim() === '' ? null : Number(createForm.category),
+            }
+      );
       const newId = Number(created.id);
       const createdName = createForm.name.trim();
       setCreateOpen(false);
       setCreateForm(EMPTY_INVENTORY_CREATE);
-      setToast('Inventory item created');
+      setToast(`${catalogTypeLabel(createType)} created`);
       window.setTimeout(() => setToast(null), 3500);
       if (Number.isFinite(newId) && newId > 0) {
         setSelected({
@@ -1385,7 +1519,7 @@ export default function Catalog() {
       const rows = await searchItems(searchQuery.trim(), practiceId, 50, {
         includeInactive: showArchived,
       });
-      setSearchResults(rows.filter((r) => r.itemType === typeFilter));
+      setSearchResults(applyCatalogTypeFilter(rows, typeFilter));
       if (selected?.itemType === row.itemType && selected.itemId === itemId) {
         await refreshDetailBundle(selected);
       }
@@ -1556,13 +1690,15 @@ export default function Catalog() {
     ? moneyBaseFromCatalogRow(detail.item as Record<string, unknown>)
     : null;
 
+  const typeFilterOptions: { value: CatalogTypeFilter; label: string }[] = [
+    { value: 'all', label: 'All' },
+    { value: 'inventory', label: 'Products' },
+    { value: 'procedure', label: 'Procedures' },
+    { value: 'lab', label: 'Labs' },
+  ];
+
   return (
     <div className="settings-section">
-      <h2 className="settings-section-title">Inventory</h2>
-      <p className="settings-section-description">
-        Manage inventory products, stock, movements, branch pricing, and quantity price tiers.
-      </p>
-
       {toast && (
         <div className="settings-message settings-success-message" style={{ marginBottom: 16 }}>
           {toast}
@@ -1570,7 +1706,20 @@ export default function Catalog() {
       )}
 
       <div className="settings-form-group" style={{ marginBottom: 24 }}>
-        <label className="settings-label">Search catalog</label>
+        <div className="inv-type-filters" role="tablist" aria-label="Item type">
+          {typeFilterOptions.map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              role="tab"
+              aria-selected={typeFilter === opt.value}
+              className={`inv-type-filters__btn${typeFilter === opt.value ? ' inv-type-filters__btn--active' : ''}`}
+              onClick={() => setTypeFilter(opt.value)}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
         <div
           style={{
             display: 'flex',
@@ -1630,7 +1779,11 @@ export default function Catalog() {
             className="settings-input"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search products, labs, procedures…"
+            placeholder={
+              typeFilter === 'all'
+                ? 'Search products, procedures, and labs…'
+                : `Search ${typeFilterOptions.find((o) => o.value === typeFilter)?.label.toLowerCase() ?? 'items'}…`
+            }
             style={{ width: '100%', maxWidth: 720, paddingRight: searching ? 40 : 12 }}
           />
           {searching && (
@@ -1657,10 +1810,11 @@ export default function Catalog() {
               onClick={() => {
                 setCreateError(null);
                 setCreateForm(EMPTY_INVENTORY_CREATE);
+                setCreateType(typeFilter === 'all' ? 'inventory' : typeFilter);
                 setCreateOpen(true);
               }}
             >
-              Add Inventory Item
+              {addItemLabel(typeFilter)}
             </button>
             <span className="inv-catalog-results__count">
               Total count:{' '}
@@ -1679,7 +1833,7 @@ export default function Catalog() {
 
         {!searchQuery.trim() && (
           <p className="settings-muted" style={{ marginTop: 0 }}>
-            Type to search the catalog. Results appear here.
+            Type to search. Results appear here.
           </p>
         )}
         {searchQuery.trim() && !searching && searchResults.length === 0 && (
@@ -1777,7 +1931,12 @@ export default function Catalog() {
                         <code className="inv-catalog-results__code">{row.code ?? '—'}</code>
                       </td>
                       <td>
-                        <span className="inv-catalog-results__type-tag">{itemType}</span> {row.name}
+                        <span
+                          className={`inv-catalog-results__type-tag inv-catalog-results__type-tag--${itemType}`}
+                        >
+                          {catalogTypeLabel(itemType)}
+                        </span>{' '}
+                        {row.name}
                       </td>
                       <td className="inv-catalog-results__cell-muted" title="Manufacturer">
                         {itemType === 'inventory'
@@ -1832,111 +1991,13 @@ export default function Catalog() {
         )}
       </div>
 
-      <div className="settings-form-group" style={{ marginBottom: 20 }}>
-        <label className="settings-label" htmlFor="inv-branch">
-          Branch
-        </label>
-        {branchesError && (
-          <p className="settings-error-message" style={{ marginTop: 4 }}>
-            {branchesError}
-          </p>
-        )}
-        <select
-          id="inv-branch"
-          className="settings-input"
-          style={{ maxWidth: 420 }}
-          value={branchId ?? ''}
-          disabled={!branches.length}
-          onChange={(e) => {
-            const v = Number(e.target.value);
-            if (Number.isFinite(v)) {
-              setBranchId(v);
-              persistBranch(v);
-            }
-          }}
-        >
-          {!branches.length && <option value="">No branches</option>}
-          {branches.map((b) => (
-            <option key={b.id} value={b.id}>
-              {b.name}
-              {b.isDefault ? ' (default)' : ''}
-            </option>
-          ))}
-        </select>
-        <p className="settings-muted" style={{ marginTop: 8, fontSize: 13 }}>
-          Add or edit branches and location buckets under{' '}
-          <a href="/schedule/settings?tab=branches-locations">Settings → Branches &amp; Locations</a>.
-        </p>
-      </div>
-
-      {branchId != null && (
-        <div className="settings-card" style={{ marginBottom: 24 }}>
-          <h3 className="settings-card-title">Inventory cost (this branch)</h3>
-          <p className="settings-muted" style={{ marginBottom: 12 }}>
-            Total and per-location extended cost (unit cost × quantity on hand) across the whole branch
-            catalog. Requires the cost-summary API; the line below shows the selected item only as a
-            quick check.
-          </p>
-          {costSummaryLoading && <p className="settings-muted">Loading cost summary…</p>}
-          {costSummaryError && !costSummaryLoading && (
-            <div className="settings-message settings-error-message" style={{ marginBottom: 8 }}>
-              {costSummaryError}
-            </div>
-          )}
-          {costSummary && !costSummaryLoading && (
-            <>
-              <p style={{ margin: '0 0 12px', fontSize: 18 }}>
-                <strong>Total extended cost:</strong> ${Number(costSummary.totalExtendedCost).toFixed(2)}
-              </p>
-              {costSummary.byLocation && costSummary.byLocation.length > 0 && (
-                <div className="settings-table-container">
-                  <table className="settings-table">
-                    <thead>
-                      <tr>
-                        <th>Location</th>
-                        <th>Code</th>
-                        <th>Extended cost</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {costSummary.byLocation.map((row, i) => (
-                        <tr key={`${row.branchLocationId ?? 'x'}-${row.code}-${i}`}>
-                          <td>{row.name}</td>
-                          <td>
-                            <code>{row.code}</code>
-                          </td>
-                          <td>${Number(row.extendedCost).toFixed(2)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      )}
-
-      {branchId != null && (
-        <div className="settings-card" style={{ marginBottom: 24 }}>
-          <h3 className="settings-card-title">Receive shipment</h3>
-          <p className="settings-muted" style={{ marginBottom: 12 }}>
-            Invoice-based receiving (scan at the box, lot/exp, supplier) moved to Inventory Control
-            Tower. Use Transfer and adjustments on the item detail for stock moves after receive.
-          </p>
-          <Link className="btn primary" to="/schedule/inventory/receive">
-            Open Receive Shipment
-          </Link>
-        </div>
-      )}
-
       {selected && (
         <div
           className="inv-item-detail-modal__backdrop"
           role="dialog"
           aria-modal="true"
           aria-labelledby="inv-item-detail-modal-title"
-          onClick={() => setSelected(null)}
+          onClick={() => closeItemDetailModal()}
         >
           <div className="inv-item-detail-modal" onClick={(e) => e.stopPropagation()}>
             <div className="inv-item-detail-modal__header">
@@ -1955,7 +2016,7 @@ export default function Catalog() {
                   type="button"
                   className="inv-item-detail-modal__close"
                   aria-label="Close"
-                  onClick={() => setSelected(null)}
+                  onClick={() => closeItemDetailModal()}
                 >
                   <X size={20} aria-hidden />
                 </button>
@@ -2130,6 +2191,45 @@ export default function Catalog() {
                     }
                   />
                 </div>
+                {detail.itemType === 'inventory' && (
+                  <div
+                    style={{
+                      display: 'flex',
+                      gap: 16,
+                      flexWrap: 'wrap',
+                      marginBottom: 12,
+                      maxWidth: 560,
+                    }}
+                  >
+                    <label className="settings-label">
+                      Recommended class
+                      <input
+                        className="settings-input"
+                        readOnly
+                        value={
+                          (detail.item as InventoryItem).recommendedAbc
+                            ? String((detail.item as InventoryItem).recommendedAbc)
+                            : 'Not calculated yet'
+                        }
+                      />
+                    </label>
+                    <label className="settings-label">
+                      Assigned class
+                      <select
+                        className="settings-input"
+                        value={coreDraft.assignedAbc}
+                        onChange={(e) =>
+                          setCoreDraft((d) => ({ ...d, assignedAbc: e.target.value }))
+                        }
+                      >
+                        <option value="">Auto (use recommended)</option>
+                        <option value="A">A — count monthly</option>
+                        <option value="B">B — count quarterly</option>
+                        <option value="C">C — count twice a year</option>
+                      </select>
+                    </label>
+                  </div>
+                )}
                 <div style={{ maxWidth: 280, marginBottom: 12 }}>
                   <TaxLevelSelect
                     settings={taxSettings}
@@ -2556,7 +2656,7 @@ export default function Catalog() {
                     Counts by branch
                   </h4>
                   <p className="settings-muted" style={{ marginBottom: 10, fontSize: 13 }}>
-                    Click a branch to see location breakdown and set the reorder point.
+                    Click a branch to set default re-order point/max and location pars.
                     {stockLinkItemId != null && (
                       <>
                         {' '}
@@ -2580,7 +2680,8 @@ export default function Catalog() {
                           <th style={{ width: 28 }} />
                           <th>Branch</th>
                           <th>On hand</th>
-                          <th>Reorder</th>
+                          <th>Max</th>
+                          <th>Re-order point</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -2592,6 +2693,11 @@ export default function Catalog() {
                             Number.isNaN(Number(stock.quantityOnHandTotal))
                               ? '—'
                               : String(stock.quantityOnHandTotal);
+                          const defaultLoc = defaultStockLocation(stock);
+                          const par =
+                            defaultLoc?.parLevel == null || Number.isNaN(Number(defaultLoc.parLevel))
+                              ? '—'
+                              : String(defaultLoc.parLevel);
                           const reorder =
                             stock?.reorderPoint == null || Number.isNaN(Number(stock.reorderPoint))
                               ? '—'
@@ -2621,11 +2727,12 @@ export default function Catalog() {
                                 </td>
                                 <td>{b.name}</td>
                                 <td>{onHand}</td>
+                                <td>{par}</td>
                                 <td>{reorder}</td>
                               </tr>
                               {expanded && (
                                 <tr className="inv-counts-by-branch__detail">
-                                  <td colSpan={4}>
+                                  <td colSpan={5}>
                                     {extCost != null && (
                                       <p style={{ margin: '0 0 12px', fontSize: 14 }}>
                                         <strong>Extended cost:</strong> ${extCost.toFixed(2)}
@@ -2648,12 +2755,21 @@ export default function Catalog() {
                                               <th>Location</th>
                                               <th>Code</th>
                                               <th>Qty</th>
+                                              <th>Re-order point</th>
+                                              <th>Max / Par</th>
                                             </tr>
                                           </thead>
                                           <tbody>
-                                            {stock.locations.map((row) => (
+                                            {stock.locations.map((row) => {
+                                              const isDefault =
+                                                defaultLoc?.branchLocationId ===
+                                                row.branchLocationId;
+                                              return (
                                               <tr key={row.branchLocationId}>
-                                                <td>{row.name}</td>
+                                                <td>
+                                                  {row.name}
+                                                  {isDefault ? ' (default)' : ''}
+                                                </td>
                                                 <td>
                                                   <code>{row.code}</code>
                                                 </td>
@@ -2662,8 +2778,54 @@ export default function Catalog() {
                                                     ? '—'
                                                     : String(row.quantityOnHand)}
                                                 </td>
+                                                <td onClick={(e) => e.stopPropagation()}>
+                                                  {isDefault ? (
+                                                    <input
+                                                      type="text"
+                                                      inputMode="decimal"
+                                                      className="settings-input"
+                                                      style={{ maxWidth: 88 }}
+                                                      value={reorderDraftByBranchId[b.id] ?? ''}
+                                                      onChange={(e) =>
+                                                        setReorderDraftByBranchId((prev) => ({
+                                                          ...prev,
+                                                          [b.id]: e.target.value,
+                                                        }))
+                                                      }
+                                                      placeholder="—"
+                                                      aria-label={`${row.name} re-order point`}
+                                                    />
+                                                  ) : (
+                                                    <span className="settings-muted">—</span>
+                                                  )}
+                                                </td>
+                                                <td onClick={(e) => e.stopPropagation()}>
+                                                  <input
+                                                    type="text"
+                                                    inputMode="decimal"
+                                                    className="settings-input"
+                                                    style={{ maxWidth: 88 }}
+                                                    value={
+                                                      parDraftByLocationKey[
+                                                        `${b.id}:${row.branchLocationId}`
+                                                      ] ?? ''
+                                                    }
+                                                    onChange={(e) =>
+                                                      setParDraftByLocationKey((prev) => ({
+                                                        ...prev,
+                                                        [`${b.id}:${row.branchLocationId}`]:
+                                                          e.target.value,
+                                                      }))
+                                                    }
+                                                    placeholder="—"
+                                                    aria-label={
+                                                      isDefault ? `${row.name} max` : `${row.name} par`
+                                                    }
+                                                  />
+                                                </td>
                                               </tr>
-                                            ))}
+                                              );
+                                            })}
                                           </tbody>
                                         </table>
                                       </div>
@@ -2681,29 +2843,13 @@ export default function Catalog() {
                                       }}
                                       onClick={(e) => e.stopPropagation()}
                                     >
-                                      <label className="settings-label">
-                                        Reorder point
-                                        <input
-                                          type="text"
-                                          inputMode="decimal"
-                                          className="settings-input"
-                                          value={reorderDraftByBranchId[b.id] ?? ''}
-                                          onChange={(e) =>
-                                            setReorderDraftByBranchId((prev) => ({
-                                              ...prev,
-                                              [b.id]: e.target.value,
-                                            }))
-                                          }
-                                          placeholder="Not set"
-                                        />
-                                      </label>
                                       <button
                                         type="button"
                                         className="btn primary"
                                         disabled={stockSaving}
                                         onClick={() => void saveReorderPoint(b.id)}
                                       >
-                                        {stockSaving ? 'Saving…' : 'Save reorder point'}
+                                        {stockSaving ? 'Saving…' : 'Save re-order point, max & par'}
                                       </button>
                                     </div>
                                   </td>
@@ -3123,7 +3269,7 @@ export default function Catalog() {
           className="settings-modal-overlay"
           role="dialog"
           aria-modal="true"
-          aria-label="Add Inventory Item"
+          aria-label={addItemLabel(createType)}
           onClick={() => !createSaving && setCreateOpen(false)}
         >
           <div
@@ -3132,7 +3278,7 @@ export default function Catalog() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="settings-modal-header">
-              <h3>Add Inventory Item</h3>
+              <h3>{addItemLabel(createType)}</h3>
               <button
                 type="button"
                 className="settings-modal-close"
@@ -3149,9 +3295,25 @@ export default function Catalog() {
                 </div>
               )}
               <p className="settings-muted" style={{ marginTop: 0, marginBottom: 14, fontSize: 13 }}>
-                Pricing, supply, clinical flags, and vaccine setup. Reminders and lots can be
-                configured after the item is created.
+                {createType === 'inventory'
+                  ? 'Pricing, supply, clinical flags, and vaccine setup. Reminders and lots can be configured after the item is created.'
+                  : 'Name, pricing, category, and tax. Quantity price tiers can be added after create.'}
               </p>
+
+              <div className="inv-type-filters" role="radiogroup" aria-label="New item type" style={{ marginBottom: 14 }}>
+                {(['inventory', 'procedure', 'lab'] as const).map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    role="radio"
+                    aria-checked={createType === t}
+                    className={`inv-type-filters__btn${createType === t ? ' inv-type-filters__btn--active' : ''}`}
+                    onClick={() => setCreateType(t)}
+                  >
+                    {catalogTypeLabel(t)}
+                  </button>
+                ))}
+              </div>
 
               <h4 style={{ fontSize: 14, fontWeight: 600, margin: '0 0 10px' }}>Basics</h4>
               <div
@@ -3286,6 +3448,8 @@ export default function Catalog() {
                 </label>
               </div>
 
+              {createType === 'inventory' && (
+              <>
               <h4 style={{ fontSize: 14, fontWeight: 600, margin: '0 0 6px' }}>
                 Medication
               </h4>
@@ -3601,6 +3765,8 @@ export default function Catalog() {
                     <span>Create vaccination log</span>
                   </label>
                 </>
+              )}
+              </>
               )}
             </div>
             <div className="settings-modal-actions">

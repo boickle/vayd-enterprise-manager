@@ -69,8 +69,9 @@ export default function BriefMergePanel({ keepPatientId, keepPatientName }: Prop
         <div>
           <h3>Merge patients</h3>
           <p>
-            Keep <strong>{keepPatientName}</strong> and absorb a duplicate chart into it. Confirm
-            this is the same animal before you continue.
+            Keep <strong>{keepPatientName}</strong> and merge another (duplicate) patient{' '}
+            <strong>into this chart</strong>. Records move here; stop using the absorbed chart
+            afterward. Confirm it is the same animal before you continue.
           </p>
         </div>
       </div>

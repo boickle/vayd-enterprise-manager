@@ -64,6 +64,7 @@ export function PimsChartMessageComposeModal({
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [overrideNonProd, setOverrideNonProd] = useState(false);
+  const [includeOnMedicalRecord, setIncludeOnMedicalRecord] = useState(false);
 
   const [mailbox, setMailbox] = useState<string | null>(null);
   const [sharedInboxes, setSharedInboxes] = useState<GmailMailboxStatus[]>([]);
@@ -144,6 +145,7 @@ export function PimsChartMessageComposeModal({
           clientId,
           channel: 'sms',
           body: smsText,
+          includeOnMedicalRecord,
         });
       } else {
         if (!mailbox || !from.trim() || !to.trim()) {
@@ -170,7 +172,7 @@ export function PimsChartMessageComposeModal({
           subject: subject.trim() || undefined,
           destination: to,
           sentFrom: from,
-          includeOnMedicalRecord: true,
+          includeOnMedicalRecord,
         });
       }
       onSent();
@@ -192,7 +194,8 @@ export function PimsChartMessageComposeModal({
           <div>
             <h3 id="pims-chart-msg-title">Message · {clientName}</h3>
             <p className="pims-chart-compose__hint">
-              One message. Send as text or email. It saves to the chart and cannot be edited after.
+              One message. Send as text or email. Saved for your workflow — not on the medical
+              record unless you check the box below.
             </p>
           </div>
           <button type="button" className="pims-chart-pick__close" onClick={onClose}>
@@ -325,6 +328,14 @@ export function PimsChartMessageComposeModal({
         )}
 
         {error ? <p className="pims-chart-compose__error">{error}</p> : null}
+        <label className="pims-chart-compose__override">
+          <input
+            type="checkbox"
+            checked={includeOnMedicalRecord}
+            onChange={(e) => setIncludeOnMedicalRecord(e.target.checked)}
+          />
+          Add this message to the medical record
+        </label>
         {allowSmsOverride && channel === 'sms' ? (
           <label className="pims-chart-compose__override">
             <input

@@ -156,6 +156,22 @@ export function listLocalBriefsForDate(date: string): BriefSession[] {
   return listLocalBriefs().filter((s) => s.date === date && s.status !== 'archived');
 }
 
+/** Open prep session already linked to this visit, if any. */
+export function findOpenPrevisitForAppointment(
+  appointmentId: number,
+  patientId: string | number
+): BriefSession | null {
+  const id = String(patientId);
+  return (
+    listLocalBriefs().find((s) => {
+      if (s.kind !== 'previsit') return false;
+      if (s.status === 'archived') return false;
+      if (s.appointmentId !== appointmentId) return false;
+      return s.patientId != null && String(s.patientId) === id;
+    }) ?? null
+  );
+}
+
 export function pendingPrevisitBriefs(opts: {
   patientId: string | number;
   appointmentId?: number | null;

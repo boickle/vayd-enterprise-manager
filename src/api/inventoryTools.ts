@@ -75,6 +75,7 @@ export type InventoryItemCatalogPatch = {
   changePatientSex?: boolean;
   defaultQuantity?: number | null;
   vaccineDetails?: InventoryVaccineDetails | null;
+  assignedAbc?: 'A' | 'B' | 'C' | null;
 };
 
 export async function patchPracticeInventoryItem(

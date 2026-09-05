@@ -51,7 +51,7 @@ export type ScoutManagedState = {
 
 export function scoutManagedState(
   record: Record<string, unknown> | null | undefined,
-  entity: 'client' | 'patient',
+  entity: 'client' | 'patient' | 'employee',
 ): ScoutManagedState {
   const scoutCreated = isScoutCreatedRecord(record);
   const scoutManaged = isScoutManagedRecord(record);

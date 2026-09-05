@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   fetchAllEmployees,
   fetchEmployee,
@@ -24,11 +24,11 @@ import {
   type PracticeBranch,
 } from '../../api/branchInventory';
 import { appConfirm } from '../../utils/appDialog';
-import { EMPLOYEE_DIRECTORY_EDIT_ENABLED } from '../../utils/pimsEntityEditing';
+import { fetchAdminUsers, type AdminManagedUser } from '../../api/users';
+import { scoutManagedState } from '../../utils/pimsScoutManaged';
 import {
   assignEmployeeRoleNameGroup,
   groupEmployeeRolesByName,
-  humanizeEmployeeRoleName,
   isEmployeeRoleNameGroupSelected,
 } from '../../utils/employeeRoleDisplay';
 
@@ -70,23 +70,29 @@ function blankToNull(s: string): string | null {
 
 type ModalMode = 'add' | 'edit' | 'roles' | 'bio' | null;
 
-function employeeRoleIds(e: Employee): number[] {
+function employeeRoleIds(e: Employee, allowedIds?: Set<number>): number[] {
   const r = e as Record<string, unknown>;
+  let ids: number[] = [];
   if (Array.isArray(r.roleIds)) {
-    return r.roleIds
+    ids = r.roleIds
       .map((x) => Number(x))
       .filter((n) => Number.isFinite(n) && n > 0);
+  } else {
+    const assignments = r.roleAssignments;
+    if (Array.isArray(assignments)) {
+      ids = assignments
+        .map((row) => {
+          if (!row || typeof row !== 'object') return NaN;
+          const a = row as { roleId?: unknown; branchId?: unknown };
+          // Practice-wide only for Staff checkboxes
+          if (a.branchId != null && a.branchId !== '') return NaN;
+          return Number(a.roleId);
+        })
+        .filter((n) => Number.isFinite(n) && n > 0);
+    }
   }
-  const assignments = r.roleAssignments;
-  if (Array.isArray(assignments)) {
-    return assignments
-      .map((row) => {
-        if (!row || typeof row !== 'object') return NaN;
-        return Number((row as { roleId?: unknown }).roleId);
-      })
-      .filter((n) => Number.isFinite(n) && n > 0);
-  }
-  return [];
+  if (allowedIds) ids = ids.filter((id) => allowedIds.has(id));
+  return [...new Set(ids)];
 }
 
 function employeeDisplayName(emp: Employee): string {
@@ -94,22 +100,6 @@ function employeeDisplayName(emp: Employee): string {
   const mid = str(r.middleName);
   const parts = [emp.title, emp.firstName, mid, emp.lastName].filter(Boolean);
   return parts.length ? parts.join(' ') : `${emp.firstName} ${emp.lastName}`.trim();
-}
-
-function roleLabelsForEmployee(emp: Employee, catalog: EmployeeRole[]): string[] {
-  const ids = new Set(employeeRoleIds(emp));
-  if (ids.size === 0) return [];
-  const names = catalog
-    .filter((role) => ids.has(role.id))
-    .map((role) => humanizeEmployeeRoleName(role.name))
-    .filter(Boolean);
-  return [...new Set(names)];
-}
-
-function truncateBio(bio: string | null | undefined, max = 72): string {
-  const t = bio?.trim();
-  if (!t) return '—';
-  return t.length > max ? `${t.slice(0, max)}…` : t;
 }
 
 function empBio(e: Employee): string | null | undefined {
@@ -128,11 +118,39 @@ function empPhone2(e: Employee): string | null {
   return s || null;
 }
 
+export type EmployeeHubSection =
+  | 'profile'
+  | 'schedule'
+  | 'types'
+  | 'zones'
+  | 'goals'
+  | 'photo';
+
+const HUB_SECTIONS: { id: EmployeeHubSection; label: string }[] = [
+  { id: 'profile', label: 'Profile' },
+  { id: 'schedule', label: 'Schedule' },
+  { id: 'types', label: 'Appointment types' },
+  { id: 'goals', label: 'Goals' },
+  { id: 'photo', label: 'Photo' },
+];
+
 type Props = {
   onMessage?: (msg: string, kind: 'success' | 'error') => void;
+  section?: EmployeeHubSection;
+  onSectionChange?: (section: EmployeeHubSection) => void;
+  selectedEmployeeId?: number | null;
+  onSelectedEmployeeIdChange?: (id: number | null) => void;
+  extra?: ReactNode;
 };
 
-export default function SettingsEmployeeDirectory({ onMessage }: Props) {
+export default function SettingsEmployeeDirectory({
+  onMessage,
+  section = 'profile',
+  onSectionChange,
+  selectedEmployeeId,
+  onSelectedEmployeeIdChange,
+  extra,
+}: Props) {
   const [rows, setRows] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -170,14 +188,24 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
   const [locationOptions, setLocationOptions] = useState<InventoryBranchLocation[]>([]);
   const [defaultBranchId, setDefaultBranchId] = useState<number | null>(null);
   const [defaultLocationId, setDefaultLocationId] = useState<number | null>(null);
+  const [loginUser, setLoginUser] = useState<AdminManagedUser | null>(null);
+  const [loadedEmployee, setLoadedEmployee] = useState<Employee | null>(null);
 
   const practice = useMemo(() => ({ id: DEFAULT_PRACTICE_ID }), []);
 
-  const roleGroups = useMemo(() => groupEmployeeRolesByName(rolesCatalog), [rolesCatalog]);
+  const practiceWideRoleIds = useMemo(
+    () => new Set(rolesCatalog.filter((r) => !r.isBranchSpecific).map((r) => r.id)),
+    [rolesCatalog]
+  );
+
+  const roleGroups = useMemo(() => {
+    const practiceWide = rolesCatalog.filter((r) => !r.isBranchSpecific);
+    return groupEmployeeRolesByName(practiceWide);
+  }, [rolesCatalog]);
 
   useEffect(() => {
     let cancelled = false;
-    void fetchEmployeeRoles()
+    void fetchEmployeeRoles({ owner: 'scout' })
       .then((list) => {
         if (!cancelled) setRolesCatalog(Array.isArray(list) ? list : []);
       })
@@ -207,12 +235,7 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
     void load();
   }, [load]);
 
-  useEffect(() => {
-    if (!EMPLOYEE_DIRECTORY_EDIT_ENABLED) setModalMode(null);
-  }, []);
-
   const openAdd = () => {
-    if (!EMPLOYEE_DIRECTORY_EDIT_ENABLED) return;
     setEditingId(null);
     setFirstName('');
     setLastName('');
@@ -223,8 +246,10 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
     setLicenseNumber('');
     setPimsId('');
     setPimsUserId('');
-    setPimsType('EVET');
+    setPimsType('VAYD');
     setIsProvider(false);
+    setLoginUser(null);
+    setLoadedEmployee(null);
     setAddress1('');
     setAddress2('');
     setAddress3('');
@@ -268,7 +293,7 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
     setCountry(str(r.country));
     setPhone1(str(r.phone1));
     setPhone2(str(r.phone2));
-    setRoleIdsSelected(employeeRoleIds(full));
+    setRoleIdsSelected(employeeRoleIds(full, practiceWideRoleIds));
   };
 
   const openEditBio = async (id: number) => {
@@ -292,7 +317,7 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
       const full = await fetchEmployee(id);
       setEditingId(id);
       setRolesEditEmployee(full);
-      setRoleIdsSelected(employeeRoleIds(full));
+      setRoleIdsSelected(employeeRoleIds(full, practiceWideRoleIds));
       setModalMode('roles');
     } catch (e) {
       onMessage?.(extractErr(e), 'error');
@@ -300,9 +325,8 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
   };
 
   const openEdit = async (id: number) => {
-    if (!EMPLOYEE_DIRECTORY_EDIT_ENABLED) return;
     setSaving(false);
-    setModalMode(null);
+    setModalMode((cur) => (cur === 'add' ? 'add' : null));
     try {
       const [full, branchList, empBranches] = await Promise.all([
         fetchEmployee(id),
@@ -310,7 +334,9 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
         getEmployeeBranches(DEFAULT_PRACTICE_ID, id).catch(() => []),
       ]);
       setEditingId(id);
+      setLoadedEmployee(full);
       applyRecordToForm(full);
+      setBioText(full.bio ?? '');
       setBranchOptions(branchList.filter((b) => b.isActive !== false));
       const primary = empBranches.find((b) => b.isPrimary) ?? empBranches[0] ?? null;
       const seedBranch =
@@ -320,6 +346,8 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
         null;
       setDefaultBranchId(seedBranch);
       setDefaultLocationId(primary?.defaultInventoryLocationId ?? null);
+      const linked = await fetchAdminUsers({ employeeId: id }).catch(() => []);
+      setLoginUser(linked.find((u) => u.employeeId === id) ?? linked[0] ?? null);
       if (seedBranch != null) {
         try {
           const locs = await listInventoryBranchLocations(DEFAULT_PRACTICE_ID, seedBranch);
@@ -330,14 +358,21 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
       } else {
         setLocationOptions([]);
       }
-      setModalMode('edit');
     } catch (e) {
       onMessage?.(extractErr(e), 'error');
     }
   };
 
   useEffect(() => {
-    if (modalMode !== 'add' && modalMode !== 'edit') return;
+    if (selectedEmployeeId != null && selectedEmployeeId !== editingId) {
+      void openEdit(selectedEmployeeId);
+    }
+    // Load the URL/parent selection once it changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedEmployeeId]);
+
+  useEffect(() => {
+    if (editingId == null && modalMode !== 'add') return;
     if (defaultBranchId == null) {
       setLocationOptions([]);
       return;
@@ -360,7 +395,7 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [modalMode, defaultBranchId]);
+  }, [modalMode, editingId, defaultBranchId]);
 
   const toggleRoleGroup = (nameKey: string, checked: boolean) => {
     const group = roleGroups.find((g) => g.nameKey === nameKey);
@@ -430,7 +465,7 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
       licenseNumber: blankToNull(licenseNumber),
       pimsId: blankToNull(pimsId),
       pimsUserId: blankToNull(pimsUserId),
-      pimsType: blankToNull(pimsType) ?? 'EVET',
+      pimsType: blankToNull(pimsType) ?? 'VAYD',
       isProvider,
       address1: blankToNull(address1),
       address2: blankToNull(address2),
@@ -442,7 +477,6 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
       country: blankToNull(country),
       phone1: blankToNull(phone1),
       phone2: blankToNull(phone2),
-      roleIds: roleIdsSelected.length ? [...roleIdsSelected] : [],
       practice,
       isActive: true,
       isDeleted: false,
@@ -450,9 +484,60 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
     return payload;
   };
 
+  const saveOfficeAndRoles = async (id: number) => {
+    await updateEmployeeRoles(id, {
+      roleIds: roleIdsSelected.length ? [...roleIdsSelected] : [],
+    });
+    const trimmedBio = bioText.trim();
+    if (trimmedBio.length > EMPLOYEE_BIO_MAX_LENGTH) {
+      throw new Error(`Bio must be ${EMPLOYEE_BIO_MAX_LENGTH} characters or fewer.`);
+    }
+    await updateEmployeeBio(id, trimmedBio === '' ? null : trimmedBio);
+    if (defaultBranchId != null) {
+      const existing = await getEmployeeBranches(DEFAULT_PRACTICE_ID, id).catch(() => []);
+      const branchIds =
+        existing.length > 0
+          ? [...new Set([...existing.map((b) => b.branchId), defaultBranchId])]
+          : [defaultBranchId];
+      await setEmployeeBranches(DEFAULT_PRACTICE_ID, id, {
+        branchIds,
+        primaryBranchId: defaultBranchId,
+        defaultInventoryLocationId: defaultLocationId,
+      });
+    }
+  };
+
   const submitModal = async (e: FormEvent) => {
     e.preventDefault();
-    if (!EMPLOYEE_DIRECTORY_EDIT_ENABLED) return;
+    if (modalMode === 'add') {
+      const fn = firstName.trim();
+      const ln = lastName.trim();
+      if (!fn || !ln) {
+        onMessage?.('First name and last name are required.', 'error');
+        return;
+      }
+      setSaving(true);
+      try {
+        const basePayload = buildPayloadFromForm();
+        const dto = { ...basePayload } as EmployeeDto;
+        if (pimsId.trim()) {
+          await upsertEmployees(dto);
+          onMessage?.('Employee added.', 'success');
+        } else {
+          await saveEmployees(dto);
+          onMessage?.('Employee added.', 'success');
+        }
+        setModalMode(null);
+        await load();
+      } catch (err) {
+        onMessage?.(extractErr(err), 'error');
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
+
+    if (editingId == null) return;
     const fn = firstName.trim();
     const ln = lastName.trim();
     if (!fn || !ln) {
@@ -461,48 +546,28 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
     }
     setSaving(true);
     try {
-      const basePayload = buildPayloadFromForm();
-      const pid = pimsId.trim();
-
-      if (modalMode === 'add') {
-        const dto = { ...basePayload } as EmployeeDto;
-        if (pid) {
-          await upsertEmployees(dto);
-          onMessage?.('Employee upserted.', 'success');
-        } else {
-          await saveEmployees(dto);
-          onMessage?.('Employee saved.', 'success');
-        }
-      } else if (modalMode === 'edit' && editingId != null) {
-        const full = await fetchEmployee(editingId);
-        const prev = full as unknown as Record<string, unknown>;
-        const merged: EmployeeDto = {
-          ...prev,
-          ...basePayload,
-          id: editingId,
-          practice: (full.practice as object | undefined) ?? (prev.practice as object | undefined) ?? practice,
-          isActive: prev.isActive !== false,
-          isDeleted: prev.isDeleted === true,
-        } as EmployeeDto;
-        await saveEmployees(merged);
-        await updateEmployeeRoles(editingId, {
-          roleIds: roleIdsSelected.length ? [...roleIdsSelected] : [],
-        });
-        if (defaultBranchId != null) {
-          const existing = await getEmployeeBranches(DEFAULT_PRACTICE_ID, editingId).catch(() => []);
-          const branchIds =
-            existing.length > 0
-              ? [...new Set([...existing.map((b) => b.branchId), defaultBranchId])]
-              : [defaultBranchId];
-          await setEmployeeBranches(DEFAULT_PRACTICE_ID, editingId, {
-            branchIds,
-            primaryBranchId: defaultBranchId,
-            defaultInventoryLocationId: defaultLocationId,
-          });
-        }
-        onMessage?.('Employee updated.', 'success');
+      const full = await fetchEmployee(editingId);
+      const prev = full as unknown as Record<string, unknown>;
+      const form = buildPayloadFromForm();
+      if (loginUser) {
+        form.email = loginUser.email ?? prev.email ?? null;
       }
-      setModalMode(null);
+      const merged: EmployeeDto = {
+        ...prev,
+        ...form,
+        id: editingId,
+        practice:
+          (full.practice as object | undefined) ??
+          (prev.practice as object | undefined) ??
+          practice,
+        isActive: prev.isActive !== false,
+        isDeleted: prev.isDeleted === true,
+      } as EmployeeDto;
+      await saveEmployees(merged);
+      await saveOfficeAndRoles(editingId);
+      const refreshed = await fetchEmployee(editingId);
+      setLoadedEmployee(refreshed);
+      onMessage?.('Employee updated.', 'success');
       await load();
     } catch (err) {
       onMessage?.(extractErr(err), 'error');
@@ -512,7 +577,6 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
   };
 
   const deactivate = async (emp: Employee) => {
-    if (!EMPLOYEE_DIRECTORY_EDIT_ENABLED) return;
     const ok = await appConfirm({
       title: 'Deactivate employee?',
       message: `Deactivate ${emp.firstName} ${emp.lastName}? They will be hidden from active lists.`,
@@ -537,7 +601,6 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
   };
 
   const reactivate = async (emp: Employee) => {
-    if (!EMPLOYEE_DIRECTORY_EDIT_ENABLED) return;
     try {
       const full = await fetchEmployee(emp.id);
       const merged = {
@@ -555,7 +618,6 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
   };
 
   const removeRow = async (emp: Employee) => {
-    if (!EMPLOYEE_DIRECTORY_EDIT_ENABLED) return;
     const ok = await appConfirm({
       title: 'Delete employee?',
       message: `Permanently delete employee #${emp.id} from the database? This cannot be undone.`,
@@ -573,181 +635,290 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
   };
 
   const sorted = useMemo(() => {
-    return [...rows].sort((a, b) =>
-      `${a.lastName} ${a.firstName}`.localeCompare(`${b.lastName} ${b.firstName}`)
-    );
+    return [...rows].sort((a, b) => {
+      const aProvider = a.isProvider === true ? 0 : 1;
+      const bProvider = b.isProvider === true ? 0 : 1;
+      if (aProvider !== bProvider) return aProvider - bProvider;
+      return `${a.lastName} ${a.firstName}`.localeCompare(`${b.lastName} ${b.firstName}`);
+    });
   }, [rows]);
+
+  const selectEmployee = (id: number) => {
+    onSelectedEmployeeIdChange?.(id);
+    void openEdit(id);
+  };
+
+  const ownership = scoutManagedState(
+    loadedEmployee as unknown as Record<string, unknown> | null,
+    'employee'
+  );
+  const emailLocked = loginUser != null;
 
   return (
     <div className="settings-employee-directory">
-      <p className="muted" style={{ marginBottom: 16, maxWidth: 900 }}>
-        {EMPLOYEE_DIRECTORY_EDIT_ENABLED ? (
-          <>
-            Add or edit staff using <code>POST /employees/upsert</code> (when PIMS ID is set on add) or{' '}
-            <code>POST /employees</code> (save). The editor loads the same fields returned by <code>GET /employees/:id</code>{' '}
-            (name, PIMS ids, address, phones, etc.). Deactivate via <code>isActive: false</code>; delete via{' '}
-            <code>DELETE /employees?ids=…</code>. Click an employee name (or <strong>Edit roles</strong>) to assign
-            employee roles for manual booking permissions.
-          </>
-        ) : (
-          <>
-            Employee PIMS fields are <strong>read-only</strong>. Click an employee name to edit{' '}
-            <strong>employee roles</strong> (<code>PUT /employees/:id/roles</code>) or use{' '}
-            <strong>Edit bio</strong> for VAYD-managed profile copy (
-            <code>PUT /employees/:id/bio</code>). To enable full add/edit of PIMS records, set{' '}
-            <code>VITE_ENABLE_PIMS_ENTITY_EDIT=true</code> in <code>.env</code> and rebuild.
-          </>
-        )}
+      <p className="settings-section-description" style={{ marginTop: 0 }}>
+        Choose a person, then use the tabs for profile, schedule (hours, offices, and zones),
+        appointment types, goals, and photo.
       </p>
 
-      <div style={{ marginBottom: 12 }}>
-        {EMPLOYEE_DIRECTORY_EDIT_ENABLED ? (
-          <button type="button" className="btn" onClick={openAdd}>
-            + Add employee
-          </button>
-        ) : null}
-        <button
-          type="button"
-          className="btn secondary"
-          style={{ marginLeft: EMPLOYEE_DIRECTORY_EDIT_ENABLED ? 8 : 0 }}
-          onClick={() => void load()}
-        >
-          Refresh
-        </button>
-      </div>
-
-      {loading && <p className="muted">Loading employees…</p>}
-      {loadError && <div className="settings-error-message">{loadError}</div>}
-
-      {!loading && !loadError && (
-        <div className="settings-table-container" style={{ overflowX: 'auto' }}>
-          <table className="settings-table">
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>Name</th>
-                <th>Email</th>
-                <th>Phone</th>
-                <th>PIMS ID</th>
-                <th>PIMS user</th>
-                <th>Provider</th>
-                <th>Bio</th>
-                <th>Roles</th>
-                <th>Status</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sorted.map((emp) => {
-                const roleLabels = roleLabelsForEmployee(emp, rolesCatalog);
-                return (
-                  <tr key={emp.id}>
-                    <td>{emp.id}</td>
-                    <td>
-                      <button
-                        type="button"
-                        className="settings-employee-directory__name-btn"
-                        onClick={() => void openEditRoles(emp.id)}
-                      >
-                        {employeeDisplayName(emp)}
-                      </button>
-                    </td>
-                    <td>{emp.email || '—'}</td>
-                    <td
-                      title={
-                        empPhone2(emp)
-                          ? `Phone 2: ${empPhone2(emp)}`
-                          : undefined
-                      }
-                    >
-                      {empPhone1(emp)}
-                    </td>
-                    <td>{empPimsId(emp)}</td>
-                    <td>{empPimsUserId(emp)}</td>
-                    <td>{emp.isProvider ? 'Yes' : 'No'}</td>
-                    <td
-                      className="settings-employee-directory__bio-cell"
-                      title={empBio(emp)?.trim() || undefined}
-                    >
-                      {truncateBio(empBio(emp))}
-                    </td>
-                    <td>
-                      {roleLabels.length > 0 ? (
-                        <div className="settings-employee-directory__role-tags">
-                          {roleLabels.map((label) => (
-                            <span key={label} className="settings-employee-directory__role-tag">
-                              {label}
-                            </span>
-                          ))}
-                        </div>
-                      ) : (
-                        <span className="muted">None</span>
-                      )}
-                    </td>
-                    <td>{empActive(emp) ? 'Active' : 'Inactive'}</td>
-                    <td>
-                      <button
-                        type="button"
-                        className="btn secondary"
-                        onClick={() => void openEditRoles(emp.id)}
-                      >
-                        Edit roles
-                      </button>
-                      <button
-                        type="button"
-                        className="btn secondary"
-                        style={{ marginLeft: 6 }}
-                        onClick={() => void openEditBio(emp.id)}
-                      >
-                        Edit bio
-                      </button>
-                      {EMPLOYEE_DIRECTORY_EDIT_ENABLED ? (
-                        <>
-                          <button
-                            type="button"
-                            className="btn secondary"
-                            style={{ marginLeft: 6 }}
-                            onClick={() => void openEdit(emp.id)}
-                          >
-                            Edit
-                          </button>
-                          {empActive(emp) ? (
-                            <button
-                              type="button"
-                              className="btn secondary"
-                              style={{ marginLeft: 6 }}
-                              onClick={() => void deactivate(emp)}
-                            >
-                              Deactivate
-                            </button>
-                          ) : (
-                            <button
-                              type="button"
-                              className="btn secondary"
-                              style={{ marginLeft: 6 }}
-                              onClick={() => void reactivate(emp)}
-                            >
-                              Reactivate
-                            </button>
-                          )}
-                          <button
-                            type="button"
-                            className="btn secondary"
-                            style={{ marginLeft: 6, color: '#b91c1c' }}
-                            onClick={() => void removeRow(emp)}
-                          >
-                            Delete
-                          </button>
-                        </>
-                      ) : null}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+      <div className="settings-employee-hub">
+        <div className="settings-employee-hub__toolbar">
+          <label className="settings-employee-hub__staff-field">
+            <span className="settings-label">Staff</span>
+            <select
+              className="settings-select"
+              value={editingId ?? ''}
+              aria-label="Staff"
+              onChange={(e) => {
+                const empId = Number(e.target.value);
+                if (empId) selectEmployee(empId);
+              }}
+            >
+              <option value="">{loading ? 'Loading…' : 'Select staff…'}</option>
+              {sorted.map((emp) => (
+                <option key={emp.id} value={emp.id}>
+                  {employeeDisplayName(emp)}
+                  {emp.isProvider ? ' · Provider' : ''}
+                  {empActive(emp) ? '' : ' · Inactive'}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="settings-employee-hub__toolbar-actions">
+            <button type="button" className="btn" onClick={openAdd}>
+              Add
+            </button>
+            <button type="button" className="btn secondary" onClick={() => void load()}>
+              Refresh
+            </button>
+          </div>
         </div>
-      )}
+        {loadError && <div className="settings-error-message">{loadError}</div>}
+
+        {editingId == null ? (
+          <div className="settings-card">
+            <p className="settings-muted" style={{ margin: 0 }}>
+              Select an employee to manage their profile, default office, and schedule.
+            </p>
+          </div>
+        ) : (
+          <>
+              <div className="settings-employee-hub__sections" role="tablist" aria-label="Employee sections">
+                {HUB_SECTIONS.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={section === item.id}
+                    className={`settings-employee-hub__section${section === item.id ? ' is-active' : ''}`}
+                    onClick={() => onSectionChange?.(item.id)}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+
+              {section === 'profile' ? (
+                <form onSubmit={submitModal} className="settings-employee-hub__form">
+                  <fieldset className="settings-employee-modal__fieldset">
+                    <legend className="settings-employee-modal__legend">Default office</legend>
+                    <p className="muted" style={{ fontSize: 12, margin: '0 0 8px' }}>
+                      Checkout takes inventory from this office unless someone changes it on the
+                      invoice.
+                    </p>
+                    <div className="settings-employee-modal__grid">
+                      <label>
+                        <span className="label">Default branch</span>
+                        <select
+                          className="input"
+                          value={defaultBranchId ?? ''}
+                          onChange={(e) => {
+                            const v = e.target.value === '' ? null : Number(e.target.value);
+                            setDefaultBranchId(v != null && Number.isFinite(v) ? v : null);
+                            setDefaultLocationId(null);
+                          }}
+                        >
+                          <option value="">Select branch…</option>
+                          {branchOptions.map((b) => (
+                            <option key={b.id} value={b.id}>
+                              {b.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        <span className="label">Default location</span>
+                        <select
+                          className="input"
+                          value={defaultLocationId ?? ''}
+                          disabled={defaultBranchId == null}
+                          onChange={(e) => {
+                            const v = e.target.value === '' ? null : Number(e.target.value);
+                            setDefaultLocationId(v != null && Number.isFinite(v) ? v : null);
+                          }}
+                        >
+                          <option value="">Select location…</option>
+                          {locationOptions.map((loc) => (
+                            <option key={loc.id} value={loc.id}>
+                              {loc.name}
+                              {loc.isDefault ? ' (default)' : ''}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                  </fieldset>
+
+                  <fieldset className="settings-employee-modal__fieldset">
+                    <legend className="settings-employee-modal__legend">Name</legend>
+                    <p className="muted" style={{ fontSize: 12, margin: '0 0 8px' }} title={ownership.title}>
+                      {ownership.label}. A save here makes Scout the source of truth.
+                    </p>
+                    <div className="settings-employee-modal__grid">
+                      <label>
+                        <span className="label">First name</span>
+                        <input
+                          className="input"
+                          value={firstName}
+                          onChange={(e) => setFirstName(e.target.value)}
+                        />
+                      </label>
+                      <label>
+                        <span className="label">Last name</span>
+                        <input
+                          className="input"
+                          value={lastName}
+                          onChange={(e) => setLastName(e.target.value)}
+                        />
+                      </label>
+                      <label>
+                        <span className="label">Title</span>
+                        <input
+                          className="input"
+                          value={title}
+                          onChange={(e) => setTitle(e.target.value)}
+                        />
+                      </label>
+                      <label>
+                        <span className="label">Email</span>
+                        <input
+                          className="input"
+                          type="email"
+                          value={emailLocked ? (loginUser.email ?? email) : email}
+                          onChange={(e) => setEmail(e.target.value)}
+                          disabled={emailLocked}
+                        />
+                        {emailLocked ? (
+                          <p className="muted" style={{ fontSize: 12, margin: '6px 0 0' }}>
+                            This is their login email.{' '}
+                            <a href={`/admin/users?user=${loginUser.id}`}>Edit it on Users</a>
+                            . It must be unique among all users.
+                          </p>
+                        ) : (
+                          <p className="muted" style={{ fontSize: 12, margin: '6px 0 0' }}>
+                            Contact email. After they have a login, change it on Users.
+                          </p>
+                        )}
+                      </label>
+                      <label>
+                        <span className="label">Phone</span>
+                        <input
+                          className="input"
+                          type="tel"
+                          value={phone1}
+                          onChange={(e) => setPhone1(e.target.value)}
+                        />
+                      </label>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, alignSelf: 'end' }}>
+                        <input
+                          type="checkbox"
+                          checked={isProvider}
+                          onChange={(e) => setIsProvider(e.target.checked)}
+                        />
+                        <span>Scheduling provider</span>
+                      </label>
+                    </div>
+                  </fieldset>
+
+                  <fieldset className="settings-employee-modal__fieldset">
+                    <legend className="settings-employee-modal__legend">Roles</legend>
+                    <p className="muted" style={{ fontSize: 12, margin: '0 0 8px' }}>
+                      Practice-wide Scout roles only. Branch-specific roles are on{' '}
+                      <a href="/schedule/settings?tab=roles">Staff → Roles</a>.
+                    </p>
+                    {roleGroups.length === 0 ? (
+                      <p className="muted" style={{ fontSize: 13, margin: 0 }}>
+                        No practice-wide Scout roles loaded.
+                      </p>
+                    ) : (
+                      <div className="settings-employee-modal__roles" role="group" aria-label="Employee roles">
+                        {roleGroups.map((group) => (
+                          <label
+                            key={group.nameKey}
+                            style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, cursor: 'pointer' }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={isEmployeeRoleNameGroupSelected(group, roleIdsSelected)}
+                              onChange={(e) => toggleRoleGroup(group.nameKey, e.target.checked)}
+                            />
+                            <span>{group.displayName}</span>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                  </fieldset>
+
+                  <fieldset className="settings-employee-modal__fieldset">
+                    <legend className="settings-employee-modal__legend">Bio</legend>
+                    <textarea
+                      className="input"
+                      rows={4}
+                      value={bioText}
+                      onChange={(e) => setBioText(e.target.value)}
+                      maxLength={EMPLOYEE_BIO_MAX_LENGTH}
+                    />
+                    <p className="muted" style={{ fontSize: 12, margin: '6px 0 0' }}>
+                      {bioText.length}/{EMPLOYEE_BIO_MAX_LENGTH}
+                    </p>
+                  </fieldset>
+
+                  <div className="settings-employee-hub__form-actions">
+                    <button type="submit" className="btn" disabled={saving}>
+                      {saving ? 'Saving…' : 'Save profile'}
+                    </button>
+                    {editingId != null ? (
+                      <>
+                        {rows.find((r) => r.id === editingId) && empActive(rows.find((r) => r.id === editingId)!) ? (
+                          <button
+                            type="button"
+                            className="btn secondary"
+                            onClick={() => void deactivate(rows.find((r) => r.id === editingId)!)}
+                          >
+                            Deactivate
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            className="btn secondary"
+                            onClick={() => {
+                              const emp = rows.find((r) => r.id === editingId);
+                              if (emp) void reactivate(emp);
+                            }}
+                          >
+                            Reactivate
+                          </button>
+                        )}
+                      </>
+                    ) : null}
+                  </div>
+                </form>
+              ) : (
+                extra
+              )}
+            </>
+          )}
+      </div>
 
       {modalMode === 'roles' && rolesEditEmployee ? (
         <div className="settings-employee-modal-root" role="presentation">
@@ -765,14 +936,15 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
                 <span className="muted"> · ID {rolesEditEmployee.id}</span>
               </p>
               <p className="muted" style={{ margin: '0 0 16px', fontSize: 13 }}>
-                Roles control which appointment types this employee may book manually on the calendar. Configure
-                types per role under <strong>Role Manual Booking</strong>.
+                Practice-wide Scout roles for this person. Branch-specific roles (for example Inventory
+                Manager) are assigned under <strong>Staff → Roles</strong>. Manual booking types are also
+                configured there.
               </p>
               <fieldset className="settings-employee-modal__fieldset">
                 <legend className="settings-employee-modal__legend">Assigned roles</legend>
                 {roleGroups.length === 0 ? (
                   <p className="muted" style={{ fontSize: 13, margin: 0 }}>
-                    No roles loaded. Check <code>GET /employees/roles</code>.
+                    No practice-wide Scout roles loaded. Add them under Staff → Roles.
                   </p>
                 ) : (
                   <div className="settings-employee-modal__roles" role="group" aria-label="Employee roles">
@@ -854,7 +1026,7 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
         </div>
       ) : null}
 
-      {EMPLOYEE_DIRECTORY_EDIT_ENABLED && (modalMode === 'add' || modalMode === 'edit') ? (
+      {modalMode === 'add' ? (
         <div className="settings-employee-modal-root" role="presentation">
           <button type="button" className="settings-employee-modal-backdrop" aria-label="Close" onClick={closeModal} />
           <div className="settings-employee-modal settings-employee-modal--wide" role="dialog" aria-modal="true">
@@ -1029,9 +1201,13 @@ export default function SettingsEmployeeDirectory({ onMessage }: Props) {
 
               <fieldset className="settings-employee-modal__fieldset">
                 <legend className="settings-employee-modal__legend">Roles</legend>
+                <p className="muted" style={{ fontSize: 12, margin: '0 0 8px' }}>
+                  Practice-wide Scout roles only. Branch-specific roles are on{' '}
+                  <a href="/schedule/settings?tab=roles">Staff → Roles</a>.
+                </p>
                 {roleGroups.length === 0 ? (
                   <p className="muted" style={{ fontSize: 13, margin: 0 }}>
-                    No roles loaded. Check <code>GET /employees/roles</code>.
+                    No practice-wide Scout roles loaded.
                   </p>
                 ) : (
                   <div className="settings-employee-modal__roles" role="group" aria-label="Employee roles">

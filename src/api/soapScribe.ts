@@ -157,7 +157,7 @@ export async function summarizeIntakeHistory(
 }
 
 /**
- * Epiphany: drop car/tech chit-chat from a spoken recording and return a chart-ready note.
+ * Jot: drop car/tech chit-chat from a spoken recording and return a chart-ready note.
  * Does not require a SOAP encounter.
  */
 export async function polishSpokenNotes(opts: {
@@ -177,10 +177,11 @@ export async function polishSpokenNotes(opts: {
 }
 
 export async function summarizeChartText(opts: {
-  mode: 'outside-record' | 'case-history';
+  mode: 'outside-record' | 'case-history' | 'household';
   sourceText?: string;
   images?: { mimeType: string; base64: string }[];
   patientName?: string | null;
+  clientName?: string | null;
   fileName?: string | null;
   asOfDate?: string | null;
 }): Promise<string> {
@@ -190,6 +191,7 @@ export async function summarizeChartText(opts: {
     ...(opts.sourceText?.trim() ? { sourceText: opts.sourceText.trim() } : {}),
     ...(opts.images?.length ? { images: opts.images } : {}),
     ...(opts.patientName?.trim() ? { patientName: opts.patientName.trim() } : {}),
+    ...(opts.clientName?.trim() ? { clientName: opts.clientName.trim() } : {}),
     ...(opts.fileName?.trim() ? { fileName: opts.fileName.trim() } : {}),
     ...(opts.asOfDate?.trim() ? { asOfDate: opts.asOfDate.trim() } : {}),
   });
@@ -202,6 +204,9 @@ export async function chatAboutChart(opts: {
   history?: { role: 'user' | 'assistant'; content: string }[];
   patientName?: string | null;
   asOfDate?: string | null;
+  patientId?: string | number | null;
+  clientId?: string | number | null;
+  chatScope?: 'patient' | 'client' | 'practice' | null;
   clientName?: string | null;
   staffName?: string | null;
   staffRole?: string | null;
@@ -213,6 +218,11 @@ export async function chatAboutChart(opts: {
   practiceWebsite?: string | null;
 }): Promise<string> {
   const trim = (v?: string | null) => (v?.trim() ? v.trim() : undefined);
+  const asId = (v?: string | number | null) => {
+    if (v == null || v === '') return undefined;
+    const n = Number(v);
+    return Number.isFinite(n) && n > 0 ? n : undefined;
+  };
   const { data } = await http.post<{ answer: string }>('/scribe/chart-chat', {
     practiceId: VISIT_WORKFLOW_PRACTICE_ID,
     sourceText: opts.sourceText,
@@ -220,6 +230,9 @@ export async function chatAboutChart(opts: {
     ...(opts.history?.length ? { history: opts.history } : {}),
     ...(trim(opts.patientName) ? { patientName: trim(opts.patientName) } : {}),
     ...(trim(opts.asOfDate) ? { asOfDate: trim(opts.asOfDate) } : {}),
+    ...(asId(opts.patientId) != null ? { patientId: asId(opts.patientId) } : {}),
+    ...(asId(opts.clientId) != null ? { clientId: asId(opts.clientId) } : {}),
+    ...(opts.chatScope ? { chatScope: opts.chatScope } : {}),
     ...(trim(opts.clientName) ? { clientName: trim(opts.clientName) } : {}),
     ...(trim(opts.staffName) ? { staffName: trim(opts.staffName) } : {}),
     ...(trim(opts.staffRole) ? { staffRole: trim(opts.staffRole) } : {}),
@@ -238,6 +251,18 @@ export type CaseHistoryChatTurn = {
   role: 'user' | 'assistant';
   content: string;
   createdAt: string;
+};
+
+export type AssistantChatScope = 'patient' | 'client' | 'practice';
+
+export type AssistantChatSearchHit = {
+  scope: AssistantChatScope;
+  patientId: string | null;
+  clientId: string | null;
+  practiceId: number | null;
+  updatedAt: string;
+  snippet: string;
+  matchCount: number;
 };
 
 /** Private to the signed-in user. Other staff never receive this thread. */
@@ -261,6 +286,96 @@ export async function saveMyCaseHistoryChat(
 
 export async function deleteMyCaseHistoryChat(patientId: string): Promise<void> {
   await http.delete('/scribe/case-history-chat', { params: { patientId } });
+}
+
+export async function fetchMyAssistantChat(opts: {
+  scope: AssistantChatScope;
+  patientId?: string | null;
+  clientId?: string | null;
+  practiceId?: number | null;
+}): Promise<CaseHistoryChatTurn[]> {
+  const { data } = await http.get<{ messages?: CaseHistoryChatTurn[] }>('/scribe/assistant-chat', {
+    params: {
+      scope: opts.scope,
+      ...(opts.patientId ? { patientId: opts.patientId } : {}),
+      ...(opts.clientId ? { clientId: opts.clientId } : {}),
+      ...(opts.practiceId != null ? { practiceId: opts.practiceId } : {}),
+    },
+  });
+  return Array.isArray(data?.messages) ? data.messages : [];
+}
+
+export async function saveMyAssistantChat(opts: {
+  scope: AssistantChatScope;
+  patientId?: string | null;
+  clientId?: string | null;
+  practiceId?: number | null;
+  messages: CaseHistoryChatTurn[];
+}): Promise<CaseHistoryChatTurn[]> {
+  const { data } = await http.put<{ messages?: CaseHistoryChatTurn[] }>('/scribe/assistant-chat', {
+    scope: opts.scope,
+    ...(opts.patientId ? { patientId: opts.patientId } : {}),
+    ...(opts.clientId ? { clientId: opts.clientId } : {}),
+    ...(opts.practiceId != null ? { practiceId: opts.practiceId } : {}),
+    messages: opts.messages,
+  });
+  return Array.isArray(data?.messages) ? data.messages : opts.messages;
+}
+
+export async function deleteMyAssistantChat(opts: {
+  scope: AssistantChatScope;
+  patientId?: string | null;
+  clientId?: string | null;
+  practiceId?: number | null;
+}): Promise<void> {
+  await http.delete('/scribe/assistant-chat', {
+    params: {
+      scope: opts.scope,
+      ...(opts.patientId ? { patientId: opts.patientId } : {}),
+      ...(opts.clientId ? { clientId: opts.clientId } : {}),
+      ...(opts.practiceId != null ? { practiceId: opts.practiceId } : {}),
+    },
+  });
+}
+
+/** Search only the signed-in user's chats across patients and households. */
+export async function searchMyAssistantChats(
+  q: string,
+  limit = 20
+): Promise<AssistantChatSearchHit[]> {
+  const { data } = await http.get<{ hits?: AssistantChatSearchHit[] }>(
+    '/scribe/assistant-chat/search',
+    { params: { q: q.trim(), limit } }
+  );
+  return Array.isArray(data?.hits) ? data.hits : [];
+}
+
+/** Practice-wide desk context (staffing, catalog snapshot, Scout help). */
+export async function fetchPracticeDeskContext(opts?: {
+  date?: string | null;
+}): Promise<{
+  sourceText: string;
+  asOfDate: string;
+  timezone: string;
+  viewerIsAdmin: boolean;
+}> {
+  const { data } = await http.get<{
+    sourceText?: string;
+    asOfDate?: string;
+    timezone?: string;
+    viewerIsAdmin?: boolean;
+  }>('/scribe/practice-desk-context', {
+    params: {
+      practiceId: VISIT_WORKFLOW_PRACTICE_ID,
+      ...(opts?.date?.trim() ? { date: opts.date.trim() } : {}),
+    },
+  });
+  return {
+    sourceText: typeof data?.sourceText === 'string' ? data.sourceText : '',
+    asOfDate: typeof data?.asOfDate === 'string' ? data.asOfDate : '',
+    timezone: typeof data?.timezone === 'string' ? data.timezone : 'America/New_York',
+    viewerIsAdmin: data?.viewerIsAdmin === true,
+  };
 }
 
 export type ScribeSocketStatus = 'idle' | 'connecting' | 'recording' | 'stopping' | 'error';

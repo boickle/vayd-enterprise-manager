@@ -5,8 +5,8 @@ import { Navigate, useLocation } from 'react-router';
 const RENAMED_PATHS: Record<string, string> = {
   '': '/schedule',
   overview: '/schedule/home',
-  inventory: '/schedule/catalog/inventory',
-  labs: '/schedule/catalog/labs',
+  inventory: '/schedule/inventory/items',
+  labs: '/schedule/inventory/items?type=lab',
   'reports/summary': '/schedule/analytics',
   'reports/activity': '/schedule/analytics',
   'settings/practice': '/schedule/settings',
@@ -17,5 +17,8 @@ export default function PimsToScheduleRedirect() {
   const { pathname, search, hash } = useLocation();
   const rest = pathname.replace(/^\/pims\/?/, '').replace(/\/+$/, '');
   const to = RENAMED_PATHS[rest] ?? `/schedule/${rest}`;
-  return <Navigate to={{ pathname: to, search, hash }} replace />;
+  const q = to.indexOf('?');
+  const destPath = q < 0 ? to : to.slice(0, q);
+  const destSearch = q < 0 ? search : to.slice(q);
+  return <Navigate to={{ pathname: destPath, search: destSearch, hash }} replace />;
 }

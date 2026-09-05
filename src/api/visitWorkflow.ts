@@ -174,6 +174,9 @@ export type VisitInvoice = {
   /** Practice-scoped Scout invoice number. */
   scoutInvoiceNumber?: number | null;
   createdByEmployeeId?: number | null;
+  /** Office checkout draws inventory from. Defaults to the cashier’s primary branch. */
+  inventoryBranchId?: number | null;
+  inventoryLocationId?: number | null;
   isDeleted?: boolean;
   voidedByEmployeeId?: number | null;
   voidReason?: string | null;
@@ -794,7 +797,7 @@ export async function ensureCounterInvoice(opts: {
 
 export async function patchVisitInvoice(
   invoiceId: string,
-  body: { appointmentId?: number | null }
+  body: { appointmentId?: number | null; inventoryBranchId?: number | null }
 ): Promise<VisitInvoice> {
   const { data } = await http.patch<VisitInvoice>(
     `/visit-invoices/${encodeURIComponent(invoiceId)}`,

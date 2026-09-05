@@ -29,7 +29,7 @@ import {
   type VisitInvoice,
   VISIT_WORKFLOW_PRACTICE_ID,
 } from '../api/visitWorkflow';
-import { polishSpokenNotes, summarizeIntakeHistory } from '../api/soapScribe';
+import { polishSpokenNotes, summarizeChartText, summarizeIntakeHistory } from '../api/soapScribe';
 import { fetchAppointmentById } from '../api/appointments';
 import { fetchEmployee } from '../api/appointmentSettings';
 import { fetchPatientProfileForRow } from '../api/patients';
@@ -54,6 +54,7 @@ import SoapPatientChronicSummary from '../components/soap/SoapPatientChronicSumm
 import type { ForwardBookingDisposition } from '../api/forwardBookingDisposition';
 import CheckoutFollowUpPrompt from '../components/soap/CheckoutFollowUpPrompt';
 import ScribeDocumentView from '../components/soap/ScribeDocumentView';
+import SoapRichTextField from '../components/soap/SoapRichTextField';
 import ScribePromptOverridesModal from '../components/soap/ScribePromptOverridesModal';
 import ScribeSuggestedPlanItems, {
   type SoapNarrativeSection,
@@ -67,6 +68,8 @@ import {
   hasPreVisitAnswersBlock,
   looksLikeRawRoomLoaderSubjective,
   looksLikeSpokenChatter,
+  caseSummaryLooksWrongForPatient,
+  mergeCaseSummaryNotes,
   mergeClinicianPrevisitNotes,
   PRE_EXAM_CHECKIN_NOT_FILLED,
   prependCheckinBlock,
@@ -75,6 +78,9 @@ import {
   withRoomLoaderSubjectivePrefix,
 } from '../utils/roomLoaderSubjectiveText';
 import { markBriefsInjected, pendingPrevisitBriefs } from '../utils/briefStore';
+import {
+  listCaseHistorySummaries,
+} from '../utils/briefRecordStore';
 import { takeDeferredPlanItems } from '../utils/deferredScribePlanItems';
 import {
   appendTreatmentPlanMedicationBullet,
@@ -514,7 +520,7 @@ export default function SoapEncounterPage() {
               });
               markBriefsInjected(pendingPrep.map((b) => b.id));
             } catch (err) {
-              console.warn('Failed to inject clinician prep notes from Epiphany', err);
+              console.warn('Failed to inject clinician prep notes from Jot', err);
             }
           }
         }
@@ -553,7 +559,7 @@ export default function SoapEncounterPage() {
         setPlanNotes(enc.planNotes ?? '');
         setLinkedProblemIds(enc.assessmentProblemIds ?? []);
 
-        const [probs, chronicMeds] = await Promise.all([
+        const [probs, chronicMeds, profileResult] = await Promise.all([
           listProblems(patientId).catch(() => [] as PatientProblem[]),
           listPatientPrescriptions(patientId, { activeChronicOnly: true }).catch(
             () => [] as PatientPrescription[]
@@ -569,6 +575,7 @@ export default function SoapEncounterPage() {
                 const name = patientField(patient, 'name') ?? `Patient #${patientId}`;
                 setPatientName(name);
                 setPatientProfile(patient);
+                return { patient, name };
               }
             } catch {
               if (!canceled) {
@@ -576,6 +583,7 @@ export default function SoapEncounterPage() {
                 setPatientProfile(null);
               }
             }
+            return { patient: null as Record<string, unknown> | null, name: `Patient #${patientId}` };
           })(),
           (async () => {
             try {
@@ -628,6 +636,87 @@ export default function SoapEncounterPage() {
         if (canceled) return;
         setProblems(probs);
         setChronicMedications(chronicMeds);
+
+        // Seed Case summary from Jot cache (or a light chart summarize) once per chart.
+        // Always use THIS open patientId + resolved profile name — never React state from a
+        // prior pet tab (that swapped Simon/Charlie names in dual-appointment tests).
+        // Also replace a stored block that clearly names the wrong pet.
+        try {
+          const partsNow = splitSubjectiveHistoryParts(subjectiveHistory);
+          const resolvedName =
+            profileResult?.name?.trim() || `Patient #${patientId}`;
+          const existingWrong =
+            Boolean(partsNow.caseSummary.trim()) &&
+            caseSummaryLooksWrongForPatient(partsNow.caseSummary, resolvedName);
+          if ((!partsNow.caseSummary.trim() || existingWrong) && scribeEnabled) {
+            const today = new Date().toISOString().slice(0, 10);
+            let summary =
+              listCaseHistorySummaries(String(patientId))[0]?.summary?.trim() ?? '';
+            // Drop a cached summary that clearly names a different patient as the subject.
+            if (
+              summary &&
+              caseSummaryLooksWrongForPatient(summary, resolvedName)
+            ) {
+              summary = '';
+            }
+            if (!summary) {
+              const openProblems = probs.filter((p) => p.status !== 'resolved');
+              const lines = [
+                `THIS PATIENT ONLY (do not describe housemates as if they are this patient):`,
+                `Patient: ${resolvedName} (patientId ${patientId})`,
+                `As of: ${today}`,
+                '',
+                'Problems on THIS patient chart:',
+                ...(openProblems.length
+                  ? openProblems.map((p) => `- ${p.label} (${p.kind}, ${p.acuity})`)
+                  : ['- None listed']),
+                '',
+                'Current medications / preventatives for THIS patient:',
+                ...(chronicMeds.length
+                  ? chronicMeds.map((rx) => {
+                      const extra = [rx.strength, rx.instructions]
+                        .filter(Boolean)
+                        .join(' · ');
+                      return `- ${rx.name}${extra ? ` — ${extra}` : ''}`;
+                    })
+                  : ['- None listed as chronic']),
+              ];
+              const sourceText = lines.join('\n');
+              // Thin SOAP-only fallback for Subjective — do NOT write into the Prep
+              // Case history cache (that is reserved for an explicit Summarize click).
+              if (openProblems.length || chronicMeds.length) {
+                summary = await summarizeChartText({
+                  mode: 'case-history',
+                  sourceText,
+                  patientName: resolvedName,
+                  asOfDate: today,
+                });
+              }
+            }
+            if (summary.trim()) {
+              const next = mergeCaseSummaryNotes(subjectiveHistory, summary, {
+                patientName: resolvedName,
+              });
+              if (next !== subjectiveHistory.trim()) {
+                subjectiveHistory = next;
+                const emailFields = emailDraftFromSubjective(enc.subjective);
+                try {
+                  enc = await updateEncounter(enc.id, {
+                    subjective: buildSubjectivePayload(next, emailFields),
+                  });
+                  if (!canceled) {
+                    setEncounter(enc);
+                    setSubjective(subjectiveHistory);
+                  }
+                } catch (err) {
+                  console.warn('Failed to save case summary into Subjective', err);
+                }
+              }
+            }
+          }
+        } catch (err) {
+          console.warn('Case summary seed failed', err);
+        }
 
         const [ords] = await Promise.all([
           listOrders(enc.id).catch(() => [] as EncounterOrder[]),
@@ -1334,14 +1423,13 @@ export default function SoapEncounterPage() {
                       </>
                     )}
 
-                    <div className="soap-subhead">Notes (also shown in Document view)</div>
-                    <textarea
-                      className="soap-textarea"
-                      rows={4}
-                      placeholder="Additional objective observations…"
+                    <div className="soap-subhead">Notes (also shown in Document view — Bold for abnormals)</div>
+                    <SoapRichTextField
                       value={objectiveNotes}
                       disabled={locked}
-                      onChange={(e) => setObjectiveNotes(e.target.value)}
+                      placeholder="Additional objective observations…"
+                      minHeightPx={120}
+                      onChange={setObjectiveNotes}
                       onBlur={() => save({ objectiveNotes })}
                     />
                   </section>

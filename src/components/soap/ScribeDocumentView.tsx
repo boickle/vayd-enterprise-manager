@@ -1,10 +1,22 @@
+import { useState } from 'react';
 import type { ReactNode } from 'react';
+import SoapRichTextField from './SoapRichTextField';
+import { soapHtmlToPlainText } from '../../utils/sanitizeCommunicationHtml';
 
 type SoapField = {
   value: string;
   onChange: (text: string) => void;
   onBlur: () => void;
 };
+
+function formatFullSoap(s: string, o: string, a: string, p: string): string {
+  return [
+    `S:\n${soapHtmlToPlainText(s).trim()}`,
+    `O:\n${soapHtmlToPlainText(o).trim()}`,
+    `A:\n${soapHtmlToPlainText(a).trim()}`,
+    `P:\n${soapHtmlToPlainText(p).trim()}`,
+  ].join('\n\n');
+}
 
 type Props = {
   disabled: boolean;
@@ -25,20 +37,22 @@ type Props = {
   planItemsSlot?: ReactNode;
 };
 
-function SoapField({
+function SoapSection({
   letter,
   label,
   placeholder,
   field,
   disabled,
-  rows = 14,
+  minHeightPx,
+  headerAction,
 }: {
   letter: string;
   label: string;
   placeholder: string;
   field: SoapField;
   disabled: boolean;
-  rows?: number;
+  minHeightPx: number;
+  headerAction?: ReactNode;
 }) {
   return (
     <section className="soap-doc-section">
@@ -46,15 +60,15 @@ function SoapField({
         <h3>
           <span className="soap-doc-letter">{letter}</span> {label}
         </h3>
+        {headerAction}
       </div>
-      <textarea
-        className="soap-doc-textarea"
-        rows={rows}
-        placeholder={placeholder}
+      <SoapRichTextField
         value={field.value}
-        disabled={disabled}
-        onChange={(e) => field.onChange(e.target.value)}
+        onChange={field.onChange}
         onBlur={field.onBlur}
+        disabled={disabled}
+        placeholder={placeholder}
+        minHeightPx={minHeightPx}
       />
     </section>
   );
@@ -62,12 +76,8 @@ function SoapField({
 
 /**
  * Editable "Document view" alternative to the tabbed SOAP form (docs/ai-scribe.md): four
- * plain-text S/O/A/P fields that are the SAME underlying encounter fields shown in the Tabs
- * view (subjective / objectiveNotes / assessmentReasoning / planNotes) — editing here saves
- * through the same path, so changes show up in both views. The AI scribe pre-fills them
- * (Subjective/Assessment via the live per-cycle suggestions, Objective/Plan via the one-shot
- * narrative generated when recording stops or a transcript is pasted), but nothing here is
- * read-only — the doctor can freely edit before/after AI content lands.
+ * rich-text S/O/A/P fields (bold for significant Objective findings) that are the SAME
+ * underlying encounter fields shown in the Tabs view.
  */
 export default function ScribeDocumentView({
   disabled,
@@ -85,43 +95,73 @@ export default function ScribeDocumentView({
   onPlanNotesBlur,
   planItemsSlot,
 }: Props) {
+  const [copied, setCopied] = useState(false);
+
+  async function copyAllSoap() {
+    const text = formatFullSoap(subjective, objectiveNotes, assessment, planNotes);
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+    }
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 2000);
+  }
+
   return (
     <div className="soap-doc-view">
-      <SoapField
+      <SoapSection
         letter="S"
         label="Subjective"
         placeholder={`Presenting Complaint: …\n\nPatient History:\n- …`}
         field={{ value: subjective, onChange: onSubjectiveChange, onBlur: onSubjectiveBlur }}
         disabled={disabled}
-        rows={16}
+        minHeightPx={260}
+        headerAction={
+          <button
+            type="button"
+            className={`soap-btn ghost small soap-doc-copy-all${copied ? ' ok' : ''}`}
+            onClick={() => void copyAllSoap()}
+          >
+            {copied ? 'Copied' : 'Copy all'}
+          </button>
+        }
       />
-      <SoapField
+      <SoapSection
         letter="O"
         label="Objective"
-        placeholder="Vital signs, physical exam findings…"
+        placeholder="Vital signs, physical exam findings… Use Bold for abnormals."
         field={{
           value: objectiveNotes,
           onChange: onObjectiveNotesChange,
           onBlur: onObjectiveNotesBlur,
         }}
         disabled={disabled}
-        rows={16}
+        minHeightPx={260}
       />
-      <SoapField
+      <SoapSection
         letter="A"
         label="Assessment"
         placeholder={`Problem List:\n- …\n- … - r/o …`}
         field={{ value: assessment, onChange: onAssessmentChange, onBlur: onAssessmentBlur }}
         disabled={disabled}
-        rows={12}
+        minHeightPx={200}
       />
-      <SoapField
+      <SoapSection
         letter="P"
         label="Plan"
         placeholder={`Diagnostics:\n- …\nTreatment Plan/Medications:\n- …\nClient Communication:\n- …`}
         field={{ value: planNotes, onChange: onPlanNotesChange, onBlur: onPlanNotesBlur }}
         disabled={disabled}
-        rows={14}
+        minHeightPx={240}
       />
 
       {planItemsSlot}

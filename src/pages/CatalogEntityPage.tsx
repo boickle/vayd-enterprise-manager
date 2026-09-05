@@ -411,8 +411,7 @@ export default function CatalogEntityPage({ itemType }: { itemType: ManagedType 
   );
 
   return (
-    <section className="settings-section">
-      <h2 className="settings-section-title">{plural}</h2>
+    <div>
       <p className="settings-section-description">
         Add, edit, archive, and configure tiered pricing for {plural.toLowerCase()}.
       </p>
@@ -567,7 +566,7 @@ export default function CatalogEntityPage({ itemType }: { itemType: ManagedType 
           </div>
         </div>
       )}
-    </section>
+    </div>
   );
 }
 

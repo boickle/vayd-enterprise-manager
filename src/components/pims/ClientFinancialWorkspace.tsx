@@ -78,6 +78,7 @@ import {
   type InvoiceEmailModel,
 } from '../../utils/invoiceEmail';
 import { listPaymentTypes, type PracticePaymentType } from '../../api/paymentTypes';
+import CheckoutInventoryBranchField from '../soap/CheckoutInventoryBranchField';
 import { recordScoutChartCommunication } from '../../api/scoutChart';
 import type { GmailComposeAttachment } from '../../api/gmail';
 import { ClientEmailComposeModal } from '../ClientEmailComposeModal';
@@ -545,6 +546,15 @@ export default function ClientFinancialWorkspace({
     if (patientId == null) return null;
     const id = allPets.find((p) => p.id === patientId)?.primaryProviderId;
     return id != null && Number.isFinite(id) && id > 0 ? id : null;
+  };
+
+  /** Prefer pet primary provider; otherwise first active provider option. */
+  const requiredProviderIdFor = (patientId: number | null | undefined): number | null => {
+    const fromPet = primaryProviderIdFor(patientId);
+    if (fromPet != null) return fromPet;
+    const first = providerOptions[0];
+    const id = first?.id != null ? Number(first.id) : NaN;
+    return Number.isFinite(id) && id > 0 ? id : null;
   };
 
   const petName = (id: number | null | undefined, fallbackName?: string | null) => {
@@ -1354,7 +1364,12 @@ export default function ClientFinancialWorkspace({
   const selectedPayType =
     paymentTypes.find((r) => r.name === tenderPaymentType) ?? null;
   const canPay =
-    selected && !invoiceGone && selected.status !== 'void' && remaining > 0 && !hasUnsavedDeletes;
+    selected &&
+    !invoiceGone &&
+    selected.status !== 'void' &&
+    remaining > 0 &&
+    !hasUnsavedDeletes &&
+    (selected.status !== 'open' || selected.inventoryBranchId != null);
   const canReturn =
     selected &&
     !invoiceGone &&
@@ -1399,6 +1414,11 @@ export default function ClientFinancialWorkspace({
     if (already) return;
     setBusy(true);
     try {
+      const providerEmployeeId = requiredProviderIdFor(linePatientId);
+      if (providerEmployeeId == null) {
+        setError('Provider is required before adding invoice line items.');
+        return;
+      }
       const next = await addCounterInvoiceLine(invoice.id, {
         description: refill.name,
         qty: refill.qty > 0 ? refill.qty : 1,
@@ -1407,7 +1427,7 @@ export default function ClientFinancialWorkspace({
         catalogItemId: refill.catalogItemId ?? null,
         catalogItemType: refill.catalogItemId != null ? 'inventory' : null,
         patientId: linePatientId,
-        providerEmployeeId: primaryProviderIdFor(linePatientId),
+        providerEmployeeId,
       });
       setSelected(next);
       await refreshList(next.id);
@@ -1476,6 +1496,11 @@ export default function ClientFinancialWorkspace({
     setBusy(true);
     setError(null);
     try {
+      const providerEmployeeId = requiredProviderIdFor(linePatientId);
+      if (providerEmployeeId == null) {
+        setError('Provider is required before adding invoice line items.');
+        return;
+      }
       const next = await addCounterInvoiceLine(selected.id, {
         description: item.name,
         qty: 1,
@@ -1485,7 +1510,7 @@ export default function ClientFinancialWorkspace({
         catalogItemType: item.itemType || null,
         listUnitPrice: listUnit > priced.unitFinal + 0.009 ? listUnit : null,
         patientId: linePatientId,
-        providerEmployeeId: primaryProviderIdFor(linePatientId),
+        providerEmployeeId,
       });
       setSelected(next);
       setQuery('');
@@ -1613,6 +1638,10 @@ export default function ClientFinancialWorkspace({
     }
     if (isDiscountType(tenderPaymentType, discountTypeNames) && cashierEmployeeId == null) {
       setError('Sign in as staff to record a discount.');
+      return;
+    }
+    if (tenderMethod === 'check' && !checkNumber.trim()) {
+      setError('Check number is required for check payments.');
       return;
     }
     const received = Number(cashReceived);
@@ -2567,7 +2596,10 @@ export default function ClientFinancialWorkspace({
                                   const patientId = e.target.value ? Number(e.target.value) : null;
                                   void patchLine(line, {
                                     patientId,
-                                    providerEmployeeId: primaryProviderIdFor(patientId),
+                                    providerEmployeeId:
+                                      requiredProviderIdFor(patientId) ??
+                                      line.providerEmployeeId ??
+                                      null,
                                   });
                                 }}
                               >
@@ -2585,14 +2617,22 @@ export default function ClientFinancialWorkspace({
                           <td className="client-fin__col-provider">
                             {canEdit ? (
                               <select
+                                required
                                 value={line.providerEmployeeId ?? ''}
-                                onChange={(e) =>
-                                  void patchLine(line, {
-                                    providerEmployeeId: e.target.value ? Number(e.target.value) : null,
-                                  })
-                                }
+                                onChange={(e) => {
+                                  const next = e.target.value ? Number(e.target.value) : null;
+                                  if (next == null) {
+                                    setError('Provider is required on invoice line items.');
+                                    return;
+                                  }
+                                  void patchLine(line, { providerEmployeeId: next });
+                                }}
                               >
-                                <option value="">—</option>
+                                {line.providerEmployeeId == null ? (
+                                  <option value="" disabled>
+                                    Select provider…
+                                  </option>
+                                ) : null}
                                 {providerOptions.map((emp) => (
                                   <option key={String(emp.id)} value={emp.id}>
                                     {emp.name}
@@ -2884,6 +2924,20 @@ export default function ClientFinancialWorkspace({
                   }))}
               />
 
+              {selected && !invoiceGone && selected.status !== 'void' ? (
+                <div className="client-fin__pay">
+                  <CheckoutInventoryBranchField
+                    invoice={selected}
+                    disabled={busy || selected.status !== 'open'}
+                    onInvoiceChange={(next) => {
+                      setSelected(next);
+                      void refreshList(next.id);
+                    }}
+                    fieldClassName="client-fin__field"
+                  />
+                </div>
+              ) : null}
+
               {canPay ? (
                 <>
                   <div className="client-fin__pay">
@@ -2937,8 +2991,13 @@ export default function ClientFinancialWorkspace({
                     ) : null}
                     {tenderMethod === 'check' ? (
                       <label className="client-fin__field">
-                        Check #
-                        <input value={checkNumber} onChange={(e) => setCheckNumber(e.target.value)} />
+                        Check # *
+                        <input
+                          required
+                          value={checkNumber}
+                          onChange={(e) => setCheckNumber(e.target.value)}
+                          placeholder="Required"
+                        />
                       </label>
                     ) : null}
                     {selectedPayType?.isDiscountCategory ? (

@@ -54,7 +54,7 @@ type HostProps = {
   pets: ClientReachPet[];
   defaultPatientIds?: number[];
   doNotSms?: boolean;
-  epiphanyPatientId?: string | number | null;
+  jotPatientId?: string | number | null;
   onRecordsChanged?: () => void;
 };
 
@@ -67,7 +67,7 @@ export function ClientReachHost({
   pets,
   defaultPatientIds,
   doNotSms,
-  epiphanyPatientId,
+  jotPatientId,
   onRecordsChanged,
 }: HostProps) {
   const [includeInPatientEmr, setIncludeInPatientEmr] = useState((defaultPatientIds ?? []).length > 0);
@@ -143,7 +143,8 @@ export function ClientReachHost({
                   they are connected. That is not live transcription here.
                 </p>
                 <p className="client-reach-call__body">
-                  Epiphany can take a callback note while you talk. You still place the call in Quo.
+                  Jot can transcribe while you talk. The transcript is saved with the call and
+                  stays off the medical record unless you add it. You still place the call in Quo.
                 </p>
                 <div className="pims-chart-pick__foot">
                   <a className="brief-btn primary" href={buildPhoneDialHref(action.phone)}>
@@ -153,12 +154,12 @@ export function ClientReachHost({
                   <a
                     className="brief-btn"
                     href={
-                      epiphanyPatientId
-                        ? `/schedule/epiphany?new=1&kind=callback&patientId=${encodeURIComponent(String(epiphanyPatientId))}&view=patients`
-                        : '/schedule/epiphany?new=1&kind=callback'
+                      jotPatientId
+                        ? `/schedule/jot?new=1&kind=callback&patientId=${encodeURIComponent(String(jotPatientId))}&view=patients`
+                        : '/schedule/jot?new=1&kind=callback'
                     }
                   >
-                    Start a callback in Epiphany
+                    Start call note in Jot
                   </a>
                   <button type="button" className="brief-btn" onClick={close}>
                     Close

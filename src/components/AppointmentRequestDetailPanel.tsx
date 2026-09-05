@@ -94,7 +94,13 @@ function PetCard({
             {pet.species ? (
               <span className="appt-request-detail-pet-species">{pet.species}</span>
             ) : null}
-            {pet.isNew ? <span className="appt-request-detail-pet-badge">New pet</span> : null}
+            <span
+              className={`appt-request-detail-pet-badge${
+                pet.isNew ? '' : ' appt-request-detail-pet-badge--existing'
+              }`}
+            >
+              {pet.isNew ? 'New patient' : 'Existing patient'}
+            </span>
           </div>
         </div>
         {pet.patientId ? (

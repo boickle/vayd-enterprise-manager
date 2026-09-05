@@ -2444,7 +2444,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                           Urgent
                         </span>
                       ) : null}
-                      {showScoutLabelChips && clientType !== 'unknown' ? (
+                      {clientType !== 'unknown' ? (
                         <div
                           style={{
                             display: 'inline-block',

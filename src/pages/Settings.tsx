@@ -1,6 +1,7 @@
 // src/pages/Settings.tsx
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useSearchParams } from 'react-router';
+import { ChevronDown } from 'lucide-react';
 import { useAuth } from '../auth/useAuth';
 import ScheduleOverrideModal from '../components/ScheduleOverrideModal';
 import {
@@ -19,6 +20,7 @@ import {
   type Zone,
 } from '../api/appointmentSettings';
 import { clearVeterinariansZoneLookupCache } from '../utils/veterinarianZoneLookup';
+import { zonesToPersistForDay } from '../utils/employeeWeekZones';
 import {
   getPracticeSettings,
   updatePracticeSettings,
@@ -59,21 +61,26 @@ import {
   type AppointmentBookingsGoalsByDow,
 } from '../api/appointmentBookingsGoals';
 import { DepotLocationField } from '../components/DepotLocationField';
+import SettingsEmployeeSchedulePanel from '../components/settings/SettingsEmployeeSchedulePanel';
 import './Settings.css';
-import SettingsEmployeeDirectory from '../components/settings/SettingsEmployeeDirectory';
+import SettingsEmployeeDirectory, {
+  type EmployeeHubSection,
+} from '../components/settings/SettingsEmployeeDirectory';
 import SettingsAppointmentTypes from '../components/settings/SettingsAppointmentTypes';
-import SettingsRoleManualBooking from '../components/settings/SettingsRoleManualBooking';
+import SettingsScoutRoles from '../components/settings/SettingsScoutRoles';
 import SettingsClSeatAssignment from '../components/settings/SettingsClSeatAssignment';
 import SettingsGmailMailboxPermissions from '../components/settings/SettingsGmailMailboxPermissions';
 import SettingsBranchesLocations from '../components/settings/SettingsBranchesLocations';
 import SettingsPaymentTypes from '../components/settings/SettingsPaymentTypes';
+import SettingsDepositBankAccounts from '../components/settings/SettingsDepositBankAccounts';
 import SettingsClientStatuses from '../components/settings/SettingsClientStatuses';
 import SettingsMessageTemplates from '../components/settings/SettingsMessageTemplates';
+import WasteAdminPage from './WasteAdminPage';
 import { appointmentTypeIsArchived } from '../utils/appointmentTypeSettings';
 
 const SETTINGS_TAB_IDS = [
   'appointment-types',
-  'role-manual-booking',
+  'practice-booking-goals',
   'employee-types',
   'employee-zones',
   'employee-schedule',
@@ -82,6 +89,7 @@ const SETTINGS_TAB_IDS = [
   'employee-images',
   'employee-goals',
   'employee-directory',
+  'roles',
   'cl-seat-assignment',
   'gmail-mailboxes',
   'reminders',
@@ -91,11 +99,72 @@ const SETTINGS_TAB_IDS = [
 ] as const;
 type SettingsTabId = (typeof SETTINGS_TAB_IDS)[number];
 
+type SettingsMenuItem = { id: SettingsTabId; label: string };
+
+const SCHEDULING_SETTINGS_ITEMS: SettingsMenuItem[] = [
+  { id: 'appointment-types', label: 'Appointment Types' },
+  { id: 'practice-booking-goals', label: 'Practice Booking Goals' },
+];
+
+const EMPLOYEE_SETTINGS_ITEMS: SettingsMenuItem[] = [
+  { id: 'employee-directory', label: 'Staff' },
+  { id: 'roles', label: 'Roles' },
+  { id: 'cl-seat-assignment', label: 'CL Seat Assignment' },
+];
+
+const EMPLOYEE_HUB_SECTIONS: EmployeeHubSection[] = [
+  'profile',
+  'schedule',
+  'types',
+  'zones',
+  'goals',
+  'photo',
+];
+
+const LEGACY_EMPLOYEE_TAB_TO_SECTION: Record<string, EmployeeHubSection> = {
+  'employee-types': 'types',
+  'employee-zones': 'schedule',
+  'employee-schedule': 'schedule',
+  'employee-images': 'photo',
+  'employee-goals': 'goals',
+};
+
+const FINANCE_SETTINGS_ITEMS: SettingsMenuItem[] = [
+  { id: 'payment-types', label: 'Payment Types' },
+  { id: 'client-statuses', label: 'Client Discounts' },
+];
+
+const COMMUNICATION_SETTINGS_ITEMS: SettingsMenuItem[] = [
+  { id: 'gmail-mailboxes', label: 'Gmail Mailboxes' },
+  { id: 'reminders', label: 'Reminders' },
+  { id: 'message-templates', label: 'Email & Text Templates' },
+];
+
+function tabInGroup(tab: SettingsTabId, items: SettingsMenuItem[]): boolean {
+  return items.some((item) => item.id === tab);
+}
+
 function parseSettingsTabParam(tab: string | null): SettingsTabId {
+  if (tab && tab in LEGACY_EMPLOYEE_TAB_TO_SECTION) return 'employee-directory';
+  if (tab === 'role-manual-booking') return 'roles';
   if (tab && (SETTINGS_TAB_IDS as readonly string[]).includes(tab)) {
     return tab as SettingsTabId;
   }
   return 'appointment-types';
+}
+
+function parseEmployeeHubSection(
+  tab: string | null,
+  section: string | null
+): EmployeeHubSection {
+  if (tab && LEGACY_EMPLOYEE_TAB_TO_SECTION[tab]) {
+    return LEGACY_EMPLOYEE_TAB_TO_SECTION[tab];
+  }
+  if (section === 'zones') return 'schedule';
+  if (section && (EMPLOYEE_HUB_SECTIONS as string[]).includes(section)) {
+    return section as EmployeeHubSection;
+  }
+  return 'profile';
 }
 
 /** Practice ID for reminder settings (default 1; override via env if needed) */
@@ -154,6 +223,75 @@ function zoneEditorRowsFromSchedule(
   });
 }
 
+function SettingsTabMenu({
+  label,
+  items,
+  activeTab,
+  onSelect,
+}: {
+  label: string;
+  items: SettingsMenuItem[];
+  activeTab: SettingsTabId;
+  onSelect: (tab: SettingsTabId) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const groupActive = tabInGroup(activeTab, items);
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open]);
+
+  return (
+    <div className="settings-tab-menu" ref={rootRef}>
+      <button
+        type="button"
+        className={`settings-tab settings-tab-menu__trigger${groupActive ? ' active' : ''}${
+          open ? ' settings-tab-menu__trigger--open' : ''
+        }`}
+        aria-expanded={open}
+        aria-haspopup="menu"
+        onClick={() => setOpen((prev) => !prev)}
+      >
+        {label}
+        <ChevronDown size={14} aria-hidden />
+      </button>
+      {open ? (
+        <div className="settings-tab-menu__panel" role="menu" aria-label={`${label} settings`}>
+          {items.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              role="menuitem"
+              className={`settings-tab-menu__item${activeTab === item.id ? ' active' : ''}`}
+              onClick={() => {
+                onSelect(item.id);
+                setOpen(false);
+              }}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export default function Settings() {
   const { role } = useAuth() as any;
   const [searchParams, setSearchParams] = useSearchParams();
@@ -161,6 +299,14 @@ export default function Settings() {
     () => parseSettingsTabParam(searchParams.get('tab')),
     [searchParams]
   );
+  const employeeHubSection = useMemo(
+    () => parseEmployeeHubSection(searchParams.get('tab'), searchParams.get('section')),
+    [searchParams]
+  );
+  const hubEmployeeId = useMemo(() => {
+    const raw = Number(searchParams.get('employee'));
+    return Number.isFinite(raw) && raw > 0 ? raw : null;
+  }, [searchParams]);
   const goToTab = useCallback(
     (tab: SettingsTabId) => {
       setSearchParams(
@@ -168,12 +314,36 @@ export default function Settings() {
           const next = new URLSearchParams(prev);
           if (tab === 'appointment-types') next.delete('tab');
           else next.set('tab', tab);
+          if (tab !== 'employee-directory') {
+            next.delete('section');
+            next.delete('employee');
+          }
           return next;
         },
         { replace: true }
       );
     },
     [setSearchParams]
+  );
+  const goToEmployeeHub = useCallback(
+    (next: { employeeId?: number | null; section?: EmployeeHubSection }) => {
+      setSearchParams(
+        (prev) => {
+          const params = new URLSearchParams(prev);
+          params.set('tab', 'employee-directory');
+          params.set('section', next.section ?? employeeHubSection);
+          const employeeId =
+            next.employeeId !== undefined
+              ? next.employeeId
+              : Number(params.get('employee')) || null;
+          if (employeeId != null) params.set('employee', String(employeeId));
+          else params.delete('employee');
+          return params;
+        },
+        { replace: true }
+      );
+    },
+    [employeeHubSection, setSearchParams]
   );
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -294,6 +464,17 @@ export default function Settings() {
     if (!isAdmin) return;
     loadData();
   }, [isAdmin]);
+
+  useEffect(() => {
+    if (activeTab !== 'employee-directory' || hubEmployeeId == null) return;
+    if (employeeHubSection === 'types') void handleLoadEmployee(hubEmployeeId);
+    if (employeeHubSection === 'schedule') void handleLoadEmployeeForSchedule(hubEmployeeId);
+    if (employeeHubSection === 'goals') {
+      const emp = employees.find((e) => e.id === hubEmployeeId) ?? null;
+      setSelectedEmployeeForGoals(emp);
+      void handleLoadEmployeeGoals(hubEmployeeId);
+    }
+  }, [activeTab, employeeHubSection, hubEmployeeId, employees]);
 
   // Load reminder settings when Reminders tab is active
   useEffect(() => {
@@ -529,7 +710,7 @@ export default function Settings() {
   };
 
   useEffect(() => {
-    if (!isAdmin || activeTab !== 'employee-goals') return;
+    if (!isAdmin || activeTab !== 'practice-booking-goals') return;
     void handleLoadAppointmentBookingsGoals();
   }, [isAdmin, activeTab, handleLoadAppointmentBookingsGoals]);
 
@@ -612,6 +793,7 @@ export default function Settings() {
             startDepotLon: schedule.startDepotLon || undefined,
             endDepotLat: schedule.endDepotLat || undefined,
             endDepotLon: schedule.endDepotLon || undefined,
+            zones: schedule.zones ?? [],
           });
         });
       }
@@ -747,8 +929,8 @@ export default function Settings() {
     if (scheduleOverrideDeepLinkRef.current === sig) return;
     scheduleOverrideDeepLinkRef.current = sig;
 
-    if (activeTab !== 'employee-schedule') {
-      goToTab('employee-schedule');
+    if (activeTab !== 'employee-directory' || employeeHubSection !== 'schedule') {
+      goToEmployeeHub({ employeeId: empId, section: 'schedule' });
     }
     setOverrideModalInitial({ employeeId: empId, date: dateStr });
     setOverrideModalOpen(true);
@@ -772,42 +954,64 @@ export default function Settings() {
     setError(null);
     setSuccess(null);
     try {
-      // Update all schedules that have changes
-      const updatePromises: Promise<any>[] = [];
-      scheduleUpdates.forEach((updates, key) => {
-        // Extract dayOfWeek from key (format: `${employeeId}-${dayOfWeek}`)
-        const dayOfWeek = Number(key.split('-')[1]);
-        const schedule = selectedEmployeeForSchedule.weeklySchedules?.find((s) => s.dayOfWeek === dayOfWeek);
-        
-        // Only update if schedule exists and has an id (required for API)
-        if (schedule && schedule.id != null && Object.keys(updates).length > 0) {
-          // Convert null values to undefined and filter them out to match API expectations
-          const cleanedUpdates: {
-            isWorkday?: boolean;
-            workStartLocal?: string;
-            workEndLocal?: string;
-            startDepotLat?: number;
-            startDepotLon?: number;
-            endDepotLat?: number;
-            endDepotLon?: number;
-          } = {};
-          
-          if (updates.isWorkday !== undefined) cleanedUpdates.isWorkday = updates.isWorkday;
-          if (updates.workStartLocal !== undefined && updates.workStartLocal !== null) cleanedUpdates.workStartLocal = updates.workStartLocal;
-          if (updates.workEndLocal !== undefined && updates.workEndLocal !== null) cleanedUpdates.workEndLocal = updates.workEndLocal;
-          if (updates.startDepotLat !== undefined && updates.startDepotLat !== null) cleanedUpdates.startDepotLat = updates.startDepotLat;
-          if (updates.startDepotLon !== undefined && updates.startDepotLon !== null) cleanedUpdates.startDepotLon = updates.startDepotLon;
-          if (updates.endDepotLat !== undefined && updates.endDepotLat !== null) cleanedUpdates.endDepotLat = updates.endDepotLat;
-          if (updates.endDepotLon !== undefined && updates.endDepotLon !== null) cleanedUpdates.endDepotLon = updates.endDepotLon;
-          
-          if (Object.keys(cleanedUpdates).length > 0) {
-            updatePromises.push(updateWeeklySchedule(schedule.id, cleanedUpdates));
-          }
-        } else if (schedule && schedule.id == null) {
-          // Schedule exists but has no id - this is a problem
-          console.warn(`Schedule for day ${dayOfWeek} has no id, cannot update`);
+      const updatePromises: Promise<unknown>[] = [];
+
+      for (const dayOfWeek of [0, 1, 2, 3, 4, 5, 6]) {
+        const schedule = selectedEmployeeForSchedule.weeklySchedules?.find(
+          (s) => s.dayOfWeek === dayOfWeek
+        );
+        if (!schedule || schedule.id == null) continue;
+        const key = `${selectedEmployeeForSchedule.id}-${dayOfWeek}`;
+        const updates = scheduleUpdates.get(key) || {};
+
+        const cleanedUpdates: {
+          isWorkday?: boolean;
+          workStartLocal?: string;
+          workEndLocal?: string;
+          startDepotLat?: number;
+          startDepotLon?: number;
+          endDepotLat?: number;
+          endDepotLon?: number;
+        } = {};
+        if (updates.isWorkday !== undefined) cleanedUpdates.isWorkday = updates.isWorkday;
+        if (updates.workStartLocal !== undefined && updates.workStartLocal !== null) {
+          cleanedUpdates.workStartLocal = updates.workStartLocal;
         }
-      });
+        if (updates.workEndLocal !== undefined && updates.workEndLocal !== null) {
+          cleanedUpdates.workEndLocal = updates.workEndLocal;
+        }
+        if (updates.startDepotLat !== undefined && updates.startDepotLat !== null) {
+          cleanedUpdates.startDepotLat = updates.startDepotLat;
+        }
+        if (updates.startDepotLon !== undefined && updates.startDepotLon !== null) {
+          cleanedUpdates.startDepotLon = updates.startDepotLon;
+        }
+        if (updates.endDepotLat !== undefined && updates.endDepotLat !== null) {
+          cleanedUpdates.endDepotLat = updates.endDepotLat;
+        }
+        if (updates.endDepotLon !== undefined && updates.endDepotLon !== null) {
+          cleanedUpdates.endDepotLon = updates.endDepotLon;
+        }
+        if (Object.keys(cleanedUpdates).length > 0) {
+          updatePromises.push(updateWeeklySchedule(schedule.id, cleanedUpdates));
+        }
+
+        const zonesToSave = zonesToPersistForDay(
+          updates.zones,
+          selectedEmployeeForSchedule,
+          dayOfWeek
+        );
+        updatePromises.push(
+          updateEmployeeScheduleZones(
+            schedule.id,
+            zonesToSave.map((z) => ({
+              zoneId: z.zoneId,
+              acceptingNewPatients: z.acceptingNewPatients,
+              transitioningOutOfZone: z.transitioningOutOfZone,
+            }))
+          )
+        );
+      }
 
       if (updatePromises.length === 0) {
         setError('No valid schedules to update. Schedules may be missing IDs.');
@@ -815,9 +1019,9 @@ export default function Settings() {
       }
 
       await Promise.all(updatePromises);
+      clearVeterinariansZoneLookupCache();
       setSuccess('Employee schedule updated successfully');
       setTimeout(() => setSuccess(null), 3000);
-      // Reload employee data
       await handleLoadEmployeeForSchedule(selectedEmployeeForSchedule.id);
     } catch (err: any) {
       setError(err?.response?.data?.message || err?.message || 'Failed to update employee schedule');
@@ -1081,36 +1285,18 @@ export default function Settings() {
         <h1 className="settings-title">Settings</h1>
 
         <div className="settings-tabs">
-          <button
-            className={`settings-tab ${activeTab === 'appointment-types' ? 'active' : ''}`}
-            onClick={() => goToTab('appointment-types')}
-          >
-            Appointment Types
-          </button>
-          <button
-            className={`settings-tab ${activeTab === 'role-manual-booking' ? 'active' : ''}`}
-            onClick={() => goToTab('role-manual-booking')}
-          >
-            Role Manual Booking
-          </button>
-          <button
-            className={`settings-tab ${activeTab === 'employee-types' ? 'active' : ''}`}
-            onClick={() => goToTab('employee-types')}
-          >
-            Employee Appointment Types
-          </button>
-          <button
-            className={`settings-tab ${activeTab === 'employee-zones' ? 'active' : ''}`}
-            onClick={() => goToTab('employee-zones')}
-          >
-            Employee Zones
-          </button>
-          <button
-            className={`settings-tab ${activeTab === 'employee-schedule' ? 'active' : ''}`}
-            onClick={() => goToTab('employee-schedule')}
-          >
-            Employee Schedule
-          </button>
+          <SettingsTabMenu
+            label="Scheduling"
+            items={SCHEDULING_SETTINGS_ITEMS}
+            activeTab={activeTab}
+            onSelect={goToTab}
+          />
+          <SettingsTabMenu
+            label="Staff"
+            items={EMPLOYEE_SETTINGS_ITEMS}
+            activeTab={activeTab}
+            onSelect={goToTab}
+          />
           <button
             className={`settings-tab ${activeTab === 'branches-locations' ? 'active' : ''}`}
             onClick={() => goToTab('branches-locations')}
@@ -1123,60 +1309,18 @@ export default function Settings() {
           >
             Inventory
           </button>
-          <button
-            className={`settings-tab ${activeTab === 'employee-images' ? 'active' : ''}`}
-            onClick={() => goToTab('employee-images')}
-          >
-            Employee Images
-          </button>
-          <button
-            className={`settings-tab ${activeTab === 'employee-goals' ? 'active' : ''}`}
-            onClick={() => goToTab('employee-goals')}
-          >
-            Employee Goals
-          </button>
-          <button
-            className={`settings-tab ${activeTab === 'employee-directory' ? 'active' : ''}`}
-            onClick={() => goToTab('employee-directory')}
-          >
-            Employees
-          </button>
-          <button
-            className={`settings-tab ${activeTab === 'cl-seat-assignment' ? 'active' : ''}`}
-            onClick={() => goToTab('cl-seat-assignment')}
-          >
-            CL Seat Assignment
-          </button>
-          <button
-            className={`settings-tab ${activeTab === 'gmail-mailboxes' ? 'active' : ''}`}
-            onClick={() => goToTab('gmail-mailboxes')}
-          >
-            Gmail Mailboxes
-          </button>
-          <button
-            className={`settings-tab ${activeTab === 'reminders' ? 'active' : ''}`}
-            onClick={() => goToTab('reminders')}
-          >
-            Reminders
-          </button>
-          <button
-            className={`settings-tab ${activeTab === 'payment-types' ? 'active' : ''}`}
-            onClick={() => goToTab('payment-types')}
-          >
-            Payment Types
-          </button>
-          <button
-            className={`settings-tab ${activeTab === 'client-statuses' ? 'active' : ''}`}
-            onClick={() => goToTab('client-statuses')}
-          >
-            Client Discounts
-          </button>
-          <button
-            className={`settings-tab ${activeTab === 'message-templates' ? 'active' : ''}`}
-            onClick={() => goToTab('message-templates')}
-          >
-            Email &amp; Text Templates
-          </button>
+          <SettingsTabMenu
+            label="Finance"
+            items={FINANCE_SETTINGS_ITEMS}
+            activeTab={activeTab}
+            onSelect={goToTab}
+          />
+          <SettingsTabMenu
+            label="Communication"
+            items={COMMUNICATION_SETTINGS_ITEMS}
+            activeTab={activeTab}
+            onSelect={goToTab}
+          />
         </div>
 
         {error && (
@@ -1226,15 +1370,11 @@ export default function Settings() {
           </div>
         )}
 
-        {activeTab === 'role-manual-booking' && (
+        {activeTab === 'roles' && (
           <div className="settings-section">
-            <h2 className="settings-section-title">Role manual booking</h2>
-            <p className="settings-section-description">
-              Configure which appointment types each employee role may book manually from the
-              scheduler calendar. Choose a role by name (for example, Business Manager or
-              Receptionist). Routing booking is not restricted by these settings.
-            </p>
-            <SettingsRoleManualBooking
+            <h2 className="settings-section-title">Roles</h2>
+            <SettingsScoutRoles
+              practiceId={practiceId}
               appointmentTypes={activeAppointmentTypes}
               allAppointmentTypes={appointmentTypes}
               onMessage={(msg, kind) => {
@@ -1248,6 +1388,71 @@ export default function Settings() {
                 }
               }}
             />
+          </div>
+        )}
+
+        {activeTab === 'practice-booking-goals' && (
+          <div className="settings-section">
+            <h2 className="settings-section-title">Practice booking goals</h2>
+            <p className="settings-section-description">
+              Total appointments the practice needs booked each day of the week. Used by Routing
+              Analytics. Employee revenue and point goals stay on each person under Staff → Staff.
+            </p>
+            <div className="settings-card">
+              {bookingsGoalsLoadError && (
+                <div className="settings-message settings-error-message">
+                  {bookingsGoalsLoadError}
+                  <button onClick={() => setBookingsGoalsLoadError(null)} className="settings-close">
+                    ×
+                  </button>
+                </div>
+              )}
+              {bookingsGoalsLoading ? (
+                <div className="settings-loading">
+                  <div className="settings-spinner"></div>
+                  <span>Loading bookings goals...</span>
+                </div>
+              ) : (
+                <>
+                  <div
+                    className="settings-form-group"
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))',
+                      gap: 12,
+                    }}
+                  >
+                    {dayNames.map((name, dow) => (
+                      <div key={dow}>
+                        <label className="settings-label">{name}</label>
+                        <input
+                          type="number"
+                          min={0}
+                          step={1}
+                          className="settings-input"
+                          value={bookingsGoalsByDow[dow] ?? ''}
+                          onChange={(e) => {
+                            const next = e.target.value === '' ? 0 : Number(e.target.value);
+                            setBookingsGoalsByDow((prev) => ({
+                              ...prev,
+                              [dow]: Number.isFinite(next) && next >= 0 ? next : 0,
+                            }));
+                          }}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={bookingsGoalsSaving}
+                    onClick={() => void handleSaveAppointmentBookingsGoals()}
+                  >
+                    {bookingsGoalsSaving ? 'Saving...' : 'Save booking goals'}
+                  </button>
+                </>
+              )}
+            </div>
           </div>
         )}
 
@@ -2498,22 +2703,25 @@ export default function Settings() {
               )}
             </div>
 
+            <div style={{ marginBottom: 24 }}>
+              <WasteAdminPage />
+            </div>
+
             <p className="settings-muted" style={{ marginTop: 8 }}>
-              To add or edit products, labs, procedures, and quantity price breaks, open{' '}
-              <a href="/schedule/catalog">Catalog</a>.
+              To add or edit products, procedures, labs, and quantity price breaks, open{' '}
+              <a href="/schedule/inventory/items">Inventory</a>.
             </p>
           </div>
         )}
 
-        {/* Employees directory (CRUD via POST /employees, upsert, DELETE) */}
         {activeTab === 'employee-directory' && (
           <div className="settings-section">
-            <h2 className="settings-section-title">Employees</h2>
-            <p className="settings-section-description">
-              View staff, assign employee roles (for manual booking permissions), and edit VAYD-managed bios.
-              Click an employee name to edit roles, or use <strong>Edit bio</strong> for profile copy.
-            </p>
+            <h2 className="settings-section-title">Staff</h2>
             <SettingsEmployeeDirectory
+              section={employeeHubSection}
+              onSectionChange={(section) => goToEmployeeHub({ section })}
+              selectedEmployeeId={hubEmployeeId}
+              onSelectedEmployeeIdChange={(id) => goToEmployeeHub({ employeeId: id })}
               onMessage={(msg, kind) => {
                 if (kind === 'success') {
                   setSuccess(msg);
@@ -2524,6 +2732,199 @@ export default function Settings() {
                   setSuccess(null);
                 }
               }}
+              extra={
+                employeeHubSection === 'types' ? (
+                  selectedEmployee ? (
+                    <div className="settings-card">
+                      <div className="settings-appt-assign-head">
+                        <div>
+                          <h3 className="settings-card-title" style={{ marginBottom: 4 }}>
+                            Appointment types
+                          </h3>
+                          <p className="settings-card-subtitle" style={{ margin: 0 }}>
+                            Check the types they handle. Online is for the appointment request form.
+                          </p>
+                        </div>
+                        {activeAppointmentTypes.length > 0 ? (
+                          <div className="settings-checkbox-bulk-actions" style={{ margin: 0 }}>
+                            <button
+                              type="button"
+                              className="settings-checkbox-bulk-action"
+                              onClick={selectAllEmployeeAppointmentTypes}
+                            >
+                              Select all
+                            </button>
+                            <span className="settings-checkbox-bulk-sep" aria-hidden>
+                              ·
+                            </span>
+                            <button
+                              type="button"
+                              className="settings-checkbox-bulk-action"
+                              onClick={unselectAllEmployeeAppointmentTypes}
+                            >
+                              Unselect all
+                            </button>
+                          </div>
+                        ) : null}
+                      </div>
+                      <div className="settings-appt-assign-wrap">
+                        <table className="settings-appt-assign-table">
+                          <thead>
+                            <tr>
+                              <th>Type</th>
+                              <th>Handles</th>
+                              <th>Online</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {activeAppointmentTypes.map((type) => {
+                              const assigned = isEmployeeAppointmentTypeAssigned(type.id);
+                              const allowOnline =
+                                employeeApptTypeAssignments.find((a) => a.appointmentTypeId === type.id)
+                                  ?.allowOnlineBooking === true;
+                              return (
+                                <tr key={type.id} className={assigned ? 'is-on' : 'is-off'}>
+                                  <td>{type.name}</td>
+                                  <td>
+                                    <input
+                                      type="checkbox"
+                                      checked={assigned}
+                                      aria-label={`Handle ${type.name}`}
+                                      onChange={() => toggleAppointmentTypeSelection(type.id)}
+                                    />
+                                  </td>
+                                  <td>
+                                    <input
+                                      type="checkbox"
+                                      checked={assigned && allowOnline}
+                                      disabled={!assigned}
+                                      aria-label={`Allow online booking for ${type.name}`}
+                                      onChange={(e) =>
+                                        toggleEmployeeAppointmentTypeOnlineBooking(
+                                          type.id,
+                                          e.target.checked
+                                        )
+                                      }
+                                    />
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                      <div className="settings-action-bar">
+                        <button className="btn" onClick={handleSaveEmployeeAppointmentTypes} disabled={saving}>
+                          {saving ? 'Saving...' : 'Save appointment types'}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="settings-muted">Select an employee.</p>
+                  )
+                ) : employeeHubSection === 'schedule' ? (
+                  selectedEmployeeForSchedule ? (
+                    <SettingsEmployeeSchedulePanel
+                      employee={selectedEmployeeForSchedule}
+                      scheduleUpdates={scheduleUpdates}
+                      dayNames={dayNames}
+                      zones={allZones}
+                      saving={saving}
+                      onOpenOverrides={handleOpenOverrideCalendar}
+                      onSave={() => void handleSaveEmployeeSchedule()}
+                      onUpdateField={updateScheduleField}
+                      onUpdateDepot={updateScheduleDepot}
+                      resolveDepotCoords={resolveDepotCoords}
+                    />
+                  ) : (
+                    <p className="settings-muted">Select an employee.</p>
+                  )
+                ) : employeeHubSection === 'goals' ? (
+                  <div>
+                    {selectedEmployeeForGoals && !goalsLoading ? (
+                      <div className="settings-card">
+                        <h3 className="settings-card-title">Employee goals</h3>
+                        <div
+                          className="settings-form-group"
+                          style={{
+                            display: 'grid',
+                            gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))',
+                            gap: 12,
+                          }}
+                        >
+                          <div>
+                            <label className="settings-label">Daily revenue</label>
+                            <input
+                              type="number"
+                              className="settings-input"
+                              value={goalsForm.dailyRevenueGoal ?? ''}
+                              onChange={(e) =>
+                                setGoalsForm((f) => ({
+                                  ...f,
+                                  dailyRevenueGoal: e.target.value === '' ? undefined : Number(e.target.value),
+                                }))
+                              }
+                            />
+                          </div>
+                          <div>
+                            <label className="settings-label">Daily points</label>
+                            <input
+                              type="number"
+                              className="settings-input"
+                              value={goalsForm.dailyPointGoal ?? ''}
+                              onChange={(e) =>
+                                setGoalsForm((f) => ({
+                                  ...f,
+                                  dailyPointGoal: e.target.value === '' ? undefined : Number(e.target.value),
+                                }))
+                              }
+                            />
+                          </div>
+                        </div>
+                        <button className="btn" disabled={goalsSaving} onClick={() => void handleSaveEmployeeGoals()}>
+                          {goalsSaving ? 'Saving...' : 'Save employee goals'}
+                        </button>
+                      </div>
+                    ) : (
+                      <p className="settings-muted">
+                        {goalsLoading ? 'Loading goals…' : 'Select an employee.'}
+                      </p>
+                    )}
+                  </div>
+                ) : employeeHubSection === 'photo' && hubEmployeeId != null ? (
+                  <div className="settings-card">
+                    <h3 className="settings-card-title">Photo</h3>
+                    <div className="settings-employee-image-row">
+                      <div className="settings-employee-image-preview">
+                        <img
+                          src={`${apiBaseUrl}/employees/${hubEmployeeId}/image?t=${employeeImageVersion[hubEmployeeId] ?? 0}`}
+                          alt=""
+                          onError={(e) => {
+                            e.currentTarget.onerror = null;
+                            e.currentTarget.src = EMPLOYEE_IMAGE_PLACEHOLDER;
+                          }}
+                        />
+                      </div>
+                      <label className={`settings-file-label ${uploadingEmployeeId === hubEmployeeId ? 'uploading' : ''}`}>
+                        <input
+                          type="file"
+                          accept=".jpg,.jpeg,.png,.gif,.webp,image/jpeg,image/png,image/gif,image/webp"
+                          className="settings-file-input"
+                          disabled={uploadingEmployeeId === hubEmployeeId}
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) handleUploadEmployeeImage(hubEmployeeId, file);
+                            e.target.value = '';
+                          }}
+                        />
+                        <span className="btn secondary">
+                          {uploadingEmployeeId === hubEmployeeId ? 'Uploading…' : 'Change image'}
+                        </span>
+                      </label>
+                    </div>
+                  </div>
+                ) : null
+              }
             />
           </div>
         )}
@@ -2925,6 +3326,12 @@ export default function Settings() {
         {activeTab === 'payment-types' && (
           <div className="settings-section">
             <SettingsPaymentTypes
+              onMessage={(msg, kind) => {
+                if (kind === 'error') setError(msg);
+                else setSuccess(msg);
+              }}
+            />
+            <SettingsDepositBankAccounts
               onMessage={(msg, kind) => {
                 if (kind === 'error') setError(msg);
                 else setSuccess(msg);

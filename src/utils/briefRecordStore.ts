@@ -21,9 +21,9 @@ export type CaseHistoryChatMessage = {
   createdAt: string;
 };
 
-const OUTSIDE_KEY = 'vayd-epiphany-outside-records-v1';
-const HISTORY_KEY = 'vayd-epiphany-case-history-v1';
-const CHAT_KEY = 'vayd-epiphany-case-history-chat-v1';
+const OUTSIDE_KEY = 'vayd-jot-outside-records-v1';
+const HISTORY_KEY = 'vayd-jot-case-history-v1';
+const CHAT_KEY = 'vayd-jot-case-history-chat-v1';
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -117,7 +117,7 @@ export function deleteCaseHistorySummary(id: string): void {
 
 type StoredChat = { patientId: string; ownerId?: string; messages: CaseHistoryChatMessage[] };
 
-const CHAT_KEY_V2 = 'vayd-epiphany-case-history-chat-v2';
+const CHAT_KEY_V2 = 'vayd-jot-case-history-chat-v2';
 
 function chatOwnerId(ownerId?: string | null): string {
   return String(ownerId ?? '').trim() || 'local';

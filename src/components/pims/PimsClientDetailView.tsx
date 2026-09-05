@@ -10,6 +10,7 @@ import {
   PawPrint,
   Pencil,
   Phone,
+  Settings,
   User,
   UserCheck,
   UserX,
@@ -46,6 +47,7 @@ import { PetThumb, publicMediaUrl } from './PetThumb';
 import PimsAppointmentsSection from './PimsAppointmentsSection';
 import ClientCommunicationsPanel from './ClientCommunicationsPanel';
 import ClientFinancialWorkspace from './ClientFinancialWorkspace';
+import PimsClientHouseholdChatCard from './PimsClientHouseholdChatCard';
 import AddPatientModal from './AddPatientModal';
 import {
   ClientReachEmailLink,
@@ -163,7 +165,7 @@ function flagOn(v: unknown): boolean {
 
 function useClientSectionOpen(
   userId: string | null,
-  key: 'pets' | 'visits' | 'prefs' | 'comms',
+  key: 'pets' | 'visits' | 'prefs' | 'household' | 'comms',
 ): [boolean, () => void] {
   const [open, setOpen] = useState(() => readStaffClientLayout(userId)[key]);
 
@@ -424,9 +426,13 @@ function recordToAddressFields(c: Record<string, unknown>): AddressFields {
 function ClientHouseholdDefaultsCard({
   record,
   onSave,
+  collapsed,
+  onToggleCollapse,
 }: {
   record: Record<string, unknown>;
   onSave: (body: ScoutClientWrite) => Promise<void>;
+  collapsed?: boolean;
+  onToggleCollapse?: () => void;
 }) {
   const [providers, setProviders] = useState<Provider[]>([]);
   const [statuses, setStatuses] = useState<ClientStatusRow[]>([]);
@@ -525,114 +531,136 @@ function ClientHouseholdDefaultsCard({
   }
 
   return (
-    <div className="pims-detail__card">
-      <h3 className="pims-detail__card-title">Household defaults</h3>
-      <p className="pims-detail__muted" style={{ marginTop: 0 }}>
-        Primary provider is the default for new patients. Discount uses Account Status from Settings.
-      </p>
-      {error ? <p className="pims-detail__banner-error">{error}</p> : null}
-      <div className="pims-add-client-modal__grid" style={{ marginTop: 8 }}>
-        <label>
-          <span className="pims-add-client-modal__label">Primary provider</span>
-          <select
-            className="input"
-            value={primaryProviderId}
-            onChange={(e) => setPrimaryProviderId(e.target.value)}
-          >
-            <option value="">None</option>
-            {providers.map((p) => (
-              <option key={String(p.id)} value={String(p.id)}>
-                {p.name?.trim() ||
-                  [p.firstName, p.lastName].filter(Boolean).join(' ').trim() ||
-                  `Provider #${p.id}`}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          <span className="pims-add-client-modal__label">Discount (Account Status)</span>
-          <select
-            className="input"
-            value={clientStatusId}
-            onChange={(e) => setClientStatusId(e.target.value)}
-          >
-            <option value="">None</option>
-            {statuses.map((s) => (
-              <option key={s.id} value={String(s.id)}>
-                {s.name}
-                {Number(s.discount) ? ` (${Number(s.discount)}%)` : ''}
-                {s.isActive === false ? ' (inactive)' : ''}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="pims-add-client-modal__full">
-          <span className="pims-add-client-modal__label">How they heard about us</span>
-          <input
-            className="input"
-            value={referralSource}
-            onChange={(e) => setReferralSource(e.target.value)}
-          />
-        </label>
-        <div className="pims-add-client-modal__full">
-          <span className="pims-add-client-modal__label">Referring client (friend/family)</span>
-          {referralClientId ? (
-            <div className="pims-add-patient__owner-selected">
-              <span>{referralClientName || `Client #${referralClientId}`}</span>
-              <button
-                type="button"
-                className="btn secondary"
-                onClick={() => {
-                  setReferralClientId('');
-                  setReferralClientName('');
-                }}
+    <section className="pims-emr-story__card pims-client-detail__household" aria-labelledby="pims-client-household">
+      {onToggleCollapse ? (
+        <button
+          type="button"
+          id="pims-client-household"
+          className="pims-emr-story__collapse"
+          onClick={onToggleCollapse}
+          aria-expanded={!collapsed}
+        >
+          {collapsed ? <ChevronRight size={15} aria-hidden /> : <ChevronDown size={15} aria-hidden />}
+          <Settings size={15} aria-hidden />
+          Household defaults
+        </button>
+      ) : (
+        <h3 id="pims-client-household">
+          <Settings size={15} aria-hidden />
+          Household defaults
+        </h3>
+      )}
+      {collapsed ? null : (
+        <>
+          <p className="pims-client-detail__comms-hint" style={{ marginTop: 8 }}>
+            Primary provider is the default for new patients. Discount uses Account Status from
+            Settings.
+          </p>
+          {error ? <p className="pims-detail__banner-error">{error}</p> : null}
+          <div className="pims-add-client-modal__grid" style={{ marginTop: 8 }}>
+            <label>
+              <span className="pims-add-client-modal__label">Primary provider</span>
+              <select
+                className="input"
+                value={primaryProviderId}
+                onChange={(e) => setPrimaryProviderId(e.target.value)}
               >
-                Clear
-              </button>
-            </div>
-          ) : (
-            <>
+                <option value="">None</option>
+                {providers.map((p) => (
+                  <option key={String(p.id)} value={String(p.id)}>
+                    {p.name?.trim() ||
+                      [p.firstName, p.lastName].filter(Boolean).join(' ').trim() ||
+                      `Provider #${p.id}`}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span className="pims-add-client-modal__label">Discount (Account Status)</span>
+              <select
+                className="input"
+                value={clientStatusId}
+                onChange={(e) => setClientStatusId(e.target.value)}
+              >
+                <option value="">None</option>
+                {statuses.map((s) => (
+                  <option key={s.id} value={String(s.id)}>
+                    {s.name}
+                    {Number(s.discount) ? ` (${Number(s.discount)}%)` : ''}
+                    {s.isActive === false ? ' (inactive)' : ''}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="pims-add-client-modal__full">
+              <span className="pims-add-client-modal__label">How they heard about us</span>
               <input
                 className="input"
-                value={referralQuery}
-                onChange={(e) => setReferralQuery(e.target.value)}
-                placeholder="Search clients…"
+                value={referralSource}
+                onChange={(e) => setReferralSource(e.target.value)}
               />
-              {referralHits.length ? (
-                <ul className="pims-add-patient__owner-results">
-                  {referralHits.map((row) => {
-                    const label =
-                      [row.firstName, row.lastName].filter(Boolean).join(' ').trim() ||
-                      `Client #${row.id}`;
-                    return (
-                      <li key={String(row.id)}>
-                        <button
-                          type="button"
-                          className="pims-add-patient__owner-option"
-                          onClick={() => {
-                            setReferralClientId(String(row.id));
-                            setReferralClientName(label);
-                            setReferralHits([]);
-                            setReferralQuery('');
-                          }}
-                        >
-                          {label}
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
-              ) : null}
-            </>
-          )}
-        </div>
-      </div>
-      <div style={{ marginTop: 12 }}>
-        <button type="button" className="btn" disabled={saving} onClick={() => void persist()}>
-          {saving ? 'Saving…' : 'Save household defaults'}
-        </button>
-      </div>
-    </div>
+            </label>
+            <div className="pims-add-client-modal__full">
+              <span className="pims-add-client-modal__label">Referring client (friend/family)</span>
+              {referralClientId ? (
+                <div className="pims-add-patient__owner-selected">
+                  <span>{referralClientName || `Client #${referralClientId}`}</span>
+                  <button
+                    type="button"
+                    className="btn secondary"
+                    onClick={() => {
+                      setReferralClientId('');
+                      setReferralClientName('');
+                    }}
+                  >
+                    Clear
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <input
+                    className="input"
+                    value={referralQuery}
+                    onChange={(e) => setReferralQuery(e.target.value)}
+                    placeholder="Search clients…"
+                  />
+                  {referralHits.length ? (
+                    <ul className="pims-add-patient__owner-results">
+                      {referralHits.map((row) => {
+                        const label =
+                          [row.firstName, row.lastName].filter(Boolean).join(' ').trim() ||
+                          `Client #${row.id}`;
+                        return (
+                          <li key={String(row.id)}>
+                            <button
+                              type="button"
+                              className="pims-add-patient__owner-option"
+                              onClick={() => {
+                                setReferralClientId(String(row.id));
+                                setReferralClientName(label);
+                                setReferralHits([]);
+                                setReferralQuery('');
+                              }}
+                            >
+                              {label}
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  ) : null}
+                </>
+              )}
+            </div>
+          </div>
+          <div style={{ marginTop: 12 }}>
+            <button type="button" className="btn" disabled={saving} onClick={() => void persist()}>
+              {saving ? 'Saving…' : 'Save household defaults'}
+            </button>
+          </div>
+        </>
+      )}
+    </section>
   );
 }
 
@@ -676,7 +704,9 @@ function ClientCommunicationPrefsCard({
   const [preferPhone, setPreferPhone] = useState(record.preferPhone !== false);
   const [preferEmail, setPreferEmail] = useState(record.preferEmail !== false);
   const [saving, setSaving] = useState(false);
+  const [saveFlash, setSaveFlash] = useState<'idle' | 'saving' | 'saved'>('idle');
   const [error, setError] = useState<string | null>(null);
+  const saveFlashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     setDoNotEmail(flagOn(record.doNotEmail));
@@ -688,6 +718,13 @@ function ClientCommunicationPrefsCard({
     setError(null);
   }, [record]);
 
+  useEffect(
+    () => () => {
+      if (saveFlashTimer.current) clearTimeout(saveFlashTimer.current);
+    },
+    []
+  );
+
   async function persist(next: {
     doNotEmail: boolean;
     doNotSms: boolean;
@@ -697,6 +734,7 @@ function ClientCommunicationPrefsCard({
     preferEmail: boolean;
   }) {
     setSaving(true);
+    setSaveFlash('saving');
     setError(null);
     try {
       await onSave({
@@ -708,8 +746,12 @@ function ClientCommunicationPrefsCard({
         preferPhone: next.preferPhone,
         preferEmail: next.preferEmail,
       });
+      setSaveFlash('saved');
+      if (saveFlashTimer.current) clearTimeout(saveFlashTimer.current);
+      saveFlashTimer.current = setTimeout(() => setSaveFlash('idle'), 1800);
     } catch (err) {
       setError(extractErr(err));
+      setSaveFlash('idle');
     } finally {
       setSaving(false);
     }
@@ -718,17 +760,24 @@ function ClientCommunicationPrefsCard({
   return (
     <section className="pims-emr-story__card pims-client-detail__comms-prefs" aria-labelledby="pims-client-prefs">
       {onToggleCollapse ? (
-        <button
-          type="button"
-          id="pims-client-prefs"
-          className="pims-emr-story__collapse"
-          onClick={onToggleCollapse}
-          aria-expanded={!collapsed}
-        >
-          {collapsed ? <ChevronRight size={15} aria-hidden /> : <ChevronDown size={15} aria-hidden />}
-          <MessageSquare size={15} aria-hidden />
-          Communication
-        </button>
+        <div className="pims-emr-story__collapse-row">
+          <button
+            type="button"
+            id="pims-client-prefs"
+            className="pims-emr-story__collapse"
+            onClick={onToggleCollapse}
+            aria-expanded={!collapsed}
+          >
+            {collapsed ? <ChevronRight size={15} aria-hidden /> : <ChevronDown size={15} aria-hidden />}
+            <MessageSquare size={15} aria-hidden />
+            Communication
+          </button>
+          {!collapsed && saveFlash !== 'idle' ? (
+            <span className="pims-client-detail__autosave" role="status" aria-live="polite">
+              {saveFlash === 'saving' ? 'Saving…' : 'Saved'}
+            </span>
+          ) : null}
+        </div>
       ) : (
         <h3 id="pims-client-prefs">
           <MessageSquare size={15} aria-hidden />
@@ -737,6 +786,9 @@ function ClientCommunicationPrefsCard({
       )}
       {collapsed ? null : (
       <>
+      <p className="pims-client-detail__comms-hint" style={{ marginTop: 6 }}>
+        Changes save automatically when you toggle a checkbox.
+      </p>
       {error ? (
         <p className="pims-detail__form-error" role="alert">
           {error}
@@ -1218,6 +1270,7 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
   const [petsOpen, togglePetsOpen] = useClientSectionOpen(userId, 'pets');
   const [visitsOpen, toggleVisitsOpen] = useClientSectionOpen(userId, 'visits');
   const [prefsOpen, togglePrefsOpen] = useClientSectionOpen(userId, 'prefs');
+  const [householdOpen, toggleHouseholdOpen] = useClientSectionOpen(userId, 'household');
   const [commsOpen, toggleCommsOpen] = useClientSectionOpen(userId, 'comms');
   const reach = useClientReach();
   const [addPetOpen, setAddPetOpen] = useState(false);
@@ -1587,26 +1640,27 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
           </>
         }
         afterReach={
-            <div
-              className={`pims-emr-header-alerts${
-                ' pims-emr-header-alerts--pair'
-              }`}
-            >
-              <div className="pims-emr-alert-box" role={alerts ? 'alert' : undefined}>
-                <div className="pims-emr-alert-box__head">
-                  <span className="pims-emr-alert-box__label">Client alerts</span>
-                  <ReachEditButton
-                    label="Edit client alerts"
-                    expanded={headerEdit === 'alerts'}
-                    onClick={() => toggleHeaderEdit('alerts')}
-                  />
-                </div>
-                {alerts ? (
-                  alerts
-                ) : (
-                  <span className="pims-emr-alert-box__empty">No client alerts</span>
-                )}
+          <div
+            className={`pims-emr-header-alerts${
+              connectionNotes ? ' pims-emr-header-alerts--pair' : ' pims-emr-header-alerts--single'
+            }`}
+          >
+            <div className="pims-emr-alert-box" role={alerts ? 'alert' : undefined}>
+              <div className="pims-emr-alert-box__head">
+                <span className="pims-emr-alert-box__label">Client alerts</span>
+                <ReachEditButton
+                  label="Edit client alerts"
+                  expanded={headerEdit === 'alerts'}
+                  onClick={() => toggleHeaderEdit('alerts')}
+                />
               </div>
+              {alerts ? (
+                alerts
+              ) : (
+                <span className="pims-emr-alert-box__empty">No client alerts</span>
+              )}
+            </div>
+            {connectionNotes ? (
               <div className="pims-emr-alert-box pims-emr-alert-box--connection">
                 <div className="pims-emr-alert-box__head">
                   <span className="pims-emr-alert-box__label">Connection Notes (staff only)</span>
@@ -1616,13 +1670,18 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
                     onClick={() => toggleHeaderEdit('connectionNotes')}
                   />
                 </div>
-                {connectionNotes ? (
-                  connectionNotes
-                ) : (
-                  <span className="pims-emr-alert-box__empty">No connection notes</span>
-                )}
+                {connectionNotes}
               </div>
-            </div>
+            ) : (
+              <button
+                type="button"
+                className="pims-emr-alert-add"
+                onClick={() => toggleHeaderEdit('connectionNotes')}
+              >
+                + Add connection notes
+              </button>
+            )}
+          </div>
         }
         stat={
           <button
@@ -1816,7 +1875,32 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
         onToggleCollapse={togglePrefsOpen}
       />
 
-      <ClientHouseholdDefaultsCard record={record} onSave={saveFields} />
+      <ClientHouseholdDefaultsCard
+        record={record}
+        onSave={saveFields}
+        collapsed={!householdOpen}
+        onToggleCollapse={toggleHouseholdOpen}
+      />
+
+      <PimsClientHouseholdChatCard
+        clientId={clientId}
+        clientName={name}
+        balance={headerBalance ?? evetBalance}
+        practiceTz={PIMS_CLIENT_DETAIL_TZ}
+        pets={patients
+          .map((p) => {
+            const pid = p.id != null ? String(p.id) : '';
+            if (!pid) return null;
+            return {
+              id: pid,
+              name: pickStr(p.name) ?? `Pet #${pid}`,
+              summaryLine: petSummary(p),
+              alerts: pickStr(p.alerts),
+              active: p.isActive !== false,
+            };
+          })
+          .filter((p): p is NonNullable<typeof p> => p != null)}
+      />
 
       <div className="pims-client-detail__story">
         <section className="pims-emr-story__card" aria-labelledby="pims-client-pets">
@@ -1957,7 +2041,7 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
               : []
           }
           doNotSms={doNotSms}
-          epiphanyPatientId={patientParam}
+          jotPatientId={patientParam}
           onRecordsChanged={() => setCommsTick((n) => n + 1)}
         />
       ) : null}
