@@ -41,7 +41,7 @@ import {
   type EmployeeWeeklySchedule,
   type ScheduleOverride,
 } from '../api/appointmentSettings';
-import { type PaymentPoint } from '../api/payments';
+import { membershipRevenueForPoint, type PaymentPoint } from '../api/payments';
 import {
   buildAppointmentTypeCatalog,
   pointsFromAppointmentRows,
@@ -175,11 +175,6 @@ function pointsFromMonthDay(day: DoctorMonthDay, catalog?: AppointmentTypeCatalo
   return pointsFromAppointmentRows([...apptsWithType, ...blocksAsPersonal], catalog);
 }
 
-/** Square + Stripe membership recurring revenue for one payment day. */
-function membershipRevenueForDay(p: PaymentPoint): number {
-  return (Number(p.subscriptionRevenue) || 0) + (Number(p.stripeRevenue) || 0);
-}
-
 type AncillaryDailyRates = {
   /** Plain pharmacy average (shown in summaries); projections use baseline + growth. */
   pharmacyOverall: number;
@@ -198,8 +193,8 @@ type AncillaryDailyRates = {
 
 /**
  * Trailing ancillary rates from Payments over the lookback window.
- * Pharmacy (onlinePharmacyRevenue) and membership (Square subscriptionRevenue + Stripe
- * stripeRevenue only) each use half-window growth: change from the first half to the
+ * Pharmacy (onlinePharmacyRevenue) and membership (Square invoices + Stripe
+ * memberships) each use half-window growth: change from the first half to the
  * second half, spread per calendar day, so future days step from the recent half's
  * average with that daily growth applied. Missing days count as $0.
  */
@@ -214,7 +209,7 @@ function buildAncillaryDailyRates(
     const d = String(p?.date ?? '').slice(0, 10);
     if (!d) continue;
     pharmacyByDate.set(d, Number(p.onlinePharmacyRevenue) || 0);
-    membershipByDate.set(d, membershipRevenueForDay(p));
+    membershipByDate.set(d, membershipRevenueForPoint(p));
   }
 
   const dates = dateRange(histStart, histEnd);
@@ -726,7 +721,7 @@ export default function ProjectedRevenueAnalyticsPage() {
       if (!d) continue;
       out.set(d, {
         pharmacy: Number(p.onlinePharmacyRevenue) || 0,
-        membership: membershipRevenueForDay(p),
+        membership: membershipRevenueForPoint(p),
       });
     }
     return out;

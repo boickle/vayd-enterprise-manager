@@ -4,14 +4,34 @@ import { paymentProcessingApiBasePath } from '../config/paymentProvider';
 import { http } from './http';
 
 export type PaymentPoint = {
-  date: string; // "YYYY-MM-DD"
-  revenue: number; // daily total (typically practice + online pharmacy)
-  count: number; // number of payments
-  subscriptionRevenue?: number; // daily Square subscription revenue
-  stripeRevenue?: number; // metadata-verified Stripe membership revenue (not part of `revenue`)
+  date: string; // "YYYY-MM-DD" in America/New_York
+  revenue: number; // Pulse practice + pharmacy (exclude-from-income removed)
+  count: number;
+  /** Completed Square INVOICES + OTHER subscriptions, net of refunds. */
+  subscriptionRevenue?: number;
+  /** Succeeded Stripe membership charges, net of refunds. */
+  stripeRevenue?: number;
+  /** Square leftover subscriptions/invoices + Stripe memberships. */
+  membershipRevenue?: number;
   onlinePharmacyRevenue?: number;
   practiceRevenue?: number;
+  /** Pulse `revenue` + `membershipRevenue`. Use this as the stacked daily total. */
+  totalCollections?: number;
 };
+
+export function membershipRevenueForPoint(p: PaymentPoint): number {
+  if (p.membershipRevenue != null) {
+    return Number(p.membershipRevenue) || 0;
+  }
+  return (Number(p.subscriptionRevenue) || 0) + (Number(p.stripeRevenue) || 0);
+}
+
+export function totalCollectionsForPoint(p: PaymentPoint): number {
+  if (p.totalCollections != null) {
+    return Number(p.totalCollections) || 0;
+  }
+  return (Number(p.revenue) || 0) + membershipRevenueForPoint(p);
+}
 
 export type PaymentProviderType = 'square' | 'stripe';
 
@@ -419,20 +439,30 @@ export async function fetchPaymentsAnalytics(params: {
 
   // Ensure we always return the normalized shape with numbers
   const rows: any[] = Array.isArray(data) ? data : (data?.rows ?? []);
-  return rows.map((r) => ({
-    date: String(r.date),
-    revenue: Number(r.revenue ?? 0),
-    count: Number(r.count ?? 0),
-    subscriptionRevenue: Number(r.subscriptionRevenue ?? 0),
-    stripeRevenue: Number(r.stripeRevenue ?? 0),
-    onlinePharmacyRevenue: Number(r.onlinePharmacyRevenue ?? 0),
-    practiceRevenue: Number(r.practiceRevenue ?? 0),
-  }));
+  return rows.map((r) => {
+    const subscriptionRevenue = Number(r.subscriptionRevenue ?? 0);
+    const stripeRevenue = Number(r.stripeRevenue ?? 0);
+    const revenue = Number(r.revenue ?? 0);
+    const membershipRevenue = Number(
+      r.membershipRevenue ?? subscriptionRevenue + stripeRevenue,
+    );
+    return {
+      date: String(r.date),
+      revenue,
+      count: Number(r.count ?? 0),
+      subscriptionRevenue,
+      stripeRevenue,
+      membershipRevenue,
+      onlinePharmacyRevenue: Number(r.onlinePharmacyRevenue ?? 0),
+      practiceRevenue: Number(r.practiceRevenue ?? 0),
+      totalCollections: Number(r.totalCollections ?? revenue + membershipRevenue),
+    };
+  });
 }
 
 /**
- * Top days / months / years matching the daily revenue card:
- * DB payments (excl. Membership Plan Payment) + Square/Stripe from Dec 2025 membership launch.
+ * Top days / months / years matching daily `totalCollections`:
+ * Pulse collections (excl. exclude-from-income) + Square invoices + Stripe memberships.
  * GET /analytics/payments/leaderboards?limit=10
  */
 export async function fetchPaymentsLeaderboards(params?: {
