@@ -164,8 +164,10 @@ export function routingCardWindowWarningReasons(
 ): RoutingCardWindowWarningReason[] {
   const reasons: RoutingCardWindowWarningReason[] = [];
   if (routingCandidateDownstreamScoreWarning(opt)) reasons.push('downstream-score');
-  // suggested-start is computed for scoring but not shown on routing cards.
-  // Only candidate / downstream reconciled tightness — not upstream pre-existing warnings.
+  // Immediate (no View Placement): suggested start vs candidate arrival window.
+  if (routingCandidateSuggestedStartWindowWarning(opt)) reasons.push('suggested-start');
+  // After POST /routing/eta (prefetch or View Placement): candidate / downstream only —
+  // not upstream pre-existing warnings.
   if (etaReconciled?.hasPlacementRelevantWarning) reasons.push('eta-reconciled');
   return reasons;
 }
@@ -175,11 +177,18 @@ export function routingCardWindowWarningMessage(
 ): string | null {
   if (reasons.length === 0) return null;
   const n = WINDOW_WARNING_MINUTES_FROM_END;
+  // Prefer reconciled copy when ETA has confirmed the same tightness View Placement shows.
   if (reasons.includes('eta-reconciled') && reasons.length === 1) {
     return `⚠ Window warning — reconciled drive times show a visit within ${n} minutes of its window end (matches calendar preview).`;
   }
+  if (reasons.includes('downstream-score') && reasons.includes('suggested-start')) {
+    return `⚠ Window warning — tight arrival window and a downstream visit may be pushed near its window end.`;
+  }
   if (reasons.includes('downstream-score')) {
     return `⚠ At least one downstream appointment is pushed within ${n} minutes of its window end.`;
+  }
+  if (reasons.includes('suggested-start') && !reasons.includes('eta-reconciled')) {
+    return `⚠ Suggested start is within ${n} minutes of this visit's arrival window end.`;
   }
   if (reasons.includes('eta-reconciled')) {
     return `⚠ Window warning — reconciled drive times show a visit within ${n} minutes of its window end (matches calendar preview).`;
