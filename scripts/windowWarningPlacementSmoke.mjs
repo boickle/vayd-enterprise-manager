@@ -2,6 +2,7 @@
  * Smoke: window warnings (Belle/Hews thread — #bugs-scout 1787344353.605449)
  * + Harris/Crispell thread — #bugs-scout 1787847418.954429
  * + Cheeseman/Ginger PRE-FIRST downstream — #bugs-scout 1788380128.760569
+ * + Whelan/Crispell before View Placement — #bugs-scout 1788960436.153099
  *
  * 1) "Within 20 minutes of window end" is inclusive (ETA exactly 20m before end warns).
  * 2) View Placement must not attribute an *upstream* pre-existing tight visit to the new
@@ -11,6 +12,8 @@
  * 4) Purple preview slot badge must use hasPlacementRelevantWarning (not only
  *    candidateHasWarning) so inserting first-of-day that pushes later stops tight still
  *    shows a Window Warning tag on the placement card before Book.
+ * 5) Suggested start within 20m of the candidate window end must warn on the result card
+ *    before View Placement / ETA reconcile.
  *
  * Run: node scripts/windowWarningPlacementSmoke.mjs
  */
@@ -151,6 +154,12 @@ function routingCardWindowWarningReasons(opt, etaReconciled) {
     opt?.scoreBreakdown?.downstreamWindowEdge ?? opt?.scoringComponents?.downstreamWindowEdge;
   if (typeof edge === 'number' && Number.isFinite(edge) && edge > 0) {
     reasons.push('downstream-score');
+  }
+  const aw = opt?.arrivalWindow;
+  const start = opt?.suggestedStartIso?.trim?.() ? opt.suggestedStartIso.trim() : '';
+  const windowEnd = aw?.windowEndIso?.trim?.() ? aw.windowEndIso.trim() : '';
+  if (start && windowEnd && shouldShowEtaWindowWarning(start, windowEnd, aw?.windowStartIso)) {
+    reasons.push('suggested-start');
   }
   if (etaReconciled?.hasPlacementRelevantWarning) reasons.push('eta-reconciled');
   return reasons;
@@ -346,6 +355,29 @@ assert(
 assert(
   !dayTypeFallbackDownstream.households[1].effectiveWindow,
   'fixture has no household effectiveWindow (forces type path)'
+);
+
+// Suggested start within 20m of window end must warn on the card before View Placement / ETA.
+const suggestedTight = {
+  suggestedStartIso: `${day}T16:20:00.000Z`, // 12:20 PM EDT
+  arrivalWindow: {
+    windowStartIso: `${day}T15:20:00.000Z`, // 11:20
+    windowEndIso: `${day}T16:35:00.000Z`, // 12:35 → 15m remaining
+  },
+};
+assert(
+  routingCardWindowWarningReasons(suggestedTight, null).includes('suggested-start'),
+  'suggested-start within 20m of window end must light the card without ETA'
+);
+assert(
+  !routingCardWindowWarningReasons(
+    {
+      suggestedStartIso: `${day}T16:00:00.000Z`, // 12:00; 35m before 12:35
+      arrivalWindow: suggestedTight.arrivalWindow,
+    },
+    null
+  ).includes('suggested-start'),
+  'comfortable suggested start must not warn before ETA'
 );
 
 console.log('windowWarningPlacementSmoke: ok');

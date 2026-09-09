@@ -83,6 +83,7 @@ import {
   routingCardWindowWarningMessage,
   routingCardWindowWarningReasons,
 } from '../utils/routingCardWindowWarning';
+import { prefetchRoutingResultEtaWindowWarnings } from '../utils/routingResultEtaWindowPrefetch';
 import { useNavigate, useSearchParams } from 'react-router';
 import {
   clearRoutingCalendarPreview,
@@ -2058,6 +2059,8 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
   >({});
   /** Calendar red-line end ("HH:mm") by `pimsId:YYYY-MM-DD` from GET /appointments/doctor. */
   const [endDepotByDoctorDate, setEndDepotByDoctorDate] = useState<Record<string, string>>({});
+  const activeCalendarPreviewOptionKeyRef = useRef<string | null>(null);
+  activeCalendarPreviewOptionKeyRef.current = activeCalendarPreviewOptionKey;
 
   useEffect(() => {
     if (!calendarWorkspaceMode) return;
@@ -5544,6 +5547,121 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     // doctorIdByPims is read for cache only; listing it would refetch after each pims resolve.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [depotLookupKey]);
+
+  /**
+   * Prefetch POST /routing/eta window warnings for result cards so amber alerts appear
+   * without requiring View Placement (same path Scheduler uses after click).
+   */
+  useEffect(() => {
+    if (!displayOptions.length) {
+      setEtaWindowWarningsByOptionKey({});
+      return;
+    }
+    const hasCoords =
+      Number.isFinite(form.newAppt.lat as number) && Number.isFinite(form.newAppt.lon as number);
+    if (!hasCoords) return;
+
+    let cancelled = false;
+    const appointmentTypeId = resolveScheduleBookTypeId();
+    if (appointmentTypeId == null) return;
+    const appointmentType =
+      routingAppointmentTypes.find((t) => Number(t.id) === appointmentTypeId) ?? null;
+    const serviceMinutes = Math.max(1, Number(form.newAppt.serviceMinutes) || 30);
+    const rescheduleRow = readRoutingRescheduleIntent();
+    const rescheduleUsesAlt =
+      Boolean(rescheduleRow) &&
+      rescheduleIntentUsesAlternateAddress(rescheduleRow) &&
+      Boolean((form.newAppt.address ?? '').trim());
+    const linkedClientUsesAlt = routingFormUsesAlternateClientAddress();
+    const newApptMeta = {
+      ...(form.newAppt.clientId?.trim() ? { clientId: form.newAppt.clientId.trim() } : {}),
+      address: form.newAppt.address,
+      lat: form.newAppt.lat,
+      lon: form.newAppt.lon,
+    };
+
+    const optionKeys = new Set(displayOptions.map((o) => routingOptionKey(o)));
+    setEtaWindowWarningsByOptionKey((prev) => {
+      const next: Record<string, RoutingPreviewEtaWindowWarningsDetail> = {};
+      for (const key of optionKeys) {
+        if (prev[key]) next[key] = prev[key]!;
+      }
+      return next;
+    });
+
+    void (async () => {
+      await Promise.all(
+        displayOptions.map(async (opt) => {
+          const optionKey = routingOptionKey(opt);
+          try {
+            let internalId = doctorIdByPims[opt.doctorPimsId];
+            if (!internalId) {
+              const { data } = await http.get(`/employees/pims/${encodeURIComponent(opt.doctorPimsId)}`);
+              const resolved = data?.id != null ? String(data.id) : '';
+              if (!resolved) return;
+              internalId = resolved;
+              if (!cancelled) {
+                setDoctorIdByPims((m) => (m[opt.doctorPimsId] ? m : { ...m, [opt.doctorPimsId]: resolved }));
+              }
+            }
+            const detail = await prefetchRoutingResultEtaWindowWarnings({
+              optionKey,
+              doctorInternalId: internalId,
+              option: {
+                date: String(opt.date ?? '').slice(0, 10),
+                suggestedStartIso: opt.suggestedStartIso,
+                doctorPimsId: opt.doctorPimsId,
+                doctorName: opt.doctorName,
+                insertionIndex: opt.insertionIndex,
+                positionInDay: (opt as { positionInDay?: number }).positionInDay,
+                candidateIndex: opt.candidateIndex,
+                candidateId: opt.candidateId,
+                arrivalWindow: opt.arrivalWindow,
+                lat: form.newAppt.lat,
+                lon: form.newAppt.lon,
+              },
+              serviceMinutes,
+              appointmentTypeId,
+              appointmentType,
+              newApptMeta,
+              rescheduleIntent: rescheduleRow,
+              routingUsesAlternateAddress: rescheduleUsesAlt || linkedClientUsesAlt,
+            });
+            if (cancelled || !detail) return;
+            setEtaWindowWarningsByOptionKey((prev) => {
+              // View Placement's Scheduler ETA is authoritative for the open preview card.
+              if (
+                activeCalendarPreviewOptionKeyRef.current === optionKey &&
+                prev[optionKey] != null
+              ) {
+                return prev;
+              }
+              return { ...prev, [optionKey]: detail };
+            });
+          } catch {
+            /* keep results usable if ETA prefetch fails */
+          }
+        })
+      );
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // doctorIdByPims / resolveScheduleBookTypeId read for cache + type; listing them would refetch noisily.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    depotLookupKey,
+    displayOptions,
+    form.newAppt.lat,
+    form.newAppt.lon,
+    form.newAppt.address,
+    form.newAppt.clientId,
+    form.newAppt.serviceMinutes,
+    routingAppointmentTypes,
+    routingApptStatsTypeKey,
+    scheduleBookTypeId,
+  ]);
 
   // =========================
   // Render
