@@ -6,6 +6,8 @@ import './styles.css';
 import { AuthProvider } from './auth/AuthProvider';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ensureGtagReady, initGA } from './utils/analytics';
+import { initGtm } from './utils/gtm';
+import { captureMarketingAttribution } from './utils/marketingAttribution';
 
 // Prevent iOS Safari address bar from showing on scroll
 if (typeof window !== 'undefined') {
@@ -28,6 +30,10 @@ if (typeof window !== 'undefined') {
     }
     lastTouchEnd = now;
   }, false);
+
+  // Capture ad click IDs before SPA navigation can drop the query string.
+  captureMarketingAttribution();
+  initGtm();
 
   // Initialize Google tags (GA + Google Ads)
   const gaMeasurementId = import.meta.env.VITE_GA_MEASUREMENT_ID;
