@@ -81,6 +81,8 @@ import {
 import { SelfScheduleCalendarModal } from '../components/SelfScheduleCalendarModal';
 import { selectedPatientDbIdsFromForm } from '../utils/onlineBookingPatientIds';
 import { trackEvent } from '../utils/analytics';
+import { pushGtmEvent } from '../utils/gtm';
+import { getMarketingAttributionForSubmit } from '../utils/marketingAttribution';
 import { useAppointmentFormDraftPersistence } from '../hooks/useAppointmentFormDraftPersistence';
 import type { AppointmentFormDraftSnapshotInput } from '../utils/appointmentFormDraftSnapshot';
 import { ClientLoginForm } from '../components/ClientLoginForm';
@@ -4853,6 +4855,7 @@ export default function AppointmentRequestForm() {
           startedAsLoggedIn: isLoggedIn,
           startedAsExistingClient: formData.haveUsedServicesBefore === 'Yes',
         },
+        marketingAttribution: getMarketingAttributionForSubmit(),
       };
       
       // Remove undefined values to clean up payload
@@ -4885,7 +4888,7 @@ export default function AppointmentRequestForm() {
       
       markFormCompleted();
       setSubmitSuccessKind(appointmentFormSubmitSuccessKindFromMessage(responseMessage));
-      trackFormEvent('appointment_form_submitted', {
+      const submittedEventParams = {
         appointment_type: appointmentType,
         pet_count: petCount,
         has_preferred_doctor: !!submissionData.preferredDoctor,
@@ -4896,6 +4899,11 @@ export default function AppointmentRequestForm() {
         online_booking: isOnlineBookingSubmit,
         how_soon: formData.howSoon || undefined,
         membership_interest: formData.membershipInterest || undefined,
+      };
+      trackFormEvent('appointment_form_submitted', submittedEventParams);
+      pushGtmEvent('appointment_form_submitted', {
+        ...getFormAnalyticsContext(),
+        ...submittedEventParams,
       });
       
       setCurrentPage('success');
