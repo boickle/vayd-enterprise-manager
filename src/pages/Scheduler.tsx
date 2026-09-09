@@ -204,6 +204,7 @@ import {
   buildTypeFillMap,
   colorsForAppointment,
 } from '../utils/schedulerAppointmentColors';
+import { appointmentShowsNewPatientCardMarker } from '../utils/schedulerNewPatientCardMarker';
 import type { SchedulerHoverDriveHint } from '../utils/schedulerHoverTypes';
 import { submitEditVisitPreviewAcceptedFeedback } from '../utils/routingBookFeedback';
 import {
@@ -11187,6 +11188,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                     const leftPct = dayTimeColumnLayout.barLeftPct(s);
                     const widthPct = dayTimeColumnLayout.barWidthPct(s, e);
                     const apptColors = colorsForAppointment(appt, typeList, typeFillMap);
+                    const showNewPatientMarker = appointmentShowsNewPatientCardMarker(appt);
                     const topPad = SCHEDULER_ALL_DAY_PAD_Y / 2;
                     const member = appointmentPatientMember(appt);
                     const isRescheduleSourceAllDay =
@@ -11205,10 +11207,12 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                       <div
                         key={appt.id}
                         data-appt-id={appt.id != null ? String(appt.id) : undefined}
+                        data-new-patient-marker={showNewPatientMarker ? '1' : undefined}
                         role="button"
                         tabIndex={0}
                         className={[
                           'scheduler-all-day-span-bar',
+                          showNewPatientMarker ? 'scheduler-all-day-span-bar--new-patient' : '',
                           isRescheduleSourceAllDay ? 'scheduler-reschedule-source-slot' : '',
                           isEditVisitActiveAllDay ? 'scheduler-edit-visit-active-slot' : '',
                           isEditVisitJustBookedAllDay ? 'scheduler-edit-visit-booked-slot' : '',
@@ -11218,7 +11222,11 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                         ]
                           .filter(Boolean)
                           .join(' ')}
-                        aria-label={pickStr(appt.description) || schedulerEventAppointmentTitle(appt)}
+                        aria-label={
+                          showNewPatientMarker
+                            ? `${pickStr(appt.description) || schedulerEventAppointmentTitle(appt)} (new patient)`
+                            : pickStr(appt.description) || schedulerEventAppointmentTitle(appt)
+                        }
                         style={{
                           left: `calc(${leftPct}% + 1px)`,
                           width: `calc(${widthPct}% - 2px)`,
@@ -11501,6 +11509,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                           const wPct = 100 / colCount;
                           const leftPct = (100 * col) / colCount;
                           const apptColors = colorsForAppointment(appt, typeList, typeFillMap);
+                          const showNewPatientMarker = appointmentShowsNewPatientCardMarker(appt);
                           const member = appointmentPatientMember(appt);
                           const apptDriveHint =
                             showByDriveTime && resolvedPrimaryProviderId.trim()
@@ -11653,11 +11662,13 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                             <div
                               key={appt.id}
                               data-appt-id={appt.id != null ? String(appt.id) : undefined}
+                              data-new-patient-marker={showNewPatientMarker ? '1' : undefined}
                               data-edit-time-preview={isEditTimePreviewVisit ? '1' : undefined}
                               data-edit-visit-active={isEditVisitActiveSlot ? '1' : undefined}
                               data-reschedule-source={isRescheduleSourceVisit ? '1' : undefined}
                               className={[
                                 'scheduler-event',
+                                showNewPatientMarker ? 'scheduler-event--new-patient' : '',
                                 isCompactEvent ? 'scheduler-event--compact' : '',
                                 isEditTimePreviewVisit ? 'scheduler-edit-time-preview-slot' : '',
                                 isRescheduleSourceVisit ? 'scheduler-reschedule-source-slot' : '',
@@ -11671,7 +11682,11 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                               ]
                                 .filter(Boolean)
                                 .join(' ')}
-                              aria-label={schedulerEventAppointmentTitle(appt)}
+                              aria-label={
+                                showNewPatientMarker
+                                  ? `${schedulerEventAppointmentTitle(appt)} (new patient)`
+                                  : schedulerEventAppointmentTitle(appt)
+                              }
                               style={{
                                 top: eventTop,
                                 height: h,
