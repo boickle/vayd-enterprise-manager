@@ -43,6 +43,11 @@ import {
   practiceTimeZoneOrDefault,
 } from '../utils/practiceTimezone';
 import {
+  projectScheduleProgressActualVisits,
+  shiftIsoByLeaveDelay,
+  type ProgressVisitActualInput,
+} from '../utils/scheduleProgressActualProjection';
+import {
   SchedulerAppointmentContextMenu,
   type SchedulerContextMenuAction,
 } from '../pages/SchedulerContextMenu';
@@ -439,36 +444,60 @@ function buildActualDayBundle(
     }
   }
 
-  // Build actual times per visit, then order visits by when they actually happened
-  // rather than inheriting the predicted route order.
+  // Resolve recorded actuals vs predicted bounds per visit, then order by when
+  // they actually happened (predicted start when not yet started).
   const built = rawHouseholds.map((h, rawIdx) => {
     const id = primaryApptId(h);
     const appt = id ? byId.get(id) : undefined;
-    const startIso =
-      (appt?.appointmentStartActual?.trim() || null) ??
-      h.startIso ??
-      appt?.appointmentStart ??
-      null;
-    const endIso =
-      (appt?.appointmentEndActual?.trim() || null) ?? h.endIso ?? appt?.appointmentEnd ?? null;
-    return { household: { ...h, startIso, endIso }, rawIdx };
+    const predictedSlot = rawTimeline[rawIdx];
+    const predictedStartIso =
+      (predictedSlot?.eta?.trim() || null) ?? h.startIso ?? appt?.appointmentStart ?? null;
+    const predictedEndIso =
+      (predictedSlot?.etd?.trim() || null) ?? h.endIso ?? appt?.appointmentEnd ?? null;
+    const actualStartIso = appt?.appointmentStartActual?.trim() || null;
+    const actualEndIso = appt?.appointmentEndActual?.trim() || null;
+    return {
+      household: h,
+      rawIdx,
+      predictedStartIso,
+      predictedEndIso,
+      actualStartIso,
+      actualEndIso,
+      sortStartIso: actualStartIso ?? predictedStartIso,
+      sortEndIso: actualEndIso ?? predictedEndIso,
+    };
   });
 
   const sorted = built
     .map((b, stableIdx) => ({ ...b, stableIdx }))
     .sort((a, b) => {
-      const at = actualVisitSortMillis(a.household.startIso, a.household.endIso);
-      const bt = actualVisitSortMillis(b.household.startIso, b.household.endIso);
+      const at = actualVisitSortMillis(a.sortStartIso, a.sortEndIso);
+      const bt = actualVisitSortMillis(b.sortStartIso, b.sortEndIso);
       if (at !== bt) return at - bt;
       return a.stableIdx - b.stableIdx;
     });
 
-  const households = sorted.map((b) => b.household);
-  const timeline = sorted.map((b) => {
+  const projectionInputs: ProgressVisitActualInput[] = sorted.map((b) => ({
+    predictedStartIso: b.predictedStartIso,
+    predictedEndIso: b.predictedEndIso,
+    actualStartIso: b.actualStartIso,
+    actualEndIso: b.actualEndIso,
+  }));
+  const { visits: projected, leaveDelayMs } =
+    projectScheduleProgressActualVisits(projectionInputs);
+
+  const households = sorted.map((b, i) => ({
+    ...b.household,
+    startIso: projected[i]?.startIso ?? b.predictedStartIso,
+    endIso: projected[i]?.endIso ?? b.predictedEndIso,
+  }));
+  const timeline = sorted.map((b, i) => {
     const predictedSlot = rawTimeline[b.rawIdx];
+    const startIso = projected[i]?.startIso ?? b.predictedStartIso;
+    const endIso = projected[i]?.endIso ?? b.predictedEndIso;
     return {
-      eta: b.household.startIso,
-      etd: b.household.endIso,
+      eta: startIso,
+      etd: endIso,
       bufferAfterMinutes: predictedSlot?.bufferAfterMinutes,
       windowStartIso: predictedSlot?.windowStartIso,
       windowEndIso: predictedSlot?.windowEndIso,
@@ -485,6 +514,8 @@ function buildActualDayBundle(
   const workdayStartIso = workday?.workdayStartActual?.trim() || plannedStartIso;
   const workdayEndIso = workday?.workdayEndActual?.trim() || plannedEndIso;
 
+  const backToDepotIso = shiftIsoByLeaveDelay(predicted.backToDepotIso, leaveDelayMs);
+
   return {
     workdayStartIso,
     workdayEndIso,
@@ -497,7 +528,7 @@ function buildActualDayBundle(
       // the predicted route order on top.
       routingOrderIndices: null,
       backToDepotSec: predicted.backToDepotSec ?? null,
-      backToDepotIso: predicted.backToDepotIso ?? null,
+      backToDepotIso,
       depotToFirstRoutableSec: predicted.depotToFirstRoutableSec ?? null,
       startDepotTime: workdayStartIso
         ? isoToDepotTimeStr(workdayStartIso, tz)
