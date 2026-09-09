@@ -259,6 +259,14 @@ export function estimateRoutingServiceMinutesForVisit(
     count: number,
   ): { minutes: number; source: RoutingServiceMinutesEstimateSource } => {
     const matched = resolveTypeByKey(typeKey);
+    const holdMins = holdTypeBaseServiceMinutes(matched, typeKey, count);
+    if (holdMins != null && holdMins >= 1) {
+      return { minutes: holdMins, source: 'default' };
+    }
+    if (isHoldTypeForRoutingServiceMinutes(matched, typeKey)) {
+      return { minutes: ROUTING_FALLBACK_SERVICE_MINUTES, source: 'fallback' };
+    }
+
     const row = resolveRoutingApptStatsRow(typeKey, apptLengthsRows, matched);
     let mins: number | null = null;
     let source: RoutingServiceMinutesEstimateSource = 'fallback';
@@ -350,6 +358,12 @@ function estimatePerPetBaseMinutes(
 ): number {
   const type = resolveTypeById(appointmentTypeId);
   const typeKey = appointmentTypeNameForRoutingStats(type);
+  const holdMins = holdTypeBaseServiceMinutes(type, typeKey || String(appointmentTypeId), 1);
+  if (holdMins != null && holdMins >= 1) return holdMins;
+  if (isHoldTypeForRoutingServiceMinutes(type, typeKey)) {
+    return ROUTING_FALLBACK_SERVICE_MINUTES;
+  }
+
   const row = resolveRoutingApptStatsRow(typeKey, apptLengthsRows, type);
   const fallbackSingle = (): number =>
     defaultDurationMinutesForRoutingTypeSelection(type, 1) ?? ROUTING_FALLBACK_SERVICE_MINUTES;
@@ -435,8 +449,68 @@ export function estimatePerPetRoutingMinutesForVisit(
 
 export type RoutingServiceMinutesTypeSource = Pick<
   AppointmentType,
-  'id' | 'name' | 'prettyName' | 'defaultDuration'
+  'id' | 'name' | 'prettyName' | 'defaultDuration' | 'isHold'
 >;
+
+/**
+ * Parse an explicit duration embedded in a type label, e.g. "HOLD - 1 hour" → 60,
+ * "HOLD – 30 min" → 30. Used so labeled HOLD slots keep their intended length even
+ * when settings defaultDuration or historical averages disagree.
+ */
+export function parseExplicitDurationMinutesFromTypeLabel(
+  label: string | null | undefined,
+): number | null {
+  const s = String(label ?? '').trim().toLowerCase();
+  if (!s) return null;
+
+  const hourMatch = s.match(/(\d+(?:\.\d+)?)\s*(?:hours?|hrs?)\b/);
+  if (hourMatch) {
+    const hours = Number(hourMatch[1]);
+    if (Number.isFinite(hours) && hours > 0) return Math.max(1, Math.round(hours * 60));
+  }
+
+  const minMatch = s.match(/(\d+)\s*(?:minutes?|mins?)\b/);
+  if (minMatch) {
+    const mins = Number(minMatch[1]);
+    if (Number.isFinite(mins) && mins > 0) return Math.max(1, Math.round(mins));
+  }
+
+  return null;
+}
+
+/** True for catalog holds (`isHold`) or labels that include a HOLD token. */
+export function isHoldTypeForRoutingServiceMinutes(
+  matchedType: RoutingServiceMinutesTypeSource | undefined,
+  typeKey?: string | null,
+): boolean {
+  if (matchedType?.isHold === true) return true;
+  const labels = [matchedType?.name, matchedType?.prettyName, typeKey]
+    .map((value) => String(value ?? '').trim())
+    .filter(Boolean);
+  return labels.some((label) => /\bhold\b/i.test(label));
+}
+
+/**
+ * HOLD Calculate Time minutes: prefer an explicit duration in the type name
+ * ("HOLD - 1 hour" → 60), then catalog defaultDuration. Skips historical averages —
+ * prior holds are often booked short and would keep pulling euth HOLD slots back to ~45.
+ */
+export function holdTypeBaseServiceMinutes(
+  matchedType: RoutingServiceMinutesTypeSource | undefined,
+  typeKey: string,
+  pets: number,
+): number | null {
+  if (!isHoldTypeForRoutingServiceMinutes(matchedType, typeKey)) return null;
+
+  const petCount = Math.max(1, Math.floor(Number(pets)) || 1);
+  const labels = [matchedType?.name, matchedType?.prettyName, typeKey];
+  for (const label of labels) {
+    const parsed = parseExplicitDurationMinutesFromTypeLabel(label);
+    if (parsed != null) return Math.round(parsed * petCount);
+  }
+
+  return defaultDurationMinutesForRoutingTypeSelection(matchedType, petCount);
+}
 
 function routingApptTypeStatsMeetMinInstances(
   row: AvgMinutesByTypeRow,
@@ -498,22 +572,28 @@ function defaultDurationMinutesForRoutingTypeSelection(
   return Math.round(dur * petCount);
 }
 
-/** 30-day doctor stats (≥5 visits), then type default duration, then fallback minutes. */
-export function estimateRoutingServiceMinutesForSelection(
+/**
+ * Base Calculate Time minutes (no new-patient buffers).
+ * HOLD types use labeled/default duration (not 30-day averages).
+ * Other types: 30-day doctor stats (≥5 visits), then type default, then fallback.
+ * Returns null when `typeKey` is empty (caller keeps the form value).
+ */
+export function estimateRoutingBaseServiceMinutesForSelection(
   typeKey: string,
   pets: number,
   apptLengthsRows: AvgMinutesByTypeRow[],
   resolveType: (key: string) => RoutingServiceMinutesTypeSource | undefined,
-  bufferOptions?: RoutingServiceMinutesBufferOptions,
-): number {
+): number | null {
   const key = typeKey.trim();
-  if (!key) {
-    return applyRoutingServiceMinuteBuffers(ROUTING_FALLBACK_SERVICE_MINUTES, {
-      ...bufferOptions,
-      numPets: bufferOptions?.numPets ?? pets,
-    });
-  }
+  if (!key) return null;
   const matched = resolveType(key);
+
+  const holdMins = holdTypeBaseServiceMinutes(matched, key, pets);
+  if (holdMins != null && holdMins >= 1) return holdMins;
+  if (isHoldTypeForRoutingServiceMinutes(matched, key)) {
+    return ROUTING_FALLBACK_SERVICE_MINUTES;
+  }
+
   const row = resolveRoutingApptStatsRow(key, apptLengthsRows, matched);
   let mins: number | null = null;
   if (row && routingApptTypeStatsMeetMinInstances(row)) {
@@ -525,7 +605,22 @@ export function estimateRoutingServiceMinutesForSelection(
   if (mins == null || mins < 1) {
     mins = ROUTING_FALLBACK_SERVICE_MINUTES;
   }
-  return applyRoutingServiceMinuteBuffers(mins, {
+  return mins;
+}
+
+/** 30-day doctor stats (≥5 visits), then type default duration, then fallback minutes. */
+export function estimateRoutingServiceMinutesForSelection(
+  typeKey: string,
+  pets: number,
+  apptLengthsRows: AvgMinutesByTypeRow[],
+  resolveType: (key: string) => RoutingServiceMinutesTypeSource | undefined,
+  bufferOptions?: RoutingServiceMinutesBufferOptions,
+): number {
+  const key = typeKey.trim();
+  const base =
+    estimateRoutingBaseServiceMinutesForSelection(key, pets, apptLengthsRows, resolveType) ??
+    ROUTING_FALLBACK_SERVICE_MINUTES;
+  return applyRoutingServiceMinuteBuffers(base, {
     ...bufferOptions,
     numPets: bufferOptions?.numPets ?? pets,
   });

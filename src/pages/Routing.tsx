@@ -153,7 +153,9 @@ import {
 } from '../utils/routingCalculateTimeType';
 import {
   applyRoutingServiceMinuteBuffers,
+  estimateRoutingBaseServiceMinutesForSelection,
   fetchAveragedApptLengthStatsForDoctors,
+  isHoldTypeForRoutingServiceMinutes,
   resolveServiceMinutesAfterDoctorConfirm,
   shouldPreserveManualRoutingMinutes,
 } from '../utils/routingServiceMinutes';
@@ -253,11 +255,8 @@ type RouteRequest = {
  * Routing “Service minutes” from the same Appt lengths stats as the popover:
  * 1 pet → regular average; 2+ pets → multipet average × pet count when multipet data exists,
  * otherwise scales the regular average by pet count.
+ * HOLD types use labeled/default duration via {@link estimateRoutingBaseServiceMinutesForSelection}.
  */
-/** When Calculate Time has no stats row and no type default duration. */
-const ROUTING_FALLBACK_SERVICE_MINUTES = 45;
-/** Minimum doctor-day visits of a type in the last 30 days before using historical averages. */
-const ROUTING_MIN_APPT_TYPE_INSTANCES_FOR_STATS = 5;
 
 /** Picker `<option value>` uses appointment type `name`, not `prettyName`. */
 function routingPickerTypeNameForAppointmentType(
@@ -285,90 +284,6 @@ function routingPickerTypeNameForAppointmentType(
     );
   });
   return byLabel ? String(byLabel.name ?? '').trim() || null : null;
-}
-
-function routingApptTypeStatsMeetMinInstances(
-  row: AvgMinutesByTypeRow,
-  minInstances = ROUTING_MIN_APPT_TYPE_INSTANCES_FOR_STATS
-): boolean {
-  return row.count + row.multipetCount >= minInstances;
-}
-
-function estimatedServiceMinutesFromStatsRow(row: AvgMinutesByTypeRow, pets: number): number | null {
-  const n = Math.floor(Number(pets));
-  const petCount = Number.isFinite(n) && n >= 1 ? n : 1;
-  const hasSingle = row.count > 0 && row.avgMinutes > 0;
-  const mp = row.multipetAvgMinutes;
-  const hasMp = mp != null && mp > 0;
-
-  if (petCount === 1) {
-    if (hasSingle) return Math.round(row.avgMinutes);
-    if (hasMp) return Math.round(mp);
-    return null;
-  }
-  if (hasMp) return Math.round(mp * petCount);
-  if (hasSingle) return Math.round(row.avgMinutes * petCount);
-  return null;
-}
-
-function resolveRoutingApptStatsRow(
-  typeKey: string,
-  apptLengthsRows: AvgMinutesByTypeRow[],
-  matchedType?: AppointmentType
-): AvgMinutesByTypeRow | undefined {
-  const key = typeKey.trim();
-  if (!key) return undefined;
-  const statsByNorm = new Map<string, AvgMinutesByTypeRow>();
-  for (const row of apptLengthsRows) {
-    const norm = normalizeAppointmentType(row.typeName);
-    if (norm) statsByNorm.set(norm, row);
-  }
-  const norm = normalizeAppointmentType(key);
-  const prettyNorm = matchedType?.prettyName
-    ? normalizeAppointmentType(String(matchedType.prettyName))
-    : '';
-  return (
-    statsByNorm.get(norm) ??
-    (prettyNorm ? statsByNorm.get(prettyNorm) : undefined) ??
-    apptLengthsRows.find((row) => {
-      const rowNorm = normalizeAppointmentType(row.typeName);
-      return rowNorm === norm || (prettyNorm !== '' && rowNorm === prettyNorm);
-    })
-  );
-}
-
-function defaultDurationMinutesForRoutingTypeSelection(
-  matchedType: AppointmentType | undefined,
-  pets: number
-): number | null {
-  const dur = matchedType?.defaultDuration != null ? Number(matchedType.defaultDuration) : NaN;
-  if (!Number.isFinite(dur) || dur <= 0) return null;
-  const petCount = Math.max(1, Math.floor(pets) || 1);
-  return Math.round(dur * petCount);
-}
-
-/** 30-day doctor stats (≥5 visits), then type default duration, then {@link ROUTING_FALLBACK_SERVICE_MINUTES}. */
-function estimateRoutingServiceMinutesForSelection(
-  typeKey: string,
-  pets: number,
-  apptLengthsRows: AvgMinutesByTypeRow[],
-  resolveType: (key: string) => AppointmentType | undefined
-): number | null {
-  const key = typeKey.trim();
-  if (!key) return null;
-  const matched = resolveType(key);
-  const row = resolveRoutingApptStatsRow(key, apptLengthsRows, matched);
-  let mins: number | null = null;
-  if (row && routingApptTypeStatsMeetMinInstances(row)) {
-    mins = estimatedServiceMinutesFromStatsRow(row, pets);
-  }
-  if (mins == null || mins < 1) {
-    mins = defaultDurationMinutesForRoutingTypeSelection(matched, pets);
-  }
-  if (mins == null || mins < 1) {
-    mins = ROUTING_FALLBACK_SERVICE_MINUTES;
-  }
-  return mins;
 }
 
 type Slot = 'early' | 'mid' | 'late';
@@ -4225,17 +4140,11 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     apptLengthsLoading,
   ]);
 
-  function defaultDurationMinutesForRoutingType(typeKey: string, pets: number): number | null {
-    return defaultDurationMinutesForRoutingTypeSelection(
-      routingAppointmentTypeForStatsKey(typeKey),
-      pets
-    );
-  }
-
   const applyRoutingServiceMinutes = useCallback(
     (typeKey: string, pets: number, opts?: { pulse?: boolean }) => {
-      if (hasActiveRescheduleIntent) return;
-      const baseMins = estimateRoutingServiceMinutesForSelection(
+      // User-driven type/pet changes should refresh Minutes even while rescheduling
+      // (e.g. HOLD - 1 hour → 60). Passive stats sync still skips via the useEffect guard.
+      const baseMins = estimateRoutingBaseServiceMinutesForSelection(
         typeKey,
         pets,
         apptLengthsRows,
@@ -4267,13 +4176,32 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       }
     },
     [
-      hasActiveRescheduleIntent,
       apptLengthsRows,
       routingAppointmentTypes,
       triggerRoutingMinutesPulse,
       activeAppointmentRequestIntent,
     ]
   );
+
+  /**
+   * Reschedule hydrate often lands Minutes from the calendar block (commonly 45) while
+   * Calculate Time shows a labeled HOLD (e.g. HOLD - 1 hour). Once the type key is set,
+   * realign Minutes to the HOLD label/default — not historical averages.
+   */
+  useEffect(() => {
+    if (!hasActiveRescheduleIntent) return;
+    if (shouldPreserveManualRoutingMinutes(routingMinutesManualOverrideRef.current)) return;
+    const typeKey = routingApptStatsTypeKey.trim();
+    if (!typeKey) return;
+    const matched = routingAppointmentTypeForStatsKey(typeKey);
+    if (!isHoldTypeForRoutingServiceMinutes(matched, typeKey)) return;
+    applyRoutingServiceMinutes(typeKey, routingPetCount, { pulse: false });
+  }, [
+    hasActiveRescheduleIntent,
+    routingApptStatsTypeKey,
+    routingPetCount,
+    applyRoutingServiceMinutes,
+  ]);
 
   const applyRoutingPatientChipSelection = useCallback(
     (nextIds: readonly string[], opts?: { pulse?: boolean }) => {
@@ -5280,7 +5208,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       try {
         const rows = await fetchAveragedApptLengthStatsForDoctors(selectedDoctorIds);
         setApptLengthsRows(rows);
-        const baseMins = estimateRoutingServiceMinutesForSelection(
+        const baseMins = estimateRoutingBaseServiceMinutesForSelection(
           typeKey,
           routingPetCount,
           rows,
