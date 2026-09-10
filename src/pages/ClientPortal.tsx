@@ -11,13 +11,19 @@ import {
   type WellnessPlan,
   fetchClientReminders,
   type ClientReminder,
-  fetchPracticeInfo,
   type Vaccination,
   fetchClientInfo,
   submitReferral,
   getClientRoomLoaderPdfHref,
   getClientRoomLoaderFormPath,
 } from '../api/clientPortal';
+import { fetchClientChatHoursOfOperation } from '../api/chatHoursOfOperation';
+import {
+  defaultChatHoursOfOperation,
+  formatChatHoursSchedule,
+  isChatOpen,
+  type ChatHoursOfOperation,
+} from '../utils/chatHours';
 import { listMembershipTransactions } from '../api/membershipTransactions';
 import { http } from '../api/http';
 import { uploadPetImage } from '../api/patients';
@@ -202,7 +208,7 @@ export default function ClientPortal() {
     pet: PetWithWellness;
     reminders: ClientReminder[];
   } | null>(null);
-  const [chatHours, setChatHours] = useState<any>(null);
+  const [chatHours, setChatHours] = useState<ChatHoursOfOperation>(defaultChatHoursOfOperation());
   const [uploadingPetId, setUploadingPetId] = useState<string | null>(null);
   const [showErrorModal, setShowErrorModal] = useState(false);
   const [errorModalMessage, setErrorModalMessage] = useState<string | null>(null);
@@ -268,11 +274,11 @@ export default function ClientPortal() {
       setLoading(true);
       setError(null);
       try {
-        const [pBase, a, r, practiceInfo] = await Promise.all([
+        const [pBase, a, r, loadedChatHours] = await Promise.all([
           fetchClientPets(),
           fetchClientAppointments(),
           fetchClientReminders(),
-          fetchPracticeInfo(),
+          fetchClientChatHoursOfOperation(),
         ]);
         
         // Store raw appointment data for client info lookup
@@ -285,9 +291,7 @@ export default function ClientPortal() {
           console.warn('Failed to fetch raw appointment data for client info:', err);
         }
         
-        if (practiceInfo?.chatHoursOfOperation) {
-          setChatHours(practiceInfo.chatHoursOfOperation);
-        }
+        if (alive) setChatHours(loadedChatHours);
         if (!alive) return;
 
         const clientIdForTransactions =
@@ -897,94 +901,8 @@ export default function ClientPortal() {
   const brand = 'var(--brand, #0f766e)';
   const brandSoft = 'var(--brand-soft, #e6f7f5)';
 
-  // Helper function to parse time string (HH:MM format) to minutes since midnight
-  function parseTimeToMinutes(timeStr: string): number {
-    if (!timeStr) return 0;
-    const match = timeStr.match(/(\d{1,2}):(\d{2})/);
-    if (match) {
-      const hours = parseInt(match[1]);
-      const minutes = parseInt(match[2]);
-      return hours * 60 + minutes;
-    }
-    return 0;
-  }
-
-  // Helper function to convert 24-hour time (HH:MM) to 12-hour time (h:MM AM/PM)
-  function formatTo12Hour(timeStr: string): string {
-    if (!timeStr) return timeStr;
-    const match = timeStr.match(/(\d{1,2}):(\d{2})/);
-    if (!match) return timeStr;
-    
-    let hours = parseInt(match[1]);
-    const minutes = match[2];
-    
-    // Handle times past midnight (e.g., "27:00" = 3:00 AM)
-    if (hours >= 24) {
-      hours = hours - 24;
-    }
-    
-    const period = hours >= 12 ? 'PM' : 'AM';
-    const hours12 = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
-    
-    return `${hours12}:${minutes} ${period}`;
-  }
-
-  // Check if chat hours are currently open based on chatHoursOfOperation
-  const isChatHoursOpen = useMemo(() => {
-    if (!chatHours) {
-      // If no chat hours data, default to hiding the button (assume closed)
-      return false;
-    }
-
-    const now = new Date();
-    const currentDay = now.getDay(); // 0 = Sunday, 1 = Monday, etc.
-    const currentTimeMinutes = now.getHours() * 60 + now.getMinutes(); // Minutes since midnight
-
-    // Map day index to lowercase day name
-    const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-    const todayName = dayNames[currentDay];
-    
-    // Get today's chat hours
-    const todayChatHours = chatHours[todayName];
-
-    if (!todayChatHours || !todayChatHours.open || !todayChatHours.close) {
-      return false; // Closed if no chat hours for today
-    }
-
-    const openMinutes = parseTimeToMinutes(todayChatHours.open);
-    let closeMinutes = parseTimeToMinutes(todayChatHours.close);
-    
-    // Handle case where close time is after midnight (e.g., "27:00" = 3:00 AM next day)
-    if (closeMinutes < openMinutes) {
-      closeMinutes += 24 * 60; // Add 24 hours
-    }
-
-    // Check if current time is within chat hours
-    const isOpen = currentTimeMinutes >= openMinutes && currentTimeMinutes < closeMinutes;
-    
-    return isOpen;
-  }, [chatHours]);
-
-  // Format chat hours for display in tooltip
-  const formattedChatHours = useMemo(() => {
-    if (!chatHours) return null;
-
-    const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-    const dayLabels = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    
-    return dayNames.map((dayName, index) => {
-      const hours = chatHours[dayName];
-      if (!hours || !hours.open || !hours.close) {
-        return { day: dayLabels[index], hours: 'Closed' };
-      }
-      
-      // Convert to 12-hour format
-      const openTime12 = formatTo12Hour(hours.open);
-      const closeTime12 = formatTo12Hour(hours.close);
-      
-      return { day: dayLabels[index], hours: `${openTime12} - ${closeTime12}` };
-    });
-  }, [chatHours]);
+  const isChatHoursOpen = useMemo(() => isChatOpen(chatHours), [chatHours]);
+  const formattedChatHours = useMemo(() => formatChatHoursSchedule(chatHours), [chatHours]);
 
   /* ---------------------------
      Bottom Nav Handlers

@@ -42,6 +42,12 @@ export type ReminderSettings = {
    * See `routingOfferableScoreConfig.ts`.
    */
   'routing.offerableScoreThresholds'?: string;
+  /**
+   * Live chat / priority support hours by day (JSON string).
+   * Shape: { sunday: { open, close } | null, monday: ..., ... }.
+   * See `chatHours.ts`.
+   */
+  'chat.hoursOfOperation'?: string;
 };
 
 export type ReminderSettingsForm = {

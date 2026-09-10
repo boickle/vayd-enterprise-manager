@@ -59,6 +59,7 @@ import SettingsAppointmentTypes from '../components/settings/SettingsAppointment
 import SettingsRoleManualBooking from '../components/settings/SettingsRoleManualBooking';
 import SettingsClSeatAssignment from '../components/settings/SettingsClSeatAssignment';
 import SettingsGmailMailboxPermissions from '../components/settings/SettingsGmailMailboxPermissions';
+import SettingsChatHours from '../components/settings/SettingsChatHours';
 import { appointmentTypeIsArchived } from '../utils/appointmentTypeSettings';
 
 const SETTINGS_TAB_IDS = [
@@ -73,6 +74,7 @@ const SETTINGS_TAB_IDS = [
   'employee-directory',
   'cl-seat-assignment',
   'gmail-mailboxes',
+  'chat-hours',
   'reminders',
 ] as const;
 type SettingsTabId = (typeof SETTINGS_TAB_IDS)[number];
@@ -1172,6 +1174,12 @@ export default function Settings() {
             onClick={() => goToTab('gmail-mailboxes')}
           >
             Gmail Mailboxes
+          </button>
+          <button
+            className={`settings-tab ${activeTab === 'chat-hours' ? 'active' : ''}`}
+            onClick={() => goToTab('chat-hours')}
+          >
+            Live Chat Hours
           </button>
           <button
             className={`settings-tab ${activeTab === 'reminders' ? 'active' : ''}`}
@@ -2701,6 +2709,29 @@ export default function Settings() {
               from that address. Personal mailboxes are still connected by each user via OAuth.
             </p>
             <SettingsGmailMailboxPermissions
+              onMessage={(msg, kind) => {
+                if (kind === 'success') {
+                  setSuccess(msg);
+                  setError(null);
+                  window.setTimeout(() => setSuccess(null), 4000);
+                } else {
+                  setError(msg);
+                  setSuccess(null);
+                }
+              }}
+            />
+          </div>
+        )}
+
+        {activeTab === 'chat-hours' && (
+          <div className="settings-section">
+            <h2 className="settings-section-title">Live Chat Hours</h2>
+            <p className="settings-section-description">
+              Configure when members can access after-hours live chat in the Client Portal. Support
+              hours shown in membership agreement copy are generated from this schedule.
+            </p>
+            <SettingsChatHours
+              practiceId={REMINDERS_PRACTICE_ID}
               onMessage={(msg, kind) => {
                 if (kind === 'success') {
                   setSuccess(msg);
