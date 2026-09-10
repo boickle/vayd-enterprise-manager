@@ -8,8 +8,7 @@ import {
   fetchPatientAppointmentsStaff,
 } from '../../api/pimsAppointments';
 import {
-  buildSchedulerFocusAppointmentUrl,
-  writeSchedulerFocusSession,
+  navigateToSchedulerFocusedAppointment,
 } from '../../utils/schedulerFocusAppointment';
 import './PimsAppointmentsSection.css';
 
@@ -62,18 +61,6 @@ function isCancelledOrDeleted(appt: Appointment): boolean {
 
 function appointmentStartMs(appt: Appointment): number {
   return Date.parse(appt.appointmentStart);
-}
-
-function schedulerHintsForAppointment(
-  appt: Appointment,
-  practiceTz: string,
-): { dateKey: string | null; providerId: string | undefined } {
-  const dateKey =
-    DateTime.fromISO(appt.appointmentStart, { zone: 'utc' }).setZone(practiceTz).toISODate() ??
-    null;
-  const providerId =
-    appt.primaryProvider?.id != null ? String(appt.primaryProvider.id) : undefined;
-  return { dateKey, providerId };
 }
 
 /** One row per appointment — same slot → adjacent rows, sorted earliest to latest. */
@@ -350,20 +337,7 @@ export default function AppointmentSearchHistory(props: AppointmentSearchHistory
   const totalCount = past.length + future.length;
 
   const viewAppointment = (appt: Appointment) => {
-    const apptId = Number(appt.id);
-    if (!Number.isFinite(apptId) || apptId <= 0) return;
-    const { dateKey, providerId } = schedulerHintsForAppointment(appt, practiceTz);
-    writeSchedulerFocusSession({
-      appointmentId: apptId,
-      dateHint: dateKey,
-      providerHint: providerId ?? null,
-    });
-    navigate(
-      buildSchedulerFocusAppointmentUrl(apptId, {
-        date: dateKey ?? undefined,
-        providerId,
-      }),
-    );
+    navigateToSchedulerFocusedAppointment(navigate, appt, practiceTz);
   };
 
   return (
