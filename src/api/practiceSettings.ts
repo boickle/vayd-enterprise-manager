@@ -48,6 +48,11 @@ export type ReminderSettings = {
    * See `chatHours.ts`.
    */
   'chat.hoursOfOperation'?: string;
+  /**
+   * Online auto-book duration and lead-time settings (JSON string).
+   * Shape: { singlePatientMinutes, multiPetPerPetMinutes, newClientLeadTimeHours, existingClientLeadTimeHours }.
+   */
+  'onlineBooking.autoBookSettings'?: string;
 };
 
 export type ReminderSettingsForm = {

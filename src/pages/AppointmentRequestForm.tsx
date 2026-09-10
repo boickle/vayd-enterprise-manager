@@ -35,6 +35,13 @@ import { DEFAULT_PRACTICE_TIMEZONE } from '../utils/practiceTimezone';
 import { formatAutobookDateTimePreferenceDisplay } from '../utils/appointmentRequestDisplay';
 import { appointmentTypeForRoutingStatsKey } from '../utils/routingCalculateTimeType';
 import { fetchPublicRoutingOfferableScoreThresholds } from '../api/routingOfferableScoreThresholds';
+import { fetchPublicOnlineBookingAutoBookSettings } from '../api/onlineBookingAutoBookSettings';
+import {
+  bumpStartDateForLeadTime,
+  defaultOnlineBookingAutoBookSettings,
+  resolveOnlineBookingLeadTimeHours,
+  computeEarliestOnlineBookingDateTime,
+} from '../utils/onlineBookingAutoBookSettings';
 import {
   daysFromTodayForSlot,
   defaultRoutingOfferableScoreConfig,
@@ -2269,6 +2276,26 @@ export default function AppointmentRequestForm() {
         return;
       }
 
+      let autoBookSettings = defaultOnlineBookingAutoBookSettings();
+      try {
+        autoBookSettings = await fetchPublicOnlineBookingAutoBookSettings(practiceId);
+      } catch (err) {
+        console.warn(
+          '[AppointmentForm] Failed to load online auto-book settings; using defaults',
+          err,
+        );
+      }
+      const leadTimeHours = resolveOnlineBookingLeadTimeHours(
+        autoBookSettings,
+        routingVisitPets,
+        isNewPatientRequest,
+      );
+      startDate = bumpStartDateForLeadTime(startDate, leadTimeHours, DEFAULT_PRACTICE_TIMEZONE);
+      const earliestBookable = computeEarliestOnlineBookingDateTime(
+        leadTimeHours,
+        DEFAULT_PRACTICE_TIMEZONE,
+      );
+
       // Doctor-specific service minutes (server stats when possible)
       let serviceMinutes = resolvedServiceMinutes;
       if (serviceMinutes == null && routingVisitPets.length > 0 && doctorId) {
@@ -2418,6 +2445,12 @@ export default function AppointmentRequestForm() {
       }): boolean => {
         const slotIso =
           opt?.suggestedStartIso || opt?.iso || opt?.date || null;
+        if (slotIso) {
+          const slotDt = DateTime.fromISO(slotIso);
+          if (slotDt.isValid && slotDt.toMillis() < earliestBookable.toMillis()) {
+            return false;
+          }
+        }
         return isRoutingScoreOfferableForConfig(opt?.score, {
           config: scoreThresholdConfig,
           appointmentTypeId: primaryAppointmentTypeId,
