@@ -80,7 +80,7 @@ export type RoutingServiceMinutesResponse = {
   baseMinutes: number;
   newPatientBufferMinutes: number;
   householdBufferMinutes: number;
-  source: 'stats' | 'default' | 'fallback' | 'mixed';
+  source: 'stats' | 'default' | 'fallback' | 'mixed' | 'configured';
 };
 
 /**
@@ -91,6 +91,8 @@ export async function fetchRoutingServiceMinutes(request: {
   practiceId: number;
   doctorId: string | number;
   visitPets: RoutingVisitPetInput[];
+  /** When false, use doctor 30-day averages (staff routing). Default true for online booking. */
+  forOnlineBooking?: boolean;
 }): Promise<RoutingServiceMinutesResponse> {
   const { data } = await http.post('/public/appointments/routing-service-minutes', request);
   return data as RoutingServiceMinutesResponse;

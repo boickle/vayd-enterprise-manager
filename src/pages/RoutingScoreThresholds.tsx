@@ -9,6 +9,12 @@ import {
   type RoutingScoreCalibrationResponse,
 } from '../api/routingOfferableScoreThresholds';
 import {
+  defaultOnlineBookingAutoBookSettings,
+  fetchOnlineBookingAutoBookSettings,
+  saveOnlineBookingAutoBookSettings,
+  type OnlineBookingAutoBookSettings,
+} from '../api/onlineBookingAutoBookSettings';
+import {
   OFFERABLE_SCORE_DAY_BUCKETS,
   OFFERABLE_SCORE_DAY_BUCKET_HINTS,
   OFFERABLE_SCORE_DAY_BUCKET_LABELS,
@@ -49,6 +55,12 @@ function parseOptionalScore(raw: string): number | undefined {
   return Math.round(n);
 }
 
+function parseOptionalPositiveMinutes(raw: string): number | undefined {
+  const n = parseOptionalScore(raw);
+  if (n == null || n < 1) return undefined;
+  return n;
+}
+
 function formatWhen(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime()) || d.getTime() === 0) return 'never';
@@ -71,9 +83,13 @@ export default function RoutingScoreThresholdsPage() {
   const [config, setConfig] = useState<RoutingOfferableScoreConfig>(
     defaultRoutingOfferableScoreConfig
   );
+  const [autoBookSettings, setAutoBookSettings] = useState<OnlineBookingAutoBookSettings>(
+    defaultOnlineBookingAutoBookSettings
+  );
   const [types, setTypes] = useState<AppointmentType[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [savingAutoBook, setSavingAutoBook] = useState(false);
   const [calibrating, setCalibrating] = useState(false);
   const [windowDays, setWindowDays] = useState<number>(90);
   const [preview, setPreview] = useState<RoutingScoreCalibrationResponse | null>(null);
@@ -88,11 +104,13 @@ export default function RoutingScoreThresholdsPage() {
     setLoading(true);
     setLoadError(null);
     try {
-      const [thresholds, appointmentTypes] = await Promise.all([
+      const [thresholds, appointmentTypes, autoBook] = await Promise.all([
         fetchRoutingOfferableScoreThresholds(PRACTICE_ID),
         fetchAllAppointmentTypes(PRACTICE_ID, { activeOnly: true }),
+        fetchOnlineBookingAutoBookSettings(PRACTICE_ID),
       ]);
       setConfig(thresholds);
+      setAutoBookSettings(autoBook);
       setTypes(
         appointmentTypes
           .filter((t) => !t.isDeleted && t.isActive !== false)
@@ -101,6 +119,7 @@ export default function RoutingScoreThresholdsPage() {
     } catch (err) {
       setLoadError(extractErr(err));
       setConfig(defaultRoutingOfferableScoreConfig());
+      setAutoBookSettings(defaultOnlineBookingAutoBookSettings());
     } finally {
       setLoading(false);
     }
@@ -286,6 +305,23 @@ export default function RoutingScoreThresholdsPage() {
       setMessage({ text: extractErr(err), kind: 'error' });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleSaveAutoBookSettings = async () => {
+    setSavingAutoBook(true);
+    setMessage(null);
+    try {
+      const saved = await saveOnlineBookingAutoBookSettings(
+        PRACTICE_ID,
+        autoBookSettings,
+      );
+      setAutoBookSettings(saved);
+      setMessage({ text: 'Auto-book settings saved.', kind: 'success' });
+    } catch (err) {
+      setMessage({ text: extractErr(err), kind: 'error' });
+    } finally {
+      setSavingAutoBook(false);
     }
   };
 
@@ -662,6 +698,116 @@ export default function RoutingScoreThresholdsPage() {
           >
             {saving ? 'Saving…' : 'Save thresholds'}
           </button>
+
+          <section className="settings-section" style={{ marginTop: 32 }}>
+            <h3 style={{ marginTop: 0 }}>Auto-book duration &amp; lead time</h3>
+            <p className="settings-section-description" style={{ marginTop: 0, maxWidth: 760 }}>
+              Controls how long online auto-book blocks on the schedule and how soon clients can
+              book. Duration uses these practice settings instead of each doctor&apos;s 30-day
+              appointment averages. Lead time is enforced on the server for every offered slot.
+            </p>
+
+            <div className="settings-grid" style={{ maxWidth: 520 }}>
+              <label className="settings-label" htmlFor="ob-single-minutes">
+                Single-patient visit (minutes)
+              </label>
+              <input
+                id="ob-single-minutes"
+                className="settings-input"
+                type="number"
+                min={1}
+                step={1}
+                value={autoBookSettings.singlePatientMinutes}
+                onChange={(e) => {
+                  const n = parseOptionalPositiveMinutes(e.target.value);
+                  if (n != null) {
+                    setAutoBookSettings((prev) => ({
+                      ...prev,
+                      singlePatientMinutes: n,
+                    }));
+                  }
+                }}
+              />
+
+              <label className="settings-label" htmlFor="ob-multi-minutes">
+                Multi-pet visit (minutes per pet)
+              </label>
+              <input
+                id="ob-multi-minutes"
+                className="settings-input"
+                type="number"
+                min={1}
+                step={1}
+                value={autoBookSettings.multiPetPerPetMinutes}
+                onChange={(e) => {
+                  const n = parseOptionalPositiveMinutes(e.target.value);
+                  if (n != null) {
+                    setAutoBookSettings((prev) => ({
+                      ...prev,
+                      multiPetPerPetMinutes: n,
+                    }));
+                  }
+                }}
+              />
+
+              <label className="settings-label" htmlFor="ob-nc-lead">
+                New client / new patient lead time (hours)
+              </label>
+              <input
+                id="ob-nc-lead"
+                className="settings-input"
+                type="number"
+                min={0}
+                step={1}
+                value={autoBookSettings.newClientLeadTimeHours}
+                onChange={(e) => {
+                  const n = parseOptionalScore(e.target.value);
+                  if (n != null) {
+                    setAutoBookSettings((prev) => ({
+                      ...prev,
+                      newClientLeadTimeHours: n,
+                    }));
+                  }
+                }}
+              />
+
+              <label className="settings-label" htmlFor="ob-existing-lead">
+                Existing client lead time (hours)
+              </label>
+              <input
+                id="ob-existing-lead"
+                className="settings-input"
+                type="number"
+                min={0}
+                step={1}
+                value={autoBookSettings.existingClientLeadTimeHours}
+                onChange={(e) => {
+                  const n = parseOptionalScore(e.target.value);
+                  if (n != null) {
+                    setAutoBookSettings((prev) => ({
+                      ...prev,
+                      existingClientLeadTimeHours: n,
+                    }));
+                  }
+                }}
+              />
+            </div>
+
+            <p className="settings-section-description" style={{ maxWidth: 760, marginTop: 12 }}>
+              Defaults: 45 min single, 30 min per pet for multi-pet, 24 hours lead for new
+              clients/patients, 0 hours for existing clients (same-day allowed).
+            </p>
+
+            <button
+              type="button"
+              className="settings-btn settings-btn-primary"
+              style={{ marginTop: 12 }}
+              disabled={savingAutoBook}
+              onClick={() => void handleSaveAutoBookSettings()}
+            >
+              {savingAutoBook ? 'Saving…' : 'Save auto-book settings'}
+            </button>
+          </section>
         </>
       )}
     </div>

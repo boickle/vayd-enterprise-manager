@@ -4532,6 +4532,7 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
       practiceId: ROUTING_PRACTICE_ID,
       doctorId,
       visitPets,
+      forOnlineBooking: false,
     })
       .then((result) => {
         if (cancelled) return;
