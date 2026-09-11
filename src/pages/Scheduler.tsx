@@ -123,10 +123,7 @@ import {
   type DayData,
   type WeekGridMetrics,
 } from './MyWeek';
-import {
-  schedulerHouseholdUsesDoctorDayClockForLayout,
-  schedulerRoutedRangeShouldKeepScheduledClock,
-} from '../utils/schedulerWindowWarning';
+import { schedulerHouseholdUsesDoctorDayClockForLayout } from '../utils/schedulerWindowWarning';
 import { arrivalWindowIsZeroWidth, computeDriveTimeWindowWarning } from '../utils/windowWarning';
 import { buildClientFinancialHref } from '../utils/clientFinancial';
 import { buildPhoneDialHref, buildPhoneSmsHref, resolveQuoFromLine } from '../utils/quoContact';
@@ -1878,46 +1875,20 @@ function driveDisplayRangeForAppointment(
   const dayKey = dayKeyFromIso(a.appointmentStart);
   const dayData = dayKey ? driveDayByDate?.get(dayKey) : null;
   const row = dayData ? driveHouseholdAndSlotForAppointment(dayData, a.id) : null;
-  const isFlex = (p: unknown) =>
-    isFlexBlockItem(p as { blockLabel?: string; title?: string } | null | undefined);
-  const practiceTz = dayData?.timezone || PRACTICE_TZ;
-  const resolvedWindow = resolveArrivalWindowIsos({
-    apptEffectiveWindow: a.effectiveWindow ?? null,
-    household: row?.h ?? null,
-    slot: row?.slot ?? null,
-    scheduledStartIso: a.appointmentStart,
-    appointmentType: a.appointmentType,
-    appointmentEndIso: a.appointmentEnd,
-    practiceTz,
-  });
-  const keepScheduledClockForRouted = (routedStart: string, routedEnd: string) => {
-    const doctorDayClock = row
-      ? schedulerHouseholdUsesDoctorDayClockForLayout(row.h, row.slot, true, isFlex)
-      : false;
-    const windowWarning = computeDriveTimeWindowWarning({
-      etaIso: routedStart,
-      windowEndIso: resolvedWindow?.endIso ?? null,
-      windowStartIso: resolvedWindow?.startIso ?? null,
-      isClientFixedTime: row ? schedulerHouseholdFixedTimeApprox(row.h) : false,
-      scheduledStartIso: row?.h.startIso ?? a.appointmentStart,
-    });
-    return schedulerRoutedRangeShouldKeepScheduledClock({
-      doctorDayClock,
-      windowWarning,
-      scheduledStartIso: a.appointmentStart,
-      scheduledEndIso: a.appointmentEnd,
-      routedStartIso: routedStart,
-    })
-      ? scheduled
-      : { startIso: routedStart, endIso: routedEnd };
-  };
-
   if (row?.slot?.eta && row.slot?.etd) {
-    return keepScheduledClockForRouted(row.slot.eta, row.slot.etd);
+    const useScheduledClock = schedulerHouseholdUsesDoctorDayClockForLayout(
+      row.h,
+      row.slot,
+      true,
+      (p) => isFlexBlockItem(p as { blockLabel?: string; title?: string } | null | undefined)
+    );
+    if (!useScheduledClock) {
+      return { startIso: row.slot.eta, endIso: row.slot.etd };
+    }
   }
 
   const fromMap = driveIsoByApptId?.get(String(a.id));
-  if (fromMap) return keepScheduledClockForRouted(fromMap.startIso, fromMap.endIso);
+  if (fromMap) return fromMap;
 
   return scheduled;
 }
