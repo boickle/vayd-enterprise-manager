@@ -13,10 +13,11 @@ import {
 } from '../utils/clientMessagesByLine';
 import {
   directoryEntryMatchesPhone,
+  displayNameForQuoLine,
   resolveLineDirectoryEntry,
   useOpenPhoneLineDirectory,
 } from '../hooks/useOpenPhoneLineDirectory';
-import { phonesMatchForQuo } from '../utils/quoContact';
+import { formatDisplayPhone, phonesMatchForQuo } from '../utils/quoContact';
 
 type Props = {
   open: boolean;
@@ -103,8 +104,8 @@ function LineSection({
           borderBottom: '1px solid #e5e7eb',
         }}
       >
-        <div style={{ fontSize: 15, fontWeight: 600, color: '#111827' }}>{entry.label}</div>
-        <div style={{ fontSize: 13, color: '#6b7280', marginTop: 2 }}>{entry.phone}</div>
+        <div style={{ fontSize: 15, fontWeight: 600, color: '#111827' }}>{displayNameForQuoLine(entry)}</div>
+        <div style={{ fontSize: 13, color: '#6b7280', marginTop: 2 }}>{formatDisplayPhone(entry.phone)}</div>
         <div style={{ fontSize: 12, color: '#9ca3af', marginTop: 4 }}>
           Last {group.messages.length} message{group.messages.length === 1 ? '' : 's'} on this line
         </div>

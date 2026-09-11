@@ -1,14 +1,21 @@
+import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
+import MessageTemplatePicker from './messageTemplates/MessageTemplatePicker';
+import { fetchClientByIdStaff } from '../api/clientsStaff';
+import { mergeValuesFromNames, type MergeValues } from '../utils/messageTemplateFields';
+import { clientDoNotSmsFromRecord, confirmSendDespiteDoNotSms } from '../utils/doNotSmsWarning';
 import { smsAllowsProductionOverride } from '../utils/smsEnvironment';
 
 type Props = {
   open: boolean;
+  clientId?: number | null;
+  doNotSms?: boolean;
   clientLabel: string;
   message: string;
   onMessageChange: (value: string) => void;
   onClose: () => void;
   onSend: (opts: { overrideNonProd: boolean }) => void;
-  onOpenMessagesHistory: () => void;
+  onOpenMessagesHistory?: () => void;
   sending: boolean;
   sendError?: string | null;
   title?: string;
@@ -18,10 +25,13 @@ type Props = {
   primarySendLabel?: string;
   /** Shown under the title — e.g. the Quo line this thread uses. */
   fromLineLabel?: string | null;
+  mergeValues?: MergeValues;
 };
 
 export function ClientSmsComposeModal({
   open,
+  clientId,
+  doNotSms,
   clientLabel,
   message,
   onMessageChange,
@@ -35,8 +45,39 @@ export function ClientSmsComposeModal({
   showProductionOverride = true,
   primarySendLabel = 'Send message',
   fromLineLabel,
+  mergeValues,
 }: Props) {
   const allowOverride = showProductionOverride && smsAllowsProductionOverride();
+  const [resolvedDoNotSms, setResolvedDoNotSms] = useState(doNotSms === true);
+
+  useEffect(() => {
+    if (!open) return;
+    if (doNotSms === true || doNotSms === false) {
+      setResolvedDoNotSms(doNotSms);
+      return;
+    }
+    if (clientId == null || !Number.isFinite(clientId)) {
+      setResolvedDoNotSms(false);
+      return;
+    }
+    let cancelled = false;
+    void fetchClientByIdStaff(clientId)
+      .then((raw) => {
+        if (!cancelled) setResolvedDoNotSms(clientDoNotSmsFromRecord(raw));
+      })
+      .catch(() => {
+        if (!cancelled) setResolvedDoNotSms(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, clientId, doNotSms]);
+
+  async function handleSend(opts: { overrideNonProd: boolean }) {
+    const ok = await confirmSendDespiteDoNotSms(resolvedDoNotSms);
+    if (!ok) return;
+    onSend(opts);
+  }
 
   if (!open || typeof document === 'undefined') return null;
 
@@ -91,6 +132,7 @@ export function ClientSmsComposeModal({
               </p>
             ) : null}
           </div>
+          {onOpenMessagesHistory ? (
           <button
             type="button"
             className="btn-link"
@@ -109,13 +151,28 @@ export function ClientSmsComposeModal({
           >
             Messages history
           </button>
+          ) : null}
         </div>
+
+        {resolvedDoNotSms ? (
+          <p role="alert" style={{ color: '#92400e', background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 8, fontSize: 13, lineHeight: 1.45, margin: '0 0 12px', padding: '10px 12px' }}>
+            Do not SMS is on for this client. Automated texts are blocked. You can still send after confirming.
+          </p>
+        ) : null}
 
         {sendError ? (
           <p role="alert" style={{ color: '#b91c1c', fontSize: 14, margin: '0 0 12px' }}>
             {sendError}
           </p>
         ) : null}
+
+        <MessageTemplatePicker
+          channel="sms"
+          mergeValues={mergeValues ?? mergeValuesFromNames({ clientFullName: clientLabel })}
+          disabled={sending}
+          currentBody={message}
+          onApply={({ body }) => onMessageChange(body)}
+        />
 
         <label style={{ display: 'block', marginBottom: 16 }}>
           <span style={{ display: 'block', marginBottom: 8, fontSize: 14, fontWeight: 600 }}>Message</span>
@@ -151,7 +208,7 @@ export function ClientSmsComposeModal({
               type="button"
               className="btn secondary"
               disabled={sending || !message.trim()}
-              onClick={() => onSend({ overrideNonProd: true })}
+              onClick={() => void handleSend({ overrideNonProd: true })}
               title="Send to the client's real number (non-production only)"
             >
               {sending ? 'Sending…' : 'Send to actual client'}
@@ -161,7 +218,7 @@ export function ClientSmsComposeModal({
             type="button"
             className="btn primary"
             disabled={sending || !message.trim()}
-            onClick={() => onSend({ overrideNonProd: false })}
+            onClick={() => void handleSend({ overrideNonProd: false })}
           >
             {sending ? 'Sending…' : primarySendLabel}
           </button>

@@ -1,4 +1,6 @@
 import { appendCareOutreachSmsSuffix } from './careOutreachSmsMessage';
+import { applySystemTemplateIfCustom } from './messageTemplateCache';
+import { withClinicDefaults } from './messageTemplateFields';
 import type { ForwardBookingSmsBookedSlot } from './forwardBookingSmsMessage';
 import type { HoldSpotReleaseSmsOpts } from './holdSpotReleaseSmsClause';
 import { appendHoldSpotReleaseClause } from './holdSpotReleaseSmsClause';
@@ -37,7 +39,16 @@ export function buildWaitlistOpeningSmsMessage(opts: {
   const doctor = opts.providerLastName?.trim();
   const when = dateLabel ? ` on ${dateLabel}` : '';
   const who = doctor ? ` with Dr. ${doctor}` : '';
-  const body = `Hi ${name}, it's Vet At Your Door. We had a cancellation${when} and can get ${pets} in${who}. Reply here if you'd like us to hold that visit, or tell us a better day.`;
+  const body = applySystemTemplateIfCustom(
+    'waitlist_opening_sms',
+    withClinicDefaults({
+      client_first_name: name,
+      pets,
+      date_label: dateLabel || '',
+      doctor_last_name: doctor || '',
+    }),
+    `Hi ${name}, it's Vet At Your Door. We had a cancellation${when} and can get ${pets} in${who}. Reply here if you'd like us to hold that visit, or tell us a better day.`,
+  );
   return appendCareOutreachSmsSuffix(body);
 }
 
@@ -59,7 +70,18 @@ export function buildWaitlistBookedSmsMessage(opts: {
   const who = doctor ? ` with Dr. ${doctor}` : '';
   const window =
     windowStart && windowEnd ? ` We'll come between ${windowStart} and ${windowEnd}.` : '';
-  let body = `Hi ${name}, it's Vet At Your Door. You're all set — we booked ${pets}${when}${who}.${window} Reply here if you need to change anything.`;
+  let body = applySystemTemplateIfCustom(
+    'waitlist_booked_sms',
+    withClinicDefaults({
+      client_first_name: name,
+      pets,
+      date_label: dateLabel || '',
+      doctor_last_name: doctor || '',
+      window_start: windowStart || '',
+      window_end: windowEnd || '',
+    }),
+    `Hi ${name}, it's Vet At Your Door. You're all set — we booked ${pets}${when}${who}.${window} Reply here if you need to change anything.`,
+  );
   if (opts.holdRelease) {
     body = appendHoldSpotReleaseClause(body, opts.holdRelease);
   }

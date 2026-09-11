@@ -1,0 +1,314 @@
+/* Visit wrap-up step — chart review, follow-up, client recap.
+   Layers on top of SoapEncounterPage.css so the two screens read as one flow. */
+
+.soap-wrapup-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+  max-width: 900px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.soap-wrapup-section {
+  background: #fff;
+  border: 1px solid var(--soap-border);
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+
+.soap-wrapup-section h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 4px;
+  font-size: 15px;
+  font-weight: 700;
+  color: #111827;
+}
+
+.soap-wrapup-step {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--soap-accent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.soap-wrapup-done {
+  color: #15803d;
+}
+
+.soap-wrapup-hint {
+  margin: 0 0 12px;
+  font-size: 12.5px;
+  color: var(--soap-muted);
+}
+
+/* --- Chart review --- */
+
+.soap-wrapup-chart {
+  border: 1px solid var(--soap-border);
+  border-radius: 8px;
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+
+.soap-wrapup-chart-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 11px;
+  background: var(--soap-bg);
+  border: 0;
+  cursor: pointer;
+  font-size: 13.5px;
+  text-align: left;
+  color: #111827;
+}
+
+.soap-wrapup-chart-head:hover {
+  background: #eef2f7;
+}
+
+.soap-wrapup-chart-meta {
+  color: var(--soap-muted);
+  font-size: 12px;
+}
+
+.soap-wrapup-chart-locked {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  font-size: 11.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #6b7280;
+}
+
+.soap-wrapup-signature {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0 0;
+  padding-top: 10px;
+  border-top: 1px dashed #d1d5db;
+  font-size: 12.5px;
+  font-weight: 600;
+  font-style: italic;
+  color: #4b5563;
+}
+
+.soap-wrapup-chart-pending {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #b45309;
+  background: #fffbeb;
+  border: 1px solid #fcd34d;
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+.soap-wrapup-chart-body {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.soap-wrapup-chart-section h4 {
+  margin: 0 0 4px;
+  font-size: 11.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--soap-muted);
+}
+
+.soap-wrapup-chart-section pre {
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--soap-bg);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: #374151;
+  white-space: pre-wrap;
+}
+
+/* --- Follow-up --- */
+
+.soap-wrapup-fb-sameforall {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+}
+
+.soap-wrapup-fb-pet {
+  border: 1px solid var(--soap-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+
+.soap-wrapup-fb-pet-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  font-size: 13.5px;
+}
+
+.soap-wrapup-fb-ok {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #15803d;
+}
+
+.soap-wrapup-fb-todo {
+  font-size: 11.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #b45309;
+  background: #fef3c7;
+  border: 1px solid #fbbf24;
+  border-radius: 4px;
+  padding: 2px 6px;
+}
+
+.soap-wrapup-fb-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+/* --- Client recap --- */
+
+.soap-wrapup-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--soap-muted);
+}
+
+.soap-wrapup-petpick {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 8px 10px;
+  background: var(--soap-bg);
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.soap-wrapup-petpick-label {
+  font-weight: 600;
+  color: var(--soap-muted);
+}
+
+.soap-wrapup-petpick label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.soap-wrapup-from {
+  margin: -4px 0 10px;
+  font-size: 12px;
+  color: var(--soap-muted);
+}
+
+.soap-wrapup-email-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.soap-wrapup-skip {
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: var(--soap-bg);
+  border-radius: 8px;
+}
+
+.soap-wrapup-sent,
+.soap-wrapup-skipped {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 11px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.soap-wrapup-sent {
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  color: #065f46;
+}
+
+.soap-wrapup-skipped {
+  background: #f3f4f6;
+  border: 1px solid var(--soap-border);
+  color: #4b5563;
+}
+
+/* --- Footer gate --- */
+
+.soap-wrapup-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 14px 16px;
+  background: #fff;
+  border: 1px solid var(--soap-border);
+  border-radius: 10px;
+}
+
+.soap-wrapup-gate {
+  display: flex;
+  gap: 14px;
+  font-size: 12.5px;
+  color: var(--soap-muted);
+}
+
+.soap-wrapup-gate span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.soap-wrapup-gate span.ok {
+  color: #15803d;
+  font-weight: 600;
+}

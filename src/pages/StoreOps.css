@@ -1,0 +1,48 @@
+.store-ops__stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin: 12px 0 4px;
+}
+
+.store-ops__stat {
+  min-width: 160px;
+  padding: 12px 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.store-ops__stat strong {
+  display: block;
+  font-size: 22px;
+  color: #134e4a;
+}
+
+.store-ops__stat span {
+  color: #64748b;
+  font-size: 13px;
+}
+
+.store-ops__stat-go {
+  color: #166534;
+}
+
+.store-ops__row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.store-ops__amount {
+  font-size: 22px;
+  font-weight: 700;
+  color: #0f172a;
+  white-space: nowrap;
+}
+
+.store-ops__amount.is-recovered {
+  color: #166534;
+}

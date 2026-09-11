@@ -238,6 +238,11 @@
   color: #1d4ed8;
 }
 
+.pims-task-card__pill--approval-pending {
+  background: #ccfbf1;
+  color: #0f766e;
+}
+
 .pims-task-card__pill--done {
   background: #f1f5f9;
   color: #475569;

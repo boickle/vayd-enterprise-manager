@@ -29,6 +29,8 @@ const CLPerformanceAnalyticsPage = React.lazy(() => import('./pages/CLPerformanc
 const VsdPaymentsMatchAnalyticsPage = React.lazy(
   () => import('./pages/VsdPaymentsMatchAnalytics')
 );
+const BankDepositsPage = React.lazy(() => import('./pages/BankDepositsPage'));
+const InventoryTotalsPage = React.lazy(() => import('./pages/InventoryTotalsPage'));
 
 export type AnalyticsTabPage = {
   path: string;
@@ -39,6 +41,12 @@ export type AnalyticsTabPage = {
 
 export const ANALYTICS_TAB_PAGES: AnalyticsTabPage[] = [
   { path: 'payments', label: 'Payments', element: <PaymentsAnalyticsPage />, role: ['employee', 'admin', 'superadmin'] },
+  {
+    path: 'bank-deposits',
+    label: 'Bank deposits',
+    element: <BankDepositsPage />,
+    role: ['employee', 'admin', 'superadmin'],
+  },
   { path: 'vsd', label: 'Veterinary Services Delivered', element: <VeterinaryServicesDeliveredPage />, role: ['employee', 'admin', 'superadmin'] },
   {
     path: 'vsd-payments',
@@ -70,6 +78,12 @@ export const ANALYTICS_TAB_PAGES: AnalyticsTabPage[] = [
     role: ['employee', 'admin', 'superadmin'],
   },
   { path: 'memberships', label: 'Memberships', element: <MembershipPurchasesAnalyticsPage />, role: ['employee', 'admin', 'superadmin'] },
+  {
+    path: 'inventory-totals',
+    label: 'Inventory Totals',
+    element: <InventoryTotalsPage />,
+    role: ['employee', 'admin', 'superadmin'],
+  },
   {
     path: 'patient-dormancy',
     label: 'Patient Dormancy',

@@ -26,6 +26,19 @@ export function phoneToQuoDialDigits(phone: string): string | null {
   return digits;
 }
 
+/** Display a US number as +1 (207) 536-8387. Other values pass through trimmed. */
+export function formatDisplayPhone(phone: string): string {
+  const digits = phone.replace(/\D/g, '');
+  const nanp =
+    digits.length === 11 && digits.startsWith('1')
+      ? digits.slice(1)
+      : digits.length === 10
+        ? digits
+        : null;
+  if (!nanp) return phone.trim();
+  return `+1 (${nanp.slice(0, 3)}) ${nanp.slice(3, 6)}-${nanp.slice(6)}`;
+}
+
 function applyQuoUrlTemplate(
   template: string,
   phone: string,

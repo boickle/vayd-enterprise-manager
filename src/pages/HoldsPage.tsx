@@ -1495,6 +1495,7 @@ export default function HoldsPage() {
       {smsGroup ? (
         <ClientSmsComposeModal
           open
+          clientId={smsGroup.anchor.client?.id}
           clientLabel={clientName(smsGroup.anchor.client)}
           message={smsMessage}
           onMessageChange={setSmsMessage}

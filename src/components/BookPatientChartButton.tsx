@@ -21,6 +21,8 @@ type Props = {
   excludeAppointmentId?: string | number | null;
   className?: string;
   label?: string;
+  /** Copy a reminder due date onto the open prescription refill expiration. */
+  onApplyRefillExpiration?: (dateInput: string) => void;
 };
 
 export function BookPatientChartButton({
@@ -34,6 +36,7 @@ export function BookPatientChartButton({
   excludeAppointmentId = null,
   className,
   label = 'Patient details',
+  onApplyRefillExpiration,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -139,6 +142,14 @@ export function BookPatientChartButton({
                     error={error}
                     showAlerts={showAlerts}
                     showHeader={false}
+                    onApplyRefillExpiration={
+                      onApplyRefillExpiration
+                        ? (dateInput) => {
+                            onApplyRefillExpiration(dateInput);
+                            close();
+                          }
+                        : undefined
+                    }
                   />
                 </div>
               </div>

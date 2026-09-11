@@ -438,6 +438,12 @@ export type GmailSendAsAlias = {
   signature?: string | null;
 };
 
+export type GmailComposeAttachment = {
+  filename: string;
+  mimeType: string;
+  contentBase64: string;
+};
+
 export type GmailComposePayload = {
   from: string;
   to: string[];
@@ -446,6 +452,7 @@ export type GmailComposePayload = {
   subject: string;
   bodyText?: string;
   bodyHtml?: string;
+  attachments?: GmailComposeAttachment[];
   threadId?: string;
   inReplyTo?: string;
   references?: string;

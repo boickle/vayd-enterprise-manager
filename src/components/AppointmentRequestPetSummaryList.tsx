@@ -41,6 +41,13 @@ export function AppointmentRequestPetSummaryList({
             ) : (
               <span className="appt-request-pet-summary-name">{pet.name}</span>
             )}
+            <span
+              className={`appt-request-detail-pet-badge${
+                pet.isNew ? '' : ' appt-request-detail-pet-badge--existing'
+              }`}
+            >
+              {pet.isNew ? 'New patient' : 'Existing patient'}
+            </span>
             {pet.patientId ? (
               <BookPatientChartButton
                 patientId={pet.patientId}

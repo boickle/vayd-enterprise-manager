@@ -298,3 +298,67 @@
   box-shadow: none;
   border: 1px solid #e2e8f0;
 }
+
+.inv-counts-by-branch__row {
+  cursor: pointer;
+}
+
+.inv-counts-by-branch__row:hover {
+  background: #f8fafc;
+}
+
+.inv-counts-by-branch__detail td {
+  background: #f8fafc;
+  padding-top: 12px;
+  padding-bottom: 16px;
+}
+
+.inv-item-picture__preview {
+  width: 96px;
+  height: 96px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: #f8fafc;
+  font-size: 12px;
+  text-align: center;
+  padding: 6px;
+}
+
+.inv-stock-link__results {
+  margin-top: 6px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  max-height: 220px;
+  overflow-y: auto;
+  background: #fff;
+}
+
+.inv-stock-link__result {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 12px;
+  border: 0;
+  border-bottom: 1px solid #f1f5f9;
+  background: transparent;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.inv-stock-link__result:last-child {
+  border-bottom: 0;
+}
+
+.inv-stock-link__result:hover {
+  background: #f8fafc;
+}
+
+.inv-item-picture__preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}

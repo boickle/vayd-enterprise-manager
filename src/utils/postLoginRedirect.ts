@@ -35,6 +35,9 @@ type FromLocation = { pathname?: string; search?: string; hash?: string };
 /** Build return path from react-router location passed via login state. */
 export function clientPortalReturnPath(from: FromLocation | undefined | null): string | null {
   const pathname = from?.pathname ?? '';
+  if (pathname.startsWith('/store')) {
+    return `${pathname}${from?.search ?? ''}${from?.hash ?? ''}`;
+  }
   if (!pathname.startsWith('/client-portal') || pathname === '/client-portal') return null;
   return `${pathname}${from?.search ?? ''}${from?.hash ?? ''}`;
 }

@@ -11,10 +11,15 @@ import { EXIT_SURVEY_PATH } from '../tools-tabs';
 import { blockRoutingCalendarPreviewNavigation } from '../utils/routingCalendarPreviewGuard';
 import TasksNavLabel from './TasksNavLabel';
 import { useTaskNavBadges } from '../hooks/useTaskNavBadges';
+import {
+  CATALOG_HOME,
+  INVENTORY_HOME,
+  isCatalogNavPath,
+  isInventoryOpsNavPath,
+} from '../utils/catalogInventoryNav';
 import '../pages/ScheduleLayout.css';
 
-/** Hide Inventory tab until the module is ready for general staff. */
-const SHOW_NAV_INVENTORY = false;
+const SHOW_NAV_CATALOG = true;
 
 const SCHED_NAV_GAP_PX = 6;
 /** Reserve width for “More” summary (tab padding + label + chevron) */
@@ -25,6 +30,8 @@ type SchedNavItemKey =
   | 'clients'
   | 'patients'
   | 'scheduling'
+  | 'visits'
+  | 'catalog'
   | 'inventory'
   | 'tasks'
   | 'settings'
@@ -35,7 +42,9 @@ const MEASURE_LABEL: Record<SchedNavItemKey, string> = {
   clients: 'Clients',
   patients: 'Patients',
   scheduling: 'Scheduling',
-  inventory: 'Inventory',
+  visits: 'Visits',
+  catalog: 'Catalog',
+  inventory: 'Pharmacy',
   tasks: 'Tasks',
   settings: 'Settings',
   admin: 'Admin',
@@ -176,15 +185,101 @@ function SettingsSubmenuLinks({
       >
         All settings
       </Link>
+      <p className="schedule-app__settings-group-label">Scheduling</p>
       <Link
-        to={{ pathname: '/schedule/settings', search: '?tab=employee-directory' }}
+        to="/schedule/settings"
         className={`schedule-app__settings-link${
-          settingsTabFromLocation === 'employee-directory' ? ' schedule-app__settings-link--active' : ''
+          location.pathname.startsWith('/schedule/settings') &&
+          (!settingsTabFromLocation || settingsTabFromLocation === 'appointment-types')
+            ? ' schedule-app__settings-link--active'
+            : ''
         }`}
         role="menuitem"
         onClick={onNavigate}
       >
-        Employees
+        Appointment Types
+      </Link>
+      <Link
+        to={{ pathname: '/schedule/settings', search: '?tab=practice-booking-goals' }}
+        className={`schedule-app__settings-link${
+          settingsTabFromLocation === 'practice-booking-goals' ? ' schedule-app__settings-link--active' : ''
+        }`}
+        role="menuitem"
+        onClick={onNavigate}
+      >
+        Practice Booking Goals
+      </Link>
+      <p className="schedule-app__settings-group-label">Staff</p>
+      <Link
+        to={{ pathname: '/schedule/settings', search: '?tab=employee-directory' }}
+        className={`schedule-app__settings-link${
+          settingsTabFromLocation === 'employee-directory' ||
+          settingsTabFromLocation === 'employee-types' ||
+          settingsTabFromLocation === 'employee-zones' ||
+          settingsTabFromLocation === 'employee-schedule' ||
+          settingsTabFromLocation === 'employee-images' ||
+          settingsTabFromLocation === 'employee-goals'
+            ? ' schedule-app__settings-link--active'
+            : ''
+        }`}
+        role="menuitem"
+        onClick={onNavigate}
+      >
+        Staff
+      </Link>
+      <Link
+        to={{ pathname: '/schedule/settings', search: '?tab=roles' }}
+        className={`schedule-app__settings-link${
+          settingsTabFromLocation === 'roles' || settingsTabFromLocation === 'role-manual-booking'
+            ? ' schedule-app__settings-link--active'
+            : ''
+        }`}
+        role="menuitem"
+        onClick={onNavigate}
+      >
+        Roles
+      </Link>
+      <Link
+        to={{ pathname: '/schedule/settings', search: '?tab=cl-seat-assignment' }}
+        className={`schedule-app__settings-link${
+          settingsTabFromLocation === 'cl-seat-assignment' ? ' schedule-app__settings-link--active' : ''
+        }`}
+        role="menuitem"
+        onClick={onNavigate}
+      >
+        CL Seat Assignment
+      </Link>
+      <p className="schedule-app__settings-group-label">Finance</p>
+      <Link
+        to={{ pathname: '/schedule/settings', search: '?tab=payment-types' }}
+        className={`schedule-app__settings-link${
+          settingsTabFromLocation === 'payment-types' ? ' schedule-app__settings-link--active' : ''
+        }`}
+        role="menuitem"
+        onClick={onNavigate}
+      >
+        Payment Types
+      </Link>
+      <Link
+        to={{ pathname: '/schedule/settings', search: '?tab=client-statuses' }}
+        className={`schedule-app__settings-link${
+          settingsTabFromLocation === 'client-statuses' ? ' schedule-app__settings-link--active' : ''
+        }`}
+        role="menuitem"
+        onClick={onNavigate}
+      >
+        Client Discounts
+      </Link>
+      <p className="schedule-app__settings-group-label">Communication</p>
+      <Link
+        to={{ pathname: '/schedule/settings', search: '?tab=gmail-mailboxes' }}
+        className={`schedule-app__settings-link${
+          settingsTabFromLocation === 'gmail-mailboxes' ? ' schedule-app__settings-link--active' : ''
+        }`}
+        role="menuitem"
+        onClick={onNavigate}
+      >
+        Gmail Mailboxes
       </Link>
       <Link
         to={{ pathname: '/schedule/settings', search: '?tab=reminders' }}
@@ -197,44 +292,14 @@ function SettingsSubmenuLinks({
         Reminders
       </Link>
       <Link
-        to={{ pathname: '/schedule/settings', search: '?tab=employee-schedule' }}
+        to={{ pathname: '/schedule/settings', search: '?tab=message-templates' }}
         className={`schedule-app__settings-link${
-          settingsTabFromLocation === 'employee-schedule' ? ' schedule-app__settings-link--active' : ''
+          settingsTabFromLocation === 'message-templates' ? ' schedule-app__settings-link--active' : ''
         }`}
         role="menuitem"
         onClick={onNavigate}
       >
-        Employee schedule
-      </Link>
-      <Link
-        to={{ pathname: '/schedule/settings', search: '?tab=employee-zones' }}
-        className={`schedule-app__settings-link${
-          settingsTabFromLocation === 'employee-zones' ? ' schedule-app__settings-link--active' : ''
-        }`}
-        role="menuitem"
-        onClick={onNavigate}
-      >
-        Employee zones
-      </Link>
-      <Link
-        to={{ pathname: '/schedule/settings', search: '?tab=employee-types' }}
-        className={`schedule-app__settings-link${
-          settingsTabFromLocation === 'employee-types' ? ' schedule-app__settings-link--active' : ''
-        }`}
-        role="menuitem"
-        onClick={onNavigate}
-      >
-        Employee appointment types
-      </Link>
-      <Link
-        to={{ pathname: '/schedule/settings', search: '?tab=gmail-mailboxes' }}
-        className={`schedule-app__settings-link${
-          settingsTabFromLocation === 'gmail-mailboxes' ? ' schedule-app__settings-link--active' : ''
-        }`}
-        role="menuitem"
-        onClick={onNavigate}
-      >
-        Gmail mailboxes
+        Email &amp; Text Templates
       </Link>
     </>
   );
@@ -264,8 +329,8 @@ export default function NavbarScheduleHorizontalNav() {
   const itemKeys = useMemo((): SchedNavItemKey[] => {
     const keys: SchedNavItemKey[] = [];
     if (homeTab) keys.push('home');
-    keys.push('clients', 'patients', 'scheduling');
-    if (SHOW_NAV_INVENTORY) keys.push('inventory');
+    keys.push('scheduling', 'visits');
+    if (SHOW_NAV_CATALOG) keys.push('catalog', 'inventory');
     keys.push('tasks');
     if (showAdminTab) keys.push('settings', 'admin');
     return keys;
@@ -327,7 +392,13 @@ export default function NavbarScheduleHorizontalNav() {
     closeSettingsMenu();
     closeSchedulingMenu();
     closeMoreMenu();
-  }, [location.pathname, location.search, closeSettingsMenu, closeSchedulingMenu, closeMoreMenu]);
+  }, [
+    location.pathname,
+    location.search,
+    closeSettingsMenu,
+    closeSchedulingMenu,
+    closeMoreMenu,
+  ]);
 
   const settingsTabFromLocation = useMemo(() => {
     if (!location.pathname.startsWith('/schedule/settings')) return null;
@@ -398,8 +469,12 @@ export default function NavbarScheduleHorizontalNav() {
         return location.pathname.startsWith('/schedule/clients');
       case 'patients':
         return location.pathname.startsWith('/schedule/patients');
+      case 'visits':
+        return location.pathname.startsWith('/schedule/soap');
+      case 'catalog':
+        return isCatalogNavPath(location.pathname);
       case 'inventory':
-        return location.pathname.startsWith('/schedule/inventory');
+        return isInventoryOpsNavPath(location.pathname);
       case 'tasks':
         return location.pathname.startsWith('/schedule/tasks');
       case 'scheduling':
@@ -458,14 +533,42 @@ export default function NavbarScheduleHorizontalNav() {
             Patients
           </NavLink>
         );
+      case 'visits':
+        return (
+          <NavLink
+            key="visits"
+            to="/schedule/soap"
+            className={({ isActive }) => `schedule-app__tab${isActive ? ' schedule-app__tab--active' : ''}`}
+          >
+            Visits
+          </NavLink>
+        );
+      case 'catalog':
+        return (
+          <NavLink
+            key="catalog"
+            to={CATALOG_HOME}
+            className={() =>
+              `schedule-app__tab${
+                isCatalogNavPath(location.pathname) ? ' schedule-app__tab--active' : ''
+              }`
+            }
+          >
+            Catalog
+          </NavLink>
+        );
       case 'inventory':
         return (
           <NavLink
             key="inventory"
-            to="/schedule/inventory"
-            className={({ isActive }) => `schedule-app__tab${isActive ? ' schedule-app__tab--active' : ''}`}
+            to={INVENTORY_HOME}
+            className={() =>
+              `schedule-app__tab${
+                isInventoryOpsNavPath(location.pathname) ? ' schedule-app__tab--active' : ''
+              }`
+            }
           >
-            Inventory
+            Pharmacy
           </NavLink>
         );
       case 'tasks':
@@ -623,11 +726,11 @@ export default function NavbarScheduleHorizontalNav() {
                         Patients
                       </NavLink>
                     );
-                  case 'inventory':
+                  case 'visits':
                     return (
                       <NavLink
-                        key="more-inventory"
-                        to="/schedule/inventory"
+                        key="more-visits"
+                        to="/schedule/soap"
                         className={({ isActive }) =>
                           `schedule-app__settings-link${isActive ? ' schedule-app__settings-link--active' : ''}`
                         }
@@ -637,7 +740,49 @@ export default function NavbarScheduleHorizontalNav() {
                           closeMoreMenu();
                         }}
                       >
-                        Inventory
+                        Visits
+                      </NavLink>
+                    );
+                  case 'catalog':
+                    return (
+                      <NavLink
+                        key="more-catalog"
+                        to={CATALOG_HOME}
+                        className={() =>
+                          `schedule-app__settings-link${
+                            isCatalogNavPath(location.pathname)
+                              ? ' schedule-app__settings-link--active'
+                              : ''
+                          }`
+                        }
+                        role="menuitem"
+                        onClick={(e) => {
+                          if (blockScheduleNavLeave(e)) return;
+                          closeMoreMenu();
+                        }}
+                      >
+                        Catalog
+                      </NavLink>
+                    );
+                  case 'inventory':
+                    return (
+                      <NavLink
+                        key="more-inventory"
+                        to={INVENTORY_HOME}
+                        className={() =>
+                          `schedule-app__settings-link${
+                            isInventoryOpsNavPath(location.pathname)
+                              ? ' schedule-app__settings-link--active'
+                              : ''
+                          }`
+                        }
+                        role="menuitem"
+                        onClick={(e) => {
+                          if (blockScheduleNavLeave(e)) return;
+                          closeMoreMenu();
+                        }}
+                      >
+                        Pharmacy
                       </NavLink>
                     );
                   case 'tasks':

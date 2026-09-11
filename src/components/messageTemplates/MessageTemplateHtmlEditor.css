@@ -1,0 +1,70 @@
+.msg-html {
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.msg-html.is-disabled {
+  opacity: 0.65;
+}
+
+.msg-html__bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 8px;
+  border-bottom: 1px solid #e2e8f0;
+  background: #f8fafc;
+}
+
+.msg-html__bar button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #334155;
+  cursor: pointer;
+}
+
+.msg-html__bar button:hover:not(:disabled) {
+  background: #e2e8f0;
+}
+
+.msg-html__sep {
+  width: 1px;
+  height: 16px;
+  margin: 0 4px;
+  background: #cbd5e1;
+}
+
+.msg-html__edit {
+  min-height: 180px;
+  padding: 12px;
+  font-size: 14px;
+  line-height: 1.55;
+  outline: none;
+}
+
+.msg-html__edit:empty::before {
+  content: attr(data-placeholder);
+  color: #94a3b8;
+}
+
+.msg-html__edit a {
+  color: #1d4ed8;
+}
+
+.msg-html__edit ul,
+.msg-html__edit ol {
+  margin: 0.25em 0 0.75em;
+  padding-left: 1.3em;
+}
+
+.msg-html__edit p {
+  margin: 0 0 0.6em;
+}

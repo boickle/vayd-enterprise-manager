@@ -1,0 +1,432 @@
+import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router';
+import { useAuth } from '../auth/AuthProvider';
+import { transferBatch } from '../api/inventoryOps';
+import {
+  listInventoryBranchLocations,
+  listPracticeBranches,
+  type InventoryBranchLocation,
+  type PracticeBranch,
+} from '../api/branchInventory';
+import { searchItems, type SearchResultItem } from '../api/quantityPriceBreaks';
+import { loadInventoryItem, useStockItemGroups } from '../hooks/useStockItemGroups';
+import StockLotPicker from '../components/inventory/StockLotPicker';
+import { resolvePracticeIdFromToken } from '../utils/practiceIdFromToken';
+import './Settings.css';
+
+type BatchLine = {
+  inventoryItemId: number;
+  name: string;
+  quantity: string;
+  trackLots?: boolean;
+  lotId: number | null;
+  lotNumber: string;
+};
+
+export default function MoveItemsPage() {
+  const { token } = useAuth() as { token: string | null };
+  const practiceId = useMemo(() => resolvePracticeIdFromToken(token), [token]);
+  const [searchParams] = useSearchParams();
+  const [branches, setBranches] = useState<PracticeBranch[]>([]);
+  const [fromBranchId, setFromBranchId] = useState<number | ''>('');
+  const [toBranchId, setToBranchId] = useState<number | ''>('');
+  const [fromLocations, setFromLocations] = useState<InventoryBranchLocation[]>([]);
+  const [toLocations, setToLocations] = useState<InventoryBranchLocation[]>([]);
+  const [fromLoc, setFromLoc] = useState<number | ''>('');
+  const [toLoc, setToLoc] = useState<number | ''>('');
+  const [searchQ, setSearchQ] = useState('');
+  const [results, setResults] = useState<SearchResultItem[]>([]);
+  const [lines, setLines] = useState<BatchLine[]>([]);
+  const [qty, setQty] = useState('1');
+  const [selected, setSelected] = useState<{
+    id: number;
+    name: string;
+    trackLots?: boolean;
+  } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+
+  useEffect(() => {
+    void listPracticeBranches(practiceId).then((b) => {
+      const active = b.filter((x) => x.isActive !== false);
+      setBranches(active);
+      const fromP = Number(searchParams.get('fromOffice'));
+      const toP = Number(searchParams.get('toOffice'));
+      const def = active.find((x) => x.isDefault) ?? active[0];
+      setFromBranchId(
+        Number.isFinite(fromP) && active.some((x) => x.id === fromP) ? fromP : (def?.id ?? '')
+      );
+      setToBranchId(
+        Number.isFinite(toP) && active.some((x) => x.id === toP) ? toP : (def?.id ?? '')
+      );
+    });
+    const itemId = Number(searchParams.get('item'));
+    const name = searchParams.get('name');
+    const q = searchParams.get('qty');
+    if (Number.isFinite(itemId) && itemId > 0 && name) {
+      const qty = q && Number(q) > 0 ? q : '1';
+      setLines([
+        { inventoryItemId: itemId, name, quantity: qty, lotId: null, lotNumber: '' },
+      ]);
+      setQty(qty);
+      void loadInventoryItem(practiceId, itemId)
+        .then((inv) => {
+          setLines((prev) =>
+            prev.map((line) =>
+              line.inventoryItemId === itemId
+                ? { ...line, trackLots: inv.trackLots === true }
+                : line
+            )
+          );
+        })
+        .catch(() => undefined);
+    }
+  }, [practiceId, searchParams]);
+
+  useEffect(() => {
+    if (fromBranchId === '') {
+      setFromLocations([]);
+      setFromLoc('');
+      return;
+    }
+    void listInventoryBranchLocations(practiceId, Number(fromBranchId)).then((locs) => {
+      const active = locs.filter((l) => l.isActive !== false);
+      setFromLocations(active);
+      const pref = Number(searchParams.get('fromLoc'));
+      if (Number.isFinite(pref) && active.some((l) => l.id === pref)) {
+        setFromLoc(pref);
+        return;
+      }
+      const def = active.find((l) => l.isDefault) ?? active[0];
+      setFromLoc(def ? def.id : '');
+    });
+  }, [practiceId, fromBranchId, searchParams]);
+
+  useEffect(() => {
+    if (toBranchId === '') {
+      setToLocations([]);
+      setToLoc('');
+      return;
+    }
+    void listInventoryBranchLocations(practiceId, Number(toBranchId)).then((locs) => {
+      const active = locs.filter((l) => l.isActive !== false);
+      setToLocations(active);
+      const pref = Number(searchParams.get('toLoc'));
+      if (Number.isFinite(pref) && active.some((l) => l.id === pref)) {
+        setToLoc(pref);
+        return;
+      }
+      const def = active.find((l) => l.isDefault) ?? active[0];
+      setToLoc(def ? def.id : '');
+    });
+  }, [practiceId, toBranchId, searchParams]);
+
+  useEffect(() => {
+    const q = searchQ.trim();
+    if (q.length < 2) {
+      setResults([]);
+      return;
+    }
+    const t = window.setTimeout(() => {
+      void searchItems(q, practiceId, 40).then((rows) =>
+        setResults(rows.filter((r) => r.itemType === 'inventory'))
+      );
+    }, 250);
+    return () => window.clearTimeout(t);
+  }, [practiceId, searchQ]);
+
+  const searchGroups = useStockItemGroups(results, practiceId);
+
+  const fromOfficeName =
+    branches.find((b) => b.id === fromBranchId)?.name ?? 'source office';
+  const toOfficeName = branches.find((b) => b.id === toBranchId)?.name ?? 'destination office';
+  const crossOffice =
+    fromBranchId !== '' && toBranchId !== '' && fromBranchId !== toBranchId;
+
+  function addLine() {
+    if (!selected) return;
+    const quantity = Number(qty);
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      setError('Quantity must be positive');
+      return;
+    }
+    setLines((prev) => [
+      ...prev,
+      {
+        inventoryItemId: selected.id,
+        name: selected.name,
+        quantity: String(quantity),
+        trackLots: selected.trackLots === true,
+        lotId: null,
+        lotNumber: '',
+      },
+    ]);
+    setSelected(null);
+    setQty('1');
+    setSearchQ('');
+    setResults([]);
+  }
+
+  async function submit() {
+    if (fromBranchId === '' || toBranchId === '' || fromLoc === '' || toLoc === '') {
+      setError('Choose from/to office and location');
+      return;
+    }
+    if (fromLoc === toLoc) {
+      setError('From and to locations must differ');
+      return;
+    }
+    if (lines.length === 0) {
+      setError('Add at least one item');
+      return;
+    }
+    if (lines.some((l) => l.trackLots && l.lotId == null)) {
+      setError('Choose the lot for each item that tracks expiration');
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const fromLocName =
+        fromLocations.find((l) => l.id === fromLoc)?.name ?? 'location';
+      const toLocName = toLocations.find((l) => l.id === toLoc)?.name ?? 'location';
+      const note = crossOffice
+        ? `Move Items: ${fromOfficeName} (${fromLocName}) → ${toOfficeName} (${toLocName})`
+        : `Move Items: ${fromLocName} → ${toLocName}`;
+
+      await transferBatch(practiceId, Number(fromBranchId), {
+        fromBranchLocationId: Number(fromLoc),
+        toBranchLocationId: Number(toLoc),
+        lines: lines.map((l) => ({
+          inventoryItemId: l.inventoryItemId,
+          quantity: Number(l.quantity),
+          inventoryLotBalanceId: l.lotId,
+          lotNumber: l.lotNumber || null,
+        })),
+        note,
+      });
+      setLines([]);
+      setToast(
+        crossOffice
+          ? `Moved to ${toOfficeName}`
+          : 'Transfer complete'
+      );
+      window.setTimeout(() => setToast(null), 2500);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Transfer failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="settings-card" style={{ maxWidth: 640, margin: '0 auto', padding: 16 }}>
+      <h2 style={{ marginTop: 0 }}>Move Items</h2>
+      <p className="settings-muted">
+        Move within an office or between offices. Your signed-in account and the time are logged
+        automatically.
+      </p>
+      {searchParams.get('item') && searchParams.get('fromOffice') ? (
+        <p className="par-transfer-hint" style={{ marginTop: 0 }}>
+          Suggested from Par Levels. Review the offices, location, and quantity, then confirm.
+        </p>
+      ) : null}
+      {toast && <div className="settings-message">{toast}</div>}
+      {error && (
+        <div className="settings-message settings-error-message" style={{ marginBottom: 10 }}>
+          {error}
+        </div>
+      )}
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+        <label className="settings-label">
+          From office
+          <select
+            className="settings-input"
+            value={fromBranchId}
+            onChange={(e) => setFromBranchId(e.target.value ? Number(e.target.value) : '')}
+          >
+            {branches.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="settings-label">
+          To office
+          <select
+            className="settings-input"
+            value={toBranchId}
+            onChange={(e) => setToBranchId(e.target.value ? Number(e.target.value) : '')}
+          >
+            {branches.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="settings-label">
+          From location
+          <select
+            className="settings-input"
+            value={fromLoc}
+            onChange={(e) => setFromLoc(e.target.value ? Number(e.target.value) : '')}
+          >
+            {fromLocations.map((l) => (
+              <option key={l.id} value={l.id}>
+                {l.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="settings-label">
+          To location
+          <select
+            className="settings-input"
+            value={toLoc}
+            onChange={(e) => setToLoc(e.target.value ? Number(e.target.value) : '')}
+          >
+            {toLocations.map((l) => (
+              <option key={l.id} value={l.id}>
+                {l.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      {crossOffice && (
+        <p className="settings-muted" style={{ marginTop: 8 }}>
+          Cross-office move: {fromOfficeName} → {toOfficeName}
+        </p>
+      )}
+
+      <label className="settings-label" style={{ marginTop: 12 }}>
+        Search stock item
+        <input
+          className="settings-input"
+          value={searchQ}
+          onChange={(e) => setSearchQ(e.target.value)}
+          placeholder="Stock item name"
+        />
+      </label>
+      {searchGroups.map((g) => (
+        <button
+          key={g.stockItemId}
+          type="button"
+          className="btn secondary"
+          style={{ display: 'block', width: '100%', textAlign: 'left', marginBottom: 4 }}
+          onClick={() => {
+            const apply = (trackLots: boolean, name = g.label) => {
+              setSelected({ id: g.stockItemId, name, trackLots });
+              setResults([]);
+            };
+            if (g.item) {
+              apply(g.item.trackLots === true, String(g.item.name ?? g.label));
+              return;
+            }
+            void loadInventoryItem(practiceId, g.stockItemId)
+              .then((inv) => apply(inv.trackLots === true, String(inv.name ?? g.label)))
+              .catch(() => apply(false));
+          }}
+        >
+          <span style={{ display: 'block' }}>{g.label}</span>
+          {g.viaNames.length > 0 ? (
+            <span style={{ display: 'block', fontSize: 12, opacity: 0.75 }}>
+              Draws stock for {g.viaNames.slice(0, 2).join(', ')}
+              {g.viaNames.length > 2 ? ` +${g.viaNames.length - 2} more` : ''}
+            </span>
+          ) : g.noStockLink ? (
+            <span style={{ display: 'block', fontSize: 12, opacity: 0.75 }}>
+              No stock link — draws on itself
+            </span>
+          ) : (
+            <span style={{ display: 'block', fontSize: 12, opacity: 0.75 }}>Stock item</span>
+          )}
+        </button>
+      ))}
+
+      {selected && (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'end', marginTop: 8 }}>
+          <label className="settings-label" style={{ flex: 1 }}>
+            {selected.name} — qty
+            <input
+              className="settings-input"
+              type="number"
+              min={0.01}
+              value={qty}
+              onChange={(e) => setQty(e.target.value)}
+            />
+          </label>
+          <button type="button" className="btn primary" onClick={addLine}>
+            Add
+          </button>
+        </div>
+      )}
+
+      <ul style={{ listStyle: 'none', padding: 0, marginTop: 16 }}>
+        {lines.map((l, i) => (
+          <li
+            key={`${l.inventoryItemId}-${i}`}
+            style={{
+              display: 'grid',
+              gap: 8,
+              padding: '8px 0',
+              borderBottom: '1px solid #e5e7eb',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+              <span>
+                {l.name} × {l.quantity}
+              </span>
+              <button
+                type="button"
+                className="btn secondary"
+                onClick={() => setLines((prev) => prev.filter((_, j) => j !== i))}
+              >
+                Remove
+              </button>
+            </div>
+            {l.trackLots ? (
+              <StockLotPicker
+                practiceId={practiceId}
+                inventoryItemId={l.inventoryItemId}
+                branchId={fromBranchId === '' ? null : Number(fromBranchId)}
+                locationId={fromLoc === '' ? null : Number(fromLoc)}
+                required
+                selectedLotId={l.lotId}
+                lotNumber={l.lotNumber}
+                onChange={(pick) =>
+                  setLines((prev) =>
+                    prev.map((row, j) =>
+                      j === i
+                        ? { ...row, lotId: pick.lotId, lotNumber: pick.lotNumber }
+                        : row
+                    )
+                  )
+                }
+              />
+            ) : null}
+          </li>
+        ))}
+      </ul>
+
+      <button
+        type="button"
+        className="btn primary"
+        style={{ width: '100%', minHeight: 48, marginTop: 12 }}
+        disabled={
+          busy ||
+          lines.length === 0 ||
+          lines.some((l) => l.trackLots && l.lotId == null)
+        }
+        onClick={() => void submit()}
+      >
+        {busy ? 'Moving…' : crossOffice ? 'Confirm office move' : 'Confirm move'}
+      </button>
+    </div>
+  );
+}

@@ -9,6 +9,11 @@ import { validateAddress } from '../api/geo';
 import { AddressAutocomplete, type AddressFields } from '../components/AddressAutocomplete';
 import { ManualAddressFields } from '../components/ManualAddressFields';
 import { BreedCombobox } from '../components/BreedCombobox';
+import OutsideHospitalPicker, {
+  pickedHospitalsToText,
+  type PetOption,
+  type PickedHospital,
+} from '../components/OutsideHospitalPicker';
 import {
   NewClientAppointmentTypePicker,
   type AppointmentTypeCardOption,
@@ -88,6 +93,7 @@ import {
 import { SelfScheduleCalendarModal } from '../components/SelfScheduleCalendarModal';
 import { selectedPatientDbIdsFromForm } from '../utils/onlineBookingPatientIds';
 import { trackEvent } from '../utils/analytics';
+import { appConfirm } from '../utils/appDialog';
 import { pushGtmEvent } from '../utils/gtm';
 import { getMarketingAttributionForSubmit } from '../utils/marketingAttribution';
 import { useAppointmentFormDraftPersistence } from '../hooks/useAppointmentFormDraftPersistence';
@@ -440,6 +446,10 @@ type FormData = {
   mailingAddress?: AddressFields;
   /** PO Box or other mailing address not found in autocomplete */
   mailingAddressManualEntry?: boolean;
+  /** Existing-client visit location: home on file, saved extra, or a one-off address. */
+  visitAddressChoice?: 'home' | 'extra' | 'other' | '';
+  extraVisitAddress?: AddressFields;
+  extraVisitAddressLabel?: string;
   otherPersonsOnAccount?: string;
   condoApartmentInfo?: string;
   petInfo: string; // Name, Species, Age, Spayed/Neutered, Breed, Color, Weight (legacy, kept for backward compatibility)
@@ -486,6 +496,12 @@ type FormData = {
     handlingNeedsExplicitNone?: boolean;
   }>;
   previousVeterinaryPractices?: string;
+  /**
+   * Directory-backed version of `previousVeterinaryPractices`. The plain string
+   * is still sent so every existing staff screen and email keeps working; this
+   * carries the hospital ids so records requests can be raised without a lookup.
+   */
+  previousVeterinaryPracticesPicked?: PickedHospital[];
   okayToContactPreviousVets?: 'Yes' | 'No' | '';
   petBehaviorAtPreviousVisits?: string; // Legacy field
   preferredDoctor?: string;
@@ -498,6 +514,10 @@ type FormData = {
   bestPhoneNumber?: string;
   whatPets?: string;
   previousVeterinaryHospitals?: string;
+  /** Directory-backed counterpart of `previousVeterinaryHospitals`. */
+  previousVeterinaryHospitalsPicked?: PickedHospital[];
+  /** Client ticked "please don't contact them" — suppresses the automatic request. */
+  optOutOfRecordsRequest?: boolean;
   preferredDoctorExisting?: string;
   lookingForEuthanasiaExisting?: 'Yes' | 'No' | '';
   isThisTheAddressWhereWeWillCome?: 'Yes' | 'No' | '';
@@ -744,6 +764,9 @@ export default function AppointmentRequestForm() {
     },
     mailingAddressSame: 'No, it is the same.',
     mailingAddressManualEntry: false,
+    visitAddressChoice: '',
+    extraVisitAddress: undefined,
+    extraVisitAddressLabel: '',
     petInfo: '',
     newClientPets: isLoggedIn ? [] : [defaultNewClientPet.pet],
     petSpecificData: isLoggedIn ? undefined : { [defaultNewClientPet.pet.id]: defaultNewClientPet.petSpecific },
@@ -1805,6 +1828,80 @@ export default function AppointmentRequestForm() {
     [formData.newClientPets, formData.existingClientNewPets],
   );
 
+  /**
+   * Pets the owner can attribute an outside hospital to. Existing clients pick
+   * from their chart; new clients only have the pets they are entering on this
+   * form, which is why the mapping question waits until that step is done.
+   * Unnamed new pets are dropped — a checkbox with no label is unanswerable.
+   */
+  const recordsPetOptions = useMemo<PetOption[]>(() => {
+    const out: PetOption[] = [];
+    if (isLoggedIn) {
+      const byId = new Map(pets.map((p) => [p.id, p]));
+      for (const id of formData.selectedPetIds ?? []) {
+        const pet = byId.get(id);
+        if (pet?.name?.trim()) out.push({ id: pet.id, name: pet.name.trim() });
+      }
+    }
+    for (const pet of [
+      ...(formData.newClientPets ?? []),
+      ...(formData.existingClientNewPets ?? []),
+    ]) {
+      if (pet.name?.trim()) out.push({ id: pet.id, name: pet.name.trim() });
+    }
+    return out;
+  }, [
+    isLoggedIn,
+    pets,
+    formData.selectedPetIds,
+    formData.newClientPets,
+    formData.existingClientNewPets,
+  ]);
+
+  /**
+   * Records go out automatically when the form is submitted, so the client needs
+   * a way to say no. Framed as an opt-out rather than a permission question: the
+   * default that helps the pet should be the one that takes no effort.
+   */
+  const renderRecordsOptOut = (hasPicks: boolean) => (
+    <>
+      <p style={{ fontSize: '13px', color: '#6b7280', marginTop: '8px', marginBottom: 0, lineHeight: 1.5 }}>
+        We will contact the practice(s) listed above to obtain your pet&apos;s prior medical
+        records. Having their history before the visit means we are not guessing at past
+        illnesses, medications, or vaccine due dates.
+      </p>
+      {hasPicks && (
+        <label
+          style={{
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: '8px',
+            marginTop: '10px',
+            padding: '10px 12px',
+            border: '1px solid #e5e7eb',
+            borderRadius: '8px',
+            background: '#fafafa',
+            cursor: 'pointer',
+            fontSize: '13px',
+            color: '#4b5563',
+            lineHeight: 1.5,
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={formData.optOutOfRecordsRequest === true}
+            onChange={(e) => updateFormData('optOutOfRecordsRequest', e.target.checked)}
+            style={{ marginTop: 3 }}
+          />
+          <span>
+            Please hold off — I would rather you did not contact these practices for now.
+            You can always ask us later.
+          </span>
+        </label>
+      )}
+    </>
+  );
+
   const handlingNeedsAllowOnlineScheduling = useMemo(
     () => petsAllowOnlineScheduling(petsInVisitWithHandlingQuestion),
     [petsInVisitWithHandlingQuestion],
@@ -2834,24 +2931,21 @@ export default function AppointmentRequestForm() {
         
         // Show warning dialog
         const message = "You will lose your data if you go back using the browser's back button. Please use the 'Previous' button in the bottom left to go back to the previous page.";
-        const userWantsToLeave = window.confirm(message);
-        
-        if (!userWantsToLeave) {
-          // User cancelled - push the current state back to prevent navigation
-          // This effectively cancels the back button press
-          window.history.pushState({ formPage: currentPage, preventBack: true }, '', window.location.href);
-        } else {
-          void (async () => {
+        window.history.pushState({ formPage: currentPage, preventBack: true }, '', window.location.href);
+        void (async () => {
+          const userWantsToLeave = await appConfirm({
+            title: 'Leave this form?',
+            message,
+            confirmLabel: 'Leave',
+            cancelLabel: 'Stay',
+            danger: true,
+          });
+          if (userWantsToLeave) {
             await sendAbandon('browser_back', { awaitPutThenPost: true });
-            // User confirmed - navigate back one more step since the browser already navigated
-            // to our pushed state (same URL), we need to go back further to the actual previous route
             window.history.back();
-          })();
-        }
-        
-        setTimeout(() => {
+          }
           isHandlingPopState = false;
-        }, 100);
+        })();
       }
     };
 
@@ -3163,6 +3257,20 @@ export default function AppointmentRequestForm() {
               setOriginalAddress(newAddress);
             }
             
+            const extraLine1 = String(client.extraAddress1 ?? '').trim();
+            const extraAddr = extraLine1
+              ? {
+                  line1: extraLine1,
+                  line2: client.extraAddress2 || undefined,
+                  city: String(client.extraCity ?? ''),
+                  state: String(client.extraState ?? ''),
+                  zip: String(client.extraZipcode ?? ''),
+                  country: 'US',
+                  lat: typeof client.extraLat === 'number' ? client.extraLat : undefined,
+                  lon: typeof client.extraLon === 'number' ? client.extraLon : undefined,
+                }
+              : undefined;
+            const mailingDifferent = client.mailingSameAsService === false && String(client.mailingAddress1 ?? '').trim();
             return {
               ...prev,
               fullName: {
@@ -3172,6 +3280,22 @@ export default function AppointmentRequestForm() {
               },
               bestPhoneNumber: phoneNumber || prev.bestPhoneNumber,
               physicalAddress: newAddress,
+              extraVisitAddress: extraAddr,
+              extraVisitAddressLabel: String(client.extraAddressLabel ?? '').trim() || 'Other address',
+              visitAddressChoice: prev.visitAddressChoice || (shouldRestoreAddress ? 'home' : prev.visitAddressChoice),
+              mailingAddressSame: mailingDifferent
+                ? 'Yes, it is different.'
+                : prev.mailingAddressSame || 'No, it is the same.',
+              mailingAddress: mailingDifferent
+                ? {
+                    line1: String(client.mailingAddress1 ?? ''),
+                    line2: client.mailingAddress2 || undefined,
+                    city: String(client.mailingCity ?? ''),
+                    state: String(client.mailingState ?? ''),
+                    zip: String(client.mailingZipcode ?? ''),
+                    country: 'US',
+                  }
+                : prev.mailingAddress,
               // Only clear newPhysicalAddress if explicitly set to "No"
               newPhysicalAddress: prev.isThisTheAddressWhereWeWillCome === 'Yes' ? undefined : prev.newPhysicalAddress,
             };
@@ -3772,6 +3896,46 @@ export default function AppointmentRequestForm() {
     }
   };
 
+  const setVisitAddressChoice = (choice: 'home' | 'extra' | 'other') => {
+    setFormData((prev) => {
+      if (choice === 'home') {
+        return {
+          ...prev,
+          visitAddressChoice: 'home',
+          isThisTheAddressWhereWeWillCome: 'Yes',
+          newPhysicalAddress: undefined,
+          physicalAddress: originalAddress ?? prev.physicalAddress,
+        };
+      }
+      if (choice === 'extra' && prev.extraVisitAddress) {
+        return {
+          ...prev,
+          visitAddressChoice: 'extra',
+          isThisTheAddressWhereWeWillCome: 'No',
+          newPhysicalAddress: prev.extraVisitAddress,
+        };
+      }
+      return {
+        ...prev,
+        visitAddressChoice: 'other',
+        isThisTheAddressWhereWeWillCome: 'No',
+        newPhysicalAddress: {
+          line1: '',
+          city: '',
+          state: '',
+          zip: '',
+          country: 'US',
+        },
+      };
+    });
+    setErrors((prev) => {
+      const next = { ...prev };
+      delete next.isThisTheAddressWhereWeWillCome;
+      delete next['newPhysicalAddress.line1'];
+      return next;
+    });
+  };
+
   const updateNestedFormData = (field: keyof FormData, nestedField: string, value: any) => {
     setFormData(prev => {
       const current = prev[field] as any;
@@ -4368,15 +4532,20 @@ export default function AppointmentRequestForm() {
 
     // For other pages, show unsaved changes warning
     const message = "You will lose your data if you leave this form. Are you sure you want to go back to the client portal?";
-    const userWantsToLeave = window.confirm(message);
-    
-    if (userWantsToLeave) {
-      void (async () => {
+    void (async () => {
+      const userWantsToLeave = await appConfirm({
+        title: 'Leave this form?',
+        message,
+        confirmLabel: 'Leave',
+        cancelLabel: 'Stay',
+        danger: true,
+      });
+      if (userWantsToLeave) {
         trackGaAbandon('exit_to_portal');
         await sendAbandon('exit_to_portal', { awaitPutThenPost: true });
         navigate('/client-portal');
-      })();
-    }
+      }
+    })();
   };
 
   const handleSubmit = async () => {
@@ -4523,14 +4692,14 @@ export default function AppointmentRequestForm() {
           return undefined;
         })(),
         
-        mailingAddress: isExistingClient && formData.differentMailingAddress === 'Yes' && formData.newMailingAddress
+        mailingAddress: isExistingClient && formData.mailingAddressSame === 'Yes, it is different.' && formData.mailingAddress
           ? {
-              line1: formData.newMailingAddress.line1 || '',
-              line2: formData.newMailingAddress.line2 || undefined,
-              city: formData.newMailingAddress.city || '',
-              state: formData.newMailingAddress.state || '',
-              zip: formData.newMailingAddress.zip || '',
-              country: formData.newMailingAddress.country || 'US',
+              line1: formData.mailingAddress.line1 || '',
+              line2: formData.mailingAddress.line2 || undefined,
+              city: formData.mailingAddress.city || '',
+              state: formData.mailingAddress.state || '',
+              zip: formData.mailingAddress.zip || '',
+              country: formData.mailingAddress.country || 'US',
             }
           : !isExistingClient && formData.mailingAddressSame === 'Yes, it is different.' && formData.mailingAddress
           ? {
@@ -4681,7 +4850,17 @@ export default function AppointmentRequestForm() {
         // Veterinary History
         previousVeterinaryPractices: formData.previousVeterinaryPractices || formData.previousVeterinaryPracticesExisting || undefined,
         previousVeterinaryHospitals: formData.previousVeterinaryHospitals || undefined,
-        okayToContactPreviousVets: !isLoggedIn ? 'Yes' : (formData.okayToContactPreviousVets || formData.okayToContactPreviousVetsExisting || undefined),
+        previousVeterinaryPracticesPicked: formData.previousVeterinaryPracticesPicked?.length
+          ? formData.previousVeterinaryPracticesPicked
+          : undefined,
+        previousVeterinaryHospitalsPicked: formData.previousVeterinaryHospitalsPicked?.length
+          ? formData.previousVeterinaryHospitalsPicked
+          : undefined,
+        optOutOfRecordsRequest: formData.optOutOfRecordsRequest === true ? true : undefined,
+        // We no longer ask permission, we state it: the form tells every client
+        // "we will contact the practice(s) listed above". Naming a practice under
+        // that sentence is the answer, so it is 'Yes' for new and existing alike.
+        okayToContactPreviousVets: 'Yes',
         hadVetCareElsewhere: formData.hadVetCareElsewhere || undefined,
         mayWeAskForRecords: formData.mayWeAskForRecords || undefined,
         
@@ -5788,35 +5967,11 @@ export default function AppointmentRequestForm() {
               </div>
             )}
 
-            <div
-              style={{
-                marginTop: 8,
-                marginBottom: isNewClientIntroStep ? 0 : 20,
-                paddingTop: 20,
-                borderTop: '1px solid #d1d5db',
-              }}
-            >
-              <label style={{ display: 'block', marginBottom: newClientLabelMb, fontWeight: 600, color: '#111827', fontSize: '14px' }}>
-                Which veterinary practice(s), including specialists, have you used previously for your pet(s)?
-              </label>
-              <textarea
-                value={formData.previousVeterinaryPractices || ''}
-                onChange={(e) => updateFormData('previousVeterinaryPractices', e.target.value)}
-                rows={isNewClientIntroStep ? 2 : 4}
-                style={{
-                  width: '100%',
-                  padding: newClientInputPadding,
-                  border: '1px solid #d1d5db',
-                  borderRadius: newClientInputRadius,
-                  fontSize: '14px',
-                  fontFamily: 'inherit',
-                  resize: 'vertical',
-                }}
-              />
-              <p style={{ fontSize: '13px', color: '#6b7280', marginTop: '8px', marginBottom: 0, lineHeight: 1.5 }}>
-                We will contact the practice(s) listed above to obtain your pet&apos;s prior medical records.
-              </p>
-            </div>
+            {/*
+              Previous practices used to be asked here, but the follow-up question
+              is "which pet went where" and no pet has been named yet at this point.
+              The whole question now lives on the pet step, after they all have names.
+            */}
 
             <div
               style={{
@@ -6253,6 +6408,42 @@ export default function AppointmentRequestForm() {
                   <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '6px' }}>{errors.newClientPets}</div>
                 )}
               </div>
+
+              {/*
+                New clients name their previous practices on the intro step, before
+                any pet exists. The "which pet went where" half of the question has
+                to wait until here, once every pet has a name to check off.
+              */}
+              <div
+                  style={{
+                    marginTop: newClientSectionGap,
+                    marginBottom: newClientSectionGap,
+                    paddingTop: 20,
+                    borderTop: '1px solid #d1d5db',
+                  }}
+                >
+                  <label style={{ display: 'block', marginBottom: newClientLabelMb, fontWeight: 600, color: '#111827', fontSize: '14px' }}>
+                    {recordsPetOptions.length > 1
+                      ? 'Which veterinary practice(s) has each pet been to?'
+                      : 'Which veterinary practice(s), including specialists, have you used previously?'}
+                  </label>
+                  <OutsideHospitalPicker
+                    practiceId={practiceId}
+                    compact={petFormTight}
+                    petOptions={recordsPetOptions}
+                    value={formData.previousVeterinaryPracticesPicked || []}
+                    onChange={(picked) => {
+                      updateFormData('previousVeterinaryPracticesPicked', picked);
+                      updateFormData(
+                        'previousVeterinaryPractices',
+                        pickedHospitalsToText(picked, recordsPetOptions),
+                      );
+                    }}
+                  />
+                  {renderRecordsOptOut(
+                    (formData.previousVeterinaryPracticesPicked?.length ?? 0) > 0,
+                  )}
+                </div>
 
               {/* How soon — shown in compact new-client-pet-info page */}
               <div
@@ -6910,7 +7101,7 @@ export default function AppointmentRequestForm() {
               ) : null;
             })()}
 
-            {/* Is this the address where we will come to see you? */}
+            {/* Where should we come? Home, saved extra address, or a one-off. */}
             {(() => {
               const addressToCheck = formData.physicalAddress && (formData.physicalAddress.line1 || formData.physicalAddress.city || formData.physicalAddress.state || formData.physicalAddress.zip)
                 ? formData.physicalAddress
@@ -6919,39 +7110,33 @@ export default function AppointmentRequestForm() {
               return addressToCheck && (addressToCheck.line1 || addressToCheck.city || addressToCheck.state || addressToCheck.zip);
             })() && (
               <div style={{ marginBottom: '20px' }} data-form-field="isThisTheAddressWhereWeWillCome">
-                <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
-                  Is this the address where we will come to see you? <span style={{ color: '#ef4444' }}>*</span>
+                <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }} htmlFor="visit-address-choice">
+                  Which address should we come to? <span style={{ color: '#ef4444' }}>*</span>
                 </label>
-                <div style={{ display: 'flex', gap: '16px' }}>
-                  {['Yes', 'No'].map((option) => (
-                    <label
-                      key={option}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        cursor: 'pointer',
-                        padding: '12px',
-                        border: `1px solid ${formData.isThisTheAddressWhereWeWillCome === option ? '#10b981' : '#d1d5db'}`,
-                        borderRadius: '8px',
-                        backgroundColor: formData.isThisTheAddressWhereWeWillCome === option ? '#f0fdf4' : '#fff',
-                        flex: 1,
-                      }}
-                    >
-                      <input
-                        type="radio"
-                        name="isThisTheAddressWhereWeWillCome"
-                        value={option}
-                        checked={formData.isThisTheAddressWhereWeWillCome === option}
-                        onChange={(e) => updateFormData('isThisTheAddressWhereWeWillCome', e.target.value)}
-                        style={{ margin: 0 }}
-                      />
-                      <span>{option}</span>
-                    </label>
-                  ))}
-                </div>
+                <select
+                  id="visit-address-choice"
+                  value={formData.visitAddressChoice || (formData.isThisTheAddressWhereWeWillCome === 'No' ? 'other' : formData.isThisTheAddressWhereWeWillCome === 'Yes' ? 'home' : '')}
+                  onChange={(e) => setVisitAddressChoice(e.target.value as 'home' | 'extra' | 'other')}
+                  style={{
+                    width: '100%',
+                    padding: '12px',
+                    border: `1px solid ${errors.isThisTheAddressWhereWeWillCome ? '#ef4444' : '#d1d5db'}`,
+                    borderRadius: '8px',
+                    fontSize: '14px',
+                    backgroundColor: '#fff',
+                  }}
+                >
+                  <option value="">Select…</option>
+                  <option value="home">Home (where we show up)</option>
+                  {formData.extraVisitAddress?.line1 ? (
+                    <option value="extra">
+                      {formData.extraVisitAddressLabel || 'Other address'}
+                    </option>
+                  ) : null}
+                  <option value="other">A different address</option>
+                </select>
                 {errors.isThisTheAddressWhereWeWillCome && <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>{errors.isThisTheAddressWhereWeWillCome}</div>}
-                {formData.isThisTheAddressWhereWeWillCome !== 'No' &&
+                {formData.visitAddressChoice === 'home' &&
                   renderVisitZoneStatus(
                     formData.physicalAddress?.city || originalAddress?.city,
                     formData.physicalAddress?.state || originalAddress?.state,
@@ -6959,8 +7144,30 @@ export default function AppointmentRequestForm() {
               </div>
             )}
 
-            {/* Show new address fields if they answered "No" to "Is this the address where we will come to see you?" */}
-            {formData.isThisTheAddressWhereWeWillCome === 'No' && (
+            {formData.visitAddressChoice === 'extra' && formData.extraVisitAddress?.line1 ? (
+              <div style={{
+                marginBottom: '20px',
+                padding: '12px',
+                backgroundColor: '#f0fdf4',
+                border: '1px solid #bbf7d0',
+                borderRadius: '8px',
+                fontSize: '14px',
+                color: '#374151',
+              }}>
+                <div style={{ fontWeight: 600, marginBottom: 4 }}>{formData.extraVisitAddressLabel || 'Other address'}</div>
+                <div>{formData.extraVisitAddress.line1}</div>
+                {formData.extraVisitAddress.line2 ? <div>{formData.extraVisitAddress.line2}</div> : null}
+                <div>
+                  {[formData.extraVisitAddress.city, formData.extraVisitAddress.state, formData.extraVisitAddress.zip]
+                    .filter(Boolean)
+                    .join(', ')}
+                </div>
+                {renderVisitZoneStatus(formData.extraVisitAddress.city, formData.extraVisitAddress.state)}
+              </div>
+            ) : null}
+
+            {/* Show new address fields if they chose a one-off visit address */}
+            {formData.visitAddressChoice === 'other' && (
               <>
                 <div style={{ marginBottom: '20px' }} data-form-field="newPhysicalAddress.line1">
                   <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
@@ -6989,6 +7196,95 @@ export default function AppointmentRequestForm() {
                 </div>
               </>
             )}
+
+            <div style={{ marginBottom: '20px' }} data-form-field="mailingAddressSame">
+              <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
+                Is your mailing address the same as this location?
+              </label>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {(
+                  [
+                    { value: 'No, it is the same.', label: 'Yes — same as the visit location' },
+                    { value: 'Yes, it is different.', label: 'No — I have a different mailing address' },
+                  ] as const
+                ).map(({ value, label }) => (
+                  <label
+                    key={value}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      cursor: 'pointer',
+                      padding: '12px',
+                      border: `1px solid ${formData.mailingAddressSame === value ? '#10b981' : '#d1d5db'}`,
+                      borderRadius: '8px',
+                      backgroundColor: formData.mailingAddressSame === value ? '#f0fdf4' : '#fff',
+                    }}
+                  >
+                    <input
+                      type="radio"
+                      name="existingMailingAddressSame"
+                      value={value}
+                      checked={formData.mailingAddressSame === value}
+                      onChange={(e) => updateFormData('mailingAddressSame', e.target.value)}
+                      style={{ margin: 0 }}
+                    />
+                    <span>{label}</span>
+                  </label>
+                ))}
+              </div>
+              {formData.mailingAddressSame === 'Yes, it is different.' ? (
+                <div style={{ marginTop: '12px' }}>
+                  <label
+                    style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, fontSize: 14 }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={!!formData.mailingAddressManualEntry}
+                      onChange={(e) => {
+                        const manual = e.target.checked;
+                        setFormData((prev) => ({
+                          ...prev,
+                          mailingAddressManualEntry: manual,
+                        }));
+                      }}
+                    />
+                    PO Box or address that is not listed
+                  </label>
+                  {formData.mailingAddressManualEntry ? (
+                    <ManualAddressFields
+                      value={
+                        formData.mailingAddress ?? {
+                          line1: '',
+                          city: '',
+                          state: '',
+                          zip: '',
+                          country: 'US',
+                        }
+                      }
+                      onChange={(address) => setAddressFields('mailingAddress', address)}
+                      errorPrefix="mailingAddress"
+                    />
+                  ) : (
+                    <AddressAutocomplete
+                      id="existing-mailing-address"
+                      value={
+                        formData.mailingAddress ?? {
+                          line1: '',
+                          city: '',
+                          state: '',
+                          zip: '',
+                          country: 'US',
+                        }
+                      }
+                      onChange={(address) => setAddressFields('mailingAddress', address)}
+                      error={errors['mailingAddress.line1']}
+                      placeholder="Start typing your mailing address"
+                    />
+                  )}
+                </div>
+              ) : null}
+            </div>
 
             <div style={{ marginBottom: '20px' }}>
               <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
@@ -7030,56 +7326,21 @@ export default function AppointmentRequestForm() {
                   <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
                     Please let us know which veterinary hospitals you went to.
                   </label>
-                  <textarea
-                    value={formData.previousVeterinaryHospitals || ''}
-                    onChange={(e) => updateFormData('previousVeterinaryHospitals', e.target.value)}
-                    rows={4}
-                    style={{
-                      width: '100%',
-                      padding: '12px',
-                      border: '1px solid #d1d5db',
-                      borderRadius: '8px',
-                      fontSize: '14px',
-                      fontFamily: 'inherit',
+                  <OutsideHospitalPicker
+                    practiceId={practiceId}
+                    petOptions={recordsPetOptions}
+                    value={formData.previousVeterinaryHospitalsPicked || []}
+                    onChange={(picked) => {
+                      updateFormData('previousVeterinaryHospitalsPicked', picked);
+                      updateFormData(
+                        'previousVeterinaryHospitals',
+                        pickedHospitalsToText(picked, recordsPetOptions),
+                      );
                     }}
                   />
-                </div>
-
-                <div style={{ marginBottom: '20px' }}>
-                  <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
-                    May we ask for records from the above hospitals?
-                  </label>
-                  <p style={{ fontSize: '13px', color: '#6b7280', marginBottom: '12px', lineHeight: 1.5 }}>
-                    Access to your pet&apos;s prior medical records is important for their safety and continuity of care. Declining to share available records may limit our ability to provide comprehensive care.
-                  </p>
-                  <div style={{ display: 'flex', gap: '16px' }}>
-                    {['Yes', 'No'].map((option) => (
-                      <label
-                        key={option}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '8px',
-                          cursor: 'pointer',
-                          padding: '12px',
-                          border: `1px solid ${formData.mayWeAskForRecords === option ? '#10b981' : '#d1d5db'}`,
-                          borderRadius: '8px',
-                          backgroundColor: formData.mayWeAskForRecords === option ? '#f0fdf4' : '#fff',
-                          flex: 1,
-                        }}
-                      >
-                        <input
-                          type="radio"
-                          name="mayWeAskForRecords"
-                          value={option}
-                          checked={formData.mayWeAskForRecords === option}
-                          onChange={(e) => updateFormData('mayWeAskForRecords', e.target.value)}
-                          style={{ margin: 0 }}
-                        />
-                        <span>{option}</span>
-                      </label>
-                    ))}
-                  </div>
+                  {renderRecordsOptOut(
+                    (formData.previousVeterinaryHospitalsPicked?.length ?? 0) > 0,
+                  )}
                 </div>
               </>
             )}

@@ -12,6 +12,7 @@ export const TASK_LINK_ENTITY_TYPES = [
   'employee',
   'referral',
   'reminder',
+  'mail_order',
 ] as const;
 
 export type TaskLinkEntityType = (typeof TASK_LINK_ENTITY_TYPES)[number];

@@ -32,3 +32,37 @@ export function sanitizeCommunicationHtml(html: string): string {
     ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel):|\/|#)/i,
   });
 }
+
+/** Tight allow-list for SOAP Document view (bold abnormals + line breaks). */
+export function sanitizeSoapHtml(html: string): string {
+  return DOMPurify.sanitize(html, {
+    ALLOWED_TAGS: ['strong', 'b', 'em', 'i', 'br', 'p', 'div', 'ul', 'ol', 'li', 'span'],
+    ALLOWED_ATTR: [],
+  });
+}
+
+/** Product descriptions: formatting plus internal/external links. */
+export function sanitizeStoreDescriptionHtml(html: string): string {
+  return DOMPurify.sanitize(html, {
+    ALLOWED_TAGS: ['p', 'br', 'strong', 'b', 'em', 'i', 'u', 'ul', 'ol', 'li', 'a', 'span'],
+    ALLOWED_ATTR: ['href', 'rel', 'target'],
+    ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel):|\/|#)/i,
+  });
+}
+
+/** Plain text for clipboard / consumers that cannot render SOAP HTML. */
+export function soapHtmlToPlainText(html: string): string {
+  if (!html) return '';
+  if (!looksLikeHtmlFragment(html)) return html;
+  if (typeof document !== 'undefined') {
+    const d = document.createElement('div');
+    d.innerHTML = sanitizeSoapHtml(html);
+    const withBreaks = d.innerHTML
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/p>/gi, '\n')
+      .replace(/<\/div>/gi, '\n');
+    d.innerHTML = withBreaks;
+    return (d.textContent ?? d.innerText ?? '').replace(/\n{3,}/g, '\n\n').trimEnd();
+  }
+  return htmlToPlainText(html);
+}

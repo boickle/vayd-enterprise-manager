@@ -8,6 +8,25 @@ export type PracticeBranch = {
   isDefault: boolean;
   isActive: boolean;
   pimsLocationId?: string | null;
+  address1?: string | null;
+  address2?: string | null;
+  city?: string | null;
+  state?: string | null;
+  zipcode?: string | null;
+  country?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+};
+
+export type PracticeBranchAddressBody = {
+  address1: string;
+  address2?: string | null;
+  city: string;
+  state: string;
+  zipcode: string;
+  country?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
 };
 
 export type BranchPriceOverrideEntityType = 'inventory_item' | 'procedure' | 'lab';
@@ -31,16 +50,55 @@ export type InventoryStockLocationRow = {
   branchLocationId: number;
   code: string;
   name: string;
+  isDefault?: boolean;
   quantityOnHand: number | null;
+  parLevel?: number | null;
 };
 
-/** GET …/inventory-items/:id/stock — totals + per-bucket breakdown; reorder only (no quantity on stock row). */
+/** GET …/inventory-items/:id/stock — totals + per-bucket breakdown. */
 export type InventoryBranchStock = {
   inventoryItemId: number;
   branchId: number;
   quantityOnHandTotal: number | null;
   reorderPoint: number | null;
+  parLevel?: number | null;
   locations: InventoryStockLocationRow[];
+};
+
+export type BranchParLocation = {
+  id: number;
+  code: string;
+  name: string;
+  isDefault?: boolean;
+};
+
+export type BranchParItemLocation = {
+  branchLocationId: number;
+  code: string;
+  name: string;
+  isDefault?: boolean;
+  quantityOnHand: number;
+  parLevel: number | null;
+  belowPar: boolean;
+};
+
+export type BranchParItem = {
+  inventoryItemId: number;
+  name: string;
+  code: string | null;
+  category?: number | null;
+  categoryName?: string | null;
+  reorderPoint: number | null;
+  parLevel: number | null;
+  quantityOnHandTotal: number;
+  belowPar: boolean;
+  locations: BranchParItemLocation[];
+};
+
+export type BranchParLevels = {
+  branchId: number;
+  locations: BranchParLocation[];
+  items: BranchParItem[];
 };
 
 export type InventoryBranchLocation = {
@@ -59,7 +117,15 @@ export type InventoryMovementType =
   | 'sold'
   | 'visit_use'
   | 'adjustment_increase'
-  | 'adjustment_decrease';
+  | 'adjustment_decrease'
+  | 'expired';
+
+export type InventoryMovementParty = {
+  id: number;
+  firstName?: string | null;
+  lastName?: string | null;
+  email?: string | null;
+};
 
 export type PostInventoryMovementBody = {
   movementType: InventoryMovementType;
@@ -68,14 +134,12 @@ export type PostInventoryMovementBody = {
   fromBranchLocationId?: number | null;
   toBranchLocationId?: number | null;
   note?: string | null;
-  movedByEmployeeId?: number | null;
   /** Unbox / receiving metadata — persist on backend when supported (else echoed in audit only). */
   vendorName?: string | null;
   invoiceNumber?: string | null;
   lotNumber?: string | null;
   expirationDate?: string | null;
   unpackedAt?: string | null;
-  unpackedByEmployeeId?: number | null;
 };
 
 export type InventoryStockMovement = {
@@ -88,6 +152,12 @@ export type InventoryStockMovement = {
   note?: string | null;
   movedByUserId?: number | null;
   movedByEmployeeId?: number | null;
+  movedByEmployee?: InventoryMovementParty | null;
+  movedByUser?: InventoryMovementParty | null;
+  inventoryItem?: { id: number; name: string } | null;
+  branch?: { id: number; name: string } | null;
+  fromBranchLocation?: { id: number; name: string } | null;
+  toBranchLocation?: { id: number; name: string } | null;
   created?: string;
   fromQuantityBefore?: number | null;
   fromQuantityAfter?: number | null;
@@ -96,9 +166,40 @@ export type InventoryStockMovement = {
   [key: string]: unknown;
 };
 
-export async function listPracticeBranches(practiceId: number): Promise<PracticeBranch[]> {
-  const { data } = await http.get<PracticeBranch[]>(`/practice/${practiceId}/branches`);
+export async function listPracticeBranches(
+  practiceId: number,
+  opts?: { includeInactive?: boolean }
+): Promise<PracticeBranch[]> {
+  const { data } = await http.get<PracticeBranch[]>(`/practice/${practiceId}/branches`, {
+    params: opts?.includeInactive ? { includeInactive: true } : undefined,
+  });
   return Array.isArray(data) ? data : [];
+}
+
+/** Create an office/site branch. Default inventory location (`main`) is created server-side. */
+export async function createPracticeBranch(
+  practiceId: number,
+  body: { name: string; pimsLocationId?: string | null } & PracticeBranchAddressBody
+): Promise<PracticeBranch> {
+  const { data } = await http.post<PracticeBranch>(`/practice/${practiceId}/branches`, body);
+  return data;
+}
+
+/** Update name / address / PIMS id, or archive (`isActive: false`) / restore (`isActive: true`). */
+export async function patchPracticeBranch(
+  practiceId: number,
+  branchId: number,
+  body: {
+    name?: string;
+    pimsLocationId?: string | null;
+    isActive?: boolean;
+  } & Partial<PracticeBranchAddressBody>
+): Promise<PracticeBranch> {
+  const { data } = await http.patch<PracticeBranch>(
+    `/practice/${practiceId}/branches/${branchId}`,
+    body
+  );
+  return data;
 }
 
 export async function listInventoryBranchLocations(
@@ -147,16 +248,30 @@ export async function getInventoryBranchStock(
   return data;
 }
 
-/** Reorder point only; quantity changes use `postInventoryMovement`. */
+/** Reorder / par; quantity changes use `postInventoryMovement`. */
 export async function upsertInventoryBranchStock(
   practiceId: number,
   branchId: number,
   inventoryItemId: number,
-  body: { reorderPoint?: number | null }
+  body: {
+    reorderPoint?: number | null;
+    parLevel?: number | null;
+    locations?: { branchLocationId: number; parLevel?: number | null }[];
+  }
 ): Promise<InventoryBranchStock> {
   const { data } = await http.put<InventoryBranchStock>(
     `/practice/${practiceId}/branches/${branchId}/inventory-items/${inventoryItemId}/stock`,
     body
+  );
+  return data;
+}
+
+export async function listBranchParLevels(
+  practiceId: number,
+  branchId: number
+): Promise<BranchParLevels> {
+  const { data } = await http.get<BranchParLevels>(
+    `/practice/${practiceId}/branches/${branchId}/inventory-pars`
   );
   return data;
 }
@@ -250,3 +365,103 @@ export async function postEffectiveBranchPrice(
   );
   return data;
 }
+
+export type EmployeeBranchAssignment = {
+  branchId: number;
+  isPrimary: boolean;
+  defaultInventoryLocationId: number | null;
+};
+
+export async function getEmployeeBranches(
+  practiceId: number,
+  employeeId: number
+): Promise<EmployeeBranchAssignment[]> {
+  const { data } = await http.get<EmployeeBranchAssignment[]>(
+    `/practice/${practiceId}/employees/${employeeId}/branches`
+  );
+  return Array.isArray(data) ? data : [];
+}
+
+export async function setEmployeeBranches(
+  practiceId: number,
+  employeeId: number,
+  body: {
+    branchIds: number[];
+    primaryBranchId?: number;
+    defaultInventoryLocationId?: number | null;
+  }
+): Promise<void> {
+  await http.put(`/practice/${practiceId}/employees/${employeeId}/branches`, body);
+}
+
+/** Lot / serial balance at a branch location. */
+export type InventoryLotBalance = {
+  id: number;
+  inventoryItemId: number;
+  branchId: number;
+  branchName: string | null;
+  branchLocationId: number;
+  locationCode: string | null;
+  locationName: string | null;
+  lotNumber: string;
+  serialNumber: string | null;
+  expirationDate: string | null;
+  quantityOnHand: number;
+};
+
+export async function listInventoryLots(
+  practiceId: number,
+  inventoryItemId: number,
+  opts?: { branchId?: number; locationId?: number; includeZero?: boolean }
+): Promise<InventoryLotBalance[]> {
+  const { data } = await http.get<InventoryLotBalance[]>(
+    `/practice/${practiceId}/inventory-items/${inventoryItemId}/lots`,
+    {
+      params: {
+        ...(opts?.branchId != null ? { branchId: opts.branchId } : {}),
+        ...(opts?.locationId != null ? { locationId: opts.locationId } : {}),
+        ...(opts?.includeZero ? { includeZero: '1' } : {}),
+      },
+    }
+  );
+  return Array.isArray(data) ? data : [];
+}
+
+export async function addInventoryLot(
+  practiceId: number,
+  body: {
+    inventoryItemId: number;
+    branchId: number;
+    branchLocationId: number;
+    lotNumber: string;
+    serialNumber?: string | null;
+    expirationDate?: string | null;
+    quantityOnHand?: number;
+  }
+): Promise<InventoryLotBalance> {
+  const { data } = await http.post<InventoryLotBalance>(
+    `/practice/${practiceId}/inventory-lots`,
+    body
+  );
+  return data;
+}
+
+/** Setting quantityOnHand records an adjustment so branch counts move with the lot. */
+export async function updateInventoryLot(
+  practiceId: number,
+  lotId: number,
+  body: {
+    lotNumber?: string;
+    serialNumber?: string | null;
+    expirationDate?: string | null;
+    quantityOnHand?: number;
+    isActive?: boolean;
+  }
+): Promise<InventoryLotBalance> {
+  const { data } = await http.patch<InventoryLotBalance>(
+    `/practice/${practiceId}/inventory-lots/${lotId}`,
+    body
+  );
+  return data;
+}
+

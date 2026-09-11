@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useLocation, useSearchParams } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 import { ChevronRight, FileText } from 'lucide-react';
 import { searchClientsStaff, type ClientSearchRow } from '../api/clientsStaff';
 import PimsClientDetailView from '../components/pims/PimsClientDetailView';
@@ -92,14 +92,12 @@ function classificationLine(row: ClientSearchRow): string {
 }
 
 export default function PimsClientsPage() {
-  const location = useLocation();
-  const clientsBasePath = location.pathname.startsWith('/schedule/clients')
-    ? '/schedule/clients'
-    : '/pims/clients';
+  const clientsBasePath = '/schedule/clients';
 
   const [searchParams, setSearchParams] = useSearchParams();
   const qParam = searchParams.get('q') ?? '';
   const clientIdParam = searchParams.get('clientId') ?? '';
+  const addParam = searchParams.get('add') === '1';
 
   const [searchBy, setSearchBy] = useState('all');
   const [query, setQuery] = useState(() => initialClientsSearchFromUrlAndSession().q);
@@ -108,6 +106,10 @@ export default function PimsClientsPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [addClientOpen, setAddClientOpen] = useState(false);
+
+  useEffect(() => {
+    if (addParam) setAddClientOpen(true);
+  }, [addParam]);
   const seq = useRef(0);
 
   useEffect(() => {
@@ -189,10 +191,14 @@ export default function PimsClientsPage() {
   const backFromDetail = useCallback(() => {
     const next = new URLSearchParams(searchParams);
     next.delete('clientId');
+    next.delete('tab');
+    next.delete('invoice');
+    next.delete('patientId');
+    next.delete('appointmentId');
     setSearchParams(next, { replace: false });
   }, [searchParams, setSearchParams]);
 
-  if (clientIdParam.trim()) {
+  if (clientIdParam.trim() && !addParam) {
     return (
       <div className="pims-clients pims-clients--detail">
         <PimsClientDetailView clientId={clientIdParam.trim()} onBack={backFromDetail} />
@@ -297,7 +303,9 @@ export default function PimsClientsPage() {
                       className="pims-clients__link"
                       to={`${clientsBasePath}?clientId=${encodeURIComponent(String(row.id))}`}
                     >
-                      {pickStr(row.firstName) || '—'}
+                      {pickStr(row.namePrefix)
+                        ? `${pickStr(row.namePrefix)} ${pickStr(row.firstName) || ''}`.trim()
+                        : pickStr(row.firstName) || '—'}
                     </Link>
                   </td>
                   <td>{String(row.id)}</td>
@@ -313,7 +321,7 @@ export default function PimsClientsPage() {
                       pets.map((pet, i) => (
                         <span key={String(pet.id)}>
                           {i > 0 ? ', ' : ''}
-                          <Link className="pims-clients__link" to={`/pims/patients?patientId=${encodeURIComponent(String(pet.id))}`}>
+                          <Link className="pims-clients__link" to={`/schedule/patients?patientId=${encodeURIComponent(String(pet.id))}`}>
                             {pet.name}
                           </Link>
                         </span>
@@ -351,19 +359,19 @@ export default function PimsClientsPage() {
 
       <AddClientModal
         open={addClientOpen}
-        onClose={() => setAddClientOpen(false)}
+        onClose={() => {
+          setAddClientOpen(false);
+          if (addParam) {
+            const next = new URLSearchParams(searchParams);
+            next.delete('add');
+            setSearchParams(next, { replace: true });
+          }
+        }}
         onCreated={(id) => {
           const next = new URLSearchParams(searchParams);
+          next.delete('add');
           next.set('clientId', id);
           setSearchParams(next, { replace: false });
-        }}
-        onUpserted={(lastName) => {
-          setQuery(lastName);
-          const next = new URLSearchParams(searchParams);
-          if (lastName.trim()) next.set('q', lastName.trim());
-          else next.delete('q');
-          setSearchParams(next, { replace: true });
-          void runSearch(lastName);
         }}
       />
     </div>

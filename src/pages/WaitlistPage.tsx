@@ -20,6 +20,7 @@ import {
   notifySchedulingToolsNavCountsRefresh,
   SCHEDULING_TOOLS_PAGE_REFRESH_EVENT,
 } from '../hooks/useSchedulingToolsNavCounts';
+import { appPrompt } from '../utils/appDialog';
 import {
   buildRoutingForwardBookingIntentFromEntries,
   buildRoutingForwardBookingIntentFromEntry,
@@ -420,7 +421,13 @@ export default function WaitlistPage() {
   }
 
   async function removeEntry(entry: WaitlistEntry) {
-    const reason = window.prompt('Remove from waitlist? Optional reason:', '') ?? null;
+    const reason = await appPrompt({
+      title: 'Remove from waitlist?',
+      message: 'Optional reason.',
+      defaultValue: '',
+      confirmLabel: 'Remove',
+      danger: true,
+    });
     if (reason === null) return;
     setRemovingId(entry.id);
     try {
@@ -759,6 +766,7 @@ export default function WaitlistPage() {
 
       <ClientSmsComposeModal
         open={smsEntry != null}
+        clientId={smsEntry?.clientId}
         clientLabel={smsEntry ? waitlistClientDisplayName(smsEntry) : ''}
         message={smsMessage}
         onMessageChange={setSmsMessage}

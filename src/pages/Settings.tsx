@@ -1,6 +1,7 @@
 // src/pages/Settings.tsx
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { useSearchParams } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
+import { ChevronDown } from 'lucide-react';
 import { useAuth } from '../auth/useAuth';
 import ScheduleOverrideModal from '../components/ScheduleOverrideModal';
 import {
@@ -19,27 +20,35 @@ import {
   type Zone,
 } from '../api/appointmentSettings';
 import { clearVeterinariansZoneLookupCache } from '../utils/veterinarianZoneLookup';
+import { zonesToPersistForDay } from '../utils/employeeWeekZones';
 import {
   getPracticeSettings,
   updatePracticeSettings,
   settingsToForm,
   formToSettings,
+  isOnlineStoreImplemented,
+  parseOnlineStoreFulfillmentBranchId,
+  parseOnlineStoreFulfillmentLocationId,
+  ONLINE_STORE_IMPLEMENTED_KEY,
+  ONLINE_STORE_FULFILLMENT_BRANCH_KEY,
+  ONLINE_STORE_FULFILLMENT_LOCATION_KEY,
+  EXCLUDE_PRODUCTION_WHEN_REFILLING_KEY,
   type ReminderSettingsForm,
   type CadenceEntry,
 } from '../api/practiceSettings';
+import {
+  listInventoryBranchLocations,
+  listPracticeBranches,
+  type InventoryBranchLocation,
+  type PracticeBranch,
+} from '../api/branchInventory';
+import {
+  getPracticeTaxSettings,
+  patchPracticeTaxSettings,
+  type PracticeTaxSettings,
+} from '../api/taxes';
 import dayjs from 'dayjs';
 import { apiBaseUrl } from '../api/http';
-import {
-  searchItems,
-  getItemWithPriceBreaks,
-  createQuantityPriceBreak,
-  updateQuantityPriceBreak,
-  deleteQuantityPriceBreak,
-  type SearchResultItem,
-  type ItemWithPriceBreaks,
-  type QuantityPriceBreak,
-  type ItemType,
-} from '../api/quantityPriceBreaks';
 import {
   fetchEmployeeGoals,
   updateEmployeeGoals,
@@ -53,37 +62,142 @@ import {
   type AppointmentBookingsGoalsByDow,
 } from '../api/appointmentBookingsGoals';
 import { DepotLocationField } from '../components/DepotLocationField';
+import SettingsEmployeeSchedulePanel from '../components/settings/SettingsEmployeeSchedulePanel';
 import './Settings.css';
-import SettingsEmployeeDirectory from '../components/settings/SettingsEmployeeDirectory';
+import SettingsEmployeeDirectory, {
+  type EmployeeHubSection,
+} from '../components/settings/SettingsEmployeeDirectory';
 import SettingsAppointmentTypes from '../components/settings/SettingsAppointmentTypes';
-import SettingsRoleManualBooking from '../components/settings/SettingsRoleManualBooking';
+import SettingsScoutRoles from '../components/settings/SettingsScoutRoles';
 import SettingsClSeatAssignment from '../components/settings/SettingsClSeatAssignment';
 import SettingsGmailMailboxPermissions from '../components/settings/SettingsGmailMailboxPermissions';
+import SettingsBranchesLocations from '../components/settings/SettingsBranchesLocations';
+import SettingsPaymentTypes from '../components/settings/SettingsPaymentTypes';
+import SettingsPracticeLetterhead from '../components/settings/SettingsPracticeLetterhead';
+import SettingsEuthanasiaConsent from '../components/settings/SettingsEuthanasiaConsent';
+import SettingsOutsideHospitals from '../components/settings/SettingsOutsideHospitals';
+import SettingsDepositBankAccounts from '../components/settings/SettingsDepositBankAccounts';
+import SettingsClientStatuses from '../components/settings/SettingsClientStatuses';
+import SettingsMessageTemplates from '../components/settings/SettingsMessageTemplates';
+import WasteAdminPage from './WasteAdminPage';
+import SettingsMailShippingTypes from '../components/settings/SettingsMailShippingTypes';
 import SettingsChatHours from '../components/settings/SettingsChatHours';
 import { appointmentTypeIsArchived } from '../utils/appointmentTypeSettings';
 
 const SETTINGS_TAB_IDS = [
+  'practice-letterhead',
+  'branches-locations',
+  'euthanasia-consent',
+  'outside-hospitals',
   'appointment-types',
-  'role-manual-booking',
+  'practice-booking-goals',
   'employee-types',
   'employee-zones',
   'employee-schedule',
-  'inventory',
+  'inventory-online-store',
+  'inventory-refills',
+  'inventory-mail-shipping',
+  'inventory-sales-tax',
+  'inventory-waste',
   'employee-images',
   'employee-goals',
   'employee-directory',
+  'roles',
   'cl-seat-assignment',
   'gmail-mailboxes',
   'chat-hours',
   'reminders',
+  'payment-types',
+  'client-statuses',
+  'message-templates',
 ] as const;
 type SettingsTabId = (typeof SETTINGS_TAB_IDS)[number];
 
+type SettingsMenuItem = { id: SettingsTabId; label: string };
+
+const PRACTICE_SETTINGS_ITEMS: SettingsMenuItem[] = [
+  { id: 'practice-letterhead', label: 'Letterhead' },
+  { id: 'branches-locations', label: 'Branches & Locations' },
+  { id: 'euthanasia-consent', label: 'Euthanasia Consent' },
+  { id: 'outside-hospitals', label: 'Outside Hospitals' },
+];
+
+const SCHEDULING_SETTINGS_ITEMS: SettingsMenuItem[] = [
+  { id: 'appointment-types', label: 'Appointment Types' },
+  { id: 'practice-booking-goals', label: 'Practice Booking Goals' },
+];
+
+const EMPLOYEE_SETTINGS_ITEMS: SettingsMenuItem[] = [
+  { id: 'employee-directory', label: 'Staff' },
+  { id: 'roles', label: 'Roles' },
+  { id: 'cl-seat-assignment', label: 'CL Seat Assignment' },
+];
+
+const EMPLOYEE_HUB_SECTIONS: EmployeeHubSection[] = [
+  'profile',
+  'schedule',
+  'types',
+  'zones',
+  'goals',
+  'photo',
+];
+
+const LEGACY_EMPLOYEE_TAB_TO_SECTION: Record<string, EmployeeHubSection> = {
+  'employee-types': 'types',
+  'employee-zones': 'schedule',
+  'employee-schedule': 'schedule',
+  'employee-images': 'photo',
+  'employee-goals': 'goals',
+};
+
+const FINANCE_SETTINGS_ITEMS: SettingsMenuItem[] = [
+  { id: 'payment-types', label: 'Payment Types' },
+  { id: 'client-statuses', label: 'Client Discounts' },
+];
+
+const COMMUNICATION_SETTINGS_ITEMS: SettingsMenuItem[] = [
+  { id: 'gmail-mailboxes', label: 'Gmail Mailboxes' },
+  { id: 'chat-hours', label: 'Live Chat Hours' },
+  { id: 'reminders', label: 'Reminders' },
+  { id: 'message-templates', label: 'Email & Text Templates' },
+];
+
+const INVENTORY_SETTINGS_ITEMS: SettingsMenuItem[] = [
+  { id: 'inventory-online-store', label: 'Online store' },
+  { id: 'inventory-refills', label: 'Refills' },
+  { id: 'inventory-mail-shipping', label: 'Mail shipping' },
+  { id: 'inventory-sales-tax', label: 'Sales tax' },
+  { id: 'inventory-waste', label: 'Waste / disposal' },
+];
+
+function tabInGroup(tab: SettingsTabId, items: SettingsMenuItem[]): boolean {
+  return items.some((item) => item.id === tab);
+}
+
 function parseSettingsTabParam(tab: string | null): SettingsTabId {
+  if (tab && tab in LEGACY_EMPLOYEE_TAB_TO_SECTION) return 'employee-directory';
+  if (tab === 'role-manual-booking') return 'roles';
+  // Practice used to be one long page; land old links on its first section.
+  if (tab === 'practice') return 'practice-letterhead';
+  if (tab === 'inventory') return 'inventory-online-store';
   if (tab && (SETTINGS_TAB_IDS as readonly string[]).includes(tab)) {
     return tab as SettingsTabId;
   }
   return 'appointment-types';
+}
+
+function parseEmployeeHubSection(
+  tab: string | null,
+  section: string | null
+): EmployeeHubSection {
+  if (tab && LEGACY_EMPLOYEE_TAB_TO_SECTION[tab]) {
+    return LEGACY_EMPLOYEE_TAB_TO_SECTION[tab];
+  }
+  if (section === 'zones') return 'schedule';
+  if (section && (EMPLOYEE_HUB_SECTIONS as string[]).includes(section)) {
+    return section as EmployeeHubSection;
+  }
+  return 'profile';
 }
 
 /** Practice ID for reminder settings (default 1; override via env if needed) */
@@ -142,6 +256,75 @@ function zoneEditorRowsFromSchedule(
   });
 }
 
+function SettingsTabMenu({
+  label,
+  items,
+  activeTab,
+  onSelect,
+}: {
+  label: string;
+  items: SettingsMenuItem[];
+  activeTab: SettingsTabId;
+  onSelect: (tab: SettingsTabId) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const groupActive = tabInGroup(activeTab, items);
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open]);
+
+  return (
+    <div className="settings-tab-menu" ref={rootRef}>
+      <button
+        type="button"
+        className={`settings-tab settings-tab-menu__trigger${groupActive ? ' active' : ''}${
+          open ? ' settings-tab-menu__trigger--open' : ''
+        }`}
+        aria-expanded={open}
+        aria-haspopup="menu"
+        onClick={() => setOpen((prev) => !prev)}
+      >
+        {label}
+        <ChevronDown size={14} aria-hidden />
+      </button>
+      {open ? (
+        <div className="settings-tab-menu__panel" role="menu" aria-label={`${label} settings`}>
+          {items.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              role="menuitem"
+              className={`settings-tab-menu__item${activeTab === item.id ? ' active' : ''}`}
+              onClick={() => {
+                onSelect(item.id);
+                setOpen(false);
+              }}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export default function Settings() {
   const { role } = useAuth() as any;
   const [searchParams, setSearchParams] = useSearchParams();
@@ -149,6 +332,14 @@ export default function Settings() {
     () => parseSettingsTabParam(searchParams.get('tab')),
     [searchParams]
   );
+  const employeeHubSection = useMemo(
+    () => parseEmployeeHubSection(searchParams.get('tab'), searchParams.get('section')),
+    [searchParams]
+  );
+  const hubEmployeeId = useMemo(() => {
+    const raw = Number(searchParams.get('employee'));
+    return Number.isFinite(raw) && raw > 0 ? raw : null;
+  }, [searchParams]);
   const goToTab = useCallback(
     (tab: SettingsTabId) => {
       setSearchParams(
@@ -156,12 +347,36 @@ export default function Settings() {
           const next = new URLSearchParams(prev);
           if (tab === 'appointment-types') next.delete('tab');
           else next.set('tab', tab);
+          if (tab !== 'employee-directory') {
+            next.delete('section');
+            next.delete('employee');
+          }
           return next;
         },
         { replace: true }
       );
     },
     [setSearchParams]
+  );
+  const goToEmployeeHub = useCallback(
+    (next: { employeeId?: number | null; section?: EmployeeHubSection }) => {
+      setSearchParams(
+        (prev) => {
+          const params = new URLSearchParams(prev);
+          params.set('tab', 'employee-directory');
+          params.set('section', next.section ?? employeeHubSection);
+          const employeeId =
+            next.employeeId !== undefined
+              ? next.employeeId
+              : Number(params.get('employee')) || null;
+          if (employeeId != null) params.set('employee', String(employeeId));
+          else params.delete('employee');
+          return params;
+        },
+        { replace: true }
+      );
+    },
+    [employeeHubSection, setSearchParams]
   );
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -195,22 +410,8 @@ export default function Settings() {
   // Use composite key: `${employeeId}-${dayOfWeek}` since schedules might not have ids
   const [scheduleUpdates, setScheduleUpdates] = useState<Map<string, Partial<EmployeeWeeklySchedule>>>(new Map());
 
-  // Inventory state
+  // Inventory / online-store settings (practice-scoped)
   const [practiceId] = useState(1); // Default practice ID, could be made configurable
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<SearchResultItem[]>([]);
-  const [searching, setSearching] = useState(false);
-  const [selectedItem, setSelectedItem] = useState<ItemWithPriceBreaks | null>(null);
-  const [loadingItem, setLoadingItem] = useState(false);
-  const [editingPriceBreak, setEditingPriceBreak] = useState<QuantityPriceBreak | null>(null);
-  const [newPriceBreak, setNewPriceBreak] = useState<{
-    price: string;
-    markup: string;
-    lowQuantity: string;
-    highQuantity: string;
-    isActive: boolean;
-  } | null>(null);
-  const [priceManuallyEdited, setPriceManuallyEdited] = useState(false);
 
   const [overrideModalOpen, setOverrideModalOpen] = useState(false);
   const [overrideModalInitial, setOverrideModalInitial] = useState<{
@@ -254,6 +455,28 @@ export default function Settings() {
   const [reminderSaving, setReminderSaving] = useState(false);
   const [reminderLoadError, setReminderLoadError] = useState<string | null>(null);
 
+  // Inventory tab — company online-store capability + fulfillment source
+  const [onlineStoreImplemented, setOnlineStoreImplemented] = useState(false);
+  const [onlineStoreFulfillmentBranchId, setOnlineStoreFulfillmentBranchId] = useState<
+    number | null
+  >(null);
+  const [onlineStoreFulfillmentLocationId, setOnlineStoreFulfillmentLocationId] = useState<
+    number | null
+  >(null);
+  const [onlineStoreBranches, setOnlineStoreBranches] = useState<PracticeBranch[]>([]);
+  const [onlineStoreLocations, setOnlineStoreLocations] = useState<InventoryBranchLocation[]>([]);
+  const [onlineStoreSettingLoading, setOnlineStoreSettingLoading] = useState(false);
+  const [onlineStoreSettingSaving, setOnlineStoreSettingSaving] = useState(false);
+  const [onlineStoreSettingError, setOnlineStoreSettingError] = useState<string | null>(null);
+  const [excludeProductionWhenRefilling, setExcludeProductionWhenRefilling] = useState(false);
+  const [refillProductionSaving, setRefillProductionSaving] = useState(false);
+
+  // Inventory tab — practice sales-tax levels (catalog item picker)
+  const [taxSettingsDraft, setTaxSettingsDraft] = useState<PracticeTaxSettings | null>(null);
+  const [taxSettingsLoading, setTaxSettingsLoading] = useState(false);
+  const [taxSettingsSaving, setTaxSettingsSaving] = useState(false);
+  const [taxSettingsError, setTaxSettingsError] = useState<string | null>(null);
+
   // Normalize roles
   const roles = Array.isArray(role) ? role : role ? [String(role)] : [];
   const isAdmin = roles.some((r) => ['admin', 'superadmin'].includes(String(r).toLowerCase()));
@@ -276,6 +499,17 @@ export default function Settings() {
     if (!isAdmin) return;
     loadData();
   }, [isAdmin]);
+
+  useEffect(() => {
+    if (activeTab !== 'employee-directory' || hubEmployeeId == null) return;
+    if (employeeHubSection === 'types') void handleLoadEmployee(hubEmployeeId);
+    if (employeeHubSection === 'schedule') void handleLoadEmployeeForSchedule(hubEmployeeId);
+    if (employeeHubSection === 'goals') {
+      const emp = employees.find((e) => e.id === hubEmployeeId) ?? null;
+      setSelectedEmployeeForGoals(emp);
+      void handleLoadEmployeeGoals(hubEmployeeId);
+    }
+  }, [activeTab, employeeHubSection, hubEmployeeId, employees]);
 
   // Load reminder settings when Reminders tab is active
   useEffect(() => {
@@ -300,6 +534,114 @@ export default function Settings() {
     };
   }, [isAdmin, activeTab]);
 
+  // Load online-store + refill settings when those Inventory sections are active
+  useEffect(() => {
+    if (
+      !isAdmin ||
+      (activeTab !== 'inventory-online-store' && activeTab !== 'inventory-refills')
+    ) {
+      return;
+    }
+    let cancelled = false;
+    setOnlineStoreSettingError(null);
+    setOnlineStoreSettingLoading(true);
+    Promise.all([
+      getPracticeSettings(REMINDERS_PRACTICE_ID),
+      listPracticeBranches(REMINDERS_PRACTICE_ID),
+    ])
+      .then(async ([settings, branchList]) => {
+        if (cancelled) return;
+        setOnlineStoreImplemented(isOnlineStoreImplemented(settings));
+        setExcludeProductionWhenRefilling(
+          settings?.[EXCLUDE_PRODUCTION_WHEN_REFILLING_KEY] === 'true',
+        );
+        const activeBranches = branchList.filter((b) => b.isActive !== false);
+        setOnlineStoreBranches(activeBranches);
+        const branchId = parseOnlineStoreFulfillmentBranchId(settings);
+        const locationId = parseOnlineStoreFulfillmentLocationId(settings);
+        setOnlineStoreFulfillmentBranchId(branchId);
+        setOnlineStoreFulfillmentLocationId(locationId);
+        if (branchId != null) {
+          try {
+            const locs = await listInventoryBranchLocations(REMINDERS_PRACTICE_ID, branchId);
+            if (!cancelled) setOnlineStoreLocations(locs.filter((l) => l.isActive !== false));
+          } catch {
+            if (!cancelled) setOnlineStoreLocations([]);
+          }
+        } else {
+          setOnlineStoreLocations([]);
+        }
+      })
+      .catch((err: any) => {
+        if (!cancelled) {
+          setOnlineStoreSettingError(
+            err?.response?.data?.message || err?.message || 'Failed to load online store setting'
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setOnlineStoreSettingLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isAdmin, activeTab]);
+
+  // Load practice sales-tax settings when that Inventory section is active
+  useEffect(() => {
+    if (!isAdmin || activeTab !== 'inventory-sales-tax') return;
+    let cancelled = false;
+    setTaxSettingsError(null);
+    setTaxSettingsLoading(true);
+    getPracticeTaxSettings(REMINDERS_PRACTICE_ID)
+      .then((settings) => {
+        if (!cancelled) setTaxSettingsDraft(settings);
+      })
+      .catch((err: any) => {
+        if (!cancelled) {
+          setTaxSettingsError(
+            err?.response?.data?.message || err?.message || 'Failed to load sales tax settings'
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setTaxSettingsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isAdmin, activeTab]);
+
+  useEffect(() => {
+    if (
+      !isAdmin ||
+      activeTab !== 'inventory-online-store' ||
+      onlineStoreFulfillmentBranchId == null
+    ) {
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const locs = await listInventoryBranchLocations(
+          REMINDERS_PRACTICE_ID,
+          onlineStoreFulfillmentBranchId
+        );
+        if (cancelled) return;
+        const active = locs.filter((l) => l.isActive !== false);
+        setOnlineStoreLocations(active);
+        setOnlineStoreFulfillmentLocationId((prev) => {
+          if (prev != null && active.some((l) => l.id === prev)) return prev;
+          return active.find((l) => l.isDefault)?.id ?? active[0]?.id ?? null;
+        });
+      } catch {
+        if (!cancelled) setOnlineStoreLocations([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isAdmin, activeTab, onlineStoreFulfillmentBranchId]);
   const loadData = async () => {
     setLoading(true);
     setError(null);
@@ -415,7 +757,7 @@ export default function Settings() {
   };
 
   useEffect(() => {
-    if (!isAdmin || activeTab !== 'employee-goals') return;
+    if (!isAdmin || activeTab !== 'practice-booking-goals') return;
     void handleLoadAppointmentBookingsGoals();
   }, [isAdmin, activeTab, handleLoadAppointmentBookingsGoals]);
 
@@ -498,6 +840,7 @@ export default function Settings() {
             startDepotLon: schedule.startDepotLon || undefined,
             endDepotLat: schedule.endDepotLat || undefined,
             endDepotLon: schedule.endDepotLon || undefined,
+            zones: schedule.zones ?? [],
           });
         });
       }
@@ -633,8 +976,8 @@ export default function Settings() {
     if (scheduleOverrideDeepLinkRef.current === sig) return;
     scheduleOverrideDeepLinkRef.current = sig;
 
-    if (activeTab !== 'employee-schedule') {
-      goToTab('employee-schedule');
+    if (activeTab !== 'employee-directory' || employeeHubSection !== 'schedule') {
+      goToEmployeeHub({ employeeId: empId, section: 'schedule' });
     }
     setOverrideModalInitial({ employeeId: empId, date: dateStr });
     setOverrideModalOpen(true);
@@ -658,42 +1001,64 @@ export default function Settings() {
     setError(null);
     setSuccess(null);
     try {
-      // Update all schedules that have changes
-      const updatePromises: Promise<any>[] = [];
-      scheduleUpdates.forEach((updates, key) => {
-        // Extract dayOfWeek from key (format: `${employeeId}-${dayOfWeek}`)
-        const dayOfWeek = Number(key.split('-')[1]);
-        const schedule = selectedEmployeeForSchedule.weeklySchedules?.find((s) => s.dayOfWeek === dayOfWeek);
-        
-        // Only update if schedule exists and has an id (required for API)
-        if (schedule && schedule.id != null && Object.keys(updates).length > 0) {
-          // Convert null values to undefined and filter them out to match API expectations
-          const cleanedUpdates: {
-            isWorkday?: boolean;
-            workStartLocal?: string;
-            workEndLocal?: string;
-            startDepotLat?: number;
-            startDepotLon?: number;
-            endDepotLat?: number;
-            endDepotLon?: number;
-          } = {};
-          
-          if (updates.isWorkday !== undefined) cleanedUpdates.isWorkday = updates.isWorkday;
-          if (updates.workStartLocal !== undefined && updates.workStartLocal !== null) cleanedUpdates.workStartLocal = updates.workStartLocal;
-          if (updates.workEndLocal !== undefined && updates.workEndLocal !== null) cleanedUpdates.workEndLocal = updates.workEndLocal;
-          if (updates.startDepotLat !== undefined && updates.startDepotLat !== null) cleanedUpdates.startDepotLat = updates.startDepotLat;
-          if (updates.startDepotLon !== undefined && updates.startDepotLon !== null) cleanedUpdates.startDepotLon = updates.startDepotLon;
-          if (updates.endDepotLat !== undefined && updates.endDepotLat !== null) cleanedUpdates.endDepotLat = updates.endDepotLat;
-          if (updates.endDepotLon !== undefined && updates.endDepotLon !== null) cleanedUpdates.endDepotLon = updates.endDepotLon;
-          
-          if (Object.keys(cleanedUpdates).length > 0) {
-            updatePromises.push(updateWeeklySchedule(schedule.id, cleanedUpdates));
-          }
-        } else if (schedule && schedule.id == null) {
-          // Schedule exists but has no id - this is a problem
-          console.warn(`Schedule for day ${dayOfWeek} has no id, cannot update`);
+      const updatePromises: Promise<unknown>[] = [];
+
+      for (const dayOfWeek of [0, 1, 2, 3, 4, 5, 6]) {
+        const schedule = selectedEmployeeForSchedule.weeklySchedules?.find(
+          (s) => s.dayOfWeek === dayOfWeek
+        );
+        if (!schedule || schedule.id == null) continue;
+        const key = `${selectedEmployeeForSchedule.id}-${dayOfWeek}`;
+        const updates = scheduleUpdates.get(key) || {};
+
+        const cleanedUpdates: {
+          isWorkday?: boolean;
+          workStartLocal?: string;
+          workEndLocal?: string;
+          startDepotLat?: number;
+          startDepotLon?: number;
+          endDepotLat?: number;
+          endDepotLon?: number;
+        } = {};
+        if (updates.isWorkday !== undefined) cleanedUpdates.isWorkday = updates.isWorkday;
+        if (updates.workStartLocal !== undefined && updates.workStartLocal !== null) {
+          cleanedUpdates.workStartLocal = updates.workStartLocal;
         }
-      });
+        if (updates.workEndLocal !== undefined && updates.workEndLocal !== null) {
+          cleanedUpdates.workEndLocal = updates.workEndLocal;
+        }
+        if (updates.startDepotLat !== undefined && updates.startDepotLat !== null) {
+          cleanedUpdates.startDepotLat = updates.startDepotLat;
+        }
+        if (updates.startDepotLon !== undefined && updates.startDepotLon !== null) {
+          cleanedUpdates.startDepotLon = updates.startDepotLon;
+        }
+        if (updates.endDepotLat !== undefined && updates.endDepotLat !== null) {
+          cleanedUpdates.endDepotLat = updates.endDepotLat;
+        }
+        if (updates.endDepotLon !== undefined && updates.endDepotLon !== null) {
+          cleanedUpdates.endDepotLon = updates.endDepotLon;
+        }
+        if (Object.keys(cleanedUpdates).length > 0) {
+          updatePromises.push(updateWeeklySchedule(schedule.id, cleanedUpdates));
+        }
+
+        const zonesToSave = zonesToPersistForDay(
+          updates.zones,
+          selectedEmployeeForSchedule,
+          dayOfWeek
+        );
+        updatePromises.push(
+          updateEmployeeScheduleZones(
+            schedule.id,
+            zonesToSave.map((z) => ({
+              zoneId: z.zoneId,
+              acceptingNewPatients: z.acceptingNewPatients,
+              transitioningOutOfZone: z.transitioningOutOfZone,
+            }))
+          )
+        );
+      }
 
       if (updatePromises.length === 0) {
         setError('No valid schedules to update. Schedules may be missing IDs.');
@@ -701,9 +1066,9 @@ export default function Settings() {
       }
 
       await Promise.all(updatePromises);
+      clearVeterinariansZoneLookupCache();
       setSuccess('Employee schedule updated successfully');
       setTimeout(() => setSuccess(null), 3000);
-      // Reload employee data
       await handleLoadEmployeeForSchedule(selectedEmployeeForSchedule.id);
     } catch (err: any) {
       setError(err?.response?.data?.message || err?.message || 'Failed to update employee schedule');
@@ -806,215 +1171,6 @@ export default function Settings() {
     });
   };
 
-  // Inventory handlers - type-ahead search with debouncing
-  useEffect(() => {
-    if (activeTab !== 'inventory') return;
-    
-    const trimmedQuery = searchQuery.trim();
-    if (!trimmedQuery) {
-      setSearchResults([]);
-      setSearching(false);
-      return;
-    }
-
-    // Debounce search - wait 300ms after user stops typing
-    const timeoutId = setTimeout(async () => {
-      setSearching(true);
-      setError(null);
-      try {
-        const results = await searchItems(trimmedQuery, practiceId);
-        setSearchResults(results);
-      } catch (err: any) {
-        setError(err?.response?.data?.message || err?.message || 'Failed to search items');
-        setSearchResults([]);
-      } finally {
-        setSearching(false);
-      }
-    }, 300);
-
-    return () => {
-      clearTimeout(timeoutId);
-    };
-  }, [searchQuery, practiceId, activeTab]);
-
-  const handleSearch = async () => {
-    if (!searchQuery.trim()) return;
-    setSearching(true);
-    setError(null);
-    try {
-      const results = await searchItems(searchQuery.trim(), practiceId);
-      setSearchResults(results);
-    } catch (err: any) {
-      setError(err?.response?.data?.message || err?.message || 'Failed to search items');
-      setSearchResults([]);
-    } finally {
-      setSearching(false);
-    }
-  };
-
-  const handleSelectItem = async (itemType: ItemType, itemId: number) => {
-    if (!itemId || itemId === 0) {
-      setError('Invalid item ID');
-      return;
-    }
-    setLoadingItem(true);
-    setError(null);
-    setSuccess(null);
-    setEditingPriceBreak(null);
-    setNewPriceBreak(null);
-    setSelectedItem(null); // Clear previous selection
-    try {
-      const item = await getItemWithPriceBreaks(itemType, itemId, practiceId);
-      // Ensure the response has the expected structure
-      if (item && item.item && item.itemType) {
-        // Ensure priceBreaks is always an array
-        if (!Array.isArray(item.priceBreaks)) {
-          item.priceBreaks = [];
-        }
-        setSelectedItem(item);
-      } else {
-        throw new Error('Invalid response structure from server');
-      }
-    } catch (err: any) {
-      const errorMessage = err?.response?.data?.message || err?.message || 'Failed to load item details';
-      setError(errorMessage);
-      setSelectedItem(null);
-    } finally {
-      setLoadingItem(false);
-    }
-  };
-
-  const handleSavePriceBreak = async (id: number) => {
-    if (!editingPriceBreak) return;
-    setSaving(true);
-    setError(null);
-    setSuccess(null);
-    try {
-      await updateQuantityPriceBreak(id, {
-        price: editingPriceBreak.price,
-        markup: editingPriceBreak.markup,
-        lowQuantity: editingPriceBreak.lowQuantity,
-        highQuantity: editingPriceBreak.highQuantity,
-        isActive: editingPriceBreak.isActive,
-      });
-      setSuccess('Price break updated successfully');
-      setTimeout(() => setSuccess(null), 3000);
-      setEditingPriceBreak(null);
-      // Reload item details
-      if (selectedItem) {
-        const item = await getItemWithPriceBreaks(
-          selectedItem.itemType,
-          selectedItem.item.id,
-          practiceId
-        );
-        setSelectedItem(item);
-      }
-    } catch (err: any) {
-      setError(err?.response?.data?.message || err?.message || 'Failed to update price break');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleCreatePriceBreak = async () => {
-    if (!newPriceBreak || !selectedItem) {
-      setError('Missing required data');
-      return;
-    }
-    
-    // Validate required fields
-    const price = newPriceBreak.price?.trim();
-    const lowQty = newPriceBreak.lowQuantity?.trim();
-    const highQty = newPriceBreak.highQuantity?.trim();
-    
-    if (!price || !lowQty || !highQty) {
-      setError('Please fill in all required fields (Price, Low Quantity, High Quantity)');
-      return;
-    }
-    
-    const priceNum = Number(price);
-    const lowQtyNum = Number(lowQty);
-    const highQtyNum = Number(highQty);
-    
-    if (isNaN(priceNum) || priceNum < 0) {
-      setError('Price must be a valid number >= 0');
-      return;
-    }
-    
-    if (isNaN(lowQtyNum) || lowQtyNum < 1) {
-      setError('Low Quantity must be >= 1');
-      return;
-    }
-    
-    if (isNaN(highQtyNum) || highQtyNum < 1) {
-      setError('High Quantity must be >= 1');
-      return;
-    }
-    
-    if (lowQtyNum > highQtyNum) {
-      setError('Low Quantity must be <= High Quantity');
-      return;
-    }
-    
-    const markupValue = newPriceBreak.markup?.trim() ? Number(newPriceBreak.markup) : null;
-    
-    setSaving(true);
-    setError(null);
-    setSuccess(null);
-    try {
-      await createQuantityPriceBreak(
-        selectedItem.itemType,
-        selectedItem.item.id,
-        practiceId,
-        priceNum,
-        lowQtyNum,
-        highQtyNum,
-        markupValue,
-        newPriceBreak.isActive
-      );
-      setSuccess('Price break created successfully');
-      setTimeout(() => setSuccess(null), 3000);
-      setNewPriceBreak(null);
-      // Reload item details
-      const item = await getItemWithPriceBreaks(
-        selectedItem.itemType,
-        selectedItem.item.id,
-        practiceId
-      );
-      setSelectedItem(item);
-    } catch (err: any) {
-      const errorMessage = err?.response?.data?.message || err?.message || 'Failed to create price break';
-      setError(errorMessage);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleDeletePriceBreak = async (id: number) => {
-    if (!confirm('Are you sure you want to delete this price break?')) return;
-    setSaving(true);
-    setError(null);
-    setSuccess(null);
-    try {
-      await deleteQuantityPriceBreak(id);
-      setSuccess('Price break deleted successfully');
-      setTimeout(() => setSuccess(null), 3000);
-      // Reload item details
-      if (selectedItem) {
-        const item = await getItemWithPriceBreaks(
-          selectedItem.itemType,
-          selectedItem.item.id,
-          practiceId
-        );
-        setSelectedItem(item);
-      }
-    } catch (err: any) {
-      setError(err?.response?.data?.message || err?.message || 'Failed to delete price break');
-    } finally {
-      setSaving(false);
-    }
-  };
-
   const handleSaveReminders = async () => {
     setReminderSaving(true);
     setError(null);
@@ -1027,6 +1183,73 @@ export default function Settings() {
       setError(err?.response?.data?.message || err?.message || 'Failed to update reminder settings');
     } finally {
       setReminderSaving(false);
+    }
+  };
+
+  const handleSaveOnlineStoreImplemented = async () => {
+    setOnlineStoreSettingSaving(true);
+    setOnlineStoreSettingError(null);
+    setError(null);
+    setSuccess(null);
+    try {
+      if (
+        onlineStoreImplemented &&
+        (onlineStoreFulfillmentBranchId == null || onlineStoreFulfillmentLocationId == null)
+      ) {
+        setOnlineStoreSettingError(
+          'Choose a fulfillment branch and location for online store orders.'
+        );
+        return;
+      }
+      await updatePracticeSettings(REMINDERS_PRACTICE_ID, {
+        [ONLINE_STORE_IMPLEMENTED_KEY]: onlineStoreImplemented ? 'true' : 'false',
+        [ONLINE_STORE_FULFILLMENT_BRANCH_KEY]:
+          onlineStoreImplemented && onlineStoreFulfillmentBranchId != null
+            ? String(onlineStoreFulfillmentBranchId)
+            : '',
+        [ONLINE_STORE_FULFILLMENT_LOCATION_KEY]:
+          onlineStoreImplemented && onlineStoreFulfillmentLocationId != null
+            ? String(onlineStoreFulfillmentLocationId)
+            : '',
+      });
+      setSuccess('Online store setting saved');
+      setTimeout(() => setSuccess(null), 3000);
+    } catch (err: any) {
+      setOnlineStoreSettingError(
+        err?.response?.data?.message || err?.message || 'Failed to save online store setting'
+      );
+    } finally {
+      setOnlineStoreSettingSaving(false);
+    }
+  };
+
+  const handleSaveTaxSettings = async () => {
+    if (!taxSettingsDraft) return;
+    setTaxSettingsSaving(true);
+    setTaxSettingsError(null);
+    setError(null);
+    setSuccess(null);
+    try {
+      const saved = await patchPracticeTaxSettings(REMINDERS_PRACTICE_ID, {
+        taxLevel1Name: taxSettingsDraft.taxLevel1Name,
+        taxLevel1Rate: Number(taxSettingsDraft.taxLevel1Rate) || 0,
+        showTaxLevel2: taxSettingsDraft.showTaxLevel2,
+        taxLevel2Name: taxSettingsDraft.taxLevel2Name,
+        taxLevel2Rate: Number(taxSettingsDraft.taxLevel2Rate) || 0,
+        showTaxLevel3: taxSettingsDraft.showTaxLevel3,
+        taxLevel3Name: taxSettingsDraft.taxLevel3Name,
+        taxLevel3Rate: Number(taxSettingsDraft.taxLevel3Rate) || 0,
+        showAccumulativeTax: taxSettingsDraft.showAccumulativeTax,
+      });
+      setTaxSettingsDraft(saved);
+      setSuccess('Sales tax settings saved');
+      setTimeout(() => setSuccess(null), 3000);
+    } catch (err: any) {
+      setTaxSettingsError(
+        err?.response?.data?.message || err?.message || 'Failed to save sales tax settings'
+      );
+    } finally {
+      setTaxSettingsSaving(false);
     }
   };
 
@@ -1109,84 +1332,42 @@ export default function Settings() {
         <h1 className="settings-title">Settings</h1>
 
         <div className="settings-tabs">
-          <button
-            className={`settings-tab ${activeTab === 'appointment-types' ? 'active' : ''}`}
-            onClick={() => goToTab('appointment-types')}
-          >
-            Appointment Types
-          </button>
-          <button
-            className={`settings-tab ${activeTab === 'role-manual-booking' ? 'active' : ''}`}
-            onClick={() => goToTab('role-manual-booking')}
-          >
-            Role Manual Booking
-          </button>
-          <button
-            className={`settings-tab ${activeTab === 'employee-types' ? 'active' : ''}`}
-            onClick={() => goToTab('employee-types')}
-          >
-            Employee Appointment Types
-          </button>
-          <button
-            className={`settings-tab ${activeTab === 'employee-zones' ? 'active' : ''}`}
-            onClick={() => goToTab('employee-zones')}
-          >
-            Employee Zones
-          </button>
-          <button
-            className={`settings-tab ${activeTab === 'employee-schedule' ? 'active' : ''}`}
-            onClick={() => goToTab('employee-schedule')}
-          >
-            Employee Schedule
-          </button>
-          <button
-            className={`settings-tab ${activeTab === 'inventory' ? 'active' : ''}`}
-            onClick={() => goToTab('inventory')}
-          >
-            Inventory
-          </button>
-          <button
-            className={`settings-tab ${activeTab === 'employee-images' ? 'active' : ''}`}
-            onClick={() => goToTab('employee-images')}
-          >
-            Employee Images
-          </button>
-          <button
-            className={`settings-tab ${activeTab === 'employee-goals' ? 'active' : ''}`}
-            onClick={() => goToTab('employee-goals')}
-          >
-            Employee Goals
-          </button>
-          <button
-            className={`settings-tab ${activeTab === 'employee-directory' ? 'active' : ''}`}
-            onClick={() => goToTab('employee-directory')}
-          >
-            Employees
-          </button>
-          <button
-            className={`settings-tab ${activeTab === 'cl-seat-assignment' ? 'active' : ''}`}
-            onClick={() => goToTab('cl-seat-assignment')}
-          >
-            CL Seat Assignment
-          </button>
-          <button
-            className={`settings-tab ${activeTab === 'gmail-mailboxes' ? 'active' : ''}`}
-            onClick={() => goToTab('gmail-mailboxes')}
-          >
-            Gmail Mailboxes
-          </button>
-          <button
-            className={`settings-tab ${activeTab === 'chat-hours' ? 'active' : ''}`}
-            onClick={() => goToTab('chat-hours')}
-          >
-            Live Chat Hours
-          </button>
-          <button
-            className={`settings-tab ${activeTab === 'reminders' ? 'active' : ''}`}
-            onClick={() => goToTab('reminders')}
-          >
-            Reminders
-          </button>
+          <SettingsTabMenu
+            label="Practice"
+            items={PRACTICE_SETTINGS_ITEMS}
+            activeTab={activeTab}
+            onSelect={goToTab}
+          />
+          <SettingsTabMenu
+            label="Scheduling"
+            items={SCHEDULING_SETTINGS_ITEMS}
+            activeTab={activeTab}
+            onSelect={goToTab}
+          />
+          <SettingsTabMenu
+            label="Staff"
+            items={EMPLOYEE_SETTINGS_ITEMS}
+            activeTab={activeTab}
+            onSelect={goToTab}
+          />
+          <SettingsTabMenu
+            label="Inventory"
+            items={INVENTORY_SETTINGS_ITEMS}
+            activeTab={activeTab}
+            onSelect={goToTab}
+          />
+          <SettingsTabMenu
+            label="Finance"
+            items={FINANCE_SETTINGS_ITEMS}
+            activeTab={activeTab}
+            onSelect={goToTab}
+          />
+          <SettingsTabMenu
+            label="Communication"
+            items={COMMUNICATION_SETTINGS_ITEMS}
+            activeTab={activeTab}
+            onSelect={goToTab}
+          />
         </div>
 
         {error && (
@@ -1236,15 +1417,11 @@ export default function Settings() {
           </div>
         )}
 
-        {activeTab === 'role-manual-booking' && (
+        {activeTab === 'roles' && (
           <div className="settings-section">
-            <h2 className="settings-section-title">Role manual booking</h2>
-            <p className="settings-section-description">
-              Configure which appointment types each employee role may book manually from the
-              scheduler calendar. Choose a role by name (for example, Business Manager or
-              Receptionist). Routing booking is not restricted by these settings.
-            </p>
-            <SettingsRoleManualBooking
+            <h2 className="settings-section-title">Roles</h2>
+            <SettingsScoutRoles
+              practiceId={practiceId}
               appointmentTypes={activeAppointmentTypes}
               allAppointmentTypes={appointmentTypes}
               onMessage={(msg, kind) => {
@@ -1258,6 +1435,100 @@ export default function Settings() {
                 }
               }}
             />
+          </div>
+        )}
+
+        {activeTab === 'practice-letterhead' && <SettingsPracticeLetterhead />}
+
+        {activeTab === 'branches-locations' && (
+          <div className="settings-section">
+            <h2 className="settings-section-title">Branches &amp; Locations</h2>
+            <p className="settings-section-description">
+              Set up practice offices (branches) and their inventory location buckets (main, vehicle,
+              staging, etc.). Stock transfers and receiving under Inventory use these buckets.
+            </p>
+            <SettingsBranchesLocations
+              practiceId={Number(import.meta.env.VITE_PRACTICE_ID) || practiceId}
+              onMessage={(msg, kind) => {
+                if (kind === 'success') {
+                  setSuccess(msg);
+                  setError(null);
+                  window.setTimeout(() => setSuccess(null), 4000);
+                } else {
+                  setError(msg);
+                  setSuccess(null);
+                }
+              }}
+            />
+          </div>
+        )}
+
+        {activeTab === 'euthanasia-consent' && <SettingsEuthanasiaConsent />}
+
+        {activeTab === 'outside-hospitals' && <SettingsOutsideHospitals />}
+
+        {activeTab === 'practice-booking-goals' && (
+          <div className="settings-section">
+            <h2 className="settings-section-title">Practice booking goals</h2>
+            <p className="settings-section-description">
+              Total appointments the practice needs booked each day of the week. Used by Routing
+              Analytics. Employee revenue and point goals stay on each person under Staff → Staff.
+            </p>
+            <div className="settings-card">
+              {bookingsGoalsLoadError && (
+                <div className="settings-message settings-error-message">
+                  {bookingsGoalsLoadError}
+                  <button onClick={() => setBookingsGoalsLoadError(null)} className="settings-close">
+                    ×
+                  </button>
+                </div>
+              )}
+              {bookingsGoalsLoading ? (
+                <div className="settings-loading">
+                  <div className="settings-spinner"></div>
+                  <span>Loading bookings goals...</span>
+                </div>
+              ) : (
+                <>
+                  <div
+                    className="settings-form-group"
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))',
+                      gap: 12,
+                    }}
+                  >
+                    {dayNames.map((name, dow) => (
+                      <div key={dow}>
+                        <label className="settings-label">{name}</label>
+                        <input
+                          type="number"
+                          min={0}
+                          step={1}
+                          className="settings-input"
+                          value={bookingsGoalsByDow[dow] ?? ''}
+                          onChange={(e) => {
+                            const next = e.target.value === '' ? 0 : Number(e.target.value);
+                            setBookingsGoalsByDow((prev) => ({
+                              ...prev,
+                              [dow]: Number.isFinite(next) && next >= 0 ? next : 0,
+                            }));
+                          }}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={bookingsGoalsSaving}
+                    onClick={() => void handleSaveAppointmentBookingsGoals()}
+                  >
+                    {bookingsGoalsSaving ? 'Saving...' : 'Save booking goals'}
+                  </button>
+                </>
+              )}
+            </div>
           </div>
         )}
 
@@ -2158,533 +2429,449 @@ export default function Settings() {
           initialDate={overrideModalInitial.date}
         />
 
-        {/* Inventory Tab */}
-        {activeTab === 'inventory' && (
+        {/* Inventory settings */}
+        {activeTab === 'inventory-online-store' && (
           <div className="settings-section">
-            <h2 className="settings-section-title">Inventory Management</h2>
+            <h2 className="settings-section-title">Online store</h2>
             <p className="settings-section-description">
-              Search for inventory items, labs, and procedures to manage quantity price breaks.
+              When enabled, Online Store appears as a price target next to branches when editing
+              inventory prices. Per-SKU listing is still controlled on each item.
             </p>
 
-            <div className="settings-form-group">
-              <label className="settings-label">Search Items</label>
-              <div style={{ position: 'relative', marginBottom: '16px' }}>
-                <input
-                  type="text"
-                  className="settings-input"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Type to search for items..."
-                  style={{ width: '100%', maxWidth: '100%', paddingRight: searching ? '40px' : '12px' }}
-                />
-                {searching && (
-                  <div style={{ 
-                    position: 'absolute', 
-                    right: '12px', 
-                    top: '50%', 
-                    transform: 'translateY(-50%)',
-                    display: 'flex',
-                    alignItems: 'center'
-                  }}>
-                    <div className="settings-spinner" style={{ width: '16px', height: '16px', borderWidth: '2px' }}></div>
-                  </div>
-                )}
-              </div>
-              {searchQuery.trim() && (
-                <p className="settings-muted" style={{ fontSize: '12px', marginTop: '4px' }}>
-                  {searching ? 'Searching...' : searchResults.length > 0 ? `Found ${searchResults.length} result${searchResults.length === 1 ? '' : 's'}` : 'No results found'}
-                </p>
+            <div className="settings-card" style={{ marginBottom: 24 }}>
+              <h3 className="settings-card-title">Online store</h3>
+              <p className="settings-muted" style={{ marginBottom: 12, fontSize: 13 }}>
+                When Yes, Online Store appears as a price target next to branches when editing
+                inventory prices. Per-SKU listing is still controlled on each item.
+              </p>
+              {onlineStoreSettingLoading ? (
+                <p className="settings-muted">Loading…</p>
+              ) : (
+                <>
+                  <fieldset style={{ border: 'none', padding: 0, margin: '0 0 12px' }}>
+                    <legend className="settings-label" style={{ marginBottom: 8 }}>
+                      Online store implemented?
+                    </legend>
+                    <label
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        marginRight: 16,
+                        cursor: 'pointer',
+                        fontSize: 14,
+                      }}
+                    >
+                      <input
+                        type="radio"
+                        name="onlineStoreImplemented"
+                        checked={onlineStoreImplemented}
+                        onChange={() => setOnlineStoreImplemented(true)}
+                        disabled={onlineStoreSettingSaving}
+                      />
+                      Yes
+                    </label>
+                    <label
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        cursor: 'pointer',
+                        fontSize: 14,
+                      }}
+                    >
+                      <input
+                        type="radio"
+                        name="onlineStoreImplemented"
+                        checked={!onlineStoreImplemented}
+                        onChange={() => setOnlineStoreImplemented(false)}
+                        disabled={onlineStoreSettingSaving}
+                      />
+                      No
+                    </label>
+                  </fieldset>
+                  {onlineStoreImplemented && (
+                    <div
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
+                        gap: 12,
+                        marginBottom: 12,
+                      }}
+                    >
+                      <label className="settings-label">
+                        Default fill office
+                        <select
+                          className="settings-input"
+                          value={onlineStoreFulfillmentBranchId ?? ''}
+                          disabled={onlineStoreSettingSaving}
+                          onChange={(e) => {
+                            const v =
+                              e.target.value === '' ? null : Number(e.target.value);
+                            setOnlineStoreFulfillmentBranchId(
+                              v != null && Number.isFinite(v) ? v : null
+                            );
+                            setOnlineStoreFulfillmentLocationId(null);
+                          }}
+                        >
+                          <option value="">Select branch…</option>
+                          {onlineStoreBranches.map((b) => (
+                            <option key={b.id} value={b.id}>
+                              {b.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="settings-label">
+                        Fulfillment location
+                        <select
+                          className="settings-input"
+                          value={onlineStoreFulfillmentLocationId ?? ''}
+                          disabled={
+                            onlineStoreSettingSaving || onlineStoreFulfillmentBranchId == null
+                          }
+                          onChange={(e) => {
+                            const v =
+                              e.target.value === '' ? null : Number(e.target.value);
+                            setOnlineStoreFulfillmentLocationId(
+                              v != null && Number.isFinite(v) ? v : null
+                            );
+                          }}
+                        >
+                          <option value="">Select location…</option>
+                          {onlineStoreLocations.map((loc) => (
+                            <option key={loc.id} value={loc.id}>
+                              {loc.name}
+                              {loc.isDefault ? ' (default)' : ''}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <p
+                        className="settings-muted"
+                        style={{ gridColumn: '1 / -1', margin: 0, fontSize: 12 }}
+                      >
+                        Default office for mail-order fills. Online store orders also draw
+                        stock from here. Brunswick is the usual default.
+                      </p>
+                    </div>
+                  )}
+                  {onlineStoreSettingError && (
+                    <div className="settings-message settings-error-message" style={{ marginBottom: 8 }}>
+                      {onlineStoreSettingError}
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    className="btn primary"
+                    disabled={onlineStoreSettingSaving}
+                    onClick={() => void handleSaveOnlineStoreImplemented()}
+                  >
+                    {onlineStoreSettingSaving ? 'Saving…' : 'Save'}
+                  </button>
+                </>
               )}
             </div>
 
-            {searchResults.length > 0 && (
-              <div className="settings-card" style={{ marginBottom: '24px' }}>
-                <h3 className="settings-card-title">Search Results</h3>
-                <div className="settings-table-container">
-                  <table className="settings-table">
-                    <thead>
-                      <tr>
-                        <th>Type</th>
-                        <th>Name</th>
-                        <th>Code</th>
-                        <th>Price</th>
-                        <th>Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {searchResults.map((item, index) => {
-                        // Extract the correct item ID based on itemType
-                        const itemId = item.itemType === 'inventory' 
-                          ? item.inventoryItem?.id 
-                          : item.itemType === 'lab' 
-                          ? item.lab?.id 
-                          : item.procedure?.id;
-                        
-                        return (
-                          <tr key={`${item.itemType}-${itemId}-${index}`}>
-                            <td style={{ textTransform: 'capitalize' }}>{item.itemType}</td>
-                            <td>{item.name}</td>
-                            <td>{item.code || '—'}</td>
-                            <td>${Number(item.price).toFixed(2)}</td>
-                            <td>
-                              <button
-                                className="btn secondary"
-                                onClick={() => {
-                                  if (itemId) {
-                                    handleSelectItem(item.itemType, itemId);
-                                  } else {
-                                    setError('Item ID not found');
-                                  }
-                                }}
-                                disabled={loadingItem || !itemId}
-                              >
-                                View Details
-                              </button>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-
-            {!searching && searchQuery.trim() && searchResults.length === 0 && (
-              <div className="settings-card" style={{ marginBottom: '24px' }}>
-                <p className="settings-muted">No items found matching "{searchQuery}".</p>
-              </div>
-            )}
-
-            {loadingItem && !selectedItem && (
-              <div className="settings-loading">
-                <div className="settings-spinner"></div>
-                <span>Loading item details...</span>
-              </div>
-            )}
-
-            {/* Inventory Item Details Modal */}
-            {selectedItem && selectedItem.item && (
-              <div
-                role="dialog"
-                aria-modal="true"
-                onClick={() => {
-                  setSelectedItem(null);
-                  setEditingPriceBreak(null);
-                  setNewPriceBreak(null);
-                }}
-                style={{
-                  position: 'fixed',
-                  top: 0,
-                  left: 0,
-                  right: 0,
-                  bottom: 0,
-                  backgroundColor: 'rgba(0, 0, 0, 0.5)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  zIndex: 10000,
-                  padding: 16,
-                }}
-              >
-                <div
-                  className="settings-card"
-                  onClick={(e) => e.stopPropagation()}
-                  style={{
-                    width: 'min(900px, 90vw)',
-                    maxHeight: '90vh',
-                    overflow: 'auto',
-                    padding: '24px',
-                    borderRadius: '12px',
-                    background: '#fff',
-                    boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' }}>
-                    <h2 className="settings-card-title" style={{ margin: 0, fontSize: '24px' }}>
-                      {selectedItem.item.name}
-                    </h2>
-                    <button
-                      className="btn secondary"
-                      onClick={() => {
-                        setSelectedItem(null);
-                        setEditingPriceBreak(null);
-                        setNewPriceBreak(null);
-                        setError(null);
-                        setSuccess(null);
-                      }}
-                      style={{ fontSize: '14px', padding: '8px 16px' }}
-                    >
-                      × Close
-                    </button>
-                  </div>
-                  <p className="settings-card-subtitle">
-                    Type: <strong style={{ textTransform: 'capitalize' }}>{selectedItem.itemType}</strong>
-                    {' | '}
-                    Code: <strong>{selectedItem.item.code || 'N/A'}</strong>
-                    {' | '}
-                    Cost: <strong>${Number(selectedItem.item.cost || 0).toFixed(2)}</strong>
-                    {' | '}
-                    Price: <strong>${Number(selectedItem.item.price).toFixed(2)}</strong>
-                  </p>
-
-                  {/* Error/Success messages inside modal */}
-                  {error && (
-                    <div className="settings-message settings-error-message" style={{ marginBottom: '16px' }}>
-                      {error}
-                      <button onClick={() => setError(null)} className="settings-close">×</button>
-                    </div>
-                  )}
-
-                  {success && (
-                    <div className="settings-message settings-success-message" style={{ marginBottom: '16px' }}>
-                      {success}
-                      <button onClick={() => setSuccess(null)} className="settings-close">×</button>
-                    </div>
-                  )}
-
-                <div style={{ marginBottom: '24px' }}>
-                  <h4 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '12px' }}>
-                    Quantity Price Breaks
-                  </h4>
-                  {selectedItem.priceBreaks.length > 0 ? (
-                    <div className="settings-table-container">
-                      <table className="settings-table">
-                        <thead>
-                          <tr>
-                            <th>Low Qty</th>
-                            <th>High Qty</th>
-                            <th>Price</th>
-                            <th>Markup %</th>
-                            <th>Active</th>
-                            <th>Actions</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {selectedItem.priceBreaks
-                            .sort((a, b) => a.lowQuantity - b.lowQuantity)
-                            .map((priceBreak) => (
-                              <tr key={priceBreak.id}>
-                                {editingPriceBreak?.id === priceBreak.id ? (
-                                  <>
-                                    <td>
-                                      <input
-                                        type="number"
-                                        className="settings-input"
-                                        value={editingPriceBreak.lowQuantity}
-                                        onChange={(e) =>
-                                          setEditingPriceBreak({
-                                            ...editingPriceBreak,
-                                            lowQuantity: Number(e.target.value),
-                                          })
-                                        }
-                                        min="1"
-                                        style={{ width: '80px' }}
-                                      />
-                                    </td>
-                                    <td>
-                                      <input
-                                        type="number"
-                                        className="settings-input"
-                                        value={editingPriceBreak.highQuantity}
-                                        onChange={(e) =>
-                                          setEditingPriceBreak({
-                                            ...editingPriceBreak,
-                                            highQuantity: Number(e.target.value),
-                                          })
-                                        }
-                                        min="1"
-                                        style={{ width: '80px' }}
-                                      />
-                                    </td>
-                                    <td>
-                                      <input
-                                        type="number"
-                                        className="settings-input"
-                                        value={editingPriceBreak.price}
-                                        onChange={(e) => {
-                                          setEditingPriceBreak({
-                                            ...editingPriceBreak,
-                                            price: Number(e.target.value),
-                                          });
-                                        }}
-                                        min="0"
-                                        step="0.01"
-                                        style={{ width: '100px' }}
-                                      />
-                                    </td>
-                                    <td>
-                                      <input
-                                        type="number"
-                                        className="settings-input"
-                                        value={editingPriceBreak.markup ?? ''}
-                                        onChange={(e) => {
-                                          const markupValue = e.target.value === '' ? null : Number(e.target.value);
-                                          const updated = {
-                                            ...editingPriceBreak,
-                                            markup: markupValue,
-                                          };
-                                          // Auto-calculate price if markup is entered, using cost as base, rounded to nearest cent
-                                          if (markupValue !== null && selectedItem?.item?.cost) {
-                                            const baseCost = Number(selectedItem.item.cost);
-                                            if (!isNaN(baseCost) && !isNaN(markupValue)) {
-                                              updated.price = Math.round(baseCost * (1 + markupValue / 100) * 100) / 100;
-                                            }
-                                          }
-                                          setEditingPriceBreak(updated);
-                                        }}
-                                        step="0.1"
-                                        style={{ width: '100px' }}
-                                      />
-                                    </td>
-                                    <td>
-                                      <input
-                                        type="checkbox"
-                                        checked={editingPriceBreak.isActive}
-                                        onChange={(e) =>
-                                          setEditingPriceBreak({
-                                            ...editingPriceBreak,
-                                            isActive: e.target.checked,
-                                          })
-                                        }
-                                      />
-                                    </td>
-                                    <td>
-                                      <div className="settings-action-buttons">
-                                        <button
-                                          className="btn"
-                                          onClick={() => handleSavePriceBreak(priceBreak.id)}
-                                          disabled={saving}
-                                        >
-                                          {saving ? 'Saving...' : 'Save'}
-                                        </button>
-                                        <button
-                                          className="btn secondary"
-                                          onClick={() => setEditingPriceBreak(null)}
-                                          disabled={saving}
-                                        >
-                                          Cancel
-                                        </button>
-                                      </div>
-                                    </td>
-                                  </>
-                                ) : (
-                                  <>
-                                    <td>{priceBreak.lowQuantity}</td>
-                                    <td>{priceBreak.highQuantity === 999 ? '∞' : priceBreak.highQuantity}</td>
-                                    <td>${Number(priceBreak.price).toFixed(2)}</td>
-                                    <td>{priceBreak.markup ? `${Number(priceBreak.markup).toFixed(1)}%` : '—'}</td>
-                                    <td>{priceBreak.isActive ? 'Yes' : 'No'}</td>
-                                    <td>
-                                      <div className="settings-action-buttons">
-                                        <button
-                                          className="btn secondary"
-                                          onClick={() => setEditingPriceBreak(priceBreak)}
-                                        >
-                                          Edit
-                                        </button>
-                                        <button
-                                          className="btn secondary"
-                                          onClick={() => handleDeletePriceBreak(priceBreak.id)}
-                                          disabled={saving}
-                                        >
-                                          Delete
-                                        </button>
-                                      </div>
-                                    </td>
-                                  </>
-                                )}
-                              </tr>
-                            ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  ) : (
-                    <p className="settings-muted">No price breaks configured for this item.</p>
-                  )}
-                </div>
-
-                {!newPriceBreak && !editingPriceBreak && (
-                  <div className="settings-action-bar">
-                    <button
-                      className="btn"
-                      onClick={() => {
-                        setPriceManuallyEdited(false);
-                        setNewPriceBreak({
-                          price: '',
-                          markup: '',
-                          lowQuantity: '',
-                          highQuantity: '',
-                          isActive: true,
-                        });
-                      }}
-                    >
-                      Add Price Break
-                    </button>
-                  </div>
-                )}
-
-                {newPriceBreak && (
-                  <div className="settings-card" style={{ marginTop: '24px', background: '#f8fdfa' }}>
-                    <h4 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '16px' }}>
-                      New Price Break
-                    </h4>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
-                      <div>
-                        <label className="settings-label">Low Quantity</label>
-                        <input
-                          type="number"
-                          className="settings-input"
-                          value={newPriceBreak.lowQuantity}
-                          onChange={(e) =>
-                            setNewPriceBreak({
-                              ...newPriceBreak,
-                              lowQuantity: e.target.value,
-                            })
-                          }
-                          min="1"
-                          placeholder="1"
-                        />
-                      </div>
-                      <div>
-                        <label className="settings-label">High Quantity</label>
-                        <input
-                          type="number"
-                          className="settings-input"
-                          value={newPriceBreak.highQuantity}
-                          onChange={(e) =>
-                            setNewPriceBreak({
-                              ...newPriceBreak,
-                              highQuantity: e.target.value,
-                            })
-                          }
-                          min="1"
-                          placeholder="999"
-                        />
-                      </div>
-                      <div>
-                        <label className="settings-label">Price</label>
-                        <input
-                          type="number"
-                          className="settings-input"
-                          value={newPriceBreak.price}
-                          onChange={(e) => {
-                            setPriceManuallyEdited(true);
-                            setNewPriceBreak({
-                              ...newPriceBreak,
-                              price: e.target.value,
-                            });
-                          }}
-                          min="0"
-                          step="0.01"
-                          placeholder="0.00"
-                        />
-                      </div>
-                      <div>
-                        <label className="settings-label">Markup % (optional)</label>
-                        <input
-                          type="number"
-                          className="settings-input"
-                          value={newPriceBreak.markup}
-                          onChange={(e) => {
-                            const markupValue = e.target.value;
-                            setNewPriceBreak({
-                              ...newPriceBreak,
-                              markup: markupValue,
-                            });
-                            // Auto-calculate price if markup is entered and price hasn't been manually edited, using cost as base, rounded to nearest cent
-                            if (markupValue && selectedItem?.item?.cost && !priceManuallyEdited) {
-                              const baseCost = Number(selectedItem.item.cost);
-                              const markupPercent = Number(markupValue);
-                              if (!isNaN(baseCost) && !isNaN(markupPercent)) {
-                                const calculatedPrice = Math.round(baseCost * (1 + markupPercent / 100) * 100) / 100;
-                                setNewPriceBreak((prev) => ({
-                                  ...(prev || {
-                                    price: '',
-                                    markup: '',
-                                    lowQuantity: '',
-                                    highQuantity: '',
-                                    isActive: true,
-                                  }),
-                                  markup: markupValue,
-                                  price: calculatedPrice.toFixed(2),
-                                }));
-                              }
-                            }
-                          }}
-                          step="0.1"
-                          placeholder="Optional"
-                        />
-                      </div>
-                    </div>
-                    <div style={{ marginBottom: '16px' }}>
-                      <label className="settings-checkbox-item">
-                        <input
-                          type="checkbox"
-                          checked={newPriceBreak.isActive}
-                          onChange={(e) =>
-                            setNewPriceBreak({
-                              ...newPriceBreak,
-                              isActive: e.target.checked,
-                            })
-                          }
-                        />
-                        <span>Active</span>
-                      </label>
-                    </div>
-                    <div className="settings-action-bar">
-                      <button
-                        type="button"
-                        className="btn"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          if (saving) {
-                            return;
-                          }
-                          if (!newPriceBreak.price || !newPriceBreak.lowQuantity || !newPriceBreak.highQuantity) {
-                            setError('Please fill in all required fields (Price, Low Quantity, High Quantity)');
-                            return;
-                          }
-                          handleCreatePriceBreak();
-                        }}
-                        style={{ 
-                          cursor: (saving || !newPriceBreak.price || !newPriceBreak.lowQuantity || !newPriceBreak.highQuantity) ? 'not-allowed' : 'pointer',
-                          opacity: (saving || !newPriceBreak.price || !newPriceBreak.lowQuantity || !newPriceBreak.highQuantity) ? 0.5 : 1
-                        }}
-                      >
-                        {saving ? 'Creating...' : 'Create Price Break'}
-                      </button>
-                      <button
-                        type="button"
-                        className="btn secondary"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          setNewPriceBreak(null);
-                        }}
-                        disabled={saving}
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
+            <p className="settings-muted" style={{ marginTop: 8 }}>
+              To add or edit products, procedures, labs, and quantity price breaks, open{' '}
+              <a href="/schedule/inventory/items">Catalog</a>.
+            </p>
           </div>
         )}
 
-        {/* Employees directory (CRUD via POST /employees, upsert, DELETE) */}
+        {activeTab === 'inventory-refills' && (
+          <div className="settings-section">
+            <h2 className="settings-section-title">Refills</h2>
+            <p className="settings-section-description">
+              When enabled, refill charges still count for the practice but are not attributed to a
+              provider’s VSD. A catalog item can override this.
+            </p>
+
+            <div className="settings-card" style={{ marginBottom: 24 }}>
+              <h3 className="settings-card-title">Refills</h3>
+              <p className="settings-muted" style={{ marginBottom: 12, fontSize: 13 }}>
+                When Yes, refill charges still count for the practice but are not attributed to a
+                provider’s VSD. A catalog item can override this.
+              </p>
+              <fieldset style={{ border: 'none', padding: 0, margin: '0 0 12px' }}>
+                <legend className="settings-label" style={{ marginBottom: 8 }}>
+                  Exclude production when refilling?
+                </legend>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginRight: 16, cursor: 'pointer', fontSize: 14 }}>
+                  <input
+                    type="radio"
+                    name="excludeProductionWhenRefilling"
+                    checked={excludeProductionWhenRefilling}
+                    onChange={() => setExcludeProductionWhenRefilling(true)}
+                    disabled={refillProductionSaving}
+                  />
+                  Yes
+                </label>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 14 }}>
+                  <input
+                    type="radio"
+                    name="excludeProductionWhenRefilling"
+                    checked={!excludeProductionWhenRefilling}
+                    onChange={() => setExcludeProductionWhenRefilling(false)}
+                    disabled={refillProductionSaving}
+                  />
+                  No
+                </label>
+              </fieldset>
+              <button
+                type="button"
+                className="btn primary"
+                disabled={refillProductionSaving}
+                onClick={() => {
+                  setRefillProductionSaving(true);
+                  void updatePracticeSettings(REMINDERS_PRACTICE_ID, {
+                    [EXCLUDE_PRODUCTION_WHEN_REFILLING_KEY]: excludeProductionWhenRefilling
+                      ? 'true'
+                      : 'false',
+                  })
+                    .then(() => {
+                      setSuccess('Refill production setting saved');
+                      setTimeout(() => setSuccess(null), 3000);
+                    })
+                    .catch((err: { response?: { data?: { message?: string } }; message?: string }) => {
+                      setOnlineStoreSettingError(
+                        err?.response?.data?.message || err?.message || 'Failed to save',
+                      );
+                    })
+                    .finally(() => setRefillProductionSaving(false));
+                }}
+              >
+                {refillProductionSaving ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'inventory-mail-shipping' && (
+          <div className="settings-section">
+            <h2 className="settings-section-title">Mail shipping</h2>
+            <p className="settings-section-description">
+              Shipping and pick-up types for the mail queue and, when enabled, the online store.
+            </p>
+            <SettingsMailShippingTypes />
+          </div>
+        )}
+
+        {activeTab === 'inventory-sales-tax' && (
+          <div className="settings-section">
+            <h2 className="settings-section-title">Sales tax</h2>
+            <p className="settings-section-description">
+              Level 1 is your practice sales tax. Enable level 2 or 3 only if your practice uses
+              additional tax tiers — they appear on catalog item Sales Tax dropdowns.
+            </p>
+
+            <div className="settings-card" style={{ marginBottom: 24 }}>
+              <h3 className="settings-card-title">Sales tax</h3>
+              <p className="settings-muted" style={{ marginBottom: 12, fontSize: 13 }}>
+                Level 1 is your practice sales tax. Enable level 2 or 3 only if your practice uses
+                additional tax tiers — they appear on catalog item Sales Tax dropdowns.
+              </p>
+              {taxSettingsLoading ? (
+                <p className="settings-muted">Loading…</p>
+              ) : taxSettingsDraft ? (
+                <>
+                  <div
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+                      gap: 12,
+                      marginBottom: 12,
+                    }}
+                  >
+                    <label className="settings-label">
+                      Level 1 name
+                      <input
+                        className="settings-input"
+                        value={taxSettingsDraft.taxLevel1Name}
+                        disabled={taxSettingsSaving}
+                        onChange={(e) =>
+                          setTaxSettingsDraft((d) =>
+                            d ? { ...d, taxLevel1Name: e.target.value } : d
+                          )
+                        }
+                      />
+                    </label>
+                    <label className="settings-label">
+                      Level 1 rate (%)
+                      <input
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        className="settings-input"
+                        value={taxSettingsDraft.taxLevel1Rate}
+                        disabled={taxSettingsSaving}
+                        onChange={(e) =>
+                          setTaxSettingsDraft((d) =>
+                            d
+                              ? { ...d, taxLevel1Rate: Number(e.target.value) || 0 }
+                              : d
+                          )
+                        }
+                      />
+                    </label>
+                  </div>
+                  <label className="settings-checkbox-item" style={{ marginBottom: 12 }}>
+                    <input
+                      type="checkbox"
+                      checked={taxSettingsDraft.showTaxLevel2}
+                      disabled={taxSettingsSaving}
+                      onChange={(e) =>
+                        setTaxSettingsDraft((d) =>
+                          d ? { ...d, showTaxLevel2: e.target.checked } : d
+                        )
+                      }
+                    />
+                    <span>Show tax level 2</span>
+                  </label>
+                  {taxSettingsDraft.showTaxLevel2 && (
+                    <div
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+                        gap: 12,
+                        marginBottom: 12,
+                      }}
+                    >
+                      <label className="settings-label">
+                        Level 2 name
+                        <input
+                          className="settings-input"
+                          value={taxSettingsDraft.taxLevel2Name}
+                          disabled={taxSettingsSaving}
+                          onChange={(e) =>
+                            setTaxSettingsDraft((d) =>
+                              d ? { ...d, taxLevel2Name: e.target.value } : d
+                            )
+                          }
+                        />
+                      </label>
+                      <label className="settings-label">
+                        Level 2 rate (%)
+                        <input
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          className="settings-input"
+                          value={taxSettingsDraft.taxLevel2Rate}
+                          disabled={taxSettingsSaving}
+                          onChange={(e) =>
+                            setTaxSettingsDraft((d) =>
+                              d
+                                ? { ...d, taxLevel2Rate: Number(e.target.value) || 0 }
+                                : d
+                            )
+                          }
+                        />
+                      </label>
+                    </div>
+                  )}
+                  <label className="settings-checkbox-item" style={{ marginBottom: 12 }}>
+                    <input
+                      type="checkbox"
+                      checked={taxSettingsDraft.showTaxLevel3}
+                      disabled={taxSettingsSaving}
+                      onChange={(e) =>
+                        setTaxSettingsDraft((d) =>
+                          d ? { ...d, showTaxLevel3: e.target.checked } : d
+                        )
+                      }
+                    />
+                    <span>Show tax level 3</span>
+                  </label>
+                  {taxSettingsDraft.showTaxLevel3 && (
+                    <div
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+                        gap: 12,
+                        marginBottom: 12,
+                      }}
+                    >
+                      <label className="settings-label">
+                        Level 3 name
+                        <input
+                          className="settings-input"
+                          value={taxSettingsDraft.taxLevel3Name}
+                          disabled={taxSettingsSaving}
+                          onChange={(e) =>
+                            setTaxSettingsDraft((d) =>
+                              d ? { ...d, taxLevel3Name: e.target.value } : d
+                            )
+                          }
+                        />
+                      </label>
+                      <label className="settings-label">
+                        Level 3 rate (%)
+                        <input
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          className="settings-input"
+                          value={taxSettingsDraft.taxLevel3Rate}
+                          disabled={taxSettingsSaving}
+                          onChange={(e) =>
+                            setTaxSettingsDraft((d) =>
+                              d
+                                ? { ...d, taxLevel3Rate: Number(e.target.value) || 0 }
+                                : d
+                            )
+                          }
+                        />
+                      </label>
+                    </div>
+                  )}
+                  {taxSettingsError && (
+                    <div
+                      className="settings-message settings-error-message"
+                      style={{ marginBottom: 8 }}
+                    >
+                      {taxSettingsError}
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    className="btn primary"
+                    disabled={taxSettingsSaving}
+                    onClick={() => void handleSaveTaxSettings()}
+                  >
+                    {taxSettingsSaving ? 'Saving…' : 'Save sales tax'}
+                  </button>
+                </>
+              ) : (
+                <p className="settings-muted">
+                  {taxSettingsError || 'Could not load sales tax settings.'}
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'inventory-waste' && (
+          <div className="settings-section">
+            <h2 className="settings-section-title">Waste / disposal</h2>
+            <p className="settings-section-description">
+              Reasons, disposal methods, and waste alerts for Waste / Adjust.
+            </p>
+            <div style={{ marginBottom: 24 }}>
+              <WasteAdminPage />
+            </div>
+          </div>
+        )}
+
         {activeTab === 'employee-directory' && (
           <div className="settings-section">
-            <h2 className="settings-section-title">Employees</h2>
-            <p className="settings-section-description">
-              View staff, assign employee roles (for manual booking permissions), and edit VAYD-managed bios.
-              Click an employee name to edit roles, or use <strong>Edit bio</strong> for profile copy.
-            </p>
+            <h2 className="settings-section-title">Staff</h2>
             <SettingsEmployeeDirectory
+              section={employeeHubSection}
+              onSectionChange={(section) => goToEmployeeHub({ section })}
+              selectedEmployeeId={hubEmployeeId}
+              onSelectedEmployeeIdChange={(id) => goToEmployeeHub({ employeeId: id })}
               onMessage={(msg, kind) => {
                 if (kind === 'success') {
                   setSuccess(msg);
@@ -2695,6 +2882,199 @@ export default function Settings() {
                   setSuccess(null);
                 }
               }}
+              extra={
+                employeeHubSection === 'types' ? (
+                  selectedEmployee ? (
+                    <div className="settings-card">
+                      <div className="settings-appt-assign-head">
+                        <div>
+                          <h3 className="settings-card-title" style={{ marginBottom: 4 }}>
+                            Appointment types
+                          </h3>
+                          <p className="settings-card-subtitle" style={{ margin: 0 }}>
+                            Check the types they handle. Online is for the appointment request form.
+                          </p>
+                        </div>
+                        {activeAppointmentTypes.length > 0 ? (
+                          <div className="settings-checkbox-bulk-actions" style={{ margin: 0 }}>
+                            <button
+                              type="button"
+                              className="settings-checkbox-bulk-action"
+                              onClick={selectAllEmployeeAppointmentTypes}
+                            >
+                              Select all
+                            </button>
+                            <span className="settings-checkbox-bulk-sep" aria-hidden>
+                              ·
+                            </span>
+                            <button
+                              type="button"
+                              className="settings-checkbox-bulk-action"
+                              onClick={unselectAllEmployeeAppointmentTypes}
+                            >
+                              Unselect all
+                            </button>
+                          </div>
+                        ) : null}
+                      </div>
+                      <div className="settings-appt-assign-wrap">
+                        <table className="settings-appt-assign-table">
+                          <thead>
+                            <tr>
+                              <th>Type</th>
+                              <th>Handles</th>
+                              <th>Online</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {activeAppointmentTypes.map((type) => {
+                              const assigned = isEmployeeAppointmentTypeAssigned(type.id);
+                              const allowOnline =
+                                employeeApptTypeAssignments.find((a) => a.appointmentTypeId === type.id)
+                                  ?.allowOnlineBooking === true;
+                              return (
+                                <tr key={type.id} className={assigned ? 'is-on' : 'is-off'}>
+                                  <td>{type.name}</td>
+                                  <td>
+                                    <input
+                                      type="checkbox"
+                                      checked={assigned}
+                                      aria-label={`Handle ${type.name}`}
+                                      onChange={() => toggleAppointmentTypeSelection(type.id)}
+                                    />
+                                  </td>
+                                  <td>
+                                    <input
+                                      type="checkbox"
+                                      checked={assigned && allowOnline}
+                                      disabled={!assigned}
+                                      aria-label={`Allow online booking for ${type.name}`}
+                                      onChange={(e) =>
+                                        toggleEmployeeAppointmentTypeOnlineBooking(
+                                          type.id,
+                                          e.target.checked
+                                        )
+                                      }
+                                    />
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                      <div className="settings-action-bar">
+                        <button className="btn" onClick={handleSaveEmployeeAppointmentTypes} disabled={saving}>
+                          {saving ? 'Saving...' : 'Save appointment types'}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="settings-muted">Select an employee.</p>
+                  )
+                ) : employeeHubSection === 'schedule' ? (
+                  selectedEmployeeForSchedule ? (
+                    <SettingsEmployeeSchedulePanel
+                      employee={selectedEmployeeForSchedule}
+                      scheduleUpdates={scheduleUpdates}
+                      dayNames={dayNames}
+                      zones={allZones}
+                      saving={saving}
+                      onOpenOverrides={handleOpenOverrideCalendar}
+                      onSave={() => void handleSaveEmployeeSchedule()}
+                      onUpdateField={updateScheduleField}
+                      onUpdateDepot={updateScheduleDepot}
+                      resolveDepotCoords={resolveDepotCoords}
+                    />
+                  ) : (
+                    <p className="settings-muted">Select an employee.</p>
+                  )
+                ) : employeeHubSection === 'goals' ? (
+                  <div>
+                    {selectedEmployeeForGoals && !goalsLoading ? (
+                      <div className="settings-card">
+                        <h3 className="settings-card-title">Employee goals</h3>
+                        <div
+                          className="settings-form-group"
+                          style={{
+                            display: 'grid',
+                            gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))',
+                            gap: 12,
+                          }}
+                        >
+                          <div>
+                            <label className="settings-label">Daily revenue</label>
+                            <input
+                              type="number"
+                              className="settings-input"
+                              value={goalsForm.dailyRevenueGoal ?? ''}
+                              onChange={(e) =>
+                                setGoalsForm((f) => ({
+                                  ...f,
+                                  dailyRevenueGoal: e.target.value === '' ? undefined : Number(e.target.value),
+                                }))
+                              }
+                            />
+                          </div>
+                          <div>
+                            <label className="settings-label">Daily points</label>
+                            <input
+                              type="number"
+                              className="settings-input"
+                              value={goalsForm.dailyPointGoal ?? ''}
+                              onChange={(e) =>
+                                setGoalsForm((f) => ({
+                                  ...f,
+                                  dailyPointGoal: e.target.value === '' ? undefined : Number(e.target.value),
+                                }))
+                              }
+                            />
+                          </div>
+                        </div>
+                        <button className="btn" disabled={goalsSaving} onClick={() => void handleSaveEmployeeGoals()}>
+                          {goalsSaving ? 'Saving...' : 'Save employee goals'}
+                        </button>
+                      </div>
+                    ) : (
+                      <p className="settings-muted">
+                        {goalsLoading ? 'Loading goals…' : 'Select an employee.'}
+                      </p>
+                    )}
+                  </div>
+                ) : employeeHubSection === 'photo' && hubEmployeeId != null ? (
+                  <div className="settings-card">
+                    <h3 className="settings-card-title">Photo</h3>
+                    <div className="settings-employee-image-row">
+                      <div className="settings-employee-image-preview">
+                        <img
+                          src={`${apiBaseUrl}/employees/${hubEmployeeId}/image?t=${employeeImageVersion[hubEmployeeId] ?? 0}`}
+                          alt=""
+                          onError={(e) => {
+                            e.currentTarget.onerror = null;
+                            e.currentTarget.src = EMPLOYEE_IMAGE_PLACEHOLDER;
+                          }}
+                        />
+                      </div>
+                      <label className={`settings-file-label ${uploadingEmployeeId === hubEmployeeId ? 'uploading' : ''}`}>
+                        <input
+                          type="file"
+                          accept=".jpg,.jpeg,.png,.gif,.webp,image/jpeg,image/png,image/gif,image/webp"
+                          className="settings-file-input"
+                          disabled={uploadingEmployeeId === hubEmployeeId}
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) handleUploadEmployeeImage(hubEmployeeId, file);
+                            e.target.value = '';
+                          }}
+                        />
+                        <span className="btn secondary">
+                          {uploadingEmployeeId === hubEmployeeId ? 'Uploading…' : 'Change image'}
+                        </span>
+                      </label>
+                    </div>
+                  </div>
+                ) : null
+              }
             />
           </div>
         )}
@@ -3113,6 +3493,45 @@ export default function Settings() {
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {activeTab === 'payment-types' && (
+          <div className="settings-section">
+            <SettingsPaymentTypes
+              onMessage={(msg, kind) => {
+                if (kind === 'error') setError(msg);
+                else setSuccess(msg);
+              }}
+            />
+            <SettingsDepositBankAccounts
+              onMessage={(msg, kind) => {
+                if (kind === 'error') setError(msg);
+                else setSuccess(msg);
+              }}
+            />
+          </div>
+        )}
+
+        {activeTab === 'client-statuses' && (
+          <div className="settings-section">
+            <SettingsClientStatuses
+              onMessage={(msg, kind) => {
+                if (kind === 'error') setError(msg);
+                else setSuccess(msg);
+              }}
+            />
+          </div>
+        )}
+
+        {activeTab === 'message-templates' && (
+          <div className="settings-section">
+            <SettingsMessageTemplates
+              onMessage={(msg, kind) => {
+                if (kind === 'error') setError(msg);
+                else setSuccess(msg);
+              }}
+            />
           </div>
         )}
       </div>

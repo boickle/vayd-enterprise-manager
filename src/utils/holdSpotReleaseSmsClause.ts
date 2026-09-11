@@ -1,6 +1,8 @@
 import { DateTime } from 'luxon';
 import { formatForwardBookingSmsDateLabel } from './forwardBookingSmsMessage';
 import { businessDaysBetween } from './holdsHousehold';
+import { applySystemTemplateIfCustom } from './messageTemplateCache';
+import { withClinicDefaults } from './messageTemplateFields';
 
 export type HoldSpotReleaseSmsOpts = {
   practiceTz: string;
@@ -122,7 +124,11 @@ export function buildHoldSpotReleaseClause(opts: HoldSpotReleaseSmsOpts): string
   const deadline = computeHoldSpotReleaseDeadline(opts);
   if (!deadline?.isValid) return null;
   const label = formatHoldSpotReleaseDeadline(deadline, opts.practiceTz);
-  return `${HOLD_RELEASE_CLAUSE_PREFIX} ${label}. ${HOLD_RELEASE_CLAUSE_SUFFIX}`;
+  return applySystemTemplateIfCustom(
+    'hold_release_clause',
+    withClinicDefaults({ hold_deadline: label }),
+    `${HOLD_RELEASE_CLAUSE_PREFIX} ${label}. ${HOLD_RELEASE_CLAUSE_SUFFIX}`,
+  );
 }
 
 export function appendHoldSpotReleaseClause(

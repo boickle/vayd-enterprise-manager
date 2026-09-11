@@ -12,15 +12,34 @@ export type ClientMessagesLineGroup = {
   latestAt: string;
 };
 
+function clientPhonesFrom(input: string | readonly string[] | null | undefined): string[] {
+  if (input == null) return [];
+  const parts = typeof input === 'string' ? [input] : [...input];
+  return parts
+    .flatMap((p) => p.split(/[,;]/))
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function isOutgoingMessage(message: Message): boolean {
+  const dir = String(message.direction ?? '').toLowerCase();
+  return dir === 'outgoing' || dir === 'outbound';
+}
+
 /** The practice OpenPhone / Quo line a message was sent on or received by. */
-export function practiceLineOnMessage(message: Message, clientPhone: string): string {
-  if (message.direction === 'outgoing') {
+export function practiceLineOnMessage(
+  message: Message,
+  clientPhone: string | readonly string[],
+): string {
+  const clientPhones = clientPhonesFrom(clientPhone);
+  const isClient = (phone: string) => clientPhones.some((c) => phonesMatchForQuo(phone, c));
+  if (isOutgoingMessage(message)) {
     return message.from?.trim() || 'unknown';
   }
   const toList = Array.isArray(message.to) ? message.to : message.to ? [message.to] : [];
   for (const to of toList) {
     const trimmed = to?.trim();
-    if (trimmed && !phonesMatchForQuo(trimmed, clientPhone)) return trimmed;
+    if (trimmed && !isClient(trimmed)) return trimmed;
   }
   for (const to of toList) {
     const trimmed = to?.trim();
@@ -33,9 +52,16 @@ export function lineKeyForPhone(phone: string): string {
   return phoneToQuoDialDigits(phone) ?? phone.trim();
 }
 
+/** True when this Quo message was sent to or received from the given client number. */
+export function messageTouchesClientPhone(message: Message, clientPhone: string): boolean {
+  if (phonesMatchForQuo(message.from, clientPhone)) return true;
+  const toList = Array.isArray(message.to) ? message.to : message.to ? [message.to] : [];
+  return toList.some((to) => phonesMatchForQuo(to, clientPhone));
+}
+
 export function groupClientMessagesByLine(
   messages: Message[],
-  clientPhone: string,
+  clientPhone: string | readonly string[],
   perLineLimit = CLIENT_MESSAGES_PER_LINE,
 ): ClientMessagesLineGroup[] {
   const byKey = new Map<string, { linePhone: string; messages: Message[] }>();
