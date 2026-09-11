@@ -19,6 +19,9 @@ export type Client = {
   isDeleted: boolean;
   pimsId?: string | null;
   pimsType?: string;
+  /** When API marks the household as new-to-practice (calendar card marker). */
+  isNewClient?: boolean;
+  isNewClientAtBooking?: boolean;
   firstName: string;
   lastName: string;
   secondFirstName?: string | null;
@@ -148,6 +151,9 @@ export type Patient = {
   isDeleted: boolean;
   pimsId?: string | null;
   pimsType?: string;
+  /** When API marks the pet as new-to-practice at booking (calendar card marker). */
+  isNewPatient?: boolean;
+  isNewPatientAtBooking?: boolean;
   name: string;
   species?: string | null;
   breed?: string | null;
@@ -328,6 +334,14 @@ export type Appointment = {
   alternateAddress?: { addressText: string } | null;
   /** End Visit follow-up choice — draft until visit is ended (see PATCH …/forward-booking-disposition). */
   forwardBookingDisposition?: import('./forwardBookingDisposition').ForwardBookingDisposition | null;
+  /**
+   * When true, Practice calendar cards show the new-patient/client marker
+   * (dark border + horizontal hatch over type color). Prefer API snapshot-at-booking.
+   */
+  isNewPatientAtBooking?: boolean;
+  isNewClientAtBooking?: boolean;
+  isNewPatient?: boolean;
+  isNewClient?: boolean;
 };
 
 export type DeclinedInventoryItem = {

@@ -37,6 +37,14 @@ import {
   computeMembershipAgeYearsForRoomLoaderRow,
   parseAgeStringToYears,
 } from '../utils/membershipAge';
+import { fetchClientChatHoursOfOperation } from '../api/chatHoursOfOperation';
+import {
+  buildMembershipAgreementText,
+  defaultChatHoursOfOperation,
+  formatChatHoursLegalSummary,
+  formatSupportAvailabilityIntro,
+  type ChatHoursOfOperation,
+} from '../utils/chatHours';
 
  type MembershipPlan = {
   id: string;
@@ -142,44 +150,6 @@ const ADD_ON_PRICING: Record<string, { label: string; monthly: number; annual?: 
     annual: 309,
   },
 };
-
-const MEMBERSHIP_AGREEMENT_TEXT = [
-  'Vet At Your Door Membership Agreement',
-  'By enrolling your pet in a Vet At Your Door Membership Plan, you agree to the following terms and conditions.',
-  'Membership Plans',
-  'Foundations: Includes one annual wellness exam and trip fee, recommended annual vaccines based on age and lifestyle, annual lab work, priority scheduling, priority 7-day support from VAYD staff, fifty percent (50%) off the exam fee on additional visits beyond those included in the plan. This discount applies to the exam only; trip fees are not discounted, and the discount does not apply to end-of-life (euthanasia) visits. Member pricing (10% off) in our online store. A store discount code is issued after sign-up. Requires a twelve (12) month commitment.',
-  'Golden: Includes two wellness exams with trip fees, recommended annual vaccines based on age and lifestyle, annual advanced lab work, priority scheduling, priority 7-day support from VAYD staff, fifty percent (50%) off the exam fee on additional visits beyond those included in the plan. This discount applies to the exam only; trip fees are not discounted, and the discount does not apply to end-of-life (euthanasia) visits. Member pricing (10% off) in our online store. A store discount code is issued after sign-up. Requires a twelve (12) month commitment.',
-  'Puppy / Kitten Add-On: Covers booster vaccine appointments during your pet\'s first year, including the required doctor and technician visits with trip fees that are specifically tied to administering recommended booster vaccines.',
-  'Priority 7-Day Support',
-  'Members may access priority support from VAYD staff seven days a week during the following times: Monday through Friday from 8:00am to 5:00pm, and Saturday through Sunday from 8:00 am to 4:00 pm. VAYD will review your pet\'s history and may consult a veterinarian if needed. No house-call visits are made after hours. If urgent care is recommended, we will direct you to an appropriate emergency facility. This service is unavailable on holidays observed by Vet At Your Door. Hours may change with thirty (30) days of notice.',
-  'VCPR Requirements and Limitations for New or Lapsed Patients',
-  'A valid Veterinarian-Client-Patient Relationship (VCPR) requires an in-person exam within the past 365 days. If more than twelve (12) months have passed since your pet\'s most recent in-person exam with us, the VCPR is considered expired.',
-  'For pets we have not yet seen, or for pets whose VCPR has lapsed, the following services cannot be provided until a current VCPR is re-established through an in-person exam:',
-  'Priority 7-day support',
-  'Medical advice, triage guidance, or care recommendations from your One Team',
-  'Prescription medications or refills of any kind',
-  'Once the initial or renewal exam is completed, all membership benefits become fully active.',
-  'Memberships do not automatically cancel when the VCPR expires. It is the client\'s responsibility to ensure their pet remains current.',
-  'Membership Rules',
-  'Benefits apply only to the enrolled pet and cannot be shared or transferred, including to another pet in the same household. Misuse may result in cancellation and repayment of any discounts received.',
-  'Memberships bill monthly or annually, renew automatically, and may transition from Foundations to Golden when your pet reaches eight (8) years of age for dogs and cats. We will email you twenty (20) to thirty (30) days before renewal with a recommendation. You may change your selection or cancel at that time.',
-  'Foundations, Golden, and Puppy / Kitten plans require a twelve (12) month term. Annual billing saves ten percent (10%) compared with paying monthly.',
-  'If your pet passes away or moves, the value of used services will be deducted from the payments you have made. If the value of services used exceeds payments made, the remaining balance will be due before the plan is closed. No partial refunds are issued. Re-enrollment requires a new registration fee if charged.',
-  'If the client moves, any refund will be issued only after we receive both a record request from a veterinary hospital outside our service area and a copy of the client\'s new lease or mortgage agreement.',
-  'A one-time registration fee, if charged, supports our Angel Fund for pets in need.',
-  'Plan Change and Upgrade Limitations',
-  'Membership plans, including the Puppy / Kitten Add-On, must be selected at the time of initial enrollment and cannot be added or upgraded mid-term. No other plan upgrades, downgrades, or add-ons may be added after enrollment.',
-  'Scheduling and Availability',
-  'Visits should be scheduled in advance for best availability. Specific appointment times cannot be guaranteed. Services are available only within our service area and during our regular appointment hours. Members receive priority scheduling, including reserve appointment slots held for members.',
-  'We will make every reasonable effort for your pet\'s care to be provided by your dedicated One Team, especially for wellness visits and planned follow-up care. In situations where schedule constraints, urgent needs, staffing limitations, or routing requirements prevent your One Team from being available, another Vet At Your Door team may provide care to ensure your pet is seen in a timely manner.',
-  'If we are unable to accommodate an urgent case or a requested appointment time, we may refer you to another facility or veterinary team. No refund, credit, or other remuneration will be provided as a result of such a referral.',
-  'Access and Technology Requirements',
-  'Internet access and a compatible device are required for virtual support and use of our online store. Instructions and your member store discount code will be provided in the Welcome Email.',
-  'Client Conduct',
-  'We strive to provide compassionate and high-quality care and expect respectful communication in return. Disrespectful behavior may result in termination of membership without refund.',
-  'Membership Scope',
-  'Membership supports proactive and routine care. Membership does not guarantee emergency availability.',
-].join('\n\n');
 
 function formatMoney(amount?: number | null, fractionDigits = 0): string {
   if (amount == null) return '—';
@@ -521,6 +491,35 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
   const [formattedPlansLoading, setFormattedPlansLoading] = useState(true);
   const [formattedPlansError, setFormattedPlansError] = useState<string | null>(null);
   const [clientPetCount, setClientPetCount] = useState<number | null>(null);
+  const [chatHours, setChatHours] = useState<ChatHoursOfOperation>(defaultChatHoursOfOperation());
+
+  const membershipAgreementText = useMemo(
+    () => buildMembershipAgreementText(chatHours),
+    [chatHours],
+  );
+  const supportAvailabilityIntro = useMemo(
+    () => formatSupportAvailabilityIntro(chatHours),
+    [chatHours],
+  );
+  const supportHoursSummary = useMemo(
+    () => formatChatHoursLegalSummary(chatHours),
+    [chatHours],
+  );
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const hours = await fetchClientChatHoursOfOperation();
+        if (alive) setChatHours(hours);
+      } catch {
+        // keep defaults
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (paymentProvider !== 'stripe' || !membershipPromoToken) {
@@ -1263,7 +1262,7 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
 
     const membershipTransaction: MembershipTransactionPayload = {
       agreementSignedAt,
-      agreementText: MEMBERSHIP_AGREEMENT_TEXT,
+      agreementText: membershipAgreementText,
       plansSelected: [
         {
           planId: subscriptionPlanId,
@@ -2600,6 +2599,8 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
           agreementSignature={agreementSignature}
           setAgreementSignature={setAgreementSignature}
           brand={brand}
+          supportAvailabilityIntro={supportAvailabilityIntro}
+          supportHoursSummary={supportHoursSummary}
         />
       )}
 
@@ -2737,12 +2738,16 @@ function AgreementSection({
   agreementSignature,
   setAgreementSignature,
   brand: _brand,
+  supportAvailabilityIntro,
+  supportHoursSummary,
 }: {
   agreementAccepted: boolean;
   setAgreementAccepted: (val: boolean) => void;
   agreementSignature: string;
   setAgreementSignature: (val: string) => void;
   brand: string;
+  supportAvailabilityIntro: string;
+  supportHoursSummary: string;
 }) {
   return (
     <section className="cp-section" style={{ marginTop: 16 }}>
@@ -2769,8 +2774,8 @@ function AgreementSection({
           <p><em>Puppy / Kitten Add-On</em></p>
           <p style={{ marginLeft: '16px' }}>Covers booster vaccine appointments during your pet&apos;s first year, including the required doctor and technician visits with trip fees that are specifically tied to administering recommended booster vaccines.</p>
           <p><strong>Priority 7-Day Support</strong></p>
-          <p>Members may access priority support from VAYD staff seven days a week during the following times:</p>
-          <p style={{ marginLeft: '16px' }}>Monday through Friday from 8:00am to 5:00pm, and Saturday through Sunday from 8:00 am to 4:00 pm. VAYD will review your pet&apos;s history and may consult a veterinarian if needed. No house-call visits are made after hours. If urgent care is recommended, we will direct you to an appropriate emergency facility. This service is unavailable on holidays observed by Vet At Your Door. Hours may change with thirty (30) days of notice.</p>
+          <p>Members may access priority support from VAYD staff {supportAvailabilityIntro}</p>
+          <p style={{ marginLeft: '16px' }}>{supportHoursSummary}. VAYD will review your pet&apos;s history and may consult a veterinarian if needed. No house-call visits are made after hours. If urgent care is recommended, we will direct you to an appropriate emergency facility. This service is unavailable on holidays observed by Vet At Your Door. Hours may change with thirty (30) days of notice.</p>
           <p><strong>VCPR Requirements and Limitations for New or Lapsed Patients</strong></p>
           <p>A valid Veterinarian-Client-Patient Relationship (VCPR) requires an in-person exam within the past 365 days. If more than twelve (12) months have passed since your pet&apos;s most recent in-person exam with us, the VCPR is considered expired.</p>
           <p>For pets we have not yet seen, or for pets whose VCPR has lapsed, the following services cannot be provided until a current VCPR is re-established through an in-person exam:</p>

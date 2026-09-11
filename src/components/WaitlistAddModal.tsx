@@ -13,6 +13,7 @@ import {
 } from '../api/waitlist';
 import { clientsForPatientSearchRow, primaryClientLabelForPatientRow } from '../utils/pimsPatientSearchRow';
 import { WAITLIST_WINDOW_OPTIONS } from '../utils/waitlistMatch';
+import type { WaitlistAddPrefill } from '../utils/waitlistAddPrefillFromAppointment';
 
 const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
 
@@ -20,6 +21,8 @@ type Props = {
   practiceId?: number;
   onClose: () => void;
   onCreated: (entry: WaitlistEntry) => void;
+  /** When set (e.g. schedule right-click), skip search and prefill client / pets / type / doctor. */
+  prefill?: WaitlistAddPrefill | null;
 };
 
 type PetPick = { id: number; name: string };
@@ -50,24 +53,38 @@ function errMsg(e: unknown): string {
   return 'Could not add to waitlist.';
 }
 
-export function WaitlistAddModal({ practiceId = PRACTICE_ID, onClose, onCreated }: Props) {
-  const [query, setQuery] = useState('');
+export function WaitlistAddModal({
+  practiceId = PRACTICE_ID,
+  onClose,
+  onCreated,
+  prefill = null,
+}: Props) {
+  const [query, setQuery] = useState(prefill?.clientLabel ?? '');
   const [searching, setSearching] = useState(false);
   const [clientHits, setClientHits] = useState<ClientSearchRow[]>([]);
   const [patientHits, setPatientHits] = useState<PatientSearchRow[]>([]);
   const [open, setOpen] = useState(false);
   const seq = useRef(0);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const prefillApplied = useRef(false);
 
-  const [selectedClient, setSelectedClient] = useState<{ id: number; label: string } | null>(null);
+  const [selectedClient, setSelectedClient] = useState<{ id: number; label: string } | null>(
+    prefill
+      ? { id: prefill.clientId, label: prefill.clientLabel }
+      : null,
+  );
   const [pets, setPets] = useState<PetPick[]>([]);
   const [selectedPetIds, setSelectedPetIds] = useState<Set<number>>(new Set());
   const [petsLoading, setPetsLoading] = useState(false);
 
   const [types, setTypes] = useState<AppointmentType[]>([]);
-  const [appointmentTypeId, setAppointmentTypeId] = useState('');
+  const [appointmentTypeId, setAppointmentTypeId] = useState(
+    prefill?.appointmentTypeId != null ? String(prefill.appointmentTypeId) : '',
+  );
   const [providers, setProviders] = useState<Provider[]>([]);
-  const [preferredProviderId, setPreferredProviderId] = useState('');
+  const [preferredProviderId, setPreferredProviderId] = useState(
+    prefill?.preferredProviderId != null ? String(prefill.preferredProviderId) : '',
+  );
   const [preferredWindow, setPreferredWindow] = useState<WaitlistPreferredWindow>('asap');
   const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState(false);
@@ -87,10 +104,42 @@ export function WaitlistAddModal({ practiceId = PRACTICE_ID, onClose, onCreated 
   }, [practiceId]);
 
   useEffect(() => {
+    if (!prefill || prefillApplied.current) return;
+    prefillApplied.current = true;
+    void (async () => {
+      setPetsLoading(true);
+      try {
+        const payload = await fetchClientByIdStaff(prefill.clientId);
+        const next: PetPick[] = extractActivePatientsFromClientStaffRecord(payload)
+          .map((row) => {
+            const id = Number(row.id);
+            if (!Number.isFinite(id) || id <= 0) return null;
+            return { id, name: row.name?.trim() || `Patient ${id}` };
+          })
+          .filter((p): p is PetPick => p != null);
+        setPets(next);
+        if (prefill.patientIds.length > 0) {
+          const visitIds = new Set(prefill.patientIds);
+          const fromVisit = next.filter((p) => visitIds.has(p.id)).map((p) => p.id);
+          setSelectedPetIds(new Set(fromVisit.length > 0 ? fromVisit : next.map((p) => p.id)));
+        } else {
+          setSelectedPetIds(new Set(next.map((p) => p.id)));
+        }
+      } catch {
+        setPets([]);
+        setSelectedPetIds(new Set(prefill.patientIds));
+      } finally {
+        setPetsLoading(false);
+      }
+    })();
+  }, [prefill]);
+
+  useEffect(() => {
     const q = query.trim();
-    if (q.length < 2) {
+    if (selectedClient || q.length < 2) {
       setClientHits([]);
       setPatientHits([]);
+      if (!selectedClient) setSearching(false);
       return;
     }
     const n = ++seq.current;
@@ -108,7 +157,7 @@ export function WaitlistAddModal({ practiceId = PRACTICE_ID, onClose, onCreated 
       });
     }, 250);
     return () => window.clearTimeout(t);
-  }, [query, practiceId]);
+  }, [query, practiceId, selectedClient]);
 
   useEffect(() => {
     function onDoc(e: MouseEvent) {
@@ -222,8 +271,9 @@ export function WaitlistAddModal({ practiceId = PRACTICE_ID, onClose, onCreated 
       <div className="waitlist-modal" onClick={(e) => e.stopPropagation()}>
         <h3 id="waitlist-add-title">Add to waitlist</h3>
         <p className="settings-muted" style={{ marginTop: 0 }}>
-          Use when the schedule is full. CLs can recommend a slot and text the household when a
-          cancellation opens.
+          {prefill
+            ? 'Client and pets are filled from the schedule visit. Choose how soon they can come in, then save.'
+            : 'Use when the schedule is full. CLs can recommend a slot and text the household when a cancellation opens.'}
         </p>
 
         <label className="waitlist-field">

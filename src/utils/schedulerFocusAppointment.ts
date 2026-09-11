@@ -82,6 +82,41 @@ export function buildSchedulerFocusAppointmentUrl(
   return `/schedule/scheduler?${params.toString()}`;
 }
 
+/** Practice-local date + provider hints for deep-linking from a PIMS appointment row. */
+export function schedulerFocusHintsFromAppointment(
+  appt: Appointment,
+  practiceTz: string,
+): { appointmentId: number; date: string | null; providerId: string | undefined } | null {
+  const appointmentId = Number(appt.id);
+  if (!Number.isFinite(appointmentId) || appointmentId <= 0) return null;
+  const date = appointmentPracticeDateKey(appt.appointmentStart, practiceTz);
+  const providerId =
+    appt.primaryProvider?.id != null ? String(appt.primaryProvider.id) : undefined;
+  return { appointmentId, date, providerId };
+}
+
+/** Write focus session + navigate to `/schedule/scheduler?focusAppt=…` for this visit. */
+export function navigateToSchedulerFocusedAppointment(
+  navigate: NavigateFunction,
+  appt: Appointment,
+  practiceTz: string,
+): boolean {
+  const hints = schedulerFocusHintsFromAppointment(appt, practiceTz);
+  if (!hints) return false;
+  writeSchedulerFocusSession({
+    appointmentId: hints.appointmentId,
+    dateHint: hints.date,
+    providerHint: hints.providerId ?? null,
+  });
+  navigate(
+    buildSchedulerFocusAppointmentUrl(hints.appointmentId, {
+      date: hints.date ?? undefined,
+      providerId: hints.providerId,
+    }),
+  );
+  return true;
+}
+
 export function writeSchedulerFocusSession(request: SchedulerFocusRequest): void {
   if (typeof sessionStorage === 'undefined') return;
   if (!Number.isFinite(request.appointmentId) || request.appointmentId <= 0) return;

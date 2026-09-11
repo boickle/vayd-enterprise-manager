@@ -22,6 +22,7 @@ export type SchedulerContextMenuAction =
   | { kind: 'addPet' }
   | { kind: 'reschedule' }
   | { kind: 'exploreAlternatives' }
+  | { kind: 'addToWaitlist' }
   | { kind: 'view' }
   | { kind: 'edit' }
   | { kind: 'visitTimes' }
@@ -56,6 +57,8 @@ type Props = {
   addPetTitle?: string;
   rescheduleDisabled?: boolean;
   rescheduleDisabledTitle?: string;
+  addToWaitlistDisabled?: boolean;
+  addToWaitlistDisabledTitle?: string;
   removeDisabled?: boolean;
   removeTitle?: string;
   /** Patient visit — shows Visit Prep submenu (Room Loader, consent, records). */
@@ -92,6 +95,8 @@ export function SchedulerAppointmentContextMenu({
   addPetTitle,
   rescheduleDisabled,
   rescheduleDisabledTitle,
+  addToWaitlistDisabled,
+  addToWaitlistDisabledTitle,
   removeDisabled,
   removeTitle,
   showSendForms,
@@ -204,6 +209,16 @@ export function SchedulerAppointmentContextMenu({
               : 'Keep this appointment and search for other options.'
           }
           onPick={() => onAction({ kind: 'exploreAlternatives' })}
+        />
+        <CtxSubRow
+          label="Add to waitlist"
+          disabled={Boolean(addToWaitlistDisabled)}
+          title={
+            addToWaitlistDisabled
+              ? addToWaitlistDisabledTitle
+              : 'Open waitlist add with this visit’s client and pets prefilled.'
+          }
+          onPick={() => onAction({ kind: 'addToWaitlist' })}
         />
         <CtxSubRow label="View appointment" onPick={() => onAction({ kind: 'view' })} />
         {showEditAppointment ? (
@@ -369,8 +384,8 @@ const CTX_FLYOUT_OVERLAP = 14;
 const CTX_FLYOUT_CLOSE_MS = 280;
 const CTX_FLYOUT_Z = 10051;
 const CTX_FLYOUT_EST_WIDTH = 240;
-/** Scheduling has grown (Explore alternatives, etc.) — underestimate left menus short and clipped at the viewport edge. */
-const CTX_FLYOUT_EST_HEIGHT = 280;
+/** Scheduling has grown (Explore alternatives, Add to waitlist, etc.) — underestimate left menus short and clipped at the viewport edge. */
+const CTX_FLYOUT_EST_HEIGHT = 300;
 
 function ctxFlyoutPlacementEqual(a: CtxFlyoutPlacement, b: CtxFlyoutPlacement): boolean {
   return (

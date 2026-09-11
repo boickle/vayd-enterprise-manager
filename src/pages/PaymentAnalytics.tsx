@@ -21,7 +21,6 @@ import IconButton from '@mui/material/IconButton';
 import { LocalizationProvider, DatePicker } from '@mui/x-date-pickers';
 import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
 import dayjs, { Dayjs } from 'dayjs';
-import utc from 'dayjs/plugin/utc';
 import {
   ResponsiveContainer,
   LineChart,
@@ -39,8 +38,10 @@ import {
   fetchSquarePayments,
   fetchStripeRevenue,
   filterSquarePaymentsForDay,
+  membershipRevenueForPoint,
   sumCreditCardPaymentsForDay,
   sumSquarePayments,
+  totalCollectionsForPoint,
   type PaymentPoint,
   type PaymentsLeaderboardEntry,
   type PaymentsLeaderboards,
@@ -48,8 +49,6 @@ import {
 import DayPaymentsListModal from '../components/DayPaymentsListModal';
 import SquareDayReconciliationModal from '../components/SquareDayReconciliationModal';
 import TodaysPaymentsDetailModal from '../components/TodaysPaymentsDetailModal';
-
-dayjs.extend(utc);
 
 // ----------------------------------
 // Types
@@ -81,17 +80,13 @@ function fmtUSD(n: number) {
   return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(n);
 }
 function toISODate(d: Dayjs) {
-  return d.utc().format('YYYY-MM-DD');
+  return d.format('YYYY-MM-DD');
 }
 function daysBetween(a: Dayjs, b: Dayjs) {
   return Math.max(1, b.startOf('day').diff(a.startOf('day'), 'day') + 1);
 }
-const dayKeyUTC = (d: string | Date | dayjs.Dayjs) => dayjs.utc(d).format('YYYY-MM-DD');
 function findPaymentPointForDay(points: PaymentPoint[], localDayKey: string): PaymentPoint | null {
-  const utcKey = dayjs(localDayKey).utc().format('YYYY-MM-DD');
-  const matches = (p: PaymentPoint) =>
-    p.date === localDayKey || p.date === utcKey || dayKeyUTC(p.date) === utcKey;
-  return points.find(matches) ?? null;
+  return points.find((p) => p.date === localDayKey) ?? null;
 }
 
 /** Linear regression trend for total revenue series. */
@@ -363,11 +358,15 @@ export default function PaymentsAnalyticsPage() {
       0
     );
     const subscriptionRevenue = series.reduce(
-      (s, p) => s + (p.subscriptionRevenue ?? 0) + (p.stripeRevenue ?? 0),
+      (s, p) => s + membershipRevenueForPoint(p),
       0
     );
-    const total = revenue + subscriptionRevenue;
-    const avg = series.length ? total / series.length : 0;
+    const total = series.reduce((s, p) => s + totalCollectionsForPoint(p), 0);
+    const calendarDays = Math.max(
+      1,
+      range.to.startOf('day').diff(range.from.startOf('day'), 'day') + 1,
+    );
+    const avg = calendarDays ? total / calendarDays : 0;
     return {
       revenue,
       practiceRevenue,
@@ -375,16 +374,16 @@ export default function PaymentsAnalyticsPage() {
       subscriptionRevenue,
       total,
       avg,
+      calendarDays,
     };
-  }, [series]);
+  }, [series, range.from, range.to]);
 
   const chartData = useMemo(
     () =>
       series.map((p) => ({
         ...p,
-        subscriptionRevenue: (p.subscriptionRevenue ?? 0) + (p.stripeRevenue ?? 0),
-        totalRevenue:
-          p.revenue + (p.subscriptionRevenue ?? 0) + (p.stripeRevenue ?? 0),
+        subscriptionRevenue: membershipRevenueForPoint(p),
+        totalRevenue: totalCollectionsForPoint(p),
       })),
     [series]
   );
@@ -412,14 +411,15 @@ export default function PaymentsAnalyticsPage() {
     : revenueDayPaymentsBreakdown > 0
       ? revenueDayPaymentsBreakdown
       : revenueDayRecordedRevenue;
-  const revenueDayTotalRevenue = revenueDayPaymentsTotal + revenueDaySubscriptionRevenue;
+  const revenueDayTotalRevenue = revenueDayRow
+    ? totalCollectionsForPoint(revenueDayRow)
+    : revenueDayPaymentsTotal + revenueDaySubscriptionRevenue;
 
   /** Fallback: derive top-N from the current chart range if the leaderboards API fails. */
   const rangeLeaderboards = useMemo((): PaymentsLeaderboards => {
     const dayTotals = series.map((p) => ({
       key: p.date,
-      // Match chart / daily card: DB revenue + Square and Stripe memberships.
-      revenue: p.revenue + (p.subscriptionRevenue ?? 0) + (p.stripeRevenue ?? 0),
+      revenue: totalCollectionsForPoint(p),
       count: p.count,
     }));
     const topDays: PaymentsLeaderboardEntry[] = [...dayTotals]
@@ -429,8 +429,8 @@ export default function PaymentsAnalyticsPage() {
     const monthMap = new Map<string, PaymentsLeaderboardEntry>();
     const yearMap = new Map<string, PaymentsLeaderboardEntry>();
     for (const p of dayTotals) {
-      const monthKey = dayjs.utc(p.key).format('YYYY-MM');
-      const yearKey = dayjs.utc(p.key).format('YYYY');
+      const monthKey = p.key.slice(0, 7);
+      const yearKey = p.key.slice(0, 4);
       const month = monthMap.get(monthKey) || { key: monthKey, revenue: 0, count: 0 };
       month.revenue += p.revenue;
       month.count += p.count;
@@ -532,7 +532,7 @@ export default function PaymentsAnalyticsPage() {
                   {fmtUSD(totals.revenue)}
                 </Typography>
                 <Typography variant="caption" color="text.secondary">
-                  {series.length} days
+                  {totals.calendarDays} days
                 </Typography>
               </CardContent>
             </Card>
@@ -548,7 +548,7 @@ export default function PaymentsAnalyticsPage() {
                   {fmtUSD(totals.practiceRevenue)}
                 </Typography>
                 <Typography variant="caption" color="text.secondary">
-                  {series.length} days
+                  {totals.calendarDays} days
                 </Typography>
               </CardContent>
             </Card>
@@ -564,7 +564,7 @@ export default function PaymentsAnalyticsPage() {
                   {fmtUSD(totals.onlinePharmacyRevenue)}
                 </Typography>
                 <Typography variant="caption" color="text.secondary">
-                  {series.length} days
+                  {totals.calendarDays} days
                 </Typography>
               </CardContent>
             </Card>
@@ -580,7 +580,7 @@ export default function PaymentsAnalyticsPage() {
                   {fmtUSD(totals.subscriptionRevenue)}
                 </Typography>
                 <Typography variant="caption" color="text.secondary">
-                  Square + Stripe memberships · {series.length} days
+                  Square + Stripe memberships · {totals.calendarDays} days
                 </Typography>
               </CardContent>
             </Card>
@@ -596,7 +596,7 @@ export default function PaymentsAnalyticsPage() {
                   {fmtUSD(totals.total)}
                 </Typography>
                 <Typography variant="caption" color="text.secondary">
-                  revenue + membership subscriptions · {series.length} days
+                  Pulse collections + memberships · {totals.calendarDays} days
                 </Typography>
               </CardContent>
             </Card>
@@ -675,7 +675,7 @@ export default function PaymentsAnalyticsPage() {
               )}
               <Box display="flex" justifyContent="space-between" alignItems="baseline">
                 <Typography variant="body2" color="text.secondary">
-                  Square membership revenue
+                  Square invoice memberships
                 </Typography>
                 <Typography variant="body1" fontWeight={600}>
                   {fmtUSD(revenueDaySquareRevenue)}
@@ -1012,7 +1012,7 @@ export default function PaymentsAnalyticsPage() {
             <Card variant="outlined">
               <CardHeader
                 title="Top 10 Days (all-time)"
-                subheader="Pulse payments (excl. membership plan) + Square/Stripe from Dec 2025"
+                subheader="Pulse collections + Square invoices + Stripe memberships from Dec 2025"
                 subheaderTypographyProps={{ variant: 'caption' }}
               />
               <CardContent>
@@ -1064,7 +1064,7 @@ export default function PaymentsAnalyticsPage() {
             <Card variant="outlined">
               <CardHeader
                 title="Top 10 Months (all-time)"
-                subheader="Same total as daily revenue"
+                subheader="Same total as daily collections"
                 subheaderTypographyProps={{ variant: 'caption' }}
               />
               <CardContent>
@@ -1116,7 +1116,7 @@ export default function PaymentsAnalyticsPage() {
             <Card variant="outlined">
               <CardHeader
                 title="Top 10 Years (all-time)"
-                subheader="Same total as daily revenue"
+                subheader="Same total as daily collections"
                 subheaderTypographyProps={{ variant: 'caption' }}
               />
               <CardContent>

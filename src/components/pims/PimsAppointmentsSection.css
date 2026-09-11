@@ -249,6 +249,31 @@
   text-decoration: underline;
 }
 
+.pims-appts-section__when-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.pims-appts-section__details-btn {
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  color: #64748b;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.pims-appts-section__details-btn:hover {
+  color: #334155;
+  text-decoration: underline;
+}
+
 .pims-appts-section__muted {
   color: #64748b;
 }
@@ -313,6 +338,8 @@
 .pims-appts-modal__actions {
   display: flex;
   justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .pims-appts-modal__close {
@@ -329,4 +356,21 @@
 
 .pims-appts-modal__close:hover {
   background: #f1f5f9;
+}
+
+.pims-appts-modal__primary {
+  border: 1px solid #1d4ed8;
+  background: #1d4ed8;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 8px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.pims-appts-modal__primary:hover {
+  background: #1e40af;
+  border-color: #1e40af;
 }

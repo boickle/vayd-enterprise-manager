@@ -113,7 +113,14 @@ export function summarizeReconciledDayWindowWarnings(
       household: h,
       slot,
       scheduledStartIso: h.startIso ?? primary?.appointmentStart ?? null,
-      appointmentType: primary?.appointmentType,
+      appointmentType: primary?.appointmentType
+        ? {
+            name: primary.appointmentType.name ?? '',
+            prettyName: primary.appointmentType.prettyName,
+            windowBeforeMinutes: primary.appointmentType.windowBeforeMinutes,
+            windowAfterMinutes: primary.appointmentType.windowAfterMinutes,
+          }
+        : undefined,
       appointmentEndIso: h.endIso ?? primary?.appointmentEnd ?? null,
       practiceTz,
     });

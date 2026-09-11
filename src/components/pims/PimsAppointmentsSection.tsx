@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { Link } from 'react-router';
+import { Link, useNavigate } from 'react-router';
 import { DateTime } from 'luxon';
 import { Calendar, ChevronDown, ChevronRight, ClipboardList } from 'lucide-react';
 import type { Appointment, RoomLoader } from '../../api/roomLoader';
@@ -27,6 +27,7 @@ import {
 } from '../../utils/roomLoaderPreApptDisplay';
 import { SchedulerRoomLoaderPdfModal } from '../../pages/SchedulerRoomLoaderModal';
 import { EmbeddedRoomLoaderModal } from './EmbeddedRoomLoaderModal';
+import { navigateToSchedulerFocusedAppointment } from '../../utils/schedulerFocusAppointment';
 import './PimsAppointmentsSection.css';
 
 const DEFAULT_PRACTICE_TZ =
@@ -241,10 +242,12 @@ function PimsAppointmentDetailModal({
   appt,
   practiceTz,
   onClose,
+  onOpenOnSchedule,
 }: {
   appt: Appointment;
   practiceTz: string;
   onClose: () => void;
+  onOpenOnSchedule: () => void;
 }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -316,6 +319,9 @@ function PimsAppointmentDetailModal({
           <button type="button" className="pims-appts-modal__close" onClick={onClose}>
             Close
           </button>
+          <button type="button" className="pims-appts-modal__primary" onClick={onOpenOnSchedule}>
+            Open on schedule
+          </button>
         </div>
       </div>
     </div>
@@ -325,6 +331,7 @@ function PimsAppointmentDetailModal({
 }
 
 export default function PimsAppointmentsSection(props: PimsAppointmentsSectionProps) {
+  const navigate = useNavigate();
   const practiceTz = props.practiceTz ?? DEFAULT_PRACTICE_TZ;
   const compact = props.compact === true;
   const [roomLoaderBusy, setRoomLoaderBusy] = useState(false);
@@ -338,6 +345,10 @@ export default function PimsAppointmentsSection(props: PimsAppointmentsSectionPr
   const [error, setError] = useState<string | null>(null);
   const [raw, setRaw] = useState<Appointment[]>([]);
   const [detail, setDetail] = useState<Appointment | null>(null);
+
+  const openOnSchedule = (appt: Appointment) => {
+    navigateToSchedulerFocusedAppointment(navigate, appt, practiceTz);
+  };
 
   const currentPatientActive =
     props.variant === 'patient' ? isPatientRowActiveForListing(props.patientRecord) : true;
@@ -488,13 +499,23 @@ export default function PimsAppointmentsSection(props: PimsAppointmentsSectionPr
               {filtered.map((a) => (
                 <tr key={String(a.id)}>
                   <td>
-                    <button
-                      type="button"
-                      className="pims-appts-section__row-btn"
-                      onClick={() => setDetail(a)}
-                    >
-                      {formatApptRange(a, practiceTz)}
-                    </button>
+                    <div className="pims-appts-section__when-cell">
+                      <button
+                        type="button"
+                        className="pims-appts-section__row-btn"
+                        title="Open this appointment on the schedule"
+                        onClick={() => openOnSchedule(a)}
+                      >
+                        {formatApptRange(a, practiceTz)}
+                      </button>
+                      <button
+                        type="button"
+                        className="pims-appts-section__details-btn"
+                        onClick={() => setDetail(a)}
+                      >
+                        Details
+                      </button>
+                    </div>
                   </td>
                   {showPatientCol ? (
                     <td>
@@ -614,7 +635,12 @@ export default function PimsAppointmentsSection(props: PimsAppointmentsSectionPr
         </button>
         {showAll ? <div className="pims-appts-compact__all">{table}</div> : null}
         {detail ? (
-          <PimsAppointmentDetailModal appt={detail} practiceTz={practiceTz} onClose={() => setDetail(null)} />
+          <PimsAppointmentDetailModal
+            appt={detail}
+            practiceTz={practiceTz}
+            onClose={() => setDetail(null)}
+            onOpenOnSchedule={() => openOnSchedule(detail)}
+          />
         ) : null}
         {embeddedRoomLoaderId != null ? (
           <EmbeddedRoomLoaderModal
@@ -664,7 +690,12 @@ export default function PimsAppointmentsSection(props: PimsAppointmentsSectionPr
       </div>
       {table}
       {detail ? (
-        <PimsAppointmentDetailModal appt={detail} practiceTz={practiceTz} onClose={() => setDetail(null)} />
+        <PimsAppointmentDetailModal
+          appt={detail}
+          practiceTz={practiceTz}
+          onClose={() => setDetail(null)}
+          onOpenOnSchedule={() => openOnSchedule(detail)}
+        />
       ) : null}
     </section>
   );

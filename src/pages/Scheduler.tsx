@@ -206,6 +206,7 @@ import {
   buildTypeFillMap,
   colorsForAppointment,
 } from '../utils/schedulerAppointmentColors';
+import { appointmentShowsNewPatientCardMarker } from '../utils/schedulerNewPatientCardMarker';
 import type { SchedulerHoverDriveHint } from '../utils/schedulerHoverTypes';
 import { submitEditVisitPreviewAcceptedFeedback } from '../utils/routingBookFeedback';
 import {
@@ -241,6 +242,7 @@ import {
 } from '../utils/visitAddressMatch';
 import { OnMyWaySmsModal } from '../components/OnMyWaySmsModal';
 import { ClientContactComposeModal } from '../components/ClientContactComposeModal';
+import { WaitlistAddModal } from '../components/WaitlistAddModal';
 import { WorkZonesMapModal } from '../components/WorkZonesMapModal';
 import { etaMinutesAwayFromNow } from '../utils/onMyWaySmsMessage';
 import { SchedulerActualVisitTimeModal } from './SchedulerActualVisitTimeModal';
@@ -413,6 +415,11 @@ import { providerLastNameFromDisplayName } from '../utils/scheduleLoaderSmsMessa
 import { slotOfferFlowActive } from '../utils/slotOfferFromRouting';
 import { notifySchedulingToolsNavCountsRefresh } from '../hooks/useSchedulingToolsNavCounts';
 import { writeWaitlistReturnSession } from '../utils/waitlistReturnSession';
+import {
+  buildWaitlistAddPrefillFromAppointment,
+  waitlistAddDisabledReason,
+  type WaitlistAddPrefill,
+} from '../utils/waitlistAddPrefillFromAppointment';
 import { writeForwardBookingLocalLink } from '../utils/forwardBookingLocalLinks';
 import {
   buildForwardBookingWorkspaceContext,
@@ -3543,6 +3550,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   const [recordsRequestModalAppt, setRecordsRequestModalAppt] = useState<Appointment | null>(null);
   const [actualVisitModal, setActualVisitModal] = useState<Appointment | null>(null);
   const [removeVisitModal, setRemoveVisitModal] = useState<Appointment | null>(null);
+  const [waitlistAddPrefill, setWaitlistAddPrefill] = useState<WaitlistAddPrefill | null>(null);
   const [onMyWaySmsAppt, setOnMyWaySmsAppt] = useState<Appointment | null>(null);
   const [embeddedRoomLoaderId, setEmbeddedRoomLoaderId] = useState<number | null>(null);
   const [roomLoaderPdfModalAppt, setRoomLoaderPdfModalAppt] = useState<Appointment | null>(null);
@@ -3573,6 +3581,11 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   const [driveIsoByApptId, setDriveIsoByApptId] = useState<Map<string, DriveIsoPair> | null>(null);
   const [driveDayByDate, setDriveDayByDate] = useState<Map<string, DayData> | null>(null);
   const [driveEtaLoading, setDriveEtaLoading] = useState(false);
+  /**
+   * View Placement: true until POST /routing/eta for the preview column finishes so Book
+   * cannot run before downstream Window Warnings are known.
+   */
+  const [routingPreviewEtaPending, setRoutingPreviewEtaPending] = useState(false);
   /** From GET /appointments/doctor — range payload often omits `isMember` / `membershipName`. */
   const [doctorDayMembershipByApptId, setDoctorDayMembershipByApptId] = useState<
     Map<string, SchedulerDoctorDayMembership>
@@ -5273,6 +5286,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       setDoctorDayIsCompleteByApptId(new Map());
       setScheduleOverridesByDate(new Map());
       setDriveEtaLoading(false);
+      setRoutingPreviewEtaPending(false);
       return;
     }
     const dates = driveFetchKey.split(',').filter(Boolean);
@@ -5286,10 +5300,13 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       setDoctorDayIsCompleteByApptId(new Map());
       setScheduleOverridesByDate(new Map());
       setDriveEtaLoading(false);
+      setRoutingPreviewEtaPending(false);
       return;
     }
 
     const canDrive = showByDriveTime;
+    const previewColumnPending =
+      Boolean(routingPreview && routingPreviewColumnKey) && canDrive;
 
     let cancelled = false;
     let pending = dates.length;
@@ -5300,6 +5317,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     setDoctorDayPatientPcpByApptId(new Map());
     setDoctorDayEffectiveWindowByApptId(new Map());
     setDoctorDayIsCompleteByApptId(new Map());
+    setRoutingPreviewEtaPending(previewColumnPending);
 
     const softDriveUpdate = driveSoftRefreshRef.current;
     driveSoftRefreshRef.current = false;
@@ -5412,6 +5430,14 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
 
             if (!dayIn) {
               markFirstData();
+              if (
+                !cancelled &&
+                routingPreview &&
+                routingPreviewColumnKey &&
+                date === routingPreviewColumnKey
+              ) {
+                setRoutingPreviewEtaPending(false);
+              }
               return;
             }
 
@@ -5460,9 +5486,18 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                 candidateHasWarning: etaWindowSummary.candidateHasWarning,
                 reconciledOverrunSeconds,
               });
+              if (!cancelled) setRoutingPreviewEtaPending(false);
             }
           } catch {
             /* skip day — other dates may still succeed */
+            if (
+              !cancelled &&
+              routingPreview &&
+              routingPreviewColumnKey &&
+              date === routingPreviewColumnKey
+            ) {
+              setRoutingPreviewEtaPending(false);
+            }
           } finally {
             bumpDone();
           }
@@ -5473,6 +5508,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     return () => {
       cancelled = true;
       setDriveEtaLoading(false);
+      setRoutingPreviewEtaPending(false);
     };
   }, [
     driveFetchKey,
@@ -10652,6 +10688,20 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           case 'view':
             setModalAppt(appt);
             return;
+          case 'addToWaitlist': {
+            const reason = waitlistAddDisabledReason(appt);
+            if (reason) {
+              fail(reason);
+              return;
+            }
+            const prefill = buildWaitlistAddPrefillFromAppointment(appt);
+            if (!prefill) {
+              fail('Needs a linked client to add to the waitlist.');
+              return;
+            }
+            setWaitlistAddPrefill(prefill);
+            return;
+          }
           case 'edit':
             setEditVisitLinkSelection(null);
             setEditVisitPatientSelection(null);
@@ -11110,6 +11160,11 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     }
     return undefined;
   }, [contextMenu, contextMenuRescheduleIntent, contextMenuMayAddressOnlyReschedule]);
+
+  const contextMenuAddToWaitlistDisabledTitle = useMemo(() => {
+    if (!contextMenu) return undefined;
+    return waitlistAddDisabledReason(contextMenu.appt);
+  }, [contextMenu]);
 
   const addAnotherPetMenuOpts = useMemo(() => {
     if (!contextMenu || !showEmployeeAddCoVisitPet) {
@@ -11644,6 +11699,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                     const leftPct = dayTimeColumnLayout.barLeftPct(s);
                     const widthPct = dayTimeColumnLayout.barWidthPct(s, e);
                     const apptColors = colorsForAppointment(appt, typeList, typeFillMap);
+                    const showNewPatientMarker = appointmentShowsNewPatientCardMarker(appt);
                     const topPad = SCHEDULER_ALL_DAY_PAD_Y / 2;
                     const member = appointmentPatientMember(appt);
                     const isRescheduleSourceAllDay =
@@ -11662,10 +11718,12 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                       <div
                         key={appt.id}
                         data-appt-id={appt.id != null ? String(appt.id) : undefined}
+                        data-new-patient-marker={showNewPatientMarker ? '1' : undefined}
                         role="button"
                         tabIndex={0}
                         className={[
                           'scheduler-all-day-span-bar',
+                          showNewPatientMarker ? 'scheduler-all-day-span-bar--new-patient' : '',
                           isRescheduleSourceAllDay ? 'scheduler-reschedule-source-slot' : '',
                           isEditVisitActiveAllDay ? 'scheduler-edit-visit-active-slot' : '',
                           isEditVisitJustBookedAllDay ? 'scheduler-edit-visit-booked-slot' : '',
@@ -11675,7 +11733,11 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                         ]
                           .filter(Boolean)
                           .join(' ')}
-                        aria-label={pickStr(appt.description) || schedulerEventAppointmentTitle(appt)}
+                        aria-label={
+                          showNewPatientMarker
+                            ? `${pickStr(appt.description) || schedulerEventAppointmentTitle(appt)} (new patient)`
+                            : pickStr(appt.description) || schedulerEventAppointmentTitle(appt)
+                        }
                         style={{
                           left: `calc(${leftPct}% + 1px)`,
                           width: `calc(${widthPct}% - 2px)`,
@@ -11974,6 +12036,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                           const wPct = 100 / colCount;
                           const leftPct = (100 * col) / colCount;
                           const apptColors = colorsForAppointment(appt, typeList, typeFillMap);
+                          const showNewPatientMarker = appointmentShowsNewPatientCardMarker(appt);
                           const member = appointmentPatientMember(appt);
                           const apptDriveHint =
                             showByDriveTime && resolvedPrimaryProviderId.trim()
@@ -12031,7 +12094,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                                   >
                                     <SchedulerAlternateLocationBadgeForAppt appt={appt} compact />
                                     <SchedulerClientZoneBadge appt={appt} compact />
-                                    {routingPreviewEtaWindowSummary?.candidateHasWarning ||
+                                    {/* Placement-relevant: candidate OR downstream stop tight (Ginger/Om). */}
+                                    {routingPreviewEtaWindowSummary?.hasPlacementRelevantWarning ||
                                     apptDriveHint?.windowWarning ? (
                                       <SchedulerWindowWarningBadge compact />
                                     ) : null}
@@ -12125,11 +12189,13 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                             <div
                               key={appt.id}
                               data-appt-id={appt.id != null ? String(appt.id) : undefined}
+                              data-new-patient-marker={showNewPatientMarker ? '1' : undefined}
                               data-edit-time-preview={isEditTimePreviewVisit ? '1' : undefined}
                               data-edit-visit-active={isEditVisitActiveSlot ? '1' : undefined}
                               data-reschedule-source={isRescheduleSourceVisit ? '1' : undefined}
                               className={[
                                 'scheduler-event',
+                                showNewPatientMarker ? 'scheduler-event--new-patient' : '',
                                 isCompactEvent ? 'scheduler-event--compact' : '',
                                 isEditTimePreviewVisit ? 'scheduler-edit-time-preview-slot' : '',
                                 isRescheduleSourceVisit ? 'scheduler-reschedule-source-slot' : '',
@@ -12143,7 +12209,11 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                               ]
                                 .filter(Boolean)
                                 .join(' ')}
-                              aria-label={schedulerEventAppointmentTitle(appt)}
+                              aria-label={
+                                showNewPatientMarker
+                                  ? `${schedulerEventAppointmentTitle(appt)} (new patient)`
+                                  : schedulerEventAppointmentTitle(appt)
+                              }
                               style={{
                                 top: eventTop,
                                 height: h,
@@ -12884,6 +12954,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               originalAppointmentEnd={reschedulePreviewOriginalTimes.end}
               clientContact={routingPreviewClientContact}
               bookDisabled={bookSlot != null || manualBookPreviewCommitting}
+              driveTimesPending={routingPreviewEtaPending}
               hasWindowWarning={Boolean(
                 routingPreviewEtaWindowSummary?.hasPlacementRelevantWarning
               )}
@@ -13417,6 +13488,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           )}
           rescheduleDisabled={!contextMenuRescheduleIntent && !contextMenuMayAddressOnlyReschedule}
           rescheduleDisabledTitle={contextMenuRescheduleDisabledTitle}
+          addToWaitlistDisabled={Boolean(contextMenuAddToWaitlistDisabledTitle)}
+          addToWaitlistDisabledTitle={contextMenuAddToWaitlistDisabledTitle}
           removeDisabled={isAppointmentCancelledOnPracticeCalendar(contextMenu.appt)}
           removeTitle={
             isAppointmentCancelledOnPracticeCalendar(contextMenu.appt)
@@ -13437,6 +13510,22 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               ? undefined
               : 'No patient on this appointment for Jot Prep.'
           }
+        />
+      ) : null}
+
+      {waitlistAddPrefill ? (
+        <WaitlistAddModal
+          practiceId={PRACTICE_ID}
+          prefill={waitlistAddPrefill}
+          onClose={() => setWaitlistAddPrefill(null)}
+          onCreated={(entry) => {
+            setWaitlistAddPrefill(null);
+            notifySchedulingToolsNavCountsRefresh();
+            const petLabel =
+              entry.patients?.map((p) => p.name?.trim()).filter(Boolean).join(', ') ||
+              'household';
+            showToast(`Added ${petLabel} to the waitlist.`);
+          }}
         />
       ) : null}
 

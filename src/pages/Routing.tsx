@@ -4621,6 +4621,7 @@ export default function Routing({
       practiceId: ROUTING_PRACTICE_ID,
       doctorId,
       visitPets,
+      forOnlineBooking: false,
     })
       .then((result) => {
         if (cancelled) return;

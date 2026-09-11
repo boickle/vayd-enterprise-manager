@@ -85,6 +85,17 @@ export type ReminderSettings = {
   'euthanasia.privateCremationUrns'?: string;
   /** Default memorial-store subcategory on the consent form. */
   'euthanasia.memorialDefaultSubcategory'?: string;
+  /**
+   * Live chat / priority support hours by day (JSON string).
+   * Shape: { sunday: { open, close } | null, monday: ..., ... }.
+   * See `chatHours.ts`.
+   */
+  'chat.hoursOfOperation'?: string;
+  /**
+   * Online auto-book duration and lead-time settings (JSON string).
+   * Shape: { singlePatientMinutes, multiPetPerPetMinutes, newClientLeadTimeHours, existingClientLeadTimeHours }.
+   */
+  'onlineBooking.autoBookSettings'?: string;
 };
 
 /** True only when the practice explicitly enabled an online store (default No). */

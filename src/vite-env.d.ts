@@ -10,6 +10,8 @@ interface ImportMetaEnv {
   readonly VITE_IS_PROD: string;
   readonly VITE_GA_MEASUREMENT_ID?: string;
   readonly VITE_GOOGLE_ADS_TAG_ID?: string;
+  /** Google Tag Manager container (GTM-XXXXXXX). */
+  readonly VITE_GTM_CONTAINER_ID?: string;
   readonly VITE_ZONE_SEARCH_BUFFER_MILES?: string;
   /** Extra minutes for the first new patient in a visit (default 15). */
   readonly VITE_ROUTING_FIRST_NEW_PATIENT_DURATION_BUFFER_MINUTES?: string;

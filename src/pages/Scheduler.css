@@ -1539,6 +1539,41 @@ label.scheduler-go-date-heading {
   min-height: 0;
 }
 
+/**
+ * New patient / new client: keep visit-type fill, add dark border + light
+ * horizontal white hatch (distinct from diagonal drive / yellow buffer).
+ */
+.scheduler-event--new-patient,
+.scheduler-all-day-span-bar--new-patient {
+  border: 2.5px solid #0f172a;
+  box-shadow:
+    0 0 0 1px rgba(15, 23, 42, 0.2),
+    0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+.scheduler-event--new-patient::after,
+.scheduler-all-day-span-bar--new-patient::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  z-index: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(255, 255, 255, 0.42) 0px,
+    rgba(255, 255, 255, 0.42) 3px,
+    rgba(255, 255, 255, 0) 3px,
+    rgba(255, 255, 255, 0) 8px
+  );
+}
+
+.scheduler-event--new-patient > *,
+.scheduler-all-day-span-bar--new-patient > * {
+  position: relative;
+  z-index: 1;
+}
+
 .scheduler-event--calendar-only-draggable {
   cursor: grab;
   touch-action: none;

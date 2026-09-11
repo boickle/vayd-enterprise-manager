@@ -1,12 +1,16 @@
 /**
  * Smoke: window warnings (Belle/Hews thread — #bugs-scout 1787344353.605449)
  * + Harris/Crispell thread — #bugs-scout 1787847418.954429
+ * + Cheeseman/Ginger PRE-FIRST downstream — #bugs-scout 1788380128.760569
  *
  * 1) "Within 20 minutes of window end" is inclusive (ETA exactly 20m before end warns).
  * 2) View Placement must not attribute an *upstream* pre-existing tight visit to the new
  *    result card — only the candidate or stops at/after it in route order.
  * 3) Card ETA summary must use the same window resolution as calendar badges (type ±N
  *    fallback when household/slot lack effectiveWindow) so Book alerts before schedule.
+ * 4) Purple preview slot badge must use hasPlacementRelevantWarning (not only
+ *    candidateHasWarning) so inserting first-of-day that pushes later stops tight still
+ *    shows a Window Warning tag on the placement card before Book.
  *
  * Run: node scripts/windowWarningPlacementSmoke.mjs
  */
@@ -282,6 +286,12 @@ assert(down.hasPlacementRelevantWarning === true, 'downstream tightness is place
 assert(
   routingCardWindowWarningReasons({}, down).includes('eta-reconciled'),
   'routing card warns when a later stop is pushed near window end'
+);
+// Purple View Placement slot must badge on hasPlacementRelevantWarning (Ginger case:
+// candidate fine, Om pets downstream tight — staff look for the tag on the card they place).
+assert(
+  down.hasPlacementRelevantWarning === true && down.candidateHasWarning === false,
+  'placement card badge signal must fire for downstream-only tightness'
 );
 
 // Harris/Crispell: calendar badges use type ±N when household has no effectiveWindow;

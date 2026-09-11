@@ -34,6 +34,13 @@ import {
   fetchAppointmentType,
   type AppointmentType,
 } from '../api/appointmentSettings';
+import { fetchPublicOnlineBookingAutoBookSettings } from '../api/onlineBookingAutoBookSettings';
+import {
+  bumpStartDateForLeadTime,
+  defaultOnlineBookingAutoBookSettings,
+  resolveOnlineBookingLeadTimeHours,
+  type OnlineBookingAutoBookSettings,
+} from '../utils/onlineBookingAutoBookSettings';
 
 // ─── Fallback avatar ─────────────────────────────────────────────────────────
 const FALLBACK_AVATAR =
@@ -161,25 +168,33 @@ function slotsToAvailableDays(candidates: MonthAvailabilityCandidate[]): Set<str
 
 function futureMonthCandidates(
   candidates: MonthAvailabilityCandidate[],
+  earliestCalendarDate?: string,
 ): MonthAvailabilityCandidate[] {
   const today = DateTime.now().startOf('day').toISODate() as string;
-  return candidates.filter((c) => c.date >= today);
+  const floor = earliestCalendarDate && earliestCalendarDate > today
+    ? earliestCalendarDate
+    : today;
+  return candidates.filter((c) => c.date >= floor);
 }
 
 /** Only dates that belong on the calendar grid for this month. */
 function candidatesInCalendarMonth(
   candidates: MonthAvailabilityCandidate[],
   month: DateTime,
+  earliestCalendarDate?: string,
 ): MonthAvailabilityCandidate[] {
   const monthKey = month.toFormat('yyyy-MM');
-  return futureMonthCandidates(candidates).filter((c) => c.date.startsWith(monthKey));
+  return futureMonthCandidates(candidates, earliestCalendarDate).filter((c) =>
+    c.date.startsWith(monthKey),
+  );
 }
 
 function monthHasBookableCandidates(
   candidates: MonthAvailabilityCandidate[],
   month: DateTime,
+  earliestCalendarDate?: string,
 ): boolean {
-  return candidatesInCalendarMonth(candidates, month).length > 0;
+  return candidatesInCalendarMonth(candidates, month, earliestCalendarDate).length > 0;
 }
 
 /** Backend cap on POST /public/appointments/availability `numDays`. */
@@ -779,6 +794,34 @@ export function SelfScheduleCalendarModal({
 
   const [hydratedAppointmentType, setHydratedAppointmentType] =
     useState<AppointmentType | null>(null);
+  const [autoBookSettings, setAutoBookSettings] = useState<OnlineBookingAutoBookSettings>(
+    defaultOnlineBookingAutoBookSettings,
+  );
+
+  const earliestCalendarDate = useMemo(() => {
+    const leadTimeHours = resolveOnlineBookingLeadTimeHours(
+      autoBookSettings,
+      visitPets,
+      isNewPatientRequest,
+    );
+    const today = DateTime.now().setZone(practiceTz).toISODate() as string;
+    return bumpStartDateForLeadTime(today, leadTimeHours, practiceTz);
+  }, [autoBookSettings, visitPets, isNewPatientRequest, practiceTz]);
+
+  useEffect(() => {
+    let alive = true;
+    void fetchPublicOnlineBookingAutoBookSettings(practiceId)
+      .then((settings) => {
+        if (alive) setAutoBookSettings(settings);
+      })
+      .catch((error) => {
+        console.warn('[SelfSchedule] Failed to load auto-book settings; using defaults', error);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [practiceId]);
+
   useEffect(() => {
     setHydratedAppointmentType(null);
     const id = Number(appointmentTypeId);
@@ -1059,8 +1102,15 @@ export function SelfScheduleCalendarModal({
       const cachedStart = cache.get(doctorMonthCacheKey(doctorId, startMonth));
       let resumeFrom: DateTime | null = null;
       if (cachedStart) {
-        if (!opts?.autoAdvance || monthHasBookableCandidates(cachedStart, startMonth)) {
-          applyMonth(startMonth, candidatesInCalendarMonth(cachedStart, startMonth), false);
+        if (
+          !opts?.autoAdvance ||
+          monthHasBookableCandidates(cachedStart, startMonth, earliestCalendarDate)
+        ) {
+          applyMonth(
+            startMonth,
+            candidatesInCalendarMonth(cachedStart, startMonth, earliestCalendarDate),
+            false,
+          );
           return;
         }
         for (let i = 1; i < 12; i++) {
@@ -1070,8 +1120,12 @@ export function SelfScheduleCalendarModal({
             resumeFrom = later;
             break;
           }
-          if (monthHasBookableCandidates(cachedLater, later)) {
-            applyMonth(later, candidatesInCalendarMonth(cachedLater, later), true);
+          if (monthHasBookableCandidates(cachedLater, later, earliestCalendarDate)) {
+            applyMonth(
+              later,
+              candidatesInCalendarMonth(cachedLater, later, earliestCalendarDate),
+              true,
+            );
             return;
           }
         }
@@ -1100,8 +1154,14 @@ export function SelfScheduleCalendarModal({
 
       try {
         const today = DateTime.now().startOf('day');
+        const earliestDay = DateTime.fromISO(earliestCalendarDate, { zone: practiceTz }).startOf(
+          'day',
+        );
         const resumeMonth = resumeFrom ?? startMonth;
         let windowStart = today > resumeMonth ? today : resumeMonth;
+        if (windowStart < earliestDay) {
+          windowStart = earliestDay;
+        }
         let scanMonth = startMonth;
         let candidates: MonthAvailabilityCandidate[] = [];
 
@@ -1113,7 +1173,11 @@ export function SelfScheduleCalendarModal({
           storeCandidatesByMonth(cache, doctorId, fetched, windowStart, windowEnd);
 
           if (!opts?.autoAdvance) {
-            candidates = candidatesInCalendarMonth(fetched, startMonth);
+            candidates = candidatesInCalendarMonth(
+              fetched,
+              startMonth,
+              earliestCalendarDate,
+            );
             scanMonth = startMonth;
             break;
           }
@@ -1123,9 +1187,9 @@ export function SelfScheduleCalendarModal({
             const m = startMonth.plus({ months: i });
             if (m.startOf('day') > windowEnd) break;
             const monthSlots = cache.get(doctorMonthCacheKey(doctorId, m));
-            if (monthSlots && monthHasBookableCandidates(monthSlots, m)) {
+            if (monthSlots && monthHasBookableCandidates(monthSlots, m, earliestCalendarDate)) {
               found = m;
-              candidates = candidatesInCalendarMonth(monthSlots, m);
+              candidates = candidatesInCalendarMonth(monthSlots, m, earliestCalendarDate);
               break;
             }
           }
@@ -1168,6 +1232,8 @@ export function SelfScheduleCalendarModal({
       appointmentTypeId,
       isNewPatientRequest,
       rawVeterinarians,
+      earliestCalendarDate,
+      practiceTz,
     ],
   );
 

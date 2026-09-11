@@ -40,6 +40,13 @@ import { DEFAULT_PRACTICE_TIMEZONE } from '../utils/practiceTimezone';
 import { formatAutobookDateTimePreferenceDisplay } from '../utils/appointmentRequestDisplay';
 import { appointmentTypeForRoutingStatsKey } from '../utils/routingCalculateTimeType';
 import { fetchPublicRoutingOfferableScoreThresholds } from '../api/routingOfferableScoreThresholds';
+import { fetchPublicOnlineBookingAutoBookSettings } from '../api/onlineBookingAutoBookSettings';
+import {
+  bumpStartDateForLeadTime,
+  defaultOnlineBookingAutoBookSettings,
+  resolveOnlineBookingLeadTimeHours,
+  computeEarliestOnlineBookingDateTime,
+} from '../utils/onlineBookingAutoBookSettings';
 import {
   daysFromTodayForSlot,
   defaultRoutingOfferableScoreConfig,
@@ -87,6 +94,8 @@ import { SelfScheduleCalendarModal } from '../components/SelfScheduleCalendarMod
 import { selectedPatientDbIdsFromForm } from '../utils/onlineBookingPatientIds';
 import { trackEvent } from '../utils/analytics';
 import { appConfirm } from '../utils/appDialog';
+import { pushGtmEvent } from '../utils/gtm';
+import { getMarketingAttributionForSubmit } from '../utils/marketingAttribution';
 import { useAppointmentFormDraftPersistence } from '../hooks/useAppointmentFormDraftPersistence';
 import type { AppointmentFormDraftSnapshotInput } from '../utils/appointmentFormDraftSnapshot';
 import { ClientLoginForm } from '../components/ClientLoginForm';
@@ -2364,6 +2373,26 @@ export default function AppointmentRequestForm() {
         return;
       }
 
+      let autoBookSettings = defaultOnlineBookingAutoBookSettings();
+      try {
+        autoBookSettings = await fetchPublicOnlineBookingAutoBookSettings(practiceId);
+      } catch (err) {
+        console.warn(
+          '[AppointmentForm] Failed to load online auto-book settings; using defaults',
+          err,
+        );
+      }
+      const leadTimeHours = resolveOnlineBookingLeadTimeHours(
+        autoBookSettings,
+        routingVisitPets,
+        isNewPatientRequest,
+      );
+      startDate = bumpStartDateForLeadTime(startDate, leadTimeHours, DEFAULT_PRACTICE_TIMEZONE);
+      const earliestBookable = computeEarliestOnlineBookingDateTime(
+        leadTimeHours,
+        DEFAULT_PRACTICE_TIMEZONE,
+      );
+
       // Doctor-specific service minutes (server stats when possible)
       let serviceMinutes = resolvedServiceMinutes;
       if (serviceMinutes == null && routingVisitPets.length > 0 && doctorId) {
@@ -2513,6 +2542,12 @@ export default function AppointmentRequestForm() {
       }): boolean => {
         const slotIso =
           opt?.suggestedStartIso || opt?.iso || opt?.date || null;
+        if (slotIso) {
+          const slotDt = DateTime.fromISO(slotIso);
+          if (slotDt.isValid && slotDt.toMillis() < earliestBookable.toMillis()) {
+            return false;
+          }
+        }
         return isRoutingScoreOfferableForConfig(opt?.score, {
           config: scoreThresholdConfig,
           appointmentTypeId: primaryAppointmentTypeId,
@@ -5032,6 +5067,7 @@ export default function AppointmentRequestForm() {
           startedAsLoggedIn: isLoggedIn,
           startedAsExistingClient: formData.haveUsedServicesBefore === 'Yes',
         },
+        marketingAttribution: getMarketingAttributionForSubmit(),
       };
       
       // Remove undefined values to clean up payload
@@ -5064,7 +5100,7 @@ export default function AppointmentRequestForm() {
       
       markFormCompleted();
       setSubmitSuccessKind(appointmentFormSubmitSuccessKindFromMessage(responseMessage));
-      trackFormEvent('appointment_form_submitted', {
+      const submittedEventParams = {
         appointment_type: appointmentType,
         pet_count: petCount,
         has_preferred_doctor: !!submissionData.preferredDoctor,
@@ -5075,6 +5111,11 @@ export default function AppointmentRequestForm() {
         online_booking: isOnlineBookingSubmit,
         how_soon: formData.howSoon || undefined,
         membership_interest: formData.membershipInterest || undefined,
+      };
+      trackFormEvent('appointment_form_submitted', submittedEventParams);
+      pushGtmEvent('appointment_form_submitted', {
+        ...getFormAnalyticsContext(),
+        ...submittedEventParams,
       });
       
       setCurrentPage('success');
