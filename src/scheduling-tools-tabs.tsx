@@ -6,6 +6,7 @@ import CareOutreachPage from './pages/CareOutreachPage';
 import ForwardBookingPage from './pages/ForwardBookingPage';
 import TextedOffersPage from './pages/TextedOffersPage';
 import ScheduleOptimizationPage from './pages/ScheduleOptimizationPage';
+import RecordsRequestsPage from './pages/RecordsRequestsPage';
 import { HOLDS_PATH } from './holds-nav';
 import {
   LEGACY_WORKFLOW_STATUS_BY_PATH,
@@ -37,6 +38,8 @@ function elementForTab(path: string): JSX.Element {
       return <ForwardBookingPage />;
     case 'booked':
       return <ForwardBookingPage variant="booked" />;
+    case 'records':
+      return <RecordsRequestsPage />;
     default:
       return <ForwardBookingPage />;
   }

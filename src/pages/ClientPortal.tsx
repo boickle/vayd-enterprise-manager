@@ -1,6 +1,6 @@
 // src/pages/ClientPortal.tsx
 import React, { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate } from 'react-router';
+import { Link, useNavigate, useSearchParams } from 'react-router';
 import { useAuth } from '../auth/useAuth';
 import {
   fetchClientAppointments,
@@ -13,6 +13,7 @@ import {
   type ClientReminder,
   fetchPracticeInfo,
   type Vaccination,
+  fetchClientChronicMeds,
   fetchClientInfo,
   submitReferral,
   getClientRoomLoaderPdfHref,
@@ -25,6 +26,11 @@ import VaccinationCertificateModal from '../components/VaccinationCertificateMod
 import { updateCommunicationPreferences, getCurrentUser } from '../api/users';
 import { trackEvent } from '../utils/analytics';
 import { appAlert } from '../utils/appDialog';
+import { publicStoreProducts } from '../api/onlineStore';
+import { addToStoreCart } from './store/storeCartState';
+import type { PatientPrescription } from '../api/visitWorkflow';
+
+const STORE_PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
 
 type PetWithWellness = Pet & {
   wellnessPlans?: WellnessPlan[];
@@ -195,6 +201,9 @@ export default function ClientPortal() {
   const [error, setError] = useState<string | null>(null);
 
   const [pets, setPets] = useState<PetWithWellness[]>([]);
+  const [chronicByPet, setChronicByPet] = useState<
+    Record<string, PatientPrescription[]>
+  >({});
   const [appts, setAppts] = useState<ClientAppointment[]>([]);
   const [rawApptsData, setRawApptsData] = useState<any[]>([]); // Store raw appointment data for client info
   const [reminders, setReminders] = useState<ClientReminder[]>([]);
@@ -211,7 +220,10 @@ export default function ClientPortal() {
   const [selectedPetForVaccination, setSelectedPetForVaccination] = useState<PetWithWellness | null>(null);
   const [localClientInfo, setLocalClientInfo] = useState<any | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [showPreferencesModal, setShowPreferencesModal] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [showPreferencesModal, setShowPreferencesModal] = useState(
+    () => searchParams.get('preferences') === '1'
+  );
   const [allowEmail, setAllowEmail] = useState<boolean | null>(null);
   const [allowText, setAllowText] = useState<boolean | null>(null);
   const [preferPhone, setPreferPhone] = useState<boolean>(true);
@@ -243,6 +255,14 @@ export default function ClientPortal() {
         });
     }
   }, [clientInfo, userId, token]);
+
+  useEffect(() => {
+    if (searchParams.get('preferences') !== '1') return;
+    setShowPreferencesModal(true);
+    const next = new URLSearchParams(searchParams);
+    next.delete('preferences');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   // Load communication preferences when preferences modal opens
   useEffect(() => {
@@ -383,6 +403,21 @@ export default function ClientPortal() {
         );
 
         setPets(petsWithWellness);
+        const chronicEntries = await Promise.all(
+          petsWithWellness.map(async (pet) => {
+            const id = Number(pet.dbId);
+            if (!Number.isFinite(id)) return [pet.id, []] as const;
+            try {
+              const rows = await fetchClientChronicMeds(id);
+              return [pet.id, rows] as const;
+            } catch {
+              return [pet.id, []] as const;
+            }
+          })
+        );
+        if (alive) {
+          setChronicByPet(Object.fromEntries(chronicEntries));
+        }
         setAppts([...a].sort((x, y) => +new Date(x.startIso) - +new Date(y.startIso)));
         setReminders(
           [...r].sort((x, y) => Date.parse(x.dueIso ?? '') - Date.parse(y.dueIso ?? ''))
@@ -1018,7 +1053,34 @@ export default function ClientPortal() {
     window.location.assign('sms:207-536-8387');
   }
   function handleShop() {
-    window.open('https://www.vetatyourdoor.com/online-pharmacy', '_blank');
+    navigate('/store');
+  }
+  async function orderChronicForPet(pet: PetWithWellness, rx: PatientPrescription) {
+    if (!rx.inventoryItemId) {
+      navigate('/store');
+      return;
+    }
+    const listings = await publicStoreProducts(STORE_PRACTICE_ID);
+    const listing = listings.find((row) =>
+      row.variants.some((variant) => variant.inventoryItemId === rx.inventoryItemId)
+    );
+    const variant = listing?.variants.find(
+      (row) => row.inventoryItemId === rx.inventoryItemId
+    );
+    addToStoreCart({
+      inventoryItemId: rx.inventoryItemId,
+      name: variant?.name || rx.name,
+      quantity: 1,
+      unitPrice: Number(variant?.onlineStorePrice ?? listing?.priceFrom ?? 0),
+      autoshipFrequency: listing?.recommendedFrequency || 'monthly',
+      recommendedFrequency: listing?.recommendedFrequency || null,
+      listingId: listing?.listingId,
+      storeProductId: listing?.storeProductId ?? null,
+      hasImage: Boolean(variant?.hasImage || listing?.hasImage),
+      approvalTag: listing?.approvalTag,
+      patientIds: pet.dbId && Number.isFinite(Number(pet.dbId)) ? [Number(pet.dbId)] : [],
+    });
+    navigate('/store/cart');
   }
   async function handleSavePreferences() {
     setSavingPreferences(true);
@@ -1764,7 +1826,11 @@ export default function ClientPortal() {
                     </svg>
                   </a>
                   <a
-                    href="https://www.vetatyourdoor.com/online-pharmacy"
+                    href="/store"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      handleShop();
+                    }}
                     target="_blank"
                     rel="noopener noreferrer"
                     style={{
@@ -1900,9 +1966,11 @@ export default function ClientPortal() {
                 <span style={{ fontSize: 14, fontWeight: 600 }}>Email Us</span>
               </a>
               <a
-                href="https://www.vetatyourdoor.com/online-pharmacy"
-                target="_blank"
-                rel="noopener noreferrer"
+                href="/store"
+                onClick={(e) => {
+                  e.preventDefault();
+                  handleShop();
+                }}
                 className="cp-card"
                 style={{
                   padding: '16px 20px',
@@ -2590,6 +2658,55 @@ export default function ClientPortal() {
               </div>
             )}
           </section>
+
+          {petsWithProvider.some((pet) => (chronicByPet[pet.id] || []).length) ? (
+            <section className="cp-section">
+              <h2 className="cp-h2">Chronic medications</h2>
+              <div className="cp-grid-gap">
+                {petsWithProvider.map((pet) => {
+                  const meds = chronicByPet[pet.id] || [];
+                  if (!meds.length) return null;
+                  return (
+                    <div key={pet.id} className="cp-card" style={{ padding: 14 }}>
+                      <div style={{ fontWeight: 700, marginBottom: 8 }}>{pet.name}</div>
+                      {meds.map((rx) => (
+                        <div
+                          key={rx.id}
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            gap: 12,
+                            alignItems: 'center',
+                            padding: '8px 0',
+                            borderTop: '1px solid #e5e7eb',
+                          }}
+                        >
+                          <div>
+                            <div style={{ fontWeight: 600 }}>{rx.name}</div>
+                            <div className="cp-muted" style={{ fontSize: 13 }}>
+                              {rx.refill != null ? `${rx.refill} refills left` : ''}
+                              {rx.autoshipStartedAt
+                                ? ` · Auto-ship started ${new Date(rx.autoshipStartedAt).toLocaleDateString()}`
+                                : ''}
+                            </div>
+                          </div>
+                          {rx.inventoryItemId ? (
+                            <button
+                              type="button"
+                              className="cp-btn"
+                              onClick={() => void orderChronicForPet(pet, rx)}
+                            >
+                              Order
+                            </button>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          ) : null}
 
           {/* UPCOMING APPOINTMENTS */}
           <section className="cp-section">

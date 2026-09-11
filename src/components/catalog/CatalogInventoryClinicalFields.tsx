@@ -17,8 +17,10 @@ type ClinicalDraft = {
   vendorDrugNumber: string;
   barcode: string;
   defaultQuantity: string;
+  strength: string;
   isMedication: boolean;
   requireExpirationOnLots: boolean;
+  requireLotNumber: boolean;
   trackLots: boolean;
   isVaccine: boolean;
   dispenseNote: string;
@@ -30,9 +32,14 @@ type ClinicalDraft = {
   hideOnMedicalRecordView: boolean;
   hideOnMedicalRecordPrint: boolean;
   excludeFromProduction: boolean;
+  excludeProductionWhenRefilling: 'inherit' | 'yes' | 'no';
   allowPriceChange: boolean;
   changePatientStatusTo: string;
   changePatientSex: boolean;
+  requiresDoctorApproval: boolean;
+  prohibitedCarriers: string[];
+  autoshipOffered: boolean;
+  autoshipFrequency: string;
 };
 
 type VaccineDraft = {
@@ -65,8 +72,10 @@ const FLAG_HELP: Record<string, string> = {
   isControlled: 'Controlled substance — track carefully for DEA / state reporting.',
   isMicrochip:
     'When charged on a visit, staff must enter the microchip number. It is saved on the patient and shown next to their name.',
-  trackLots: 'Enable lot / serial balances by branch. Required for vaccine lot picking on SOAP.',
-  requireExpirationOnLots: 'A lot cannot be saved without an expiration date.',
+  trackLots:
+    'On by default. Split this SKU into dated bottles so invoices, waste, mail, and moves pick which pile to use. Expiration is always required. Turn off only if one undated pile is enough.',
+  requireLotNumber:
+    'Off by default. Turn on for vaccines and anything that prints a lot #. Leave off for items that only have an expiration (e.g. Miconahex).',
   hasClientNotes:
     'Show a client-facing note on this charge. Set the default below; staff can edit it on the SOAP and at checkout.',
   hideOnInvoice: 'Hide this line on the client invoice.',
@@ -74,9 +83,18 @@ const FLAG_HELP: Record<string, string> = {
   hideOnMedicalRecordPrint: 'Hide this line when printing the medical record.',
   excludeFromProduction:
     'Revenue still counts for the practice, but it is not attributed to a provider’s VSD — it lands in Not Specified.',
+  excludeProductionWhenRefilling:
+    'Overrides the practice default for excluding provider VSD when this item is refilled. Inherit uses Settings → Inventory.',
   allowPriceChange:
     'Staff may change the unit price of this line on the SOAP / at checkout.',
   changePatientSex: 'Charging this item updates the patient’s sex (e.g. after spay/neuter).',
+  requiresDoctorApproval:
+    'Fills and mail orders stay in the queue until a doctor approves. Applies everywhere, not only the online store.',
+  prohibitUps:
+    'Do not offer UPS on any mail shipment that includes this item — alone or with others. Use this for CBD / Ellevet and anything else UPS will not carry.',
+  prohibitFedex:
+    'Do not offer FedEx on any mail shipment that includes this item — alone or with others.',
+  autoshipOffered: 'Clients can set a renewal frequency when they order this item.',
 };
 
 function numOrNull(s: string): number | null {
@@ -97,11 +115,13 @@ function fromItem(item: InventoryItem): ClinicalDraft {
     vendorDrugNumber: strField(item.vendorDrugNumber),
     barcode: strField(item.barcode),
     defaultQuantity: strField(item.defaultQuantity),
+    strength: strField((item as InventoryItem & { strength?: string | null }).strength),
     // eVet imports can mark an item dispensable without marking it a medication; both mean
     // "prescribed product" here, so either one checks the single Medication box and keeps
     // the saved directions visible instead of silently dropping them.
     isMedication: item.isMedication === true || item.isDispensable === true,
-    requireExpirationOnLots: item.requireExpirationOnLots === true,
+    requireExpirationOnLots: true,
+    requireLotNumber: item.requireLotNumber === true,
     trackLots: item.trackLots === true,
     isVaccine: item.isVaccine === true,
     dispenseNote: strField(item.dispenseNote),
@@ -113,9 +133,21 @@ function fromItem(item: InventoryItem): ClinicalDraft {
     hideOnMedicalRecordView: item.hideOnMedicalRecordView === true,
     hideOnMedicalRecordPrint: item.hideOnMedicalRecordPrint === true,
     excludeFromProduction: item.excludeFromProduction === true,
+    excludeProductionWhenRefilling:
+      item.excludeProductionWhenRefilling === true
+        ? 'yes'
+        : item.excludeProductionWhenRefilling === false
+          ? 'no'
+          : 'inherit',
     allowPriceChange: item.allowPriceChange === true,
     changePatientStatusTo: strField(item.changePatientStatusTo),
     changePatientSex: item.changePatientSex === true,
+    requiresDoctorApproval: item.requiresDoctorApproval === true,
+    prohibitedCarriers: Array.isArray(item.prohibitedCarriers)
+      ? item.prohibitedCarriers.map((c) => String(c).toUpperCase())
+      : [],
+    autoshipOffered: Boolean(item.autoshipRecommendedFrequency),
+    autoshipFrequency: item.autoshipRecommendedFrequency || 'monthly',
   };
 }
 
@@ -265,13 +297,17 @@ function summaryChips(draft: ClinicalDraft): string[] {
   if (draft.isMedication) chips.push('Medication');
   if (draft.isVaccine) chips.push('Vaccine');
   if (draft.trackLots) chips.push('Lots');
-  if (draft.requireExpirationOnLots) chips.push('Lot expiration required');
+  if (draft.requireLotNumber) chips.push('Lot # required');
   if (draft.isControlled) chips.push('Controlled');
   if (draft.isMicrochip) chips.push('Microchip');
   if (draft.hasClientNotes) chips.push('Client notes');
   if (draft.allowPriceChange) chips.push('Price editable');
   if (draft.excludeFromProduction) chips.push('Excluded from provider VSD');
   if (draft.hideOnInvoice) chips.push('Hidden on invoice');
+  if (draft.requiresDoctorApproval) chips.push('Doctor approval');
+  if (draft.prohibitedCarriers.includes('UPS')) chips.push('No UPS');
+  if (draft.prohibitedCarriers.includes('FEDEX')) chips.push('No FedEx');
+  if (draft.autoshipOffered) chips.push('Autoship');
   return chips;
 }
 
@@ -304,7 +340,9 @@ export default function CatalogInventoryClinicalFields({
         barcode: draft.barcode.trim() || null,
         defaultQuantity: numOrNull(draft.defaultQuantity),
         isMedication: draft.isMedication,
-        requireExpirationOnLots: draft.requireExpirationOnLots,
+        strength: draft.isMedication ? draft.strength.trim() || null : null,
+        requireExpirationOnLots: true,
+        requireLotNumber: draft.requireLotNumber,
         trackLots: draft.trackLots,
         isVaccine: draft.isVaccine,
         // Dispensable is no longer a separate switch: a medication is what you hand to a
@@ -321,9 +359,20 @@ export default function CatalogInventoryClinicalFields({
         hideOnMedicalRecordView: draft.hideOnMedicalRecordView,
         hideOnMedicalRecordPrint: draft.hideOnMedicalRecordPrint,
         excludeFromProduction: draft.excludeFromProduction,
+        excludeProductionWhenRefilling:
+          draft.excludeProductionWhenRefilling === 'yes'
+            ? true
+            : draft.excludeProductionWhenRefilling === 'no'
+              ? false
+              : null,
         allowPriceChange: draft.allowPriceChange,
         changePatientStatusTo: draft.changePatientStatusTo.trim() || null,
         changePatientSex: draft.changePatientSex,
+        requiresDoctorApproval: draft.requiresDoctorApproval,
+        prohibitedCarriers: draft.prohibitedCarriers,
+        autoshipRecommendedFrequency: draft.autoshipOffered
+          ? draft.autoshipFrequency || 'monthly'
+          : null,
         ...(draft.isVaccine
           ? {
               vaccineDetails: {
@@ -496,6 +545,17 @@ export default function CatalogInventoryClinicalFields({
               history.
             </p>
             {draft.isMedication && (
+              <>
+              <label className="settings-label" style={{ margin: '12px 0 0' }}>
+                Strength
+                <FlagHelp text="Printed on the Rx label. Set it here on the catalog item — staff do not type it at print time." />
+                <input
+                  className="settings-input"
+                  value={draft.strength}
+                  onChange={(e) => setDraft((d) => ({ ...d, strength: e.target.value }))}
+                  placeholder="e.g. 100 mg"
+                />
+              </label>
               <label className="settings-label" style={{ margin: '12px 0 0' }}>
                 Default directions
                 <FlagHelp text="Prefills the directions (sig) on the SOAP and the dispensing label. Staff can edit them per patient." />
@@ -510,6 +570,7 @@ export default function CatalogInventoryClinicalFields({
                   style={NOTE_TEXTAREA_STYLE}
                 />
               </label>
+              </>
             )}
           </div>
 
@@ -531,7 +592,7 @@ export default function CatalogInventoryClinicalFields({
                 setDraft((d) => ({
                   ...d,
                   isVaccine: checked,
-                  ...(checked ? { trackLots: true } : {}),
+                  ...(checked ? { trackLots: true, requireLotNumber: true } : {}),
                 }))
               }
             />
@@ -700,6 +761,52 @@ export default function CatalogInventoryClinicalFields({
             }}
           >
             <FlagCheckbox
+              checked={draft.requiresDoctorApproval}
+              label="Doctor approval required"
+              help={FLAG_HELP.requiresDoctorApproval}
+              onChange={(checked) =>
+                setDraft((d) => ({ ...d, requiresDoctorApproval: checked }))
+              }
+            />
+            <FlagCheckbox
+              checked={draft.prohibitedCarriers.includes('UPS')}
+              label="Prohibited carrier: UPS"
+              help={FLAG_HELP.prohibitUps}
+              onChange={(checked) =>
+                setDraft((d) => ({
+                  ...d,
+                  prohibitedCarriers: checked
+                    ? [...d.prohibitedCarriers.filter((c) => c !== 'UPS'), 'UPS']
+                    : d.prohibitedCarriers.filter((c) => c !== 'UPS'),
+                }))
+              }
+            />
+            <FlagCheckbox
+              checked={draft.prohibitedCarriers.includes('FEDEX')}
+              label="Prohibited carrier: FedEx"
+              help={FLAG_HELP.prohibitFedex}
+              onChange={(checked) =>
+                setDraft((d) => ({
+                  ...d,
+                  prohibitedCarriers: checked
+                    ? [...d.prohibitedCarriers.filter((c) => c !== 'FEDEX'), 'FEDEX']
+                    : d.prohibitedCarriers.filter((c) => c !== 'FEDEX'),
+                }))
+              }
+            />
+            <FlagCheckbox
+              checked={draft.autoshipOffered}
+              label="Autoship"
+              help={FLAG_HELP.autoshipOffered}
+              onChange={(checked) =>
+                setDraft((d) => ({
+                  ...d,
+                  autoshipOffered: checked,
+                  autoshipFrequency: d.autoshipFrequency || 'monthly',
+                }))
+              }
+            />
+            <FlagCheckbox
               checked={draft.isControlled}
               label="Controlled"
               help={FLAG_HELP.isControlled}
@@ -724,11 +831,11 @@ export default function CatalogInventoryClinicalFields({
               }
             />
             <FlagCheckbox
-              checked={draft.requireExpirationOnLots}
-              label="Require expiration on lots"
-              help={FLAG_HELP.requireExpirationOnLots}
+              checked={draft.requireLotNumber}
+              label="Require lot #"
+              help={FLAG_HELP.requireLotNumber}
               onChange={(checked) =>
-                setDraft((d) => ({ ...d, requireExpirationOnLots: checked }))
+                setDraft((d) => ({ ...d, requireLotNumber: checked }))
               }
             />
             <FlagCheckbox
@@ -755,6 +862,23 @@ export default function CatalogInventoryClinicalFields({
                 setDraft((d) => ({ ...d, excludeFromProduction: checked }))
               }
             />
+            <label className="settings-label" title={FLAG_HELP.excludeProductionWhenRefilling}>
+              Exclude production when refilling
+              <select
+                className="settings-input"
+                value={draft.excludeProductionWhenRefilling}
+                onChange={(e) =>
+                  setDraft((d) => ({
+                    ...d,
+                    excludeProductionWhenRefilling: e.target.value as ClinicalDraft['excludeProductionWhenRefilling'],
+                  }))
+                }
+              >
+                <option value="inherit">Inherit practice default</option>
+                <option value="yes">Always exclude on refill</option>
+                <option value="no">Never exclude on refill</option>
+              </select>
+            </label>
             <FlagCheckbox
               checked={draft.hideOnInvoice}
               label="Hide on invoice"
@@ -788,6 +912,23 @@ export default function CatalogInventoryClinicalFields({
               }
             />
           </div>
+          {draft.autoshipOffered ? (
+            <label className="settings-label" style={{ marginBottom: 12, maxWidth: 280 }}>
+              Autoship frequency
+              <select
+                className="settings-input"
+                value={draft.autoshipFrequency}
+                onChange={(e) =>
+                  setDraft((d) => ({ ...d, autoshipFrequency: e.target.value }))
+                }
+              >
+                <option value="monthly">Monthly</option>
+                <option value="quarterly">Quarterly</option>
+                <option value="every_6_months">Every 6 months</option>
+                <option value="yearly">Yearly</option>
+              </select>
+            </label>
+          ) : null}
 
           {draft.hasClientNotes && (
             <label className="settings-label" style={{ marginBottom: 12 }}>

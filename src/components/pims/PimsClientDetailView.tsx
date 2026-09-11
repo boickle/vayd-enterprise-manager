@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { createPortal } from 'react-dom';
 import { Link, useSearchParams } from 'react-router';
 import {
   ChevronDown,
   ChevronRight,
+  FileText,
   KeyRound,
   Mail,
   MapPin,
@@ -11,6 +13,7 @@ import {
   Pencil,
   Phone,
   Settings,
+  Sparkles,
   User,
   UserCheck,
   UserX,
@@ -26,6 +29,8 @@ import {
   type ScoutClientWrite,
 } from '../../api/clientsMutations';
 import { sendClientPortalAccess } from '../../api/users';
+import { recordScoutChartCommunication } from '../../api/scoutChart';
+import { buildPhoneDialHref } from '../../utils/quoContact';
 import { formatAddressFields } from '../../api/geo';
 import { lookupClientZoneForAddress } from '../../api/zoneLookup';
 import { apiBaseUrl } from '../../api/http';
@@ -60,6 +65,7 @@ import {
   readStaffClientLayout,
   writeStaffClientLayout,
   STAFF_UI_PREFS_EVENT,
+  type StaffClientLayout,
 } from '../../utils/staffUiPrefs';
 import {
   accountBalanceFromClient,
@@ -145,12 +151,6 @@ function formatDateOnly(iso: unknown): string {
   return Number.isNaN(d.getTime()) ? s : d.toLocaleDateString(undefined, { dateStyle: 'medium' });
 }
 
-function yn(v: unknown): string {
-  if (v === true) return 'Yes';
-  if (v === false) return 'No';
-  return '—';
-}
-
 function mediaUrl(path: unknown): string | null {
   return publicMediaUrl(path, apiBaseUrl);
 }
@@ -165,7 +165,7 @@ function flagOn(v: unknown): boolean {
 
 function useClientSectionOpen(
   userId: string | null,
-  key: 'pets' | 'visits' | 'prefs' | 'household' | 'comms',
+  key: keyof StaffClientLayout,
 ): [boolean, () => void] {
   const [open, setOpen] = useState(() => readStaffClientLayout(userId)[key]);
 
@@ -689,13 +689,9 @@ function ReachEditButton({
 function ClientCommunicationPrefsCard({
   record,
   onSave,
-  collapsed,
-  onToggleCollapse,
 }: {
   record: Record<string, unknown>;
   onSave: (body: ScoutClientWrite) => Promise<void>;
-  collapsed?: boolean;
-  onToggleCollapse?: () => void;
 }) {
   const [doNotEmail, setDoNotEmail] = useState(flagOn(record.doNotEmail));
   const [doNotSms, setDoNotSms] = useState(flagOn(record.doNotSms) || flagOn(record.smsOptOut));
@@ -759,36 +755,14 @@ function ClientCommunicationPrefsCard({
 
   return (
     <section className="pims-emr-story__card pims-client-detail__comms-prefs" aria-labelledby="pims-client-prefs">
-      {onToggleCollapse ? (
-        <div className="pims-emr-story__collapse-row">
-          <button
-            type="button"
-            id="pims-client-prefs"
-            className="pims-emr-story__collapse"
-            onClick={onToggleCollapse}
-            aria-expanded={!collapsed}
-          >
-            {collapsed ? <ChevronRight size={15} aria-hidden /> : <ChevronDown size={15} aria-hidden />}
-            <MessageSquare size={15} aria-hidden />
-            Communication
-          </button>
-          {!collapsed && saveFlash !== 'idle' ? (
-            <span className="pims-client-detail__autosave" role="status" aria-live="polite">
-              {saveFlash === 'saving' ? 'Saving…' : 'Saved'}
-            </span>
-          ) : null}
-        </div>
-      ) : (
-        <h3 id="pims-client-prefs">
-          <MessageSquare size={15} aria-hidden />
-          Communication
-        </h3>
-      )}
-      {collapsed ? null : (
-      <>
-      <p className="pims-client-detail__comms-hint" style={{ marginTop: 6 }}>
-        Changes save automatically when you toggle a checkbox.
-      </p>
+      <div className="pims-emr-story__collapse-row">
+        <h3 id="pims-client-prefs">Preferences</h3>
+        {saveFlash !== 'idle' ? (
+          <span className="pims-client-detail__autosave" role="status" aria-live="polite">
+            {saveFlash === 'saving' ? 'Saving…' : 'Saved'}
+          </span>
+        ) : null}
+      </div>
       {error ? (
         <p className="pims-detail__form-error" role="alert">
           {error}
@@ -856,12 +830,9 @@ function ClientCommunicationPrefsCard({
             />
             Do not send reminders
           </label>
-          <p className="pims-client-detail__comms-hint">
-            Blocks automated email/SMS. Staff can still text after a warning.
-          </p>
         </fieldset>
         <fieldset className="pims-client-detail__comms-set" disabled={saving}>
-          <legend>Communication preferences</legend>
+          <legend>Prefer</legend>
           <label>
             <input
               type="checkbox"
@@ -921,13 +892,11 @@ function ClientCommunicationPrefsCard({
             />
             Email
           </label>
-          <p className="pims-client-detail__comms-hint">
-            Same choices the client can set in the client portal.
-          </p>
         </fieldset>
       </div>
-      </>
-      )}
+      <p className="pims-client-detail__comms-hint">
+        Toggles save as you click. Do-not-contact blocks automated email/SMS.
+      </p>
     </section>
   );
 }
@@ -1271,9 +1240,25 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
   const [visitsOpen, toggleVisitsOpen] = useClientSectionOpen(userId, 'visits');
   const [prefsOpen, togglePrefsOpen] = useClientSectionOpen(userId, 'prefs');
   const [householdOpen, toggleHouseholdOpen] = useClientSectionOpen(userId, 'household');
-  const [commsOpen, toggleCommsOpen] = useClientSectionOpen(userId, 'comms');
+  const [summaryOpen, toggleSummaryOpen] = useClientSectionOpen(userId, 'summary');
+  const [syncOpen, toggleSyncOpen] = useClientSectionOpen(userId, 'sync');
   const reach = useClientReach();
   const [addPetOpen, setAddPetOpen] = useState(false);
+  const [communicatePick, setCommunicatePick] = useState(false);
+  const [logOpen, setLogOpen] = useState(false);
+  const [logBody, setLogBody] = useState('');
+  const [logSaving, setLogSaving] = useState(false);
+  const [logError, setLogError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (searchParams.get('communicate') !== '1') return;
+    setCommunicatePick(true);
+    const next = new URLSearchParams(searchParams);
+    next.delete('communicate');
+    setSearchParams(next, { replace: true });
+    // Only react to the launch flag from the schedule menu.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams.get('communicate')]);
 
   const patientsBasePath = '/schedule/patients';
 
@@ -1495,9 +1480,19 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
         : Number.isFinite(fromFlat) && fromFlat > 0
           ? fromFlat
           : null;
-      return { id, name: pickStr(p.name) ?? `Pet #${id}`, primaryProviderId };
+      return {
+        id,
+        name: pickStr(p.name) ?? `Pet #${id}`,
+        primaryProviderId,
+        isActive: p.isActive !== false,
+      };
     })
-    .filter((p): p is { id: number; name: string; primaryProviderId: number | null } => p != null);
+    .filter((p): p is {
+      id: number;
+      name: string;
+      primaryProviderId: number | null;
+      isActive: boolean;
+    } => p != null);
 
   const zoneText = zone ? `Zone ${zone.replace(/^Zone\s+/i, '')}` : null;
 
@@ -1642,24 +1637,32 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
         afterReach={
           <div
             className={`pims-emr-header-alerts${
-              connectionNotes ? ' pims-emr-header-alerts--pair' : ' pims-emr-header-alerts--single'
+              alerts && connectionNotes
+                ? ' pims-emr-header-alerts--pair'
+                : ' pims-emr-header-alerts--single'
             }`}
           >
-            <div className="pims-emr-alert-box" role={alerts ? 'alert' : undefined}>
-              <div className="pims-emr-alert-box__head">
-                <span className="pims-emr-alert-box__label">Client alerts</span>
-                <ReachEditButton
-                  label="Edit client alerts"
-                  expanded={headerEdit === 'alerts'}
-                  onClick={() => toggleHeaderEdit('alerts')}
-                />
+            {alerts ? (
+              <div className="pims-emr-alert-box" role="alert">
+                <div className="pims-emr-alert-box__head">
+                  <span className="pims-emr-alert-box__label">Client alerts</span>
+                  <ReachEditButton
+                    label="Edit client alerts"
+                    expanded={headerEdit === 'alerts'}
+                    onClick={() => toggleHeaderEdit('alerts')}
+                  />
+                </div>
+                {alerts}
               </div>
-              {alerts ? (
-                alerts
-              ) : (
-                <span className="pims-emr-alert-box__empty">No client alerts</span>
-              )}
-            </div>
+            ) : (
+              <button
+                type="button"
+                className="pims-emr-alert-add"
+                onClick={() => toggleHeaderEdit('alerts')}
+              >
+                + Add client alerts
+              </button>
+            )}
             {connectionNotes ? (
               <div className="pims-emr-alert-box pims-emr-alert-box--connection">
                 <div className="pims-emr-alert-box__head">
@@ -1713,6 +1716,14 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
           <>
             <button type="button" className="pims-detail__btn-primary" onClick={() => openFinancial()}>
               Invoices
+            </button>
+            <button
+              type="button"
+              className="pims-detail__btn-secondary"
+              onClick={() => setCommunicatePick(true)}
+            >
+              <MessageSquare size={14} aria-hidden />
+              Communicate
             </button>
             <button
               type="button"
@@ -1868,13 +1879,6 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
         </div>
       ) : null}
 
-      <ClientCommunicationPrefsCard
-        record={record}
-        onSave={saveFields}
-        collapsed={!prefsOpen}
-        onToggleCollapse={togglePrefsOpen}
-      />
-
       <ClientHouseholdDefaultsCard
         record={record}
         onSave={saveFields}
@@ -1882,25 +1886,42 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
         onToggleCollapse={toggleHouseholdOpen}
       />
 
-      <PimsClientHouseholdChatCard
-        clientId={clientId}
-        clientName={name}
-        balance={headerBalance ?? evetBalance}
-        practiceTz={PIMS_CLIENT_DETAIL_TZ}
-        pets={patients
-          .map((p) => {
-            const pid = p.id != null ? String(p.id) : '';
-            if (!pid) return null;
-            return {
-              id: pid,
-              name: pickStr(p.name) ?? `Pet #${pid}`,
-              summaryLine: petSummary(p),
-              alerts: pickStr(p.alerts),
-              active: p.isActive !== false,
-            };
-          })
-          .filter((p): p is NonNullable<typeof p> => p != null)}
-      />
+      <div className={`pims-emr-case-prep-wrap${summaryOpen ? '' : ' is-collapsed'}`}>
+        <div className="pims-emr-story__collapse-row pims-emr-case-prep-wrap__head">
+          <button
+            type="button"
+            id="pims-client-summary"
+            className="pims-emr-story__collapse"
+            onClick={toggleSummaryOpen}
+            aria-expanded={summaryOpen}
+          >
+            {summaryOpen ? <ChevronDown size={15} aria-hidden /> : <ChevronRight size={15} aria-hidden />}
+            <Sparkles size={15} aria-hidden />
+            Household summary + chat
+          </button>
+        </div>
+        {summaryOpen ? (
+          <PimsClientHouseholdChatCard
+            clientId={clientId}
+            clientName={name}
+            balance={headerBalance ?? evetBalance}
+            practiceTz={PIMS_CLIENT_DETAIL_TZ}
+            pets={patients
+              .map((p) => {
+                const pid = p.id != null ? String(p.id) : '';
+                if (!pid) return null;
+                return {
+                  id: pid,
+                  name: pickStr(p.name) ?? `Pet #${pid}`,
+                  summaryLine: petSummary(p),
+                  alerts: pickStr(p.alerts),
+                  active: p.isActive !== false,
+                };
+              })
+              .filter((p): p is NonNullable<typeof p> => p != null)}
+          />
+        ) : null}
+      </div>
 
       <div className="pims-client-detail__story">
         <section className="pims-emr-story__card" aria-labelledby="pims-client-pets">
@@ -1992,6 +2013,35 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
         </div>
       </div>
 
+      <div className={`pims-emr-case-prep-wrap${prefsOpen ? '' : ' is-collapsed'}`}>
+        <div className="pims-emr-story__collapse-row pims-emr-case-prep-wrap__head">
+          <button
+            type="button"
+            id="pims-client-comms-wrap"
+            className="pims-emr-story__collapse"
+            onClick={togglePrefsOpen}
+            aria-expanded={prefsOpen}
+          >
+            {prefsOpen ? <ChevronDown size={15} aria-hidden /> : <ChevronRight size={15} aria-hidden />}
+            <MessageSquare size={15} aria-hidden />
+            Communication Preferences + History
+          </button>
+        </div>
+        {prefsOpen ? (
+          <div className="pims-client-detail__comms-stack">
+            <ClientCommunicationPrefsCard record={record} onSave={saveFields} />
+            <section className="pims-emr-story__card pims-client-detail__comms-history" aria-labelledby="pims-client-history">
+              <h3 id="pims-client-history">History</h3>
+              <ClientCommunicationsPanel
+                clientId={Number(clientId)}
+                refreshKey={commsTick}
+                embedded
+              />
+            </section>
+          </div>
+        ) : null}
+      </div>
+
       <div id="client-financial" ref={financialRef} className="pims-client-detail__financial">
         <ClientFinancialWorkspace
           clientId={Number(clientId)}
@@ -2020,13 +2070,6 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
         />
       </div>
 
-      <ClientCommunicationsPanel
-        clientId={Number(clientId)}
-        refreshKey={commsTick}
-        collapsed={!commsOpen}
-        onToggleCollapse={toggleCommsOpen}
-      />
-
       {Number.isFinite(Number(clientId)) ? (
         <ClientReachHost
           action={reach.action}
@@ -2047,59 +2090,87 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
       ) : null}
 
       <TechnicalDetails
+        collapsed={!syncOpen}
+        onToggleCollapse={toggleSyncOpen}
+        summary={[
+          `Scout ${record.id ?? clientId}`,
+          pickStr(record.pimsId) ? `eVet ${pickStr(record.pimsId)}` : null,
+        ]
+          .filter(Boolean)
+          .join(' · ')}
         note={
           scoutState.scoutManaged
             ? 'Scout owns this record. eVet imports will not overwrite the fields above.'
             : 'eVet still owns this record. Editing any field above hands ownership to Scout.'
         }
-        rows={[
-          { label: 'Scout ID', value: String(record.id ?? clientId) },
-          { label: 'PIMS ID', value: pickStr(record.pimsId) },
-          { label: 'PIMS type', value: pickStr(record.pimsType) },
-          { label: 'Portal username', value: pickStr(record.username) },
+        groups={[
           {
-            label: 'Portal login',
-            value:
-              portalAccounts.length === 0
-                ? 'No portal account'
-                : portalAccounts
-                    .map((a) =>
-                      [
-                        a.email,
-                        a.hasLoggedIn
-                          ? formatPortalLogin(a.lastLoginAt)
-                          : a.requiresPasswordReset
-                            ? 'Invited, never logged in'
-                            : 'Last login not recorded',
-                      ]
-                        .filter(Boolean)
-                        .join(' — '),
-                    )
-                    .join('; '),
+            title: 'Record',
+            rows: [
+              { label: 'Scout ID', value: String(record.id ?? clientId) },
+              { label: 'eVet ID', value: pickStr(record.pimsId) },
+              { label: 'Source', value: pickStr(record.pimsType) },
+              { label: 'Deleted', value: flagOn(record.isDeleted) ? 'Yes' : null },
+            ],
           },
-          { label: 'Created in Scout', value: formatTs(record.created) },
-          { label: 'Updated in Scout', value: formatTs(record.updated) },
-          { label: 'Created in eVet', value: formatDateOnly(record.externalCreated) },
-          { label: 'Last Scout edit', value: formatTs(record.externalUpdated) },
-          { label: 'Last eVet sync', value: formatTs(record.lastPimsSyncedAt) },
           {
-            label: 'Coordinates',
-            value:
-              toNum(record.lat) != null && toNum(record.lon) != null
-                ? `${toNum(record.lat)!.toFixed(6)}, ${toNum(record.lon)!.toFixed(6)}`
-                : null,
+            title: 'Client portal',
+            rows: [
+              { label: 'Username', value: pickStr(record.username) },
+              {
+                label: 'Login',
+                value:
+                  portalAccounts.length === 0
+                    ? 'No portal account'
+                    : portalAccounts
+                        .map((a) =>
+                          [
+                            a.email,
+                            a.hasLoggedIn
+                              ? formatPortalLogin(a.lastLoginAt)
+                              : a.requiresPasswordReset
+                                ? 'Invited, never logged in'
+                                : 'Last login not recorded',
+                          ]
+                            .filter(Boolean)
+                            .join(' — '),
+                        )
+                        .join('; '),
+              },
+            ],
           },
-          { label: 'Geocode match', value: pickStr(record.latLonMatchLevel) },
-          { label: 'Address verified', value: yn(record.latLonValidated) },
-          { label: 'Do not email', value: yn(record.doNotEmail) },
-          { label: 'Do not SMS', value: yn(doNotSms) },
-          { label: 'Do not send reminders', value: yn(record.doNotSendReminders) },
-          { label: 'Prefer email', value: yn(record.preferEmail !== false) },
-          { label: 'Prefer SMS', value: yn(record.preferSms !== false) },
-          { label: 'Prefer phone', value: yn(record.preferPhone !== false) },
-          { label: 'Primary SMS-enabled', value: yn(record.phone1SmsEnabled !== false) },
-          { label: 'Alternate SMS-enabled', value: yn(record.phone2SmsEnabled !== false) },
-          { label: 'Deleted', value: yn(record.isDeleted) },
+          {
+            title: 'Sync',
+            rows: [
+              { label: 'Created in Scout', value: formatTs(record.created) },
+              { label: 'Created in eVet', value: formatDateOnly(record.externalCreated) },
+              { label: 'Updated in Scout', value: formatTs(record.updated) },
+              { label: 'Last Scout edit', value: formatTs(record.externalUpdated) },
+              { label: 'Last eVet sync', value: formatTs(record.lastPimsSyncedAt) },
+            ],
+          },
+          {
+            title: 'Map',
+            rows: [
+              {
+                label: 'Coordinates',
+                value:
+                  toNum(record.lat) != null && toNum(record.lon) != null
+                    ? `${toNum(record.lat)!.toFixed(6)}, ${toNum(record.lon)!.toFixed(6)}`
+                    : null,
+              },
+              { label: 'Match', value: pickStr(record.latLonMatchLevel) },
+              {
+                label: 'Verified',
+                value:
+                  record.latLonValidated == null
+                    ? null
+                    : flagOn(record.latLonValidated)
+                      ? 'Yes'
+                      : 'No',
+              },
+            ],
+          },
         ]}
       />
       <AddPatientModal
@@ -2111,6 +2182,162 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
           await applyWriteResult(undefined);
         }}
       />
+
+      {communicatePick && typeof document !== 'undefined'
+        ? createPortal(
+            <div className="pims-chart-pick" role="dialog" aria-modal="true" aria-labelledby="pims-client-msg-pick">
+              <button
+                type="button"
+                className="pims-chart-pick__backdrop"
+                aria-label="Close"
+                onClick={() => setCommunicatePick(false)}
+              />
+              <div className="pims-chart-pick__card">
+                <div className="pims-chart-pick__head">
+                  <h3 id="pims-client-msg-pick">Communicate {name}</h3>
+                </div>
+                <p className="pims-chart-pick__empty">
+                  Text and email stay in your workflow unless you add them to the record. Call
+                  opens the phone line. Log saves a client communication.
+                </p>
+                <div className="pims-chart-pick__foot">
+                  <button
+                    type="button"
+                    className="brief-btn primary"
+                    disabled={!phone1}
+                    onClick={() => {
+                      setCommunicatePick(false);
+                      reach.openSms(phone1);
+                    }}
+                  >
+                    <MessageSquare size={14} aria-hidden />
+                    Text
+                  </button>
+                  <button
+                    type="button"
+                    className="brief-btn"
+                    disabled={!primaryEmail}
+                    onClick={() => {
+                      setCommunicatePick(false);
+                      reach.openEmail(primaryEmail);
+                    }}
+                  >
+                    <Mail size={14} aria-hidden />
+                    Email
+                  </button>
+                  <button
+                    type="button"
+                    className="brief-btn"
+                    disabled={!phone1}
+                    onClick={() => {
+                      if (!phone1) return;
+                      setCommunicatePick(false);
+                      window.location.href = buildPhoneDialHref(phone1);
+                    }}
+                  >
+                    <Phone size={14} aria-hidden />
+                    Call
+                  </button>
+                  <button
+                    type="button"
+                    className="brief-btn"
+                    onClick={() => {
+                      setCommunicatePick(false);
+                      setLogError(null);
+                      setLogBody('');
+                      setLogOpen(true);
+                    }}
+                  >
+                    <FileText size={14} aria-hidden />
+                    Log
+                  </button>
+                  <button type="button" className="brief-btn" onClick={() => setCommunicatePick(false)}>
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
+
+      {logOpen && typeof document !== 'undefined'
+        ? createPortal(
+            <div className="pims-chart-pick" role="dialog" aria-modal="true" aria-labelledby="pims-client-log">
+              <button
+                type="button"
+                className="pims-chart-pick__backdrop"
+                aria-label="Close"
+                onClick={() => setLogOpen(false)}
+              />
+              <div className="pims-chart-pick__card" style={{ width: 'min(520px, 100%)' }}>
+                <div className="pims-chart-pick__head">
+                  <h3 id="pims-client-log">Communications</h3>
+                  <button
+                    type="button"
+                    className="pims-chart-pick__close"
+                    onClick={() => setLogOpen(false)}
+                    aria-label="Close"
+                  >
+                    ×
+                  </button>
+                </div>
+                <p className="pims-chart-pick__empty">
+                  Save a communication for {name}. This is added to client communications.
+                </p>
+                <textarea
+                  className="pims-chart-log__area"
+                  rows={8}
+                  value={logBody}
+                  onChange={(e) => setLogBody(e.target.value)}
+                  placeholder="Write the communication…"
+                />
+                {logError ? <p className="pims-chart-pick__empty">{logError}</p> : null}
+                <div className="pims-chart-pick__foot">
+                  <button type="button" className="brief-btn" onClick={() => setLogOpen(false)}>
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="brief-btn primary"
+                    disabled={logSaving}
+                    onClick={() => {
+                      const text = logBody.trim();
+                      if (!text) {
+                        setLogError('Write the communication before saving.');
+                        return;
+                      }
+                      setLogSaving(true);
+                      setLogError(null);
+                      void recordScoutChartCommunication({
+                        clientId: Number(clientId),
+                        channel: 'log',
+                        body: text,
+                        typeLabel: 'Communication log',
+                        includeOnMedicalRecord: false,
+                      })
+                        .then(() => {
+                          setLogOpen(false);
+                          setLogBody('');
+                          setCommsTick((n) => n + 1);
+                          if (!prefsOpen) togglePrefsOpen();
+                        })
+                        .catch((err) => {
+                          setLogError(
+                            err instanceof Error ? err.message : 'Could not save that communication.',
+                          );
+                        })
+                        .finally(() => setLogSaving(false));
+                    }}
+                  >
+                    {logSaving ? 'Saving…' : 'Save'}
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }

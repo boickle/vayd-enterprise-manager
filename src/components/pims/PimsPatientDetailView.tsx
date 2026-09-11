@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import {
@@ -22,6 +22,7 @@ import {
   Bell,
   Heart,
   Pencil,
+  Upload,
   X,
 } from 'lucide-react';
 import { fetchClientByIdStaff } from '../../api/clientsStaff';
@@ -45,7 +46,11 @@ import {
   fetchPatientMedicalRecordStaff,
   patchPatient,
   reactivatePatient,
+  uploadPatientChartDocument,
   uploadPetImage,
+  removePatientChartDocumentFromChart,
+  CHART_DOCUMENT_UPLOAD_ACCEPT,
+  CHART_DOCUMENT_UPLOAD_MAX_BYTES,
   type ScoutPatientWrite,
 } from '../../api/patients';
 import {
@@ -69,14 +74,29 @@ import {
 import {
   buildChartRowsFromMedicalRecord,
   chartRowsFromClientRoomLoaders,
+  chartRowsFromMailOrders,
   chartRowsFromScoutNotes,
   filterRowsByDateRange,
   groupChartRowsByLocalDate,
+  treatmentItemBelongsOnChart,
+  treatmentPlanBelongsOnChart,
   type ChartRow,
   type MedicalRecordBundle,
 } from '../../utils/patientChartFromMedicalRecord';
+import { listMailOrders, type MailOrder } from '../../api/onlineStore';
 import { searchRoomLoaders, type RoomLoader } from '../../api/roomLoader';
-import { listScoutChartNotes, type ScoutChartNote } from '../../api/scoutChart';
+import PimsPatientChronicAdders from './PimsPatientChronicAdders';
+import {
+  listScoutChartNotes,
+  removeScoutChartNoteFromChart,
+  type ScoutChartNote,
+} from '../../api/scoutChart';
+import {
+  CHART_REMOVE_REASONS,
+  type ChartRemoveReasonId,
+} from '../../utils/chartRemove';
+import type { OutsideRecordAcceptResult } from '../../utils/briefRecordStore';
+import ScoutNoteAddenda from './ScoutNoteAddenda';
 import { defaultPimsAppointmentHistoryRangeUtc } from '../../api/pimsAppointments';
 import { DateTime } from 'luxon';
 import { apiBaseUrl } from '../../api/http';
@@ -85,6 +105,7 @@ import {
   looksLikeHtmlFragment,
   sanitizeCommunicationHtml,
 } from '../../utils/sanitizeCommunicationHtml';
+import { PimsChartPdfModal } from './PimsChartPdfModal';
 import { PimsExamDetailModal } from './PimsExamDetailModal';
 import { PimsMedicalNoteModal } from './PimsMedicalNoteModal';
 import PimsSoapNoteModal from './PimsSoapNoteModal';
@@ -118,6 +139,8 @@ import {
 import { startFreshNewAppointmentRouting } from '../../utils/routingNewAppointment';
 import { writeRoutingChartBookIntent } from '../../utils/routingChartBookIntent';
 import { markSchedulerHandoffPreferRoutingDoctor } from '../../utils/schedulerCalendarHandoff';
+import SendRxLabelButton from '../soap/SendRxLabelButton';
+import { ensurePrintRxNumber } from '../../utils/ensurePrintRxNumber';
 import {
   Card,
   DetailHeader,
@@ -322,36 +345,115 @@ function usePatientSectionOpen(
 }
 
 function chartRowHasBody(r: ChartRow): boolean {
-  return Boolean((r.detailText && r.detailText.trim()) || r.detailHtml);
+  return Boolean(
+    (r.detailText && r.detailText.trim()) ||
+      r.detailHtml ||
+      (r.filePatientId && r.fileDocumentId) ||
+      r.removable ||
+      r.removed,
+  );
 }
 
-function ChartRowExpandBody({ row }: { row: ChartRow }) {
+function ChartDocumentOpenButton({
+  row,
+  label = 'Open PDF',
+}: {
+  row: ChartRow;
+  label?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  if (!row.filePatientId || !row.fileDocumentId) return null;
+  return (
+    <div>
+      <button
+        type="button"
+        className="pims-patient-detail__pdf-btn"
+        onClick={(event) => {
+          event.stopPropagation();
+          setOpen(true);
+        }}
+      >
+        {label}
+      </button>
+      {open ? (
+        <PimsChartPdfModal
+          patientId={row.filePatientId}
+          documentId={row.fileDocumentId}
+          title={row.description || row.typeLabel || 'Document'}
+          onClose={() => setOpen(false)}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function ChartRowExpandBody({
+  row,
+  onRemove,
+}: {
+  row: ChartRow;
+  onRemove?: (row: ChartRow) => void;
+}) {
+  const fileBtn =
+    row.filePatientId && row.fileDocumentId ? (
+      <ChartDocumentOpenButton
+        row={row}
+        label={row.removed ? 'Retrieve file' : 'Open PDF'}
+      />
+    ) : null;
+  const removeBtn =
+    row.removable && onRemove ? (
+      <button
+        type="button"
+        className="pims-patient-detail__remove-btn"
+        onClick={(event) => {
+          event.stopPropagation();
+          onRemove(row);
+        }}
+      >
+        Remove from chart
+      </button>
+    ) : null;
+
+  const text = (row.detailText || '').trim();
+  let body: ReactNode = null;
   if (row.detailHtml) {
-    return (
+    body = (
       <>
-        {row.detailText?.trim() ? (
-          <div className="pims-patient-detail__detail-meta">{row.detailText}</div>
-        ) : null}
+        {text ? <div className="pims-patient-detail__detail-meta">{text}</div> : null}
         <div
           className="pims-patient-detail__html-body"
           dangerouslySetInnerHTML={{ __html: row.detailHtml }}
         />
       </>
     );
-  }
-  const text = (row.detailText || '').trim();
-  if (!text) {
-    return <div className="pims-patient-detail__expand-text">No additional detail.</div>;
-  }
-  if (looksLikeHtmlFragment(text)) {
-    return (
+  } else if (text && looksLikeHtmlFragment(text)) {
+    body = (
       <div
         className="pims-patient-detail__html-body"
         dangerouslySetInnerHTML={{ __html: sanitizeCommunicationHtml(text) }}
       />
     );
+  } else if (text) {
+    body = <div className="pims-patient-detail__expand-text">{text}</div>;
+  } else if (!fileBtn && !removeBtn) {
+    body = <div className="pims-patient-detail__expand-text">No additional detail.</div>;
   }
-  return <div className="pims-patient-detail__expand-text">{text}</div>;
+
+  return (
+    <div className="pims-patient-detail__expand-stack">
+      {body}
+      {fileBtn || removeBtn ? (
+        <div className="pims-patient-detail__expand-actions">
+          {fileBtn}
+          {removeBtn}
+        </div>
+      ) : null}
+      {row.source === 'scoutNote' && row.removeScoutNoteId && !row.removed ? (
+        <ScoutNoteAddenda noteId={row.removeScoutNoteId} />
+      ) : null}
+    </div>
+  );
 }
 
 function groupPrescriptionTreatmentRows(items: unknown[]) {
@@ -360,6 +462,7 @@ function groupPrescriptionTreatmentRows(items: unknown[]) {
   for (const raw of items) {
     if (!raw || typeof raw !== 'object') continue;
     const row = raw as Record<string, unknown>;
+    if (!treatmentItemBelongsOnChart(row)) continue;
     const inv =
       row.inventoryItem && typeof row.inventoryItem === 'object'
         ? (row.inventoryItem as Record<string, unknown>)
@@ -435,6 +538,32 @@ function prescriberFromRxRow(row: Record<string, unknown>): string {
   const named = pickStr(row.prescriberName);
   if (named) return named;
   return employeeFromRow(row);
+}
+
+function strengthFromRxRow(row: Record<string, unknown>): string {
+  const presc =
+    row.prescription && typeof row.prescription === 'object'
+      ? (row.prescription as Record<string, unknown>)
+      : null;
+  return (
+    pickStr(row.strength) ??
+    pickStr(row.productStrength) ??
+    (presc ? pickStr(presc.strength) : null) ??
+    ''
+  );
+}
+
+function rxNumberFromRxRow(row: Record<string, unknown>): string | null {
+  const presc =
+    row.prescription && typeof row.prescription === 'object'
+      ? (row.prescription as Record<string, unknown>)
+      : null;
+  return pickStr(row.rxNumber) ?? (presc ? pickStr(presc.rxNumber) : null);
+}
+
+function quantityFromRxRow(row: Record<string, unknown>): number {
+  const n = Number(row.quantity ?? row.quantityDispensed);
+  return Number.isFinite(n) && n > 0 ? n : 1;
 }
 
 function WeightTrendChart({ points }: { points: { serviceDate: string; weight: number }[] }) {
@@ -622,6 +751,101 @@ function extractPatientSaveErr(err: unknown): string {
   return e?.response?.data?.message ?? e?.message ?? 'Could not save patient.';
 }
 
+function RemoveFromChartConfirm({
+  row,
+  busy,
+  error,
+  onCancel,
+  onConfirm,
+}: {
+  row: ChartRow;
+  busy: boolean;
+  error: string | null;
+  onCancel: () => void;
+  onConfirm: (reason: ChartRemoveReasonId) => void;
+}) {
+  const [reason, setReason] = useState<ChartRemoveReasonId>('uploaded_in_error');
+  const isFile = row.removeKind === 'document';
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !busy) onCancel();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [busy, onCancel]);
+
+  if (typeof document === 'undefined') return null;
+  return createPortal(
+    <div
+      className="pims-chart-pick pims-detail--emr"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="pims-chart-remove-title"
+    >
+      <button
+        type="button"
+        className="pims-chart-pick__backdrop"
+        aria-label="Keep this on the chart"
+        onClick={() => {
+          if (!busy) onCancel();
+        }}
+      />
+      <div className="pims-chart-pick__card pims-chart-confirm">
+        <div className="pims-chart-pick__head">
+          <h3 id="pims-chart-remove-title">Remove from chart?</h3>
+          <button
+            type="button"
+            className="pims-chart-pick__close"
+            aria-label="Keep this on the chart"
+            disabled={busy}
+            onClick={onCancel}
+          >
+            <X size={16} aria-hidden />
+          </button>
+        </div>
+        <p className="pims-chart-confirm__body">
+          A one-line stub stays on the Timeline so the record is not silently rewritten.
+          {isFile
+            ? ' The file stays stored and can be retrieved from that stub — including if this was not a medical record.'
+            : ' The note text is kept and can be opened from the stub.'}
+        </p>
+        <p className="pims-chart-confirm__quote">{row.description}</p>
+        <fieldset className="pims-chart-confirm__reasons" disabled={busy}>
+          <legend>Why is this coming off?</legend>
+          {CHART_REMOVE_REASONS.map((opt) => (
+            <label key={opt.id}>
+              <input
+                type="radio"
+                name="chart-remove-reason"
+                value={opt.id}
+                checked={reason === opt.id}
+                onChange={() => setReason(opt.id)}
+              />
+              <span>{opt.label}</span>
+            </label>
+          ))}
+        </fieldset>
+        {error ? <p className="pims-chart-confirm__error">{error}</p> : null}
+        <div className="pims-chart-pick__foot pims-chart-confirm__foot">
+          <button type="button" className="brief-btn" disabled={busy} onClick={onCancel}>
+            Keep it
+          </button>
+          <button
+            type="button"
+            className="brief-btn danger"
+            disabled={busy}
+            onClick={() => onConfirm(reason)}
+          >
+            {busy ? 'Removing…' : 'Remove from chart'}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 function DeleteReminderConfirm({
   reminder,
   patientName,
@@ -777,7 +1001,7 @@ export default function PimsPatientDetailView({
   patientsListPath = '/schedule/patients',
 }: Props) {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { abilities, userId } = useAuth() as { abilities?: string[]; userId?: string | null };
   const canBookAppointment = !abilities || abilities.includes('canSeeRouting');
   const practiceTz = practiceTimeZoneOrDefault(DEFAULT_PRACTICE_TIMEZONE);
@@ -785,6 +1009,7 @@ export default function PimsPatientDetailView({
   const [remindersOpen, toggleRemindersOpen] = usePatientSectionOpen(userId, 'reminders');
   const [casePrepOpen, toggleCasePrepOpen] = usePatientSectionOpen(userId, 'casePrep');
   const [weightOpen, toggleWeightOpen] = usePatientSectionOpen(userId, 'weight');
+  const [syncOpen, toggleSyncOpen] = usePatientSectionOpen(userId, 'sync');
   const [summarizeRequestId, setSummarizeRequestId] = useState(0);
   const [summarizeConsumedId, setSummarizeConsumedId] = useState(0);
   const [payload, setPayload] = useState<Record<string, unknown> | null>(null);
@@ -805,27 +1030,39 @@ export default function PimsPatientDetailView({
   const [dateStart, setDateStart] = useState('2000-01-01');
   const [dateEnd, setDateEnd] = useState(() => new Date().toISOString().slice(0, 10));
   const [expandedChartRowIds, setExpandedChartRowIds] = useState<Set<string>>(() => new Set());
+  const [highlightedChartRowIds, setHighlightedChartRowIds] = useState<string[]>([]);
   const [groupOpen, setGroupOpen] = useState<Record<string, boolean>>({});
   const [selectedExam, setSelectedExam] = useState<Record<string, unknown> | null>(null);
   const [selectedMedicalNote, setSelectedMedicalNote] = useState<{
     title: string;
     record: Record<string, unknown>;
   } | null>(null);
+  const [selectedPdf, setSelectedPdf] = useState<{
+    patientId: number;
+    documentId: number;
+    title: string;
+  } | null>(null);
   /** Scout-native SOAP notes for this patient (separate from eVet-imported exams). */
   const [soapNotes, setSoapNotes] = useState<SoapEncounter[]>([]);
   const [clientRoomLoaders, setClientRoomLoaders] = useState<RoomLoader[]>([]);
   const [scoutNotes, setScoutNotes] = useState<ScoutChartNote[]>([]);
+  const [mailOrders, setMailOrders] = useState<MailOrder[]>([]);
   const [embeddedRoomLoaderId, setEmbeddedRoomLoaderId] = useState<number | null>(null);
   const [selectedSoapNote, setSelectedSoapNote] = useState<SoapEncounter | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [photoFailed, setPhotoFailed] = useState(false);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [uploadingDocument, setUploadingDocument] = useState(false);
+  const [documentUploadError, setDocumentUploadError] = useState<string | null>(null);
   const [pendingDeleteReminder, setPendingDeleteReminder] = useState<{
     id: string;
     label: string;
   } | null>(null);
   const [removingReminderId, setRemovingReminderId] = useState<string | null>(null);
+  const [pendingRemoveRow, setPendingRemoveRow] = useState<ChartRow | null>(null);
+  const [removingChartRow, setRemovingChartRow] = useState(false);
+  const [removeChartError, setRemoveChartError] = useState<string | null>(null);
   const [expandedRxKeys, setExpandedRxKeys] = useState<Set<string>>(() => new Set());
   const [householdPets, setHouseholdPets] = useState<HouseholdPet[]>([]);
   const [householdClient, setHouseholdClient] = useState<Record<string, unknown> | null>(null);
@@ -851,6 +1088,7 @@ export default function PimsPatientDetailView({
         treatmentRows,
         completedRoomLoaders,
         scoutNoteRows,
+        mailOrderRows,
       ] = await Promise.all([
           fetchPatientByIdStaff(id),
           fetchPatientMedicalRecordStaff(id).catch((e: unknown) => {
@@ -883,6 +1121,9 @@ export default function PimsPatientDetailView({
             }).catch(() => [] as RoomLoader[]);
           })(),
           listScoutChartNotes(Number(id), 'finalized').catch(() => [] as ScoutChartNote[]),
+          listMailOrders(PIMS_DETAIL_PRACTICE_ID, undefined, Number(id)).catch(
+            () => [] as MailOrder[],
+          ),
         ]);
       if (isStale?.()) return;
       if (patientData && typeof patientData === 'object') {
@@ -899,6 +1140,7 @@ export default function PimsPatientDetailView({
       setTreatments(treatmentRows);
       setClientRoomLoaders(completedRoomLoaders);
       setScoutNotes(scoutNoteRows);
+      setMailOrders(mailOrderRows);
     },
     [patientId]
   );
@@ -918,6 +1160,7 @@ export default function PimsPatientDetailView({
         setSoapNotes([]);
         setClientRoomLoaders([]);
         setScoutNotes([]);
+        setMailOrders([]);
         setEmbeddedRoomLoaderId(null);
         setTreatments([]);
     setPhotoFailed(false);
@@ -939,6 +1182,7 @@ export default function PimsPatientDetailView({
   useEffect(() => {
     setSelectedExam(null);
     setSelectedMedicalNote(null);
+    setSelectedPdf(null);
     setSelectedSoapNote(null);
     setExpandedRxKeys(new Set());
   }, [patientId]);
@@ -951,6 +1195,9 @@ export default function PimsPatientDetailView({
   const client = payload ? clientBlockFromPatient(payload) : null;
   const pname = payload ? patientNameFrom(payload) : '';
   const cname = client ? clientDisplayName(client) : (pickStr(payload?.clientName) ?? '—');
+  const speciesName = payload
+    ? pickStr(payload.species) ?? pickStr(payload.speciesName) ?? ''
+    : '';
   const householdClientId = client?.id != null ? String(client.id) : null;
 
   useEffect(() => {
@@ -1007,11 +1254,13 @@ export default function PimsPatientDetailView({
       treatments,
       true,
       [...rxItems, ...prescriptions],
+      Number(patientId) || null,
     );
     const loaders = chartRowsFromClientRoomLoaders(clientRoomLoaders, patientId);
     const notes = chartRowsFromScoutNotes(scoutNotes);
-    return [...base, ...loaders, ...notes].sort((a, b) => b.sortTime - a.sortTime);
-  }, [medicalRecord, problems, visitCharges, treatments, rxItems, prescriptions, clientRoomLoaders, scoutNotes, patientId]);
+    const mail = chartRowsFromMailOrders(mailOrders, patientId);
+    return [...base, ...loaders, ...notes, ...mail].sort((a, b) => b.sortTime - a.sortTime);
+  }, [medicalRecord, problems, visitCharges, treatments, rxItems, prescriptions, clientRoomLoaders, scoutNotes, mailOrders, patientId]);
 
   /** Ongoing problems, pinned above the record so they are not buried in the timeline. */
   const chronicProblems = useMemo(
@@ -1082,6 +1331,10 @@ export default function PimsPatientDetailView({
   const noteIdParam = searchParams.get('noteId');
   const chartNotes = medicalRecord?.chartNotes ?? [];
   const chartDocuments = medicalRecord?.chartDocuments ?? [];
+  const activeChartDocuments = chartDocuments.filter((row) => {
+    const o = row as Record<string, unknown>;
+    return !pickStr(o.removedAt);
+  });
 
   useEffect(() => {
     if (!examIdParam || exams.length === 0) return;
@@ -1177,6 +1430,36 @@ export default function PimsPatientDetailView({
     });
   };
 
+  const revealAcceptedChartRows = useCallback((result?: OutsideRecordAcceptResult) => {
+    const ids: string[] = [];
+    if (result?.chartDocumentId) ids.push(`document:${result.chartDocumentId}`);
+    if (result?.scoutNoteId) ids.push(`scoutNote:${result.scoutNoteId}`);
+    if (!ids.length) return;
+    setMrTab('byDate');
+    setExpandedChartRowIds((prev) => {
+      const next = new Set(prev);
+      for (const id of ids) next.add(id);
+      return next;
+    });
+    setHighlightedChartRowIds(ids);
+  }, []);
+
+  useEffect(() => {
+    if (highlightedChartRowIds.length === 0) return;
+    const firstId = highlightedChartRowIds[0];
+    const scrollTimer = window.setTimeout(() => {
+      const el = document.querySelector(
+        `[data-chart-row-id="${CSS.escape(firstId)}"]`,
+      ) as HTMLElement | null;
+      el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 80);
+    const clearTimer = window.setTimeout(() => setHighlightedChartRowIds([]), 2800);
+    return () => {
+      window.clearTimeout(scrollTimer);
+      window.clearTimeout(clearTimer);
+    };
+  }, [highlightedChartRowIds]);
+
   const setGroupExpanded = (key: string, open: boolean) => {
     setGroupOpen((o) => ({ ...o, [key]: open }));
   };
@@ -1227,6 +1510,9 @@ export default function PimsPatientDetailView({
 
   async function saveFields(body: ScoutPatientWrite) {
     await applyWriteResult(await patchPatient(patientId, body));
+    if (body.weight !== undefined) {
+      await reloadChartData();
+    }
   }
 
   async function handlePhotoUpload(file: File | null) {
@@ -1253,6 +1539,29 @@ export default function PimsPatientDetailView({
       setSaveError(e instanceof Error ? e.message : 'Could not upload the patient photo.');
     } finally {
       setUploadingPhoto(false);
+    }
+  }
+
+  /** Outside records and other chart attachments. Defaults to "Previous Medical Records". */
+  async function handleChartDocumentUpload(file: File | null) {
+    if (!file || uploadingDocument) return;
+    if (file.size > CHART_DOCUMENT_UPLOAD_MAX_BYTES) {
+      setDocumentUploadError('The file must be 25 MB or smaller.');
+      return;
+    }
+    setUploadingDocument(true);
+    setDocumentUploadError(null);
+    try {
+      await uploadPatientChartDocument(Number(patientId), file, {
+        documentType: 'previousRecords',
+      });
+      await reloadChartData();
+    } catch (e: unknown) {
+      setDocumentUploadError(
+        e instanceof Error ? e.message : 'Could not upload that document.',
+      );
+    } finally {
+      setUploadingDocument(false);
     }
   }
 
@@ -1312,6 +1621,30 @@ export default function PimsPatientDetailView({
       setSaveError(extractPatientSaveErr(err));
     } finally {
       setRemovingReminderId(null);
+    }
+  }
+
+  async function handleRemoveFromChart(row: ChartRow, reason: ChartRemoveReasonId) {
+    setRemovingChartRow(true);
+    setRemoveChartError(null);
+    try {
+      if (row.removeKind === 'document' && row.removeDocumentId) {
+        await removePatientChartDocumentFromChart(
+          Number(patientId),
+          row.removeDocumentId,
+          reason,
+        );
+      } else if (row.removeKind === 'scoutNote' && row.removeScoutNoteId) {
+        await removeScoutChartNoteFromChart(row.removeScoutNoteId, reason);
+      } else {
+        throw new Error('This row cannot be removed from the chart.');
+      }
+      setPendingRemoveRow(null);
+      await reloadChartData();
+    } catch (err) {
+      setRemoveChartError(extractPatientSaveErr(err));
+    } finally {
+      setRemovingChartRow(false);
     }
   }
 
@@ -1599,14 +1932,16 @@ export default function PimsPatientDetailView({
         }
         afterReach={
           <>
+            {patientAlert || ownerAlert || connectionNotes ? (
             <div
               className={`pims-emr-header-alerts${
-                !ownerAlert && !connectionNotes
-                  ? ' pims-emr-header-alerts--single'
-                  : ' pims-emr-header-alerts--pair'
+                [patientAlert, ownerAlert, connectionNotes].filter(Boolean).length > 1
+                  ? ' pims-emr-header-alerts--pair'
+                  : ' pims-emr-header-alerts--single'
               }`}
             >
-              <div className="pims-emr-alert-box" role={patientAlert ? 'alert' : undefined}>
+              {patientAlert ? (
+              <div className="pims-emr-alert-box" role="alert">
                 <div className="pims-emr-alert-box__head">
                   <span className="pims-emr-alert-box__label">Patient alerts</span>
                   <HeaderEditButton
@@ -1615,12 +1950,9 @@ export default function PimsPatientDetailView({
                     onClick={() => setHeaderEdit((cur) => (cur === 'alerts' ? null : 'alerts'))}
                   />
                 </div>
-                {patientAlert ? (
-                  patientAlert
-                ) : (
-                  <span className="pims-emr-alert-box__empty">No patient alerts</span>
-                )}
+                {patientAlert}
               </div>
+              ) : null}
               {ownerAlert ? (
                 <div className="pims-emr-alert-box" role="alert">
                   <span className="pims-emr-alert-box__label">Client alerts</span>
@@ -1634,15 +1966,12 @@ export default function PimsPatientDetailView({
                 </div>
               ) : null}
             </div>
+            ) : null}
             <section
               className="pims-emr-story__care-chips"
               aria-label="Chronic problems and medications"
             >
-              {chronicProblems.length === 0 && chronicMedications.length === 0 ? (
-                <p className="pims-emr-story__muted pims-emr-story__care-chips-empty">
-                  No chronic problems / meds
-                </p>
-              ) : (
+              {chronicProblems.length === 0 && chronicMedications.length === 0 ? null : (
                 <ul className="pims-emr-story__chips pims-emr-story__chips--row">
                   {chronicProblems.map((p) => (
                     <li key={`prob-${p.id}`} className="pims-emr-story__chip--problem">
@@ -1659,7 +1988,12 @@ export default function PimsPatientDetailView({
                   {chronicMedications.map((rx) => (
                     <li key={`rx-${rx.id}`} className="pims-emr-story__chip--med">
                       <Pill size={12} aria-hidden />
-                      <span>{rx.name}</span>
+                      <span>
+                        {rx.name}
+                        {rx.inventoryItemId != null ? (
+                          <span className="pims-emr-story__chip-catalog"> · catalog</span>
+                        ) : null}
+                      </span>
                       <button
                         type="button"
                         disabled={discontinuingRxId != null}
@@ -1671,6 +2005,18 @@ export default function PimsPatientDetailView({
                   ))}
                 </ul>
               )}
+              {Number.isFinite(Number(patientId)) && Number(patientId) > 0 ? (
+                <PimsPatientChronicAdders
+                  patientId={Number(patientId)}
+                  practiceId={practiceId}
+                  onProblemCreated={(created) => {
+                    setProblems((prev) => [created, ...prev.filter((p) => p.id !== created.id)]);
+                  }}
+                  onMedicationCreated={(created) => {
+                    setPrescriptions((prev) => [created, ...prev.filter((m) => m.id !== created.id)]);
+                  }}
+                />
+              ) : null}
             </section>
           </>
         }
@@ -1809,7 +2155,23 @@ export default function PimsPatientDetailView({
         onStartSoap={openSoapForVisit}
         onBookAppointment={canBookAppointment ? startAppointmentForThisPatient : undefined}
         onInvoice={() => openFinancial()}
-        onRecordsChanged={() => void reloadChartData()}
+        onRecordsChanged={(result) => {
+          void (async () => {
+            await reloadChartData();
+            revealAcceptedChartRows(result);
+          })();
+        }}
+        launchNote={searchParams.get('writeNote') === '1'}
+        launchCommunicate={searchParams.get('communicate') === '1'}
+        onLaunchConsumed={() => {
+          if (searchParams.get('writeNote') !== '1' && searchParams.get('communicate') !== '1') {
+            return;
+          }
+          const next = new URLSearchParams(searchParams);
+          next.delete('writeNote');
+          next.delete('communicate');
+          setSearchParams(next, { replace: true });
+        }}
         onTextClient={clientId ? () => reach.openSms(reachPhones[0]?.phone ?? clientPhone, false) : undefined}
         onEmailClient={clientId ? () => reach.openEmail(reachEmails[0]?.email ?? clientEmail) : undefined}
         onOpenCallSession={(id) =>
@@ -1826,6 +2188,7 @@ export default function PimsPatientDetailView({
 
       <>
       <div className="pims-emr-story">
+        <div className="pims-emr-story__split">
         <section className="pims-emr-story__card pims-emr-story__card--visits">
           <PimsAppointmentsSection
             variant="patient"
@@ -1915,6 +2278,7 @@ export default function PimsPatientDetailView({
             </>
           ) : null}
         </section>
+        </div>
 
         <div className={`pims-emr-case-prep-wrap${casePrepOpen ? '' : ' is-collapsed'}`}>
           <div className="pims-emr-story__collapse-row pims-emr-case-prep-wrap__head">
@@ -1986,7 +2350,7 @@ export default function PimsPatientDetailView({
               >
                 <dl className="pims-detail__facts pims-detail__facts--1 pims-emr-weight-exam">
                   <div className="pims-detail__fact">
-                    <dt>Last exam</dt>
+                    <dt>Last recorded</dt>
                     <dd className={latestWeightPoint ? undefined : 'pims-detail__fact-empty'}>
                       {latestWeightPoint
                         ? `${latestWeightPoint.weight} lbs · ${formatChartDateShort(latestWeightPoint.serviceDate)}`
@@ -2003,6 +2367,9 @@ export default function PimsPatientDetailView({
 
       <div className="pims-emr-about-row">
         <TechnicalDetails
+          collapsed={!syncOpen}
+          onToggleCollapse={toggleSyncOpen}
+          summary={`Scout ${record.id ?? patientId}`}
           note="Identifiers and implant tags. Chart edits stay in Scout."
           rows={[
             { label: 'Scout ID', value: String(record.id ?? patientId) },
@@ -2106,12 +2473,18 @@ export default function PimsPatientDetailView({
                       ...rows.flatMap((r: ChartRow) => {
                         const open = expandedChartRowIds.has(r.id);
                         const canExpand = chartRowHasBody(r);
+                        const highlighted = highlightedChartRowIds.includes(r.id);
                         return [
                           <tr
                             key={r.id}
-                            className={
-                              canExpand ? 'pims-patient-detail__mr-row--clickable' : undefined
-                            }
+                            data-chart-row-id={r.id}
+                            className={[
+                              canExpand ? 'pims-patient-detail__mr-row--clickable' : '',
+                              highlighted ? 'pims-patient-detail__mr-row--highlight' : '',
+                              r.removed ? 'pims-patient-detail__mr-row--removed' : '',
+                            ]
+                              .filter(Boolean)
+                              .join(' ') || undefined}
                             onClick={canExpand ? () => toggleChartRowExpand(r.id) : undefined}
                             aria-expanded={canExpand ? open : undefined}
                           >
@@ -2150,7 +2523,13 @@ export default function PimsPatientDetailView({
                           open ? (
                             <tr key={`${r.id}-body`} className="pims-patient-detail__expand-row">
                               <td colSpan={5}>
-                                <ChartRowExpandBody row={r} />
+                                <ChartRowExpandBody
+                                  row={r}
+                                  onRemove={(next) => {
+                                    setRemoveChartError(null);
+                                    setPendingRemoveRow(next);
+                                  }}
+                                />
                               </td>
                             </tr>
                           ) : null,
@@ -2201,10 +2580,18 @@ export default function PimsPatientDetailView({
                       </tr>,
                       ...rows.map((r: ChartRow) => {
                         const open = expandedChartRowIds.has(r.id);
+                        const highlighted = highlightedChartRowIds.includes(r.id);
                         return (
                           <tr
                             key={r.id}
-                            className="pims-patient-detail__mr-row--clickable"
+                            data-chart-row-id={r.id}
+                            className={[
+                              'pims-patient-detail__mr-row--clickable',
+                              highlighted ? 'pims-patient-detail__mr-row--highlight' : '',
+                              r.removed ? 'pims-patient-detail__mr-row--removed' : '',
+                            ]
+                              .filter(Boolean)
+                              .join(' ')}
                             onClick={() => toggleChartRowExpand(r.id)}
                           >
                             <td>
@@ -2314,8 +2701,8 @@ export default function PimsPatientDetailView({
                 [
                   'documents',
                   'Documents',
-                  chartDocuments.length + clientRoomLoaders.length,
-                  chartDocuments,
+                  activeChartDocuments.length + clientRoomLoaders.length,
+                  activeChartDocuments,
                   false,
                 ],
                 ['online', 'Online Activity', 0, [], false],
@@ -2335,7 +2722,7 @@ export default function PimsPatientDetailView({
                     <span>
                       {title}
                       {!isTr && ` (${count})`}
-                      {isTr && ` (${treatments.length})`}
+                      {isTr && ` (${treatments.filter(treatmentPlanBelongsOnChart).length})`}
                     </span>
                   </button>
                   {open && (
@@ -2347,19 +2734,20 @@ export default function PimsPatientDetailView({
                       )}
                       {key === 'treatments' && (
                         <>
-                          {treatments.length === 0 && (
+                          {treatments.filter(treatmentPlanBelongsOnChart).length === 0 && (
                             <p className="pims-patient-detail__muted">
                               No treatment plans recorded.
                             </p>
                           )}
-                          {treatments.map((t) => (
+                          {treatments.filter(treatmentPlanBelongsOnChart).map((t) => {
+                            const items = (t.treatmentItems ?? []).filter(treatmentItemBelongsOnChart);
+                            if (items.length === 0) return null;
+                            return (
                             <div key={t.id} className="pims-patient-detail__group-line">
                               <strong>Plan #{t.id}</strong>
                               {t.pimsId ? <span> · {t.pimsId}</span> : null}
                               <ul className="pims-patient-detail__muted">
-                                {(t.treatmentItems ?? [])
-                                  .filter((item) => !item.isDeleted && !item.isDeclined)
-                                  .map((item) => {
+                                {items.map((item) => {
                                     const name =
                                       item.inventoryItem?.name ||
                                       item.procedure?.name ||
@@ -2376,7 +2764,8 @@ export default function PimsPatientDetailView({
                                   })}
                               </ul>
                             </div>
-                          ))}
+                            );
+                          })}
                         </>
                       )}
                       {list &&
@@ -2550,19 +2939,74 @@ export default function PimsPatientDetailView({
                             </div>
                           );
                         })}
+                      {key === 'documents' && (
+                        <div className="pims-patient-detail__doc-upload">
+                          <label
+                            className="pims-detail__btn-secondary"
+                            aria-disabled={uploadingDocument}
+                          >
+                            <Upload size={14} aria-hidden />
+                            {uploadingDocument ? 'Uploading…' : 'Upload records'}
+                            <input
+                              className="pims-detail__photo-input"
+                              type="file"
+                              accept={CHART_DOCUMENT_UPLOAD_ACCEPT}
+                              disabled={uploadingDocument}
+                              onChange={(e) => {
+                                const file = e.currentTarget.files?.[0] ?? null;
+                                void handleChartDocumentUpload(file);
+                                e.currentTarget.value = '';
+                              }}
+                            />
+                          </label>
+                          <span className="pims-patient-detail__muted">
+                            Filed as Previous Medical Records. PDF, image, Word, or text up to
+                            25 MB.
+                          </span>
+                          {documentUploadError && (
+                            <span className="pims-patient-detail__doc-upload-error">
+                              {documentUploadError}
+                            </span>
+                          )}
+                        </div>
+                      )}
                       {key === 'documents' &&
-                        chartDocuments.map((row) => {
+                        activeChartDocuments.map((row) => {
                           const o = row as Record<string, unknown>;
                           const kind = pickStr(o.description);
                           const name = pickStr(o.name) ?? 'Document';
+                          if (
+                            /memorial items purchased on euthanasia consent/i.test(kind ?? '') ||
+                            /^memorial items purchased/i.test(name)
+                          ) {
+                            return null;
+                          }
                           return (
                             <button
                               key={String(o.id)}
                               type="button"
                               className="pims-patient-detail__exam-row"
-                              onClick={() =>
-                                setSelectedMedicalNote({ title: 'Document', record: o })
-                              }
+                              onClick={() => {
+                                const documentId = Number(o.id);
+                                const hasFile =
+                                  o.hasFile === true || o.isUploadedToBlob === true;
+                                const pid = Number(patientId);
+                                if (
+                                  hasFile &&
+                                  Number.isFinite(documentId) &&
+                                  documentId > 0 &&
+                                  Number.isFinite(pid) &&
+                                  pid > 0
+                                ) {
+                                  setSelectedPdf({
+                                    patientId: pid,
+                                    documentId,
+                                    title: kind ? `${kind} — ${name}` : name,
+                                  });
+                                  return;
+                                }
+                                setSelectedMedicalNote({ title: 'Document', record: o });
+                              }}
                             >
                               <span className="pims-patient-detail__exam-row-icons" aria-hidden>
                                 <ChevronRight size={14} />
@@ -2751,6 +3195,7 @@ export default function PimsPatientDetailView({
                       <th className="pims-patient-detail__th-icon" />
                       <th>Start date</th>
                       <th>Name</th>
+                      <th>Quantity</th>
                       <th>Strength</th>
                       <th>Type</th>
                       <th>Refills</th>
@@ -2778,6 +3223,7 @@ export default function PimsPatientDetailView({
                           </td>
                           <td>{formatChartDateShort(rx.startDate)}</td>
                           <td>{rx.name}</td>
+                          <td>{rx.quantity != null ? rx.quantity : '—'}</td>
                           <td>{rx.strength ?? '—'}</td>
                           <td>
                             {rx.acuity === 'chronic'
@@ -2805,28 +3251,70 @@ export default function PimsPatientDetailView({
                             )}
                           </td>
                           <td>
-                            {rx.discontinuedAt ? null : (
-                              <button
-                                type="button"
+                            <div className="pims-patient-detail__rx-actions">
+                              {rx.discontinuedAt ? null : (
+                                <button
+                                  type="button"
+                                  className="pims-patient-detail__linkish"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    openFinancial({
+                                      name: rx.name,
+                                      qty: rx.quantity ?? 1,
+                                      instructions: directions ?? '',
+                                      catalogItemId: rx.inventoryItemId,
+                                    });
+                                  }}
+                                >
+                                  Refill
+                                </button>
+                              )}
+                              <SendRxLabelButton
                                 className="pims-patient-detail__linkish"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  openFinancial({
-                                    name: rx.name,
-                                    qty: 1,
-                                    instructions: directions ?? '',
-                                    catalogItemId: rx.inventoryItemId,
-                                  });
+                                stopClickPropagation
+                                source={{
+                                  patientId: Number(patientId),
+                                  patientName: pname,
+                                  species: speciesName,
+                                  ownerName: cname === '—' ? '' : cname,
+                                  quantity: rx.quantity ?? 1,
+                                  name: rx.name,
+                                  strength: rx.strength,
+                                  instructions: directions,
+                                  refill: rx.refill,
+                                  acuity: rx.acuity === 'acute' || rx.acuity === 'chronic' ? rx.acuity : '',
+                                  refillExpiration: rx.refillExpiration,
+                                  startDate: rx.startDate,
+                                  rxNumber: rx.rxNumber,
+                                  onSavePrescription: async (value) => {
+                                    const rxNumber = await ensurePrintRxNumber({
+                                      existingNumber: rx.rxNumber,
+                                      patientId: Number(patientId),
+                                      name: value.name,
+                                      inventoryItemId: rx.inventoryItemId,
+                                      instructions: value.instructions,
+                                      refill: value.refill,
+                                      startDate: value.startDate,
+                                      refillExpiration: value.refillExpiration,
+                                      acuity: value.acuity,
+                                    });
+                                    if (rxNumber != null) {
+                                      setPrescriptions((prev) =>
+                                        prev.map((row) =>
+                                          row.id === rx.id ? { ...row, rxNumber } : row
+                                        )
+                                      );
+                                    }
+                                    return { rxNumber };
+                                  },
                                 }}
-                              >
-                                Refill
-                              </button>
-                            )}
+                              />
+                            </div>
                           </td>
                         </tr>,
                         open ? (
                           <tr key={`${key}-body`} className="pims-patient-detail__expand-row">
-                            <td colSpan={8}>
+                            <td colSpan={9}>
                               <div className="pims-patient-detail__expand-text">
                                 {directions || 'No written directions on this prescription.'}
                               </div>
@@ -2903,16 +3391,40 @@ export default function PimsPatientDetailView({
                               ) : null}
                             </td>
                             <td>
-                              <button
-                                type="button"
-                                className="pims-patient-detail__linkish"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  openFinancial(refillPrefillFromRxRow(row, g.displayName));
-                                }}
-                              >
-                                Refill
-                              </button>
+                              <div className="pims-patient-detail__rx-actions">
+                                <button
+                                  type="button"
+                                  className="pims-patient-detail__linkish"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    openFinancial(refillPrefillFromRxRow(row, g.displayName));
+                                  }}
+                                >
+                                  Refill
+                                </button>
+                                <SendRxLabelButton
+                                  className="pims-patient-detail__linkish"
+                                  stopClickPropagation
+                                  source={{
+                                    patientId: Number(patientId),
+                                    patientName: pname,
+                                    species: speciesName,
+                                    ownerName: cname === '—' ? '' : cname,
+                                    veterinarianName: prescriberFromRxRow(row),
+                                    quantity: quantityFromRxRow(row),
+                                    name:
+                                      pickStr(row.productName) ??
+                                      pickStr(row.name) ??
+                                      g.displayName,
+                                    strength: strengthFromRxRow(row),
+                                    instructions: directions,
+                                    refill: Number.isFinite(refillsAllowed) ? refillsAllowed : null,
+                                    refillExpiration: pickStr(row.refillExpiration),
+                                    startDate: pickStr(row.serviceDate),
+                                    rxNumber: rxNumberFromRxRow(row),
+                                  }}
+                                />
+                              </div>
                             </td>
                           </tr>,
                           open ? (
@@ -2979,7 +3491,17 @@ export default function PimsPatientDetailView({
         <PimsMedicalNoteModal
           title={selectedMedicalNote.title}
           record={selectedMedicalNote.record}
+          patientId={Number(patientId) || null}
           onClose={() => setSelectedMedicalNote(null)}
+        />
+      ) : null}
+
+      {selectedPdf ? (
+        <PimsChartPdfModal
+          patientId={selectedPdf.patientId}
+          documentId={selectedPdf.documentId}
+          title={selectedPdf.title}
+          onClose={() => setSelectedPdf(null)}
         />
       ) : null}
 
@@ -2995,6 +3517,20 @@ export default function PimsPatientDetailView({
         <EmbeddedRoomLoaderModal
           roomLoaderId={embeddedRoomLoaderId}
           onClose={() => setEmbeddedRoomLoaderId(null)}
+        />
+      ) : null}
+
+      {pendingRemoveRow ? (
+        <RemoveFromChartConfirm
+          row={pendingRemoveRow}
+          busy={removingChartRow}
+          error={removeChartError}
+          onCancel={() => {
+            if (removingChartRow) return;
+            setPendingRemoveRow(null);
+            setRemoveChartError(null);
+          }}
+          onConfirm={(reason) => void handleRemoveFromChart(pendingRemoveRow, reason)}
         />
       ) : null}
 

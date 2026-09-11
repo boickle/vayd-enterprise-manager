@@ -237,6 +237,120 @@ export async function fetchPatientProfileForRow(p: {
  * GET /patients/:id/medical-record — chart bundle (labs, exams, complaints, …).
  * Returns null when the backend responds 404 (no medical record row for this patient).
  */
+function filenameFromContentDisposition(header: string | undefined): string | null {
+  if (!header) return null;
+  const utf = /filename\*=(?:UTF-8'')?([^;]+)/i.exec(header);
+  if (utf?.[1]) {
+    try {
+      return decodeURIComponent(utf[1].trim().replace(/^["']|["']$/g, ''));
+    } catch {
+      // keep looking
+    }
+  }
+  const quoted = /filename="([^"]+)"/i.exec(header);
+  if (quoted?.[1]?.trim()) return quoted[1].trim();
+  const plain = /filename=([^;]+)/i.exec(header);
+  return plain?.[1]?.trim().replace(/^["']|["']$/g, '') || null;
+}
+
+export function downloadBlobUrl(url: string, filename: string): void {
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.rel = 'noopener';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+/** PDFs, scans, Word, or plain text, up to 25 MB — matches the API's accepted types. */
+export const CHART_DOCUMENT_UPLOAD_ACCEPT =
+  '.pdf,.png,.jpg,.jpeg,.gif,.webp,.heic,.tif,.tiff,.txt,.doc,.docx';
+
+export const CHART_DOCUMENT_UPLOAD_MAX_BYTES = 25 * 1024 * 1024;
+
+/**
+ * Attach a file to a patient's chart. Defaults to the "Previous Medical Records"
+ * document type so outside records read the same as EVET-imported ones.
+ */
+export async function uploadPatientChartDocument(
+  patientId: number,
+  file: File,
+  opts?: {
+    name?: string;
+    description?: string;
+    documentType?: 'previousRecords' | 'other';
+    serviceDate?: string;
+  },
+): Promise<Record<string, unknown>> {
+  const form = new FormData();
+  form.append('file', file);
+  if (opts?.name?.trim()) form.append('name', opts.name.trim());
+  if (opts?.description?.trim()) form.append('description', opts.description.trim());
+  if (opts?.documentType) form.append('documentType', opts.documentType);
+  if (opts?.serviceDate?.trim()) form.append('serviceDate', opts.serviceDate.trim());
+  const { data } = await http.post<Record<string, unknown>>(
+    `/patients/${encodeURIComponent(String(patientId))}/chart-documents`,
+    form,
+  );
+  return data;
+}
+
+export async function removePatientChartDocumentFromChart(
+  patientId: number,
+  documentId: number,
+  reason: string,
+): Promise<Record<string, unknown>> {
+  const { data } = await http.post<Record<string, unknown>>(
+    `/patients/${encodeURIComponent(String(patientId))}/chart-documents/${encodeURIComponent(String(documentId))}/remove-from-chart`,
+    { reason },
+  );
+  return data;
+}
+
+export async function fetchPatientChartDocumentFile(
+  patientId: number,
+  documentId: number,
+  fallbackFilename = 'document.pdf',
+): Promise<{ objectUrl: string; filename: string; blob: Blob }> {
+  const res = await http.get<Blob>(
+    `/patients/${encodeURIComponent(String(patientId))}/chart-documents/${encodeURIComponent(String(documentId))}/file`,
+    { responseType: 'blob' },
+  );
+  const data = res.data;
+  const headerType = String(res.headers?.['content-type'] || '');
+  if (
+    data instanceof Blob &&
+    (data.type.includes('json') || headerType.includes('json'))
+  ) {
+    const text = await data.text();
+    let message = 'Could not open that PDF.';
+    try {
+      const parsed = JSON.parse(text) as { message?: unknown };
+      if (typeof parsed.message === 'string' && parsed.message.trim()) {
+        message = parsed.message;
+      }
+    } catch {
+      // keep default
+    }
+    throw new Error(message);
+  }
+  const blob =
+    data instanceof Blob
+      ? data.type
+        ? data
+        : new Blob([data], { type: 'application/pdf' })
+      : new Blob([data], { type: 'application/pdf' });
+  const fromHeader = filenameFromContentDisposition(
+    String(res.headers?.['content-disposition'] || ''),
+  );
+  return {
+    blob,
+    objectUrl: URL.createObjectURL(blob),
+    filename: fromHeader || fallbackFilename,
+  };
+}
+
 export async function fetchPatientMedicalRecordStaff(
   patientId: string | number
 ): Promise<MedicalRecordBundle | null> {

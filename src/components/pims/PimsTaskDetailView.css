@@ -157,6 +157,192 @@
   color: #1d4ed8;
 }
 
+.pims-task-detail__status--approval-pending {
+  background: #ccfbf1;
+  color: #0f766e;
+}
+
+.pims-task-mail {
+  margin: 0 0 28px;
+  padding: 16px;
+  border: 1px solid #99f6e4;
+  border-radius: 12px;
+  background: #f0fdfa;
+}
+
+.pims-task-mail__who {
+  margin-bottom: 14px;
+}
+
+.pims-task-mail__client {
+  margin: 0 0 4px;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.pims-task-mail__pets {
+  margin: 0 0 4px;
+  font-size: 22px;
+  font-weight: 700;
+  color: #0f766e;
+  line-height: 1.3;
+}
+
+.pims-task-mail__meta {
+  margin: 0;
+  font-size: 13px;
+  color: #64748b;
+}
+
+.pims-task-mail__link {
+  color: #0f766e;
+  font-weight: 700;
+  text-decoration: underline;
+}
+
+.pims-task-mail__group {
+  margin-bottom: 12px;
+}
+
+.pims-task-mail__pet {
+  margin: 0 0 6px;
+  font-size: 18px;
+  font-weight: 700;
+  color: #0f766e;
+}
+
+.pims-task-mail__line {
+  border: 1px solid #d1fae5;
+  border-radius: 10px;
+  padding: 12px;
+  background: #fff;
+  margin-bottom: 10px;
+}
+
+.pims-task-mail__line h4 {
+  margin: 0 0 6px;
+  font-size: 15px;
+}
+
+.pims-task-mail__line-meta {
+  margin: 0 0 4px;
+  font-size: 13px;
+  color: #64748b;
+}
+
+.pims-task-mail__script {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  background: #ecfdf5;
+  border-radius: 8px;
+  font-size: 14px;
+}
+
+.pims-task-mail__summary {
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  background: #fff;
+  border-radius: 10px;
+  border: 1px solid #99f6e4;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.pims-task-mail__summary strong {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.pims-task-mail__summary-p {
+  margin: 0 0 8px;
+  white-space: pre-wrap;
+  color: #134e4a;
+}
+
+.pims-task-mail__summary-prose.brief-prose,
+.pims-task-mail__summary-prose .brief-prose__p {
+  margin: 0 0 8px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #134e4a;
+}
+
+.pims-task-mail__summary-prose .brief-cite {
+  display: none;
+}
+
+.pims-task-mail__refill {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 10px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #0f766e;
+}
+
+.pims-task-mail__refill-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.pims-task-mail__details-link {
+  font-weight: 600;
+}
+
+.pims-task-mail__exp-chips {
+  display: flex;
+  gap: 4px;
+}
+
+.pims-task-mail__chip {
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 999px;
+  background: #ecfdf5;
+  color: #0f766e;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.pims-task-mail__chip.is-active {
+  background: #0f766e;
+  color: #fff;
+}
+
+.pims-task-mail__refill input {
+  max-width: 120px;
+}
+
+.pims-task-mail__refill input[type='date'] {
+  max-width: 180px;
+}
+
+.pims-task-mail__refill textarea {
+  min-height: 72px;
+  resize: vertical;
+  font-weight: 500;
+}
+
+.pims-task-mail__authorized {
+  margin: 8px 0 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: #0f766e;
+}
+
+.pims-task-mail__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 0 12px;
+}
+
 .pims-task-detail__status--done {
   background: #f1f5f9;
   color: #475569;

@@ -29,6 +29,9 @@ export type InventoryItem = {
   onlineStorePrice?: string | number | null;
   /** When true, item can ship from the online storefront. */
   shippable?: boolean;
+  autoshipRecommendedFrequency?: string | null;
+  requiresDoctorApproval?: boolean;
+  prohibitedCarriers?: string[] | null;
   /** S3 key for catalog image (display via GET …/image). */
   imageUrl?: string | null;
   /** How the item is counted when selling or dispensing: capsule, bottle, ml, etc. */
@@ -45,6 +48,7 @@ export type InventoryItem = {
   vendorDrugNumber?: string | null;
   barcode?: string | null;
   requireExpirationOnLots?: boolean;
+  requireLotNumber?: boolean;
   trackLots?: boolean;
   isVaccine?: boolean;
   isDispensable?: boolean;
@@ -57,6 +61,8 @@ export type InventoryItem = {
   hideOnMedicalRecordView?: boolean;
   hideOnMedicalRecordPrint?: boolean;
   excludeFromProduction?: boolean;
+  /** Null inherits the practice refill-production setting. */
+  excludeProductionWhenRefilling?: boolean | null;
   allowPriceChange?: boolean;
   changePatientStatusTo?: string | null;
   changePatientSex?: boolean;
@@ -96,6 +102,11 @@ export type Procedure = {
   serviceFee?: string | number | null;
   taxLevelValue?: number | null;
   excludePercentageDiscount?: boolean;
+  isShippingType?: boolean;
+  /** eVet catalog flags, stored with eVet's polarity. */
+  hideOnInvoice?: boolean;
+  excludeFromProduction?: boolean;
+  allowPriceChange?: boolean;
   linkedInventoryItemId?: number | null;
   linkedInventoryItemDefaultQuantity?: number | string | null;
   isActive?: boolean;

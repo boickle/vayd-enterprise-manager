@@ -9,6 +9,11 @@ import { validateAddress } from '../api/geo';
 import { AddressAutocomplete, type AddressFields } from '../components/AddressAutocomplete';
 import { ManualAddressFields } from '../components/ManualAddressFields';
 import { BreedCombobox } from '../components/BreedCombobox';
+import OutsideHospitalPicker, {
+  pickedHospitalsToText,
+  type PetOption,
+  type PickedHospital,
+} from '../components/OutsideHospitalPicker';
 import {
   NewClientAppointmentTypePicker,
   type AppointmentTypeCardOption,
@@ -482,6 +487,12 @@ type FormData = {
     handlingNeedsExplicitNone?: boolean;
   }>;
   previousVeterinaryPractices?: string;
+  /**
+   * Directory-backed version of `previousVeterinaryPractices`. The plain string
+   * is still sent so every existing staff screen and email keeps working; this
+   * carries the hospital ids so records requests can be raised without a lookup.
+   */
+  previousVeterinaryPracticesPicked?: PickedHospital[];
   okayToContactPreviousVets?: 'Yes' | 'No' | '';
   petBehaviorAtPreviousVisits?: string; // Legacy field
   preferredDoctor?: string;
@@ -494,6 +505,10 @@ type FormData = {
   bestPhoneNumber?: string;
   whatPets?: string;
   previousVeterinaryHospitals?: string;
+  /** Directory-backed counterpart of `previousVeterinaryHospitals`. */
+  previousVeterinaryHospitalsPicked?: PickedHospital[];
+  /** Client ticked "please don't contact them" — suppresses the automatic request. */
+  optOutOfRecordsRequest?: boolean;
   preferredDoctorExisting?: string;
   lookingForEuthanasiaExisting?: 'Yes' | 'No' | '';
   isThisTheAddressWhereWeWillCome?: 'Yes' | 'No' | '';
@@ -1802,6 +1817,80 @@ export default function AppointmentRequestForm() {
   const petsInVisitWithHandlingQuestion = useMemo(
     () => [...(formData.newClientPets ?? []), ...(formData.existingClientNewPets ?? [])],
     [formData.newClientPets, formData.existingClientNewPets],
+  );
+
+  /**
+   * Pets the owner can attribute an outside hospital to. Existing clients pick
+   * from their chart; new clients only have the pets they are entering on this
+   * form, which is why the mapping question waits until that step is done.
+   * Unnamed new pets are dropped — a checkbox with no label is unanswerable.
+   */
+  const recordsPetOptions = useMemo<PetOption[]>(() => {
+    const out: PetOption[] = [];
+    if (isLoggedIn) {
+      const byId = new Map(pets.map((p) => [p.id, p]));
+      for (const id of formData.selectedPetIds ?? []) {
+        const pet = byId.get(id);
+        if (pet?.name?.trim()) out.push({ id: pet.id, name: pet.name.trim() });
+      }
+    }
+    for (const pet of [
+      ...(formData.newClientPets ?? []),
+      ...(formData.existingClientNewPets ?? []),
+    ]) {
+      if (pet.name?.trim()) out.push({ id: pet.id, name: pet.name.trim() });
+    }
+    return out;
+  }, [
+    isLoggedIn,
+    pets,
+    formData.selectedPetIds,
+    formData.newClientPets,
+    formData.existingClientNewPets,
+  ]);
+
+  /**
+   * Records go out automatically when the form is submitted, so the client needs
+   * a way to say no. Framed as an opt-out rather than a permission question: the
+   * default that helps the pet should be the one that takes no effort.
+   */
+  const renderRecordsOptOut = (hasPicks: boolean) => (
+    <>
+      <p style={{ fontSize: '13px', color: '#6b7280', marginTop: '8px', marginBottom: 0, lineHeight: 1.5 }}>
+        We will contact the practice(s) listed above to obtain your pet&apos;s prior medical
+        records. Having their history before the visit means we are not guessing at past
+        illnesses, medications, or vaccine due dates.
+      </p>
+      {hasPicks && (
+        <label
+          style={{
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: '8px',
+            marginTop: '10px',
+            padding: '10px 12px',
+            border: '1px solid #e5e7eb',
+            borderRadius: '8px',
+            background: '#fafafa',
+            cursor: 'pointer',
+            fontSize: '13px',
+            color: '#4b5563',
+            lineHeight: 1.5,
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={formData.optOutOfRecordsRequest === true}
+            onChange={(e) => updateFormData('optOutOfRecordsRequest', e.target.checked)}
+            style={{ marginTop: 3 }}
+          />
+          <span>
+            Please hold off — I would rather you did not contact these practices for now.
+            You can always ask us later.
+          </span>
+        </label>
+      )}
+    </>
   );
 
   const handlingNeedsAllowOnlineScheduling = useMemo(
@@ -4726,7 +4815,17 @@ export default function AppointmentRequestForm() {
         // Veterinary History
         previousVeterinaryPractices: formData.previousVeterinaryPractices || formData.previousVeterinaryPracticesExisting || undefined,
         previousVeterinaryHospitals: formData.previousVeterinaryHospitals || undefined,
-        okayToContactPreviousVets: !isLoggedIn ? 'Yes' : (formData.okayToContactPreviousVets || formData.okayToContactPreviousVetsExisting || undefined),
+        previousVeterinaryPracticesPicked: formData.previousVeterinaryPracticesPicked?.length
+          ? formData.previousVeterinaryPracticesPicked
+          : undefined,
+        previousVeterinaryHospitalsPicked: formData.previousVeterinaryHospitalsPicked?.length
+          ? formData.previousVeterinaryHospitalsPicked
+          : undefined,
+        optOutOfRecordsRequest: formData.optOutOfRecordsRequest === true ? true : undefined,
+        // We no longer ask permission, we state it: the form tells every client
+        // "we will contact the practice(s) listed above". Naming a practice under
+        // that sentence is the answer, so it is 'Yes' for new and existing alike.
+        okayToContactPreviousVets: 'Yes',
         hadVetCareElsewhere: formData.hadVetCareElsewhere || undefined,
         mayWeAskForRecords: formData.mayWeAskForRecords || undefined,
         
@@ -5827,35 +5926,11 @@ export default function AppointmentRequestForm() {
               </div>
             )}
 
-            <div
-              style={{
-                marginTop: 8,
-                marginBottom: isNewClientIntroStep ? 0 : 20,
-                paddingTop: 20,
-                borderTop: '1px solid #d1d5db',
-              }}
-            >
-              <label style={{ display: 'block', marginBottom: newClientLabelMb, fontWeight: 600, color: '#111827', fontSize: '14px' }}>
-                Which veterinary practice(s), including specialists, have you used previously for your pet(s)?
-              </label>
-              <textarea
-                value={formData.previousVeterinaryPractices || ''}
-                onChange={(e) => updateFormData('previousVeterinaryPractices', e.target.value)}
-                rows={isNewClientIntroStep ? 2 : 4}
-                style={{
-                  width: '100%',
-                  padding: newClientInputPadding,
-                  border: '1px solid #d1d5db',
-                  borderRadius: newClientInputRadius,
-                  fontSize: '14px',
-                  fontFamily: 'inherit',
-                  resize: 'vertical',
-                }}
-              />
-              <p style={{ fontSize: '13px', color: '#6b7280', marginTop: '8px', marginBottom: 0, lineHeight: 1.5 }}>
-                We will contact the practice(s) listed above to obtain your pet&apos;s prior medical records.
-              </p>
-            </div>
+            {/*
+              Previous practices used to be asked here, but the follow-up question
+              is "which pet went where" and no pet has been named yet at this point.
+              The whole question now lives on the pet step, after they all have names.
+            */}
 
             <div
               style={{
@@ -6292,6 +6367,42 @@ export default function AppointmentRequestForm() {
                   <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '6px' }}>{errors.newClientPets}</div>
                 )}
               </div>
+
+              {/*
+                New clients name their previous practices on the intro step, before
+                any pet exists. The "which pet went where" half of the question has
+                to wait until here, once every pet has a name to check off.
+              */}
+              <div
+                  style={{
+                    marginTop: newClientSectionGap,
+                    marginBottom: newClientSectionGap,
+                    paddingTop: 20,
+                    borderTop: '1px solid #d1d5db',
+                  }}
+                >
+                  <label style={{ display: 'block', marginBottom: newClientLabelMb, fontWeight: 600, color: '#111827', fontSize: '14px' }}>
+                    {recordsPetOptions.length > 1
+                      ? 'Which veterinary practice(s) has each pet been to?'
+                      : 'Which veterinary practice(s), including specialists, have you used previously?'}
+                  </label>
+                  <OutsideHospitalPicker
+                    practiceId={practiceId}
+                    compact={petFormTight}
+                    petOptions={recordsPetOptions}
+                    value={formData.previousVeterinaryPracticesPicked || []}
+                    onChange={(picked) => {
+                      updateFormData('previousVeterinaryPracticesPicked', picked);
+                      updateFormData(
+                        'previousVeterinaryPractices',
+                        pickedHospitalsToText(picked, recordsPetOptions),
+                      );
+                    }}
+                  />
+                  {renderRecordsOptOut(
+                    (formData.previousVeterinaryPracticesPicked?.length ?? 0) > 0,
+                  )}
+                </div>
 
               {/* How soon — shown in compact new-client-pet-info page */}
               <div
@@ -7174,56 +7285,21 @@ export default function AppointmentRequestForm() {
                   <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
                     Please let us know which veterinary hospitals you went to.
                   </label>
-                  <textarea
-                    value={formData.previousVeterinaryHospitals || ''}
-                    onChange={(e) => updateFormData('previousVeterinaryHospitals', e.target.value)}
-                    rows={4}
-                    style={{
-                      width: '100%',
-                      padding: '12px',
-                      border: '1px solid #d1d5db',
-                      borderRadius: '8px',
-                      fontSize: '14px',
-                      fontFamily: 'inherit',
+                  <OutsideHospitalPicker
+                    practiceId={practiceId}
+                    petOptions={recordsPetOptions}
+                    value={formData.previousVeterinaryHospitalsPicked || []}
+                    onChange={(picked) => {
+                      updateFormData('previousVeterinaryHospitalsPicked', picked);
+                      updateFormData(
+                        'previousVeterinaryHospitals',
+                        pickedHospitalsToText(picked, recordsPetOptions),
+                      );
                     }}
                   />
-                </div>
-
-                <div style={{ marginBottom: '20px' }}>
-                  <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
-                    May we ask for records from the above hospitals?
-                  </label>
-                  <p style={{ fontSize: '13px', color: '#6b7280', marginBottom: '12px', lineHeight: 1.5 }}>
-                    Access to your pet&apos;s prior medical records is important for their safety and continuity of care. Declining to share available records may limit our ability to provide comprehensive care.
-                  </p>
-                  <div style={{ display: 'flex', gap: '16px' }}>
-                    {['Yes', 'No'].map((option) => (
-                      <label
-                        key={option}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '8px',
-                          cursor: 'pointer',
-                          padding: '12px',
-                          border: `1px solid ${formData.mayWeAskForRecords === option ? '#10b981' : '#d1d5db'}`,
-                          borderRadius: '8px',
-                          backgroundColor: formData.mayWeAskForRecords === option ? '#f0fdf4' : '#fff',
-                          flex: 1,
-                        }}
-                      >
-                        <input
-                          type="radio"
-                          name="mayWeAskForRecords"
-                          value={option}
-                          checked={formData.mayWeAskForRecords === option}
-                          onChange={(e) => updateFormData('mayWeAskForRecords', e.target.value)}
-                          style={{ margin: 0 }}
-                        />
-                        <span>{option}</span>
-                      </label>
-                    ))}
-                  </div>
+                  {renderRecordsOptOut(
+                    (formData.previousVeterinaryHospitalsPicked?.length ?? 0) > 0,
+                  )}
                 </div>
               </>
             )}

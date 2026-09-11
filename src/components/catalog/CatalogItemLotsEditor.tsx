@@ -16,8 +16,9 @@ type Props = {
   /** Prefer lots for this stock item when the catalog code draws from another SKU. */
   stockItemId?: number | null;
   trackLots?: boolean;
-  /** When true, the lot modal requires an expiration date before save. */
+  /** Expiration is always required. Kept so older callers still type-check. */
   requireExpirationOnLots?: boolean;
+  requireLotNumber?: boolean;
   /** Lot quantities move branch counts, so the parent can refresh them. */
   onLotsChanged?: () => void;
 };
@@ -28,7 +29,7 @@ export default function CatalogItemLotsEditor({
   branches,
   stockItemId,
   trackLots,
-  requireExpirationOnLots,
+  requireLotNumber,
   onLotsChanged,
 }: Props) {
   const lotItemId = stockItemId ?? inventoryItemId;
@@ -116,16 +117,16 @@ export default function CatalogItemLotsEditor({
   }
 
   async function submitLot() {
-    if (!lotNumber.trim()) {
-      setError('Lot number is required');
+    if (requireLotNumber && !lotNumber.trim()) {
+      setError('Lot number is required for this item');
       return;
     }
     if (!isEdit && (branchId === '' || locationId === '')) {
       setError('Branch and location are required');
       return;
     }
-    if (requireExpirationOnLots && !expirationDate.trim()) {
-      setError('An expiration date is required for lots on this item');
+    if (!expirationDate.trim()) {
+      setError('An expiration date is required');
       return;
     }
     setSaving(true);
@@ -321,11 +322,12 @@ export default function CatalogItemLotsEditor({
                 </>
               )}
               <label className="settings-label">
-                Lot number
+                Lot number{requireLotNumber ? ' (required)' : ' (optional)'}
                 <input
                   className="settings-input"
                   value={lotNumber}
                   onChange={(e) => setLotNumber(e.target.value)}
+                  required={requireLotNumber}
                 />
               </label>
               <label className="settings-label">
@@ -337,13 +339,13 @@ export default function CatalogItemLotsEditor({
                 />
               </label>
               <label className="settings-label">
-                Expiration{requireExpirationOnLots ? ' (required)' : ''}
+                Expiration (required)
                 <input
                   className="settings-input"
                   type="date"
                   value={expirationDate}
                   onChange={(e) => setExpirationDate(e.target.value)}
-                  required={requireExpirationOnLots}
+                  required
                 />
               </label>
               <label className="settings-label">

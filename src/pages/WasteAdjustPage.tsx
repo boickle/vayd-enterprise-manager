@@ -13,7 +13,8 @@ import {
   type PracticeBranch,
 } from '../api/branchInventory';
 import { searchItems, type SearchResultItem } from '../api/quantityPriceBreaks';
-import { useStockItemGroups } from '../hooks/useStockItemGroups';
+import { loadInventoryItem, useStockItemGroups } from '../hooks/useStockItemGroups';
+import StockLotPicker from '../components/inventory/StockLotPicker';
 import { resolvePracticeIdFromToken } from '../utils/practiceIdFromToken';
 import './Settings.css';
 
@@ -30,10 +31,11 @@ export default function WasteAdjustPage() {
   const [disposalCode, setDisposalCode] = useState('');
   const [searchQ, setSearchQ] = useState('');
   const [results, setResults] = useState<SearchResultItem[]>([]);
-  const [item, setItem] = useState<{ id: number; name: string } | null>(null);
+  const [item, setItem] = useState<{ id: number; name: string; trackLots?: boolean } | null>(null);
   const [qty, setQty] = useState('1');
   const [notes, setNotes] = useState('');
   const [lot, setLot] = useState('');
+  const [lotId, setLotId] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -96,6 +98,10 @@ export default function WasteAdjustPage() {
       setError('Disposal method is required');
       return;
     }
+    if (item.trackLots && lotId == null) {
+      setError('Choose the lot you are adjusting');
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -108,12 +114,14 @@ export default function WasteAdjustPage() {
         disposalMethodCode: disposalCode || null,
         notes: notes.trim() || null,
         lotNumber: lot.trim() || null,
+        inventoryLotBalanceId: lotId,
       });
       setToast('Adjustment recorded');
       setItem(null);
       setQty('1');
       setNotes('');
       setLot('');
+      setLotId(null);
       window.setTimeout(() => setToast(null), 2500);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to record');
@@ -152,9 +160,20 @@ export default function WasteAdjustPage() {
             className="btn secondary"
             style={{ display: 'block', width: '100%', textAlign: 'left', marginBottom: 4 }}
             onClick={() => {
-              setItem({ id: g.stockItemId, name: g.label });
-              setResults([]);
-              setSearchQ('');
+              const apply = (trackLots: boolean, name = g.label) => {
+                setItem({ id: g.stockItemId, name, trackLots });
+                setLot('');
+                setLotId(null);
+                setResults([]);
+                setSearchQ('');
+              };
+              if (g.item) {
+                apply(g.item.trackLots === true, String(g.item.name ?? g.label));
+                return;
+              }
+              void loadInventoryItem(practiceId, g.stockItemId)
+                .then((inv) => apply(inv.trackLots === true, String(inv.name ?? g.label)))
+                .catch(() => apply(false));
             }}
           >
             <span style={{ display: 'block' }}>{g.label}</span>
@@ -246,10 +265,23 @@ export default function WasteAdjustPage() {
         </fieldset>
       )}
 
-      <label className="settings-label" style={{ marginTop: 12 }}>
-        Lot # (optional)
-        <input className="settings-input" value={lot} onChange={(e) => setLot(e.target.value)} />
-      </label>
+      {item ? (
+        <div style={{ marginTop: 12 }}>
+          <StockLotPicker
+            practiceId={practiceId}
+            inventoryItemId={item.id}
+            branchId={branchId === '' ? null : Number(branchId)}
+            locationId={fromLoc === '' ? null : Number(fromLoc)}
+            required={item.trackLots === true}
+            selectedLotId={lotId}
+            lotNumber={lot}
+            onChange={(pick) => {
+              setLotId(pick.lotId);
+              setLot(pick.lotNumber);
+            }}
+          />
+        </div>
+      ) : null}
 
       <p className="settings-muted">
         Recording this adjustment logs your signed-in account and the current time automatically.
@@ -270,7 +302,7 @@ export default function WasteAdjustPage() {
         type="button"
         className="btn primary"
         style={{ width: '100%', minHeight: 48, marginTop: 12 }}
-        disabled={busy}
+        disabled={busy || (item?.trackLots === true && lotId == null)}
         onClick={() => void submit()}
       >
         {busy ? 'Saving…' : 'Record adjustment'}

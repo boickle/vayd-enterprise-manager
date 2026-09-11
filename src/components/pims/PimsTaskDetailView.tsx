@@ -9,6 +9,7 @@ import {
   type TaskLinkEntityType,
   TASK_LINK_ENTITY_TYPES,
 } from '../../api/tasks';
+import { respondMailApproval } from '../../api/onlineStore';
 import type { PracticeBranch } from '../../api/branchInventory';
 import type { Employee } from '../../api/appointmentSettings';
 import { formatEmployeeDisplayName } from '../../utils/employeeDisplayName';
@@ -27,7 +28,12 @@ import {
 } from '../../utils/forwardBookingCreateLink';
 import { TaskBodyContent } from './TaskBodyContent';
 import { ForwardBookingFromTaskLink } from './ForwardBookingFromTaskLink';
+import MailOrderTaskPanel from './MailOrderTaskPanel';
 import TaskReassignModal from './TaskReassignModal';
+import {
+  mailOrderTaskStatusClass,
+  mailOrderTaskStatusLabel,
+} from '../../utils/mailOrderTaskStatus';
 import './PimsTaskDetailView.css';
 
 function isTaskLinkEntityType(s: string): s is TaskLinkEntityType {
@@ -82,6 +88,8 @@ function linkHref(entityType: string, entityId: number): string | null {
       return `/schedule/clients?clientId=${encodeURIComponent(String(entityId))}`;
     case 'appointment':
       return buildSchedulerFocusAppointmentUrl(entityId);
+    case 'mail_order':
+      return `/schedule/mail-orders?orderId=${encodeURIComponent(String(entityId))}`;
     default:
       return null;
   }
@@ -210,6 +218,35 @@ export default function PimsTaskDetailView({
     );
   }, [task?.events]);
 
+  const [approvalNote, setApprovalNote] = useState('');
+  const mailOrderId = task?.links?.find((l) => l.entityType === 'mail_order')?.entityId ?? null;
+
+  const handleMailApproval = async (
+    outcome: 'approved' | 'rejected' | 'send_back',
+    lineRefills?: Array<{ lineId: number; refills: number; expiration?: string | null }>,
+    lineScripts?: Array<{ lineId: number; scriptText: string }>,
+  ) => {
+    if (!task || mailOrderId == null || !canMutate) return;
+    setBusy(true);
+    setActionError(null);
+    try {
+      await respondMailApproval(task.practiceId, mailOrderId, {
+        outcome,
+        notes: approvalNote.trim() || undefined,
+        lineRefills,
+        lineScripts,
+      });
+      setApprovalNote('');
+      const d = await getTask(task.id);
+      setTask(d);
+      onUpdated();
+    } catch (e: unknown) {
+      setActionError(errMsg(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const handleComplete = async () => {
     if (!task || !canMutate) return;
     setBusy(true);
@@ -323,7 +360,7 @@ export default function PimsTaskDetailView({
                   Reassign
                 </button>
               )}
-              {canMutate && task.status !== 'done' && (
+              {canMutate && task.status !== 'done' && mailOrderId == null && (
                 <button type="button" className="pims-task-detail__btn pims-task-detail__btn--primary" disabled={busy} onClick={() => void handleComplete()}>
                   <CheckCircle2 size={18} />
                   Mark complete
@@ -365,8 +402,16 @@ export default function PimsTaskDetailView({
       <header className="pims-task-detail__head">
         <h1 className="pims-task-detail__title">{task.title}</h1>
         <div className="pims-task-detail__meta">
-          <span className={`pims-task-detail__status pims-task-detail__status--${task.status}`}>{task.status}</span>
-          {task.source !== 'manual' && (
+          <span
+            className={`pims-task-detail__status pims-task-detail__status--${
+              mailOrderId != null
+                ? mailOrderTaskStatusClass(task.status)
+                : task.status
+            }`}
+          >
+            {mailOrderTaskStatusLabel(task.status, task.links)}
+          </span>
+          {task.source !== 'manual' && mailOrderId == null && (
             <span className="pims-task-detail__pill">
               {task.source}
               {task.triggerDefinitionId ? ` · ${task.triggerDefinitionId}` : ''}
@@ -375,9 +420,27 @@ export default function PimsTaskDetailView({
         </div>
       </header>
 
+      {mailOrderId != null ? (
+        <MailOrderTaskPanel
+          practiceId={task.practiceId}
+          mailOrderId={mailOrderId}
+          canApprove={canMutate && task.status !== 'done'}
+          busy={busy}
+          approvalNote={approvalNote}
+          onApprovalNoteChange={setApprovalNote}
+          onApprove={(outcome, lineRefills, lineScripts) =>
+            void handleMailApproval(outcome, lineRefills, lineScripts)
+          }
+          onPresentationSynced={() => {
+            void getTask(task.id).then(setTask).catch(() => undefined);
+          }}
+        />
+      ) : null}
+
       <section className="pims-task-detail__section">
         <h2 className="pims-task-detail__h2">Details</h2>
         <dl className="pims-task-detail__dl">
+          {mailOrderId == null ? (
           <div>
             <dt>Description</dt>
             <dd>
@@ -390,14 +453,18 @@ export default function PimsTaskDetailView({
               {!taskDescriptionBody && !forwardBookingPrefill ? <>—</> : null}
             </dd>
           </div>
+          ) : null}
+          {mailOrderId == null ? (
           <div>
             <dt>Start</dt>
             <dd>{formatTaskIso(task.startAt)}</dd>
           </div>
+          ) : null}
           <div>
             <dt>Due</dt>
             <dd>{formatTaskIso(task.dueAt)}</dd>
           </div>
+          {mailOrderId == null ? (
           <div>
             <dt>Branches</dt>
             <dd>
@@ -406,6 +473,7 @@ export default function PimsTaskDetailView({
                 : '—'}
             </dd>
           </div>
+          ) : null}
           <div>
             <dt>Assignee</dt>
             <dd>{employeeLabel(employeeMap, task.assignedToEmployeeId)}</dd>

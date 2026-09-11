@@ -640,16 +640,70 @@
   color: var(--pims-ink);
 }
 
+.pims-detail__tech-toggle-copy {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 14px;
+  min-width: 0;
+}
+
+.pims-detail__tech-summary {
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--pims-muted);
+}
+
 .pims-detail__tech .pims-detail__card-body {
   border-top: 1px solid var(--pims-line);
 }
 
 .pims-detail__tech-note {
-  margin-bottom: 14px;
+  margin-bottom: 16px;
+}
+
+.pims-detail__tech-groups {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px 28px;
+}
+
+@media (max-width: 720px) {
+  .pims-detail__tech-groups {
+    grid-template-columns: 1fr;
+  }
+}
+
+.pims-detail__tech-group {
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--pims-line);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.pims-detail__tech-group-title {
+  margin: 0 0 10px;
+  font-size: 12px;
+  font-weight: 750;
+  letter-spacing: 0.02em;
+  color: #334155;
+}
+
+.pims-detail__tech-group .pims-detail__facts {
+  margin: 0;
+}
+
+.pims-detail__tech .pims-detail__fact dt {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: #64748b;
 }
 
 .pims-detail__tech .pims-detail__fact dd {
-  font-size: 13px;
+  font-size: 13.5px;
   font-variant-numeric: tabular-nums;
 }
 

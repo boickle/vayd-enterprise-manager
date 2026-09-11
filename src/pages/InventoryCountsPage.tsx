@@ -8,12 +8,25 @@ import {
   submitCountLine,
   submitCountSession,
   type StaffCountLine,
+  type StaffCountLocation,
   type StaffCountSession,
 } from '../api/inventoryCounts';
 import { resolvePracticeIdFromToken } from '../utils/practiceIdFromToken';
 import './Settings.css';
 
 const BRANCH_STORAGE_PREFIX = 'vayd_inventory_branch:';
+const UNASSIGNED_LOT = 'UNASSIGNED';
+
+type DraftCell = {
+  key: string;
+  id?: number;
+  branchLocationId: number;
+  inventoryLotBalanceId: number | null;
+  lotNumber: string;
+  expirationDate: string;
+  actualQty: string;
+  lockedLot: boolean;
+};
 
 function parseQty(raw: string): number | null {
   const t = raw.trim();
@@ -22,15 +35,85 @@ function parseQty(raw: string): number | null {
   return Number.isFinite(n) && n >= 0 ? n : Number.NaN;
 }
 
-function lineFullyCounted(line: StaffCountLine): boolean {
+function displayQty(qty: number | null | undefined): string {
+  return qty == null || !Number.isFinite(Number(qty)) ? '—' : String(qty);
+}
+
+function lotDisplay(
+  lotNumber: string | null | undefined,
+  expirationDate?: string | null
+): string {
+  const raw = lotNumber?.trim() ?? '';
+  if (raw === UNASSIGNED_LOT) return 'Existing stock (no lot recorded)';
+  if (raw) return raw;
+  if (expirationDate) return `Exp ${expirationDate.slice(0, 10)}`;
+  return 'No lot # — expiration identifies this bottle';
+}
+
+function dateInputValue(value: string | null | undefined): string {
+  if (!value) return '';
+  const slice = value.slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(slice) ? slice : '';
+}
+
+function cellsFromLine(line: StaffCountLine): DraftCell[] {
+  return line.locations.map((loc, idx) => ({
+    key: loc.id != null && loc.id > 0 ? `id:${loc.id}` : `tmp:${line.id}:${loc.branchLocationId}:${idx}`,
+    id: loc.id != null && loc.id > 0 ? loc.id : undefined,
+    branchLocationId: loc.branchLocationId,
+    inventoryLotBalanceId: loc.inventoryLotBalanceId ?? null,
+    lotNumber: loc.lotNumber ?? '',
+    expirationDate: dateInputValue(loc.expirationDate),
+    actualQty: loc.actualQty == null ? '' : String(loc.actualQty),
+    lockedLot: loc.inventoryLotBalanceId != null,
+  }));
+}
+
+function lineSearchText(line: StaffCountLine): string {
+  return [
+    line.name ?? '',
+    line.code ?? '',
+    ...(line.aliases ?? []),
+    ...line.locations.map((loc) => loc.lotNumber ?? ''),
+  ]
+    .join(' ')
+    .toLowerCase();
+}
+
+function everyLocationHasCell(
+  cells: Array<{ branchLocationId: number }>,
+  locationIds: number[]
+): boolean {
+  const have = new Set(cells.map((c) => c.branchLocationId));
+  return locationIds.length > 0 && locationIds.every((id) => have.has(id));
+}
+
+function cellsFullyCounted(cells: DraftCell[]): boolean {
   return (
+    cells.length > 0 &&
+    cells.every((cell) => {
+      const qty = parseQty(cell.actualQty);
+      return qty != null && !Number.isNaN(qty);
+    })
+  );
+}
+
+function lineFullyCounted(line: StaffCountLine, locationIds: number[]): boolean {
+  return (
+    everyLocationHasCell(line.locations, locationIds) &&
     line.locations.length > 0 &&
     line.locations.every((loc) => loc.actualQty != null && Number.isFinite(Number(loc.actualQty)))
   );
 }
 
-function displayQty(qty: number | null | undefined): string {
-  return qty == null || !Number.isFinite(Number(qty)) ? '—' : String(qty);
+function cellTotal(cells: Array<{ actualQty: string }>): number | null {
+  let sum = 0;
+  for (const cell of cells) {
+    const qty = parseQty(cell.actualQty);
+    if (qty == null || Number.isNaN(qty)) return null;
+    sum += qty;
+  }
+  return sum;
 }
 
 type Props = {
@@ -44,7 +127,7 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
   const [branches, setBranches] = useState<PracticeBranch[]>([]);
   const [branchId, setBranchId] = useState<number | null>(null);
   const [session, setSession] = useState<StaffCountSession | null>(null);
-  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [drafts, setDrafts] = useState<Record<number, DraftCell[]>>({});
   const [editingLineId, setEditingLineId] = useState<number | null>(null);
   const [filter, setFilter] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -95,12 +178,9 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
       .then((next) => {
         if (cancelled) return;
         setSession(next);
-        const nextDrafts: Record<string, string> = {};
+        const nextDrafts: Record<number, DraftCell[]> = {};
         for (const line of next.lines) {
-          for (const loc of line.locations) {
-            nextDrafts[`${line.id}:${loc.branchLocationId}`] =
-              loc.actualQty == null ? '' : String(loc.actualQty);
-          }
+          nextDrafts[line.id] = cellsFromLine(line);
         }
         setDrafts(nextDrafts);
       })
@@ -123,56 +203,88 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
     };
   }, [practiceId, branchId, kind, isFull]);
 
+  const locationIds = (session?.locations ?? []).map((loc) => loc.id);
+
   function applyLine(updated: StaffCountLine) {
     setSession((prev) =>
       prev
         ? { ...prev, lines: prev.lines.map((l) => (l.id === updated.id ? updated : l)) }
         : prev
     );
-    setDrafts((prev) => {
-      const next = { ...prev };
-      for (const loc of updated.locations) {
-        next[`${updated.id}:${loc.branchLocationId}`] =
-          loc.actualQty == null ? '' : String(loc.actualQty);
-      }
-      return next;
-    });
+    setDrafts((prev) => ({ ...prev, [updated.id]: cellsFromLine(updated) }));
   }
 
   function locationsPayload(line: StaffCountLine) {
-    return line.locations.map((loc) => {
-      const raw = drafts[`${line.id}:${loc.branchLocationId}`] ?? '';
-      const qty = parseQty(raw);
+    const cells = drafts[line.id] ?? cellsFromLine(line);
+    return cells.map((cell) => {
+      const qty = parseQty(cell.actualQty);
       if (Number.isNaN(qty)) {
-        throw new Error(`${line.name ?? 'Item'} ${loc.name} must be a number 0 or greater`);
+        throw new Error(`${line.name ?? 'Item'} must have a number 0 or greater`);
       }
-      return { branchLocationId: loc.branchLocationId, actualQty: qty };
+      const lotNumber = cell.lotNumber.trim();
+      return {
+        ...(cell.id != null ? { id: cell.id } : {}),
+        branchLocationId: cell.branchLocationId,
+        inventoryLotBalanceId: cell.inventoryLotBalanceId,
+        lotNumber: lotNumber || null,
+        expirationDate: cell.expirationDate.trim() || null,
+        actualQty: qty,
+      };
     });
   }
 
   function beginEdit(line: StaffCountLine) {
     if (line.submitted || busy) return;
-    const nextDrafts = { ...drafts };
-    for (const loc of line.locations) {
-      nextDrafts[`${line.id}:${loc.branchLocationId}`] =
-        loc.actualQty == null ? '' : String(loc.actualQty);
-    }
-    setDrafts(nextDrafts);
+    setDrafts((prev) => ({ ...prev, [line.id]: cellsFromLine(line) }));
     setEditingLineId(line.id);
     setError(null);
   }
 
   function cancelEdit(line: StaffCountLine) {
-    setDrafts((prev) => {
-      const next = { ...prev };
-      for (const loc of line.locations) {
-        next[`${line.id}:${loc.branchLocationId}`] =
-          loc.actualQty == null ? '' : String(loc.actualQty);
-      }
-      return next;
-    });
+    setDrafts((prev) => ({ ...prev, [line.id]: cellsFromLine(line) }));
     setEditingLineId(null);
     setError(null);
+  }
+
+  function addLotRow(line: StaffCountLine, branchLocationId: number) {
+    setDrafts((prev) => {
+      const cur = prev[line.id] ?? cellsFromLine(line);
+      return {
+        ...prev,
+        [line.id]: [
+          ...cur,
+          {
+            key: `new:${line.id}:${branchLocationId}:${Date.now()}`,
+            branchLocationId,
+            inventoryLotBalanceId: null,
+            lotNumber: '',
+            expirationDate: '',
+            actualQty: '',
+            lockedLot: false,
+          },
+        ],
+      };
+    });
+  }
+
+  function updateCell(lineId: number, key: string, patch: Partial<DraftCell>) {
+    setDrafts((prev) => ({
+      ...prev,
+      [lineId]: (prev[lineId] ?? []).map((cell) =>
+        cell.key === key ? { ...cell, ...patch } : cell
+      ),
+    }));
+  }
+
+  function removeCell(lineId: number, key: string) {
+    setDrafts((prev) => {
+      const cur = prev[lineId] ?? [];
+      const target = cur.find((c) => c.key === key);
+      if (!target || target.lockedLot) return prev;
+      const atLoc = cur.filter((c) => c.branchLocationId === target.branchLocationId);
+      if (atLoc.length <= 1) return prev;
+      return { ...prev, [lineId]: cur.filter((c) => c.key !== key) };
+    });
   }
 
   async function saveLine(line: StaffCountLine) {
@@ -194,7 +306,7 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
   }
 
   async function submitLine(line: StaffCountLine) {
-    if (!session || !lineFullyCounted(line)) return;
+    if (!session || !lineFullyCounted(line, locationIds)) return;
     setSavingId(line.id);
     setError(null);
     try {
@@ -224,7 +336,7 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
       setToast(
         next.submittedCount
           ? `Posted ${next.submittedCount} item${next.submittedCount === 1 ? '' : 's'} to inventory`
-          : 'No items ready. Save a count for every location on an item first.'
+          : 'No items ready. Save a count for every location and lot on an item first.'
       );
       window.setTimeout(() => setToast(null), 3500);
     } catch (e: unknown) {
@@ -238,15 +350,11 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
   const visibleLines = useMemo(() => {
     const lines = session?.lines ?? [];
     if (!filterLower) return lines;
-    return lines.filter((line) => {
-      const name = (line.name ?? '').toLowerCase();
-      const code = (line.code ?? '').toLowerCase();
-      return name.includes(filterLower) || code.includes(filterLower);
-    });
+    return lines.filter((line) => lineSearchText(line).includes(filterLower));
   }, [session?.lines, filterLower]);
 
   const readyToPost = (session?.lines ?? []).filter(
-    (line) => !line.submitted && lineFullyCounted(line)
+    (line) => !line.submitted && lineFullyCounted(line, locationIds)
   ).length;
   const doneCount = session?.lines.filter((l) => l.submitted).length ?? 0;
   const totalCount = session?.lines.length ?? 0;
@@ -255,8 +363,8 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
     <div className="settings-section">
       <p className="settings-section-description">
         {isFull
-          ? 'Full inventory: every active stock item. Edit a row to enter counts, then Save. Different people can fill different locations. Submit posts an item to on-hand only after every location for that item has a saved count.'
-          : 'Weekly list to count: due A/B/C items (capped at 20). Edit a row to enter counts, then Save. Different people can fill different locations. Submit posts an item to on-hand only after every location for that item has a saved count. System quantity stays hidden until you submit.'}
+          ? 'Full inventory: count each lot at each location (how many of this dated bottle are on this shelf). Edit a row, enter qty — add a lot when you find a bottle that is not listed. Submit posts an item only after every location / lot for that item has a saved count.'
+          : 'Weekly list to count: due A/B/C items (capped at 20). Count each lot at each location. Submit posts an item only after every location / lot for that item has a saved count. System quantity stays hidden until you submit.'}
       </p>
       {toast && (
         <div className="settings-message settings-success-message" style={{ marginBottom: 12 }}>
@@ -295,7 +403,7 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
             ))}
           </select>
         </label>
-        {isFull && session && session.lines.length > 0 && (
+        {session && session.lines.length > 0 && (
           <label className="settings-label">
             Find item
             <input
@@ -303,7 +411,7 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
               style={{ minWidth: 220 }}
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
-              placeholder="Name or code"
+              placeholder="Name, code, charge name, or lot"
             />
           </label>
         )}
@@ -323,8 +431,8 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
               editingLineId != null
                 ? 'Save or cancel the row you are editing first'
                 : readyToPost === 0
-                  ? 'Save a count for every location on an item before submitting'
-                  : 'Post all items that already have every location counted'
+                  ? 'Save a count for every location and lot on an item before submitting'
+                  : 'Post all items that already have every location and lot counted'
             }
           >
             Submit ready items ({readyToPost})
@@ -352,9 +460,10 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
             <thead>
               <tr>
                 <th>Item</th>
-                {(session.locations ?? []).map((loc) => (
-                  <th key={loc.id}>{loc.name}</th>
-                ))}
+                <th>Location</th>
+                <th>Lot</th>
+                <th>Exp</th>
+                <th>Count</th>
                 <th>Total</th>
                 <th />
               </tr>
@@ -362,140 +471,210 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
             <tbody>
               {visibleLines.map((line) => {
                 const editing = editingLineId === line.id;
+                const cells = editing ? drafts[line.id] ?? cellsFromLine(line) : null;
+                const displayCells: Array<StaffCountLocation | DraftCell> = editing
+                  ? cells ?? []
+                  : line.locations;
+                const rowCount = Math.max(displayCells.length, 1);
                 const savedTotal =
-                  lineFullyCounted(line) && !editing
+                  lineFullyCounted(line, locationIds) && !editing
                     ? line.locations.reduce((sum, loc) => sum + Number(loc.actualQty), 0)
                     : null;
-                const draftTotal = editing
-                  ? line.locations.reduce((sum, loc) => {
-                      const qty = parseQty(drafts[`${line.id}:${loc.branchLocationId}`] ?? '');
-                      return qty != null && !Number.isNaN(qty) ? sum + qty : sum;
-                    }, 0)
-                  : null;
-                const draftAllIn =
-                  editing &&
-                  line.locations.every((loc) => {
-                    const qty = parseQty(drafts[`${line.id}:${loc.branchLocationId}`] ?? '');
-                    return qty != null && !Number.isNaN(qty);
-                  });
-                const canSubmit = !line.submitted && !editing && lineFullyCounted(line);
+                const draftTotal = editing && cells ? cellTotal(cells) : null;
+                const canSubmit = !line.submitted && !editing && lineFullyCounted(line, locationIds);
                 const itemHref = `/schedule/inventory/items?itemId=${line.inventoryItemId}${
-                  line.name
-                    ? `&name=${encodeURIComponent(line.name)}`
-                    : ''
+                  line.name ? `&name=${encodeURIComponent(line.name)}` : ''
                 }`;
+                const locName = (id: number) =>
+                  session.locations.find((l) => l.id === id)?.name ?? `Location #${id}`;
 
-                return (
-                  <tr key={line.id}>
-                    <td>
-                      <Link
-                        to={itemHref}
-                        style={{ fontWeight: 600, color: 'inherit', textDecoration: 'underline' }}
-                      >
-                        {line.name ?? `Item #${line.inventoryItemId}`}
-                      </Link>
-                      {line.code ? (
-                        <div className="settings-muted" style={{ fontSize: 12 }}>
-                          {line.code}
-                        </div>
-                      ) : null}
-                      {line.submitted ? (
-                        <div className="settings-muted" style={{ fontSize: 12 }}>
-                          Posted to inventory
-                        </div>
-                      ) : null}
-                    </td>
-                    {line.locations.map((loc) => {
-                      const key = `${line.id}:${loc.branchLocationId}`;
-                      if (editing) {
-                        return (
-                          <td key={loc.branchLocationId}>
-                            <input
-                              className="settings-input par-levels-input"
-                              inputMode="decimal"
-                              disabled={busy || savingId === line.id}
-                              value={drafts[key] ?? ''}
-                              onChange={(e) =>
-                                setDrafts((prev) => ({
-                                  ...prev,
-                                  [key]: e.target.value,
-                                }))
-                              }
-                              placeholder="—"
-                              aria-label={`${line.name ?? 'Item'} ${loc.name}`}
-                            />
-                          </td>
-                        );
-                      }
-                      return (
-                        <td key={loc.branchLocationId}>
-                          <span aria-label={`${line.name ?? 'Item'} ${loc.name}`}>
-                            {displayQty(loc.actualQty)}
-                          </span>
-                        </td>
-                      );
-                    })}
-                    <td>
-                      {editing
-                        ? draftAllIn
-                          ? draftTotal
-                          : <span className="settings-muted">—</span>
-                        : savedTotal != null
-                          ? savedTotal
-                          : <span className="settings-muted">—</span>}
-                    </td>
-                    <td>
-                      {!line.submitted && (
-                        <div className="par-row-actions">
+                return displayCells.map((cell, idx) => {
+                  const draft = editing ? (cell as DraftCell) : null;
+                  const saved = !editing ? (cell as StaffCountLocation) : null;
+                  const locId = draft?.branchLocationId ?? saved?.branchLocationId ?? 0;
+                  return (
+                    <tr key={`${line.id}:${draft?.key ?? saved?.id ?? idx}`}>
+                      {idx === 0 && (
+                        <td rowSpan={rowCount} style={{ verticalAlign: 'top' }}>
+                          <Link
+                            to={itemHref}
+                            style={{ fontWeight: 600, color: 'inherit', textDecoration: 'underline' }}
+                          >
+                            {line.name ?? `Item #${line.inventoryItemId}`}
+                          </Link>
+                          {line.code ? (
+                            <div className="settings-muted" style={{ fontSize: 12 }}>
+                              {line.code}
+                            </div>
+                          ) : null}
+                          {line.aliases && line.aliases.length > 0 ? (
+                            <div className="settings-muted" style={{ fontSize: 12 }}>
+                              Also: {line.aliases.slice(0, 4).join(', ')}
+                              {line.aliases.length > 4 ? '…' : ''}
+                            </div>
+                          ) : null}
+                          {line.submitted ? (
+                            <div className="settings-muted" style={{ fontSize: 12 }}>
+                              Posted to inventory
+                            </div>
+                          ) : null}
                           {editing ? (
-                            <>
-                              <button
-                                type="button"
-                                className="btn primary"
-                                disabled={savingId === line.id || busy}
-                                onClick={() => void saveLine(line)}
-                              >
-                                {savingId === line.id ? 'Saving…' : 'Save'}
-                              </button>
-                              <button
-                                type="button"
-                                className="btn secondary"
-                                disabled={savingId === line.id || busy}
-                                onClick={() => cancelEdit(line)}
-                              >
-                                Cancel
-                              </button>
-                            </>
-                          ) : (
-                            <>
-                              <button
-                                type="button"
-                                className="btn secondary"
-                                disabled={busy || (editingLineId != null && editingLineId !== line.id)}
-                                onClick={() => beginEdit(line)}
-                              >
-                                Edit
-                              </button>
-                              <button
-                                type="button"
-                                className="btn primary"
-                                disabled={savingId === line.id || busy || !canSubmit}
-                                title={
-                                  canSubmit
-                                    ? 'Post this item’s counts to on-hand'
-                                    : 'Save a count for every location before submitting'
-                                }
-                                onClick={() => void submitLine(line)}
-                              >
-                                {savingId === line.id ? 'Submitting…' : 'Submit'}
-                              </button>
-                            </>
-                          )}
-                        </div>
+                            <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                              {(session.locations ?? []).map((loc) => (
+                                <button
+                                  key={loc.id}
+                                  type="button"
+                                  className="btn secondary"
+                                  style={{ fontSize: 12, padding: '4px 8px' }}
+                                  disabled={busy || savingId === line.id}
+                                  onClick={() => addLotRow(line, loc.id)}
+                                >
+                                  Add lot at {loc.name}
+                                </button>
+                              ))}
+                            </div>
+                          ) : null}
+                        </td>
                       )}
-                    </td>
-                  </tr>
-                );
+                      <td>{locName(locId)}</td>
+                      <td>
+                        {editing && draft && !draft.lockedLot ? (
+                          <input
+                            className="settings-input par-levels-input"
+                            value={draft.lotNumber}
+                            disabled={busy || savingId === line.id}
+                            placeholder="Lot # (optional)"
+                            required={line.requireLotNumber === true}
+                            aria-label={`${line.name ?? 'Item'} lot`}
+                            onChange={(e) =>
+                              updateCell(line.id, draft.key, { lotNumber: e.target.value })
+                            }
+                          />
+                        ) : (
+                          lotDisplay(
+                            draft?.lotNumber ?? saved?.lotNumber,
+                            draft?.expirationDate ?? saved?.expirationDate
+                          )
+                        )}
+                      </td>
+                      <td>
+                        {editing && draft && !draft.lockedLot ? (
+                          <input
+                            className="settings-input par-levels-input"
+                            type="date"
+                            value={draft.expirationDate}
+                            disabled={busy || savingId === line.id}
+                            required={draft.lotNumber.trim() !== UNASSIGNED_LOT}
+                            aria-label={`${line.name ?? 'Item'} expiration`}
+                            onChange={(e) =>
+                              updateCell(line.id, draft.key, { expirationDate: e.target.value })
+                            }
+                          />
+                        ) : (
+                          dateInputValue(draft?.expirationDate ?? saved?.expirationDate) || '—'
+                        )}
+                      </td>
+                      <td>
+                        {editing && draft ? (
+                          <input
+                            className="settings-input par-levels-input"
+                            inputMode="decimal"
+                            disabled={busy || savingId === line.id}
+                            value={draft.actualQty}
+                            onChange={(e) =>
+                              updateCell(line.id, draft.key, { actualQty: e.target.value })
+                            }
+                            placeholder="—"
+                            aria-label={`${line.name ?? 'Item'} ${locName(locId)} count`}
+                          />
+                        ) : (
+                          displayQty(saved?.actualQty)
+                        )}
+                        {editing &&
+                        draft &&
+                        !draft.lockedLot &&
+                        (cells ?? []).filter((c) => c.branchLocationId === locId).length > 1 ? (
+                          <button
+                            type="button"
+                            className="btn secondary"
+                            style={{ fontSize: 12, padding: '4px 8px', marginTop: 6, display: 'block' }}
+                            disabled={busy || savingId === line.id}
+                            onClick={() => removeCell(line.id, draft.key)}
+                          >
+                            Remove
+                          </button>
+                        ) : null}
+                      </td>
+                      {idx === 0 && (
+                        <>
+                          <td rowSpan={rowCount} style={{ verticalAlign: 'top' }}>
+                            {editing
+                              ? draftTotal != null
+                                ? draftTotal
+                                : <span className="settings-muted">—</span>
+                              : savedTotal != null
+                                ? savedTotal
+                                : <span className="settings-muted">—</span>}
+                          </td>
+                          <td rowSpan={rowCount} style={{ verticalAlign: 'top' }}>
+                            {!line.submitted && (
+                              <div className="par-row-actions par-row-actions--stack">
+                                {editing ? (
+                                  <>
+                                    <button
+                                      type="button"
+                                      className="btn primary"
+                                      disabled={
+                                        savingId === line.id ||
+                                        busy ||
+                                        !(cells && cellsFullyCounted(cells))
+                                      }
+                                      onClick={() => void saveLine(line)}
+                                    >
+                                      {savingId === line.id ? 'Saving…' : 'Save'}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="btn secondary"
+                                      disabled={savingId === line.id || busy}
+                                      onClick={() => cancelEdit(line)}
+                                    >
+                                      Cancel
+                                    </button>
+                                  </>
+                                ) : (
+                                  <>
+                                    <button
+                                      type="button"
+                                      className="btn secondary"
+                                      disabled={busy || (editingLineId != null && editingLineId !== line.id)}
+                                      onClick={() => beginEdit(line)}
+                                    >
+                                      Edit
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="btn primary"
+                                      disabled={savingId === line.id || busy || !canSubmit}
+                                      title={
+                                        canSubmit
+                                          ? 'Post this item’s counts to on-hand'
+                                          : 'Save a count for every location and lot before submitting'
+                                      }
+                                      onClick={() => void submitLine(line)}
+                                    >
+                                      {savingId === line.id ? 'Submitting…' : 'Submit'}
+                                    </button>
+                                  </>
+                                )}
+                              </div>
+                            )}
+                          </td>
+                        </>
+                      )}
+                    </tr>
+                  );
+                });
               })}
             </tbody>
           </table>

@@ -45,6 +45,15 @@ export function citationChipLabel(c: CaseHistoryCitation): string {
   return c.label;
 }
 
+/** Drop `[ref:…]` tokens so a summary can be read without chart-source noise. */
+export function stripCitationTokens(text: string): string {
+  return text
+    .replace(/\[ref:[A-Za-z0-9_-]+\]/g, '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
+}
+
 export function citationTitle(c: CaseHistoryCitation): string {
   return c.date && c.date !== 'undated' ? `${c.date} · ${c.label}` : c.label;
 }

@@ -13,11 +13,19 @@ export type ScoutChartNote = {
   status: ScoutChartNoteStatus;
   createdByEmployeeId: number | null;
   finalizedByEmployeeId: number | null;
+  createdByEmployee?: {
+    firstName?: string | null;
+    lastName?: string | null;
+  } | null;
   finalizedByEmployee?: {
     firstName?: string | null;
     lastName?: string | null;
   } | null;
   finalizedAt: string | null;
+  removedAt?: string | null;
+  removedByEmployeeId?: number | null;
+  removedByName?: string | null;
+  removedReason?: string | null;
   created: string;
   updated: string;
 };
@@ -65,6 +73,47 @@ export async function finalizeScoutChartNote(id: string): Promise<ScoutChartNote
   return data;
 }
 
+export type ScoutChartNoteAddendum = {
+  id: string;
+  noteId: string;
+  body: string;
+  created: string;
+  createdByEmployeeId: number | null;
+  createdByName: string | null;
+};
+
+export async function listScoutChartNoteAddenda(
+  noteId: string,
+): Promise<ScoutChartNoteAddendum[]> {
+  const { data } = await http.get<ScoutChartNoteAddendum[]>(
+    `/scout-chart/notes/${encodeURIComponent(noteId)}/addenda`,
+    { params: { practiceId: PRACTICE_ID } },
+  );
+  return Array.isArray(data) ? data : [];
+}
+
+export async function createScoutChartNoteAddendum(
+  noteId: string,
+  body: string,
+): Promise<ScoutChartNoteAddendum> {
+  const { data } = await http.post<ScoutChartNoteAddendum>(
+    `/scout-chart/notes/${encodeURIComponent(noteId)}/addenda`,
+    { practiceId: PRACTICE_ID, body },
+  );
+  return data;
+}
+
+export async function removeScoutChartNoteFromChart(
+  id: string,
+  reason: string,
+): Promise<ScoutChartNote> {
+  const { data } = await http.post<ScoutChartNote>(
+    `/scout-chart/notes/${encodeURIComponent(id)}/remove-from-chart`,
+    { practiceId: PRACTICE_ID, reason },
+  );
+  return data;
+}
+
 export type ClientCommunicationRow = {
   id: number;
   serviceDate: string;
@@ -93,7 +142,7 @@ export async function recordScoutChartCommunication(body: {
   patientId?: number | null;
   patientIds?: number[];
   clientId: number;
-  channel: 'email' | 'sms';
+  channel: 'email' | 'sms' | 'log' | 'phone';
   body: string;
   subject?: string;
   destination?: string;

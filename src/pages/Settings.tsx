@@ -1,6 +1,6 @@
 // src/pages/Settings.tsx
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { useSearchParams } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 import { ChevronDown } from 'lucide-react';
 import { useAuth } from '../auth/useAuth';
 import ScheduleOverrideModal from '../components/ScheduleOverrideModal';
@@ -32,6 +32,7 @@ import {
   ONLINE_STORE_IMPLEMENTED_KEY,
   ONLINE_STORE_FULFILLMENT_BRANCH_KEY,
   ONLINE_STORE_FULFILLMENT_LOCATION_KEY,
+  EXCLUDE_PRODUCTION_WHEN_REFILLING_KEY,
   type ReminderSettingsForm,
   type CadenceEntry,
 } from '../api/practiceSettings';
@@ -72,20 +73,31 @@ import SettingsClSeatAssignment from '../components/settings/SettingsClSeatAssig
 import SettingsGmailMailboxPermissions from '../components/settings/SettingsGmailMailboxPermissions';
 import SettingsBranchesLocations from '../components/settings/SettingsBranchesLocations';
 import SettingsPaymentTypes from '../components/settings/SettingsPaymentTypes';
+import SettingsPracticeLetterhead from '../components/settings/SettingsPracticeLetterhead';
+import SettingsEuthanasiaConsent from '../components/settings/SettingsEuthanasiaConsent';
+import SettingsOutsideHospitals from '../components/settings/SettingsOutsideHospitals';
 import SettingsDepositBankAccounts from '../components/settings/SettingsDepositBankAccounts';
 import SettingsClientStatuses from '../components/settings/SettingsClientStatuses';
 import SettingsMessageTemplates from '../components/settings/SettingsMessageTemplates';
 import WasteAdminPage from './WasteAdminPage';
+import SettingsMailShippingTypes from '../components/settings/SettingsMailShippingTypes';
 import { appointmentTypeIsArchived } from '../utils/appointmentTypeSettings';
 
 const SETTINGS_TAB_IDS = [
+  'practice-letterhead',
+  'branches-locations',
+  'euthanasia-consent',
+  'outside-hospitals',
   'appointment-types',
   'practice-booking-goals',
   'employee-types',
   'employee-zones',
   'employee-schedule',
-  'branches-locations',
-  'inventory',
+  'inventory-online-store',
+  'inventory-refills',
+  'inventory-mail-shipping',
+  'inventory-sales-tax',
+  'inventory-waste',
   'employee-images',
   'employee-goals',
   'employee-directory',
@@ -100,6 +112,13 @@ const SETTINGS_TAB_IDS = [
 type SettingsTabId = (typeof SETTINGS_TAB_IDS)[number];
 
 type SettingsMenuItem = { id: SettingsTabId; label: string };
+
+const PRACTICE_SETTINGS_ITEMS: SettingsMenuItem[] = [
+  { id: 'practice-letterhead', label: 'Letterhead' },
+  { id: 'branches-locations', label: 'Branches & Locations' },
+  { id: 'euthanasia-consent', label: 'Euthanasia Consent' },
+  { id: 'outside-hospitals', label: 'Outside Hospitals' },
+];
 
 const SCHEDULING_SETTINGS_ITEMS: SettingsMenuItem[] = [
   { id: 'appointment-types', label: 'Appointment Types' },
@@ -140,6 +159,14 @@ const COMMUNICATION_SETTINGS_ITEMS: SettingsMenuItem[] = [
   { id: 'message-templates', label: 'Email & Text Templates' },
 ];
 
+const INVENTORY_SETTINGS_ITEMS: SettingsMenuItem[] = [
+  { id: 'inventory-online-store', label: 'Online store' },
+  { id: 'inventory-refills', label: 'Refills' },
+  { id: 'inventory-mail-shipping', label: 'Mail shipping' },
+  { id: 'inventory-sales-tax', label: 'Sales tax' },
+  { id: 'inventory-waste', label: 'Waste / disposal' },
+];
+
 function tabInGroup(tab: SettingsTabId, items: SettingsMenuItem[]): boolean {
   return items.some((item) => item.id === tab);
 }
@@ -147,6 +174,9 @@ function tabInGroup(tab: SettingsTabId, items: SettingsMenuItem[]): boolean {
 function parseSettingsTabParam(tab: string | null): SettingsTabId {
   if (tab && tab in LEGACY_EMPLOYEE_TAB_TO_SECTION) return 'employee-directory';
   if (tab === 'role-manual-booking') return 'roles';
+  // Practice used to be one long page; land old links on its first section.
+  if (tab === 'practice') return 'practice-letterhead';
+  if (tab === 'inventory') return 'inventory-online-store';
   if (tab && (SETTINGS_TAB_IDS as readonly string[]).includes(tab)) {
     return tab as SettingsTabId;
   }
@@ -435,6 +465,8 @@ export default function Settings() {
   const [onlineStoreSettingLoading, setOnlineStoreSettingLoading] = useState(false);
   const [onlineStoreSettingSaving, setOnlineStoreSettingSaving] = useState(false);
   const [onlineStoreSettingError, setOnlineStoreSettingError] = useState<string | null>(null);
+  const [excludeProductionWhenRefilling, setExcludeProductionWhenRefilling] = useState(false);
+  const [refillProductionSaving, setRefillProductionSaving] = useState(false);
 
   // Inventory tab — practice sales-tax levels (catalog item picker)
   const [taxSettingsDraft, setTaxSettingsDraft] = useState<PracticeTaxSettings | null>(null);
@@ -499,9 +531,14 @@ export default function Settings() {
     };
   }, [isAdmin, activeTab]);
 
-  // Load online-store company setting when Inventory tab is active
+  // Load online-store + refill settings when those Inventory sections are active
   useEffect(() => {
-    if (!isAdmin || activeTab !== 'inventory') return;
+    if (
+      !isAdmin ||
+      (activeTab !== 'inventory-online-store' && activeTab !== 'inventory-refills')
+    ) {
+      return;
+    }
     let cancelled = false;
     setOnlineStoreSettingError(null);
     setOnlineStoreSettingLoading(true);
@@ -512,6 +549,9 @@ export default function Settings() {
       .then(async ([settings, branchList]) => {
         if (cancelled) return;
         setOnlineStoreImplemented(isOnlineStoreImplemented(settings));
+        setExcludeProductionWhenRefilling(
+          settings?.[EXCLUDE_PRODUCTION_WHEN_REFILLING_KEY] === 'true',
+        );
         const activeBranches = branchList.filter((b) => b.isActive !== false);
         setOnlineStoreBranches(activeBranches);
         const branchId = parseOnlineStoreFulfillmentBranchId(settings);
@@ -544,9 +584,9 @@ export default function Settings() {
     };
   }, [isAdmin, activeTab]);
 
-  // Load practice sales-tax settings when Inventory tab is active
+  // Load practice sales-tax settings when that Inventory section is active
   useEffect(() => {
-    if (!isAdmin || activeTab !== 'inventory') return;
+    if (!isAdmin || activeTab !== 'inventory-sales-tax') return;
     let cancelled = false;
     setTaxSettingsError(null);
     setTaxSettingsLoading(true);
@@ -570,7 +610,11 @@ export default function Settings() {
   }, [isAdmin, activeTab]);
 
   useEffect(() => {
-    if (!isAdmin || activeTab !== 'inventory' || onlineStoreFulfillmentBranchId == null) {
+    if (
+      !isAdmin ||
+      activeTab !== 'inventory-online-store' ||
+      onlineStoreFulfillmentBranchId == null
+    ) {
       return;
     }
     let cancelled = false;
@@ -1286,6 +1330,12 @@ export default function Settings() {
 
         <div className="settings-tabs">
           <SettingsTabMenu
+            label="Practice"
+            items={PRACTICE_SETTINGS_ITEMS}
+            activeTab={activeTab}
+            onSelect={goToTab}
+          />
+          <SettingsTabMenu
             label="Scheduling"
             items={SCHEDULING_SETTINGS_ITEMS}
             activeTab={activeTab}
@@ -1297,18 +1347,12 @@ export default function Settings() {
             activeTab={activeTab}
             onSelect={goToTab}
           />
-          <button
-            className={`settings-tab ${activeTab === 'branches-locations' ? 'active' : ''}`}
-            onClick={() => goToTab('branches-locations')}
-          >
-            Branches &amp; Locations
-          </button>
-          <button
-            className={`settings-tab ${activeTab === 'inventory' ? 'active' : ''}`}
-            onClick={() => goToTab('inventory')}
-          >
-            Inventory
-          </button>
+          <SettingsTabMenu
+            label="Inventory"
+            items={INVENTORY_SETTINGS_ITEMS}
+            activeTab={activeTab}
+            onSelect={goToTab}
+          />
           <SettingsTabMenu
             label="Finance"
             items={FINANCE_SETTINGS_ITEMS}
@@ -1390,6 +1434,35 @@ export default function Settings() {
             />
           </div>
         )}
+
+        {activeTab === 'practice-letterhead' && <SettingsPracticeLetterhead />}
+
+        {activeTab === 'branches-locations' && (
+          <div className="settings-section">
+            <h2 className="settings-section-title">Branches &amp; Locations</h2>
+            <p className="settings-section-description">
+              Set up practice offices (branches) and their inventory location buckets (main, vehicle,
+              staging, etc.). Stock transfers and receiving under Inventory use these buckets.
+            </p>
+            <SettingsBranchesLocations
+              practiceId={Number(import.meta.env.VITE_PRACTICE_ID) || practiceId}
+              onMessage={(msg, kind) => {
+                if (kind === 'success') {
+                  setSuccess(msg);
+                  setError(null);
+                  window.setTimeout(() => setSuccess(null), 4000);
+                } else {
+                  setError(msg);
+                  setSuccess(null);
+                }
+              }}
+            />
+          </div>
+        )}
+
+        {activeTab === 'euthanasia-consent' && <SettingsEuthanasiaConsent />}
+
+        {activeTab === 'outside-hospitals' && <SettingsOutsideHospitals />}
 
         {activeTab === 'practice-booking-goals' && (
           <div className="settings-section">
@@ -2353,36 +2426,13 @@ export default function Settings() {
           initialDate={overrideModalInitial.date}
         />
 
-        {activeTab === 'branches-locations' && (
+        {/* Inventory settings */}
+        {activeTab === 'inventory-online-store' && (
           <div className="settings-section">
-            <h2 className="settings-section-title">Branches &amp; Locations</h2>
+            <h2 className="settings-section-title">Online store</h2>
             <p className="settings-section-description">
-              Set up practice offices (branches) and their inventory location buckets (main, vehicle,
-              staging, etc.). Stock transfers and receiving under Inventory use these buckets.
-            </p>
-            <SettingsBranchesLocations
-              practiceId={Number(import.meta.env.VITE_PRACTICE_ID) || practiceId}
-              onMessage={(msg, kind) => {
-                if (kind === 'success') {
-                  setSuccess(msg);
-                  setError(null);
-                  window.setTimeout(() => setSuccess(null), 4000);
-                } else {
-                  setError(msg);
-                  setSuccess(null);
-                }
-              }}
-            />
-          </div>
-        )}
-
-        {/* Inventory Tab */}
-        {activeTab === 'inventory' && (
-          <div className="settings-section">
-            <h2 className="settings-section-title">Inventory</h2>
-            <p className="settings-section-description">
-              Company storefront capability. Manage catalog items, labs, procedures, and quantity
-              price tiers under Catalog.
+              When enabled, Online Store appears as a price target next to branches when editing
+              inventory prices. Per-SKU listing is still controlled on each item.
             </p>
 
             <div className="settings-card" style={{ marginBottom: 24 }}>
@@ -2447,7 +2497,7 @@ export default function Settings() {
                       }}
                     >
                       <label className="settings-label">
-                        Fulfillment branch
+                        Default fill office
                         <select
                           className="settings-input"
                           value={onlineStoreFulfillmentBranchId ?? ''}
@@ -2498,7 +2548,8 @@ export default function Settings() {
                         className="settings-muted"
                         style={{ gridColumn: '1 / -1', margin: 0, fontSize: 12 }}
                       >
-                        Online orders draw stock from this branch and location when fulfilled.
+                        Default office for mail-order fills. Online store orders also draw
+                        stock from here. Brunswick is the usual default.
                       </p>
                     </div>
                   )}
@@ -2518,6 +2569,99 @@ export default function Settings() {
                 </>
               )}
             </div>
+
+            <p className="settings-muted" style={{ marginTop: 8 }}>
+              To add or edit products, procedures, labs, and quantity price breaks, open{' '}
+              <a href="/schedule/inventory/items">Catalog</a>.
+            </p>
+          </div>
+        )}
+
+        {activeTab === 'inventory-refills' && (
+          <div className="settings-section">
+            <h2 className="settings-section-title">Refills</h2>
+            <p className="settings-section-description">
+              When enabled, refill charges still count for the practice but are not attributed to a
+              provider’s VSD. A catalog item can override this.
+            </p>
+
+            <div className="settings-card" style={{ marginBottom: 24 }}>
+              <h3 className="settings-card-title">Refills</h3>
+              <p className="settings-muted" style={{ marginBottom: 12, fontSize: 13 }}>
+                When Yes, refill charges still count for the practice but are not attributed to a
+                provider’s VSD. A catalog item can override this.
+              </p>
+              <fieldset style={{ border: 'none', padding: 0, margin: '0 0 12px' }}>
+                <legend className="settings-label" style={{ marginBottom: 8 }}>
+                  Exclude production when refilling?
+                </legend>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginRight: 16, cursor: 'pointer', fontSize: 14 }}>
+                  <input
+                    type="radio"
+                    name="excludeProductionWhenRefilling"
+                    checked={excludeProductionWhenRefilling}
+                    onChange={() => setExcludeProductionWhenRefilling(true)}
+                    disabled={refillProductionSaving}
+                  />
+                  Yes
+                </label>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 14 }}>
+                  <input
+                    type="radio"
+                    name="excludeProductionWhenRefilling"
+                    checked={!excludeProductionWhenRefilling}
+                    onChange={() => setExcludeProductionWhenRefilling(false)}
+                    disabled={refillProductionSaving}
+                  />
+                  No
+                </label>
+              </fieldset>
+              <button
+                type="button"
+                className="btn primary"
+                disabled={refillProductionSaving}
+                onClick={() => {
+                  setRefillProductionSaving(true);
+                  void updatePracticeSettings(REMINDERS_PRACTICE_ID, {
+                    [EXCLUDE_PRODUCTION_WHEN_REFILLING_KEY]: excludeProductionWhenRefilling
+                      ? 'true'
+                      : 'false',
+                  })
+                    .then(() => {
+                      setSuccess('Refill production setting saved');
+                      setTimeout(() => setSuccess(null), 3000);
+                    })
+                    .catch((err: { response?: { data?: { message?: string } }; message?: string }) => {
+                      setOnlineStoreSettingError(
+                        err?.response?.data?.message || err?.message || 'Failed to save',
+                      );
+                    })
+                    .finally(() => setRefillProductionSaving(false));
+                }}
+              >
+                {refillProductionSaving ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'inventory-mail-shipping' && (
+          <div className="settings-section">
+            <h2 className="settings-section-title">Mail shipping</h2>
+            <p className="settings-section-description">
+              Shipping and pick-up types for the mail queue and, when enabled, the online store.
+            </p>
+            <SettingsMailShippingTypes />
+          </div>
+        )}
+
+        {activeTab === 'inventory-sales-tax' && (
+          <div className="settings-section">
+            <h2 className="settings-section-title">Sales tax</h2>
+            <p className="settings-section-description">
+              Level 1 is your practice sales tax. Enable level 2 or 3 only if your practice uses
+              additional tax tiers — they appear on catalog item Sales Tax dropdowns.
+            </p>
 
             <div className="settings-card" style={{ marginBottom: 24 }}>
               <h3 className="settings-card-title">Sales tax</h3>
@@ -2702,15 +2846,18 @@ export default function Settings() {
                 </p>
               )}
             </div>
+          </div>
+        )}
 
+        {activeTab === 'inventory-waste' && (
+          <div className="settings-section">
+            <h2 className="settings-section-title">Waste / disposal</h2>
+            <p className="settings-section-description">
+              Reasons, disposal methods, and waste alerts for Waste / Adjust.
+            </p>
             <div style={{ marginBottom: 24 }}>
               <WasteAdminPage />
             </div>
-
-            <p className="settings-muted" style={{ marginTop: 8 }}>
-              To add or edit products, procedures, labs, and quantity price breaks, open{' '}
-              <a href="/schedule/inventory/items">Inventory</a>.
-            </p>
           </div>
         )}
 

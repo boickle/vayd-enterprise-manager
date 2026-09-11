@@ -15,6 +15,9 @@ export type SendClientSmsPayload = {
   markInboxDone?: boolean;
   /** Label for delivery-failure alerts (e.g. care_outreach, forward_booking). */
   source?: string;
+  practiceId?: number;
+  patientIds?: number[];
+  typeLabel?: string;
 };
 
 export type StaffSmsDeliveryFailure = {

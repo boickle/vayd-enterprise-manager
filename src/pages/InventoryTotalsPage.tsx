@@ -134,7 +134,10 @@ export default function InventoryTotalsPage() {
         </select>
         <p className="settings-muted" style={{ marginTop: 8, fontSize: 13 }}>
           Add or edit branches and location buckets under{' '}
-          <a href="/schedule/settings?tab=branches-locations">Settings → Branches &amp; Locations</a>.
+          <a href="/schedule/settings?tab=branches-locations">
+            Settings → Practice → Branches &amp; Locations
+          </a>
+          .
         </p>
       </div>
 

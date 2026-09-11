@@ -4,7 +4,38 @@ export type OutsideRecordSummary = {
   fileName: string;
   uploadedAt: string;
   summary: string;
+  /** Chart document holding the original file. Only set after Accept (or leftover from an earlier auto-upload). */
+  chartDocumentId?: number | null;
+  /** Staff who uploaded the file and directed the summary. */
+  uploadedByName?: string | null;
 };
+
+/** What landed on the chart after Accept — used to scroll and highlight the new Timeline rows. */
+export type OutsideRecordAcceptResult = {
+  chartDocumentId?: number | null;
+  scoutNoteId?: string | null;
+};
+
+/** Original files stay in memory until Accept. localStorage only holds the summary. */
+const pendingFiles = new Map<string, File>();
+
+export function stashOutsideRecordFile(id: string, file: File): void {
+  pendingFiles.set(id, file);
+}
+
+export function peekOutsideRecordFile(id: string): File | undefined {
+  return pendingFiles.get(id);
+}
+
+export function takeOutsideRecordFile(id: string): File | undefined {
+  const file = pendingFiles.get(id);
+  pendingFiles.delete(id);
+  return file;
+}
+
+export function discardOutsideRecordFile(id: string): void {
+  pendingFiles.delete(id);
+}
 
 export type CaseHistorySummary = {
   id: string;
@@ -66,6 +97,9 @@ export function saveOutsideRecord(input: {
   patientId: string;
   fileName: string;
   summary: string;
+  chartDocumentId?: number | null;
+  file?: File;
+  uploadedByName?: string | null;
 }): OutsideRecordSummary {
   const row: OutsideRecordSummary = {
     id: newId(),
@@ -73,12 +107,27 @@ export function saveOutsideRecord(input: {
     fileName: input.fileName.trim() || 'Uploaded record',
     uploadedAt: nowIso(),
     summary: input.summary.trim(),
+    chartDocumentId: input.chartDocumentId ?? null,
+    uploadedByName: input.uploadedByName?.trim() || null,
   };
+  if (input.file) stashOutsideRecordFile(row.id, input.file);
   writeJson(OUTSIDE_KEY, [row, ...readJson<OutsideRecordSummary>(OUTSIDE_KEY)]);
   return row;
 }
 
+/** Drop pending reviews for this pet so Upload File opens as a blank slate. */
+export function clearOutsideRecordsForPatient(patientId: string): void {
+  const id = String(patientId);
+  const kept = readJson<OutsideRecordSummary>(OUTSIDE_KEY).filter((r) => {
+    if (!r || r.patientId !== id) return true;
+    discardOutsideRecordFile(r.id);
+    return false;
+  });
+  writeJson(OUTSIDE_KEY, kept);
+}
+
 export function deleteOutsideRecord(id: string): void {
+  discardOutsideRecordFile(id);
   writeJson(
     OUTSIDE_KEY,
     readJson<OutsideRecordSummary>(OUTSIDE_KEY).filter((r) => r.id !== id)

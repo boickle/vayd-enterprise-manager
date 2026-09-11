@@ -115,11 +115,24 @@ export type VisitInvoiceLine = {
   instructions?: string | null;
   instructionsEnteredByEmployeeId?: number | null;
   instructionsEnteredByName?: string | null;
+  rxApprovedAt?: string | null;
+  rxApprovedByEmployeeId?: number | null;
+  rxApprovedByName?: string | null;
   refillCount?: number | null;
   catalogInstructions?: string | null;
   catalogRefill?: number | null;
+  catalogDiscardAfter?: string | null;
+  catalogRefillExpiration?: string | null;
   catalogItemId?: number | null;
   catalogItemType?: string | null;
+  /** eVet "Show on Invoice" is off: staff see the charge, the client's copy does not. */
+  hideOnInvoice?: boolean;
+  /** Practice revenue — no doctor attributed on the invoice. */
+  excludeFromProduction?: boolean;
+  inventoryLotBalanceId?: number | null;
+  lotNumber?: string | null;
+  stockInventoryItemId?: number | null;
+  trackLots?: boolean;
   listUnitPrice?: number | null;
   patientName?: string | null;
   taxLevelValue?: number | null;
@@ -476,6 +489,8 @@ export type PatientPrescription = {
   /** Set on freeform pin rows that belong to the patient directly (no order, no treatment). */
   patientId: number | null;
   rxNumber: number | null;
+  quantity?: number | null;
+  autoshipStartedAt?: string | null;
 };
 
 /** True for prescriptions Scout wrote (SOAP order or EMR pin) rather than eVet-imported ones. */
@@ -691,6 +706,10 @@ export async function createPatientPrescription(body: {
   name: string;
   acuity?: PrescriptionAcuity;
   inventoryItemId?: number | null;
+  instructions?: string;
+  refill?: number;
+  startDate?: string;
+  refillExpiration?: string;
 }): Promise<PatientPrescription> {
   const { data } = await http.post<PatientPrescription>('/patient-prescriptions', {
     practiceId: pid(),
@@ -751,10 +770,14 @@ export type CounterInvoiceLineInput = {
   refillCount?: number | null;
   catalogItemId?: number | null;
   catalogItemType?: string | null;
+  inventoryLotBalanceId?: number | null;
+  lotNumber?: string | null;
   isCovered?: boolean;
   listUnitPrice?: number | null;
   patientId?: number | null;
   providerEmployeeId?: number | null;
+  rxApproved?: boolean;
+  miscCharge?: boolean;
 };
 
 export async function listClientVisitInvoices(clientId: number): Promise<VisitInvoice[]> {
@@ -797,7 +820,11 @@ export async function ensureCounterInvoice(opts: {
 
 export async function patchVisitInvoice(
   invoiceId: string,
-  body: { appointmentId?: number | null; inventoryBranchId?: number | null }
+  body: {
+    appointmentId?: number | null;
+    inventoryBranchId?: number | null;
+    inventoryLocationId?: number | null;
+  }
 ): Promise<VisitInvoice> {
   const { data } = await http.patch<VisitInvoice>(
     `/visit-invoices/${encodeURIComponent(invoiceId)}`,
@@ -1018,6 +1045,22 @@ export async function savePaymentMethod(
 export async function chargeSavedCard(invoiceId: string): Promise<VisitInvoice> {
   const { data } = await http.post<VisitInvoice>(
     `/visit-payments/${encodeURIComponent(invoiceId)}/charge-saved-card`,
+    { practiceId: pid() }
+  );
+  return data;
+}
+
+export async function authorizeSavedCard(invoiceId: string): Promise<VisitInvoice> {
+  const { data } = await http.post<VisitInvoice>(
+    `/visit-payments/${encodeURIComponent(invoiceId)}/authorize`,
+    { practiceId: pid() }
+  );
+  return data;
+}
+
+export async function captureAuthorization(invoiceId: string): Promise<VisitInvoice> {
+  const { data } = await http.post<VisitInvoice>(
+    `/visit-payments/${encodeURIComponent(invoiceId)}/capture-authorization`,
     { practiceId: pid() }
   );
   return data;

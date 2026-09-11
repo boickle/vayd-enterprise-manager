@@ -34,7 +34,13 @@ import {
 } from '../hooks/useStockItemGroups';
 import { appConfirm } from '../utils/appDialog';
 import { resolvePracticeIdFromToken } from '../utils/practiceIdFromToken';
+import {
+  clearReceiveShipmentDraft,
+  loadReceiveShipmentDraft,
+  saveReceiveShipmentDraft,
+} from '../utils/receiveShipmentDraft';
 import { sellUnitLabel, suggestedReceiveQuantity } from '../utils/vendorPackSize';
+import StockLotPicker from '../components/inventory/StockLotPicker';
 import './Settings.css';
 
 type DraftLine = InventoryShipmentLine;
@@ -65,7 +71,8 @@ function applyItemToParsedLine(
     unitsPerPackage:
       item.unitsPerPackage != null ? Number(item.unitsPerPackage) : line.unitsPerPackage ?? null,
     trackLots: item.trackLots === true,
-    requireExpirationOnLots: item.requireExpirationOnLots === true,
+    requireExpirationOnLots: true,
+    requireLotNumber: item.requireLotNumber === true,
     receiveQuantity: line.receiveQuantity ?? suggested.receiveQuantity,
     receiveUnitsPerVendorQty: suggested.receiveUnitsPerVendorQty,
   };
@@ -83,10 +90,15 @@ function parsedLineIssue(line: ParsedInvoiceLine): LineIssue | null {
       message: `Enter how many ${sellUnitLabel(line.sellUnitType, line.sellUnitTypeDetail)} to receive`,
     };
   }
-  if (line.trackLots && !line.lotNumber?.trim()) {
-    return { field: 'lot', message: 'Enter a lot #' };
+  if (
+    line.trackLots &&
+    line.requireLotNumber &&
+    line.inventoryLotBalanceId == null &&
+    !line.lotNumber?.trim()
+  ) {
+    return { field: 'lot', message: 'Enter a lot # or choose an existing bottle' };
   }
-  if (line.requireExpirationOnLots && !line.expirationDate?.trim()) {
+  if (line.trackLots && !line.expirationDate?.trim() && line.inventoryLotBalanceId == null) {
     return { field: 'exp', message: 'Enter an expiration date' };
   }
   return null;
@@ -124,6 +136,7 @@ export default function ReceiveShipmentPage() {
     name: string;
     trackLots?: boolean;
     requireExpirationOnLots?: boolean;
+    requireLotNumber?: boolean;
     sellUnitType?: string | null;
     cost?: string | number | null;
     /** Set when the searched code draws stock from this item. */
@@ -131,6 +144,7 @@ export default function ReceiveShipmentPage() {
   } | null>(null);
   const [qty, setQty] = useState('1');
   const [lot, setLot] = useState('');
+  const [lotId, setLotId] = useState<number | null>(null);
   const [exp, setExp] = useState('');
   /** Invoice-friendly entry: total line cost or cost per unit. Stored as costPerUnit. */
   const [costMode, setCostMode] = useState<'total' | 'perUnit'>('total');
@@ -166,6 +180,8 @@ export default function ReceiveShipmentPage() {
   const [matchSearchKey, setMatchSearchKey] = useState<number | null>(null);
   const [matchSearchQ, setMatchSearchQ] = useState('');
   const [matchSearchResults, setMatchSearchResults] = useState<SearchResultItem[]>([]);
+  const [draftReady, setDraftReady] = useState(false);
+  const [resumedDraft, setResumedDraft] = useState(false);
 
   const headerReady =
     branchId !== '' &&
@@ -206,21 +222,64 @@ export default function ReceiveShipmentPage() {
   }
 
   useEffect(() => {
+    let cancelled = false;
     void (async () => {
       try {
         const [b, s] = await Promise.all([
           listPracticeBranches(practiceId),
           listSuppliers(practiceId),
         ]);
-        setBranches(b.filter((x) => x.isActive !== false));
+        if (cancelled) return;
+        const activeBranches = b.filter((x) => x.isActive !== false);
+        setBranches(activeBranches);
         setSuppliers(s.filter((x) => x.isActive !== false));
-        const def = b.find((x) => x.isDefault) ?? b[0];
-        if (def) setBranchId(def.id);
+
+        const draft = loadReceiveShipmentDraft(practiceId, token);
+        if (draft) {
+          if (draft.branchId && activeBranches.some((row) => row.id === draft.branchId)) {
+            setBranchId(draft.branchId);
+          } else {
+            const def = activeBranches.find((x) => x.isDefault) ?? activeBranches[0];
+            if (def) setBranchId(def.id);
+          }
+          if (draft.supplierId) setSupplierId(draft.supplierId);
+          if (draft.invoiceNumber) setInvoiceNumber(draft.invoiceNumber);
+          if (draft.defaultLocId) {
+            setDefaultLocId(draft.defaultLocId);
+            setLineLocId(draft.defaultLocId);
+          }
+          if (draft.parsedLines.length) setParsedLines(draft.parsedLines);
+          if (draft.parseMeta) setParseMeta(draft.parseMeta);
+          if (draft.invoiceFileName) setInvoiceFileName(draft.invoiceFileName);
+          if (draft.shipmentId) {
+            try {
+              const bundle = await getShipment(practiceId, draft.shipmentId);
+              if (!cancelled && bundle.shipment.status === 'draft') {
+                setShipment(bundle.shipment);
+                setLines(bundle.lines);
+                if (bundle.shipment.invoicePdfKey) {
+                  setInvoiceStoredOnShipmentId(bundle.shipment.id);
+                }
+              }
+            } catch {
+              // Draft shipment was removed or finalized elsewhere.
+            }
+          }
+          setResumedDraft(true);
+        } else {
+          const def = activeBranches.find((x) => x.isDefault) ?? activeBranches[0];
+          if (def) setBranchId(def.id);
+        }
       } catch (e: unknown) {
-        setError(e instanceof Error ? e.message : 'Failed to load');
+        if (!cancelled) setError(e instanceof Error ? e.message : 'Failed to load');
+      } finally {
+        if (!cancelled) setDraftReady(true);
       }
     })();
-  }, [practiceId]);
+    return () => {
+      cancelled = true;
+    };
+  }, [practiceId, token]);
 
   useEffect(() => {
     let cancelled = false;
@@ -243,14 +302,49 @@ export default function ReceiveShipmentPage() {
     }
     void (async () => {
       const locs = await listInventoryBranchLocations(practiceId, Number(branchId));
-      setLocations(locs);
-      const def = locs.find((l) => l.isDefault) ?? locs[0];
-      if (def) {
-        setDefaultLocId(def.id);
-        setLineLocId(def.id);
-      }
+      const active = locs.filter((l) => l.isActive !== false);
+      setLocations(active);
+      setDefaultLocId((prev) => {
+        if (prev !== '' && active.some((l) => l.id === prev)) return prev;
+        const def = active.find((l) => l.isDefault) ?? active[0];
+        return def ? def.id : '';
+      });
+      setLineLocId((prev) => {
+        if (prev !== '' && active.some((l) => l.id === prev)) return prev;
+        const def = active.find((l) => l.isDefault) ?? active[0];
+        return def ? def.id : '';
+      });
     })();
   }, [practiceId, branchId]);
+
+  useEffect(() => {
+    if (!draftReady) return;
+    const t = window.setTimeout(() => {
+      saveReceiveShipmentDraft(practiceId, token, {
+        branchId: branchId === '' ? null : Number(branchId),
+        supplierId: supplierId === '' ? null : Number(supplierId),
+        invoiceNumber,
+        defaultLocId: defaultLocId === '' ? null : Number(defaultLocId),
+        shipmentId: shipment?.status === 'draft' ? shipment.id : null,
+        parsedLines,
+        parseMeta,
+        invoiceFileName,
+      });
+    }, 400);
+    return () => window.clearTimeout(t);
+  }, [
+    draftReady,
+    practiceId,
+    token,
+    branchId,
+    supplierId,
+    invoiceNumber,
+    defaultLocId,
+    shipment,
+    parsedLines,
+    parseMeta,
+    invoiceFileName,
+  ]);
 
   useEffect(() => {
     if (!shipment?.id) return;
@@ -309,7 +403,8 @@ export default function ReceiveShipmentPage() {
         id: item.id,
         name: String(item.name),
         trackLots: item.trackLots,
-        requireExpirationOnLots: item.requireExpirationOnLots,
+        requireExpirationOnLots: true,
+        requireLotNumber: item.requireLotNumber === true,
         sellUnitType: item.sellUnitType,
         cost: item.cost,
         viaName: group.viaNames[0] ?? null,
@@ -319,6 +414,9 @@ export default function ReceiveShipmentPage() {
       setCostMode('total');
       setSearchResults([]);
       setSearchQ('');
+      setLot('');
+      setLotId(null);
+      setExp('');
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Could not load item');
     }
@@ -370,6 +468,8 @@ export default function ReceiveShipmentPage() {
   }
 
   function resetReceiveForm() {
+    clearReceiveShipmentDraft(practiceId, token);
+    setResumedDraft(false);
     setShipment(null);
     setLines([]);
     setInvoiceNumber('');
@@ -497,12 +597,12 @@ export default function ReceiveShipmentPage() {
       setError('Quantity received is required and must be positive');
       return;
     }
-    if (selectedItem.trackLots && !lot.trim()) {
+    if (selectedItem.requireLotNumber && !lot.trim() && lotId == null) {
       setError('Lot # is required for this item');
       return;
     }
-    if (selectedItem.requireExpirationOnLots && !exp.trim()) {
-      setError('Expiration date is required for this item');
+    if (selectedItem.trackLots && !exp.trim() && lotId == null) {
+      setError('Expiration date is required');
       return;
     }
     if (cost.trim() === '') {
@@ -547,6 +647,7 @@ export default function ReceiveShipmentPage() {
       setSelectedItem(null);
       setQty('1');
       setLot('');
+      setLotId(null);
       setExp('');
       setCost('');
       setCostMode('total');
@@ -862,10 +963,53 @@ export default function ReceiveShipmentPage() {
     (receivedPageSafe - 1) * RECEIVED_PAGE_SIZE,
     receivedPageSafe * RECEIVED_PAGE_SIZE
   );
+  const matchedParsedLines = parsedLines.filter(
+    (l) => l.status === 'matched' && l.inventoryItemId != null
+  );
+  const allMatchedParsedReady =
+    matchedParsedLines.length > 0 && matchedParsedLines.every((l) => parsedLineReady(l));
 
   return (
     <div className="settings-card" style={{ maxWidth: 720, margin: '0 auto', padding: 16 }}>
       <h2 style={{ marginTop: 0 }}>Receive Shipment</h2>
+      {resumedDraft ? (
+        <div
+          className="settings-message"
+          style={{
+            marginBottom: 10,
+            backgroundColor: '#ecfdf5',
+            border: '1px solid #6ee7b7',
+            color: '#065f46',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'flex-start',
+            gap: 10,
+            flexWrap: 'wrap',
+          }}
+        >
+          <span style={{ fontSize: 14 }}>
+            Picked up your in-progress receive — only on this browser for your login.
+            {invoiceFileName && !invoiceFile ? ` Re-upload ${invoiceFileName} if you still need the PDF on file.` : ''}
+          </span>
+          <button
+            type="button"
+            className="btn secondary"
+            onClick={() => {
+              void (async () => {
+                const ok = await appConfirm({
+                  title: 'Discard in-progress receive?',
+                  message:
+                    'Clears your saved draft on this device. Lines already on the server draft shipment stay until you delete that shipment.',
+                });
+                if (!ok) return;
+                resetReceiveForm();
+              })();
+            }}
+          >
+            Discard draft
+          </button>
+        </div>
+      ) : null}
       {toast && (
         <div className="settings-message" style={{ marginBottom: 10 }}>
           {toast}
@@ -916,12 +1060,69 @@ export default function ReceiveShipmentPage() {
       {parsedLines.length > 0 && (
         <div className="settings-card" style={{ marginBottom: 16, padding: 12 }}>
           <h3 style={{ marginTop: 0 }}>Invoice lines to approve</h3>
+          <p className="settings-muted" style={{ margin: '0 0 12px', fontSize: 13 }}>
+            Matched items that track lots need a lot before you can add them — pick an existing
+            bottle to add onto, or enter a new lot #. That is separate from whether this invoice was
+            received before.
+          </p>
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+              gap: 10,
+              marginBottom: 12,
+            }}
+          >
+            <label className="settings-label">
+              Destination office *
+              <select
+                className="settings-input"
+                value={branchId}
+                onChange={(e) => setBranchId(e.target.value ? Number(e.target.value) : '')}
+                disabled={!!shipment}
+                required
+              >
+                <option value="">Select…</option>
+                {branches.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="settings-label">
+              Default location *
+              <select
+                className="settings-input"
+                value={defaultLocId}
+                onChange={(e) => {
+                  const v = e.target.value ? Number(e.target.value) : '';
+                  setDefaultLocId(v);
+                  setLineLocId(v);
+                }}
+                required
+              >
+                <option value="">Select…</option>
+                {locations.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          {shipment ? (
+            <p className="settings-muted" style={{ margin: '0 0 12px', fontSize: 13 }}>
+              Office is locked because this shipment already started — stock receives here.
+            </p>
+          ) : null}
           <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
             {parsedLines.map((line, index) => {
               const isMatched = line.status === 'matched';
               const isIgnored = line.status === 'ignored';
               const rematching = matchSearchKey === index;
-              const issue = lineIssues[index];
+              const issue =
+                lineIssues[index] ?? (isMatched ? parsedLineIssue(line) : null);
               return (
               <li
                 key={`${line.vendorSku ?? line.description}-${index}`}
@@ -1091,30 +1292,51 @@ export default function ReceiveShipmentPage() {
                         </span>
                       )}
                     </label>
-                    {line.trackLots && (
-                      <label className="settings-label">
-                        Lot # *
-                        <input
-                          className="settings-input"
-                          value={line.lotNumber ?? ''}
-                          style={issue?.field === 'lot' ? { borderColor: '#dc2626' } : undefined}
-                          onChange={(e) => {
-                            const lotNumber = e.target.value;
+                    {line.trackLots ? (
+                      <div style={{ gridColumn: '1 / -1' }}>
+                        {branchId === '' || defaultLocId === '' ? (
+                          <p className="settings-muted" style={{ margin: '0 0 8px', fontSize: 13, color: '#b45309' }}>
+                            Choose destination office and location above to list existing lots you
+                            can add onto.
+                          </p>
+                        ) : null}
+                        <StockLotPicker
+                          practiceId={practiceId}
+                          inventoryItemId={line.inventoryItemId}
+                          branchId={branchId === '' ? null : Number(branchId)}
+                          locationId={defaultLocId === '' ? null : Number(defaultLocId)}
+                          allowNew
+                          requireExpiration
+                          requireLotNumber={line.requireLotNumber === true}
+                          required
+                          selectedLotId={line.inventoryLotBalanceId ?? null}
+                          lotNumber={line.lotNumber ?? ''}
+                          expirationDate={line.expirationDate}
+                          label="Lot / expiration"
+                          onChange={(pick) => {
                             clearLineIssue(index, 'lot');
+                            clearLineIssue(index, 'exp');
                             setParsedLines((prev) =>
-                              prev.map((row, i) => (i === index ? { ...row, lotNumber } : row))
+                              prev.map((row, i) =>
+                                i === index
+                                  ? {
+                                      ...row,
+                                      inventoryLotBalanceId: pick.lotId,
+                                      lotNumber: pick.lotNumber,
+                                      expirationDate: pick.expirationDate,
+                                    }
+                                  : row
+                              )
                             );
                           }}
-                          required
                         />
-                        {issue?.field === 'lot' && (
+                        {issue?.field === 'lot' || issue?.field === 'exp' ? (
                           <span style={{ display: 'block', marginTop: 4, color: '#dc2626', fontSize: 13 }}>
                             {issue.message}
                           </span>
-                        )}
-                      </label>
-                    )}
-                    {line.requireExpirationOnLots && (
+                        ) : null}
+                      </div>
+                    ) : line.requireExpirationOnLots ? (
                       <label className="settings-label">
                         Exp date *
                         <input
@@ -1126,18 +1348,20 @@ export default function ReceiveShipmentPage() {
                             const expirationDate = e.target.value;
                             clearLineIssue(index, 'exp');
                             setParsedLines((prev) =>
-                              prev.map((row, i) => (i === index ? { ...row, expirationDate } : row))
+                              prev.map((row, i) =>
+                                i === index ? { ...row, expirationDate } : row
+                              )
                             );
                           }}
                           required
                         />
-                        {issue?.field === 'exp' && (
+                        {issue?.field === 'exp' ? (
                           <span style={{ display: 'block', marginTop: 4, color: '#dc2626', fontSize: 13 }}>
                             {issue.message}
                           </span>
-                        )}
+                        ) : null}
                       </label>
-                    )}
+                    ) : null}
                     <p className="settings-muted" style={{ gridColumn: '1 / -1', margin: 0, fontSize: 13 }}>
                       Invoice qty {invoiceQtyOf(line)}
                       {/\b\d+\s*[xX×]\s*1/i.test(line.description) ||
@@ -1213,7 +1437,7 @@ export default function ReceiveShipmentPage() {
             <button
               type="button"
               className="btn primary"
-              disabled={busy || parsing || !parsedLines.some((l) => parsedLineReady(l))}
+              disabled={busy || parsing || !allMatchedParsedReady}
               onClick={() => void addParsedToShipment()}
             >
               Add approved lines to shipment
@@ -1433,29 +1657,6 @@ export default function ReceiveShipmentPage() {
                 required
               />
             </label>
-            {selectedItem.trackLots && (
-            <label className="settings-label">
-              Lot # *
-              <input
-                className="settings-input"
-                value={lot}
-                onChange={(e) => setLot(e.target.value)}
-                required
-              />
-            </label>
-            )}
-            {selectedItem.requireExpirationOnLots && (
-            <label className="settings-label">
-              Exp date *
-              <input
-                className="settings-input"
-                type="date"
-                value={exp}
-                onChange={(e) => setExp(e.target.value)}
-                required
-              />
-            </label>
-            )}
             <label className="settings-label">
               Location *
               <select
@@ -1471,6 +1672,34 @@ export default function ReceiveShipmentPage() {
                 ))}
               </select>
             </label>
+            {selectedItem.trackLots && (
+              <div style={{ gridColumn: '1 / -1' }}>
+                <StockLotPicker
+                  practiceId={practiceId}
+                  inventoryItemId={selectedItem.id}
+                  branchId={branchId === '' ? null : Number(branchId)}
+                  locationId={
+                    lineLocId === ''
+                      ? defaultLocId === ''
+                        ? null
+                        : Number(defaultLocId)
+                      : Number(lineLocId)
+                  }
+                  allowNew
+                  requireExpiration
+                  requireLotNumber={selectedItem.requireLotNumber === true}
+                  required
+                  selectedLotId={lotId}
+                  lotNumber={lot}
+                  expirationDate={exp}
+                  onChange={(pick) => {
+                    setLotId(pick.lotId);
+                    setLot(pick.lotNumber);
+                    setExp(pick.expirationDate ?? '');
+                  }}
+                />
+              </div>
+            )}
           </div>
 
           <div style={{ marginTop: 12 }}>

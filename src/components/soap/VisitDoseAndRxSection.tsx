@@ -31,6 +31,14 @@ import {
 } from '../../utils/catalogItemPricing';
 import VaccineLotPicker from './VaccineLotPicker';
 import RxLabelModal, { type RxLabelPrescriptionInput } from './RxLabelModal';
+import DirectionsLimitHint, { directionsMaxLength } from './DirectionsLimitHint';
+import { BookPatientChartButton } from '../BookPatientChartButton';
+import { ensurePrintRxNumber } from '../../utils/ensurePrintRxNumber';
+import {
+  clampRefillExpiration,
+  maxRefillExpirationInput,
+  refillExpirationExceedsMax,
+} from '../../utils/printRxLabel';
 import type { InventoryLotBalance } from '../../api/branchInventory';
 
 type Props = {
@@ -56,6 +64,8 @@ type Props = {
 };
 
 const VACCINE_TYPES = ['Killed', 'Modified Live', 'Recombinant'];
+const PRACTICE_TZ =
+  (import.meta.env.VITE_PRACTICE_TIMEZONE as string | undefined)?.trim() || 'America/New_York';
 
 /** `input[type=date]` wants yyyy-MM-dd, and only the date half of an ISO timestamp. */
 function toDateInput(iso: string | null | undefined): string {
@@ -270,11 +280,14 @@ export default function VisitDoseAndRxSection({
           recorded={prescriptions[order.id] ?? null}
           stockDraw={stockDraws[order.id] ?? null}
           disabled={disabled}
+          patientId={patientId}
+          practiceId={practiceId}
           patientName={patientName}
           patientSpecies={patientSpecies}
           ownerName={ownerName}
           providerName={providerName}
           providerLicense={providerLicense}
+          providerId={providerId}
           open={expanded === order.id}
           onToggle={() => setExpanded(expanded === order.id ? null : order.id)}
           onQtyChange={repriceQty}
@@ -365,7 +378,10 @@ function RowHeader({
   return (
     <button type="button" className="soap-dose-row-head" onClick={onToggle}>
       {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-      <span className="soap-dose-row-name">{order.name}</span>
+      <span className="soap-dose-row-name">
+        {order.name}
+        {complete ? <Check className="soap-dose-row-check" size={14} aria-label="All set" /> : null}
+      </span>
       <span className={`soap-dose-row-status ${complete ? 'ok' : 'pending'}`}>{summary}</span>
     </button>
   );
@@ -697,11 +713,14 @@ function PrescriptionRow({
   recorded,
   stockDraw,
   disabled,
+  patientId,
+  practiceId,
   patientName,
   patientSpecies,
   ownerName,
   providerName,
   providerLicense,
+  providerId,
   open,
   onToggle,
   onQtyChange,
@@ -712,11 +731,14 @@ function PrescriptionRow({
   recorded: OrderPrescription | null;
   stockDraw: StockDraw | null;
   disabled?: boolean;
+  patientId?: number;
+  practiceId: number;
   patientName: string;
   patientSpecies?: string | null;
   ownerName?: string | null;
   providerName?: string | null;
   providerLicense?: string | null;
+  providerId?: number | null;
   open: boolean;
   onToggle: () => void;
   onQtyChange: (order: EncounterOrder, qty: number) => Promise<void>;
@@ -763,7 +785,7 @@ function PrescriptionRow({
         const expiry = defaults.refillExpirationDate
           ? toDateInput(defaults.refillExpirationDate)
           : applyExpiration(startDate || today(), defaults.refillExpiration);
-        if (expiry) setRefillExpiration(expiry);
+        if (expiry) setRefillExpiration(clampRefillExpiration(expiry));
         setSigSource(defaults.source);
         setPrefilled(true);
       })
@@ -797,7 +819,7 @@ function PrescriptionRow({
         refill: labelValues?.refill ?? (Number(refill) || 0),
         refillExpiration: labelValues?.refillExpiration || refillExpiration || undefined,
         startDate: labelValues?.startDate || startDate || undefined,
-        acuity,
+        acuity: labelValues?.acuity === 'acute' || labelValues?.acuity === 'chronic' ? labelValues.acuity : acuity,
       });
       if (labelValues) {
         setName(labelValues.name);
@@ -806,6 +828,9 @@ function PrescriptionRow({
         setRefill(String(labelValues.refill));
         setRefillExpiration(labelValues.refillExpiration);
         setStartDate(labelValues.startDate);
+        if (labelValues.acuity === 'acute' || labelValues.acuity === 'chronic') {
+          setAcuity(labelValues.acuity);
+        }
       }
       onSaved(saved);
       return saved;
@@ -824,7 +849,7 @@ function PrescriptionRow({
     : 'Needs acute/chronic + sig';
 
   return (
-    <div className={`soap-dose-row ${recorded ? 'recorded' : ''}`}>
+    <div className={`soap-dose-row ${recorded?.acuity ? 'recorded' : ''}`}>
       <RowHeader
         order={order}
         summary={summary}
@@ -858,7 +883,29 @@ function PrescriptionRow({
               />
             </label>
             <label>
-              Refills
+              <span className="soap-rx-label-field-head">
+                Refills
+                {patientId != null ? (
+                  <BookPatientChartButton
+                    patientId={String(patientId)}
+                    patientName={patientName}
+                    practiceId={practiceId}
+                    practiceTz={PRACTICE_TZ}
+                    showAlerts
+                    label="View details"
+                    className="soap-rx-label-details-link"
+                    onApplyRefillExpiration={(dateInput) => {
+                      if (refillExpirationExceedsMax(dateInput)) {
+                        setError('Refill expiration cannot be more than 1 year from today.');
+                        setRefillExpiration(maxRefillExpirationInput());
+                        return;
+                      }
+                      setError(null);
+                      setRefillExpiration(dateInput);
+                    }}
+                  />
+                ) : null}
+              </span>
               <input
                 className="soap-input"
                 type="number"
@@ -885,7 +932,7 @@ function PrescriptionRow({
                         type="button"
                         className={`soap-dose-date-chip${active ? ' is-active' : ''}`}
                         disabled={disabled || saving || !value}
-                        onClick={() => setRefillExpiration(value)}
+                        onClick={() => setRefillExpiration(clampRefillExpiration(value))}
                       >
                         +{months}m
                       </button>
@@ -896,9 +943,19 @@ function PrescriptionRow({
               <input
                 className="soap-input"
                 type="date"
+                max={maxRefillExpirationInput()}
                 value={refillExpiration}
                 disabled={disabled || saving}
-                onChange={(e) => setRefillExpiration(e.target.value)}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  if (refillExpirationExceedsMax(next)) {
+                    setError('Refill expiration cannot be more than 1 year from today.');
+                    setRefillExpiration(maxRefillExpirationInput());
+                    return;
+                  }
+                  setError(null);
+                  setRefillExpiration(next);
+                }}
               />
             </label>
             <label>
@@ -929,10 +986,14 @@ function PrescriptionRow({
           </div>
 
           <label className="soap-dose-sig">
-            Instructions (sig)
+            <span className="soap-rx-label-field-head">
+              Instructions (sig)
+              <DirectionsLimitHint value={instructions} />
+            </span>
             <textarea
               className="soap-input"
-              rows={2}
+              rows={4}
+              maxLength={directionsMaxLength()}
               value={instructions}
               disabled={disabled || saving}
               placeholder="No default sig set up for this item — type the directions."
@@ -956,10 +1017,6 @@ function PrescriptionRow({
               disabled={disabled || saving}
               title="Review and print a prescription label"
               onClick={() => {
-                if (!acuity) {
-                  setError('Choose acute or chronic before printing this prescription.');
-                  return;
-                }
                 setError(null);
                 setShowLabel(true);
               }}
@@ -969,11 +1026,13 @@ function PrescriptionRow({
       )}
       {showLabel && (
         <RxLabelModal
+          patientId={patientId}
           patientName={patientName}
           species={patientSpecies ?? ''}
           ownerName={ownerName ?? ''}
           veterinarianName={providerName ?? ''}
           veterinarianLicense={providerLicense ?? ''}
+          providerEmployeeId={providerId}
           quantity={Number(order.qty) || 1}
           prescription={{
             name,
@@ -983,11 +1042,24 @@ function PrescriptionRow({
             refillExpiration,
             startDate,
             rxNumber: recorded?.rxNumber,
+            acuity,
           }}
           onSavePrescription={async (value) => {
             const saved = await save(value);
             if (!saved) throw new Error('Could not save the prescription before printing.');
-            return { rxNumber: saved.rxNumber };
+            if (saved.rxNumber != null) return { rxNumber: saved.rxNumber };
+            const rxNumber = await ensurePrintRxNumber({
+              existingNumber: saved.rxNumber,
+              patientId,
+              name: value.name,
+              inventoryItemId: order.catalogItemId,
+              instructions: value.instructions,
+              refill: value.refill,
+              startDate: value.startDate,
+              refillExpiration: value.refillExpiration,
+              acuity: value.acuity,
+            });
+            return { rxNumber };
           }}
           onClose={() => setShowLabel(false)}
         />

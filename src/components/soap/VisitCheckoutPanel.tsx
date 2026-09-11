@@ -1,16 +1,25 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { CreditCard, Receipt, RotateCcw, Smartphone, ShieldCheck, X } from 'lucide-react';
+import { Check, CreditCard, Receipt, RotateCcw, Smartphone, ShieldCheck, X } from 'lucide-react';
 import {
   VISIT_WORKFLOW_PRACTICE_ID,
+  addCounterInvoiceLine,
   cancelTerminalCheckout,
+  authorizeSavedCard,
+  captureAuthorization,
   chargeSavedCard,
   deleteOrder,
   getInvoice,
+  getOrderClinicalDetails,
+  removeCounterInvoiceLine,
   reopenInvoice,
+  saveOrderPrescription,
   startTerminalCheckout,
+  updateCounterInvoiceLine,
   updateOrder,
   voidInvoice,
   type EncounterOrder,
+  type OrderPrescription,
+  type OrderVaccination,
   type TerminalReaderCatalog,
   type VisitInvoice,
   type VisitInvoiceLine,
@@ -19,6 +28,27 @@ import { subscribeTerminalCheckout } from '../../utils/terminalCheckoutRealtime'
 import { appConfirm } from '../../utils/appDialog';
 import TerminalReaderPicker from './TerminalReaderPicker';
 import CheckoutInventoryBranchField from './CheckoutInventoryBranchField';
+import SendRxLabelButton from './SendRxLabelButton';
+import MailInvoiceLineCheckbox, {
+  cancelMailOrdersForInvoiceLines,
+  isMailOrderShipped,
+  matchingMailOrderForLine,
+  shippedMailMessage,
+} from './MailInvoiceLineCheckbox';
+import { listMailOrders, type MailOrder } from '../../api/onlineStore';
+import { attachShippingLines, isInvoiceShippingLine } from '../../utils/mailShippingTypes';
+import { ensurePrintRxNumber } from '../../utils/ensurePrintRxNumber';
+import StockLotPicker from '../inventory/StockLotPicker';
+
+export type CheckoutRxLabelContext = {
+  patientId?: number | null;
+  patientName: string;
+  species?: string | null;
+  ownerName: string;
+  veterinarianName?: string | null;
+  veterinarianLicense?: string | null;
+  veterinarianEmployeeId?: number | null;
+};
 
 type Props = {
   /** Needed to delete the encounter order behind an invoice line. */
@@ -27,6 +57,7 @@ type Props = {
   /** Used to show / edit client notes and price overrides on checkout lines. */
   orders?: EncounterOrder[];
   disabled?: boolean;
+  rxLabel?: CheckoutRxLabelContext | null;
   /** Rendered below the payment actions — the follow-up question, asked while
    * the client is still here (see CheckoutFollowUpPrompt). */
   followUpSlot?: ReactNode;
@@ -37,8 +68,23 @@ type Props = {
   onOrdersChange?: (orders: EncounterOrder[]) => void;
 };
 
+function isCheckoutRxLine(line: VisitInvoiceLine, order: EncounterOrder | null): boolean {
+  if (order?.kind === 'med') return true;
+  return Boolean(
+    line.instructions?.trim() ||
+      line.catalogInstructions?.trim() ||
+      line.refillCount != null ||
+      line.catalogRefill != null
+  );
+}
+
 function money(n: number | null | undefined): string {
   return `$${(Number(n) || 0).toFixed(2)}`;
+}
+
+function invoiceMailPaymentStatus(inv: VisitInvoice): 'paid' | 'awaiting_payment' {
+  const due = (Number(inv.total) || 0) - (Number(inv.amountPaid) || 0);
+  return due <= 0.009 ? 'paid' : 'awaiting_payment';
 }
 
 /** Nest returns the useful text in `response.data.message`, not `Error.message`. */
@@ -67,6 +113,7 @@ export default function VisitCheckoutPanel({
   invoice,
   orders = [],
   disabled,
+  rxLabel,
   followUpSlot,
   onInvoiceChange,
   onOpenEuthanasiaPrepay,
@@ -78,6 +125,28 @@ export default function VisitCheckoutPanel({
   const [error, setError] = useState<string | null>(null);
   const [activeCheckoutId, setActiveCheckoutId] = useState<string | null>(null);
   const [readerCatalog, setReaderCatalog] = useState<TerminalReaderCatalog | null>(null);
+  const [prescriptionsByOrderId, setPrescriptionsByOrderId] = useState<
+    Record<string, OrderPrescription>
+  >({});
+  const [vaccineOrderIds, setVaccineOrderIds] = useState<ReadonlySet<string>>(new Set());
+  const [vaccinationsByOrderId, setVaccinationsByOrderId] = useState<
+    Record<string, OrderVaccination>
+  >({});
+  const [mailOrders, setMailOrders] = useState<MailOrder[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void listMailOrders(VISIT_WORKFLOW_PRACTICE_ID)
+      .then((rows) => {
+        if (!cancelled) setMailOrders(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setMailOrders([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [invoice?.id]);
 
   useEffect(() => {
     if (!invoice?.id) return;
@@ -101,6 +170,36 @@ export default function VisitCheckoutPanel({
     // Re-subscribe when the open invoice id changes, not on every invoice field update.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [invoice?.id]);
+
+  useEffect(() => {
+    if (!encounterId) return;
+    let canceled = false;
+    void getOrderClinicalDetails(encounterId)
+      .then((details) => {
+        if (canceled) return;
+        const next: Record<string, OrderPrescription> = {};
+        for (const rx of details.prescriptions) {
+          if (rx.encounterOrderId) next[rx.encounterOrderId] = rx;
+        }
+        setPrescriptionsByOrderId(next);
+        setVaccineOrderIds(new Set(details.vaccineOrderIds));
+        const shots: Record<string, OrderVaccination> = {};
+        for (const shot of details.vaccinations) {
+          if (shot.encounterOrderId) shots[shot.encounterOrderId] = shot;
+        }
+        setVaccinationsByOrderId(shots);
+      })
+      .catch(() => {
+        if (!canceled) {
+          setPrescriptionsByOrderId({});
+          setVaccineOrderIds(new Set());
+          setVaccinationsByOrderId({});
+        }
+      });
+    return () => {
+      canceled = true;
+    };
+  }, [encounterId, invoice?.id]);
 
   const selectedReader =
     readerCatalog?.readers.find((r) => r.id === readerCatalog.selectedId) ?? null;
@@ -180,6 +279,20 @@ export default function VisitCheckoutPanel({
       setNote('Charged the card on file.');
     });
 
+  const authorizeCard = () =>
+    run('authorize', async () => {
+      if (!invoice) return;
+      onInvoiceChange(await authorizeSavedCard(invoice.id));
+      setNote('Card authorized. Future appointments stay on the books until you convert this to payment.');
+    });
+
+  const convertAuthorization = () =>
+    run('capture', async () => {
+      if (!invoice) return;
+      onInvoiceChange(await captureAuthorization(invoice.id));
+      setNote('Authorization converted to payment.');
+    });
+
   const tapToPay = () =>
     run('terminal', async () => {
       if (!invoice) return;
@@ -214,13 +327,39 @@ export default function VisitCheckoutPanel({
   const isPaid = status === 'paid';
   const isVoid = status === 'void';
   const hasSavedCard = Boolean(invoice?.savedPaymentMethodId);
-  const branchReady = invoice?.status !== 'open' || invoice.inventoryBranchId != null;
+  const branchReady =
+    invoice?.status !== 'open' ||
+    (invoice.inventoryBranchId != null && invoice.inventoryLocationId != null);
   const canEditLines = Boolean(encounterId) && !isPaid && !isVoid && status === 'open';
   const payDisabled = disabled || busy != null || !branchReady;
 
+  const checkoutLineGroups = attachShippingLines(
+    (invoice?.lines ?? []).filter((row) => !row.isDeleted),
+    (row) => isInvoiceShippingLine(row),
+    (row) => String(row.catalogItemType ?? '').toLowerCase() === 'inventory'
+  );
+
+  const shippedMailForLine = (line: VisitInvoiceLine): MailOrder | null => {
+    if (!invoice) return null;
+    const match = matchingMailOrderForLine(mailOrders, invoice.id, line);
+    return match && isMailOrderShipped(match) ? match : null;
+  };
+
   const removeLine = (line: VisitInvoiceLine) => {
     if (!encounterId || !line.orderId || !canEditLines) return;
+    const shipped = shippedMailForLine(line);
+    if (shipped) {
+      setError(shippedMailMessage(shipped));
+      return;
+    }
     void run(`remove:${line.id}`, async () => {
+      if (invoice) {
+        const shippingIds = await cancelMailOrdersForInvoiceLines(invoice.id, [line]);
+        for (const shippingId of shippingIds) {
+          if (shippingId === line.id) continue;
+          await removeCounterInvoiceLine(invoice.id, shippingId).catch(() => undefined);
+        }
+      }
       await deleteOrder(encounterId, line.orderId!);
       onOrderRemoved?.(line.orderId!);
     });
@@ -233,7 +372,9 @@ export default function VisitCheckoutPanel({
         <span>Checkout</span>
         <span className={`soap-invoice-badge status-${status}`}>{status}</span>
         {invoice?.isEuthanasiaPrepay && (
-          <span className="soap-invoice-badge euthanasia">euthanasia prepay</span>
+          <span className="soap-invoice-badge euthanasia">
+            {invoice.lastChargeStatus === 'requires_capture' ? 'authorized' : 'euthanasia auth'}
+          </span>
         )}
       </div>
 
@@ -251,17 +392,54 @@ export default function VisitCheckoutPanel({
             selectClassName="soap-select"
           />
           <div className="soap-invoice-lines">
-            {(invoice.lines ?? [])
-              .filter((l) => !l.isDeleted)
-              .map((l) => {
+            {[...checkoutLineGroups.parents, ...checkoutLineGroups.leftover].map((l) => {
                 const order =
                   l.orderId != null
                     ? orders.find((o) => o.id === l.orderId) ?? null
                     : null;
                 const showClientNote = order?.catalogFlags?.hasClientNotes === true;
                 const allowPrice = order?.catalogFlags?.allowPriceChange === true;
+                const recorded = l.orderId ? prescriptionsByOrderId[l.orderId] ?? null : null;
+                const showRxLabel = Boolean(rxLabel) && isCheckoutRxLine(l, order);
+                const instructions =
+                  recorded?.instructions || l.instructions || l.catalogInstructions || '';
+                const scriptApproved = Boolean(l.rxApprovedAt);
+                const providerId = l.providerEmployeeId ?? rxLabel?.veterinarianEmployeeId ?? null;
+                const attachedShipping = checkoutLineGroups.attached.get(l.id) ?? [];
+                const mailed = matchingMailOrderForLine(mailOrders, invoice.id, l);
+                const isVaccineLine = Boolean(order && vaccineOrderIds.has(order.id));
+                const lotReady =
+                  !l.trackLots ||
+                  Boolean(mailed) ||
+                  isVaccineLine ||
+                  l.inventoryLotBalanceId != null;
+                const lineReady = (order && vaccineOrderIds.has(order.id)
+                  ? Boolean(vaccinationsByOrderId[order.id])
+                  : showRxLabel
+                    ? scriptApproved && Boolean(String(instructions).trim())
+                    : isInvoiceShippingLine(l) ||
+                        order?.catalogFlags?.excludeFromProduction === true
+                      ? true
+                      : l.providerEmployeeId != null || Boolean(l.orderId)) && lotReady;
+                const mailBlockedReason = showRxLabel
+                  ? providerId == null
+                    ? 'Provider is required'
+                    : !String(instructions).trim()
+                      ? 'Enter the script first'
+                      : !scriptApproved
+                        ? 'Approve the script first'
+                        : invoice.inventoryBranchId == null
+                          ? 'Select a branch'
+                          : invoice.inventoryLocationId == null
+                            ? 'Select a fill location'
+                            : null
+                  : null;
                 return (
-                  <div key={l.id} className="soap-invoice-line" style={{ flexWrap: 'wrap' }}>
+                  <div
+                    key={l.id}
+                    className={`soap-invoice-line ${lineReady ? 'is-ready' : 'is-pending'}`}
+                    style={{ flexWrap: 'wrap' }}
+                  >
                     <span className="soap-invoice-line-desc">
                       {l.isCovered ? (
                         <span
@@ -274,6 +452,32 @@ export default function VisitCheckoutPanel({
                       ) : null}
                       {l.description}
                       {Number(l.qty) > 1 ? ` ×${Number(l.qty)}` : ''}
+                      {lineReady ? (
+                        <Check className="soap-invoice-line-check" size={14} aria-label="All set" />
+                      ) : null}
+                      {showRxLabel && canEditLines && !scriptApproved ? (
+                        <button
+                          type="button"
+                          className="soap-dose-dymo"
+                          disabled={disabled || busy != null || !String(instructions).trim() || providerId == null}
+                          onClick={() => {
+                            void updateCounterInvoiceLine(invoice.id, l.id, {
+                              instructions: String(instructions).trim() || null,
+                              rxApproved: true,
+                            })
+                              .then(onInvoiceChange)
+                              .catch((e) => setError(apiErrorMessage(e)));
+                          }}
+                        >
+                          Approve
+                        </button>
+                      ) : null}
+                      {showRxLabel && scriptApproved ? (
+                        <span className="soap-invoice-line-amt" style={{ fontWeight: 600, color: '#64748b' }}>
+                          Approved
+                          {l.rxApprovedByName ? ` by ${l.rxApprovedByName}` : ''}
+                        </span>
+                      ) : null}
                     </span>
                     <span className="soap-invoice-line-amt">
                       {l.isCovered ? 'covered' : money(l.amount)}
@@ -282,13 +486,149 @@ export default function VisitCheckoutPanel({
                       <button
                         type="button"
                         className="soap-invoice-line-remove"
-                        title="Remove from checkout"
-                        disabled={disabled || busy != null}
+                        title={
+                          shippedMailForLine(l)
+                            ? shippedMailMessage(shippedMailForLine(l))
+                            : 'Remove from checkout'
+                        }
+                        disabled={disabled || busy != null || Boolean(shippedMailForLine(l))}
                         onClick={() => removeLine(l)}
                       >
                         <X size={14} />
                       </button>
                     )}
+                    {showRxLabel && rxLabel && (
+                      <span className="soap-invoice-line-dymo">
+                        <SendRxLabelButton
+                          className="soap-dose-dymo"
+                          disabled={!scriptApproved}
+                          source={{
+                            patientId: rxLabel.patientId,
+                            patientName: rxLabel.patientName,
+                            species: rxLabel.species,
+                            ownerName: rxLabel.ownerName,
+                            veterinarianName: rxLabel.veterinarianName,
+                            veterinarianLicense: rxLabel.veterinarianLicense,
+                            providerEmployeeId: rxLabel.veterinarianEmployeeId,
+                            quantity: l.qty,
+                            name: recorded?.name || order?.name || l.description,
+                            strength: recorded?.strength,
+                            instructions:
+                              recorded?.instructions || l.instructions || l.catalogInstructions,
+                            refill: recorded?.refill ?? l.refillCount ?? l.catalogRefill,
+                            refillExpiration: recorded?.refillExpiration,
+                            startDate: recorded?.startDate ?? invoice?.created,
+                            rxNumber: recorded?.rxNumber,
+                            acuity: recorded?.acuity,
+                            onSavePrescription: async (value) => {
+                              if (encounterId && l.orderId) {
+                                const saved = await saveOrderPrescription(encounterId, l.orderId, {
+                                  name: value.name,
+                                  strength: value.strength,
+                                  instructions: value.instructions,
+                                  refill: value.refill,
+                                  refillExpiration: value.refillExpiration || undefined,
+                                  startDate: value.startDate || undefined,
+                                  acuity:
+                                    value.acuity === 'acute' || value.acuity === 'chronic'
+                                      ? value.acuity
+                                      : undefined,
+                                  employeeId: rxLabel.veterinarianEmployeeId ?? undefined,
+                                });
+                                setPrescriptionsByOrderId((prev) => ({
+                                  ...prev,
+                                  [l.orderId!]: saved,
+                                }));
+                                if (saved.rxNumber != null) return { rxNumber: saved.rxNumber };
+                              }
+                              const rxNumber = await ensurePrintRxNumber({
+                                existingNumber: recorded?.rxNumber,
+                                patientId: rxLabel.patientId,
+                                name: value.name,
+                                inventoryItemId: order?.catalogItemId ?? l.catalogItemId,
+                                instructions: value.instructions,
+                                refill: value.refill,
+                                startDate: value.startDate,
+                                refillExpiration: value.refillExpiration,
+                                acuity: value.acuity,
+                              });
+                              return { rxNumber };
+                            },
+                          }}
+                        />
+                      </span>
+                    )}
+                    {attachedShipping.map((ship) => (
+                      <span
+                        key={ship.id}
+                        className="soap-invoice-line-dymo"
+                        style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}
+                      >
+                        <span>{ship.description}</span>
+                        <span className="soap-invoice-line-amt">
+                          {ship.isCovered ? 'covered' : money(ship.amount)}
+                        </span>
+                      </span>
+                    ))}
+                    {l.trackLots && !mailed && !isVaccineLine ? (
+                      <div style={{ flex: '1 1 100%' }}>
+                        <StockLotPicker
+                          practiceId={VISIT_WORKFLOW_PRACTICE_ID}
+                          inventoryItemId={l.stockInventoryItemId ?? l.catalogItemId ?? null}
+                          branchId={invoice.inventoryBranchId}
+                          locationId={invoice.inventoryLocationId}
+                          disabled={disabled || !canEditLines}
+                          selectedLotId={l.inventoryLotBalanceId ?? null}
+                          lotNumber={l.lotNumber ?? ''}
+                          onChange={(pick) => {
+                            void updateCounterInvoiceLine(invoice.id, l.id, {
+                              inventoryLotBalanceId: pick.lotId,
+                              lotNumber: pick.lotNumber || null,
+                            }).then(onInvoiceChange);
+                          }}
+                        />
+                      </div>
+                    ) : null}
+                    <MailInvoiceLineCheckbox
+                      invoiceId={invoice.id}
+                      line={{
+                        ...l,
+                        catalogItemId: l.catalogItemId ?? order?.catalogItemId ?? null,
+                        catalogItemType: l.catalogItemType ?? order?.catalogItemType ?? null,
+                      }}
+                      clientId={invoice.clientId}
+                      clientName={rxLabel?.ownerName || 'Client'}
+                      patientId={l.patientId ?? invoice.patientId ?? rxLabel?.patientId}
+                      patientName={rxLabel?.patientName}
+                      paymentStatus={invoiceMailPaymentStatus(invoice)}
+                      doctorEmployeeId={providerId}
+                      blockedReason={mailBlockedReason}
+                      disabled={disabled || busy != null}
+                      onError={setError}
+                      onChargeShipping={async (result) => {
+                        const next = await addCounterInvoiceLine(invoice.id, {
+                          description: result.shippingChargeName,
+                          qty: 1,
+                          unitPrice: result.shipping,
+                          catalogItemId: result.type.catalogItemId ?? null,
+                          catalogItemType: result.type.catalogItemType ?? 'procedure',
+                          patientId: l.patientId ?? invoice.patientId ?? null,
+                          providerEmployeeId: providerId,
+                          miscCharge: true,
+                        });
+                        onInvoiceChange(next);
+                        const matches = (next.lines ?? []).filter(
+                          (row) =>
+                            !row.isDeleted &&
+                            row.description === result.shippingChargeName &&
+                            Math.abs(Number(row.unitPrice) - result.shipping) < 0.009
+                        );
+                        return matches[matches.length - 1]?.id ?? null;
+                      }}
+                      onRemoveShipping={async (shippingLineId) => {
+                        onInvoiceChange(await removeCounterInvoiceLine(invoice.id, shippingLineId));
+                      }}
+                    />
                     {showClientNote && order && encounterId && canEditLines && (
                       <label
                         style={{
@@ -407,7 +747,39 @@ export default function VisitCheckoutPanel({
           )}
 
           <div className="soap-checkout-actions">
-            {!isPaid && !isVoid && (
+            {!isPaid && !isVoid && invoice?.isEuthanasiaPrepay && (
+              <>
+                <button
+                  type="button"
+                  className="soap-btn ghost"
+                  disabled={disabled || busy != null}
+                  onClick={onOpenEuthanasiaPrepay}
+                >
+                  <ShieldCheck size={14} /> Save card
+                </button>
+                {invoice.lastChargeStatus === 'requires_capture' ? (
+                  <button
+                    type="button"
+                    className="soap-btn"
+                    disabled={payDisabled}
+                    onClick={convertAuthorization}
+                  >
+                    <CreditCard size={14} /> Convert Authorization to Payment
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="soap-btn"
+                    disabled={payDisabled || !hasSavedCard}
+                    title={hasSavedCard ? '' : 'Save a card before authorizing'}
+                    onClick={authorizeCard}
+                  >
+                    <ShieldCheck size={14} /> Authorize card
+                  </button>
+                )}
+              </>
+            )}
+            {!isPaid && !isVoid && !invoice?.isEuthanasiaPrepay && (
               <>
                 <button
                   type="button"
@@ -415,7 +787,7 @@ export default function VisitCheckoutPanel({
                   disabled={payDisabled || !readerReady}
                   title={
                     !branchReady
-                      ? 'Choose the branch inventory is drawn from'
+                      ? 'Choose the branch and location inventory is drawn from'
                       : !selectedReader
                         ? 'Select a reader first'
                         : !readerReady
@@ -442,7 +814,7 @@ export default function VisitCheckoutPanel({
                   disabled={payDisabled || !hasSavedCard}
                   title={
                     !branchReady
-                      ? 'Choose the branch inventory is drawn from'
+                      ? 'Choose the branch and location inventory is drawn from'
                       : hasSavedCard
                         ? ''
                         : 'No card saved on file'
@@ -450,14 +822,6 @@ export default function VisitCheckoutPanel({
                   onClick={cardOnFile}
                 >
                   <CreditCard size={14} /> Card on file
-                </button>
-                <button
-                  type="button"
-                  className="soap-btn ghost"
-                  disabled={disabled || busy != null}
-                  onClick={onOpenEuthanasiaPrepay}
-                >
-                  <ShieldCheck size={14} /> Save card (euthanasia)
                 </button>
               </>
             )}

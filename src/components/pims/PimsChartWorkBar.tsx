@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   FileText,
@@ -11,12 +11,14 @@ import {
   Stethoscope,
   Upload,
 } from 'lucide-react';
+import { recordScoutChartCommunication } from '../../api/scoutChart';
 import { PimsChartMessageComposeModal } from './PimsChartMessageComposeModal';
 import { PimsChartNoteComposeModal } from './PimsChartNoteComposeModal';
 import PimsChartCallModal from './PimsChartCallModal';
 import PimsStartSoapModal from './PimsStartSoapModal';
 import BriefMergePanel from '../brief/BriefMergePanel';
 import BriefRecordReview from '../brief/BriefRecordReview';
+import type { OutsideRecordAcceptResult } from '../../utils/briefRecordStore';
 
 type Props = {
   patientId: string;
@@ -29,11 +31,14 @@ type Props = {
   onStartSoap: (appointmentId: number, patientId: string, clientId: string | null) => void;
   onBookAppointment?: () => void;
   onInvoice: () => void;
-  onRecordsChanged?: () => void;
+  onRecordsChanged?: (result?: OutsideRecordAcceptResult) => void;
   onTextClient?: () => void;
   onEmailClient?: () => void;
   onOpenCallSession: (sessionId: string) => void;
   onStartCallNote: () => void;
+  launchNote?: boolean;
+  launchCommunicate?: boolean;
+  onLaunchConsumed?: () => void;
 };
 
 export default function PimsChartWorkBar({
@@ -52,13 +57,26 @@ export default function PimsChartWorkBar({
   onEmailClient,
   onOpenCallSession,
   onStartCallNote,
+  launchNote = false,
+  launchCommunicate = false,
+  onLaunchConsumed,
 }: Props) {
   const [noteOpen, setNoteOpen] = useState(false);
   const [messageOpen, setMessageOpen] = useState(false);
   const [messagePick, setMessagePick] = useState(false);
+  const [logOpen, setLogOpen] = useState(false);
   const [callOpen, setCallOpen] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [soapPickOpen, setSoapPickOpen] = useState(false);
+
+  useEffect(() => {
+    if (!launchNote && !launchCommunicate) return;
+    if (launchNote) setNoteOpen(true);
+    if (launchCommunicate) setMessagePick(true);
+    onLaunchConsumed?.();
+    // Only react to the launch flags from the schedule menu, not a new callback each render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [launchNote, launchCommunicate]);
 
   const clientIdNum =
     clientId != null && Number.isFinite(Number(clientId)) && Number(clientId) > 0
@@ -79,14 +97,11 @@ export default function PimsChartWorkBar({
             type="button"
             className="brief-btn"
             disabled={clientIdNum == null}
-            title={clientIdNum == null ? 'This pet has no client on file' : 'Text or email the client'}
-            onClick={() => {
-              if (onTextClient || onEmailClient) setMessagePick(true);
-              else setMessageOpen(true);
-            }}
+            title={clientIdNum == null ? 'This pet has no client on file' : 'Text, email, call, or log a communication'}
+            onClick={() => setMessagePick(true)}
           >
             <MessageSquare size={15} aria-hidden />
-            Message
+            Communicate
           </button>
           <button
             type="button"
@@ -177,8 +192,10 @@ export default function PimsChartWorkBar({
                   patientId={patientId}
                   patientName={patientName}
                   clientId={clientId}
-                  onAccepted={() => {
-                    onRecordsChanged?.();
+                  hideHeading
+                  onAccepted={(result) => {
+                    setUploadOpen(false);
+                    onRecordsChanged?.(result);
                   }}
                 />
               </div>
@@ -226,11 +243,11 @@ export default function PimsChartWorkBar({
               />
               <div className="pims-chart-pick__card">
                 <div className="pims-chart-pick__head">
-                  <h3 id="pims-chart-msg-pick">Message {clientName}</h3>
+                  <h3 id="pims-chart-msg-pick">Communicate {clientName}</h3>
                 </div>
                 <p className="pims-chart-pick__empty">
-                  Messages are saved for your workflow. They are not on the medical record unless
-                  you choose to add them.
+                  Text and email stay in your workflow unless you add them to the record. Call
+                  starts a phone session. Log saves a communication on the chart.
                 </p>
                 <div className="pims-chart-pick__foot">
                   <button
@@ -239,7 +256,8 @@ export default function PimsChartWorkBar({
                     disabled={!onTextClient}
                     onClick={() => {
                       setMessagePick(false);
-                      onTextClient?.();
+                      if (onTextClient) onTextClient();
+                      else setMessageOpen(true);
                     }}
                   >
                     <MessageSquare size={14} aria-hidden />
@@ -251,11 +269,36 @@ export default function PimsChartWorkBar({
                     disabled={!onEmailClient}
                     onClick={() => {
                       setMessagePick(false);
-                      onEmailClient?.();
+                      if (onEmailClient) onEmailClient();
+                      else setMessageOpen(true);
                     }}
                   >
                     <Mail size={14} aria-hidden />
                     Email
+                  </button>
+                  <button
+                    type="button"
+                    className="brief-btn"
+                    disabled={clientIdNum == null && !clientPhone}
+                    onClick={() => {
+                      setMessagePick(false);
+                      setCallOpen(true);
+                    }}
+                  >
+                    <Phone size={14} aria-hidden />
+                    Call
+                  </button>
+                  <button
+                    type="button"
+                    className="brief-btn"
+                    disabled={clientIdNum == null}
+                    onClick={() => {
+                      setMessagePick(false);
+                      setLogOpen(true);
+                    }}
+                  >
+                    <FileText size={14} aria-hidden />
+                    Log
                   </button>
                   <button type="button" className="brief-btn" onClick={() => setMessagePick(false)}>
                     Cancel
@@ -266,7 +309,104 @@ export default function PimsChartWorkBar({
             document.body,
           )
         : null}
+
+      {logOpen && clientIdNum != null && Number.isFinite(patientIdNum)
+        ? createPortal(
+            <PimsChartCommunicationLogModal
+              patientId={patientIdNum}
+              clientId={clientIdNum}
+              clientName={clientName}
+              onClose={() => setLogOpen(false)}
+              onSaved={() => {
+                setLogOpen(false);
+                onRecordsChanged?.();
+              }}
+            />,
+            document.body,
+          )
+        : null}
     </>
+  );
+}
+
+function PimsChartCommunicationLogModal({
+  patientId,
+  clientId,
+  clientName,
+  onClose,
+  onSaved,
+}: {
+  patientId: number;
+  clientId: number;
+  clientName: string;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [body, setBody] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const save = async () => {
+    const text = body.trim();
+    if (!text) {
+      setError('Write the communication before saving.');
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await recordScoutChartCommunication({
+        patientId,
+        clientId,
+        channel: 'log',
+        body: text,
+        typeLabel: 'Communication log',
+        includeOnMedicalRecord: true,
+      });
+      onSaved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not save that communication.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="pims-chart-pick" role="dialog" aria-modal="true" aria-labelledby="pims-chart-log">
+      <button
+        type="button"
+        className="pims-chart-pick__backdrop"
+        aria-label="Close"
+        onClick={onClose}
+      />
+      <div className="pims-chart-pick__card" style={{ width: 'min(520px, 100%)' }}>
+        <div className="pims-chart-pick__head">
+          <h3 id="pims-chart-log">Communications</h3>
+          <button type="button" className="pims-chart-pick__close" onClick={onClose} aria-label="Close">
+            ×
+          </button>
+        </div>
+        <p className="pims-chart-pick__empty">
+          Save a communication for {clientName}. This is added to the chart.
+        </p>
+        <textarea
+          className="pims-chart-log__area"
+          rows={8}
+          value={body}
+          onChange={(e) => setBody(e.target.value)}
+          placeholder="Write the communication…"
+        />
+        {error ? <p className="pims-chart-pick__empty">{error}</p> : null}
+        <div className="pims-chart-pick__foot">
+          <button type="button" className="brief-btn" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="button" className="brief-btn primary" disabled={saving} onClick={() => void save()}>
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

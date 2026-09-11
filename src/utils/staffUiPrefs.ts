@@ -9,6 +9,10 @@ export type StaffClientLayout = {
   household: boolean;
   comms: boolean;
   contact: boolean;
+  /** Household summary + chat */
+  summary: boolean;
+  /** Record & sync details */
+  sync: boolean;
 };
 
 export type StaffPatientLayout = {
@@ -17,6 +21,7 @@ export type StaffPatientLayout = {
   reminders: boolean;
   casePrep: boolean;
   weight: boolean;
+  sync: boolean;
 };
 
 export const DEFAULT_STAFF_CLIENT_LAYOUT: StaffClientLayout = {
@@ -26,6 +31,8 @@ export const DEFAULT_STAFF_CLIENT_LAYOUT: StaffClientLayout = {
   household: true,
   comms: true,
   contact: false,
+  summary: true,
+  sync: false,
 };
 
 export const DEFAULT_STAFF_PATIENT_LAYOUT: StaffPatientLayout = {
@@ -33,6 +40,7 @@ export const DEFAULT_STAFF_PATIENT_LAYOUT: StaffPatientLayout = {
   reminders: false,
   casePrep: true,
   weight: false,
+  sync: false,
 };
 
 function clientStorageKey(userId: string): string {
@@ -60,6 +68,8 @@ function asClientLayout(raw: unknown): StaffClientLayout | null {
     household: parsed.household !== false,
     comms: parsed.comms !== false,
     contact: parsed.contact === true,
+    summary: parsed.summary !== false,
+    sync: parsed.sync === true,
   };
 }
 
@@ -71,6 +81,7 @@ function asPatientLayout(raw: unknown): StaffPatientLayout | null {
     reminders: parsed.reminders === true,
     casePrep: parsed.casePrep !== false,
     weight: parsed.weight === true,
+    sync: parsed.sync === true,
   };
 }
 

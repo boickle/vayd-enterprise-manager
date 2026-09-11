@@ -34,9 +34,13 @@ export type InventoryItemCatalogPatch = {
   /** Percentage over cost: price = cost * (1 + markup / 100). */
   markup?: number | null;
   isMedication?: boolean;
+  strength?: string | null;
   isActive?: boolean;
   description?: string | null;
   shippable?: boolean;
+  autoshipRecommendedFrequency?: string | null;
+  requiresDoctorApproval?: boolean;
+  prohibitedCarriers?: string[] | null;
   /** Set null to clear; prefer uploadInventoryItemImage for files. */
   imageUrl?: string | null;
   showOnOnlineStore?: boolean;
@@ -58,6 +62,7 @@ export type InventoryItemCatalogPatch = {
   vendorDrugNumber?: string | null;
   barcode?: string | null;
   requireExpirationOnLots?: boolean;
+  requireLotNumber?: boolean;
   trackLots?: boolean;
   isVaccine?: boolean;
   isDispensable?: boolean;
@@ -70,6 +75,7 @@ export type InventoryItemCatalogPatch = {
   hideOnMedicalRecordView?: boolean;
   hideOnMedicalRecordPrint?: boolean;
   excludeFromProduction?: boolean;
+  excludeProductionWhenRefilling?: boolean | null;
   allowPriceChange?: boolean;
   changePatientStatusTo?: string | null;
   changePatientSex?: boolean;

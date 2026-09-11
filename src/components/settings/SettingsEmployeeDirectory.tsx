@@ -26,6 +26,7 @@ import {
 import { appConfirm } from '../../utils/appDialog';
 import { fetchAdminUsers, type AdminManagedUser } from '../../api/users';
 import { scoutManagedState } from '../../utils/pimsScoutManaged';
+import { loadProviderSignature, saveProviderSignature } from '../../utils/practiceLetterhead';
 import {
   assignEmployeeRoleNameGroup,
   groupEmployeeRolesByName,
@@ -169,6 +170,7 @@ export default function SettingsEmployeeDirectory({
   const [isProvider, setIsProvider] = useState(false);
   const [middleName, setMiddleName] = useState('');
   const [licenseNumber, setLicenseNumber] = useState('');
+  const [signatureImage, setSignatureImage] = useState<string | null>(null);
   const [address1, setAddress1] = useState('');
   const [address2, setAddress2] = useState('');
   const [address3, setAddress3] = useState('');
@@ -244,6 +246,7 @@ export default function SettingsEmployeeDirectory({
     setTitle('');
     setDesignation('');
     setLicenseNumber('');
+    setSignatureImage(null);
     setPimsId('');
     setPimsUserId('');
     setPimsType('VAYD');
@@ -279,6 +282,16 @@ export default function SettingsEmployeeDirectory({
     setTitle(str(full.title));
     setDesignation(str(full.designation));
     setLicenseNumber(str(r.licenseNumber));
+    const storedSig =
+      typeof r.signatureImage === 'string' && r.signatureImage.startsWith('data:image/')
+        ? r.signatureImage
+        : null;
+    setSignatureImage(storedSig);
+    if (full.id != null && !storedSig) {
+      void loadProviderSignature(Number(full.id)).then((sig) => {
+        if (sig) setSignatureImage(sig);
+      });
+    }
     setPimsId(str(r.pimsId));
     setPimsUserId(str(r.pimsUserId));
     setPimsType(str(r.pimsType) || 'EVET');
@@ -463,6 +476,7 @@ export default function SettingsEmployeeDirectory({
       title: blankToNull(title),
       designation: blankToNull(designation),
       licenseNumber: blankToNull(licenseNumber),
+      signatureImage,
       pimsId: blankToNull(pimsId),
       pimsUserId: blankToNull(pimsUserId),
       pimsType: blankToNull(pimsType) ?? 'VAYD',
@@ -552,18 +566,32 @@ export default function SettingsEmployeeDirectory({
       if (loginUser) {
         form.email = loginUser.email ?? prev.email ?? null;
       }
+      const practiceRef = (full.practice ?? prev.practice ?? practice) as
+        | { id?: number }
+        | null
+        | undefined;
+      const practiceId = Number(practiceRef?.id);
       const merged: EmployeeDto = {
         ...prev,
         ...form,
         id: editingId,
+        created: undefined,
+        updated: undefined,
+        externalCreated: undefined,
+        externalUpdated: undefined,
+        weeklySchedules: undefined,
+        appointmentTypes: undefined,
+        species: undefined,
+        roleAssignments: undefined,
         practice:
-          (full.practice as object | undefined) ??
-          (prev.practice as object | undefined) ??
-          practice,
+          Number.isFinite(practiceId) && practiceId > 0 ? { id: practiceId } : practice,
         isActive: prev.isActive !== false,
         isDeleted: prev.isDeleted === true,
       } as EmployeeDto;
       await saveEmployees(merged);
+      if (isProvider) {
+        await saveProviderSignature(editingId, signatureImage);
+      }
       await saveOfficeAndRoles(editingId);
       const refreshed = await fetchEmployee(editingId);
       setLoadedEmployee(refreshed);
@@ -1064,6 +1092,35 @@ export default function SettingsEmployeeDirectory({
                     <span className="label">License number</span>
                     <input className="input" value={licenseNumber} onChange={(e) => setLicenseNumber(e.target.value)} />
                   </label>
+                  {isProvider ? (
+                    <label className="settings-employee-modal__full">
+                      <span className="label">Signature</span>
+                      <input
+                        className="input"
+                        type="file"
+                        accept="image/png,image/jpeg"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          const reader = new FileReader();
+                          reader.onload = () => {
+                            const result = typeof reader.result === 'string' ? reader.result : null;
+                            setSignatureImage(result);
+                          };
+                          reader.readAsDataURL(file);
+                        }}
+                      />
+                      {signatureImage ? (
+                        <img
+                          src={signatureImage}
+                          alt="Provider signature"
+                          style={{ display: 'block', maxHeight: 56, marginTop: 8 }}
+                        />
+                      ) : (
+                        <span className="settings-muted">PNG or JPEG printed on Rx labels.</span>
+                      )}
+                    </label>
+                  ) : null}
                   <label className="settings-employee-modal__full">
                     <span className="label">Email</span>
                     <input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />

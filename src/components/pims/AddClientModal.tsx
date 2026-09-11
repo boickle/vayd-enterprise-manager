@@ -13,6 +13,7 @@ import { CLIENT_NAME_PREFIX_OPTIONS } from '../../utils/clientNamePrefix';
 import { formatAddressLine } from '../../utils/clientVisitAddresses';
 import { EMPTY_ADDRESS_FIELDS } from '../../utils/verifiedAddress';
 import { clientSearchRowHomeAddress } from '../../utils/visitAddressMatch';
+import AddPatientModal from './AddPatientModal';
 
 const DEFAULT_PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
 
@@ -247,6 +248,9 @@ export default function AddClientModal({ open, onClose, onCreated }: Props) {
   const [emailHit, setEmailHit] = useState<ClientSearchRow | null>(null);
   const [nameHits, setNameHits] = useState<ClientSearchRow[]>([]);
   const [addressHits, setAddressHits] = useState<ClientSearchRow[]>([]);
+  const [phase, setPhase] = useState<'form' | 'ask' | 'pet'>('form');
+  const [createdClient, setCreatedClient] = useState<{ id: string; name: string } | null>(null);
+  const [addedPetCount, setAddedPetCount] = useState(0);
 
   const friendFamilyReferral = referralSource === 'Referred by a friend or family';
 
@@ -298,6 +302,9 @@ export default function AddClientModal({ open, onClose, onCreated }: Props) {
   const goToClient = useCallback(
     (id: string | number) => {
       reset();
+      setCreatedClient(null);
+      setAddedPetCount(0);
+      setPhase('form');
       onClose();
       onCreated?.(String(id));
     },
@@ -305,11 +312,15 @@ export default function AddClientModal({ open, onClose, onCreated }: Props) {
   );
 
   const handleClose = useCallback(() => {
-    if (!submitting) {
-      reset();
-      onClose();
+    if (submitting) return;
+    if (createdClient) {
+      goToClient(createdClient.id);
+      return;
     }
-  }, [onClose, reset, submitting]);
+    reset();
+    setPhase('form');
+    onClose();
+  }, [createdClient, goToClient, onClose, reset, submitting]);
 
   useEffect(() => {
     if (!open) return;
@@ -565,9 +576,17 @@ export default function AddClientModal({ open, onClose, onCreated }: Props) {
     try {
       const result = await createClientScout(body);
       const newId = createdClientId(result);
+      if (!newId) {
+        reset();
+        onClose();
+        return;
+      }
+      const clientName =
+        [firstName.trim(), lastName.trim()].filter(Boolean).join(' ') || `Client #${newId}`;
       reset();
-      onClose();
-      if (newId && onCreated) onCreated(newId);
+      setCreatedClient({ id: newId, name: clientName });
+      setAddedPetCount(0);
+      setPhase('ask');
     } catch (err) {
       setError(extractErr(err));
     } finally {
@@ -575,16 +594,49 @@ export default function AddClientModal({ open, onClose, onCreated }: Props) {
     }
   }
 
+  if (phase === 'pet' && createdClient) {
+    return (
+      <AddPatientModal
+        open
+        lockOwner
+        stayOpenAfterCreate
+        defaultOwner={createdClient}
+        onClose={() => setPhase('ask')}
+        onCreated={() => {
+          setAddedPetCount((n) => n + 1);
+          setPhase('ask');
+        }}
+      />
+    );
+  }
+
   return (
     <div className="pims-add-client-modal-root" role="presentation">
       <button type="button" className="pims-add-client-modal-backdrop" aria-label="Close" onClick={handleClose} />
       <div className="pims-add-client-modal" role="dialog" aria-modal="true" aria-labelledby="pims-add-client-title">
         <div className="pims-add-client-modal__head">
-          <h2 id="pims-add-client-title">Add client</h2>
+          <h2 id="pims-add-client-title">{phase === 'ask' ? 'Add patients' : 'Add client'}</h2>
           <button type="button" className="pims-add-client-modal__close" onClick={handleClose} aria-label="Close">
             ×
           </button>
         </div>
+        {phase === 'ask' && createdClient ? (
+          <div className="pims-add-client-modal__ask">
+            <p>
+              {addedPetCount === 0
+                ? `${createdClient.name} is on the books. Add their patients now?`
+                : `Saved ${addedPetCount} patient${addedPetCount === 1 ? '' : 's'} for ${createdClient.name}. Add another?`}
+            </p>
+            <div className="pims-add-client-modal__actions">
+              <button type="button" className="btn secondary" onClick={() => goToClient(createdClient.id)}>
+                {addedPetCount === 0 ? 'Not now' : 'Done'}
+              </button>
+              <button type="button" className="btn" onClick={() => setPhase('pet')}>
+                {addedPetCount === 0 ? 'Add a patient' : 'Add another'}
+              </button>
+            </div>
+          </div>
+        ) : (
         <form className="pims-add-client-modal__form" onSubmit={onSubmit}>
           {error ? <div className="pims-add-client-modal__error">{error}</div> : null}
           <div className="pims-add-client-modal__grid">
@@ -1069,6 +1121,7 @@ export default function AddClientModal({ open, onClose, onCreated }: Props) {
             </button>
           </div>
         </form>
+        )}
       </div>
     </div>
   );

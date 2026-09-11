@@ -49,6 +49,7 @@ import ProposedOrdersPanel from '../components/soap/ProposedOrdersPanel';
 import VisitCheckoutPanel from '../components/soap/VisitCheckoutPanel';
 import HouseholdInvoiceSummary from '../components/soap/HouseholdInvoiceSummary';
 import EuthanasiaPrepayModal from '../components/soap/EuthanasiaPrepayModal';
+import EuthanasiaConsentPanel from '../components/soap/EuthanasiaConsentPanel';
 import ScribePanel from '../components/soap/ScribePanel';
 import SoapPatientChronicSummary from '../components/soap/SoapPatientChronicSummary';
 import type { ForwardBookingDisposition } from '../api/forwardBookingDisposition';
@@ -1561,11 +1562,35 @@ export default function SoapEncounterPage() {
             refreshSignal={householdRefreshTick}
             onSwitchPet={switchToPet}
           />
+          <EuthanasiaConsentPanel
+            appointmentId={appointmentId}
+            patientId={patientId}
+            clientId={
+              encounter?.clientId ??
+              (clientIdParam ? Number(clientIdParam) : undefined)
+            }
+            encounterId={encounter?.id}
+            onAddedToPlan={() => {
+              if (encounter?.id) {
+                void listOrders(encounter.id).then(setOrders).catch(() => undefined);
+              }
+              void refreshInvoice();
+            }}
+          />
           <VisitCheckoutPanel
             encounterId={encounter?.id}
             invoice={invoice}
             orders={orders}
             disabled={locked}
+            rxLabel={{
+              patientId,
+              patientName,
+              species: patientField(patientProfile, 'species'),
+              ownerName: clientName,
+              veterinarianName: primaryProviderName,
+              veterinarianLicense: primaryProviderLicense,
+              veterinarianEmployeeId: primaryProviderId,
+            }}
             onInvoiceChange={setInvoice}
             onOrdersChange={(next) => {
               setOrders(next);

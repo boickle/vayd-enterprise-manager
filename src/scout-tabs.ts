@@ -27,6 +27,7 @@ export const SCHEDULE_OUTLET_EXTRA_SEGMENTS: string[] = [
   'chat',
   'catalog',
   'inventory',
+  'mail-orders',
   'tasks',
   'clients',
   'patients',

@@ -9,11 +9,19 @@ import {
   type PracticeBranch,
 } from '../api/branchInventory';
 import { searchItems, type SearchResultItem } from '../api/quantityPriceBreaks';
-import { useStockItemGroups } from '../hooks/useStockItemGroups';
+import { loadInventoryItem, useStockItemGroups } from '../hooks/useStockItemGroups';
+import StockLotPicker from '../components/inventory/StockLotPicker';
 import { resolvePracticeIdFromToken } from '../utils/practiceIdFromToken';
 import './Settings.css';
 
-type BatchLine = { inventoryItemId: number; name: string; quantity: string };
+type BatchLine = {
+  inventoryItemId: number;
+  name: string;
+  quantity: string;
+  trackLots?: boolean;
+  lotId: number | null;
+  lotNumber: string;
+};
 
 export default function MoveItemsPage() {
   const { token } = useAuth() as { token: string | null };
@@ -30,7 +38,11 @@ export default function MoveItemsPage() {
   const [results, setResults] = useState<SearchResultItem[]>([]);
   const [lines, setLines] = useState<BatchLine[]>([]);
   const [qty, setQty] = useState('1');
-  const [selected, setSelected] = useState<{ id: number; name: string } | null>(null);
+  const [selected, setSelected] = useState<{
+    id: number;
+    name: string;
+    trackLots?: boolean;
+  } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -54,8 +66,21 @@ export default function MoveItemsPage() {
     const q = searchParams.get('qty');
     if (Number.isFinite(itemId) && itemId > 0 && name) {
       const qty = q && Number(q) > 0 ? q : '1';
-      setLines([{ inventoryItemId: itemId, name, quantity: qty }]);
+      setLines([
+        { inventoryItemId: itemId, name, quantity: qty, lotId: null, lotNumber: '' },
+      ]);
       setQty(qty);
+      void loadInventoryItem(practiceId, itemId)
+        .then((inv) => {
+          setLines((prev) =>
+            prev.map((line) =>
+              line.inventoryItemId === itemId
+                ? { ...line, trackLots: inv.trackLots === true }
+                : line
+            )
+          );
+        })
+        .catch(() => undefined);
     }
   }, [practiceId, searchParams]);
 
@@ -128,7 +153,14 @@ export default function MoveItemsPage() {
     }
     setLines((prev) => [
       ...prev,
-      { inventoryItemId: selected.id, name: selected.name, quantity: String(quantity) },
+      {
+        inventoryItemId: selected.id,
+        name: selected.name,
+        quantity: String(quantity),
+        trackLots: selected.trackLots === true,
+        lotId: null,
+        lotNumber: '',
+      },
     ]);
     setSelected(null);
     setQty('1');
@@ -149,6 +181,10 @@ export default function MoveItemsPage() {
       setError('Add at least one item');
       return;
     }
+    if (lines.some((l) => l.trackLots && l.lotId == null)) {
+      setError('Choose the lot for each item that tracks expiration');
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -165,6 +201,8 @@ export default function MoveItemsPage() {
         lines: lines.map((l) => ({
           inventoryItemId: l.inventoryItemId,
           quantity: Number(l.quantity),
+          inventoryLotBalanceId: l.lotId,
+          lotNumber: l.lotNumber || null,
         })),
         note,
       });
@@ -282,8 +320,17 @@ export default function MoveItemsPage() {
           className="btn secondary"
           style={{ display: 'block', width: '100%', textAlign: 'left', marginBottom: 4 }}
           onClick={() => {
-            setSelected({ id: g.stockItemId, name: g.label });
-            setResults([]);
+            const apply = (trackLots: boolean, name = g.label) => {
+              setSelected({ id: g.stockItemId, name, trackLots });
+              setResults([]);
+            };
+            if (g.item) {
+              apply(g.item.trackLots === true, String(g.item.name ?? g.label));
+              return;
+            }
+            void loadInventoryItem(practiceId, g.stockItemId)
+              .then((inv) => apply(inv.trackLots === true, String(inv.name ?? g.label)))
+              .catch(() => apply(false));
           }}
         >
           <span style={{ display: 'block' }}>{g.label}</span>
@@ -325,22 +372,44 @@ export default function MoveItemsPage() {
           <li
             key={`${l.inventoryItemId}-${i}`}
             style={{
-              display: 'flex',
-              justifyContent: 'space-between',
+              display: 'grid',
+              gap: 8,
               padding: '8px 0',
               borderBottom: '1px solid #e5e7eb',
             }}
           >
-            <span>
-              {l.name} × {l.quantity}
-            </span>
-            <button
-              type="button"
-              className="btn secondary"
-              onClick={() => setLines((prev) => prev.filter((_, j) => j !== i))}
-            >
-              Remove
-            </button>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+              <span>
+                {l.name} × {l.quantity}
+              </span>
+              <button
+                type="button"
+                className="btn secondary"
+                onClick={() => setLines((prev) => prev.filter((_, j) => j !== i))}
+              >
+                Remove
+              </button>
+            </div>
+            {l.trackLots ? (
+              <StockLotPicker
+                practiceId={practiceId}
+                inventoryItemId={l.inventoryItemId}
+                branchId={fromBranchId === '' ? null : Number(fromBranchId)}
+                locationId={fromLoc === '' ? null : Number(fromLoc)}
+                required
+                selectedLotId={l.lotId}
+                lotNumber={l.lotNumber}
+                onChange={(pick) =>
+                  setLines((prev) =>
+                    prev.map((row, j) =>
+                      j === i
+                        ? { ...row, lotId: pick.lotId, lotNumber: pick.lotNumber }
+                        : row
+                    )
+                  )
+                }
+              />
+            ) : null}
           </li>
         ))}
       </ul>
@@ -349,7 +418,11 @@ export default function MoveItemsPage() {
         type="button"
         className="btn primary"
         style={{ width: '100%', minHeight: 48, marginTop: 12 }}
-        disabled={busy || lines.length === 0}
+        disabled={
+          busy ||
+          lines.length === 0 ||
+          lines.some((l) => l.trackLots && l.lotId == null)
+        }
         onClick={() => void submit()}
       >
         {busy ? 'Moving…' : crossOffice ? 'Confirm office move' : 'Confirm move'}

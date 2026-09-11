@@ -21,9 +21,13 @@ export type CountDueItem = {
 };
 
 export type StaffCountLocation = {
+  id?: number;
   branchLocationId: number;
   name: string;
   isDefault?: boolean;
+  inventoryLotBalanceId?: number | null;
+  lotNumber?: string | null;
+  expirationDate?: string | null;
   actualQty: number | null;
   counted: boolean;
 };
@@ -33,6 +37,9 @@ export type StaffCountLine = {
   inventoryItemId: number;
   name: string | null;
   code: string | null;
+  aliases?: string[];
+  requireExpirationOnLots?: boolean;
+  requireLotNumber?: boolean;
   effectiveAbc: string;
   submitted: boolean;
   actualTotal: number | null;
@@ -68,6 +75,9 @@ export type CountReportRow = {
   locations: {
     branchLocationId: number;
     locationName: string | null;
+    inventoryLotBalanceId?: number | null;
+    lotNumber?: string | null;
+    expirationDate?: string | null;
     expectedQty: number | null;
     actualQty: number | null;
   }[];
@@ -110,7 +120,14 @@ export async function patchCountLine(
   practiceId: number,
   sessionId: number,
   lineId: number,
-  locations: { branchLocationId: number; actualQty: number | null }[]
+  locations: {
+    id?: number;
+    branchLocationId: number;
+    inventoryLotBalanceId?: number | null;
+    lotNumber?: string | null;
+    expirationDate?: string | null;
+    actualQty: number | null;
+  }[]
 ): Promise<StaffCountLine> {
   const { data } = await http.patch<StaffCountLine>(
     `/practice/${practiceId}/inventory-counts/${sessionId}/lines/${lineId}`,

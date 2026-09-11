@@ -1,3 +1,10 @@
+.client-comms__heading {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #475569;
+}
+
 .client-comms__err {
   margin: 0;
   color: #b91c1c;

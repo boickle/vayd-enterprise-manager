@@ -17,6 +17,9 @@ export const ONLINE_STORE_FULFILLMENT_BRANCH_KEY =
 /** Inventory location within that branch for online store fulfillment. */
 export const ONLINE_STORE_FULFILLMENT_LOCATION_KEY =
   'inventory.onlineStoreFulfillmentLocationId' as const;
+/** When true, refill charges are excluded from provider VSD unless the item overrides. */
+export const EXCLUDE_PRODUCTION_WHEN_REFILLING_KEY =
+  'inventory.excludeProductionWhenRefilling' as const;
 
 export type ReminderSettings = {
   'reminders.enableEmail'?: string;
@@ -49,6 +52,10 @@ export type ReminderSettings = {
   'inventory.onlineStoreFulfillmentBranchId'?: string;
   /** Inventory location id (string) within the fulfillment branch. */
   'inventory.onlineStoreFulfillmentLocationId'?: string;
+  /** JSON array of mail-order shipping / pick-up types. */
+  'inventory.mailShippingTypes'?: string;
+  /** `'true'` / `'false'`; unset = No. Item-level override wins when set. */
+  'inventory.excludeProductionWhenRefilling'?: string;
   /**
    * Practice daily appointment bookings goals by day of week (JSON string).
    * Shape: { "0": 37, "1": 37, ... } where 0=Sunday … 6=Saturday.
@@ -60,6 +67,24 @@ export type ReminderSettings = {
    * See `routingOfferableScoreConfig.ts`.
    */
   'routing.offerableScoreThresholds'?: string;
+  /** Letterhead on Rx / vaccination labels. Falls back to GET /practice/info when unset. */
+  'labels.practiceName'?: string;
+  'labels.practicePhone'?: string;
+  'labels.practiceAddress'?: string;
+  /** PNG/JPEG data URL printed on Rx labels. */
+  'labels.practiceLogo'?: string;
+  /** JSON map of employeeId → PNG data URL for provider signatures. */
+  'labels.providerSignatures'?: string;
+  /** JSON: { ink, clayCharge, clayFree } catalog item refs for euthanasia paw prints. */
+  'euthanasia.pawPrintItems'?: string;
+  /** JSON map of employeeId → { ink, clayCharge, clayFree } booleans. */
+  'euthanasia.providerPawPrintOfferings'?: string;
+  /** JSON map of ash-return choice keys → client-facing labels. */
+  'euthanasia.ashReturnLabels'?: string;
+  /** JSON: included urn + substitute urns for private cremation. */
+  'euthanasia.privateCremationUrns'?: string;
+  /** Default memorial-store subcategory on the consent form. */
+  'euthanasia.memorialDefaultSubcategory'?: string;
 };
 
 /** True only when the practice explicitly enabled an online store (default No). */

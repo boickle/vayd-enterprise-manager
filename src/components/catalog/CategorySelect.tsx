@@ -24,15 +24,18 @@ export default function CategorySelect({
   const options = [...categories].sort((a, b) =>
     a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
   );
-  const valueInList =
-    value === '' || options.some((c) => String(c.pimsId) === value);
+  const matched = options.find(
+    (c) => String(c.pimsId ?? '') === value || String(c.id) === value
+  );
+  const selectValue = matched ? String(matched.pimsId ?? matched.id) : value;
+  const valueInList = value === '' || Boolean(matched);
 
   return (
     <label className="settings-label">
       {label}
       <select
         className={className}
-        value={value}
+        value={selectValue}
         disabled={disabled || loading}
         onChange={(e) => onChange(e.target.value)}
       >
@@ -41,7 +44,7 @@ export default function CategorySelect({
           <option value={value}>Category {value} (not in list)</option>
         )}
         {options.map((c) => (
-          <option key={c.id} value={String(c.pimsId ?? '')}>
+          <option key={c.id} value={String(c.pimsId ?? c.id)}>
             {c.name}
           </option>
         ))}

@@ -36,19 +36,51 @@ type Props = {
   /** Receives the new pet's internal id so the parent can open its detail view. */
   onCreated?: (patientId: string) => void;
   defaultOwner?: { id: string | number; name: string } | null;
+  /** Hide owner search — used when adding pets right after creating a client. */
+  lockOwner?: boolean;
+  /** Keep the dialog open and clear the form so another pet can be added. */
+  stayOpenAfterCreate?: boolean;
 };
+
+function dobFromAgeParts(years: string, months: string, weeks: string): string | null {
+  const y = Number(years.trim() || 0);
+  const m = Number(months.trim() || 0);
+  const w = Number(weeks.trim() || 0);
+  if (![y, m, w].every((n) => Number.isFinite(n) && n >= 0)) return null;
+  if (y === 0 && m === 0 && w === 0) return null;
+  const d = new Date();
+  d.setHours(12, 0, 0, 0);
+  if (y) d.setFullYear(d.getFullYear() - y);
+  if (m) d.setMonth(d.getMonth() - m);
+  if (w) d.setDate(d.getDate() - w * 7);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
 
 /**
  * Creates a pet that lives only in Scout (pimsType VAYD). There is no eVet counterpart,
  * so nothing will ever overwrite it.
  */
-export default function AddPatientModal({ open, onClose, onCreated, defaultOwner }: Props) {
+export default function AddPatientModal({
+  open,
+  onClose,
+  onCreated,
+  defaultOwner,
+  lockOwner,
+  stayOpenAfterCreate,
+}: Props) {
   const [name, setName] = useState('');
   const [speciesId, setSpeciesId] = useState('');
   const [breedId, setBreedId] = useState('');
   const [sex, setSex] = useState('');
   const [neuterStatus, setNeuterStatus] = useState('');
+  const [ageMode, setAgeMode] = useState<'dob' | 'age'>('dob');
   const [dob, setDob] = useState('');
+  const [ageYears, setAgeYears] = useState('');
+  const [ageMonths, setAgeMonths] = useState('');
+  const [ageWeeks, setAgeWeeks] = useState('');
   const [color, setColor] = useState('');
   const [weight, setWeight] = useState('');
   const [alerts, setAlerts] = useState('');
@@ -175,16 +207,20 @@ export default function AddPatientModal({ open, onClose, onCreated, defaultOwner
     setBreedId('');
     setSex('');
     setNeuterStatus('');
+    setAgeMode('dob');
     setDob('');
+    setAgeYears('');
+    setAgeMonths('');
+    setAgeWeeks('');
     setColor('');
     setWeight('');
     setAlerts('');
     setPrimaryProviderId('');
-    setOwner(null);
+    setOwner(defaultOwner ?? null);
     setOwnerQuery('');
     setOwnerResults([]);
     setError(null);
-  }, []);
+  }, [defaultOwner]);
 
   const handleClose = useCallback(() => {
     if (!submitting) {
@@ -213,7 +249,11 @@ export default function AddPatientModal({ open, onClose, onCreated, defaultOwner
       color: color.trim() || null,
       alerts: alerts.trim() || null,
       // Noon UTC keeps a date-only birthday from shifting a day in either direction.
-      dob: dob.trim() ? `${dob.trim()}T12:00:00.000Z` : null,
+      dob: (() => {
+        const date =
+          ageMode === 'age' ? dobFromAgeParts(ageYears, ageMonths, ageWeeks) : dob.trim() || null;
+        return date ? `${date}T12:00:00.000Z` : null;
+      })(),
     };
 
     const sid = parseInt(speciesId, 10);
@@ -235,7 +275,7 @@ export default function AddPatientModal({ open, onClose, onCreated, defaultOwner
       const result = await createPatientScout(body);
       const newId = createdPatientId(result);
       reset();
-      onClose();
+      if (!stayOpenAfterCreate) onClose();
       if (newId && onCreated) onCreated(newId);
     } catch (err) {
       setError(extractErr(err));
@@ -308,10 +348,69 @@ export default function AddPatientModal({ open, onClose, onCreated, defaultOwner
               </select>
             </label>
 
-            <label>
-              <span className="pims-add-client-modal__label">Date of birth</span>
-              <input className="input" type="date" value={dob} onChange={(e) => setDob(e.target.value)} />
-            </label>
+            <div className="pims-add-client-modal__full">
+              <span className="pims-add-client-modal__label">Age</span>
+              <div className="pims-add-patient__mode" role="tablist" aria-label="Age entry">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={ageMode === 'dob'}
+                  className={ageMode === 'dob' ? 'is-on' : undefined}
+                  onClick={() => setAgeMode('dob')}
+                >
+                  Date of birth
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={ageMode === 'age'}
+                  className={ageMode === 'age' ? 'is-on' : undefined}
+                  onClick={() => setAgeMode('age')}
+                >
+                  Years / months / weeks
+                </button>
+              </div>
+              {ageMode === 'dob' ? (
+                <input className="input" type="date" value={dob} onChange={(e) => setDob(e.target.value)} />
+              ) : (
+                <>
+                  <div className="pims-add-patient__age-row">
+                    <label>
+                      <span className="pims-add-client-modal__label">Years</span>
+                      <input
+                        className="input"
+                        inputMode="numeric"
+                        value={ageYears}
+                        onChange={(e) => setAgeYears(e.target.value)}
+                      />
+                    </label>
+                    <label>
+                      <span className="pims-add-client-modal__label">Months</span>
+                      <input
+                        className="input"
+                        inputMode="numeric"
+                        value={ageMonths}
+                        onChange={(e) => setAgeMonths(e.target.value)}
+                      />
+                    </label>
+                    <label>
+                      <span className="pims-add-client-modal__label">Weeks</span>
+                      <input
+                        className="input"
+                        inputMode="numeric"
+                        value={ageWeeks}
+                        onChange={(e) => setAgeWeeks(e.target.value)}
+                      />
+                    </label>
+                  </div>
+                  {dobFromAgeParts(ageYears, ageMonths, ageWeeks) ? (
+                    <p className="pims-add-patient__owner-hint">
+                      Estimated date of birth {dobFromAgeParts(ageYears, ageMonths, ageWeeks)}
+                    </p>
+                  ) : null}
+                </>
+              )}
+            </div>
             <label>
               <span className="pims-add-client-modal__label">Weight (lbs)</span>
               <input
@@ -320,6 +419,7 @@ export default function AddPatientModal({ open, onClose, onCreated, defaultOwner
                 value={weight}
                 onChange={(e) => setWeight(e.target.value)}
               />
+              <p className="pims-add-patient__owner-hint">Saved on the weight history as today&apos;s date.</p>
             </label>
             <label>
               <span className="pims-add-client-modal__label">Color</span>
@@ -331,16 +431,18 @@ export default function AddPatientModal({ open, onClose, onCreated, defaultOwner
               {owner ? (
                 <div className="pims-add-patient__owner-selected">
                   <span>{owner.name}</span>
-                  <button
-                    type="button"
-                    className="btn secondary"
-                    onClick={() => {
-                      setOwner(null);
-                      setOwnerQuery('');
-                    }}
-                  >
-                    Change
-                  </button>
+                  {lockOwner ? null : (
+                    <button
+                      type="button"
+                      className="btn secondary"
+                      onClick={() => {
+                        setOwner(null);
+                        setOwnerQuery('');
+                      }}
+                    >
+                      Change
+                    </button>
+                  )}
                 </div>
               ) : (
                 <>

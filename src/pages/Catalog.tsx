@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router';
+import { useNavigate, useSearchParams } from 'react-router';
 import { useAuth } from '../auth/useAuth';
 import {
   searchItems,
@@ -24,7 +24,19 @@ import {
   setCatalogItemActive,
 } from '../api/catalogItems';
 import QuantityPriceBreaksEditor from '../components/catalog/QuantityPriceBreaksEditor';
-import { appConfirm } from '../utils/appDialog';
+import { appConfirm, appPrompt } from '../utils/appDialog';
+import {
+  createOnlineStoreProduct,
+  createStoreCategory,
+  getCatalogStoreListing,
+  listStoreCategories,
+  patchOnlineStoreItem,
+  patchOnlineStoreListing,
+  storeListingImageUrl,
+  uploadOnlineStoreListingImage,
+  type StoreAdminListing,
+  type StoreCategory,
+} from '../api/onlineStore';
 import CatalogInventoryClinicalFields from '../components/catalog/CatalogInventoryClinicalFields';
 import CatalogItemRemindersEditor from '../components/catalog/CatalogItemRemindersEditor';
 import CatalogItemLotsEditor from '../components/catalog/CatalogItemLotsEditor';
@@ -63,7 +75,7 @@ import TaxLevelSelect, {
 } from '../components/catalog/TaxLevelSelect';
 import CategorySelect from '../components/catalog/CategorySelect';
 import { getPreDiscountForOneUnit } from '../utils/catalogItemPricing';
-import { Pencil, Copy, X, ChevronDown, ChevronRight } from 'lucide-react';
+import { Archive, ArchiveRestore, Copy, X, ChevronDown, ChevronRight } from 'lucide-react';
 import './Settings.css';
 import './Catalog.css';
 
@@ -179,10 +191,6 @@ function catalogServiceFee(row: SearchResultItem): number {
   return toMoneyNumber((e as Record<string, unknown>).serviceFee);
 }
 
-function catalogDescription(row: SearchResultItem): string {
-  return pickStr((catalogEntity(row) as Record<string, unknown> | null)?.description) ?? '—';
-}
-
 function catalogSellUnit(row: SearchResultItem): string {
   if (row.itemType !== 'inventory' || !row.inventoryItem) return 'each';
   const u = pickStr(row.inventoryItem.sellUnitType);
@@ -282,6 +290,7 @@ const EMPTY_INVENTORY_CREATE = {
   minimumPrice: '',
   isMedication: false,
   excludePercentageDiscount: false,
+  isShippingType: false,
   taxLevelValue: 1,
   category: '',
   manufacturer: '',
@@ -289,8 +298,9 @@ const EMPTY_INVENTORY_CREATE = {
   vendorDrugNumber: '',
   barcode: '',
   defaultQuantity: '',
-  requireExpirationOnLots: false,
-  trackLots: false,
+  requireExpirationOnLots: true,
+  requireLotNumber: false,
+  trackLots: true,
   isVaccine: false,
   dispenseNote: '',
   isControlled: false,
@@ -363,6 +373,7 @@ export default function Catalog() {
   const [searching, setSearching] = useState(false);
   const searchSeq = useRef(0);
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   const typeFilter = typeFilterFromSearch(searchParams.toString());
   const [showArchived, setShowArchived] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
@@ -380,12 +391,18 @@ export default function Catalog() {
     minimumPrice: '',
     isMedication: false,
     excludePercentageDiscount: false,
+    isShippingType: false,
+    hideOnInvoice: false,
+    excludeFromProduction: false,
+    allowPriceChange: false,
     taxLevelValue: 1,
     category: '',
     assignedAbc: '',
   });
   const [taxSettings, setTaxSettings] = useState<PracticeTaxSettings | null>(null);
   const [categories, setCategories] = useState<CatalogCategory[]>([]);
+  const [storeCategories, setStoreCategories] = useState<StoreCategory[]>([]);
+  const [storeListing, setStoreListing] = useState<StoreAdminListing | null>(null);
 
   function setTypeFilter(next: CatalogTypeFilter) {
     const nextParams = new URLSearchParams(searchParams);
@@ -393,6 +410,16 @@ export default function Catalog() {
     else nextParams.set('type', next);
     setSearchParams(nextParams, { replace: true });
   }
+
+  const [coreSaving, setCoreSaving] = useState(false);
+  const [coreError, setCoreError] = useState<string | null>(null);
+  const [archiveBusyId, setArchiveBusyId] = useState<string | null>(null);
+
+  const [selected, setSelected] = useState<{
+    itemType: ItemType;
+    itemId: number;
+    label: string;
+  } | null>(null);
 
   useEffect(() => {
     if (!createOpen) return;
@@ -409,15 +436,33 @@ export default function Catalog() {
     };
   }, [createOpen, createType, practiceId]);
 
-  const [coreSaving, setCoreSaving] = useState(false);
-  const [coreError, setCoreError] = useState<string | null>(null);
-  const [archiveBusyId, setArchiveBusyId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!selected || createOpen) return;
+    let cancelled = false;
+    listCatalogCategories(practiceId, selected.itemType)
+      .then((cats) => {
+        if (!cancelled) setCategories(cats);
+      })
+      .catch(() => {
+        if (!cancelled) setCategories([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [createOpen, practiceId, selected]);
 
-  const [selected, setSelected] = useState<{
-    itemType: ItemType;
-    itemId: number;
-    label: string;
-  } | null>(null);
+  // Online store "+ Add inventory item" opens the catalog create modal.
+  useEffect(() => {
+    const create = searchParams.get('create');
+    if (create !== 'inventory' && create !== 'product' && create !== '1') return;
+    setCreateError(null);
+    setCreateForm(EMPTY_INVENTORY_CREATE);
+    setCreateType('inventory');
+    setCreateOpen(true);
+    const next = new URLSearchParams(searchParams);
+    next.delete('create');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   // Deep-link from counts / other pages: /inventory/items?itemId=123&name=...
   useEffect(() => {
@@ -426,21 +471,44 @@ export default function Catalog() {
     const itemId = Number(raw);
     if (!Number.isFinite(itemId) || itemId <= 0) return;
     const name = searchParams.get('name')?.trim() || 'Item';
+    const itemType =
+      searchParams.get('itemType') === 'procedure' ? 'procedure' : 'inventory';
     setSelected((prev) => {
-      if (prev?.itemType === 'inventory' && prev.itemId === itemId) {
+      if (prev?.itemType === itemType && prev.itemId === itemId) {
         return prev.label === name ? prev : { ...prev, label: name };
       }
-      return { itemType: 'inventory', itemId, label: name };
+      return { itemType, itemId, label: name };
     });
   }, [searchParams]);
 
+  function catalogReturnTo() {
+    const raw = searchParams.get('returnTo');
+    if (!raw) return null;
+    if (!raw.startsWith('/') || raw.startsWith('//')) return null;
+    return raw;
+  }
+
   function closeItemDetailModal() {
     setSelected(null);
+    const dest = catalogReturnTo();
+    if (dest) {
+      navigate(dest);
+      return;
+    }
     if (!searchParams.has('itemId') && !searchParams.has('name')) return;
     const next = new URLSearchParams(searchParams);
     next.delete('itemId');
     next.delete('name');
     setSearchParams(next, { replace: true });
+  }
+
+  function closeCreateModal() {
+    const dest = catalogReturnTo();
+    if (dest) {
+      navigate(dest);
+      return;
+    }
+    setCreateOpen(false);
   }
 
   const [detail, setDetail] = useState<ItemWithPriceBreaks | null>(null);
@@ -517,7 +585,11 @@ export default function Catalog() {
     description: '',
     shippable: false,
     showOnOnlineStore: false,
+    requiresDoctorApproval: false,
+    autoshipOffered: false,
+    autoshipFrequency: 'monthly',
     onlineStorePrice: '',
+    storeCategory: '',
     sellUnitType: '',
     sellUnitTypeDetail: '',
     unitsPerPackage: '',
@@ -615,6 +687,24 @@ export default function Catalog() {
   }, [practiceId]);
 
   useEffect(() => {
+    if (!onlineStoreImplemented) {
+      setStoreCategories([]);
+      return;
+    }
+    let cancelled = false;
+    listStoreCategories(practiceId)
+      .then((rows) => {
+        if (!cancelled) setStoreCategories(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setStoreCategories([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [onlineStoreImplemented, practiceId]);
+
+  useEffect(() => {
     if (branchId == null) {
       setBranchLocations([]);
       return;
@@ -664,6 +754,10 @@ export default function Catalog() {
       excludePercentageDiscount: Boolean(
         (item as Lab | Procedure).excludePercentageDiscount
       ),
+      isShippingType: Boolean((item as Procedure).isShippingType),
+      hideOnInvoice: Boolean((item as Procedure).hideOnInvoice),
+      excludeFromProduction: Boolean((item as Procedure).excludeFromProduction),
+      allowPriceChange: Boolean((item as Procedure).allowPriceChange),
       taxLevelValue: taxLevelSelectValue(
         (item as InventoryItem | Lab | Procedure).taxLevelValue
       ),
@@ -678,6 +772,71 @@ export default function Catalog() {
   }, [detail]);
 
   useEffect(() => {
+    if (!detail || detail.itemType !== 'procedure') return;
+    const item = detail.item as Procedure;
+    setCatalogDraft({
+      description: '',
+      shippable: false,
+      showOnOnlineStore: false,
+      requiresDoctorApproval: false,
+      autoshipOffered: false,
+      autoshipFrequency: 'monthly',
+      onlineStorePrice:
+        item.price != null && String(item.price).trim() !== '' ? String(item.price) : '',
+      storeCategory: '',
+      sellUnitType: '',
+      sellUnitTypeDetail: '',
+      unitsPerPackage: '',
+      alternateSellUnitType: '',
+      alternateUnitsPerPackage: '',
+    });
+    setItemHasImage(false);
+  }, [detail]);
+
+  useEffect(() => {
+    if (!detail || (detail.itemType !== 'inventory' && detail.itemType !== 'procedure')) {
+      setStoreListing(null);
+      return;
+    }
+    let cancelled = false;
+    const q =
+      detail.itemType === 'procedure'
+        ? { procedureId: selected?.itemId }
+        : { inventoryItemId: selected?.itemId };
+    if (!q.procedureId && !q.inventoryItemId) return undefined;
+    getCatalogStoreListing(practiceId, q)
+      .then((listing) => {
+        if (cancelled) return;
+        setStoreListing(listing);
+        if (detail.itemType === 'procedure') {
+          setItemHasImage(Boolean(listing?.hasImage));
+        }
+        setCatalogDraft((d) => ({
+          ...d,
+          storeCategory: listing?.storeCategory || d.storeCategory || '',
+          showOnOnlineStore:
+            detail.itemType === 'procedure'
+              ? Boolean(listing?.listed)
+              : d.showOnOnlineStore,
+          description:
+            detail.itemType === 'procedure'
+              ? listing?.description || d.description
+              : d.description,
+          requiresDoctorApproval:
+            detail.itemType === 'procedure'
+              ? listing?.approvalTag === 'needs_doctor_approval'
+              : d.requiresDoctorApproval,
+        }));
+      })
+      .catch(() => {
+        if (!cancelled) setStoreListing(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [detail, practiceId, selected?.itemId]);
+
+  useEffect(() => {
     if (!detail || detail.itemType !== 'inventory') return;
     const item = detail.item as InventoryItem;
     const raw = item.showOnOnlineStore as unknown;
@@ -686,10 +845,14 @@ export default function Catalog() {
       description: item.description != null ? String(item.description) : '',
       shippable: shipRaw === true || shipRaw === 'true' || shipRaw === 1 || shipRaw === '1',
       showOnOnlineStore: raw === true || raw === 'true' || raw === 1 || raw === '1',
+      requiresDoctorApproval: item.requiresDoctorApproval === true,
+      autoshipOffered: Boolean(item.autoshipRecommendedFrequency),
+      autoshipFrequency: item.autoshipRecommendedFrequency || 'monthly',
       onlineStorePrice:
         item.onlineStorePrice != null && String(item.onlineStorePrice).trim() !== ''
           ? String(item.onlineStorePrice)
           : '',
+      storeCategory: '',
       sellUnitType: (item.sellUnitType as string) || '',
       sellUnitTypeDetail: (item.sellUnitTypeDetail as string) || '',
       unitsPerPackage:
@@ -1375,6 +1538,11 @@ export default function Catalog() {
             ? coreDraft.assignedAbc
             : null;
       }
+      if (selected.itemType === 'procedure') {
+        body.hideOnInvoice = coreDraft.hideOnInvoice;
+        body.excludeFromProduction = coreDraft.excludeFromProduction;
+        body.allowPriceChange = coreDraft.allowPriceChange;
+      }
       if (selected.itemType === 'lab' || selected.itemType === 'procedure') {
         body.excludePercentageDiscount = coreDraft.excludePercentageDiscount;
         body.taxLevelValue = coreDraft.taxLevelValue;
@@ -1419,7 +1587,8 @@ export default function Catalog() {
         vendorDrugNumber: createForm.vendorDrugNumber.trim() || null,
         barcode: createForm.barcode.trim() || null,
         defaultQuantity: optionalNumber(createForm.defaultQuantity),
-        requireExpirationOnLots: createForm.requireExpirationOnLots,
+        requireExpirationOnLots: true,
+        requireLotNumber: createForm.isVaccine ? true : createForm.requireLotNumber,
         trackLots: createForm.isVaccine ? true : createForm.trackLots,
         isVaccine: createForm.isVaccine,
         isDispensable: createForm.isMedication,
@@ -1555,20 +1724,87 @@ export default function Catalog() {
     }
   }
 
+  async function rememberStoreCategory(name: string) {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    if (storeCategories.some((row) => row.name === trimmed)) return;
+    try {
+      const created = await createStoreCategory(practiceId, trimmed);
+      setStoreCategories((rows) =>
+        rows.some((row) => row.id === created.id) ? rows : [...rows, created]
+      );
+    } catch {
+      setStoreCategories((rows) =>
+        rows.some((row) => row.name === trimmed)
+          ? rows
+          : [...rows, { id: 0, name: trimmed, sortOrder: 0, source: 'manual', productCount: 0 }]
+      );
+    }
+  }
+
   async function saveOnlineStoreFields() {
-    if (!selected || selected.itemType !== 'inventory') return;
+    if (!selected || (selected.itemType !== 'inventory' && selected.itemType !== 'procedure')) {
+      return;
+    }
     setCatalogSaving(true);
     setCatalogError(null);
     try {
-      await patchPracticeInventoryItem(practiceId, selected.itemId, {
-        description: catalogDraft.description.trim() || null,
-        shippable: catalogDraft.shippable,
-        showOnOnlineStore: catalogDraft.showOnOnlineStore,
-        onlineStorePrice:
-          catalogDraft.onlineStorePrice.trim() === ''
-            ? null
-            : Number(catalogDraft.onlineStorePrice),
-      });
+      if (catalogDraft.storeCategory.trim()) {
+        await rememberStoreCategory(catalogDraft.storeCategory.trim());
+      }
+      if (selected.itemType === 'inventory') {
+        await patchPracticeInventoryItem(practiceId, selected.itemId, {
+          description: catalogDraft.description.trim() || null,
+          shippable: catalogDraft.shippable,
+          showOnOnlineStore: catalogDraft.showOnOnlineStore,
+          requiresDoctorApproval: catalogDraft.requiresDoctorApproval,
+          autoshipRecommendedFrequency: catalogDraft.autoshipOffered
+            ? catalogDraft.autoshipFrequency || 'monthly'
+            : null,
+          onlineStorePrice:
+            catalogDraft.onlineStorePrice.trim() === ''
+              ? null
+              : Number(catalogDraft.onlineStorePrice),
+        });
+        await patchOnlineStoreItem(practiceId, selected.itemId, {
+          listed: catalogDraft.showOnOnlineStore,
+          storeCategory: catalogDraft.storeCategory.trim() || null,
+          approvalTag: catalogDraft.requiresDoctorApproval
+            ? 'needs_doctor_approval'
+            : 'approved',
+        });
+        if (storeListing) {
+          await patchOnlineStoreListing(practiceId, storeListing.listingId, {
+            listed: catalogDraft.showOnOnlineStore,
+            storeCategory: catalogDraft.storeCategory.trim() || null,
+            description: catalogDraft.description.trim() || null,
+          });
+        }
+      } else {
+        const payload = {
+          name: coreDraft.name.trim() || selected.label,
+          description: catalogDraft.description.trim() || null,
+          procedureId: selected.itemId,
+          storeCategory: catalogDraft.storeCategory.trim() || null,
+          approvalTag: catalogDraft.requiresDoctorApproval
+            ? ('needs_doctor_approval' as const)
+            : ('approved' as const),
+        };
+        if (!storeListing && !catalogDraft.showOnOnlineStore) {
+          setToast('Nothing to save — this procedure is not listed on the store');
+          window.setTimeout(() => setToast(null), 3500);
+          return;
+        }
+        const listing = storeListing
+          ? await patchOnlineStoreListing(practiceId, storeListing.listingId, {
+              listed: catalogDraft.showOnOnlineStore,
+              description: payload.description,
+              storeCategory: payload.storeCategory,
+              approvalTag: payload.approvalTag,
+            })
+          : await createOnlineStoreProduct(practiceId, payload);
+        setStoreListing(listing ?? null);
+      }
       setToast('Online store details saved');
       window.setTimeout(() => setToast(null), 3500);
       await refreshDetailBundle(selected);
@@ -1580,7 +1816,41 @@ export default function Catalog() {
   }
 
   async function onInventoryImageSelected(file: File | null) {
-    if (!file || !selected || selected.itemType !== 'inventory') return;
+    if (!file || !selected) return;
+    if (selected.itemType === 'procedure') {
+      setImageUploading(true);
+      setCatalogError(null);
+      try {
+        let listing = storeListing;
+        if (!listing) {
+          listing = await createOnlineStoreProduct(practiceId, {
+            name: coreDraft.name.trim() || selected.label,
+            procedureId: selected.itemId,
+            storeCategory: catalogDraft.storeCategory.trim() || null,
+            description: catalogDraft.description.trim() || null,
+          });
+          setStoreListing(listing);
+        }
+        if (!listing) throw new Error('Could not create a store listing for this picture.');
+        const next = await uploadOnlineStoreListingImage(
+          practiceId,
+          listing.listingId,
+          file
+        );
+        setStoreListing(next ?? listing);
+        setItemHasImage(Boolean(next?.hasImage ?? listing.hasImage));
+        setItemImageVersion((v) => v + 1);
+        setToast('Picture uploaded');
+        window.setTimeout(() => setToast(null), 3500);
+      } catch (e: unknown) {
+        setCatalogError(e instanceof Error ? e.message : 'Image upload failed');
+      } finally {
+        setImageUploading(false);
+        if (itemImageInputRef.current) itemImageInputRef.current.value = '';
+      }
+      return;
+    }
+    if (selected.itemType !== 'inventory') return;
     setImageUploading(true);
     setCatalogError(null);
     try {
@@ -1847,21 +2117,20 @@ export default function Catalog() {
               <thead>
                 <tr>
                   {bulkSelectMode && <th className="inv-catalog-results__th-narrow" />}
-                  <th className="inv-catalog-results__th-icon">Edit</th>
-                  <th className="inv-catalog-results__th-icon">Copy</th>
-                  <th>Dosages / notes</th>
-                  <th>Code</th>
-                  <th>Name</th>
+                  <th>Item</th>
                   <th>Manufacturer</th>
                   <th>Vendor</th>
                   <th className="inv-catalog-results__th-num">Cost</th>
                   <th className="inv-catalog-results__th-num">Markup</th>
                   <th className="inv-catalog-results__th-num">Price</th>
-                  <th className="inv-catalog-results__th-num">Service fee</th>
-                  <th>Measurement</th>
-                  <th className="inv-catalog-results__th-num">On hand</th>
-                  <th className="inv-catalog-results__th-center">Status</th>
-                  <th className="inv-catalog-results__th-icon">Archive</th>
+                  <th className="inv-catalog-results__th-num" title="Service fee">
+                    Fee
+                  </th>
+                  <th>Unit</th>
+                  <th>Status</th>
+                  <th className="inv-catalog-results__th-actions">
+                    <span className="sr-only">Actions</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -1871,6 +2140,15 @@ export default function Catalog() {
                   const cost = catalogCost(row);
                   const busyKey = itemId != null ? `${itemType}:${itemId}` : '';
                   const active = catalogIsActive(row);
+                  const manufacturer =
+                    itemType === 'inventory'
+                      ? (row.inventoryItem as InventoryItem | undefined)?.manufacturer
+                      : null;
+                  const vendor =
+                    itemType === 'inventory'
+                      ? (row.inventoryItem as InventoryItem | undefined)?.vendorName
+                      : null;
+                  const price = Number(row.price);
                   return (
                     <tr
                       key={`${itemType}-${itemId}-${i}`}
@@ -1891,96 +2169,82 @@ export default function Catalog() {
                               aria-label={`Select ${row.name} for bulk pricing`}
                             />
                           ) : (
-                            <span className="settings-muted">—</span>
+                            <span className="inv-catalog-results__empty">—</span>
                           )}
                         </td>
                       )}
                       <td>
-                        <button
-                          type="button"
-                          className="inv-catalog-results__icon-btn"
-                          title="Select for branch details"
-                          aria-label={`Edit / select ${row.name}`}
-                          disabled={itemId == null}
-                          onClick={() => {
-                            if (itemId == null) return;
-                            setSelected({ itemType, itemId, label: row.name });
-                          }}
-                        >
-                          <Pencil size={16} />
-                        </button>
+                        <div className="inv-catalog-results__item">
+                          <span
+                            className={`inv-catalog-results__type-tag inv-catalog-results__type-tag--${itemType}`}
+                          >
+                            {catalogTypeLabel(itemType)}
+                          </span>
+                          <div className="inv-catalog-results__item-text">
+                            <span className="inv-catalog-results__name">{row.name}</span>
+                            <span className="inv-catalog-results__code">{row.code || 'No code'}</span>
+                          </div>
+                        </div>
                       </td>
-                      <td>
-                        <button
-                          type="button"
-                          className="inv-catalog-results__icon-btn"
-                          title="Copy name"
-                          aria-label={`Copy ${row.name}`}
-                          onClick={() => {
-                            void navigator.clipboard.writeText(row.name).then(() => {
-                              setToast('Copied to clipboard');
-                              window.setTimeout(() => setToast(null), 2000);
-                            });
-                          }}
-                        >
-                          <Copy size={16} />
-                        </button>
+                      <td className={manufacturer ? undefined : 'inv-catalog-results__empty'}>
+                        {manufacturer || '—'}
                       </td>
-                      <td className="inv-catalog-results__cell-muted">{catalogDescription(row)}</td>
-                      <td>
-                        <code className="inv-catalog-results__code">{row.code ?? '—'}</code>
-                      </td>
-                      <td>
-                        <span
-                          className={`inv-catalog-results__type-tag inv-catalog-results__type-tag--${itemType}`}
-                        >
-                          {catalogTypeLabel(itemType)}
-                        </span>{' '}
-                        {row.name}
-                      </td>
-                      <td className="inv-catalog-results__cell-muted" title="Manufacturer">
-                        {itemType === 'inventory'
-                          ? ((row.inventoryItem as InventoryItem | undefined)?.manufacturer ||
-                              '—')
-                          : '—'}
-                      </td>
-                      <td className="inv-catalog-results__cell-muted" title="Vendor on the item">
-                        {itemType === 'inventory'
-                          ? ((row.inventoryItem as InventoryItem | undefined)?.vendorName || '—')
-                          : '—'}
+                      <td className={vendor ? undefined : 'inv-catalog-results__empty'}>
+                        {vendor || '—'}
                       </td>
                       <td className="inv-catalog-results__td-num">{formatUsd(cost)}</td>
                       <td className="inv-catalog-results__td-num">{catalogMarkupPct(row.price, cost)}</td>
-                      <td className="inv-catalog-results__td-num">{formatUsd(row.price)}</td>
-                      <td className="inv-catalog-results__td-num">{formatUsd(catalogServiceFee(row))}</td>
-                      <td>{catalogSellUnit(row)}</td>
                       <td
-                        className="inv-catalog-results__td-num inv-catalog-results__cell-muted"
-                        title="Select a branch to load branch-level on-hand in details"
+                        className={`inv-catalog-results__td-num${
+                          Number.isFinite(price) && price < 0
+                            ? ' inv-catalog-results__td-num--neg'
+                            : ''
+                        }`}
                       >
-                        —
+                        {formatUsd(price)}
                       </td>
-                      <td className="inv-catalog-results__td-center">
+                      <td className="inv-catalog-results__td-num">
+                        {formatUsd(catalogServiceFee(row))}
+                      </td>
+                      <td className="inv-catalog-results__unit">{catalogSellUnit(row)}</td>
+                      <td>
                         <span
                           className={
-                            catalogIsActive(row)
+                            active
                               ? 'inv-catalog-results__status inv-catalog-results__status--ok'
                               : 'inv-catalog-results__status inv-catalog-results__status--off'
                           }
-                          title={catalogIsActive(row) ? 'Active' : 'Inactive'}
-                        />
+                        >
+                          {active ? 'Active' : 'Archived'}
+                        </span>
                       </td>
                       <td>
-                        <button
-                          type="button"
-                          className="inv-catalog-results__icon-btn inv-catalog-results__icon-btn--danger"
-                          disabled={itemId == null || archiveBusyId === busyKey}
-                          title={active ? 'Archive' : 'Restore'}
-                          aria-label={active ? `Archive ${row.name}` : `Restore ${row.name}`}
-                          onClick={() => void archiveOrRestoreRow(row)}
-                        >
-                          <X size={16} />
-                        </button>
+                        <div className="inv-catalog-results__row-actions">
+                          <button
+                            type="button"
+                            className="inv-catalog-results__icon-btn"
+                            title="Copy name"
+                            aria-label={`Copy ${row.name}`}
+                            onClick={() => {
+                              void navigator.clipboard.writeText(row.name).then(() => {
+                                setToast('Copied to clipboard');
+                                window.setTimeout(() => setToast(null), 2000);
+                              });
+                            }}
+                          >
+                            <Copy size={15} />
+                          </button>
+                          <button
+                            type="button"
+                            className="inv-catalog-results__icon-btn"
+                            disabled={itemId == null || archiveBusyId === busyKey}
+                            title={active ? 'Archive' : 'Restore'}
+                            aria-label={active ? `Archive ${row.name}` : `Restore ${row.name}`}
+                            onClick={() => void archiveOrRestoreRow(row)}
+                          >
+                            {active ? <Archive size={15} /> : <ArchiveRestore size={15} />}
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -2185,6 +2449,7 @@ export default function Catalog() {
                 <div style={{ maxWidth: 280, marginBottom: 12 }}>
                   <CategorySelect
                     categories={categories}
+                    label="Scout catalog category"
                     value={coreDraft.category}
                     onChange={(category) =>
                       setCoreDraft((d) => ({ ...d, category }))
@@ -2239,7 +2504,7 @@ export default function Catalog() {
                     }
                   />
                 </div>
-                {(detail.itemType === 'lab' || detail.itemType === 'procedure') && (
+                {detail.itemType === 'lab' && (
                   <label className="settings-checkbox-item" style={{ marginBottom: 8 }}>
                     <input
                       type="checkbox"
@@ -2253,6 +2518,76 @@ export default function Catalog() {
                     />
                     <span>Exclude percentage discounts</span>
                   </label>
+                )}
+                {/*
+                  Worded the way eVet words them, and stored the way eVet stores
+                  them — hence the inversions. Staff recognize these four labels.
+                */}
+                {detail.itemType === 'procedure' && (
+                  <div style={{ marginBottom: 8 }}>
+                    <label className="settings-checkbox-item">
+                      <input
+                        type="checkbox"
+                        checked={!coreDraft.hideOnInvoice}
+                        onChange={(e) =>
+                          setCoreDraft((d) => ({ ...d, hideOnInvoice: !e.target.checked }))
+                        }
+                      />
+                      <span>
+                        Show on invoice
+                        <small style={{ display: 'block', color: '#6b7280' }}>
+                          Off keeps the charge on the invoice but off the client&rsquo;s copy.
+                        </small>
+                      </span>
+                    </label>
+                    <label className="settings-checkbox-item">
+                      <input
+                        type="checkbox"
+                        checked={!coreDraft.excludeFromProduction}
+                        onChange={(e) =>
+                          setCoreDraft((d) => ({
+                            ...d,
+                            excludeFromProduction: !e.target.checked,
+                          }))
+                        }
+                      />
+                      <span>
+                        Include in provider production
+                        <small style={{ display: 'block', color: '#6b7280' }}>
+                          Off means the revenue stays with the practice — use this for
+                          shipping and handling.
+                        </small>
+                      </span>
+                    </label>
+                    <label className="settings-checkbox-item">
+                      <input
+                        type="checkbox"
+                        checked={coreDraft.allowPriceChange}
+                        onChange={(e) =>
+                          setCoreDraft((d) => ({ ...d, allowPriceChange: e.target.checked }))
+                        }
+                      />
+                      <span>
+                        Allow price change at checkout
+                        <small style={{ display: 'block', color: '#6b7280' }}>
+                          Off fixes the price; staff cannot edit it on an invoice.
+                        </small>
+                      </span>
+                    </label>
+                    <label className="settings-checkbox-item">
+                      <input
+                        type="checkbox"
+                        checked={!coreDraft.excludePercentageDiscount}
+                        onChange={(e) =>
+                          setCoreDraft((d) => ({
+                            ...d,
+                            excludePercentageDiscount: !e.target.checked,
+                          }))
+                        }
+                      />
+                      <span>Allow discount</span>
+                    </label>
+                  </div>
                 )}
                 <button
                   type="button"
@@ -2285,8 +2620,9 @@ export default function Catalog() {
                     stockItemId={stockItemId}
                     branches={branches}
                     trackLots={(detail.item as InventoryItem).trackLots === true}
-                    requireExpirationOnLots={
-                      (detail.item as InventoryItem).requireExpirationOnLots === true
+                    requireExpirationOnLots
+                    requireLotNumber={
+                      (detail.item as InventoryItem).requireLotNumber === true
                     }
                     onLotsChanged={() => {
                       if (stockItemId != null) void loadBranchStock(stockItemId, branches);
@@ -2864,7 +3200,7 @@ export default function Catalog() {
                 </div>
               )}
 
-              {detail.itemType === 'inventory' && (
+              {(detail.itemType === 'inventory' || detail.itemType === 'procedure') && (
                 <div
                   style={{
                     marginBottom: 20,
@@ -2878,7 +3214,9 @@ export default function Catalog() {
                   </h4>
                   <p className="settings-muted" style={{ marginBottom: 12, fontSize: 13 }}>
                     {onlineStoreImplemented
-                      ? 'Description, shipping, picture, listing, and web price for this SKU.'
+                      ? detail.itemType === 'procedure'
+                        ? 'List this procedure in the shop (urns, memorial items, and other services) and assign an online store category.'
+                        : 'Description, shipping, picture, listing, online store category, and web price for this SKU.'
                       : 'Online store listing is off for this practice — enable it under Settings → Inventory.'}
                   </p>
                   {catalogError && (
@@ -2900,6 +3238,49 @@ export default function Catalog() {
                           placeholder="Storefront / catalog description"
                         />
                       </label>
+                      <label className="settings-label" style={{ display: 'block', marginBottom: 12 }}>
+                        Online store category
+                        <select
+                          className="settings-input"
+                          value={catalogDraft.storeCategory}
+                          onChange={(e) => {
+                            const next = e.target.value;
+                            if (next === '__new__') {
+                              void appPrompt({
+                                title: 'New store category',
+                                message:
+                                  'This is a shop category (Memorial, Urns, and so on) — not a Scout catalog category.',
+                                placeholder: 'e.g. Memorial / Urns',
+                              }).then((typed) => {
+                                const name = typed?.trim() || '';
+                                if (!name) return;
+                                setCatalogDraft((d) => ({ ...d, storeCategory: name }));
+                                void rememberStoreCategory(name);
+                              });
+                              return;
+                            }
+                            setCatalogDraft((d) => ({ ...d, storeCategory: next }));
+                          }}
+                        >
+                          <option value="">No store category</option>
+                          {[
+                            ...new Set(
+                              [
+                                catalogDraft.storeCategory,
+                                ...storeCategories.map((row) => row.name),
+                              ].filter(Boolean)
+                            ),
+                          ]
+                            .sort((a, b) => a.localeCompare(b))
+                            .map((name) => (
+                              <option key={name} value={name}>
+                                {name}
+                              </option>
+                            ))}
+                          <option value="__new__">Add new category…</option>
+                        </select>
+                      </label>
+                      {detail.itemType === 'inventory' && (
                       <fieldset style={{ border: 'none', padding: 0, margin: '0 0 12px' }}>
                         <legend className="settings-label" style={{ marginBottom: 6 }}>
                           Shippable?
@@ -2923,6 +3304,7 @@ export default function Catalog() {
                           No
                         </label>
                       </fieldset>
+                      )}
                       <div className="inv-item-picture" style={{ marginBottom: 14 }}>
                         <div className="settings-label" style={{ marginBottom: 6 }}>
                           Picture
@@ -2931,11 +3313,15 @@ export default function Catalog() {
                           <div className="inv-item-picture__preview">
                             {itemHasImage ? (
                               <img
-                                src={inventoryItemImageUrl(
-                                  practiceId,
-                                  selected.itemId,
-                                  itemImageVersion
-                                )}
+                                src={
+                                  detail.itemType === 'procedure' && storeListing
+                                    ? `${storeListingImageUrl(practiceId, storeListing) || ''}?v=${itemImageVersion}`
+                                    : inventoryItemImageUrl(
+                                        practiceId,
+                                        selected.itemId,
+                                        itemImageVersion
+                                      )
+                                }
                                 alt=""
                               />
                             ) : (
@@ -2964,7 +3350,7 @@ export default function Catalog() {
                                   ? 'Replace picture'
                                   : 'Upload picture'}
                             </button>
-                            {itemHasImage && (
+                            {itemHasImage && detail.itemType === 'inventory' && (
                               <button
                                 type="button"
                                 className="btn secondary"
@@ -2996,6 +3382,76 @@ export default function Catalog() {
                         />
                         Show on online store
                       </label>
+                      <label
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 8,
+                          marginBottom: 12,
+                          cursor: 'pointer',
+                          fontSize: 14,
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={catalogDraft.requiresDoctorApproval}
+                          onChange={(e) =>
+                            setCatalogDraft((d) => ({
+                              ...d,
+                              requiresDoctorApproval: e.target.checked,
+                            }))
+                          }
+                        />
+                        Doctor approval required
+                      </label>
+                      {detail.itemType === 'inventory' && (
+                        <>
+                          <label
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 8,
+                              marginBottom: 12,
+                              cursor: 'pointer',
+                              fontSize: 14,
+                            }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={catalogDraft.autoshipOffered}
+                              onChange={(e) =>
+                                setCatalogDraft((d) => ({
+                                  ...d,
+                                  autoshipOffered: e.target.checked,
+                                  autoshipFrequency: d.autoshipFrequency || 'monthly',
+                                }))
+                              }
+                            />
+                            Autoship
+                          </label>
+                          {catalogDraft.autoshipOffered ? (
+                            <label className="settings-label" style={{ marginBottom: 12 }}>
+                              Autoship frequency
+                              <select
+                                className="settings-input"
+                                value={catalogDraft.autoshipFrequency}
+                                onChange={(e) =>
+                                  setCatalogDraft((d) => ({
+                                    ...d,
+                                    autoshipFrequency: e.target.value,
+                                  }))
+                                }
+                              >
+                                <option value="monthly">Monthly</option>
+                                <option value="quarterly">Quarterly</option>
+                                <option value="every_6_months">Every 6 months</option>
+                                <option value="yearly">Yearly</option>
+                              </select>
+                            </label>
+                          ) : null}
+                        </>
+                      )}
+                      {detail.itemType === 'inventory' ? (
                       <label className="settings-label">
                         Online store price
                         <input
@@ -3010,6 +3466,11 @@ export default function Catalog() {
                           placeholder="0.00"
                         />
                       </label>
+                      ) : (
+                        <p className="settings-muted" style={{ fontSize: 13 }}>
+                          Shop price uses the catalog price ({coreDraft.price.trim() || 'not set'}).
+                        </p>
+                      )}
                       <button
                         type="button"
                         className="btn primary"
@@ -3270,7 +3731,7 @@ export default function Catalog() {
           role="dialog"
           aria-modal="true"
           aria-label={addItemLabel(createType)}
-          onClick={() => !createSaving && setCreateOpen(false)}
+          onClick={() => !createSaving && closeCreateModal()}
         >
           <div
             className="settings-modal settings-modal-wide"
@@ -3283,7 +3744,7 @@ export default function Catalog() {
                 type="button"
                 className="settings-modal-close"
                 disabled={createSaving}
-                onClick={() => setCreateOpen(false)}
+                onClick={() => closeCreateModal()}
               >
                 ×
               </button>
@@ -3421,6 +3882,7 @@ export default function Catalog() {
                 </label>
                 <CategorySelect
                   categories={categories}
+                  label="Scout catalog category"
                   value={createForm.category}
                   onChange={(category) => setCreateForm((f) => ({ ...f, category }))}
                 />
@@ -3545,7 +4007,7 @@ export default function Catalog() {
                     ['isControlled', 'Controlled'],
                     ['isMicrochip', 'Microchip'],
                     ['trackLots', 'Lots enabled'],
-                    ['requireExpirationOnLots', 'Require expiration on lots'],
+                    ['requireLotNumber', 'Require lot #'],
                     ['hasClientNotes', 'Has client notes'],
                     ['hideOnInvoice', 'Hide on invoice'],
                     ['hideOnMedicalRecordView', 'Hide on medical record view'],
@@ -3567,6 +4029,7 @@ export default function Catalog() {
                           ...(key === 'isVaccine' && checked
                             ? {
                                 trackLots: true,
+                                requireLotNumber: true,
                                 vaccineName: f.vaccineName || f.name,
                                 vaccineManufacturer:
                                   f.vaccineManufacturer || f.manufacturer,
@@ -3774,7 +4237,7 @@ export default function Catalog() {
                 type="button"
                 className="btn secondary"
                 disabled={createSaving}
-                onClick={() => setCreateOpen(false)}
+                onClick={() => closeCreateModal()}
               >
                 Cancel
               </button>

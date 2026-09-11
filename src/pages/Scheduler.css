@@ -1425,6 +1425,11 @@ label.scheduler-go-date-heading {
   padding-right: 20px;
 }
 
+.scheduler-event:has(.scheduler-appt-card-icons-tr :nth-child(2)),
+.scheduler-all-day-span-bar:has(.scheduler-appt-card-icons-tr :nth-child(2)) {
+  padding-right: 36px;
+}
+
 .scheduler-day-bodies-row {
   display: flex;
   flex: 1;
@@ -1858,6 +1863,7 @@ label.scheduler-go-date-heading {
   font-size: 11px;
   color: #334155;
   line-height: 1.28;
+  white-space: pre-wrap;
 }
 
 .scheduler-tooltip-vh-staff-notes {

@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   getEmployeeBranches,
+  listInventoryBranchLocations,
   listPracticeBranches,
+  type InventoryBranchLocation,
   type PracticeBranch,
 } from '../../api/branchInventory';
 import {
@@ -14,6 +16,8 @@ import { useAuth } from '../../auth/useAuth';
 type Props = {
   invoice: VisitInvoice | null;
   disabled?: boolean;
+  /** Persist branch/location to the server. Leave off for unsaved drafts. */
+  persist?: boolean;
   onInvoiceChange: (invoice: VisitInvoice) => void;
   className?: string;
   fieldClassName?: string;
@@ -41,6 +45,7 @@ function employeeDefaultBranchId(
 export default function CheckoutInventoryBranchField({
   invoice,
   disabled,
+  persist = true,
   onInvoiceChange,
   className,
   fieldClassName,
@@ -50,6 +55,7 @@ export default function CheckoutInventoryBranchField({
   const empId =
     employeeId != null && Number.isFinite(Number(employeeId)) ? Number(employeeId) : null;
   const [branches, setBranches] = useState<PracticeBranch[]>([]);
+  const [locations, setLocations] = useState<InventoryBranchLocation[]>([]);
   const [fallbackBranchId, setFallbackBranchId] = useState<number | null>(null);
   const seededFor = useRef<string | null>(null);
 
@@ -58,6 +64,8 @@ export default function CheckoutInventoryBranchField({
     invoice.status === 'paid' ||
     invoice.status === 'void' ||
     invoice.status === 'finalized';
+
+  const branchId = invoice?.inventoryBranchId ?? fallbackBranchId ?? null;
 
   useEffect(() => {
     let canceled = false;
@@ -82,10 +90,14 @@ export default function CheckoutInventoryBranchField({
           seededFor.current !== invoice.id
         ) {
           seededFor.current = invoice.id;
-          const fresh = await patchVisitInvoice(invoice.id, {
-            inventoryBranchId: nextDefault,
-          });
-          if (!canceled) onInvoiceChange(fresh);
+          if (!persist) {
+            if (!canceled) onInvoiceChange({ ...invoice, inventoryBranchId: nextDefault });
+          } else {
+            const fresh = await patchVisitInvoice(invoice.id, {
+              inventoryBranchId: nextDefault,
+            });
+            if (!canceled) onInvoiceChange(fresh);
+          }
         }
       } catch {
         if (!canceled) setBranches([]);
@@ -98,16 +110,53 @@ export default function CheckoutInventoryBranchField({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [invoice?.id, empId, locked]);
 
+  useEffect(() => {
+    let canceled = false;
+    if (branchId == null) {
+      setLocations([]);
+      return;
+    }
+    void listInventoryBranchLocations(VISIT_WORKFLOW_PRACTICE_ID, branchId)
+      .then((rows) => {
+        if (!canceled) setLocations(rows.filter((loc) => loc.isActive !== false));
+      })
+      .catch(() => {
+        if (!canceled) setLocations([]);
+      });
+    return () => {
+      canceled = true;
+    };
+  }, [branchId]);
+
   if (!invoice) return null;
 
-  const selected =
-    invoice.inventoryBranchId ?? fallbackBranchId ?? '';
+  const selectedBranch = invoice.inventoryBranchId ?? fallbackBranchId ?? '';
+  const selectedLocation = invoice.inventoryLocationId ?? '';
 
-  const onChange = async (raw: string) => {
+  const onBranchChange = async (raw: string) => {
     const next = Number(raw);
     if (!Number.isFinite(next) || next === invoice.inventoryBranchId) return;
     try {
+      if (!persist) {
+        onInvoiceChange({ ...invoice, inventoryBranchId: next, inventoryLocationId: null });
+        return;
+      }
       onInvoiceChange(await patchVisitInvoice(invoice.id, { inventoryBranchId: next }));
+    } catch {
+      /* parent checkout panel surfaces API errors on pay */
+    }
+  };
+
+  const onLocationChange = async (raw: string) => {
+    const next = raw === '' ? null : Number(raw);
+    if (next != null && !Number.isFinite(next)) return;
+    if (next === invoice.inventoryLocationId) return;
+    try {
+      if (!persist) {
+        onInvoiceChange({ ...invoice, inventoryLocationId: next });
+        return;
+      }
+      onInvoiceChange(await patchVisitInvoice(invoice.id, { inventoryLocationId: next }));
     } catch {
       /* parent checkout panel surfaces API errors on pay */
     }
@@ -119,14 +168,33 @@ export default function CheckoutInventoryBranchField({
         Branch
         <select
           className={selectClassName}
-          value={selected === '' ? '' : String(selected)}
+          value={selectedBranch === '' ? '' : String(selectedBranch)}
           disabled={disabled || locked || branches.length === 0}
-          onChange={(e) => void onChange(e.target.value)}
+          onChange={(e) => void onBranchChange(e.target.value)}
         >
-          {selected === '' ? <option value="">Select branch…</option> : null}
+          {selectedBranch === '' ? <option value="">Select branch…</option> : null}
           {branches.map((b) => (
             <option key={b.id} value={b.id}>
               {b.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className={fieldClassName}>
+        Location *
+        <select
+          className={selectClassName}
+          required
+          aria-required="true"
+          value={selectedLocation === '' ? '' : String(selectedLocation)}
+          disabled={disabled || locked || selectedBranch === '' || locations.length === 0}
+          onChange={(e) => void onLocationChange(e.target.value)}
+        >
+          <option value="">{locations.length ? 'Select location…' : 'No locations'}</option>
+          {locations.map((loc) => (
+            <option key={loc.id} value={loc.id}>
+              {loc.name}
+              {loc.isDefault ? ' (default)' : ''}
             </option>
           ))}
         </select>

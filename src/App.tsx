@@ -1,5 +1,5 @@
 // src/App.tsx
-import { Route, Routes, useNavigate, Navigate, useLocation, useOutlet, Link } from 'react-router';
+import { Route, Routes, useNavigate, Navigate, useLocation, useOutlet, Link, Outlet } from 'react-router';
 import { useEffect, useMemo, useRef } from 'react';
 import LoginPage from './pages/Login';
 import RequestReset from './pages/RequestReset';
@@ -56,6 +56,18 @@ import InventoryCountsPage from './pages/InventoryCountsPage';
 import InventoryCountReportPage from './pages/InventoryCountReportPage';
 import InventoryStockRequestsPage from './pages/InventoryStockRequestsPage';
 import SuppliersAdminPage from './pages/SuppliersAdminPage';
+import OnlineStoreImportPage from './pages/OnlineStoreImportPage';
+import MailOrdersPage from './pages/MailOrdersPage';
+import AbandonedCartsPage from './pages/AbandonedCartsPage';
+import StoreCategoriesPage from './pages/StoreCategoriesPage';
+import StoreSubscriptionsPage from './pages/StoreSubscriptionsPage';
+import StoreLayout from './pages/store/StoreLayout';
+import StoreHome from './pages/store/StoreHome';
+import StoreProduct from './pages/store/StoreProduct';
+import StoreCartPage from './pages/store/StoreCartPage';
+import StoreThanks from './pages/store/StoreThanks';
+import StoreAutoshipPage from './pages/store/StoreAutoshipPage';
+import StoreCartFloat from './pages/store/StoreCartFloat';
 import PimsClientsPage from './pages/PimsClientsPage';
 import PimsPatientsPage from './pages/PimsPatientsPage';
 import PimsTasksPage from './pages/PimsTasksPage';
@@ -64,6 +76,8 @@ import GmailInbox from './pages/GmailInbox';
 import Scheduler from './pages/Scheduler';
 import Analytics from './pages/Analytics';
 import PostAppointmentSurvey from './pages/PostAppointmentSurvey';
+import EuthanasiaConsentForm from './pages/EuthanasiaConsentForm';
+import RecordsUploadPage from './pages/RecordsUploadPage';
 import PublicReferAFriend from './pages/PublicReferAFriend';
 import SlotOfferConfirmPage from './pages/SlotOfferConfirmPage';
 import ErrorPage from './pages/ErrorPage';
@@ -300,6 +314,11 @@ function RedirectAppointmentsOnHold() {
   );
 }
 
+function LegacyMailOrdersRedirect() {
+  const { search, hash } = useLocation();
+  return <Navigate to={{ pathname: '/schedule/mail-orders', search, hash }} replace />;
+}
+
 export default function App() {
   const { token, abilities, role } = useAuth() as any;
   const nav = useNavigate();
@@ -334,8 +353,6 @@ export default function App() {
       if (scoutTabPermissionOk('canSeeRouting', abilities)) {
         out.push({ label: '+ Appointment', to: '/schedule/routing' });
       }
-      out.push({ label: 'Jot', to: '/schedule/jot' });
-      out.push({ label: 'Chat', to: '/schedule/chat' });
       out.push({ label: 'New Task', to: '/schedule/tasks?new=1' });
       out.push({ label: 'Send Room Loader', to: '/schedule/room-loader' });
       out.push({
@@ -375,6 +392,7 @@ export default function App() {
 
   const mainClassName = useMemo(() => {
     if (isClient && location.pathname.startsWith('/client-portal')) return '';
+    if (location.pathname === '/store' || location.pathname.startsWith('/store/')) return '';
     const path = location.pathname;
     if (path.startsWith('/schedule')) return 'schedule-main-wrapper';
     return 'container';
@@ -393,6 +411,8 @@ export default function App() {
       {/* Hide navbar on client portal, login page, create-client page, reset password, and public room loader form */}
       {!(isClient && location.pathname.startsWith('/client-portal')) &&
         !location.pathname.startsWith('/client-portal/request-appointment') &&
+        location.pathname !== '/store' &&
+        !location.pathname.startsWith('/store/') &&
         location.pathname !== '/login' &&
         location.pathname !== '/create-client' &&
         location.pathname !== '/reset-password' &&
@@ -530,12 +550,22 @@ export default function App() {
           {/* Public surveys by slug (no login), e.g. post-appointment, exit-interview; * catches duplicate path in email links */}
           <Route path="/survey/:surveySlug" element={<PostAppointmentSurvey />} />
           <Route path="/survey/:surveySlug/*" element={<PostAppointmentSurvey />} />
+          <Route path="/consent/euthanasia" element={<EuthanasiaConsentForm />} />
+          {/* Outside hospital uploads previous records from an emailed link */}
+          <Route path="/records/upload" element={<RecordsUploadPage />} />
           <Route path="/share" element={<PublicReferAFriend />} />
           <Route path="/refer-a-friend" element={<Navigate to="/share" replace />} />
           {/* Slot offer confirm — same host as portal, e.g. /confirm/:token from SMS */}
           <Route path="/confirm/:token" element={<SlotOfferConfirmPage />} />
           {/* Public room loader form (no authentication required) */}
           <Route path="/public/room-loader/form" element={<PublicRoomLoaderForm />} />
+          <Route path="/store" element={<StoreLayout />}>
+            <Route index element={<StoreHome />} />
+            <Route path="cart" element={<StoreCartPage />} />
+            <Route path="autoship" element={<StoreAutoshipPage />} />
+            <Route path="thanks/:id" element={<StoreThanks />} />
+            <Route path=":id" element={<StoreProduct />} />
+          </Route>
 
           {/* Employees only: keep these pages alive across tab switches */}
           {!isClient && (
@@ -623,11 +653,28 @@ export default function App() {
                     />
                     <Route path="scheduler" element={<Scheduler />} />
                     <Route
+                      path="mail-orders"
+                      element={<InventoryLayout basePath="/schedule/inventory" />}
+                    >
+                      <Route index element={<MailOrdersPage />} />
+                    </Route>
+                    <Route
                       path="inventory"
                       element={<InventoryLayout basePath="/schedule/inventory" />}
                     >
                       <Route index element={<Navigate to="items" replace />} />
                       <Route path="items" element={<Catalog />} />
+                      <Route path="online-store" element={<Outlet />}>
+                        <Route index element={<OnlineStoreImportPage />} />
+                        <Route
+                          path="categories"
+                          element={<Navigate to="/schedule/inventory/store-categories" replace />}
+                        />
+                      </Route>
+                      <Route path="store-categories" element={<StoreCategoriesPage />} />
+                      <Route path="mail-orders" element={<LegacyMailOrdersRedirect />} />
+                      <Route path="abandoned-carts" element={<AbandonedCartsPage />} />
+                      <Route path="subscriptions" element={<StoreSubscriptionsPage />} />
                       <Route path="receive" element={<ReceiveShipmentPage />} />
                       <Route path="move" element={<MoveItemsPage />} />
                       <Route path="waste" element={<WasteAdjustPage />} />
@@ -661,7 +708,7 @@ export default function App() {
                       <Route path="suppliers" element={<SuppliersAdminPage />} />
                       <Route
                         path="waste-admin"
-                        element={<Navigate to="/schedule/settings?tab=inventory" replace />}
+                        element={<Navigate to="/schedule/settings?tab=inventory-waste" replace />}
                       />
                     </Route>
                     <Route
@@ -735,6 +782,11 @@ export default function App() {
           <Route path="*" element={<RouteGuard />} />
         </Routes>
       </main>
+      {location.pathname.startsWith('/client-portal') ||
+      location.pathname === '/store' ||
+      location.pathname.startsWith('/store/') ? (
+        <StoreCartFloat />
+      ) : null}
     </div>
   );
 }

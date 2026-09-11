@@ -1,6 +1,21 @@
 import { http } from './http';
 import type { ItemType } from './quantityPriceBreaks';
 
+export type CatalogShippingType = {
+  id: number;
+  name: string;
+  code: string | null;
+  price: number | null;
+  isShippingType: boolean;
+};
+
+export async function listCatalogShippingTypes(practiceId: number) {
+  const { data } = await http.get<CatalogShippingType[]>(
+    `/practice/${practiceId}/procedures/shipping-types`
+  );
+  return data ?? [];
+}
+
 export type CatalogCoreFields = {
   name?: string;
   code?: string | null;
@@ -11,6 +26,11 @@ export type CatalogCoreFields = {
   category?: number | null;
   taxLevelValue?: number | null;
   excludePercentageDiscount?: boolean;
+  isShippingType?: boolean;
+  /** eVet flags, procedures only — inventory items have their own editor. */
+  hideOnInvoice?: boolean;
+  excludeFromProduction?: boolean;
+  allowPriceChange?: boolean;
   isMedication?: boolean;
   isActive?: boolean;
   description?: string | null;

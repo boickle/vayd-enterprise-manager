@@ -199,20 +199,30 @@ export default function InventoryCountReportPage() {
                     <tr>
                       <td colSpan={8}>
                         <div className="settings-muted" style={{ marginBottom: 8, fontSize: 13 }}>
-                          Locations
+                          Location / lot
                         </div>
                         <table className="settings-table">
                           <thead>
                             <tr>
                               <th>Location</th>
+                              <th>Lot</th>
+                              <th>Exp</th>
                               <th>Expected</th>
                               <th>Counted</th>
                             </tr>
                           </thead>
                           <tbody>
-                            {row.locations.map((loc) => (
-                              <tr key={loc.branchLocationId}>
+                            {row.locations.map((loc, i) => (
+                              <tr
+                                key={`${loc.branchLocationId}:${loc.inventoryLotBalanceId ?? loc.lotNumber ?? i}`}
+                              >
                                 <td>{loc.locationName ?? loc.branchLocationId}</td>
+                                <td>
+                                  {loc.lotNumber === 'UNASSIGNED'
+                                    ? 'Existing stock (no lot recorded)'
+                                    : loc.lotNumber || '—'}
+                                </td>
+                                <td>{loc.expirationDate?.slice(0, 10) || '—'}</td>
                                 <td>{loc.expectedQty ?? '—'}</td>
                                 <td>{loc.actualQty ?? '—'}</td>
                               </tr>

@@ -41,6 +41,15 @@ export function sanitizeSoapHtml(html: string): string {
   });
 }
 
+/** Product descriptions: formatting plus internal/external links. */
+export function sanitizeStoreDescriptionHtml(html: string): string {
+  return DOMPurify.sanitize(html, {
+    ALLOWED_TAGS: ['p', 'br', 'strong', 'b', 'em', 'i', 'u', 'ul', 'ol', 'li', 'a', 'span'],
+    ALLOWED_ATTR: ['href', 'rel', 'target'],
+    ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel):|\/|#)/i,
+  });
+}
+
 /** Plain text for clipboard / consumers that cannot render SOAP HTML. */
 export function soapHtmlToPlainText(html: string): string {
   if (!html) return '';

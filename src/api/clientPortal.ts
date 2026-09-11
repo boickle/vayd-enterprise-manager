@@ -401,6 +401,16 @@ export async function fetchClientAppointments(): Promise<ClientAppointment[]> {
  *
  * IMPORTANT: we now capture BOTH the external id (kept in `id`) and the REAL DB id in `dbId`.
  */
+export async function fetchClientChronicMeds(
+  patientId: number,
+  practiceId = Number(import.meta.env.VITE_PRACTICE_ID) || 1
+) {
+  const { data } = await http.get('/patient-prescriptions/mine', {
+    params: { patientId, practiceId, activeChronicOnly: true },
+  });
+  return Array.isArray(data) ? data : [];
+}
+
 export async function fetchClientPets(): Promise<Pet[]> {
   // 1) Try the first-class endpoint.
   try {

@@ -184,6 +184,17 @@
   background: #fee2e2;
 }
 
+.client-fin__btn-approve,
+.client-fin__sig-label .client-fin__btn-approve {
+  background: #dc2626;
+  border-color: #b91c1c;
+  color: #fff;
+}
+
+.client-fin__btn-approve:hover:not(:disabled) {
+  background: #b91c1c;
+}
+
 .client-fin__filters {
   display: flex;
   flex-wrap: wrap;
@@ -359,11 +370,108 @@
   color: #0f172a;
 }
 
+.client-fin__item-toggle {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 4px;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+}
+
+.client-fin__item-toggle svg {
+  flex: none;
+  margin-top: 3px;
+  color: #64748b;
+}
+
+.client-fin__item-toggle .client-fin__line-check {
+  color: #059669;
+}
+
+.client-fin__item-toggle .client-fin__item-name {
+  text-align: left;
+}
+
+.client-fin__item-toggle:hover .client-fin__item-name,
+.client-fin__item-toggle:hover svg:not(.client-fin__line-check) {
+  color: #2563eb;
+}
+
 .client-fin__item-by {
   margin-top: 2px;
   font-size: 12px;
   font-weight: 600;
   color: #94a3b8;
+}
+
+.client-fin__col-item .client-fin__btn {
+  margin-top: 6px;
+}
+
+.client-fin__invoice tr.client-fin__line--pending td {
+  background: #fff5f5;
+}
+
+.client-fin__invoice tr.client-fin__line--ready td {
+  background: #fff;
+}
+
+.client-fin__line-check {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: #059669;
+  margin-left: 6px;
+}
+
+.client-fin__item-toggle .client-fin__line-check,
+.client-fin__item-name .client-fin__line-check {
+  vertical-align: middle;
+}
+
+.client-fin__invoice .mail-line-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #0f766e;
+  cursor: pointer;
+}
+
+.client-fin__invoice .mail-line-check input {
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
+  margin: 0;
+  accent-color: #0f766e;
+}
+
+.client-fin__invoice .mail-line-check--on {
+  padding: 7px 12px;
+  border: 2px solid #0f766e;
+  border-radius: 8px;
+  background: #ccfbf1;
+  color: #115e59;
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.18);
+}
+
+.client-fin__invoice .mail-line-check--locked {
+  color: #64748b;
+  cursor: default;
+}
+
+.client-fin__invoice .mail-line-check--on.mail-line-check--locked {
+  border-color: #94a3b8;
+  background: #f1f5f9;
+  box-shadow: none;
 }
 
 .client-fin__invoice select,
@@ -385,13 +493,18 @@
 }
 
 .client-fin__invoice .client-fin__qty,
-.client-fin__invoice .client-fin__price,
-.client-fin__invoice .client-fin__refill-input {
+.client-fin__invoice .client-fin__price {
   width: 100%;
   min-width: 0;
   text-align: right;
   padding-left: 4px;
   padding-right: 6px;
+}
+
+.client-fin__invoice .client-fin__refill-input {
+  width: 100%;
+  min-width: 0;
+  text-align: left;
 }
 
 .client-fin__price-wrap {
@@ -452,6 +565,38 @@
   font-size: 12px;
 }
 
+.client-fin__dymo {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: #2563eb;
+  background: none;
+  border: 0;
+  padding: 0;
+  font-family: inherit;
+  text-decoration: underline;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.client-fin__col-item .client-fin__dymo {
+  margin-top: 4px;
+}
+
+.client-fin__sig-label .client-fin__dymo {
+  margin-left: 4px;
+}
+
+.client-fin__refill .client-fin__dymo {
+  margin-top: 6px;
+  white-space: nowrap;
+}
+
 .client-fin__entered {
   font-weight: 600;
   letter-spacing: 0.02em;
@@ -467,14 +612,144 @@
   line-height: 1.4;
 }
 
-.client-fin__refill {
-  align-items: flex-end;
-  max-width: 5.5rem;
+.client-fin__sig-limit {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #334155;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.client-fin__sig-limit.is-over {
+  color: #b91c1c;
+}
+
+.client-fin__rx-extras {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  min-width: 7rem;
   margin-left: auto;
 }
 
+.client-fin__line-fulfill td {
+  padding-top: 0;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #e2e8f0;
+  vertical-align: top;
+}
+
+.client-fin__rx-fulfill {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px 18px;
+  padding-top: 8px;
+}
+
+.client-fin__rx-fulfill .mail-line-check {
+  margin-top: 0;
+}
+
+.client-fin__fulfill-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+}
+
+/* Staff still see a hidden charge; this says it is off the client's copy. */
+.client-fin__item-hidden {
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #b45309;
+}
+
+/* Stands in for the branch/location pickers when mail order owns the fill. */
+.client-fin__fulfill-note {
+  margin: 0;
+  font-size: 12px;
+  font-style: italic;
+  color: #6b7280;
+}
+
+.client-fin__fulfill-fields .client-fin__rx-field,
+.client-fin__fulfill-fields .client-fin__field {
+  min-width: 11rem;
+}
+
+.client-fin__rx-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.client-fin__rx-field > span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.client-fin__rx-field input[type='date'],
+.client-fin__rx-select {
+  width: 100%;
+  min-width: 0;
+}
+
+.client-fin__details-link {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: #2563eb;
+  text-decoration: underline;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.client-fin__details-link:hover {
+  color: #1d4ed8;
+}
+
+.client-fin__refill {
+  align-items: stretch;
+  max-width: none;
+  margin-left: 0;
+}
+
+@keyframes client-fin-refill-flash {
+  0%,
+  100% {
+    background: #fff;
+    border-color: inherit;
+    box-shadow: none;
+  }
+  40% {
+    background: #fff7ed;
+    border-color: #f59e0b;
+    box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.35);
+  }
+}
+
+.client-fin__refill-input {
+  animation: client-fin-refill-flash 0.7s ease-in-out 3;
+}
+
 .client-fin__refill input {
-  width: 3.25rem;
+  width: 4.5rem;
 }
 
 .client-fin__row-action {
@@ -670,6 +945,19 @@
   color: #64748b;
 }
 
+.client-fin__search--add {
+  padding: 12px 14px;
+  border: 1.5px solid #86efac;
+  background: #ecfdf5;
+  color: #166534;
+  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.12);
+}
+
+.client-fin__search--add:focus-within {
+  border-color: #22c55e;
+  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.22);
+}
+
 .client-fin__search input {
   flex: 1;
   min-width: 0;
@@ -678,6 +966,18 @@
   font: inherit;
   font-size: 14px;
   color: #0f172a;
+}
+
+.client-fin__search--add input {
+  font-size: 15px;
+  font-weight: 600;
+  color: #14532d;
+}
+
+.client-fin__search--add input::placeholder {
+  color: #15803d;
+  font-weight: 650;
+  opacity: 1;
 }
 
 .client-fin__search input:focus {
@@ -736,6 +1036,44 @@
   flex-wrap: wrap;
   gap: 10px;
   margin-top: 8px;
+}
+
+.client-fin__add-bar {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 16px 24px;
+  margin: 4px 0 20px;
+}
+
+.client-fin__add-bar .client-fin__search--add {
+  flex: 1 1 240px;
+  min-width: 220px;
+  margin: 0;
+}
+
+.client-fin__charge-to {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  flex: 0 0 auto;
+}
+
+.client-fin__use-inactive {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #334155;
+  cursor: pointer;
+  user-select: none;
+}
+
+.client-fin__use-inactive input {
+  margin: 0;
 }
 
 .client-fin__line-fields label,

@@ -48,7 +48,11 @@ import {
   type EmployeeGoalsResponseDto,
 } from '../api/employeeGoals';
 import { fetchForwardBookingCalendarIndex } from '../api/forwardBooking';
-import { fetchSoapCalendarLockIndex } from '../api/visitWorkflow';
+import {
+  createInvoice,
+  fetchSoapCalendarLockIndex,
+  getInvoiceByAppointment,
+} from '../api/visitWorkflow';
 import { saveBrief } from '../api/briefs';
 import { findOpenPrevisitForAppointment } from '../utils/briefStore';
 import { BRIEF_KIND_LABEL } from '../utils/briefTypes';
@@ -124,13 +128,7 @@ import {
   schedulerRoutedRangeShouldKeepScheduledClock,
 } from '../utils/schedulerWindowWarning';
 import { arrivalWindowIsZeroWidth, computeDriveTimeWindowWarning } from '../utils/windowWarning';
-import {
-  evetAddCommunicationLink,
-  evetCheckoutLink,
-  evetClientLink,
-  evetMedicalNoteLink,
-  evetPatientLink,
-} from '../utils/evet';
+import { buildClientFinancialHref } from '../utils/clientFinancial';
 import { buildPhoneDialHref, buildPhoneSmsHref, resolveQuoFromLine } from '../utils/quoContact';
 import {
   loadRoutingPreviewClientContact,
@@ -253,6 +251,31 @@ import {
   schedulerRoomLoaderMenuMode,
 } from './SchedulerRoomLoaderModal';
 import { resolveRoomLoaderIdForAppointment } from '../utils/schedulerRoomLoaderResolve';
+import {
+  euthanasiaConsentMenuLabel,
+  euthanasiaConsentMenuMode,
+  getEuthanasiaConsentStatus,
+  getEuthanasiaConsentStatuses,
+  sendEuthanasiaConsent,
+  type EuthanasiaConsentMenuMode,
+} from '../api/consent';
+import {
+  EUTHANASIA_CONSENT_STATUS_CHANGED_EVENT,
+  notifyEuthanasiaConsentStatusChanged,
+  type EuthanasiaConsentUiStatus,
+} from '../utils/euthanasiaConsentSettings';
+import { SchedulerEuthanasiaConsentModal } from './SchedulerEuthanasiaConsentModal';
+import {
+  RECORDS_REQUEST_STATUS_CHANGED_EVENT,
+  getRecordsRequestStatuses,
+  type RecordsRequestPendingContact,
+  type RecordsRequestUiStatus,
+} from '../api/recordsRequests';
+import { SchedulerRecordsRequestModal } from './SchedulerRecordsRequestModal';
+import {
+  RECORDS_URGENT_DAYS_BEFORE_VISIT,
+  daysUntilVisit,
+} from '../utils/recordsRequestUrgency';
 
 const RoomLoaderPage = lazy(() => import('./RoomLoader'));
 import {
@@ -294,6 +317,7 @@ import {
 import {
   cancelEuthanasiaFutureAppointments,
   findFutureAppointmentsForPatients,
+  isEuthanasiaAppointment,
   isEuthanasiaAppointmentType,
   type EuthanasiaFutureAppointmentRow,
 } from '../utils/euthanasiaFutureAppointments';
@@ -3062,10 +3086,11 @@ function isCalendarBlockAppointment(a: Appointment): boolean {
   return isPracticeCalendarBlockAppointment(a);
 }
 
-/** Room-loader / pre-appt icon: patient visits only — skip blocks, staff notes, all-day, and non-patient rows. */
+/** Room-loader / pre-appt icon: patient visits only — skip blocks, staff notes, all-day, euthanasia, and non-patient rows. */
 function showPreApptRoomLoaderIcon(a: Appointment): boolean {
   if (a.allDay) return false;
   if (isCalendarBlockAppointment(a)) return false;
+  if (isEuthanasiaAppointment(a)) return false;
   if (patientsForAppointment(a).length === 0) return false;
   const typeLabel = [a.appointmentType?.prettyName, a.appointmentType?.name].filter(Boolean).join(' ');
   if (typeLabel.toLowerCase().includes('note to staff')) return false;
@@ -3085,6 +3110,97 @@ function resolveSchedulerRlStatus(
   return preferRoomLoaderPreApptStatus(
     roomLoaderPreApptUiStatus(confirmStatusName),
     scoutUiStatus ?? 'none'
+  );
+}
+
+function SchedulerEuthanasiaConsentIcon({
+  status,
+}: {
+  status: EuthanasiaConsentUiStatus;
+}) {
+  const title =
+    status === 'complete'
+      ? 'Euthanasia consent: client submitted'
+      : status === 'sent'
+        ? 'Euthanasia consent: sent, waiting for client'
+        : 'Euthanasia consent: not sent';
+  return (
+    <span
+      className={[
+        'scheduler-preappt-rl-icon',
+        status === 'sent' ? 'scheduler-preappt-rl-icon--sent' : '',
+      ]
+        .filter(Boolean)
+        .join(' ')}
+      title={title}
+      aria-hidden
+      style={{ backgroundColor: PRE_APPT_STATUS_COLOR[status] }}
+    >
+      EC
+    </span>
+  );
+}
+
+/** Purple is the "some back, some still out" state the other badges don't have. */
+const RECORDS_REQUEST_STATUS_COLOR: Record<
+  Exclude<RecordsRequestUiStatus, 'none'>,
+  string
+> = {
+  pending: '#ffc72c',
+  partial: '#7c3aed',
+  received: '#16a34a',
+};
+
+const RECORDS_REQUEST_URGENT_COLOR = '#dc2626';
+
+/** Mirrors the Room Loader menu: the label says what the next action actually is. */
+function schedulerRecordsRequestMenuLabel(status: RecordsRequestUiStatus): string {
+  if (status === 'received') return 'Records — view / request more';
+  if (status === 'partial') return 'Re-send records request';
+  if (status === 'pending') return 'Re-send records request';
+  return 'Request records';
+}
+
+function SchedulerRecordsRequestIcon({
+  status,
+  appointmentStart,
+}: {
+  status: RecordsRequestUiStatus;
+  appointmentStart?: string | null;
+}) {
+  if (status === 'none') return null;
+  // Records that are still out stop being a nice-to-have once the visit is days
+  // away — the doctor walks in without them. Anything already back stays green.
+  const daysOut = appointmentStart ? daysUntilVisit({ appointmentStart }) : null;
+  const urgent =
+    status !== 'received' &&
+    daysOut != null &&
+    daysOut <= RECORDS_URGENT_DAYS_BEFORE_VISIT;
+  const title = urgent
+    ? `Records still outstanding and the visit is ${daysOut <= 0 ? 'here' : `${daysOut} day(s) away`}`
+    : status === 'received'
+      ? 'Records request: all records received'
+      : status === 'partial'
+        ? 'Records request: some received, some still outstanding'
+        : 'Records request: waiting on the outside hospital';
+  return (
+    <span
+      className={[
+        'scheduler-preappt-rl-icon',
+        status === 'pending' && !urgent ? 'scheduler-preappt-rl-icon--sent' : '',
+      ]
+        .filter(Boolean)
+        .join(' ')}
+      title={title}
+      aria-hidden
+      style={{
+        backgroundColor: urgent
+          ? RECORDS_REQUEST_URGENT_COLOR
+          : RECORDS_REQUEST_STATUS_COLOR[status],
+      }}
+    >
+      RR
+    </span>
   );
 }
 
@@ -3260,6 +3376,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   const [optimizePreviewListTick, setOptimizePreviewListTick] = useState(0);
   const [manualBookableTypeIds, setManualBookableTypeIds] = useState<number[] | null>(null);
   const [rawAppointments, setRawAppointments] = useState<Appointment[]>([]);
+  const rawAppointmentsRef = useRef<Appointment[]>([]);
+  rawAppointmentsRef.current = rawAppointments;
   const [loading, setLoading] = useState(true);
   /** After the first in-flight range fetch, keep the calendar mounted so outlet scroll is not reset on prev/next week. */
   const appointmentRangeBlockingLoadDone = useRef(false);
@@ -3417,6 +3535,12 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   const [contextMenu, setContextMenu] = useState<{ appt: Appointment; x: number; y: number } | null>(
     null
   );
+  const [euthanasiaConsentMode, setEuthanasiaConsentMode] =
+    useState<EuthanasiaConsentMenuMode>('send');
+  const [euthanasiaConsentModalAppt, setEuthanasiaConsentModalAppt] = useState<Appointment | null>(
+    null
+  );
+  const [recordsRequestModalAppt, setRecordsRequestModalAppt] = useState<Appointment | null>(null);
   const [actualVisitModal, setActualVisitModal] = useState<Appointment | null>(null);
   const [removeVisitModal, setRemoveVisitModal] = useState<Appointment | null>(null);
   const [onMyWaySmsAppt, setOnMyWaySmsAppt] = useState<Appointment | null>(null);
@@ -3425,6 +3549,15 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   /** Scout room-loader sentStatus → RL badge color when PIMS confirmStatusName lags behind. */
   const [roomLoaderStatusByApptId, setRoomLoaderStatusByApptId] = useState<
     Map<number, RoomLoaderPreApptUiStatus>
+  >(() => new Map());
+  const [euthanasiaConsentStatusByApptId, setEuthanasiaConsentStatusByApptId] = useState<
+    Map<number, EuthanasiaConsentUiStatus>
+  >(() => new Map());
+  const [recordsRequestStatusByApptId, setRecordsRequestStatusByApptId] = useState<
+    Map<number, RecordsRequestUiStatus>
+  >(() => new Map());
+  const [recordsPendingContactsByApptId, setRecordsPendingContactsByApptId] = useState<
+    Map<number, RecordsRequestPendingContact[]>
   >(() => new Map());
   const [workZonesMapOpen, setWorkZonesMapOpen] = useState(false);
   const [roomLoaderOpening, setRoomLoaderOpening] = useState(false);
@@ -4829,6 +4962,57 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     }
   }, [rangeUtc.startLocal, rangeUtc.endLocalExclusive]);
 
+  const loadEuthanasiaConsentStatuses = useCallback(async (appts?: Appointment[]) => {
+    const source = appts ?? rawAppointmentsRef.current;
+    const ids = source
+      .filter((row) => isEuthanasiaAppointment(row))
+      .map((row) => Number(row.id))
+      .filter((id) => Number.isFinite(id));
+    if (!ids.length) {
+      setEuthanasiaConsentStatusByApptId(new Map());
+      return;
+    }
+    try {
+      const { statuses } = await getEuthanasiaConsentStatuses(ids);
+      const next = new Map<number, EuthanasiaConsentUiStatus>();
+      for (const [key, value] of Object.entries(statuses ?? {})) {
+        const id = Number(key);
+        if (Number.isFinite(id)) next.set(id, value);
+      }
+      setEuthanasiaConsentStatusByApptId(next);
+    } catch {
+      // Keep prior map on transient failures so badges don't flash red.
+    }
+  }, []);
+
+  /** Every patient visit can chase records, so this batches over the whole range. */
+  const loadRecordsRequestStatuses = useCallback(async (appts?: Appointment[]) => {
+    const source = appts ?? rawAppointmentsRef.current;
+    const ids = source.map((row) => Number(row.id)).filter((id) => Number.isFinite(id));
+    if (!ids.length) {
+      setRecordsRequestStatusByApptId(new Map());
+      setRecordsPendingContactsByApptId(new Map());
+      return;
+    }
+    try {
+      const { statuses, pendingContacts } = await getRecordsRequestStatuses(ids);
+      const next = new Map<number, RecordsRequestUiStatus>();
+      for (const [key, value] of Object.entries(statuses ?? {})) {
+        const id = Number(key);
+        if (Number.isFinite(id) && value !== 'none') next.set(id, value);
+      }
+      setRecordsRequestStatusByApptId(next);
+      const contacts = new Map<number, RecordsRequestPendingContact[]>();
+      for (const [key, value] of Object.entries(pendingContacts ?? {})) {
+        const id = Number(key);
+        if (Number.isFinite(id) && value?.length) contacts.set(id, value);
+      }
+      setRecordsPendingContactsByApptId(contacts);
+    } catch {
+      // Keep prior map on transient failures so badges don't flash.
+    }
+  }, []);
+
   const loadRange = useCallback(
     async (opts?: { refreshDrive?: boolean; silent?: boolean; refreshDriveSoft?: boolean }) => {
       if (providers.length === 0) {
@@ -4863,6 +5047,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         void refreshForwardBookingSourceIds();
         void refreshSoapLockedAppointmentIds();
         void loadRoomLoaderStatusesForRange();
+        void loadEuthanasiaConsentStatuses(rows);
+        void loadRecordsRequestStatuses(rows);
       } catch (e: unknown) {
         const msg = e && typeof e === 'object' && 'message' in e ? String((e as Error).message) : 'Failed to load';
         setError(msg);
@@ -4882,6 +5068,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       providersLoadState,
       refreshForwardBookingSourceIds,
       loadRoomLoaderStatusesForRange,
+      loadEuthanasiaConsentStatuses,
+      loadRecordsRequestStatuses,
       refreshSoapLockedAppointmentIds,
     ]
   );
@@ -5055,6 +5243,22 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     window.addEventListener(ROOM_LOADER_SENT_STATUS_CHANGED_EVENT, onSentStatusChanged);
     return () => window.removeEventListener(ROOM_LOADER_SENT_STATUS_CHANGED_EVENT, onSentStatusChanged);
   }, [loadRoomLoaderStatusesForRange]);
+
+  useEffect(() => {
+    const onConsentChanged = () => {
+      void loadEuthanasiaConsentStatuses();
+    };
+    window.addEventListener(EUTHANASIA_CONSENT_STATUS_CHANGED_EVENT, onConsentChanged);
+    return () => window.removeEventListener(EUTHANASIA_CONSENT_STATUS_CHANGED_EVENT, onConsentChanged);
+  }, [loadEuthanasiaConsentStatuses]);
+
+  useEffect(() => {
+    const onRecordsChanged = () => {
+      void loadRecordsRequestStatuses();
+    };
+    window.addEventListener(RECORDS_REQUEST_STATUS_CHANGED_EVENT, onRecordsChanged);
+    return () => window.removeEventListener(RECORDS_REQUEST_STATUS_CHANGED_EVENT, onRecordsChanged);
+  }, [loadRecordsRequestStatuses]);
 
   useEffect(() => {
     const docId = resolvedPrimaryProviderId.trim();
@@ -10602,41 +10806,113 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             return;
           }
           case 'viewChart': {
-            const pid = pickStr(firstPatient?.pimsId);
-            if (!pid) {
-              fail('Patient has no PIMS id (eVet link unavailable).');
+            if (!firstPatient?.id) {
+              fail('No patient on this appointment.');
               return;
             }
-            window.open(evetPatientLink(pid), '_blank', 'noopener,noreferrer');
+            navigate(`/schedule/patients?patientId=${encodeURIComponent(String(firstPatient.id))}`);
             return;
           }
           case 'writeMedicalNote': {
-            const apptPims = pickStr(appt.pimsId);
-            const cid = pickStr(client?.pimsId);
-            if (!apptPims || !cid) {
-              fail('Appointment or client is missing a PIMS id for eVet.');
+            if (!firstPatient?.id) {
+              fail('No patient on this appointment.');
               return;
             }
-            window.open(evetMedicalNoteLink(apptPims, cid), '_blank', 'noopener,noreferrer');
+            navigate(
+              `/schedule/patients?patientId=${encodeURIComponent(String(firstPatient.id))}&writeNote=1`,
+            );
             return;
           }
           case 'addCommunication': {
-            const cid = pickStr(client?.pimsId);
-            const pid = pickStr(firstPatient?.pimsId);
-            if (!cid || !pid) {
-              fail('Client or patient is missing a PIMS id for eVet.');
+            if (!firstPatient?.id) {
+              fail('No patient on this appointment.');
               return;
             }
-            window.open(evetAddCommunicationLink(cid, pid), '_blank', 'noopener,noreferrer');
+            navigate(
+              `/schedule/patients?patientId=${encodeURIComponent(String(firstPatient.id))}&communicate=1`,
+            );
             return;
           }
           case 'viewClientInfo': {
-            const cid = pickStr(client?.pimsId);
-            if (!cid) {
-              fail('Client has no PIMS id (eVet link unavailable).');
+            if (client?.id == null) {
+              fail('No client on this appointment.');
               return;
             }
-            window.open(evetClientLink(cid), '_blank', 'noopener,noreferrer');
+            navigate(`/schedule/clients?clientId=${encodeURIComponent(String(client.id))}`);
+            return;
+          }
+          case 'clientCommunicate': {
+            if (client?.id == null) {
+              fail('No client on this appointment.');
+              return;
+            }
+            navigate(
+              `/schedule/clients?clientId=${encodeURIComponent(String(client.id))}&communicate=1`,
+            );
+            return;
+          }
+          case 'recordsRequest': {
+            if (!firstPatient?.id) {
+              fail('No patient on this appointment to request records for.');
+              return;
+            }
+            setRecordsRequestModalAppt(appt);
+            return;
+          }
+          case 'recordsCall': {
+            const phone = action.contact.phone;
+            if (!phone) {
+              fail(`No phone number on file for ${action.contact.name}.`);
+              return;
+            }
+            // Hospital lines dial from the practice's own Quo number, not the
+            // visit doctor's — this is the records desk calling, not the vet.
+            window.location.href = buildPhoneDialHref(phone);
+            return;
+          }
+          case 'recordsEmail': {
+            const email = action.contact.email;
+            if (!email) {
+              fail(`No email on file for ${action.contact.name}.`);
+              return;
+            }
+            window.location.href = `mailto:${email}?subject=${encodeURIComponent(
+              `Records request follow-up — ${firstPatient?.name ?? 'patient'}`,
+            )}`;
+            return;
+          }
+          case 'euthanasiaConsent': {
+            if (!isEuthanasiaAppointment(appt)) {
+              fail('Euthanasia consent is only for euthanasia visits.');
+              return;
+            }
+            if (!firstPatient?.id) {
+              fail('No patient on this appointment for euthanasia consent.');
+              return;
+            }
+            const consentApptId = Number(appt.id);
+            if (!Number.isFinite(consentApptId)) {
+              fail('This appointment cannot send euthanasia consent.');
+              return;
+            }
+            if (euthanasiaConsentMode === 'view') {
+              setEuthanasiaConsentModalAppt(appt);
+              return;
+            }
+            const result = await sendEuthanasiaConsent({
+              appointmentId: consentApptId,
+              patientId: Number(firstPatient.id),
+              clientId: client?.id != null ? Number(client.id) : undefined,
+            });
+            setEuthanasiaConsentMode('resend');
+            notifyEuthanasiaConsentStatusChanged();
+            await navigator.clipboard.writeText(result.formUrl).catch(() => undefined);
+            const intended = result.intendedRecipientEmail?.trim();
+            if (intended && intended !== result.sentTo) {
+              showToast(`Consent sent to ${result.sentTo} (intended ${intended}). Link copied.`);
+            } else {
+              showToast(`Consent sent to ${result.sentTo}. Link copied.`);
+            }
             return;
           }
           case 'roomLoader': {
@@ -10668,12 +10944,39 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             return;
           }
           case 'checkout': {
-            const cid = pickStr(client?.pimsId);
-            if (!cid) {
-              fail('Client has no PIMS id (eVet link unavailable).');
+            if (client?.id == null) {
+              fail('No client on this appointment.');
               return;
             }
-            window.open(evetCheckoutLink(cid), '_blank', 'noopener,noreferrer');
+            const appointmentId = Number(appt.id);
+            if (!Number.isFinite(appointmentId) || appointmentId <= 0) {
+              fail('This appointment cannot open charges.');
+              return;
+            }
+            let invoice: 'new' | string = 'new';
+            try {
+              const existing = await getInvoiceByAppointment(appointmentId);
+              if (existing?.id && existing.isDeleted !== true && existing.status !== 'void') {
+                invoice = existing.id;
+              } else if (isEuthanasiaAppointment(appt)) {
+                const created = await createInvoice({
+                  appointmentId,
+                  clientId: Number(client.id),
+                  isEuthanasiaPrepay: true,
+                });
+                invoice = created.id;
+              }
+            } catch {
+              /* open a new Scout invoice */
+            }
+            navigate(
+              buildClientFinancialHref({
+                clientId: client.id,
+                invoice,
+                patientId: firstPatient?.id ?? null,
+                appointmentId,
+              }),
+            );
             return;
           }
           case 'call': {
@@ -10743,8 +11046,34 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       roomLoaderStatusByApptId,
       authEmployeeId,
       authDoctorId,
+      euthanasiaConsentMode,
     ]
   );
+
+  useEffect(() => {
+    const appt = contextMenu?.appt;
+    if (!appt || !isEuthanasiaAppointment(appt)) {
+      setEuthanasiaConsentMode('send');
+      return;
+    }
+    const apptId = Number(appt.id);
+    const patientId = patientsForAppointment(appt)[0]?.id;
+    if (!Number.isFinite(apptId) || patientId == null) {
+      setEuthanasiaConsentMode('send');
+      return;
+    }
+    let cancelled = false;
+    void getEuthanasiaConsentStatus(apptId, Number(patientId))
+      .then((status) => {
+        if (!cancelled) setEuthanasiaConsentMode(euthanasiaConsentMenuMode(status));
+      })
+      .catch(() => {
+        if (!cancelled) setEuthanasiaConsentMode('send');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [contextMenu]);
 
   const contextMenuRescheduleIntent = useMemo(() => {
     if (!contextMenu) return null;
@@ -11376,12 +11705,27 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                         onMouseLeave={() => endHoverPopoverForAppt(appt.id)}
                         onContextMenu={(ev) => handleAppointmentContextMenu(ev, appt)}
                       >
-                        {showPreApptRoomLoaderIcon(appt) ? (
+                        {showPreApptRoomLoaderIcon(appt) ||
+                        isEuthanasiaAppointment(appt) ||
+                        recordsRequestStatusByApptId.has(Number(appt.id)) ? (
                           <div className="scheduler-appt-card-icons-tr" aria-hidden>
-                            <SchedulerPreApptRlIcon
-                              confirmStatusName={appt.confirmStatusName}
-                              scoutUiStatus={roomLoaderStatusByApptId.get(Number(appt.id)) ?? null}
+                            {isEuthanasiaAppointment(appt) ? (
+                              <SchedulerEuthanasiaConsentIcon
+                                status={
+                                  euthanasiaConsentStatusByApptId.get(Number(appt.id)) ?? 'none'
+                                }
+                              />
+                            ) : null}
+                            <SchedulerRecordsRequestIcon
+                              status={recordsRequestStatusByApptId.get(Number(appt.id)) ?? 'none'}
+                              appointmentStart={appt.appointmentStart}
                             />
+                            {showPreApptRoomLoaderIcon(appt) ? (
+                              <SchedulerPreApptRlIcon
+                                confirmStatusName={appt.confirmStatusName}
+                                scoutUiStatus={roomLoaderStatusByApptId.get(Number(appt.id)) ?? null}
+                              />
+                            ) : null}
                           </div>
                         ) : null}
                         <span className="scheduler-all-day-span-bar-text">
@@ -11900,12 +12244,27 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                                 if (!isEditTimePreviewVisit) handleAppointmentContextMenu(e, appt);
                               }}
                             >
-                              {showPreApptRoomLoaderIcon(appt) ? (
+                              {showPreApptRoomLoaderIcon(appt) ||
+                              isEuthanasiaAppointment(appt) ||
+                              recordsRequestStatusByApptId.has(Number(appt.id)) ? (
                                 <div className="scheduler-appt-card-icons-tr" aria-hidden>
-                                  <SchedulerPreApptRlIcon
-                                    confirmStatusName={appt.confirmStatusName}
-                                    scoutUiStatus={roomLoaderStatusByApptId.get(Number(appt.id)) ?? null}
+                                  {isEuthanasiaAppointment(appt) ? (
+                                    <SchedulerEuthanasiaConsentIcon
+                                      status={
+                                        euthanasiaConsentStatusByApptId.get(Number(appt.id)) ?? 'none'
+                                      }
+                                    />
+                                  ) : null}
+                                  <SchedulerRecordsRequestIcon
+                                    status={recordsRequestStatusByApptId.get(Number(appt.id)) ?? 'none'}
+                                    appointmentStart={appt.appointmentStart}
                                   />
+                                  {showPreApptRoomLoaderIcon(appt) ? (
+                                    <SchedulerPreApptRlIcon
+                                      confirmStatusName={appt.confirmStatusName}
+                                      scoutUiStatus={roomLoaderStatusByApptId.get(Number(appt.id)) ?? null}
+                                    />
+                                  ) : null}
                                 </div>
                               ) : null}
                               <div
@@ -13036,7 +13395,21 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           showAddPet={addAnotherPetMenuOpts.show}
           addPetDisabled={addAnotherPetMenuOpts.disabled}
           addPetTitle={addAnotherPetMenuOpts.title}
-          showSendForms={showPreApptRoomLoaderIcon(contextMenu.appt)}
+          showSendForms={
+            showPreApptRoomLoaderIcon(contextMenu.appt) ||
+            isEuthanasiaAppointment(contextMenu.appt) ||
+            patientsForAppointment(contextMenu.appt).length > 0
+          }
+          showRoomLoader={showPreApptRoomLoaderIcon(contextMenu.appt)}
+          showEuthanasiaConsent={isEuthanasiaAppointment(contextMenu.appt)}
+          euthanasiaConsentLabel={euthanasiaConsentMenuLabel(euthanasiaConsentMode)}
+          showRecordsRequest={patientsForAppointment(contextMenu.appt).length > 0}
+          recordsRequestLabel={schedulerRecordsRequestMenuLabel(
+            recordsRequestStatusByApptId.get(Number(contextMenu.appt.id)) ?? 'none',
+          )}
+          recordsPendingContacts={recordsPendingContactsByApptId.get(
+            Number(contextMenu.appt.id),
+          )}
           roomLoaderMenuLabel={schedulerRoomLoaderMenuLabel(
             contextMenu.appt.confirmStatusName,
             null,
@@ -13198,6 +13571,29 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         : null}
 
       {workZonesMapOpen ? <WorkZonesMapModal onClose={() => setWorkZonesMapOpen(false)} /> : null}
+
+      {recordsRequestModalAppt ? (
+        <SchedulerRecordsRequestModal
+          appt={recordsRequestModalAppt}
+          patientId={Number(patientsForAppointment(recordsRequestModalAppt)[0]?.id)}
+          patientName={patientsForAppointment(recordsRequestModalAppt)[0]?.name ?? 'this patient'}
+          clientId={
+            recordsRequestModalAppt.client?.id != null
+              ? Number(recordsRequestModalAppt.client.id)
+              : null
+          }
+          accentColor={colorsForAppointment(recordsRequestModalAppt, typeList, typeFillMap).fill}
+          onClose={() => setRecordsRequestModalAppt(null)}
+        />
+      ) : null}
+
+      {euthanasiaConsentModalAppt ? (
+        <SchedulerEuthanasiaConsentModal
+          appt={euthanasiaConsentModalAppt}
+          accentColor={colorsForAppointment(euthanasiaConsentModalAppt, typeList, typeFillMap).fill}
+          onClose={() => setEuthanasiaConsentModalAppt(null)}
+        />
+      ) : null}
 
       {roomLoaderPdfModalAppt ? (
         <SchedulerRoomLoaderPdfModal

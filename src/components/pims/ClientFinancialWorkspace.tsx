@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { DateTime } from 'luxon';
-import { Plus, Search, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Plus, Search, X } from 'lucide-react';
 import { isAppointmentCancelledOnPracticeCalendar } from '../../api/appointments';
 import { fetchClientAppointmentsStaff } from '../../api/pimsAppointments';
 import { fetchAllEmployees, fetchEmployee, type Employee } from '../../api/appointmentSettings';
@@ -24,6 +24,7 @@ import {
   ensureCounterInvoice,
   getInvoice,
   listClientVisitInvoices,
+  patchVisitInvoice,
   removeCounterInvoiceLine,
   returnVisitInvoiceLines,
   startTerminalCheckout,
@@ -43,6 +44,18 @@ import {
   pricingItemFromSearchAndCheck,
 } from '../../utils/catalogItemPricing';
 import TerminalReaderPicker from '../soap/TerminalReaderPicker';
+import DirectionsLimitHint, { directionsMaxLength } from '../soap/DirectionsLimitHint';
+import { BookPatientChartButton } from '../BookPatientChartButton';
+import {
+  addCalendarYear,
+  clampRefillExpiration,
+  dateForInput,
+  dateIsTodayOrBefore,
+  maxRefillExpirationInput,
+  refillExpirationExceedsMax,
+  toDateInput,
+  tomorrowInput,
+} from '../../utils/printRxLabel';
 import {
   readFinancialPrefill,
   scoutArFromInvoices,
@@ -79,6 +92,24 @@ import {
 } from '../../utils/invoiceEmail';
 import { listPaymentTypes, type PracticePaymentType } from '../../api/paymentTypes';
 import CheckoutInventoryBranchField from '../soap/CheckoutInventoryBranchField';
+import SendRxLabelButton, { type SendRxLabelSource } from '../soap/SendRxLabelButton';
+import MailInvoiceLineCheckbox, {
+  cancelMailOrdersForInvoiceLines,
+  isMailOrderShipped,
+  matchingMailOrderForLine,
+  shippedMailMessage,
+} from '../soap/MailInvoiceLineCheckbox';
+import { listMailOrders, type MailOrder } from '../../api/onlineStore';
+import { getPracticeSettings } from '../../api/practiceSettings';
+import {
+  attachShippingLines,
+  catalogItemIdsFromMailTypes,
+  isInvoiceShippingLine,
+  MAIL_SHIPPING_TYPES_KEY,
+  parseMailShippingTypes,
+} from '../../utils/mailShippingTypes';
+import { ensurePrintRxNumber } from '../../utils/ensurePrintRxNumber';
+import StockLotPicker from '../inventory/StockLotPicker';
 import { recordScoutChartCommunication } from '../../api/scoutChart';
 import type { GmailComposeAttachment } from '../../api/gmail';
 import { ClientEmailComposeModal } from '../ClientEmailComposeModal';
@@ -86,7 +117,12 @@ import { ClientSmsComposeModal } from '../ClientSmsComposeModal';
 import { sendClientSms } from '../../api/clientSms';
 import './ClientFinancialWorkspace.css';
 
-export type FinancialPet = { id: number; name: string; primaryProviderId?: number | null };
+export type FinancialPet = {
+  id: number;
+  name: string;
+  primaryProviderId?: number | null;
+  isActive?: boolean;
+};
 
 type LedgerFilter = 'all' | 'open' | 'paid' | 'void' | 'returns';
 
@@ -156,8 +192,72 @@ function lineDirections(line: VisitInvoiceLine): string {
 }
 
 function lineRefills(line: VisitInvoiceLine): string {
-  const n = line.refillCount ?? line.catalogRefill;
+  const n = line.refillCount;
   return n == null || !Number.isFinite(Number(n)) ? '' : String(n);
+}
+
+function parsedRefillCount(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (trimmed === '') return null;
+  const n = Number(trimmed);
+  if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) return null;
+  return n;
+}
+
+function refillCountIsZero(raw: string): boolean {
+  const n = parsedRefillCount(raw);
+  return n === 0;
+}
+
+function futureDateMissing(label: string, value: string): string | null {
+  if (!value) return `Enter ${label}`;
+  if (dateIsTodayOrBefore(value)) return `${label} must be after today`;
+  return null;
+}
+
+/** Save sig only. Block if a shown date is today or earlier. */
+function saveScriptMissing(draft: SigDraft): string | null {
+  if (draft.refillExpiration && dateIsTodayOrBefore(draft.refillExpiration)) {
+    return 'Refill expiration must be after today';
+  }
+  if (draft.discardAfter && dateIsTodayOrBefore(draft.discardAfter)) {
+    return 'Discard after must be after today';
+  }
+  return null;
+}
+
+function lineExcludesFromProduction(
+  line: VisitInvoiceLine,
+  shippingIdSet: Set<number>
+): boolean {
+  return (
+    line.excludeFromProduction === true || isInvoiceShippingLine(line, shippingIdSet)
+  );
+}
+
+function approveScriptMissing(
+  line: VisitInvoiceLine,
+  draft: SigDraft,
+  invoice: { inventoryBranchId?: number | null; inventoryLocationId?: number | null } | null,
+  /** Mail order chooses where it fills from, so it needs no branch here. */
+  mailed = false
+): string | null {
+  if (line.providerEmployeeId == null) return 'Provider is required';
+  if (!draft.instructions.trim()) return 'Enter the script first';
+  if (draft.refillCount.trim() === '') return 'Enter 0 if there are no refills';
+  const refillCount = parsedRefillCount(draft.refillCount);
+  if (refillCount == null) return 'Refills must be a whole number';
+  if (refillCount > 0) {
+    const exp = futureDateMissing('refill expiration', draft.refillExpiration);
+    if (exp) return exp;
+  }
+  if (!draft.acuity) return 'Select acute or chronic';
+  const discard = futureDateMissing('discard after', draft.discardAfter);
+  if (discard) return discard;
+  if (mailed) return null;
+  if (invoice?.inventoryBranchId == null) return 'Select a branch';
+  if (invoice?.inventoryLocationId == null) return 'Select a fill location';
+  return null;
 }
 
 function payLinkMerge(clientName: string, amount: number, labels: string, url: string) {
@@ -191,6 +291,10 @@ function PriceShown({
 
 function dueOf(inv: VisitInvoice): number {
   return (Number(inv.total) || 0) - (Number(inv.amountPaid) || 0);
+}
+
+function invoiceMailPaymentStatus(inv: VisitInvoice): 'paid' | 'awaiting_payment' {
+  return dueOf(inv) <= 0.009 ? 'paid' : 'awaiting_payment';
 }
 
 /** Ledger/AR status: unpaid bills are open. Only a voided or deleted invoice is void. */
@@ -262,6 +366,75 @@ function activeLines(invoice: VisitInvoice | null): VisitInvoiceLine[] {
   return (invoice?.lines ?? []).filter((l) => !l.isDeleted);
 }
 
+const DRAFT_INVOICE_ID = 'draft';
+
+function isUnsavedInvoice(invoice: VisitInvoice | null | undefined): boolean {
+  return invoice?.id === DRAFT_INVOICE_ID;
+}
+
+function isEmptyOpenInvoice(invoice: VisitInvoice): boolean {
+  return (
+    invoice.status === 'open' &&
+    invoice.isDeleted !== true &&
+    activeLines(invoice).length === 0 &&
+    Number(invoice.amountPaid) <= 0.005
+  );
+}
+
+function isFinancialPetActive(pet: FinancialPet): boolean {
+  return pet.isActive !== false;
+}
+
+function defaultChargePatientId(
+  pets: FinancialPet[],
+  preferred?: number | null,
+): number | null {
+  if (preferred != null) {
+    const hit = pets.find((p) => p.id === preferred);
+    if (hit && isFinancialPetActive(hit)) return preferred;
+  }
+  return pets.find(isFinancialPetActive)?.id ?? null;
+}
+
+function petsForChargeSelect(
+  pets: FinancialPet[],
+  includeInactive: boolean,
+  keepId?: number | null,
+): FinancialPet[] {
+  if (includeInactive) return pets;
+  return pets.filter((p) => isFinancialPetActive(p) || (keepId != null && p.id === keepId));
+}
+
+function emptyDraftInvoice(opts: {
+  clientId: number;
+  patientId?: number | null;
+  appointmentId?: number | null;
+}): VisitInvoice {
+  return {
+    id: DRAFT_INVOICE_ID,
+    practiceId: VISIT_WORKFLOW_PRACTICE_ID,
+    appointmentId: opts.appointmentId ?? null,
+    patientId: opts.patientId ?? null,
+    clientId: opts.clientId,
+    status: 'open',
+    subtotal: 0,
+    membershipAdjustments: 0,
+    taxTotal: 0,
+    total: 0,
+    amountPaid: 0,
+    isEuthanasiaPrepay: false,
+    stripeCustomerId: null,
+    stripeSetupIntentId: null,
+    savedPaymentMethodId: null,
+    stripePaymentIntentId: null,
+    lastChargeStatus: null,
+    finalizedAt: null,
+    paidAt: null,
+    lines: [],
+    tenders: [],
+  };
+}
+
 function apiErr(err: unknown): string {
   const e = err as { response?: { data?: { message?: string | string[] } }; message?: string };
   const msg = e?.response?.data?.message;
@@ -290,6 +463,17 @@ function staffName(employee: Employee | undefined, fallbackId?: number | null): 
   return fallbackId != null ? `Employee #${fallbackId}` : '—';
 }
 
+function staffLicense(employee: Employee | undefined): string {
+  const raw = (employee as (Employee & { licenseNumber?: unknown }) | undefined)?.licenseNumber;
+  return typeof raw === 'string' ? raw.trim() : '';
+}
+
+function providerLabel(employee: Employee | undefined, fallbackId?: number | null): string {
+  const name = staffName(employee, fallbackId);
+  if (!name || name === '—' || name.startsWith('Employee #')) return name === '—' ? '' : name;
+  return /^dr\.?\b/i.test(name) ? name : `Dr. ${name}`;
+}
+
 function staffShortName(employee?: Employee, name?: string | null): string | null {
   const first = employee?.firstName?.trim();
   const last = employee?.lastName?.trim();
@@ -316,12 +500,23 @@ function savedRefills(line: VisitInvoiceLine): string {
     : String(line.refillCount);
 }
 
-type SigDraft = { instructions: string; refillCount: string };
+type PrescriptionAcuityDraft = '' | 'acute' | 'chronic';
 
-function defaultSigDraft(line: VisitInvoiceLine): SigDraft {
+type SigDraft = {
+  instructions: string;
+  refillCount: string;
+  acuity: PrescriptionAcuityDraft;
+  refillExpiration: string;
+  discardAfter: string;
+};
+
+function defaultSigDraft(line: VisitInvoiceLine, prescribedDate: string): SigDraft {
   return {
     instructions: lineDirections(line),
     refillCount: lineRefills(line),
+    acuity: '',
+    refillExpiration: '',
+    discardAfter: line.catalogDiscardAfter || addCalendarYear(prescribedDate),
   };
 }
 
@@ -420,7 +615,10 @@ export default function ClientFinancialWorkspace({
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<SearchableItem[]>([]);
   const [searching, setSearching] = useState(false);
-  const [linePatientId, setLinePatientId] = useState<number | null>(initialPatientId ?? pets[0]?.id ?? null);
+  const [linePatientId, setLinePatientId] = useState<number | null>(() =>
+    defaultChargePatientId(pets, initialPatientId),
+  );
+  const [useInactivePets, setUseInactivePets] = useState(false);
   const [visits, setVisits] = useState<Appointment[]>([]);
   const [tenderMethod, setTenderMethod] = useState<VisitTenderMethod>('cash');
   const [tenderAmount, setTenderAmount] = useState('');
@@ -431,6 +629,8 @@ export default function ClientFinancialWorkspace({
   const [editing, setEditing] = useState(false);
   const [pendingDeleteIds, setPendingDeleteIds] = useState<string[]>([]);
   const [sigDrafts, setSigDrafts] = useState<Record<string, SigDraft>>({});
+  const [rxRowOpenIds, setRxRowOpenIds] = useState<Record<string, true>>({});
+  const [printedLineId, setPrintedLineId] = useState<string | null>(null);
   const [extraPets, setExtraPets] = useState<FinancialPet[]>([]);
   const [staffById, setStaffById] = useState<Map<number, Employee>>(new Map());
   const [providers, setProviders] = useState<Provider[]>([]);
@@ -462,8 +662,16 @@ export default function ClientFinancialWorkspace({
   const appliedPrefill = useRef(false);
   const [splitPct, setSplitPct] = useState(readFinSplitPct);
   const [splitting, setSplitting] = useState(false);
+  const [shippingTypeIds, setShippingTypeIds] = useState<number[]>([]);
+  const [sigNeedsReapprove, setSigNeedsReapprove] = useState<Record<string, boolean>>({});
+  const [mailOrders, setMailOrders] = useState<MailOrder[]>([]);
   const splitRef = useRef<HTMLDivElement>(null);
   const splitDragRef = useRef<{ startX: number; startPct: number } | null>(null);
+  const catalogSearchRef = useRef<HTMLInputElement>(null);
+  const rxLineWatchRef = useRef<{ invoiceId: string | null; lineIds: Set<string> }>({
+    invoiceId: null,
+    lineIds: new Set(),
+  });
 
   const persistSplit = useCallback((pct: number) => {
     const clamped = Math.min(FIN_SPLIT_MAX, Math.max(FIN_SPLIT_MIN, pct));
@@ -536,6 +744,19 @@ export default function ClientFinancialWorkspace({
     return [...byId.values()];
   }, [pets, extraPets]);
 
+  const chargePets = useMemo(
+    () => petsForChargeSelect(allPets, useInactivePets, linePatientId),
+    [allPets, useInactivePets, linePatientId],
+  );
+
+  useEffect(() => {
+    if (useInactivePets || linePatientId == null) return;
+    const cur = allPets.find((p) => p.id === linePatientId);
+    if (cur && !isFinancialPetActive(cur)) {
+      setLinePatientId(defaultChargePatientId(allPets));
+    }
+  }, [allPets, linePatientId, useInactivePets]);
+
   const providerOptions = useMemo(() => {
     const rows = providers.filter((e) => e?.id != null && Number(e.id) > 0);
     rows.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
@@ -569,7 +790,7 @@ export default function ClientFinancialWorkspace({
     const rows = await listClientVisitInvoices(clientId);
     setScoutInvoices(rows);
     const keep = preferId ?? selected?.id;
-    if (keep) {
+    if (keep && !isUnsavedInvoice({ id: keep } as VisitInvoice)) {
       const found = rows.find((r) => r.id === keep);
       if (found) setSelected(found);
     }
@@ -593,6 +814,38 @@ export default function ClientFinancialWorkspace({
   }, [clientId]);
 
   useEffect(() => {
+    let cancelled = false;
+    void getPracticeSettings(VISIT_WORKFLOW_PRACTICE_ID)
+      .then((settings) => {
+        if (!cancelled) {
+          setShippingTypeIds(
+            catalogItemIdsFromMailTypes(parseMailShippingTypes(settings[MAIL_SHIPPING_TYPES_KEY])),
+          );
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setShippingTypeIds([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void listMailOrders(VISIT_WORKFLOW_PRACTICE_ID)
+      .then((rows) => {
+        if (!cancelled) setMailOrders(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setMailOrders([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selected?.id]);
+
+  useEffect(() => {
     if (evetInvoices.length && evetLoaded.length === 0) setEvetLoaded(evetInvoices);
   }, [evetInvoices, evetLoaded.length]);
 
@@ -611,16 +864,16 @@ export default function ClientFinancialWorkspace({
         if (initialInvoiceId && initialInvoiceId !== 'new') {
           next = rows.find((r) => r.id === initialInvoiceId) ?? (await getInvoice(initialInvoiceId));
         } else if (openNew || initialInvoiceId === 'new') {
-          next = await ensureCounterInvoice({
+          next = emptyDraftInvoice({
             clientId,
             patientId: initialPatientId,
             appointmentId: initialAppointmentId,
           });
-          onSelectInvoice?.(next.id);
+          onSelectInvoice?.('new');
         }
         if (!cancelled) {
           setSelected(next);
-          if (next && !rows.some((r) => r.id === next!.id)) {
+          if (next && !isUnsavedInvoice(next) && !rows.some((r) => r.id === next!.id)) {
             setScoutInvoices([next, ...rows]);
           }
         }
@@ -831,7 +1084,12 @@ export default function ClientFinancialWorkspace({
               : Number.isFinite(fromFlat) && fromFlat > 0
                 ? fromFlat
                 : null;
-          return { id, name: name ?? `Pet #${id}`, primaryProviderId };
+          return {
+            id,
+            name: name ?? `Pet #${id}`,
+            primaryProviderId,
+            isActive: row?.isActive !== false,
+          };
         } catch {
           return { id, name: `Pet #${id}` };
         }
@@ -859,6 +1117,39 @@ export default function ClientFinancialWorkspace({
     if (!refill) return;
     appliedPrefill.current = true;
     void applyPrefill(selected, refill);
+  }, [selected]);
+
+  useEffect(() => {
+    if (isUnsavedInvoice(selected)) catalogSearchRef.current?.focus();
+  }, [selected?.id]);
+
+  useEffect(() => {
+    const invoiceId = selected?.id ?? null;
+    const lineIds = new Set(activeLines(selected).map((line) => line.id));
+    const prev = rxLineWatchRef.current;
+    const switchedRealInvoice =
+      prev.invoiceId != null &&
+      invoiceId != null &&
+      prev.invoiceId !== invoiceId &&
+      prev.invoiceId !== DRAFT_INVOICE_ID &&
+      invoiceId !== DRAFT_INVOICE_ID;
+    const added =
+      prev.invoiceId == null
+        ? []
+        : switchedRealInvoice
+          ? []
+          : [...lineIds].filter((id) => !prev.lineIds.has(id));
+    rxLineWatchRef.current = { invoiceId, lineIds };
+    if (!added.length) return;
+    const addedRx = activeLines(selected).filter(
+      (line) => added.includes(line.id) && isPrescriptionLine(line),
+    );
+    if (!addedRx.length) return;
+    setRxRowOpenIds((prevOpen) => {
+      const next = { ...prevOpen };
+      for (const line of addedRx) next[line.id] = true;
+      return next;
+    });
   }, [selected]);
 
   useEffect(() => {
@@ -922,7 +1213,7 @@ export default function ClientFinancialWorkspace({
   };
 
   const ledger = useMemo((): LedgerRow[] => {
-    const scoutRows: LedgerRow[] = scoutInvoices.map((inv) => {
+    const scoutRows: LedgerRow[] = scoutInvoices.filter((inv) => !isEmptyOpenInvoice(inv)).map((inv) => {
       const deleted = inv.isDeleted === true;
       const actorNote = deleted
         ? inv.deletedByEmployeeId != null
@@ -1109,6 +1400,10 @@ export default function ClientFinancialWorkspace({
   }
 
   async function startInvoiceEmail() {
+    if (isUnsavedInvoice(selected)) {
+      setError('Add a line before emailing this invoice.');
+      return;
+    }
     const scout = selected && selected.isDeleted !== true && selected.status !== 'void' ? selected : null;
     const evet = evetSelected && evetSelected.raw.isDeleted !== true ? evetSelected : null;
     if (!scout && !evet) {
@@ -1166,7 +1461,9 @@ export default function ClientFinancialWorkspace({
                 l.originalPrice != null ? l.originalPrice * (Number(l.qty) || 1) : null,
             }))
           : (scout!.lines ?? [])
-              .filter((l) => l.isDeleted !== true)
+              // Charges the catalog marks hidden stay off the client's copy. The
+              // money is still in the totals — only the line is withheld.
+              .filter((l) => l.isDeleted !== true && l.hideOnInvoice !== true)
               .map((l) => ({
                 description: l.description,
                 pet: petName(l.patientId, l.patientName),
@@ -1339,11 +1636,63 @@ export default function ClientFinancialWorkspace({
   const pendingDeleteSet = useMemo(() => new Set(pendingDeleteIds), [pendingDeleteIds]);
   const displayLines = lines.filter((l) => !pendingDeleteSet.has(l.id));
   const visibleLines = displayLines.filter((l) => !isImportAdjustment(l));
+  const shippingIdSet = useMemo(() => new Set(shippingTypeIds), [shippingTypeIds]);
+  const lineGroups = useMemo(
+    () =>
+      attachShippingLines(
+        visibleLines,
+        (line) => isInvoiceShippingLine(line, shippingIdSet),
+        (line) => isPrescriptionLine(line)
+      ),
+    [visibleLines, shippingIdSet]
+  );
   const hasUnsavedDeletes = pendingDeleteIds.length > 0;
-  const draftOf = (line: VisitInvoiceLine): SigDraft => sigDrafts[line.id] ?? defaultSigDraft(line);
+  const hasShippedMail = useMemo(
+    () =>
+      Boolean(
+        selected &&
+          (selected.lines ?? []).some((row) => {
+            if (row.isDeleted) return false;
+            const match = matchingMailOrderForLine(mailOrders, selected.id, row);
+            return Boolean(match && isMailOrderShipped(match));
+          })
+      ),
+    [selected, mailOrders]
+  );
+  /**
+   * Mail order picks its own branch and fill location when it packs the order, so
+   * a line on the mail queue must not also claim stock from whatever the counter
+   * happens to default to — that would decrement the wrong shelf.
+   */
+  const mailOrderForLine = useCallback(
+    (line: VisitInvoiceLine): MailOrder | null =>
+      selected ? matchingMailOrderForLine(mailOrders, selected.id, line) : null,
+    [selected, mailOrders]
+  );
+  /** Only lines we hand over in person still need somewhere to decrement from. */
+  const needsLocalFill = useMemo(
+    () =>
+      visibleLines.some(
+        (line) =>
+          !isInvoiceShippingLine(line, shippingIdSet) && !mailOrderForLine(line)
+      ),
+    [visibleLines, shippingIdSet, mailOrderForLine]
+  );
+  const invoicePrescribedDate = toDateInput(selected?.created ?? selected?.paidAt) || dateForInput(new Date());
+  const draftOf = (line: VisitInvoiceLine): SigDraft =>
+    sigDrafts[line.id] ?? defaultSigDraft(line, invoicePrescribedDate);
+  const patchSigDraft = (line: VisitInvoiceLine, patch: Partial<SigDraft>) => {
+    setSigDrafts((prev) => ({
+      ...prev,
+      [line.id]: { ...(prev[line.id] ?? defaultSigDraft(line, invoicePrescribedDate)), ...patch },
+    }));
+    if (line.rxApprovedAt) {
+      setSigNeedsReapprove((prev) => (prev[line.id] ? prev : { ...prev, [line.id]: true }));
+    }
+  };
   const lineSigDirty = (line: VisitInvoiceLine): boolean => {
     const d = draftOf(line);
-    return d.instructions.trim() !== savedDirections(line) || d.refillCount.trim() !== savedRefills(line);
+    return d.instructions.trim() !== savedDirections(line);
   };
   const previewSubtotal = displayLines
     .filter((l) => !l.isCovered)
@@ -1363,13 +1712,32 @@ export default function ClientFinancialWorkspace({
   const hasDirtySigs = dirtySigLines.length > 0;
   const selectedPayType =
     paymentTypes.find((r) => r.name === tenderPaymentType) ?? null;
+  const rxBlocksPay = Boolean(
+    selected &&
+      visibleLines.some((line) => {
+        if (!isPrescriptionLine(line)) return false;
+        return !(Boolean(line.rxApprovedAt) && !lineSigDirty(line) && !sigNeedsReapprove[line.id]);
+      }),
+  );
+  const lotBlocksPay = Boolean(
+    selected &&
+      visibleLines.some((line) => {
+        if (!line.trackLots) return false;
+        if (mailOrderForLine(line)) return false;
+        return line.inventoryLotBalanceId == null;
+      })
+  );
   const canPay =
     selected &&
     !invoiceGone &&
     selected.status !== 'void' &&
     remaining > 0 &&
     !hasUnsavedDeletes &&
-    (selected.status !== 'open' || selected.inventoryBranchId != null);
+    !rxBlocksPay &&
+    !lotBlocksPay &&
+    (selected.status !== 'open' ||
+      !needsLocalFill ||
+      (selected.inventoryBranchId != null && selected.inventoryLocationId != null));
   const canReturn =
     selected &&
     !invoiceGone &&
@@ -1419,7 +1787,9 @@ export default function ClientFinancialWorkspace({
         setError('Provider is required before adding invoice line items.');
         return;
       }
-      const next = await addCounterInvoiceLine(invoice.id, {
+      const persisted = isUnsavedInvoice(invoice) ? await persistDraftIfNeeded() : invoice;
+      if (!persisted) return;
+      const next = await addCounterInvoiceLine(persisted.id, {
         description: refill.name,
         qty: refill.qty > 0 ? refill.qty : 1,
         unitPrice: refill.unitPrice ?? undefined,
@@ -1438,30 +1808,48 @@ export default function ClientFinancialWorkspace({
     }
   }
 
-  async function startNewInvoice() {
+  async function persistDraftIfNeeded(): Promise<VisitInvoice | null> {
+    if (!selected) return null;
+    if (!isUnsavedInvoice(selected)) return selected;
+    const next = await ensureCounterInvoice({
+      clientId,
+      patientId: initialPatientId ?? linePatientId ?? selected.patientId,
+      appointmentId: initialAppointmentId ?? selected.appointmentId,
+    });
+    const patch: {
+      inventoryBranchId?: number | null;
+      inventoryLocationId?: number | null;
+    } = {};
+    if (selected.inventoryBranchId != null) patch.inventoryBranchId = selected.inventoryBranchId;
+    if (selected.inventoryLocationId != null) {
+      patch.inventoryLocationId = selected.inventoryLocationId;
+    }
+    const saved = Object.keys(patch).length ? await patchVisitInvoice(next.id, patch) : next;
+    setSelected(saved);
+    onSelectInvoice?.(saved.id);
+    return saved;
+  }
+
+  function startNewInvoice() {
     if (hasDirtySigs) {
       void appAlert({ title: 'Directions not saved', message: INVOICE_DIRECTIONS_LEAVE_MESSAGE });
       return;
     }
-    setBusy(true);
     setError(null);
+    setNote(null);
     setEvetSelected(null);
     setReturning(false);
     setEditing(false);
-    try {
-      const next = await ensureCounterInvoice({
+    setQuery('');
+    setHits([]);
+    setSelected(
+      emptyDraftInvoice({
         clientId,
         patientId: initialPatientId ?? linePatientId,
         appointmentId: initialAppointmentId,
-      });
-      setSelected(next);
-      onSelectInvoice?.(next.id);
-      await refreshList(next.id);
-    } catch (e: unknown) {
-      setError(apiErr(e));
-    } finally {
-      setBusy(false);
-    }
+      }),
+    );
+    onSelectInvoice?.('new');
   }
 
   async function addItem(item: SearchableItem) {
@@ -1501,21 +1889,40 @@ export default function ClientFinancialWorkspace({
         setError('Provider is required before adding invoice line items.');
         return;
       }
-      const next = await addCounterInvoiceLine(selected.id, {
-        description: item.name,
-        qty: 1,
-        unitPrice: priced.unitFinal,
-        isCovered: priced.isCovered,
-        catalogItemId: Number.isFinite(catalogId) ? catalogId : null,
-        catalogItemType: item.itemType || null,
-        listUnitPrice: listUnit > priced.unitFinal + 0.009 ? listUnit : null,
-        patientId: linePatientId,
-        providerEmployeeId,
-      });
-      setSelected(next);
-      setQuery('');
-      setHits([]);
-      await refreshList(next.id);
+      const wasDraft = isUnsavedInvoice(selected);
+      const invoice = await persistDraftIfNeeded();
+      if (!invoice) return;
+      try {
+        const next = await addCounterInvoiceLine(invoice.id, {
+          description: item.name,
+          qty: 1,
+          unitPrice: priced.unitFinal,
+          isCovered: priced.isCovered,
+          catalogItemId: Number.isFinite(catalogId) ? catalogId : null,
+          catalogItemType: item.itemType || null,
+          listUnitPrice: listUnit > priced.unitFinal + 0.009 ? listUnit : null,
+          patientId: linePatientId,
+          providerEmployeeId,
+        });
+        setSelected(next);
+        setQuery('');
+        setHits([]);
+        await refreshList(next.id);
+      } catch (err) {
+        if (wasDraft && activeLines(invoice).length === 0) {
+          try {
+            await discardVisitInvoice(invoice.id, { deletedByEmployeeId: cashierEmployeeId });
+          } catch {
+            /* keep the draft open */
+          }
+          setSelected({
+            ...selected,
+            id: DRAFT_INVOICE_ID,
+          });
+          onSelectInvoice?.('new');
+        }
+        throw err;
+      }
     } catch (e: unknown) {
       setError(apiErr(e));
     } finally {
@@ -1523,12 +1930,89 @@ export default function ClientFinancialWorkspace({
     }
   }
 
-  async function patchLine(line: VisitInvoiceLine, body: Parameters<typeof updateCounterInvoiceLine>[2]) {
-    if (!selected) return;
+  /** Returns false when the edit was refused, so callers can put the field back. */
+  async function patchLine(
+    line: VisitInvoiceLine,
+    body: Parameters<typeof updateCounterInvoiceLine>[2]
+  ): Promise<boolean> {
+    if (!selected) return false;
     setBusy(true);
     setError(null);
     try {
       const next = await updateCounterInvoiceLine(selected.id, line.id, body);
+      setSelected(next);
+      await refreshList(next.id);
+      return true;
+    } catch (e: unknown) {
+      setError(apiErr(e));
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function invoiceLabelSource(line: VisitInvoiceLine): SendRxLabelSource {
+    const draft = draftOf(line);
+    return {
+      patientId: line.patientId,
+      patientName: petName(line.patientId, line.patientName),
+      ownerName: clientName,
+      veterinarianName: providerLabel(
+        staffById.get(line.providerEmployeeId ?? -1),
+        line.providerEmployeeId
+      ),
+      veterinarianLicense: staffLicense(staffById.get(line.providerEmployeeId ?? -1)),
+      providerEmployeeId: line.providerEmployeeId,
+      quantity: line.qty,
+      name: line.description,
+      instructions: draft.instructions,
+      refill: draft.refillCount,
+      refillExpiration: draft.refillExpiration,
+      startDate: invoicePrescribedDate,
+      discardAfter: draft.discardAfter,
+      acuity: draft.acuity,
+      onSavePrescription: async (value) => {
+        if (canEdit) await persistDirections([line]);
+        const rxNumber = await ensurePrintRxNumber({
+          patientId: line.patientId,
+          name: value.name,
+          inventoryItemId: line.catalogItemId,
+          instructions: value.instructions,
+          refill: value.refill,
+          startDate: value.startDate,
+          refillExpiration: value.refillExpiration,
+          acuity: value.acuity,
+        });
+        return { rxNumber };
+      },
+    };
+  }
+
+  async function approveScript(line: VisitInvoiceLine) {
+    if (!selected) return;
+    const d = draftOf(line);
+    const missing = approveScriptMissing(line, d, selected);
+    if (missing) {
+      setError(missing);
+      setRxRowOpenIds((prev) => ({ ...prev, [line.id]: true }));
+      return;
+    }
+    const refillCount = Number(d.refillCount.trim());
+    setBusy(true);
+    setError(null);
+    try {
+      const next = await updateCounterInvoiceLine(selected.id, line.id, {
+        instructions: d.instructions.trim(),
+        refillCount,
+        rxApproved: true,
+      });
+      setSigDrafts((prev) => ({ ...prev, [line.id]: d }));
+      setSigNeedsReapprove((prev) => {
+        if (!prev[line.id]) return prev;
+        const copy = { ...prev };
+        delete copy[line.id];
+        return copy;
+      });
       setSelected(next);
       await refreshList(next.id);
     } catch (e: unknown) {
@@ -1546,20 +2030,25 @@ export default function ClientFinancialWorkspace({
       let next = selected;
       for (const line of rows) {
         const d = draftOf(line);
-        const refillRaw = d.refillCount.trim();
-        const refillCount = refillRaw === '' ? null : Number(refillRaw);
-        if (refillCount != null && (!Number.isFinite(refillCount) || refillCount < 0)) {
-          setError('Refills must be a whole number.');
+        const missing = saveScriptMissing(d);
+        if (missing) {
+          setError(missing);
+          setRxRowOpenIds((prev) => ({ ...prev, [line.id]: true }));
           return;
         }
         next = await updateCounterInvoiceLine(next.id, line.id, {
           instructions: d.instructions.trim() || null,
-          refillCount,
         });
       }
       setSigDrafts((prev) => {
         const copy = { ...prev };
-        for (const line of rows) delete copy[line.id];
+        for (const line of rows) {
+          const kept = copy[line.id] ?? draftOf(line);
+          copy[line.id] = {
+            ...kept,
+            instructions: kept.instructions.trim(),
+          };
+        }
         return copy;
       });
       setSelected(next);
@@ -1571,8 +2060,19 @@ export default function ClientFinancialWorkspace({
     }
   }
 
+  const shippedMailForLine = (line: VisitInvoiceLine): MailOrder | null => {
+    if (!selected) return null;
+    const match = matchingMailOrderForLine(mailOrders, selected.id, line);
+    return match && isMailOrderShipped(match) ? match : null;
+  };
+
   async function removeLine(line: VisitInvoiceLine) {
     if (!selected) return;
+    const shipped = shippedMailForLine(line);
+    if (shipped) {
+      setError(shippedMailMessage(shipped));
+      return;
+    }
     const stageOnly = selected.status !== 'open';
     if (stageOnly) {
       setPendingDeleteIds((prev) => (prev.includes(line.id) ? prev : [...prev, line.id]));
@@ -1582,7 +2082,13 @@ export default function ClientFinancialWorkspace({
     setBusy(true);
     setError(null);
     try {
-      const next = await removeCounterInvoiceLine(selected.id, line.id);
+      const shippingIds = await cancelMailOrdersForInvoiceLines(selected.id, [line]);
+      let next = selected;
+      for (const shippingId of shippingIds) {
+        if (shippingId === line.id) continue;
+        next = await removeCounterInvoiceLine(next.id, shippingId).catch(() => next);
+      }
+      next = await removeCounterInvoiceLine(next.id, line.id);
       setSigDrafts((prev) => {
         if (!(line.id in prev)) return prev;
         const copy = { ...prev };
@@ -1608,11 +2114,24 @@ export default function ClientFinancialWorkspace({
     if (!selected) return;
     const locked = selected.status === 'paid' || selected.status === 'finalized';
     if (!pendingDeleteIds.length && !locked) return;
+    const pendingLines = (selected.lines ?? []).filter((row) =>
+      pendingDeleteIds.includes(row.id)
+    );
+    const shippedPending = pendingLines.map((row) => shippedMailForLine(row)).find(Boolean);
+    if (shippedPending) {
+      setError(shippedMailMessage(shippedPending));
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
       let next = selected;
       if (locked) next = await unlockVisitInvoice(next.id);
+      const shippingIds = await cancelMailOrdersForInvoiceLines(next.id, pendingLines);
+      for (const shippingId of shippingIds) {
+        if (pendingDeleteIds.includes(shippingId)) continue;
+        next = await removeCounterInvoiceLine(next.id, shippingId).catch(() => next);
+      }
       for (const lineId of pendingDeleteIds) {
         next = await removeCounterInvoiceLine(next.id, lineId);
       }
@@ -1630,6 +2149,10 @@ export default function ClientFinancialWorkspace({
 
   async function takeTender() {
     if (!selected) return;
+    if (rxBlocksPay) {
+      setError('Approve each prescription before taking payment.');
+      return;
+    }
     const typedAmount = tenderAmount.trim() === '' ? null : Number(tenderAmount);
     let amount = typedAmount != null && Number.isFinite(typedAmount) ? typedAmount : remaining;
     if (!Number.isFinite(amount) || amount <= 0) {
@@ -1691,6 +2214,10 @@ export default function ClientFinancialWorkspace({
 
   async function takeSavedCard() {
     if (!selected) return;
+    if (rxBlocksPay) {
+      setError('Approve each prescription before taking payment.');
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -1707,6 +2234,10 @@ export default function ClientFinancialWorkspace({
 
   async function sendToTerminal() {
     if (!selected) return;
+    if (rxBlocksPay) {
+      setError('Approve each prescription before taking payment.');
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -1846,6 +2377,22 @@ export default function ClientFinancialWorkspace({
 
   async function discardSelected() {
     if (!selected) return;
+    if (isUnsavedInvoice(selected)) {
+      setSelected(null);
+      onSelectInvoice?.(null);
+      setQuery('');
+      setHits([]);
+      setNote(null);
+      return;
+    }
+    const shipped = (selected.lines ?? [])
+      .filter((row) => !row.isDeleted)
+      .map((row) => shippedMailForLine(row))
+      .find(Boolean);
+    if (shipped) {
+      setError(shippedMailMessage(shipped));
+      return;
+    }
     const label = invoicePublicLabel(selected);
     const ok = await appConfirm({
       title: 'Delete invoice?',
@@ -1858,6 +2405,10 @@ export default function ClientFinancialWorkspace({
     setError(null);
     try {
       const removedId = selected.id;
+      await cancelMailOrdersForInvoiceLines(
+        removedId,
+        (selected.lines ?? []).filter((row) => !row.isDeleted)
+      );
       await discardVisitInvoice(removedId, { deletedByEmployeeId: cashierEmployeeId });
       setSelected(null);
       onSelectInvoice?.(null);
@@ -1965,7 +2516,7 @@ export default function ClientFinancialWorkspace({
                 </span>
               </div>
             </div>
-            <button type="button" className="client-fin__btn" onClick={() => void startNewInvoice()} disabled={busy}>
+            <button type="button" className="client-fin__btn" onClick={() => startNewInvoice()} disabled={busy}>
               New invoice
             </button>
           </div>
@@ -2425,10 +2976,17 @@ export default function ClientFinancialWorkspace({
                     <button
                       type="button"
                       className="client-fin__btn"
-                      disabled={busy}
+                      disabled={
+                        busy || dirtySigLines.some((line) => Boolean(saveScriptMissing(draftOf(line))))
+                      }
+                      title={
+                        dirtySigLines
+                          .map((line) => saveScriptMissing(draftOf(line)))
+                          .find(Boolean) || undefined
+                      }
                       onClick={() => void persistDirections(dirtySigLines)}
                     >
-                      Save directions
+                      Save sig
                     </button>
                   ) : null}
                   {hasUnsavedEdits ? (
@@ -2445,24 +3003,19 @@ export default function ClientFinancialWorkspace({
                     <button
                       type="button"
                       className="client-fin__btn-ghost client-fin__btn-danger"
-                      disabled={busy}
+                      disabled={busy || hasShippedMail}
+                      title={
+                        hasShippedMail
+                          ? 'An item on this invoice has already shipped. Return it instead of deleting the invoice.'
+                          : undefined
+                      }
                       onClick={() => void discardSelected()}
                     >
-                      Delete invoice
+                      {isUnsavedInvoice(selected) ? 'Cancel' : 'Delete invoice'}
                     </button>
                   ) : null}
                   <button type="button" className="client-fin__btn-ghost" onClick={() => window.print()}>
                     Print
-                  </button>
-                  <button
-                    type="button"
-                    className="client-fin__btn-ghost"
-                    disabled={busy}
-                    onClick={() => void startInvoiceEmail()}
-                  >
-                    {remaining <= 0.009 && (Number(selected.amountPaid) || 0) > 0.009
-                      ? 'Email receipt'
-                      : 'Email invoice'}
                   </button>
                 </div>
               </div>
@@ -2485,28 +3038,52 @@ export default function ClientFinancialWorkspace({
 
               {canEdit ? (
                 <>
-                  <label className="client-fin__field">
-                    Charge to
-                    <select
-                      value={linePatientId ?? ''}
-                      onChange={(e) => setLinePatientId(e.target.value ? Number(e.target.value) : null)}
-                    >
-                      <option value="">Household</option>
-                      {allPets.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <div className="client-fin__search">
-                    <Search size={16} aria-hidden />
-                    <input
-                      value={query}
-                      onChange={(e) => setQuery(e.target.value)}
-                      placeholder="Search catalog to add a line"
-                    />
-                    {searching ? <span className="client-fin__muted">Searching…</span> : null}
+                  <div className="client-fin__add-bar">
+                    <div className="client-fin__charge-to">
+                      <label className="client-fin__field">
+                        Charge to
+                        <select
+                          value={linePatientId ?? ''}
+                          onChange={(e) => setLinePatientId(e.target.value ? Number(e.target.value) : null)}
+                        >
+                          <option value="">Household</option>
+                          {chargePets.map((p) => (
+                            <option key={p.id} value={p.id}>
+                              {p.name}
+                              {p.isActive === false ? ' (inactive)' : ''}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="client-fin__use-inactive">
+                        <input
+                          type="checkbox"
+                          checked={useInactivePets}
+                          onChange={(e) => {
+                            const on = e.target.checked;
+                            setUseInactivePets(on);
+                            if (!on && linePatientId != null) {
+                              const cur = allPets.find((p) => p.id === linePatientId);
+                              if (cur && !isFinancialPetActive(cur)) {
+                                setLinePatientId(defaultChargePatientId(allPets));
+                              }
+                            }
+                          }}
+                        />
+                        Use inactive
+                      </label>
+                    </div>
+                    <div className="client-fin__search client-fin__search--add">
+                      <Search size={16} aria-hidden />
+                      <input
+                        ref={catalogSearchRef}
+                        autoFocus={isUnsavedInvoice(selected)}
+                        value={query}
+                        onChange={(e) => setQuery(e.target.value)}
+                        placeholder="Type here to add a charge"
+                      />
+                      {searching ? <span className="client-fin__muted">Searching…</span> : null}
+                    </div>
                   </div>
                   {hits.length ? (
                     <ul className="client-fin__hits">
@@ -2558,13 +3135,197 @@ export default function ClientFinancialWorkspace({
                       </tr>
                     </thead>
                     <tbody>
-                      {visibleLines.map((line) => {
-                        const directions = draftOf(line).instructions;
-                        const refills = draftOf(line).refillCount;
-                        const showMeta =
-                          isPrescriptionLine(line) &&
-                          (canEdit || Boolean(lineDirections(line)) || lineRefills(line) !== '');
+                      {[...lineGroups.parents, ...lineGroups.leftover].map((line) => {
+                        const draft = draftOf(line);
+                        const directions = draft.instructions;
+                        const refills = draft.refillCount;
+                        const refillEntered = refills.trim() !== '';
+                        const refillCount = refillEntered ? Number(refills) : NaN;
+                        const showMeta = isPrescriptionLine(line);
+                        const attachedShipping = lineGroups.attached.get(line.id) ?? [];
                         const dirty = canEdit && lineSigDirty(line);
+                        const needsReapprove = Boolean(sigNeedsReapprove[line.id]);
+                        const mailedLineOrder = mailOrderForLine(line);
+                        const approveMissing = approveScriptMissing(
+                          line,
+                          draft,
+                          selected,
+                          Boolean(mailedLineOrder)
+                        );
+                        const rxOpen = Boolean(rxRowOpenIds[line.id]);
+                        const toggleRxRow = () => {
+                          setRxRowOpenIds((prev) => {
+                            if (prev[line.id]) {
+                              const next = { ...prev };
+                              delete next[line.id];
+                              return next;
+                            }
+                            return { ...prev, [line.id]: true };
+                          });
+                        };
+                        const scriptReady = Boolean(directions.trim());
+                        const scriptApproved =
+                          Boolean(line.rxApprovedAt) && !dirty && !needsReapprove;
+                        const noProviderLine = lineExcludesFromProduction(
+                          line,
+                          shippingIdSet
+                        );
+                        const lotReady =
+                          !line.trackLots ||
+                          Boolean(mailedLineOrder) ||
+                          line.inventoryLotBalanceId != null;
+                        const lineReady = showMeta
+                          ? scriptApproved && !approveMissing && lotReady
+                          : (noProviderLine || line.providerEmployeeId != null) && lotReady;
+                        const shippedMail = shippedMailForLine(line);
+                        // No branch check here: mail order decides where it fills from,
+                        // so requiring one before you can mail is backwards.
+                        const mailBlockedReason = !showMeta
+                          ? null
+                          : !scriptApproved
+                            ? approveMissing || 'Approve the script first'
+                            : null;
+                        const rxPrintButton = (
+                          <>
+                            <SendRxLabelButton
+                              className="client-fin__dymo"
+                              direct
+                              disabled={!scriptApproved}
+                              source={invoiceLabelSource(line)}
+                              onError={(message) => {
+                                setError(
+                                  message ||
+                                    (!scriptApproved ? 'Approve the script before sending a label.' : null)
+                                );
+                                if (message) {
+                                  setRxRowOpenIds((prev) => ({ ...prev, [line.id]: true }));
+                                }
+                              }}
+                              onSuccess={() => {
+                                setError(null);
+                                setPrintedLineId(line.id);
+                              }}
+                            />
+                            {printedLineId === line.id ? (
+                              <span className="client-fin__entered">Sent to DYMO</span>
+                            ) : null}
+                          </>
+                        );
+                        const mailCheckbox = selected ? (
+                          <MailInvoiceLineCheckbox
+                            invoiceId={selected.id}
+                            line={line}
+                            clientId={clientId}
+                            clientName={clientName}
+                            patientId={line.patientId ?? selected.patientId ?? initialPatientId}
+                            patientName={petName(line.patientId, line.patientName)}
+                            paymentStatus={invoiceMailPaymentStatus(selected)}
+                            doctorEmployeeId={line.providerEmployeeId ?? null}
+                            blockedReason={mailBlockedReason}
+                            disabled={busy || invoiceGone}
+                            onError={(message) => setError(message)}
+                            onChargeShipping={async (result) => {
+                              if (!selected) return null;
+                              const currentQty = Number(line.qty) || 1;
+                              const mailQty = Math.min(
+                                currentQty,
+                                Math.max(1, Number(result.mailQty) || currentQty)
+                              );
+                              let mailedLine = line;
+                              let invoice = selected;
+                              if (mailQty < currentQty - 0.0001 && !line.orderId) {
+                                const keepQty =
+                                  Math.round((currentQty - mailQty) * 1000) / 1000;
+                                const refillRaw = draft.refillCount.trim();
+                                const refillSaved =
+                                  refillRaw === '' ? line.refillCount ?? null : Number(refillRaw);
+                                // The client committed to the full quantity, so both
+                                // halves keep the tier rate that quantity earned.
+                                // Splitting for fulfillment is our concern, not a
+                                // reason to charge them the smaller-quantity price.
+                                invoice = await updateCounterInvoiceLine(invoice.id, line.id, {
+                                  qty: keepQty,
+                                });
+                                invoice = await addCounterInvoiceLine(invoice.id, {
+                                  description: line.description,
+                                  qty: mailQty,
+                                  unitPrice: Number(line.unitPrice) || 0,
+                                  catalogItemId: line.catalogItemId ?? null,
+                                  catalogItemType: line.catalogItemType ?? 'inventory',
+                                  patientId: line.patientId ?? selected.patientId ?? null,
+                                  providerEmployeeId: line.providerEmployeeId,
+                                  instructions: draft.instructions.trim() || line.instructions || null,
+                                  refillCount:
+                                    refillSaved != null && Number.isFinite(Number(refillSaved))
+                                      ? Number(refillSaved)
+                                      : null,
+                                  rxApproved: scriptApproved,
+                                  isCovered: line.isCovered,
+                                  listUnitPrice: line.listUnitPrice ?? null,
+                                });
+                                const created = (invoice.lines ?? []).filter(
+                                  (row) =>
+                                    !row.isDeleted &&
+                                    row.id !== line.id &&
+                                    row.catalogItemId === line.catalogItemId &&
+                                    Math.abs(Number(row.qty) - mailQty) < 0.009
+                                );
+                                mailedLine = created[created.length - 1] ?? line;
+                                setSigDrafts((prev) => ({ ...prev, [mailedLine.id]: draft }));
+                                setRxRowOpenIds((prev) => ({ ...prev, [mailedLine.id]: true }));
+                              }
+                              invoice = await addCounterInvoiceLine(invoice.id, {
+                                description: result.shippingChargeName,
+                                qty: 1,
+                                unitPrice: result.shipping,
+                                catalogItemId: result.type.catalogItemId ?? null,
+                                catalogItemType: result.type.catalogItemType ?? 'procedure',
+                                patientId: mailedLine.patientId ?? selected.patientId ?? null,
+                                miscCharge: true,
+                              });
+                              setSelected(invoice);
+                              await refreshList(invoice.id);
+                              const matches = (invoice.lines ?? []).filter(
+                                (row) =>
+                                  !row.isDeleted &&
+                                  row.description === result.shippingChargeName &&
+                                  Math.abs(Number(row.unitPrice) - result.shipping) < 0.009
+                              );
+                              return {
+                                shippingLineId: matches[matches.length - 1]?.id ?? null,
+                                line: mailedLine,
+                              };
+                            }}
+                            onRemoveShipping={async (shippingLineId) => {
+                              if (!selected) return;
+                              const next = await removeCounterInvoiceLine(selected.id, shippingLineId);
+                              setSelected(next);
+                              await refreshList(next.id);
+                            }}
+                          />
+                        ) : null;
+                        const approveButton =
+                          showMeta && canEdit && !scriptApproved ? (
+                            <button
+                              type="button"
+                              className="client-fin__btn client-fin__btn-approve"
+                              disabled={busy || Boolean(approveMissing)}
+                              title={approveMissing || (dirty || needsReapprove ? 'Saves the sig and approves the script' : 'Approve this script')}
+                              onClick={() => {
+                                setRxRowOpenIds((prev) => ({ ...prev, [line.id]: true }));
+                                void approveScript(line);
+                              }}
+                            >
+                              Approve
+                            </button>
+                          ) : showMeta && scriptApproved ? (
+                            <span className="client-fin__entered">
+                              Approved
+                              {line.rxApprovedByName
+                                ? ` by ${staffShortName(undefined, line.rxApprovedByName)}`
+                                : ''}
+                            </span>
+                          ) : null;
                         const lineEnteredBy = staffShortName(
                           line.enteredByEmployeeId != null
                             ? staffById.get(line.enteredByEmployeeId)
@@ -2581,12 +3342,62 @@ export default function ClientFinancialWorkspace({
                         );
                         return (
                         <Fragment key={line.id}>
-                        <tr>
+                        <tr className={lineReady ? 'client-fin__line--ready' : 'client-fin__line--pending'}>
                           <td className="client-fin__col-item">
-                            <div className="client-fin__item-name">{line.description}</div>
+                            {showMeta ? (
+                              <button
+                                type="button"
+                                className="client-fin__item-toggle"
+                                aria-expanded={rxOpen}
+                                onClick={toggleRxRow}
+                              >
+                                {rxOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                                <span className="client-fin__item-name">{line.description}</span>
+                                {lineReady ? (
+                                  <Check className="client-fin__line-check" size={14} aria-label="All set" />
+                                ) : null}
+                              </button>
+                            ) : (
+                              <div className="client-fin__item-name">
+                                {line.description}
+                                {lineReady ? (
+                                  <Check className="client-fin__line-check" size={14} aria-label="All set" />
+                                ) : null}
+                              </div>
+                            )}
                             {lineEnteredBy ? (
                               <div className="client-fin__item-by">{lineEnteredBy}</div>
                             ) : null}
+                            {line.hideOnInvoice ? (
+                              <div
+                                className="client-fin__item-hidden"
+                                title="This catalog item has Show on Invoice turned off. Staff see the charge; it is left off the invoice the client receives."
+                              >
+                                Not shown on client invoice
+                              </div>
+                            ) : null}
+                            {line.trackLots && !mailedLineOrder ? (
+                              <StockLotPicker
+                                practiceId={VISIT_WORKFLOW_PRACTICE_ID}
+                                inventoryItemId={line.stockInventoryItemId ?? line.catalogItemId ?? null}
+                                branchId={selected?.inventoryBranchId ?? null}
+                                locationId={selected?.inventoryLocationId ?? null}
+                                disabled={!canEdit || busy}
+                                selectedLotId={line.inventoryLotBalanceId ?? null}
+                                lotNumber={line.lotNumber ?? ''}
+                                onChange={(pick) => {
+                                  void patchLine(line, {
+                                    inventoryLotBalanceId: pick.lotId,
+                                    lotNumber: pick.lotNumber || null,
+                                  });
+                                }}
+                              />
+                            ) : line.trackLots && mailedLineOrder ? (
+                              <p className="client-fin__fulfill-note">
+                                Mail order will ask which lot to decrement when this is filled.
+                              </p>
+                            ) : null}
+                            {isPrescriptionLine(line) && !showMeta ? rxPrintButton : null}
                           </td>
                           <td className="client-fin__col-pet">
                             {canEdit ? (
@@ -2596,17 +3407,22 @@ export default function ClientFinancialWorkspace({
                                   const patientId = e.target.value ? Number(e.target.value) : null;
                                   void patchLine(line, {
                                     patientId,
-                                    providerEmployeeId:
-                                      requiredProviderIdFor(patientId) ??
-                                      line.providerEmployeeId ??
-                                      null,
+                                    ...(noProviderLine
+                                      ? {}
+                                      : {
+                                          providerEmployeeId:
+                                            requiredProviderIdFor(patientId) ??
+                                            line.providerEmployeeId ??
+                                            null,
+                                        }),
                                   });
                                 }}
                               >
                                 <option value="">—</option>
-                                {allPets.map((p) => (
+                                {petsForChargeSelect(allPets, useInactivePets, line.patientId).map((p) => (
                                   <option key={p.id} value={p.id}>
                                     {p.name}
+                                    {p.isActive === false ? ' (inactive)' : ''}
                                   </option>
                                 ))}
                               </select>
@@ -2615,7 +3431,9 @@ export default function ClientFinancialWorkspace({
                             )}
                           </td>
                           <td className="client-fin__col-provider">
-                            {canEdit ? (
+                            {noProviderLine ? (
+                              '—'
+                            ) : canEdit ? (
                               <select
                                 required
                                 value={line.providerEmployeeId ?? ''}
@@ -2654,6 +3472,11 @@ export default function ClientFinancialWorkspace({
                           <td className="client-fin__col-qty client-fin__num">
                             {canEdit ? (
                               <input
+                                // Uncontrolled, so React only reads defaultValue on
+                                // mount. Splitting a line changes qty behind the
+                                // input's back; keying on it forces the remount that
+                                // shows the new number.
+                                key={`qty-${line.id}-${line.qty}`}
                                 className="client-fin__qty"
                                 inputMode="decimal"
                                 defaultValue={String(line.qty)}
@@ -2675,18 +3498,24 @@ export default function ClientFinancialWorkspace({
                                   $
                                 </span>
                                 <input
+                                  key={`price-${line.id}-${line.unitPrice}`}
                                   className="client-fin__price"
                                   inputMode="decimal"
                                   defaultValue={moneyInput(line.unitPrice)}
                                   onBlur={(e) => {
-                                    const unitPrice = Math.round(Number(e.target.value) * 100) / 100;
+                                    const input = e.currentTarget;
+                                    const unitPrice = Math.round(Number(input.value) * 100) / 100;
                                     if (
                                       Number.isFinite(unitPrice) &&
                                       unitPrice !== Math.round(Number(line.unitPrice) * 100) / 100
                                     ) {
-                                      void patchLine(line, { unitPrice });
+                                      // Catalog items with Allow price change off are
+                                      // refused by the API; show the real price again.
+                                      void patchLine(line, { unitPrice }).then((ok) => {
+                                        if (!ok) input.value = moneyInput(line.unitPrice);
+                                      });
                                     } else {
-                                      e.target.value = moneyInput(line.unitPrice);
+                                      input.value = moneyInput(line.unitPrice);
                                     }
                                   }}
                                 />
@@ -2722,7 +3551,12 @@ export default function ClientFinancialWorkspace({
                               <button
                                 type="button"
                                 className="client-fin__btn-ghost"
-                                disabled={busy}
+                                disabled={busy || Boolean(shippedMail)}
+                                title={
+                                  shippedMail
+                                    ? shippedMailMessage(shippedMail)
+                                    : 'Remove line'
+                                }
                                 onClick={() => removeLine(line)}
                                 aria-label="Remove line"
                               >
@@ -2731,8 +3565,9 @@ export default function ClientFinancialWorkspace({
                             </td>
                           ) : null}
                         </tr>
-                        {showMeta ? (
-                          <tr className="client-fin__line-meta">
+                        {showMeta && rxOpen ? (
+                          <>
+                          <tr className={`client-fin__line-meta ${lineReady ? 'client-fin__line--ready' : 'client-fin__line--pending'}`}>
                             <td colSpan={3}>
                               {canEdit ? (
                                 <label className="client-fin__sig">
@@ -2742,60 +3577,380 @@ export default function ClientFinancialWorkspace({
                                       <button
                                         type="button"
                                         className="client-fin__btn"
-                                        disabled={busy}
+                                        disabled={busy || Boolean(saveScriptMissing(draft))}
+                                        title={saveScriptMissing(draft) || undefined}
                                         onClick={() => void persistDirections([line])}
                                       >
-                                        Save
+                                        Save sig
                                       </button>
                                     ) : sigEnteredBy ? (
                                       <span className="client-fin__entered">Entered by {sigEnteredBy}</span>
                                     ) : null}
+                                    {approveButton}
+                                    {rxPrintButton}
                                   </span>
                                   <textarea
                                     value={directions}
-                                    rows={3}
-                                    onChange={(e) =>
-                                      setSigDrafts((prev) => ({
-                                        ...prev,
-                                        [line.id]: { ...draftOf(line), instructions: e.target.value },
-                                      }))
-                                    }
+                                    rows={4}
+                                    maxLength={directionsMaxLength()}
+                                    onChange={(e) => patchSigDraft(line, { instructions: e.target.value })}
                                   />
+                                  <DirectionsLimitHint value={directions} className="client-fin__sig-limit" />
                                 </label>
-                              ) : lineDirections(line) ? (
+                              ) : (
                                 <div className="client-fin__sig">
                                   <span className="client-fin__sig-label">
                                     Directions (sig)
                                     {sigEnteredBy ? (
                                       <span className="client-fin__entered">Entered by {sigEnteredBy}</span>
                                     ) : null}
+                                    {rxPrintButton}
                                   </span>
-                                  <div>{lineDirections(line)}</div>
+                                  <div>{directions || 'No written directions yet.'}</div>
                                 </div>
-                              ) : null}
+                              )}
                             </td>
                             <td colSpan={returning && canReturn ? 4 : 3}>
-                              {canEdit ? (
-                                <label className="client-fin__refill">
-                                  <span># refills</span>
-                                  <input
-                                    className="client-fin__refill-input"
-                                    inputMode="numeric"
-                                    value={refills}
+                              <div className="client-fin__rx-extras">
+                                <label className="client-fin__rx-field client-fin__refill">
+                                  <span>
+                                    # refills *
+                                    {line.patientId != null ? (
+                                      <BookPatientChartButton
+                                        patientId={String(line.patientId)}
+                                        patientName={petName(line.patientId, line.patientName)}
+                                        practiceId={VISIT_WORKFLOW_PRACTICE_ID}
+                                        practiceTz={PRACTICE_TZ}
+                                        showAlerts
+                                        label="View details"
+                                        className="client-fin__details-link"
+                                        onApplyRefillExpiration={(dateInput) => {
+                                          if (dateIsTodayOrBefore(dateInput)) {
+                                            setError('Refill expiration must be after today.');
+                                            return;
+                                          }
+                                          if (refillExpirationExceedsMax(dateInput)) {
+                                            setError(
+                                              'Refill expiration cannot be more than 1 year from today.'
+                                            );
+                                            patchSigDraft(line, {
+                                              refillExpiration: maxRefillExpirationInput(),
+                                            });
+                                            return;
+                                          }
+                                          setError(null);
+                                          patchSigDraft(line, { refillExpiration: dateInput });
+                                        }}
+                                      />
+                                    ) : null}
+                                  </span>
+                                  {canEdit ? (
+                                    <input
+                                      className="client-fin__refill-input"
+                                      inputMode="numeric"
+                                      placeholder="0 if none"
+                                      value={refills}
+                                      onChange={(e) => {
+                                        const next = e.target.value;
+                                        patchSigDraft(
+                                          line,
+                                          refillCountIsZero(next)
+                                            ? { refillCount: next, refillExpiration: '' }
+                                            : { refillCount: next },
+                                        );
+                                      }}
+                                    />
+                                  ) : (
+                                    <div>{refills === '' ? '—' : refills}</div>
+                                  )}
+                                </label>
+                                {Number.isFinite(refillCount) && refillCount > 0 ? (
+                                  <label className="client-fin__rx-field">
+                                    <span>Refill expiration *</span>
+                                    <input
+                                      type="date"
+                                      min={tomorrowInput()}
+                                      max={maxRefillExpirationInput()}
+                                      value={draft.refillExpiration}
+                                      onChange={(e) => {
+                                        const next = e.target.value;
+                                        if (next && dateIsTodayOrBefore(next)) {
+                                          setError('Refill expiration must be after today.');
+                                          return;
+                                        }
+                                        if (refillExpirationExceedsMax(next)) {
+                                          setError(
+                                            'Refill expiration cannot be more than 1 year from today.'
+                                          );
+                                          patchSigDraft(line, {
+                                            refillExpiration: maxRefillExpirationInput(),
+                                          });
+                                          return;
+                                        }
+                                        setError(null);
+                                        patchSigDraft(line, { refillExpiration: next });
+                                      }}
+                                    />
+                                  </label>
+                                ) : null}
+                                <label className="client-fin__rx-field">
+                                  <span>Acute or chronic *</span>
+                                  <select
+                                    className="client-fin__rx-select"
+                                    aria-label="Acute or chronic prescription"
+                                    value={draft.acuity}
                                     onChange={(e) =>
-                                      setSigDrafts((prev) => ({
-                                        ...prev,
-                                        [line.id]: { ...draftOf(line), refillCount: e.target.value },
-                                      }))
+                                      patchSigDraft(line, {
+                                        acuity: e.target.value as PrescriptionAcuityDraft,
+                                      })
                                     }
+                                  >
+                                    <option value="">Select…</option>
+                                    <option value="acute">Acute</option>
+                                    <option value="chronic">Chronic</option>
+                                  </select>
+                                </label>
+                                <label className="client-fin__rx-field">
+                                  <span>Discard after *</span>
+                                  <input
+                                    type="date"
+                                    min={tomorrowInput()}
+                                    value={draft.discardAfter}
+                                    onChange={(e) => {
+                                      const next = e.target.value;
+                                      if (next && dateIsTodayOrBefore(next)) {
+                                        setError('Discard after must be after today.');
+                                        return;
+                                      }
+                                      setError(null);
+                                      patchSigDraft(line, { discardAfter: next });
+                                    }}
                                   />
                                 </label>
-                              ) : refills !== '' ? (
-                                <div className="client-fin__refill">
-                                  <span># refills</span>
-                                  <div>{refills}</div>
-                                </div>
-                              ) : null}
+                              </div>
+                            </td>
+                            {canRemoveLines ? <td className="client-fin__row-action" /> : null}
+                          </tr>
+                          <tr className={`client-fin__line-fulfill ${lineReady ? 'client-fin__line--ready' : 'client-fin__line--pending'}`}>
+                            <td colSpan={returning && canReturn ? 7 : 6}>
+                              <div className="client-fin__rx-fulfill">
+                                {mailedLineOrder ? (
+                                  <p className="client-fin__fulfill-note">
+                                    Mail order chooses the branch and fill location when
+                                    it packs this order.
+                                  </p>
+                                ) : selected && !invoiceGone && selected.status !== 'void' ? (
+                                  <CheckoutInventoryBranchField
+                                    invoice={selected}
+                                    persist={!isUnsavedInvoice(selected)}
+                                    disabled={busy || selected.status !== 'open'}
+                                    onInvoiceChange={(next) => {
+                                      setSelected(next);
+                                      if (!isUnsavedInvoice(next)) void refreshList(next.id);
+                                    }}
+                                    className="client-fin__fulfill-fields"
+                                    fieldClassName="client-fin__rx-field"
+                                  />
+                                ) : null}
+                              </div>
+                            </td>
+                            {canRemoveLines ? <td className="client-fin__row-action" /> : null}
+                          </tr>
+                          </>
+                        ) : null}
+                        {attachedShipping.map((ship) => {
+                          const shipEnteredBy = staffShortName(
+                            ship.enteredByEmployeeId != null
+                              ? staffById.get(ship.enteredByEmployeeId)
+                              : undefined,
+                            ship.enteredByName
+                          );
+                          const shippedMail = shippedMailForLine(ship);
+                          const shipNoProvider = lineExcludesFromProduction(
+                            ship,
+                            shippingIdSet
+                          );
+                          return (
+                        <tr
+                          key={ship.id}
+                          className={
+                            shipNoProvider || ship.providerEmployeeId != null
+                              ? 'client-fin__line--ready'
+                              : 'client-fin__line--pending'
+                          }
+                        >
+                          <td className="client-fin__col-item">
+                            <div className="client-fin__item-name">{ship.description}</div>
+                            {shipEnteredBy ? (
+                              <div className="client-fin__item-by">{shipEnteredBy}</div>
+                            ) : null}
+                          </td>
+                          <td className="client-fin__col-pet">
+                            {canEdit ? (
+                              <select
+                                value={ship.patientId ?? ''}
+                                onChange={(e) => {
+                                  const patientId = e.target.value ? Number(e.target.value) : null;
+                                  void patchLine(ship, {
+                                    patientId,
+                                    ...(shipNoProvider
+                                      ? {}
+                                      : {
+                                          providerEmployeeId:
+                                            requiredProviderIdFor(patientId) ??
+                                            ship.providerEmployeeId ??
+                                            null,
+                                        }),
+                                  });
+                                }}
+                              >
+                                <option value="">—</option>
+                                {petsForChargeSelect(allPets, useInactivePets, ship.patientId).map((p) => (
+                                  <option key={p.id} value={p.id}>
+                                    {p.name}
+                                    {p.isActive === false ? ' (inactive)' : ''}
+                                  </option>
+                                ))}
+                              </select>
+                            ) : (
+                              petName(ship.patientId, ship.patientName)
+                            )}
+                          </td>
+                          <td className="client-fin__col-provider">
+                            {shipNoProvider ? (
+                              '—'
+                            ) : canEdit ? (
+                              <select
+                                required
+                                value={ship.providerEmployeeId ?? ''}
+                                onChange={(e) => {
+                                  const next = e.target.value ? Number(e.target.value) : null;
+                                  if (next == null) {
+                                    setError('Provider is required on invoice line items.');
+                                    return;
+                                  }
+                                  void patchLine(ship, { providerEmployeeId: next });
+                                }}
+                              >
+                                {ship.providerEmployeeId == null ? (
+                                  <option value="" disabled>
+                                    Select provider…
+                                  </option>
+                                ) : null}
+                                {providerOptions.map((emp) => (
+                                  <option key={String(emp.id)} value={emp.id}>
+                                    {emp.name}
+                                  </option>
+                                ))}
+                                {ship.providerEmployeeId != null &&
+                                !providerOptions.some((e) => Number(e.id) === ship.providerEmployeeId) ? (
+                                  <option value={ship.providerEmployeeId}>
+                                    {staffName(staffById.get(ship.providerEmployeeId), ship.providerEmployeeId)}
+                                  </option>
+                                ) : null}
+                              </select>
+                            ) : ship.providerEmployeeId != null ? (
+                              staffName(staffById.get(ship.providerEmployeeId), ship.providerEmployeeId)
+                            ) : (
+                              ''
+                            )}
+                          </td>
+                          <td className="client-fin__col-qty client-fin__num">
+                            {canEdit ? (
+                              <input
+                                key={`qty-${ship.id}-${ship.qty}`}
+                                className="client-fin__qty"
+                                inputMode="decimal"
+                                defaultValue={String(ship.qty)}
+                                onBlur={(e) => {
+                                  const qty = Number(e.target.value);
+                                  if (Number.isFinite(qty) && qty !== Number(ship.qty)) {
+                                    void patchLine(ship, { qty });
+                                  }
+                                }}
+                              />
+                            ) : (
+                              ship.qty
+                            )}
+                          </td>
+                          <td className="client-fin__col-price client-fin__num">
+                            {canEdit ? (
+                              <label className="client-fin__price-wrap">
+                                <span className="client-fin__price-prefix" aria-hidden>
+                                  $
+                                </span>
+                                <input
+                                  key={`price-${ship.id}-${ship.unitPrice}`}
+                                  className="client-fin__price"
+                                  inputMode="decimal"
+                                  defaultValue={moneyInput(ship.unitPrice)}
+                                  onBlur={(e) => {
+                                    const input = e.currentTarget;
+                                    const unitPrice = Math.round(Number(input.value) * 100) / 100;
+                                    if (
+                                      Number.isFinite(unitPrice) &&
+                                      unitPrice !== Math.round(Number(ship.unitPrice) * 100) / 100
+                                    ) {
+                                      void patchLine(ship, { unitPrice }).then((ok) => {
+                                        if (!ok) input.value = moneyInput(ship.unitPrice);
+                                      });
+                                    } else {
+                                      input.value = moneyInput(ship.unitPrice);
+                                    }
+                                  }}
+                                />
+                              </label>
+                            ) : (
+                              <PriceShown
+                                charged={Number(ship.unitPrice) || 0}
+                                list={ship.listUnitPrice}
+                                covered={ship.isCovered}
+                              />
+                            )}
+                          </td>
+                          <td className="client-fin__col-amount client-fin__num">
+                            {ship.isCovered ? (
+                              <span className="client-fin__covered">Covered ❤️</span>
+                            ) : (
+                              money(ship.amount)
+                            )}
+                          </td>
+                          {returning && canReturn ? (
+                            <td>
+                              <input
+                                value={returnQty[ship.id] ?? ''}
+                                onChange={(e) =>
+                                  setReturnQty((prev) => ({ ...prev, [ship.id]: e.target.value }))
+                                }
+                                placeholder={`≤ ${Math.abs(Number(ship.qty) || 0)}`}
+                              />
+                            </td>
+                          ) : null}
+                          {canRemoveLines ? (
+                            <td className="client-fin__row-action">
+                              <button
+                                type="button"
+                                className="client-fin__btn-ghost"
+                                disabled={busy || Boolean(shippedMail)}
+                                title={
+                                  shippedMail
+                                    ? shippedMailMessage(shippedMail)
+                                    : 'Remove line'
+                                }
+                                onClick={() => removeLine(ship)}
+                                aria-label="Remove line"
+                              >
+                                <X size={14} />
+                              </button>
+                            </td>
+                          ) : null}
+                        </tr>
+                          );
+                        })}
+                        {showMeta ? (
+                          <tr className={`client-fin__line-fulfill ${lineReady ? 'client-fin__line--ready' : 'client-fin__line--pending'}`}>
+                            <td colSpan={returning && canReturn ? 7 : 6}>
+                              <div className="client-fin__rx-fulfill">{mailCheckbox}</div>
                             </td>
                             {canRemoveLines ? <td className="client-fin__row-action" /> : null}
                           </tr>
@@ -2924,18 +4079,41 @@ export default function ClientFinancialWorkspace({
                   }))}
               />
 
-              {selected && !invoiceGone && selected.status !== 'void' ? (
+              {selected &&
+              !invoiceGone &&
+              selected.status !== 'void' &&
+              visibleLines.length > 0 &&
+              !visibleLines.some((row) => isPrescriptionLine(row)) ? (
                 <div className="client-fin__pay">
+                  {!needsLocalFill ? (
+                    <p className="client-fin__fulfill-note">
+                      Everything here ships — mail order chooses the branch and fill
+                      location.
+                    </p>
+                  ) : (
                   <CheckoutInventoryBranchField
                     invoice={selected}
+                    persist={!isUnsavedInvoice(selected)}
                     disabled={busy || selected.status !== 'open'}
                     onInvoiceChange={(next) => {
                       setSelected(next);
-                      void refreshList(next.id);
+                      if (!isUnsavedInvoice(next)) void refreshList(next.id);
                     }}
+                    className="client-fin__fulfill-fields"
                     fieldClassName="client-fin__field"
                   />
+                  )}
                 </div>
+              ) : null}
+
+              {selected &&
+              !invoiceGone &&
+              selected.status === 'open' &&
+              remaining > 0.009 &&
+              rxBlocksPay ? (
+                <p className="client-fin__err">
+                  Approve each prescription before taking payment.
+                </p>
               ) : null}
 
               {canPay ? (
@@ -3015,6 +4193,26 @@ export default function ClientFinancialWorkspace({
                     <button type="button" className="client-fin__btn" disabled={busy} onClick={() => void takeTender()}>
                       Record {methodLabel(tenderMethod, tenderPaymentType)}
                     </button>
+                    <button
+                      type="button"
+                      className="client-fin__btn-ghost"
+                      disabled={busy || isUnsavedInvoice(selected)}
+                      onClick={() => void startInvoiceEmail()}
+                    >
+                      {remaining <= 0.009 && (Number(selected.amountPaid) || 0) > 0.009
+                        ? 'Email receipt'
+                        : 'Email invoice'}
+                    </button>
+                    {remaining > 0.009 ? (
+                      <button
+                        type="button"
+                        className="client-fin__btn-ghost"
+                        disabled={busy}
+                        onClick={() => void startPayLink('sms')}
+                      >
+                        Text to Pay
+                      </button>
+                    ) : null}
                     {selected.savedPaymentMethodId ? (
                       <button
                         type="button"
@@ -3052,6 +4250,29 @@ export default function ClientFinancialWorkspace({
                     )}
                   </div>
                 </>
+              ) : selected && !invoiceGone && selected.status !== 'void' ? (
+                <div className="client-fin__actions">
+                  <button
+                    type="button"
+                    className="client-fin__btn-ghost"
+                    disabled={busy || isUnsavedInvoice(selected)}
+                    onClick={() => void startInvoiceEmail()}
+                  >
+                    {remaining <= 0.009 && (Number(selected.amountPaid) || 0) > 0.009
+                      ? 'Email receipt'
+                      : 'Email invoice'}
+                  </button>
+                  {remaining > 0.009 ? (
+                    <button
+                      type="button"
+                      className="client-fin__btn-ghost"
+                      disabled={busy}
+                      onClick={() => void startPayLink('sms')}
+                    >
+                      Text to Pay
+                    </button>
+                  ) : null}
+                </div>
               ) : null}
 
               {canUnlock || canVoidInvoice ? (

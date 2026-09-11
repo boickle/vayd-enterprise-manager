@@ -61,6 +61,8 @@ export type RoutingPatientReminderLine = {
   id: string;
   label: string;
   dueMs: number | null;
+  /** yyyy-MM-dd in the practice timezone, when a due date is known. */
+  dueDateInput: string | null;
 };
 
 export type RoutingClientPatientRow = {
@@ -222,6 +224,13 @@ function formatReminderDueLabel(dueMs: number | null, practiceTz: string): strin
   return dt.toFormat('M/d/yyyy');
 }
 
+function reminderDueDateInput(dueMs: number | null, practiceTz: string): string | null {
+  if (dueMs == null) return null;
+  const dt = DateTime.fromMillis(dueMs, { zone: practiceTz });
+  if (!dt.isValid) return null;
+  return dt.toFormat('yyyy-MM-dd');
+}
+
 function reminderIsHidden(o: Record<string, unknown>): boolean {
   const v = o.isHidden ?? o.is_hidden ?? o.hidden;
   if (v === true || v === 1) return true;
@@ -254,6 +263,7 @@ export function parseRemindersFromMedicalRecord(
         id: String(o.id ?? `${title}-${dueMs ?? ''}`),
         label: parts.join(' - '),
         dueMs,
+        dueDateInput: reminderDueDateInput(dueMs, practiceTz),
       };
     })
     .sort((a, b) => {

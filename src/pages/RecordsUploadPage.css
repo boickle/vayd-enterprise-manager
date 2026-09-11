@@ -1,0 +1,25 @@
+.records-upload__drop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  text-align: center;
+  border: 2px dashed #cfc6b4;
+  border-radius: 12px;
+  padding: 28px 16px;
+  margin: 16px 0;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.records-upload__drop:hover,
+.records-upload__drop.is-drop {
+  border-color: #7a6a4f;
+  background: rgba(122, 106, 79, 0.06);
+}
+
+.records-upload__foot {
+  margin-top: 16px;
+  font-size: 12px;
+}

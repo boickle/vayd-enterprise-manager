@@ -412,13 +412,14 @@ export type InventoryLotBalance = {
 export async function listInventoryLots(
   practiceId: number,
   inventoryItemId: number,
-  opts?: { branchId?: number; includeZero?: boolean }
+  opts?: { branchId?: number; locationId?: number; includeZero?: boolean }
 ): Promise<InventoryLotBalance[]> {
   const { data } = await http.get<InventoryLotBalance[]>(
     `/practice/${practiceId}/inventory-items/${inventoryItemId}/lots`,
     {
       params: {
         ...(opts?.branchId != null ? { branchId: opts.branchId } : {}),
+        ...(opts?.locationId != null ? { locationId: opts.locationId } : {}),
         ...(opts?.includeZero ? { includeZero: '1' } : {}),
       },
     }

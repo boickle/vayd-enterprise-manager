@@ -511,6 +511,48 @@ a.pims-clients__petname:hover {
   margin-top: 8px;
 }
 
+.pims-add-client-modal__ask {
+  padding: 4px 0 8px;
+}
+
+.pims-add-client-modal__ask p {
+  margin: 0 0 16px;
+  font-size: 15px;
+  line-height: 1.45;
+  color: #1c1917;
+}
+
+.pims-add-patient__mode {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 8px;
+}
+
+.pims-add-patient__mode button {
+  border: 1px solid #d6d3d1;
+  background: #fff;
+  color: #44403c;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.pims-add-patient__mode button.is-on {
+  border-color: #1d4ed8;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.pims-add-patient__age-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+}
+
 @media (max-width: 480px) {
   .pims-add-client-modal__grid {
     grid-template-columns: 1fr;
@@ -525,5 +567,8 @@ a.pims-clients__petname:hover {
   }
   .pims-add-client-modal__inline-check {
     padding-bottom: 0;
+  }
+  .pims-add-patient__age-row {
+    grid-template-columns: 1fr;
   }
 }

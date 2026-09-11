@@ -1,6 +1,7 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
+import { PimsChartPdfModal } from './PimsChartPdfModal';
 import {
   looksLikeHtmlFragment,
   sanitizeCommunicationHtml,
@@ -54,30 +55,39 @@ function NoteRichText({ value, className }: { value: string; className?: string 
 type Props = {
   title: string;
   record: Record<string, unknown>;
+  patientId?: number | null;
   onClose: () => void;
 };
 
 /**
  * History form or EVET chart note — same chrome as the exam modal, without vitals.
  */
-export function PimsMedicalNoteModal({ title, record, onClose }: Props) {
+export function PimsMedicalNoteModal({ title, record, patientId, onClose }: Props) {
+  const [pdfOpen, setPdfOpen] = useState(false);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape' && !pdfOpen) onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, pdfOpen]);
 
   const formName =
     pickStr(record.formName) ?? pickStr(record.name) ?? pickStr(record.recordLabel) ?? title;
   const serviceDate = pickStr(record.serviceDate) ?? pickStr(record.createdAt);
-  const body =
-    pickStr(record.noteText) ??
-    pickStr(record.documentText) ??
-    pickStr(record.comments) ??
-    pickStr(record.description) ??
-    '';
+  const documentId = Number(record.id);
+  const hasFile =
+    record.hasFile === true ||
+    record.isUploadedToBlob === true;
+  const canOpenPdf =
+    Boolean(patientId) && Number.isFinite(documentId) && documentId > 0 && hasFile;
+  const body = canOpenPdf
+    ? ''
+    : pickStr(record.noteText) ??
+      pickStr(record.documentText) ??
+      pickStr(record.comments) ??
+      pickStr(record.description) ??
+      '';
   const fileMeta = [
     pickStr(record.extension) && `File type: ${pickStr(record.extension)}`,
     pickStr(record.contentType) && `Content: ${pickStr(record.contentType)}`,
@@ -163,7 +173,19 @@ export function PimsMedicalNoteModal({ title, record, onClose }: Props) {
             </section>
           ) : null}
 
-          {!body && responses.length === 0 ? (
+          {canOpenPdf ? (
+            <section className="pims-exam-modal__fieldset">
+              <button
+                type="button"
+                className="pims-exam-modal__close-btn"
+                onClick={() => setPdfOpen(true)}
+              >
+                Open PDF
+              </button>
+            </section>
+          ) : null}
+
+          {!body && responses.length === 0 && !canOpenPdf ? (
             <p className="pims-exam-modal__muted">
               {fileMeta
                 ? `${fileMeta}. The file itself is not stored in Scout yet — this is the chart entry from the import.`
@@ -181,5 +203,17 @@ export function PimsMedicalNoteModal({ title, record, onClose }: Props) {
     </div>
   );
 
-  return createPortal(modal, document.body);
+  return (
+    <>
+      {createPortal(modal, document.body)}
+      {pdfOpen && canOpenPdf ? (
+        <PimsChartPdfModal
+          patientId={patientId!}
+          documentId={documentId}
+          title={formName}
+          onClose={() => setPdfOpen(false)}
+        />
+      ) : null}
+    </>
+  );
 }

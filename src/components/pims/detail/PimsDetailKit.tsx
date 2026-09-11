@@ -452,33 +452,74 @@ export function EditableCard({
   );
 }
 
+export type TechDetailRow = { label: string; value: ReactNode };
+export type TechDetailGroup = { title: string; rows: TechDetailRow[] };
+
+function techRowsWithValues(rows: TechDetailRow[]): TechDetailRow[] {
+  return rows.filter((row) => {
+    if (row.value == null || row.value === false) return false;
+    if (typeof row.value === 'string' && (!row.value.trim() || row.value.trim() === '—')) return false;
+    return true;
+  });
+}
+
 /**
  * Internal ids, PIMS keys and sync timestamps. Collapsed by default: staff only need these
  * when reconciling a record against eVet, but then they need all of them at once.
  */
 export function TechnicalDetails({
   rows,
+  groups,
   note,
+  summary,
+  collapsed,
+  onToggleCollapse,
 }: {
-  rows: { label: string; value: ReactNode }[];
+  rows?: TechDetailRow[];
+  groups?: TechDetailGroup[];
   note?: ReactNode;
+  summary?: string | null;
+  collapsed?: boolean;
+  onToggleCollapse?: () => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
+  const open = onToggleCollapse ? collapsed === false : uncontrolledOpen;
+  const visibleGroups = (groups ?? [])
+    .map((group) => ({ ...group, rows: techRowsWithValues(group.rows) }))
+    .filter((group) => group.rows.length > 0);
+  const visibleRows = techRowsWithValues(rows ?? []);
+
   return (
     <section className="pims-detail__card pims-detail__tech">
       <button
         type="button"
         className="pims-detail__tech-toggle"
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => (onToggleCollapse ? onToggleCollapse() : setUncontrolledOpen((o) => !o))}
         aria-expanded={open}
       >
         {open ? <ChevronDown size={16} aria-hidden /> : <ChevronRight size={16} aria-hidden />}
-        Record &amp; sync details
+        <span className="pims-detail__tech-toggle-copy">
+          Record &amp; sync
+          {summary && !open ? (
+            <span className="pims-detail__tech-summary">{summary}</span>
+          ) : null}
+        </span>
       </button>
       {open ? (
         <div className="pims-detail__card-body">
           {note ? <p className="pims-detail__muted pims-detail__tech-note">{note}</p> : null}
-          <FactGrid rows={rows} columns={2} />
+          {visibleGroups.length ? (
+            <div className="pims-detail__tech-groups">
+              {visibleGroups.map((group) => (
+                <div key={group.title} className="pims-detail__tech-group">
+                  <h3 className="pims-detail__tech-group-title">{group.title}</h3>
+                  <FactGrid rows={group.rows} columns={1} />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <FactGrid rows={visibleRows} columns={2} />
+          )}
         </div>
       ) : null}
     </section>

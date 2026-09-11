@@ -148,8 +148,20 @@
   margin: 10px 0 10px;
 }
 
+.pims-emr-story__split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  min-width: 0;
+}
+
 @media (max-width: 980px) {
   .pims-emr-story {
+    grid-template-columns: 1fr;
+  }
+
+  .pims-emr-story__split {
     grid-template-columns: 1fr;
   }
 }
@@ -219,11 +231,148 @@
 
 .pims-emr-story__care-chips {
   margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
 
 .pims-emr-story__care-chips-empty {
   margin: 0;
   font-size: 12px;
+}
+
+.pims-emr-story__chip-catalog {
+  font-weight: 500;
+  font-size: 11px;
+  color: #1d4ed8;
+}
+
+.pims-emr-chronic-add {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.pims-emr-chronic-add__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.pims-emr-chronic-add__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: 1px solid #99f6e4;
+  border-radius: 999px;
+  background: #f0fdfa;
+  color: #0f766e;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.pims-emr-chronic-add__btn:hover,
+.pims-emr-chronic-add__btn[aria-expanded='true'] {
+  background: #ccfbf1;
+  border-color: #5eead4;
+}
+
+.pims-emr-chronic-add__panel {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: min(360px, 100%);
+}
+
+.pims-emr-chronic-add__panel--med {
+  position: relative;
+  display: block;
+  min-width: min(420px, 100%);
+}
+
+.pims-emr-chronic-add__panel .input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.pims-emr-chronic-add__panel .btn {
+  flex: none;
+}
+
+.pims-emr-chronic-add__search {
+  position: relative;
+}
+
+.pims-emr-chronic-add__search-icon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #a8a29e;
+  pointer-events: none;
+}
+
+.pims-emr-chronic-add__search .input {
+  width: 100%;
+  padding-left: 30px;
+  box-sizing: border-box;
+}
+
+.pims-emr-chronic-add__results {
+  position: absolute;
+  z-index: 20;
+  left: 0;
+  right: 0;
+  top: calc(100% + 4px);
+  max-height: 220px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid #e7e0d4;
+  border-radius: 8px;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.12);
+}
+
+.pims-emr-chronic-add__empty,
+.pims-emr-chronic-add__option {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  padding: 8px 12px;
+  color: #1c1917;
+}
+
+.pims-emr-chronic-add__empty {
+  color: #78716c;
+}
+
+.pims-emr-chronic-add__option {
+  cursor: pointer;
+}
+
+.pims-emr-chronic-add__option:hover:not(:disabled) {
+  background: #f8fafc;
+}
+
+.pims-emr-chronic-add__option--free {
+  border-top: 1px solid #e7e0d4;
+  font-weight: 700;
+  color: #0f766e;
+}
+
+.pims-emr-chronic-add__hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: #78716c;
 }
 
 .pims-emr-story__card h3 {
@@ -1186,12 +1335,189 @@
   max-width: 52rem;
 }
 
+.pims-patient-detail__pdf-btn {
+  display: inline-flex;
+  align-items: center;
+  border: 0;
+  border-radius: 10px;
+  background: #0f766e;
+  color: #fff;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 14px;
+  cursor: pointer;
+}
+
+.pims-patient-detail__pdf-btn:hover:not(:disabled) {
+  background: #0c5f59;
+}
+
+.pims-patient-detail__pdf-btn:disabled {
+  opacity: 0.7;
+  cursor: wait;
+}
+
+.pims-patient-detail__pdf-error {
+  margin: 8px 0 0;
+  color: #991b1b;
+  font-size: 13px;
+}
+
 .pims-patient-detail__mr-row--clickable {
   cursor: pointer;
 }
 
 .pims-patient-detail__mr-row--clickable:hover td {
   background: #eff6ff;
+}
+
+@keyframes pims-chart-row-highlight {
+  0% {
+    background: #fef08a;
+  }
+  40% {
+    background: #fde047;
+  }
+  100% {
+    background: transparent;
+  }
+}
+
+.pims-patient-detail__mr-row--highlight td {
+  animation: pims-chart-row-highlight 2.4s ease-out;
+}
+
+.pims-patient-detail__mr-row--removed td {
+  color: #64748b;
+  font-style: italic;
+}
+
+.pims-patient-detail__expand-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pims-patient-detail__expand-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.pims-patient-detail__remove-btn {
+  border: 1px solid #fecaca;
+  background: #fff;
+  color: #b91c1c;
+  border-radius: 8px;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.pims-patient-detail__remove-btn:hover {
+  background: #fef2f2;
+}
+
+.pims-chart-confirm__reasons {
+  margin: 0 0 12px;
+  padding: 0;
+  border: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pims-chart-confirm__reasons legend {
+  padding: 0;
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 650;
+  color: #0f172a;
+}
+
+.pims-chart-confirm__reasons label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  color: #334155;
+  cursor: pointer;
+}
+
+.pims-chart-confirm__error {
+  margin: 0 0 10px;
+  color: #b91c1c;
+  font-size: 13px;
+}
+
+.pims-note-addenda {
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.pims-note-addenda__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.pims-note-addenda__hint {
+  margin: 6px 0 8px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.pims-note-addenda__item {
+  padding: 8px 0;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.pims-note-addenda__item:last-child {
+  border-bottom: none;
+}
+
+.pims-note-addenda__meta {
+  margin: 0 0 4px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.pims-note-addenda__body {
+  margin: 0;
+  white-space: pre-wrap;
+  color: #0f172a;
+  font-size: 13px;
+}
+
+.pims-note-addenda__composer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.pims-note-addenda__textarea {
+  width: 100%;
+  min-height: 88px;
+  resize: vertical;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 13px;
+}
+
+.pims-note-addenda__textarea:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
 }
 
 .pims-patient-detail__mr-inline-error {
@@ -1363,6 +1689,22 @@
   font-size: 13px;
 }
 
+.pims-patient-detail__doc-upload {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding-bottom: 10px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.pims-patient-detail__doc-upload-error {
+  flex-basis: 100%;
+  color: #b91c1c;
+  font-size: 12px;
+}
+
 .pims-patient-detail__group-line {
   padding: 6px 0;
   border-bottom: 1px solid #f1f5f9;
@@ -1499,6 +1841,13 @@
   cursor: pointer;
   font-family: inherit;
   text-decoration: underline;
+}
+
+.pims-patient-detail__rx-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
 }
 
 /* ---------- Summary tab ---------- */
@@ -1718,6 +2067,10 @@
   border-radius: 14px;
   box-shadow: 0 20px 48px rgba(15, 23, 42, 0.22);
   padding: 16px 16px 14px;
+  /* Matches the .pims-chart-pick padding so long bodies scroll instead of
+     running past the viewport and hiding their own action buttons. */
+  max-height: calc(100vh - 96px);
+  overflow-y: auto;
 }
 
 .pims-chart-pick__head {
@@ -1749,6 +2102,19 @@
   color: #64748b;
   font-size: 13px;
   line-height: 1.45;
+}
+
+.pims-chart-log__area {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #d1d5db;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font: inherit;
+  color: #1f2937;
+  resize: vertical;
+  min-height: 160px;
+  margin-bottom: 12px;
 }
 
 .pims-chart-pick__list {

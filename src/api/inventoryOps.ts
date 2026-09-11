@@ -122,6 +122,7 @@ export type ParsedInvoiceLine = {
   lineTotal: number | null;
   lotNumber: string | null;
   expirationDate: string | null;
+  inventoryLotBalanceId?: number | null;
   status: 'matched' | 'ignored' | 'unmatched';
   inventoryItemId: number | null;
   inventoryItemName: string | null;
@@ -134,6 +135,7 @@ export type ParsedInvoiceLine = {
   unitsPerPackage?: number | null;
   trackLots?: boolean;
   requireExpirationOnLots?: boolean;
+  requireLotNumber?: boolean;
 };
 
 export type ParsedInvoice = {
@@ -192,7 +194,7 @@ export async function lookupInventoryByCode(
 ) {
   const { data } = await http.get<{
     /** Already resolved to the item that holds stock. */
-    item: { id: number; name: string; trackLots?: boolean; requireExpirationOnLots?: boolean; cost?: string | number | null };
+    item: { id: number; name: string; trackLots?: boolean; requireExpirationOnLots?: boolean; requireLotNumber?: boolean; cost?: string | number | null };
     matchedVia: string;
     /** The sellable code scanned, when it draws stock from `item`. */
     resolvedFrom: { id: number; name: string } | null;
@@ -343,7 +345,12 @@ export async function transferBatch(
   body: {
     fromBranchLocationId: number;
     toBranchLocationId: number;
-    lines: { inventoryItemId: number; quantity: number; lotNumber?: string | null }[];
+    lines: {
+      inventoryItemId: number;
+      quantity: number;
+      lotNumber?: string | null;
+      inventoryLotBalanceId?: number | null;
+    }[];
     note?: string | null;
   }
 ) {
@@ -407,6 +414,7 @@ export async function recordWaste(
     disposalMethodCode?: string | null;
     notes?: string | null;
     lotNumber?: string | null;
+    inventoryLotBalanceId?: number | null;
   }
 ) {
   const { data } = await http.post(

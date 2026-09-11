@@ -7,6 +7,7 @@ import type { PatientProblem, PostedVisitCharge } from '../api/visitWorkflow';
 import { buildSubjectiveTextFromRoomLoaderResponse } from './roomLoaderSubjectiveText';
 import { communicationBodyForDisplay } from './clientCommunicationDisplay';
 import { looksLikeHtmlFragment } from './sanitizeCommunicationHtml';
+import { chartRemoveReasonLabel } from './chartRemove';
 
 function pickStr(v: unknown): string | null {
   if (v == null) return null;
@@ -47,6 +48,23 @@ function isStockInventoryName(name: string): boolean {
   return /^felv\s+inventory$/i.test(name);
 }
 
+/** eVet soft-deletes invoice/treatment lines with `isActive: false` more often than `isDeleted`. */
+export function treatmentPlanBelongsOnChart(plan: {
+  isDeleted?: boolean;
+  isActive?: boolean;
+  isEstimate?: boolean;
+}): boolean {
+  return plan.isDeleted !== true && plan.isActive !== false && plan.isEstimate !== true;
+}
+
+export function treatmentItemBelongsOnChart(item: {
+  isDeleted?: boolean;
+  isActive?: boolean;
+  isDeclined?: boolean;
+}): boolean {
+  return item.isDeleted !== true && item.isActive !== false && item.isDeclined !== true;
+}
+
 function documentChartLabel(o: Record<string, unknown>): { typeLabel: string; description: string } {
   const name = pickStr(o.name) ?? 'Document';
   const desc = pickStr(o.description);
@@ -83,6 +101,17 @@ export type ChartRow = {
   hasResult?: boolean;
   /** Membership-covered visit charge — show a heart next to the description. */
   isCovered?: boolean;
+  filePatientId?: number;
+  fileDocumentId?: number;
+  removed?: boolean;
+  removedReason?: string | null;
+  removedByName?: string | null;
+  removedAt?: string | null;
+  filePurged?: boolean;
+  removable?: boolean;
+  removeKind?: 'document' | 'scoutNote';
+  removeDocumentId?: number;
+  removeScoutNoteId?: string;
 };
 
 export type ChartRowSource =
@@ -104,7 +133,8 @@ export type ChartRowSource =
   | 'document'
   | 'treatment'
   | 'roomLoader'
-  | 'scoutNote';
+  | 'scoutNote'
+  | 'mailOrder';
 
 export type MedicalRecordBundle = {
   labOrders?: unknown[];
@@ -256,7 +286,7 @@ function medicationHintsFromRows(rows: unknown[] | null | undefined): Medication
   const out: MedicationHint[] = [];
   for (const raw of rows) {
     const o = asObj(raw);
-    if (!o) continue;
+    if (!o || !treatmentItemBelongsOnChart(o)) continue;
     const id = Number(o.treatmentItemId);
     out.push({
       treatmentItemId: Number.isFinite(id) && id > 0 ? id : null,
@@ -428,6 +458,7 @@ export function buildChartRowsFromMedicalRecord(
   treatments?: TreatmentWithItems[] | null,
   emrOnly = false,
   medicationHistory?: unknown[] | null,
+  patientId?: number | null,
 ): ChartRow[] {
   if (!mr && !problems?.length && !visitCharges?.length && !treatments?.length) return [];
   const out: ChartRow[] = [];
@@ -461,21 +492,28 @@ export function buildChartRowsFromMedicalRecord(
 
   const medHints = medicationHintsFromRows(medicationHistory);
   for (const c of visitCharges ?? []) {
+    const extra = c as PostedVisitCharge & { isDeleted?: boolean; isActive?: boolean };
+    if (extra.isDeleted === true || extra.isActive === false) continue;
     const day = (c.postedToRecordAt || '').slice(0, 10);
     const hint = hintForTreatmentItem(medHints, 0, c.name, day);
     out.push(visitChargeChartRow(c, hint));
   }
 
   const visitChargeKeys = new Set(
-    (visitCharges ?? []).map((c) => {
-      const day = (c.postedToRecordAt || '').slice(0, 10);
-      return `${day}|${(c.name || '').trim().toLowerCase()}`;
-    })
+    (visitCharges ?? [])
+      .filter((c) => {
+        const extra = c as PostedVisitCharge & { isDeleted?: boolean; isActive?: boolean };
+        return extra.isDeleted !== true && extra.isActive !== false;
+      })
+      .map((c) => {
+        const day = (c.postedToRecordAt || '').slice(0, 10);
+        return `${day}|${(c.name || '').trim().toLowerCase()}`;
+      })
   );
   for (const plan of treatments ?? []) {
-    if (plan.isDeleted || plan.isEstimate) continue;
+    if (!treatmentPlanBelongsOnChart(plan)) continue;
     for (const item of plan.treatmentItems ?? []) {
-      if (item.isDeleted || item.isDeclined) continue;
+      if (!treatmentItemBelongsOnChart(item)) continue;
       const inv = item.inventoryItem?.name?.trim();
       const proc = item.procedure?.name?.trim();
       const lab = item.lab?.name?.trim();
@@ -833,29 +871,81 @@ export function buildChartRowsFromMedicalRecord(
   for (const doc of mr.chartDocuments ?? []) {
     const o = asObj(doc);
     if (!o) continue;
+    const name = pickStr(o.name) ?? 'Document';
+    const desc = pickStr(o.description) ?? '';
+    if (
+      /memorial items purchased on euthanasia consent/i.test(desc) ||
+      /^memorial items purchased/i.test(name)
+    ) {
+      continue;
+    }
     const id = o.id != null ? String(o.id) : `doc-${out.length}`;
     const { typeLabel, description } = documentChartLabel(o);
     const ext = pickStr(o.extension);
     const serviceDateIso = pickStr(o.serviceDate) ?? pickStr(o.createdAt);
-    const text = pickStr(o.documentText);
-    const name = pickStr(o.name) ?? 'Document';
+    const removedAt = pickStr(o.removedAt);
+    const removed = Boolean(removedAt);
+    const filePurged = Boolean(pickStr(o.filePurgedAt));
+    const hasFile =
+      !removed &&
+      !filePurged &&
+      (o.hasFile === true || o.isUploadedToBlob === true);
+    const canRetrieve =
+      removed &&
+      !filePurged &&
+      (o.hasFile === true || o.isUploadedToBlob === true);
+    const numericId = Number(o.id);
+    const fileDocumentId = Number.isFinite(numericId) && numericId > 0 ? numericId : undefined;
+    const text = hasFile ? null : pickStr(o.documentText);
+    const removedByName = pickStr(o.removedByName);
+    const removedReason = pickStr(o.removedReason);
+    const scoutUpload = pickStr(o.pimsType) === 'SCOUT';
     out.push({
       id: `document:${id}`,
       source: 'document',
       typeLabel,
-      description,
-      provider: employeeName(o.employee),
+        description: removed
+        ? `${name} — removed${removedReason ? ` (${chartRemoveReasonLabel(removedReason)})` : ''}${
+            removedByName ? ` · ${removedByName}` : ''
+          }`
+        : description,
+      provider: removedByName || employeeName(o.employee),
       serviceDateIso,
       sortTime: parseSortTime(serviceDateIso),
-      detailText: [
-        text,
-        !text && ext && `File: ${name}${ext.startsWith('.') ? ext : `.${ext}`}`,
-        !text && pickStr(o.contentType) && `Type: ${pickStr(o.contentType)}`,
-        !text &&
-          'The file itself is not stored in Scout yet — this is the chart entry from the import.',
-      ]
-        .filter(Boolean)
-        .join('\n'),
+      filePatientId: (hasFile || canRetrieve) && patientId ? patientId : undefined,
+      fileDocumentId: hasFile || canRetrieve ? fileDocumentId : undefined,
+      removed,
+      removedReason,
+      removedByName,
+      removedAt,
+      filePurged,
+      removable: scoutUpload && !removed,
+      removeKind: scoutUpload ? 'document' : undefined,
+      removeDocumentId: scoutUpload ? fileDocumentId : undefined,
+      detailText: removed
+        ? [
+            removedReason && `Reason: ${chartRemoveReasonLabel(removedReason)}`,
+            removedByName && `Removed by ${removedByName}`,
+            removedAt && `Removed ${removedAt}`,
+            filePurged
+              ? 'The file was discarded — it was never a medical record.'
+              : canRetrieve
+                ? 'The file is still stored. Open it from this row if needed.'
+                : null,
+          ]
+            .filter(Boolean)
+            .join('\n')
+        : [
+            text,
+            !text && !hasFile && ext && `File: ${name}${ext.startsWith('.') ? ext : `.${ext}`}`,
+            !text && !hasFile && pickStr(o.contentType) && `Type: ${pickStr(o.contentType)}`,
+            !text &&
+              !hasFile &&
+              'The file itself is not stored in Scout yet — this is the chart entry from the import.',
+            hasFile && 'Signed form PDF is attached. Open it from this row.',
+          ]
+            .filter(Boolean)
+            .join('\n'),
     });
   }
 
@@ -949,22 +1039,121 @@ function employeeLabel(emp: { firstName?: string | null; lastName?: string | nul
   return name || 'Staff';
 }
 
+const MAIL_STAGE_LABEL: Record<string, string> = {
+  needs_approval: 'Needs approval',
+  needs_payment: 'Needs payment',
+  fill: 'Fill',
+  check: 'Check',
+  rtg: 'Ready to go',
+  ship: 'Shipping',
+  ready_for_pickup: 'Ready for pickup',
+  done: 'Completed',
+  rejected: 'Rejected',
+};
+
+export type MailOrderChartSource = {
+  id: number;
+  created: string;
+  pickup?: boolean;
+  origin?: string;
+  pharmacyStage?: string | null;
+  doctorName?: string | null;
+  trackingCode?: string | null;
+  patientId?: number | null;
+  lines?: Array<{
+    id: number;
+    patientId?: number | null;
+    name: string;
+    quantity: number;
+    scriptText?: string | null;
+  }>;
+};
+
+/** Online-store / staff mail fills belong on the pet medical record. */
+export function chartRowsFromMailOrders(
+  orders: MailOrderChartSource[] | null | undefined,
+  patientId: number | string,
+): ChartRow[] {
+  const pid = Number(patientId);
+  if (!orders?.length || !Number.isFinite(pid)) return [];
+  const out: ChartRow[] = [];
+  for (const order of orders) {
+    const pickup = Boolean(order.pickup || order.origin === 'office_pickup');
+    const stage = order.pharmacyStage || '';
+    const status =
+      pickup && (stage === 'ship' || stage === 'done')
+        ? 'Ready for pickup'
+        : MAIL_STAGE_LABEL[stage] || stage;
+    const typeLabel =
+      order.origin === 'online_store' ? 'Online store order' : 'Mail order';
+    const mine = (order.lines || []).filter((line) => {
+      if (line.patientId != null) return Number(line.patientId) === pid;
+      return Number(order.patientId) === pid;
+    });
+    for (const line of mine) {
+      const qty = Number(line.quantity) || 1;
+      out.push({
+        id: `mailOrder:${line.id}`,
+        source: 'mailOrder',
+        typeLabel,
+        description: `${line.name} × ${qty}${status ? ` (${status})` : ''}`,
+        provider: order.doctorName || '—',
+        serviceDateIso: order.created,
+        sortTime: parseSortTime(order.created),
+        detailText: [
+          line.scriptText,
+          `Qty: ${qty}`,
+          pickup ? 'Office pickup' : 'Ship',
+          order.trackingCode ? `Tracking ${order.trackingCode}` : '',
+          `Order #${order.id}`,
+        ]
+          .filter(Boolean)
+          .join('\n'),
+      });
+    }
+  }
+  return out;
+}
+
 /** Wrapped-up Scout medical notes belong on the pet medical record. */
 export function chartRowsFromScoutNotes(notes: ScoutChartNote[] | null | undefined): ChartRow[] {
   if (!notes?.length) return [];
   return notes
     .filter((n) => n.status === 'finalized' && n.body.trim())
     .map((n) => {
-      const when = n.finalizedAt || n.updated || n.created;
+      const removedAt = n.removedAt ?? null;
+      const removed = Boolean(removedAt);
+      const when = removedAt || n.finalizedAt || n.updated || n.created;
+      const preview = n.body.trim().slice(0, 120) + (n.body.trim().length > 120 ? '…' : '');
       return {
         id: `scoutNote:${n.id}`,
         source: 'scoutNote' as const,
         typeLabel: 'Medical note',
-        description: n.body.trim().slice(0, 120) + (n.body.trim().length > 120 ? '…' : ''),
-        provider: employeeLabel(n.finalizedByEmployee),
+        description: removed
+          ? `Note — removed${n.removedReason ? ` (${chartRemoveReasonLabel(n.removedReason)})` : ''}${
+              n.removedByName ? ` · ${n.removedByName}` : ''
+            }`
+          : preview,
+        provider: n.removedByName || employeeLabel(n.finalizedByEmployee ?? n.createdByEmployee),
         serviceDateIso: when,
         sortTime: parseSortTime(when),
-        detailText: n.body.trim(),
+        detailText: removed
+          ? [
+              n.removedReason && `Reason: ${chartRemoveReasonLabel(n.removedReason)}`,
+              n.removedByName && `Removed by ${n.removedByName}`,
+              removedAt && `Removed ${removedAt}`,
+              n.body.trim() && `\n${n.body.trim()}`,
+            ]
+              .filter(Boolean)
+              .join('\n')
+          : n.body.trim(),
+        removed,
+        removedReason: n.removedReason ?? null,
+        removedByName: n.removedByName ?? null,
+        removedAt,
+        removable: false,
+        removeKind: undefined,
+        removeScoutNoteId: n.id,
       };
     })
     .sort((a, b) => b.sortTime - a.sortTime);

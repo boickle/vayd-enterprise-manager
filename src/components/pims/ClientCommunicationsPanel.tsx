@@ -36,11 +36,14 @@ export default function ClientCommunicationsPanel({
   refreshKey = 0,
   collapsed,
   onToggleCollapse,
+  embedded = false,
 }: {
   clientId: number;
   refreshKey?: number;
   collapsed?: boolean;
   onToggleCollapse?: () => void;
+  /** Render the message list inside another card (no second header). */
+  embedded?: boolean;
 }) {
   const [rows, setRows] = useState<ClientCommunicationRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -66,6 +69,85 @@ export default function ClientCommunicationsPanel({
     };
   }, [clientId, refreshKey]);
 
+  const body =
+    collapsed && !embedded ? null : loading ? (
+      <p className="pims-emr-story__muted">Loading messages…</p>
+    ) : error ? (
+      <p className="client-comms__err">{error}</p>
+    ) : rows.length === 0 ? (
+      <p className="pims-emr-story__muted">
+        Emails and texts sent from Scout land here — invoices, receipts, and other clerical
+        notes stay off the patient medical record unless you choose otherwise.
+      </p>
+    ) : (
+      <ul className="client-comms__list">
+        {rows.map((row) => {
+          const open = openId === row.id;
+          const parsed = communicationBodyForDisplay(row.message);
+          const summary = parsed.subject || parsed.text || row.typeLabel;
+          const preview = summary.length > 140 ? `${summary.slice(0, 140)}…` : summary;
+          return (
+            <li key={row.id} className={`client-comms__item${open ? ' is-open' : ''}`}>
+              <button
+                type="button"
+                className="client-comms__row"
+                aria-expanded={open}
+                onClick={() => setOpenId(open ? null : row.id)}
+              >
+                {open ? <ChevronDown size={15} aria-hidden /> : <ChevronRight size={15} aria-hidden />}
+                <span className="client-comms__main">
+                  <span className="client-comms__type">{row.typeLabel}</span>
+                  <span className="client-comms__preview">{preview}</span>
+                  <span className="client-comms__meta">{commMeta(row)}</span>
+                </span>
+              </button>
+              {open ? (
+                <div className="client-comms__body">
+                  {row.destination || row.sentFrom || row.sentByName ? (
+                    <dl className="client-comms__routing">
+                      {row.destination ? (
+                        <>
+                          <dt>To</dt>
+                          <dd>{row.destination}</dd>
+                        </>
+                      ) : null}
+                      {row.sentFrom?.trim() ? (
+                        <>
+                          <dt>From</dt>
+                          <dd>{row.sentFrom.trim()}</dd>
+                        </>
+                      ) : null}
+                      {row.sentByName?.trim() ? (
+                        <>
+                          <dt>Sent by</dt>
+                          <dd>{row.sentByName.trim()}</dd>
+                        </>
+                      ) : null}
+                    </dl>
+                  ) : null}
+                  {parsed.subject ? (
+                    <div className="client-comms__subject">Subject: {parsed.subject}</div>
+                  ) : null}
+                  {parsed.html ? (
+                    <div
+                      className="client-comms__html"
+                      dangerouslySetInnerHTML={{ __html: parsed.html }}
+                    />
+                  ) : (
+                    <pre className="client-comms__text">{parsed.text || '—'}</pre>
+                  )}
+                </div>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
+    );
+
+  if (embedded) {
+    return <div className="client-comms client-comms--embedded">{body}</div>;
+  }
+
   return (
     <section className="pims-emr-story__card client-comms" aria-labelledby="pims-client-comms">
       {onToggleCollapse ? (
@@ -86,80 +168,7 @@ export default function ClientCommunicationsPanel({
           Client communications
         </h3>
       )}
-      {collapsed ? null : loading ? (
-        <p className="pims-emr-story__muted">Loading messages…</p>
-      ) : error ? (
-        <p className="client-comms__err">{error}</p>
-      ) : rows.length === 0 ? (
-        <p className="pims-emr-story__muted">
-          Emails and texts sent from Scout land here — invoices, receipts, and other clerical
-          notes stay off the patient medical record unless you choose otherwise.
-        </p>
-      ) : (
-        <ul className="client-comms__list">
-          {rows.map((row) => {
-            const open = openId === row.id;
-            const parsed = communicationBodyForDisplay(row.message);
-            const summary = parsed.subject || parsed.text || row.typeLabel;
-            const preview =
-              summary.length > 140 ? `${summary.slice(0, 140)}…` : summary;
-            return (
-              <li key={row.id} className={`client-comms__item${open ? ' is-open' : ''}`}>
-                <button
-                  type="button"
-                  className="client-comms__row"
-                  aria-expanded={open}
-                  onClick={() => setOpenId(open ? null : row.id)}
-                >
-                  {open ? <ChevronDown size={15} aria-hidden /> : <ChevronRight size={15} aria-hidden />}
-                  <span className="client-comms__main">
-                    <span className="client-comms__type">{row.typeLabel}</span>
-                    <span className="client-comms__preview">{preview}</span>
-                    <span className="client-comms__meta">{commMeta(row)}</span>
-                  </span>
-                </button>
-                {open ? (
-                  <div className="client-comms__body">
-                    {row.destination || row.sentFrom || row.sentByName ? (
-                      <dl className="client-comms__routing">
-                        {row.destination ? (
-                          <>
-                            <dt>To</dt>
-                            <dd>{row.destination}</dd>
-                          </>
-                        ) : null}
-                        {row.sentFrom?.trim() ? (
-                          <>
-                            <dt>From</dt>
-                            <dd>{row.sentFrom.trim()}</dd>
-                          </>
-                        ) : null}
-                        {row.sentByName?.trim() ? (
-                          <>
-                            <dt>Sent by</dt>
-                            <dd>{row.sentByName.trim()}</dd>
-                          </>
-                        ) : null}
-                      </dl>
-                    ) : null}
-                    {parsed.subject ? (
-                      <div className="client-comms__subject">Subject: {parsed.subject}</div>
-                    ) : null}
-                    {parsed.html ? (
-                      <div
-                        className="client-comms__html"
-                        dangerouslySetInnerHTML={{ __html: parsed.html }}
-                      />
-                    ) : (
-                      <pre className="client-comms__text">{parsed.text || '—'}</pre>
-                    )}
-                  </div>
-                ) : null}
-              </li>
-            );
-          })}
-        </ul>
-      )}
+      {body}
     </section>
   );
 }
