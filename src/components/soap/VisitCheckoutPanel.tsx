@@ -38,6 +38,7 @@ import MailInvoiceLineCheckbox, {
 import { listMailOrders, type MailOrder } from '../../api/onlineStore';
 import { attachShippingLines, isInvoiceShippingLine } from '../../utils/mailShippingTypes';
 import { ensurePrintRxNumber } from '../../utils/ensurePrintRxNumber';
+import PostVisitMembershipSignup from './PostVisitMembershipSignup';
 import StockLotPicker from '../inventory/StockLotPicker';
 
 export type CheckoutRxLabelContext = {
@@ -123,6 +124,7 @@ export default function VisitCheckoutPanel({
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [postVisitSignupOpen, setPostVisitSignupOpen] = useState(false);
   const [activeCheckoutId, setActiveCheckoutId] = useState<string | null>(null);
   const [readerCatalog, setReaderCatalog] = useState<TerminalReaderCatalog | null>(null);
   const [prescriptionsByOrderId, setPrescriptionsByOrderId] = useState<
@@ -729,6 +731,32 @@ export default function VisitCheckoutPanel({
               </div>
             )}
           </div>
+
+          {/* Clients can join within 24h of the visit; this re-prices the bill,
+              refunds the difference and emails them, instead of the manual
+              void / refund / re-enter dance. */}
+          {Number(invoice.amountPaid) > 0 && (
+            <button
+              type="button"
+              className="btn secondary soap-postvisit-signup-btn"
+              onClick={() => setPostVisitSignupOpen(true)}
+              disabled={disabled || busy != null}
+            >
+              <ShieldCheck size={14} aria-hidden="true" />
+              Post-visit sign-up for membership
+            </button>
+          )}
+
+          {postVisitSignupOpen && (
+            <PostVisitMembershipSignup
+              visitInvoiceId={invoice.id}
+              patientName={rxLabel?.patientName ?? null}
+              onClose={() => setPostVisitSignupOpen(false)}
+              onCompleted={() => {
+                void getInvoice(invoice.id).then(onInvoiceChange).catch(() => undefined);
+              }}
+            />
+          )}
 
           {error && <div className="soap-error">{error}</div>}
           {note && <div className="soap-note-banner">{note}</div>}

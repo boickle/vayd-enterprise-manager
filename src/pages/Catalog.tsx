@@ -37,6 +37,7 @@ import {
   type StoreAdminListing,
   type StoreCategory,
 } from '../api/onlineStore';
+import CatalogBundles from '../components/catalog/CatalogBundles';
 import CatalogInventoryClinicalFields from '../components/catalog/CatalogInventoryClinicalFields';
 import CatalogItemRemindersEditor from '../components/catalog/CatalogItemRemindersEditor';
 import CatalogItemLotsEditor from '../components/catalog/CatalogItemLotsEditor';
@@ -197,7 +198,11 @@ function catalogSellUnit(row: SearchResultItem): string {
   return u ?? 'each';
 }
 
-type CatalogTypeFilter = ItemType | 'all';
+/**
+ * `bundle` is not a catalog table like the others — it is the sell-once package store, which
+ * has its own list and editor rather than a row in the item search results.
+ */
+type CatalogTypeFilter = ItemType | 'all' | 'bundle';
 
 function defaultStockLocation(stock?: InventoryBranchStock | null) {
   const locs = stock?.locations ?? [];
@@ -208,7 +213,7 @@ function defaultStockLocation(stock?: InventoryBranchStock | null) {
 
 function typeFilterFromSearch(search: string): CatalogTypeFilter {
   const t = new URLSearchParams(search).get('type');
-  if (t === 'procedure' || t === 'lab' || t === 'inventory') return t;
+  if (t === 'procedure' || t === 'lab' || t === 'inventory' || t === 'bundle') return t;
   return 'all';
 }
 
@@ -216,7 +221,7 @@ function applyCatalogTypeFilter(
   rows: SearchResultItem[],
   typeFilter: CatalogTypeFilter
 ): SearchResultItem[] {
-  if (typeFilter === 'all') return rows;
+  if (typeFilter === 'all' || typeFilter === 'bundle') return rows;
   return rows.filter((r) => r.itemType === typeFilter);
 }
 
@@ -230,6 +235,7 @@ function addItemLabel(typeFilter: CatalogTypeFilter): string {
   if (typeFilter === 'procedure') return 'Add procedure';
   if (typeFilter === 'lab') return 'Add lab';
   if (typeFilter === 'inventory') return 'Add product';
+  if (typeFilter === 'bundle') return 'Add bundle';
   return 'Add item';
 }
 
@@ -965,7 +971,7 @@ export default function Catalog() {
 
   useEffect(() => {
     const q = searchQuery.trim();
-    if (!q) {
+    if (!q || typeFilter === 'bundle') {
       setSearchResults([]);
       return;
     }
@@ -1965,7 +1971,37 @@ export default function Catalog() {
     { value: 'inventory', label: 'Products' },
     { value: 'procedure', label: 'Procedures' },
     { value: 'lab', label: 'Labs' },
+    { value: 'bundle', label: 'Bundles' },
   ];
+
+  const typeFilterBar = (
+    <div className="inv-type-filters" role="tablist" aria-label="Item type">
+      {typeFilterOptions.map((opt) => (
+        <button
+          key={opt.value}
+          type="button"
+          role="tab"
+          aria-selected={typeFilter === opt.value}
+          className={`inv-type-filters__btn${typeFilter === opt.value ? ' inv-type-filters__btn--active' : ''}`}
+          onClick={() => setTypeFilter(opt.value)}
+        >
+          {opt.label}
+        </button>
+      ))}
+    </div>
+  );
+
+  // Bundles are their own store rather than rows in the item search, so they get their own view.
+  if (typeFilter === 'bundle') {
+    return (
+      <div className="settings-section">
+        <div className="settings-form-group" style={{ marginBottom: 24 }}>
+          {typeFilterBar}
+        </div>
+        <CatalogBundles practiceId={practiceId} />
+      </div>
+    );
+  }
 
   return (
     <div className="settings-section">
@@ -1976,20 +2012,7 @@ export default function Catalog() {
       )}
 
       <div className="settings-form-group" style={{ marginBottom: 24 }}>
-        <div className="inv-type-filters" role="tablist" aria-label="Item type">
-          {typeFilterOptions.map((opt) => (
-            <button
-              key={opt.value}
-              type="button"
-              role="tab"
-              aria-selected={typeFilter === opt.value}
-              className={`inv-type-filters__btn${typeFilter === opt.value ? ' inv-type-filters__btn--active' : ''}`}
-              onClick={() => setTypeFilter(opt.value)}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
+        {typeFilterBar}
         <div
           style={{
             display: 'flex',

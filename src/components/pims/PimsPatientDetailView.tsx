@@ -112,6 +112,7 @@ import PimsSoapNoteModal from './PimsSoapNoteModal';
 import PimsAppointmentsSection from './PimsAppointmentsSection';
 import PimsChartWorkBar, { PimsPatientMergeButton } from './PimsChartWorkBar';
 import PimsChartCaseSummaryCard from './PimsChartCaseSummaryCard';
+import PatientMembershipPanel from './PatientMembershipPanel';
 import {
   buildClientFinancialHref,
   writeFinancialPrefill,
@@ -2279,6 +2280,10 @@ export default function PimsPatientDetailView({
           ) : null}
         </section>
         </div>
+
+        {Number.isFinite(Number(patientId)) ? (
+          <PatientMembershipPanel patientId={Number(patientId)} patientName={pname || null} />
+        ) : null}
 
         <div className={`pims-emr-case-prep-wrap${casePrepOpen ? '' : ' is-collapsed'}`}>
           <div className="pims-emr-story__collapse-row pims-emr-case-prep-wrap__head">
