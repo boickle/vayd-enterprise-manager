@@ -502,7 +502,16 @@ export default function App() {
           />
 
           {/* Public auth */}
-          <Route path="/login" element={<LoginPage />} />
+          <Route
+            path="/login"
+            element={
+              token ? (
+                <Navigate to={isClient ? '/client-portal' : '/schedule'} replace />
+              ) : (
+                <LoginPage />
+              )
+            }
+          />
           <Route path="/create-client" element={isCreateClientEnabled() ? <CreateClientUser /> : <Navigate to="/login" replace />} />
           <Route path="/request-reset" element={<RequestReset />} />
           <Route path="/auth/request-reset" element={<Navigate to="/request-reset" replace />} />
