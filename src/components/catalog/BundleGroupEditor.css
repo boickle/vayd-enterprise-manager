@@ -1,0 +1,345 @@
+/*
+ * Bundle group/item builder.
+ *
+ * Choice groups use the same visual language as the patient membership card: a brace of
+ * options threaded onto one accent spine with OR chips between them, under a banner saying
+ * how many the client picks. The mode dropdown says it; the drawing proves it.
+ */
+
+.bge {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.bge__empty {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.55;
+  max-width: 76ch;
+}
+
+.bge__empty--tight {
+  padding: 8px 0 2px;
+  font-size: 12.5px;
+}
+
+.bge__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.bge-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.bge-btn--ghost {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.bge-btn--ghost:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+
+.bge-btn--accent {
+  border: 1px solid var(--accent);
+  background: var(--pill);
+  color: var(--accent-strong);
+}
+
+.bge-btn--accent:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--surface);
+}
+
+.bge-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* ---------- Group shell ---------- */
+
+.bge-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.bge-group--choice {
+  border-color: var(--accent);
+  border-left-width: 3px;
+  background: linear-gradient(180deg, var(--pill), var(--surface) 120px);
+}
+
+.bge-group__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.bge-group__reorder {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-bottom: 8px;
+  color: var(--muted);
+}
+
+.bge-group__move {
+  width: 22px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  font: inherit;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.bge-group__move:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+
+.bge-group__move:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.bge-group__banner {
+  margin: 0;
+  padding: 7px 10px;
+  border: 1px dashed var(--accent);
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 12.5px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.bge-group__banner strong {
+  color: var(--accent-strong);
+}
+
+.bge-group__banner--all {
+  border-style: solid;
+  border-color: var(--border);
+}
+
+.bge-group__banner--all strong {
+  color: var(--text);
+}
+
+.bge-group__add {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 420px;
+}
+
+/* ---------- Items ---------- */
+
+.bge-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.bge-group--choice .bge-items {
+  position: relative;
+  padding-left: 22px;
+}
+
+.bge-group--choice .bge-items::before {
+  content: '';
+  position: absolute;
+  top: 16px;
+  bottom: 16px;
+  left: 6px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.bge-item {
+  position: relative;
+  padding: 9px 0;
+  min-width: 0;
+}
+
+.bge-item + .bge-item {
+  border-top: 1px solid var(--border);
+}
+
+.bge-group--choice .bge-item + .bge-item {
+  border-top: none;
+}
+
+.bge-item__dot {
+  position: absolute;
+  top: 15px;
+  left: -22px;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+  background: var(--surface);
+}
+
+.bge-item__body {
+  min-width: 0;
+}
+
+.bge-item__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 6px;
+}
+
+.bge-item__name {
+  font-size: 13.5px;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.bge-item__code {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.bge-item__controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.bge-or {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+  user-select: none;
+}
+
+.bge-or::before,
+.bge-or::after {
+  content: '';
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--border);
+}
+
+.bge-or span {
+  flex: 0 0 auto;
+  padding: 1px 9px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  color: var(--accent-strong);
+}
+
+/* ---------- Fields ---------- */
+
+.bge-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.bge-field--grow {
+  flex: 1 1 200px;
+}
+
+.bge-field--narrow {
+  flex: 0 0 auto;
+  width: 108px;
+}
+
+.bge-field--full {
+  width: 100%;
+}
+
+.bge-field__label {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.bge-input {
+  width: 100%;
+  min-width: 0;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.bge-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.bge-input:disabled {
+  background: var(--bg);
+  color: var(--muted);
+}
+
+.bge-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.bge-icon-btn:hover:not(:disabled) {
+  border-color: var(--error);
+  color: var(--error);
+}
+
+.bge-icon-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

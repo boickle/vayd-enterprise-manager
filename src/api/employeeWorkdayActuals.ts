@@ -13,6 +13,10 @@ export type EmployeeWorkdayActual = {
   startedByEmployeeId: number | null;
   endedByEmployeeId: number | null;
   notes: string | null;
+  /** Branch the provider is working from this day (stock draws). */
+  inventoryBranchId: number | null;
+  /** Inventory location within that branch. */
+  inventoryLocationId: number | null;
 };
 
 export type SetWorkdayActualTimeBody = {
@@ -25,6 +29,8 @@ export type UpsertWorkdayActualBody = {
   workdayStartActual?: string | null;
   workdayEndActual?: string | null;
   notes?: string;
+  inventoryBranchId?: number | null;
+  inventoryLocationId?: number | null;
 };
 
 /** GET /employees/:id/workday-actuals/by-date?date=YYYY-MM-DD */

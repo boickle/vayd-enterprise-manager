@@ -49,6 +49,7 @@ function invoiceLineItems(inv: Record<string, unknown>): unknown[] {
 export type NormalizedLine = {
   key: string;
   patient: string;
+  patientId: number | null;
   provider: string;
   productionEmployee: string;
   description: string;
@@ -56,10 +57,14 @@ export type NormalizedLine = {
   qty: string;
   unitPrice: number;
   serviceFee: number;
+  originalPrice: number | null;
+  isCovered: boolean;
   subtotal: number;
   tax: number;
   total: number;
   complete: boolean;
+  isWriteOff: boolean;
+  isRemoved: boolean;
 };
 
 function employeeName(v: unknown): string | null {
@@ -85,6 +90,7 @@ function normalizeLine(row: unknown, idx: number): NormalizedLine | null {
   const o = row as Record<string, unknown>;
   const pat = o.patient;
   let patient = '—';
+  let patientId: number | null = toNum(o.patientId);
   if (typeof pat === 'string') patient = pat;
   else if (pat && typeof pat === 'object') {
     const p = pat as Record<string, unknown>;
@@ -92,6 +98,7 @@ function normalizeLine(row: unknown, idx: number): NormalizedLine | null {
       pickStr(p.name) ??
       [pickStr(p.firstName), pickStr(p.lastName)].filter(Boolean).join(' ').trim() ??
       '—';
+    if (patientId == null) patientId = toNum(p.id);
   } else {
     patient = pickStr(o.patientName) ?? pickStr(o.petName) ?? '—';
   }
@@ -114,6 +121,7 @@ function normalizeLine(row: unknown, idx: number): NormalizedLine | null {
     (lab ? `Lab: ${lab}` : null) ??
     proc ??
     custom ??
+    pickStr(o.packageName) ??
     pickStr(o.description) ??
     pickStr(o.serviceName) ??
     pickStr(o.name) ??
@@ -141,9 +149,23 @@ function normalizeLine(row: unknown, idx: number): NormalizedLine | null {
     (Number.isFinite(lineNet + tax) ? lineNet + tax : subtotal + tax);
   const complete = o.complete === true || o.isComplete === true || o.completed === true;
   const id = o.id ?? o.lineItemId ?? idx;
+  const originalPrice = toNum(o.originalPrice);
+  const adjustedTotal = toNum(o.adjustedTotal);
+  const chargedTotal = adjustedTotal ?? total;
+  const taxLevel = toNum(o.taxLevelValue);
+  const computedTax =
+    taxLevel != null && taxLevel !== 0 && chargedTotal > 0
+      ? Math.round(chargedTotal * 0.055 * 100) / 100
+      : 0;
+  const lineTax = tax || computedTax;
+  const isCovered = chargedTotal === 0 && originalPrice != null && originalPrice > 0;
+  const isWriteOff =
+    chargedTotal < -0.005 || /discount|write[- ]?off|adjustment|rebate/i.test(description);
+  const isRemoved = o.isRemoved === true;
   return {
     key: String(id),
     patient,
+    patientId,
     provider,
     productionEmployee,
     description,
@@ -151,10 +173,14 @@ function normalizeLine(row: unknown, idx: number): NormalizedLine | null {
     qty,
     unitPrice,
     serviceFee,
+    originalPrice,
+    isCovered,
     subtotal,
-    tax,
-    total,
+    tax: lineTax,
+    total: chargedTotal,
     complete,
+    isWriteOff,
+    isRemoved,
   };
 }
 
@@ -167,10 +193,62 @@ export type NormalizedInvoice = {
   total: number;
   paid: number;
   due: number;
+  listSubtotal: number;
+  discountSavings: number;
   lines: NormalizedLine[];
+  removedLines: NormalizedLine[];
   /** Original invoice DTO for payments and extra fields in the detail modal. */
   raw: Record<string, unknown>;
 };
+
+export type EvetInvoicePayment = {
+  key: string;
+  amount: number;
+  creditUsed: number;
+  method: string | null;
+  receiptNumber: string | null;
+  receivedAt: string | null;
+  cashierName: string | null;
+  cashierEmployeeId: number | null;
+  isVoided: boolean;
+  voidedByName: string | null;
+  voidedByEmployeeId: number | null;
+  voidedAt: string | null;
+  voidedComments: string | null;
+};
+
+export function evetPaymentsOnInvoice(inv: NormalizedInvoice): EvetInvoicePayment[] {
+  const raw = inv.raw.invoicePayments;
+  if (!Array.isArray(raw)) return [];
+  const out: EvetInvoicePayment[] = [];
+  raw.forEach((row, idx) => {
+    if (!row || typeof row !== 'object') return;
+    const o = row as Record<string, unknown>;
+    const amount = toNum(o.amountPaid) ?? 0;
+    const creditUsed = toNum(o.creditUsed) ?? 0;
+    if (Math.abs(amount) < 0.005 && Math.abs(creditUsed) < 0.005) return;
+    const voided =
+      o.isVoided === true ||
+      pickStr(o.voidedDateTime) != null ||
+      pickStr(o.voidedComments) != null;
+    out.push({
+      key: String(o.id ?? o.pimsId ?? idx),
+      amount,
+      creditUsed,
+      method: pickStr(o.paymentTypeName),
+      receiptNumber: strFromScalar(o.receiptNumber),
+      receivedAt: pickStr(o.receivedAt),
+      cashierName: pickStr(o.cashierName),
+      cashierEmployeeId: toNum(o.cashierEmployeeId),
+      isVoided: voided,
+      voidedByName: pickStr(o.voidedByName),
+      voidedByEmployeeId: toNum(o.voidedByEmployeeId),
+      voidedAt: pickStr(o.voidedDateTime),
+      voidedComments: pickStr(o.voidedComments),
+    });
+  });
+  return out;
+}
 
 export function normalizeInvoice(row: unknown, idx: number): NormalizedInvoice | null {
   if (!row || typeof row !== 'object') return null;
@@ -181,7 +259,11 @@ export function normalizeInvoice(row: unknown, idx: number): NormalizedInvoice |
     pickStr(o.invoicedDate) ?? pickStr(o.invoiceDate) ?? pickStr(o.date) ?? pickStr(o.createdAt) ?? '';
   const date = dateIso.trim() ? formatTs(dateIso) : '—';
   const status =
-    pickStr(o.invoiceStatusName) ?? pickStr(o.invoiceStatus) ?? pickStr(o.status) ?? '—';
+    o.isDeleted === true
+      ? 'Deleted'
+      : o.isActive === false
+        ? 'Void'
+        : pickStr(o.invoiceStatusName) ?? pickStr(o.invoiceStatus) ?? pickStr(o.status) ?? '—';
   const created = o.createdBy;
   let createdBy = '—';
   if (typeof created === 'string') createdBy = created;
@@ -199,6 +281,19 @@ export function normalizeInvoice(row: unknown, idx: number): NormalizedInvoice |
   const due = toNum(o.amountDue) ?? toNum(o.balance) ?? Math.max(0, total - paid);
   const rawLines = invoiceLineItems(o);
   const lines = rawLines.map(normalizeLine).filter(Boolean) as NormalizedLine[];
+  const rawRemoved = Array.isArray(o.removedItems) ? o.removedItems : [];
+  const removedLines = rawRemoved.map(normalizeLine).filter(Boolean) as NormalizedLine[];
+  const forTotals = lines.length ? lines : removedLines;
+  let listSubtotal = 0;
+  let chargedSubtotal = 0;
+  for (const line of forTotals) {
+    const qty = Number(line.qty) || 1;
+    const list =
+      line.originalPrice != null ? line.originalPrice * qty : line.total;
+    listSubtotal += list;
+    chargedSubtotal += line.total;
+  }
+  const discountSavings = Math.round((listSubtotal - chargedSubtotal) * 100) / 100;
   return {
     key: String(o.id ?? number ?? idx),
     number,
@@ -208,20 +303,19 @@ export function normalizeInvoice(row: unknown, idx: number): NormalizedInvoice |
     total,
     paid,
     due,
+    listSubtotal: Math.round(listSubtotal * 100) / 100,
+    discountSavings,
     lines,
+    removedLines,
     raw: o,
   };
 }
 
 export function extractInvoices(c: Record<string, unknown>): unknown[] {
-  if (Array.isArray(c.invoices)) return c.invoices;
-  if (Array.isArray(c.openInvoices)) return c.openInvoices;
-  if (Array.isArray(c.accountInvoices)) return c.accountInvoices;
-  const billing = c.billing;
-  if (billing && typeof billing === 'object') {
-    const b = billing as Record<string, unknown>;
-    if (Array.isArray(b.invoices)) return b.invoices;
-    if (Array.isArray(b.openInvoices)) return b.openInvoices;
+  const billing = c.billing && typeof c.billing === 'object' ? (c.billing as Record<string, unknown>) : null;
+  const candidates = [c.invoices, c.openInvoices, c.accountInvoices, billing?.invoices, billing?.openInvoices];
+  for (const raw of candidates) {
+    if (Array.isArray(raw) && raw.length > 0) return raw;
   }
   return [];
 }
@@ -357,6 +451,29 @@ export function findInvoiceForPayment(
   }
 
   return null;
+}
+
+export type InvoiceNumberFields = {
+  id: string;
+  scoutInvoiceNumber?: number | null;
+  evetInvoiceNumber?: number | null;
+};
+
+/** Staff-facing invoice id: eVet # when adopted, otherwise Scout #. */
+export function invoicePublicLabel(
+  inv: InvoiceNumberFields,
+  opts?: { isReturn?: boolean },
+): string {
+  const scout = inv.scoutInvoiceNumber;
+  const evet = inv.evetInvoiceNumber;
+  if (opts?.isReturn) {
+    if (scout != null) return `Return #${scout}`;
+    if (evet != null) return `Return #${evet}`;
+    return `Return ${inv.id.slice(0, 8)}`;
+  }
+  if (evet != null) return `#${evet}`;
+  if (scout != null) return `#${scout}`;
+  return `Invoice ${inv.id.slice(0, 8)}`;
 }
 
 /** @deprecated Use findInvoiceForPayment */

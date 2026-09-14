@@ -45,6 +45,10 @@ import {
   type AssignedTasksTab,
 } from '../utils/taskOwnership';
 import PimsTaskDetailView from '../components/pims/PimsTaskDetailView';
+import {
+  mailOrderTaskStatusClass,
+  mailOrderTaskStatusLabel,
+} from '../utils/mailOrderTaskStatus';
 import TaskReassignModal from '../components/pims/TaskReassignModal';
 import './PimsTasksPage.css';
 
@@ -734,7 +738,15 @@ export default function PimsTasksPage() {
           <Link className="pims-task-card__title" to={`?taskId=${row.id}`}>
             {row.title}
           </Link>
-          <span className={`pims-task-card__pill pims-task-card__pill--${row.status}`}>{row.status}</span>
+          <span
+            className={`pims-task-card__pill pims-task-card__pill--${
+              links?.some((l) => l.entityType === 'mail_order')
+                ? mailOrderTaskStatusClass(row.status)
+                : row.status
+            }`}
+          >
+            {mailOrderTaskStatusLabel(row.status, links)}
+          </span>
         </div>
         {humanStartLine(row.startAt) ? (
           <p className="pims-task-card__due pims-task-card__due--start">{humanStartLine(row.startAt)}</p>
@@ -958,14 +970,14 @@ function TaskLinkInline({
   const label = taskLinkDisplayLabel(link, labels);
   if (link.entityType === 'patient') {
     return (
-      <Link className="pims-task-card__link" to={`/pims/patients?patientId=${encodeURIComponent(String(link.entityId))}`}>
+      <Link className="pims-task-card__link" to={`/schedule/patients?patientId=${encodeURIComponent(String(link.entityId))}`}>
         {label}
       </Link>
     );
   }
   if (link.entityType === 'client') {
     return (
-      <Link className="pims-task-card__link" to={`/pims/clients?clientId=${encodeURIComponent(String(link.entityId))}`}>
+      <Link className="pims-task-card__link" to={`/schedule/clients?clientId=${encodeURIComponent(String(link.entityId))}`}>
         {label}
       </Link>
     );

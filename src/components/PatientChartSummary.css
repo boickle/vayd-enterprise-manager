@@ -77,6 +77,34 @@
   padding-left: 18px;
 }
 
+.patient-chart-summary-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 10px;
+}
+
+.patient-chart-summary-refill-exp {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: #1a56db;
+  text-decoration: underline;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.patient-chart-summary-refill-exp:hover {
+  color: #0d3d99;
+}
+
+.patient-chart-summary-list--overdue .patient-chart-summary-refill-exp {
+  color: #1a56db;
+}
+
 .patient-chart-summary-list li + li {
   margin-top: 4px;
 }

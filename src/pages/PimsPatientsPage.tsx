@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useLocation, useSearchParams } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 import { FileText } from 'lucide-react';
 import { useAuth } from '../auth/useAuth';
 import { searchPatientsStaff, type PatientSearchRow } from '../api/patients';
@@ -9,6 +9,7 @@ import {
   writePimsPatientsSession,
 } from '../utils/pimsSession';
 import PimsPatientDetailView from '../components/pims/PimsPatientDetailView';
+import AddPatientModal from '../components/pims/AddPatientModal';
 import { enrichPatientSearchRowsSex } from '../utils/enrichPatientSearchRowsSex';
 import { patientSexDisplayFromRecord } from '../utils/schedulerVisitDisplay';
 import './PimsClientsPage.css';
@@ -82,13 +83,8 @@ function patientListStatus(row: PatientSearchRow): { active: boolean; text: stri
 }
 
 export default function PimsPatientsPage() {
-  const location = useLocation();
-  const patientsBasePath = location.pathname.startsWith('/schedule/patients')
-    ? '/schedule/patients'
-    : '/pims/patients';
-  const clientsBasePath = location.pathname.startsWith('/schedule/patients')
-    ? '/schedule/clients'
-    : '/pims/clients';
+  const patientsBasePath = '/schedule/patients';
+  const clientsBasePath = '/schedule/clients';
 
   const { token } = useAuth() as { token: string | null };
   const practiceId = useMemo(() => resolvePracticeIdFromToken(token), [token]);
@@ -96,6 +92,7 @@ export default function PimsPatientsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const qParam = searchParams.get('q') ?? '';
   const patientIdParam = searchParams.get('patientId') ?? '';
+  const addParam = searchParams.get('add') === '1';
 
   const [searchBy, setSearchBy] = useState('all');
   const [query, setQuery] = useState(() => initialPatientsSearchFromUrlAndSession().q);
@@ -103,7 +100,12 @@ export default function PimsPatientsPage() {
   const [rows, setRows] = useState<PatientSearchRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [addPatientOpen, setAddPatientOpen] = useState(false);
   const seq = useRef(0);
+
+  useEffect(() => {
+    if (addParam) setAddPatientOpen(true);
+  }, [addParam]);
 
   useEffect(() => {
     if (qParam !== '' || searchParams.get('patientId')) {
@@ -173,7 +175,7 @@ export default function PimsPatientsPage() {
     setSearchParams(next, { replace: false });
   }, [searchParams, setSearchParams]);
 
-  if (patientIdParam.trim()) {
+  if (patientIdParam.trim() && !addParam) {
     return (
       <div className="pims-clients pims-clients--detail">
         <PimsPatientDetailView
@@ -189,7 +191,7 @@ export default function PimsPatientsPage() {
     <div className="pims-clients">
       <div className="pims-clients__head">
         <h1 className="pims-clients__title">Patients</h1>
-        <button type="button" className="pims-clients__add">
+        <button type="button" className="pims-clients__add" onClick={() => setAddPatientOpen(true)}>
           + Add Patient
         </button>
       </div>
@@ -327,6 +329,24 @@ export default function PimsPatientsPage() {
           <p className="pims-clients__hint">Enter a search to load patients from your practice directory.</p>
         )}
       </div>
+
+      <AddPatientModal
+        open={addPatientOpen}
+        onClose={() => {
+          setAddPatientOpen(false);
+          if (addParam) {
+            const next = new URLSearchParams(searchParams);
+            next.delete('add');
+            setSearchParams(next, { replace: true });
+          }
+        }}
+        onCreated={(id) => {
+          const next = new URLSearchParams(searchParams);
+          next.delete('add');
+          next.set('patientId', id);
+          setSearchParams(next, { replace: false });
+        }}
+      />
     </div>
   );
 }

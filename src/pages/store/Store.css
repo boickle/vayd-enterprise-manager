@@ -1,0 +1,739 @@
+.vayd-store {
+  min-height: 100vh;
+  background: radial-gradient(1000px 600px at 20% -10%, #ecfff8 0%, transparent 60%), #f6fbf9;
+  color: #103b2e;
+  font-family: 'Open Sans', ui-sans-serif, system-ui, sans-serif;
+}
+.vayd-store h1,
+.vayd-store h2,
+.vayd-store h3,
+.vayd-store__card h3,
+.vayd-store__cart-head h1,
+.vayd-store__pdp-info h1 {
+  font-family: 'Libre Baskerville', 'Times New Roman', serif;
+  color: #103b2e;
+}
+.vayd-store h1 { font-size: 28px; font-weight: 700; margin: 0 0 16px; }
+.vayd-store h2 { font-size: 20px; font-weight: 700; }
+.vayd-store a { color: #0f766e; }
+.vayd-store__account-btn {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 1001;
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 8px;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+.vayd-store__account-btn svg { width: 24px; height: 24px; stroke: #111827; }
+.vayd-store__account-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+}
+.vayd-store__account-menu {
+  position: fixed;
+  top: 68px;
+  right: 16px;
+  z-index: 1000;
+  min-width: 180px;
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  overflow: hidden;
+}
+.vayd-store__account-menu a,
+.vayd-store__account-menu button {
+  display: block;
+  width: 100%;
+  padding: 12px 16px;
+  border: 0;
+  background: none;
+  color: #374151;
+  font: inherit;
+  font-weight: 600;
+  font-size: 14px;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+.vayd-store__account-menu a:hover,
+.vayd-store__account-menu button:hover { background: #f3f4f6; }
+@media (max-width: 768px) {
+  .vayd-store__account-btn { top: env(safe-area-inset-top, 0px); }
+  .vayd-store__account-menu { top: calc(env(safe-area-inset-top, 0px) + 52px); }
+}
+.vayd-store__hero {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 20px 16px 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+.vayd-store__nav {
+  width: 100%;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 18px;
+  padding-right: 56px;
+}
+.vayd-store__nav a {
+  color: #0f766e;
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 14px;
+}
+.vayd-store__nav a:hover { text-decoration: underline; }
+.vayd-store__nav-cart {
+  padding: 8px 16px;
+  background: #ecfff8;
+  border: 1px solid #0f766e;
+  border-radius: 10px;
+  box-shadow: 0 0 16px rgba(15, 118, 110, 0.28);
+}
+.vayd-store__nav-cart:hover { text-decoration: none !important; filter: brightness(1.03); }
+.vayd-store__logo { display: block; text-decoration: none; }
+.vayd-store__logo img {
+  display: block;
+  width: min(320px, 60vw);
+  max-width: 360px;
+  height: auto;
+  mix-blend-mode: multiply;
+}
+.vayd-store__wrap { max-width: 1120px; margin: 0 auto; padding: 8px 16px 96px; }
+.vayd-store__note {
+  background: #ecfff8;
+  border: 1px solid #0f766e;
+  border-radius: 12px;
+  padding: 12px 16px;
+  margin-bottom: 18px;
+  font-size: 14px;
+  line-height: 1.45;
+  color: #0f4c3a;
+}
+.vayd-store__search {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid #d7e5df;
+  background: #fff;
+  font-size: 16px;
+  margin-bottom: 14px;
+}
+.vayd-store__chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
+.vayd-store__chips--sub {
+  margin-top: -10px;
+  padding: 10px 12px;
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 12px;
+}
+.vayd-store__chip {
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: #fff;
+  border-radius: 12px;
+  padding: 8px 14px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: #103b2e;
+}
+.vayd-store__chip.is-on { background: rgb(15, 118, 110); color: #fff; border-color: transparent; }
+.vayd-store__chip--throb {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.vayd-store__chip--throb:not(.is-on) {
+  animation: vayd-store-throb 1.7s ease-in-out infinite;
+}
+.vayd-store__chip-tag {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(15, 118, 110, 0.12);
+  color: rgb(15, 118, 110);
+}
+.vayd-store__chip--throb.is-on .vayd-store__chip-tag {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+@keyframes vayd-store-throb {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(15, 118, 110, 0.35); }
+  50% { transform: scale(1.045); box-shadow: 0 0 0 7px rgba(15, 118, 110, 0); }
+}
+.vayd-store__stepper {
+  display: inline-flex;
+  align-items: stretch;
+  width: auto;
+  border: 1px solid #d7e5df;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #fff;
+}
+.vayd-store__stepper button {
+  width: 40px;
+  border: 0;
+  background: #ecfff8;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  color: #103b2e;
+}
+.vayd-store__stepper button:hover { background: #d9f6ee; }
+.vayd-store__stepper input {
+  width: 56px;
+  margin: 0;
+  border: 0;
+  border-left: 1px solid #e5e0d8;
+  border-right: 1px solid #e5e0d8;
+  border-radius: 0;
+  text-align: center;
+  font-size: 16px;
+  padding: 8px 4px;
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+.vayd-store__stepper input::-webkit-outer-spin-button,
+.vayd-store__stepper input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.vayd-store__price-was {
+  display: inline-block;
+  margin-right: 10px;
+  color: #9aa3a0;
+  font-weight: 600;
+  font-size: 0.62em;
+  text-decoration: line-through;
+}
+.vayd-store__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 16px;
+}
+.vayd-store a.vayd-store__card {
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 12px;
+  overflow: hidden;
+  text-decoration: none;
+  color: #103b2e;
+  display: flex;
+  flex-direction: column;
+}
+.vayd-store__card-media {
+  position: relative;
+}
+.vayd-store__card img {
+  width: 100%;
+  height: 180px;
+  object-fit: cover;
+  background: #eef6f2;
+}
+.vayd-store__sale-banner {
+  position: absolute;
+  top: 14px;
+  left: 0;
+  z-index: 1;
+  background: #b45309;
+  color: #fff;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  font-size: 13px;
+  padding: 6px 14px 6px 12px;
+  box-shadow: 0 2px 8px rgba(180, 83, 9, 0.35);
+}
+.vayd-store__sale-ends {
+  margin: -8px 0 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #b45309;
+}
+.vayd-store__card-body { padding: 12px 14px 16px; }
+.vayd-store__card h3 { margin: 0 0 6px; font-size: 16px; font-weight: 700; }
+.vayd-store__price { font-weight: 700; color: rgb(15, 118, 110); }
+.vayd-store__card .vayd-store__price-was {
+  font-size: 13px;
+  margin-right: 6px;
+}
+.vayd-store a.vayd-store__card:hover { text-decoration: none; border-color: rgba(15, 118, 110, 0.35); }
+.vayd-store__badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  background: #ecfff8;
+  color: #0f766e;
+  padding: 3px 8px;
+  border-radius: 999px;
+  margin: 6px 6px 0 0;
+}
+.vayd-store__badge--on {
+  background: #0f766e;
+  color: #fff;
+}
+.vayd-store__pdp {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.95fr) minmax(300px, 1.05fr);
+  gap: 12px 40px;
+  align-items: start;
+}
+.vayd-store__pdp-nav {
+  grid-column: 1 / -1;
+  text-decoration: none;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.vayd-store__pdp-media {
+  position: sticky;
+  top: 16px;
+}
+.vayd-store__pdp-media .vayd-store__sale-banner { top: 18px; }
+.vayd-store__pdp-media img,
+.vayd-store__pdp-placeholder {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: contain;
+  background: #fff;
+  border-radius: 16px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+}
+.vayd-store__pdp-placeholder { background: #eef6f2; }
+.vayd-store__pdp-info h1 { margin: 0 0 10px; line-height: 1.2; }
+.vayd-store__pdp-info .vayd-store__price { font-size: 28px; margin: 0 0 14px; }
+.vayd-store__pdp-desc { font-size: 15px; line-height: 1.55; margin: 0 0 12px; }
+.vayd-store__pdp-desc a { color: rgb(15, 118, 110); text-decoration: underline; }
+.vayd-store__pdp-desc p { margin: 0 0 0.7em; }
+.vayd-store__pdp-desc ul,
+.vayd-store__pdp-desc ol { margin: 0 0 0.8em; padding-left: 1.25em; }
+@media (max-width: 800px) {
+  .vayd-store__pdp {
+    grid-template-columns: 1fr;
+  }
+  .vayd-store__pdp-media { position: static; }
+}
+
+.vayd-store__cart-float {
+  position: fixed;
+  top: 50%;
+  right: 20px;
+  z-index: 80;
+  transform: translateY(-50%);
+}
+.vayd-store__cart-float-btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  min-width: 56px;
+  height: 56px;
+  padding: 0;
+  border: 0;
+  background: #0f766e;
+  color: #fff;
+  border-radius: 999px;
+  cursor: pointer;
+  box-shadow: 0 10px 28px rgba(15, 118, 110, 0.35);
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+.vayd-store__cart-float-btn svg {
+  width: 26px;
+  height: 26px;
+}
+.vayd-store__cart-float-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 14px 32px rgba(15, 118, 110, 0.45);
+  text-decoration: none;
+}
+.vayd-store__cart-float-count {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #fff;
+  color: #0f766e;
+  border: 2px solid #0f766e;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 12px;
+  line-height: 1;
+}
+.vayd-store__cart-float-panel {
+  position: absolute;
+  right: 0;
+  bottom: 100%;
+  width: min(300px, calc(100vw - 32px));
+  background: #fff;
+  color: #103b2e;
+  border-radius: 14px;
+  padding: 14px 14px 12px;
+  margin-bottom: 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.16);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(8px);
+  transition: opacity 0.16s ease, transform 0.16s ease;
+}
+.vayd-store__cart-float.is-open .vayd-store__cart-float-panel {
+  opacity: 1;
+  pointer-events: auto;
+  transform: none;
+}
+.vayd-store__cart-float-title {
+  font-weight: 700;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+.vayd-store__cart-float-panel ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.vayd-store__cart-float-panel li {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 13px;
+  line-height: 1.35;
+  padding: 6px 0;
+  border-bottom: 1px solid #e4efe9;
+}
+.vayd-store__cart-float-panel li span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vayd-store__cart-float-more { margin: 8px 0 0; font-size: 12px; color: #6b7280; }
+.vayd-store__cart-float-total {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin: 10px 0 12px;
+  font-size: 14px;
+}
+.vayd-store__cart-float-panel .primary {
+  display: block;
+  text-align: center;
+  text-decoration: none;
+  background: #0f766e;
+  color: #fff;
+  border-radius: 10px;
+  padding: 10px 16px;
+  font-weight: 600;
+}
+@keyframes vayd-store-cart-pop {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.08); }
+  100% { transform: scale(1); }
+}
+.vayd-store__cart-float.is-pop .vayd-store__cart-float-btn {
+  animation: vayd-store-cart-pop 0.35s ease;
+}
+.vayd-store__option { margin: 16px 0 8px; }
+.vayd-store__option-label { font-size: 14px; font-weight: 600; margin-bottom: 8px; }
+.vayd-store__custom-freq {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0 0;
+}
+.vayd-store__custom-freq input,
+.vayd-store__custom-freq select {
+  width: auto;
+  max-width: 120px;
+}
+.vayd-store__autoship-note {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: rgb(15, 118, 110);
+}
+.vayd-store__price-note { font-weight: 500; color: #4b5563; font-size: 15px; }
+.vayd-store__actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+.vayd-store button.primary, .vayd-store .primary {
+  background: #0f766e;
+  color: #fff;
+  border: 0;
+  border-radius: 10px;
+  padding: 10px 16px;
+  cursor: pointer;
+  font-weight: 600;
+}
+.vayd-store button.ghost {
+  background: #ecfff8;
+  border: 1px solid #0f766e;
+  color: #0f766e;
+  border-radius: 10px;
+  padding: 10px 16px;
+  cursor: pointer;
+  font-weight: 600;
+}
+.vayd-store label { display: block; margin: 10px 0; font-size: 14px; }
+.vayd-store input, .vayd-store select, .vayd-store textarea {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid #d7e5df;
+  margin-top: 4px;
+}
+.vayd-store .vayd-store__stepper input {
+  width: 56px;
+  margin-top: 0;
+  padding: 8px 4px;
+}
+.vayd-store .vayd-store__custom-freq input,
+.vayd-store .vayd-store__custom-freq select {
+  width: auto;
+  max-width: 120px;
+  margin-top: 0;
+}
+.vayd-store__err { color: #9b1c1c; }
+.vayd-store__cart { max-width: 980px; }
+.vayd-store__cart-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 10px;
+}
+.vayd-store__cart-head h1 { margin: 0; }
+.vayd-store__cart-head .ghost { text-decoration: none; }
+.vayd-store__cart-purchase { margin-top: 10px; }
+.vayd-store__cart-purchase .vayd-store__chips { margin-bottom: 8px; }
+.vayd-store__card-copy {
+  margin: 10px 0 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: rgb(15, 118, 110);
+}
+.vayd-store__card-link {
+  display: inline-block;
+  margin: 8px 0 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: rgb(15, 118, 110);
+  font: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.vayd-store__card-pay {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 14px;
+}
+.vayd-store__card-pay label,
+.vayd-store__card-entry label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+}
+.vayd-store__card-label {
+  display: block;
+  margin-bottom: 5px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+}
+.vayd-store__card-select,
+.vayd-store__card-entry input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #d7e5df;
+  border-radius: 8px;
+  padding: 9px 11px;
+  font: inherit;
+  font-weight: 400;
+  color: #103b2e;
+  background: #fff;
+}
+.vayd-store__card-entry {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 12px;
+  margin-top: 14px;
+}
+.vayd-store__card-pay label,
+.vayd-store__card-entry label { margin: 0; }
+.vayd-store__card-entry > :first-child,
+.vayd-store__card-entry > :nth-child(2),
+.vayd-store__card-entry .vayd-store__cart-wide,
+.vayd-store__card-entry .vayd-store__card-save,
+.vayd-store__card-entry .vayd-store__card-link,
+.vayd-store__card-entry .vayd-store__note,
+.vayd-store__card-entry .vayd-store__err {
+  grid-column: 1 / -1;
+}
+.vayd-store__card-box {
+  background: #fff;
+  border: 1px solid #d7e5df;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.vayd-store__card-save {
+  flex-direction: row !important;
+  align-items: flex-start;
+  gap: 8px !important;
+  font-weight: 500 !important;
+  line-height: 1.4;
+}
+.vayd-store .vayd-store__card-save input {
+  width: auto;
+  margin-top: 2px;
+}
+.vayd-store__place {
+  display: block;
+  width: 100%;
+  margin-top: 22px;
+}
+.vayd-store__cart-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 12px;
+  overflow: hidden;
+  margin: 18px 0 24px;
+}
+.vayd-store__cart-table th,
+.vayd-store__cart-table td {
+  text-align: left;
+  padding: 14px 16px;
+  border-bottom: 1px solid #e4efe9;
+  vertical-align: top;
+}
+.vayd-store__cart-table th { font-size: 13px; color: #6b7280; }
+.vayd-store__cart-item { display: flex; gap: 12px; align-items: flex-start; }
+.vayd-store__cart-item img,
+.vayd-store__cart-ph {
+  width: 72px;
+  height: 72px;
+  object-fit: cover;
+  border-radius: 10px;
+  background: #eef6f2;
+  flex: 0 0 72px;
+}
+.vayd-store__cart-meta { font-size: 13px; color: #6b7280; margin-top: 4px; }
+.vayd-store__cart-pets {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: #f6fbf9;
+  border: 1px solid #e4efe9;
+  border-radius: 12px;
+  font-size: 13px;
+}
+.vayd-store__cart-pets-label {
+  font-weight: 700;
+  color: #0f766e;
+}
+.vayd-store__cart-pets-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.vayd-store__cart-pets label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 6px 10px;
+  border: 1px solid #d7e5df;
+  border-radius: 10px;
+  background: #fff;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.vayd-store__cart-pets label.is-on {
+  border-color: #0f766e;
+  background: #ecfff8;
+  color: #0f766e;
+}
+.vayd-store__cart-pets input {
+  width: auto;
+  margin: 0;
+  accent-color: #0f766e;
+}
+.vayd-store__cart-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(260px, 0.8fr);
+  gap: 28px;
+  align-items: start;
+}
+.vayd-store__cart-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 12px;
+}
+.vayd-store__cart-wide { grid-column: 1 / -1; position: relative; z-index: 3; }
+.vayd-store .vayd-store__address-input {
+  width: 100%;
+  max-width: none;
+}
+.vayd-store__cart-summary {
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 12px;
+  padding: 16px 18px 18px;
+}
+.vayd-store__cart-summary table { width: 100%; }
+.vayd-store__cart-summary th { text-align: left; font-weight: 500; color: #4b5563; }
+.vayd-store__cart-summary td { text-align: right; padding: 6px 0; }
+.vayd-store__cart-grand th,
+.vayd-store__cart-grand td { font-size: 18px; font-weight: 700; color: rgb(15, 118, 110); padding-top: 10px; }
+.vayd-store__cart-coupon span { display: flex; gap: 8px; align-items: center; }
+.vayd-store__cart-coupon input { width: 140px; margin-top: 0; }
+.vayd-store .vayd-store__cart-coupon input { width: 140px; }
+.vayd-store__autoship-list {
+  list-style: none;
+  padding: 0;
+  margin: 16px 0 0;
+  display: grid;
+  gap: 14px;
+}
+.vayd-store__autoship-card {
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 12px;
+  padding: 16px 18px;
+}
+.vayd-store__autoship-card h2 { font-size: 18px; margin: 0 0 8px; }
+.vayd-store__autoship-card p { margin: 0 0 8px; font-size: 14px; color: #4b5563; }
+.vayd-store__autoship-pet {
+  margin: -2px 0 10px;
+  font-size: 17px;
+  font-weight: 700;
+  color: #0f766e;
+}
+@media (max-width: 800px) {
+  .vayd-store__cart-grid,
+  .vayd-store__cart-fields,
+  .vayd-store__card-entry { grid-template-columns: 1fr; }
+  .vayd-store__nav { justify-content: center; flex-wrap: wrap; gap: 12px; }
+}

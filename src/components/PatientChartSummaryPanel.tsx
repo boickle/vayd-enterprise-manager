@@ -3,6 +3,31 @@ import type { ReactNode } from 'react';
 import type { RoutingPatientHoverSummary } from '../utils/routingPatientHoverData';
 import './PatientChartSummary.css';
 
+function ReminderRow({
+  label,
+  dueDateInput,
+  onApplyRefillExpiration,
+}: {
+  label: string;
+  dueDateInput: string | null;
+  onApplyRefillExpiration?: (dateInput: string) => void;
+}) {
+  return (
+    <li>
+      <span>{label}</span>
+      {onApplyRefillExpiration && dueDateInput ? (
+        <button
+          type="button"
+          className="patient-chart-summary-refill-exp"
+          onClick={() => onApplyRefillExpiration(dueDateInput)}
+        >
+          Refill exp
+        </button>
+      ) : null}
+    </li>
+  );
+}
+
 function SummarySection({
   title,
   children,
@@ -35,6 +60,8 @@ type Props = {
   /** When false, omit the patient name header (e.g. modal title already shows it). */
   showHeader?: boolean;
   className?: string;
+  /** Apply a reminder due date to the open prescription's refill expiration. */
+  onApplyRefillExpiration?: (dateInput: string) => void;
 };
 
 export function PatientChartSummaryPanel({
@@ -47,6 +74,7 @@ export function PatientChartSummaryPanel({
   membershipName = null,
   showHeader = true,
   className,
+  onApplyRefillExpiration,
 }: Props) {
   const membershipLabel = membershipName?.trim() || 'Member';
   return (
@@ -110,7 +138,12 @@ export function PatientChartSummaryPanel({
             {summary.activeReminders.length > 0 ? (
               <ul className="patient-chart-summary-list">
                 {summary.activeReminders.map((r) => (
-                  <li key={r.id}>{r.label}</li>
+                  <ReminderRow
+                    key={r.id}
+                    label={r.label}
+                    dueDateInput={r.dueDateInput}
+                    onApplyRefillExpiration={onApplyRefillExpiration}
+                  />
                 ))}
               </ul>
             ) : (
@@ -122,7 +155,12 @@ export function PatientChartSummaryPanel({
             {summary.overdueReminders.length > 0 ? (
               <ul className="patient-chart-summary-list patient-chart-summary-list--overdue">
                 {summary.overdueReminders.map((r) => (
-                  <li key={r.id}>{r.label}</li>
+                  <ReminderRow
+                    key={r.id}
+                    label={r.label}
+                    dueDateInput={r.dueDateInput}
+                    onApplyRefillExpiration={onApplyRefillExpiration}
+                  />
                 ))}
               </ul>
             ) : (

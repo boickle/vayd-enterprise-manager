@@ -8,7 +8,7 @@ import ScheduleLayout from './pages/ScheduleLayout';
 import SurveyResponsesPage from './pages/SurveyResponses';
 import SurveyResults from './pages/SurveyResults';
 import Tools from './pages/Tools';
-import PimsLayout from './pages/PimsLayout';
+import PimsToScheduleRedirect from './pages/PimsToScheduleRedirect';
 
 export type AppPage = {
   path: string;
@@ -63,7 +63,7 @@ export function getAccessiblePages(abilities?: string[], roles?: string[]): AppP
     {
       path: '/pims',
       label: 'PIMS',
-      element: <PimsLayout />,
+      element: <PimsToScheduleRedirect />,
       role: ['employee', 'admin', 'superadmin'],
       showInMainTabs: false,
     },

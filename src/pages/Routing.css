@@ -343,6 +343,32 @@
   letter-spacing: -0.01em;
 }
 
+.routing-route-form-collapse {
+  margin-left: auto;
+  border: 1px solid #dbe4ee;
+  background: #fff;
+  color: #334155;
+  border-radius: 8px;
+  padding: 4px 10px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.routing-route-form-collapse:hover {
+  background: #f8fafc;
+  color: #0f172a;
+  border-color: #cbd5e1;
+}
+
+@media (max-width: 900px) {
+  .routing-route-form-collapse {
+    display: none;
+  }
+}
+
 .routing-reschedule-mode-badge {
   display: inline-flex;
   align-items: center;

@@ -551,3 +551,11 @@ export function postWithToken<T = any>(path: string, data: any, tokenOverride: s
   const headers = new AxiosHeaders({ Authorization: `Bearer ${tokenOverride}` });
   return http.post<T>(path, data, { headers });
 }
+
+export function apiErrorMessage(e: unknown): string {
+  const res = (e as { response?: { data?: { message?: string | string[] } } })?.response;
+  const message = res?.data?.message;
+  if (Array.isArray(message)) return message.join(', ');
+  if (typeof message === 'string' && message.trim()) return message;
+  return e instanceof Error ? e.message : 'Request failed';
+}

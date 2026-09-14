@@ -1,0 +1,124 @@
+.navbar-recent {
+  position: relative;
+  flex: 0 1 240px;
+  max-width: 260px;
+  min-width: 150px;
+}
+
+.navbar-recent__btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 9px 10px 9px 12px;
+  border-radius: 10px;
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  color: #0f172a;
+  font-family: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.navbar-recent__btn:disabled {
+  color: #94a3b8;
+  cursor: default;
+}
+
+.navbar-recent__btn:not(:disabled):hover {
+  border-color: #94a3b8;
+}
+
+.navbar-recent__text {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.navbar-recent__prefix {
+  font-weight: 600;
+  color: #334155;
+}
+
+.navbar-recent__sep,
+.navbar-recent__empty {
+  color: #64748b;
+}
+
+.navbar-recent__name {
+  font-weight: 500;
+}
+
+.navbar-recent__menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 100%;
+  width: max-content;
+  max-width: min(360px, 80vw);
+  background: #fff;
+  color: #0f172a;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  box-shadow: 0 12px 40px rgba(15, 23, 42, 0.14);
+  max-height: min(420px, 70vh);
+  overflow-y: auto;
+  z-index: 50;
+}
+
+.navbar-recent__hint {
+  padding: 10px 14px 6px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #94a3b8;
+}
+
+.navbar-recent__menu ul {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 6px;
+}
+
+.navbar-recent__hit {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  width: 100%;
+  padding: 8px 14px;
+  border: none;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.navbar-recent__hit:hover,
+.navbar-recent__hit.is-on {
+  background: #f1f5f9;
+}
+
+.navbar-recent__hit-kind {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.navbar-recent__hit-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1e40af;
+}
+
+.navbar-recent__hit-sub {
+  font-size: 12px;
+  color: #64748b;
+}

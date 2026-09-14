@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { PanelLeft } from 'lucide-react';
 import Routing from './Routing';
 import Scheduler from './Scheduler';
 import { hasActiveForwardBookingWorkspaceLock } from '../utils/forwardBookingWorkspaceGuard';
@@ -13,6 +14,7 @@ import {
   rescheduleIntentIsActive,
   ROUTING_RESCHEDULE_INTENT_UPDATED_EVENT,
 } from '../utils/routingRescheduleIntent';
+import { ROUTING_NEW_APPOINTMENT_CLEAR_EVENT } from '../utils/routingUiSnapshot';
 import './RoutingCalendarWorkspace.css';
 
 const SPLIT_STORAGE_KEY = 'schedule-routing-workspace-split';
@@ -60,6 +62,7 @@ export default function RoutingCalendarWorkspace() {
   const [showEmbeddedCalendar, setShowEmbeddedCalendar] = useState(
     () => !isMobileRoutingViewport() || mobileRoutingNeedsEmbeddedCalendar()
   );
+  const [routingCollapsed, setRoutingCollapsed] = useState(false);
 
   useEffect(() => {
     const mq = window.matchMedia(MOBILE_MQ);
@@ -102,6 +105,29 @@ export default function RoutingCalendarWorkspace() {
   }, [mobileViewport, showEmbeddedCalendar]);
 
   const mobileRoutingOnly = mobileViewport && !showEmbeddedCalendar;
+  const routingPaneHidden = routingCollapsed && !mobileViewport;
+
+  useEffect(() => {
+    if (mobileViewport && routingCollapsed) setRoutingCollapsed(false);
+  }, [mobileViewport, routingCollapsed]);
+
+  useEffect(() => {
+    const expand = () => setRoutingCollapsed(false);
+    const events = [
+      ROUTING_NEW_APPOINTMENT_CLEAR_EVENT,
+      ROUTING_RESCHEDULE_INTENT_UPDATED_EVENT,
+      ROUTING_FORWARD_BOOKING_INTENT_UPDATED_EVENT,
+      ROUTING_APPOINTMENT_REQUEST_INTENT_UPDATED_EVENT,
+    ] as const;
+    for (const name of events) {
+      window.addEventListener(name, expand);
+    }
+    return () => {
+      for (const name of events) {
+        window.removeEventListener(name, expand);
+      }
+    };
+  }, []);
 
   const persistSplit = useCallback((pct: number) => {
     const clamped = Math.min(MAX_ROUTING_PCT, Math.max(MIN_ROUTING_PCT, pct));
@@ -175,18 +201,41 @@ export default function RoutingCalendarWorkspace() {
         'schedule-routing-workspace',
         dragging ? 'schedule-routing-workspace--resizing' : '',
         mobileRoutingOnly ? 'schedule-routing-workspace--mobile-routing-only' : '',
+        routingPaneHidden ? 'schedule-routing-workspace--routing-collapsed' : '',
       ]
         .filter(Boolean)
         .join(' ')}
       style={{ ['--routing-split-pct' as string]: `${routingPct}%` }}
     >
-      <div className="schedule-routing-workspace__routing">
+      {routingPaneHidden ? (
+        <button
+          type="button"
+          className="schedule-routing-workspace__expand"
+          onClick={() => setRoutingCollapsed(false)}
+          data-schedule-preview-allow
+          aria-label="Show Get Best Route"
+          title="Show Get Best Route"
+        >
+          <PanelLeft size={18} strokeWidth={1.75} aria-hidden />
+          <span className="schedule-routing-workspace__expand-label">Get Best Route</span>
+        </button>
+      ) : null}
+      <div
+        className="schedule-routing-workspace__routing"
+        hidden={routingPaneHidden}
+        aria-hidden={routingPaneHidden}
+      >
         <div className="schedule-routing-workspace__routing-inner">
-          <Routing calendarWorkspaceMode />
+          <Routing
+            calendarWorkspaceMode
+            onCollapseWorkspace={() => setRoutingCollapsed(true)}
+          />
         </div>
       </div>
       <div
         className="schedule-routing-workspace__splitter"
+        hidden={routingPaneHidden}
+        aria-hidden={routingPaneHidden}
         role="separator"
         aria-orientation="vertical"
         aria-valuemin={MIN_ROUTING_PCT}

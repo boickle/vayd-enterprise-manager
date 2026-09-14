@@ -5,6 +5,7 @@ import App from './App';
 import './styles.css';
 import { AuthProvider } from './auth/AuthProvider';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import AppDialogProvider from './components/AppDialogProvider';
 import { ensureGtagReady, initGA } from './utils/analytics';
 import { initGtm } from './utils/gtm';
 import { captureMarketingAttribution } from './utils/marketingAttribution';
@@ -61,7 +62,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     <BrowserRouter>
       <AuthProvider>
         <ErrorBoundary>
-          <App />
+          <AppDialogProvider>
+            <App />
+          </AppDialogProvider>
         </ErrorBoundary>
       </AuthProvider>
     </BrowserRouter>

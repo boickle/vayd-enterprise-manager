@@ -3,6 +3,8 @@ import { fetchUnscheduledReminders } from '../api/careOutreach';
 import { fetchForwardBookings } from '../api/forwardBooking';
 import { fetchSlotOffers } from '../api/slotOffers';
 import { fetchWaitlist } from '../api/waitlist';
+import { listRecordsRequests } from '../api/recordsRequests';
+import { isRecordsRequestUrgent } from '../utils/recordsRequestUrgency';
 import { fetchAllAppointmentTypes } from '../api/appointmentSettings';
 import {
   buildAppointmentTypeCatalogFromTypes,
@@ -48,6 +50,8 @@ export type SchedulingToolsNavCounts = {
   textedOffersToConfirm: number;
   waitlistWaiting: number;
   scheduleOptimizeQueued: number;
+  recordsPending: number;
+  recordsUrgent: number;
 };
 
 const EMPTY_COUNTS: SchedulingToolsNavCounts = {
@@ -61,6 +65,8 @@ const EMPTY_COUNTS: SchedulingToolsNavCounts = {
   textedOffersToConfirm: 0,
   waitlistWaiting: 0,
   scheduleOptimizeQueued: 0,
+  recordsPending: 0,
+  recordsUrgent: 0,
 };
 
 export function useSchedulingToolsNavCounts(enabled = true) {
@@ -72,7 +78,15 @@ export function useSchedulingToolsNavCounts(enabled = true) {
     setLoading(true);
     try {
       const careRange = careOutreachPriorityNavCountFetchRange();
-      const [types, forwardBookings, careReminders, activeOffers, toConfirmOffers, waitlistWaiting] = await Promise.all([
+      const [
+        types,
+        forwardBookings,
+        careReminders,
+        activeOffers,
+        toConfirmOffers,
+        waitlistWaiting,
+        pendingRecords,
+      ] = await Promise.all([
         fetchAllAppointmentTypes(PRACTICE_ID, { activeOnly: false }),
         fetchForwardBookings({ practiceId: PRACTICE_ID, limit: 2000, includeRemoved: true }),
         fetchUnscheduledReminders({
@@ -84,7 +98,12 @@ export function useSchedulingToolsNavCounts(enabled = true) {
         fetchSlotOffers({ practiceId: PRACTICE_ID, tab: 'active' }).catch(() => []),
         fetchSlotOffers({ practiceId: PRACTICE_ID, tab: 'to_confirm' }).catch(() => []),
         fetchWaitlist({ practiceId: PRACTICE_ID, status: 'waiting', limit: 2000 }).catch(() => []),
+        listRecordsRequests({ status: 'pending' }).catch(() => []),
       ]);
+
+      const recordsUrgent = pendingRecords.filter((row) =>
+        isRecordsRequestUrgent(row),
+      ).length;
 
       const catalog = buildAppointmentTypeCatalogFromTypes(types);
       const practiceTz = practiceTimeZoneOrDefault(undefined);
@@ -140,6 +159,8 @@ export function useSchedulingToolsNavCounts(enabled = true) {
         textedOffersToConfirm: toConfirmOffers.length,
         waitlistWaiting: waitlistWaiting.length,
         scheduleOptimizeQueued: countQueuedScheduleOptimizeItems(PRACTICE_ID),
+        recordsPending: pendingRecords.length,
+        recordsUrgent,
       });
     } catch {
       setCounts({
