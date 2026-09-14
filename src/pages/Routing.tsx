@@ -66,7 +66,12 @@ import {
   formatDoctorZoneInlineWarning,
   getDoctorClientZoneStatus,
   distinctDaysOfWeekInDateRange,
+  doctorPimsIdsAcceptingAppointmentType,
 } from '../utils/veterinarianZoneLookup';
+import {
+  collectRoutingResultDoctorIds,
+  filterRoutingResultByAppointmentType,
+} from '../utils/routingAppointmentTypeFilter';
 import {
   normalizeRoutingV2SlotSearchResponse,
   type RoutingSlotSearchOptionalFlags,
@@ -5145,9 +5150,28 @@ export default function Routing({ calendarWorkspaceMode = false }: RoutingProps)
     setLoading(true);
     try {
       const { data } = await http.post<Result>(endpoint, payload);
-      const normalized = normalizeRoutingV2SlotSearchResponse(
+      let normalized = normalizeRoutingV2SlotSearchResponse(
         data as RoutingV2SlotSearchResult
       ) as Result;
+      // Auto-widen must still honor Settings → appointment types (NP + Follow-Up).
+      if (
+        routingTypeId != null &&
+        !isAsapSearch &&
+        !multiDoctor &&
+        form.doctorId.trim()
+      ) {
+        const accepting = await doctorPimsIdsAcceptingAppointmentType(
+          collectRoutingResultDoctorIds(normalized),
+          routingTypeId
+        );
+        normalized = filterRoutingResultByAppointmentType(normalized, {
+          requestedDoctorId: form.doctorId.trim(),
+          appointmentTypeId: routingTypeId,
+          doctorsAcceptingType: accepting,
+          asapAllDoctorSearch: isAsapSearch,
+          multiDoctor,
+        }) as Result;
+      }
       setResult(normalized);
       setEtaWindowWarningsByOptionKey({});
       setFeedbackSuccessKey(null);
