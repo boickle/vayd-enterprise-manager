@@ -21,6 +21,7 @@ import ClientPortal from './pages/ClientPortal';
 import MembershipSignup from './pages/MembershipSignup';
 import MembershipPayment from './pages/MembershipPayment';
 import MembershipUpgrade from './pages/MembershipUpgrade';
+import MembershipRenewalReview from './pages/MembershipRenewalReview';
 import AppointmentRequestForm from './pages/AppointmentRequestForm';
 import PublicRoomLoaderForm from './pages/PublicRoomLoaderForm';
 import RoutingCalendarWorkspace from './pages/RoutingCalendarWorkspace';
@@ -546,6 +547,7 @@ export default function App() {
           <Route path="/client-portal/request-appointment" element={<AppointmentRequestForm />} />
           {/* Public membership signup when started from appointment request (no auth required) */}
           <Route path="/client-portal/request-appointment/membership-signup" element={<MembershipSignup />} />
+          <Route path="/membership/renewal" element={<MembershipRenewalReview />} />
 
           {/* Public surveys by slug (no login), e.g. post-appointment, exit-interview; * catches duplicate path in email links */}
           <Route path="/survey/:surveySlug" element={<PostAppointmentSurvey />} />

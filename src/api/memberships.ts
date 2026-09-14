@@ -1,3 +1,4 @@
+import axios from 'axios';
 import { getToken, http } from './http';
 import { resolvePracticeIdFromToken } from '../utils/practiceIdFromToken';
 
@@ -69,6 +70,13 @@ export type Bundle = {
   tier: string | null;
   minAgeMonths: number | null;
   maxAgeMonths: number | null;
+  termMonths: number | null;
+  /** Default plan at each renewal while the member still fits the age window. */
+  renewalSuccessorPackageId: number | null;
+  renewalSuccessorPackageName: string | null;
+  /** Plan at renewal when the pet has passed maxAgeMonths. */
+  ageLimitSuccessorPackageId: number | null;
+  ageLimitSuccessorPackageName: string | null;
   price: number | null;
   priceMonthly: number | null;
   priceAnnual: number | null;
@@ -119,6 +127,9 @@ export type BundleFields = {
   tier?: string | null;
   minAgeMonths?: number | null;
   maxAgeMonths?: number | null;
+  termMonths?: number | null;
+  renewalSuccessorPackageId?: number | null;
+  ageLimitSuccessorPackageId?: number | null;
   price?: number | null;
   priceMonthly?: number | null;
   priceAnnual?: number | null;
@@ -255,6 +266,8 @@ export async function updateBundle(
     /** "Apply this to all current {{plan}} memberships." */
     applyToExistingMemberships?: boolean;
     removeBenefitsDroppedFromPlan?: boolean;
+    /** `future` = new enrollments and renewals; `current` = also update live Stripe subscriptions. */
+    priceApplyTo?: 'future' | 'current';
   },
 ): Promise<Bundle & { propagation?: PropagationResult }> {
   const { data } = await http.patch<Bundle & { propagation?: PropagationResult }>(
@@ -269,6 +282,7 @@ export async function updateBundle(
       ...(opts?.removeBenefitsDroppedFromPlan
         ? { removeBenefitsDroppedFromPlan: true }
         : {}),
+      ...(opts?.priceApplyTo ? { priceApplyTo: opts.priceApplyTo } : {}),
     },
   );
   return data;
@@ -555,6 +569,47 @@ export async function executePostVisitSignup(input: {
   const { data } = await http.post<PostVisitSignupResult>(
     '/memberships/post-visit-signup/execute',
     { practiceId: currentPracticeId(), ...input },
+  );
+  return data;
+}
+
+export type MembershipRenewalPreview = {
+  petName: string;
+  clientFirstName: string;
+  currentPlanName: string;
+  nextPlanName: string;
+  billingInterval: MembershipBillingInterval | null;
+  nextPrice: number | null;
+  termEnd: string;
+  reason: 'aged_out' | 'successor' | 'same';
+  alreadyCanceling: boolean;
+  cancelPhrase: string;
+};
+
+/** No JWT — the review token is in the query string. */
+const publicMembershipClient = axios.create({
+  baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000',
+  withCredentials: false,
+});
+
+export async function fetchMembershipRenewalPreview(
+  token: string,
+): Promise<MembershipRenewalPreview> {
+  const { data } = await publicMembershipClient.get<MembershipRenewalPreview>(
+    '/public/membership-renewal',
+    { params: { token } },
+  );
+  return data;
+}
+
+export async function requestMembershipRenewalCancel(
+  token: string,
+  body: { petName: string; phrase: string; reason: string; acknowledge: boolean },
+): Promise<{ ok: true; termEnd: string }> {
+  const { data } = await publicMembershipClient.post<{ ok: true; termEnd: string }>(
+    '/public/membership-renewal/cancel',
+    body,
+    { params: { token } },
   );
   return data;
 }

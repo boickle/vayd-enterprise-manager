@@ -9,6 +9,7 @@ export function isPublicClientLinkPath(pathname: string): boolean {
     pathname === '/share' ||
     pathname === '/refer-a-friend' ||
     pathname.startsWith('/client-portal/request-appointment') ||
+    pathname.startsWith('/membership/renewal') ||
     pathname === '/store' ||
     pathname.startsWith('/store/')
   );

@@ -95,8 +95,11 @@ type PlanDraft = {
   marketingSummary: string;
   species: string;
   tier: string;
-  minAgeMonths: string;
-  maxAgeMonths: string;
+  minAgeYears: string;
+  maxAgeYears: string;
+  termMonths: string;
+  renewalSuccessorPackageId: string;
+  ageLimitSuccessorPackageId: string;
   priceMonthly: string;
   priceAnnual: string;
   outOfPlanDiscount: string;
@@ -137,6 +140,40 @@ function intOr(value: string, fallback: number): number {
   return Math.max(0, Math.round(parsed));
 }
 
+function idOrNull(value: string): number | null {
+  const trimmed = value.trim();
+  if (trimmed === '') return null;
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return Math.round(parsed);
+}
+
+function monthsToYearsText(months: number | null | undefined): string {
+  if (months == null) return '';
+  return String(Math.round(months / 12));
+}
+
+function yearsToMonths(years: string): number | null {
+  const parsed = numOrNull(years);
+  if (parsed == null) return null;
+  return Math.round(parsed * 12);
+}
+
+function planCadenceLabel(plan: Bundle): string {
+  if (plan.priceMonthly != null) return 'Monthly';
+  if (plan.priceAnnual != null) return 'Annual';
+  if (/\bmonthly\b/i.test(plan.name)) return 'Monthly';
+  if (/\bannual\b/i.test(plan.name)) return 'Annual';
+  return '';
+}
+
+function speciesLabel(species: string | null | undefined): string {
+  if (!species) return 'Any species';
+  if (species === 'dog') return 'Dog';
+  if (species === 'cat') return 'Cat';
+  return species;
+}
+
 function money(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(Number(value))) return '—';
   return `$${Number(value).toFixed(2)}`;
@@ -150,8 +187,11 @@ function emptyPlanDraft(): PlanDraft {
     marketingSummary: '',
     species: '',
     tier: '',
-    minAgeMonths: '',
-    maxAgeMonths: '',
+    minAgeYears: '',
+    maxAgeYears: '',
+    termMonths: '12',
+    renewalSuccessorPackageId: '',
+    ageLimitSuccessorPackageId: '',
     priceMonthly: '',
     priceAnnual: '',
     outOfPlanDiscount: '',
@@ -174,8 +214,11 @@ function planDraftFrom(bundle: Bundle): PlanDraft {
     marketingSummary: text(bundle.marketingSummary),
     species: text(bundle.species),
     tier: text(bundle.tier),
-    minAgeMonths: numText(bundle.minAgeMonths),
-    maxAgeMonths: numText(bundle.maxAgeMonths),
+    minAgeYears: monthsToYearsText(bundle.minAgeMonths),
+    maxAgeYears: monthsToYearsText(bundle.maxAgeMonths),
+    termMonths: numText(bundle.termMonths) || '12',
+    renewalSuccessorPackageId: numText(bundle.renewalSuccessorPackageId),
+    ageLimitSuccessorPackageId: numText(bundle.ageLimitSuccessorPackageId),
     priceMonthly: numText(bundle.priceMonthly),
     priceAnnual: numText(bundle.priceAnnual),
     outOfPlanDiscount: numText(bundle.outOfPlanDiscount),
@@ -219,8 +262,53 @@ function groupDraftFrom(group: BundleGroup): GroupDraft {
   };
 }
 
+function autoGroupName(group: GroupDraft): string {
+  const names = group.items.map((item) => item.name.trim()).filter(Boolean);
+  if (group.selectionMode === 'choice') {
+    if (names.length === 0) return 'Pick one';
+    if (names.length === 1) return `${names[0]} — pick one`;
+    if (names.length === 2) return `${names[0]} or ${names[1]}`;
+    return `${names[0]} or ${names.length - 1} others`;
+  }
+  return names[0] || group.name.trim() || 'Included';
+}
+
+/**
+ * Staff edit a flat list of lines. An `all` group with several items is one
+ * "always included" bucket in the API, so we split it into one group per item
+ * here. Choice groups stay intact as OR clusters. Item ids are kept so a later
+ * save moves rows between groups instead of recreating them.
+ */
+function splitIncludedLines(groups: GroupDraft[]): GroupDraft[] {
+  if (!groups.some((group) => group.selectionMode === 'all' && group.items.length > 1)) {
+    return groups;
+  }
+  const out: GroupDraft[] = [];
+  for (const group of groups) {
+    if (group.selectionMode === 'choice' || group.items.length <= 1) {
+      out.push(group);
+      continue;
+    }
+    group.items.forEach((item, index) => {
+      out.push({
+        key: index === 0 ? group.key : `line-${item.key}`,
+        id: index === 0 ? group.id : undefined,
+        name: index === 0 ? group.name : item.name,
+        description: index === 0 ? group.description : '',
+        selectionMode: 'all',
+        allowedQuantity: '1',
+        items: [item],
+      });
+    });
+  }
+  return out;
+}
+
 function groupDraftsFrom(bundle: Bundle): GroupDraft[] {
-  return [...(bundle.groups ?? [])].sort((a, b) => a.sortOrder - b.sortOrder).map(groupDraftFrom);
+  const sorted = [...(bundle.groups ?? [])]
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+    .map(groupDraftFrom);
+  return splitIncludedLines(sorted);
 }
 
 function planFieldsFrom(draft: PlanDraft): BundleFields & { name: string } {
@@ -231,26 +319,45 @@ function planFieldsFrom(draft: PlanDraft): BundleFields & { name: string } {
     marketingSummary: draft.marketingSummary.trim() || null,
     species: draft.species.trim() || null,
     tier: draft.tier.trim() || null,
-    minAgeMonths: numOrNull(draft.minAgeMonths),
-    maxAgeMonths: numOrNull(draft.maxAgeMonths),
+    minAgeMonths: yearsToMonths(draft.minAgeYears),
+    maxAgeMonths: yearsToMonths(draft.maxAgeYears),
+    termMonths: numOrNull(draft.termMonths) ?? 12,
+    renewalSuccessorPackageId: idOrNull(draft.renewalSuccessorPackageId),
+    ageLimitSuccessorPackageId: idOrNull(draft.ageLimitSuccessorPackageId),
     priceMonthly: numOrNull(draft.priceMonthly),
     priceAnnual: numOrNull(draft.priceAnnual),
     outOfPlanDiscount: numOrNull(draft.outOfPlanDiscount),
     renewalMonths: numOrNull(draft.renewalMonths),
     isAutoRenew: draft.isAutoRenew,
     isActive: draft.isActive,
-    stripeProductId: draft.stripeProductId.trim() || null,
-    stripeMonthlyPriceId: draft.stripeMonthlyPriceId.trim() || null,
-    stripeAnnualPriceId: draft.stripeAnnualPriceId.trim() || null,
     portalSlug: draft.portalSlug.trim() || null,
     ...(draft.sortOrder.trim() === '' ? {} : { sortOrder: intOr(draft.sortOrder, 0) }),
   };
 }
 
+/** Consecutive included lines become one `all` group again so the API and chart stay tidy. */
+function coalesceIncludedLines(groups: GroupDraft[]): GroupDraft[] {
+  const out: GroupDraft[] = [];
+  for (const group of groups) {
+    if (group.items.length === 0) continue;
+    if (group.selectionMode === 'choice') {
+      out.push(group);
+      continue;
+    }
+    const prev = out[out.length - 1];
+    if (prev && prev.selectionMode === 'all') {
+      out[out.length - 1] = { ...prev, items: [...prev.items, ...group.items] };
+    } else {
+      out.push({ ...group, items: [...group.items] });
+    }
+  }
+  return out;
+}
+
 function groupInputsFrom(groups: GroupDraft[]): BundleGroupInput[] {
-  return groups.map((group, groupIndex) => ({
+  return coalesceIncludedLines(groups).map((group, groupIndex) => ({
     ...(group.id == null ? {} : { id: group.id }),
-    name: group.name.trim(),
+    name: group.selectionMode === 'choice' ? autoGroupName(group) : group.name.trim() || 'Included',
     description: group.description.trim() || null,
     selectionMode: group.selectionMode,
     allowedQuantity: group.selectionMode === 'choice' ? intOr(group.allowedQuantity, 1) : 1,
@@ -272,30 +379,51 @@ function groupInputsFrom(groups: GroupDraft[]): BundleGroupInput[] {
 }
 
 /** Client-side mirror of the API rules so staff get the message before a 400. */
-function validate(draft: PlanDraft, groups: GroupDraft[]): string | null {
+function validate(
+  draft: PlanDraft,
+  groups: GroupDraft[],
+  currentPlanId?: number,
+): string | null {
   if (!draft.name.trim()) return 'Give the plan a name.';
 
-  for (const [index, group] of groups.entries()) {
-    const label = group.name.trim() || `Group ${index + 1}`;
-    if (!group.name.trim()) return `Name group ${index + 1}.`;
-    if (group.items.length === 0) return `${label} has no items yet.`;
+  const minAgeMonths = yearsToMonths(draft.minAgeYears);
+  const maxAgeMonths = yearsToMonths(draft.maxAgeYears);
+  if (minAgeMonths != null && maxAgeMonths != null && minAgeMonths > maxAgeMonths) {
+    return 'Youngest age must be less than or equal to oldest age.';
+  }
+  const renewalSuccessorId = idOrNull(draft.renewalSuccessorPackageId);
+  const ageLimitSuccessorId = idOrNull(draft.ageLimitSuccessorPackageId);
+  if (currentPlanId != null) {
+    if (renewalSuccessorId === currentPlanId || ageLimitSuccessorId === currentPlanId) {
+      return 'Choose a different plan to renew into — a plan cannot renew into itself.';
+    }
+  }
+  if (ageLimitSuccessorId != null && !draft.maxAgeYears.trim()) {
+    return 'Set an oldest age when choosing a plan for members who age out.';
+  }
+
+  for (const group of groups) {
+    if (group.items.length === 0) {
+      return 'Finish picking a catalog item, or remove the empty line.';
+    }
+    const label = autoGroupName(group);
     if (group.selectionMode === 'choice' && group.items.length < 2) {
-      return `${label} is an "either / or" group, so it needs at least two alternatives for the member to pick between.`;
+      return `${label} needs another option so the member can pick between them.`;
     }
     if (group.selectionMode === 'choice' && intOr(group.allowedQuantity, 0) < 1) {
-      return `${label} needs a shared allowance of at least 1.`;
+      return `${label} needs an allowance of at least 1.`;
     }
     for (const item of group.items) {
       if (!Number.isFinite(item.catalogItemId) || item.catalogItemId <= 0) {
         return `${label} has a line with no catalog item picked.`;
       }
       if (item.coverage === 'copay' && numOrNull(item.copayPrice) == null) {
-        return `${item.name} in ${label} needs a copay amount.`;
+        return `${item.name} needs a copay amount.`;
       }
       if (item.coverage === 'percent_off') {
         const pct = numOrNull(item.percentOff);
         if (pct == null || pct <= 0 || pct > 100) {
-          return `${item.name} in ${label} needs a percent off between 1 and 100.`;
+          return `${item.name} needs a percent off between 1 and 100.`;
         }
       }
     }
@@ -306,7 +434,7 @@ function validate(draft: PlanDraft, groups: GroupDraft[]): string | null {
     for (const item of group.items) {
       const dedupe = `${group.key}:${item.itemType}:${item.catalogItemId}`;
       if (seen.has(dedupe)) {
-        return `${item.name} is listed twice in ${group.name.trim() || 'the same group'}.`;
+        return `${item.name} is listed twice in the same either / or set.`;
       }
       seen.add(dedupe);
     }
@@ -499,8 +627,16 @@ export default function SettingsMemberships({ onMessage }: Props) {
   const [groups, setGroups] = useState<GroupDraft[]>([]);
   const [pickerGroupKey, setPickerGroupKey] = useState<string | null>(null);
 
+  useEffect(() => {
+    setGroups((cur) => {
+      const next = splitIncludedLines(cur);
+      return next === cur ? cur : next;
+    });
+  }, [groups]);
+
   const [applyToExisting, setApplyToExisting] = useState(false);
   const [removeDropped, setRemoveDropped] = useState(false);
+  const [priceApplyTo, setPriceApplyTo] = useState<'future' | 'current'>('future');
   const [saving, setSaving] = useState(false);
 
   const [auditOpen, setAuditOpen] = useState(false);
@@ -548,6 +684,7 @@ export default function SettingsMemberships({ onMessage }: Props) {
     setAuditOpen(false);
     setApplyToExisting(false);
     setRemoveDropped(false);
+    setPriceApplyTo('future');
     void getBundle(selectedId)
       .then((bundle) => {
         if (cancelled) return;
@@ -585,6 +722,13 @@ export default function SettingsMemberships({ onMessage }: Props) {
     );
   }, [plans, search]);
 
+  const renewalSuccessorOptions = useMemo(() => {
+    const currentId = selection?.mode === 'plan' ? selection.id : null;
+    return [...plans]
+      .filter((plan) => plan.id !== currentId)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [plans, selection]);
+
   function startNewPlan() {
     setSelection({ mode: 'new' });
     setDetail(null);
@@ -594,6 +738,7 @@ export default function SettingsMemberships({ onMessage }: Props) {
     setPickerGroupKey(null);
     setApplyToExisting(false);
     setRemoveDropped(false);
+    setPriceApplyTo('future');
     setAuditOpen(false);
   }
 
@@ -620,29 +765,103 @@ export default function SettingsMemberships({ onMessage }: Props) {
     );
   }
 
-  function addGroup(selectionMode: GroupSelectionMode) {
+  function tidyGroups(cur: GroupDraft[], keepKey?: string): GroupDraft[] {
+    return cur
+      .filter((group) => group.items.length > 0 || group.key === keepKey)
+      .map((group) =>
+        group.selectionMode === 'choice' && group.items.length < 2 && group.key !== keepKey
+          ? { ...group, selectionMode: 'all' as const, name: group.items[0]?.name ?? group.name }
+          : group
+      );
+  }
+
+  function closePicker() {
+    setPickerGroupKey(null);
+    setGroups((cur) => tidyGroups(cur));
+  }
+
+  function addLine() {
     const group: GroupDraft = {
       key: nextKey('group'),
       name: '',
       description: '',
-      selectionMode,
+      selectionMode: 'all',
       allowedQuantity: '1',
       items: [],
     };
-    setGroups((cur) => [...cur, group]);
+    setGroups((cur) => [...tidyGroups(cur), group]);
     setPickerGroupKey(group.key);
   }
 
+  function addOr(group: GroupDraft, itemKey?: string) {
+    const targetItemKey = itemKey ?? group.items[0]?.key;
+    const choiceKey = nextKey('group');
+    setGroups((cur) => {
+      const cleaned = tidyGroups(cur, group.key);
+      const idx = cleaned.findIndex((row) => row.key === group.key);
+      if (idx < 0) return cleaned;
+      const row = cleaned[idx];
+      const itemIndex = Math.max(
+        0,
+        row.items.findIndex((item) => item.key === targetItemKey),
+      );
+      const target = row.items[itemIndex] ?? row.items[0];
+      if (!target) return cleaned;
+
+      if (row.selectionMode === 'choice' || row.items.length <= 1) {
+        return cleaned.map((g) =>
+          g.key === row.key
+            ? {
+                ...g,
+                selectionMode: 'choice' as const,
+                allowedQuantity: target.quantity || g.allowedQuantity || '1',
+                name: `${target.name} — pick one`,
+              }
+            : g
+        );
+      }
+
+      const before = row.items.slice(0, itemIndex);
+      const after = row.items.slice(itemIndex + 1);
+      const choiceGroup: GroupDraft = {
+        key: choiceKey,
+        name: `${target.name} — pick one`,
+        description: '',
+        selectionMode: 'choice',
+        allowedQuantity: target.quantity || '1',
+        items: [target],
+      };
+      const replacement: GroupDraft[] = [];
+      if (before.length) replacement.push({ ...row, items: before });
+      replacement.push(choiceGroup);
+      if (after.length) {
+        replacement.push({
+          key: nextKey('group'),
+          name: row.name,
+          description: '',
+          selectionMode: 'all',
+          allowedQuantity: '1',
+          items: after,
+        });
+      }
+      return [...cleaned.slice(0, idx), ...replacement, ...cleaned.slice(idx + 1)];
+    });
+    setPickerGroupKey(group.items.length <= 1 || group.selectionMode === 'choice' ? group.key : choiceKey);
+  }
+
   async function removeGroup(group: GroupDraft) {
-    const label = group.name.trim() || 'this group';
+    const label = autoGroupName(group);
+    const several = group.items.length > 1;
     const ok = await appConfirm({
-      title: `Remove ${label}?`,
-      message:
-        'The group and its items come off the plan. Nothing changes for patients already on the plan until you apply the plan to existing memberships.',
-      confirmLabel: 'Remove group',
+      title: several ? `Remove ${label}?` : `Remove ${group.items[0]?.name ?? 'this benefit'}?`,
+      message: several
+        ? 'This either / or set and its options come off the plan. Nothing changes for patients already on the plan until you apply the plan to existing memberships.'
+        : 'This benefit comes off the plan. Nothing changes for patients already on the plan until you apply the plan to existing memberships.',
+      confirmLabel: several ? 'Remove set' : 'Remove',
       danger: true,
     });
     if (!ok) return;
+    if (pickerGroupKey === group.key) setPickerGroupKey(null);
     setGroups((cur) => cur.filter((g) => g.key !== group.key));
   }
 
@@ -671,19 +890,40 @@ export default function SettingsMemberships({ onMessage }: Props) {
 
   function pickItem(groupKey: string, item: ItemDraft) {
     setGroups((cur) =>
-      cur.map((group) =>
-        group.key === groupKey ? { ...group, items: [...group.items, item] } : group
-      )
+      cur.map((group) => {
+        if (group.key !== groupKey) return group;
+        const items = [...group.items, item];
+        return {
+          ...group,
+          items,
+          name:
+            group.selectionMode === 'choice'
+              ? autoGroupName({ ...group, items })
+              : item.name,
+        };
+      })
     );
+    setPickerGroupKey(null);
   }
 
   function removeItem(groupKey: string, itemKey: string) {
     setGroups((cur) =>
-      cur.map((group) =>
-        group.key === groupKey
-          ? { ...group, items: group.items.filter((item) => item.key !== itemKey) }
-          : group
-      )
+      cur.flatMap((group) => {
+        if (group.key !== groupKey) return [group];
+        const items = group.items.filter((item) => item.key !== itemKey);
+        if (items.length === 0) return [];
+        if (group.selectionMode === 'choice' && items.length < 2) {
+          return [
+            {
+              ...group,
+              items,
+              selectionMode: 'all' as const,
+              name: items[0]?.name ?? group.name,
+            },
+          ];
+        }
+        return [{ ...group, items, name: autoGroupName({ ...group, items }) }];
+      })
     );
   }
 
@@ -698,7 +938,11 @@ export default function SettingsMemberships({ onMessage }: Props) {
   }
 
   async function save() {
-    const problem = validate(planDraft, groups);
+    const problem = validate(
+      planDraft,
+      groups,
+      selection?.mode === 'plan' ? selection.id : undefined,
+    );
     if (problem) {
       onMessage?.(problem, 'error');
       return;
@@ -723,6 +967,10 @@ export default function SettingsMemberships({ onMessage }: Props) {
 
     if (!detail) return;
 
+    const pricesChanged =
+      numOrNull(planDraft.priceMonthly) !== (detail.priceMonthly ?? null) ||
+      numOrNull(planDraft.priceAnnual) !== (detail.priceAnnual ?? null);
+
     if (applyToExisting) {
       const members = detail.activeMemberCount;
       const ok = await appConfirm({
@@ -746,6 +994,7 @@ export default function SettingsMemberships({ onMessage }: Props) {
         ...(applyToExisting
           ? { applyToExistingMemberships: true, removeBenefitsDroppedFromPlan: removeDropped }
           : {}),
+        ...(pricesChanged ? { priceApplyTo } : {}),
       });
       absorbSaved(saved);
       const propagation = saved.propagation;
@@ -843,14 +1092,171 @@ export default function SettingsMemberships({ onMessage }: Props) {
 
   async function explainChoiceGroups() {
     await appAlert({
-      title: 'Either / or groups',
+      title: 'Adding an OR to a line',
       message:
-        'A "member picks one" group holds alternatives that share a single allowance. ' +
-        'If the shared allowance is 1 and the group holds a heartworm test and a tick panel, ' +
-        'the member gets one of the two on the plan — taking either one uses up the allowance. ' +
-        'Put things the member always gets in an "everything listed" group instead.',
+        'Each line is included with the membership unless you add an OR to it. ' +
+        'Lyme and lepto stay as their own lines — members always get those. ' +
+        'On a lab line, tap OR and pick the other lab; the member then gets one of those options, not both. ' +
+        'You can keep adding ORs to that same line. Taking any option uses the line’s allowance.',
       confirmLabel: 'Got it',
     });
+  }
+
+  function renderBenefitItem(
+    group: GroupDraft,
+    item: ItemDraft,
+    itemIndex: number,
+    opts: {
+      showOr: boolean;
+      showAddOr: boolean;
+      moveWholeGroup: boolean;
+      groupIndex: number;
+    },
+  ) {
+    const isChoice = group.selectionMode === 'choice';
+    const upDisabled = opts.moveWholeGroup ? opts.groupIndex === 0 : itemIndex === 0;
+    const downDisabled = opts.moveWholeGroup
+      ? opts.groupIndex === groups.length - 1
+      : itemIndex === group.items.length - 1;
+
+    return (
+      <li key={item.key} className="memberships-item">
+        {opts.showOr ? (
+          <span className="memberships-item__or" aria-hidden>
+            or
+          </span>
+        ) : null}
+        <div className="memberships-item__body">
+          <div className="memberships-item__ident">
+            <span className="memberships-item__name">{item.name}</span>
+            <span className="settings-muted memberships-item__meta">
+              {ITEM_TYPE_LABELS[item.itemType]}
+              {item.code ? ` · ${item.code}` : ''}
+              {item.catalogPrice == null ? '' : ` · catalog ${money(item.catalogPrice)}`}
+            </span>
+          </div>
+
+          <div className="memberships-item__controls">
+            {isChoice ? null : (
+              <label className="settings-label memberships-item__qty">
+                Allowance
+                <input
+                  className="settings-input"
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={item.quantity}
+                  onChange={(e) =>
+                    updateItem(group.key, item.key, {
+                      quantity: e.target.value,
+                    })
+                  }
+                />
+              </label>
+            )}
+            <label className="settings-label memberships-item__coverage">
+              Member pays
+              <select
+                className="settings-select"
+                value={item.coverage}
+                onChange={(e) =>
+                  updateItem(group.key, item.key, {
+                    coverage: e.target.value as ItemCoverage,
+                  })
+                }
+              >
+                {COVERAGE_ORDER.map((coverage) => (
+                  <option key={coverage} value={coverage}>
+                    {COVERAGE_LABELS[coverage]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {item.coverage === 'copay' ? (
+              <label className="settings-label memberships-item__money">
+                Copay ($)
+                <input
+                  className="settings-input"
+                  type="number"
+                  min={0}
+                  step={0.01}
+                  value={item.copayPrice}
+                  onChange={(e) =>
+                    updateItem(group.key, item.key, {
+                      copayPrice: e.target.value,
+                    })
+                  }
+                />
+              </label>
+            ) : null}
+            {item.coverage === 'percent_off' ? (
+              <label className="settings-label memberships-item__money">
+                Percent off
+                <input
+                  className="settings-input"
+                  type="number"
+                  min={1}
+                  max={100}
+                  step={1}
+                  value={item.percentOff}
+                  onChange={(e) =>
+                    updateItem(group.key, item.key, {
+                      percentOff: e.target.value,
+                    })
+                  }
+                />
+              </label>
+            ) : null}
+          </div>
+
+          <div className="memberships-item__tools">
+            {opts.showAddOr ? (
+              <button
+                type="button"
+                className="memberships-item__or-btn"
+                onClick={() => addOr(group, item.key)}
+              >
+                OR
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="btn-link"
+              aria-label={opts.moveWholeGroup ? 'Move line up' : 'Move option up'}
+              disabled={upDisabled}
+              onClick={() =>
+                opts.moveWholeGroup
+                  ? moveGroup(opts.groupIndex, -1)
+                  : moveItem(group.key, itemIndex, -1)
+              }
+            >
+              <ChevronUp size={15} aria-hidden />
+            </button>
+            <button
+              type="button"
+              className="btn-link"
+              aria-label={opts.moveWholeGroup ? 'Move line down' : 'Move option down'}
+              disabled={downDisabled}
+              onClick={() =>
+                opts.moveWholeGroup
+                  ? moveGroup(opts.groupIndex, 1)
+                  : moveItem(group.key, itemIndex, 1)
+              }
+            >
+              <ChevronDown size={15} aria-hidden />
+            </button>
+            <button
+              type="button"
+              className="btn-link"
+              aria-label={`Remove ${item.name}`}
+              onClick={() => removeItem(group.key, item.key)}
+            >
+              <X size={15} aria-hidden />
+            </button>
+          </div>
+        </div>
+      </li>
+    );
   }
 
   const isNew = selection?.mode === 'new';
@@ -860,11 +1266,10 @@ export default function SettingsMemberships({ onMessage }: Props) {
     <div className="settings-section memberships">
       <h2 className="settings-section-title">Memberships</h2>
       <p className="settings-section-description">
-        Wellness plans patients subscribe to. Each plan is a set of groups: an{' '}
-        <strong>everything listed</strong> group is what the member always gets, and a{' '}
-        <strong>member picks one</strong> group holds alternatives that share one allowance — this
-        lab <em>or</em> that lab. Edits here only reach patients already on a plan when you apply
-        the plan to existing memberships.
+        Wellness plans patients subscribe to. Each line is included with the membership. Add an{' '}
+        <strong>OR</strong> to a line when the member picks one of several options — this lab{' '}
+        <em>or</em> that lab — while other lines stay included. Edits here only reach patients
+        already on a plan when you apply the plan to existing memberships.
       </p>
 
       <div className="memberships-layout">
@@ -1031,15 +1436,6 @@ export default function SettingsMemberships({ onMessage }: Props) {
                     />
                   </label>
                   <label className="settings-label">
-                    Species
-                    <input
-                      className="settings-input"
-                      value={planDraft.species}
-                      placeholder="Canine"
-                      onChange={(e) => setField('species', e.target.value)}
-                    />
-                  </label>
-                  <label className="settings-label">
                     Tier
                     <input
                       className="settings-input"
@@ -1094,28 +1490,6 @@ export default function SettingsMemberships({ onMessage }: Props) {
                     />
                   </label>
                   <label className="settings-label">
-                    Youngest age (months)
-                    <input
-                      className="settings-input"
-                      type="number"
-                      min={0}
-                      step={1}
-                      value={planDraft.minAgeMonths}
-                      onChange={(e) => setField('minAgeMonths', e.target.value)}
-                    />
-                  </label>
-                  <label className="settings-label">
-                    Oldest age (months)
-                    <input
-                      className="settings-input"
-                      type="number"
-                      min={0}
-                      step={1}
-                      value={planDraft.maxAgeMonths}
-                      onChange={(e) => setField('maxAgeMonths', e.target.value)}
-                    />
-                  </label>
-                  <label className="settings-label">
                     Sort order
                     <input
                       className="settings-input"
@@ -1156,25 +1530,31 @@ export default function SettingsMemberships({ onMessage }: Props) {
                   <label className="settings-label">
                     Stripe product ID
                     <input
-                      className="settings-input"
+                      className="settings-input memberships-stripe-id"
                       value={planDraft.stripeProductId}
-                      onChange={(e) => setField('stripeProductId', e.target.value)}
+                      readOnly
+                      placeholder="Set by Stripe sync"
+                      title="Managed by Stripe; not editable here"
                     />
                   </label>
                   <label className="settings-label">
                     Stripe monthly price ID
                     <input
-                      className="settings-input"
+                      className="settings-input memberships-stripe-id"
                       value={planDraft.stripeMonthlyPriceId}
-                      onChange={(e) => setField('stripeMonthlyPriceId', e.target.value)}
+                      readOnly
+                      placeholder="Set by Stripe sync"
+                      title="Managed by Stripe; not editable here"
                     />
                   </label>
                   <label className="settings-label">
                     Stripe annual price ID
                     <input
-                      className="settings-input"
+                      className="settings-input memberships-stripe-id"
                       value={planDraft.stripeAnnualPriceId}
-                      onChange={(e) => setField('stripeAnnualPriceId', e.target.value)}
+                      readOnly
+                      placeholder="Set by Stripe sync"
+                      title="Managed by Stripe; not editable here"
                     />
                   </label>
                 </div>
@@ -1199,6 +1579,128 @@ export default function SettingsMemberships({ onMessage }: Props) {
                 </div>
               </div>
 
+              <div className="settings-card memberships-restrictions">
+                <div className="memberships-restrictions__head">
+                  <h3 className="settings-card-title memberships-detail__title">Restrictions</h3>
+                  <p className="settings-muted">
+                    Who may enrol on this plan, the length of a membership year, and where they
+                    move at renewal or when they age out. Owners are emailed 14 days before the
+                    year ends.
+                  </p>
+                </div>
+                <div className="memberships-fields">
+                  <label className="settings-label">
+                    Species
+                    <select
+                      className="settings-select"
+                      value={planDraft.species}
+                      onChange={(e) => setField('species', e.target.value)}
+                    >
+                      <option value="">Any species</option>
+                      <option value="dog">Dog</option>
+                      <option value="cat">Cat</option>
+                    </select>
+                  </label>
+                  <label className="settings-label">
+                    Youngest age (years)
+                    <input
+                      className="settings-input"
+                      type="number"
+                      min={0}
+                      step={1}
+                      placeholder="e.g. 0 for puppies"
+                      value={planDraft.minAgeYears}
+                      onChange={(e) => setField('minAgeYears', e.target.value)}
+                    />
+                  </label>
+                  <label className="settings-label">
+                    Oldest age (years)
+                    <input
+                      className="settings-input"
+                      type="number"
+                      min={0}
+                      step={1}
+                      placeholder="e.g. 8 for Foundations"
+                      value={planDraft.maxAgeYears}
+                      onChange={(e) => setField('maxAgeYears', e.target.value)}
+                    />
+                  </label>
+                  <label className="settings-label">
+                    Membership year (months)
+                    <input
+                      className="settings-input"
+                      type="number"
+                      min={1}
+                      step={1}
+                      value={planDraft.termMonths}
+                      onChange={(e) => setField('termMonths', e.target.value)}
+                    />
+                  </label>
+                  <label className="settings-label memberships-fields__wide">
+                    On renewal, move to
+                    <select
+                      className="settings-select"
+                      value={planDraft.renewalSuccessorPackageId}
+                      onChange={(e) => setField('renewalSuccessorPackageId', e.target.value)}
+                    >
+                      <option value="">Stay on this plan</option>
+                      {renewalSuccessorOptions.map((plan) => {
+                        const cadence = planCadenceLabel(plan);
+                        const species = speciesLabel(plan.species);
+                        const meta = [species, cadence].filter(Boolean).join(' · ');
+                        return (
+                          <option key={plan.id} value={String(plan.id)}>
+                            {plan.name}
+                            {meta ? ` (${meta})` : ''}
+                            {plan.isArchived ? ' — archived' : ''}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </label>
+                  <label className="settings-label memberships-fields__wide">
+                    When age limit is reached, move to
+                    <select
+                      className="settings-select"
+                      value={planDraft.ageLimitSuccessorPackageId}
+                      onChange={(e) => setField('ageLimitSuccessorPackageId', e.target.value)}
+                    >
+                      <option value="">Use the on-renewal plan above</option>
+                      {renewalSuccessorOptions.map((plan) => {
+                        const cadence = planCadenceLabel(plan);
+                        const species = speciesLabel(plan.species);
+                        const meta = [species, cadence].filter(Boolean).join(' · ');
+                        return (
+                          <option key={plan.id} value={String(plan.id)}>
+                            {plan.name}
+                            {meta ? ` (${meta})` : ''}
+                            {plan.isArchived ? ' — archived' : ''}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </label>
+                </div>
+                {planDraft.renewalSuccessorPackageId.trim() ? (
+                  <p className="settings-muted memberships-restrictions__hint">
+                    At each renewal, members still within the age window move to{' '}
+                    {renewalSuccessorOptions.find(
+                      (plan) => String(plan.id) === planDraft.renewalSuccessorPackageId,
+                    )?.name ?? detail?.renewalSuccessorPackageName ?? 'the selected plan'}
+                    .
+                  </p>
+                ) : null}
+                {planDraft.maxAgeYears.trim() && planDraft.ageLimitSuccessorPackageId.trim() ? (
+                  <p className="settings-muted memberships-restrictions__hint">
+                    Members older than {planDraft.maxAgeYears} years move to{' '}
+                    {renewalSuccessorOptions.find(
+                      (plan) => String(plan.id) === planDraft.ageLimitSuccessorPackageId,
+                    )?.name ?? detail?.ageLimitSuccessorPackageName ?? 'the selected plan'}{' '}
+                    instead.
+                  </p>
+                ) : null}
+              </div>
+
               <div className="settings-card">
                 <div className="memberships-groups__head">
                   <div>
@@ -1206,75 +1708,99 @@ export default function SettingsMemberships({ onMessage }: Props) {
                       What the plan includes
                     </h3>
                     <p className="settings-muted">
-                      Group the benefits the way you would explain them to a client.{' '}
+                      Every line is included. Add <strong>OR</strong> on a line when the member
+                      picks one option from that line.{' '}
                       <button
                         type="button"
                         className="btn-link"
                         onClick={() => void explainChoiceGroups()}
                       >
-                        How do either / or groups work?
+                        How does OR work?
                       </button>
                     </p>
                   </div>
                   <div className="memberships-groups__add">
-                    <button type="button" className="btn secondary" onClick={() => addGroup('all')}>
-                      <Plus size={13} aria-hidden /> Everything listed
-                    </button>
-                    <button
-                      type="button"
-                      className="btn secondary"
-                      onClick={() => addGroup('choice')}
-                    >
-                      <Shuffle size={13} aria-hidden /> Member picks one
+                    <button type="button" className="btn secondary" onClick={addLine}>
+                      <Plus size={13} aria-hidden /> Add a benefit
                     </button>
                   </div>
                 </div>
 
                 {groups.length === 0 ? (
                   <p className="settings-muted memberships-groups__empty">
-                    No groups yet. Add an <strong>everything listed</strong> group for the benefits
-                    every member gets, or a <strong>member picks one</strong> group for
-                    alternatives.
+                    No benefits yet. Add the items every member gets. If they pick this lab{' '}
+                    <em>or</em> that lab, add an OR on that line.
                   </p>
                 ) : (
                   <div className="memberships-groups">
                     {groups.map((group, groupIndex) => {
                       const isChoice = group.selectionMode === 'choice';
+                      const picking = pickerGroupKey === group.key;
                       const allowance = intOr(group.allowedQuantity, 1);
                       const tooFewAlternatives = isChoice && group.items.length < 2;
-                      return (
-                        <section
-                          key={group.key}
-                          className={`memberships-group${isChoice ? ' memberships-group--choice' : ''}`}
-                        >
-                          <header className="memberships-group__head">
-                            <span
-                              className={`memberships-group__mode${
-                                isChoice ? ' memberships-group__mode--choice' : ''
-                              }`}
-                            >
-                              {isChoice ? (
-                                <>
-                                  <Shuffle size={12} aria-hidden /> Member picks {allowance} of
-                                  these
-                                </>
-                              ) : (
-                                <>
-                                  <Layers size={12} aria-hidden /> Everything listed
-                                </>
-                              )}
-                            </span>
-                            <input
-                              className="settings-input memberships-group__name"
-                              value={group.name}
-                              placeholder={isChoice ? 'Annual lab — one of' : 'Core wellness'}
-                              onChange={(e) => updateGroup(group.key, { name: e.target.value })}
+
+                      if (group.items.length === 0) {
+                        return (
+                          <section key={group.key} className="memberships-line-placeholder">
+                            <p className="settings-muted memberships-line-placeholder__hint">
+                              Search for a catalog item to add.
+                            </p>
+                            <CatalogItemPicker
+                              onClose={closePicker}
+                              onPick={(item) => pickItem(group.key, item)}
                             />
+                          </section>
+                        );
+                      }
+
+                      if (!isChoice) {
+                        return (
+                          <section key={group.key} className="memberships-line">
+                            <ul className="memberships-items">
+                              {renderBenefitItem(group, group.items[0], 0, {
+                                showOr: false,
+                                showAddOr: !picking,
+                                moveWholeGroup: true,
+                                groupIndex,
+                              })}
+                            </ul>
+                            {picking ? (
+                              <CatalogItemPicker
+                                onClose={closePicker}
+                                onPick={(item) => pickItem(group.key, item)}
+                              />
+                            ) : null}
+                          </section>
+                        );
+                      }
+
+                      return (
+                        <section key={group.key} className="memberships-or-cluster">
+                          <header className="memberships-or-cluster__head">
+                            <span className="memberships-or-cluster__badge">
+                              <Shuffle size={12} aria-hidden /> Member picks {allowance}
+                            </span>
+                            <p className="memberships-or-cluster__explainer">
+                              One allowance for this set — taking any option uses it.
+                            </p>
+                            <label className="settings-label memberships-or-cluster__allowance">
+                              Allowance
+                              <input
+                                className="settings-input"
+                                type="number"
+                                min={1}
+                                step={1}
+                                value={group.allowedQuantity}
+                                onChange={(e) =>
+                                  updateGroup(group.key, { allowedQuantity: e.target.value })
+                                }
+                              />
+                            </label>
                             <div className="memberships-group__tools">
                               <button
                                 type="button"
                                 className="btn-link"
-                                aria-label="Move group up"
+                                aria-label="Move this set up"
                                 disabled={groupIndex === 0}
                                 onClick={() => moveGroup(groupIndex, -1)}
                               >
@@ -1283,7 +1809,7 @@ export default function SettingsMemberships({ onMessage }: Props) {
                               <button
                                 type="button"
                                 className="btn-link"
-                                aria-label="Move group down"
+                                aria-label="Move this set down"
                                 disabled={groupIndex === groups.length - 1}
                                 onClick={() => moveGroup(groupIndex, 1)}
                               >
@@ -1292,7 +1818,7 @@ export default function SettingsMemberships({ onMessage }: Props) {
                               <button
                                 type="button"
                                 className="btn-link"
-                                aria-label="Remove group"
+                                aria-label="Remove this either / or set"
                                 onClick={() => void removeGroup(group)}
                               >
                                 <Trash2 size={14} aria-hidden />
@@ -1300,221 +1826,48 @@ export default function SettingsMemberships({ onMessage }: Props) {
                             </div>
                           </header>
 
-                          <div className="memberships-group__row">
-                            <label className="settings-label memberships-group__desc">
-                              How staff should read this group
-                              <input
-                                className="settings-input"
-                                value={group.description}
-                                placeholder={
-                                  isChoice
-                                    ? 'Heartworm test or tick panel — whichever the pet needs.'
-                                    : 'Included with every membership.'
-                                }
-                                onChange={(e) =>
-                                  updateGroup(group.key, { description: e.target.value })
-                                }
-                              />
-                            </label>
-                            <label className="settings-label memberships-group__mode-select">
-                              Group behaviour
-                              <select
-                                className="settings-select"
-                                value={group.selectionMode}
-                                onChange={(e) =>
-                                  updateGroup(group.key, {
-                                    selectionMode: e.target.value as GroupSelectionMode,
-                                  })
-                                }
-                              >
-                                <option value="all">Everything listed is included</option>
-                                <option value="choice">
-                                  Member picks from these (either / or)
-                                </option>
-                              </select>
-                            </label>
-                            {isChoice ? (
-                              <label className="settings-label memberships-group__allowance">
-                                Shared allowance
-                                <input
-                                  className="settings-input"
-                                  type="number"
-                                  min={1}
-                                  step={1}
-                                  value={group.allowedQuantity}
-                                  onChange={(e) =>
-                                    updateGroup(group.key, { allowedQuantity: e.target.value })
-                                  }
-                                />
-                              </label>
-                            ) : null}
-                          </div>
-
-                          {isChoice ? (
-                            <p className="memberships-group__explainer">
-                              The member gets <strong>{allowance}</strong> from this group in total
-                              — taking any one of the {group.items.length || 0} alternative
-                              {group.items.length === 1 ? '' : 's'} below draws down the whole
-                              group&rsquo;s allowance.
-                            </p>
-                          ) : null}
-
                           {tooFewAlternatives ? (
                             <p className="settings-message settings-error-message memberships-group__warning">
-                              An either / or group needs at least two alternatives to pick between.
+                              Add at least one more option, or close the search to leave this as a
+                              regular included line.
                             </p>
                           ) : null}
 
-                          {group.items.length === 0 ? (
-                            <p className="settings-muted memberships-group__empty">
-                              Nothing in this group yet.
-                            </p>
-                          ) : (
-                            <ul className="memberships-items">
-                              {group.items.map((item, itemIndex) => (
-                                <li key={item.key} className="memberships-item">
-                                  {isChoice && itemIndex > 0 ? (
-                                    <span className="memberships-item__or" aria-hidden>
-                                      or
-                                    </span>
-                                  ) : null}
-                                  <div className="memberships-item__body">
-                                    <div className="memberships-item__ident">
-                                      <span className="memberships-item__name">{item.name}</span>
-                                      <span className="settings-muted memberships-item__meta">
-                                        {ITEM_TYPE_LABELS[item.itemType]}
-                                        {item.code ? ` · ${item.code}` : ''}
-                                        {item.catalogPrice == null
-                                          ? ''
-                                          : ` · catalog ${money(item.catalogPrice)}`}
-                                      </span>
-                                    </div>
+                          <ul className="memberships-items">
+                            {group.items.map((item, itemIndex) =>
+                              renderBenefitItem(group, item, itemIndex, {
+                                showOr: itemIndex > 0,
+                                showAddOr: false,
+                                moveWholeGroup: false,
+                                groupIndex,
+                              }),
+                            )}
+                          </ul>
 
-                                    <div className="memberships-item__controls">
-                                      {isChoice ? null : (
-                                        <label className="settings-label memberships-item__qty">
-                                          Allowance
-                                          <input
-                                            className="settings-input"
-                                            type="number"
-                                            min={1}
-                                            step={1}
-                                            value={item.quantity}
-                                            onChange={(e) =>
-                                              updateItem(group.key, item.key, {
-                                                quantity: e.target.value,
-                                              })
-                                            }
-                                          />
-                                        </label>
-                                      )}
-                                      <label className="settings-label memberships-item__coverage">
-                                        Member pays
-                                        <select
-                                          className="settings-select"
-                                          value={item.coverage}
-                                          onChange={(e) =>
-                                            updateItem(group.key, item.key, {
-                                              coverage: e.target.value as ItemCoverage,
-                                            })
-                                          }
-                                        >
-                                          {COVERAGE_ORDER.map((coverage) => (
-                                            <option key={coverage} value={coverage}>
-                                              {COVERAGE_LABELS[coverage]}
-                                            </option>
-                                          ))}
-                                        </select>
-                                      </label>
-                                      {item.coverage === 'copay' ? (
-                                        <label className="settings-label memberships-item__money">
-                                          Copay ($)
-                                          <input
-                                            className="settings-input"
-                                            type="number"
-                                            min={0}
-                                            step={0.01}
-                                            value={item.copayPrice}
-                                            onChange={(e) =>
-                                              updateItem(group.key, item.key, {
-                                                copayPrice: e.target.value,
-                                              })
-                                            }
-                                          />
-                                        </label>
-                                      ) : null}
-                                      {item.coverage === 'percent_off' ? (
-                                        <label className="settings-label memberships-item__money">
-                                          Percent off
-                                          <input
-                                            className="settings-input"
-                                            type="number"
-                                            min={1}
-                                            max={100}
-                                            step={1}
-                                            value={item.percentOff}
-                                            onChange={(e) =>
-                                              updateItem(group.key, item.key, {
-                                                percentOff: e.target.value,
-                                              })
-                                            }
-                                          />
-                                        </label>
-                                      ) : null}
-                                    </div>
-
-                                    <div className="memberships-item__tools">
-                                      <button
-                                        type="button"
-                                        className="btn-link"
-                                        aria-label="Move item up"
-                                        disabled={itemIndex === 0}
-                                        onClick={() => moveItem(group.key, itemIndex, -1)}
-                                      >
-                                        <ChevronUp size={15} aria-hidden />
-                                      </button>
-                                      <button
-                                        type="button"
-                                        className="btn-link"
-                                        aria-label="Move item down"
-                                        disabled={itemIndex === group.items.length - 1}
-                                        onClick={() => moveItem(group.key, itemIndex, 1)}
-                                      >
-                                        <ChevronDown size={15} aria-hidden />
-                                      </button>
-                                      <button
-                                        type="button"
-                                        className="btn-link"
-                                        aria-label={`Remove ${item.name}`}
-                                        onClick={() => removeItem(group.key, item.key)}
-                                      >
-                                        <X size={15} aria-hidden />
-                                      </button>
-                                    </div>
-                                  </div>
-                                </li>
-                              ))}
-                            </ul>
-                          )}
-
-                          {pickerGroupKey === group.key ? (
+                          {picking ? (
                             <CatalogItemPicker
-                              onClose={() => setPickerGroupKey(null)}
+                              onClose={closePicker}
                               onPick={(item) => pickItem(group.key, item)}
                             />
                           ) : (
                             <button
                               type="button"
                               className="btn secondary memberships-group__add-item"
-                              onClick={() => setPickerGroupKey(group.key)}
+                              onClick={() => addOr(group)}
                             >
-                              <Plus size={13} aria-hidden />{' '}
-                              {isChoice ? 'Add an alternative' : 'Add an item'}
+                              <Plus size={13} aria-hidden /> Add another OR
                             </button>
                           )}
                         </section>
                       );
                     })}
+                    <button
+                      type="button"
+                      className="btn secondary memberships-group__add-item"
+                      onClick={addLine}
+                    >
+                      <Plus size={13} aria-hidden /> Add a benefit
+                    </button>
                   </div>
                 )}
               </div>
@@ -1522,6 +1875,34 @@ export default function SettingsMemberships({ onMessage }: Props) {
               <div className="settings-card">
                 {detail ? (
                   <div className="memberships-apply">
+                    {(numOrNull(planDraft.priceMonthly) !== (detail.priceMonthly ?? null) ||
+                    numOrNull(planDraft.priceAnnual) !== (detail.priceAnnual ?? null)) ? (
+                      <fieldset className="memberships-price-apply">
+                        <legend>This listed price also changes Stripe</legend>
+                        <label className="settings-checkbox-item">
+                          <input
+                            type="radio"
+                            name="priceApplyTo"
+                            checked={priceApplyTo === 'future'}
+                            onChange={() => setPriceApplyTo('future')}
+                          />
+                          Future enrollments and renewals only
+                        </label>
+                        <label className="settings-checkbox-item">
+                          <input
+                            type="radio"
+                            name="priceApplyTo"
+                            checked={priceApplyTo === 'current'}
+                            onChange={() => setPriceApplyTo('current')}
+                          />
+                          Also update everyone currently on {detail.name} (next invoice, no proration)
+                        </label>
+                        <p className="settings-muted memberships-apply__hint">
+                          Stripe prices cannot be edited in place, so we create a new price and
+                          archive the old one. Renewal emails always quote this new listed price.
+                        </p>
+                      </fieldset>
+                    ) : null}
                     <label className="settings-checkbox-item">
                       <input
                         type="checkbox"

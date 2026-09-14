@@ -197,6 +197,34 @@
   width: 100%;
 }
 
+.memberships-restrictions {
+  margin-top: 16px;
+}
+
+.memberships-restrictions__head {
+  margin-bottom: 12px;
+}
+
+.memberships-restrictions__head .settings-muted {
+  margin: 4px 0 0;
+}
+
+.memberships-restrictions__hint {
+  margin: 10px 0 0;
+}
+
+.memberships-price-apply {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+}
+
+.memberships-price-apply legend {
+  padding: 0 6px;
+  font-weight: 600;
+}
+
 .memberships-flags {
   display: flex;
   gap: 16px;
@@ -243,56 +271,81 @@
 .memberships-groups {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 8px;
 }
 
-.memberships-group {
-  border: 1px solid var(--border);
-  border-left: 4px solid var(--border);
+.memberships-line .memberships-items {
+  margin-bottom: 0;
+}
+
+.memberships-line-placeholder {
+  border: 1px dashed var(--border);
   border-radius: 10px;
-  padding: 12px 14px;
+  padding: 12px;
   background: var(--surface);
 }
 
-/* The "this OR that" group is the one staff misread, so it gets its own skin. */
-.memberships-group--choice {
-  border-left-color: var(--accent);
-  background: var(--pill);
+.memberships-line-placeholder__hint {
+  margin: 0 0 8px;
 }
 
-.memberships-group__head {
+.memberships-or-cluster {
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  padding: 10px 12px 12px;
+  background: var(--pill);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.memberships-or-cluster__head {
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
-  margin-bottom: 10px;
 }
 
-.memberships-group__mode {
+.memberships-or-cluster__badge {
   display: inline-flex;
   align-items: center;
   gap: 5px;
   padding: 3px 9px;
   border-radius: 999px;
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--muted);
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--surface);
   font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
 }
 
-.memberships-group__mode--choice {
-  border-color: var(--accent);
-  background: var(--accent);
-  color: var(--surface);
+.memberships-or-cluster__explainer {
+  margin: 0;
+  flex: 1 1 160px;
+  font-size: 12px;
+  color: var(--accent-strong);
 }
 
-.memberships-group__name {
-  flex: 1 1 200px;
+.memberships-or-cluster__allowance {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  font-size: 12px;
+}
+
+.memberships-or-cluster__allowance .settings-input {
+  width: 72px;
   max-width: none;
-  min-width: 160px;
-  font-weight: 600;
+}
+
+.memberships-or-cluster .memberships-items {
+  margin-bottom: 0;
+}
+
+.memberships-or-cluster .memberships-item__body {
+  background: var(--surface);
 }
 
 .memberships-group__tools {
@@ -302,48 +355,16 @@
   margin-left: auto;
 }
 
-.memberships-group__row {
-  display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(0, 1.2fr) minmax(0, 110px);
-  gap: 10px;
-  align-items: end;
-  margin-bottom: 10px;
-}
-
-.memberships-group__row .settings-label {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-  margin: 0;
-  font-size: 12px;
-}
-
-.memberships-group__row .settings-input,
-.memberships-group__row .settings-select {
-  max-width: none;
-  width: 100%;
-}
-
-.memberships-group__explainer {
-  margin: 0 0 10px;
-  font-size: 13px;
-  color: var(--accent-strong);
-}
-
 .memberships-group__warning {
-  margin: 0 0 10px;
+  margin: 0;
   font-size: 13px;
-}
-
-.memberships-group__empty {
-  margin: 0 0 10px;
 }
 
 .memberships-group__add-item {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  align-self: flex-start;
 }
 
 /* ------------------------------------------------------------------- items */
@@ -429,6 +450,24 @@
   align-items: center;
   gap: 2px;
   padding-bottom: 4px;
+}
+
+.memberships-item__or-btn {
+  appearance: none;
+  border: 1px solid var(--accent);
+  background: var(--surface);
+  color: var(--accent-strong);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 3px 8px;
+  border-radius: 999px;
+  cursor: pointer;
+  margin-right: 4px;
+}
+
+.memberships-item__or-btn:hover {
+  background: var(--pill);
 }
 
 /* ------------------------------------------------------------------ picker */
@@ -586,8 +625,8 @@
 }
 
 @media (max-width: 900px) {
-  .memberships-group__row {
-    grid-template-columns: 1fr;
+  .memberships-or-cluster__head {
+    align-items: flex-start;
   }
 
   .memberships-item__body {
@@ -598,4 +637,9 @@
   .memberships-item__tools {
     padding-bottom: 0;
   }
+}
+
+.memberships-stripe-id {
+  cursor: default;
+  opacity: 0.85;
 }
