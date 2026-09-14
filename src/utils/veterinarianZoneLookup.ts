@@ -276,6 +276,34 @@ export function employeeAcceptsAppointmentType(
   return types.some((at) => at?.id != null && Number(at.id) === target);
 }
 
+/**
+ * Which of these PIMS / employee ids are assigned the appointment type in Settings.
+ * Missing employee records are treated as not accepting (same as the doctor picker).
+ */
+export async function doctorPimsIdsAcceptingAppointmentType(
+  doctorPimsIds: readonly string[],
+  appointmentTypeId: number
+): Promise<Set<string>> {
+  const accepted = new Set<string>();
+  const unique = [
+    ...new Set(doctorPimsIds.map((id) => String(id ?? '').trim()).filter(Boolean)),
+  ];
+  await Promise.all(
+    unique.map(async (pimsId) => {
+      const employee = await loadEmployeeForDoctorPimsId(pimsId);
+      if (!employee || !employeeAcceptsAppointmentType(employee, appointmentTypeId)) return;
+      accepted.add(pimsId);
+      if (employee.pimsId != null && String(employee.pimsId).trim()) {
+        accepted.add(String(employee.pimsId).trim());
+      }
+      if (employee.id != null && String(employee.id).trim()) {
+        accepted.add(String(employee.id).trim());
+      }
+    })
+  );
+  return accepted;
+}
+
 /** Distinct `dayOfWeek` values (0=Sun … 6=Sat) covered by an inclusive date range. */
 export function distinctDaysOfWeekInDateRange(
   startDate: string,
