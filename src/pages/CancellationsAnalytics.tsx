@@ -51,6 +51,12 @@ import {
   fetchAppointmentCancellationsAnalytics,
   type CancelledAppointmentAnalyticsRow,
 } from '../api/appointmentCancellationsAnalytics';
+import {
+  cancellationLocalDate,
+  getCancellationSortTimeIso,
+  isCancelledAnalyticsRow,
+} from '../utils/cancellationsAnalytics';
+import { DEFAULT_PRACTICE_TIMEZONE } from '../utils/practiceTimezone';
 
 function toLocalDateStr(d: Dayjs) {
   return d.format('YYYY-MM-DD');
@@ -114,11 +120,6 @@ const PRESETS: Record<string, () => { from: Dayjs; to: Dayjs }> = {
 
 const ALL_PROVIDERS = '';
 
-function isCancelledStatus(name: unknown): boolean {
-  const n = typeof name === 'string' ? name.trim() : '';
-  return n === 'Canceled Appointment' || n === 'Canceled';
-}
-
 function getAppointmentStartIso(appt: CancelledAppointmentAnalyticsRow): string | null {
   const v =
     appt.appointmentStart ??
@@ -129,47 +130,22 @@ function getAppointmentStartIso(appt: CancelledAppointmentAnalyticsRow): string 
   return null;
 }
 
-/** When the cancellation was recorded; used for list ordering (newest first). */
-function getCancellationSortTimeIso(appt: CancelledAppointmentAnalyticsRow): string | null {
-  const keys = [
-    'lastTouchedAt',
-    'externalUpdated',
-    'cancelledAt',
-    'canceledAt',
-    'cancellationDate',
-    'cancellationTime',
-    'cancelDate',
-    'cancelTime',
-    'statusChangedAt',
-    'confirmStatusChangedAt',
-    'modifiedAt',
-    'updated',
-  ] as const;
-  for (const k of keys) {
-    const v = appt[k];
-    if (typeof v === 'string' && v.trim()) return v.trim();
-  }
-  return null;
-}
-
 function parseToMs(iso: string | null | undefined): number | null {
   if (!iso) return null;
   const d = dayjs(iso);
   return d.isValid() ? d.valueOf() : null;
 }
 
-/** Calendar day the cancellation was recorded (lastTouchedAt, externalUpdated, etc.). */
-function cancellationLocalDate(appt: CancelledAppointmentAnalyticsRow): string | null {
-  const iso = getCancellationSortTimeIso(appt);
-  if (!iso) return null;
-  const d = dayjs(iso);
-  return d.isValid() ? d.format('YYYY-MM-DD') : null;
-}
-
 function formatTableDateTime(iso: string | null): string {
   if (!iso) return '—';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
   const d = dayjs(iso);
   return d.isValid() ? d.format('YYYY-MM-DD h:mm A') : iso;
+}
+
+/** Display instant for "Cancelled on"; fall back to API byDay date when no timestamp. */
+function cancelledOnDisplayIso(appt: CancelledAppointmentAnalyticsRow): string | null {
+  return getCancellationSortTimeIso(appt) ?? cancellationLocalDate(appt);
 }
 
 function primaryProviderLabel(appt: CancelledAppointmentAnalyticsRow): string {
@@ -414,7 +390,7 @@ export default function CancellationsAnalytics() {
     const from = startStr;
     const to = endStr;
     return raw.filter((appt) => {
-      if (!isCancelledStatus(appt.confirmStatusName)) return false;
+      if (!isCancelledAnalyticsRow(appt)) return false;
       const d = cancellationLocalDate(appt);
       if (!d) return false;
       return d >= from && d <= to;
@@ -492,11 +468,11 @@ export default function CancellationsAnalytics() {
           Cancellations
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          Counts and the list below use the day the cancellation was recorded (
-          <code>lastTouchedAt</code> / <code>externalUpdated</code>), not the scheduled appointment start.
-          Days are the practice timezone (America/New_York), not UTC. Only rows with{' '}
-          <code>confirmStatusName</code> of &quot;Canceled Appointment&quot; or &quot;Canceled&quot; are
-          included.
+          Counts and the list below use the day the cancellation was recorded (API day bucket, or
+          cancel / last-touch timestamps), not the scheduled appointment start. Days use the practice
+          timezone ({DEFAULT_PRACTICE_TIMEZONE}), not UTC. Cancelled rows include{' '}
+          <code>cancellationFlag</code> and confirm/status labels such as &quot;Canceled Appointment&quot;
+          / &quot;Cancelled&quot;.
         </Typography>
 
         {providersError && (
@@ -656,11 +632,13 @@ export default function CancellationsAnalytics() {
                       <TableBody>
                         {sortedList.map((appt, index) => {
                           const startIso = getAppointmentStartIso(appt);
-                          const cancelledIso = getCancellationSortTimeIso(appt);
+                          const cancelledIso = cancelledOnDisplayIso(appt);
                           const status =
                             typeof appt.confirmStatusName === 'string'
                               ? appt.confirmStatusName
-                              : '—';
+                              : typeof appt.statusName === 'string'
+                                ? appt.statusName
+                                : '—';
                           return (
                             <TableRow
                               key={listKey(appt, index)}
