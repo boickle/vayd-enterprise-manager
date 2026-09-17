@@ -1,10 +1,8 @@
 import { http } from './http';
-import { stampAnalyticsCancelDate } from '../utils/cancellationsAnalytics';
 
 /**
  * Single cancellation row (flattened from `byDay[].cancellations[]` or a top-level array).
  * The UI shows every field in a detail modal.
- * Rows from `byDay` also carry `analyticsCancelDate` (YYYY-MM-DD) from the bucket date.
  */
 export type CancelledAppointmentAnalyticsRow = Record<string, unknown>;
 
@@ -39,20 +37,16 @@ function flattenByDay(o: Record<string, unknown>): CancelledAppointmentAnalytics
   for (const day of byDay) {
     if (!day || typeof day !== 'object') continue;
     const d = day as Record<string, unknown>;
-    const dayDate = typeof d.date === 'string' ? d.date : '';
     const cans = d.cancellations;
     if (!Array.isArray(cans)) continue;
     for (const row of cans) {
-      if (!row || typeof row !== 'object') continue;
-      out.push(
-        stampAnalyticsCancelDate(row as CancelledAppointmentAnalyticsRow, dayDate) as CancelledAppointmentAnalyticsRow
-      );
+      if (row && typeof row === 'object') out.push(row as CancelledAppointmentAnalyticsRow);
     }
   }
   return out;
 }
 
-/** Flatten `byDay` (stamping each row with the bucket date) or fall back to a top-level array field. */
+/** Flatten `byDay` or fall back to a top-level array field. */
 export function normalizeAppointmentCancellationsResponse(raw: unknown): CancelledAppointmentAnalyticsRow[] {
   if (!raw || typeof raw !== 'object') return [];
   if (Array.isArray(raw)) return raw as CancelledAppointmentAnalyticsRow[];
