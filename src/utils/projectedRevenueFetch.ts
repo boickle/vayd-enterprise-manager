@@ -9,7 +9,12 @@ import {
   type ScheduleOverride,
 } from '../api/appointmentSettings';
 import { fetchEmployeeGoals, type EmployeeGoalsResponseDto } from '../api/employeeGoals';
-import { fetchDoctorRevenueSeries, type DoctorRevenueSeriesResponse } from '../api/opsStats';
+import {
+  fetchCollectibleRevenueRates,
+  fetchDoctorRevenueSeries,
+  type CollectibleRevenueRatesResponse,
+  type DoctorRevenueSeriesResponse,
+} from '../api/opsStats';
 import { fetchPaymentsAnalytics, type PaymentPoint } from '../api/payments';
 import { fetchScheduleOverridesByDate } from './scheduleOverrideMerge';
 import { createAsyncTtlCache, mapPool } from './asyncTtlCache';
@@ -73,6 +78,24 @@ export async function fetchBookingsAnalyticsCached(params: {
         return await fetchAppointmentBookingsAnalytics(params);
       } catch (e) {
         console.error('Booking history for fill curve failed:', e);
+        return null;
+      }
+    },
+    LOOKBACK_TTL_MS
+  );
+}
+
+export async function fetchCollectibleRevenueRatesCached(params: {
+  start: string;
+  end: string;
+}): Promise<CollectibleRevenueRatesResponse | null> {
+  return cache.getOrFetch(
+    `collectible:${params.start}:${params.end}`,
+    async () => {
+      try {
+        return await fetchCollectibleRevenueRates(params);
+      } catch (e) {
+        console.error('Collectible rates for projected revenue failed:', e);
         return null;
       }
     },
