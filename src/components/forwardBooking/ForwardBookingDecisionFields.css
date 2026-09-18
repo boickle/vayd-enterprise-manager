@@ -1,0 +1,164 @@
+/* Styling for the shared follow-up ("forward booking") prompt. Moved out of
+   Scheduler.css so the identical prompt can render on the SOAP checkout panel and
+   the visit wrap-up, which must not pull in the scheduler's stylesheet. Class names
+   are unchanged from the End Visit modal so scheduler-side modifiers still apply. */
+
+.scheduler-forward-booking-saved-lead {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: #64748b;
+}
+
+.scheduler-forward-booking-mode-row--readonly {
+  cursor: default;
+}
+
+.scheduler-forward-booking-mode-option--readonly {
+  pointer-events: none;
+}
+
+.scheduler-forward-booking-saved-details {
+  margin: 0;
+  padding: 0 12px 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.scheduler-forward-booking-saved-details > div {
+  display: grid;
+  gap: 2px;
+}
+
+.scheduler-forward-booking-saved-details dt {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.scheduler-forward-booking-saved-details dd {
+  margin: 0;
+  font-size: 14px;
+  color: #0f172a;
+  white-space: pre-wrap;
+}
+
+.scheduler-forward-booking-mode-fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.scheduler-forward-booking-mode-legend {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.scheduler-forward-booking-mode-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.scheduler-forward-booking-mode-option {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.scheduler-forward-booking-mode-option--active {
+  border-color: color-mix(in srgb, var(--scheduler-accent, #0d9488) 45%, #cbd5e1);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--scheduler-accent, #0d9488) 18%, transparent);
+}
+
+.scheduler-forward-booking-mode-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+.scheduler-forward-booking-mode-row input[type='radio'] {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  margin: 2px 0 0;
+}
+
+.scheduler-forward-booking-mode-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.scheduler-forward-booking-mode-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: #0f172a;
+  line-height: 1.35;
+}
+
+.scheduler-forward-booking-mode-hint {
+  font-size: 12px;
+  line-height: 1.45;
+  color: #64748b;
+}
+
+.scheduler-forward-booking-mode-panel {
+  padding: 0 12px 12px 40px;
+}
+
+.scheduler-forward-booking-field-hint {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.4;
+  font-weight: 400;
+}
+
+/* The panels' inputs are styled by Scheduler.css inside the End Visit modal. Scoped
+   copies of those two rules so the prompt looks the same off the scheduler; the
+   declarations match, so the higher specificity changes nothing in the modal. */
+.scheduler-forward-booking-mode-panel .scheduler-edit-two-col {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.scheduler-forward-booking-mode-panel .scheduler-edit-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+}
+
+.scheduler-forward-booking-mode-panel .scheduler-edit-field input,
+.scheduler-forward-booking-mode-panel .scheduler-edit-field select,
+.scheduler-forward-booking-mode-panel .scheduler-edit-field textarea {
+  font-size: 14px;
+  font-weight: 500;
+  padding: 8px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  color: #0f172a;
+}
+
+.scheduler-forward-booking-mode-panel .scheduler-edit-field textarea {
+  resize: vertical;
+  min-height: 72px;
+}

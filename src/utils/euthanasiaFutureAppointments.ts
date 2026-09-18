@@ -338,7 +338,7 @@ export async function inactivateEuthanasiaPatients(
 
     const writeId = resolvePatientWriteId(record, id);
     try {
-      await patchPatient(writeId, { isActive: false, active: false });
+      await patchPatient(writeId, { isActive: false });
       inactivatedIds.push(writeId);
     } catch (e: unknown) {
       const msg = extractPatientMutationErrorMessage(e, writeId);

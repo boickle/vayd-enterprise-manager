@@ -1,5 +1,7 @@
 import type { ForwardBookingSmsBookedSlot } from './forwardBookingSmsMessage';
 import { appendHoldSpotReleaseClause, type HoldSpotReleaseSmsOpts } from './holdSpotReleaseSmsClause';
+import { applySystemTemplateIfCustom } from './messageTemplateCache';
+import { withClinicDefaults } from './messageTemplateFields';
 
 /** Appended to client-facing care outreach SMS (hold follow-up and text offers). */
 export const CARE_OUTREACH_SMS_SUFFIX = '-- neighborhood slots go fast.';
@@ -62,11 +64,28 @@ export function buildCareOutreachSmsMessage(opts: {
   const windowStart = opts.bookedSlot?.windowStart?.trim() || 'xxxx';
   const windowEnd = opts.bookedSlot?.windowEnd?.trim() || 'xxxx';
   const doctorLastName = opts.providerLastName?.trim() || 'xxxxx';
+  const values = withClinicDefaults({
+    client_first_name: firstName,
+    pets,
+    have_has: haveVerb,
+    doctor_last_name: doctorLastName,
+    date_label: datePart,
+    window_start: windowStart,
+    window_end: windowEnd,
+  });
   let body: string;
   if (opts.anyPastDue) {
-    body = `Hi ${firstName}, it's Dr. ${doctorLastName}'s team at Vet At Your Door! It looks like ${pets} ${haveVerb} a few things past due, and Dr. ${doctorLastName} is going to be in your neighborhood on ${datePart} between ${windowStart} and ${windowEnd}. Would it be a good time for the team to stop by then to get ${pets} all up to date?`;
+    body = applySystemTemplateIfCustom(
+      'care_outreach_past_due',
+      values,
+      `Hi ${firstName}, it's Dr. ${doctorLastName}'s team at Vet At Your Door! It looks like ${pets} ${haveVerb} a few things past due, and Dr. ${doctorLastName} is going to be in your neighborhood on ${datePart} between ${windowStart} and ${windowEnd}. Would it be a good time for the team to stop by then to get ${pets} all up to date?`,
+    );
   } else {
-    body = `Hi ${firstName}, it's Dr. ${doctorLastName}'s team at Vet At Your Door! It looks like ${pets} ${haveVerb} a few things coming due, and Dr. ${doctorLastName} is already going to be in your neighborhood on ${datePart} between ${windowStart} and ${windowEnd}. Would it be a good time for the team to stop by then?`;
+    body = applySystemTemplateIfCustom(
+      'care_outreach_coming_due',
+      values,
+      `Hi ${firstName}, it's Dr. ${doctorLastName}'s team at Vet At Your Door! It looks like ${pets} ${haveVerb} a few things coming due, and Dr. ${doctorLastName} is already going to be in your neighborhood on ${datePart} between ${windowStart} and ${windowEnd}. Would it be a good time for the team to stop by then?`,
+    );
   }
   if (opts.holdRelease) {
     body = appendHoldSpotReleaseClause(body, opts.holdRelease);

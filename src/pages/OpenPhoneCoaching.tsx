@@ -114,7 +114,7 @@ function normRoleToken(s: string): string {
 function findReceptionistRoleId(roles: EmployeeRole[]): number | null {
   const byName = roles.find((r) => normRoleToken(r.name) === 'receptionist');
   if (byName) return byName.id;
-  const byValue = roles.find((r) => normRoleToken(r.roleValue) === 'receptionist');
+  const byValue = roles.find((r) => normRoleToken(String(r.roleValue ?? '')) === 'receptionist');
   if (byValue) return byValue.id;
   const fuzzy = roles.find((r) => normRoleToken(r.name).includes('receptionist'));
   return fuzzy?.id ?? null;

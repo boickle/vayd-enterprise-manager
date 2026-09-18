@@ -111,6 +111,21 @@ function tabBadgesForPath(
           />
         </>
       );
+    case 'records':
+      return (
+        <>
+          <TabBadge
+            count={counts.recordsPending - counts.recordsUrgent}
+            variant="default"
+            title={`${counts.recordsPending} records requests still open`}
+          />
+          <TabBadge
+            count={counts.recordsUrgent}
+            variant="urgent"
+            title={`${counts.recordsUrgent} still open with the visit three days out or sooner`}
+          />
+        </>
+      );
     default:
       return null;
   }

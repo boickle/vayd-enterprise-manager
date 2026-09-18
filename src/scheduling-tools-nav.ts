@@ -18,9 +18,10 @@ export const SCHEDULING_TOOL_OUTREACH_TABS: SchedulingToolTab[] = [
   { path: 'schedule-optimization', label: 'Schedule optimization' },
 ];
 
-/** Workflow views after outreach — booked visits. */
+/** Workflow views after outreach — booked visits and records chasing. */
 export const SCHEDULING_TOOL_WORKFLOW_TABS: SchedulingToolTab[] = [
   { path: 'booked', label: 'Booked' },
+  { path: 'records', label: 'Records' },
 ];
 
 /** Scheduling Tools tabs (holds board: /schedule/holds). */

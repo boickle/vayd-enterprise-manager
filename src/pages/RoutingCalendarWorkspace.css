@@ -38,6 +38,49 @@
   min-width: min(320px, 38%);
 }
 
+.schedule-routing-workspace--routing-collapsed .schedule-routing-workspace__calendar {
+  min-width: 0;
+}
+
+.schedule-routing-workspace--routing-collapsed .schedule-routing-workspace__routing,
+.schedule-routing-workspace--routing-collapsed .schedule-routing-workspace__splitter {
+  display: none !important;
+}
+
+.schedule-routing-workspace__expand {
+  flex: 0 0 40px;
+  width: 40px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  align-self: stretch;
+  margin: 0;
+  padding: 12px 6px;
+  border: none;
+  border-right: 1px solid #e2e8f0;
+  background: #fff;
+  color: #334155;
+  cursor: pointer;
+  font: inherit;
+}
+
+.schedule-routing-workspace__expand:hover {
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+.schedule-routing-workspace__expand-label {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
 .schedule-routing-workspace__splitter {
   flex: 0 0 7px;
   margin: 0 -3px;

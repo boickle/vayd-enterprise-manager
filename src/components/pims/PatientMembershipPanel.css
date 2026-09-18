@@ -1,0 +1,654 @@
+/*
+ * Patient membership card.
+ *
+ * The one thing this layout has to get right is the difference between a group where every
+ * benefit is included and a group where the benefits are alternatives sharing one allowance.
+ * A label alone gets skimmed past, so choice groups are drawn as a braced stack of options
+ * threaded onto a single spine with "OR" between them, under one shared allowance meter.
+ */
+
+.pmp {
+  min-width: 0;
+}
+
+/* The story column styles every h3/h4 as a tiny uppercase eyebrow; the card needs real headings. */
+.pmp h3,
+.pmp h4,
+.pmp .pims-detail__card-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text);
+}
+
+.pmp-muted {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.pmp-head-plan {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--accent-strong);
+}
+
+.pmp-empty {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+/* ---------- Summary ---------- */
+
+.pmp-summary {
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg);
+}
+
+.pmp-summary__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.pmp-summary__plan {
+  font-size: 17px !important;
+}
+
+.pmp-summary__badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.pmp-summary__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* The owner's "one click, not Stripe" action, so it reads as the primary move on the card. */
+.pmp-btn-change {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border: 1px solid var(--accent-strong);
+  border-radius: 8px;
+  background: var(--accent);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--surface);
+  cursor: pointer;
+}
+
+.pmp-btn-change:hover:not(:disabled) {
+  background: var(--accent-strong);
+}
+
+.pmp-btn-change:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.pmp .pims-detail__card,
+.pmp-summary {
+  margin-top: 12px;
+}
+
+/* ---------- Allowance meter ---------- */
+
+.pmp-meter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 140px;
+  margin-top: 5px;
+}
+
+.pmp-meter__track {
+  position: relative;
+  flex: 1 1 80px;
+  max-width: 120px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.pmp-meter__fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 999px;
+  background: var(--accent);
+}
+
+.pmp-meter__track--spent .pmp-meter__fill {
+  background: var(--warning);
+}
+
+.pmp-meter__label {
+  flex: 0 0 auto;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.pmp-meter__label--spent {
+  color: var(--warning);
+}
+
+/* ---------- Groups ---------- */
+
+.pmp-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.pmp-group {
+  padding: 11px 13px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.pmp-group__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.pmp-group__title-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.pmp-group__mode {
+  padding: 2px 9px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: var(--pill);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent-strong);
+}
+
+.pmp-group__mode--all {
+  border-color: var(--border);
+  background: var(--bg);
+  color: var(--muted);
+}
+
+.pmp-group__explain {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* A choice group is the "this lab OR that lab" case: one allowance, several ways to spend it. */
+.pmp-group--choice {
+  border-color: var(--accent);
+  border-left-width: 3px;
+  background: linear-gradient(180deg, var(--pill), var(--surface) 90px);
+}
+
+/* ---------- Benefits ---------- */
+
+.pmp-benefits {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.pmp-benefits--removed {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+}
+
+/* The spine that ties the alternatives together, so the OR reads as one bracketed set. */
+.pmp-group--choice .pmp-benefits {
+  position: relative;
+  padding-left: 20px;
+}
+
+.pmp-group--choice .pmp-benefits::before {
+  content: '';
+  position: absolute;
+  top: 14px;
+  bottom: 14px;
+  left: 5px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.pmp-benefit {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 0;
+  min-width: 0;
+}
+
+.pmp-benefit + .pmp-benefit {
+  border-top: 1px solid var(--border);
+}
+
+.pmp-group--choice .pmp-benefit + .pmp-benefit {
+  border-top: none;
+}
+
+.pmp-benefit__alt-dot {
+  position: absolute;
+  top: 15px;
+  left: -20px;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+  background: var(--surface);
+}
+
+.pmp-benefit__main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.pmp-benefit__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.pmp-benefit__name {
+  font-size: 13.5px;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.pmp-benefit__code {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.pmp-benefit__sub,
+.pmp-benefit__audit {
+  margin: 4px 0 0;
+  font-size: 11.5px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.pmp-benefit__audit strong {
+  color: var(--text);
+  font-weight: 650;
+}
+
+.pmp-benefit--custom .pmp-benefit__name {
+  text-decoration: underline;
+  text-decoration-color: var(--accent);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+}
+
+.pmp-benefit--removed .pmp-benefit__name {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+
+.pmp-benefit--removed {
+  opacity: 0.75;
+}
+
+.pmp-benefit__actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pmp-benefit--editing {
+  display: block;
+}
+
+.pmp-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.pmp-icon-btn:hover:not(:disabled) {
+  border-color: var(--error);
+  color: var(--error);
+}
+
+.pmp-icon-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* The OR divider between alternatives. */
+.pmp-or {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+  user-select: none;
+}
+
+.pmp-or::before,
+.pmp-or::after {
+  content: '';
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--border);
+}
+
+.pmp-or span {
+  flex: 0 0 auto;
+  padding: 1px 9px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  color: var(--accent-strong);
+}
+
+/* ---------- Coverage pills ---------- */
+
+.pmp-coverage {
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.pmp-coverage--included {
+  border-color: var(--accent);
+  background: var(--pill);
+  color: var(--accent-strong);
+}
+
+.pmp-coverage--copay,
+.pmp-coverage--percent-off {
+  border-color: var(--warning);
+  color: var(--warning);
+}
+
+/* ---------- Plan lists ---------- */
+
+.pmp-plans {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pmp-plan {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.pmp-plan:hover {
+  border-color: var(--accent);
+}
+
+.pmp-plan__main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.pmp-plan__name {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.pmp-plan__meta {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.pmp-plan__blurb {
+  font-size: 12px;
+  color: var(--muted);
+  max-width: 52ch;
+}
+
+/* ---------- Forms ---------- */
+
+.pmp-change__lede {
+  margin-bottom: 10px;
+}
+
+.pmp-change__opts {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pmp-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--muted);
+  line-height: 1.45;
+  cursor: pointer;
+}
+
+.pmp-check input {
+  margin-top: 2px;
+  width: 15px;
+  height: 15px;
+  accent-color: var(--accent-strong);
+}
+
+.pmp-check strong {
+  color: var(--text);
+}
+
+.pmp-form--inline {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: var(--bg);
+}
+
+.pmp-form__title {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.pmp-form__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 12px;
+}
+
+@media (max-width: 720px) {
+  .pmp-form__grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.pmp-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.pmp-field--full {
+  grid-column: 1 / -1;
+}
+
+.pmp-field--inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  max-width: 260px;
+}
+
+.pmp-field__label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.pmp-field__hint {
+  font-size: 11.5px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.pmp-input {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.pmp-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.pmp-form__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.pmp-form__error {
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  border: 1px solid var(--error);
+  border-radius: 8px;
+  font-size: 12.5px;
+  color: var(--error);
+}
+
+/* ---------- Audit ---------- */
+
+.pmp-audit {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.pmp-audit__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.pmp-audit__toggle:hover {
+  color: var(--accent-strong);
+}
+
+.pmp-audit__list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.pmp-audit__entry {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 10px;
+  border-left: 2px solid var(--border);
+}
+
+.pmp-audit__summary {
+  font-size: 12.5px;
+  color: var(--text);
+}
+
+.pmp-audit__meta {
+  font-size: 11px;
+  color: var(--muted);
+}

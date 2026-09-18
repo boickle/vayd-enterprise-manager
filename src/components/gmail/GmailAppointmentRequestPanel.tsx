@@ -722,6 +722,7 @@ export default function GmailAppointmentRequestPanel({
       {smsOpen ? (
         <ClientSmsComposeModal
           open
+          clientId={requestDataClientId(rd) ? Number(requestDataClientId(rd)) : null}
           clientLabel={clientName}
           message={smsLoading ? 'Loading message…' : smsMessage}
           onMessageChange={setSmsMessage}

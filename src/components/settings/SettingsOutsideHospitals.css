@@ -1,0 +1,118 @@
+.outside-hospital-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.outside-hospital-toolbar > .settings-input {
+  flex: 1 1 240px;
+  min-width: 200px;
+}
+
+.outside-hospital-form {
+  border: 1px solid var(--border, #e7e0d4);
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 14px;
+  background: var(--surface-2, #fbf9f5);
+}
+
+.outside-hospital-form__grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.outside-hospital-form__grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  min-width: 0;
+}
+
+.outside-hospital-form__wide {
+  grid-column: 1 / -1;
+}
+
+.outside-hospital-form__actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.outside-hospital-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.outside-hospital-row--off {
+  opacity: 0.6;
+}
+
+.outside-hospital-import {
+  border: 1px solid var(--border, #e7e0d4);
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 14px;
+  background: var(--surface-2, #fbf9f5);
+}
+
+.outside-hospital-import__drop {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px dashed var(--border, #cfc6b4);
+  border-radius: 10px;
+  padding: 14px;
+  margin: 10px 0;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--muted, #6b6455);
+}
+
+.outside-hospital-import__drop.is-drop {
+  border-color: var(--accent, #7a6a4f);
+  background: rgba(122, 106, 79, 0.08);
+}
+
+.outside-hospital-import__paste {
+  width: 100%;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  white-space: pre;
+}
+
+.outside-hospital-import__count {
+  margin: 10px 0 6px;
+  font-size: 13px;
+}
+
+.outside-hospital-import__preview {
+  max-height: 320px;
+  overflow: auto;
+}
+
+.outside-hospital-import__row--skip {
+  opacity: 0.55;
+}
+
+.outside-hospital-import__error {
+  color: var(--error, #b4342b);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+}
+
+@media (max-width: 900px) {
+  .outside-hospital-form__grid {
+    grid-template-columns: 1fr;
+  }
+}

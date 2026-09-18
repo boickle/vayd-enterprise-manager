@@ -3,9 +3,14 @@ export function isPublicClientLinkPath(pathname: string): boolean {
   return (
     pathname.startsWith('/confirm/') ||
     pathname.startsWith('/survey/') ||
+    pathname.startsWith('/consent/') ||
+    pathname.startsWith('/records/') ||
     pathname.startsWith('/public/room-loader') ||
     pathname === '/share' ||
     pathname === '/refer-a-friend' ||
-    pathname.startsWith('/client-portal/request-appointment')
+    pathname.startsWith('/client-portal/request-appointment') ||
+    pathname.startsWith('/membership/renewal') ||
+    pathname === '/store' ||
+    pathname.startsWith('/store/')
   );
 }

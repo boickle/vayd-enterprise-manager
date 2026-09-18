@@ -2,6 +2,7 @@
 import React, { useRef, useEffect, useState, useMemo } from 'react';
 import type { Pet, Vaccination, PracticeInfo } from '../api/clientPortal';
 import { fetchPracticeInfo } from '../api/clientPortal';
+import { appAlert } from '../utils/appDialog';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 
@@ -160,7 +161,10 @@ export default function VaccinationCertificateModal({
 
     const printWindow = window.open('', '_blank');
     if (!printWindow) {
-      alert('Please allow pop-ups to print the certificate.');
+      void appAlert({
+        title: 'Allow pop-ups',
+        message: 'Please allow pop-ups to print the certificate.',
+      });
       return;
     }
 
@@ -522,7 +526,10 @@ export default function VaccinationCertificateModal({
       pdf.save(filename);
     } catch (error) {
       console.error('Error generating PDF:', error);
-      alert('Failed to generate PDF. Please try again or use the print option.');
+      void appAlert({
+        title: 'Could not generate PDF',
+        message: 'Failed to generate PDF. Please try again or use the print option.',
+      });
     }
   };
 
