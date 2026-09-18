@@ -73,6 +73,10 @@ import {
   type AppointmentTypeCatalog,
 } from '../utils/appointmentTypeSettings';
 import { fetchScheduleOverridesByDate } from '../utils/scheduleOverrideMerge';
+import {
+  volumeWeightedPracticeVsdPerPoint,
+  volumeWeightedVsdPerPoint,
+} from '../utils/vsdPerPoint';
 import { useAuth } from '../auth/useAuth';
 import { useCommittedDateRange } from '../hooks/useCommittedDateRange';
 import { isEmployeeAnalyticsRestricted, normalizeAuthRoles } from '../utils/analyticsAccess';
@@ -166,56 +170,6 @@ function seriesByDate(series: DoctorRevenuePoint[]): Map<string, number> {
     if (d) m.set(d, (m.get(d) ?? 0) + Number(p?.total ?? 0));
   }
   return m;
-}
-
-/** Mean of (revenue ÷ points) over days in [histStart, histEnd] where points > 0. */
-function meanHistoricalVsdPerPoint(
-  series: DoctorRevenuePoint[],
-  pointsByDate: Record<string, number>,
-  histStart: Dayjs,
-  histEnd: Dayjs
-): number | null {
-  const revByDate = seriesByDate(series);
-  const ratios: number[] = [];
-  for (const dateStr of dateRange(histStart, histEnd)) {
-    const pts = pointsByDate[dateStr] ?? 0;
-    if (pts <= 0) continue;
-    const rev = revByDate.get(dateStr) ?? 0;
-    ratios.push(Number(rev) / pts);
-  }
-  if (!ratios.length) return null;
-  return ratios.reduce((a, b) => a + b, 0) / ratios.length;
-}
-
-/**
- * Practice-wide trailing VSD/pt: for each historical day, (sum of provider revenues) ÷ (sum of provider
- * points); then mean over days with points &gt; 0. Excludes "Not Specified" (no calendar points).
- */
-function meanPracticeHistoricalVsdPerPoint(
-  providerIds: string[],
-  histResponses: { doctorId: string; response: DoctorRevenueSeriesResponse }[],
-  pointsByDoctorByDate: Record<string, Record<string, number>>,
-  histStart: Dayjs,
-  histEnd: Dayjs
-): number | null {
-  const revByDoctorByDate = new Map<string, Map<string, number>>();
-  for (const id of providerIds) {
-    const hist = histResponses.find((x) => x.doctorId === id);
-    if (!hist) continue;
-    revByDoctorByDate.set(id, seriesByDate(hist.response.series ?? []));
-  }
-  const ratios: number[] = [];
-  for (const dateStr of dateRange(histStart, histEnd)) {
-    let rev = 0;
-    let pts = 0;
-    for (const id of providerIds) {
-      rev += revByDoctorByDate.get(id)?.get(dateStr) ?? 0;
-      pts += pointsByDoctorByDate[id]?.[dateStr] ?? 0;
-    }
-    if (pts > 0) ratios.push(rev / pts);
-  }
-  if (!ratios.length) return null;
-  return ratios.reduce((a, b) => a + b, 0) / ratios.length;
 }
 
 /** Compute linear regression trend values for chart data (index vs total). */
@@ -660,7 +614,8 @@ export default function VeterinaryServicesDeliveredPage() {
           for (const day of days) {
             const date = day?.date?.slice(0, 10);
             if (date) {
-              byDoctorByDate[doctorId][date] = pointsFromMonthDay(day, typeCatalog);
+              // Estimate uses legacy 1 / 0.5 / 2 weights, not catalog points.
+              byDoctorByDate[doctorId][date] = pointsFromMonthDay(day);
             }
           }
         }
@@ -680,7 +635,7 @@ export default function VeterinaryServicesDeliveredPage() {
     return () => {
       alive = false;
     };
-  }, [isViewingCalendarToday, providersForApi, restrictEmployeeAnalytics, typeCatalog]);
+  }, [isViewingCalendarToday, providersForApi, restrictEmployeeAnalytics]);
 
   const practiceSeries = useMemo(() => {
     if (loading) return [];
@@ -976,7 +931,7 @@ export default function VeterinaryServicesDeliveredPage() {
     };
   }, [goalTotalsForRange, actualsForGoalScope]);
 
-  /** When viewing today: trailing avg VSD/pt (last N days, excluding today) × today's appointment points. */
+  /** When viewing today: trailing VSD/pt (last N days, excluding today) × today's appointment points. */
   const todayRevenueEstimates = useMemo(() => {
     if (!isViewingCalendarToday || !doctorResponses.length) return null;
 
@@ -985,7 +940,7 @@ export default function VeterinaryServicesDeliveredPage() {
     const histStart = histEnd.subtract(VSD_ESTIMATE_LOOKBACK_DAYS - 1, 'day');
 
     const providerIds = providersForApi.map((p) => String(p.id));
-    const practiceAvgVsd = meanPracticeHistoricalVsdPerPoint(
+    const practiceAvgVsd = volumeWeightedPracticeVsdPerPoint(
       providerIds,
       estHistDoctorResponses,
       estHistPointsByDoctorByDate,
@@ -1007,11 +962,11 @@ export default function VeterinaryServicesDeliveredPage() {
 
     for (const r of doctorResponses) {
       const id = String(r.doctorId);
-      const todayPoints = pointsByDoctorByDate[id]?.[todayCalStr] ?? 0;
+      const todayPoints = estHistPointsByDoctorByDate[id]?.[todayCalStr] ?? 0;
       const hist = estHistDoctorResponses.find((x) => x.doctorId === id);
       const histPts = estHistPointsByDoctorByDate[id] ?? {};
       const personalAvg = hist
-        ? meanHistoricalVsdPerPoint(hist.response.series ?? [], histPts, histStart, histEnd)
+        ? volumeWeightedVsdPerPoint(hist.response.series ?? [], histPts, histStart, histEnd)
         : null;
       const usedPracticeFallback = personalAvg == null && practiceAvgVsd != null;
       const rateVsd = personalAvg ?? practiceAvgVsd;
@@ -1042,7 +997,6 @@ export default function VeterinaryServicesDeliveredPage() {
     todayCalStr,
     doctorResponses,
     providersForApi,
-    pointsByDoctorByDate,
     estHistDoctorResponses,
     estHistPointsByDoctorByDate,
   ]);
@@ -1466,10 +1420,9 @@ export default function VeterinaryServicesDeliveredPage() {
                       </Typography>
                     </Typography>
                     <Typography variant="caption" color="text.secondary" component="p" sx={{ mt: 0.5, mb: 0 }}>
-                      Trailing {VSD_ESTIMATE_LOOKBACK_DAYS}-day average VSD per point (excluding today) ×
-                      today&apos;s scheduled points. Same weighting as the chart (1 / 0.5 / 2 by appointment
-                      type). Doctors without enough personal history use the practice-wide average for that
-                      window (combined revenue ÷ combined points per day, then averaged across days).
+                      Trailing {VSD_ESTIMATE_LOOKBACK_DAYS}-day total VSD ÷ total appointment points
+                      (excluding today), using 1 / 0.5 / 2 by appointment type. Doctors without enough
+                      personal history use the practice-wide total for that window.
                     </Typography>
                     {todayRevenueEstimates.doctorsUsingPracticeFallback > 0 && (
                       <Typography variant="caption" color="text.secondary" component="p" sx={{ mt: 0.5 }}>

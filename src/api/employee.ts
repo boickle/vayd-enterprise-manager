@@ -99,6 +99,34 @@ export function deriveVeterinarianClientZoneFlags(v: {
   return { seeingClients, acceptingNewPatients };
 }
 
+function normalizeProviderLabel(value: string | null | undefined): string {
+  return String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+}
+
+/** Shared PIMS placeholder that books no visits but still receives production. */
+export function isHospitalAccountProvider(
+  p:
+    | {
+        name?: string | null;
+        firstName?: string | null;
+        lastName?: string | null;
+      }
+    | string
+    | null
+    | undefined
+): boolean {
+  if (p == null) return false;
+  if (typeof p === 'string') return normalizeProviderLabel(p) === 'hospital account';
+  const combined = [p.firstName, p.lastName].filter(Boolean).join(' ');
+  return (
+    normalizeProviderLabel(p.name) === 'hospital account' ||
+    normalizeProviderLabel(combined) === 'hospital account'
+  );
+}
+
 function buildProviderName(r: any): string {
   const parts: string[] = [];
   if (r.firstName) parts.push(r.firstName);

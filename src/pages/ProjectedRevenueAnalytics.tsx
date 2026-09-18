@@ -32,23 +32,19 @@ import {
   Line,
   Legend,
 } from 'recharts';
-import { fetchPrimaryProviders, type Provider } from '../api/employee';
-import { type DoctorRevenuePoint, type DoctorRevenueSeriesResponse } from '../api/opsStats';
+import { fetchPrimaryProviders, isHospitalAccountProvider, type Provider } from '../api/employee';
+import { type DoctorRevenueSeriesResponse } from '../api/opsStats';
 import { type DoctorMonthDay } from '../api/appointments';
 import {
-  fetchAllAppointmentTypes,
   scheduleOverrideIsOff,
   type EmployeeWeeklySchedule,
   type ScheduleOverride,
 } from '../api/appointmentSettings';
 import { membershipRevenueForPoint, type PaymentPoint } from '../api/payments';
-import {
-  buildAppointmentTypeCatalog,
-  pointsFromAppointmentRows,
-  type AppointmentTypeCatalog,
-} from '../utils/appointmentTypeSettings';
+import { pointsFromAppointmentRows } from '../utils/appointmentTypeSettings';
 import { monthDayIsTimeOff } from '../utils/doctorTimeOff';
 import {
+  fetchCollectibleRevenueRatesCached,
   fetchDoctorMonthsCached,
   fetchDoctorRevenueSeriesCachedMany,
   fetchEmployeeGoalsCached,
@@ -57,6 +53,19 @@ import {
   fetchScheduleOverridesCached,
   PROJECTED_REVENUE_FETCH_CONCURRENCY,
 } from '../utils/projectedRevenueFetch';
+import {
+  collectibleShare,
+  EMPTY_COLLECTIBLE_RATES,
+  ratesFromApi,
+  scaleCollectible,
+  type CollectibleRevenueRates,
+} from '../utils/projectedRevenueCollectible';
+import {
+  practiceVsdPerPointTrend,
+  projectVsdPerPoint,
+  vsdPerPointTrend,
+  type VsdPerPointTrend,
+} from '../utils/vsdPerPoint';
 import { mapPool } from '../utils/asyncTtlCache';
 import {
   buildDoctorPointsCapacity,
@@ -109,84 +118,36 @@ function monthsInRange(start: Dayjs, end: Dayjs): { year: number; month: number 
   return out;
 }
 
-function seriesByDate(series: DoctorRevenuePoint[]): Map<string, number> {
-  const m = new Map<string, number>();
-  for (const p of series) {
-    const d = String(p?.date ?? '').slice(0, 10);
-    if (d) m.set(d, (m.get(d) ?? 0) + Number(p?.total ?? 0));
-  }
-  return m;
-}
-
-/** Mean of (revenue ÷ points) over days in [histStart, histEnd] where points > 0. */
-function meanHistoricalVsdPerPoint(
-  series: DoctorRevenuePoint[],
-  pointsByDate: Record<string, number>,
-  histStart: Dayjs,
-  histEnd: Dayjs
-): number | null {
-  const revByDate = seriesByDate(series);
-  const ratios: number[] = [];
-  for (const dateStr of dateRange(histStart, histEnd)) {
-    const pts = pointsByDate[dateStr] ?? 0;
-    if (pts <= 0) continue;
-    const rev = revByDate.get(dateStr) ?? 0;
-    ratios.push(Number(rev) / pts);
-  }
-  if (!ratios.length) return null;
-  return ratios.reduce((a, b) => a + b, 0) / ratios.length;
-}
-
-/** Practice-wide trailing VSD/pt across providers. */
-function meanPracticeHistoricalVsdPerPoint(
-  providerIds: string[],
+function histResponseForDoctor(
   histResponses: { doctorId: string; response: DoctorRevenueSeriesResponse }[],
-  pointsByDoctorByDate: Record<string, Record<string, number>>,
-  histStart: Dayjs,
-  histEnd: Dayjs
-): number | null {
-  const revByDoctorByDate = new Map<string, Map<string, number>>();
-  for (const id of providerIds) {
-    const hist = histResponses.find((x) => x.doctorId === id);
-    if (!hist) continue;
-    revByDoctorByDate.set(id, seriesByDate(hist.response.series ?? []));
-  }
-  const ratios: number[] = [];
-  for (const dateStr of dateRange(histStart, histEnd)) {
-    let rev = 0;
-    let pts = 0;
-    for (const id of providerIds) {
-      rev += revByDoctorByDate.get(id)?.get(dateStr) ?? 0;
-      pts += pointsByDoctorByDate[id]?.[dateStr] ?? 0;
-    }
-    if (pts > 0) ratios.push(rev / pts);
-  }
-  if (!ratios.length) return null;
-  return ratios.reduce((a, b) => a + b, 0) / ratios.length;
+  doctorId: string
+): { doctorId: string; response: DoctorRevenueSeriesResponse } | undefined {
+  const key = String(doctorId);
+  return histResponses.find((x) => String(x.doctorId) === key);
 }
 
-function pointsFromMonthDay(day: DoctorMonthDay, catalog?: AppointmentTypeCatalog): number {
+function pointsFromMonthDay(day: DoctorMonthDay): number {
   const apptsWithType = (day.appts ?? []).map((a) => ({
     appointmentType: a.appointmentType,
     appointmentTypeId: (a as { appointmentTypeId?: number }).appointmentTypeId,
     isPersonalBlock: false,
   }));
   const blocksAsPersonal = (day.blocks ?? []).map(() => ({ isPersonalBlock: true }));
-  return pointsFromAppointmentRows([...apptsWithType, ...blocksAsPersonal], catalog);
+  return pointsFromAppointmentRows([...apptsWithType, ...blocksAsPersonal]);
 }
 
 type AncillaryDailyRates = {
-  /** Plain pharmacy average (shown in summaries); projections use baseline + growth. */
+  /** Plain pharmacy average over the full lookback. */
   pharmacyOverall: number;
-  /** Recent half-window pharmacy $/day — starting point for the next projected day. */
+  /** Recent half-window pharmacy $/day — held for every projected day. */
   pharmacyBaseline: number;
-  /** Linear pharmacy growth $/calendar-day from the lookback window. */
+  /** Half-to-half pharmacy slope (not applied to projections). */
   pharmacyDailyGrowth: number;
-  /** Recent half-window membership $/day — starting point for the next projected day. */
+  /** Recent half-window membership $/day — held for every projected day. */
   membershipBaseline: number;
-  /** Linear membership growth $/calendar-day from the lookback window. */
+  /** Half-to-half membership slope (not applied to projections). */
   membershipDailyGrowth: number;
-  /** Plain membership average (shown in summaries); projections use baseline + growth. */
+  /** Plain membership average over the full lookback. */
   membershipOverall: number;
   sampleDays: number;
 };
@@ -194,9 +155,8 @@ type AncillaryDailyRates = {
 /**
  * Trailing ancillary rates from Payments over the lookback window.
  * Pharmacy (onlinePharmacyRevenue) and membership (Square invoices + Stripe
- * memberships) each use half-window growth: change from the first half to the
- * second half, spread per calendar day, so future days step from the recent half's
- * average with that daily growth applied. Missing days count as $0.
+ * memberships) use the recent half-window daily average as a flat run-rate.
+ * Missing days count as $0.
  */
 function buildAncillaryDailyRates(
   series: PaymentPoint[],
@@ -273,19 +233,17 @@ function ancillaryGrowthFromWindow(values: number[]): {
 }
 
 /**
- * Pharmacy and membership each start from their recent half-window average and add
- * one day of measured growth per calendar day past today.
+ * Pharmacy and membership stay at their recent half-window daily average.
+ * Linear $/day growth was compounding into multi-month forecasts and diverging
+ * from actuals (pharmacy collapsing, membership exploding).
  */
 function ancillaryForDate(
-  dateStr: string,
-  rates: AncillaryDailyRates | null,
-  today: Dayjs = dayjs().startOf('day')
+  rates: AncillaryDailyRates | null
 ): { pharmacy: number; membership: number } {
   if (!rates) return { pharmacy: 0, membership: 0 };
-  const daysUntil = Math.max(0, dayjs(dateStr).startOf('day').diff(today, 'day'));
   return {
-    pharmacy: Math.max(0, rates.pharmacyBaseline + rates.pharmacyDailyGrowth * daysUntil),
-    membership: Math.max(0, rates.membershipBaseline + rates.membershipDailyGrowth * daysUntil),
+    pharmacy: Math.max(0, rates.pharmacyBaseline),
+    membership: Math.max(0, rates.membershipBaseline),
   };
 }
 
@@ -384,13 +342,18 @@ export default function ProjectedRevenueAnalyticsPage() {
   const [preset, setPreset] = useState<string>('7D');
   const [providers, setProviders] = useState<Provider[]>([]);
   const [graphSelection, setGraphSelection] = useState<string>(PRACTICE_TOTAL_ID);
-  const [typeCatalog, setTypeCatalog] = useState<AppointmentTypeCatalog | undefined>();
-  /** Raw doctor/month days — points are derived in a memo so catalog arrival doesn't re-fetch. */
+  /** Raw doctor/month days — points are derived with the same 1 / 0.5 / 2 weights as the VSD estimate. */
   const [monthDaysByDoctor, setMonthDaysByDoctor] = useState<Record<string, DoctorMonthDay[]>>({});
   const [histDoctorResponses, setHistDoctorResponses] = useState<
     { doctorId: string; name: string; response: DoctorRevenueSeriesResponse }[]
   >([]);
+  /** Trailing VSD series ending yesterday — same window as the VSD page's estimated day revenue. */
+  const [rateHistDoctorResponses, setRateHistDoctorResponses] = useState<
+    { doctorId: string; name: string; response: DoctorRevenueSeriesResponse }[]
+  >([]);
   const [paymentHistorySeries, setPaymentHistorySeries] = useState<PaymentPoint[]>([]);
+  const [collectibleRates, setCollectibleRates] =
+    useState<CollectibleRevenueRates>(EMPTY_COLLECTIBLE_RATES);
   const [doctorSchedulesBase, setDoctorSchedulesBase] = useState<
     Record<string, Omit<DoctorScheduleInfo, 'timeOffDates'>>
   >({});
@@ -443,20 +406,6 @@ export default function ProjectedRevenueAnalyticsPage() {
     };
   }, []);
 
-  useEffect(() => {
-    let alive = true;
-    void fetchAllAppointmentTypes(PRACTICE_ID, { activeOnly: false })
-      .then((rows) => {
-        if (alive) setTypeCatalog(buildAppointmentTypeCatalog(Array.isArray(rows) ? rows : []));
-      })
-      .catch(() => {
-        if (alive) setTypeCatalog(undefined);
-      });
-    return () => {
-      alive = false;
-    };
-  }, []);
-
   // Prefetch practice-wide payment history as soon as the page mounts.
   useEffect(() => {
     const todayD = dayjs().startOf('day');
@@ -467,6 +416,10 @@ export default function ProjectedRevenueAnalyticsPage() {
       end: toLocalDateStr(todayD),
       practiceId: PRACTICE_ID,
     });
+    void fetchCollectibleRevenueRatesCached({
+      start: toLocalDateStr(rateHistStart),
+      end: toLocalDateStr(rateHistEnd),
+    });
   }, []);
 
   // Load booked appointment points, trailing point/VSD history, schedules, and payments.
@@ -474,7 +427,9 @@ export default function ProjectedRevenueAnalyticsPage() {
     if (!providersForApi.length) {
       setMonthDaysByDoctor({});
       setHistDoctorResponses([]);
+      setRateHistDoctorResponses([]);
       setPaymentHistorySeries([]);
+      setCollectibleRates(EMPTY_COLLECTIBLE_RATES);
       setDoctorSchedulesBase({});
       setLoading(false);
       return;
@@ -516,17 +471,31 @@ export default function ProjectedRevenueAnalyticsPage() {
 
     (async () => {
       try {
-        const [revenueResults, pointResults, paymentsSeries, scheduleResults] = await Promise.all([
+        const doctorsForRevenue = providersForApi.map((p) => ({
+          id: String(p.id),
+          name: p.name,
+        }));
+        const [revenueResults, rateHistResults, pointResults, paymentsSeries, collectible, scheduleResults] =
+          await Promise.all([
           fetchDoctorRevenueSeriesCachedMany(
-            providersForApi.map((p) => ({ id: String(p.id), name: p.name })),
+            doctorsForRevenue,
             fetchStartStr,
             revenueEndStr
+          ),
+          fetchDoctorRevenueSeriesCachedMany(
+            doctorsForRevenue,
+            toLocalDateStr(rateHistStart),
+            toLocalDateStr(rateHistEnd)
           ),
           fetchDoctorMonthsCached(doctorIds, monthPairs),
           fetchPaymentsAnalyticsCached({
             start: fetchStartStr,
             end: fetchEndStr,
             practiceId: PRACTICE_ID,
+          }),
+          fetchCollectibleRevenueRatesCached({
+            start: toLocalDateStr(rateHistStart),
+            end: toLocalDateStr(rateHistEnd),
           }),
           mapPool(providersForApi, PROJECTED_REVENUE_FETCH_CONCURRENCY, async (p) => {
             const id = String(p.id);
@@ -581,8 +550,10 @@ export default function ProjectedRevenueAnalyticsPage() {
         }
 
         setHistDoctorResponses(revenueResults);
+        setRateHistDoctorResponses(rateHistResults);
         setMonthDaysByDoctor(daysByDoctor);
         setPaymentHistorySeries(Array.isArray(paymentsSeries) ? paymentsSeries : []);
+        setCollectibleRates(ratesFromApi(collectible));
         setDoctorSchedulesBase(schedulesById);
       } catch (e) {
         if (!alive) return;
@@ -590,7 +561,9 @@ export default function ProjectedRevenueAnalyticsPage() {
         setError('Failed to load projected revenue data');
         setMonthDaysByDoctor({});
         setHistDoctorResponses([]);
+        setRateHistDoctorResponses([]);
         setPaymentHistorySeries([]);
+        setCollectibleRates(EMPTY_COLLECTIBLE_RATES);
         setDoctorSchedulesBase({});
       } finally {
         if (alive) setLoading(false);
@@ -603,7 +576,7 @@ export default function ProjectedRevenueAnalyticsPage() {
     // start/end dayjs objects track startStr/endStr; omit them to avoid identity churn.
   }, [providersForApi, startStr, endStr]);
 
-  /** Derive points / counts / time-off from cached month days + type catalog. */
+  /** Derive points / counts / time-off from cached month days. */
   const {
     pointsByDoctorByDate,
     histPointsByDoctorByDate,
@@ -621,7 +594,7 @@ export default function ProjectedRevenueAnalyticsPage() {
       for (const day of days) {
         const date = day?.date?.slice(0, 10);
         if (!date) continue;
-        pointsByDoctor[doctorId][date] = pointsFromMonthDay(day, typeCatalog);
+        pointsByDoctor[doctorId][date] = pointsFromMonthDay(day);
         countsByDoctor[doctorId][date] = (day.appts ?? []).length;
         if (monthDayIsTimeOff(day)) timeOffByDoctor[doctorId].add(date);
       }
@@ -641,41 +614,65 @@ export default function ProjectedRevenueAnalyticsPage() {
       apptCountByDoctorByDate: countsByDoctor,
       doctorSchedules: schedules,
     };
-  }, [monthDaysByDoctor, doctorSchedulesBase, typeCatalog]);
+  }, [monthDaysByDoctor, doctorSchedulesBase]);
 
   const ratesByDoctor = useMemo(() => {
     const todayD = dayjs().startOf('day');
     const histEnd = todayD.subtract(1, 'day');
     const histStart = histEnd.subtract(VSD_ESTIMATE_LOOKBACK_DAYS - 1, 'day');
-    const providerIds = providersForApi.map((p) => String(p.id));
-    const practiceAvg = meanPracticeHistoricalVsdPerPoint(
+    const providerIds = providersForApi
+      .filter((p) => !isHospitalAccountProvider(p))
+      .map((p) => String(p.id));
+    const practiceTrend = practiceVsdPerPointTrend(
       providerIds,
-      histDoctorResponses,
+      rateHistDoctorResponses,
       histPointsByDoctorByDate,
       histStart,
       histEnd
     );
+    const share = collectibleShare(collectibleRates);
+    const practiceAvg =
+      practiceTrend.baseline != null ? scaleCollectible(practiceTrend.baseline, share) : null;
+    const emptyTrend: VsdPerPointTrend = { baseline: null, dailyGrowth: 0 };
 
     const byDoctor: Record<
       string,
-      { rate: number | null; usedPracticeFallback: boolean; personalAvg: number | null }
+      {
+        rate: number | null;
+        usedPracticeFallback: boolean;
+        personalAvg: number | null;
+        trend: VsdPerPointTrend;
+      }
     > = {};
     for (const p of providersForApi) {
       const id = String(p.id);
-      const hist = histDoctorResponses.find((x) => x.doctorId === id);
+      if (isHospitalAccountProvider(p)) {
+        byDoctor[id] = {
+          rate: null,
+          usedPracticeFallback: false,
+          personalAvg: null,
+          trend: emptyTrend,
+        };
+        continue;
+      }
+      const hist = histResponseForDoctor(rateHistDoctorResponses, id);
       const histPts = histPointsByDoctorByDate[id] ?? {};
-      const personalAvg = hist
-        ? meanHistoricalVsdPerPoint(hist.response.series ?? [], histPts, histStart, histEnd)
-        : null;
-      const usedPracticeFallback = personalAvg == null && practiceAvg != null;
+      const personalTrend = hist
+        ? vsdPerPointTrend(hist.response.series ?? [], histPts, histStart, histEnd)
+        : emptyTrend;
+      const usedPracticeFallback = personalTrend.baseline == null && practiceTrend.baseline != null;
+      const trend = personalTrend.baseline != null ? personalTrend : practiceTrend;
+      const personalAvg =
+        personalTrend.baseline != null ? scaleCollectible(personalTrend.baseline, share) : null;
       byDoctor[id] = {
-        rate: personalAvg ?? practiceAvg,
+        rate: trend.baseline != null ? scaleCollectible(trend.baseline, share) : null,
         usedPracticeFallback,
         personalAvg,
+        trend,
       };
     }
-    return { byDoctor, practiceAvg };
-  }, [providersForApi, histDoctorResponses, histPointsByDoctorByDate]);
+    return { byDoctor, practiceAvg, practiceTrend };
+  }, [providersForApi, rateHistDoctorResponses, histPointsByDoctorByDate, collectibleRates]);
 
   /** Each doctor's trailing-30-day point average, kept separately for every weekday. */
   const weekdayCapacityByDoctor = useMemo(() => {
@@ -700,18 +697,22 @@ export default function ProjectedRevenueAnalyticsPage() {
     return capacityById;
   }, [providersForApi, histPointsByDoctorByDate, doctorSchedules]);
 
-  /** Posted treatment VSD by doctor/date from ops revenue series; includes pre-billed future dates. */
+  /** Posted collectible treatment by doctor/date (VSD × trailing membership collectible share). */
   const actualTreatmentByDoctorByDate = useMemo(() => {
+    const share = collectibleShare(collectibleRates);
     const out: Record<string, Record<string, number>> = {};
     for (const { doctorId, response } of histDoctorResponses) {
       out[doctorId] = {};
       for (const p of response.series ?? []) {
         const d = String(p?.date ?? '').slice(0, 10);
-        if (d) out[doctorId][d] = (out[doctorId][d] ?? 0) + Number(p?.total ?? 0);
+        if (d) {
+          out[doctorId][d] =
+            (out[doctorId][d] ?? 0) + scaleCollectible(Number(p?.total ?? 0), share);
+        }
       }
     }
     return out;
-  }, [histDoctorResponses]);
+  }, [histDoctorResponses, collectibleRates]);
 
   /** Actual pharmacy / membership payments by date (through today). */
   const actualAncillaryByDate = useMemo(() => {
@@ -739,9 +740,14 @@ export default function ProjectedRevenueAnalyticsPage() {
   const todayCalStr = toLocalDateStr(dayjs().startOf('day'));
 
   /** Per-day revenue: actuals through today, projections for future days. */
-  const dailyEstimates = useMemo(() => {
+  const dailyTreatmentEstimates = useMemo(() => {
     const dates = dateRange(start, end);
     const todayD = dayjs().startOf('day');
+    const share = collectibleShare(collectibleRates);
+    const collectibleRate = (id: string, daysUntil: number) => {
+      const vsd = projectVsdPerPoint(ratesByDoctor.byDoctor[id]?.trend, daysUntil);
+      return vsd != null ? scaleCollectible(vsd, share) : null;
+    };
 
     return dates.map((date) => {
       const isActual = !dayjs(date).startOf('day').isAfter(todayD);
@@ -799,8 +805,11 @@ export default function ProjectedRevenueAnalyticsPage() {
             treatment += actual;
             continue;
           }
-          // Once a doctor has hit their revenue goal, stop estimating more for the day.
-          const goal = doctorSchedules[id]?.revenueGoalByDate.get(date) ?? 0;
+          // Once a doctor has hit their (collectible) revenue goal, stop estimating more.
+          const goal = scaleCollectible(
+            doctorSchedules[id]?.revenueGoalByDate.get(date) ?? 0,
+            share
+          );
           if (goal > 0 && actual >= goal) {
             treatment += actual;
             continue;
@@ -809,7 +818,7 @@ export default function ProjectedRevenueAnalyticsPage() {
           // delivered, so today's posted revenue already covers appointments that have not
           // happened yet. Adding a points estimate on top would count those twice; take
           // whichever view of the day is larger instead.
-          const rate = ratesByDoctor.byDoctor[id]?.rate;
+          const rate = collectibleRate(id, 0);
           const estimate = rate != null && bookedPts > 0 ? rate * bookedPts : 0;
           if (estimate > actual) estimateExceedsActual = true;
           treatment += Math.max(actual, estimate);
@@ -840,7 +849,7 @@ export default function ProjectedRevenueAnalyticsPage() {
 
       const daysUntil = Math.max(0, dayjs(date).startOf('day').diff(todayD, 'day'));
       const ancillary = includeAncillary
-        ? ancillaryForDate(date, ancillaryRates, todayD)
+        ? ancillaryForDate(ancillaryRates)
         : { pharmacy: 0, membership: 0 };
       // Revenue already invoiced against this future date. It is a floor, not an addition: the
       // points estimate is predicting the same visits this money was billed for.
@@ -851,7 +860,7 @@ export default function ProjectedRevenueAnalyticsPage() {
         const pts = pointsByDoctorByDate[id]?.[date] ?? 0;
         const posted = postedFor(id);
         const working = isDoctorWorkingOnDate(doctorSchedules[id], date);
-        const rate = ratesByDoctor.byDoctor[id]?.rate;
+        const rate = collectibleRate(id, daysUntil);
         const weekdayProjection = typicalForDoctor(id, pts);
         // Off with something already booked: that is all there will be.
         const projection = working ? weekdayProjection : { projectedPoints: pts };
@@ -1001,7 +1010,10 @@ export default function ProjectedRevenueAnalyticsPage() {
     actualAncillaryByDate,
     doctorSchedules,
     weekdayCapacityByDoctor,
+    collectibleRates,
   ]);
+
+  const dailyEstimates = dailyTreatmentEstimates;
 
   const buckets: BucketRow[] = useMemo(() => {
     if (useDailyBuckets) {
@@ -1155,6 +1167,9 @@ export default function ProjectedRevenueAnalyticsPage() {
   );
 
   const hasAnyRate = Object.values(ratesByDoctor.byDoctor).some((r) => r.rate != null);
+  const collectibleShareValue = collectibleShare(collectibleRates);
+  const membershipCoveragePct = (1 - collectibleShareValue) * 100;
+  const hasCollectibleLookback = collectibleRates.vsd > 0;
   const expectedAdditionalTreatment = useMemo(
     () =>
       dailyEstimates
@@ -1168,7 +1183,7 @@ export default function ProjectedRevenueAnalyticsPage() {
       case 'estimated':
         return includeAncillary ? 'Total' : 'Treatment';
       case 'treatmentEstimated':
-        return 'Treatment (VSD)';
+        return 'Treatment (collectible)';
       case 'bookedEstimated':
         return 'Treatment on the books';
       case 'pharmacyEstimated':
@@ -1212,22 +1227,33 @@ export default function ProjectedRevenueAnalyticsPage() {
           Projected Revenue
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          Past days use actual treatment VSD and (for practice totals) actual pharmacy / membership
-          payments. For today, each doctor shows the greater of their posted VSD and their booked
-          points × trailing {VSD_ESTIMATE_LOOKBACK_DAYS}-day VSD per point — treatment is often
-          invoiced at booking, so the two are never added together. A doctor whose posted VSD
-          already meets their daily revenue goal shows actual only. For future days, each scheduled
+          Past days use collectible treatment (VSD after membership coverage) and (for practice
+          totals) actual pharmacy / membership payments. Membership coverage is a trailing
+          practice-wide rate (membership discounts ÷ VSD over the last{' '}
+          {VSD_ESTIMATE_LOOKBACK_DAYS} complete days), applied evenly — it is not priced client by
+          client for future visits. Membership dues stay on their own line. Open A/R is left out:
+          it is unpaid invoices already on the books, not cash expected in this window, and new A/R
+          versus collections tends to average out. For today, each
+          doctor&apos;s treatment starts from recent-half VSD per point (total VSD ÷ total
+          appointment points, 1 / 0.5 / 2 by type), then that amount is reduced by the collectible
+          share. The day shows
+          the greater of posted collectible treatment and that
+          estimate — treatment is often invoiced at booking, so the two are never added together. A
+          doctor whose posted amount already meets their daily revenue goal shows actual only. For
+          future days, each scheduled
           doctor is expected to reach their own average for that specific weekday over the trailing{' '}
           {DOCTOR_CAPACITY_LOOKBACK_DAYS} days, shown as Typical pts. For example, a doctor&apos;s
           recent Fridays determine future Fridays; Mondays do not affect them. Expected points are
           that weekday average or the points already booked, whichever is higher—there is no
-          additional booking-fill multiplier. Expected points are then priced at each doctor&apos;s
-          trailing {VSD_ESTIMATE_LOOKBACK_DAYS}-day VSD per point, plus pharmacy and Square + Stripe
-          membership revenue that each follow their measured daily growth trend from the last{' '}
-          {VSD_ESTIMATE_LOOKBACK_DAYS} days. Because visits are billed at booking, a future day
-          never projects below the treatment revenue already invoiced against it. Days nobody is
-          scheduled get no expected volume (weekly schedules, OFF overrides, and calendar time off
-          all count), and cancelled visits never count as booked points.
+          additional booking-fill multiplier. Expected points are priced at each doctor&apos;s
+          collectible $ per point from the more recent half of the trailing{' '}
+          {VSD_ESTIMATE_LOOKBACK_DAYS}-day window, plus the measured half-to-half slope out to that
+          day (capped so the rate stays between 70% and 150% of the recent-half baseline). Pharmacy
+          and Square + Stripe membership stay at that same recent-half daily average rather than
+          compounding a $/day trend across the horizon. Because visits are billed at booking, a
+          future day never projects below the collectible treatment already invoiced against it.
+          Days nobody is scheduled get no expected volume (weekly schedules, OFF overrides, and
+          calendar time off all count), and cancelled visits never count as booked points.
           {useDailyBuckets
             ? ' Showing daily totals for this range.'
             : ' Range is over 30 days — showing weekly totals.'}
@@ -1294,8 +1320,8 @@ export default function ProjectedRevenueAnalyticsPage() {
 
         {!hasAnyRate && totals.projectedDayCount > 0 && !error && (
           <Alert severity="info" sx={{ mb: 2 }}>
-            No trailing VSD/point history is available yet, so future-day estimates cannot be
-            calculated. Past and today still show actual revenue when available.
+            No trailing collectible $/point history is available yet, so future-day estimates cannot
+            be calculated. Past and today still show actual revenue when available.
           </Alert>
         )}
 
@@ -1363,9 +1389,15 @@ export default function ProjectedRevenueAnalyticsPage() {
                 <>
                   <Box>
                     <Typography variant="subtitle2" color="text.secondary">
-                      Treatment (VSD)
+                      Treatment (collectible)
                     </Typography>
                     <Typography variant="h5">{fmtUSD(totals.treatmentEstimated)}</Typography>
+                    {hasCollectibleLookback && (
+                      <Typography variant="caption" color="text.secondary" display="block">
+                        {(collectibleShareValue * 100).toFixed(1)}% of trailing VSD billed ·
+                        membership coverage {membershipCoveragePct.toFixed(1)}%
+                      </Typography>
+                    )}
                   </Box>
                   <Box>
                     <Typography variant="subtitle2" color="text.secondary">
@@ -1374,9 +1406,7 @@ export default function ProjectedRevenueAnalyticsPage() {
                     <Typography variant="h5">{fmtUSD(totals.pharmacyEstimated)}</Typography>
                     {totals.projectedDayCount > 0 && (
                       <Typography variant="caption" color="text.secondary" display="block">
-                        {ancillaryRates.pharmacyDailyGrowth >= 0 ? '+' : ''}
-                        {fmtUSD(ancillaryRates.pharmacyDailyGrowth)}/day growth · near-term ~
-                        {fmtUSD(ancillaryRates.pharmacyBaseline)}
+                        held at recent-half avg {fmtUSD(ancillaryRates.pharmacyBaseline)}/day
                       </Typography>
                     )}
                   </Box>
@@ -1387,9 +1417,7 @@ export default function ProjectedRevenueAnalyticsPage() {
                     <Typography variant="h5">{fmtUSD(totals.membershipEstimated)}</Typography>
                     {totals.projectedDayCount > 0 && (
                       <Typography variant="caption" color="text.secondary" display="block">
-                        {ancillaryRates.membershipDailyGrowth >= 0 ? '+' : ''}
-                        {fmtUSD(ancillaryRates.membershipDailyGrowth)}/day growth · near-term ~
-                        {fmtUSD(ancillaryRates.membershipBaseline)}
+                        held at recent-half avg {fmtUSD(ancillaryRates.membershipBaseline)}/day
                       </Typography>
                     )}
                   </Box>
@@ -1446,7 +1474,7 @@ export default function ProjectedRevenueAnalyticsPage() {
                 ratesByDoctor.byDoctor[graphSelection]?.rate != null && (
                   <Box>
                     <Typography variant="subtitle2" color="text.secondary">
-                      VSD / point (trailing)
+                      Collectible $ / point (recent half)
                     </Typography>
                     <Typography variant="h5">
                       {fmtUSD(ratesByDoctor.byDoctor[graphSelection].rate!)}
@@ -1461,14 +1489,34 @@ export default function ProjectedRevenueAnalyticsPage() {
                         </Typography>
                       )}
                     </Typography>
+                    <Typography variant="caption" color="text.secondary" display="block">
+                      {ratesByDoctor.byDoctor[graphSelection].trend.dailyGrowth >= 0 ? '+' : ''}
+                      {fmtUSD(
+                        scaleCollectible(
+                          ratesByDoctor.byDoctor[graphSelection].trend.dailyGrowth,
+                          collectibleShareValue
+                        )
+                      )}
+                      /day on future days, capped at 70–150% of this rate
+                    </Typography>
                   </Box>
                 )}
               {graphSelection === PRACTICE_TOTAL_ID && ratesByDoctor.practiceAvg != null && (
                 <Box>
                   <Typography variant="subtitle2" color="text.secondary">
-                    Practice VSD / point (trailing)
+                    Practice collectible $ / point (recent half)
                   </Typography>
                   <Typography variant="h5">{fmtUSD(ratesByDoctor.practiceAvg)}</Typography>
+                  <Typography variant="caption" color="text.secondary" display="block">
+                    {ratesByDoctor.practiceTrend.dailyGrowth >= 0 ? '+' : ''}
+                    {fmtUSD(
+                      scaleCollectible(
+                        ratesByDoctor.practiceTrend.dailyGrowth,
+                        collectibleShareValue
+                      )
+                    )}
+                    /day on future days, capped at 70–150% of this rate
+                  </Typography>
                 </Box>
               )}
             </Box>
@@ -1486,10 +1534,10 @@ export default function ProjectedRevenueAnalyticsPage() {
             title={useDailyBuckets ? 'Revenue by day' : 'Revenue by week'}
             subheader={
               hasMixedActualProjected
-                ? 'Through today = actual; after today = projected (treatment fill-in + ancillary averages)'
+                ? 'Through today = actual collectible; after today = projected (treatment fill-in + ancillary)'
                 : includeAncillary
-                  ? 'Includes treatment, pharmacy, and membership'
-                  : 'Treatment revenue for the selected provider'
+                  ? 'Includes collectible treatment, pharmacy, and membership'
+                  : 'Collectible treatment for the selected provider'
             }
           />
           <CardContent>
