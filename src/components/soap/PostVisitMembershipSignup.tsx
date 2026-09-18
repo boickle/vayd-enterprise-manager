@@ -162,8 +162,8 @@ export default function PostVisitMembershipSignup({
             </h2>
             <p className="pvms-sub">
               {patientName
-                ? `Enrol ${patientName}, re-price this visit, and refund the difference.`
-                : 'Enrol this pet, re-price the visit, and refund the difference.'}
+                ? `Enroll ${patientName}, re-price this visit, and refund the difference.`
+                : 'Enroll this pet, re-price the visit, and refund the difference.'}
             </p>
           </div>
           <button type="button" className="pvms-close" onClick={onClose} aria-label="Close">

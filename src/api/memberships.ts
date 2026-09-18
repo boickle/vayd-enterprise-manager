@@ -23,11 +23,26 @@ export type BundleKind = 'bundle' | 'membership';
 /**
  * `all` — every item is included on its own allowance.
  * `choice` — the items are alternatives sharing one allowance ("this OR that").
+ * `any` — sell-once only: staff may check any subset (including none) at invoice time.
  */
-export type GroupSelectionMode = 'all' | 'choice';
+export type GroupSelectionMode = 'all' | 'choice' | 'any';
 
 /** What a member pays for a line still inside its allowance. */
 export type ItemCoverage = 'included' | 'copay' | 'percent_off';
+
+/**
+ * How doctor production is valued for a membership / package line.
+ * - `full_price` — catalog list price
+ * - `membership_price` — what the member is charged for the line
+ * - `custom` — fixed amount in `productionOverride`
+ */
+export type ItemProductionBasis =
+  | 'full_price'
+  | 'membership_price'
+  | 'custom';
+
+/** Sentinel for unlimited allowance — every matching visit gets member pricing. */
+export const UNLIMITED_ALLOWANCE = -1;
 
 export type MembershipBillingInterval = 'monthly' | 'annual';
 
@@ -40,10 +55,13 @@ export type BundleItem = {
   name: string;
   code: string | null;
   catalogPrice: number | null;
+  /** -1 means unlimited (every matching visit gets member pricing). */
   quantity: number;
   coverage: ItemCoverage;
   copayPrice: number | null;
   percentOff: number | null;
+  productionBasis: ItemProductionBasis;
+  productionOverride: number | null;
   sortOrder: number;
   note: string | null;
 };
@@ -53,7 +71,13 @@ export type BundleGroup = {
   name: string;
   description: string | null;
   selectionMode: GroupSelectionMode;
+  /** -1 means unlimited shared OR picks. */
   allowedQuantity: number;
+  /**
+   * Sell-once `choice`: when true (default), staff must satisfy the pick count.
+   * When false, they may skip. Always treated as optional for `any`.
+   */
+  isRequired: boolean;
   sortOrder: number;
   items: BundleItem[];
 };
@@ -81,6 +105,7 @@ export type Bundle = {
   priceMonthly: number | null;
   priceAnnual: number | null;
   outOfPlanDiscount: number | null;
+  onlineStoreDiscount: number | null;
   renewalMonths: number | null;
   isAutoRenew: boolean;
   stripeProductId: string | null;
@@ -104,6 +129,8 @@ export type BundleItemInput = {
   coverage?: ItemCoverage;
   copayPrice?: number | null;
   percentOff?: number | null;
+  productionBasis?: ItemProductionBasis;
+  productionOverride?: number | null;
   sortOrder?: number;
   note?: string | null;
 };
@@ -114,6 +141,7 @@ export type BundleGroupInput = {
   description?: string | null;
   selectionMode: GroupSelectionMode;
   allowedQuantity?: number;
+  isRequired?: boolean;
   sortOrder?: number;
   items: BundleItemInput[];
 };
@@ -134,6 +162,7 @@ export type BundleFields = {
   priceMonthly?: number | null;
   priceAnnual?: number | null;
   outOfPlanDiscount?: number | null;
+  onlineStoreDiscount?: number | null;
   renewalMonths?: number | null;
   isAutoRenew?: boolean;
   stripeProductId?: string | null;
@@ -160,8 +189,10 @@ export type MembershipBenefit = {
   name: string;
   code: string | null;
   catalogPrice: number | null;
+  /** -1 means unlimited. */
   includedQuantity: number;
   usedQuantity: number;
+  /** -1 means unlimited remaining. */
   remainingQuantity: number;
   coverage: ItemCoverage;
   price: number | null;
@@ -240,6 +271,50 @@ export async function getBundle(id: number): Promise<Bundle> {
   const { data } = await http.get<Bundle>(
     `/memberships/bundles/${encodeURIComponent(id)}`,
     { params: { practiceId: currentPracticeId() } },
+  );
+  return data;
+}
+
+/** One catalog line after expanding a sell-once bundle (post OR picks). */
+export type BundleSaleLine = {
+  packageItemId: number;
+  groupId: number | null;
+  itemType: MembershipItemType;
+  catalogItemId: number;
+  name: string;
+  code: string | null;
+  quantity: number;
+  unitPrice: number;
+  listUnitPrice: number;
+  note: string | null;
+};
+
+export type BundleSaleResolution = {
+  bundleId: number;
+  bundleName: string;
+  bundlePrice: number | null;
+  lines: BundleSaleLine[];
+};
+
+export type BundleSaleGroupSelection = {
+  groupId: number;
+  packageItemIds: number[];
+};
+
+/**
+ * Expand a catalog bundle for an invoice / SOAP charge. `all` groups always
+ * expand; `choice` (OR) groups need staff picks in `selections`.
+ */
+export async function resolveBundleForSale(
+  id: number,
+  selections: BundleSaleGroupSelection[] = [],
+): Promise<BundleSaleResolution> {
+  const { data } = await http.post<BundleSaleResolution>(
+    `/memberships/bundles/${encodeURIComponent(id)}/resolve-for-sale`,
+    {
+      practiceId: currentPracticeId(),
+      selections,
+    },
   );
   return data;
 }
@@ -552,7 +627,7 @@ export async function previewPostVisitSignup(input: {
 }
 
 /**
- * Enrols the patient, re-prices the visit, credits the services they already
+ * Enrolls the patient, re-prices the visit, credits the services they already
  * received, refunds the difference, and emails the client.
  *
  * `confirmRefundAmount` is the figure staff were shown; the API rejects the call

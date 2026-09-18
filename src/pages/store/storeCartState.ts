@@ -25,6 +25,54 @@ export function formatAutoshipFrequency(frequency: string | null | undefined): s
   return frequency.replace(/_/g, ' ');
 }
 
+/** Natural cadence for checkout copy, e.g. "every month". */
+export function autoshipCadencePhrase(frequency: string | null | undefined): string {
+  if (!frequency) return '';
+  if (frequency === 'monthly') return 'every month';
+  if (frequency === 'quarterly') return 'every 3 months';
+  if (frequency === 'every_2_months') return 'every 2 months';
+  if (frequency === 'every_6_months') return 'every 6 months';
+  if (frequency === 'yearly') return 'every year';
+  if (frequency === 'weekly') return 'every week';
+  const label = formatAutoshipFrequency(frequency).toLowerCase();
+  if (label.startsWith('every ')) return label;
+  return label;
+}
+
+/** Advance a date by an autoship frequency (matches API renewal math). */
+export function addAutoshipFrequency(from: Date, frequency: string): Date {
+  const d = new Date(from);
+  const custom = /^every_(\d+)_(day|days|week|weeks|month|months)$/i.exec(frequency || '');
+  if (custom) {
+    const n = Math.max(1, Number(custom[1]) || 1);
+    const unit = custom[2].toLowerCase();
+    if (unit.startsWith('day')) d.setDate(d.getDate() + n);
+    else if (unit.startsWith('week')) d.setDate(d.getDate() + n * 7);
+    else d.setMonth(d.getMonth() + n);
+    return d;
+  }
+  if (frequency === 'monthly') d.setMonth(d.getMonth() + 1);
+  else if (frequency === 'quarterly') d.setMonth(d.getMonth() + 3);
+  else if (frequency === 'every_2_months') d.setMonth(d.getMonth() + 2);
+  else if (frequency === 'every_6_months') d.setMonth(d.getMonth() + 6);
+  else if (frequency === 'yearly') d.setFullYear(d.getFullYear() + 1);
+  else if (frequency === 'weekly') d.setDate(d.getDate() + 7);
+  else d.setMonth(d.getMonth() + 1);
+  return d;
+}
+
+export function isoDateOnly(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+/** Next ship/charge date from today for a frequency change. */
+export function nextAutoshipRenewalDate(frequency: string, from: Date = new Date()): string {
+  return isoDateOnly(addAutoshipFrequency(from, frequency));
+}
+
 export type StoreCartLine = {
   inventoryItemId: number;
   name: string;
@@ -35,6 +83,11 @@ export type StoreCartLine = {
   sale?: StoreSale | null;
   autoshipFrequency: string | null;
   recommendedFrequency: string | null;
+  reminderCadence?: {
+    dueAt: number;
+    periodUnit: string;
+    adjustByQuantity: boolean;
+  } | null;
   listingId?: string | null;
   storeProductId?: number | null;
   hasImage?: boolean;
@@ -93,6 +146,8 @@ export function addToStoreCart(line: StoreCartLine) {
       storeProductId: line.storeProductId ?? current.storeProductId,
       hasImage: line.hasImage ?? current.hasImage,
       approvalTag: line.approvalTag ?? current.approvalTag,
+      reminderCadence: line.reminderCadence ?? current.reminderCadence,
+      recommendedFrequency: line.recommendedFrequency ?? current.recommendedFrequency,
     };
   } else {
     lines.push(line);

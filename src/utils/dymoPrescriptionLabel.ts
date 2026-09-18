@@ -482,31 +482,47 @@ export type MailOrderBagLabelData = {
   orderNumber: string;
   clientName: string;
   patientName: string;
+  /** e.g. `42.5 lb (3/15/2026)` — patient weight and when it was taken */
+  patientWeight?: string | null;
   notes?: string | null;
 };
 
 function buildMailOrderBagLabelXml(data: MailOrderBagLabelData): string {
   const notes = (data.notes || '').trim().slice(0, MAIL_ORDER_BAG_NOTES_MAX);
+  const weight = (data.patientWeight || '').trim();
   const y = MARGIN_TOP;
   const title = wrapText(`Mail order ${data.orderNumber}`, 12, true, TEXT_WIDTH);
   const client = wrapText(data.clientName, 10, true, TEXT_WIDTH);
   const patient = wrapText(data.patientName, 11, true, TEXT_WIDTH);
+  const weightText = weight ? wrapText(weight, 9, false, TEXT_WIDTH) : '';
   const noteText = notes ? wrapText(notes, 8, false, TEXT_WIDTH) : '';
   const titleH = neededHeight(title, 12);
   const clientH = neededHeight(client, 10);
   const patientH = neededHeight(patient, 11);
+  const weightH = weightText ? neededHeight(weightText, 9) : 0;
   const noteH = noteText ? neededHeight(noteText, 8) : 0;
   const bands: LabelBand[] = [
     { text: title, size: 12, bold: true, y, height: titleH },
     { text: client, size: 10, bold: true, y: y + titleH + 20, height: clientH },
     { text: patient, size: 11, bold: true, y: y + titleH + clientH + 40, height: patientH },
   ];
+  let nextY = y + titleH + clientH + patientH + 40;
+  if (weightText) {
+    bands.push({
+      text: weightText,
+      size: 9,
+      bold: false,
+      y: nextY + 20,
+      height: weightH,
+    });
+    nextY += weightH + 20;
+  }
   if (noteText) {
     bands.push({
       text: noteText,
       size: 8,
       bold: false,
-      y: y + titleH + clientH + patientH + 70,
+      y: nextY + 30,
       height: noteH,
     });
   }

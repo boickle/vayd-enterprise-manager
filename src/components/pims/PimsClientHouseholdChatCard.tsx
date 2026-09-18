@@ -43,6 +43,9 @@ type PetInput = {
   summaryLine: string;
   alerts: string | null;
   active: boolean;
+  statusName?: string | null;
+  inactiveAt?: string | null;
+  inactivatedByName?: string | null;
 };
 
 type Props = {
@@ -191,6 +194,9 @@ export default function PimsClientHouseholdChatCard({
           summaryLine: pet.summaryLine,
           alerts: pet.alerts,
           active: pet.active,
+          statusName: pet.statusName ?? null,
+          inactiveAt: pet.inactiveAt ?? null,
+          inactivatedByName: pet.inactivatedByName ?? null,
           problems,
           prescriptions,
         };

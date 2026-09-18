@@ -619,10 +619,11 @@ export default function InventoryParLevelsPage() {
       <p className="settings-section-description">
         Other locations have a <strong>par</strong> (ideal on-hand). The default location has
         a <strong>re-order point</strong> (when to buy) and a <strong>max</strong> (order up to). Shorts
-        at other locations go to the fill list. Surplus above par or max feeds the transfer
-        list first; leftover need comes from the default location. That item goes on the
-        order list only when default on-hand is then at or below the re-order point. Short of
-        par or at the re-order point is red; over target is green.
+        at other locations go on the transfer list as the destination. Prefer depleting Main
+        (down to 0) over pulling another location below par; other locations give over-par
+        first. Planned gives from Main that leave it at or below the re-order point put the
+        item on the order list back to max. Short of par or at the re-order point is red; over
+        target is green.
       </p>
       {toast && (
         <div className="settings-message settings-success-message" style={{ marginBottom: 12 }}>
@@ -663,14 +664,11 @@ export default function InventoryParLevelsPage() {
           />
           <span>Only needs fill or order</span>
         </label>
-        <Link className="btn secondary" to="/schedule/inventory/fill-list">
-          Fill list
+        <Link className="btn secondary" to="/schedule/inventory/transfer-list">
+          Transfer list
         </Link>
         <Link className="btn secondary" to="/schedule/inventory/order-list">
           Order list
-        </Link>
-        <Link className="btn secondary" to="/schedule/inventory/transfer-list">
-          Transfer list
         </Link>
       </div>
 

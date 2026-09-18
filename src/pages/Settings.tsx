@@ -78,6 +78,7 @@ import SettingsEuthanasiaConsent from '../components/settings/SettingsEuthanasia
 import SettingsOutsideHospitals from '../components/settings/SettingsOutsideHospitals';
 import SettingsDepositBankAccounts from '../components/settings/SettingsDepositBankAccounts';
 import SettingsClientStatuses from '../components/settings/SettingsClientStatuses';
+import SettingsPatientStatuses from '../components/settings/SettingsPatientStatuses';
 import SettingsMemberships from '../components/settings/SettingsMemberships';
 import SettingsMessageTemplates from '../components/settings/SettingsMessageTemplates';
 import WasteAdminPage from './WasteAdminPage';
@@ -110,6 +111,7 @@ const SETTINGS_TAB_IDS = [
   'reminders',
   'payment-types',
   'client-statuses',
+  'patient-statuses',
   'memberships',
   'message-templates',
 ] as const;
@@ -155,6 +157,7 @@ const LEGACY_EMPLOYEE_TAB_TO_SECTION: Record<string, EmployeeHubSection> = {
 const FINANCE_SETTINGS_ITEMS: SettingsMenuItem[] = [
   { id: 'payment-types', label: 'Payment Types' },
   { id: 'client-statuses', label: 'Client Discounts' },
+  { id: 'patient-statuses', label: 'Patient Statuses' },
   { id: 'memberships', label: 'Memberships' },
 ];
 
@@ -3519,6 +3522,17 @@ export default function Settings() {
         {activeTab === 'client-statuses' && (
           <div className="settings-section">
             <SettingsClientStatuses
+              onMessage={(msg, kind) => {
+                if (kind === 'error') setError(msg);
+                else setSuccess(msg);
+              }}
+            />
+          </div>
+        )}
+
+        {activeTab === 'patient-statuses' && (
+          <div className="settings-section">
+            <SettingsPatientStatuses
               onMessage={(msg, kind) => {
                 if (kind === 'error') setError(msg);
                 else setSuccess(msg);

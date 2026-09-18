@@ -43,6 +43,142 @@
   white-space: nowrap;
 }
 
+.autoship-list__head,
+.autoship-list__row {
+  display: grid;
+  grid-template-columns:
+    minmax(110px, 0.9fr)
+    minmax(140px, 1.1fr)
+    minmax(110px, 0.9fr)
+    minmax(200px, 1.8fr)
+    minmax(100px, 0.8fr)
+    minmax(220px, auto);
+  gap: 12px 16px;
+  align-items: center;
+}
+
+.autoship-list__head {
+  padding: 0 14px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.autoship-list__card .autoship-list__row {
+  padding: 14px 16px;
+}
+
+.autoship-list__primary {
+  font-weight: 600;
+  color: #134e4a;
+}
+
+.autoship-list__item {
+  font-weight: 700;
+  color: #134e4a;
+  line-height: 1.35;
+}
+
+.autoship-list__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.autoship-edit__row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.autoship-edit__row > .settings-label {
+  flex: 1;
+  min-width: 120px;
+}
+
+.edit-autoship-list-modal {
+  max-width: 520px;
+}
+
+.edit-autoship-list-modal__body {
+  padding: 20px 24px 8px !important;
+}
+
+.edit-autoship-list-modal__context {
+  padding: 12px 14px;
+  margin-bottom: 14px;
+  border-radius: 10px;
+  background: #f0fdfa;
+  border: 1px solid #99f6e4;
+}
+
+.edit-autoship-list-modal__context-main {
+  font-weight: 600;
+  color: #134e4a;
+  line-height: 1.4;
+}
+
+.edit-autoship-list-modal__dot {
+  margin: 0 6px;
+  color: #5eead4;
+  font-weight: 400;
+}
+
+.edit-autoship-list-modal__context-meta {
+  margin-top: 4px;
+  font-size: 13px;
+  color: #64748b;
+}
+
+.edit-autoship-list-modal__note {
+  margin: 0 0 18px !important;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.edit-autoship-list-modal__form {
+  display: grid;
+  gap: 14px;
+}
+
+.edit-autoship-list-modal__form .settings-label {
+  margin: 0;
+}
+
+.edit-autoship-list-modal__footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 16px 24px 24px;
+  border-top: 1px solid var(--border, #e2e8f0);
+  background: #fafafa;
+  border-radius: 0 0 16px 16px;
+}
+
+.edit-autoship-list-modal .settings-modal-header {
+  padding: 18px 24px;
+}
+
+@media (max-width: 960px) {
+  .autoship-list__head {
+    display: none;
+  }
+
+  .autoship-list__row {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+
+  .autoship-list__actions {
+    justify-content: flex-start;
+  }
+}
+
 .store-ops__amount.is-recovered {
   color: #166534;
 }

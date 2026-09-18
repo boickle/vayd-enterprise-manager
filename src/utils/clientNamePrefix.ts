@@ -26,7 +26,8 @@ export function firstNameFromDisplayName(full: string | null | undefined): strin
   const parts = String(full ?? '')
     .trim()
     .split(/\s+/)
-    .filter(Boolean);
+    .filter(Boolean)
+    .map((p) => p.replace(/[.,]+$/g, ''));
   if (!parts.length) return '';
   let i = 0;
   if (NAME_PREFIX_TOKEN.test(parts[0])) i += 1;

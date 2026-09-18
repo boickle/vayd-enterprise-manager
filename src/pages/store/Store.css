@@ -466,6 +466,66 @@
   font-size: 13px;
   color: rgb(15, 118, 110);
 }
+.vayd-store__rebate-promo {
+  position: relative;
+  overflow: hidden;
+  margin: 14px 0 4px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: linear-gradient(135deg, #ecfff8 0%, #fff7ed 100%);
+  border: 1px solid rgba(15, 118, 110, 0.18);
+  color: #0f766e;
+  font-weight: 700;
+  font-size: 15px;
+  line-height: 1.35;
+}
+.vayd-store__rebate-promo p { margin: 0; }
+.vayd-store__rebate-burst {
+  pointer-events: none;
+  position: absolute;
+  inset: -20px;
+}
+.vayd-store__rebate-burst-pop {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%) scale(0.4);
+  background: #0f766e;
+  color: #fff;
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-size: 16px;
+  white-space: nowrap;
+  animation: vayd-store-rebate-pop 1.8s ease-out forwards;
+  box-shadow: 0 10px 24px rgba(15, 118, 110, 0.28);
+}
+.vayd-store__rebate-burst-bit {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 9px;
+  height: 9px;
+  margin: -4px 0 0 -4px;
+  border-radius: 50%;
+  background: hsl(var(--hue, 160) 80% 50%);
+  animation: vayd-store-rebate-bit 1.6s ease-out forwards;
+  transform: rotate(calc(var(--bit, 0) * 20deg)) translateY(0);
+}
+@keyframes vayd-store-rebate-pop {
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(0.2) rotate(-8deg); }
+  18% { opacity: 1; transform: translate(-50%, -58%) scale(1.15) rotate(3deg); }
+  40% { opacity: 1; transform: translate(-50%, -62%) scale(1) rotate(0deg); }
+  100% { opacity: 0; transform: translate(-50%, -80%) scale(0.9) rotate(0deg); }
+}
+@keyframes vayd-store-rebate-bit {
+  0% { opacity: 1; transform: rotate(calc(var(--bit, 0) * 20deg)) translateY(0) scale(0.6); }
+  70% { opacity: 1; }
+  100% { opacity: 0; transform: rotate(calc(var(--bit, 0) * 20deg)) translateY(-72px) scale(1.15); }
+}
+.vayd-store__autoship-note--checkout {
+  margin: 12px 0 0;
+  line-height: 1.45;
+}
 .vayd-store__price-note { font-weight: 500; color: #4b5563; font-size: 15px; }
 .vayd-store__actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
 .vayd-store button.primary, .vayd-store .primary {
@@ -637,6 +697,8 @@
   flex: 0 0 72px;
 }
 .vayd-store__cart-meta { font-size: 13px; color: #6b7280; margin-top: 4px; }
+.vayd-store__cart-tagalong td { color: #475569; }
+.vayd-store__cart-tagalong .vayd-store__cart-item { padding-left: 8px; }
 .vayd-store__cart-pets {
   display: flex;
   flex-direction: column;

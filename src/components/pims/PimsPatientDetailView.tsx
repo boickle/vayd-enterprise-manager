@@ -26,7 +26,7 @@ import {
   X,
 } from 'lucide-react';
 import { fetchClientByIdStaff } from '../../api/clientsStaff';
-import { PetThumb, publicMediaUrl } from './PetThumb';
+import { PetThumb, patientPhotoSrc } from './PetThumb';
 import {
   ClientReachEmailLink,
   ClientReachHost,
@@ -47,12 +47,12 @@ import {
   patchPatient,
   reactivatePatient,
   uploadPatientChartDocument,
-  uploadPetImage,
   removePatientChartDocumentFromChart,
   CHART_DOCUMENT_UPLOAD_ACCEPT,
   CHART_DOCUMENT_UPLOAD_MAX_BYTES,
   type ScoutPatientWrite,
 } from '../../api/patients';
+import PatientPhotoGalleryModal from './PatientPhotoGalleryModal';
 import {
   getPatientTreatmentHistory,
   getPatientTreatmentMedications,
@@ -129,7 +129,7 @@ import { appConfirm } from '../../utils/appDialog';
 import { pushRecentRecord } from '../../utils/recentRecordsStore';
 import '../../pages/BriefWorkspacePage.css';
 import { scoutManagedState } from '../../utils/pimsScoutManaged';
-import { patientSexDisplayFromRecord } from '../../utils/schedulerVisitDisplay';
+import { patientSexDisplayFromRecord, patientSexHighlightTone } from '../../utils/schedulerVisitDisplay';
 import { useAuth } from '../../auth/AuthProvider';
 import {
   readStaffPatientLayout,
@@ -152,6 +152,10 @@ import {
   type FieldSpec,
 } from './detail/PimsDetailKit';
 import { BreedPicker, SpeciesSelect, useSpeciesCatalog } from './detail/SpeciesBreedFields';
+import {
+  patientActiveChip,
+  patientStatusChip as statusChipFromRecord,
+} from '../../utils/patientStatusDisplay';
 import './detail/PimsDetailKit.css';
 import './PimsPatientDetailView.css';
 
@@ -163,8 +167,8 @@ function pickStr(v: unknown): string | null {
   return s || null;
 }
 
-function mediaUrl(path: unknown): string | null {
-  return publicMediaUrl(path, apiBaseUrl);
+function petImageSrc(patientId: string | number | null | undefined, imageUrl: unknown): string | null {
+  return patientPhotoSrc(patientId, imageUrl, apiBaseUrl);
 }
 
 function patientNameFrom(p: Record<string, unknown>): string {
@@ -191,6 +195,9 @@ type HouseholdPet = {
   name: string;
   active: boolean;
   imageUrl: string | null;
+  isMember: boolean;
+  membershipName: string | null;
+  sexTone: 'male' | 'female' | 'neutral';
 };
 
 function householdPetsFromClient(raw: unknown, currentId: string): HouseholdPet[] {
@@ -203,7 +210,10 @@ function householdPetsFromClient(raw: unknown, currentId: string): HouseholdPet[
       id: String(p.id),
       name: pickStr(p.name) ?? `Pet #${p.id}`,
       active: p.isActive !== false,
-      imageUrl: mediaUrl(p.imageUrl),
+      imageUrl: petImageSrc(String(p.id), p.imageUrl),
+      isMember: patientMembershipFromRecord(p).isMember,
+      membershipName: patientMembershipFromRecord(p).membershipName,
+      sexTone: patientSexHighlightTone(p as never),
     }));
   pets.sort((a, b) => {
     if (a.active !== b.active) return a.active ? -1 : 1;
@@ -222,6 +232,17 @@ function formatAddressClient(c: Record<string, unknown>): string {
   const locality = [pickStr(c.city), pickStr(c.state)].filter(Boolean).join(', ');
   const zip = pickStr(c.zip) ?? pickStr(c.zipcode);
   return [...street, locality, zip].filter(Boolean).join(', ') || '—';
+}
+
+function googleMapsUrlForClient(c: Record<string, unknown>, addressLine: string): string {
+  const latRaw = c.lat ?? c.latitude;
+  const lonRaw = c.lon ?? c.lng ?? c.longitude;
+  const lat = typeof latRaw === 'number' ? latRaw : Number(latRaw);
+  const lon = typeof lonRaw === 'number' ? lonRaw : Number(lonRaw);
+  if (Number.isFinite(lat) && Number.isFinite(lon)) {
+    return `https://www.google.com/maps?q=${lat},${lon}`;
+  }
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addressLine)}`;
 }
 
 function zoneLabel(c: Record<string, unknown> | null): string | null {
@@ -278,14 +299,15 @@ function HeaderEditButton({
 
 type StatusBadge = { label: string; variant: 'danger' | 'ok' | 'muted' };
 
-function patientDetailStatus(p: Record<string, unknown>): StatusBadge {
-  const st = (pickStr(p.status) ?? pickStr(p.patientStatus) ?? '').toLowerCase();
-  if (st.includes('euthan')) return { label: 'Euthanized', variant: 'danger' };
-  if (st.includes('deceas') || st.includes('died')) return { label: 'Deceased', variant: 'muted' };
-  if (p.isActive === false || p.active === false || st.includes('inactive')) {
-    return { label: 'Inactive', variant: 'muted' };
-  }
-  return { label: 'Active', variant: 'ok' };
+/** Active / inactive only — patient status (Euthanized, …) is a separate chip. */
+function patientActiveBadge(p: Record<string, unknown>): StatusBadge {
+  const chip = patientActiveChip(p);
+  return { label: chip.label, variant: chip.tone };
+}
+
+function patientStatusChip(p: Record<string, unknown>): StatusBadge | null {
+  const chip = statusChipFromRecord(p);
+  return chip ? { label: chip.label, variant: chip.tone } : null;
 }
 
 function ageFromDob(dob: string | null): string | null {
@@ -1053,7 +1075,8 @@ export default function PimsPatientDetailView({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [photoFailed, setPhotoFailed] = useState(false);
-  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [photoGalleryOpen, setPhotoGalleryOpen] = useState(false);
+  const [photoVersion, setPhotoVersion] = useState(0);
   const [uploadingDocument, setUploadingDocument] = useState(false);
   const [documentUploadError, setDocumentUploadError] = useState<string | null>(null);
   const [pendingDeleteReminder, setPendingDeleteReminder] = useState<{
@@ -1245,7 +1268,8 @@ export default function PimsPatientDetailView({
   const connectionNotes = alertFieldText(client, ['connectionNotes']);
   const addressLine = client ? formatAddressClient(client) : null;
   const ownerZone = zoneLabel(client);
-  const badge = payload ? patientDetailStatus(payload) : { label: '—', variant: 'muted' as const };
+  const badge = payload ? patientActiveBadge(payload) : { label: '—', variant: 'muted' as const };
+  const statusChip = payload ? patientStatusChip(payload) : null;
 
   const chartRows = useMemo(() => {
     const base = buildChartRowsFromMedicalRecord(
@@ -1280,6 +1304,15 @@ export default function PimsPatientDetailView({
   };
 
   const discontinueMedication = async (rx: PatientPrescription) => {
+    if (rx.autoshipStartedAt) {
+      const ok = window.confirm(
+        `Cancel auto-ship for ${rx.name}?\n\nThis cancels the Stripe subscription and emails the client. The medication will leave the chronic list.\n\nChoose Cancel to keep auto-ship and leave it on the list.`
+      );
+      if (!ok) return;
+    } else {
+      const ok = window.confirm(`Stop ${rx.name}? It will leave the chronic medications list.`);
+      if (!ok) return;
+    }
     setDiscontinuingRxId(rx.id);
     try {
       const updated = await updatePatientPrescription(rx.id, { discontinued: true });
@@ -1516,33 +1549,6 @@ export default function PimsPatientDetailView({
     }
   }
 
-  async function handlePhotoUpload(file: File | null) {
-    if (!file || uploadingPhoto) return;
-    const validTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
-    if (!validTypes.includes(file.type)) {
-      setSaveError('Choose a JPEG, PNG, GIF, or WebP image.');
-      return;
-    }
-    if (file.size > 5 * 1024 * 1024) {
-      setSaveError('The image must be 5 MB or smaller.');
-      return;
-    }
-
-    setUploadingPhoto(true);
-    setSaveError(null);
-    try {
-      const result = await uploadPetImage(patientId, file);
-      setPayload((current) =>
-        current ? { ...current, imageUrl: result.imageUrl } : current
-      );
-      setPhotoFailed(false);
-    } catch (e: unknown) {
-      setSaveError(e instanceof Error ? e.message : 'Could not upload the patient photo.');
-    } finally {
-      setUploadingPhoto(false);
-    }
-  }
-
   /** Outside records and other chart attachments. Defaults to "Previous Medical Records". */
   async function handleChartDocumentUpload(file: File | null) {
     if (!file || uploadingDocument) return;
@@ -1710,8 +1716,12 @@ export default function PimsPatientDetailView({
 
   const signalment = signalmentParts(record, ageStr, weightLine);
   const clientId = client?.id != null ? String(client.id) : null;
-  const petPhoto = mediaUrl(record.imageUrl);
+  const petPhotoBase = petImageSrc(patientId, record.imageUrl);
+  const petPhoto = petPhotoBase
+    ? `${petPhotoBase}${petPhotoBase.includes('?') ? '&' : '?'}v=${photoVersion}`
+    : null;
   const membership = patientMembershipFromRecord(record);
+  const sexTone = patientSexHighlightTone(record as never);
   const membershipLabel =
     membership.membershipName?.trim() ||
     (wellnessPlans[0] && typeof wellnessPlans[0] === 'object'
@@ -1794,20 +1804,42 @@ export default function PimsPatientDetailView({
             <ul className="pims-emr-household__pets">
               {householdPets.map((pet) => {
                 const current = pet.id === patientId;
+                const sexClass =
+                  pet.sexTone === 'female'
+                    ? ' is-female'
+                    : pet.sexTone === 'male'
+                      ? ' is-male'
+                      : '';
+                const heart = pet.isMember ? (
+                  <span title={pet.membershipName?.trim() || 'On a membership'}>
+                    <Heart
+                      className="pims-emr-household__pet-heart"
+                      size={12}
+                      fill="currentColor"
+                      strokeWidth={1.75}
+                      aria-label={pet.membershipName?.trim() || 'Membership'}
+                    />
+                  </span>
+                ) : null;
                 return (
                   <li key={pet.id}>
                     {current ? (
-                      <span className="pims-emr-household__pet is-current" aria-current="page">
+                      <span
+                        className={`pims-emr-household__pet is-current${sexClass}`}
+                        aria-current="page"
+                      >
                         <PetThumb src={pet.imageUrl} size={22} className="pims-emr-household__pet-img" />
                         {pet.name}
+                        {heart}
                       </span>
                     ) : (
                       <Link
-                        className={`pims-emr-household__pet${pet.active ? '' : ' is-inactive'}`}
+                        className={`pims-emr-household__pet${sexClass}${pet.active ? '' : ' is-inactive'}`}
                         to={`${patientsListPath}?patientId=${encodeURIComponent(pet.id)}`}
                       >
                         <PetThumb src={pet.imageUrl} size={22} className="pims-emr-household__pet-img" />
                         {pet.name}
+                        {heart}
                       </Link>
                     )}
                   </li>
@@ -1821,28 +1853,55 @@ export default function PimsPatientDetailView({
       <DetailHeader
         avatar={
           petPhoto && !photoFailed ? (
-            <img
-              className="pims-detail__avatar pims-detail__avatar--img"
-              src={petPhoto}
-              alt={`${pname}`}
-              width={56}
-              height={56}
-              onError={() => setPhotoFailed(true)}
-            />
-          ) : undefined
+            <button
+              type="button"
+              className="pims-detail__avatar pims-detail__avatar--img pims-detail__avatar--btn"
+              onClick={() => setPhotoGalleryOpen(true)}
+              aria-label={`View photos of ${pname}`}
+              title="View photos"
+            >
+              <img
+                src={petPhoto}
+                alt=""
+                width={56}
+                height={56}
+                onError={() => setPhotoFailed(true)}
+              />
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="pims-detail__avatar pims-detail__avatar--btn"
+              onClick={() => setPhotoGalleryOpen(true)}
+              aria-label={`Add photos for ${pname}`}
+              title="Add photos"
+            >
+              <Camera size={22} aria-hidden />
+            </button>
+          )
         }
         title={
-          <span className="pims-emr-title">
-            {pname}
+          <span
+            className={`pims-emr-title${
+              sexTone === 'female'
+                ? ' pims-emr-title--female'
+                : sexTone === 'male'
+                  ? ' pims-emr-title--male'
+                  : ''
+            }`}
+          >
+            <span className="pims-emr-title__name">{pname}</span>
             {membership.isMember ? (
-              <Heart
-                className="pims-emr-title__heart"
-                size={18}
-                fill="#dc2626"
-                color="#dc2626"
-                strokeWidth={1.75}
-                aria-label={membershipLabel}
-              />
+              <span title={membershipLabel}>
+                <Heart
+                  className="pims-emr-title__heart"
+                  size={18}
+                  fill="#dc2626"
+                  color="#dc2626"
+                  strokeWidth={1.75}
+                  aria-label={membershipLabel}
+                />
+              </span>
             ) : null}
             <HeaderEditButton
               label="Edit pet info and alerts"
@@ -1854,6 +1913,9 @@ export default function PimsPatientDetailView({
         badges={
           <>
             <PimsBadge tone={badge.variant}>{badge.label}</PimsBadge>
+            {statusChip ? (
+              <PimsBadge tone={statusChip.variant}>{statusChip.label}</PimsBadge>
+            ) : null}
             {scoutState.scoutManaged ? (
               <PimsBadge tone="info" title={scoutState.title}>
                 {scoutState.label}
@@ -1891,7 +1953,14 @@ export default function PimsPatientDetailView({
               <li>
                 <MapPin size={15} aria-hidden />
                 <span>
-                  {addressLine}
+                  <a
+                    href={googleMapsUrlForClient(client!, addressLine)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title="Open in Google Maps"
+                  >
+                    {addressLine}
+                  </a>
                   {ownerZone ? (
                     <span className="pims-emr-zone-badge">Zone {ownerZone.replace(/^Zone\s+/i, '')}</span>
                   ) : null}
@@ -1991,6 +2060,15 @@ export default function PimsPatientDetailView({
                       <Pill size={12} aria-hidden />
                       <span>
                         {rx.name}
+                        {rx.autoshipStartedAt ? (
+                          <span
+                            className="pims-emr-story__chip-autoship"
+                            title={`Auto-ship started ${new Date(rx.autoshipStartedAt).toLocaleDateString()}`}
+                          >
+                            {' '}
+                            · auto-ship
+                          </span>
+                        ) : null}
                         {rx.inventoryItemId != null ? (
                           <span className="pims-emr-story__chip-catalog"> · catalog</span>
                         ) : null}
@@ -2023,24 +2101,14 @@ export default function PimsPatientDetailView({
         }
         actions={
           <>
-            <label
+            <button
+              type="button"
               className="pims-detail__btn-secondary"
-              aria-disabled={uploadingPhoto}
+              onClick={() => setPhotoGalleryOpen(true)}
             >
               <Camera size={14} aria-hidden />
-              {uploadingPhoto ? 'Uploading…' : petPhoto && !photoFailed ? 'Change photo' : 'Add photo'}
-              <input
-                className="pims-detail__photo-input"
-                type="file"
-                accept="image/jpeg,image/png,image/gif,image/webp"
-                disabled={uploadingPhoto}
-                onChange={(e) => {
-                  const file = e.currentTarget.files?.[0] ?? null;
-                  void handlePhotoUpload(file);
-                  e.currentTarget.value = '';
-                }}
-              />
-            </label>
+              {petPhoto && !photoFailed ? 'Photos' : 'Add photo'}
+            </button>
             <button
               type="button"
               className="pims-detail__btn-primary"
@@ -2282,7 +2350,11 @@ export default function PimsPatientDetailView({
         </div>
 
         {Number.isFinite(Number(patientId)) ? (
-          <PatientMembershipPanel patientId={Number(patientId)} patientName={pname || null} />
+          <PatientMembershipPanel
+            patientId={Number(patientId)}
+            patientName={pname || null}
+            clientId={clientId ? Number(clientId) : null}
+          />
         ) : null}
 
         <div className={`pims-emr-case-prep-wrap${casePrepOpen ? '' : ' is-collapsed'}`}>
@@ -3232,7 +3304,9 @@ export default function PimsPatientDetailView({
                           <td>{rx.strength ?? '—'}</td>
                           <td>
                             {rx.acuity === 'chronic'
-                              ? 'Chronic'
+                              ? rx.autoshipStartedAt
+                                ? 'Chronic · auto-ship'
+                                : 'Chronic'
                               : rx.acuity === 'acute'
                                 ? 'Acute'
                                 : '—'}
@@ -3565,6 +3639,34 @@ export default function PimsPatientDetailView({
           onRecordsChanged={() => void reloadChartData()}
         />
       ) : null}
+
+      <PatientPhotoGalleryModal
+        open={photoGalleryOpen}
+        onClose={() => setPhotoGalleryOpen(false)}
+        patientId={patientId}
+        patientName={pname}
+        notifyClientOnUpload
+        patientActive={isActive}
+        onPrimaryChange={(imageUrl) => {
+          setPayload((current) =>
+            current ? { ...current, imageUrl: imageUrl || null } : current,
+          );
+          setHouseholdPets((pets) =>
+            pets.map((pet) =>
+              String(pet.id) === String(patientId)
+                ? {
+                    ...pet,
+                    imageUrl: imageUrl
+                      ? petImageSrc(patientId, imageUrl)
+                      : null,
+                  }
+                : pet,
+            ),
+          );
+          setPhotoFailed(false);
+          setPhotoVersion((v) => v + 1);
+        }}
+      />
 
     </div>
   );

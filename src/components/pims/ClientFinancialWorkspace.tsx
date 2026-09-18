@@ -14,21 +14,40 @@ import {
   type SearchableItem,
 } from '../../api/roomLoader';
 import {
+  getBundle,
+  listBundles,
+  resolveBundleForSale,
+  type Bundle,
+  type BundleSaleLine,
+  type BundleSaleResolution,
+} from '../../api/memberships';
+import BundleSalePickerModal from '../catalog/BundleSalePickerModal';
+import MembershipCoveragePickerModal from '../catalog/MembershipCoveragePickerModal';
+import {
+  checkItemPricingWithCoverageChoice,
+  type CoverageChoicePrompt,
+} from '../../utils/membershipCoverageChoice';
+import {
   addCounterInvoiceLine,
   addVisitTender,
   adoptEvetInvoice,
   createClientPayLink,
   cancelTerminalCheckout,
   chargeSavedCard,
+  getInvoiceCardOnFile,
   discardVisitInvoice,
   ensureCounterInvoice,
   getInvoice,
   listClientVisitInvoices,
   patchVisitInvoice,
+  postAccountAdjustment,
   removeCounterInvoiceLine,
   returnVisitInvoiceLines,
+  refundVisitTender,
+  listVisitRefundPeers,
   startTerminalCheckout,
   type TerminalReaderCatalog,
+  type VisitRefundPeer,
   unlockVisitInvoice,
   updateCounterInvoiceLine,
   voidInvoice,
@@ -36,9 +55,14 @@ import {
   VISIT_WORKFLOW_PRACTICE_ID,
   type VisitInvoice,
   type VisitInvoiceLine,
+  type VisitInvoiceTender,
+  type InvoiceCardOnFile,
   type VisitTenderMethod,
+  type OrderVaccination,
+  type StockDraw,
 } from '../../api/visitWorkflow';
 import {
+  buildCheckItemPayload,
   buildCheckItemPayloadFromSearch,
   getCatalogLinePrice,
   pricingItemFromSearchAndCheck,
@@ -78,7 +102,6 @@ import {
   applySystemSubject,
   applySystemSubjectIfCustom,
   applySystemTemplate,
-  applySystemTemplateIfCustom,
 } from '../../utils/messageTemplateCache';
 import { firstNameFromDisplayName } from '../../utils/clientNamePrefix';
 import { mergeValuesFromNames, withClinicDefaults, type MergeValues } from '../../utils/messageTemplateFields';
@@ -90,7 +113,11 @@ import {
   payButtonHtml,
   type InvoiceEmailModel,
 } from '../../utils/invoiceEmail';
-import { listPaymentTypes, type PracticePaymentType } from '../../api/paymentTypes';
+import {
+  listPaymentTypes,
+  type PaymentOptionType,
+  type PracticePaymentType,
+} from '../../api/paymentTypes';
 import CheckoutInventoryBranchField from '../soap/CheckoutInventoryBranchField';
 import SendRxLabelButton, { type SendRxLabelSource } from '../soap/SendRxLabelButton';
 import MailInvoiceLineCheckbox, {
@@ -108,8 +135,18 @@ import {
   MAIL_SHIPPING_TYPES_KEY,
   parseMailShippingTypes,
 } from '../../utils/mailShippingTypes';
+import {
+  attachTagalongLines,
+  tagalongChildIds,
+  tagalongTaxHint,
+} from '../../utils/invoiceTagalongs';
 import { ensurePrintRxNumber } from '../../utils/ensurePrintRxNumber';
 import StockLotPicker from '../inventory/StockLotPicker';
+import LinkedStockInvoiceDetails from '../invoice/LinkedStockInvoiceDetails';
+import { linkedStockFromLine } from '../../utils/linkedInvoiceStock';
+import InvoiceVaccineDoseEditor, {
+  loadClinicalForInvoiceLines,
+} from './InvoiceVaccineDoseEditor';
 import { recordScoutChartCommunication } from '../../api/scoutChart';
 import type { GmailComposeAttachment } from '../../api/gmail';
 import { ClientEmailComposeModal } from '../ClientEmailComposeModal';
@@ -270,6 +307,11 @@ function payLinkMerge(clientName: string, amount: number, labels: string, url: s
   });
 }
 
+/** Stripe return URL for SMS/email pay links — clients land in the portal, not staff. */
+function clientPayReturnUrl(): string {
+  return `${window.location.origin}/client-portal`;
+}
+
 function PriceShown({
   charged,
   list,
@@ -331,6 +373,7 @@ type InvoiceFacePayment = {
   cashier?: string | null;
   extra?: string | null;
   onVoid?: () => void;
+  onRefund?: () => void;
 };
 
 function paymentFaceLabel(p: InvoiceFacePayment): string {
@@ -343,6 +386,45 @@ function paymentFaceLabel(p: InvoiceFacePayment): string {
   ]
     .filter(Boolean)
     .join(' · ');
+}
+
+function tenderRefundable(t: VisitInvoiceTender): number {
+  if (t.voidedAt) return 0;
+  return Math.max(0, (Number(t.amount) || 0) - (Number(t.refundedAmount) || 0));
+}
+
+function tenderCanStripeRefund(t: VisitInvoiceTender): boolean {
+  return (
+    !t.voidedAt &&
+    t.method === 'card' &&
+    Boolean(t.stripePaymentIntentId?.trim()) &&
+    tenderRefundable(t) > 0.009
+  );
+}
+
+function invoiceCardRefundable(invoice: VisitInvoice | null): number {
+  if (!invoice) return 0;
+  return (invoice.tenders ?? [])
+    .filter((t) => tenderCanStripeRefund(t))
+    .reduce((sum, t) => sum + tenderRefundable(t), 0);
+}
+
+/** Estimate return total (line + proportional tax) for the return qty draft. */
+function estimateReturnRefund(
+  lines: VisitInvoiceLine[],
+  qtyByLine: Record<string, string>
+): number {
+  let total = 0;
+  for (const line of lines) {
+    const qty = Number(qtyByLine[line.id] || 0);
+    if (!(qty > 0)) continue;
+    const unit = Number(line.unitPrice) || 0;
+    const origQty = Math.abs(Number(line.qty) || 0);
+    const tax = Number(line.taxAmount) || 0;
+    const taxShare = origQty > 0 ? (tax / origQty) * qty : 0;
+    total += qty * unit + taxShare;
+  }
+  return Math.round(total * 100) / 100;
 }
 
 function StaffVoidedPayments({ items }: { items: { key: string; text: string }[] }) {
@@ -362,8 +444,83 @@ function StaffVoidedPayments({ items }: { items: { key: string; text: string }[]
   );
 }
 
+function StaffInvoiceAudit({
+  entries,
+}: {
+  entries?:
+    | Array<{
+        at: string;
+        kind: string;
+        message: string;
+        employeeName?: string | null;
+      }>
+    | null;
+}) {
+  const rows = Array.isArray(entries) ? entries : [];
+  if (!rows.length) return null;
+  return (
+    <details className="client-fin__staff-audit">
+      <summary>Staff audit · {rows.length}</summary>
+      <p className="client-fin__muted">
+        Price overrides and other staff edits. Not shown on the client copy.
+      </p>
+      <ul>
+        {rows.map((row, i) => (
+          <li key={`${row.at}-${i}`}>
+            {(row.at || '').slice(0, 16).replace('T', ' ')}
+            {row.employeeName ? ` · ${row.employeeName}` : ''}
+            {' — '}
+            {row.message}
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
+}
+
 function activeLines(invoice: VisitInvoice | null): VisitInvoiceLine[] {
   return (invoice?.lines ?? []).filter((l) => !l.isDeleted);
+}
+
+type InvoiceLineDisplayBlock =
+  | { kind: 'solo'; line: VisitInvoiceLine }
+  | {
+      kind: 'bundle';
+      saleId: string;
+      name: string;
+      lines: VisitInvoiceLine[];
+    };
+
+/** Nest lines that share a sell-once bundle expand under one header. */
+function groupLinesByBundleSale(lines: VisitInvoiceLine[]): InvoiceLineDisplayBlock[] {
+  const blocks: InvoiceLineDisplayBlock[] = [];
+  const saleIndex = new Map<string, number>();
+  for (const line of lines) {
+    const saleId = (line.bundleSaleId ?? '').trim();
+    if (!saleId) {
+      blocks.push({ kind: 'solo', line });
+      continue;
+    }
+    const existing = saleIndex.get(saleId);
+    if (existing != null) {
+      const block = blocks[existing];
+      if (block?.kind === 'bundle') {
+        block.lines.push(line);
+        if (!block.name && line.sourceBundleName) {
+          block.name = line.sourceBundleName;
+        }
+      }
+      continue;
+    }
+    saleIndex.set(saleId, blocks.length);
+    blocks.push({
+      kind: 'bundle',
+      saleId,
+      name: (line.sourceBundleName ?? '').trim() || 'Bundle',
+      lines: [line],
+    });
+  }
+  return blocks;
 }
 
 const DRAFT_INVOICE_ID = 'draft';
@@ -449,6 +606,28 @@ function methodLabel(method: VisitTenderMethod, paymentTypeName?: string | null)
   return method.charAt(0).toUpperCase() + method.slice(1);
 }
 
+function tenderMethodFromOption(optionType: PaymentOptionType, name?: string | null): VisitTenderMethod {
+  if (/care\s*credit/i.test(name || '')) return 'carecredit';
+  if (optionType === 'cash') return 'cash';
+  if (optionType === 'check') return 'check';
+  if (optionType === 'credit_card' || optionType === 'credit_card_auto') return 'card';
+  return 'other';
+}
+
+function isCreditPaymentType(row: PracticePaymentType): boolean {
+  return row.optionType === 'credit_card' || row.optionType === 'credit_card_auto';
+}
+
+function formatCardOnFile(card: InvoiceCardOnFile): string {
+  const brand = (card.brand || 'Card').replace(/^./, (c) => c.toUpperCase());
+  const last4 = card.last4 ? `•••• ${card.last4}` : 'on file';
+  const exp =
+    card.expMonth && card.expYear
+      ? ` · exp ${String(card.expMonth).padStart(2, '0')}/${String(card.expYear).slice(-2)}`
+      : '';
+  return `${brand} ${last4}${exp}`;
+}
+
 function statusLabel(status: string): string {
   const s = status.trim();
   if (!s) return '—';
@@ -521,15 +700,20 @@ function defaultSigDraft(line: VisitInvoiceLine, prescribedDate: string): SigDra
 }
 
 function isPrescriptionLine(line: VisitInvoiceLine): boolean {
-  const type = String(line.catalogItemType ?? '').toLowerCase();
-  if (type === 'inventory') return true;
-  if (type === 'procedure' || type === 'lab') return false;
+  if (line.catalogIsMedication === true || line.catalogIsDispensable === true) {
+    return true;
+  }
+  // Staff already wrote / approved a script on this line — keep the Rx UI.
   return Boolean(
-    line.catalogInstructions?.trim() ||
-      line.catalogRefill != null ||
-      line.instructions?.trim() ||
-      (line.refillCount != null && Number.isFinite(Number(line.refillCount))),
+    line.instructions?.trim() ||
+      (line.refillCount != null && Number.isFinite(Number(line.refillCount))) ||
+      line.rxApprovedAt,
   );
+}
+
+function isVaccineLine(line: VisitInvoiceLine): boolean {
+  if (line.catalogIsVaccine === true) return true;
+  return /\bvaccine\b|\bvx\b/i.test(line.description || '');
 }
 
 function isDiscountType(name: string | null | undefined, discountNames: Set<string>): boolean {
@@ -539,6 +723,15 @@ function isDiscountType(name: string | null | undefined, discountNames: Set<stri
 
 function isImportAdjustment(line: { description?: string | null }): boolean {
   return (line.description ?? '') === 'eVet billed-total adjustment';
+}
+
+/** Same catalog/patient charge — used to nest mail vs give-today halves. */
+function sameFulfillmentProduct(a: VisitInvoiceLine, b: VisitInvoiceLine): boolean {
+  if ((a.patientId ?? null) !== (b.patientId ?? null)) return false;
+  if (a.catalogItemId != null && b.catalogItemId != null) {
+    return Number(a.catalogItemId) === Number(b.catalogItemId);
+  }
+  return (a.description || '').trim() === (b.description || '').trim();
 }
 
 function isPlaceholderPetName(name: string | null | undefined): boolean {
@@ -614,6 +807,10 @@ export default function ClientFinancialWorkspace({
   const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<SearchableItem[]>([]);
+  const [bundleHits, setBundleHits] = useState<Bundle[]>([]);
+  const [bundlePicker, setBundlePicker] = useState<Bundle | null>(null);
+  const [coveragePrompt, setCoveragePrompt] = useState<CoverageChoicePrompt | null>(null);
+  const coverageChoiceResolveRef = useRef<((id: number | null) => void) | null>(null);
   const [searching, setSearching] = useState(false);
   const [linePatientId, setLinePatientId] = useState<number | null>(() =>
     defaultChargePatientId(pets, initialPatientId),
@@ -626,10 +823,22 @@ export default function ClientFinancialWorkspace({
   const [checkNumber, setCheckNumber] = useState('');
   const [returnQty, setReturnQty] = useState<Record<string, string>>({});
   const [returning, setReturning] = useState(false);
+  const [refundDraft, setRefundDraft] = useState<null | {
+    tenderId: string;
+    maxAmount: number;
+    amount: string;
+    reason: string;
+    scope: 'this' | 'all';
+    peers: VisitRefundPeer[];
+    peersLoading: boolean;
+  }>(null);
+  const refundPanelRef = useRef<HTMLDivElement | null>(null);
   const [editing, setEditing] = useState(false);
   const [pendingDeleteIds, setPendingDeleteIds] = useState<string[]>([]);
   const [sigDrafts, setSigDrafts] = useState<Record<string, SigDraft>>({});
   const [rxRowOpenIds, setRxRowOpenIds] = useState<Record<string, true>>({});
+  const [vaccineByOrderId, setVaccineByOrderId] = useState<Record<string, OrderVaccination>>({});
+  const [stockDrawsByOrderId, setStockDrawsByOrderId] = useState<Record<string, StockDraw>>({});
   const [printedLineId, setPrintedLineId] = useState<string | null>(null);
   const [extraPets, setExtraPets] = useState<FinancialPet[]>([]);
   const [staffById, setStaffById] = useState<Map<number, Employee>>(new Map());
@@ -658,6 +867,8 @@ export default function ClientFinancialWorkspace({
   const [paySmsError, setPaySmsError] = useState<string | null>(null);
   const [paymentTypes, setPaymentTypes] = useState<PracticePaymentType[]>([]);
   const [tenderPaymentType, setTenderPaymentType] = useState('');
+  const [useSavedCard, setUseSavedCard] = useState(false);
+  const [cardOnFile, setCardOnFile] = useState<InvoiceCardOnFile | null>(null);
   const [discountTypeNames, setDiscountTypeNames] = useState<Set<string>>(new Set());
   const appliedPrefill = useRef(false);
   const [splitPct, setSplitPct] = useState(readFinSplitPct);
@@ -860,6 +1071,7 @@ export default function ClientFinancialWorkspace({
         const rows = await listClientVisitInvoices(clientId);
         if (cancelled) return;
         setScoutInvoices(rows);
+        setEvetSelected(null);
         let next: VisitInvoice | null = null;
         if (initialInvoiceId && initialInvoiceId !== 'new') {
           next = rows.find((r) => r.id === initialInvoiceId) ?? (await getInvoice(initialInvoiceId));
@@ -870,6 +1082,23 @@ export default function ClientFinancialWorkspace({
             appointmentId: initialAppointmentId,
           });
           onSelectInvoice?.('new');
+        } else {
+          // Open the newest unpaid Scout invoice in the detail pane by default.
+          const openRows = rows
+            .filter(
+              (inv) =>
+                inv.isDeleted !== true &&
+                inv.status !== 'void' &&
+                !isEmptyOpenInvoice(inv) &&
+                dueOf(inv) > 0.009,
+            )
+            .sort(
+              (a, b) =>
+                ledgerTime(b.paidAt ?? b.finalizedAt ?? b.created) -
+                ledgerTime(a.paidAt ?? a.finalizedAt ?? a.created),
+            );
+          next = openRows[0] ?? null;
+          if (next) onSelectInvoice?.(next.id);
         }
         if (!cancelled) {
           setSelected(next);
@@ -942,6 +1171,46 @@ export default function ClientFinancialWorkspace({
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!selected?.id || isUnsavedInvoice(selected)) {
+      setCardOnFile(null);
+      return;
+    }
+    let cancelled = false;
+    void getInvoiceCardOnFile(selected.id)
+      .then((card) => {
+        if (!cancelled) setCardOnFile(card);
+      })
+      .catch(() => {
+        if (!cancelled) setCardOnFile(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selected?.id]);
+
+  useEffect(() => {
+    if (cardOnFile) {
+      setUseSavedCard(true);
+      setTenderPaymentType('');
+      setTenderMethod('card');
+      return;
+    }
+    setUseSavedCard(false);
+    const fallback =
+      paymentTypes.find((row) => row.isDefault) ??
+      paymentTypes.find((row) => isCreditPaymentType(row)) ??
+      paymentTypes[0] ??
+      null;
+    if (fallback) {
+      setTenderPaymentType(fallback.name);
+      setTenderMethod(tenderMethodFromOption(fallback.optionType, fallback.name));
+    } else {
+      setTenderPaymentType('');
+      setTenderMethod('cash');
+    }
+  }, [cardOnFile?.paymentMethodId, paymentTypes, selected?.id]);
 
   useEffect(() => {
     const ids = new Set<number>();
@@ -1123,6 +1392,57 @@ export default function ClientFinancialWorkspace({
     if (isUnsavedInvoice(selected)) catalogSearchRef.current?.focus();
   }, [selected?.id]);
 
+  const vaccineLoadKey = selected
+    ? `${selected.id}:${activeLines(selected)
+        .filter((l) => l.orderId && l.encounterId)
+        .map((l) => `${l.orderId}:${l.encounterId}`)
+        .join(',')}`
+    : '';
+
+  useEffect(() => {
+    if (!selected) {
+      setVaccineByOrderId({});
+      setStockDrawsByOrderId({});
+      return;
+    }
+    let canceled = false;
+    void loadClinicalForInvoiceLines(activeLines(selected))
+      .then((result) => {
+        if (canceled) return;
+        setVaccineByOrderId(result.vaccinations);
+        setStockDrawsByOrderId(result.stockDraws);
+      })
+      .catch(() => {
+        if (!canceled) {
+          setVaccineByOrderId({});
+          setStockDrawsByOrderId({});
+        }
+      });
+    return () => {
+      canceled = true;
+    };
+  }, [vaccineLoadKey]);
+
+  useEffect(() => {
+    if (!selected) return;
+    setRxRowOpenIds((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      for (const line of activeLines(selected)) {
+        const needsDose =
+          isVaccineLine(line) &&
+          Boolean(line.orderId) &&
+          !vaccineByOrderId[line.orderId!];
+        const needsLot = Boolean(line.trackLots) && line.inventoryLotBalanceId == null;
+        if ((needsDose || needsLot) && !next[line.id]) {
+          next[line.id] = true;
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [selected?.id, vaccineLoadKey, vaccineByOrderId]);
+
   useEffect(() => {
     const invoiceId = selected?.id ?? null;
     const lineIds = new Set(activeLines(selected).map((line) => line.id));
@@ -1156,23 +1476,41 @@ export default function ClientFinancialWorkspace({
     const q = query.trim();
     if (q.length < 2) {
       setHits([]);
+      setBundleHits([]);
       return;
     }
     let cancelled = false;
     const t = window.setTimeout(() => {
       setSearching(true);
-      void searchItems({
-        q,
-        practiceId: VISIT_WORKFLOW_PRACTICE_ID,
-        limit: 8,
-        patientId: linePatientId ?? undefined,
-        clientId,
-      })
-        .then((rows) => {
-          if (!cancelled) setHits(rows);
+      void Promise.all([
+        searchItems({
+          q,
+          practiceId: VISIT_WORKFLOW_PRACTICE_ID,
+          limit: 8,
+          patientId: linePatientId ?? undefined,
+          clientId,
+        }),
+        listBundles({ kind: 'bundle', q }).catch(() => [] as Bundle[]),
+      ])
+        .then(([rows, bundles]) => {
+          if (cancelled) return;
+          setHits(rows);
+          const needle = q.toLowerCase();
+          setBundleHits(
+            bundles
+              .filter(
+                (b) =>
+                  b.name.toLowerCase().includes(needle) ||
+                  (b.code ?? '').toLowerCase().includes(needle),
+              )
+              .slice(0, 5),
+          );
         })
         .catch(() => {
-          if (!cancelled) setHits([]);
+          if (!cancelled) {
+            setHits([]);
+            setBundleHits([]);
+          }
         })
         .finally(() => {
           if (!cancelled) setSearching(false);
@@ -1358,6 +1696,29 @@ export default function ClientFinancialWorkspace({
   );
   const unpaidTotal = unpaidScout.reduce((s, inv) => s + dueOf(inv), 0) + unpaidEvet.reduce((s, inv) => s + inv.due, 0);
 
+  // If Scout had nothing open on load, open the newest unpaid eVet invoice once it arrives.
+  useEffect(() => {
+    if (loading) return;
+    if (selected != null || evetSelected != null) return;
+    if (initialInvoiceId || openNew) return;
+    const openEvet = unpaidEvet
+      .slice()
+      .sort(
+        (a, b) =>
+          ledgerTime(
+            typeof b.raw.invoicedDate === 'string' ? b.raw.invoicedDate : null,
+            b.date,
+          ) -
+          ledgerTime(
+            typeof a.raw.invoicedDate === 'string' ? a.raw.invoicedDate : null,
+            a.date,
+          ),
+      );
+    if (!openEvet.length) return;
+    setEvetSelected(openEvet[0]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, unpaidEvet]);
+
   async function startPayLink(channel: 'email' | 'sms') {
     if (channel === 'email' && !clientEmail?.trim()) {
       setError('Add a client email to send a pay link.');
@@ -1375,17 +1736,17 @@ export default function ClientFinancialWorkspace({
         if (Number.isFinite(evetId)) await adoptEvetInvoice(evetId);
       }
       if (unpaidEvet.length) await refreshList();
-      const here = window.location.href;
-      const link = await createClientPayLink(clientId, { successUrl: here, cancelUrl: here });
+      const back = clientPayReturnUrl();
+      const link = await createClientPayLink(clientId, { successUrl: back, cancelUrl: back });
       const labels = link.invoiceLabels.join(', ');
       if (channel === 'email') {
         setPayCompose({ channel: 'email', url: link.url, amount: link.amount, labels: link.invoiceLabels });
       } else {
         setPaySms(
-          applySystemTemplateIfCustom(
+          applySystemTemplate(
             'payment_link_sms',
             payLinkMerge(clientName, link.amount, labels, link.url),
-            `Hi ${clientName.split(' ')[0] || 'there'}, here is a secure link to pay ${money(link.amount)} for ${labels}: ${link.url}`,
+            `Hi ${firstNameFromDisplayName(clientName) || 'there'}, here is a secure link to pay ${money(link.amount)} for ${labels}: ${link.url}`,
           ),
         );
         setPaySmsError(null);
@@ -1495,8 +1856,8 @@ export default function ClientFinancialWorkspace({
       let payUrl = '';
       if (!isReceipt && model.due > 0.009) {
         try {
-          const here = window.location.href;
-          const link = await createClientPayLink(clientId, { successUrl: here, cancelUrl: here });
+          const back = clientPayReturnUrl();
+          const link = await createClientPayLink(clientId, { successUrl: back, cancelUrl: back });
           payUrl = link.url;
         } catch {
           /* still send the invoice without a pay button */
@@ -1576,8 +1937,8 @@ export default function ClientFinancialWorkspace({
       let payUrl = '';
       if (balance > 0.009) {
         try {
-          const here = window.location.href;
-          const link = await createClientPayLink(clientId, { successUrl: here, cancelUrl: here });
+          const back = clientPayReturnUrl();
+          const link = await createClientPayLink(clientId, { successUrl: back, cancelUrl: back });
           payUrl = link.url;
         } catch {
           /* still send the ledger without a pay button */
@@ -1637,14 +1998,19 @@ export default function ClientFinancialWorkspace({
   const displayLines = lines.filter((l) => !pendingDeleteSet.has(l.id));
   const visibleLines = displayLines.filter((l) => !isImportAdjustment(l));
   const shippingIdSet = useMemo(() => new Set(shippingTypeIds), [shippingTypeIds]);
+  const tagalongGroups = useMemo(() => attachTagalongLines(visibleLines), [visibleLines]);
   const lineGroups = useMemo(
     () =>
       attachShippingLines(
-        visibleLines,
+        [...tagalongGroups.parents, ...tagalongGroups.leftover],
         (line) => isInvoiceShippingLine(line, shippingIdSet),
         (line) => isPrescriptionLine(line)
       ),
-    [visibleLines, shippingIdSet]
+    [tagalongGroups, shippingIdSet]
+  );
+  const invoiceLineBlocks = useMemo(
+    () => groupLinesByBundleSale([...lineGroups.parents, ...lineGroups.leftover]),
+    [lineGroups],
   );
   const hasUnsavedDeletes = pendingDeleteIds.length > 0;
   const hasShippedMail = useMemo(
@@ -1674,7 +2040,9 @@ export default function ClientFinancialWorkspace({
     () =>
       visibleLines.some(
         (line) =>
-          !isInvoiceShippingLine(line, shippingIdSet) && !mailOrderForLine(line)
+          !line.tagalongOfLineId &&
+          !isInvoiceShippingLine(line, shippingIdSet) &&
+          !mailOrderForLine(line)
       ),
     [visibleLines, shippingIdSet, mailOrderForLine]
   );
@@ -1707,7 +2075,7 @@ export default function ClientFinancialWorkspace({
       )
     : 0;
   const invoiceGone = selected?.isDeleted === true;
-  const canEdit = !invoiceGone && selected?.status === 'open' && !lines.some((l) => l.orderId);
+  const canEdit = !invoiceGone && selected?.status === 'open';
   const dirtySigLines = canEdit ? visibleLines.filter((l) => isPrescriptionLine(l) && lineSigDirty(l)) : [];
   const hasDirtySigs = dirtySigLines.length > 0;
   const selectedPayType =
@@ -1715,6 +2083,7 @@ export default function ClientFinancialWorkspace({
   const rxBlocksPay = Boolean(
     selected &&
       visibleLines.some((line) => {
+        if (line.tagalongOfLineId) return false;
         if (!isPrescriptionLine(line)) return false;
         return !(Boolean(line.rxApprovedAt) && !lineSigDirty(line) && !sigNeedsReapprove[line.id]);
       }),
@@ -1722,6 +2091,7 @@ export default function ClientFinancialWorkspace({
   const lotBlocksPay = Boolean(
     selected &&
       visibleLines.some((line) => {
+        if (line.tagalongOfLineId) return false;
         if (!line.trackLots) return false;
         if (mailOrderForLine(line)) return false;
         return line.inventoryLotBalanceId == null;
@@ -1744,6 +2114,7 @@ export default function ClientFinancialWorkspace({
     (selected.status === 'paid' || selected.status === 'finalized') &&
     !lines.some((l) => l.returnOfLineId);
   const isSoapInvoice = lines.some((l) => l.orderId);
+  /** SOAP visit invoices: edit sig/qty/provider from the ledger; remove/void stay on SOAP. */
   const canRemoveLines = Boolean(
     selected &&
       !invoiceGone &&
@@ -1782,6 +2153,10 @@ export default function ClientFinancialWorkspace({
     if (already) return;
     setBusy(true);
     try {
+      if (linePatientId == null) {
+        setError('Pick a pet before adding a charge.');
+        return;
+      }
       const providerEmployeeId = requiredProviderIdFor(linePatientId);
       if (providerEmployeeId == null) {
         setError('Provider is required before adding invoice line items.');
@@ -1852,6 +2227,37 @@ export default function ClientFinancialWorkspace({
     onSelectInvoice?.('new');
   }
 
+  async function addManualAccountCredit() {
+    const raw = window.prompt('Account credit amount (dollars):', '');
+    if (raw == null) return;
+    const amount = Number(raw.replace(/[$,\s]/g, ''));
+    if (!Number.isFinite(amount) || amount < 0.01) {
+      setError('Enter a credit amount of at least $0.01.');
+      return;
+    }
+    const description =
+      window.prompt('Description (optional):', 'Account credit')?.trim() || 'Account credit';
+    setBusy(true);
+    setError(null);
+    try {
+      const credit = await postAccountAdjustment({
+        clientId,
+        patientId: initialPatientId ?? linePatientId ?? null,
+        amount: -Math.abs(amount),
+        description,
+        cashierEmployeeId,
+      });
+      setSelected(credit);
+      onSelectInvoice?.(credit.id);
+      await refreshList(credit.id);
+      setNote(`Added ${money(amount)} account credit.`);
+    } catch (e: unknown) {
+      setError(apiErr(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function addItem(item: SearchableItem) {
     if (!selected) return;
     const catalog =
@@ -1868,22 +2274,37 @@ export default function ClientFinancialWorkspace({
     );
     if (linePatientId != null && catalogId != null) {
       try {
-        const checked = await checkItemPricing({
-          patientId: linePatientId,
-          practiceId: VISIT_WORKFLOW_PRACTICE_ID,
-          clientId,
-          itemType: item.itemType,
-          item: buildCheckItemPayloadFromSearch(item),
+        const checked = await checkItemPricingWithCoverageChoice({
+          request: {
+            patientId: linePatientId,
+            practiceId: VISIT_WORKFLOW_PRACTICE_ID,
+            clientId,
+            itemType: item.itemType,
+            item: buildCheckItemPayloadFromSearch(item),
+          },
+          itemName: item.name,
+          askCoverageChoice: (prompt) =>
+            new Promise<number | null>((resolve) => {
+              coverageChoiceResolveRef.current = resolve;
+              setCoveragePrompt(prompt);
+            }),
         });
         priced = getCatalogLinePrice(pricingItemFromSearchAndCheck(item, checked), 1);
         listUnit = Number(checked.originalPrice ?? listUnit);
-      } catch {
+      } catch (e: unknown) {
+        if (e instanceof Error && e.message === 'Coverage choice cancelled') {
+          return;
+        }
         /* search result already includes room-loader pricing */
       }
     }
     setBusy(true);
     setError(null);
     try {
+      if (linePatientId == null) {
+        setError('Pick a pet before adding a charge.');
+        return;
+      }
       const providerEmployeeId = requiredProviderIdFor(linePatientId);
       if (providerEmployeeId == null) {
         setError('Provider is required before adding invoice line items.');
@@ -1907,6 +2328,7 @@ export default function ClientFinancialWorkspace({
         setSelected(next);
         setQuery('');
         setHits([]);
+        setBundleHits([]);
         await refreshList(next.id);
       } catch (err) {
         if (wasDraft && activeLines(invoice).length === 0) {
@@ -1927,6 +2349,132 @@ export default function ClientFinancialWorkspace({
       setError(apiErr(e));
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function addBundleSaleLines(resolution: BundleSaleResolution) {
+    if (!selected) return;
+    if (linePatientId == null) {
+      setError('Pick a pet before adding a charge.');
+      return;
+    }
+    const providerEmployeeId = requiredProviderIdFor(linePatientId);
+    if (providerEmployeeId == null) {
+      setError('Provider is required before adding invoice line items.');
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const wasDraft = isUnsavedInvoice(selected);
+      const invoice = await persistDraftIfNeeded();
+      if (!invoice) return;
+      let next = invoice;
+      const bundleSaleId =
+        typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+          ? crypto.randomUUID()
+          : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (ch) => {
+              const r = (Math.random() * 16) | 0;
+              const v = ch === 'x' ? r : (r & 0x3) | 0x8;
+              return v.toString(16);
+            });
+      try {
+        for (const line of resolution.lines as BundleSaleLine[]) {
+          let unitPrice = line.unitPrice;
+          let listUnit = line.listUnitPrice;
+          let isCovered = false;
+          if (linePatientId != null) {
+            try {
+              const checked = await checkItemPricing({
+                patientId: linePatientId,
+                practiceId: VISIT_WORKFLOW_PRACTICE_ID,
+                clientId,
+                itemType: line.itemType,
+                item: buildCheckItemPayload(line.itemType, line.catalogItemId),
+              });
+              const priced = getCatalogLinePrice(
+                {
+                  itemType: line.itemType,
+                  price: checked.adjustedPrice ?? line.unitPrice,
+                  originalPrice: checked.originalPrice ?? line.listUnitPrice,
+                  wellnessPlanPricing: checked.wellnessPlanPricing,
+                },
+                line.quantity,
+              );
+              unitPrice = priced.unitFinal;
+              listUnit = Number(checked.originalPrice ?? listUnit);
+              isCovered = priced.isCovered;
+            } catch {
+              /* use bundle catalog price */
+            }
+          }
+          next = await addCounterInvoiceLine(next.id, {
+            description: line.name,
+            qty: line.quantity,
+            unitPrice,
+            isCovered,
+            catalogItemId: line.catalogItemId,
+            catalogItemType: line.itemType,
+            listUnitPrice: listUnit > unitPrice + 0.009 ? listUnit : null,
+            patientId: linePatientId,
+            providerEmployeeId,
+            bundleSaleId,
+            sourceBundleId: resolution.bundleId,
+            sourceBundleName: resolution.bundleName,
+          });
+        }
+      } catch (err) {
+        if (wasDraft && activeLines(invoice).length === 0) {
+          try {
+            await discardVisitInvoice(invoice.id, { deletedByEmployeeId: cashierEmployeeId });
+          } catch {
+            /* keep the draft open */
+          }
+          setSelected({
+            ...selected,
+            id: DRAFT_INVOICE_ID,
+          });
+          onSelectInvoice?.('new');
+        }
+        throw err;
+      }
+      setSelected(next);
+      setQuery('');
+      setHits([]);
+      setBundleHits([]);
+      setBundlePicker(null);
+      await refreshList(next.id);
+      setNote(
+        resolution.lines.length === 1
+          ? `Added ${resolution.bundleName}.`
+          : `Added ${resolution.lines.length} lines from ${resolution.bundleName}.`,
+      );
+    } catch (e: unknown) {
+      setError(apiErr(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function pickBundle(bundleHit: Bundle) {
+    if (!selected || busy) return;
+    setError(null);
+    try {
+      const full = await getBundle(bundleHit.id);
+      const needsPick = full.groups.some(
+        (g) =>
+          (g.selectionMode === 'choice' || g.selectionMode === 'any') &&
+          g.id > 0 &&
+          g.items.length > 0,
+      );
+      if (needsPick) {
+        setBundlePicker(full);
+        return;
+      }
+      const resolution = await resolveBundleForSale(full.id, []);
+      await addBundleSaleLines(resolution);
+    } catch (e: unknown) {
+      setError(apiErr(e));
     }
   }
 
@@ -2075,7 +2623,13 @@ export default function ClientFinancialWorkspace({
     }
     const stageOnly = selected.status !== 'open';
     if (stageOnly) {
-      setPendingDeleteIds((prev) => (prev.includes(line.id) ? prev : [...prev, line.id]));
+      const extraIds = tagalongChildIds(selected.lines ?? [], line.id);
+      setPendingDeleteIds((prev) => {
+        const next = new Set(prev);
+        next.add(line.id);
+        extraIds.forEach((id) => next.add(id));
+        return [...next];
+      });
       setNote('Line removed. Save the invoice to keep this change.');
       return;
     }
@@ -2097,6 +2651,65 @@ export default function ClientFinancialWorkspace({
       });
       setSelected(next);
       await refreshList(next.id);
+    } catch (e: unknown) {
+      setError(apiErr(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeBundleSale(saleId: string, bundleName: string, memberLines: VisitInvoiceLine[]) {
+    if (!selected || memberLines.length === 0) return;
+    const shipped = memberLines.map((row) => shippedMailForLine(row)).find(Boolean);
+    if (shipped) {
+      setError(shippedMailMessage(shipped));
+      return;
+    }
+    const ok = await appConfirm({
+      title: 'Remove bundle?',
+      message: `You are deleting all services associated with ${bundleName}.`,
+      confirmLabel: 'Remove bundle',
+      cancelLabel: 'Keep',
+    });
+    if (!ok) return;
+
+    const stageOnly = selected.status !== 'open';
+    if (stageOnly) {
+      setPendingDeleteIds((prev) => {
+        const next = new Set(prev);
+        for (const row of memberLines) next.add(row.id);
+        return [...next];
+      });
+      setNote('Bundle removed. Save the invoice to keep this change.');
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const shippingIds = await cancelMailOrdersForInvoiceLines(selected.id, memberLines);
+      let next = selected;
+      const removeIds = new Set(memberLines.map((row) => row.id));
+      for (const shippingId of shippingIds) {
+        if (removeIds.has(shippingId)) continue;
+        next = await removeCounterInvoiceLine(next.id, shippingId).catch(() => next);
+      }
+      for (const row of memberLines) {
+        next = await removeCounterInvoiceLine(next.id, row.id);
+      }
+      setSigDrafts((prev) => {
+        let changed = false;
+        const copy = { ...prev };
+        for (const row of memberLines) {
+          if (row.id in copy) {
+            delete copy[row.id];
+            changed = true;
+          }
+        }
+        return changed ? copy : prev;
+      });
+      setSelected(next);
+      await refreshList(next.id);
+      setNote(`Removed ${bundleName}.`);
     } catch (e: unknown) {
       setError(apiErr(e));
     } finally {
@@ -2132,7 +2745,13 @@ export default function ClientFinancialWorkspace({
         if (pendingDeleteIds.includes(shippingId)) continue;
         next = await removeCounterInvoiceLine(next.id, shippingId).catch(() => next);
       }
-      for (const lineId of pendingDeleteIds) {
+      const pendingSet = new Set(pendingDeleteIds);
+      const lineById = new Map((selected.lines ?? []).map((row) => [row.id, row]));
+      const deleteIds = pendingDeleteIds.filter((id) => {
+        const row = lineById.get(id);
+        return !row?.tagalongOfLineId || !pendingSet.has(row.tagalongOfLineId);
+      });
+      for (const lineId of deleteIds) {
         next = await removeCounterInvoiceLine(next.id, lineId);
       }
       setPendingDeleteIds([]);
@@ -2306,6 +2925,122 @@ export default function ClientFinancialWorkspace({
     }
   }
 
+  function openRefund(tenderId: string) {
+    if (!selected) return;
+    const tender = (selected.tenders ?? []).find((t) => t.id === tenderId);
+    if (!tender || !tenderCanStripeRefund(tender)) return;
+    const maxAmount = tenderRefundable(tender);
+    setRefundDraft({
+      tenderId,
+      maxAmount,
+      amount: maxAmount.toFixed(2),
+      reason: '',
+      scope: 'this',
+      peers: [
+        {
+          invoiceId: selected.id,
+          tenderId,
+          refundable: maxAmount,
+          amount: Number(tender.amount) || 0,
+          scoutInvoiceNumber: selected.scoutInvoiceNumber ?? null,
+          isCurrent: true,
+        },
+      ],
+      peersLoading: true,
+    });
+    void (async () => {
+      try {
+        const { peers } = await listVisitRefundPeers(selected.id, tenderId);
+        setRefundDraft((cur) => {
+          if (!cur || cur.tenderId !== tenderId) return cur;
+          const list = peers.length ? peers : cur.peers;
+          const current = list.find((p) => p.isCurrent) ?? list[0];
+          const allTotal = list.reduce((s, p) => s + p.refundable, 0);
+          return {
+            ...cur,
+            peers: list,
+            peersLoading: false,
+            maxAmount: current?.refundable ?? cur.maxAmount,
+            amount:
+              list.length > 1 && cur.scope === 'all'
+                ? allTotal.toFixed(2)
+                : (current?.refundable ?? cur.maxAmount).toFixed(2),
+          };
+        });
+      } catch {
+        setRefundDraft((cur) => (cur && cur.tenderId === tenderId ? { ...cur, peersLoading: false } : cur));
+      }
+    })();
+  }
+
+  useEffect(() => {
+    if (!refundDraft) return;
+    refundPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, [refundDraft?.tenderId]);
+
+  async function submitRefund() {
+    if (!selected || !refundDraft) return;
+    const reason = refundDraft.reason.trim() || undefined;
+    const targets =
+      refundDraft.scope === 'all' && refundDraft.peers.length > 1
+        ? refundDraft.peers
+        : refundDraft.peers.filter((p) => p.tenderId === refundDraft.tenderId);
+
+    if (refundDraft.scope === 'this') {
+      const amount = Number(refundDraft.amount);
+      if (!(amount > 0.009)) {
+        setError('Enter a refund amount greater than zero.');
+        return;
+      }
+      if (amount > refundDraft.maxAmount + 0.009) {
+        setError(`Refund cannot exceed ${money(refundDraft.maxAmount)}.`);
+        return;
+      }
+    }
+
+    setBusy(true);
+    setError(null);
+    const scope = refundDraft.scope;
+    const targetCount = targets.length;
+    try {
+      let next: VisitInvoice | null = null;
+      let totalRefunded = 0;
+      for (const peer of targets) {
+        const amount =
+          scope === 'all'
+            ? peer.refundable
+            : peer.tenderId === refundDraft.tenderId
+              ? Number(refundDraft.amount)
+              : peer.refundable;
+        if (!(amount > 0.009)) continue;
+        next = await refundVisitTender(peer.invoiceId, peer.tenderId, {
+          amount,
+          reason,
+          refundedByEmployeeId: cashierEmployeeId,
+        });
+        totalRefunded += amount;
+      }
+      setRefundDraft(null);
+      if (next && next.id === selected.id) {
+        setSelected(next);
+        await refreshList(next.id);
+      } else {
+        const refreshed = await getInvoice(selected.id);
+        setSelected(refreshed);
+        await refreshList(selected.id);
+      }
+      setNote(
+        scope === 'all' && targetCount > 1
+          ? `Refunded ${money(totalRefunded)} across ${targetCount} invoices via Stripe.`
+          : `Refunded ${money(totalRefunded)} via Stripe.`,
+      );
+    } catch (e: unknown) {
+      setError(apiErr(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function askVoidReason(title: string, message: string): Promise<string | null> {
     const reason = await appPrompt({
       title,
@@ -2446,7 +3181,7 @@ export default function ClientFinancialWorkspace({
     }
   }
 
-  async function submitReturns() {
+  async function submitReturns(refundViaStripe: boolean) {
     if (!selected) return;
     const items = lines
       .map((line) => {
@@ -2458,18 +3193,41 @@ export default function ClientFinancialWorkspace({
       setError('Enter a quantity to return on at least one line.');
       return;
     }
+    const estimated = estimateReturnRefund(lines, returnQty);
+    if (refundViaStripe) {
+      const available = invoiceCardRefundable(selected);
+      if (estimated > available + 0.009) {
+        setError(
+          `Return total ${money(estimated)} exceeds refundable card payments (${money(available)}).`
+        );
+        return;
+      }
+      const ok = await appConfirm({
+        title: 'Return & refund?',
+        message: `Return the selected items and refund ${money(estimated)} to the client's card via Stripe?`,
+        confirmLabel: `Refund ${money(estimated)}`,
+        danger: true,
+      });
+      if (!ok) return;
+    }
     setBusy(true);
     setError(null);
     try {
-      const credit = await returnVisitInvoiceLines(selected.id, items, {
+      const next = await returnVisitInvoiceLines(selected.id, items, {
         cashierEmployeeId,
+        refundViaStripe,
+        reason: refundViaStripe ? 'Return items' : undefined,
       });
       setReturnQty({});
       setReturning(false);
-      setSelected(credit);
-      onSelectInvoice?.(credit.id);
-      await refreshList(credit.id);
-      setNote('Opened a credit invoice for the returned items.');
+      setSelected(next);
+      onSelectInvoice?.(next.id);
+      await refreshList(next.id);
+      setNote(
+        refundViaStripe
+          ? `Returned items and refunded ${money(estimated)} via Stripe.`
+          : 'Opened a credit invoice for the returned items.',
+      );
     } catch (e: unknown) {
       setError(apiErr(e));
     } finally {
@@ -2518,6 +3276,15 @@ export default function ClientFinancialWorkspace({
             </div>
             <button type="button" className="client-fin__btn" onClick={() => startNewInvoice()} disabled={busy}>
               New invoice
+            </button>
+            <button
+              type="button"
+              className="client-fin__btn-ghost"
+              onClick={() => void addManualAccountCredit()}
+              disabled={busy}
+              title="Add a credit on this account"
+            >
+              Add credit
             </button>
           </div>
           <div className="client-fin__pay-links client-fin__pay-links--ledger">
@@ -3014,6 +3781,19 @@ export default function ClientFinancialWorkspace({
                       {isUnsavedInvoice(selected) ? 'Cancel' : 'Delete invoice'}
                     </button>
                   ) : null}
+                  {canReturn && !returning ? (
+                    <button
+                      type="button"
+                      className="client-fin__btn-ghost"
+                      disabled={busy}
+                      onClick={() => {
+                        setReturning(true);
+                        setRefundDraft(null);
+                      }}
+                    >
+                      Return items
+                    </button>
+                  ) : null}
                   <button type="button" className="client-fin__btn-ghost" onClick={() => window.print()}>
                     Print
                   </button>
@@ -3044,9 +3824,15 @@ export default function ClientFinancialWorkspace({
                         Charge to
                         <select
                           value={linePatientId ?? ''}
-                          onChange={(e) => setLinePatientId(e.target.value ? Number(e.target.value) : null)}
+                          onChange={(e) => {
+                            const next = e.target.value ? Number(e.target.value) : null;
+                            if (next != null) setLinePatientId(next);
+                          }}
+                          disabled={!chargePets.length}
                         >
-                          <option value="">Household</option>
+                          {!chargePets.length ? (
+                            <option value="">No pets on this account</option>
+                          ) : null}
                           {chargePets.map((p) => (
                             <option key={p.id} value={p.id}>
                               {p.name}
@@ -3085,8 +3871,38 @@ export default function ClientFinancialWorkspace({
                       {searching ? <span className="client-fin__muted">Searching…</span> : null}
                     </div>
                   </div>
-                  {hits.length ? (
+                  {bundleHits.length || hits.length ? (
                     <ul className="client-fin__hits">
+                      {bundleHits.map((bundle) => {
+                        const choiceCount = bundle.groups.filter(
+                          (g) => g.selectionMode === 'choice' || g.selectionMode === 'any',
+                        ).length;
+                        return (
+                          <li key={`bundle-${bundle.id}`}>
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => void pickBundle(bundle)}
+                            >
+                              <span>
+                                <Plus size={14} aria-hidden /> {bundle.name}
+                                <span className="client-fin__muted">
+                                  {' '}
+                                  · Bundle
+                                  {choiceCount
+                                    ? ` · choose ${choiceCount} option group${choiceCount === 1 ? '' : 's'}`
+                                    : ''}
+                                </span>
+                              </span>
+                              {bundle.price != null && bundle.price > 0 ? (
+                                <PriceShown charged={bundle.price} />
+                              ) : (
+                                <span className="client-fin__muted">expand</span>
+                              )}
+                            </button>
+                          </li>
+                        );
+                      })}
                       {hits.map((item) => (
                         <li key={`${item.itemType}-${item.name}`}>
                           <button type="button" disabled={busy} onClick={() => void addItem(item)}>
@@ -3135,23 +3951,106 @@ export default function ClientFinancialWorkspace({
                       </tr>
                     </thead>
                     <tbody>
-                      {[...lineGroups.parents, ...lineGroups.leftover].map((line) => {
+                      {invoiceLineBlocks.map((block) => {
+                        const blockLines = block.kind === 'bundle' ? block.lines : [block.line];
+                        const bundleAmount =
+                          block.kind === 'bundle'
+                            ? block.lines.reduce(
+                                (sum, row) => sum + (row.isCovered ? 0 : Number(row.amount) || 0),
+                                0,
+                              )
+                            : 0;
+                        const bundleShipped =
+                          block.kind === 'bundle'
+                            ? block.lines.map((row) => shippedMailForLine(row)).find(Boolean)
+                            : null;
+                        return (
+                          <Fragment
+                            key={
+                              block.kind === 'bundle' ? `bundle-${block.saleId}` : block.line.id
+                            }
+                          >
+                            {block.kind === 'bundle' ? (
+                              <tr className="client-fin__bundle-head">
+                                <td className="client-fin__col-item" colSpan={3}>
+                                  <div className="client-fin__bundle-label">
+                                    <span className="client-fin__bundle-name">{block.name}</span>
+                                    <span className="client-fin__bundle-meta">
+                                      Bundle · {block.lines.length} item
+                                      {block.lines.length === 1 ? '' : 's'}
+                                    </span>
+                                  </div>
+                                </td>
+                                <td className="client-fin__col-qty" />
+                                <td className="client-fin__col-price" />
+                                <td className="client-fin__col-amount client-fin__num">
+                                  {money(bundleAmount)}
+                                </td>
+                                {returning && canReturn ? <td /> : null}
+                                {canRemoveLines ? (
+                                  <td className="client-fin__row-action">
+                                    <button
+                                      type="button"
+                                      className="client-fin__btn-ghost"
+                                      disabled={busy || Boolean(bundleShipped)}
+                                      title={
+                                        bundleShipped
+                                          ? shippedMailMessage(bundleShipped)
+                                          : `Remove all services in ${block.name}`
+                                      }
+                                      onClick={() =>
+                                        void removeBundleSale(block.saleId, block.name, block.lines)
+                                      }
+                                      aria-label={`Remove bundle ${block.name}`}
+                                    >
+                                      <X size={14} />
+                                    </button>
+                                  </td>
+                                ) : null}
+                              </tr>
+                            ) : null}
+                            {blockLines.map((line) => {
+                        const nestedUnderBundle = block.kind === 'bundle';
                         const draft = draftOf(line);
                         const directions = draft.instructions;
                         const refills = draft.refillCount;
                         const refillEntered = refills.trim() !== '';
                         const refillCount = refillEntered ? Number(refills) : NaN;
-                        const showMeta = isPrescriptionLine(line);
+                        const showVaxMeta = isVaccineLine(line);
+                        const showRxMeta = isPrescriptionLine(line) && !showVaxMeta;
+                        const stockDraw = line.orderId
+                          ? stockDrawsByOrderId[line.orderId] ?? null
+                          : null;
+                        const linkedStock = linkedStockFromLine(line, stockDraw);
+                        const showLotOnly =
+                          Boolean(line.trackLots) &&
+                          !showVaxMeta &&
+                          !showRxMeta &&
+                          !linkedStock.linked;
+                        const showMeta = showRxMeta || showVaxMeta || showLotOnly;
                         const attachedShipping = lineGroups.attached.get(line.id) ?? [];
-                        const dirty = canEdit && lineSigDirty(line);
+                        const attachedTagalongs = tagalongGroups.attached.get(line.id) ?? [];
+                        const dirty = canEdit && showRxMeta && lineSigDirty(line);
                         const needsReapprove = Boolean(sigNeedsReapprove[line.id]);
                         const mailedLineOrder = mailOrderForLine(line);
-                        const approveMissing = approveScriptMissing(
-                          line,
-                          draft,
-                          selected,
-                          Boolean(mailedLineOrder)
+                        const fulfillSibling = visibleLines.find(
+                          (other) =>
+                            other.id !== line.id &&
+                            sameFulfillmentProduct(other, line) &&
+                            Boolean(mailOrderForLine(other)) !== Boolean(mailedLineOrder)
                         );
+                        /** Mail half of a split: nest under the give-today row instead of a second product. */
+                        const isMailSplitChild = Boolean(mailedLineOrder && fulfillSibling);
+                        /** In-clinic half when the rest of this charge is on the mail queue. */
+                        const isClinicSplitParent = Boolean(!mailedLineOrder && fulfillSibling);
+                        const approveMissing = showRxMeta
+                          ? approveScriptMissing(
+                              line,
+                              draft,
+                              selected,
+                              Boolean(mailedLineOrder)
+                            )
+                          : null;
                         const rxOpen = Boolean(rxRowOpenIds[line.id]);
                         const toggleRxRow = () => {
                           setRxRowOpenIds((prev) => {
@@ -3163,24 +4062,40 @@ export default function ClientFinancialWorkspace({
                             return { ...prev, [line.id]: true };
                           });
                         };
-                        const scriptReady = Boolean(directions.trim());
                         const scriptApproved =
                           Boolean(line.rxApprovedAt) && !dirty && !needsReapprove;
                         const noProviderLine = lineExcludesFromProduction(
                           line,
                           shippingIdSet
                         );
+                        const vaccineRecorded =
+                          line.orderId != null
+                            ? Boolean(vaccineByOrderId[line.orderId])
+                            : true;
+                        const vaccineLotId =
+                          (line.orderId &&
+                            vaccineByOrderId[line.orderId]?.inventoryLotBalanceId) ||
+                          line.inventoryLotBalanceId;
                         const lotReady =
-                          !line.trackLots ||
-                          Boolean(mailedLineOrder) ||
-                          line.inventoryLotBalanceId != null;
-                        const lineReady = showMeta
+                          showVaxMeta
+                            ? Boolean(mailedLineOrder) ||
+                              vaccineLotId != null ||
+                              (line.stockInventoryItemId == null &&
+                                line.catalogItemId == null)
+                            : !line.trackLots ||
+                              Boolean(mailedLineOrder) ||
+                              line.inventoryLotBalanceId != null;
+                        const lineReady = showRxMeta
                           ? scriptApproved && !approveMissing && lotReady
-                          : (noProviderLine || line.providerEmployeeId != null) && lotReady;
+                          : showVaxMeta
+                            ? (noProviderLine || line.providerEmployeeId != null) &&
+                              vaccineRecorded &&
+                              lotReady
+                            : (noProviderLine || line.providerEmployeeId != null) && lotReady;
                         const shippedMail = shippedMailForLine(line);
                         // No branch check here: mail order decides where it fills from,
                         // so requiring one before you can mail is backwards.
-                        const mailBlockedReason = !showMeta
+                        const mailBlockedReason = !showRxMeta
                           ? null
                           : !scriptApproved
                             ? approveMissing || 'Approve the script first'
@@ -3305,7 +4220,7 @@ export default function ClientFinancialWorkspace({
                           />
                         ) : null;
                         const approveButton =
-                          showMeta && canEdit && !scriptApproved ? (
+                          showRxMeta && canEdit && !scriptApproved ? (
                             <button
                               type="button"
                               className="client-fin__btn client-fin__btn-approve"
@@ -3318,7 +4233,7 @@ export default function ClientFinancialWorkspace({
                             >
                               Approve
                             </button>
-                          ) : showMeta && scriptApproved ? (
+                          ) : showRxMeta && scriptApproved ? (
                             <span className="client-fin__entered">
                               Approved
                               {line.rxApprovedByName
@@ -3326,14 +4241,6 @@ export default function ClientFinancialWorkspace({
                                 : ''}
                             </span>
                           ) : null;
-                        const lineEnteredBy = staffShortName(
-                          line.enteredByEmployeeId != null
-                            ? staffById.get(line.enteredByEmployeeId)
-                            : line.instructionsEnteredByEmployeeId != null
-                              ? staffById.get(line.instructionsEnteredByEmployeeId)
-                              : undefined,
-                          line.enteredByName ?? line.instructionsEnteredByName
-                        );
                         const sigEnteredBy = staffShortName(
                           line.instructionsEnteredByEmployeeId != null
                             ? staffById.get(line.instructionsEnteredByEmployeeId)
@@ -3342,7 +4249,13 @@ export default function ClientFinancialWorkspace({
                         );
                         return (
                         <Fragment key={line.id}>
-                        <tr className={lineReady ? 'client-fin__line--ready' : 'client-fin__line--pending'}>
+                        <tr
+                          className={`${lineReady ? 'client-fin__line--ready' : 'client-fin__line--pending'}${
+                            nestedUnderBundle ? ' client-fin__bundle-child' : ''
+                          }${isMailSplitChild ? ' client-fin__line--mail-split' : ''}${
+                            isClinicSplitParent ? ' client-fin__line--clinic-split' : ''
+                          }`}
+                        >
                           <td className="client-fin__col-item">
                             {showMeta ? (
                               <button
@@ -3352,21 +4265,39 @@ export default function ClientFinancialWorkspace({
                                 onClick={toggleRxRow}
                               >
                                 {rxOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                                <span className="client-fin__item-name">{line.description}</span>
+                                <span className="client-fin__item-name">
+                                  {isMailSplitChild ? 'Mailing' : line.description}
+                                </span>
+                                {isMailSplitChild || mailedLineOrder ? (
+                                  <span className="client-fin__fulfill-pill client-fin__fulfill-pill--mail">
+                                    Mail
+                                  </span>
+                                ) : null}
+                                {isClinicSplitParent ? (
+                                  <span className="client-fin__fulfill-pill">Give today</span>
+                                ) : null}
                                 {lineReady ? (
                                   <Check className="client-fin__line-check" size={14} aria-label="All set" />
                                 ) : null}
                               </button>
                             ) : (
                               <div className="client-fin__item-name">
-                                {line.description}
+                                {isMailSplitChild ? 'Mailing' : line.description}
+                                {isMailSplitChild || mailedLineOrder ? (
+                                  <span className="client-fin__fulfill-pill client-fin__fulfill-pill--mail">
+                                    Mail
+                                  </span>
+                                ) : null}
+                                {isClinicSplitParent ? (
+                                  <span className="client-fin__fulfill-pill">Give today</span>
+                                ) : null}
                                 {lineReady ? (
                                   <Check className="client-fin__line-check" size={14} aria-label="All set" />
                                 ) : null}
                               </div>
                             )}
-                            {lineEnteredBy ? (
-                              <div className="client-fin__item-by">{lineEnteredBy}</div>
+                            {isMailSplitChild ? (
+                              <div className="client-fin__item-by">{line.description}</div>
                             ) : null}
                             {line.hideOnInvoice ? (
                               <div
@@ -3376,12 +4307,29 @@ export default function ClientFinancialWorkspace({
                                 Not shown on client invoice
                               </div>
                             ) : null}
-                            {line.trackLots && !mailedLineOrder ? (
+                            {showMeta &&
+                            !rxOpen &&
+                            ((showVaxMeta && !vaccineRecorded) ||
+                              (line.trackLots &&
+                                !linkedStock.linked &&
+                                !mailedLineOrder &&
+                                line.inventoryLotBalanceId == null)) ? (
+                              <div className="client-fin__item-by">
+                                {showVaxMeta && !vaccineRecorded
+                                  ? linkedStock.linked
+                                    ? 'Dose needed — expand to record'
+                                    : 'Dose / lot needed — expand to edit'
+                                  : 'Lot needed — expand to choose'}
+                              </div>
+                            ) : null}
+                            {/* Non-Rx / non-vax inventory: lot stays on the row. Expandable lines keep lots inside. */}
+                            {line.trackLots && !mailedLineOrder && !showMeta && !linkedStock.linked ? (
                               <StockLotPicker
                                 practiceId={VISIT_WORKFLOW_PRACTICE_ID}
                                 inventoryItemId={line.stockInventoryItemId ?? line.catalogItemId ?? null}
                                 branchId={selected?.inventoryBranchId ?? null}
                                 locationId={selected?.inventoryLocationId ?? null}
+                                itemName={line.description}
                                 disabled={!canEdit || busy}
                                 selectedLotId={line.inventoryLotBalanceId ?? null}
                                 lotNumber={line.lotNumber ?? ''}
@@ -3392,19 +4340,20 @@ export default function ClientFinancialWorkspace({
                                   });
                                 }}
                               />
-                            ) : line.trackLots && mailedLineOrder ? (
-                              <p className="client-fin__fulfill-note">
-                                Mail order will ask which lot to decrement when this is filled.
-                              </p>
+                            ) : line.trackLots && mailedLineOrder && !showMeta ? (
+                              <p className="client-fin__fulfill-note">Lot chosen when filled</p>
                             ) : null}
                             {isPrescriptionLine(line) && !showMeta ? rxPrintButton : null}
                           </td>
                           <td className="client-fin__col-pet">
-                            {canEdit ? (
+                            {isMailSplitChild ? (
+                              <span className="client-fin__muted">{petName(line.patientId, line.patientName)}</span>
+                            ) : canEdit ? (
                               <select
                                 value={line.patientId ?? ''}
                                 onChange={(e) => {
                                   const patientId = e.target.value ? Number(e.target.value) : null;
+                                  if (patientId == null) return;
                                   void patchLine(line, {
                                     patientId,
                                     ...(noProviderLine
@@ -3418,7 +4367,11 @@ export default function ClientFinancialWorkspace({
                                   });
                                 }}
                               >
-                                <option value="">—</option>
+                                {line.patientId == null ? (
+                                  <option value="" disabled>
+                                    Select pet…
+                                  </option>
+                                ) : null}
                                 {petsForChargeSelect(allPets, useInactivePets, line.patientId).map((p) => (
                                   <option key={p.id} value={p.id}>
                                     {p.name}
@@ -3566,8 +4519,61 @@ export default function ClientFinancialWorkspace({
                           ) : null}
                         </tr>
                         {showMeta && rxOpen ? (
+                          showVaxMeta ? (
+                          <tr className={`client-fin__line-meta ${lineReady ? 'client-fin__line--ready' : 'client-fin__line--pending'}${isMailSplitChild ? ' client-fin__line--mail-split' : ''}`}>
+                            <td colSpan={returning && canReturn ? 7 : 6}>
+                              {linkedStock.linked && !mailedLineOrder ? (
+                                <LinkedStockInvoiceDetails
+                                  line={line}
+                                  stockDraw={stockDraw}
+                                  practiceId={VISIT_WORKFLOW_PRACTICE_ID}
+                                  providerId={line.providerEmployeeId}
+                                  branchId={selected?.inventoryBranchId}
+                                  locationId={selected?.inventoryLocationId}
+                                  disabled={!canEdit || busy}
+                                  onSelectLot={(lot) => {
+                                    void patchLine(line, {
+                                      inventoryLotBalanceId: lot?.id ?? null,
+                                      lotNumber: lot?.lotNumber || null,
+                                    });
+                                  }}
+                                />
+                              ) : null}
+                              <InvoiceVaccineDoseEditor
+                                line={line}
+                                disabled={!canEdit || busy}
+                                hideLotPicker={linkedStock.linked}
+                                branchId={selected?.inventoryBranchId}
+                                locationId={selected?.inventoryLocationId}
+                                recorded={
+                                  line.orderId ? vaccineByOrderId[line.orderId] ?? null : null
+                                }
+                                onSaved={(saved) => {
+                                  if (!saved.encounterOrderId) return;
+                                  setVaccineByOrderId((prev) => ({
+                                    ...prev,
+                                    [saved.encounterOrderId as string]: saved,
+                                  }));
+                                  if (saved.inventoryLotBalanceId != null) {
+                                    void patchLine(line, {
+                                      inventoryLotBalanceId: saved.inventoryLotBalanceId,
+                                      lotNumber: saved.lotNumber ?? null,
+                                    });
+                                  }
+                                }}
+                                onLotPicked={(pick) => {
+                                  void patchLine(line, {
+                                    inventoryLotBalanceId: pick.lotId,
+                                    lotNumber: pick.lotNumber,
+                                  });
+                                }}
+                              />
+                            </td>
+                            {canRemoveLines ? <td className="client-fin__row-action" /> : null}
+                          </tr>
+                          ) : (
                           <>
-                          <tr className={`client-fin__line-meta ${lineReady ? 'client-fin__line--ready' : 'client-fin__line--pending'}`}>
+                          <tr className={`client-fin__line-meta ${lineReady ? 'client-fin__line--ready' : 'client-fin__line--pending'}${isMailSplitChild ? ' client-fin__line--mail-split' : ''}`}>
                             <td colSpan={3}>
                               {canEdit ? (
                                 <label className="client-fin__sig">
@@ -3586,7 +4592,6 @@ export default function ClientFinancialWorkspace({
                                     ) : sigEnteredBy ? (
                                       <span className="client-fin__entered">Entered by {sigEnteredBy}</span>
                                     ) : null}
-                                    {approveButton}
                                     {rxPrintButton}
                                   </span>
                                   <textarea
@@ -3612,6 +4617,30 @@ export default function ClientFinancialWorkspace({
                             </td>
                             <td colSpan={returning && canReturn ? 4 : 3}>
                               <div className="client-fin__rx-extras">
+                                {line.trackLots && !mailedLineOrder && !linkedStock.linked ? (
+                                  <div className="client-fin__rx-field client-fin__rx-lot">
+                                    <StockLotPicker
+                                      practiceId={VISIT_WORKFLOW_PRACTICE_ID}
+                                      inventoryItemId={
+                                        line.stockInventoryItemId ?? line.catalogItemId ?? null
+                                      }
+                                      branchId={selected?.inventoryBranchId ?? null}
+                                      locationId={selected?.inventoryLocationId ?? null}
+                                      itemName={line.description}
+                                      disabled={!canEdit || busy}
+                                      selectedLotId={line.inventoryLotBalanceId ?? null}
+                                      lotNumber={line.lotNumber ?? ''}
+                                      onChange={(pick) => {
+                                        void patchLine(line, {
+                                          inventoryLotBalanceId: pick.lotId,
+                                          lotNumber: pick.lotNumber || null,
+                                        });
+                                      }}
+                                    />
+                                  </div>
+                                ) : line.trackLots && mailedLineOrder ? (
+                                  <p className="client-fin__fulfill-note">Lot chosen when filled</p>
+                                ) : null}
                                 <label className="client-fin__rx-field client-fin__refill">
                                   <span>
                                     # refills *
@@ -3727,6 +4756,9 @@ export default function ClientFinancialWorkspace({
                                     }}
                                   />
                                 </label>
+                                {approveButton ? (
+                                  <div className="client-fin__rx-approve">{approveButton}</div>
+                                ) : null}
                               </div>
                             </td>
                             {canRemoveLines ? <td className="client-fin__row-action" /> : null}
@@ -3757,14 +4789,32 @@ export default function ClientFinancialWorkspace({
                             {canRemoveLines ? <td className="client-fin__row-action" /> : null}
                           </tr>
                           </>
+                          )
+                        ) : null}
+                        {showRxMeta ? (
+                          <tr
+                            className={`client-fin__line-fulfill ${lineReady ? 'client-fin__line--ready' : 'client-fin__line--pending'}${
+                              nestedUnderBundle ? ' client-fin__bundle-child' : ''
+                            }${isMailSplitChild ? ' client-fin__line--mail-split' : ''}`}
+                          >
+                            <td colSpan={returning && canReturn ? 7 : 6}>
+                              <div className="client-fin__rx-fulfill">{mailCheckbox}</div>
+                            </td>
+                            {canRemoveLines ? <td className="client-fin__row-action" /> : null}
+                          </tr>
+                        ) : mailCheckbox ? (
+                          <tr
+                            className={`client-fin__line-fulfill ${lineReady ? 'client-fin__line--ready' : 'client-fin__line--pending'}${
+                              isMailSplitChild ? ' client-fin__line--mail-split' : ''
+                            }`}
+                          >
+                            <td colSpan={returning && canReturn ? 7 : 6}>
+                              <div className="client-fin__rx-fulfill">{mailCheckbox}</div>
+                            </td>
+                            {canRemoveLines ? <td className="client-fin__row-action" /> : null}
+                          </tr>
                         ) : null}
                         {attachedShipping.map((ship) => {
-                          const shipEnteredBy = staffShortName(
-                            ship.enteredByEmployeeId != null
-                              ? staffById.get(ship.enteredByEmployeeId)
-                              : undefined,
-                            ship.enteredByName
-                          );
                           const shippedMail = shippedMailForLine(ship);
                           const shipNoProvider = lineExcludesFromProduction(
                             ship,
@@ -3773,17 +4823,16 @@ export default function ClientFinancialWorkspace({
                           return (
                         <tr
                           key={ship.id}
-                          className={
+                          className={`${
                             shipNoProvider || ship.providerEmployeeId != null
                               ? 'client-fin__line--ready'
                               : 'client-fin__line--pending'
-                          }
+                          } client-fin__line--shipping-child${
+                            isMailSplitChild || mailedLineOrder ? ' client-fin__line--mail-split' : ''
+                          }`}
                         >
                           <td className="client-fin__col-item">
                             <div className="client-fin__item-name">{ship.description}</div>
-                            {shipEnteredBy ? (
-                              <div className="client-fin__item-by">{shipEnteredBy}</div>
-                            ) : null}
                           </td>
                           <td className="client-fin__col-pet">
                             {canEdit ? (
@@ -3791,6 +4840,7 @@ export default function ClientFinancialWorkspace({
                                 value={ship.patientId ?? ''}
                                 onChange={(e) => {
                                   const patientId = e.target.value ? Number(e.target.value) : null;
+                                  if (patientId == null) return;
                                   void patchLine(ship, {
                                     patientId,
                                     ...(shipNoProvider
@@ -3804,7 +4854,11 @@ export default function ClientFinancialWorkspace({
                                   });
                                 }}
                               >
-                                <option value="">—</option>
+                                {ship.patientId == null ? (
+                                  <option value="" disabled>
+                                    Select pet…
+                                  </option>
+                                ) : null}
                                 {petsForChargeSelect(allPets, useInactivePets, ship.patientId).map((p) => (
                                   <option key={p.id} value={p.id}>
                                     {p.name}
@@ -3947,15 +5001,70 @@ export default function ClientFinancialWorkspace({
                         </tr>
                           );
                         })}
-                        {showMeta ? (
-                          <tr className={`client-fin__line-fulfill ${lineReady ? 'client-fin__line--ready' : 'client-fin__line--pending'}`}>
-                            <td colSpan={returning && canReturn ? 7 : 6}>
-                              <div className="client-fin__rx-fulfill">{mailCheckbox}</div>
+                        {attachedTagalongs.map((child) => (
+                          <tr
+                            key={child.id}
+                            className="client-fin__line--ready client-fin__line--shipping-child client-fin__line--tagalong"
+                          >
+                            <td className="client-fin__col-item">
+                              <div className="client-fin__item-name">{child.description}</div>
+                              {tagalongTaxHint(child) ? (
+                                <div className="client-fin__item-by">{tagalongTaxHint(child)}</div>
+                              ) : null}
                             </td>
-                            {canRemoveLines ? <td className="client-fin__row-action" /> : null}
+                            <td className="client-fin__col-pet">
+                              {petName(child.patientId, child.patientName)}
+                            </td>
+                            <td className="client-fin__col-provider">—</td>
+                            <td className="client-fin__col-qty client-fin__num">{child.qty}</td>
+                            <td className="client-fin__col-price client-fin__num">
+                              <PriceShown
+                                charged={Number(child.unitPrice) || 0}
+                                list={child.listUnitPrice}
+                                covered={child.isCovered}
+                              />
+                            </td>
+                            <td className="client-fin__col-amount client-fin__num">
+                              {child.isCovered ? (
+                                <span className="client-fin__covered">Covered ❤️</span>
+                              ) : (
+                                money(child.amount)
+                              )}
+                            </td>
+                            {returning && canReturn ? (
+                              <td>
+                                <input
+                                  value={returnQty[child.id] ?? ''}
+                                  onChange={(e) =>
+                                    setReturnQty((prev) => ({
+                                      ...prev,
+                                      [child.id]: e.target.value,
+                                    }))
+                                  }
+                                  placeholder={`≤ ${Math.abs(Number(child.qty) || 0)}`}
+                                />
+                              </td>
+                            ) : null}
+                            {canRemoveLines ? (
+                              <td className="client-fin__row-action">
+                                <button
+                                  type="button"
+                                  className="client-fin__btn-ghost"
+                                  disabled={busy}
+                                  title="Remove tagalong"
+                                  onClick={() => removeLine(child)}
+                                  aria-label="Remove tagalong"
+                                >
+                                  <X size={14} />
+                                </button>
+                              </td>
+                            ) : null}
                           </tr>
-                        ) : null}
+                        ))}
                         </Fragment>
+                        );
+                            })}
+                          </Fragment>
                         );
                       })}
                     </tbody>
@@ -4005,19 +5114,49 @@ export default function ClientFinancialWorkspace({
                             ? `Entered by ${who}`
                             : null
                           : who,
-                        extra: t.checkNumber ? `Check ${t.checkNumber}` : null,
+                        extra: [
+                          t.checkNumber ? `Check ${t.checkNumber}` : null,
+                          Number(t.refundedAmount) > 0.009
+                            ? `Refunded ${money(Number(t.refundedAmount))}`
+                            : null,
+                        ]
+                          .filter(Boolean)
+                          .join(' · ') || null,
                         onVoid:
-                          selected.status !== 'void'
+                          selected.status !== 'void' && !tenderCanStripeRefund(t)
                             ? () => {
                                 void voidPayment(t.id);
                               }
                             : undefined,
+                        onRefund:
+                          selected.status !== 'void' && tenderCanStripeRefund(t)
+                            ? () => {
+                                openRefund(t.id);
+                              }
+                            : undefined,
                       };
+                      const showRefundPanel = refundDraft?.tenderId === t.id;
+                      const peerTotal = (refundDraft?.peers ?? []).reduce(
+                        (s, p) => s + p.refundable,
+                        0
+                      );
+                      const multiPay = (refundDraft?.peers.length ?? 0) > 1;
                       return (
-                        <div key={t.id} className="client-fin__paid-line">
+                        <Fragment key={t.id}>
+                        <div className="client-fin__paid-line">
                           <span>{paymentFaceLabel(face)}</span>
                           <b>
                             {money(face.amount)}
+                            {face.onRefund ? (
+                              <button
+                                type="button"
+                                className="client-fin__btn-ghost client-fin__no-print"
+                                disabled={busy}
+                                onClick={face.onRefund}
+                              >
+                                Refund
+                              </button>
+                            ) : null}
                             {face.onVoid ? (
                               <button
                                 type="button"
@@ -4030,6 +5169,137 @@ export default function ClientFinancialWorkspace({
                             ) : null}
                           </b>
                         </div>
+                        {showRefundPanel && refundDraft ? (
+                          <div
+                            ref={refundPanelRef}
+                            className="client-fin__refund-panel client-fin__no-print"
+                          >
+                            <h4>Refund payment</h4>
+                            <p className="client-fin__muted">
+                              Refunds the client&apos;s card via Stripe.
+                              {refundDraft.peersLoading ? ' Checking for other invoices on this payment…' : null}
+                            </p>
+                            {multiPay ? (
+                              <fieldset className="client-fin__refund-scope">
+                                <legend>This card payment covered {refundDraft.peers.length} invoices</legend>
+                                <label>
+                                  <input
+                                    type="radio"
+                                    name="refund-scope"
+                                    checked={refundDraft.scope === 'this'}
+                                    onChange={() =>
+                                      setRefundDraft((cur) =>
+                                        cur
+                                          ? {
+                                              ...cur,
+                                              scope: 'this',
+                                              amount: cur.maxAmount.toFixed(2),
+                                            }
+                                          : cur
+                                      )
+                                    }
+                                  />
+                                  This invoice only ({money(refundDraft.maxAmount)})
+                                </label>
+                                <label>
+                                  <input
+                                    type="radio"
+                                    name="refund-scope"
+                                    checked={refundDraft.scope === 'all'}
+                                    onChange={() =>
+                                      setRefundDraft((cur) =>
+                                        cur
+                                          ? {
+                                              ...cur,
+                                              scope: 'all',
+                                              amount: peerTotal.toFixed(2),
+                                            }
+                                          : cur
+                                      )
+                                    }
+                                  />
+                                  All invoices on this payment ({money(peerTotal)})
+                                </label>
+                                <ul className="client-fin__refund-peers">
+                                  {refundDraft.peers.map((p) => (
+                                    <li key={p.tenderId}>
+                                      {p.isCurrent ? 'This invoice' : `Invoice #${p.scoutInvoiceNumber ?? p.invoiceId.slice(0, 8)}`}
+                                      {' · '}
+                                      {money(p.refundable)}
+                                    </li>
+                                  ))}
+                                </ul>
+                              </fieldset>
+                            ) : null}
+                            {refundDraft.scope === 'this' ? (
+                              <label className="client-fin__field">
+                                <span>Amount (partial or full)</span>
+                                <input
+                                  type="number"
+                                  min="0.01"
+                                  step="0.01"
+                                  max={refundDraft.maxAmount}
+                                  value={refundDraft.amount}
+                                  onChange={(e) =>
+                                    setRefundDraft((cur) =>
+                                      cur ? { ...cur, amount: e.target.value } : cur
+                                    )
+                                  }
+                                />
+                              </label>
+                            ) : (
+                              <p className="client-fin__muted">
+                                Will refund {money(peerTotal)} total across all linked invoices.
+                              </p>
+                            )}
+                            <label className="client-fin__field">
+                              <span>Reason (optional)</span>
+                              <input
+                                type="text"
+                                value={refundDraft.reason}
+                                placeholder="e.g. Client request"
+                                onChange={(e) =>
+                                  setRefundDraft((cur) =>
+                                    cur ? { ...cur, reason: e.target.value } : cur
+                                  )
+                                }
+                              />
+                            </label>
+                            <div className="client-fin__actions">
+                              {refundDraft.scope === 'this' ? (
+                                <button
+                                  type="button"
+                                  className="client-fin__btn-ghost"
+                                  disabled={busy}
+                                  onClick={() =>
+                                    setRefundDraft((cur) =>
+                                      cur ? { ...cur, amount: cur.maxAmount.toFixed(2) } : cur
+                                    )
+                                  }
+                                >
+                                  Full for this invoice
+                                </button>
+                              ) : null}
+                              <button
+                                type="button"
+                                className="client-fin__btn"
+                                disabled={busy || refundDraft.peersLoading}
+                                onClick={() => void submitRefund()}
+                              >
+                                Process refund
+                              </button>
+                              <button
+                                type="button"
+                                className="client-fin__btn-ghost"
+                                disabled={busy}
+                                onClick={() => setRefundDraft(null)}
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        ) : null}
+                        </Fragment>
                       );
                     })}
                   {liveTenders.length ? <div className="client-fin__pay-sum" aria-hidden /> : null}
@@ -4078,6 +5348,7 @@ export default function ClientFinancialWorkspace({
                       .join(' · '),
                   }))}
               />
+              <StaffInvoiceAudit entries={selected.staffAudit} />
 
               {selected &&
               !invoiceGone &&
@@ -4122,14 +5393,31 @@ export default function ClientFinancialWorkspace({
                     <label className="client-fin__field">
                       Method
                       <select
-                        value={tenderPaymentType ? `type:${tenderPaymentType}` : tenderMethod}
+                        value={
+                          useSavedCard
+                            ? 'saved'
+                            : tenderPaymentType
+                              ? `type:${tenderPaymentType}`
+                              : tenderMethod
+                        }
                         onChange={(e) => {
                           const v = e.target.value;
+                          if (v === 'saved') {
+                            setUseSavedCard(true);
+                            setTenderPaymentType('');
+                            setTenderMethod('card');
+                            return;
+                          }
+                          setUseSavedCard(false);
                           if (v.startsWith('type:')) {
                             const name = v.slice(5);
-                            setTenderMethod('other');
-                            setTenderPaymentType(name);
                             const type = paymentTypes.find((r) => r.name === name);
+                            setTenderPaymentType(name);
+                            setTenderMethod(
+                              type
+                                ? tenderMethodFromOption(type.optionType, type.name)
+                                : 'other',
+                            );
                             const pct = Number(type?.discountPercent) || 0;
                             if (type?.isDiscountCategory && pct > 0) {
                               setTenderAmount(((remaining * pct) / 100).toFixed(2));
@@ -4140,19 +5428,26 @@ export default function ClientFinancialWorkspace({
                           }
                         }}
                       >
-                        <option value="cash">Cash</option>
-                        <option value="check">Check</option>
-                        <option value="carecredit">CareCredit</option>
-                        <option value="other">Other</option>
-                        {paymentTypes
-                          .filter((r) => r.isDiscountCategory && r.isActive !== false)
-                          .map((r) => (
-                            <option key={r.id} value={`type:${r.name}`}>
-                              {r.name}
-                            </option>
-                          ))}
+                        {cardOnFile ? (
+                          <option value="saved">Card on file · {formatCardOnFile(cardOnFile)}</option>
+                        ) : null}
+                        {paymentTypes.map((r) => (
+                          <option key={r.id} value={`type:${r.name}`}>
+                            {r.name}
+                            {r.isDefault ? ' (default)' : ''}
+                          </option>
+                        ))}
+                        {!paymentTypes.length ? (
+                          <>
+                            <option value="cash">Cash</option>
+                            <option value="check">Check</option>
+                            <option value="carecredit">CareCredit</option>
+                            <option value="other">Other</option>
+                          </>
+                        ) : null}
                       </select>
                     </label>
+                    {!useSavedCard && !(selectedPayType && isCreditPaymentType(selectedPayType)) ? (
                     <label className="client-fin__field">
                       Amount
                       <input
@@ -4161,13 +5456,14 @@ export default function ClientFinancialWorkspace({
                         placeholder={String(remaining.toFixed(2))}
                       />
                     </label>
-                    {tenderMethod === 'cash' ? (
+                    ) : null}
+                    {!useSavedCard && tenderMethod === 'cash' ? (
                       <label className="client-fin__field">
                         Cash received
                         <input value={cashReceived} onChange={(e) => setCashReceived(e.target.value)} />
                       </label>
                     ) : null}
-                    {tenderMethod === 'check' ? (
+                    {!useSavedCard && tenderMethod === 'check' ? (
                       <label className="client-fin__field">
                         Check # *
                         <input
@@ -4177,6 +5473,11 @@ export default function ClientFinancialWorkspace({
                           placeholder="Required"
                         />
                       </label>
+                    ) : null}
+                    {useSavedCard && cardOnFile ? (
+                      <p className="client-fin__muted" style={{ gridColumn: '1 / -1', margin: 0 }}>
+                        Charges {formatCardOnFile(cardOnFile)} for {money(remaining)}.
+                      </p>
                     ) : null}
                     {selectedPayType?.isDiscountCategory ? (
                       <p className="client-fin__muted" style={{ gridColumn: '1 / -1', margin: 0 }}>
@@ -4188,11 +5489,52 @@ export default function ClientFinancialWorkspace({
                           : ''}
                       </p>
                     ) : null}
+                    {!useSavedCard && selectedPayType && isCreditPaymentType(selectedPayType) ? (
+                      <div className="client-fin__field" style={{ gridColumn: '1 / -1' }}>
+                        <TerminalReaderPicker
+                          disabled={busy}
+                          onCatalog={setReaderCatalog}
+                        />
+                      </div>
+                    ) : null}
                   </div>
                   <div className="client-fin__actions">
-                    <button type="button" className="client-fin__btn" disabled={busy} onClick={() => void takeTender()}>
-                      Record {methodLabel(tenderMethod, tenderPaymentType)}
-                    </button>
+                    {useSavedCard ? (
+                      <button
+                        type="button"
+                        className="client-fin__btn"
+                        disabled={busy || !cardOnFile}
+                        onClick={() => void takeSavedCard()}
+                      >
+                        Charge card on file
+                      </button>
+                    ) : selectedPayType && isCreditPaymentType(selectedPayType) ? (
+                      terminalJob ? (
+                        <button type="button" className="client-fin__btn-ghost" disabled={busy} onClick={() => void cancelTerminal()}>
+                          Cancel terminal
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="client-fin__btn"
+                          disabled={busy || !readerReady}
+                          title={
+                            !selectedReader
+                              ? 'Select a reader first'
+                              : !readerReady
+                                ? 'That reader is offline'
+                                : ''
+                          }
+                          onClick={() => void sendToTerminal()}
+                        >
+                          Send remaining to terminal
+                        </button>
+                      )
+                    ) : (
+                      <button type="button" className="client-fin__btn" disabled={busy} onClick={() => void takeTender()}>
+                        Record {methodLabel(tenderMethod, tenderPaymentType)}
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="client-fin__btn-ghost"
@@ -4213,41 +5555,6 @@ export default function ClientFinancialWorkspace({
                         Text to Pay
                       </button>
                     ) : null}
-                    {selected.savedPaymentMethodId ? (
-                      <button
-                        type="button"
-                        className="client-fin__btn-ghost"
-                        disabled={busy}
-                        onClick={() => void takeSavedCard()}
-                      >
-                        Charge remaining on saved card
-                      </button>
-                    ) : null}
-                    <TerminalReaderPicker
-                      disabled={busy}
-                      onCatalog={setReaderCatalog}
-                    />
-                    {terminalJob ? (
-                      <button type="button" className="client-fin__btn-ghost" disabled={busy} onClick={() => void cancelTerminal()}>
-                        Cancel terminal
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        className="client-fin__btn-ghost"
-                        disabled={busy || !readerReady}
-                        title={
-                          !selectedReader
-                            ? 'Select a reader first'
-                            : !readerReady
-                              ? 'That reader is offline'
-                              : ''
-                        }
-                        onClick={() => void sendToTerminal()}
-                      >
-                        Send remaining to terminal
-                      </button>
-                    )}
                   </div>
                 </>
               ) : selected && !invoiceGone && selected.status !== 'void' ? (
@@ -4290,31 +5597,54 @@ export default function ClientFinancialWorkspace({
                 </div>
               ) : null}
 
-              {canReturn && !returning ? (
-                <div className="client-fin__actions">
-                  <button type="button" className="client-fin__btn-ghost" disabled={busy} onClick={() => setReturning(true)}>
-                    Return items
-                  </button>
-                </div>
-              ) : null}
-
               {canReturn && returning ? (
-                <div className="client-fin__actions">
-                  <button type="button" className="client-fin__btn" disabled={busy} onClick={() => void submitReturns()}>
-                    Return selected quantities
-                  </button>
-                  <button
-                    type="button"
-                    className="client-fin__btn-ghost"
-                    disabled={busy}
-                    onClick={() => {
-                      setReturning(false);
-                      setReturnQty({});
-                      setNote(null);
-                    }}
-                  >
-                    Cancel
-                  </button>
+                <div className="client-fin__actions client-fin__actions--stack">
+                  {(() => {
+                    const estimated = estimateReturnRefund(lines, returnQty);
+                    const cardAvail = invoiceCardRefundable(selected);
+                    return (
+                      <>
+                        {estimated > 0.009 ? (
+                          <p className="client-fin__muted">
+                            Return total {money(estimated)}
+                            {cardAvail > 0.009
+                              ? ` · ${money(cardAvail)} refundable on card`
+                              : ' · no card payment to refund (will open account credit)'}
+                          </p>
+                        ) : null}
+                        {cardAvail > 0.009 ? (
+                          <button
+                            type="button"
+                            className="client-fin__btn"
+                            disabled={busy || estimated <= 0.009}
+                            onClick={() => void submitReturns(true)}
+                          >
+                            Return &amp; refund {estimated > 0.009 ? money(estimated) : ''}
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          className="client-fin__btn-ghost"
+                          disabled={busy || estimated <= 0.009}
+                          onClick={() => void submitReturns(false)}
+                        >
+                          Return as account credit
+                        </button>
+                        <button
+                          type="button"
+                          className="client-fin__btn-ghost"
+                          disabled={busy}
+                          onClick={() => {
+                            setReturning(false);
+                            setReturnQty({});
+                            setNote(null);
+                          }}
+                        >
+                          Cancel
+                        </button>
+                      </>
+                    );
+                  })()}
                 </div>
               ) : null}
 
@@ -4403,7 +5733,7 @@ export default function ClientFinancialWorkspace({
         }
         initialBodyText={
           payCompose
-            ? applySystemTemplateIfCustom(
+            ? applySystemTemplate(
                 'payment_link_email',
                 payLinkMerge(
                   clientName,
@@ -4411,7 +5741,7 @@ export default function ClientFinancialWorkspace({
                   payCompose.labels.join(', '),
                   payCompose.url,
                 ),
-                `Hi ${clientName.split(' ')[0] || 'there'},\n\nHere is a secure Stripe link to pay ${money(payCompose.amount)} for ${payCompose.labels.join(', ')}:\n\n${payCompose.url}\n\nThank you.`,
+                `Hi ${firstNameFromDisplayName(clientName) || 'there'},\n\nHere is a secure Stripe link to pay ${money(payCompose.amount)} for ${payCompose.labels.join(', ')}:\n\n${payCompose.url}\n\nThank you.`,
               )
             : ''
         }
@@ -4456,6 +5786,30 @@ export default function ClientFinancialWorkspace({
           })();
         }}
       />
+      {bundlePicker ? (
+        <BundleSalePickerModal
+          bundle={bundlePicker}
+          onCancel={() => setBundlePicker(null)}
+          onResolved={(resolution) => addBundleSaleLines(resolution)}
+        />
+      ) : null}
+      {coveragePrompt ? (
+        <MembershipCoveragePickerModal
+          itemName={coveragePrompt.itemName}
+          alternatives={coveragePrompt.alternatives}
+          initialId={coveragePrompt.initialId}
+          onCancel={() => {
+            coverageChoiceResolveRef.current?.(null);
+            coverageChoiceResolveRef.current = null;
+            setCoveragePrompt(null);
+          }}
+          onPick={(id) => {
+            coverageChoiceResolveRef.current?.(id);
+            coverageChoiceResolveRef.current = null;
+            setCoveragePrompt(null);
+          }}
+        />
+      ) : null}
     </div>
   );
 }

@@ -9,7 +9,8 @@ import {
 type Props = {
   value: string;
   onChange: (htmlOrText: string) => void;
-  onBlur: () => void;
+  /** Called with the latest editor value so parents never save a stale React state. */
+  onBlur: (value: string) => void;
   disabled?: boolean;
   placeholder?: string;
   className?: string;
@@ -53,13 +54,15 @@ export default function SoapRichTextField({
     if (el.innerHTML !== next) el.innerHTML = next;
   }, [value]);
 
-  function emitFromDom() {
+  function emitFromDom(): string {
     const el = rootRef.current;
-    if (!el) return;
+    if (!el) return value ?? '';
     const html = sanitizeSoapHtml(el.innerHTML);
     const plain = soapHtmlToPlainText(html);
     // Keep plain storage when there's no formatting — easier for copy/paste & older consumers.
-    onChange(/<(strong|b)\b/i.test(html) ? html : plain);
+    const next = /<(strong|b)\b/i.test(html) ? html : plain;
+    onChange(next);
+    return next;
   }
 
   function runBold() {
@@ -93,8 +96,7 @@ export default function SoapRichTextField({
         aria-multiline="true"
         onInput={emitFromDom}
         onBlur={() => {
-          emitFromDom();
-          onBlur();
+          onBlur(emitFromDom());
         }}
       />
     </div>

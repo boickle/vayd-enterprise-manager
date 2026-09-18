@@ -38,6 +38,10 @@ type Props = {
   disabled?: boolean;
   /** Restrict the list to one catalog table. */
   onlyTypes?: ItemType[];
+  /** Hide rows already on the line / OR (same catalog table + id). */
+  exclude?: ReadonlyArray<{ itemType: ItemType; catalogItemId: number }>;
+  /** Focus the search field when the picker mounts (e.g. after clicking OR). */
+  autoFocus?: boolean;
 };
 
 /**
@@ -52,13 +56,20 @@ export default function CatalogItemPicker({
   placeholder = 'Search products, labs, procedures…',
   disabled = false,
   onlyTypes,
+  exclude,
+  autoFocus = false,
 }: Props) {
   const [query, setQuery] = useState('');
   const [rows, setRows] = useState<SearchResultItem[]>([]);
   const [searching, setSearching] = useState(false);
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const seq = useRef(0);
+  const excludeKey = (exclude ?? [])
+    .map((e) => `${e.itemType}:${e.catalogItemId}`)
+    .sort()
+    .join('|');
 
   useEffect(() => {
     const q = query.trim();
@@ -67,6 +78,7 @@ export default function CatalogItemPicker({
       setSearching(false);
       return;
     }
+    const blocked = new Set(excludeKey ? excludeKey.split('|') : []);
     const mine = ++seq.current;
     setSearching(true);
     const timer = window.setTimeout(() => {
@@ -74,9 +86,13 @@ export default function CatalogItemPicker({
         .then((found) => {
           if (seq.current !== mine) return;
           setRows(
-            found.filter(
-              (r) => catalogItemIdOf(r) != null && (!onlyTypes || onlyTypes.includes(r.itemType))
-            )
+            found.filter((r) => {
+              const id = catalogItemIdOf(r);
+              if (id == null) return false;
+              if (onlyTypes && !onlyTypes.includes(r.itemType)) return false;
+              if (blocked.has(`${r.itemType}:${id}`)) return false;
+              return true;
+            })
           );
         })
         .catch(() => {
@@ -87,7 +103,7 @@ export default function CatalogItemPicker({
         });
     }, 250);
     return () => window.clearTimeout(timer);
-  }, [query, practiceId, onlyTypes]);
+  }, [query, practiceId, onlyTypes, excludeKey]);
 
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
@@ -103,6 +119,15 @@ export default function CatalogItemPicker({
       document.removeEventListener('keydown', onKey);
     };
   }, []);
+
+  useEffect(() => {
+    if (!autoFocus || value || disabled) return;
+    const id = window.requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      setOpen(true);
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [autoFocus, value, disabled]);
 
   if (value) {
     return (
@@ -133,6 +158,7 @@ export default function CatalogItemPicker({
       <div className="cat-item-picker__field">
         <Search size={14} aria-hidden className="cat-item-picker__field-icon" />
         <input
+          ref={inputRef}
           type="text"
           className="cat-item-picker__input"
           value={query}

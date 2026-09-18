@@ -123,7 +123,9 @@ export async function getScribeSession(
 export async function structureTranscript(
   soapEncounterId: string,
   transcript: string,
-  patients?: TranscriptPatientRosterEntry[]
+  patients?: TranscriptPatientRosterEntry[],
+  /** Names already on the plan/invoice, so the model doesn't re-suggest them for checkout. */
+  existingOrderNames?: string[]
 ): Promise<ScribeSuggestion | MultiPatientScribeSuggestion> {
   const { data } = await http.post<ScribeSuggestion | MultiPatientScribeSuggestion>(
     `/soap-encounters/${encodeURIComponent(soapEncounterId)}/scribe/structure`,
@@ -131,6 +133,7 @@ export async function structureTranscript(
       practiceId: VISIT_WORKFLOW_PRACTICE_ID,
       transcript,
       ...(patients && patients.length > 1 ? { patients } : {}),
+      ...(existingOrderNames?.length ? { existingOrderNames } : {}),
     }
   );
   return data;

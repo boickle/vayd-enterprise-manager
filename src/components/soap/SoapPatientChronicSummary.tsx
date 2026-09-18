@@ -102,6 +102,15 @@ export default function SoapPatientChronicSummary({
   };
 
   const discontinueMedication = async (rx: PatientPrescription) => {
+    if (rx.autoshipStartedAt) {
+      const ok = window.confirm(
+        `Cancel auto-ship for ${rx.name}?\n\nThis cancels the Stripe subscription and emails the client. The medication will leave the chronic list.\n\nChoose Cancel to keep auto-ship and leave it on the list.`
+      );
+      if (!ok) return;
+    } else {
+      const ok = window.confirm(`Stop ${rx.name}? It will leave the chronic medications list.`);
+      if (!ok) return;
+    }
     setBusyId(rx.id);
     try {
       onMedicationUpdated(await updatePatientPrescription(rx.id, { discontinued: true }));
@@ -225,6 +234,15 @@ export default function SoapPatientChronicSummary({
               <li key={rx.id} className="soap-scribe-chronic-item">
                 <span className="soap-scribe-chronic-item-label">
                   {rx.name}
+                  {rx.autoshipStartedAt ? (
+                    <span
+                      className="soap-scribe-chronic-autoship"
+                      title={`Auto-ship started ${new Date(rx.autoshipStartedAt).toLocaleDateString()}`}
+                    >
+                      {' '}
+                      · auto-ship
+                    </span>
+                  ) : null}
                   {rx.inventoryItemId != null ? (
                     <span
                       className="soap-scribe-chronic-catalog"

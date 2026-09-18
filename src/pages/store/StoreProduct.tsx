@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import {
   publicStoreProduct,
@@ -7,8 +7,11 @@ import {
   type StoreListing,
 } from '../../api/onlineStore';
 import { enhanceStoreDescriptionHtml, storeListingIdFromHref } from '../../utils/storeDescriptionLinks';
-import { addToStoreCart, AUTOSHIP_FREQS } from './storeCartState';
+import { addToStoreCart, AUTOSHIP_FREQS, formatAutoshipFrequency } from './storeCartState';
 import { applyStoreSale, formatSaleEnds, isStoreSaleActive, storeUnitPrice } from './storePricing';
+import { expandStoreTagalongs } from '../../utils/storeTagalongs';
+import { storeRecommendedFrequency } from '../../utils/storeReminderFrequency';
+import StoreRebatePromo from './StoreRebatePromo';
 import './Store.css';
 
 const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
@@ -77,36 +80,46 @@ export default function StoreProduct() {
   const canAutoship = Boolean(
     selected?.inventoryItemId && (item?.variants || []).some((row) => row.inventoryItemId)
   );
+  const recommendedFreq = storeRecommendedFrequency(
+    selected?.reminderCadence,
+    selected?.recommendedFrequency,
+    Math.max(1, Math.floor(Number(qty) || 1))
+  );
+  const lastRecommendedRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    lastRecommendedRef.current = null;
+  }, [selected?.inventoryItemId, selected?.procedureId]);
 
   useEffect(() => {
     if (!canAutoship) {
       setMode('once');
       setCustomOn(false);
+      lastRecommendedRef.current = null;
       return;
     }
-    const recommended = selected?.recommendedFrequency || '';
-    const preset = AUTOSHIP_FREQS.some((row) => row.value === recommended);
-    if (recommended) {
-      setMode('autoship');
-      if (preset) {
-        setFreq(recommended);
-        setCustomOn(false);
-      } else {
-        const custom = /^every_(\d+)_(days|weeks|months)$/i.exec(recommended);
-        if (custom) {
-          setCustomOn(true);
-          setCustomCount(Math.max(1, Number(custom[1]) || 1));
-          setCustomUnit(custom[2].toLowerCase() as 'days' | 'weeks' | 'months');
-        } else {
-          setFreq('monthly');
-          setCustomOn(false);
-        }
-      }
+    if (!recommendedFreq) return;
+    const current = customOn ? `every_${customCount}_${customUnit}` : freq;
+    const shouldSnap =
+      !lastRecommendedRef.current || current === lastRecommendedRef.current;
+    lastRecommendedRef.current = recommendedFreq;
+    if (!shouldSnap) return;
+    setMode('autoship');
+    if (AUTOSHIP_FREQS.some((row) => row.value === recommendedFreq)) {
+      setFreq(recommendedFreq);
+      setCustomOn(false);
+      return;
+    }
+    const custom = /^every_(\d+)_(days|weeks|months)$/i.exec(recommendedFreq);
+    if (custom) {
+      setCustomOn(true);
+      setCustomCount(Math.max(1, Number(custom[1]) || 1));
+      setCustomUnit(custom[2].toLowerCase() as 'days' | 'weeks' | 'months');
     } else {
-      setMode('once');
+      setFreq(recommendedFreq);
       setCustomOn(false);
     }
-  }, [canAutoship, selected?.inventoryItemId, selected?.procedureId, selected?.recommendedFrequency]);
+  }, [canAutoship, customCount, customOn, customUnit, freq, recommendedFreq]);
 
   if (!item) return <p>Loading…</p>;
 
@@ -121,6 +134,9 @@ export default function StoreProduct() {
   const saleOn = isStoreSaleActive(item);
   const unitPrice = applyStoreSale(tierPrice, item);
   const lineTotal = unitPrice * safeQty;
+  const qualifyingTagalongs = selected
+    ? expandStoreTagalongs({ quantity: safeQty }, selected.tagalongs)
+    : [];
   const compareAt =
     saleOn && unitPrice < tierPrice
       ? tierPrice
@@ -271,6 +287,7 @@ export default function StoreProduct() {
             </button>
           </div>
         </div>
+        <StoreRebatePromo rules={selected?.tagalongs} extras={qualifyingTagalongs} />
         {canAutoship ? (
         <div className="vayd-store__option">
           <div className="vayd-store__option-label">Purchase</div>
@@ -288,7 +305,7 @@ export default function StoreProduct() {
               onClick={() => {
                 setMode('autoship');
                 if (!freq && !customOn) {
-                  setFreq(selected?.recommendedFrequency || 'monthly');
+                  setFreq(recommendedFreq || 'monthly');
                 }
               }}
             >
@@ -313,9 +330,31 @@ export default function StoreProduct() {
                   }}
                 >
                   {f.label}
-                  {selected?.recommendedFrequency === f.value ? ' (recommended)' : ''}
+                  {recommendedFreq === f.value ? ' (recommended)' : ''}
                 </button>
               ))}
+              {recommendedFreq &&
+              !AUTOSHIP_FREQS.some((row) => row.value === recommendedFreq) ? (
+                <button
+                  type="button"
+                  className={`vayd-store__chip${!customOn && freq === recommendedFreq ? ' is-on' : ''}${
+                    customOn && `every_${customCount}_${customUnit}` === recommendedFreq ? ' is-on' : ''
+                  }`}
+                  onClick={() => {
+                    const custom = /^every_(\d+)_(days|weeks|months)$/i.exec(recommendedFreq);
+                    if (custom) {
+                      setCustomOn(true);
+                      setCustomCount(Math.max(1, Number(custom[1]) || 1));
+                      setCustomUnit(custom[2].toLowerCase() as 'days' | 'weeks' | 'months');
+                    } else {
+                      setCustomOn(false);
+                      setFreq(recommendedFreq);
+                    }
+                  }}
+                >
+                  {formatAutoshipFrequency(recommendedFreq)} (recommended)
+                </button>
+              ) : null}
               <button
                 type="button"
                 className={`vayd-store__chip${customOn ? ' is-on' : ''}`}
@@ -373,7 +412,8 @@ export default function StoreProduct() {
                     }
                   : null,
                 autoshipFrequency,
-                recommendedFrequency: selected.recommendedFrequency || null,
+                recommendedFrequency: recommendedFreq,
+                reminderCadence: selected.reminderCadence || null,
                 listingId: item.listingId,
                 storeProductId: item.storeProductId ?? null,
                 hasImage: Boolean(selected.hasImage || item.hasImage),

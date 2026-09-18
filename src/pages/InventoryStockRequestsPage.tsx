@@ -24,7 +24,12 @@ import ParTransferModal, {
 } from '../components/inventory/ParTransferModal';
 import PlaceOrderModal from '../components/inventory/PlaceOrderModal';
 import { resolvePracticeIdFromToken } from '../utils/practiceIdFromToken';
-import { syncStockListsFromPars, type FillSource } from '../utils/syncFillList';
+import {
+  hitsDefaultMin,
+  shortBy,
+  surplusBy,
+} from '../utils/inventoryLocationTargets';
+import { syncStockListsFromPars, type FillSource, type OrderBreakdown } from '../utils/syncFillList';
 import './Settings.css';
 
 const BRANCH_STORAGE_PREFIX = 'vayd_inventory_branch:';
@@ -34,6 +39,7 @@ type LocSnap = {
   name: string;
   quantityOnHand: number;
   parLevel: number | null;
+  isDefault?: boolean;
 };
 
 function sourcesFor(sources: FillSource[], row: InventoryStockRequest): FillSource[] {
@@ -55,16 +61,45 @@ function stockKey(branchId: number, itemId: number): string {
   return `${branchId}:${itemId}`;
 }
 
-function shortBy(onHand: number, par: number | null): number | null {
-  if (par == null || !Number.isFinite(Number(par))) return null;
-  const n = Number(par) - Number(onHand);
-  return n > 0 ? n : null;
+function transferIdentityKey(row: InventoryStockRequest): string {
+  if (row.kind === 'fill') {
+    return `fill:${row.inventoryItemId}:${row.branchId}:${row.branchLocationId}`;
+  }
+  return `xfer:${row.inventoryItemId}:${row.branchId}:${row.branchLocationId}:${row.toBranchId ?? ''}:${row.toBranchLocationId ?? ''}`;
 }
 
-function surplusBy(onHand: number, par: number | null): number | null {
-  if (par == null || !Number.isFinite(Number(par))) return null;
-  const n = Number(onHand) - Number(par);
-  return n > 0 ? n : null;
+function mergeTransferRows(
+  transfers: InventoryStockRequest[],
+  fills: InventoryStockRequest[]
+): InventoryStockRequest[] {
+  const coveredLoc = new Set(
+    transfers.map(
+      (row) =>
+        `${row.inventoryItemId}:${row.toBranchId ?? row.branchId}:${row.toBranchLocationId ?? ''}`
+    )
+  );
+  // Also treat transfers with a dest location as covering fills to that location in the same office.
+  for (const row of transfers) {
+    if (row.toBranchLocationId == null) continue;
+    const destOffice = row.toBranchId ?? row.branchId;
+    coveredLoc.add(`${row.inventoryItemId}:${destOffice}:${row.toBranchLocationId}`);
+  }
+  const needRows = fills.filter((row) => {
+    if (coveredLoc.has(`${row.inventoryItemId}:${row.branchId}:${row.branchLocationId}`)) {
+      return false;
+    }
+    return true;
+  });
+  const merged = [...transfers, ...needRows];
+  const seen = new Set<string>();
+  const deduped: InventoryStockRequest[] = [];
+  for (const row of merged) {
+    const key = transferIdentityKey(row);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(row);
+  }
+  return deduped;
 }
 
 function locFromRow(row: InventoryStockLocationRow): LocSnap {
@@ -73,10 +108,54 @@ function locFromRow(row: InventoryStockLocationRow): LocSnap {
     name: row.name,
     quantityOnHand: Number(row.quantityOnHand ?? 0),
     parLevel: row.parLevel ?? null,
+    isDefault: row.isDefault === true || String(row.code ?? '').toLowerCase() === 'main',
   };
 }
 
-function ParStatus({ onHand, par }: { onHand: number; par: number | null }) {
+function TargetCell({
+  loc,
+  reorder,
+}: {
+  loc: LocSnap;
+  reorder?: number | null;
+}) {
+  if (loc.isDefault) {
+    return (
+      <>
+        <div>{loc.parLevel != null ? `Max ${loc.parLevel}` : 'Max —'}</div>
+        <div className="settings-muted" style={{ fontSize: 12 }}>
+          Re-order {reorder != null ? reorder : '—'}
+        </div>
+      </>
+    );
+  }
+  return <>{loc.parLevel != null ? `Par ${loc.parLevel}` : '—'}</>;
+}
+
+function ParStatus({
+  onHand,
+  par,
+  isDefault,
+  min,
+}: {
+  onHand: number;
+  par: number | null;
+  isDefault?: boolean;
+  min?: number | null;
+}) {
+  if (isDefault) {
+    if (hitsDefaultMin(onHand, min ?? null)) {
+      return <span className="par-short">at re-order — order</span>;
+    }
+    const belowMax = shortBy(onHand, par);
+    if (belowMax != null) {
+      return <span className="settings-muted">below max {belowMax}</span>;
+    }
+    const extra = surplusBy(onHand, par);
+    if (extra != null) return <span className="par-surplus">Over {extra}</span>;
+    if (par != null) return <span className="settings-muted">at max</span>;
+    return <span className="settings-muted">can give {onHand}</span>;
+  }
   const short = shortBy(onHand, par);
   const extra = surplusBy(onHand, par);
   if (short != null) return <span className="par-short">short {short}</span>;
@@ -101,10 +180,13 @@ export default function InventoryStockRequestsPage({ kind }: Props) {
   const [locationId, setLocationId] = useState<number | ''>('');
   const [rows, setRows] = useState<InventoryStockRequest[]>([]);
   const [fillSources, setFillSources] = useState<FillSource[]>([]);
+  const [orderBreakdowns, setOrderBreakdowns] = useState<OrderBreakdown[]>([]);
   const [stockMap, setStockMap] = useState<Record<string, LocSnap[]>>({});
+  const [defaultLocationId, setDefaultLocationId] = useState<number | null>(null);
+  const [reorderByItemId, setReorderByItemId] = useState<Record<number, number | null>>({});
   const [openOtherId, setOpenOtherId] = useState<number | null>(null);
   const [otherRows, setOtherRows] = useState<
-    { branchId: number; branchName: string; loc: LocSnap }[]
+    { branchId: number; branchName: string; loc: LocSnap; reorder: number | null }[]
   >([]);
   const [otherBusy, setOtherBusy] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -119,7 +201,7 @@ export default function InventoryStockRequestsPage({ kind }: Props) {
   const isFill = kind === 'fill';
   const isTransfer = kind === 'transfer';
   const isOrder = kind === 'order';
-  const title = isFill ? 'Fill list' : isTransfer ? 'Transfer list' : 'Order list';
+  const title = isTransfer || isFill ? 'Transfer list' : 'Order list';
   const officeName = branches.find((b) => b.id === branchId)?.name ?? 'Office';
   const orderedQtyByItemLoc = useMemo(() => {
     const map = new Map<string, number>();
@@ -218,20 +300,59 @@ export default function InventoryStockRequestsPage({ kind }: Props) {
             .map((b) => ({ branchId: b.id, name: b.name })),
         });
         setFillSources(plan.fillSources);
+        setOrderBreakdowns(plan.orderBreakdowns);
+        setDefaultLocationId(defaultLocationId);
+        const reorder: Record<number, number | null> = {};
+        for (const item of pars.items ?? []) {
+          reorder[item.inventoryItemId] = item.reorderPoint ?? null;
+        }
+        setReorderByItemId(reorder);
       }
-      const data = await listStockRequests(practiceId, {
-        kind,
-        status: 'open',
-        branchId: isTransfer || branchId === '' ? undefined : Number(branchId),
-        branchLocationId: isFill && locationId !== '' ? Number(locationId) : undefined,
-      });
-      const office = branchId === '' ? null : Number(branchId);
-      const next =
-        isTransfer && office != null
-          ? data.filter((row) => row.branchId === office || row.toBranchId === office)
-          : data;
-      setRows(next);
-      if (isTransfer) void loadStockMap(next);
+      if (isTransfer || isFill) {
+        const [transfers, fills] = await Promise.all([
+          listStockRequests(practiceId, { kind: 'transfer', status: 'open' }),
+          listStockRequests(practiceId, {
+            kind: 'fill',
+            status: 'open',
+            branchId: branchId === '' ? undefined : Number(branchId),
+          }),
+        ]);
+        const office = branchId === '' ? null : Number(branchId);
+        const loc = locationId === '' ? null : Number(locationId);
+        const transferRows =
+          office == null
+            ? transfers
+            : transfers.filter((row) => row.branchId === office || row.toBranchId === office);
+        const officeFills =
+          office == null ? fills : fills.filter((row) => row.branchId === office);
+        const merged = mergeTransferRows(transferRows, officeFills);
+        const next =
+          loc == null
+            ? merged
+            : merged.filter(
+                (row) =>
+                  row.branchLocationId === loc ||
+                  row.toBranchLocationId === loc
+              );
+        setRows(next);
+        void loadStockMap(next);
+      } else {
+        const data = await listStockRequests(practiceId, {
+          kind,
+          status: 'open',
+          branchId: branchId === '' ? undefined : Number(branchId),
+        });
+        const seen = new Set<string>();
+        const deduped: InventoryStockRequest[] = [];
+        for (const row of data) {
+          const key = `${row.inventoryItemId}:${row.branchLocationId}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          deduped.push(row);
+        }
+        setRows(deduped);
+        void loadStockMap(deduped);
+      }
       if (isOrder) {
         const [pos, sups] = await Promise.all([
           listPurchaseOrders(practiceId, branchId === '' ? undefined : Number(branchId)),
@@ -269,10 +390,12 @@ export default function InventoryStockRequestsPage({ kind }: Props) {
         others.map(async (b) => {
           try {
             const stock = await getInventoryBranchStock(practiceId, b.id, row.inventoryItemId);
+            const reorder = stock.reorderPoint ?? null;
             return (stock.locations ?? []).map((loc) => ({
               branchId: b.id,
               branchName: b.name,
               loc: locFromRow(loc),
+              reorder,
             }));
           } catch {
             return [];
@@ -286,13 +409,33 @@ export default function InventoryStockRequestsPage({ kind }: Props) {
   }
 
   function openTransfer(row: InventoryStockRequest) {
-    const fromLocs = stockMap[stockKey(row.branchId, row.inventoryItemId)] ?? [];
-    const fromLoc = findLoc(fromLocs, row.branchLocationId);
+    const destOnly = row.kind === 'fill';
+    const fromOfficeId = destOnly ? row.branchId : row.branchId;
+    const fromLocs = stockMap[stockKey(fromOfficeId, row.inventoryItemId)] ?? [];
+    const fromLoc = findLoc(fromLocs, destOnly ? null : row.branchLocationId);
+    const dest =
+      destOnly
+        ? {
+            branchId: row.branchId,
+            branchName: row.branchName ?? 'Office',
+            locationId: row.branchLocationId,
+            locationName: row.locationName ?? 'Location',
+            quantity: row.quantity,
+          }
+        : row.toBranchId != null && row.toBranchLocationId != null
+          ? {
+              branchId: row.toBranchId,
+              branchName: row.toBranchName ?? 'Office',
+              locationId: row.toBranchLocationId,
+              locationName: row.toLocationName ?? 'Location',
+              quantity: row.quantity,
+            }
+          : undefined;
     setTransferSource({
       inventoryItemId: row.inventoryItemId,
       itemName: row.itemName ?? `Item #${row.inventoryItemId}`,
-      fromBranchId: row.branchId,
-      fromBranchName: row.branchName ?? 'Office',
+      fromBranchId: fromOfficeId,
+      fromBranchName: row.branchName ?? officeName,
       fromLocations:
         fromLocs.length > 0
           ? fromLocs.map((l) => ({
@@ -309,29 +452,18 @@ export default function InventoryStockRequestsPage({ kind }: Props) {
                 parLevel: fromLoc?.parLevel ?? null,
               },
             ],
-      defaultFromLocId: row.branchLocationId,
+      defaultFromLocId: destOnly ? null : row.branchLocationId,
       requestId: row.id,
-      dest:
-        row.toBranchId != null && row.toBranchLocationId != null
-          ? {
-              branchId: row.toBranchId,
-              branchName: row.toBranchName ?? 'Office',
-              locationId: row.toBranchLocationId,
-              locationName: row.toLocationName ?? 'Location',
-              quantity: row.quantity,
-            }
-          : undefined,
+      dest,
     });
   }
 
   return (
     <div className="settings-section">
       <p className="settings-section-description">
-        {isFill
-          ? 'Short of par at locations other than default. Transfer from is filled only when another location is over par or max.'
-          : isTransfer
-            ? 'Over-target stock assigned to a short location. Transfer moves it.'
-            : 'Buy at the default location when on-hand is at or below the re-order point, after surplus transfers and filling other locations. Quantity brings default back to max. Recording an order does not change on-hand — receive does that.'}
+        {isTransfer || isFill
+          ? 'Prefer Main first (down to 0 — that may put the item on the order list back to max), then other locations over par, then other offices over par. Only pull another location below par if Main is empty. To is short of par; uncovered asks show From as —. Locations at or over par are not destinations.'
+          : 'Buy at the default location when on-hand (after planned transfers out) is at or below the re-order point. Quantity brings default back to max. The list recalculates when stock or transfers change. Recording an order does not change on-hand — receive does that.'}
       </p>
       {toast && (
         <div className="settings-message settings-success-message" style={{ marginBottom: 12 }}>
@@ -362,7 +494,7 @@ export default function InventoryStockRequestsPage({ kind }: Props) {
               }
             }}
           >
-            {isTransfer ? <option value="">All offices</option> : null}
+            {isTransfer || isFill ? <option value="">All offices</option> : null}
             {branches.map((b) => (
               <option key={b.id} value={b.id}>
                 {b.name}
@@ -371,7 +503,7 @@ export default function InventoryStockRequestsPage({ kind }: Props) {
             ))}
           </select>
         </label>
-        {isFill && (
+        {(isTransfer || isFill) && (
           <label className="settings-label">
             Location
             <select
@@ -405,7 +537,7 @@ export default function InventoryStockRequestsPage({ kind }: Props) {
             <thead>
               <tr>
                 <th>Item</th>
-                {isTransfer ? (
+                {isTransfer || isFill ? (
                   <>
                     <th>From</th>
                     <th>To</th>
@@ -418,26 +550,38 @@ export default function InventoryStockRequestsPage({ kind }: Props) {
                 )}
                 <th>Qty</th>
                 {isOrder ? <th>On order</th> : null}
-                {isFill ? <th>Transfer from</th> : null}
-                {isTransfer ? <th /> : null}
+                {isTransfer || isFill || isOrder ? <th /> : null}
               </tr>
             </thead>
             <tbody>
               {rows.map((row) => {
-                const sources = isFill ? sourcesFor(fillSources, row) : [];
-                const fromLocs = isTransfer
-                  ? stockMap[stockKey(row.branchId, row.inventoryItemId)]
-                  : undefined;
-                const fromLoc = isTransfer ? findLoc(fromLocs, row.branchLocationId) : null;
+                const destOnly = row.kind === 'fill';
+                const sources = destOnly ? sourcesFor(fillSources, row) : [];
+                const fromLocs =
+                  isTransfer || isFill || isOrder
+                    ? stockMap[stockKey(row.branchId, row.inventoryItemId)]
+                    : undefined;
+                const fromLoc =
+                  isTransfer || isFill
+                    ? findLoc(fromLocs, destOnly ? null : row.branchLocationId)
+                    : null;
+                const toOfficeId = destOnly ? row.branchId : row.toBranchId;
+                const toLocId = destOnly ? row.branchLocationId : row.toBranchLocationId;
                 const toLocs =
-                  isTransfer && row.toBranchId != null
-                    ? stockMap[stockKey(row.toBranchId, row.inventoryItemId)]
+                  (isTransfer || isFill) && toOfficeId != null
+                    ? stockMap[stockKey(toOfficeId, row.inventoryItemId)]
                     : undefined;
                 const toLoc =
-                  isTransfer && row.toBranchLocationId != null
-                    ? findLoc(toLocs, row.toBranchLocationId)
+                  (isTransfer || isFill) && toLocId != null
+                    ? findLoc(toLocs, toLocId)
                     : null;
                 const otherOpen = openOtherId === row.id;
+                const orderOpen = openOrderId === row.id;
+                const breakdown = orderBreakdowns.find(
+                  (b) =>
+                    b.inventoryItemId === row.inventoryItemId &&
+                    b.branchLocationId === row.branchLocationId
+                );
                 return (
                   <Fragment key={row.id}>
                     <tr>
@@ -449,23 +593,47 @@ export default function InventoryStockRequestsPage({ kind }: Props) {
                           </div>
                         ) : null}
                       </td>
-                      {isTransfer ? (
+                      {isTransfer || isFill ? (
                         <>
                           <td>
-                            <div>{placeLabel(row.branchName, row.locationName)}</div>
-                            {fromLoc ? (
-                              <div style={{ fontSize: 12, marginTop: 2 }}>
-                                {fromLoc.quantityOnHand} on hand
-                                {fromLoc.parLevel != null ? ` / ${fromLoc.parLevel}` : ''}
-                                {' · '}
-                                <ParStatus onHand={fromLoc.quantityOnHand} par={fromLoc.parLevel} />
-                              </div>
-                            ) : null}
+                            {destOnly ? (
+                              sources.length > 0 ? (
+                                sources.map((s) => (
+                                  <div key={`${s.fromBranchId}:${s.fromBranchLocationId}`}>
+                                    {placeLabel(s.fromBranchName, s.fromLocationName)} · {s.quantity}
+                                  </div>
+                                ))
+                              ) : (
+                                <span className="settings-muted">—</span>
+                              )
+                            ) : (
+                              <>
+                                <div>{placeLabel(row.branchName, row.locationName)}</div>
+                                {fromLoc ? (
+                                  <div style={{ fontSize: 12, marginTop: 2 }}>
+                                    {fromLoc.quantityOnHand} on hand
+                                    {fromLoc.parLevel != null ? ` / ${fromLoc.parLevel}` : ''}
+                                    {' · '}
+                                    <ParStatus
+                                      onHand={fromLoc.quantityOnHand}
+                                      par={fromLoc.parLevel}
+                                      isDefault={
+                                        defaultLocationId != null &&
+                                        fromLoc.branchLocationId === defaultLocationId
+                                      }
+                                      min={reorderByItemId[row.inventoryItemId] ?? null}
+                                    />
+                                  </div>
+                                ) : null}
+                              </>
+                            )}
                           </td>
                           <td>
-                            {row.toLocationName || row.toBranchName
-                              ? placeLabel(row.toBranchName, row.toLocationName)
-                              : '—'}
+                            {destOnly
+                              ? placeLabel(row.branchName, row.locationName)
+                              : row.toLocationName || row.toBranchName
+                                ? placeLabel(row.toBranchName, row.toLocationName)
+                                : '—'}
                             {toLoc ? (
                               <div style={{ fontSize: 12, marginTop: 2 }}>
                                 {toLoc.quantityOnHand} on hand
@@ -496,20 +664,7 @@ export default function InventoryStockRequestsPage({ kind }: Props) {
                           )}
                         </td>
                       ) : null}
-                      {isFill ? (
-                        <td>
-                          {sources.length > 0 ? (
-                            sources.map((s) => (
-                              <div key={`${s.fromBranchId}:${s.fromBranchLocationId}`}>
-                                {placeLabel(s.fromBranchName, s.fromLocationName)} · {s.quantity}
-                              </div>
-                            ))
-                          ) : (
-                            <span className="settings-muted">—</span>
-                          )}
-                        </td>
-                      ) : null}
-                      {isTransfer ? (
+                      {isTransfer || isFill ? (
                         <td>
                           <div className="par-row-actions">
                             <button
@@ -529,12 +684,87 @@ export default function InventoryStockRequestsPage({ kind }: Props) {
                           </div>
                         </td>
                       ) : null}
+                      {isOrder ? (
+                        <td>
+                          <button
+                            type="button"
+                            className="btn secondary"
+                            onClick={() =>
+                              setOpenOrderId((prev) => (prev === row.id ? null : row.id))
+                            }
+                          >
+                            {orderOpen ? 'Hide need' : 'Show need'}
+                          </button>
+                        </td>
+                      ) : null}
                     </tr>
-                    {isTransfer && otherOpen ? (
+                    {isOrder && orderOpen ? (
+                      <tr>
+                        <td colSpan={branchId === '' ? 5 : 4}>
+                          <div className="settings-muted" style={{ marginBottom: 8, fontSize: 13 }}>
+                            Order qty brings Main back to max when on-hand (after planned transfers
+                            out) is at or below the re-order point.
+                          </div>
+                          {breakdown ? (
+                            <div style={{ display: 'grid', gap: 10 }}>
+                              <div>
+                                Main: {breakdown.mainOnHand} on hand
+                                {breakdown.mainOut > 0
+                                  ? ` − ${breakdown.mainOut} planned out = ${breakdown.effectiveOnHand} effective`
+                                  : ` · effective ${breakdown.effectiveOnHand}`}
+                                {' · '}
+                                re-order {breakdown.reorderPoint ?? '—'}
+                                {' · '}
+                                max {breakdown.max ?? '—'}
+                                {' → '}
+                                order <strong>{breakdown.quantity}</strong>
+                              </div>
+                              {breakdown.locationNeeds.length > 0 ? (
+                                <table className="settings-table">
+                                  <thead>
+                                    <tr>
+                                      <th>Location needing stock</th>
+                                      <th>On hand</th>
+                                      <th>Par</th>
+                                      <th>Short</th>
+                                      <th>From Main</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {breakdown.locationNeeds.map((need) => (
+                                      <tr key={need.locationId}>
+                                        <td>{need.locationName}</td>
+                                        <td>{need.onHand}</td>
+                                        <td>{need.par != null ? need.par : '—'}</td>
+                                        <td>
+                                          <span className="par-short">{need.short}</span>
+                                        </td>
+                                        <td>{need.coveredFromMain}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              ) : (
+                                <p className="settings-muted" style={{ margin: 0 }}>
+                                  No other locations in this office are short of par — Main itself
+                                  is at or below the re-order point.
+                                </p>
+                              )}
+                            </div>
+                          ) : (
+                            <p className="settings-muted" style={{ margin: 0 }}>
+                              Refresh the list to load the need breakdown for this item.
+                            </p>
+                          )}
+                        </td>
+                      </tr>
+                    ) : null}
+                    {(isTransfer || isFill) && otherOpen ? (
                       <tr>
                         <td colSpan={5}>
                           <div className="settings-muted" style={{ marginBottom: 8, fontSize: 13 }}>
-                            Locations for this product
+                            Locations for this product — default locations use max / re-order;
+                            others use par.
                           </div>
                           <table className="settings-table">
                             <thead>
@@ -542,22 +772,38 @@ export default function InventoryStockRequestsPage({ kind }: Props) {
                                 <th>Office</th>
                                 <th>Location</th>
                                 <th>On hand</th>
-                                <th>Par</th>
+                                <th>Target</th>
                                 <th>Status</th>
                               </tr>
                             </thead>
                             <tbody>
-                              {(fromLocs ?? []).map((loc) => (
-                                <tr key={`from:${loc.branchLocationId}`}>
-                                  <td>{row.branchName ?? 'Office'}</td>
-                                  <td>{loc.name}</td>
-                                  <td>{loc.quantityOnHand}</td>
-                                  <td>{loc.parLevel != null ? loc.parLevel : '—'}</td>
-                                  <td>
-                                    <ParStatus onHand={loc.quantityOnHand} par={loc.parLevel} />
-                                  </td>
-                                </tr>
-                              ))}
+                              {(fromLocs ?? []).map((loc) => {
+                                const isDef =
+                                  loc.isDefault === true ||
+                                  (defaultLocationId != null &&
+                                    loc.branchLocationId === defaultLocationId);
+                                return (
+                                  <tr key={`from:${loc.branchLocationId}`}>
+                                    <td>{row.branchName ?? 'Office'}</td>
+                                    <td>{loc.name}</td>
+                                    <td>{loc.quantityOnHand}</td>
+                                    <td>
+                                      <TargetCell
+                                        loc={{ ...loc, isDefault: isDef }}
+                                        reorder={reorderByItemId[row.inventoryItemId] ?? null}
+                                      />
+                                    </td>
+                                    <td>
+                                      <ParStatus
+                                        onHand={loc.quantityOnHand}
+                                        par={loc.parLevel}
+                                        isDefault={isDef}
+                                        min={reorderByItemId[row.inventoryItemId] ?? null}
+                                      />
+                                    </td>
+                                  </tr>
+                                );
+                              })}
                               {row.toBranchId != null &&
                               row.toBranchId !== row.branchId
                                 ? (toLocs ?? []).map((loc) => (
@@ -565,9 +811,15 @@ export default function InventoryStockRequestsPage({ kind }: Props) {
                                       <td>{row.toBranchName ?? 'Office'}</td>
                                       <td>{loc.name}</td>
                                       <td>{loc.quantityOnHand}</td>
-                                      <td>{loc.parLevel != null ? loc.parLevel : '—'}</td>
                                       <td>
-                                        <ParStatus onHand={loc.quantityOnHand} par={loc.parLevel} />
+                                        <TargetCell loc={loc} reorder={null} />
+                                      </td>
+                                      <td>
+                                        <ParStatus
+                                          onHand={loc.quantityOnHand}
+                                          par={loc.parLevel}
+                                          isDefault={loc.isDefault}
+                                        />
                                       </td>
                                     </tr>
                                   ))
@@ -584,11 +836,15 @@ export default function InventoryStockRequestsPage({ kind }: Props) {
                                     <td>{extra.branchName}</td>
                                     <td>{extra.loc.name}</td>
                                     <td>{extra.loc.quantityOnHand}</td>
-                                    <td>{extra.loc.parLevel != null ? extra.loc.parLevel : '—'}</td>
+                                    <td>
+                                      <TargetCell loc={extra.loc} reorder={extra.reorder} />
+                                    </td>
                                     <td>
                                       <ParStatus
                                         onHand={extra.loc.quantityOnHand}
                                         par={extra.loc.parLevel}
+                                        isDefault={extra.loc.isDefault}
+                                        min={extra.reorder}
                                       />
                                     </td>
                                   </tr>

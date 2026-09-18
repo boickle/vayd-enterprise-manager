@@ -26,8 +26,9 @@ import {
   type ChatHoursOfOperation,
 } from '../utils/chatHours';
 import { listMembershipTransactions } from '../api/membershipTransactions';
-import { http } from '../api/http';
-import { uploadPetImage } from '../api/patients';
+import { http, apiBaseUrl } from '../api/http';
+import PatientPhotoGalleryModal from '../components/pims/PatientPhotoGalleryModal';
+import { patientPhotoSrc } from '../components/pims/PetThumb';
 import VaccinationCertificateModal from '../components/VaccinationCertificateModal';
 import { updateCommunicationPreferences, getCurrentUser } from '../api/users';
 import { trackEvent } from '../utils/analytics';
@@ -134,9 +135,10 @@ const CAT_PLACEHOLDER = `${import.meta.env.BASE_URL ?? '/'}catty.png`;
 const APPOINTMENT_REQUEST_URL = import.meta.env.VITE_APPOINTMENT_REQUEST_URL || '/client-portal/request-appointment';
 
 function petImg(p: Pet) {
-  // Check for uploaded photo first
-  if (p.photoUrl) {
-    return p.photoUrl;
+  // Check for uploaded photo first (S3 key or API path → stable /patients/:id/image)
+  const uploaded = patientPhotoSrc(p.dbId ?? p.id, p.photoUrl, apiBaseUrl);
+  if (uploaded) {
+    return uploaded;
   }
   // Fallback to species-based placeholders
   const s = (p.species || p.breed || '').toLowerCase();
@@ -219,7 +221,7 @@ export default function ClientPortal() {
     reminders: ClientReminder[];
   } | null>(null);
   const [chatHours, setChatHours] = useState<ChatHoursOfOperation>(defaultChatHoursOfOperation());
-  const [uploadingPetId, setUploadingPetId] = useState<string | null>(null);
+  const [photoGalleryPet, setPhotoGalleryPet] = useState<PetWithWellness | null>(null);
   const [showErrorModal, setShowErrorModal] = useState(false);
   const [errorModalMessage, setErrorModalMessage] = useState<string | null>(null);
   const [showVaccinationModal, setShowVaccinationModal] = useState(false);
@@ -661,79 +663,6 @@ export default function ClientPortal() {
     const mostCommonProvider = sortedProviders[0]?.[0] || providers[0];
     return getProviderEmail(mostCommonProvider);
   }, [pets]);
-
-  async function handlePetImageUpload(pet: PetWithWellness, file: File) {
-    if (!pet.dbId) {
-      setErrorModalMessage('Unable to upload image: Pet ID not found.');
-      setShowErrorModal(true);
-      return;
-    }
-
-    // Validate file type
-    const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
-    if (!validTypes.includes(file.type)) {
-      setErrorModalMessage('Please select a valid image file (JPEG, PNG, GIF, or WebP).');
-      setShowErrorModal(true);
-      return;
-    }
-
-    // Validate file size (5MB max)
-    const maxSize = 5 * 1024 * 1024; // 5MB in bytes
-    if (file.size > maxSize) {
-      setErrorModalMessage('Image file is too large. Maximum size is 5MB.');
-      setShowErrorModal(true);
-      return;
-    }
-
-    setUploadingPetId(pet.id);
-    setError(null);
-
-    try {
-      const result = await uploadPetImage(pet.dbId, file);
-      
-      // Update the pet's photoUrl in the pets array
-      setPets((prevPets) =>
-        prevPets.map((p) =>
-          p.id === pet.id ? { ...p, photoUrl: result.imageUrl } : p
-        )
-      );
-    } catch (err: any) {
-      let errorMessage = 'Failed to upload image. Please try again.';
-      
-      // Handle different types of errors more gracefully
-      if (err?.response) {
-        const status = err.response.status;
-        const serverMessage = err.response.data?.message || err.response.data?.error;
-        
-        if (status === 413) {
-          errorMessage = 'Image file is too large. Please choose a smaller image (max 5MB).';
-        } else if (status === 400) {
-          errorMessage = serverMessage || 'Invalid image file. Please choose a valid image format (JPEG, PNG, GIF, or WebP).';
-        } else if (status === 401 || status === 403) {
-          errorMessage = 'You do not have permission to upload images. Please contact support if this issue persists.';
-        } else if (status === 500) {
-          errorMessage = 'Server error occurred. Please try again in a few moments.';
-        } else if (serverMessage) {
-          errorMessage = serverMessage;
-        } else {
-          errorMessage = `Upload failed (${status}). Please try again.`;
-        }
-      } else if (err?.message) {
-        if (err.message.includes('Network') || err.message.includes('network')) {
-          errorMessage = 'Network error. Please check your connection and try again.';
-        } else if (err.message.includes('timeout')) {
-          errorMessage = 'Upload timed out. Please try again with a smaller image.';
-        } else {
-          errorMessage = err.message;
-        }
-      }
-      
-      setErrorModalMessage(errorMessage);
-      setShowErrorModal(true);
-    } finally {
-      setUploadingPetId(null);
-    }
-  }
 
   function handleEnrollMembership(pet: PetWithWellness) {
     if (!pet.id) {
@@ -2155,7 +2084,8 @@ export default function ClientPortal() {
                           </span>
                         )}
                         {p.dbId && (
-                          <label
+                          <button
+                            type="button"
                             style={{
                               position: 'absolute',
                               top: 10,
@@ -2168,42 +2098,24 @@ export default function ClientPortal() {
                               display: 'flex',
                               alignItems: 'center',
                               justifyContent: 'center',
-                              cursor: uploadingPetId === p.id ? 'wait' : 'pointer',
+                              cursor: 'pointer',
                               boxShadow: '0 2px 8px rgba(0, 0, 0, 0.15)',
                               transition: 'all 0.2s ease',
+                              padding: 0,
                             }}
-                            title="Upload pet image"
+                            title="Manage pet photos"
+                            onClick={() => setPhotoGalleryPet(p)}
                             onMouseEnter={(e) => {
-                              if (uploadingPetId !== p.id) {
-                                e.currentTarget.style.background = 'rgba(255, 255, 255, 1)';
-                                e.currentTarget.style.transform = 'scale(1.1)';
-                              }
+                              e.currentTarget.style.background = 'rgba(255, 255, 255, 1)';
+                              e.currentTarget.style.transform = 'scale(1.1)';
                             }}
                             onMouseLeave={(e) => {
                               e.currentTarget.style.background = 'rgba(255, 255, 255, 0.9)';
                               e.currentTarget.style.transform = 'scale(1)';
                             }}
                           >
-                            <input
-                              type="file"
-                              accept="image/jpeg,image/jpg,image/png,image/gif,image/webp"
-                              style={{ display: 'none' }}
-                              disabled={uploadingPetId === p.id}
-                              onChange={(e) => {
-                                const file = e.target.files?.[0];
-                                if (file) {
-                                  handlePetImageUpload(p, file);
-                                }
-                                // Reset input so same file can be selected again
-                                e.target.value = '';
-                              }}
-                            />
-                            {uploadingPetId === p.id ? (
-                              <span style={{ fontSize: 14, color: '#666' }}>⏳</span>
-                            ) : (
-                              <span style={{ fontSize: 16 }}>📷</span>
-                            )}
-                          </label>
+                            <span style={{ fontSize: 16 }}>📷</span>
+                          </button>
                         )}
                       </div>
 
@@ -2933,6 +2845,23 @@ export default function ClientPortal() {
               }}
             />
           )}
+
+          {photoGalleryPet?.dbId ? (
+            <PatientPhotoGalleryModal
+              open
+              patientId={photoGalleryPet.dbId}
+              patientName={photoGalleryPet.name || 'Pet'}
+              onClose={() => setPhotoGalleryPet(null)}
+              onPrimaryChange={(imageUrl) => {
+                const petKey = photoGalleryPet.id;
+                setPets((prev) =>
+                  prev.map((p) =>
+                    p.id === petKey ? { ...p, photoUrl: imageUrl || null } : p,
+                  ),
+                );
+              }}
+            />
+          ) : null}
 
         </>
       )}

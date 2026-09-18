@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router';
 import {
   ArrowLeftRight,
   ChevronDown,
@@ -30,8 +31,19 @@ import {
   type MembershipGroup,
   type PatientMembership,
 } from '../../api/memberships';
+import {
+  addCounterInvoiceLine,
+  ensureCounterInvoice,
+} from '../../api/visitWorkflow';
 import { apiErrorMessage, getToken } from '../../api/http';
+import {
+  getPracticeSettings,
+  membershipAssignFeeToProvider,
+} from '../../api/practiceSettings';
 import { resolvePracticeIdFromToken } from '../../utils/practiceIdFromToken';
+import {
+  buildClientFinancialHref,
+} from '../../utils/clientFinancial';
 import { appConfirm, appPrompt } from '../../utils/appDialog';
 import CatalogItemPicker, { type PickedCatalogItem } from '../catalog/CatalogItemPicker';
 import { Card, FactGrid, PimsBadge } from './detail/PimsDetailKit';
@@ -93,6 +105,27 @@ function planPriceLabel(plan: Bundle): string {
   return parts.join(' · ') || 'No price set';
 }
 
+/**
+ * Plans are usually named “… Annual” / “… Monthly” with a single price field.
+ * Prefer that over a separate billing dropdown so staff don’t enroll an annual
+ * plan as monthly by accident.
+ */
+function billingIntervalForPlan(plan: Bundle): MembershipBillingInterval {
+  if (/\bmonthly\b/i.test(plan.name ?? '')) return 'monthly';
+  if (/\b(annual|yearly)\b/i.test(plan.name ?? '')) return 'annual';
+  if (plan.priceAnnual != null && plan.priceMonthly == null) return 'annual';
+  if (plan.priceMonthly != null && plan.priceAnnual == null) return 'monthly';
+  return 'monthly';
+}
+
+function listedPriceForPlan(
+  plan: Bundle,
+  interval: MembershipBillingInterval,
+): number | null {
+  if (interval === 'annual') return plan.priceAnnual ?? plan.price ?? null;
+  return plan.priceMonthly ?? plan.price ?? null;
+}
+
 /** Keep the interval the pet is already billed on unless the new plan has no price for it. */
 function intervalFor(plan: Bundle, current: string | null): MembershipBillingInterval {
   if (current === 'annual') {
@@ -122,7 +155,10 @@ type BenefitDraft = {
 
 function draftFromBenefit(b: MembershipBenefit): BenefitDraft {
   return {
-    quantity: String(b.includedQuantity ?? 1),
+    quantity:
+      b.includedQuantity != null && Number(b.includedQuantity) < 0
+        ? 'unlimited'
+        : String(b.includedQuantity ?? 1),
     coverage: b.coverage,
     price: b.price != null ? String(b.price) : '',
     percentOff: b.percentOff != null ? String(b.percentOff) : '',
@@ -130,7 +166,37 @@ function draftFromBenefit(b: MembershipBenefit): BenefitDraft {
   };
 }
 
-function AllowanceMeter({ used, total, label }: { used: number; total: number; label: string }) {
+function isUnlimitedAllowance(value: number | string | null | undefined): boolean {
+  if (typeof value === 'string') return value.trim().toLowerCase() === 'unlimited';
+  if (value == null) return false;
+  return Number.isFinite(Number(value)) && Number(value) < 0;
+}
+
+function parseAllowanceInput(raw: string): number | null {
+  if (raw.trim().toLowerCase() === 'unlimited') return -1;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 1) return null;
+  return Math.round(n);
+}
+
+function AllowanceMeter({
+  used,
+  total,
+  label,
+}: {
+  used: number;
+  total: number;
+  label: string;
+}) {
+  if (isUnlimitedAllowance(total)) {
+    return (
+      <div className="pmp-meter">
+        <span className="pmp-meter__label">
+          Unlimited{used > 0 ? ` · ${used} used` : ''}
+        </span>
+      </div>
+    );
+  }
   const safeTotal = total > 0 ? total : 0;
   const pct = safeTotal > 0 ? Math.min(100, Math.round((used / safeTotal) * 100)) : 0;
   const spent = safeTotal > 0 && used >= safeTotal;
@@ -159,6 +225,8 @@ type Props = {
    */
   practiceId?: number;
   patientName?: string | null;
+  /** Owner client — used to open a counter invoice after enrollment. */
+  clientId?: number | null;
 };
 
 type PanelMode = 'none' | 'add' | 'change' | 'enrol';
@@ -167,9 +235,12 @@ export default function PatientMembershipPanel({
   patientId,
   practiceId: practiceIdProp,
   patientName,
+  clientId,
 }: Props) {
+  const navigate = useNavigate();
   const practiceId = practiceIdProp ?? resolvePracticeIdFromToken(getToken());
   const [open, setOpen] = useState(true);
+  const [inactiveDetailsOpen, setInactiveDetailsOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [membership, setMembership] = useState<PatientMembership | null>(null);
@@ -197,7 +268,6 @@ export default function PatientMembershipPanel({
   const [changeReason, setChangeReason] = useState('');
   const [carryOverUsage, setCarryOverUsage] = useState(true);
   const [keepCustomItems, setKeepCustomItems] = useState(true);
-  const [enrolInterval, setEnrolInterval] = useState<MembershipBillingInterval>('monthly');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -216,6 +286,9 @@ export default function PatientMembershipPanel({
       ]);
       setMembership(full);
       setAudit(log);
+      if (full.status !== 'active') {
+        setInactiveDetailsOpen(false);
+      }
     } catch (e) {
       setError(apiErrorMessage(e));
     } finally {
@@ -311,9 +384,9 @@ export default function PatientMembershipPanel({
       setFormError('Pick a catalog item first.');
       return;
     }
-    const qty = numOrNull(addQty);
-    if (qty == null || qty <= 0) {
-      setFormError('Quantity must be a number above zero.');
+    const qty = parseAllowanceInput(addQty);
+    if (qty == null) {
+      setFormError('Quantity must be a number above zero, or unlimited.');
       return;
     }
     if (addCoverage === 'copay' && numOrNull(addPrice) == null) {
@@ -324,6 +397,36 @@ export default function PatientMembershipPanel({
       setFormError('Enter the percent off.');
       return;
     }
+
+    const existing = membership.groups.flatMap((g) =>
+      g.benefits
+        .filter(
+          (b) =>
+            !b.isRemoved &&
+            b.itemType === addItem.itemType &&
+            b.catalogItemId === addItem.catalogItemId,
+        )
+        .map(
+          (b) =>
+            `• ${b.name} — ${coverageLabel(b)}, ${
+              isUnlimitedAllowance(b.includedQuantity)
+                ? 'unlimited'
+                : `×${b.includedQuantity}`
+            }`,
+        ),
+    );
+    if (existing.length > 0) {
+      const ok = await appConfirm({
+        title: 'Already on this membership',
+        message:
+          `${addItem.name} is already on this pet’s membership:\n\n${existing.join('\n')}\n\n` +
+          'Add another benefit line anyway? Use this when the first visits are fully covered and later ones use a different discount.',
+        confirmLabel: 'Add another line',
+        cancelLabel: 'Cancel',
+      });
+      if (!ok) return;
+    }
+
     setBusy(true);
     setFormError(null);
     try {
@@ -349,9 +452,9 @@ export default function PatientMembershipPanel({
 
   async function submitEdit(benefitId: number) {
     if (!membership || !editDraft) return;
-    const qty = numOrNull(editDraft.quantity);
-    if (qty == null || qty <= 0) {
-      setFormError('Quantity must be a number above zero.');
+    const qty = parseAllowanceInput(editDraft.quantity);
+    if (qty == null) {
+      setFormError('Quantity must be a number above zero, or unlimited.');
       return;
     }
     setBusy(true);
@@ -437,12 +540,14 @@ export default function PatientMembershipPanel({
   }
 
   async function enrol(plan: Bundle) {
+    const interval = billingIntervalForPlan(plan);
+    const price = listedPriceForPlan(plan, interval);
     const ok = await appConfirm({
-      title: `Enrol in ${plan.name}?`,
+      title: `Enroll in ${plan.name}?`,
       message: `${patientName ?? 'This pet'} will be enrolled in ${plan.name}, billed ${
-        enrolInterval === 'annual' ? 'annually' : 'monthly'
-      }. Every benefit on the plan becomes available right away.`,
-      confirmLabel: 'Enrol',
+        interval === 'annual' ? 'annually' : 'monthly'
+      }. Benefits are available right away — you’ll be taken to an invoice to collect payment.`,
+      confirmLabel: 'Enroll',
     });
     if (!ok) return;
     setBusy(true);
@@ -451,11 +556,46 @@ export default function PatientMembershipPanel({
       const created = await createPatientMembership({
         patientId,
         packageId: plan.id,
-        billingInterval: enrolInterval,
+        billingInterval: interval,
+        price,
       });
       setMembership(created);
       await refreshAudit(created.id);
       closePanels();
+
+      if (clientId != null && Number(clientId) > 0) {
+        try {
+          const settings = await getPracticeSettings(practiceId).catch(() => ({}));
+          const assignToProvider = membershipAssignFeeToProvider(settings);
+          const invoice = await ensureCounterInvoice({
+            clientId: Number(clientId),
+            patientId,
+          });
+          const withLine = await addCounterInvoiceLine(invoice.id, {
+            description: plan.name,
+            qty: 1,
+            unitPrice: price ?? created.price ?? 0,
+            listUnitPrice: price ?? created.price ?? null,
+            patientId,
+            sourceBundleId: plan.id,
+            sourceBundleName: plan.name,
+            miscCharge: true,
+            excludeFromProduction: !assignToProvider,
+          });
+          navigate(
+            buildClientFinancialHref({
+              clientId,
+              invoice: withLine.id,
+              patientId,
+            }),
+          );
+          return;
+        } catch (invoiceErr) {
+          setError(
+            `Enrolled, but could not open the invoice: ${apiErrorMessage(invoiceErr)}`,
+          );
+        }
+      }
     } catch (e) {
       setFormError(apiErrorMessage(e));
     } finally {
@@ -479,6 +619,8 @@ export default function PatientMembershipPanel({
     try {
       const next = await cancelMembership(membership.id, reason.trim() || undefined);
       setMembership(next);
+      setInactiveDetailsOpen(false);
+      closePanels();
       await refreshAudit(next.id);
     } catch (e) {
       setError(apiErrorMessage(e));
@@ -504,13 +646,33 @@ export default function PatientMembershipPanel({
             <p className="pmp-form__title">Edit {benefit.name}</p>
             <div className="pmp-form__grid">
               <label className="pmp-field">
-                <span className="pmp-field__label">Quantity included</span>
-                <input
+                <span className="pmp-field__label">Allowance</span>
+                <select
                   className="pmp-input"
-                  inputMode="decimal"
-                  value={editDraft.quantity}
-                  onChange={(e) => setEditDraft({ ...editDraft, quantity: e.target.value })}
-                />
+                  value={isUnlimitedAllowance(editDraft.quantity) ? 'unlimited' : 'limited'}
+                  onChange={(e) =>
+                    setEditDraft({
+                      ...editDraft,
+                      quantity:
+                        e.target.value === 'unlimited'
+                          ? 'unlimited'
+                          : editDraft.quantity === 'unlimited'
+                            ? '1'
+                            : editDraft.quantity || '1',
+                    })
+                  }
+                >
+                  <option value="limited">Limited</option>
+                  <option value="unlimited">Unlimited</option>
+                </select>
+                {isUnlimitedAllowance(editDraft.quantity) ? null : (
+                  <input
+                    className="pmp-input"
+                    inputMode="decimal"
+                    value={editDraft.quantity}
+                    onChange={(e) => setEditDraft({ ...editDraft, quantity: e.target.value })}
+                  />
+                )}
               </label>
               <label className="pmp-field">
                 <span className="pmp-field__label">Coverage</span>
@@ -629,7 +791,11 @@ export default function PatientMembershipPanel({
             <AllowanceMeter
               used={benefit.usedQuantity}
               total={benefit.includedQuantity}
-              label={`${benefit.remainingQuantity} of ${benefit.includedQuantity} left`}
+              label={
+                isUnlimitedAllowance(benefit.includedQuantity)
+                  ? 'Unlimited'
+                  : `${benefit.remainingQuantity} of ${benefit.includedQuantity} left`
+              }
             />
           )}
           {benefit.isCustom ? (
@@ -694,7 +860,9 @@ export default function PatientMembershipPanel({
             <h4 className="pmp-group__title">{group.name || 'Benefits'}</h4>
             {isChoice ? (
               <span className="pmp-group__mode">
-                Pick {group.allowedQuantity} of these {live.length}
+                {isUnlimitedAllowance(group.allowedQuantity)
+                  ? `Unlimited picks of these ${live.length}`
+                  : `Pick ${group.allowedQuantity} of these ${live.length}`}
               </span>
             ) : (
               <span className="pmp-group__mode pmp-group__mode--all">
@@ -706,7 +874,11 @@ export default function PatientMembershipPanel({
             <AllowanceMeter
               used={group.usedQuantity}
               total={group.allowedQuantity}
-              label={`${group.remainingQuantity} of ${group.allowedQuantity} left`}
+              label={
+                isUnlimitedAllowance(group.allowedQuantity)
+                  ? 'Unlimited'
+                  : `${group.remainingQuantity} of ${group.allowedQuantity} left`
+              }
             />
           ) : null}
         </div>
@@ -744,10 +916,14 @@ export default function PatientMembershipPanel({
   }
 
   const headerBadge = membership ? (
-    <span className="pmp-head-plan">
-      {membership.planName}
-      {membership.status !== 'active' ? ' · inactive' : ''}
-    </span>
+    <>
+      <span className="pmp-head-plan">{membership.planName}</span>
+      {membership.status !== 'active' ? (
+        <span className="pmp-head-inactive" aria-label="Membership inactive">
+          Inactive
+        </span>
+      ) : null}
+    </>
   ) : null;
 
   return (
@@ -777,12 +953,17 @@ export default function PatientMembershipPanel({
           ) : null}
 
           {canEnrol ? (
-            <div className="pmp-empty">
-              <p className="pmp-muted">
-                {membership
-                  ? `The ${membership.planName} membership is no longer active.`
-                  : `${patientName ?? 'This pet'} is not on a membership plan.`}
-              </p>
+            <div className={`pmp-empty${membership ? ' pmp-empty--inactive' : ''}`}>
+              {membership ? (
+                <p className="pmp-inactive-banner" role="status">
+                  <strong>Inactive</strong>
+                  {` — ${membership.planName} is no longer active.`}
+                </p>
+              ) : (
+                <p className="pmp-muted">
+                  {`${patientName ?? 'This pet'} is not on a membership plan.`}
+                </p>
+              )}
               <button
                 type="button"
                 className="pims-detail__btn-primary"
@@ -793,24 +974,13 @@ export default function PatientMembershipPanel({
                 }}
               >
                 <UserPlus size={14} aria-hidden />
-                Enrol in a plan
+                Enroll in a plan
               </button>
             </div>
           ) : null}
 
           {canEnrol && mode === 'enrol' ? (
             <Card title="Available membership plans">
-              <label className="pmp-field pmp-field--inline">
-                <span className="pmp-field__label">Billing</span>
-                <select
-                  className="pmp-input"
-                  value={enrolInterval}
-                  onChange={(e) => setEnrolInterval(e.target.value as MembershipBillingInterval)}
-                >
-                  <option value="monthly">Monthly</option>
-                  <option value="annual">Annual</option>
-                </select>
-              </label>
               {formError ? (
                 <p className="pmp-form__error" role="alert">
                   {formError}
@@ -841,7 +1011,7 @@ export default function PatientMembershipPanel({
                         disabled={busy}
                         onClick={() => void enrol(plan)}
                       >
-                        Enrol
+                        Enroll
                       </button>
                     </li>
                   ))}
@@ -852,7 +1022,29 @@ export default function PatientMembershipPanel({
 
           {membership ? (
             <>
-              <div className="pmp-summary">
+              {membership.status !== 'active' ? (
+                <button
+                  type="button"
+                  className="pmp-inactive-details-toggle"
+                  aria-expanded={inactiveDetailsOpen}
+                  onClick={() => setInactiveDetailsOpen((v) => !v)}
+                >
+                  {inactiveDetailsOpen ? (
+                    <ChevronDown size={14} aria-hidden />
+                  ) : (
+                    <ChevronRight size={14} aria-hidden />
+                  )}
+                  {inactiveDetailsOpen ? 'Hide previous plan details' : 'Show previous plan details'}
+                </button>
+              ) : null}
+
+              {membership.status === 'active' || inactiveDetailsOpen ? (
+              <>
+              <div
+                className={`pmp-summary${
+                  membership.status !== 'active' ? ' pmp-summary--inactive' : ''
+                }`}
+              >
                 <div className="pmp-summary__head">
                   <div>
                     <h3 className="pmp-summary__plan">{membership.planName}</h3>
@@ -1030,13 +1222,31 @@ export default function PatientMembershipPanel({
                       />
                     </div>
                     <label className="pmp-field">
-                      <span className="pmp-field__label">Quantity included</span>
-                      <input
+                      <span className="pmp-field__label">Allowance</span>
+                      <select
                         className="pmp-input"
-                        inputMode="decimal"
-                        value={addQty}
-                        onChange={(e) => setAddQty(e.target.value)}
-                      />
+                        value={isUnlimitedAllowance(addQty) ? 'unlimited' : 'limited'}
+                        onChange={(e) =>
+                          setAddQty(
+                            e.target.value === 'unlimited'
+                              ? 'unlimited'
+                              : addQty === 'unlimited'
+                                ? '1'
+                                : addQty || '1',
+                          )
+                        }
+                      >
+                        <option value="limited">Limited</option>
+                        <option value="unlimited">Unlimited</option>
+                      </select>
+                      {isUnlimitedAllowance(addQty) ? null : (
+                        <input
+                          className="pmp-input"
+                          inputMode="decimal"
+                          value={addQty}
+                          onChange={(e) => setAddQty(e.target.value)}
+                        />
+                      )}
                     </label>
                     <label className="pmp-field">
                       <span className="pmp-field__label">Coverage</span>
@@ -1176,6 +1386,8 @@ export default function PatientMembershipPanel({
                   )
                 ) : null}
               </div>
+              </>
+              ) : null}
             </>
           ) : null}
         </div>

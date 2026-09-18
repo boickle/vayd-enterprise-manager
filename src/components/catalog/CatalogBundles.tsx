@@ -97,16 +97,30 @@ function itemCount(bundle: Bundle): number {
 }
 
 function choiceCount(bundle: Bundle): number {
-  return bundle.groups.filter((g) => g.selectionMode === 'choice').length;
+  return bundle.groups.filter(
+    (g) => g.selectionMode === 'choice' || g.selectionMode === 'any',
+  ).length;
 }
 
-type Props = { practiceId: number };
+type Props = {
+  practiceId: number;
+  /** Open this bundle once after the list loads (e.g. clicked from Catalog All search). */
+  focusBundleId?: number | null;
+  onFocusBundleConsumed?: () => void;
+  /** Prefill the bundles search box. */
+  initialQuery?: string;
+};
 
-export default function CatalogBundles({ practiceId }: Props) {
+export default function CatalogBundles({
+  practiceId,
+  focusBundleId = null,
+  onFocusBundleConsumed,
+  initialQuery = '',
+}: Props) {
   const [bundles, setBundles] = useState<Bundle[]>([]);
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState(initialQuery);
   const [showArchived, setShowArchived] = useState(false);
 
   const [editing, setEditing] = useState<Bundle | null>(null);
@@ -135,6 +149,10 @@ export default function CatalogBundles({ practiceId }: Props) {
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  useEffect(() => {
+    if (initialQuery.trim()) setQuery(initialQuery);
+  }, [initialQuery]);
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -176,6 +194,24 @@ export default function CatalogBundles({ practiceId }: Props) {
       await appAlert({ title: 'Could not open bundle', message: apiErrorMessage(e) });
     }
   }
+
+  useEffect(() => {
+    if (focusBundleId == null || loading) return;
+    const row = bundles.find((b) => b.id === focusBundleId);
+    if (!row) {
+      onFocusBundleConsumed?.();
+      return;
+    }
+    let cancelled = false;
+    void openBundle(row).finally(() => {
+      if (!cancelled) onFocusBundleConsumed?.();
+    });
+    return () => {
+      cancelled = true;
+    };
+    // One-shot open from Catalog All search.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusBundleId, loading, bundles]);
 
   function closeEditor() {
     setEditing(null);
@@ -363,11 +399,16 @@ export default function CatalogBundles({ practiceId }: Props) {
 
         <section className="cbn-card">
           <h4 className="cbn-card__title">What’s in the bundle</h4>
+          <p className="cbn-card__hint">
+            “{draft.name.trim() || 'This bundle'}” is the sellable package name. The lines below
+            are the catalog items it expands to.
+          </p>
           <BundleGroupEditor
             practiceId={practiceId}
             groups={groups}
             onChange={setGroups}
             disabled={saving}
+            context="bundle"
           />
         </section>
 
@@ -405,6 +446,26 @@ export default function CatalogBundles({ practiceId }: Props) {
             ) : null}
           </section>
         ) : null}
+
+        <div className="cbn__editor-foot">
+          <button
+            type="button"
+            className="cbn-btn cbn-btn--quiet"
+            disabled={saving}
+            onClick={closeEditor}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="cbn-btn cbn-btn--primary"
+            disabled={saving}
+            onClick={() => void save()}
+          >
+            <Save size={14} aria-hidden />
+            {saving ? 'Saving…' : creating ? 'Create bundle' : 'Save bundle'}
+          </button>
+        </div>
       </div>
     );
   }
@@ -503,7 +564,7 @@ export default function CatalogBundles({ practiceId }: Props) {
                     </span>
                     {choiceCount(bundle) > 0 ? (
                       <span className="cbn__or-pill">
-                        {choiceCount(bundle)} OR choice
+                        {choiceCount(bundle)} pick-at-sale
                         {choiceCount(bundle) === 1 ? '' : 's'}
                       </span>
                     ) : null}

@@ -33,11 +33,38 @@ export function PetThumb({
   );
 }
 
-/** Only a real browser URL. S3 keys like `pets/123/….jpeg` are not loadable as-is. */
+/**
+ * Resolve a displayable pet photo URL.
+ * DB stores an S3 key (`pets/123/….jpeg`); browsers need the public API proxy
+ * `GET /patients/:id/image` (same pattern as employee photos).
+ */
+export function patientPhotoSrc(
+  patientId: string | number | null | undefined,
+  imageUrl: unknown,
+  apiBase: string,
+): string | null {
+  const id = patientId != null ? String(patientId).trim() : '';
+  const raw = imageUrl == null ? '' : String(imageUrl).trim();
+  if (!raw && !id) return null;
+  // No stored image key / URL → no photo.
+  if (!raw) return null;
+  const base = apiBase.replace(/\/+$/, '');
+  if (id) {
+    // Prefer the stable proxy whenever we know the patient — works for S3 keys
+    // and avoids expired signed URLs from older portal responses.
+    return `${base}/patients/${encodeURIComponent(id)}/image`;
+  }
+  if (/^https?:\/\//i.test(raw)) return raw;
+  if (raw.startsWith('/')) return `${base}${raw}`;
+  return null;
+}
+
+/** @deprecated Prefer {@link patientPhotoSrc} with a patient id. */
 export function publicMediaUrl(path: unknown, apiBase: string): string | null {
   if (path == null) return null;
   const p = String(path).trim();
   if (!p) return null;
   if (/^https?:\/\//i.test(p)) return p;
+  if (p.startsWith('/')) return `${apiBase.replace(/\/+$/, '')}${p}`;
   return null;
 }

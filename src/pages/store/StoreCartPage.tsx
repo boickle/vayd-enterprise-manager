@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { useAuth } from '../../auth/useAuth';
 import {
@@ -7,10 +7,14 @@ import {
   publicPreviewCoupon,
   publicStoreCardOnFile,
   publicStoreFulfillment,
+  publicStoreProducts,
+  listMyStoreMemberDiscounts,
   publicStoreTax,
   storeProductImageUrl,
   type StoreFulfillmentOption,
+  type StoreReminderCadence,
   type StoreSavedCard,
+  type StoreTagalongPreview,
 } from '../../api/onlineStore';
 import { AddressAutocomplete, type AddressFields } from '../../components/AddressAutocomplete';
 import { fetchClientInfo, fetchClientPets, type Pet } from '../../api/clientPortal';
@@ -30,22 +34,52 @@ import {
 } from '../../utils/mailShippingTypes';
 import {
   AUTOSHIP_FREQS,
+  autoshipCadencePhrase,
   formatAutoshipFrequency,
   readStoreCart,
   writeStoreCart,
   type StoreCartLine,
 } from './storeCartState';
+import { expandStoreTagalongs, storeRebatePromoCopy } from '../../utils/storeTagalongs';
+import { storeRecommendedFrequency } from '../../utils/storeReminderFrequency';
+import { applyMemberStoreDiscount, memberDiscountForPets } from '../../utils/storeMemberPrice';
+import StoreRebatePromo from './StoreRebatePromo';
 import './Store.css';
 
 function customFreqParts(frequency: string | null | undefined) {
   const match = /^every_(\d+)_(days|weeks|months)$/i.exec(frequency || '');
-  if (!match) return { on: false, count: 8, unit: 'weeks' as const };
-  const unit = match[2].toLowerCase();
+  if (!match) return { on: false, count: 1, unit: 'months' as const };
   return {
     on: true,
-    count: Math.max(1, Number(match[1]) || 8),
-    unit: unit === 'days' || unit === 'months' ? (unit as 'days' | 'months') : ('weeks' as const),
+    count: Math.max(1, Number(match[1]) || 1),
+    unit: match[2].toLowerCase() as 'days' | 'weeks' | 'months',
   };
+}
+
+function autoshipPlaceOrderNote(lines: StoreCartLine[]): string | null {
+  const autoshipLines = lines.filter((line) => line.autoshipFrequency);
+  if (!autoshipLines.length) return null;
+  const cadences = [
+    ...new Set(
+      autoshipLines
+        .map((line) => autoshipCadencePhrase(line.autoshipFrequency))
+        .filter(Boolean),
+    ),
+  ];
+  const oneTime = lines.some((line) => !line.autoshipFrequency);
+  const schedule =
+    cadences.length === 1
+      ? cadences[0]
+      : cadences.length === 2
+        ? `${cadences[0]} and ${cadences[1]}`
+        : `${cadences.slice(0, -1).join(', ')}, and ${cadences[cadences.length - 1]}`;
+  if (oneTime) {
+    return `Auto-ship items ship and charge this card ${schedule} until you cancel. One-time items are charged only for this order.`;
+  }
+  if (cadences.length === 1) {
+    return `You'll receive a shipment and be charged ${schedule} until you cancel. You can change or stop auto-ship anytime.`;
+  }
+  return `You'll receive shipments and be charged on each item's schedule (${schedule}) until you cancel.`;
 }
 
 const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
@@ -99,6 +133,9 @@ export default function StoreCartPage() {
   const [options, setOptions] = useState<StoreFulfillmentOption[]>([]);
   const [fulfillmentId, setFulfillmentId] = useState('');
   const [taxRates, setTaxRates] = useState({ name: 'Sales Tax', level1: 5.5, level2: 0, level3: 0 });
+  const [tagalongsByItem, setTagalongsByItem] = useState<Record<number, StoreTagalongPreview[]>>({});
+  const [cadenceByItem, setCadenceByItem] = useState<Record<number, StoreReminderCadence>>({});
+  const [memberDiscounts, setMemberDiscounts] = useState<Record<number, number>>({});
   const [cards, setCards] = useState<StoreSavedCard[]>([]);
   const [selectedCardId, setSelectedCardId] = useState('');
   const [enterNewCard, setEnterNewCard] = useState(false);
@@ -122,6 +159,7 @@ export default function StoreCartPage() {
     persist(
       lines.map((line, i) => {
         if (i !== index) return line;
+        const prevQty = Math.max(1, Math.floor(Number(line.quantity) || 1));
         const next = { ...line, ...patch };
         const qty = Math.max(1, Math.floor(Number(next.quantity) || 1));
         next.quantity = qty;
@@ -129,6 +167,28 @@ export default function StoreCartPage() {
           storeUnitPrice(next.basePrice ?? next.unitPrice, next.priceBreaks, qty),
           next.sale
         );
+        const cadence = next.reminderCadence ?? cadenceByItem[line.inventoryItemId] ?? null;
+        const prevRecommended = storeRecommendedFrequency(
+          cadence,
+          line.recommendedFrequency,
+          prevQty
+        );
+        const nextRecommended = storeRecommendedFrequency(
+          cadence,
+          line.recommendedFrequency,
+          qty
+        );
+        next.reminderCadence = cadence;
+        next.recommendedFrequency = nextRecommended;
+        if (
+          line.autoshipFrequency &&
+          prevRecommended &&
+          line.autoshipFrequency === prevRecommended &&
+          nextRecommended &&
+          patch.autoshipFrequency === undefined
+        ) {
+          next.autoshipFrequency = nextRecommended;
+        }
         return next;
       })
     );
@@ -152,11 +212,33 @@ export default function StoreCartPage() {
         });
       })
       .catch(() => undefined);
+    void publicStoreProducts(PRACTICE_ID)
+      .then((listings) => {
+        const next: Record<number, StoreTagalongPreview[]> = {};
+        const cadences: Record<number, StoreReminderCadence> = {};
+        for (const listing of listings) {
+          for (const variant of listing.variants || []) {
+            if (variant.inventoryItemId == null) continue;
+            next[variant.inventoryItemId] = variant.tagalongs ?? [];
+            if (variant.reminderCadence) cadences[variant.inventoryItemId] = variant.reminderCadence;
+          }
+        }
+        setTagalongsByItem(next);
+        setCadenceByItem(cadences);
+      })
+      .catch(() => undefined);
   }, []);
 
   useEffect(() => {
     if (!loggedIn || !clientId) return;
     void fetchClientPets().then(setPets).catch(() => setPets([]));
+    void listMyStoreMemberDiscounts(PRACTICE_ID)
+      .then((rows) => {
+        setMemberDiscounts(
+          Object.fromEntries(rows.map((row) => [row.patientId, row.percent]))
+        );
+      })
+      .catch(() => setMemberDiscounts({}));
     void fetchClientInfo(clientId).then((info) => {
       if (!info) return;
       setShip((prev) => ({
@@ -207,9 +289,33 @@ export default function StoreCartPage() {
         ? selectedFulfillment
         : (allAutoship && autoshipOption) || selectedFulfillment || options[0] || null;
   const pickup = fulfillment?.kind === 'pickup';
+  const extrasByIndex = useMemo(
+    () =>
+      lines.map((line) => expandStoreTagalongs(line, tagalongsByItem[line.inventoryItemId])),
+    [lines, tagalongsByItem]
+  );
+  const chargedUnits = useMemo(
+    () =>
+      lines.map((line) =>
+        applyMemberStoreDiscount(
+          line.unitPrice,
+          memberDiscountForPets(memberDiscounts, line.patientIds)
+        )
+      ),
+    [lines, memberDiscounts]
+  );
+  const hasMemberPricing = Object.keys(memberDiscounts).length > 0;
   const subtotal = useMemo(
-    () => lines.reduce((n, line) => n + line.unitPrice * line.quantity, 0),
-    [lines]
+    () =>
+      lines.reduce((n, line, i) => {
+        const extras = extrasByIndex[i] ?? [];
+        return (
+          n +
+          (chargedUnits[i] ?? line.unitPrice) * line.quantity +
+          extras.reduce((sum, extra) => sum + extra.amount, 0)
+        );
+      }, 0),
+    [chargedUnits, extrasByIndex, lines]
   );
   const shipping =
     couponFreeShip || pickup || fulfillment?.charge !== 'amount'
@@ -217,8 +323,13 @@ export default function StoreCartPage() {
       : Number(fulfillment?.amount) || 0;
   const tax = useMemo(() => {
     let n = 0;
-    for (const line of lines) {
-      const amount = line.unitPrice * line.quantity;
+    for (let i = 0; i < lines.length; i += 1) {
+      const line = lines[i]!;
+      const extras = extrasByIndex[i] ?? [];
+      const amount = (chargedUnits[i] ?? line.unitPrice) * line.quantity;
+      const beforeAmt = extras
+        .filter((extra) => extra.taxMode === 'before_tax')
+        .reduce((sum, extra) => sum + extra.amount, 0);
       const share = subtotal > 0 ? amount / subtotal : 0;
       const after = Math.max(0, amount - couponOff * share);
       const rate = storeTaxRateForLevel(line.taxLevelValue ?? 1, {
@@ -226,7 +337,18 @@ export default function StoreCartPage() {
         level2: taxRates.level2,
         level3: taxRates.level3,
       });
-      n += after * rate;
+      n += (after + beforeAmt) * rate;
+      for (const extra of extras) {
+        if (extra.taxMode === 'before_tax') continue;
+        const extraShare = subtotal > 0 ? extra.amount / subtotal : 0;
+        const extraAfter = extra.amount - couponOff * extraShare;
+        const extraRate = storeTaxRateForLevel(extra.taxLevelValue ?? 0, {
+          level1: taxRates.level1,
+          level2: taxRates.level2,
+          level3: taxRates.level3,
+        });
+        n += extraAfter * extraRate;
+      }
     }
     if (shipping > 0) {
       n += shipping * storeTaxRateForLevel(1, {
@@ -236,7 +358,7 @@ export default function StoreCartPage() {
       });
     }
     return roundStoreMoney(n);
-  }, [couponOff, lines, shipping, subtotal, taxRates]);
+  }, [chargedUnits, couponOff, extrasByIndex, lines, shipping, subtotal, taxRates]);
   const total = Math.max(0, subtotal - couponOff + shipping + tax);
   const patientNamesById = useMemo(
     () =>
@@ -297,9 +419,19 @@ export default function StoreCartPage() {
             {lines.map((line, i) => {
               const image = storeProductImageUrl(PRACTICE_ID, line.inventoryItemId);
               const rx = lineNeedsApproval(line);
-              const needsPet = lineNeedsPet(line);
+              const needsPet = lineNeedsPet(line) || hasMemberPricing;
+              const extras = extrasByIndex[i] ?? [];
+              const cadence = line.reminderCadence ?? cadenceByItem[line.inventoryItemId] ?? null;
+              const recommended = storeRecommendedFrequency(
+                cadence,
+                line.recommendedFrequency,
+                line.quantity
+              );
+              const charged = chargedUnits[i] ?? line.unitPrice;
+              const memberPct = memberDiscountForPets(memberDiscounts, line.patientIds);
               return (
-                <tr key={`${line.inventoryItemId}-${i}`}>
+                <Fragment key={`${line.inventoryItemId}-${i}`}>
+                <tr>
                   <td>
                     <div className="vayd-store__cart-item">
                       {line.hasImage !== false ? (
@@ -310,7 +442,15 @@ export default function StoreCartPage() {
                       <div>
                         <strong>{line.name}</strong>
                         <div className="vayd-store__cart-meta">
-                          ${line.unitPrice.toFixed(2)} each
+                          {memberPct > 0 ? (
+                            <>
+                              <span className="vayd-store__price-was">${line.unitPrice.toFixed(2)}</span>
+                              {' '}
+                              ${charged.toFixed(2)} each · Member {memberPct}% off
+                            </>
+                          ) : (
+                            <>${line.unitPrice.toFixed(2)} each</>
+                          )}
                           {rx ? ' · Prescription' : ''}
                         </div>
                         <div className="vayd-store__cart-purchase">
@@ -329,7 +469,7 @@ export default function StoreCartPage() {
                                 updateLine(i, {
                                   autoshipFrequency:
                                     line.autoshipFrequency ||
-                                    line.recommendedFrequency ||
+                                    recommended ||
                                     'monthly',
                                 })
                               }
@@ -351,7 +491,7 @@ export default function StoreCartPage() {
                                     onClick={() => updateLine(i, { autoshipFrequency: f.value })}
                                   >
                                     {f.label}
-                                    {line.recommendedFrequency === f.value ? ' (recommended)' : ''}
+                                    {recommended === f.value ? ' (recommended)' : ''}
                                   </button>
                                 ))}
                                 <button
@@ -368,6 +508,18 @@ export default function StoreCartPage() {
                                 >
                                   Build your own
                                 </button>
+                                {recommended &&
+                                !AUTOSHIP_FREQS.some((row) => row.value === recommended) ? (
+                                  <button
+                                    type="button"
+                                    className={`vayd-store__chip${
+                                      line.autoshipFrequency === recommended ? ' is-on' : ''
+                                    }`}
+                                    onClick={() => updateLine(i, { autoshipFrequency: recommended })}
+                                  >
+                                    {formatAutoshipFrequency(recommended)} (recommended)
+                                  </button>
+                                ) : null}
                               </div>
                               {customFreqParts(line.autoshipFrequency).on ? (
                                 <div className="vayd-store__custom-freq">
@@ -426,6 +578,7 @@ export default function StoreCartPage() {
                                       onChange={() => updateLine(i, { patientIds: [id] })}
                                     />
                                     {pet.name}
+                                    {memberDiscounts[id] ? ` · member ${memberDiscounts[id]}% off` : ''}
                                   </label>
                                 );
                               })}
@@ -454,13 +607,40 @@ export default function StoreCartPage() {
                       </button>
                     </div>
                   </td>
-                  <td>${(line.unitPrice * line.quantity).toFixed(2)}</td>
+                  <td>${(charged * line.quantity).toFixed(2)}</td>
                   <td>
                     <button type="button" className="ghost" onClick={() => persist(lines.filter((_, idx) => idx !== i))}>
                       Remove
                     </button>
                   </td>
                 </tr>
+                {storeRebatePromoCopy(tagalongsByItem[line.inventoryItemId]) ? (
+                  <tr className="vayd-store__cart-tagalong">
+                    <td colSpan={4}>
+                      <StoreRebatePromo rules={tagalongsByItem[line.inventoryItemId]} extras={extras} />
+                    </td>
+                  </tr>
+                ) : null}
+                {extras.map((extra) => (
+                  <tr key={`${line.inventoryItemId}-tagalong-${extra.ruleId}`} className="vayd-store__cart-tagalong">
+                    <td>
+                      <div className="vayd-store__cart-item">
+                        <div className="vayd-store__cart-ph" aria-hidden />
+                        <div>
+                          <strong>{extra.name}</strong>
+                          <div className="vayd-store__cart-meta">
+                            Added with this item
+                            {extra.taxMode === 'before_tax' ? ' · included in product tax' : ''}
+                          </div>
+                        </div>
+                      </div>
+                    </td>
+                    <td>{extra.qty}</td>
+                    <td>${extra.amount.toFixed(2)}</td>
+                    <td />
+                  </tr>
+                ))}
+                </Fragment>
               );
             })}
           </tbody>
@@ -707,6 +887,11 @@ export default function StoreCartPage() {
               <p className="vayd-store__err">Choose which pet each auto-ship or prescription item is for.</p>
             ) : null}
             {err ? <p className="vayd-store__err">{err}</p> : null}
+            {hasAutoship ? (
+              <p className="vayd-store__autoship-note vayd-store__autoship-note--checkout">
+                {autoshipPlaceOrderNote(lines)}
+              </p>
+            ) : null}
             <button
               type="button"
               className="primary vayd-store__place"

@@ -43,7 +43,6 @@ import {
 import PhysicalExamSection from '../components/soap/PhysicalExamSection';
 import MasterProblemListSection from '../components/soap/MasterProblemListSection';
 import PlanOrdersSection from '../components/soap/PlanOrdersSection';
-import VisitDoseAndRxSection from '../components/soap/VisitDoseAndRxSection';
 import SoapAddendaSection from '../components/soap/SoapAddendaSection';
 import ProposedOrdersPanel from '../components/soap/ProposedOrdersPanel';
 import VisitCheckoutPanel from '../components/soap/VisitCheckoutPanel';
@@ -296,6 +295,7 @@ export default function SoapEncounterPage() {
   const [writingAddendum, setWritingAddendum] = useState(false);
   const [roster, setRoster] = useState<HouseholdRosterEntry[]>([]);
   const [householdRefreshTick, setHouseholdRefreshTick] = useState(0);
+  const [clinicalRefreshTick, setClinicalRefreshTick] = useState(0);
   /** Room Loader–originated order ids — Accept goes to Checkout only, not the left Plan list. */
   const [roomLoaderOrderIds, setRoomLoaderOrderIds] = useState<ReadonlySet<string>>(
     () => new Set()
@@ -835,6 +835,45 @@ export default function SoapEncounterPage() {
     [save]
   );
 
+  const applyScribeChart = useCallback(
+    (patch: {
+      subjective?: string;
+      vitals?: Vitals;
+      exam?: PeExamState;
+      objectiveNotes?: string;
+      reasoning?: string;
+      planNotes?: string;
+    }) => {
+      const body: Parameters<typeof updateEncounter>[1] = {};
+      if (patch.subjective != null) {
+        setSubjective(patch.subjective);
+        body.subjective = buildSubjectivePayload(patch.subjective, emailDraftRef.current);
+      }
+      if (patch.vitals) {
+        setVitals(patch.vitals);
+        body.objectiveVitals = { ...patch.vitals };
+      }
+      if (patch.exam) {
+        setExam(patch.exam);
+        body.objectiveExam = patch.exam;
+      }
+      if (patch.objectiveNotes != null) {
+        setObjectiveNotes(patch.objectiveNotes);
+        body.objectiveNotes = patch.objectiveNotes;
+      }
+      if (patch.reasoning != null) {
+        setReasoning(patch.reasoning);
+        body.assessmentReasoning = patch.reasoning;
+      }
+      if (patch.planNotes != null) {
+        setPlanNotes(patch.planNotes);
+        body.planNotes = patch.planNotes;
+      }
+      if (Object.keys(body).length > 0) void save(body);
+    },
+    [save]
+  );
+
   const appendBulletToSoapSection = useCallback(
     (section: SoapNarrativeSection, text: string) => {
       const trimmed = text.trim();
@@ -1134,6 +1173,7 @@ export default function SoapEncounterPage() {
           onApplyObjectiveNotes={applyScribeObjectiveNotes}
           onApplyReasoning={applyScribeReasoning}
           onApplyPlanNotes={applyScribePlanNotes}
+          onApplyChart={applyScribeChart}
           onProblemCreated={onScribeProblemCreated}
           onOrderCreated={onScribeOrderCreated}
           onPlanItemsChange={setScribePlanItems}
@@ -1156,16 +1196,28 @@ export default function SoapEncounterPage() {
               disabled={locked}
               subjective={subjective}
               onSubjectiveChange={setSubjective}
-              onSubjectiveBlur={() => void saveSubjective(subjective)}
+              onSubjectiveBlur={(text) => {
+                setSubjective(text);
+                void saveSubjective(text);
+              }}
               objectiveNotes={objectiveNotes}
               onObjectiveNotesChange={setObjectiveNotes}
-              onObjectiveNotesBlur={() => save({ objectiveNotes })}
+              onObjectiveNotesBlur={(text) => {
+                setObjectiveNotes(text);
+                void save({ objectiveNotes: text });
+              }}
               assessment={reasoning}
               onAssessmentChange={setReasoning}
-              onAssessmentBlur={() => save({ assessmentReasoning: reasoning })}
+              onAssessmentBlur={(text) => {
+                setReasoning(text);
+                void save({ assessmentReasoning: text });
+              }}
               planNotes={planNotes}
               onPlanNotesChange={setPlanNotes}
-              onPlanNotesBlur={() => save({ planNotes })}
+              onPlanNotesBlur={(text) => {
+                setPlanNotes(text);
+                void save({ planNotes: text });
+              }}
               planItemsSlot={
                 encounter && (
                   <>
@@ -1204,30 +1256,11 @@ export default function SoapEncounterPage() {
                       clientId={clientIdParam ? Number(clientIdParam) : undefined}
                       practiceId={VISIT_WORKFLOW_PRACTICE_ID}
                       excludeOrderIds={roomLoaderOrderIds}
+                      showSearch={false}
                       onChange={setOrders}
                       onInvoiceShouldRefresh={() => void refreshInvoice()}
                       onInventoryItemAdded={appendInventoryToTreatmentPlan}
                       onInventoryItemRemoved={removeInventoryFromTreatmentPlan}
-                    />
-                    <VisitDoseAndRxSection
-                      key={`dose-rx-${encounter.id}`}
-                      encounterId={encounter.id}
-                      orders={orders}
-                      disabled={locked}
-                      patientId={patientId}
-                      clientId={clientIdParam ? Number(clientIdParam) : undefined}
-                      practiceId={VISIT_WORKFLOW_PRACTICE_ID}
-                      providerId={primaryProviderId}
-                      patientName={patientName}
-                      patientSpecies={patientField(patientProfile, 'species')}
-                      ownerName={clientName}
-                      providerName={primaryProviderName}
-                      providerLicense={primaryProviderLicense}
-                      onOrderUpdated={(updated) =>
-                        setOrders((prev) => prev.map((o) => (o.id === updated.id ? updated : o)))
-                      }
-                      onInvoiceShouldRefresh={() => void refreshInvoice()}
-                      onChronicMedicationsMaybeChanged={refreshChronicMedications}
                     />
                   </>
                 )
@@ -1269,7 +1302,11 @@ export default function SoapEncounterPage() {
                       value={subjective}
                       disabled={locked}
                       onChange={(e) => setSubjective(e.target.value)}
-                      onBlur={() => void saveSubjective(subjective)}
+                      onBlur={(e) => {
+                        const text = e.target.value;
+                        setSubjective(text);
+                        void saveSubjective(text);
+                      }}
                     />
                   </section>
                 )}
@@ -1431,7 +1468,10 @@ export default function SoapEncounterPage() {
                       placeholder="Additional objective observations…"
                       minHeightPx={120}
                       onChange={setObjectiveNotes}
-                      onBlur={() => save({ objectiveNotes })}
+                      onBlur={(text) => {
+                        setObjectiveNotes(text);
+                        void save({ objectiveNotes: text });
+                      }}
                     />
                   </section>
                 )}
@@ -1461,7 +1501,11 @@ export default function SoapEncounterPage() {
                       value={reasoning}
                       disabled={locked}
                       onChange={(e) => setReasoning(e.target.value)}
-                      onBlur={() => save({ assessmentReasoning: reasoning })}
+                      onBlur={(e) => {
+                        const text = e.target.value;
+                        setReasoning(text);
+                        void save({ assessmentReasoning: text });
+                      }}
                     />
                   </section>
                 )}
@@ -1472,8 +1516,8 @@ export default function SoapEncounterPage() {
                       <ClipboardList size={16} /> Plan
                     </h2>
                     <p className="soap-section-hint">
-                      Every order is both a record entry and an invoice line. Meds also generate a
-                      label and discharge instruction.
+                      Add charges from Checkout on the right. Notes that are not catalog items can
+                      still appear here; every catalog order becomes an invoice line.
                     </p>
                     {encounter && (
                       <PlanOrdersSection
@@ -1485,32 +1529,11 @@ export default function SoapEncounterPage() {
                         clientId={clientIdParam ? Number(clientIdParam) : undefined}
                         practiceId={VISIT_WORKFLOW_PRACTICE_ID}
                         excludeOrderIds={roomLoaderOrderIds}
+                        showSearch={false}
                         onChange={setOrders}
                         onInvoiceShouldRefresh={() => void refreshInvoice()}
                         onInventoryItemAdded={appendInventoryToTreatmentPlan}
                         onInventoryItemRemoved={removeInventoryFromTreatmentPlan}
-                      />
-                    )}
-                    {encounter && (
-                      <VisitDoseAndRxSection
-                        key={`dose-rx-manual-${encounter.id}`}
-                        encounterId={encounter.id}
-                        orders={orders}
-                        disabled={locked}
-                        patientId={patientId}
-                        clientId={clientIdParam ? Number(clientIdParam) : undefined}
-                        practiceId={VISIT_WORKFLOW_PRACTICE_ID}
-                        providerId={primaryProviderId}
-                        patientName={patientName}
-                        patientSpecies={patientField(patientProfile, 'species')}
-                        ownerName={clientName}
-                        providerName={primaryProviderName}
-                        providerLicense={primaryProviderLicense}
-                        onOrderUpdated={(updated) =>
-                          setOrders((prev) => prev.map((o) => (o.id === updated.id ? updated : o)))
-                        }
-                        onInvoiceShouldRefresh={() => void refreshInvoice()}
-                        onChronicMedicationsMaybeChanged={refreshChronicMedications}
                       />
                     )}
 
@@ -1522,7 +1545,11 @@ export default function SoapEncounterPage() {
                       value={planNotes}
                       disabled={locked}
                       onChange={(e) => setPlanNotes(e.target.value)}
-                      onBlur={() => save({ planNotes })}
+                      onBlur={(e) => {
+                        const text = e.target.value;
+                        setPlanNotes(text);
+                        void save({ planNotes: text });
+                      }}
                     />
                   </section>
                 )}
@@ -1582,6 +1609,15 @@ export default function SoapEncounterPage() {
             invoice={invoice}
             orders={orders}
             disabled={locked}
+            clinicalRefreshSignal={clinicalRefreshTick}
+            clientId={
+              encounter?.clientId ??
+              (clientIdParam ? Number(clientIdParam) : null)
+            }
+            patientId={patientId}
+            practiceId={VISIT_WORKFLOW_PRACTICE_ID}
+            onClinicalRecorded={() => setClinicalRefreshTick((t) => t + 1)}
+            onChronicMedicationsMaybeChanged={refreshChronicMedications}
             rxLabel={{
               patientId,
               patientName,
@@ -1596,6 +1632,9 @@ export default function SoapEncounterPage() {
               setOrders(next);
               void refreshInvoice();
             }}
+            onInvoiceShouldRefresh={() => void refreshInvoice()}
+            onInventoryItemAdded={appendInventoryToTreatmentPlan}
+            onInventoryItemRemoved={removeInventoryFromTreatmentPlan}
             onOpenEuthanasiaPrepay={() => setShowEuthanasia(true)}
             onOrderRemoved={(orderId) => {
               const removed = orders.find((o) => o.id === orderId);

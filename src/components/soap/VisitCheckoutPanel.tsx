@@ -1,5 +1,5 @@
-import { useEffect, useState, type ReactNode } from 'react';
-import { Check, CreditCard, Receipt, RotateCcw, Smartphone, ShieldCheck, X } from 'lucide-react';
+import { Fragment, useEffect, useState, type ReactNode } from 'react';
+import { Check, ChevronDown, ChevronRight, CreditCard, Pencil, Receipt, RotateCcw, Smartphone, ShieldCheck, X } from 'lucide-react';
 import {
   VISIT_WORKFLOW_PRACTICE_ID,
   addCounterInvoiceLine,
@@ -7,6 +7,7 @@ import {
   authorizeSavedCard,
   captureAuthorization,
   chargeSavedCard,
+  getInvoiceCardOnFile,
   deleteOrder,
   getInvoice,
   getOrderClinicalDetails,
@@ -21,6 +22,8 @@ import {
   type OrderPrescription,
   type OrderVaccination,
   type TerminalReaderCatalog,
+  type StockDraw,
+  type InvoiceCardOnFile,
   type VisitInvoice,
   type VisitInvoiceLine,
 } from '../../api/visitWorkflow';
@@ -37,9 +40,16 @@ import MailInvoiceLineCheckbox, {
 } from './MailInvoiceLineCheckbox';
 import { listMailOrders, type MailOrder } from '../../api/onlineStore';
 import { attachShippingLines, isInvoiceShippingLine } from '../../utils/mailShippingTypes';
+import { attachTagalongLines, tagalongTaxHint } from '../../utils/invoiceTagalongs';
 import { ensurePrintRxNumber } from '../../utils/ensurePrintRxNumber';
 import PostVisitMembershipSignup from './PostVisitMembershipSignup';
 import StockLotPicker from '../inventory/StockLotPicker';
+import LinkedStockInvoiceDetails from '../invoice/LinkedStockInvoiceDetails';
+import InvoiceVaccineDoseEditor from '../pims/InvoiceVaccineDoseEditor';
+import { linkedStockFromLine } from '../../utils/linkedInvoiceStock';
+import VisitDoseAndRxSection from './VisitDoseAndRxSection';
+import PlanOrdersSection from './PlanOrdersSection';
+import { fetchPrimaryProviders, type Provider } from '../../api/employee';
 
 export type CheckoutRxLabelContext = {
   patientId?: number | null;
@@ -62,25 +72,64 @@ type Props = {
   /** Rendered below the payment actions — the follow-up question, asked while
    * the client is still here (see CheckoutFollowUpPrompt). */
   followUpSlot?: ReactNode;
+  /**
+   * Dose / Rx recording used to live above the invoice lines (duplicating every item).
+   * Clinical details now expand under each line — keep these for that embedded UI.
+   */
+  clientId?: number | null;
+  patientId?: number | null;
+  practiceId?: number;
+  onClinicalRecorded?: () => void;
+  onChronicMedicationsMaybeChanged?: () => void;
+  /** Bump when dose/Rx clinical details change so Approve sees fresh sigs. */
+  clinicalRefreshSignal?: number;
   onInvoiceChange: (invoice: VisitInvoice) => void;
   onOpenEuthanasiaPrepay: () => void;
   /** After removing a line's order, drop it from local order state and refresh the invoice. */
   onOrderRemoved?: (orderId: string) => void;
   onOrdersChange?: (orders: EncounterOrder[]) => void;
+  /** Refresh invoice after a catalog add (works even before the first line exists). */
+  onInvoiceShouldRefresh?: () => void;
+  /** Inventory catalog picks also go under Treatment Plan/Medications in the Plan narrative. */
+  onInventoryItemAdded?: (item: { name: string; isVaccine?: boolean }) => void;
+  onInventoryItemRemoved?: (itemName: string) => void;
 };
 
 function isCheckoutRxLine(line: VisitInvoiceLine, order: EncounterOrder | null): boolean {
   if (order?.kind === 'med') return true;
-  return Boolean(
-    line.instructions?.trim() ||
-      line.catalogInstructions?.trim() ||
-      line.refillCount != null ||
-      line.catalogRefill != null
-  );
+  if (line.catalogIsMedication === true || line.catalogIsDispensable === true) return true;
+  return Boolean(line.instructions?.trim() || line.refillCount != null);
 }
 
 function money(n: number | null | undefined): string {
   return `$${(Number(n) || 0).toFixed(2)}`;
+}
+
+/** Compact provider label for tight checkout columns — e.g. "H. Crispell". */
+function shortProviderName(
+  full?: string | null,
+  firstName?: string | null,
+  lastName?: string | null,
+): string {
+  const first = firstName?.trim();
+  const last = lastName?.trim();
+  if (first && last) return `${first[0]!.toUpperCase()}. ${last}`;
+  const cleaned = (full ?? '')
+    .replace(/^(dr|dra|mr|mrs|ms)\.?\s+/i, '')
+    .trim();
+  const parts = cleaned.split(/\s+/).filter(Boolean);
+  while (
+    parts.length > 1 &&
+    /^(dvm|vmd|phd|dacv[a-z]*|vm\.?d)\.?$/i.test(parts[parts.length - 1]!)
+  ) {
+    parts.pop();
+  }
+  if (parts.length >= 2) {
+    const given = parts[0]!;
+    const surname = parts[parts.length - 1]!;
+    return `${given[0]!.toUpperCase()}. ${surname}`;
+  }
+  return cleaned || '—';
 }
 
 function invoiceMailPaymentStatus(inv: VisitInvoice): 'paid' | 'awaiting_payment' {
@@ -116,10 +165,19 @@ export default function VisitCheckoutPanel({
   disabled,
   rxLabel,
   followUpSlot,
+  clientId,
+  patientId,
+  practiceId = VISIT_WORKFLOW_PRACTICE_ID,
+  onClinicalRecorded,
+  onChronicMedicationsMaybeChanged,
+  clinicalRefreshSignal = 0,
   onInvoiceChange,
   onOpenEuthanasiaPrepay,
   onOrderRemoved,
   onOrdersChange,
+  onInvoiceShouldRefresh,
+  onInventoryItemAdded,
+  onInventoryItemRemoved,
 }: Props) {
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -134,7 +192,50 @@ export default function VisitCheckoutPanel({
   const [vaccinationsByOrderId, setVaccinationsByOrderId] = useState<
     Record<string, OrderVaccination>
   >({});
+  const [stockDrawsByOrderId, setStockDrawsByOrderId] = useState<Record<string, StockDraw>>({});
   const [mailOrders, setMailOrders] = useState<MailOrder[]>([]);
+  const [expandedLineId, setExpandedLineId] = useState<string | null>(null);
+  const [editingPriceLineId, setEditingPriceLineId] = useState<string | null>(null);
+  const [providers, setProviders] = useState<Provider[]>([]);
+  const [cardOnFile, setCardOnFile] = useState<InvoiceCardOnFile | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchPrimaryProviders()
+      .then((rows) => {
+        if (!cancelled) {
+          setProviders(
+            [...rows]
+              .filter((e) => e?.id != null && Number(e.id) > 0)
+              .sort((a, b) => (a.name || '').localeCompare(b.name || '')),
+          );
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setProviders([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!invoice?.id) {
+      setCardOnFile(null);
+      return;
+    }
+    let cancelled = false;
+    void getInvoiceCardOnFile(invoice.id)
+      .then((card) => {
+        if (!cancelled) setCardOnFile(card);
+      })
+      .catch(() => {
+        if (!cancelled) setCardOnFile(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [invoice?.id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -190,18 +291,55 @@ export default function VisitCheckoutPanel({
           if (shot.encounterOrderId) shots[shot.encounterOrderId] = shot;
         }
         setVaccinationsByOrderId(shots);
+        setStockDrawsByOrderId(
+          Object.fromEntries(details.stockDraws.map((d) => [d.orderId, d])),
+        );
       })
       .catch(() => {
         if (!canceled) {
           setPrescriptionsByOrderId({});
           setVaccineOrderIds(new Set());
           setVaccinationsByOrderId({});
+          setStockDrawsByOrderId({});
         }
       });
     return () => {
       canceled = true;
     };
-  }, [encounterId, invoice?.id]);
+  }, [encounterId, invoice?.id, clinicalRefreshSignal]);
+
+  // Stamp the visit provider onto production lines that still lack one (SOAP used to leave these blank).
+  useEffect(() => {
+    if (!invoice?.id || invoice.status !== 'open' || disabled) return;
+    const visitProvider = rxLabel?.veterinarianEmployeeId ?? null;
+    if (visitProvider == null || visitProvider <= 0) return;
+    const missing = (invoice.lines ?? []).filter((l) => {
+      if (l.isDeleted) return false;
+      if (isInvoiceShippingLine(l)) return false;
+      if (l.excludeFromProduction === true) return false;
+      return l.providerEmployeeId == null;
+    });
+    if (!missing.length) return;
+    let cancelled = false;
+    void (async () => {
+      let next = invoice;
+      for (const line of missing) {
+        if (cancelled) return;
+        try {
+          next = await updateCounterInvoiceLine(invoice.id, line.id, {
+            providerEmployeeId: visitProvider,
+          });
+        } catch {
+          /* keep going — UI still lets staff pick */
+        }
+      }
+      if (!cancelled && next !== invoice) onInvoiceChange(next);
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [invoice?.id, invoice?.status, rxLabel?.veterinarianEmployeeId, disabled]);
 
   const selectedReader =
     readerCatalog?.readers.find((r) => r.id === readerCatalog.selectedId) ?? null;
@@ -274,7 +412,7 @@ export default function VisitCheckoutPanel({
       setNote('Invoice reopened — charges are editable and payment can be taken.');
     });
 
-  const cardOnFile = () =>
+  const chargeCardOnFile = () =>
     run('saved', async () => {
       if (!invoice) return;
       onInvoiceChange(await chargeSavedCard(invoice.id));
@@ -328,15 +466,17 @@ export default function VisitCheckoutPanel({
   const status = invoice?.status ?? 'open';
   const isPaid = status === 'paid';
   const isVoid = status === 'void';
-  const hasSavedCard = Boolean(invoice?.savedPaymentMethodId);
+  const hasSavedCard = Boolean(cardOnFile || invoice?.savedPaymentMethodId);
   const branchReady =
     invoice?.status !== 'open' ||
     (invoice.inventoryBranchId != null && invoice.inventoryLocationId != null);
   const canEditLines = Boolean(encounterId) && !isPaid && !isVoid && status === 'open';
   const payDisabled = disabled || busy != null || !branchReady;
 
+  const activeCheckoutLines = (invoice?.lines ?? []).filter((row) => !row.isDeleted);
+  const checkoutTagalongs = attachTagalongLines(activeCheckoutLines);
   const checkoutLineGroups = attachShippingLines(
-    (invoice?.lines ?? []).filter((row) => !row.isDeleted),
+    [...checkoutTagalongs.parents, ...checkoutTagalongs.leftover],
     (row) => isInvoiceShippingLine(row),
     (row) => String(row.catalogItemType ?? '').toLowerCase() === 'inventory'
   );
@@ -348,12 +488,19 @@ export default function VisitCheckoutPanel({
   };
 
   const removeLine = (line: VisitInvoiceLine) => {
-    if (!encounterId || !line.orderId || !canEditLines) return;
     const shipped = shippedMailForLine(line);
     if (shipped) {
       setError(shippedMailMessage(shipped));
       return;
     }
+    if (line.tagalongOfLineId) {
+      if (!canEditLines || !invoice) return;
+      void run(`remove:${line.id}`, async () => {
+        onInvoiceChange(await removeCounterInvoiceLine(invoice.id, line.id));
+      });
+      return;
+    }
+    if (!encounterId || !line.orderId || !canEditLines) return;
     void run(`remove:${line.id}`, async () => {
       if (invoice) {
         const shippingIds = await cancelMailOrdersForInvoiceLines(invoice.id, [line]);
@@ -380,9 +527,37 @@ export default function VisitCheckoutPanel({
         )}
       </div>
 
+      {encounterId && onOrdersChange ? (
+        <PlanOrdersSection
+          key={`checkout-add-${encounterId}`}
+          className="soap-checkout-add"
+          encounterId={encounterId}
+          orders={orders}
+          disabled={disabled}
+          patientId={patientId ?? undefined}
+          clientId={clientId ?? undefined}
+          practiceId={practiceId}
+          showList={false}
+          showSearch={!disabled}
+          onChange={onOrdersChange}
+          onInvoiceShouldRefresh={() => {
+            if (onInvoiceShouldRefresh) {
+              onInvoiceShouldRefresh();
+              return;
+            }
+            if (!invoice?.id) return;
+            void getInvoice(invoice.id)
+              .then(onInvoiceChange)
+              .catch(() => undefined);
+          }}
+          onInventoryItemAdded={onInventoryItemAdded}
+          onInventoryItemRemoved={onInventoryItemRemoved}
+        />
+      ) : null}
+
       {!invoice ? (
         <div className="soap-empty">
-          No invoice yet — placing an order in the Plan opens one automatically.
+          No invoice yet — add a charge above to open one.
         </div>
       ) : (
         <>
@@ -394,6 +569,14 @@ export default function VisitCheckoutPanel({
             selectClassName="soap-select"
           />
           <div className="soap-invoice-lines">
+            <div className="soap-invoice-lines-head" aria-hidden>
+              <span />
+              <span>Item</span>
+              <span>Provider</span>
+              <span>Qty</span>
+              <span>Amt</span>
+              <span />
+            </div>
             {[...checkoutLineGroups.parents, ...checkoutLineGroups.leftover].map((l) => {
                 const order =
                   l.orderId != null
@@ -408,23 +591,48 @@ export default function VisitCheckoutPanel({
                 const scriptApproved = Boolean(l.rxApprovedAt);
                 const providerId = l.providerEmployeeId ?? rxLabel?.veterinarianEmployeeId ?? null;
                 const attachedShipping = checkoutLineGroups.attached.get(l.id) ?? [];
+                const attachedTagalongs = checkoutTagalongs.attached.get(l.id) ?? [];
                 const mailed = matchingMailOrderForLine(mailOrders, invoice.id, l);
-                const isVaccineLine = Boolean(order && vaccineOrderIds.has(order.id));
+                const isVaccineLine =
+                  Boolean(order && vaccineOrderIds.has(order.id)) ||
+                  l.catalogIsVaccine === true;
+                const excludesProduction =
+                  order?.catalogFlags?.excludeFromProduction === true ||
+                  l.excludeFromProduction === true;
+                const needsProvider =
+                  !excludesProduction && !isInvoiceShippingLine(l);
                 const lotReady =
                   !l.trackLots ||
                   Boolean(mailed) ||
                   isVaccineLine ||
                   l.inventoryLotBalanceId != null;
-                const lineReady = (order && vaccineOrderIds.has(order.id)
+                const clinicalReady = order && vaccineOrderIds.has(order.id)
                   ? Boolean(vaccinationsByOrderId[order.id])
                   : showRxLabel
                     ? scriptApproved && Boolean(String(instructions).trim())
-                    : isInvoiceShippingLine(l) ||
-                        order?.catalogFlags?.excludeFromProduction === true
-                      ? true
-                      : l.providerEmployeeId != null || Boolean(l.orderId)) && lotReady;
+                    : true;
+                const lineReady =
+                  clinicalReady &&
+                  (!needsProvider || l.providerEmployeeId != null) &&
+                  lotReady;
+                const effectiveProviderId =
+                  providerId ?? rxLabel?.veterinarianEmployeeId ?? null;
+                const needsClinical =
+                  Boolean(order) &&
+                  (isVaccineLine || showRxLabel || order?.kind === 'med');
+                const canEditLineMeta =
+                  Boolean(order) && Boolean(encounterId) && canEditLines && !l.isCovered;
+                const stockDraw = l.orderId ? stockDrawsByOrderId[l.orderId] ?? null : null;
+                const stock = linkedStockFromLine(l, stockDraw);
+                const canExpand = needsClinical || showClientNote || isVaccineLine;
+                const lineExpanded = expandedLineId === l.id;
+                const approveBlockedReason = !String(instructions).trim()
+                  ? 'Record the script (sig) first — expand this line'
+                  : effectiveProviderId == null
+                    ? 'Set the visit provider before approving'
+                    : null;
                 const mailBlockedReason = showRxLabel
-                  ? providerId == null
+                  ? effectiveProviderId == null
                     ? 'Provider is required'
                     : !String(instructions).trim()
                       ? 'Enter the script first'
@@ -437,35 +645,61 @@ export default function VisitCheckoutPanel({
                             : null
                   : null;
                 return (
+                  <Fragment key={l.id}>
                   <div
-                    key={l.id}
                     className={`soap-invoice-line ${lineReady ? 'is-ready' : 'is-pending'}`}
-                    style={{ flexWrap: 'wrap' }}
                   >
+                    {canExpand ? (
+                      <button
+                        type="button"
+                        className="soap-invoice-line-expand"
+                        title={
+                          lineExpanded
+                            ? 'Collapse'
+                            : needsClinical
+                              ? 'Enter dose / Rx details'
+                              : 'More details'
+                        }
+                        aria-expanded={lineExpanded}
+                        onClick={() =>
+                          setExpandedLineId(lineExpanded ? null : l.id)
+                        }
+                      >
+                        {lineExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                      </button>
+                    ) : (
+                      <span className="soap-invoice-line-expand" aria-hidden />
+                    )}
                     <span className="soap-invoice-line-desc">
-                      {l.isCovered ? (
-                        <span
-                          className="soap-invoice-heart"
-                          title="Membership covered"
-                          aria-label="Membership covered"
-                        >
-                          ❤️{' '}
-                        </span>
-                      ) : null}
-                      {l.description}
-                      {Number(l.qty) > 1 ? ` ×${Number(l.qty)}` : ''}
-                      {lineReady ? (
-                        <Check className="soap-invoice-line-check" size={14} aria-label="All set" />
-                      ) : null}
+                      <span className="soap-invoice-line-title">
+                        {l.isCovered ? (
+                          <span
+                            className="soap-invoice-heart"
+                            title="Membership covered"
+                            aria-label="Membership covered"
+                          >
+                            ❤️{' '}
+                          </span>
+                        ) : null}
+                        {l.description}
+                        {lineReady ? (
+                          <Check className="soap-invoice-line-check" size={14} aria-label="All set" />
+                        ) : null}
+                      </span>
                       {showRxLabel && canEditLines && !scriptApproved ? (
                         <button
                           type="button"
-                          className="soap-dose-dymo"
-                          disabled={disabled || busy != null || !String(instructions).trim() || providerId == null}
+                          className="soap-dose-dymo soap-checkout-approve"
+                          title={approveBlockedReason ?? 'Approve this script'}
+                          disabled={disabled || busy != null || Boolean(approveBlockedReason)}
                           onClick={() => {
                             void updateCounterInvoiceLine(invoice.id, l.id, {
                               instructions: String(instructions).trim() || null,
                               rxApproved: true,
+                              ...(l.providerEmployeeId == null &&
+                              rxLabel?.veterinarianEmployeeId != null
+                                ? { providerEmployeeId: rxLabel.veterinarianEmployeeId }
+                                : {}),
                             })
                               .then(onInvoiceChange)
                               .catch((e) => setError(apiErrorMessage(e)));
@@ -475,16 +709,168 @@ export default function VisitCheckoutPanel({
                         </button>
                       ) : null}
                       {showRxLabel && scriptApproved ? (
-                        <span className="soap-invoice-line-amt" style={{ fontWeight: 600, color: '#64748b' }}>
+                        <span className="soap-checkout-approved-pill">
                           Approved
-                          {l.rxApprovedByName ? ` by ${l.rxApprovedByName}` : ''}
+                          {l.rxApprovedByName
+                            ? ` · ${shortProviderName(l.rxApprovedByName)}`
+                            : ''}
                         </span>
                       ) : null}
                     </span>
+                    {needsProvider ? (
+                      canEditLines ? (
+                        <select
+                          className="soap-select soap-checkout-provider-select"
+                          title="Provider"
+                          aria-label="Provider"
+                          value={l.providerEmployeeId ?? ''}
+                          disabled={disabled || busy != null}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={(e) => {
+                            const next = e.target.value ? Number(e.target.value) : null;
+                            if (next == null || !Number.isFinite(next)) {
+                              setError('Provider is required on invoice line items.');
+                              return;
+                            }
+                            void updateCounterInvoiceLine(invoice.id, l.id, {
+                              providerEmployeeId: next,
+                            })
+                              .then(onInvoiceChange)
+                              .catch((err) => setError(apiErrorMessage(err)));
+                          }}
+                        >
+                          {l.providerEmployeeId == null ? (
+                            <option value="" disabled>
+                              Provider…
+                            </option>
+                          ) : null}
+                          {providers.map((emp) => (
+                            <option key={String(emp.id)} value={emp.id}>
+                              {shortProviderName(emp.name, emp.firstName, emp.lastName)}
+                            </option>
+                          ))}
+                          {l.providerEmployeeId != null &&
+                          !providers.some((e) => Number(e.id) === l.providerEmployeeId) ? (
+                            <option value={l.providerEmployeeId}>
+                              {shortProviderName(
+                                rxLabel?.veterinarianEmployeeId === l.providerEmployeeId
+                                  ? rxLabel.veterinarianName
+                                  : `Provider #${l.providerEmployeeId}`,
+                              )}
+                            </option>
+                          ) : null}
+                        </select>
+                      ) : (
+                        <span className="soap-checkout-provider-ro">
+                          {(() => {
+                            const emp = providers.find(
+                              (e) => Number(e.id) === l.providerEmployeeId,
+                            );
+                            if (emp) {
+                              return shortProviderName(emp.name, emp.firstName, emp.lastName);
+                            }
+                            if (rxLabel && rxLabel.veterinarianEmployeeId === l.providerEmployeeId) {
+                              return shortProviderName(rxLabel.veterinarianName);
+                            }
+                            return l.providerEmployeeId != null
+                              ? `#${l.providerEmployeeId}`
+                              : '—';
+                          })()}
+                        </span>
+                      )
+                    ) : (
+                      <span className="soap-checkout-provider-ro" aria-hidden>
+                        —
+                      </span>
+                    )}
+                    {canEditLineMeta && order && encounterId ? (
+                      <input
+                        className="soap-input soap-checkout-line-qty-input"
+                        type="number"
+                        min={0.001}
+                        step="any"
+                        title="Quantity"
+                        aria-label="Quantity"
+                        key={`qty-${order.id}-${order.qty}`}
+                        defaultValue={Number(order.qty) || Number(l.qty) || 1}
+                        disabled={disabled || busy != null}
+                        onClick={(e) => e.stopPropagation()}
+                        onBlur={(e) => {
+                          const n = Number(e.target.value);
+                          if (!Number.isFinite(n) || n <= 0) return;
+                          if (Math.abs(n - Number(order.qty)) < 0.0001) return;
+                          void (async () => {
+                            const updated = await updateOrder(encounterId, order.id, {
+                              qty: n,
+                            });
+                            onOrdersChange?.(
+                              orders.map((o) => (o.id === order.id ? updated : o))
+                            );
+                          })();
+                        }}
+                      />
+                    ) : (
+                      <span className="soap-checkout-line-qty--ro">
+                        {Number(l.qty) || 1}
+                      </span>
+                    )}
                     <span className="soap-invoice-line-amt">
-                      {l.isCovered ? 'covered' : money(l.amount)}
+                      {l.isCovered ? (
+                        'covered'
+                      ) : (
+                        <>
+                          {money(l.amount)}
+                          {canEditLineMeta && order && allowPrice ? (
+                            editingPriceLineId === l.id ? (
+                              <input
+                                className="soap-input soap-checkout-inline-price"
+                                type="number"
+                                min={0}
+                                step="0.01"
+                                autoFocus
+                                key={`price-${order.id}-${order.unitPrice}`}
+                                defaultValue={Number(order.unitPrice) || 0}
+                                disabled={disabled || busy != null}
+                                onClick={(e) => e.stopPropagation()}
+                                onBlur={(e) => {
+                                  const n = Number(e.target.value);
+                                  setEditingPriceLineId(null);
+                                  if (!Number.isFinite(n) || n < 0) return;
+                                  if (Math.abs(n - Number(order.unitPrice)) < 0.0001) return;
+                                  void (async () => {
+                                    const updated = await updateOrder(encounterId!, order.id, {
+                                      unitPrice: n,
+                                    });
+                                    onOrdersChange?.(
+                                      orders.map((o) => (o.id === order.id ? updated : o))
+                                    );
+                                    try {
+                                      onInvoiceChange(await getInvoice(invoice.id));
+                                    } catch {
+                                      /* ignore */
+                                    }
+                                  })();
+                                }}
+                              />
+                            ) : (
+                              <button
+                                type="button"
+                                className="soap-checkout-price-edit-btn"
+                                title="Edit unit price (catalog allows price change)"
+                                disabled={disabled || busy != null}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setEditingPriceLineId(l.id);
+                                }}
+                              >
+                                <Pencil size={12} />
+                              </button>
+                            )
+                          ) : null}
+                        </>
+                      )}
                     </span>
-                    {canEditLines && l.orderId && (
+                    {canEditLines && (l.orderId || l.tagalongOfLineId) ? (
                       <button
                         type="button"
                         className="soap-invoice-line-remove"
@@ -498,209 +884,319 @@ export default function VisitCheckoutPanel({
                       >
                         <X size={14} />
                       </button>
+                    ) : (
+                      <span className="soap-invoice-line-remove" aria-hidden />
                     )}
-                    {showRxLabel && rxLabel && (
-                      <span className="soap-invoice-line-dymo">
-                        <SendRxLabelButton
-                          className="soap-dose-dymo"
-                          disabled={!scriptApproved}
-                          source={{
-                            patientId: rxLabel.patientId,
-                            patientName: rxLabel.patientName,
-                            species: rxLabel.species,
-                            ownerName: rxLabel.ownerName,
-                            veterinarianName: rxLabel.veterinarianName,
-                            veterinarianLicense: rxLabel.veterinarianLicense,
-                            providerEmployeeId: rxLabel.veterinarianEmployeeId,
-                            quantity: l.qty,
-                            name: recorded?.name || order?.name || l.description,
-                            strength: recorded?.strength,
-                            instructions:
-                              recorded?.instructions || l.instructions || l.catalogInstructions,
-                            refill: recorded?.refill ?? l.refillCount ?? l.catalogRefill,
-                            refillExpiration: recorded?.refillExpiration,
-                            startDate: recorded?.startDate ?? invoice?.created,
-                            rxNumber: recorded?.rxNumber,
-                            acuity: recorded?.acuity,
-                            onSavePrescription: async (value) => {
-                              if (encounterId && l.orderId) {
-                                const saved = await saveOrderPrescription(encounterId, l.orderId, {
-                                  name: value.name,
-                                  strength: value.strength,
-                                  instructions: value.instructions,
-                                  refill: value.refill,
-                                  refillExpiration: value.refillExpiration || undefined,
-                                  startDate: value.startDate || undefined,
-                                  acuity:
-                                    value.acuity === 'acute' || value.acuity === 'chronic'
-                                      ? value.acuity
-                                      : undefined,
-                                  employeeId: rxLabel.veterinarianEmployeeId ?? undefined,
-                                });
-                                setPrescriptionsByOrderId((prev) => ({
-                                  ...prev,
-                                  [l.orderId!]: saved,
-                                }));
-                                if (saved.rxNumber != null) return { rxNumber: saved.rxNumber };
-                              }
-                              const rxNumber = await ensurePrintRxNumber({
-                                existingNumber: recorded?.rxNumber,
-                                patientId: rxLabel.patientId,
-                                name: value.name,
-                                inventoryItemId: order?.catalogItemId ?? l.catalogItemId,
-                                instructions: value.instructions,
-                                refill: value.refill,
-                                startDate: value.startDate,
-                                refillExpiration: value.refillExpiration,
-                                acuity: value.acuity,
-                              });
-                              return { rxNumber };
-                            },
-                          }}
-                        />
-                      </span>
-                    )}
+
                     {attachedShipping.map((ship) => (
-                      <span
-                        key={ship.id}
-                        className="soap-invoice-line-dymo"
-                        style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}
-                      >
+                      <div key={ship.id} className="soap-invoice-line-extra soap-invoice-line-ship">
                         <span>{ship.description}</span>
                         <span className="soap-invoice-line-amt">
                           {ship.isCovered ? 'covered' : money(ship.amount)}
                         </span>
-                      </span>
+                      </div>
                     ))}
-                    {l.trackLots && !mailed && !isVaccineLine ? (
-                      <div style={{ flex: '1 1 100%' }}>
-                        <StockLotPicker
-                          practiceId={VISIT_WORKFLOW_PRACTICE_ID}
-                          inventoryItemId={l.stockInventoryItemId ?? l.catalogItemId ?? null}
-                          branchId={invoice.inventoryBranchId}
-                          locationId={invoice.inventoryLocationId}
-                          disabled={disabled || !canEditLines}
-                          selectedLotId={l.inventoryLotBalanceId ?? null}
-                          lotNumber={l.lotNumber ?? ''}
-                          onChange={(pick) => {
-                            void updateCounterInvoiceLine(invoice.id, l.id, {
-                              inventoryLotBalanceId: pick.lotId,
-                              lotNumber: pick.lotNumber || null,
-                            }).then(onInvoiceChange);
-                          }}
-                        />
+                    {attachedTagalongs.map((child) => (
+                      <div key={child.id} className="soap-invoice-line-extra soap-invoice-line-ship soap-invoice-line-tagalong">
+                        <span>
+                          {child.description}
+                          {tagalongTaxHint(child) ? (
+                            <span className="settings-muted"> · {tagalongTaxHint(child)}</span>
+                          ) : null}
+                        </span>
+                        <span className="soap-checkout-line-qty--ro">{Number(child.qty) || 1}</span>
+                        <span className="soap-invoice-line-amt">
+                          {child.isCovered ? 'covered' : money(child.amount)}
+                        </span>
+                        {canEditLines ? (
+                          <button
+                            type="button"
+                            className="soap-invoice-line-remove"
+                            title="Remove tagalong"
+                            disabled={disabled || busy != null}
+                            onClick={() => removeLine(child)}
+                          >
+                            <X size={14} />
+                          </button>
+                        ) : null}
+                      </div>
+                    ))}
+
+                    {lineExpanded ? (
+                      <div className="soap-invoice-line-extra">
+                        {showRxLabel && rxLabel ? (
+                          <div className="soap-invoice-line-dymo">
+                            <SendRxLabelButton
+                              className="soap-dose-dymo"
+                              disabled={!scriptApproved}
+                              source={{
+                                patientId: rxLabel.patientId,
+                                patientName: rxLabel.patientName,
+                                species: rxLabel.species,
+                                ownerName: rxLabel.ownerName,
+                                veterinarianName: rxLabel.veterinarianName,
+                                veterinarianLicense: rxLabel.veterinarianLicense,
+                                providerEmployeeId: rxLabel.veterinarianEmployeeId,
+                                quantity: l.qty,
+                                name: recorded?.name || order?.name || l.description,
+                                strength: recorded?.strength,
+                                instructions:
+                                  recorded?.instructions ||
+                                  l.instructions ||
+                                  l.catalogInstructions,
+                                refill: recorded?.refill ?? l.refillCount ?? l.catalogRefill,
+                                refillExpiration: recorded?.refillExpiration,
+                                startDate: recorded?.startDate ?? invoice?.created,
+                                rxNumber: recorded?.rxNumber,
+                                acuity: recorded?.acuity,
+                                onSavePrescription: async (value) => {
+                                  if (encounterId && l.orderId) {
+                                    const saved = await saveOrderPrescription(
+                                      encounterId,
+                                      l.orderId,
+                                      {
+                                        name: value.name,
+                                        strength: value.strength,
+                                        instructions: value.instructions,
+                                        refill: value.refill,
+                                        refillExpiration: value.refillExpiration || undefined,
+                                        startDate: value.startDate || undefined,
+                                        acuity:
+                                          value.acuity === 'acute' || value.acuity === 'chronic'
+                                            ? value.acuity
+                                            : undefined,
+                                        employeeId: rxLabel.veterinarianEmployeeId ?? undefined,
+                                      }
+                                    );
+                                    setPrescriptionsByOrderId((prev) => ({
+                                      ...prev,
+                                      [l.orderId!]: saved,
+                                    }));
+                                    if (saved.rxNumber != null) return { rxNumber: saved.rxNumber };
+                                  }
+                                  const rxNumber = await ensurePrintRxNumber({
+                                    existingNumber: recorded?.rxNumber,
+                                    patientId: rxLabel.patientId,
+                                    name: value.name,
+                                    inventoryItemId: order?.catalogItemId ?? l.catalogItemId,
+                                    instructions: value.instructions,
+                                    refill: value.refill,
+                                    startDate: value.startDate,
+                                    refillExpiration: value.refillExpiration,
+                                    acuity: value.acuity,
+                                  });
+                                  return { rxNumber };
+                                },
+                              }}
+                            />
+                          </div>
+                        ) : null}
+                        {l.trackLots && !mailed && !isVaccineLine && !stock.linked ? (
+                          <StockLotPicker
+                            practiceId={VISIT_WORKFLOW_PRACTICE_ID}
+                            inventoryItemId={l.stockInventoryItemId ?? l.catalogItemId ?? null}
+                            branchId={invoice.inventoryBranchId}
+                            locationId={invoice.inventoryLocationId}
+                            itemName={l.description}
+                            disabled={disabled || !canEditLines}
+                            selectedLotId={l.inventoryLotBalanceId ?? null}
+                            lotNumber={l.lotNumber ?? ''}
+                            onChange={(pick) => {
+                              void updateCounterInvoiceLine(invoice.id, l.id, {
+                                inventoryLotBalanceId: pick.lotId,
+                                lotNumber: pick.lotNumber || null,
+                              }).then(onInvoiceChange);
+                            }}
+                          />
+                        ) : null}
+                        {!isVaccineLine ? (
+                          <MailInvoiceLineCheckbox
+                            invoiceId={invoice.id}
+                            line={{
+                              ...l,
+                              catalogItemId: l.catalogItemId ?? order?.catalogItemId ?? null,
+                              catalogItemType:
+                                l.catalogItemType ?? order?.catalogItemType ?? null,
+                            }}
+                            clientId={invoice.clientId}
+                            clientName={rxLabel?.ownerName || 'Client'}
+                            patientId={l.patientId ?? invoice.patientId ?? rxLabel?.patientId}
+                            patientName={rxLabel?.patientName}
+                            paymentStatus={invoiceMailPaymentStatus(invoice)}
+                            doctorEmployeeId={effectiveProviderId}
+                            blockedReason={mailBlockedReason}
+                            disabled={disabled || busy != null}
+                            onError={setError}
+                            onChargeShipping={async (result) => {
+                              const next = await addCounterInvoiceLine(invoice.id, {
+                                description: result.shippingChargeName,
+                                qty: 1,
+                                unitPrice: result.shipping,
+                                catalogItemId: result.type.catalogItemId ?? null,
+                                catalogItemType: result.type.catalogItemType ?? 'procedure',
+                                patientId: l.patientId ?? invoice.patientId ?? null,
+                                providerEmployeeId: effectiveProviderId,
+                                miscCharge: true,
+                              });
+                              onInvoiceChange(next);
+                              const matches = (next.lines ?? []).filter(
+                                (row) =>
+                                  !row.isDeleted &&
+                                  row.description === result.shippingChargeName &&
+                                  Math.abs(Number(row.unitPrice) - result.shipping) < 0.009
+                              );
+                              return matches[matches.length - 1]?.id ?? null;
+                            }}
+                            onRemoveShipping={async (shippingLineId) => {
+                              onInvoiceChange(
+                                await removeCounterInvoiceLine(invoice.id, shippingLineId)
+                              );
+                            }}
+                          />
+                        ) : null}
+                        {showClientNote && order && encounterId && canEditLines ? (
+                          <label className="soap-checkout-client-note">
+                            Client note
+                            <textarea
+                              className="soap-input"
+                              rows={2}
+                              defaultValue={order.clientNote ?? ''}
+                              disabled={disabled || busy != null}
+                              onBlur={(e) => {
+                                const next = e.target.value.trim() || null;
+                                if ((order.clientNote ?? null) === next) return;
+                                void (async () => {
+                                  const updated = await updateOrder(encounterId, order.id, {
+                                    clientNote: next,
+                                  });
+                                  onOrdersChange?.(
+                                    orders.map((o) => (o.id === order.id ? updated : o))
+                                  );
+                                })();
+                              }}
+                            />
+                          </label>
+                        ) : null}
+                        {isVaccineLine && !(encounterId && order) ? (
+                          <div className="soap-invoice-line-clinical">
+                            {stock.linked && !mailed ? (
+                              <LinkedStockInvoiceDetails
+                                line={l}
+                                stockDraw={stockDraw}
+                                practiceId={practiceId ?? VISIT_WORKFLOW_PRACTICE_ID}
+                                providerId={l.providerEmployeeId ?? rxLabel?.veterinarianEmployeeId}
+                                branchId={invoice.inventoryBranchId}
+                                locationId={invoice.inventoryLocationId}
+                                disabled={disabled || !canEditLines}
+                                onSelectLot={(lot) => {
+                                  void updateCounterInvoiceLine(invoice.id, l.id, {
+                                    inventoryLotBalanceId: lot?.id ?? null,
+                                    lotNumber: lot?.lotNumber || null,
+                                  }).then(onInvoiceChange);
+                                }}
+                              />
+                            ) : null}
+                            <InvoiceVaccineDoseEditor
+                              line={l}
+                              disabled={disabled || !canEditLines}
+                              hideLotPicker={stock.linked}
+                              branchId={invoice.inventoryBranchId}
+                              locationId={invoice.inventoryLocationId}
+                              recorded={null}
+                              onSaved={() => {
+                                onClinicalRecorded?.();
+                              }}
+                              onLotPicked={(pick) => {
+                                void updateCounterInvoiceLine(invoice.id, l.id, {
+                                  inventoryLotBalanceId: pick.lotId,
+                                  lotNumber: pick.lotNumber,
+                                }).then(onInvoiceChange);
+                              }}
+                            />
+                          </div>
+                        ) : null}
+                        {needsClinical && encounterId && order ? (
+                          <div className="soap-invoice-line-clinical">
+                            {stock.linked && !mailed ? (
+                              <LinkedStockInvoiceDetails
+                                line={l}
+                                stockDraw={stockDraw}
+                                practiceId={practiceId ?? VISIT_WORKFLOW_PRACTICE_ID}
+                                providerId={l.providerEmployeeId ?? rxLabel?.veterinarianEmployeeId}
+                                branchId={invoice.inventoryBranchId}
+                                locationId={invoice.inventoryLocationId}
+                                disabled={disabled || !canEditLines}
+                                onSelectLot={(lot) => {
+                                  void updateCounterInvoiceLine(invoice.id, l.id, {
+                                    inventoryLotBalanceId: lot?.id ?? null,
+                                    lotNumber: lot?.lotNumber || null,
+                                  }).then(onInvoiceChange);
+                                }}
+                              />
+                            ) : null}
+                            <VisitDoseAndRxSection
+                              encounterId={encounterId}
+                              orders={orders}
+                              disabled={disabled}
+                              patientId={patientId ?? rxLabel?.patientId ?? undefined}
+                              clientId={clientId ?? invoice.clientId ?? undefined}
+                              practiceId={practiceId}
+                              providerId={rxLabel?.veterinarianEmployeeId}
+                              inventoryBranchId={invoice.inventoryBranchId}
+                              inventoryLocationId={invoice.inventoryLocationId}
+                              patientName={rxLabel?.patientName ?? 'Patient'}
+                              patientSpecies={rxLabel?.species}
+                              ownerName={rxLabel?.ownerName}
+                              providerName={rxLabel?.veterinarianName}
+                              providerLicense={rxLabel?.veterinarianLicense}
+                              onlyOrderIds={[order.id]}
+                              embedded
+                              forceOpenOrderId={order.id}
+                              invoiceLots={{
+                                [order.id]: {
+                                  lotId: l.inventoryLotBalanceId ?? null,
+                                  lotNumber: l.lotNumber ?? null,
+                                },
+                              }}
+                              onOrderUpdated={(updated) => {
+                                onOrdersChange?.(
+                                  orders.map((o) => (o.id === updated.id ? updated : o))
+                                );
+                              }}
+                              onInvoiceShouldRefresh={() => {
+                                void getInvoice(invoice.id)
+                                  .then(onInvoiceChange)
+                                  .catch(() => undefined);
+                              }}
+                              onChronicMedicationsMaybeChanged={onChronicMedicationsMaybeChanged}
+                              onClinicalRecorded={onClinicalRecorded}
+                            />
+                          </div>
+                        ) : null}
                       </div>
                     ) : null}
-                    <MailInvoiceLineCheckbox
-                      invoiceId={invoice.id}
-                      line={{
-                        ...l,
-                        catalogItemId: l.catalogItemId ?? order?.catalogItemId ?? null,
-                        catalogItemType: l.catalogItemType ?? order?.catalogItemType ?? null,
-                      }}
-                      clientId={invoice.clientId}
-                      clientName={rxLabel?.ownerName || 'Client'}
-                      patientId={l.patientId ?? invoice.patientId ?? rxLabel?.patientId}
-                      patientName={rxLabel?.patientName}
-                      paymentStatus={invoiceMailPaymentStatus(invoice)}
-                      doctorEmployeeId={providerId}
-                      blockedReason={mailBlockedReason}
-                      disabled={disabled || busy != null}
-                      onError={setError}
-                      onChargeShipping={async (result) => {
-                        const next = await addCounterInvoiceLine(invoice.id, {
-                          description: result.shippingChargeName,
-                          qty: 1,
-                          unitPrice: result.shipping,
-                          catalogItemId: result.type.catalogItemId ?? null,
-                          catalogItemType: result.type.catalogItemType ?? 'procedure',
-                          patientId: l.patientId ?? invoice.patientId ?? null,
-                          providerEmployeeId: providerId,
-                          miscCharge: true,
-                        });
-                        onInvoiceChange(next);
-                        const matches = (next.lines ?? []).filter(
-                          (row) =>
-                            !row.isDeleted &&
-                            row.description === result.shippingChargeName &&
-                            Math.abs(Number(row.unitPrice) - result.shipping) < 0.009
-                        );
-                        return matches[matches.length - 1]?.id ?? null;
-                      }}
-                      onRemoveShipping={async (shippingLineId) => {
-                        onInvoiceChange(await removeCounterInvoiceLine(invoice.id, shippingLineId));
-                      }}
-                    />
-                    {showClientNote && order && encounterId && canEditLines && (
-                      <label
-                        style={{
-                          flex: '1 1 100%',
-                          fontSize: 12,
-                          color: '#475569',
-                          marginTop: 4,
-                        }}
-                      >
-                        Client note
-                        <textarea
-                          className="soap-input"
-                          rows={2}
-                          defaultValue={order.clientNote ?? ''}
-                          disabled={disabled || busy != null}
-                          onBlur={(e) => {
-                            const next = e.target.value.trim() || null;
-                            if ((order.clientNote ?? null) === next) return;
-                            void (async () => {
-                              const updated = await updateOrder(encounterId, order.id, {
-                                clientNote: next,
-                              });
-                              onOrdersChange?.(
-                                orders.map((o) => (o.id === order.id ? updated : o))
-                              );
-                            })();
-                          }}
-                          style={{ marginTop: 4, width: '100%', resize: 'vertical' }}
-                        />
-                      </label>
-                    )}
-                    {allowPrice && order && encounterId && canEditLines && !l.isCovered && (
-                      <label
-                        style={{
-                          flex: '1 1 100%',
-                          fontSize: 12,
-                          color: '#475569',
-                          marginTop: 4,
-                          maxWidth: 160,
-                        }}
-                      >
-                        Unit price
-                        <input
-                          className="soap-input"
-                          type="number"
-                          min={0}
-                          step="0.01"
-                          defaultValue={Number(order.unitPrice) || 0}
-                          disabled={disabled || busy != null}
-                          onBlur={(e) => {
-                            const n = Number(e.target.value);
-                            if (!Number.isFinite(n) || n < 0) return;
-                            if (Math.abs(n - Number(order.unitPrice)) < 0.0001) return;
-                            void (async () => {
-                              const updated = await updateOrder(encounterId, order.id, {
-                                unitPrice: n,
-                              });
-                              onOrdersChange?.(
-                                orders.map((o) => (o.id === order.id ? updated : o))
-                              );
-                            })();
-                          }}
-                          style={{ marginTop: 4, width: '100%' }}
-                        />
-                      </label>
-                    )}
                   </div>
+                  </Fragment>
                 );
               })}
           </div>
+
+          {Array.isArray(invoice.staffAudit) && invoice.staffAudit.length > 0 ? (
+            <details className="soap-checkout-staff-audit">
+              <summary>Staff audit · {invoice.staffAudit.length}</summary>
+              <ul>
+                {invoice.staffAudit.map((row, i) => (
+                  <li key={`${row.at}-${i}`}>
+                    {(row.at || '').slice(0, 16).replace('T', ' ')}
+                    {row.employeeName ? ` · ${row.employeeName}` : ''}
+                    {' — '}
+                    {row.message}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          ) : null}
+
           <div className="soap-invoice-totals">
             {Number(invoice.membershipAdjustments) !== 0 && (
               <div className="soap-invoice-row covered">
@@ -844,10 +1340,12 @@ export default function VisitCheckoutPanel({
                     !branchReady
                       ? 'Choose the branch and location inventory is drawn from'
                       : hasSavedCard
-                        ? ''
+                        ? cardOnFile
+                          ? `${(cardOnFile.brand || 'Card').replace(/^./, (c) => c.toUpperCase())} ${cardOnFile.last4 ? `•••• ${cardOnFile.last4}` : 'on file'}`
+                          : ''
                         : 'No card saved on file'
                   }
-                  onClick={cardOnFile}
+                  onClick={chargeCardOnFile}
                 >
                   <CreditCard size={14} /> Card on file
                 </button>

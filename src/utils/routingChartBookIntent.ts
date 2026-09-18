@@ -1,5 +1,5 @@
 /**
- * Patient chart → Routing: prefill this household and select this pet.
+ * Client or patient chart → Routing: prefill this household (and optionally one pet).
  * Storage only — startFreshNewAppointmentRouting() clears it before a new write.
  */
 
@@ -9,7 +9,8 @@ export type RoutingChartBookIntentV1 = {
   v: 1;
   appliedToRoutingForm?: boolean;
   clientId: string;
-  patientId: string;
+  /** When set, Get Best Route selects this pet; omit to only load the household. */
+  patientId?: string;
   clientDisplayLabel?: string;
   patientName?: string;
 };
@@ -20,9 +21,7 @@ export function readRoutingChartBookIntent(): RoutingChartBookIntentV1 | null {
     const raw = sessionStorage.getItem(ROUTING_CHART_BOOK_INTENT_STORAGE_KEY);
     if (!raw) return null;
     const o = JSON.parse(raw) as RoutingChartBookIntentV1;
-    if (o?.v !== 1 || !String(o.clientId ?? '').trim() || !String(o.patientId ?? '').trim()) {
-      return null;
-    }
+    if (o?.v !== 1 || !String(o.clientId ?? '').trim()) return null;
     return o;
   } catch {
     return null;
@@ -33,10 +32,13 @@ export function writeRoutingChartBookIntent(
   next: Omit<RoutingChartBookIntentV1, 'v' | 'appliedToRoutingForm'>
 ): void {
   if (typeof sessionStorage === 'undefined') return;
+  const patientId = String(next.patientId ?? '').trim();
   const stored: RoutingChartBookIntentV1 = {
     v: 1,
     appliedToRoutingForm: false,
     ...next,
+    clientId: String(next.clientId).trim(),
+    ...(patientId ? { patientId } : { patientId: undefined }),
   };
   try {
     sessionStorage.setItem(ROUTING_CHART_BOOK_INTENT_STORAGE_KEY, JSON.stringify(stored));

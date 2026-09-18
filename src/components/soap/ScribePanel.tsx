@@ -81,6 +81,15 @@ type Props = {
   onApplyObjectiveNotes: (text: string) => void;
   onApplyReasoning: (text: string) => void;
   onApplyPlanNotes: (text: string) => void;
+  /** One save for Process — same fields, one PATCH instead of six. */
+  onApplyChart?: (patch: {
+    subjective?: string;
+    vitals?: Vitals;
+    exam?: PeExamState;
+    objectiveNotes?: string;
+    reasoning?: string;
+    planNotes?: string;
+  }) => void;
   onProblemCreated: (problem: PatientProblem) => void;
   onOrderCreated: (order: EncounterOrder) => void;
   /** Products/services the AI heard mentioned in the plan, not yet added as real orders — feeds
@@ -315,6 +324,7 @@ export default function ScribePanel({
   onApplyObjectiveNotes,
   onApplyReasoning,
   onApplyPlanNotes,
+  onApplyChart,
   onProblemCreated,
   onOrderCreated,
   onPlanItemsChange,
@@ -499,8 +509,64 @@ export default function ScribePanel({
         }
       });
     }
+    const examPatch: Record<string, PeSystemFinding> = {};
+    if (examEnabled) {
+      for (const sys of PE_SYSTEMS) {
+        const suggested = suggestion.exam[sys.key];
+        const existing = currentExamRef.current[sys.key];
+        if (suggested?.status === 'abnormal' && !existing?.status) {
+          examPatch[sys.key] = { status: 'abnormal', note: suggested.note ?? undefined };
+        }
+      }
+    }
+
+    const subjectiveDelta = suggestion.subjectiveHistory?.trim()
+      ? suggestion.subjectiveHistory
+      : null;
+    const nextSubjective = subjectiveDelta
+      ? mergeSubjectiveHistory(currentSubjectiveRef.current, subjectiveDelta)
+      : undefined;
+    const nextReasoning = suggestion.assessmentReasoning?.trim()
+      ? formatSoapSectionSpacing(suggestion.assessmentReasoning)
+      : undefined;
+    const nextObjective = suggestion.narrativeObjective?.trim()
+      ? formatSoapSectionSpacing(suggestion.narrativeObjective)
+      : undefined;
+    const nextPlan = suggestion.narrativePlan?.trim()
+      ? formatSoapSectionSpacing(suggestion.narrativePlan)
+      : undefined;
+
+    const chartPatch: {
+      subjective?: string;
+      vitals?: Vitals;
+      exam?: PeExamState;
+      objectiveNotes?: string;
+      reasoning?: string;
+      planNotes?: string;
+    } = {};
     if (Object.keys(vitalsPatch).length > 0) {
-      onApplyVitals(vitalsPatch);
+      chartPatch.vitals = { ...current, ...vitalsPatch };
+    }
+    if (Object.keys(examPatch).length > 0) {
+      chartPatch.exam = { ...currentExamRef.current, ...examPatch };
+    }
+    if (nextSubjective) chartPatch.subjective = nextSubjective;
+    if (nextReasoning) chartPatch.reasoning = nextReasoning;
+    if (nextObjective) chartPatch.objectiveNotes = nextObjective;
+    if (nextPlan) chartPatch.planNotes = nextPlan;
+
+    if (Object.keys(chartPatch).length > 0 && onApplyChart) {
+      onApplyChart(chartPatch);
+    } else {
+      if (chartPatch.vitals) onApplyVitals(vitalsPatch);
+      if (chartPatch.exam) onApplyExam(examPatch);
+      if (nextSubjective) onApplySubjective(nextSubjective);
+      if (nextReasoning) onApplyReasoning(nextReasoning);
+      if (nextObjective) onApplyObjectiveNotes(nextObjective);
+      if (nextPlan) onApplyPlanNotes(nextPlan);
+    }
+
+    if (chartPatch.vitals) {
       logApplied(
         vitalsPatch.weightNotTaken
           ? 'Vitals filled in: No weight taken'
@@ -515,52 +581,21 @@ export default function ScribePanel({
               .join(', ')}`
       );
     }
-
-    if (examEnabled) {
-      const examPatch: Record<string, PeSystemFinding> = {};
-      for (const sys of PE_SYSTEMS) {
-        const suggested = suggestion.exam[sys.key];
-        const existing = currentExamRef.current[sys.key];
-        if (suggested?.status === 'abnormal' && !existing?.status) {
-          examPatch[sys.key] = { status: 'abnormal', note: suggested.note ?? undefined };
-        }
-      }
-      if (Object.keys(examPatch).length > 0) {
-        onApplyExam(examPatch);
-        logApplied(
-          `Exam marked abnormal: ${Object.keys(examPatch)
-            .map((k) => PE_LABEL_BY_KEY[k] ?? k)
-            .join(', ')}`
-        );
-      }
+    if (chartPatch.exam) {
+      logApplied(
+        `Exam marked abnormal: ${Object.keys(examPatch)
+          .map((k) => PE_LABEL_BY_KEY[k] ?? k)
+          .join(', ')}`
+      );
     }
-
-    const subjectiveDelta = suggestion.subjectiveHistory?.trim()
-      ? suggestion.subjectiveHistory
-      : null;
-    if (subjectiveDelta) {
-      onApplySubjective(mergeSubjectiveHistory(currentSubjectiveRef.current, subjectiveDelta));
-      logApplied('Subjective updated');
-    }
-
-    if (suggestion.assessmentReasoning?.trim()) {
-      onApplyReasoning(formatSoapSectionSpacing(suggestion.assessmentReasoning));
-      logApplied('Assessment updated');
-    }
-
-    // One-shot Process: replace O/A/P (do not append) so Re-load SOAP doesn't stack duplicates.
-    if (suggestion.narrativeObjective?.trim()) {
-      onApplyObjectiveNotes(formatSoapSectionSpacing(suggestion.narrativeObjective));
-      logApplied('Objective notes updated');
-    }
-
-    if (suggestion.narrativePlan?.trim()) {
-      onApplyPlanNotes(formatSoapSectionSpacing(suggestion.narrativePlan));
-      logApplied('Plan notes updated');
-    }
+    if (nextSubjective) logApplied('Subjective updated');
+    if (nextReasoning) logApplied('Assessment updated');
+    if (nextObjective) logApplied('Objective notes updated');
+    if (nextPlan) logApplied('Plan notes updated');
   }, [
     suggestion,
     examEnabled,
+    onApplyChart,
     onApplyVitals,
     onApplyExam,
     onApplyObjectiveNotes,
@@ -708,7 +743,12 @@ export default function ScribePanel({
         setPasteText(text);
         setTranscriptOpen(false);
       } else {
-        const result = await structureTranscript(soapEncounterId, text);
+        const result = await structureTranscript(
+          soapEncounterId,
+          text,
+          undefined,
+          orders.map((o) => o.name).filter(Boolean)
+        );
         setFinalTranscript(text);
         setInterimText('');
         prevSuggestionRef.current = null;
@@ -910,19 +950,21 @@ export default function ScribePanel({
       );
       let applied = 0;
       let missing = 0;
-      for (const p of suggestion.patients) {
-        if (gen !== multiApplyGenRef.current) return;
-        const entry = rosterById.get(Number(p.patientId));
-        if (!entry) {
-          missing += 1;
-          console.warn(
-            `[scribe] multi-pet apply: no roster entry for patientId=${p.patientId}`
-          );
-          continue;
-        }
-        await applyMultiRef.current(entry, { ...p, patientId: Number(p.patientId) });
-        applied += 1;
-      }
+      await Promise.all(
+        suggestion.patients.map(async (p) => {
+          if (gen !== multiApplyGenRef.current) return;
+          const entry = rosterById.get(Number(p.patientId));
+          if (!entry) {
+            missing += 1;
+            console.warn(
+              `[scribe] multi-pet apply: no roster entry for patientId=${p.patientId}`
+            );
+            return;
+          }
+          await applyMultiRef.current(entry, { ...p, patientId: Number(p.patientId) });
+          applied += 1;
+        })
+      );
       if (gen !== multiApplyGenRef.current) return;
       multiAppliedFingerprintRef.current = fingerprint;
       logApplied(

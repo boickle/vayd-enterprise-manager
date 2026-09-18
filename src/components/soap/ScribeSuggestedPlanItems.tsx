@@ -56,23 +56,60 @@ function norm(s: string): string {
 const RXED_BULLET = /^rx'?ed\s+/i;
 const VX_ADMINISTERED_BULLET = /^vx\s+administered:\s*/i;
 
-/**
- * A narrative bullet and an order are the same item when one name starts with the other:
- * `shortenForSearch` truncates at the first comma, so "Bravecto 10-22lb (3 month dose) ADD
- * REBATE FOR 2" has to still match the order's full "… FOR 2, 3, OR 4 DOSES".
- */
-function matchesExistingOrder(name: string, orderNames: string[]): boolean {
-  const candidate = norm(name)
+/** Route, form and packaging words that differ between how a doctor says an item and how the
+ * catalog spells it ("Lyme vaccine annual SQ" vs "crLyme Vaccine- Annual"). */
+const NOISE_TOKENS = new Set([
+  'sq',
+  'subq',
+  'sub',
+  'im',
+  'iv',
+  'sc',
+  'po',
+  'inj',
+  'injection',
+  'oral',
+  'dose',
+  'doses',
+  'add',
+  'rebate',
+  'for',
+  'and',
+  'the',
+  'with',
+  'per',
+  'each',
+]);
+
+function significantTokens(name: string): string[] {
+  return norm(name)
     .replace(RXED_BULLET, '')
     .replace(VX_ADMINISTERED_BULLET, '')
-    .replace(/\s+sq\.?$/i, '')
-    .trim();
-  if (!candidate) return false;
-  return orderNames.some(
-    (order) =>
-      order === candidate ||
-      (candidate.length >= 6 && (order.startsWith(candidate) || candidate.startsWith(order)))
-  );
+    .split(/[^a-z0-9]+/)
+    .filter((t) => t.length >= 3 && !NOISE_TOKENS.has(t));
+}
+
+/**
+ * A suggestion and an order are the same item when every meaningful word of the suggestion is
+ * present in the order name. Substring containment on each token handles the catalog's species
+ * prefixes — "lyme" has to match "crLyme" — which plain prefix comparison of the whole string
+ * missed, so "Lyme vaccine annual SQ" kept reappearing next to "crLyme Vaccine- Annual".
+ *
+ * Requiring *all* tokens keeps "Rabies vaccine annual" from collapsing onto "crLyme Vaccine-
+ * Annual" just because both are annual vaccines. Genuine paraphrases the transcript and catalog
+ * word completely differently ("Heartworm/tick-borne disease screening" vs "Heartworm / Tick Test
+ * (4dx)") are handled upstream instead, by telling the model what is already on the invoice.
+ */
+function matchesExistingOrder(name: string, orderNames: string[]): boolean {
+  const candidate = significantTokens(name);
+  if (!candidate.length) return false;
+  return orderNames.some((order) => {
+    const orderTokens = significantTokens(order);
+    if (!orderTokens.length) return false;
+    return candidate.every((t) =>
+      orderTokens.some((o) => o === t || (t.length >= 4 && o.includes(t)) || (o.length >= 4 && t.includes(o)))
+    );
+  });
 }
 
 const SECTION_KIND: { pattern: RegExp; kind: EncounterOrderKind }[] = [
@@ -335,8 +372,8 @@ function PlanItemSearchRow({
 
   useEffect(() => {
     const q = query.trim();
-    if (q.length < 2) {
-      setResults([]);
+    if (!open || q.length < 2) {
+      if (!open) setResults([]);
       setSearchError(null);
       setSearching(false);
       return;
@@ -363,7 +400,7 @@ function PlanItemSearchRow({
       canceled = true;
       clearTimeout(handle);
     };
-  }, [query, practiceId, patientId, clientId]);
+  }, [open, query, practiceId, patientId, clientId]);
 
   useEffect(() => {
     const onDown = (e: MouseEvent) => {

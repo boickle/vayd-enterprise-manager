@@ -218,6 +218,12 @@ a.pims-clients__petname:hover {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  white-space: nowrap;
+}
+
+.pims-clients__status-extra {
+  color: #64748b;
+  font-weight: 500;
 }
 
 .pims-clients__dot {

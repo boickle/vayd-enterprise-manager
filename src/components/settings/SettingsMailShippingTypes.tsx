@@ -4,6 +4,7 @@ import { listPracticeBranches, type PracticeBranch } from '../../api/branchInven
 import {
   getPracticeSettings,
   isOnlineStoreImplemented,
+  MAIL_ORDER_RX_LINE_PHONE_KEY,
   updatePracticeSettings,
 } from '../../api/practiceSettings';
 import {
@@ -18,6 +19,7 @@ const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
 
 export default function SettingsMailShippingTypes({ embedded = false }: { embedded?: boolean }) {
   const [rows, setRows] = useState<MailShippingType[]>([]);
+  const [rxLinePhone, setRxLinePhone] = useState('');
   const [procedures, setProcedures] = useState<CatalogShippingType[]>([]);
   const [offices, setOffices] = useState<PracticeBranch[]>([]);
   const [loading, setLoading] = useState(true);
@@ -37,6 +39,7 @@ export default function SettingsMailShippingTypes({ embedded = false }: { embedd
       .then(([settings, procs, branches]) => {
         if (cancelled) return;
         setRows(parseMailShippingTypes(settings[MAIL_SHIPPING_TYPES_KEY]));
+        setRxLinePhone(String(settings[MAIL_ORDER_RX_LINE_PHONE_KEY] || '').trim());
         setOnlineStoreEnabled(isOnlineStoreImplemented(settings));
         setProcedures(procs);
         setOffices(branches);
@@ -84,6 +87,7 @@ export default function SettingsMailShippingTypes({ embedded = false }: { embedd
     try {
       await updatePracticeSettings(PRACTICE_ID, {
         [MAIL_SHIPPING_TYPES_KEY]: serializeMailShippingTypes(rows),
+        [MAIL_ORDER_RX_LINE_PHONE_KEY]: rxLinePhone.trim(),
       });
       setSaved(true);
     } catch (err) {
@@ -102,6 +106,21 @@ export default function SettingsMailShippingTypes({ embedded = false }: { embedd
         catalog procedure so a fee can post on the invoice. For pick-up, choose the
         office or a specific address.
       </p>
+      <label className="settings-label" style={{ marginBottom: 16, maxWidth: 360 }}>
+        Pharmacy RX Quo line
+        <input
+          className="settings-input"
+          value={rxLinePhone}
+          onChange={(e) => {
+            setRxLinePhone(e.target.value);
+            setSaved(false);
+          }}
+          placeholder="207-865-8815"
+        />
+        <span className="settings-muted" style={{ fontSize: 12 }}>
+          Mail-order texts prefer this line. Leave blank to use the default Quo line.
+        </span>
+      </label>
       {loading ? (
         <p className="settings-muted">Loading…</p>
       ) : (

@@ -3,7 +3,7 @@
 // visit invoices/checkout, euthanasia prepay, and the VisitCompleted hub event.
 // Mirrors the backend visitWorkflow module. All calls go through the shared
 // authenticated axios instance.
-import { http } from './http';
+import { apiBaseUrl, http } from './http';
 
 export const VISIT_WORKFLOW_PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
 
@@ -123,6 +123,15 @@ export type VisitInvoiceLine = {
   catalogRefill?: number | null;
   catalogDiscardAfter?: string | null;
   catalogRefillExpiration?: string | null;
+  /** True when the catalog item is marked Medication (or dispensable). */
+  catalogIsMedication?: boolean;
+  catalogIsDispensable?: boolean;
+  /** Catalog Vaccine flag — hide mail-order. */
+  catalogIsVaccine?: boolean;
+  /** Encounter for the linked order — vaccine dose save path. */
+  encounterId?: string | null;
+  catalogChangePatientStatusTo?: string | null;
+  catalogChangePatientSex?: boolean;
   catalogItemId?: number | null;
   catalogItemType?: string | null;
   /** eVet "Show on Invoice" is off: staff see the charge, the client's copy does not. */
@@ -132,6 +141,8 @@ export type VisitInvoiceLine = {
   inventoryLotBalanceId?: number | null;
   lotNumber?: string | null;
   stockInventoryItemId?: number | null;
+  stockInventoryItemName?: string | null;
+  stockInventoryItemCode?: string | null;
   trackLots?: boolean;
   listUnitPrice?: number | null;
   patientName?: string | null;
@@ -141,6 +152,15 @@ export type VisitInvoiceLine = {
   taxRate?: number;
   taxAmount?: number;
   isDeleted?: boolean;
+  /** Shared id for lines from one sell-once bundle expand. */
+  bundleSaleId?: string | null;
+  sourceBundleId?: number | null;
+  sourceBundleName?: string | null;
+  /** Parent charge that auto-added this line via a catalog tagalong rule. */
+  tagalongOfLineId?: string | null;
+  tagalongRuleId?: number | null;
+  /** after_tax = tax the product first (Maine rebate). before_tax folds this into the product. */
+  tagalongTaxMode?: 'after_tax' | 'before_tax' | string | null;
 };
 
 export type VisitInvoiceTender = {
@@ -154,6 +174,8 @@ export type VisitInvoiceTender = {
   changeGiven?: number | null;
   checkNumber?: string | null;
   stripePaymentIntentId?: string | null;
+  /** Dollars already refunded via Stripe against this tender. */
+  refundedAmount?: number;
   receivedAt: string;
   voidedAt?: string | null;
   voidedByEmployeeId?: number | null;
@@ -196,6 +218,14 @@ export type VisitInvoice = {
   voidedAt?: string | null;
   deletedByEmployeeId?: number | null;
   deletedAt?: string | null;
+  /** Staff-only audit (price overrides, etc.). Collapsible on invoice views. */
+  staffAudit?: Array<{
+    at: string;
+    kind: string;
+    message: string;
+    employeeId?: number | null;
+    employeeName?: string | null;
+  }> | null;
   lines?: VisitInvoiceLine[];
   tenders?: VisitInvoiceTender[];
 };
@@ -278,9 +308,10 @@ export type HouseholdRosterEntry = {
 };
 
 /**
- * Other patients from the same client seen around the same time as this encounter's appointment
- * (docs/ai-scribe.md "Multi-pet visits"), always including the current patient. A length-1 result
- * means no siblings were found — the paste-transcript flow stays single-patient in that case.
+ * Other *active* patients from the same client seen around the same time as this encounter's
+ * appointment (docs/ai-scribe.md "Multi-pet visits"), always including the current patient.
+ * Inactive / deceased household mates are omitted. A length-1 result means no siblings were
+ * found — the paste-transcript flow stays single-patient in that case.
  */
 export async function getHouseholdRoster(encounterId: string): Promise<HouseholdRosterEntry[]> {
   const { data } = await http.get<HouseholdRosterEntry[]>(
@@ -594,6 +625,7 @@ export async function saveOrderVaccination(
     animalControlLicensingMonths?: number;
     employeeId?: number;
     inventoryLotBalanceId?: number | null;
+    lotZeroOverrideReason?: string;
   }
 ): Promise<OrderVaccination> {
   const { data } = await http.put<OrderVaccination>(
@@ -778,6 +810,11 @@ export type CounterInvoiceLineInput = {
   providerEmployeeId?: number | null;
   rxApproved?: boolean;
   miscCharge?: boolean;
+  bundleSaleId?: string | null;
+  sourceBundleId?: number | null;
+  sourceBundleName?: string | null;
+  /** Practice revenue only — no provider (Not Specified VSD). */
+  excludeFromProduction?: boolean;
 };
 
 export async function listClientVisitInvoices(clientId: number): Promise<VisitInvoice[]> {
@@ -814,6 +851,27 @@ export async function ensureCounterInvoice(opts: {
     patientId: opts.patientId ?? undefined,
     clientId: opts.clientId ?? undefined,
     appointmentId: opts.appointmentId ?? undefined,
+  });
+  return data;
+}
+
+/** Negative amount = account credit; positive = paid charge on the ledger. */
+export async function postAccountAdjustment(opts: {
+  clientId: number;
+  patientId?: number | null;
+  amount: number;
+  description?: string;
+  stripePaymentIntentId?: string | null;
+  cashierEmployeeId?: number | null;
+}): Promise<VisitInvoice> {
+  const { data } = await http.post<VisitInvoice>('/visit-invoices/account-adjustment', {
+    practiceId: pid(),
+    clientId: opts.clientId,
+    patientId: opts.patientId ?? undefined,
+    amount: opts.amount,
+    description: opts.description,
+    stripePaymentIntentId: opts.stripePaymentIntentId ?? undefined,
+    cashierEmployeeId: opts.cashierEmployeeId ?? undefined,
   });
   return data;
 }
@@ -865,14 +923,60 @@ export async function voidVisitTender(
   return data;
 }
 
+export async function refundVisitTender(
+  invoiceId: string,
+  tenderId: string,
+  opts?: {
+    amount?: number | null;
+    reason?: string;
+    refundedByEmployeeId?: number | null;
+  }
+): Promise<VisitInvoice> {
+  const { data } = await http.post<VisitInvoice>(
+    `/visit-invoices/${encodeURIComponent(invoiceId)}/tenders/${encodeURIComponent(tenderId)}/refund`,
+    { practiceId: pid(), ...opts }
+  );
+  return data;
+}
+
+export type VisitRefundPeer = {
+  invoiceId: string;
+  tenderId: string;
+  refundable: number;
+  amount: number;
+  scoutInvoiceNumber: number | null;
+  isCurrent: boolean;
+};
+
+export async function listVisitRefundPeers(
+  invoiceId: string,
+  tenderId: string
+): Promise<{ paymentIntentId: string | null; peers: VisitRefundPeer[] }> {
+  const { data } = await http.get<{ paymentIntentId: string | null; peers: VisitRefundPeer[] }>(
+    `/visit-invoices/${encodeURIComponent(invoiceId)}/tenders/${encodeURIComponent(tenderId)}/refund-peers`,
+    { params: { practiceId: pid() } }
+  );
+  return data;
+}
+
 export async function returnVisitInvoiceLines(
   invoiceId: string,
   items: { lineId: string; qty: number }[],
-  opts?: { cashierEmployeeId?: number | null }
+  opts?: {
+    cashierEmployeeId?: number | null;
+    refundViaStripe?: boolean;
+    reason?: string;
+  }
 ): Promise<VisitInvoice> {
   const { data } = await http.post<VisitInvoice>(
     `/visit-invoices/${encodeURIComponent(invoiceId)}/returns`,
-    { practiceId: pid(), items, cashierEmployeeId: opts?.cashierEmployeeId ?? null }
+    {
+      practiceId: pid(),
+      items,
+      cashierEmployeeId: opts?.cashierEmployeeId ?? null,
+      refundViaStripe: opts?.refundViaStripe === true,
+      reason: opts?.reason,
+    }
   );
   return data;
 }
@@ -896,7 +1000,10 @@ export async function createClientPayLink(
       cancelUrl: opts?.cancelUrl,
     }
   );
-  return data;
+  const url = data?.url?.startsWith('/')
+    ? `${apiBaseUrl.replace(/\/+$/, '')}${data.url}`
+    : data.url;
+  return { ...data, url };
 }
 
 export async function adoptEvetInvoice(evetInvoiceId: number): Promise<VisitInvoice> {
@@ -1040,6 +1147,23 @@ export async function savePaymentMethod(
     { practiceId: pid(), paymentMethodId }
   );
   return data;
+}
+
+export type InvoiceCardOnFile = {
+  customerId: string;
+  paymentMethodId: string;
+  last4: string | null;
+  brand: string | null;
+  expMonth: number | null;
+  expYear: number | null;
+};
+
+export async function getInvoiceCardOnFile(invoiceId: string): Promise<InvoiceCardOnFile | null> {
+  const { data } = await http.get<InvoiceCardOnFile | null>(
+    `/visit-payments/${encodeURIComponent(invoiceId)}/card-on-file`,
+    { params: { practiceId: pid() } }
+  );
+  return data ?? null;
 }
 
 export async function chargeSavedCard(invoiceId: string): Promise<VisitInvoice> {

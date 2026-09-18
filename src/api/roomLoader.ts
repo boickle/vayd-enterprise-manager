@@ -727,6 +727,19 @@ export type CheckItemPricingRequest = {
     procedure?: Record<string, unknown>;
     inventoryItem?: Record<string, unknown>;
   };
+  /** When several membership benefits match, force this wellness_plan_items id. */
+  preferredWellnessPlanItemId?: number;
+};
+
+export type MembershipCoverageAlternative = {
+  wellnessPlanItemId: number;
+  label: string;
+  coverage: string;
+  adjustedPrice: number | null;
+  includedQuantity: number;
+  usedQuantity: number;
+  remainingQuantity: number;
+  isWithinLimit: boolean;
 };
 
 export type CheckItemPricingResponse = {
@@ -749,6 +762,9 @@ export type CheckItemPricingResponse = {
     usedQuantity: number;
     remainingQuantity: number;
     isWithinLimit: boolean;
+    wellnessPlanItemId?: number;
+    coverageAlternatives?: MembershipCoverageAlternative[];
+    [key: string]: unknown;
   };
   discountPricing?: {
     priceAdjustedByDiscount: boolean;

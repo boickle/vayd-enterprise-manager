@@ -6,7 +6,7 @@ import { soapHtmlToPlainText } from '../../utils/sanitizeCommunicationHtml';
 type SoapField = {
   value: string;
   onChange: (text: string) => void;
-  onBlur: () => void;
+  onBlur: (value: string) => void;
 };
 
 function formatFullSoap(s: string, o: string, a: string, p: string): string {
@@ -22,16 +22,16 @@ type Props = {
   disabled: boolean;
   subjective: string;
   onSubjectiveChange: (text: string) => void;
-  onSubjectiveBlur: () => void;
+  onSubjectiveBlur: (value: string) => void;
   objectiveNotes: string;
   onObjectiveNotesChange: (text: string) => void;
-  onObjectiveNotesBlur: () => void;
+  onObjectiveNotesBlur: (value: string) => void;
   assessment: string;
   onAssessmentChange: (text: string) => void;
-  onAssessmentBlur: () => void;
+  onAssessmentBlur: (value: string) => void;
   planNotes: string;
   onPlanNotesChange: (text: string) => void;
-  onPlanNotesBlur: () => void;
+  onPlanNotesBlur: (value: string) => void;
   /** Rendered directly under the Plan field — the itemized "match to catalog" plan-items UI
    * (docs/ai-scribe.md) lives here since it needs order/pricing APIs this view doesn't own. */
   planItemsSlot?: ReactNode;

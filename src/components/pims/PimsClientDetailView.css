@@ -202,11 +202,32 @@
   border-bottom: 1px solid #f3eee6;
 }
 
+.pims-client-detail__pet.is-inactive {
+  opacity: 0.58;
+}
+
+.pims-client-detail__pet.is-inactive .pims-client-detail__pet-img {
+  filter: grayscale(0.85);
+}
+
+.pims-client-detail__pet.is-inactive .pims-client-detail__pet-name a {
+  color: #64748b;
+}
+
+.pims-client-detail__pet.is-inactive .pims-client-detail__pet-name a:hover {
+  color: #0f172a;
+}
+
 .pims-client-detail__pet:last-child {
   border-bottom: none;
 }
 
 .pims-client-detail__pet:hover {
+  background: #f8fafc;
+}
+
+.pims-client-detail__pet.is-inactive:hover {
+  opacity: 0.78;
   background: #f8fafc;
 }
 
@@ -241,6 +262,10 @@
   font-size: 14px;
   font-weight: 600;
   color: #0f172a;
+}
+
+.pims-client-detail__pet-heart {
+  flex-shrink: 0;
 }
 
 .pims-client-detail__pet-name a {

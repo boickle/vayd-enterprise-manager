@@ -9,6 +9,11 @@ import {
 } from './patientChartFromMedicalRecord';
 import { htmlToPlainText, looksLikeHtmlFragment } from './sanitizeCommunicationHtml';
 import { patientSexListDisplayFromRecord } from './schedulerVisitDisplay';
+import {
+  formatHouseholdLossesSection,
+  householdLossesWithinMonths,
+  type HouseholdPetStatusInput,
+} from './householdPetStatus';
 
 export type { CaseHistoryCitation };
 export type CaseHistorySource = {
@@ -351,6 +356,8 @@ export function buildCaseHistorySource(opts: {
   patientRecord?: Record<string, unknown> | null;
   medicalRecord: MedicalRecordBundle | null;
   asOfDate: string;
+  /** Other pets in the household (include inactive) for recent-loss context. */
+  householdPets?: HouseholdPetStatusInput[];
 }): CaseHistorySource {
   const citations: CaseHistoryCitation[] = [];
   const lines: string[] = [];
@@ -361,6 +368,21 @@ export function buildCaseHistorySource(opts: {
   }
   lines.push(`As of: ${opts.asOfDate}`);
   lines.push('');
+
+  const losses = householdLossesWithinMonths(opts.householdPets ?? [], {
+    currentPatientId: opts.patientId,
+    asOfDate: opts.asOfDate,
+    months: 18,
+  });
+  const lossLines = formatHouseholdLossesSection(losses, 18);
+  if (lossLines.length) {
+    lines.push(...lossLines);
+    lines.push(
+      'Include these household losses in Watch when present (name, why/status, when, and who if listed). Do not invent details.'
+    );
+    lines.push('');
+  }
+
   lines.push(
     ...visitFactsLines({
       appointments: opts.appointments ?? [],

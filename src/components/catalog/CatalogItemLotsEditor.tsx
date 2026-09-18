@@ -15,12 +15,15 @@ type Props = {
   branches: PracticeBranch[];
   /** Prefer lots for this stock item when the catalog code draws from another SKU. */
   stockItemId?: number | null;
+  stockItemName?: string | null;
   trackLots?: boolean;
   /** Expiration is always required. Kept so older callers still type-check. */
   requireExpirationOnLots?: boolean;
   requireLotNumber?: boolean;
   /** Lot quantities move branch counts, so the parent can refresh them. */
   onLotsChanged?: () => void;
+  /** Open the inventory SKU that actually holds lots and counts. */
+  onOpenStockItem?: () => void;
 };
 
 export default function CatalogItemLotsEditor({
@@ -28,10 +31,14 @@ export default function CatalogItemLotsEditor({
   inventoryItemId,
   branches,
   stockItemId,
+  stockItemName,
   trackLots,
   requireLotNumber,
   onLotsChanged,
+  onOpenStockItem,
 }: Props) {
+  const lotsLiveOnOther =
+    stockItemId != null && Number(stockItemId) !== Number(inventoryItemId);
   const lotItemId = stockItemId ?? inventoryItemId;
   const [lots, setLots] = useState<InventoryLotBalance[]>([]);
   const [loading, setLoading] = useState(true);
@@ -64,8 +71,13 @@ export default function CatalogItemLotsEditor({
   }, [practiceId, lotItemId]);
 
   useEffect(() => {
+    if (lotsLiveOnOther) {
+      setLoading(false);
+      setLots([]);
+      return;
+    }
     void reload();
-  }, [reload]);
+  }, [reload, lotsLiveOnOther]);
 
   useEffect(() => {
     if (branchId === '' || isEdit) {
@@ -171,22 +183,41 @@ export default function CatalogItemLotsEditor({
           marginBottom: 8,
         }}
       >
-        <h4 style={{ fontSize: 15, fontWeight: 600, margin: 0 }}>Lots</h4>
-        {trackLots && (
+        <h4 style={{ fontSize: 15, fontWeight: 600, margin: 0 }}>
+          {lotsLiveOnOther ? `Lots on ${stockItemName || 'linked inventory'}` : 'Lots'}
+        </h4>
+        {trackLots && !lotsLiveOnOther && (
           <button type="button" className="btn" onClick={openAdd}>
             Add lot
           </button>
         )}
       </div>
       <p className="settings-muted" style={{ marginBottom: 12, fontSize: 13 }}>
-        Lot / serial balances by branch and location
-        {stockItemId != null && stockItemId !== inventoryItemId
-          ? ' (on the linked stock item checkout will draw).'
-          : '.'}
-        {!trackLots && (
+        {lotsLiveOnOther ? (
           <>
-            {' '}
-            Turn on <em>Lots enabled</em> above to add or edit lots.
+            This sellable is the billed service only (for example annual vs initial). It has no
+            on-hand of its own. Lots, serials, and counts live on{' '}
+            <strong>{stockItemName || 'the linked inventory item'}</strong>, which also appears
+            under the service on the invoice so staff can pick a lot.
+            {onOpenStockItem ? (
+              <>
+                {' '}
+                <button type="button" className="btn" onClick={onOpenStockItem}>
+                  Open {stockItemName || 'inventory item'}
+                </button>
+              </>
+            ) : null}
+          </>
+        ) : (
+          <>
+            Lot / serial balances by branch and location. Use Edit to change on-hand for a lot.
+            {!trackLots && (
+              <>
+                {' '}
+                Turn on <em>Lots enabled</em> above to add or edit lots. Location counts can also be
+                edited under Counts by branch.
+              </>
+            )}
           </>
         )}
       </p>
@@ -195,7 +226,7 @@ export default function CatalogItemLotsEditor({
           {error}
         </div>
       )}
-      {loading ? (
+      {lotsLiveOnOther ? null : loading ? (
         <p className="settings-muted">Loading lots…</p>
       ) : lots.length === 0 ? (
         <p className="settings-muted" style={{ fontSize: 13 }}>

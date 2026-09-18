@@ -49,12 +49,15 @@ import Catalog from './pages/Catalog';
 import { LegacyCatalogRedirect } from './pages/CatalogLayout';
 import InventoryLayout from './pages/InventoryLayout';
 import ReceiveShipmentPage from './pages/ReceiveShipmentPage';
+import InitialInventoryEntryPage from './pages/InitialInventoryEntryPage';
 import MoveItemsPage from './pages/MoveItemsPage';
 import WasteAdjustPage from './pages/WasteAdjustPage';
 import InventoryActivityPage from './pages/InventoryActivityPage';
 import InventoryParLevelsPage from './pages/InventoryParLevelsPage';
 import InventoryCountsPage from './pages/InventoryCountsPage';
 import InventoryCountReportPage from './pages/InventoryCountReportPage';
+import InventoryCostReviewsPage from './pages/InventoryCostReviewsPage';
+import InventoryExpiringReportPage from './pages/InventoryExpiringReportPage';
 import InventoryStockRequestsPage from './pages/InventoryStockRequestsPage';
 import SuppliersAdminPage from './pages/SuppliersAdminPage';
 import OnlineStoreImportPage from './pages/OnlineStoreImportPage';
@@ -676,8 +679,13 @@ export default function App() {
                       <Route path="store-categories" element={<StoreCategoriesPage />} />
                       <Route path="mail-orders" element={<LegacyMailOrdersRedirect />} />
                       <Route path="abandoned-carts" element={<AbandonedCartsPage />} />
-                      <Route path="subscriptions" element={<StoreSubscriptionsPage />} />
+                      <Route path="auto-ships" element={<StoreSubscriptionsPage />} />
+                      <Route
+                        path="subscriptions"
+                        element={<Navigate to="/schedule/inventory/auto-ships" replace />}
+                      />
                       <Route path="receive" element={<ReceiveShipmentPage />} />
+                      <Route path="initial-entry" element={<InitialInventoryEntryPage />} />
                       <Route path="move" element={<MoveItemsPage />} />
                       <Route path="waste" element={<WasteAdjustPage />} />
                       <Route path="activity" element={<InventoryActivityPage />} />
@@ -689,9 +697,11 @@ export default function App() {
                       <Route path="counts" element={<InventoryCountsPage kind="weekly" />} />
                       <Route path="full-count" element={<InventoryCountsPage kind="full" />} />
                       <Route path="count-report" element={<InventoryCountReportPage />} />
+                      <Route path="expiring" element={<InventoryExpiringReportPage />} />
+                      <Route path="cost-reviews" element={<InventoryCostReviewsPage />} />
                       <Route
                         path="fill-list"
-                        element={<InventoryStockRequestsPage kind="fill" />}
+                        element={<Navigate to="/schedule/inventory/transfer-list" replace />}
                       />
                       <Route
                         path="order-list"
@@ -700,12 +710,6 @@ export default function App() {
                       <Route
                         path="transfer-list"
                         element={<InventoryStockRequestsPage kind="transfer" />}
-                      />
-                      <Route
-                        path="cost-reviews"
-                        element={
-                          <Navigate to="/schedule/admin/inventory/cost-reviews" replace />
-                        }
                       />
                       <Route path="suppliers" element={<SuppliersAdminPage />} />
                       <Route

@@ -1036,7 +1036,14 @@ export function SchedulerActualVisitTimeModal({
         }
       }
       if (args.patientIdsToInactivate.length > 0) {
-        const inactivateResult = await inactivateEuthanasiaPatients(args.patientIdsToInactivate);
+        const providerRaw =
+          Number(forwardBookingProviderId) || Number(appt.primaryProvider?.id);
+        const inactivatedByEmployeeId =
+          Number.isFinite(providerRaw) && providerRaw > 0 ? providerRaw : null;
+        const inactivateResult = await inactivateEuthanasiaPatients(
+          args.patientIdsToInactivate,
+          { inactivatedByEmployeeId },
+        );
         // Inactivation is best-effort (Scout PATCH may 404; eVet often owns status).
         // Never block End Visit / forward-booking save on these failures.
         const softOrHard = [...inactivateResult.softErrors, ...inactivateResult.errors];
@@ -1049,7 +1056,7 @@ export function SchedulerActualVisitTimeModal({
       }
       return warnings;
     },
-    [practiceId]
+    [practiceId, forwardBookingProviderId, appt.primaryProvider?.id]
   );
 
   const postBoth = useCallback(

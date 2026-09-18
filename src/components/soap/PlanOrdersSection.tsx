@@ -8,6 +8,16 @@ import {
 } from '../../api/visitWorkflow';
 import { searchItems, type SearchableItem } from '../../api/roomLoader';
 import {
+  getBundle,
+  listBundles,
+  resolveBundleForSale,
+  type Bundle,
+  type BundleSaleResolution,
+} from '../../api/memberships';
+import BundleSalePickerModal from '../catalog/BundleSalePickerModal';
+import MembershipCoveragePickerModal from '../catalog/MembershipCoveragePickerModal';
+import { apiErrorMessage } from '../../api/http';
+import {
   catalogIdForSearchItem,
   createNoteOrder,
   createOrderFromSearchItem,
@@ -15,6 +25,7 @@ import {
   getCatalogLinePrice,
   type CatalogPricingItem,
 } from '../../utils/catalogItemPricing';
+import type { CoverageChoicePrompt } from '../../utils/membershipCoverageChoice';
 import {
   ensureSharpsFeeOrder,
   isSharpsOrderName,
@@ -36,6 +47,15 @@ type Props = {
   onInventoryItemAdded?: (item: { name: string; isVaccine?: boolean }) => void;
   /** When an inventory order is removed from Plan/checkout, drop its Plan narrative bullet. */
   onInventoryItemRemoved?: (itemName: string) => void;
+  /**
+   * Catalog search lives on Checkout (same green add-bar as the ledger). Left Plan only
+   * lists leftover notes / uncharged rows.
+   */
+  showSearch?: boolean;
+  /** When false, only the search bar is rendered (Checkout placement). */
+  showList?: boolean;
+  /** Optional class for Checkout's green add-charge treatment. */
+  className?: string;
 };
 
 function money(n: number): string {
@@ -65,9 +85,16 @@ export default function PlanOrdersSection({
   onInvoiceShouldRefresh,
   onInventoryItemAdded,
   onInventoryItemRemoved,
+  showSearch = true,
+  showList = true,
+  className,
 }: Props) {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchableItem[]>([]);
+  const [bundleHits, setBundleHits] = useState<Bundle[]>([]);
+  const [bundlePicker, setBundlePicker] = useState<Bundle | null>(null);
+  const [coveragePrompt, setCoveragePrompt] = useState<CoverageChoicePrompt | null>(null);
+  const coverageChoiceResolveRef = useRef<((id: number | null) => void) | null>(null);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
@@ -111,6 +138,7 @@ export default function PlanOrdersSection({
     const q = query.trim();
     if (q.length < 2) {
       setResults([]);
+      setBundleHits([]);
       setSearchError(null);
       setSearching(false);
       return;
@@ -118,17 +146,30 @@ export default function PlanOrdersSection({
     let canceled = false;
     setSearching(true);
     const handle = setTimeout(() => {
-      searchItems({
-        q,
-        practiceId,
-        limit: 25,
-        code: q,
-        patientId,
-        clientId,
-      })
-        .then((rows) => {
+      void Promise.all([
+        searchItems({
+          q,
+          practiceId,
+          limit: 25,
+          code: q,
+          patientId,
+          clientId,
+        }),
+        listBundles({ kind: 'bundle', q }).catch(() => [] as Bundle[]),
+      ])
+        .then(([rows, bundles]) => {
           if (canceled) return;
           setResults(rows);
+          const needle = q.toLowerCase();
+          setBundleHits(
+            bundles
+              .filter(
+                (b) =>
+                  b.name.toLowerCase().includes(needle) ||
+                  (b.code ?? '').toLowerCase().includes(needle),
+              )
+              .slice(0, 5),
+          );
           setOpen(true);
           setSearchError(null);
         })
@@ -136,6 +177,7 @@ export default function PlanOrdersSection({
           if (canceled) return;
           setSearchError(e instanceof Error ? e.message : 'Search failed');
           setResults([]);
+          setBundleHits([]);
         })
         .finally(() => {
           if (!canceled) setSearching(false);
@@ -201,6 +243,11 @@ export default function PlanOrdersSection({
         patientId: canPrice ? patientId : undefined,
         practiceId,
         clientId,
+        askCoverageChoice: (prompt) =>
+          new Promise<number | null>((resolve) => {
+            coverageChoiceResolveRef.current = resolve;
+            setCoveragePrompt(prompt);
+          }),
       });
       storePricing(order.id, pricingItem);
       const nextOrders = [...orders, order];
@@ -227,9 +274,102 @@ export default function PlanOrdersSection({
       }
       setQuery('');
       setResults([]);
+      setBundleHits([]);
       setOpen(false);
+    } catch (e: unknown) {
+      if (!(e instanceof Error && e.message === 'Coverage choice cancelled')) {
+        setSearchError(apiErrorMessage(e) || 'Could not add item');
+      }
     } finally {
       setAdding(false);
+    }
+  };
+
+  const addBundleSaleLines = async (resolution: BundleSaleResolution) => {
+    if (adding) return;
+    setAdding(true);
+    try {
+      const created: EncounterOrder[] = [];
+      for (const line of resolution.lines) {
+        const searchItem = {
+          name: line.name,
+          itemType: line.itemType,
+          price: line.unitPrice,
+          originalPrice: line.listUnitPrice,
+          ...(line.itemType === 'lab'
+            ? { lab: { id: line.catalogItemId, name: line.name, price: line.listUnitPrice } }
+            : line.itemType === 'inventory'
+              ? {
+                  inventoryItem: {
+                    id: line.catalogItemId,
+                    name: line.name,
+                    price: line.listUnitPrice,
+                  },
+                }
+              : {
+                  procedure: {
+                    id: line.catalogItemId,
+                    name: line.name,
+                    price: line.listUnitPrice,
+                  },
+                }),
+        } as SearchableItem;
+
+        const { order, pricingItem } = await createOrderFromSearchItem({
+          encounterId,
+          item: searchItem,
+          patientId: canPrice ? patientId : undefined,
+          practiceId,
+          clientId,
+        });
+        storePricing(order.id, pricingItem);
+        if (line.quantity !== 1) {
+          const { unitFinal, isCovered } = getCatalogLinePrice(pricingItem, line.quantity);
+          created.push(
+            await updateOrder(encounterId, order.id, {
+              qty: line.quantity,
+              unitPrice: unitFinal,
+              isCovered,
+            }),
+          );
+        } else {
+          created.push(order);
+        }
+      }
+      onChange([...orders, ...created]);
+      onInvoiceShouldRefresh();
+      setQuery('');
+      setResults([]);
+      setBundleHits([]);
+      setBundlePicker(null);
+      setOpen(false);
+    } catch (e: unknown) {
+      setSearchError(apiErrorMessage(e) || 'Could not add bundle');
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const pickBundle = async (bundleHit: Bundle) => {
+    if (adding) return;
+    setSearchError(null);
+    try {
+      const full = await getBundle(bundleHit.id);
+      const needsPick = full.groups.some(
+        (g) =>
+          (g.selectionMode === 'choice' || g.selectionMode === 'any') &&
+          g.id > 0 &&
+          g.items.length > 0,
+      );
+      if (needsPick) {
+        setBundlePicker(full);
+        setOpen(false);
+        return;
+      }
+      const resolution = await resolveBundleForSale(full.id, []);
+      await addBundleSaleLines(resolution);
+    } catch (e: unknown) {
+      setSearchError(apiErrorMessage(e) || 'Could not load bundle');
     }
   };
 
@@ -297,36 +437,38 @@ export default function PlanOrdersSection({
   );
 
   return (
-    <div className="soap-plan">
-      <div className="soap-order-table">
-        {active.length === 0 ? (
-          <div className="soap-empty">No orders placed. Each order becomes a charge.</div>
-        ) : (
-          active.map((o) =>
-            o.kind === 'note' ? (
-              <NoteRow key={o.id} order={o} disabled={disabled} onPatch={patch} onRemove={remove} />
-            ) : (
-              <CatalogRow
-                key={o.id}
-                order={o}
-                disabled={disabled}
-                onQtyChange={repriceAndPatch}
-                onPatch={patch}
-                onChangeState={changeState}
-                onRemove={remove}
-              />
+    <div className={['soap-plan', className].filter(Boolean).join(' ')}>
+      {showList && (active.length > 0 || showSearch) ? (
+        <div className="soap-order-table">
+          {active.length === 0 ? (
+            <div className="soap-empty">No orders placed. Each order becomes a charge.</div>
+          ) : (
+            active.map((o) =>
+              o.kind === 'note' ? (
+                <NoteRow key={o.id} order={o} disabled={disabled} onPatch={patch} onRemove={remove} />
+              ) : (
+                <CatalogRow
+                  key={o.id}
+                  order={o}
+                  disabled={disabled}
+                  onQtyChange={repriceAndPatch}
+                  onPatch={patch}
+                  onChangeState={changeState}
+                  onRemove={remove}
+                />
+              )
             )
-          )
-        )}
-      </div>
+          )}
+        </div>
+      ) : null}
 
-      {!disabled && (
+      {!disabled && showSearch ? (
         <div className="soap-plan-search" ref={boxRef}>
           <div className="soap-plan-search-input">
             <Search size={15} className="soap-plan-search-icon" />
             <input
               className="soap-input"
-              placeholder="Search to order, or type a note…"
+              placeholder="Type here to add a charge, or a note…"
               value={query}
               onChange={(e) => {
                 setQuery(e.target.value);
@@ -349,6 +491,37 @@ export default function PlanOrdersSection({
               {!searching && searchError && (
                 <div className="soap-plan-result-empty error">{searchError}</div>
               )}
+              {!searching &&
+                bundleHits.map((bundle) => {
+                  const choiceCount = bundle.groups.filter(
+                    (g) => g.selectionMode === 'choice' || g.selectionMode === 'any',
+                  ).length;
+                  return (
+                    <button
+                      key={`bundle-${bundle.id}`}
+                      type="button"
+                      className="soap-plan-result"
+                      disabled={adding}
+                      onClick={() => void pickBundle(bundle)}
+                    >
+                      <span className="soap-plan-result-name">
+                        {bundle.name}
+                        <span className="soap-plan-result-type">
+                          {' '}
+                          · Bundle
+                          {choiceCount
+                            ? ` · choose ${choiceCount} option group${choiceCount === 1 ? '' : 's'}`
+                            : ''}
+                        </span>
+                      </span>
+                      <span className="soap-plan-result-price">
+                        {bundle.price != null && bundle.price > 0
+                          ? money(bundle.price)
+                          : 'expand'}
+                      </span>
+                    </button>
+                  );
+                })}
               {!searching &&
                 results.map((item, idx) => {
                   const eff = displayPriceForSearchItem(item);
@@ -404,7 +577,31 @@ export default function PlanOrdersSection({
             “Add as note” creates a text line you can edit and optionally price.
           </p>
         </div>
-      )}
+      ) : null}
+      {bundlePicker ? (
+        <BundleSalePickerModal
+          bundle={bundlePicker}
+          onCancel={() => setBundlePicker(null)}
+          onResolved={(resolution) => addBundleSaleLines(resolution)}
+        />
+      ) : null}
+      {coveragePrompt ? (
+        <MembershipCoveragePickerModal
+          itemName={coveragePrompt.itemName}
+          alternatives={coveragePrompt.alternatives}
+          initialId={coveragePrompt.initialId}
+          onCancel={() => {
+            coverageChoiceResolveRef.current?.(null);
+            coverageChoiceResolveRef.current = null;
+            setCoveragePrompt(null);
+          }}
+          onPick={(id) => {
+            coverageChoiceResolveRef.current?.(id);
+            coverageChoiceResolveRef.current = null;
+            setCoveragePrompt(null);
+          }}
+        />
+      ) : null}
     </div>
   );
 }

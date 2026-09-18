@@ -225,6 +225,7 @@ export default function PimsTaskDetailView({
     outcome: 'approved' | 'rejected' | 'send_back',
     lineRefills?: Array<{ lineId: number; refills: number; expiration?: string | null }>,
     lineScripts?: Array<{ lineId: number; scriptText: string }>,
+    approvalBasis?: 'standard' | 'chart' | 'refills',
   ) => {
     if (!task || mailOrderId == null || !canMutate) return;
     setBusy(true);
@@ -233,6 +234,8 @@ export default function PimsTaskDetailView({
       await respondMailApproval(task.practiceId, mailOrderId, {
         outcome,
         notes: approvalNote.trim() || undefined,
+        approvalBasis: outcome === 'approved' ? approvalBasis || 'standard' : undefined,
+        taskId: task.id,
         lineRefills,
         lineScripts,
       });
@@ -424,12 +427,13 @@ export default function PimsTaskDetailView({
         <MailOrderTaskPanel
           practiceId={task.practiceId}
           mailOrderId={mailOrderId}
+          taskId={task.id}
           canApprove={canMutate && task.status !== 'done'}
           busy={busy}
           approvalNote={approvalNote}
           onApprovalNoteChange={setApprovalNote}
-          onApprove={(outcome, lineRefills, lineScripts) =>
-            void handleMailApproval(outcome, lineRefills, lineScripts)
+          onApprove={(outcome, lineRefills, lineScripts, approvalBasis) =>
+            void handleMailApproval(outcome, lineRefills, lineScripts, approvalBasis)
           }
           onPresentationSynced={() => {
             void getTask(task.id).then(setTask).catch(() => undefined);

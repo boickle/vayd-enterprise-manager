@@ -403,6 +403,8 @@ export type ScoutPatientWrite = {
   alerts?: string | null;
   primaryProviderId?: number | null;
   isActive?: boolean;
+  /** When setting isActive false after euthanasia — who performed it. */
+  inactivatedByEmployeeId?: number | null;
   clientIds?: number[];
 };
 
@@ -465,27 +467,95 @@ export async function getZonePercentagesForProvider(
 }
 
 // ---------------------------
-// Pet Image Upload
+// Pet Image Upload / Gallery
 // ---------------------------
 
-// Upload a pet image
+export const PATIENT_PHOTO_GALLERY_MAX = 12;
+
+export type PatientGalleryImage = {
+  id: number;
+  url: string;
+  isPrimary: boolean;
+  sortOrder: number;
+  created?: string | null;
+};
+
 export async function uploadPetImage(
   patientId: string | number,
   file: File
 ): Promise<{ success: boolean; imageUrl: string; s3Key: string }> {
   const formData = new FormData();
   formData.append('file', file);
-  
+
   const response = await http.post(`/patients/${patientId}/image`, formData, {
     headers: {
       'Content-Type': 'multipart/form-data',
     },
   });
-  
+
   return response.data;
 }
 
-// Get pet image URL (signed URL, valid for 1 hour)
+export async function listPatientImages(
+  patientId: string | number,
+): Promise<PatientGalleryImage[]> {
+  const { data } = await http.get<PatientGalleryImage[]>(
+    `/patients/${encodeURIComponent(patientId)}/images`,
+  );
+  return Array.isArray(data) ? data : [];
+}
+
+export async function uploadPatientGalleryImage(
+  patientId: string | number,
+  file: File,
+): Promise<{
+  success: boolean;
+  imageUrl: string;
+  s3Key: string;
+  image: PatientGalleryImage;
+  images: PatientGalleryImage[];
+}> {
+  const formData = new FormData();
+  formData.append('file', file);
+  const { data } = await http.post(
+    `/patients/${encodeURIComponent(patientId)}/images`,
+    formData,
+    { headers: { 'Content-Type': 'multipart/form-data' } },
+  );
+  return data;
+}
+
+export async function setPatientImagePrimary(
+  patientId: string | number,
+  imageId: number,
+): Promise<{ success: boolean; imageUrl: string; images: PatientGalleryImage[] }> {
+  const { data } = await http.post(
+    `/patients/${encodeURIComponent(patientId)}/images/${encodeURIComponent(imageId)}/primary`,
+  );
+  return data;
+}
+
+export async function deletePatientGalleryImage(
+  patientId: string | number,
+  imageId: number,
+): Promise<{ success: boolean; imageUrl: string; images: PatientGalleryImage[] }> {
+  const { data } = await http.delete(
+    `/patients/${encodeURIComponent(patientId)}/images/${encodeURIComponent(imageId)}`,
+  );
+  return data;
+}
+
+/** Staff: email the client that a new pet photo was uploaded (active pets only). */
+export async function notifyPatientPhotoUpload(
+  patientId: string | number,
+): Promise<{ sent: boolean; reason?: string; message?: string }> {
+  const { data } = await http.post(
+    `/patients/${encodeURIComponent(patientId)}/images/notify-upload`,
+  );
+  return data;
+}
+
+/** @deprecated Prefer gallery modal; kept for callers that only need the primary proxy URL. */
 export async function getPetImageUrl(
   patientId: string | number
 ): Promise<{ imageUrl: string }> {

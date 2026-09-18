@@ -742,7 +742,10 @@ main.schedule-main-wrapper {
   border: 0;
   padding: 10px 14px;
   border-radius: 12px;
+  font-family: inherit;
+  font-size: inherit;
   font-weight: 700;
+  line-height: inherit;
   cursor: pointer;
   box-shadow: 0 6px 16px rgba(18, 147, 114, 0.15);
 }
@@ -752,6 +755,14 @@ main.schedule-main-wrapper {
 .btn.secondary {
   background: #e9f6f2;
   color: var(--accent-strong);
+}
+a.btn {
+  display: inline-block;
+  text-decoration: none;
+  text-align: center;
+}
+a.btn:hover {
+  text-decoration: none;
 }
 
 .hero {

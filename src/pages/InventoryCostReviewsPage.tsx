@@ -6,6 +6,7 @@ import {
   resolveCostReview,
   type InventoryCostReview,
 } from '../api/inventoryOps';
+import InventoryItemDetailModal from '../components/inventory/InventoryItemDetailModal';
 import { resolvePracticeIdFromToken } from '../utils/practiceIdFromToken';
 import './Settings.css';
 
@@ -33,6 +34,11 @@ export default function InventoryCostReviewsPage() {
   const [actingId, setActingId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [detailItemId, setDetailItemId] = useState<number | null>(null);
+  const [detailItemName, setDetailItemName] = useState<string | null>(null);
+  const [editingRowId, setEditingRowId] = useState<number | null>(null);
+  const [editedAppliedCost, setEditedAppliedCost] = useState('');
+  const [editedSuggestedPrice, setEditedSuggestedPrice] = useState('');
 
   useEffect(() => {
     void listPracticeBranches(practiceId)
@@ -62,15 +68,49 @@ export default function InventoryCostReviewsPage() {
     void load();
   }, [load]);
 
+  function cancelEdit() {
+    setEditingRowId(null);
+    setEditedAppliedCost('');
+    setEditedSuggestedPrice('');
+  }
+
+  function beginEdit(row: InventoryCostReview) {
+    setEditingRowId(row.id);
+    setEditedAppliedCost(
+      Number.isFinite(Number(row.receivedCostPerUnit))
+        ? String(Number(row.receivedCostPerUnit))
+        : ''
+    );
+    setEditedSuggestedPrice(
+      row.suggestedPrice != null && Number.isFinite(Number(row.suggestedPrice))
+        ? String(Number(row.suggestedPrice))
+        : ''
+    );
+  }
+
+  function openItemDetail(row: InventoryCostReview) {
+    setDetailItemId(row.inventoryItemId);
+    setDetailItemName(row.itemName);
+  }
+
   async function onResolve(
     row: InventoryCostReview,
-    action: 'apply_catalog' | 'apply_branch' | 'dismiss'
+    action: 'apply_catalog' | 'apply_branch' | 'dismiss',
+    overrides?: { appliedCost?: number | null; suggestedPrice?: number | null }
   ) {
     setActingId(row.id);
     setError(null);
     setMessage(null);
     try {
-      await resolveCostReview(practiceId, row.id, { action });
+      await resolveCostReview(practiceId, row.id, {
+        action,
+        ...(overrides?.appliedCost != null && Number.isFinite(overrides.appliedCost)
+          ? { appliedCost: overrides.appliedCost }
+          : {}),
+        ...(overrides?.suggestedPrice != null && Number.isFinite(overrides.suggestedPrice)
+          ? { suggestedPrice: overrides.suggestedPrice }
+          : {}),
+      });
       setMessage(
         action === 'apply_catalog'
           ? `Updated practice catalog cost for ${row.itemName ?? 'item'}.`
@@ -78,12 +118,27 @@ export default function InventoryCostReviewsPage() {
             ? `Set office-only cost override for ${row.itemName ?? 'item'}.`
             : `Dismissed review for ${row.itemName ?? 'item'}.`
       );
+      cancelEdit();
       await load();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Could not resolve review');
     } finally {
       setActingId(null);
     }
+  }
+
+  async function onApplyEditedCatalog(row: InventoryCostReview) {
+    const cost = Number(editedAppliedCost);
+    const price = Number(editedSuggestedPrice);
+    if (editedAppliedCost.trim() === '' || !Number.isFinite(cost) || cost < 0) {
+      setError('Enter a valid unit cost');
+      return;
+    }
+    if (editedSuggestedPrice.trim() === '' || !Number.isFinite(price) || price < 0) {
+      setError('Enter a valid suggested sell price');
+      return;
+    }
+    await onResolve(row, 'apply_catalog', { appliedCost: cost, suggestedPrice: price });
   }
 
   return (
@@ -164,6 +219,7 @@ export default function InventoryCostReviewsPage() {
           {rows.map((row) => {
             const pending = row.status === 'pending';
             const acting = actingId === row.id;
+            const editing = editingRowId === row.id;
             return (
               <article
                 key={row.id}
@@ -182,10 +238,25 @@ export default function InventoryCostReviewsPage() {
                     gap: 8,
                   }}
                 >
-                  <strong>
+                  <button
+                    type="button"
+                    style={{
+                      padding: 0,
+                      border: 'none',
+                      background: 'none',
+                      color: 'var(--primary, #1b5e20)',
+                      fontWeight: 700,
+                      textAlign: 'left',
+                      cursor: 'pointer',
+                      textDecoration: 'underline',
+                      textUnderlineOffset: 2,
+                    }}
+                    onClick={() => openItemDetail(row)}
+                    title="View inventory item details"
+                  >
                     {row.itemName ?? `Item #${row.inventoryItemId}`}
                     {row.itemCode ? ` · ${row.itemCode}` : ''}
-                  </strong>
+                  </button>
                   <time className="settings-muted">
                     {row.created ? new Date(row.created).toLocaleString() : ''}
                   </time>
@@ -209,7 +280,19 @@ export default function InventoryCostReviewsPage() {
                   </div>
                   <div>
                     <div className="settings-muted">Invoice cost / unit</div>
-                    <div>{money(row.receivedCostPerUnit)}</div>
+                    {editing ? (
+                      <input
+                        className="settings-input"
+                        type="number"
+                        min={0}
+                        step="0.0001"
+                        value={editedAppliedCost}
+                        onChange={(e) => setEditedAppliedCost(e.target.value)}
+                        style={{ width: 120 }}
+                      />
+                    ) : (
+                      <div>{money(row.receivedCostPerUnit)}</div>
+                    )}
                   </div>
                   <div>
                     <div className="settings-muted">Difference</div>
@@ -217,48 +300,103 @@ export default function InventoryCostReviewsPage() {
                   </div>
                   <div>
                     <div className="settings-muted">Catalog price → suggested</div>
-                    <div>
-                      {money(row.previousPrice, 2)} → {money(row.suggestedPrice, 2)}
-                    </div>
+                    {editing ? (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                        <span>{money(row.previousPrice, 2)} →</span>
+                        <input
+                          className="settings-input"
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          value={editedSuggestedPrice}
+                          onChange={(e) => setEditedSuggestedPrice(e.target.value)}
+                          style={{ width: 110 }}
+                        />
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                        <span>
+                          {money(row.previousPrice, 2)} → {money(row.suggestedPrice, 2)}
+                        </span>
+                        {pending ? (
+                          <button
+                            type="button"
+                            className="btn secondary"
+                            style={{ padding: '2px 8px', fontSize: 12 }}
+                            onClick={() => beginEdit(row)}
+                          >
+                            Edit
+                          </button>
+                        ) : null}
+                      </div>
+                    )}
                   </div>
                 </div>
                 {pending ? (
-                  <div
-                    style={{
-                      display: 'flex',
-                      flexWrap: 'wrap',
-                      gap: 8,
-                      marginTop: 12,
-                    }}
-                  >
-                    <button
-                      className="btn primary"
-                      type="button"
-                      disabled={acting}
-                      onClick={() => void onResolve(row, 'apply_catalog')}
-                      title="Update practice-wide catalog cost and suggested sell price"
+                  editing ? (
+                    <div
+                      style={{
+                        display: 'flex',
+                        flexWrap: 'wrap',
+                        gap: 8,
+                        marginTop: 12,
+                      }}
                     >
-                      Update catalog
-                    </button>
-                    <button
-                      className="btn secondary"
-                      type="button"
-                      disabled={acting}
-                      onClick={() => void onResolve(row, 'apply_branch')}
-                      title="Override cost/price for this office only"
+                      <button
+                        className="btn primary"
+                        type="button"
+                        disabled={acting}
+                        onClick={() => void onApplyEditedCatalog(row)}
+                      >
+                        Update catalog
+                      </button>
+                      <button
+                        className="btn secondary"
+                        type="button"
+                        disabled={acting}
+                        onClick={cancelEdit}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <div
+                      style={{
+                        display: 'flex',
+                        flexWrap: 'wrap',
+                        gap: 8,
+                        marginTop: 12,
+                      }}
                     >
-                      Office only
-                    </button>
-                    <button
-                      className="btn secondary"
-                      type="button"
-                      disabled={acting}
-                      onClick={() => void onResolve(row, 'dismiss')}
-                      title="Keep current catalog and office pricing"
-                    >
-                      Keep current
-                    </button>
-                  </div>
+                      <button
+                        className="btn primary"
+                        type="button"
+                        disabled={acting}
+                        onClick={() => void onResolve(row, 'apply_catalog')}
+                        title="Update practice-wide catalog cost and suggested sell price"
+                      >
+                        Update catalog
+                      </button>
+                      <button
+                        className="btn secondary"
+                        type="button"
+                        disabled={acting}
+                        onClick={() => void onResolve(row, 'apply_branch')}
+                        title="Override cost/price for this office only"
+                      >
+                        Office only
+                      </button>
+                      <button
+                        className="btn secondary"
+                        type="button"
+                        disabled={acting}
+                        onClick={() => void onResolve(row, 'dismiss')}
+                        title="Keep current catalog and office pricing"
+                      >
+                        Keep current
+                      </button>
+                    </div>
+                  )
                 ) : (
                   <div className="settings-muted" style={{ marginTop: 10 }}>
                     Resolved: {row.status.replace(/_/g, ' ')}
@@ -270,6 +408,18 @@ export default function InventoryCostReviewsPage() {
           })}
         </div>
       )}
+
+      {detailItemId != null ? (
+        <InventoryItemDetailModal
+          practiceId={practiceId}
+          inventoryItemId={detailItemId}
+          title={detailItemName}
+          onClose={() => {
+            setDetailItemId(null);
+            setDetailItemName(null);
+          }}
+        />
+      ) : null}
     </div>
   );
 }

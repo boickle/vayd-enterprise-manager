@@ -9,6 +9,7 @@ import {
   type MailOrderLine,
 } from '../../api/onlineStore';
 import { fetchPatientByIdStaff, fetchPatientMedicalRecordStaff } from '../../api/patients';
+import { fetchClientByIdStaff } from '../../api/clientsStaff';
 import { fetchPatientAppointmentsStaff } from '../../api/pimsAppointments';
 import {
   listEncounters,
@@ -23,7 +24,13 @@ import {
   buildCaseHistorySource,
   signalmentFromPatient,
 } from '../../utils/buildCaseHistorySource';
-import { clientNameFromPatientRow } from '../../utils/briefDisplay';
+import { clientIdFromPatientRow, clientNameFromPatientRow } from '../../utils/briefDisplay';
+import {
+  employeeDisplayName,
+  inactiveAtIso,
+  statusNameFromPatient,
+  type HouseholdPetStatusInput,
+} from '../../utils/householdPetStatus';
 import { formatAutoshipFrequency } from '../../pages/store/storeCartState';
 import type { MedicalRecordBundle } from '../../utils/patientChartFromMedicalRecord';
 import { stripCitationTokens } from '../../utils/chartCitation';
@@ -111,6 +118,32 @@ async function summarizePet(opts: {
   ]);
   const rec = unwrapPatientRecord(profile);
   const owner = rec ? clientNameFromPatientRow(rec) : opts.clientName;
+  let householdPets: HouseholdPetStatusInput[] = [];
+  const clientId = rec ? clientIdFromPatientRow(rec) : null;
+  if (clientId != null) {
+    const clientRow = await fetchClientByIdStaff(String(clientId)).catch(() => null);
+    if (clientRow && typeof clientRow === 'object') {
+      const rawPets = Array.isArray((clientRow as Record<string, unknown>).patients)
+        ? ((clientRow as Record<string, unknown>).patients as unknown[])
+        : [];
+      householdPets = rawPets
+        .map((raw): HouseholdPetStatusInput | null => {
+          if (!raw || typeof raw !== 'object') return null;
+          const p = raw as Record<string, unknown>;
+          const id = p.id != null ? String(p.id) : '';
+          if (!id) return null;
+          return {
+            id,
+            name: typeof p.name === 'string' && p.name.trim() ? p.name.trim() : `Pet #${id}`,
+            active: p.isActive !== false,
+            statusName: statusNameFromPatient(p),
+            inactiveAt: inactiveAtIso(p.inactiveAt),
+            inactivatedByName: employeeDisplayName(p.inactivatedByEmployee),
+          };
+        })
+        .filter((p): p is HouseholdPetStatusInput => p != null);
+    }
+  }
   const src = buildCaseHistorySource({
     patientId: String(opts.patientId),
     patientName: opts.patientName,
@@ -123,6 +156,7 @@ async function summarizePet(opts: {
     patientRecord: rec,
     medicalRecord: medicalRecord as MedicalRecordBundle | null,
     asOfDate: today,
+    householdPets,
   });
   if (!src.text.trim()) return 'No chart text to summarize yet.';
   const summary = await chatAboutChart({
@@ -147,6 +181,8 @@ async function summarizePet(opts: {
 type Props = {
   practiceId: number;
   mailOrderId: number;
+  /** When set, only lines tied to this approval task are shown / decided. */
+  taskId?: number | null;
   canApprove: boolean;
   busy: boolean;
   approvalNote: string;
@@ -155,6 +191,7 @@ type Props = {
     outcome: 'approved' | 'rejected' | 'send_back',
     lineRefills?: Array<{ lineId: number; refills: number; expiration?: string | null }>,
     lineScripts?: Array<{ lineId: number; scriptText: string }>,
+    approvalBasis?: 'standard' | 'chart' | 'refills',
   ) => void;
   onPresentationSynced?: () => void;
 };
@@ -162,6 +199,7 @@ type Props = {
 export default function MailOrderTaskPanel({
   practiceId,
   mailOrderId,
+  taskId = null,
   canApprove,
   busy,
   approvalNote,
@@ -234,14 +272,35 @@ export default function MailOrderTaskPanel({
     };
   }, [practiceId, mailOrderId]);
 
-  const groups = useMemo(() => (order ? groupLines(order) : []), [order]);
+  const scopedOrder = useMemo(() => {
+    if (!order) return null;
+    if (taskId == null || !Number.isFinite(Number(taskId))) return order;
+    const scoped = (order.lines || []).filter(
+      (line) => Number(line.approvalTaskId) === Number(taskId),
+    );
+    if (!scoped.length) {
+      // Fallback: lines still awaiting approval (legacy tasks without per-line task ids).
+      const awaiting = (order.lines || []).filter(
+        (line) =>
+          line.lineStatus === 'awaiting_doctor_approval' ||
+          line.lineStatus === 'send_back',
+      );
+      return { ...order, lines: awaiting.length ? awaiting : order.lines };
+    }
+    return { ...order, lines: scoped };
+  }, [order, taskId]);
+
+  const groups = useMemo(
+    () => (scopedOrder ? groupLines(scopedOrder) : []),
+    [scopedOrder],
+  );
   const pets = useMemo(() => {
-    if (!order) return [];
-    if (order.patients?.length) {
-      return order.patients.filter((p) => p.id != null || p.name);
+    if (!scopedOrder) return [];
+    if (scopedOrder.patients?.length) {
+      return scopedOrder.patients.filter((p) => p.id != null || p.name);
     }
     return groups.map((g) => ({ id: g.petId, name: g.petName }));
-  }, [order, groups]);
+  }, [scopedOrder, groups]);
 
   const handleSummarize = async () => {
     if (!order || summarizing) return;
@@ -279,6 +338,43 @@ export default function MailOrderTaskPanel({
         <Loader2 className="pims-task-detail__spinner" size={16} /> Loading mail order…
       </p>
     );
+  }
+
+  function submitApprove(basis: 'standard' | 'chart' | 'refills') {
+    const current = scopedOrder;
+    if (!current) return;
+    const lineRefills = (current.lines || []).map((line) => ({
+      lineId: line.id,
+      refills: Math.max(0, Math.floor(Number(refillsByLine[line.id]) || 0)),
+      expiration: (expirationsByLine[line.id] || '').trim() || null,
+    }));
+    const lineScripts = (current.lines || []).map((line) => ({
+      lineId: line.id,
+      scriptText: (
+        scriptsByLine[line.id] ||
+        (!isPlaceholderMailScript(line.scriptText) ? line.scriptText : '') ||
+        ''
+      ).trim(),
+    }));
+    const missing = (current.lines || []).some(
+      (line) => String(refillsByLine[line.id] ?? '').trim() === '',
+    );
+    if (missing) {
+      setSummaryError('Enter how many refills to add for each item before approving.');
+      return;
+    }
+    const missingExpiration = lineRefills.some((row) => row.refills > 0 && !row.expiration);
+    if (missingExpiration) {
+      setSummaryError(
+        'Enter a refill expiration for each item with refills. Use View details to match a wellness reminder.',
+      );
+      return;
+    }
+    if (lineScripts.some((row) => isPlaceholderMailScript(row.scriptText))) {
+      setSummaryError('Write directions for each item before approving.');
+      return;
+    }
+    onApprove('approved', lineRefills, lineScripts, basis);
   }
 
   return (
@@ -360,13 +456,16 @@ export default function MailOrderTaskPanel({
                   ? `${line.refillsRemaining} refill${line.refillsRemaining === 1 ? '' : 's'} remaining on the prior Rx`
                   : line.refillNote || 'No prior refill count on file'}
               </p>
-              {canApprove && isPlaceholderMailScript(line.scriptText) ? (
+              {canApprove ? (
                 <label className="pims-task-mail__refill">
                   Directions
                   <textarea
                     className="settings-input"
                     rows={3}
-                    value={scriptsByLine[line.id] ?? ''}
+                    value={
+                      scriptsByLine[line.id] ??
+                      (!isPlaceholderMailScript(line.scriptText) ? line.scriptText || '' : '')
+                    }
                     onChange={(e) =>
                       setScriptsByLine((prev) => ({ ...prev, [line.id]: e.target.value }))
                     }
@@ -510,52 +609,37 @@ export default function MailOrderTaskPanel({
               rows={3}
               value={approvalNote}
               onChange={(e) => onApprovalNoteChange(e.target.value)}
-              placeholder="Notes are saved on the mail order"
+              placeholder="Optional — e.g. dose confirmed in last SOAP"
             />
           </label>
-          <div className="pims-task-detail__actions" style={{ marginTop: 8 }}>
+          <p className="pims-task-detail__muted" style={{ margin: '0 0 8px', fontSize: 13 }}>
+            Use chart or refill approval when a full new Rx review is not needed. Pharmacy can
+            also proceed without a doctor task after a product change when they give a reason.
+          </p>
+          <div className="pims-task-detail__actions" style={{ marginTop: 8, flexWrap: 'wrap' }}>
             <button
               type="button"
               className="pims-task-detail__btn pims-task-detail__btn--primary"
               disabled={busy}
-              onClick={() => {
-                const lineRefills = (order.lines || []).map((line) => ({
-                  lineId: line.id,
-                  refills: Math.max(0, Math.floor(Number(refillsByLine[line.id]) || 0)),
-                  expiration: (expirationsByLine[line.id] || '').trim() || null,
-                }));
-                const lineScripts = (order.lines || []).map((line) => ({
-                  lineId: line.id,
-                  scriptText: (
-                    scriptsByLine[line.id] ||
-                    (!isPlaceholderMailScript(line.scriptText) ? line.scriptText : '') ||
-                    ''
-                  ).trim(),
-                }));
-                const missing = (order.lines || []).some(
-                  (line) => String(refillsByLine[line.id] ?? '').trim() === '',
-                );
-                if (missing) {
-                  setSummaryError('Enter how many refills to add for each item before approving.');
-                  return;
-                }
-                const missingExpiration = lineRefills.some(
-                  (row) => row.refills > 0 && !row.expiration,
-                );
-                if (missingExpiration) {
-                  setSummaryError(
-                    'Enter a refill expiration for each item with refills. Use View details to match a wellness reminder.',
-                  );
-                  return;
-                }
-                if (lineScripts.some((row) => isPlaceholderMailScript(row.scriptText))) {
-                  setSummaryError('Write directions for each item before approving.');
-                  return;
-                }
-                onApprove('approved', lineRefills, lineScripts);
-              }}
+              onClick={() => submitApprove('standard')}
             >
               Approved
+            </button>
+            <button
+              type="button"
+              className="pims-task-detail__btn pims-task-detail__btn--primary"
+              disabled={busy}
+              onClick={() => submitApprove('chart')}
+            >
+              Approve — based on chart
+            </button>
+            <button
+              type="button"
+              className="pims-task-detail__btn pims-task-detail__btn--primary"
+              disabled={busy}
+              onClick={() => submitApprove('refills')}
+            >
+              Approve — refills on file
             </button>
             <button
               type="button"

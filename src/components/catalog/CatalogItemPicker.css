@@ -43,8 +43,10 @@
   z-index: 40;
   top: calc(100% + 4px);
   left: 0;
-  right: 0;
-  max-height: 260px;
+  right: auto;
+  width: max(100%, min(720px, 90vw));
+  min-width: 100%;
+  max-height: 320px;
   overflow-y: auto;
   margin: 0;
   padding: 4px;
@@ -63,7 +65,7 @@
 
 .cat-item-picker__result {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   width: 100%;
   padding: 7px 8px;
@@ -85,17 +87,21 @@
 .cat-item-picker__result-name {
   flex: 1 1 auto;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   font-weight: 600;
+  line-height: 1.35;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .cat-item-picker__result-meta {
   flex: 0 0 auto;
+  max-width: 38%;
   font-size: 11px;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
+  line-height: 1.35;
+  text-align: right;
+  overflow-wrap: anywhere;
 }
 
 .cat-item-picker__tag {

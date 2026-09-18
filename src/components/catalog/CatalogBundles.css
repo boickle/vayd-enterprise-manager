@@ -265,11 +265,17 @@
 /* ---------- Editor ---------- */
 
 .cbn__editor-head {
+  position: sticky;
+  top: 0;
+  z-index: 4;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 10px;
-  margin-bottom: 14px;
+  margin: -18px -20px 14px;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
 }
 
 .cbn__editor-head .cbn__title {
@@ -281,6 +287,16 @@
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.cbn__editor-foot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
 }
 
 .cbn__back {
@@ -314,6 +330,14 @@
   font-size: 13px;
   font-weight: 700;
   color: var(--text);
+}
+
+.cbn-card__hint {
+  margin: -6px 0 14px;
+  font-size: 12.5px;
+  color: var(--muted);
+  line-height: 1.45;
+  max-width: 72ch;
 }
 
 .cbn-grid {

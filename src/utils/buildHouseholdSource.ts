@@ -1,11 +1,12 @@
 import type { PatientPrescription, PatientProblem, VisitInvoice } from '../api/visitWorkflow';
+import {
+  formatPetInactivationLine,
+  type HouseholdPetStatusInput,
+} from './householdPetStatus';
 
-export type HouseholdPetSourceInput = {
-  id: string;
-  name: string;
+export type HouseholdPetSourceInput = HouseholdPetStatusInput & {
   summaryLine: string;
   alerts: string | null;
-  active: boolean;
   problems: PatientProblem[];
   prescriptions: PatientPrescription[];
 };
@@ -91,9 +92,19 @@ export function buildHouseholdSourceText(opts: {
   }
   for (const pet of opts.pets) {
     lines.push('');
-    lines.push(`### ${pet.name} (patientId ${pet.id})${pet.active ? '' : ' · inactive'}`);
+    const inactiveDetail = formatPetInactivationLine(pet);
+    lines.push(
+      `### ${pet.name} (patientId ${pet.id})${
+        pet.active ? '' : inactiveDetail ? ` · ${inactiveDetail}` : ' · inactive'
+      }`
+    );
     if (pet.summaryLine.trim()) lines.push(`Signalment / summary: ${pet.summaryLine.trim()}`);
     if (pet.alerts?.trim()) lines.push(`Patient alerts: ${pet.alerts.trim()}`);
+    if (!pet.active) {
+      lines.push(
+        'Note: this pet is inactive / not alive — include them in the household snapshot with status, date, and who performed euthanasia when listed. Do not invent a provider or date.'
+      );
+    }
 
     const openProblems = pet.problems.filter((p) => p.status !== 'resolved').slice(0, 20);
     if (openProblems.length) {
