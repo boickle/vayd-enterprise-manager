@@ -29,6 +29,7 @@ const CLPerformanceAnalyticsPage = React.lazy(() => import('./pages/CLPerformanc
 const VsdPaymentsMatchAnalyticsPage = React.lazy(
   () => import('./pages/VsdPaymentsMatchAnalytics')
 );
+const BookingCalendarAnalyticsPage = React.lazy(() => import('./pages/BookingCalendarAnalytics'));
 
 export type AnalyticsTabPage = {
   path: string;
@@ -50,6 +51,12 @@ export const ANALYTICS_TAB_PAGES: AnalyticsTabPage[] = [
     path: 'projected-revenue',
     label: 'Projected Revenue',
     element: <ProjectedRevenueAnalyticsPage />,
+    role: ['employee', 'admin', 'superadmin'],
+  },
+  {
+    path: 'booking-calendar',
+    label: 'Booking Calendar',
+    element: <BookingCalendarAnalyticsPage />,
     role: ['employee', 'admin', 'superadmin'],
   },
   { path: 'time-spent', label: 'Time Spent', element: <TimeSpentAnalyticsPage />, role: ['employee', 'admin', 'superadmin'] },
