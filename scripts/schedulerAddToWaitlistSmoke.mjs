@@ -34,6 +34,8 @@ assert(
 assert(/export function waitlistAddDisabledReason/.test(utilSrc), 'util must export waitlistAddDisabledReason');
 assert(/patientIds/.test(utilSrc) && /appointmentTypeId/.test(utilSrc), 'prefill must carry pets + type');
 assert(/preferredProviderId/.test(utilSrc), 'prefill must carry preferred doctor');
+assert(/bookedAppointmentId/.test(utilSrc), 'prefill must carry booked appointment id');
+assert(/bookedAppointmentStart/.test(utilSrc), 'prefill must carry booked appointment start');
 assert(
   /Needs a linked client to add to the waitlist/.test(utilSrc),
   'blocks without client must be rejected',

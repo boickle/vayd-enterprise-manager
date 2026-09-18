@@ -52,6 +52,13 @@ import { evetClientLink, evetPatientLink } from '../utils/evet';
 import { careOutreachClientHasSmsPhone } from '../utils/careOutreachSmsMessage';
 import { holdReleaseOptsForAppointment } from '../utils/forwardBookingSmsMessage';
 import { practiceTimeZoneOrDefault } from '../utils/practiceTimezone';
+import { fetchClientAppointmentsStaff } from '../api/pimsAppointments';
+import {
+  pickSoonestFutureVisitStartIso,
+  waitlistEffectiveBookedStartIso,
+  waitlistShouldShowWantsSoonerBadge,
+  waitlistWantsSoonerBadgeText,
+} from '../utils/waitlistBookedVisit';
 import './WaitlistPage.css';
 import './Settings.css';
 
@@ -121,6 +128,8 @@ export default function WaitlistPage() {
   const [messagesClientId, setMessagesClientId] = useState<number | null>(null);
   const [messagesLabel, setMessagesLabel] = useState('');
   const [highlightId, setHighlightId] = useState<number | null>(null);
+  /** Schedule-backed starts when waitlist rows omit bookedAppointmentStart. */
+  const [enrichedBookedStartById, setEnrichedBookedStartById] = useState<Record<number, string>>({});
 
   const load = useCallback(async (nextStatus: StatusTab) => {
     setLoading(true);
@@ -150,6 +159,61 @@ export default function WaitlistPage() {
   useEffect(() => {
     void load(status);
   }, [load, status]);
+
+  useEffect(() => {
+    if (status !== 'waiting') {
+      setEnrichedBookedStartById({});
+      return;
+    }
+    const needing = entries.filter(
+      (e) => e.status === 'waiting' && !e.bookedAppointmentStart?.trim(),
+    );
+    if (needing.length === 0) {
+      setEnrichedBookedStartById({});
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const byClient = new Map<number, typeof needing>();
+      for (const row of needing) {
+        const list = byClient.get(row.clientId) ?? [];
+        list.push(row);
+        byClient.set(row.clientId, list);
+      }
+      const next: Record<number, string> = {};
+      const clientIds = [...byClient.keys()];
+      const concurrency = 4;
+      for (let i = 0; i < clientIds.length; i += concurrency) {
+        const chunk = clientIds.slice(i, i + concurrency);
+        await Promise.all(
+          chunk.map(async (clientId) => {
+            try {
+              const appointments = await fetchClientAppointmentsStaff(clientId, {
+                practiceId: PRACTICE_ID,
+                start: new Date(Date.now() - 2 * 86400000).toISOString(),
+                end: new Date(Date.now() + 400 * 86400000).toISOString(),
+              });
+              if (cancelled) return;
+              for (const row of byClient.get(clientId) ?? []) {
+                const startIso = pickSoonestFutureVisitStartIso({
+                  appointments,
+                  waitlistPatientIds: row.patientIds ?? [],
+                  practiceTz: PRACTICE_TZ,
+                });
+                if (startIso) next[row.id] = startIso;
+              }
+            } catch {
+              /* leave chip absent when history fails */
+            }
+          }),
+        );
+      }
+      if (!cancelled) setEnrichedBookedStartById(next);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [entries, status]);
 
   useEffect(() => {
     const onRefresh = () => void load(status);
@@ -609,14 +673,18 @@ export default function WaitlistPage() {
                       {prefDocMatch ? (
                         <span className="waitlist-chip waitlist-chip--ok">Preferred doctor</span>
                       ) : null}
-                      {entry.status === 'waiting' &&
-                      (entry.createdVia === 'online_booking' || entry.bookedAppointmentStart) ? (
+                      {waitlistShouldShowWantsSoonerBadge(
+                        entry,
+                        enrichedBookedStartById[entry.id],
+                      ) ? (
                         <span className="waitlist-chip waitlist-chip--ok">
-                          {entry.bookedAppointmentStart
-                            ? `Has ${DateTime.fromISO(entry.bookedAppointmentStart)
-                                .setZone(PRACTICE_TZ)
-                                .toFormat('ccc, LLL d')} — wants sooner`
-                            : 'Wants sooner'}
+                          {waitlistWantsSoonerBadgeText(
+                            waitlistEffectiveBookedStartIso(
+                              entry,
+                              enrichedBookedStartById[entry.id],
+                            ),
+                            PRACTICE_TZ,
+                          )}
                         </span>
                       ) : null}
                       {entry.appointmentTypeName ? <span>{entry.appointmentTypeName}</span> : null}

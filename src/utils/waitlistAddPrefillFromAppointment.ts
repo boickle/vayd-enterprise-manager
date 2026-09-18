@@ -10,6 +10,9 @@ export type WaitlistAddPrefill = {
   patientIds: number[];
   appointmentTypeId?: number;
   preferredProviderId?: number;
+  /** Existing calendar visit — keeps the “Has … — wants sooner” chip on the waitlist card. */
+  bookedAppointmentId?: number;
+  bookedAppointmentStart?: string;
 };
 
 export function waitlistAddDisabledReason(appt: Appointment): string | undefined {
@@ -38,11 +41,18 @@ export function buildWaitlistAddPrefillFromAppointment(appt: Appointment): Waitl
     .filter((id) => Number.isFinite(id) && id > 0);
   const typeId = Number(appt.appointmentType?.id);
   const providerId = Number(appt.primaryProvider?.id);
+  const apptId = Number(appt.id);
+  const startIso =
+    typeof appt.appointmentStart === 'string' && appt.appointmentStart.trim()
+      ? appt.appointmentStart.trim()
+      : undefined;
   return {
     clientId,
     clientLabel,
     patientIds,
     ...(Number.isFinite(typeId) && typeId > 0 ? { appointmentTypeId: typeId } : {}),
     ...(Number.isFinite(providerId) && providerId > 0 ? { preferredProviderId: providerId } : {}),
+    ...(Number.isFinite(apptId) && apptId > 0 ? { bookedAppointmentId: apptId } : {}),
+    ...(startIso ? { bookedAppointmentStart: startIso } : {}),
   };
 }
