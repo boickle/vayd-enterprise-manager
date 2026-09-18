@@ -794,7 +794,7 @@ export default function ProjectedRevenueAnalyticsPage() {
         let typicalDayPoints = 0;
         for (const id of idsForDay) {
           const bookedPts = pointsByDoctorByDate[id]?.[date] ?? 0;
-          // Drs column: only doctors with appointments already on the books.
+          // Past/today Drs: doctors who already have visits on the books.
           if (bookedPts > 0) workingDoctorCount += 1;
           if (isDoctorWorkingOnDate(doctorSchedules[id], date)) {
             typicalDayPoints += typicalForDoctor(id).points ?? 0;
@@ -897,8 +897,8 @@ export default function ProjectedRevenueAnalyticsPage() {
           const d = projectDoctor(String(p.id));
           postedTotal += d.posted;
           if (!d.working && d.points <= 0 && d.posted <= 0) continue;
-          // Drs column: only doctors with appointments already on the books.
-          if (d.points > 0) workingDoctorCount += 1;
+          // Future Drs: scheduled to work, even when the book is still empty.
+          if (d.working || d.points > 0) workingDoctorCount += 1;
           if (d.working) {
             scheduledDoctorCount += 1;
             if (fillFraction == null) fillFraction = d.fillFraction;
@@ -986,7 +986,7 @@ export default function ProjectedRevenueAnalyticsPage() {
         points: doctor.points,
         projectedPoints: doctor.projectedPoints,
         typicalDayPoints: doctor.typicalDayPoints,
-        workingDoctorCount: doctor.points > 0 ? 1 : 0,
+        workingDoctorCount: doctor.working || doctor.points > 0 ? 1 : 0,
         appointmentCount,
         daysUntil,
         fillFraction: doctor.fillFraction,
@@ -1637,8 +1637,8 @@ export default function ProjectedRevenueAnalyticsPage() {
                     <MuiTooltip
                       title={
                         useDailyBuckets
-                          ? 'Doctors with at least one appointment on the books that day.'
-                          : 'Doctor-days: sum of doctors with appointments on the books across each day in the week.'
+                          ? 'Projected days count doctors scheduled to work. Past days count doctors with appointments already on the books.'
+                          : 'Doctor-days: scheduled doctors on projected days, or doctors with appointments on past days.'
                       }
                     >
                       <span>{useDailyBuckets ? 'Drs' : 'Dr-days'}</span>
