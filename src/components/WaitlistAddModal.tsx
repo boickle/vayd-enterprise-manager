@@ -7,6 +7,7 @@ import { searchPatientsStaff, type PatientSearchRow } from '../api/patients';
 import { extractActivePatientsFromClientStaffRecord } from '../utils/routingPatientHoverData';
 import {
   createWaitlistEntry,
+  patchWaitlistEntry,
   waitlistConflictExistingId,
   type WaitlistEntry,
   type WaitlistPreferredWindow,
@@ -233,7 +234,11 @@ export function WaitlistAddModal({
       const typeId = appointmentTypeId.trim() ? Number(appointmentTypeId) : undefined;
       const providerId = preferredProviderId.trim() ? Number(preferredProviderId) : undefined;
       const type = bookableTypes.find((t) => Number(t.id) === typeId);
-      const entry = await createWaitlistEntry({
+      const bookedAppointmentId =
+        prefill?.bookedAppointmentId != null && Number.isFinite(Number(prefill.bookedAppointmentId))
+          ? Number(prefill.bookedAppointmentId)
+          : undefined;
+      let entry = await createWaitlistEntry({
         practiceId,
         clientId: selectedClient.id,
         patientIds,
@@ -244,10 +249,43 @@ export function WaitlistAddModal({
           ? { serviceMinutes: Math.max(1, Math.round(Number(type.defaultDuration))) }
           : {}),
         ...(notes.trim() ? { notes: notes.trim() } : {}),
+        ...(bookedAppointmentId != null && bookedAppointmentId > 0 ? { bookedAppointmentId } : {}),
       });
+      // If API accepted the id but omitted start, keep the schedule start for the wants-sooner chip.
+      if (
+        !entry.bookedAppointmentStart?.trim() &&
+        prefill?.bookedAppointmentStart?.trim() &&
+        (entry.bookedAppointmentId != null || bookedAppointmentId != null)
+      ) {
+        entry = {
+          ...entry,
+          bookedAppointmentId: entry.bookedAppointmentId ?? bookedAppointmentId ?? null,
+          bookedAppointmentStart: prefill.bookedAppointmentStart.trim(),
+        };
+      }
       onCreated(entry);
     } catch (e) {
       const existing = waitlistConflictExistingId(e);
+      if (existing && prefill?.bookedAppointmentId != null && Number(prefill.bookedAppointmentId) > 0) {
+        try {
+          let linked = await patchWaitlistEntry(existing, {
+            practiceId,
+            bookedAppointmentId: Number(prefill.bookedAppointmentId),
+          });
+          if (linked.status === 'waiting') {
+            if (!linked.bookedAppointmentStart?.trim() && prefill.bookedAppointmentStart?.trim()) {
+              linked = {
+                ...linked,
+                bookedAppointmentStart: prefill.bookedAppointmentStart.trim(),
+              };
+            }
+            onCreated(linked);
+            return;
+          }
+        } catch {
+          /* fall through to conflict message */
+        }
+      }
       setError(
         existing
           ? 'This client is already on the waitlist. Open that card to update notes or pets.'

@@ -1,5 +1,6 @@
 import { http } from './http';
 import axios from 'axios';
+import { normalizeWaitlistEntry } from '../utils/waitlistEntryNormalize';
 
 export type WaitlistStatus = 'waiting' | 'booked' | 'removed';
 export type WaitlistPreferredWindow = 'asap' | 'week' | 'two_weeks' | 'month' | 'flexible';
@@ -88,6 +89,11 @@ export type CreateWaitlistPayload = {
   preferredEndDate?: string;
   serviceMinutes?: number;
   notes?: string;
+  /**
+   * Existing calendar visit to keep while waiting for a sooner opening
+   * (schedule “Add to waitlist”, same idea as joinWaitlistIfSooner on book).
+   */
+  bookedAppointmentId?: number;
 };
 
 export type PatchWaitlistPayload = {
@@ -106,23 +112,24 @@ export type PatchWaitlistPayload = {
   touchLastContacted?: boolean;
 };
 
+
 function unwrapEntry(raw: unknown): WaitlistEntry {
   if (raw && typeof raw === 'object') {
     const o = raw as Record<string, unknown>;
-    if (o.entry && typeof o.entry === 'object') return o.entry as WaitlistEntry;
+    if (o.entry && typeof o.entry === 'object') return normalizeWaitlistEntry(o.entry);
     if (o.data && typeof o.data === 'object' && !Array.isArray(o.data)) {
-      return o.data as WaitlistEntry;
+      return normalizeWaitlistEntry(o.data);
     }
   }
-  return raw as WaitlistEntry;
+  return normalizeWaitlistEntry(raw);
 }
 
 export async function fetchWaitlist(params: FetchWaitlistParams): Promise<WaitlistEntry[]> {
   const { data } = await http.get<{ items?: WaitlistEntry[] } | WaitlistEntry[]>('/waitlist', {
     params,
   });
-  if (Array.isArray(data)) return data;
-  return Array.isArray(data?.items) ? data.items : [];
+  const list = Array.isArray(data) ? data : Array.isArray(data?.items) ? data.items : [];
+  return list.map((row) => normalizeWaitlistEntry(row));
 }
 
 export async function createWaitlistEntry(body: CreateWaitlistPayload): Promise<WaitlistEntry> {
