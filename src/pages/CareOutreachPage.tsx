@@ -99,6 +99,7 @@ import {
 import { useGmailInboxAccess } from '../hooks/useGmailInboxAccess';
 import { resolveScheduleLoaderSmsBookedSlot } from '../utils/scheduleLoaderSmsMessage';
 import { holdReleaseOptsForAppointment } from '../utils/forwardBookingSmsMessage';
+import { formatLastTextedOfferSentLabel } from '../utils/lastTextedOfferSent';
 import './Settings.css';
 
 const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
@@ -1510,6 +1511,9 @@ export default function CareOutreachPage() {
                             const diff = calendarDayDiffFromToday(r.dueDate ?? null);
                             const overdue = diff !== null && diff < 0;
                             const hidden = reminderIsHidden(r);
+                            const contactLogText = noteDrafts[r.id] ?? initialNotes(r);
+                            const lastTextedOfferLabel =
+                              formatLastTextedOfferSentLabel(contactLogText);
                             return (
                               <tr
                                 key={r.id}
@@ -1584,6 +1588,20 @@ export default function CareOutreachPage() {
                                   )}
                                 </td>
                                 <td style={{ padding: '10px 16px', verticalAlign: 'top' }}>
+                                  {lastTextedOfferLabel ? (
+                                    <div
+                                      style={{
+                                        fontSize: 13,
+                                        fontWeight: 700,
+                                        color: 'var(--text)',
+                                        marginBottom: 6,
+                                        lineHeight: 1.35,
+                                      }}
+                                      title="Most recent texted-offer send logged in this contact log"
+                                    >
+                                      {lastTextedOfferLabel}
+                                    </div>
+                                  ) : null}
                                   <textarea
                                     className="settings-input"
                                     rows={2}
@@ -1594,7 +1612,7 @@ export default function CareOutreachPage() {
                                       fontFamily: 'inherit',
                                       fontSize: 13,
                                     }}
-                                    value={noteDrafts[r.id] ?? initialNotes(r)}
+                                    value={contactLogText}
                                     onChange={(e) => onNotesChange(r.id, e.target.value)}
                                     onBlur={(e) => void onNotesBlur(r.id, e.currentTarget.value)}
                                     placeholder="e.g. 11/14/2026 DF – LMOM"
