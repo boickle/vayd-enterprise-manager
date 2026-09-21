@@ -3,9 +3,11 @@ import { useSearchParams } from 'react-router';
 import { useAuth } from '../auth/AuthProvider';
 import { transferBatch } from '../api/inventoryOps';
 import {
+  getInventoryBranchStock,
   listInventoryBranchLocations,
   listPracticeBranches,
   type InventoryBranchLocation,
+  type InventoryBranchStock,
   type PracticeBranch,
 } from '../api/branchInventory';
 import { searchItems, type SearchResultItem } from '../api/quantityPriceBreaks';
@@ -22,6 +24,25 @@ type BatchLine = {
   lotId: number | null;
   lotNumber: string;
 };
+
+function stockByLocation(stock: InventoryBranchStock): Record<number, number> {
+  return Object.fromEntries(
+    (stock.locations ?? []).map((loc) => [
+      loc.branchLocationId,
+      Number(loc.quantityOnHand ?? 0),
+    ])
+  );
+}
+
+function locationOptionLabel(
+  name: string,
+  locationId: number,
+  stockByLoc: Record<number, number>
+): string {
+  const qoh = stockByLoc[locationId];
+  if (qoh === undefined) return name;
+  return `${name} — ${qoh} on hand`;
+}
 
 export default function MoveItemsPage() {
   const { token } = useAuth() as { token: string | null };
@@ -46,6 +67,11 @@ export default function MoveItemsPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [fromBranchStock, setFromBranchStock] = useState<Record<number, number>>({});
+  const [toBranchStock, setToBranchStock] = useState<Record<number, number>>({});
+  const [lineStockByKey, setLineStockByKey] = useState<
+    Record<string, Record<number, number>>
+  >({});
 
   useEffect(() => {
     void listPracticeBranches(practiceId).then((b) => {
@@ -138,6 +164,76 @@ export default function MoveItemsPage() {
 
   const searchGroups = useStockItemGroups(results, practiceId);
 
+  const qohDisplayItemId =
+    selected?.id ?? (lines.length === 1 ? lines[0].inventoryItemId : null);
+  const qohDisplayItemName =
+    selected?.name ?? (lines.length === 1 ? lines[0].name : null);
+
+  useEffect(() => {
+    if (!qohDisplayItemId || fromBranchId === '') {
+      setFromBranchStock({});
+      if (toBranchId === '' || toBranchId === fromBranchId) setToBranchStock({});
+      return;
+    }
+    let cancelled = false;
+    void getInventoryBranchStock(practiceId, Number(fromBranchId), qohDisplayItemId)
+      .then((stock) => {
+        if (cancelled) return;
+        const byLoc = stockByLocation(stock);
+        setFromBranchStock(byLoc);
+        if (toBranchId === fromBranchId) setToBranchStock(byLoc);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setFromBranchStock({});
+          if (toBranchId === fromBranchId) setToBranchStock({});
+        }
+      });
+    if (toBranchId !== '' && toBranchId !== fromBranchId) {
+      void getInventoryBranchStock(practiceId, Number(toBranchId), qohDisplayItemId)
+        .then((stock) => {
+          if (!cancelled) setToBranchStock(stockByLocation(stock));
+        })
+        .catch(() => {
+          if (!cancelled) setToBranchStock({});
+        });
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [practiceId, qohDisplayItemId, fromBranchId, toBranchId]);
+
+  useEffect(() => {
+    if (lines.length === 0 || fromBranchId === '' || toBranchId === '') {
+      setLineStockByKey({});
+      return;
+    }
+    const itemIds = [...new Set(lines.map((l) => l.inventoryItemId))];
+    const branchIds = [...new Set([Number(fromBranchId), Number(toBranchId)])];
+    let cancelled = false;
+    void Promise.all(
+      branchIds.flatMap((branchId) =>
+        itemIds.map(async (itemId) => {
+          const key = `${branchId}-${itemId}`;
+          try {
+            const stock = await getInventoryBranchStock(practiceId, branchId, itemId);
+            return { key, byLoc: stockByLocation(stock) };
+          } catch {
+            return { key, byLoc: {} as Record<number, number> };
+          }
+        })
+      )
+    ).then((rows) => {
+      if (cancelled) return;
+      const next: Record<string, Record<number, number>> = {};
+      for (const row of rows) next[row.key] = row.byLoc;
+      setLineStockByKey(next);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [practiceId, lines, fromBranchId, toBranchId]);
+
   const fromOfficeName =
     branches.find((b) => b.id === fromBranchId)?.name ?? 'source office';
   const toOfficeName = branches.find((b) => b.id === toBranchId)?.name ?? 'destination office';
@@ -195,24 +291,33 @@ export default function MoveItemsPage() {
         ? `Move Items: ${fromOfficeName} (${fromLocName}) → ${toOfficeName} (${toLocName})`
         : `Move Items: ${fromLocName} → ${toLocName}`;
 
+      const movedLines = lines.map((l) => ({
+        ...l,
+        quantityNum: Number(l.quantity),
+      }));
+
       await transferBatch(practiceId, Number(fromBranchId), {
         fromBranchLocationId: Number(fromLoc),
         toBranchLocationId: Number(toLoc),
-        lines: lines.map((l) => ({
+        lines: movedLines.map((l) => ({
           inventoryItemId: l.inventoryItemId,
-          quantity: Number(l.quantity),
+          quantity: l.quantityNum,
           inventoryLotBalanceId: l.lotId,
           lotNumber: l.lotNumber || null,
         })),
         note,
       });
       setLines([]);
+      const confirmations = movedLines.map(
+        (l) =>
+          `Move of ${l.quantityNum} ${l.name} from ${fromLocName} to ${toLocName}.`
+      );
       setToast(
         crossOffice
-          ? `Moved to ${toOfficeName}`
-          : 'Transfer complete'
+          ? `${confirmations.join(' ')} (${fromOfficeName} → ${toOfficeName})`
+          : confirmations.join(' ')
       );
-      window.setTimeout(() => setToast(null), 2500);
+      window.setTimeout(() => setToast(null), 6000);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Transfer failed');
     } finally {
@@ -232,7 +337,11 @@ export default function MoveItemsPage() {
           Suggested from Par Levels. Review the offices, location, and quantity, then confirm.
         </p>
       ) : null}
-      {toast && <div className="settings-message">{toast}</div>}
+      {toast && (
+        <div className="settings-message settings-success-message" style={{ marginBottom: 10 }}>
+          {toast}
+        </div>
+      )}
       {error && (
         <div className="settings-message settings-error-message" style={{ marginBottom: 10 }}>
           {error}
@@ -277,7 +386,7 @@ export default function MoveItemsPage() {
           >
             {fromLocations.map((l) => (
               <option key={l.id} value={l.id}>
-                {l.name}
+                {locationOptionLabel(l.name, l.id, fromBranchStock)}
               </option>
             ))}
           </select>
@@ -291,7 +400,7 @@ export default function MoveItemsPage() {
           >
             {toLocations.map((l) => (
               <option key={l.id} value={l.id}>
-                {l.name}
+                {locationOptionLabel(l.name, l.id, toBranchStock)}
               </option>
             ))}
           </select>
@@ -303,6 +412,30 @@ export default function MoveItemsPage() {
           Cross-office move: {fromOfficeName} → {toOfficeName}
         </p>
       )}
+
+      {qohDisplayItemId && fromLoc !== '' && toLoc !== '' ? (
+        <p className="settings-muted" style={{ marginTop: 8, fontSize: 13 }}>
+          <strong>{qohDisplayItemName}</strong>
+          {' · '}
+          From{' '}
+          <strong>
+            {fromBranchStock[fromLoc] ?? '—'}
+          </strong>{' '}
+          at {fromLocations.find((l) => l.id === fromLoc)?.name ?? 'source'}
+          {' → '}
+          To{' '}
+          <strong>
+            {toBranchStock[toLoc] ?? '—'}
+          </strong>{' '}
+          at {toLocations.find((l) => l.id === toLoc)?.name ?? 'destination'}
+        </p>
+      ) : null}
+
+      {!qohDisplayItemId ? (
+        <p className="settings-muted" style={{ marginTop: 8, fontSize: 13 }}>
+          Search and select an item to see quantity on hand for each location.
+        </p>
+      ) : null}
 
       <label className="settings-label" style={{ marginTop: 12 }}>
         Search stock item
@@ -381,6 +514,22 @@ export default function MoveItemsPage() {
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
               <span>
                 {l.name} × {l.quantity}
+                {fromLoc !== '' && toLoc !== '' ? (
+                  <span className="settings-muted" style={{ display: 'block', fontSize: 13 }}>
+                    {(() => {
+                      const fromKey = `${fromBranchId}-${l.inventoryItemId}`;
+                      const toKey = `${toBranchId}-${l.inventoryItemId}`;
+                      const fromQ = lineStockByKey[fromKey]?.[fromLoc];
+                      const toQ = lineStockByKey[toKey]?.[toLoc];
+                      if (fromQ === undefined && toQ === undefined) return null;
+                      const fromName =
+                        fromLocations.find((loc) => loc.id === fromLoc)?.name ?? 'from';
+                      const toName =
+                        toLocations.find((loc) => loc.id === toLoc)?.name ?? 'to';
+                      return `QOH: ${fromName} ${fromQ ?? '—'} → ${toName} ${toQ ?? '—'}`;
+                    })()}
+                  </span>
+                ) : null}
               </span>
               <button
                 type="button"

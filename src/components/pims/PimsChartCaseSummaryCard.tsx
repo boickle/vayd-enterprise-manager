@@ -51,6 +51,12 @@ import BriefChartCitedText from '../brief/BriefChartCitedText';
 import { PimsExamDetailModal } from './PimsExamDetailModal';
 import { PimsMedicalNoteModal } from './PimsMedicalNoteModal';
 import PimsSoapNoteModal from './PimsSoapNoteModal';
+import {
+  employeeDisplayName,
+  inactiveAtIso,
+  statusNameFromPatient,
+  type HouseholdPetStatusInput,
+} from '../../utils/householdPetStatus';
 import { fetchClientByIdStaff } from '../../api/clientsStaff';
 
 const STARTERS = [
@@ -232,10 +238,29 @@ export default function PimsChartCaseSummaryCard({
 
     let owner = snap.clientName ?? null;
     const clientId = snap.patientRecord ? clientIdFromPatientRow(snap.patientRecord) : null;
-    if (!owner && clientId != null) {
+    let householdPets: HouseholdPetStatusInput[] = [];
+    if (clientId != null) {
       const client = await fetchClientByIdStaff(String(clientId)).catch(() => null);
       if (client && typeof client === 'object') {
-        owner = clientNameFromPatientRow(client as Record<string, unknown>);
+        const rec = client as Record<string, unknown>;
+        if (!owner) owner = clientNameFromPatientRow(rec);
+        const rawPets = Array.isArray(rec.patients) ? rec.patients : [];
+        householdPets = rawPets
+          .map((raw): HouseholdPetStatusInput | null => {
+            if (!raw || typeof raw !== 'object') return null;
+            const p = raw as Record<string, unknown>;
+            const id = p.id != null ? String(p.id) : '';
+            if (!id) return null;
+            return {
+              id,
+              name: typeof p.name === 'string' && p.name.trim() ? p.name.trim() : `Pet #${id}`,
+              active: p.isActive !== false,
+              statusName: statusNameFromPatient(p),
+              inactiveAt: inactiveAtIso(p.inactiveAt),
+              inactivatedByName: employeeDisplayName(p.inactivatedByEmployee),
+            };
+          })
+          .filter((p): p is HouseholdPetStatusInput => p != null);
       }
     }
 
@@ -271,6 +296,7 @@ export default function PimsChartCaseSummaryCard({
       patientRecord: snap.patientRecord,
       medicalRecord: snap.medicalRecord,
       asOfDate: today,
+      householdPets,
     });
   };
 

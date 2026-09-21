@@ -8,7 +8,10 @@ const PHARMACY_SEGMENTS = new Set([
   'counts',
   'full-count',
   'count-report',
+  'expiring',
+  'cost-reviews',
   'receive',
+  'initial-entry',
   'move',
   'waste',
   'activity',
@@ -18,6 +21,8 @@ const PHARMACY_SEGMENTS = new Set([
   'online-store',
   'store-categories',
   'abandoned-carts',
+  'auto-ships',
+  'subscriptions',
 ]);
 
 function inventorySegment(pathname: string): string | null {

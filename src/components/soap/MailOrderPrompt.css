@@ -65,6 +65,28 @@
   font-weight: 400;
 }
 
+.mail-order-prompt__check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 12px 0 4px;
+  padding: 10px 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f9fafb;
+  font-weight: 600;
+}
+
+.mail-order-prompt__check input {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.mail-order-prompt__check .mail-order-prompt__hint {
+  margin: 4px 0 0;
+  font-weight: 400;
+}
+
 .mail-order-prompt__actions {
   display: flex;
   gap: 8px;

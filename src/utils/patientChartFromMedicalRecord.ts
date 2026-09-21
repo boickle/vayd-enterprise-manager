@@ -62,7 +62,49 @@ export function treatmentItemBelongsOnChart(item: {
   isActive?: boolean;
   isDeclined?: boolean;
 }): boolean {
-  return item.isDeleted !== true && item.isActive !== false && item.isDeclined !== true;
+  return item.isDeleted !== true && item.isActive !== false;
+}
+
+function treatmentItemCatalogKey(item: TreatmentItem): string | null {
+  const inv = item.inventoryItem?.id;
+  if (inv) return `inventory:${inv}`;
+  const proc = item.procedure?.id;
+  if (proc) return `procedure:${proc}`;
+  const lab = item.lab?.id;
+  if (lab) return `lab:${lab}`;
+  const name = (
+    item.inventoryItem?.name ||
+    item.procedure?.name ||
+    item.lab?.name ||
+    ''
+  )
+    .trim()
+    .toLowerCase();
+  return name ? `name:${name}` : null;
+}
+
+export function laterReceivedDateForDeclinedItem(
+  declined: TreatmentItem,
+  allItems: TreatmentItem[]
+): string | null {
+  if (!declined.isDeclined) return null;
+  const key = treatmentItemCatalogKey(declined);
+  if (!key) return null;
+  const declinedAt = declined.serviceDate ? Date.parse(declined.serviceDate) : 0;
+  let latest: string | null = null;
+  let latestMs = declinedAt;
+  for (const item of allItems) {
+    if (item.isDeclined || !treatmentItemBelongsOnChart(item)) continue;
+    if (treatmentItemCatalogKey(item) !== key) continue;
+    const iso = item.serviceDate;
+    if (!iso) continue;
+    const ms = Date.parse(iso);
+    if (Number.isFinite(ms) && ms > latestMs) {
+      latestMs = ms;
+      latest = iso;
+    }
+  }
+  return latest;
 }
 
 function documentChartLabel(o: Record<string, unknown>): { typeLabel: string; description: string } {
@@ -112,6 +154,8 @@ export type ChartRow = {
   removeKind?: 'document' | 'scoutNote';
   removeDocumentId?: number;
   removeScoutNoteId?: string;
+  isDeclined?: boolean;
+  laterReceivedOn?: string | null;
 };
 
 export type ChartRowSource =
@@ -148,6 +192,7 @@ export type MedicalRecordBundle = {
   histories?: unknown[];
   communicationLogs?: unknown[];
   reminders?: unknown[];
+  declinedItems?: unknown[];
   wellnessPlans?: unknown[];
   vaccinationLogs?: unknown[];
   /** Exam vital weights, ordered by service date on the server. */
@@ -510,6 +555,9 @@ export function buildChartRowsFromMedicalRecord(
         return `${day}|${(c.name || '').trim().toLowerCase()}`;
       })
   );
+  const allChartItems = (treatments ?? []).flatMap((plan) =>
+    treatmentPlanBelongsOnChart(plan) ? plan.treatmentItems ?? [] : []
+  );
   for (const plan of treatments ?? []) {
     if (!treatmentPlanBelongsOnChart(plan)) continue;
     for (const item of plan.treatmentItems ?? []) {
@@ -521,21 +569,35 @@ export function buildChartRowsFromMedicalRecord(
       if (!name) continue;
       const serviceDateIso = item.serviceDate || plan.created || null;
       const day = (serviceDateIso || '').slice(0, 10);
-      if (visitChargeKeys.has(`${day}|${name.toLowerCase()}`)) continue;
-      const typeLabel = inv ? 'Inventory Item' : proc ? 'Procedure' : 'Lab';
+      if (!item.isDeclined && visitChargeKeys.has(`${day}|${name.toLowerCase()}`)) continue;
+      const laterReceivedOn = item.isDeclined
+        ? laterReceivedDateForDeclinedItem(item, allChartItems)
+        : null;
+      const typeLabel = item.isDeclined
+        ? 'Declined'
+        : inv
+          ? 'Inventory Item'
+          : proc
+            ? 'Procedure'
+            : 'Lab';
       const hint = hintForTreatmentItem(medHints, item.id, name, day);
       const rec = item as Record<string, unknown>;
+      const laterNote = laterReceivedOn
+        ? `later received on ${new Date(laterReceivedOn).toLocaleDateString()}`
+        : null;
       out.push({
         id: `treatment:${item.id}`,
         source: 'treatment',
         typeLabel,
-        description: name,
+        description: laterNote ? `${name} — ${laterNote}` : name,
         provider: employeeName(
           rec.productionEmployee ?? rec.employee ?? rec.provider,
         ),
         serviceDateIso,
         sortTime: parseSortTime(serviceDateIso),
-        detailText: treatmentItemDetail(item, hint),
+        detailText: [treatmentItemDetail(item, hint), laterNote].filter(Boolean).join('\n'),
+        isDeclined: item.isDeclined === true,
+        laterReceivedOn,
       });
     }
   }

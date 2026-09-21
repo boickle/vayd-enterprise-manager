@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   getEmployeeBranches,
   listInventoryLots,
@@ -6,17 +6,23 @@ import {
   type InventoryLotBalance,
 } from '../../api/branchInventory';
 import { fetchEmployeeWorkdayActualByDate } from '../../api/employeeWorkdayActuals';
+import AddInventoryLotModal from '../inventory/AddInventoryLotModal';
 
 type Props = {
   practiceId: number;
   inventoryItemId: number;
+  itemName?: string | null;
   providerId?: number | null;
+  /** Invoice checkout branch — lots follow this, not the provider, when set. */
+  branchId?: number | null;
+  locationId?: number | null;
   disabled?: boolean;
-  /** Currently selected lot balance id (null = free-text / none). */
+  /** Currently selected lot balance id. */
   selectedLotId: number | null;
-  lotNumber: string;
   onSelectLot: (lot: InventoryLotBalance | null) => void;
-  onLotNumberChange: (value: string) => void;
+  /** Reason when using a lot with QOH ≤ 0. */
+  zeroOverrideReason?: string;
+  onZeroOverrideReasonChange?: (reason: string) => void;
 };
 
 function todayYmd(): string {
@@ -42,32 +48,62 @@ function lotLabel(lot: InventoryLotBalance, showBranch: boolean): string {
 }
 
 /**
- * Defaults to lots at the provider’s assigned / workday branch. “Search other branches”
- * expands the list; free-text lot entry remains as a fallback when no balance matches.
+ * Lots follow the invoice checkout branch / location when those are set, and
+ * reload when either dropdown changes. Otherwise the provider’s workday branch
+ * is the fallback. “Search other branches” expands the list.
+ *
+ * Zero/negative lots stay hidden until “Include zero/negative lots” is checked.
+ * The override reason only appears after those lots are in the list and one is selected.
  */
 export default function VaccineLotPicker({
   practiceId,
   inventoryItemId,
+  itemName,
   providerId,
+  branchId: invoiceBranchId,
+  locationId: invoiceLocationId,
   disabled,
   selectedLotId,
-  lotNumber,
   onSelectLot,
-  onLotNumberChange,
+  zeroOverrideReason = '',
+  onZeroOverrideReasonChange,
 }: Props) {
-  const [preferredBranchId, setPreferredBranchId] = useState<number | null>(null);
+  const [providerBranchId, setProviderBranchId] = useState<number | null>(null);
   const [branchLots, setBranchLots] = useState<InventoryLotBalance[]>([]);
   const [otherLots, setOtherLots] = useState<InventoryLotBalance[]>([]);
   const [searchOthers, setSearchOthers] = useState(false);
+  const [includeZero, setIncludeZero] = useState(false);
   const [loading, setLoading] = useState(false);
   const [branchName, setBranchName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
+  const [reloadTick, setReloadTick] = useState(0);
+
+  const preferredBranchId =
+    invoiceBranchId != null && Number.isFinite(Number(invoiceBranchId))
+      ? Number(invoiceBranchId)
+      : providerBranchId;
+  const preferredLocationId =
+    invoiceLocationId != null && Number.isFinite(Number(invoiceLocationId))
+      ? Number(invoiceLocationId)
+      : null;
 
   useEffect(() => {
     let canceled = false;
     async function resolveBranch() {
+      if (invoiceBranchId != null && Number.isFinite(Number(invoiceBranchId))) {
+        try {
+          const branches = await listPracticeBranches(practiceId);
+          if (canceled) return;
+          const bid = Number(invoiceBranchId);
+          setBranchName(branches.find((b) => b.id === bid)?.name ?? `Branch #${bid}`);
+        } catch {
+          if (!canceled) setBranchName(`Branch #${invoiceBranchId}`);
+        }
+        return;
+      }
       if (providerId == null || !Number.isFinite(providerId)) {
-        setPreferredBranchId(null);
+        setProviderBranchId(null);
         return;
       }
       try {
@@ -85,19 +121,19 @@ export default function VaccineLotPicker({
         const primary = assignments.find((a) => a.isPrimary)?.branchId ?? null;
         const first = assignments[0]?.branchId ?? null;
         const bid = fromWorkday ?? primary ?? first;
-        setPreferredBranchId(bid);
+        setProviderBranchId(bid);
         if (bid != null) {
           setBranchName(branches.find((b) => b.id === bid)?.name ?? `Branch #${bid}`);
         }
       } catch {
-        if (!canceled) setPreferredBranchId(null);
+        if (!canceled) setProviderBranchId(null);
       }
     }
     void resolveBranch();
     return () => {
       canceled = true;
     };
-  }, [practiceId, providerId]);
+  }, [practiceId, providerId, invoiceBranchId]);
 
   useEffect(() => {
     let canceled = false;
@@ -105,7 +141,8 @@ export default function VaccineLotPicker({
     setError(null);
     void listInventoryLots(practiceId, inventoryItemId, {
       ...(preferredBranchId != null ? { branchId: preferredBranchId } : {}),
-      includeZero: false,
+      ...(preferredLocationId != null ? { locationId: preferredLocationId } : {}),
+      includeZero,
     })
       .then((rows) => {
         if (!canceled) setBranchLots(rows);
@@ -122,7 +159,14 @@ export default function VaccineLotPicker({
     return () => {
       canceled = true;
     };
-  }, [practiceId, inventoryItemId, preferredBranchId]);
+  }, [
+    practiceId,
+    inventoryItemId,
+    preferredBranchId,
+    preferredLocationId,
+    reloadTick,
+    includeZero,
+  ]);
 
   useEffect(() => {
     if (!searchOthers) {
@@ -130,13 +174,19 @@ export default function VaccineLotPicker({
       return;
     }
     let canceled = false;
-    void listInventoryLots(practiceId, inventoryItemId, { includeZero: false })
+    void listInventoryLots(practiceId, inventoryItemId, { includeZero })
       .then((rows) => {
         if (canceled) return;
         setOtherLots(
-          preferredBranchId != null
-            ? rows.filter((r) => r.branchId !== preferredBranchId)
-            : rows
+          rows.filter((r) => {
+            if (preferredLocationId != null) {
+              return r.branchLocationId !== preferredLocationId;
+            }
+            if (preferredBranchId != null) {
+              return r.branchId !== preferredBranchId;
+            }
+            return true;
+          })
         );
       })
       .catch(() => {
@@ -145,7 +195,32 @@ export default function VaccineLotPicker({
     return () => {
       canceled = true;
     };
-  }, [searchOthers, practiceId, inventoryItemId, preferredBranchId]);
+  }, [
+    searchOthers,
+    practiceId,
+    inventoryItemId,
+    preferredBranchId,
+    preferredLocationId,
+    reloadTick,
+    includeZero,
+  ]);
+
+  const scopeKey = `${preferredBranchId ?? ''}:${preferredLocationId ?? ''}`;
+  const prevScopeRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (prevScopeRef.current == null) {
+      prevScopeRef.current = scopeKey;
+      return;
+    }
+    if (prevScopeRef.current === scopeKey) return;
+    prevScopeRef.current = scopeKey;
+    setSearchOthers(false);
+    onSelectLot(null);
+    onZeroOverrideReasonChange?.('');
+    // Only when the invoice branch/location changes — not when the parent
+    // recreates onSelectLot.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scopeKey]);
 
   const selectValue = useMemo(() => {
     if (selectedLotId != null) return String(selectedLotId);
@@ -159,6 +234,9 @@ export default function VaccineLotPicker({
     return map;
   }, [branchLots, otherLots]);
 
+  const selectedLot = selectedLotId != null ? allKnown.get(selectedLotId) ?? null : null;
+  const selectedIsZero = selectedLot != null && Number(selectedLot.quantityOnHand) <= 0;
+
   return (
     <div className="soap-dose-lot-picker">
       <label>
@@ -171,21 +249,37 @@ export default function VaccineLotPicker({
             const id = e.target.value ? Number(e.target.value) : null;
             if (id == null || !Number.isFinite(id)) {
               onSelectLot(null);
+              onZeroOverrideReasonChange?.('');
               return;
             }
             const lot = allKnown.get(id) ?? null;
             onSelectLot(lot);
+            if (!lot || Number(lot.quantityOnHand) > 0) {
+              onZeroOverrideReasonChange?.('');
+            }
           }}
         >
           <option value="">
             {loading
               ? 'Loading lots…'
               : branchLots.length === 0
-                ? 'No lots at this branch — type below or search others'
+                ? includeZero
+                  ? preferredLocationId != null
+                    ? 'No lots at this location — add a lot or search others'
+                    : 'No lots at this branch — add a lot or search others'
+                  : 'No lots with stock — add a lot, search others, or include zero/negative lots'
                 : 'Select a lot…'}
           </option>
           {branchLots.length > 0 && (
-            <optgroup label={branchName ? `${branchName} (provider branch)` : 'Provider branch'}>
+            <optgroup
+              label={
+                preferredLocationId != null
+                  ? `${branchName ?? 'Invoice branch'} · this location`
+                  : branchName
+                    ? `${branchName} (invoice branch)`
+                    : 'Invoice branch'
+              }
+            >
               {branchLots.map((lot) => (
                 <option key={lot.id} value={lot.id}>
                   {lotLabel(lot, false)}
@@ -204,7 +298,44 @@ export default function VaccineLotPicker({
           )}
         </select>
       </label>
+      <label className="soap-dose-lot-picker__zero">
+        <input
+          type="checkbox"
+          checked={includeZero}
+          disabled={disabled}
+          onChange={(e) => {
+            const on = e.target.checked;
+            setIncludeZero(on);
+            if (!on && selectedIsZero) {
+              onSelectLot(null);
+              onZeroOverrideReasonChange?.('');
+            }
+          }}
+        />
+        Include zero/negative lots
+      </label>
+      {includeZero && selectedIsZero ? (
+        <label>
+          Use lot despite zero/negative count — why is it still on hand? *
+          <textarea
+            className="soap-input"
+            rows={2}
+            value={zeroOverrideReason}
+            disabled={disabled}
+            placeholder="e.g. Bottle on truck; count not updated yet"
+            onChange={(e) => onZeroOverrideReasonChange?.(e.target.value)}
+          />
+        </label>
+      ) : null}
       <div className="soap-dose-lot-picker__actions">
+        <button
+          type="button"
+          className="soap-btn small"
+          disabled={disabled}
+          onClick={() => setAddOpen(true)}
+        >
+          Add lot
+        </button>
         {!searchOthers ? (
           <button
             type="button"
@@ -212,7 +343,7 @@ export default function VaccineLotPicker({
             disabled={disabled}
             onClick={() => setSearchOthers(true)}
           >
-            Search other branches
+            Search other locations
           </button>
         ) : (
           <button
@@ -221,20 +352,30 @@ export default function VaccineLotPicker({
             disabled={disabled}
             onClick={() => setSearchOthers(false)}
           >
-            Hide other branches
+            Hide other locations
           </button>
         )}
       </div>
-      <label>
-        Lot number {selectedLotId != null ? '(from selected lot)' : '(or type manually)'}
-        <input
-          className="soap-input"
-          value={lotNumber}
-          disabled={disabled || selectedLotId != null}
-          onChange={(e) => onLotNumberChange(e.target.value)}
-        />
-      </label>
       {error && <p className="soap-dose-error">{error}</p>}
+      <AddInventoryLotModal
+        open={addOpen}
+        practiceId={practiceId}
+        inventoryItemId={inventoryItemId}
+        itemName={itemName}
+        defaultBranchId={preferredBranchId}
+        defaultLocationId={preferredLocationId}
+        requireLotNumber
+        defaultQuantity={1}
+        onClose={() => setAddOpen(false)}
+        onCreated={(lot) => {
+          setReloadTick((n) => n + 1);
+          if (preferredBranchId != null && lot.branchId !== preferredBranchId) {
+            setSearchOthers(true);
+          }
+          onSelectLot(lot);
+          onZeroOverrideReasonChange?.('');
+        }}
+      />
     </div>
   );
 }

@@ -40,6 +40,12 @@ import {
   signalmentFromPatient,
   type CaseHistorySource,
 } from '../../utils/buildCaseHistorySource';
+import {
+  employeeDisplayName,
+  inactiveAtIso,
+  statusNameFromPatient,
+  type HouseholdPetStatusInput,
+} from '../../utils/householdPetStatus';
 import type { MedicalRecordBundle } from '../../utils/patientChartFromMedicalRecord';
 import type { CaseHistoryCitation } from '../../utils/chartCitation';
 import BriefChartCitedText from './BriefChartCitedText';
@@ -376,9 +382,31 @@ export default function BriefCaseHistoryPanel({
         const rec = unwrapPatientRecord(profile);
         let owner = rec ? clientNameFromPatientRow(rec) : null;
         const clientId = rec ? clientIdFromPatientRow(rec) : null;
-        if (!owner && clientId != null) {
+        let householdPets: HouseholdPetStatusInput[] = [];
+        if (clientId != null) {
           const clientRow = await fetchClientByIdStaff(clientId).catch(() => null);
-          owner = ownerNameFromClient(clientRow);
+          if (!owner) owner = ownerNameFromClient(clientRow);
+          if (clientRow && typeof clientRow === 'object') {
+            const rawPets = Array.isArray((clientRow as Record<string, unknown>).patients)
+              ? ((clientRow as Record<string, unknown>).patients as unknown[])
+              : [];
+            householdPets = rawPets
+              .map((raw): HouseholdPetStatusInput | null => {
+                if (!raw || typeof raw !== 'object') return null;
+                const p = raw as Record<string, unknown>;
+                const id = p.id != null ? String(p.id) : '';
+                if (!id) return null;
+                return {
+                  id,
+                  name: typeof p.name === 'string' && p.name.trim() ? p.name.trim() : `Pet #${id}`,
+                  active: p.isActive !== false,
+                  statusName: statusNameFromPatient(p),
+                  inactiveAt: inactiveAtIso(p.inactiveAt),
+                  inactivatedByName: employeeDisplayName(p.inactivatedByEmployee),
+                };
+              })
+              .filter((p): p is HouseholdPetStatusInput => p != null);
+          }
         }
         const clinic = practiceById ?? practice;
         const meRec = me && typeof me === 'object' ? (me as Record<string, unknown>) : null;
@@ -413,6 +441,7 @@ export default function BriefCaseHistoryPanel({
             patientRecord: rec,
             medicalRecord: medicalRecord as MedicalRecordBundle | null,
             asOfDate,
+            householdPets,
           })
         );
       } catch (err) {

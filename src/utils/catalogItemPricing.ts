@@ -9,6 +9,10 @@ import {
   type EncounterOrderCatalogType,
   type EncounterOrderKind,
 } from '../api/visitWorkflow';
+import {
+  checkItemPricingWithCoverageChoice,
+  type CoverageChoicePrompt,
+} from './membershipCoverageChoice';
 
 /** Item shape used for tier + discount pricing (matches Room Loader). */
 export type CatalogPricingItem = {
@@ -289,21 +293,37 @@ export async function createOrderFromSearchItem(args: {
   practiceId: number;
   clientId?: number;
   state?: 'accepted' | 'proposed';
+  askCoverageChoice?: (prompt: CoverageChoicePrompt) => Promise<number | null>;
 }): Promise<{ order: EncounterOrder; pricingItem: CatalogPricingItem }> {
-  const { encounterId, item, patientId, practiceId, clientId, state = 'accepted' } = args;
+  const {
+    encounterId,
+    item,
+    patientId,
+    practiceId,
+    clientId,
+    state = 'accepted',
+    askCoverageChoice,
+  } = args;
   const catalogItemType = item.itemType as EncounterOrderCatalogType;
   let pricingItem: CatalogPricingItem = item as CatalogPricingItem;
   let unitPrice = getCatalogLinePrice(pricingItem, 1).unitFinal;
   let isCovered = false;
 
   if (patientId != null && Number.isFinite(patientId)) {
-    const pricingResponse = await checkItemPricing({
+    const request = {
       patientId,
       practiceId,
       clientId,
       itemType: item.itemType,
       item: buildCheckItemPayloadFromSearch(item),
-    });
+    };
+    const pricingResponse = askCoverageChoice
+      ? await checkItemPricingWithCoverageChoice({
+          request,
+          itemName: item.name,
+          askCoverageChoice,
+        })
+      : await checkItemPricing(request);
     pricingItem = pricingItemFromSearchAndCheck(item, pricingResponse);
     const line = getCatalogLinePrice(pricingItem, 1);
     unitPrice = line.unitFinal;

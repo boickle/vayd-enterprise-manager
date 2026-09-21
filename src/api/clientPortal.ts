@@ -1,6 +1,10 @@
 // src/api/clientPortal.ts
 import { apiBaseUrl, http } from './http';
 import { pickPracticeMainPhone } from '../utils/practicePhone';
+import {
+  parseDeclinedItems,
+  type DeclinedTreatmentItem,
+} from './declinedTreatments';
 
 /** ---------- Types ---------- **/
 export type Vaccination = {
@@ -670,6 +674,13 @@ export async function fetchClientPetsWithWellness(): Promise<Pet[]> {
 }
 
 // api/clientPortal.ts
+export type ClientDeclinedItem = {
+  id: number;
+  label: string;
+  declinedAt: string | null;
+  patientId?: number;
+};
+
 export type ClientReminder = {
   id: number | string;
   clientId?: number | string;
@@ -715,14 +726,26 @@ export function mapClientReminder(r: any): ClientReminder {
 }
 
 // Example fetch using the mapper + sort by due date
-export async function fetchClientReminders(): Promise<ClientReminder[]> {
-  const resp = await http.get('/reminders/client'); // your endpoint
-  const list = Array.isArray(resp.data) ? resp.data.map(mapClientReminder) : [];
-  return list.sort((a, b) => {
+export async function fetchClientReminders(): Promise<{
+  reminders: ClientReminder[];
+  declinedItems: DeclinedTreatmentItem[];
+}> {
+  const resp = await http.get('/reminders/client');
+  const data = resp.data;
+  const rawReminders: unknown[] = Array.isArray(data)
+    ? data
+    : Array.isArray(data?.reminders)
+      ? data.reminders
+      : [];
+  const reminders = rawReminders.map(mapClientReminder).sort((a, b) => {
     const ta = a.dueIso ? Date.parse(a.dueIso) : Number.POSITIVE_INFINITY;
     const tb = b.dueIso ? Date.parse(b.dueIso) : Number.POSITIVE_INFINITY;
     return ta - tb;
   });
+  return {
+    reminders,
+    declinedItems: parseDeclinedItems(data?.declinedItems),
+  };
 }
 
 // Message types

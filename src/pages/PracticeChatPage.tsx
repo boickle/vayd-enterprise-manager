@@ -211,7 +211,7 @@ export default function PracticeChatPage() {
       const prior = listCaseHistoryChat(storageKey, chatOwner)
         .filter((m) => m.role === 'user' || m.role === 'assistant')
         .slice(0, -1)
-        .slice(-10)
+        .slice(-6)
         .map((m) => ({ role: m.role, content: m.content }));
       const answer = await chatAboutChart({
         sourceText: src,

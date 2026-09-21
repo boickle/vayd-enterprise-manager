@@ -1,8 +1,6 @@
 /**
- * Smoke: default location min/max vs other-location par.
- *
- * Order list fires when default on-hand (after surplus transfers and
- * filling other locations) is at or below min. Qty brings default back to max.
+ * Smoke: Main can give down to 0; order when effective on-hand ≤ min (back to max).
+ * Prefer Main over pulling other locations below par.
  *
  * Keep in sync with src/utils/inventoryLocationTargets.ts and planStockLists.
  *
@@ -21,6 +19,12 @@ function surplusBy(onHand, par) {
   return n > 0 ? n : null;
 }
 
+function spareForTransfer({ isDefault, onHand, parOrMax, allowBelowPar }) {
+  const q = Math.max(0, Number(onHand) || 0);
+  if (isDefault || allowBelowPar) return q;
+  return surplusBy(q, parOrMax) ?? 0;
+}
+
 function orderQtyForDefault({ effectiveOnHand, min, max }) {
   if (min == null || !Number.isFinite(min)) return 0;
   if (Number(effectiveOnHand) > min) return 0;
@@ -30,22 +34,58 @@ function orderQtyForDefault({ effectiveOnHand, min, max }) {
   return qty > 0 ? qty : 0;
 }
 
-function planItem({ defaultOnHand, defaultMin, defaultMax, others, otherSurplus = 0 }) {
-  let remaining = 0;
-  for (const loc of others) {
-    remaining += shortBy(loc.onHand, loc.par) ?? 0;
+/** Simplified one-dest planner mirroring planStockLists priority. */
+function planItem({ defaultOnHand, defaultMin, defaultMax, others }) {
+  let need = others.reduce((sum, loc) => sum + (shortBy(loc.onHand, loc.par) ?? 0), 0);
+  let mainLeft = spareForTransfer({
+    isDefault: true,
+    onHand: defaultOnHand,
+    parOrMax: defaultMax,
+  });
+  const fromMain = Math.min(mainLeft, need);
+  mainLeft -= fromMain;
+  need -= fromMain;
+
+  let overParSpare = others.reduce(
+    (sum, loc) =>
+      sum +
+      spareForTransfer({
+        isDefault: false,
+        onHand: loc.onHand,
+        parOrMax: loc.par,
+      }),
+    0
+  );
+  const fromOver = Math.min(overParSpare, need);
+  need -= fromOver;
+
+  let belowParSpare = 0;
+  if (need > 0 && mainLeft <= 0) {
+    belowParSpare = others.reduce((sum, loc) => {
+      const over = spareForTransfer({
+        isDefault: false,
+        onHand: loc.onHand,
+        parOrMax: loc.par,
+      });
+      const all = spareForTransfer({
+        isDefault: false,
+        onHand: loc.onHand,
+        parOrMax: loc.par,
+        allowBelowPar: true,
+      });
+      return sum + Math.max(0, all - over);
+    }, 0);
+    need -= Math.min(belowParSpare, need);
   }
-  const defaultExtra = surplusBy(defaultOnHand, defaultMax) ?? 0;
-  const cover = Math.min(defaultExtra + otherSurplus, remaining);
-  remaining -= cover;
-  const givenFromDefault = Math.min(defaultExtra, cover) + remaining;
-  const fillQty = others.reduce((sum, loc) => sum + (shortBy(loc.onHand, loc.par) ?? 0), 0);
+
+  const fillQty = need;
+  const effective = defaultOnHand - fromMain;
   const orderQty = orderQtyForDefault({
-    effectiveOnHand: defaultOnHand - givenFromDefault,
+    effectiveOnHand: effective,
     min: defaultMin,
     max: defaultMax,
   });
-  return { fillQty, orderQty, effective: defaultOnHand - givenFromDefault };
+  return { fillQty, orderQty, effective, fromMain };
 }
 
 function assert(name, actual, expected) {
@@ -64,47 +104,50 @@ assert('no min does not order', orderQtyForDefault({ effectiveOnHand: 2, min: nu
 assert('no max orders back to min', orderQtyForDefault({ effectiveOnHand: 3, min: 8, max: null }), 5);
 
 assert(
-  'truck short, main still above min → fill only',
+  'main below max still gives; stays above min → no order',
+  planItem({
+    defaultOnHand: 25,
+    defaultMin: 10,
+    defaultMax: 35,
+    others: [{ onHand: 20, par: 25 }],
+  }),
+  { fillQty: 0, orderQty: 0, effective: 20, fromMain: 5 }
+);
+
+assert(
+  'main gives below min → order to max',
   planItem({
     defaultOnHand: 12,
-    defaultMin: 8,
-    defaultMax: 20,
-    others: [{ onHand: 1, par: 4 }],
+    defaultMin: 10,
+    defaultMax: 35,
+    others: [{ onHand: 0, par: 5 }],
   }),
-  { fillQty: 3, orderQty: 0, effective: 9 }
+  { fillQty: 0, orderQty: 28, effective: 7, fromMain: 5 }
 );
 
 assert(
-  'truck short pulls main to min → order to max',
+  'main empty → uncovered fill',
   planItem({
-    defaultOnHand: 10,
-    defaultMin: 8,
-    defaultMax: 20,
-    others: [{ onHand: 1, par: 4 }],
+    defaultOnHand: 0,
+    defaultMin: 10,
+    defaultMax: 35,
+    others: [{ onHand: 0, par: 3 }],
   }),
-  { fillQty: 3, orderQty: 13, effective: 7 }
+  { fillQty: 3, orderQty: 35, effective: 0, fromMain: 0 }
 );
 
 assert(
-  'main already at min, trucks full → order',
+  'prefer main over other below-par',
   planItem({
-    defaultOnHand: 5,
-    defaultMin: 8,
+    defaultOnHand: 4,
+    defaultMin: 2,
     defaultMax: 20,
-    others: [{ onHand: 4, par: 4 }],
+    others: [
+      { onHand: 1, par: 5 },
+      { onHand: 3, par: 5 },
+    ],
   }),
-  { fillQty: 0, orderQty: 15, effective: 5 }
-);
-
-assert(
-  'par on trucks but no min → fill, no order',
-  planItem({
-    defaultOnHand: 5,
-    defaultMin: null,
-    defaultMax: 20,
-    others: [{ onHand: 1, par: 4 }],
-  }),
-  { fillQty: 3, orderQty: 0, effective: 2 }
+  { fillQty: 0, orderQty: 20, effective: 0, fromMain: 4 }
 );
 
 if (process.exitCode) {

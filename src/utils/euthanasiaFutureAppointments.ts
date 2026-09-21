@@ -318,12 +318,19 @@ export type InactivateEuthanasiaPatientsResult = {
  */
 export async function inactivateEuthanasiaPatients(
   patientIds: readonly string[],
+  opts?: { inactivatedByEmployeeId?: number | null },
 ): Promise<InactivateEuthanasiaPatientsResult> {
   const inactivatedIds: string[] = [];
   const alreadyInactiveIds: string[] = [];
   const softErrors: string[] = [];
   const errors: string[] = [];
   const seen = new Set<string>();
+  const byEmployeeId =
+    opts?.inactivatedByEmployeeId != null &&
+    Number.isFinite(Number(opts.inactivatedByEmployeeId)) &&
+    Number(opts.inactivatedByEmployeeId) > 0
+      ? Number(opts.inactivatedByEmployeeId)
+      : undefined;
 
   for (const raw of patientIds) {
     const id = String(raw).trim();
@@ -338,7 +345,10 @@ export async function inactivateEuthanasiaPatients(
 
     const writeId = resolvePatientWriteId(record, id);
     try {
-      await patchPatient(writeId, { isActive: false });
+      await patchPatient(writeId, {
+        isActive: false,
+        ...(byEmployeeId != null ? { inactivatedByEmployeeId: byEmployeeId } : {}),
+      });
       inactivatedIds.push(writeId);
     } catch (e: unknown) {
       const msg = extractPatientMutationErrorMessage(e, writeId);

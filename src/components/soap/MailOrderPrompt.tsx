@@ -17,6 +17,7 @@ export type MailOrderPromptResult = {
   shipping: number;
   type: MailShippingType;
   mailQty: number;
+  sendWithoutPayment: boolean;
 };
 
 type Props = {
@@ -38,6 +39,7 @@ export default function MailOrderPrompt({
   const [types, setTypes] = useState<MailShippingType[]>([]);
   const [typeId, setTypeId] = useState('');
   const [mailQty, setMailQty] = useState(String(qtyCap));
+  const [sendWithoutPayment, setSendWithoutPayment] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -116,6 +118,20 @@ export default function MailOrderPrompt({
                   }.`
                 : ''}
             </p>
+            <label className="mail-order-prompt__check">
+              <input
+                type="checkbox"
+                checked={sendWithoutPayment}
+                onChange={(e) => setSendWithoutPayment(e.target.checked)}
+              />
+              <span>
+                Send without payment
+                <span className="mail-order-prompt__hint">
+                  Pharmacy can fill and ship now. The order stays open until the owner pays.
+                  Staff only — not printed on the invoice.
+                </span>
+              </span>
+            </label>
           </>
         )}
         <div className="mail-order-prompt__actions">
@@ -132,6 +148,7 @@ export default function MailOrderPrompt({
                 shipping: mailShippingAmountForType(selected),
                 type: selected,
                 mailQty: qty,
+                sendWithoutPayment,
               });
             }}
           >

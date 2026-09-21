@@ -6,6 +6,7 @@ import {
   type SentToClient,
 } from '../api/roomLoader';
 import { practiceTimeZoneOrDefault } from './practiceTimezone';
+import { formatSoapSectionSpacing } from './soapSectionSpacing';
 
 const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
 
@@ -324,6 +325,360 @@ export function splitSubjectiveHistoryParts(text: string): SubjectiveHistoryPart
   return parts;
 }
 
+const PRE_EXAM_CHECKIN_TAG = '(Pre-Exam Check-In)';
+
+function isPlaceholderCheckin(text: string): boolean {
+  return new RegExp(`^${escapeForRegExp(PRE_EXAM_CHECKIN_NOT_FILLED)}$`, 'i').test(text.trim());
+}
+
+function stripSubjectiveWrappers(text: string): string {
+  let t = text.trim();
+  const prefixes = [
+    `${PRE_VISIT_SUBJECTIVE_PREFIX}:`,
+    PRE_VISIT_SUBJECTIVE_PREFIX,
+    ...LEGACY_PRE_VISIT_SUBJECTIVE_PREFIXES.map((p) => `${p}:`),
+    ...LEGACY_PRE_VISIT_SUBJECTIVE_PREFIXES,
+    VISIT_DISCUSSION_HEADER,
+  ];
+  for (const prefix of prefixes) {
+    t = t.replace(new RegExp(`^${escapeForRegExp(prefix)}\\s*`, 'i'), '').trim();
+  }
+  return t;
+}
+
+function extractAfterHeader(text: string, header: string, stopHeaders: string[]): string {
+  const startRe = new RegExp(`(?:^|\\n)${escapeForRegExp(header)}\\s*`, 'i');
+  const match = startRe.exec(text);
+  if (!match) return '';
+  const from = match.index + match[0].length;
+  let end = text.length;
+  const rest = text.slice(from);
+  for (const stop of stopHeaders) {
+    const idx = rest.search(new RegExp(`(?:^|\\n)${escapeForRegExp(stop)}\\s*`, 'i'));
+    if (idx >= 0 && from + idx < end) end = from + idx;
+  }
+  return text.slice(from, end).trim();
+}
+
+function firstParagraph(s: string): string {
+  return (s.split(/\n\s*\n/)[0] ?? '').replace(/\s*\n\s*/g, ' ').trim();
+}
+
+function toBullets(section: string): string[] {
+  if (!section.trim()) return [];
+  const lines = section
+    .split(/\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const dashed = lines.filter((l) => /^[-•]/.test(l));
+  const source = dashed.length > 0 ? dashed : lines;
+  return source.map((l) => l.replace(/^[-•]\s*/, '').trim()).filter(Boolean);
+}
+
+function parseSoapHistorySections(text: string): {
+  presentingComplaint: string;
+  history: string[];
+  medications: string[];
+} {
+  const raw = stripSubjectiveWrappers(text);
+  if (!raw || isPlaceholderCheckin(raw)) {
+    return { presentingComplaint: '', history: [], medications: [] };
+  }
+  const pc = extractAfterHeader(raw, 'Presenting Complaint:', [
+    'Patient History:',
+    'Current Medications:',
+  ]);
+  const ph = extractAfterHeader(raw, 'Patient History:', [
+    'Current Medications:',
+    'Presenting Complaint:',
+  ]);
+  const meds = extractAfterHeader(raw, 'Current Medications:', [
+    'Patient History:',
+    'Presenting Complaint:',
+  ]);
+  if (pc || ph || meds) {
+    return {
+      presentingComplaint: firstParagraph(pc),
+      history: toBullets(ph),
+      medications: toBullets(meds).filter((b) => !/^none\.?$/i.test(b)),
+    };
+  }
+  return {
+    presentingComplaint: '',
+    history: raw
+      .split(/\n+/)
+      .map((l) => l.replace(/^[-•]\s*/, '').trim())
+      .filter(Boolean),
+    medications: [],
+  };
+}
+
+function trimPeriod(s: string): string {
+  return s.replace(/\.+$/g, '').trim();
+}
+
+function normPhrase(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/\(\s*pre-exam check-in\s*\)/gi, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+const COVER_STOP = new Set([
+  'the',
+  'a',
+  'an',
+  'and',
+  'or',
+  'for',
+  'is',
+  'are',
+  'was',
+  'were',
+  'to',
+  'of',
+  'on',
+  'in',
+  'at',
+  'here',
+  'presents',
+  'present',
+  'presenting',
+  'patient',
+  'owner',
+  'reports',
+  'reported',
+  'client',
+  'with',
+  'that',
+  'this',
+  'they',
+  'he',
+  'she',
+  'it',
+  'his',
+  'her',
+  'their',
+]);
+
+function phraseCoveredBy(haystack: string, needle: string): boolean {
+  const h = normPhrase(haystack);
+  const n = normPhrase(needle);
+  if (!n || !h) return false;
+  if (h.includes(n) || (n.length > 24 && n.includes(h))) return true;
+  const tokens = n.split(' ').filter((t) => t.length > 2 && !COVER_STOP.has(t));
+  if (tokens.length === 0) return false;
+  return tokens.filter((t) => h.includes(t)).length / tokens.length >= 0.72;
+}
+
+function checkinReasonAddon(checkin: string): string {
+  const t = trimPeriod(checkin);
+  const m = t.match(
+    /\b(?:is here for|here for|presents for|presenting for|seen for|coming in for|coming for)\s+(.+)/i
+  );
+  if (m?.[1]) return trimPeriod(m[1]);
+  return t;
+}
+
+function combinePresentingComplaints(checkinPc: string, visitPc: string): string {
+  const checkin = trimPeriod(checkinPc.replace(/^presenting complaint:\s*/i, ''));
+  const visit = trimPeriod(visitPc.replace(/^presenting complaint:\s*/i, ''));
+  if (!checkin) return visit;
+  if (!visit) return checkin;
+  if (phraseCoveredBy(visit, checkin) || phraseCoveredBy(checkin, visit)) return visit;
+  const checkinEuth = /euthan/i.test(checkin);
+  const visitEuth = /euthan/i.test(visit);
+  if (checkinEuth !== visitEuth) {
+    return `${visit}. Pre-exam check-in had listed ${checkin.charAt(0).toLowerCase()}${checkin.slice(1)}.`;
+  }
+  const addon = checkinReasonAddon(checkin);
+  if (phraseCoveredBy(visit, addon)) return visit;
+  return `${visit}; ${addon}.`;
+}
+
+function isIndoorOnlyLine(s: string): boolean {
+  return (
+    /\bdoes not go outdoors\b|\bnot (?:an )?outdoor\b|\bindoor only\b|\bindoor cat\b|\bdoes not live with a (?:cat|dog) that goes outdoors\b/i.test(
+      s
+    ) && !/\bindoor\s*[/-]\s*outdoor\b|\bindoor-outdoor\b/i.test(s)
+  );
+}
+
+function isOutdoorLifestyleLine(s: string): boolean {
+  return /\bindoor\s*[/-]\s*outdoor\b|\bindoor-outdoor\b|\bhunt(?:s|ing)\b|\bgoes (?:outside|outdoors)\b|\boutdoor cat\b/i.test(
+    s
+  );
+}
+
+const VAX_NAME =
+  /\b(lepto(?:spirosis)?|lyme|felv|feline leukemia|leukemia|bordetella|rabies|fvrcp)\b/i;
+
+function electedVaccine(s: string): string | null {
+  if (!/owner (?:elects?|selected|requests?|chose)|elected|requested/i.test(s)) return null;
+  return s.match(VAX_NAME)?.[1] ?? null;
+}
+
+function mentionsDeclinedVaccine(s: string, name: string): boolean {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  if (!new RegExp(`\\b${escaped}\\b`, 'i').test(s)) return false;
+  return /declin(?:ed|e)|elected not to|not (?:initiated|recommended|started)|do not start/i.test(s);
+}
+
+function withParenthetical(bullet: string, note: string): string {
+  if (bullet.toLowerCase().includes(note.toLowerCase())) return bullet;
+  return `${trimPeriod(bullet)} (${note})`;
+}
+
+function tagPreExam(bullet: string): string {
+  if (/\(\s*pre-exam check-in\s*\)/i.test(bullet)) return bullet;
+  return `${trimPeriod(bullet)} ${PRE_EXAM_CHECKIN_TAG}`;
+}
+
+function mergeHistoryBullets(
+  visitHistory: string[],
+  checkinHistory: string[]
+): { history: string[]; leftover: string[] } {
+  const history = [...visitHistory];
+  const leftover: string[] = [];
+  const visitBlob = history.join('\n');
+
+  for (const raw of checkinHistory) {
+    const checkin = raw.replace(/\s*\(\s*pre-exam check-in\s*\)\.?/gi, '').trim();
+    if (!checkin) continue;
+    if (phraseCoveredBy(visitBlob, checkin) || history.some((v) => phraseCoveredBy(v, checkin))) {
+      continue;
+    }
+    if (isIndoorOnlyLine(checkin)) {
+      const idx = history.findIndex(isOutdoorLifestyleLine);
+      if (idx >= 0) {
+        history[idx] = withParenthetical(
+          history[idx]!,
+          'pre-exam check-in had reported indoor only'
+        );
+        continue;
+      }
+    }
+    const vax = electedVaccine(checkin);
+    if (vax) {
+      const idx = history.findIndex((v) => mentionsDeclinedVaccine(v, vax));
+      if (idx >= 0) {
+        history[idx] = withParenthetical(history[idx]!, 'elected on pre-exam check-in');
+        continue;
+      }
+    }
+    leftover.push(checkin);
+  }
+  return { history, leftover };
+}
+
+function mergeMedicationBullets(visit: string[], checkin: string[]): string[] {
+  const out = [...visit];
+  for (const raw of checkin) {
+    const med = raw.replace(/\s*\(\s*pre-exam check-in\s*\)\.?/gi, '').trim();
+    if (!med) continue;
+    if (out.some((v) => phraseCoveredBy(v, med) || phraseCoveredBy(med, v))) continue;
+    out.push(tagPreExam(med));
+  }
+  return out;
+}
+
+function renderSoapHistory(sections: {
+  presentingComplaint: string;
+  history: string[];
+  medications: string[];
+}): string {
+  const blocks: string[] = [];
+  if (sections.presentingComplaint) {
+    blocks.push(
+      `Presenting Complaint: ${sections.presentingComplaint.replace(/^presenting complaint:\s*/i, '')}`
+    );
+  }
+  if (sections.history.length > 0) {
+    blocks.push(`Patient History:\n${sections.history.map((b) => `- ${b}`).join('\n')}`);
+  }
+  if (sections.medications.length > 0) {
+    blocks.push(`Current Medications:\n${sections.medications.map((b) => `- ${b}`).join('\n')}`);
+  }
+  return blocks.join('\n\n');
+}
+
+/**
+ * One Presenting Complaint + Patient History after SOAP exists. Check-in facts already
+ * covered by the visit drop; additive ones keep a "(Pre-Exam Check-In)" tag; conflicts
+ * stay on the visit line with a short explanation.
+ */
+export function foldCheckinIntoVisit(checkin: string, visitDiscussion: string): string {
+  const visitRaw = stripSubjectiveWrappers(visitDiscussion);
+  if (!visitRaw) return stripSubjectiveWrappers(checkin);
+  if (!checkin.trim() || isPlaceholderCheckin(checkin)) return visitRaw;
+
+  const checkinParts = parseSoapHistorySections(checkin);
+  const visitParts = parseSoapHistorySections(visitDiscussion);
+  const visitHasSoap = Boolean(visitParts.presentingComplaint || visitParts.history.length);
+
+  if (!visitHasSoap) {
+    const extras = checkinParts.history
+      .filter((b) => !phraseCoveredBy(visitRaw, b))
+      .map(tagPreExam);
+    return extras.length > 0 ? `${visitRaw}\n\n${extras.map((b) => `- ${b}`).join('\n')}` : visitRaw;
+  }
+
+  const { history, leftover } = mergeHistoryBullets(visitParts.history, checkinParts.history);
+  return formatSoapSectionSpacing(
+    renderSoapHistory({
+      presentingComplaint: combinePresentingComplaints(
+        checkinParts.presentingComplaint,
+        visitParts.presentingComplaint
+      ),
+      history: [...history, ...leftover.map(tagPreExam)],
+      medications: mergeMedicationBullets(visitParts.medications, checkinParts.medications),
+    })
+  );
+}
+
+/** Pull form-only facts back out so Re-load can fold them into a new visit note. */
+export function extractTaggedPreExamFacts(text: string): string {
+  const parsed = parseSoapHistorySections(text);
+  const taggedHistory = parsed.history.filter((b) => /\(\s*pre-exam check-in\s*\)/i.test(b));
+  const taggedPc = /\(\s*pre-exam check-in\s*\)/i.test(parsed.presentingComplaint)
+    ? parsed.presentingComplaint.replace(/\s*\(\s*pre-exam check-in\s*\)\.?/gi, '').trim()
+    : '';
+  if (!taggedHistory.length && !taggedPc) return '';
+  return renderSoapHistory({
+    presentingComplaint: taggedPc,
+    history: taggedHistory.map((b) => b.replace(/\s*\(\s*pre-exam check-in\s*\)\.?/gi, '').trim()),
+    medications: [],
+  });
+}
+
+/** True when Subjective is already a visit SOAP (not the standalone check-in block). */
+export function subjectiveHasVisitSoap(text: string): boolean {
+  const t = text.trim();
+  if (!t || hasPreVisitAnswersBlock(t) || isPlaceholderCheckin(t)) return false;
+  const parts = splitSubjectiveHistoryParts(t);
+  const body = parts.visitDiscussion.trim() || t;
+  return /presenting complaint:/i.test(body) && /patient history:/i.test(body);
+}
+
+/**
+ * After a visit SOAP exists: fold check-in into that history (one complaint, one
+ * history) and drop generated case-summary dumps.
+ */
+export function cleanSubjectiveAfterVisit(parts: SubjectiveHistoryParts): SubjectiveHistoryParts {
+  const next = { ...parts };
+  if (caseSummaryLooksGenerated(next.caseSummary)) {
+    next.caseSummary = '';
+  }
+  if (next.visitDiscussion.trim()) {
+    const checkin = isPlaceholderCheckin(next.checkin) ? '' : next.checkin;
+    next.visitDiscussion = foldCheckinIntoVisit(checkin, next.visitDiscussion);
+    next.checkin = '';
+  }
+  return next;
+}
+
 export function joinSubjectiveHistoryParts(parts: SubjectiveHistoryParts): string {
   const blocks: string[] = [];
   if (parts.checkin.trim()) blocks.push(parts.checkin.trim());
@@ -334,9 +689,11 @@ export function joinSubjectiveHistoryParts(parts: SubjectiveHistoryParts): strin
     blocks.push(`${CLINICIAN_PREVISIT_HEADER}\n\n${parts.clinicianPrevisit.trim()}`);
   }
   if (parts.visitDiscussion.trim()) {
-    const v = parts.visitDiscussion.trim();
-    if (v.toLowerCase().startsWith(VISIT_DISCUSSION_HEADER.toLowerCase())) blocks.push(v);
-    else blocks.push(`${VISIT_DISCUSSION_HEADER}\n\n${v}`);
+    const v = stripSubjectiveWrappers(parts.visitDiscussion);
+    if (!v) return blocks.join('\n\n').trim();
+    // Stacked "Visit discussion" only while check-in is still a separate block.
+    if (parts.checkin.trim()) blocks.push(`${VISIT_DISCUSSION_HEADER}\n\n${v}`);
+    else blocks.push(v);
   }
   return blocks.join('\n\n').trim();
 }
@@ -354,14 +711,106 @@ export function mergeClinicianPrevisitNotes(existing: string, notes: string): st
  * True when a Case summary block looks like it describes a different pet than `patientName`
  * (e.g. "Charlie is a cat…" on Simon's chart).
  */
+/**
+ * True when Case summary is a generated dump, not a doctor's note.
+ *
+ * Auto-seed used to paste chart-chat into Subjective ("patient of unspecified species",
+ * "no chronic medications listed"). That block is not medical history — Process should
+ * drop it rather than leave it above the visit discussion.
+ */
+export function caseSummaryLooksGenerated(summary: string): boolean {
+  const text = summary.trim();
+  if (!text) return false;
+  return (
+    /unspecified (species|age|sex|breed)/i.test(text) ||
+    /this patient only/i.test(text) ||
+    /no dated clinical history/i.test(text) ||
+    /no chronic medications or preventatives/i.test(text) ||
+    /no handling history/i.test(text) ||
+    /no pending follow-up documented/i.test(text) ||
+    (/^as of \d{4}-\d{2}-\d{2}/im.test(text) && /open items:/i.test(text))
+  );
+}
+
+/**
+ * Drop check-in lines the visit conversation contradicted.
+ *
+ * Room Loader answers stay on the page as if they were still true, so Casper is "indoor"
+ * in check-in and "indoor/outdoor" in the visit, and Rosie elects Lyme on the form then
+ * declines it in the room. Visit discussion is the source of truth.
+ */
+export function reconcileCheckinWithVisit(checkin: string, visitDiscussion: string): string {
+  const visit = visitDiscussion.trim();
+  if (!checkin.trim() || !visit) return checkin;
+
+  const lines = checkin.split(/\r?\n/);
+  const keep: string[] = [];
+  let visitComplaint: string | null = null;
+  const complaintMatch = visit.match(/presenting complaint:\s*(.+)/i);
+  if (complaintMatch?.[1]) visitComplaint = complaintMatch[1].trim();
+
+  const visitOutdoor =
+    /\bindoor\s*[\/-]\s*outdoor\b|\bindoor-outdoor\b|\bhunt(?:s|ing)\b|\bgoes (?:outside|outdoors)\b|\boutdoor cat\b/i.test(
+      visit
+    );
+  const declinedVaccine = (name: RegExp) =>
+    new RegExp(
+      `(?:declin(?:ed|e)|elected not to|not (?:initiated|recommended|started)|do not start)[^.]{0,80}${name.source}`,
+      'i'
+    ).test(visit) ||
+    new RegExp(
+      `${name.source}[^.]{0,80}(?:declin(?:ed|e)|elected not to|not (?:initiated|recommended|started))`,
+      'i'
+    ).test(visit);
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    if (
+      visitComplaint &&
+      /^presenting complaint:/i.test(trimmed) &&
+      (/\basdf\b/i.test(trimmed) || /unspecified concern/i.test(trimmed))
+    ) {
+      keep.push(line.replace(/^(Presenting Complaint:\s*).+$/i, `$1${visitComplaint}`));
+      continue;
+    }
+
+    if (
+      visitOutdoor &&
+      /\bdoes not go outdoors\b|\bnot (?:an )?outdoor\b|\bindoor only\b|\bdoes not live with a (?:cat|dog) that goes outdoors\b/i.test(
+        trimmed
+      )
+    ) {
+      continue;
+    }
+
+    const election =
+      /owner (?:elects?|selected|requests?|chose)\b/i.test(trimmed) &&
+      /\b(lepto(?:spirosis)?|lyme|felv|leukemia|bordetella|rabies|fvrcp)\b/i.test(trimmed);
+    if (election) {
+      const vax = trimmed.match(
+        /\b(lepto(?:spirosis)?|lyme|felv|feline leukemia|leukemia|bordetella|rabies|fvrcp)\b/i
+      );
+      if (vax && declinedVaccine(new RegExp(vax[1].replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'))) {
+        continue;
+      }
+    }
+
+    keep.push(line);
+  }
+
+  return keep.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
 export function caseSummaryLooksWrongForPatient(
   summary: string,
   patientName: string
 ): boolean {
-  const name = patientName.trim();
-  if (!name || /^Patient #\d+$/i.test(name)) return false;
   const text = summary.trim();
   if (!text) return false;
+  if (caseSummaryLooksGenerated(text)) return true;
+  const name = patientName.trim();
+  if (!name || /^Patient #\d+$/i.test(name)) return false;
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const namesSelf = new RegExp(`\\b${escaped}\\b`, 'i').test(text);
   if (namesSelf) return false;

@@ -293,6 +293,7 @@ export async function listInventoryMovements(
   branchId: number,
   params?: {
     inventoryItemId?: number;
+    branchLocationId?: number;
     fromDate?: string;
     toDate?: string;
     movedByUserId?: number;
@@ -427,6 +428,58 @@ export async function listInventoryLots(
   return Array.isArray(data) ? data : [];
 }
 
+export type ExpiringLotLocation = {
+  lotId: number;
+  branchId: number;
+  branchName: string | null;
+  branchLocationId: number;
+  locationName: string | null;
+  locationCode: string | null;
+  lotNumber: string;
+  serialNumber: string | null;
+  expirationDate: string;
+  quantityOnHand: number;
+};
+
+export type ExpiringLotItem = {
+  inventoryItemId: number;
+  name: string | null;
+  code: string | null;
+  soonestExpiration: string;
+  totalQty: number;
+  locations: ExpiringLotLocation[];
+};
+
+export type ExpiringLotsResponse = {
+  withinDays: number;
+  fromDate: string;
+  toDate: string;
+  rows: ExpiringLotItem[];
+};
+
+export async function listExpiringInventoryLots(
+  practiceId: number,
+  opts?: {
+    withinDays?: number;
+    branchId?: number;
+    locationId?: number;
+    includeZero?: boolean;
+  }
+): Promise<ExpiringLotsResponse> {
+  const { data } = await http.get<ExpiringLotsResponse>(
+    `/practice/${practiceId}/inventory-lots/expiring`,
+    {
+      params: {
+        ...(opts?.withinDays != null ? { withinDays: opts.withinDays } : {}),
+        ...(opts?.branchId != null ? { branchId: opts.branchId } : {}),
+        ...(opts?.locationId != null ? { locationId: opts.locationId } : {}),
+        ...(opts?.includeZero ? { includeZero: '1' } : {}),
+      },
+    }
+  );
+  return data;
+}
+
 export async function addInventoryLot(
   practiceId: number,
   body: {
@@ -437,6 +490,7 @@ export async function addInventoryLot(
     serialNumber?: string | null;
     expirationDate?: string | null;
     quantityOnHand?: number;
+    note?: string | null;
   }
 ): Promise<InventoryLotBalance> {
   const { data } = await http.post<InventoryLotBalance>(
@@ -456,6 +510,8 @@ export async function updateInventoryLot(
     expirationDate?: string | null;
     quantityOnHand?: number;
     isActive?: boolean;
+    /** Audit note for quantity corrections (shown on Activity). */
+    note?: string | null;
   }
 ): Promise<InventoryLotBalance> {
   const { data } = await http.patch<InventoryLotBalance>(
@@ -463,5 +519,35 @@ export async function updateInventoryLot(
     body
   );
   return data;
+}
+
+export type InitialEntryLot = {
+  id: number;
+  lotNumber: string;
+  serialNumber: string | null;
+  expirationDate: string | null;
+  quantityOnHand: number;
+  locked: boolean;
+};
+
+export type InitialEntryItem = {
+  inventoryItemId: number;
+  name: string;
+  code: string | null;
+  requireLotNumber: boolean;
+  trackLots: boolean;
+  lots: InitialEntryLot[];
+  seededQty: number;
+};
+
+export async function listInitialInventoryEntry(
+  practiceId: number,
+  branchId: number,
+  locationId: number,
+): Promise<InitialEntryItem[]> {
+  const { data } = await http.get<InitialEntryItem[]>(
+    `/practice/${practiceId}/branches/${branchId}/locations/${locationId}/initial-entry`,
+  );
+  return Array.isArray(data) ? data : [];
 }
 

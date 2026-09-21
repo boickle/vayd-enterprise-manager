@@ -178,17 +178,25 @@ export default function ScheduleLayout() {
       location.pathname === '/schedule/jot' ||
       location.pathname.startsWith('/schedule/jot/') ||
       location.pathname === '/schedule/chat' ||
-      location.pathname.startsWith('/schedule/chat/'),
+      location.pathname.startsWith('/schedule/chat/') ||
+      // SOAP chart: fill the outlet so chart + invoice scroll independently (not wrap-up/checkout).
+      /^\/schedule\/soap\/[^/]+\/[^/]+$/.test(location.pathname),
     [location.pathname]
   );
 
-  /** Practice calendar (and home) can grow vertically; scroll inside outlet so toolbar/date chrome scrolls away. Routing split stays overflow-hidden. */
+  const soapChartSplit = useMemo(
+    () => /^\/schedule\/soap\/[^/]+\/[^/]+$/.test(location.pathname),
+    [location.pathname]
+  );
+
+  /** Practice calendar (and home) can grow vertically; scroll inside outlet so toolbar/date chrome scrolls away. Routing split and SOAP chart stay overflow-hidden. */
   const outletFlushVerticallyScrollable = useMemo(
     () =>
       outletFlush &&
       !location.pathname.startsWith('/schedule/routing') &&
-      location.pathname !== '/schedule/email',
-    [outletFlush, location.pathname]
+      location.pathname !== '/schedule/email' &&
+      !soapChartSplit,
+    [outletFlush, location.pathname, soapChartSplit]
   );
 
   /** Lets practice week/day `position: sticky` stick to the outlet (see ScheduleLayout.css). */
@@ -356,7 +364,8 @@ export default function ScheduleLayout() {
             {canAccessScheduleAnalytics ? (
               <>
                 <NavLink
-                  to="/schedule/analytics/bank-deposits"
+                  to="/schedule/deposits"
+                  end
                   className={({ isActive }) =>
                     `schedule-app__quick-link${isActive ? ' schedule-app__quick-link--active' : ''}`
                   }
@@ -446,7 +455,8 @@ export default function ScheduleLayout() {
         <div
           className={`schedule-app__outlet${outletFlush ? ' schedule-app__outlet--flush' : ''}${
             location.pathname === '/schedule/routing' ||
-            location.pathname.startsWith('/schedule/jot')
+            location.pathname.startsWith('/schedule/jot') ||
+            soapChartSplit
               ? ' schedule-app__outlet--routing-split'
               : ''
           }${outletFlushVerticallyScrollable ? ' schedule-app__outlet--flush-scroll-y' : ''}${

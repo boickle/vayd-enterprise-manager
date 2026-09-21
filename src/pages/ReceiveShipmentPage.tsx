@@ -13,6 +13,7 @@ import {
   parseInventoryInvoice,
   patchShipment,
   removeShipmentLine,
+  updateShipmentLine,
   uploadShipmentInvoice,
   upsertVendorItemMap,
   type InventoryShipment,
@@ -182,6 +183,19 @@ export default function ReceiveShipmentPage() {
   const [matchSearchResults, setMatchSearchResults] = useState<SearchResultItem[]>([]);
   const [draftReady, setDraftReady] = useState(false);
   const [resumedDraft, setResumedDraft] = useState(false);
+  const [editingLineId, setEditingLineId] = useState<number | null>(null);
+  const [editQty, setEditQty] = useState('');
+  const [editLot, setEditLot] = useState('');
+  const [editLotId, setEditLotId] = useState<number | null>(null);
+  const [editExp, setEditExp] = useState('');
+  const [editCostMode, setEditCostMode] = useState<'total' | 'perUnit'>('perUnit');
+  const [editCost, setEditCost] = useState('');
+  const [editItemMeta, setEditItemMeta] = useState<{
+    trackLots?: boolean;
+    requireLotNumber?: boolean;
+    sellUnitType?: string | null;
+    sellUnitTypeDetail?: string | null;
+  } | null>(null);
 
   const headerReady =
     branchId !== '' &&
@@ -468,6 +482,7 @@ export default function ReceiveShipmentPage() {
   }
 
   function resetReceiveForm() {
+    cancelEditLine();
     clearReceiveShipmentDraft(practiceId, token);
     setResumedDraft(false);
     setShipment(null);
@@ -950,8 +965,94 @@ export default function ReceiveShipmentPage() {
     }
   }
 
+  function cancelEditLine() {
+    setEditingLineId(null);
+    setEditQty('');
+    setEditLot('');
+    setEditLotId(null);
+    setEditExp('');
+    setEditCost('');
+    setEditItemMeta(null);
+  }
+
+  async function beginEditLine(line: DraftLine) {
+    setEditingLineId(line.id);
+    setEditQty(String(line.quantity));
+    setEditLot(line.lotNumber ?? '');
+    setEditLotId(null);
+    setEditExp(line.expirationDate ? String(line.expirationDate).slice(0, 10) : '');
+    setEditCostMode('perUnit');
+    setEditCost(line.costPerUnit != null ? String(line.costPerUnit) : '');
+    setEditItemMeta(null);
+    try {
+      const item = await loadInventoryItem(practiceId, line.inventoryItemId);
+      setEditItemMeta({
+        trackLots: item.trackLots === true,
+        requireLotNumber: item.requireLotNumber === true,
+        sellUnitType: item.sellUnitType ?? null,
+        sellUnitTypeDetail: item.sellUnitTypeDetail ?? null,
+      });
+    } catch {
+      setEditItemMeta({});
+    }
+  }
+
+  async function saveEditLine(line: DraftLine) {
+    if (!shipment) return;
+    const quantity = Number(editQty);
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      setError('Quantity must be a positive number');
+      return;
+    }
+    if (editItemMeta?.requireLotNumber && !editLot.trim() && editLotId == null) {
+      setError('Lot # is required for this item');
+      return;
+    }
+    if (editItemMeta?.trackLots && !editExp.trim() && editLotId == null) {
+      setError('Expiration date is required');
+      return;
+    }
+    if (editCost.trim() === '') {
+      setError(editCostMode === 'total' ? 'Total cost is required' : 'Cost per unit is required');
+      return;
+    }
+    const costEntered = Number(editCost);
+    if (!Number.isFinite(costEntered) || costEntered < 0) {
+      setError('Cost must be a valid number (0 or greater)');
+      return;
+    }
+    const costPerUnit =
+      editCostMode === 'total' ? costEntered / quantity : costEntered;
+    if (!Number.isFinite(costPerUnit)) {
+      setError('Could not calculate cost per unit');
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    try {
+      await updateShipmentLine(practiceId, shipment.id, line.id, {
+        inventoryItemId: line.inventoryItemId,
+        quantity,
+        costPerUnit: Number(costPerUnit.toFixed(4)),
+        lotNumber: editLot.trim() || null,
+        expirationDate: editExp.trim() || null,
+        toBranchLocationId: line.toBranchLocationId,
+      });
+      await refreshLines(shipment.id);
+      cancelEditLine();
+      setToast('Line updated');
+      window.setTimeout(() => setToast(null), 2000);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Could not update line');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function onRemoveLine(lineId: number) {
     if (!shipment) return;
+    if (editingLineId === lineId) cancelEditLine();
     await removeShipmentLine(practiceId, shipment.id, lineId);
     await refreshLines(shipment.id);
   }
@@ -1041,9 +1142,39 @@ export default function ReceiveShipmentPage() {
           that supplier description; ignore syringes and other things you do not track.
         </p>
         {parsing && (
-          <p className="settings-muted" style={{ marginTop: 8 }}>
-            Reading invoice…
-          </p>
+          <div
+            className="settings-message settings-info-message"
+            role="status"
+            aria-live="polite"
+            style={{
+              marginTop: 12,
+              marginBottom: 0,
+              fontWeight: 600,
+              fontSize: 15,
+            }}
+          >
+            <span style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <span
+                className="settings-spinner"
+                aria-hidden
+                style={{ width: 22, height: 22, borderWidth: 3, flexShrink: 0 }}
+              />
+              <span>
+                Reading invoice…
+                <span
+                  style={{
+                    display: 'block',
+                    marginTop: 2,
+                    fontWeight: 400,
+                    fontSize: 13,
+                    opacity: 0.9,
+                  }}
+                >
+                  Extracting supplier, office, and line items — this may take a moment.
+                </span>
+              </span>
+            </span>
+          </div>
         )}
         {invoiceFileName && !parsing && (
           <p className="settings-muted" style={{ marginTop: 8, fontSize: 13 }}>
@@ -1781,45 +1912,177 @@ export default function ReceiveShipmentPage() {
               </p>
             ) : (
               <ul style={{ listStyle: 'none', padding: 0 }}>
-                {lines.map((l) => (
+                {lines.map((l) => {
+                  const editing = editingLineId === l.id;
+                  return (
                   <li
                     key={l.id}
                     style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'flex-start',
-                      gap: 12,
                       padding: '8px 0',
                       borderBottom: '1px solid var(--border, #e5e7eb)',
                     }}
                   >
-                    <div>
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'flex-start',
+                        gap: 12,
+                      }}
+                    >
                       <div>
-                        {l.itemName ?? `Item #${l.inventoryItemId}`} × {Number(l.quantity)}
-                        {l.lotNumber ? ` · Lot ${l.lotNumber}` : ''}
-                        {l.expirationDate ? ` · Exp ${String(l.expirationDate).slice(0, 10)}` : ''}
-                        {l.costPerUnit != null
-                          ? ` · $${Number(l.costPerUnit).toFixed(4)}/unit`
-                          : ''}
-                      </div>
-                      {l.willUpdatePrice ? (
-                        <div style={{ marginTop: 2, fontSize: 13, fontWeight: 600, color: '#2e7d32' }}>
-                          Will update price
-                          {l.catalogCost != null
-                            ? ` (catalog $${Number(l.catalogCost).toFixed(4)} → $${Number(l.costPerUnit).toFixed(4)})`
+                        <div>
+                          {l.itemName ?? `Item #${l.inventoryItemId}`} × {Number(l.quantity)}
+                          {l.lotNumber ? ` · Lot ${l.lotNumber}` : ''}
+                          {l.expirationDate ? ` · Exp ${String(l.expirationDate).slice(0, 10)}` : ''}
+                          {l.costPerUnit != null
+                            ? ` · $${Number(l.costPerUnit).toFixed(4)}/unit`
                             : ''}
                         </div>
-                      ) : l.willQueueCostReview ? (
-                        <div style={{ marginTop: 2, fontSize: 13, color: '#9a3412' }}>
-                          Lower than catalog — manager will review on Cost Reviews
-                        </div>
-                      ) : null}
+                        {l.willUpdatePrice ? (
+                          <div style={{ marginTop: 2, fontSize: 13, fontWeight: 600, color: '#2e7d32' }}>
+                            Will update price
+                            {l.catalogCost != null
+                              ? ` (catalog $${Number(l.catalogCost).toFixed(4)} → $${Number(l.costPerUnit).toFixed(4)})`
+                              : ''}
+                          </div>
+                        ) : l.willQueueCostReview ? (
+                          <div style={{ marginTop: 2, fontSize: 13, color: '#9a3412' }}>
+                            Lower than catalog — manager will review on Cost Reviews
+                          </div>
+                        ) : null}
+                      </div>
+                      <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                        {editing ? (
+                          <button type="button" className="btn secondary" onClick={cancelEditLine}>
+                            Cancel
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            className="btn secondary"
+                            disabled={busy || editingLineId != null}
+                            onClick={() => void beginEditLine(l)}
+                          >
+                            Edit
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className="btn secondary"
+                          disabled={busy}
+                          onClick={() => void onRemoveLine(l.id)}
+                        >
+                          Remove
+                        </button>
+                      </div>
                     </div>
-                    <button type="button" className="btn secondary" onClick={() => void onRemoveLine(l.id)}>
-                      Remove
-                    </button>
+                    {editing && (
+                      <div
+                        style={{
+                          display: 'grid',
+                          gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
+                          gap: 8,
+                          marginTop: 10,
+                          padding: 12,
+                          borderRadius: 6,
+                          background: 'var(--surface-muted, #f9fafb)',
+                        }}
+                      >
+                        <label className="settings-label">
+                          Qty received (
+                          {sellUnitLabel(editItemMeta?.sellUnitType, editItemMeta?.sellUnitTypeDetail)}) *
+                          <input
+                            className="settings-input"
+                            type="number"
+                            min={0.01}
+                            step="any"
+                            value={editQty}
+                            onChange={(e) => setEditQty(e.target.value)}
+                            required
+                          />
+                        </label>
+                        {editItemMeta?.trackLots ? (
+                          <div style={{ gridColumn: '1 / -1' }}>
+                            {branchId === '' || defaultLocId === '' ? (
+                              <p
+                                className="settings-muted"
+                                style={{ margin: '0 0 8px', fontSize: 13, color: '#b45309' }}
+                              >
+                                Choose destination office and location above to list existing lots.
+                              </p>
+                            ) : null}
+                            <StockLotPicker
+                              practiceId={practiceId}
+                              inventoryItemId={l.inventoryItemId}
+                              branchId={branchId === '' ? null : Number(branchId)}
+                              locationId={
+                                l.toBranchLocationId ??
+                                (defaultLocId === '' ? null : Number(defaultLocId))
+                              }
+                              allowNew
+                              requireExpiration
+                              requireLotNumber={editItemMeta.requireLotNumber === true}
+                              required
+                              selectedLotId={editLotId}
+                              lotNumber={editLot}
+                              expirationDate={editExp}
+                              onChange={(pick) => {
+                                setEditLotId(pick.lotId);
+                                setEditLot(pick.lotNumber);
+                                setEditExp(pick.expirationDate ?? '');
+                              }}
+                            />
+                          </div>
+                        ) : null}
+                        <div style={{ gridColumn: '1 / -1' }}>
+                          <div className="settings-label" style={{ marginBottom: 6 }}>
+                            Cost (from invoice) *
+                          </div>
+                          <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                            <button
+                              type="button"
+                              className={`btn ${editCostMode === 'total' ? 'primary' : 'secondary'}`}
+                              onClick={() => setEditCostMode('total')}
+                            >
+                              Total cost
+                            </button>
+                            <button
+                              type="button"
+                              className={`btn ${editCostMode === 'perUnit' ? 'primary' : 'secondary'}`}
+                              onClick={() => setEditCostMode('perUnit')}
+                            >
+                              Cost / unit
+                            </button>
+                          </div>
+                          <label className="settings-label" style={{ maxWidth: 220 }}>
+                            {editCostMode === 'total' ? 'Total cost for this line *' : 'Cost per unit *'}
+                            <input
+                              className="settings-input"
+                              type="number"
+                              min={0}
+                              step="0.01"
+                              value={editCost}
+                              onChange={(e) => setEditCost(e.target.value)}
+                              required
+                            />
+                          </label>
+                        </div>
+                        <div style={{ gridColumn: '1 / -1' }}>
+                          <button
+                            type="button"
+                            className="btn primary"
+                            disabled={busy}
+                            onClick={() => void saveEditLine(l)}
+                          >
+                            Save changes
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </li>
-                ))}
+                  );
+                })}
               </ul>
             )}
           </div>

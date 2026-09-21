@@ -38,12 +38,84 @@
   color: var(--accent-strong);
 }
 
+.pmp-head-inactive {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid #fecaca;
+  background: #fef2f2;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #b91c1c;
+}
+
 .pmp-empty {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+}
+
+.pmp-empty__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.pmp-empty--inactive {
+  align-items: center;
+  flex-direction: row;
+}
+
+.pmp-empty--inactive .pmp-inactive-banner {
+  flex: 1 1 220px;
+}
+
+.pmp-inactive-banner {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #fecaca;
+  border-radius: 10px;
+  background: #fef2f2;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #7f1d1d;
+}
+
+.pmp-inactive-banner strong {
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.pmp-inactive-details-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.pmp-inactive-details-toggle:hover {
+  color: var(--text);
+}
+
+.pmp-summary--inactive {
+  border-color: #fecaca;
+  background: #fffafa;
+  opacity: 0.92;
 }
 
 /* ---------- Summary ---------- */
@@ -587,6 +659,57 @@
   justify-content: flex-end;
   gap: 8px;
   margin-top: 12px;
+}
+
+.pmp-cancel {
+  scroll-margin-top: 16px;
+}
+
+.pmp-owner-sees {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  font-size: 13.5px;
+  line-height: 1.45;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  border-radius: 9px;
+}
+
+.pmp-cancel-totals {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0 0 12px;
+}
+
+.pmp-cancel-totals div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.pmp-cancel-totals span {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.pmp-cancel-totals strong {
+  font-size: 15px;
+}
+
+.pmp-cancel-lines {
+  margin: 0 0 10px;
+  padding: 0 0 0 18px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.pmp-input[rows] {
+  resize: vertical;
+  min-height: 4.5rem;
 }
 
 .pmp-form__error {

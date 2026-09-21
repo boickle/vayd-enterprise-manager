@@ -80,40 +80,34 @@ function lineSearchText(line: StaffCountLine): string {
     .toLowerCase();
 }
 
-function everyLocationHasCell(
-  cells: Array<{ branchLocationId: number }>,
-  locationIds: number[]
-): boolean {
-  const have = new Set(cells.map((c) => c.branchLocationId));
-  return locationIds.length > 0 && locationIds.every((id) => have.has(id));
-}
-
-function cellsFullyCounted(cells: DraftCell[]): boolean {
-  return (
-    cells.length > 0 &&
-    cells.every((cell) => {
-      const qty = parseQty(cell.actualQty);
-      return qty != null && !Number.isNaN(qty);
-    })
+function lineHasCountedCells(line: StaffCountLine): boolean {
+  return (line.locations ?? []).some(
+    (loc) => loc.actualQty != null && Number.isFinite(Number(loc.actualQty))
   );
 }
 
-function lineFullyCounted(line: StaffCountLine, locationIds: number[]): boolean {
-  return (
-    everyLocationHasCell(line.locations, locationIds) &&
-    line.locations.length > 0 &&
-    line.locations.every((loc) => loc.actualQty != null && Number.isFinite(Number(loc.actualQty)))
-  );
+/** Draft is savable when every filled cell is a valid qty and at least one is filled. */
+function draftReadyToSave(cells: DraftCell[]): boolean {
+  let counted = 0;
+  for (const cell of cells) {
+    if (cell.actualQty.trim() === '') continue;
+    const qty = parseQty(cell.actualQty);
+    if (qty == null || Number.isNaN(qty)) return false;
+    counted += 1;
+  }
+  return counted > 0;
 }
 
 function cellTotal(cells: Array<{ actualQty: string }>): number | null {
   let sum = 0;
+  let any = false;
   for (const cell of cells) {
     const qty = parseQty(cell.actualQty);
-    if (qty == null || Number.isNaN(qty)) return null;
+    if (qty == null || Number.isNaN(qty)) continue;
+    any = true;
     sum += qty;
   }
-  return sum;
+  return any ? sum : null;
 }
 
 type Props = {
@@ -203,8 +197,6 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
     };
   }, [practiceId, branchId, kind, isFull]);
 
-  const locationIds = (session?.locations ?? []).map((loc) => loc.id);
-
   function applyLine(updated: StaffCountLine) {
     setSession((prev) =>
       prev
@@ -217,8 +209,9 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
   function locationsPayload(line: StaffCountLine) {
     const cells = drafts[line.id] ?? cellsFromLine(line);
     return cells.map((cell) => {
+      const raw = cell.actualQty.trim();
       const qty = parseQty(cell.actualQty);
-      if (Number.isNaN(qty)) {
+      if (raw !== '' && (qty == null || Number.isNaN(qty))) {
         throw new Error(`${line.name ?? 'Item'} must have a number 0 or greater`);
       }
       const lotNumber = cell.lotNumber.trim();
@@ -228,7 +221,7 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
         inventoryLotBalanceId: cell.inventoryLotBalanceId,
         lotNumber: lotNumber || null,
         expirationDate: cell.expirationDate.trim() || null,
-        actualQty: qty,
+        actualQty: raw === '' ? null : qty,
       };
     });
   }
@@ -289,6 +282,11 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
 
   async function saveLine(line: StaffCountLine) {
     if (!session) return;
+    const cells = drafts[line.id] ?? cellsFromLine(line);
+    if (!draftReadyToSave(cells)) {
+      setError('Enter a count for at least one location before saving.');
+      return;
+    }
     setSavingId(line.id);
     setError(null);
     try {
@@ -306,7 +304,7 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
   }
 
   async function submitLine(line: StaffCountLine) {
-    if (!session || !lineFullyCounted(line, locationIds)) return;
+    if (!session || !lineHasCountedCells(line)) return;
     setSavingId(line.id);
     setError(null);
     try {
@@ -336,7 +334,7 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
       setToast(
         next.submittedCount
           ? `Posted ${next.submittedCount} item${next.submittedCount === 1 ? '' : 's'} to inventory`
-          : 'No items ready. Save a count for every location and lot on an item first.'
+          : 'No items ready. Save a count for at least one location on an item first.'
       );
       window.setTimeout(() => setToast(null), 3500);
     } catch (e: unknown) {
@@ -354,7 +352,7 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
   }, [session?.lines, filterLower]);
 
   const readyToPost = (session?.lines ?? []).filter(
-    (line) => !line.submitted && lineFullyCounted(line, locationIds)
+    (line) => !line.submitted && lineHasCountedCells(line)
   ).length;
   const doneCount = session?.lines.filter((l) => l.submitted).length ?? 0;
   const totalCount = session?.lines.length ?? 0;
@@ -363,9 +361,42 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
     <div className="settings-section">
       <p className="settings-section-description">
         {isFull
-          ? 'Full inventory: count each lot at each location (how many of this dated bottle are on this shelf). Edit a row, enter qty — add a lot when you find a bottle that is not listed. Submit posts an item only after every location / lot for that item has a saved count.'
-          : 'Weekly list to count: due A/B/C items (capped at 20). Count each lot at each location. Submit posts an item only after every location / lot for that item has a saved count. System quantity stays hidden until you submit.'}
+          ? 'Full inventory: count each lot at each location you check (how many of this dated bottle are on this shelf). Leave other locations blank to leave their on-hand unchanged. Lot # and expiration come from inventory; Count is what you enter (not the catalog QOH — that stays hidden so this is a blind count). Submit posts counted locations only.'
+          : 'Weekly list to count: due A/B/C items (capped at 20). Lot # and expiration come from inventory; Count is blank until you enter what you see on the shelf (catalog QOH is hidden on purpose). Leave unchecked locations blank. Submit posts counted locations only.'}
       </p>
+      <div
+        style={{
+          display: 'flex',
+          gap: 12,
+          flexWrap: 'wrap',
+          alignItems: 'center',
+          marginBottom: 12,
+        }}
+      >
+        <span className="settings-muted" style={{ fontSize: 13 }}>
+          List
+        </span>
+        {isFull ? (
+          <>
+            <strong style={{ fontSize: 13 }}>Full count (all items)</strong>
+            <Link to="/schedule/inventory/counts" className="btn secondary" style={{ fontSize: 13 }}>
+              Weekly count list
+            </Link>
+          </>
+        ) : (
+          <>
+            <strong style={{ fontSize: 13 }}>Weekly count list</strong>
+            <Link
+              to="/schedule/inventory/full-count"
+              className="btn secondary"
+              style={{ fontSize: 13 }}
+              title="One-time physical count of every stock item before go-live"
+            >
+              Full count list
+            </Link>
+          </>
+        )}
+      </div>
       {toast && (
         <div className="settings-message settings-success-message" style={{ marginBottom: 12 }}>
           {toast}
@@ -431,8 +462,8 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
               editingLineId != null
                 ? 'Save or cancel the row you are editing first'
                 : readyToPost === 0
-                  ? 'Save a count for every location and lot on an item before submitting'
-                  : 'Post all items that already have every location and lot counted'
+                  ? 'Save a count for at least one location on an item before submitting'
+                  : 'Post all items that already have at least one location counted'
             }
           >
             Submit ready items ({readyToPost})
@@ -476,12 +507,17 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
                   ? cells ?? []
                   : line.locations;
                 const rowCount = Math.max(displayCells.length, 1);
-                const savedTotal =
-                  lineFullyCounted(line, locationIds) && !editing
-                    ? line.locations.reduce((sum, loc) => sum + Number(loc.actualQty), 0)
+                const savedTotal = lineHasCountedCells(line) && !editing
+                    ? line.locations.reduce(
+                        (sum, loc) =>
+                          loc.actualQty != null && Number.isFinite(Number(loc.actualQty))
+                            ? sum + Number(loc.actualQty)
+                            : sum,
+                        0
+                      )
                     : null;
                 const draftTotal = editing && cells ? cellTotal(cells) : null;
-                const canSubmit = !line.submitted && !editing && lineFullyCounted(line, locationIds);
+                const canSubmit = !line.submitted && !editing && lineHasCountedCells(line);
                 const itemHref = `/schedule/inventory/items?itemId=${line.inventoryItemId}${
                   line.name ? `&name=${encodeURIComponent(line.name)}` : ''
                 }`;
@@ -587,8 +623,12 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
                             placeholder="—"
                             aria-label={`${line.name ?? 'Item'} ${locName(locId)} count`}
                           />
+                        ) : saved?.actualQty != null ? (
+                          displayQty(saved.actualQty)
                         ) : (
-                          displayQty(saved?.actualQty)
+                          <span className="settings-muted" title="Enter what you count on the shelf">
+                            enter count
+                          </span>
                         )}
                         {editing &&
                         draft &&
@@ -627,7 +667,7 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
                                       disabled={
                                         savingId === line.id ||
                                         busy ||
-                                        !(cells && cellsFullyCounted(cells))
+                                        !(cells && draftReadyToSave(cells))
                                       }
                                       onClick={() => void saveLine(line)}
                                     >
@@ -658,8 +698,8 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
                                       disabled={savingId === line.id || busy || !canSubmit}
                                       title={
                                         canSubmit
-                                          ? 'Post this item’s counts to on-hand'
-                                          : 'Save a count for every location and lot before submitting'
+                                          ? 'Post this item’s counted locations to on-hand (blank locations stay unchanged)'
+                                          : 'Save a count for at least one location before submitting'
                                       }
                                       onClick={() => void submitLine(line)}
                                     >

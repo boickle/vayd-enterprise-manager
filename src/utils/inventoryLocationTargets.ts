@@ -12,6 +12,24 @@ export function surplusBy(onHand: number, target: number | null): number | null 
   return n > 0 ? n : null;
 }
 
+/**
+ * Units a location can give toward another location's short.
+ * - Default (Main): all on-hand down to 0 (ordering brings it back to max).
+ * - Other locations: only above par unless `allowBelowPar` (after Main is empty).
+ */
+export function spareForTransfer(args: {
+  isDefault: boolean;
+  onHand: number;
+  parOrMax: number | null;
+  min?: number | null;
+  allowBelowPar?: boolean;
+}): number {
+  const onHand = Math.max(0, Number(args.onHand) || 0);
+  if (args.isDefault) return onHand;
+  if (args.allowBelowPar) return onHand;
+  return surplusBy(onHand, args.parOrMax) ?? 0;
+}
+
 export function isDefaultLocationId(
   locId: number,
   defaultLocationId: number | null | undefined

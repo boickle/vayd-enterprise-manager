@@ -178,6 +178,8 @@ export default function MailInvoiceLineCheckbox({
   }, [invoiceId, line.id, line.catalogItemId, line.catalogItemType]);
 
   if (!isInventoryLine(line)) return null;
+  // Vaccines are given in clinic — never offer mail-order.
+  if (line.catalogIsVaccine === true) return null;
 
   const locked = on && shipped;
   const blocked = Boolean(blockedReason) && !on;
@@ -273,6 +275,7 @@ export default function MailInvoiceLineCheckbox({
                 paymentStatus,
                 shippingPaymentStatus:
                   result.shipping > 0 ? paymentStatus : result.shippingPaymentStatus,
+                sendWithoutPayment: result.sendWithoutPayment,
                 shippingChargeName: result.shippingChargeName,
                 shipping: result.shipping,
                 doctorEmployeeId:

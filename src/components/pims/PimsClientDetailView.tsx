@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { Link, useSearchParams } from 'react-router';
+import { Link, useNavigate, useSearchParams } from 'react-router';
 import {
   ChevronDown,
   ChevronRight,
   FileText,
+  Heart,
   KeyRound,
   Mail,
   MapPin,
@@ -12,6 +13,7 @@ import {
   PawPrint,
   Pencil,
   Phone,
+  Plus,
   Settings,
   Sparkles,
   User,
@@ -48,7 +50,8 @@ import {
   mailingSameAsService,
 } from '../../utils/clientVisitAddresses';
 import { BookPatientChartButton } from '../BookPatientChartButton';
-import { PetThumb, publicMediaUrl } from './PetThumb';
+import { patientStatusChip } from '../../utils/patientStatusDisplay';
+import { PetThumb, patientPhotoSrc } from './PetThumb';
 import PimsAppointmentsSection from './PimsAppointmentsSection';
 import ClientCommunicationsPanel from './ClientCommunicationsPanel';
 import ClientFinancialWorkspace from './ClientFinancialWorkspace';
@@ -77,6 +80,13 @@ import { scoutManagedState } from '../../utils/pimsScoutManaged';
 import { appAlert, appConfirm } from '../../utils/appDialog';
 import { CLIENT_NAME_PREFIX_OPTIONS, formatClientDisplayName } from '../../utils/clientNamePrefix';
 import { pushRecentRecord } from '../../utils/recentRecordsStore';
+import {
+  enrichRoutingClientPatientsMembership,
+  patientMembershipFromRecord,
+} from '../../utils/routingPatientHoverData';
+import { writeRoutingChartBookIntent } from '../../utils/routingChartBookIntent';
+import { startFreshNewAppointmentRouting } from '../../utils/routingNewAppointment';
+import { markSchedulerHandoffPreferRoutingDoctor } from '../../utils/schedulerCalendarHandoff';
 import {
   DetailHeader,
   EditableCard,
@@ -151,8 +161,8 @@ function formatDateOnly(iso: unknown): string {
   return Number.isNaN(d.getTime()) ? s : d.toLocaleDateString(undefined, { dateStyle: 'medium' });
 }
 
-function mediaUrl(path: unknown): string | null {
-  return publicMediaUrl(path, apiBaseUrl);
+function petImageSrc(patientId: string | number | null | undefined, imageUrl: unknown): string | null {
+  return patientPhotoSrc(patientId, imageUrl, apiBaseUrl);
 }
 
 function displayName(c: Record<string, unknown>): string {
@@ -1220,8 +1230,14 @@ type Props = {
 };
 
 export default function PimsClientDetailView({ clientId, onBack }: Props) {
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { employeeId, userId } = useAuth();
+  const { employeeId, userId, abilities } = useAuth() as {
+    employeeId?: number | null;
+    userId?: string | null;
+    abilities?: string[];
+  };
+  const canBookAppointment = !abilities || abilities.includes('canSeeRouting');
   const financialTab = searchParams.get('tab') === 'financial';
   const invoiceParam = searchParams.get('invoice');
   const patientParam = searchParams.get('patientId');
@@ -1236,12 +1252,12 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
   const [headerBalance, setHeaderBalance] = useState<number | null>(null);
   const [resetBusy, setResetBusy] = useState(false);
   const financialRef = useRef<HTMLDivElement>(null);
-  const [petsOpen, togglePetsOpen] = useClientSectionOpen(userId, 'pets');
-  const [visitsOpen, toggleVisitsOpen] = useClientSectionOpen(userId, 'visits');
-  const [prefsOpen, togglePrefsOpen] = useClientSectionOpen(userId, 'prefs');
-  const [householdOpen, toggleHouseholdOpen] = useClientSectionOpen(userId, 'household');
-  const [summaryOpen, toggleSummaryOpen] = useClientSectionOpen(userId, 'summary');
-  const [syncOpen, toggleSyncOpen] = useClientSectionOpen(userId, 'sync');
+  const [petsOpen, togglePetsOpen] = useClientSectionOpen(userId ?? null, 'pets');
+  const [visitsOpen, toggleVisitsOpen] = useClientSectionOpen(userId ?? null, 'visits');
+  const [prefsOpen, togglePrefsOpen] = useClientSectionOpen(userId ?? null, 'prefs');
+  const [householdOpen, toggleHouseholdOpen] = useClientSectionOpen(userId ?? null, 'household');
+  const [summaryOpen, toggleSummaryOpen] = useClientSectionOpen(userId ?? null, 'summary');
+  const [syncOpen, toggleSyncOpen] = useClientSectionOpen(userId ?? null, 'sync');
   const reach = useClientReach();
   const [addPetOpen, setAddPetOpen] = useState(false);
   const [communicatePick, setCommunicatePick] = useState(false);
@@ -1325,8 +1341,78 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
     if (!payload) return [] as Record<string, unknown>[];
     const raw = payload.patients;
     if (!Array.isArray(raw)) return [];
-    return raw.filter((p): p is Record<string, unknown> => p != null && typeof p === 'object');
+    const rows = raw.filter(
+      (p): p is Record<string, unknown> => p != null && typeof p === 'object',
+    );
+    return [...rows].sort((a, b) => {
+      const aActive = a.isActive !== false ? 0 : 1;
+      const bActive = b.isActive !== false ? 0 : 1;
+      if (aActive !== bActive) return aActive - bActive;
+      return String(pickStr(a.name) ?? '').localeCompare(String(pickStr(b.name) ?? ''));
+    });
   }, [payload]);
+
+  const [petMembershipById, setPetMembershipById] = useState<
+    Record<string, { isMember: boolean; membershipName: string | null }>
+  >({});
+
+  useEffect(() => {
+    let cancelled = false;
+    const rows = patients
+      .map((p) => {
+        const id = p.id != null ? String(p.id) : '';
+        if (!id) return null;
+        const membership = patientMembershipFromRecord(p);
+        return {
+          id,
+          name: pickStr(p.name) ?? `Pet #${id}`,
+          isMember: membership.isMember,
+          membershipName: membership.membershipName,
+        };
+      })
+      .filter((r): r is NonNullable<typeof r> => r != null);
+    if (!rows.length) {
+      setPetMembershipById({});
+      return;
+    }
+    const fromPayload: Record<string, { isMember: boolean; membershipName: string | null }> = {};
+    for (const row of rows) {
+      fromPayload[row.id] = {
+        isMember: Boolean(row.isMember),
+        membershipName: row.membershipName ?? null,
+      };
+    }
+    setPetMembershipById(fromPayload);
+    void enrichRoutingClientPatientsMembership(rows).then((enriched) => {
+      if (cancelled) return;
+      const next: Record<string, { isMember: boolean; membershipName: string | null }> = {};
+      for (const row of enriched) {
+        next[row.id] = {
+          isMember: Boolean(row.isMember),
+          membershipName: row.membershipName ?? null,
+        };
+      }
+      setPetMembershipById(next);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [patients]);
+
+  function startAppointmentForThisClient() {
+    if (!canBookAppointment) {
+      navigate('/schedule/home');
+      return;
+    }
+    if (!startFreshNewAppointmentRouting()) return;
+    const label = payload ? displayName(payload) : '';
+    writeRoutingChartBookIntent({
+      clientId,
+      clientDisplayLabel: label && label !== '—' ? label : undefined,
+    });
+    markSchedulerHandoffPreferRoutingDoctor();
+    navigate('/schedule/routing');
+  }
 
   const toggleHeaderEdit = useCallback((next: HeaderEdit) => {
     setHeaderEdit((cur) => (cur === next ? null : next));
@@ -1714,7 +1800,15 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
         }
         actions={
           <>
-            <button type="button" className="pims-detail__btn-primary" onClick={() => openFinancial()}>
+            <button
+              type="button"
+              className="pims-detail__btn-primary"
+              onClick={startAppointmentForThisClient}
+            >
+              <Plus size={14} aria-hidden />
+              Appointment
+            </button>
+            <button type="button" className="pims-detail__btn-secondary" onClick={() => openFinancial()}>
               Invoices
             </button>
             <button
@@ -1910,12 +2004,37 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
               .map((p) => {
                 const pid = p.id != null ? String(p.id) : '';
                 if (!pid) return null;
+                const statusNested =
+                  p.patientStatus && typeof p.patientStatus === 'object'
+                    ? (p.patientStatus as Record<string, unknown>)
+                    : null;
+                const inactivatedBy =
+                  p.inactivatedByEmployee && typeof p.inactivatedByEmployee === 'object'
+                    ? (p.inactivatedByEmployee as Record<string, unknown>)
+                    : null;
+                const byName = inactivatedBy
+                  ? [pickStr(inactivatedBy.firstName), pickStr(inactivatedBy.lastName)]
+                      .filter(Boolean)
+                      .join(' ')
+                      .trim() || pickStr(inactivatedBy.name)
+                  : null;
                 return {
                   id: pid,
                   name: pickStr(p.name) ?? `Pet #${pid}`,
                   summaryLine: petSummary(p),
                   alerts: pickStr(p.alerts),
                   active: p.isActive !== false,
+                  statusName:
+                    (statusNested && pickStr(statusNested.name)) ||
+                    pickStr(p.patientStatusName) ||
+                    null,
+                  inactiveAt:
+                    typeof p.inactiveAt === 'string'
+                      ? p.inactiveAt
+                      : p.inactiveAt != null
+                        ? String(p.inactiveAt)
+                        : null,
+                  inactivatedByName: byName,
                 };
               })
               .filter((p): p is NonNullable<typeof p> => p != null)}
@@ -1956,13 +2075,16 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
                 const href = pid
                   ? `${patientsBasePath}?patientId=${encodeURIComponent(pid)}`
                   : patientsBasePath;
-                const img = mediaUrl(p.imageUrl);
+                const img = petImageSrc(pid, p.imageUrl);
                 const petActive = p.isActive !== false;
+                const petStatus = patientStatusChip(p);
                 const petAlerts = pickStr(p.alerts);
+                const membership =
+                  (pid ? petMembershipById[pid] : null) ?? patientMembershipFromRecord(p);
                 return (
                   <li
                     key={pid || pickStr(p.pimsId) || `pet-${idx}`}
-                    className="pims-client-detail__pet"
+                    className={`pims-client-detail__pet${!petActive ? ' is-inactive' : ''}`}
                   >
                     <PetThumb src={img} size={44} className="pims-client-detail__pet-img" />
                     <div className="pims-client-detail__pet-main">
@@ -1972,7 +2094,28 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
                         ) : (
                           <span>{pickStr(p.name) ?? 'Pet'}</span>
                         )}
+                        {membership.isMember ? (
+                          <span
+                            title={
+                              membership.membershipName?.trim() || 'On a membership'
+                            }
+                          >
+                            <Heart
+                              className="pims-client-detail__pet-heart"
+                              size={14}
+                              fill="#dc2626"
+                              color="#dc2626"
+                              strokeWidth={1.75}
+                              aria-label={
+                                membership.membershipName?.trim() || 'Membership'
+                              }
+                            />
+                          </span>
+                        ) : null}
                         {!petActive ? <PimsBadge tone="muted">Inactive</PimsBadge> : null}
+                        {petStatus ? (
+                          <PimsBadge tone={petStatus.tone}>{petStatus.label}</PimsBadge>
+                        ) : null}
                         {pid ? (
                           <BookPatientChartButton
                             patientId={pid}

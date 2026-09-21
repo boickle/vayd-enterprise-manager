@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import {
   ArrowRight,
@@ -9,14 +9,19 @@ import {
   Activity,
   ListChecks,
   PawPrint,
+  Receipt,
   SlidersHorizontal,
+  Mic,
+  Users,
 } from 'lucide-react';
 import './SoapEncounterPage.css';
 import {
   createEncounter,
+  getEncounter,
   getHouseholdRoster,
   getInvoiceByAppointment,
   listOrders,
+  soapFieldConflictFrom,
   listPatientPrescriptions,
   listProblems,
   updateEncounter,
@@ -29,12 +34,20 @@ import {
   type VisitInvoice,
   VISIT_WORKFLOW_PRACTICE_ID,
 } from '../api/visitWorkflow';
-import { polishSpokenNotes, summarizeChartText, summarizeIntakeHistory } from '../api/soapScribe';
+import { polishSpokenNotes, summarizeIntakeHistory } from '../api/soapScribe';
 import { fetchAppointmentById } from '../api/appointments';
 import { fetchEmployee } from '../api/appointmentSettings';
 import { fetchPatientProfileForRow } from '../api/patients';
 import { useAuth } from '../auth/useAuth';
 import { pushRecentRecord } from '../utils/recentRecordsStore';
+import {
+  peerPresenceCaption,
+  peerShortName,
+  soapFieldLabel,
+  subscribeVisit,
+  type VisitPeer,
+  type VisitRealtimeHandle,
+} from '../utils/visitRealtime';
 import {
   defaultPeExamState,
   peExamFromValue,
@@ -43,24 +56,34 @@ import {
 import PhysicalExamSection from '../components/soap/PhysicalExamSection';
 import MasterProblemListSection from '../components/soap/MasterProblemListSection';
 import PlanOrdersSection from '../components/soap/PlanOrdersSection';
-import VisitDoseAndRxSection from '../components/soap/VisitDoseAndRxSection';
 import SoapAddendaSection from '../components/soap/SoapAddendaSection';
-import ProposedOrdersPanel from '../components/soap/ProposedOrdersPanel';
 import VisitCheckoutPanel from '../components/soap/VisitCheckoutPanel';
-import HouseholdInvoiceSummary from '../components/soap/HouseholdInvoiceSummary';
 import EuthanasiaPrepayModal from '../components/soap/EuthanasiaPrepayModal';
 import EuthanasiaConsentPanel from '../components/soap/EuthanasiaConsentPanel';
 import ScribePanel from '../components/soap/ScribePanel';
 import SoapPatientChronicSummary from '../components/soap/SoapPatientChronicSummary';
-import type { ForwardBookingDisposition } from '../api/forwardBookingDisposition';
-import CheckoutFollowUpPrompt from '../components/soap/CheckoutFollowUpPrompt';
-import ScribeDocumentView from '../components/soap/ScribeDocumentView';
+import ScribeDocumentView, { type DocTabId } from '../components/soap/ScribeDocumentView';
+import SoapVitalsFields from '../components/soap/SoapVitalsFields';
+import {
+  formatVitalWeight,
+  isWeightAddressed,
+  vitalsFromValue,
+  type Vitals,
+} from '../utils/soapVitals';
 import SoapRichTextField from '../components/soap/SoapRichTextField';
 import ScribePromptOverridesModal from '../components/soap/ScribePromptOverridesModal';
 import ScribeSuggestedPlanItems, {
   type SoapNarrativeSection,
   type SuggestedPlanItem,
 } from '../components/soap/ScribeSuggestedPlanItems';
+import { appConfirm } from '../utils/appDialog';
+import {
+  clearSoapChartDraft,
+  readSoapChartDraft,
+  soapChartDraftIsNewer,
+  writeSoapChartDraft,
+  type SoapChartDraft,
+} from '../utils/soapChartDraft';
 import type { PeSystemFinding } from '../components/soap/peTemplate';
 import {
   appointmentReasonFromSentToClient,
@@ -69,19 +92,17 @@ import {
   hasPreVisitAnswersBlock,
   looksLikeRawRoomLoaderSubjective,
   looksLikeSpokenChatter,
-  caseSummaryLooksWrongForPatient,
-  mergeCaseSummaryNotes,
+  cleanSubjectiveAfterVisit,
+  joinSubjectiveHistoryParts,
   mergeClinicianPrevisitNotes,
   PRE_EXAM_CHECKIN_NOT_FILLED,
   prependCheckinBlock,
   splitSubjectiveHistoryParts,
   stripCheckinPlaceholder,
+  subjectiveHasVisitSoap,
   withRoomLoaderSubjectivePrefix,
 } from '../utils/roomLoaderSubjectiveText';
 import { markBriefsInjected, pendingPrevisitBriefs } from '../utils/briefStore';
-import {
-  listCaseHistorySummaries,
-} from '../utils/briefRecordStore';
 import { takeDeferredPlanItems } from '../utils/deferredScribePlanItems';
 import {
   appendTreatmentPlanMedicationBullet,
@@ -89,34 +110,6 @@ import {
 } from '../utils/planNotesSections';
 import { patientSexDisplayFromRecord } from '../utils/schedulerVisitDisplay';
 
-export type WeightUnit = 'lb' | 'kg';
-
-export type Vitals = {
-  tempF: string;
-  weight: string;
-  /** Unit for `weight`. Ignored when `weightNotTaken`. Defaults to lb. */
-  weightUnit: WeightUnit;
-  /** Explicit: weight was not taken this visit (required alternative to a value). */
-  weightNotTaken: boolean;
-  hr: string;
-  rr: string;
-  bcs: string;
-  painScore: string;
-};
-
-/** True when the visit either recorded a weight + unit or chose "No weight taken". */
-export function isWeightAddressed(v: Vitals): boolean {
-  if (v.weightNotTaken) return true;
-  return Boolean(v.weight.trim());
-}
-
-/** Display string for header / chart review, or null if nothing recorded. */
-export function formatVitalWeight(v: Vitals): string | null {
-  if (v.weightNotTaken) return 'No weight taken';
-  const w = v.weight.trim();
-  if (!w) return null;
-  return `${w} ${v.weightUnit}`;
-}
 
 function patientField(patient: Record<string, unknown> | null, ...keys: string[]): string | null {
   if (!patient) return null;
@@ -166,10 +159,10 @@ function examDayLabel(iso: string | null): string {
 
 /** Forward booking is deliberately absent: it belongs to the wrap-up, which settles
  * it for every pet on the visit rather than one chart at a time. */
-type SoapTabId = 'subjective' | 'objective' | 'assessment' | 'plan';
+type SoapTabId = DocTabId;
 
 const SOAP_TABS: {
-  id: SoapTabId;
+  id: Exclude<SoapTabId, 'checkout-prep'>;
   label: string;
   short: string;
   icon: typeof ClipboardList;
@@ -180,21 +173,6 @@ const SOAP_TABS: {
   { id: 'plan', label: 'Plan', short: 'P', icon: ClipboardList },
 ];
 
-export function vitalsFromValue(v: unknown): Vitals {
-  const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>;
-  const s = (k: string) => (o[k] == null ? '' : String(o[k]));
-  const unitRaw = String(o.weightUnit ?? '').toLowerCase();
-  return {
-    tempF: s('tempF'),
-    weight: s('weight'),
-    weightUnit: unitRaw === 'kg' ? 'kg' : 'lb',
-    weightNotTaken: o.weightNotTaken === true || o.weightNotTaken === 'true',
-    hr: s('hr'),
-    rr: s('rr'),
-    bcs: s('bcs'),
-    painScore: s('painScore'),
-  };
-}
 
 function emailDraftFromSubjective(subjective: Record<string, unknown> | null | undefined): {
   subject: string;
@@ -218,21 +196,172 @@ function buildSubjectivePayload(
   };
 }
 
+function snapshotSoapDraft(parts: {
+  subjective: string;
+  email: { subject: string; body: string };
+  objectiveNotes: string;
+  reasoning: string;
+  planNotes: string;
+  vitals: Vitals;
+  exam: PeExamState;
+  linkedProblemIds: string[];
+}): SoapChartDraft {
+  return {
+    subjective: parts.subjective,
+    emailSubject: parts.email.subject,
+    emailBody: parts.email.body,
+    objectiveNotes: parts.objectiveNotes,
+    reasoning: parts.reasoning,
+    planNotes: parts.planNotes,
+    vitals: parts.vitals,
+    exam: parts.exam,
+    linkedProblemIds: [...parts.linkedProblemIds],
+    at: new Date().toISOString(),
+  };
+}
+
+function soapDraftDirty(live: SoapChartDraft, saved: SoapChartDraft): boolean {
+  return (
+    live.subjective !== saved.subjective ||
+    live.emailSubject !== saved.emailSubject ||
+    live.emailBody !== saved.emailBody ||
+    live.objectiveNotes !== saved.objectiveNotes ||
+    live.reasoning !== saved.reasoning ||
+    live.planNotes !== saved.planNotes ||
+    JSON.stringify(live.vitals) !== JSON.stringify(saved.vitals) ||
+    JSON.stringify(live.exam) !== JSON.stringify(saved.exam) ||
+    live.linkedProblemIds.join('\0') !== saved.linkedProblemIds.join('\0')
+  );
+}
+
+function patchFromDraftDiff(
+  live: SoapChartDraft,
+  saved: SoapChartDraft
+): Parameters<typeof updateEncounter>[1] {
+  const patch: Parameters<typeof updateEncounter>[1] = {};
+  if (
+    live.subjective !== saved.subjective ||
+    live.emailSubject !== saved.emailSubject ||
+    live.emailBody !== saved.emailBody
+  ) {
+    patch.subjective = buildSubjectivePayload(live.subjective, {
+      subject: live.emailSubject,
+      body: live.emailBody,
+    });
+  }
+  if (live.objectiveNotes !== saved.objectiveNotes) patch.objectiveNotes = live.objectiveNotes;
+  if (live.reasoning !== saved.reasoning) patch.assessmentReasoning = live.reasoning;
+  if (live.planNotes !== saved.planNotes) patch.planNotes = live.planNotes;
+  if (JSON.stringify(live.vitals) !== JSON.stringify(saved.vitals)) {
+    patch.objectiveVitals = { ...live.vitals };
+  }
+  if (JSON.stringify(live.exam) !== JSON.stringify(saved.exam)) {
+    patch.objectiveExam = live.exam;
+  }
+  if (live.linkedProblemIds.join('\0') !== saved.linkedProblemIds.join('\0')) {
+    patch.assessmentProblemIds = live.linkedProblemIds;
+  }
+  return patch;
+}
+
+const SOAP_SPLIT_KEY_PREFIX = 'scout.soap.chartInvoiceSplitPct';
+const SOAP_SPLIT_DEFAULT = 52;
+const SOAP_SPLIT_MIN = 32;
+const SOAP_SPLIT_MAX = 72;
+
+function soapSplitStorageKey(userId: string | null | undefined): string {
+  return `${SOAP_SPLIT_KEY_PREFIX}.${userId?.trim() || 'anon'}`;
+}
+
+function readSoapSplitPct(userId: string | null | undefined): number {
+  try {
+    const raw = localStorage.getItem(soapSplitStorageKey(userId));
+    const n = raw != null ? Number(raw) : NaN;
+    if (Number.isFinite(n)) {
+      return Math.min(SOAP_SPLIT_MAX, Math.max(SOAP_SPLIT_MIN, n));
+    }
+  } catch {
+    /* ignore */
+  }
+  return SOAP_SPLIT_DEFAULT;
+}
+
 export default function SoapEncounterPage() {
   const params = useParams();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { employeeId, role } = useAuth() as {
+  const { employeeId, role, userId, userEmail } = useAuth() as {
     employeeId?: string | null;
     role?: string[];
+    userId?: string | null;
+    userEmail?: string | null;
   };
   const appointmentId = Number(params.appointmentId);
   const patientId = Number(params.patientId);
   const clientIdParam = searchParams.get('clientId');
 
+  const workspaceRef = useRef<HTMLDivElement>(null);
+  const splitDragRef = useRef<{ startX: number; startPct: number } | null>(null);
+  const [chartPct, setChartPct] = useState(() => readSoapSplitPct(userId));
+  const [splitDragging, setSplitDragging] = useState(false);
+
+  useEffect(() => {
+    setChartPct(readSoapSplitPct(userId));
+  }, [userId]);
+
+  const persistChartPct = useCallback(
+    (pct: number) => {
+      const clamped = Math.min(SOAP_SPLIT_MAX, Math.max(SOAP_SPLIT_MIN, pct));
+      setChartPct(clamped);
+      try {
+        localStorage.setItem(soapSplitStorageKey(userId), String(Math.round(clamped * 10) / 10));
+      } catch {
+        /* ignore */
+      }
+    },
+    [userId]
+  );
+
+  const onSplitPointerDown = useCallback(
+    (e: ReactPointerEvent<HTMLDivElement>) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      splitDragRef.current = { startX: e.clientX, startPct: chartPct };
+      setSplitDragging(true);
+      e.currentTarget.setPointerCapture(e.pointerId);
+    },
+    [chartPct]
+  );
+
+  const onSplitPointerMove = useCallback(
+    (e: ReactPointerEvent<HTMLDivElement>) => {
+      const drag = splitDragRef.current;
+      const el = workspaceRef.current;
+      if (!drag || !el) return;
+      const rect = el.getBoundingClientRect();
+      if (rect.width <= 0) return;
+      const deltaPct = ((e.clientX - drag.startX) / rect.width) * 100;
+      persistChartPct(drag.startPct + deltaPct);
+    },
+    [persistChartPct]
+  );
+
+  const onSplitPointerUp = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
+    if (!splitDragRef.current) return;
+    splitDragRef.current = null;
+    setSplitDragging(false);
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   const [encounter, setEncounter] = useState<SoapEncounter | null>(null);
   const encounterRef = useRef(encounter);
   encounterRef.current = encounter;
+  /** Last snapshot we know is on the server (or just hydrated). Auto-save diffs against this. */
+  const lastSavedRef = useRef<SoapChartDraft | null>(null);
   const [problems, setProblems] = useState<PatientProblem[]>([]);
   const [chronicMedications, setChronicMedications] = useState<PatientPrescription[]>([]);
   const [orders, setOrders] = useState<EncounterOrder[]>([]);
@@ -281,7 +410,21 @@ export default function SoapEncounterPage() {
   const planNotesRef = useRef(planNotes);
   planNotesRef.current = planNotes;
   const [linkedProblemIds, setLinkedProblemIds] = useState<string[]>([]);
+  const subjectiveRef = useRef(subjective);
+  subjectiveRef.current = subjective;
+  const vitalsRef = useRef(vitals);
+  vitalsRef.current = vitals;
+  const examRef = useRef(exam);
+  examRef.current = exam;
+  const objectiveNotesRef = useRef(objectiveNotes);
+  objectiveNotesRef.current = objectiveNotes;
+  const reasoningRef = useRef(reasoning);
+  reasoningRef.current = reasoning;
+  const linkedProblemIdsRef = useRef(linkedProblemIds);
+  linkedProblemIdsRef.current = linkedProblemIds;
   const [activeTab, setActiveTab] = useState<SoapTabId>('subjective');
+  /** Unmatched checkout-prep rows (dismiss / match lowers this). */
+  const [checkoutPrepPendingCount, setCheckoutPrepPendingCount] = useState(0);
   const [entryMode, setEntryMode] = useState<'manual' | 'scribe'>('scribe');
   const [emailDraft, setEmailDraft] = useState<{
     subject: string;
@@ -295,7 +438,7 @@ export default function SoapEncounterPage() {
   /** Opens the bottom addendum composer (also triggered from the header). */
   const [writingAddendum, setWritingAddendum] = useState(false);
   const [roster, setRoster] = useState<HouseholdRosterEntry[]>([]);
-  const [householdRefreshTick, setHouseholdRefreshTick] = useState(0);
+  const [clinicalRefreshTick, setClinicalRefreshTick] = useState(0);
   /** Room Loader–originated order ids — Accept goes to Checkout only, not the left Plan list. */
   const [roomLoaderOrderIds, setRoomLoaderOrderIds] = useState<ReadonlySet<string>>(
     () => new Set()
@@ -360,11 +503,169 @@ export default function SoapEncounterPage() {
     } catch {
       /* invoice may not exist yet */
     }
-    setHouseholdRefreshTick((t) => t + 1);
   }, [appointmentId]);
 
+  // --- Live co-editing: the tech works the invoice while the doctor writes the chart ---
+
+  const [peers, setPeers] = useState<VisitPeer[]>([]);
+  const [coEditNotice, setCoEditNotice] = useState<string | null>(null);
+  /** Bumped so the checkout panel reloads orders somebody else just changed. */
+  const [ordersRevision, setOrdersRevision] = useState(0);
+  const visitSocketRef = useRef<VisitRealtimeHandle | null>(null);
+  const focusedFieldRef = useRef<string | null>(null);
+
+  const showCoEditNotice = useCallback((message: string) => {
+    setCoEditNotice(message);
+    window.setTimeout(
+      () => setCoEditNotice((current) => (current === message ? null : current)),
+      6000
+    );
+  }, []);
+
+  /**
+   * Pull in what someone else just wrote. The field this user has focused is
+   * deliberately skipped — a remote save must never pull text out from under a
+   * live cursor. They get it on their next blur instead.
+   */
+  const applyRemoteEncounter = useCallback(
+    async (
+      fields: string[],
+      byName: string | null | undefined,
+      opts?: { notify?: boolean }
+    ) => {
+      const id = encounterRef.current?.id;
+      if (!id || fields.length === 0) return;
+      let fresh: SoapEncounter;
+      try {
+        fresh = await getEncounter(id);
+      } catch {
+        return;
+      }
+      setEncounter(fresh);
+
+      const focused = focusedFieldRef.current;
+      const takes = (field: string) => fields.includes(field) && field !== focused;
+
+      if (takes('subjective')) {
+        setSubjective(
+          typeof fresh.subjective?.history === 'string' ? fresh.subjective.history : ''
+        );
+        setEmailDraft(emailDraftFromSubjective(fresh.subjective));
+      }
+      if (takes('objectiveVitals')) setVitals(vitalsFromValue(fresh.objectiveVitals));
+      if (takes('objectiveExam')) setExam(peExamFromValue(fresh.objectiveExam));
+      if (takes('objectiveNotes')) setObjectiveNotes(fresh.objectiveNotes ?? '');
+      if (takes('assessmentReasoning')) setReasoning(fresh.assessmentReasoning ?? '');
+      if (takes('planNotes')) setPlanNotes(fresh.planNotes ?? '');
+      if (takes('assessmentProblemIds')) {
+        setLinkedProblemIds(fresh.assessmentProblemIds ?? []);
+      }
+
+      // Auto-save diffs against lastSaved — mark remote-applied fields as already stored
+      // so we don't immediately write our stale copy back over them.
+      if (lastSavedRef.current) {
+        const next = { ...lastSavedRef.current };
+        if (takes('subjective')) {
+          next.subjective =
+            typeof fresh.subjective?.history === 'string' ? fresh.subjective.history : '';
+          const email = emailDraftFromSubjective(fresh.subjective);
+          next.emailSubject = email.subject;
+          next.emailBody = email.body;
+        }
+        if (takes('objectiveVitals')) next.vitals = vitalsFromValue(fresh.objectiveVitals);
+        if (takes('objectiveExam')) next.exam = peExamFromValue(fresh.objectiveExam);
+        if (takes('objectiveNotes')) next.objectiveNotes = fresh.objectiveNotes ?? '';
+        if (takes('assessmentReasoning')) next.reasoning = fresh.assessmentReasoning ?? '';
+        if (takes('planNotes')) next.planNotes = fresh.planNotes ?? '';
+        if (takes('assessmentProblemIds')) {
+          next.linkedProblemIds = fresh.assessmentProblemIds ?? [];
+        }
+        lastSavedRef.current = next;
+      }
+
+      if (opts?.notify === false) return;
+      const held = focused && fields.includes(focused) ? soapFieldLabel(focused) : null;
+      const who = byName?.trim() || 'Someone else';
+      showCoEditNotice(
+        held
+          ? `${who} also edited ${held}. Your version is still on screen — click out to save it.`
+          : `${who} updated this chart.`
+      );
+    },
+    [showCoEditNotice]
+  );
+
+  useEffect(() => {
+    if (!Number.isFinite(appointmentId)) return;
+    const handle = subscribeVisit({
+      practiceId: VISIT_WORKFLOW_PRACTICE_ID,
+      appointmentId,
+      encounterId: encounterRef.current?.id ?? null,
+      name: userEmail ?? null,
+      onPresence: setPeers,
+      onChanged: (payload) => {
+        if (payload.scope === 'invoice') {
+          void refreshInvoice();
+          return;
+        }
+        if (payload.scope === 'orders') {
+          setOrdersRevision((n) => n + 1);
+          return;
+        }
+        // Our own saves echo back; applying them is a no-op, but skip the round trip.
+        if (payload.encounterId !== encounterRef.current?.id) return;
+        if (payload.byEmployeeId != null && String(payload.byEmployeeId) === employeeId) {
+          return;
+        }
+        void applyRemoteEncounter(payload.fields ?? [], payload.byName);
+      },
+    });
+    visitSocketRef.current = handle;
+    return () => {
+      visitSocketRef.current = null;
+      handle.close();
+    };
+  }, [appointmentId, userEmail, employeeId, refreshInvoice, applyRemoteEncounter]);
+
+  /**
+   * Which SOAP field this user is in, read off `data-soap-field` rather than
+   * threaded through every editor. Drives the other side's presence chip.
+   */
+  useEffect(() => {
+    const readField = (target: EventTarget | null): string | null => {
+      if (!(target instanceof Element)) return null;
+      return target.closest<HTMLElement>('[data-soap-field]')?.dataset.soapField ?? null;
+    };
+    const onFocusIn = (e: FocusEvent) => {
+      const field = readField(e.target);
+      focusedFieldRef.current = field;
+      visitSocketRef.current?.setFocus(field, encounterRef.current?.id ?? null);
+    };
+    const onFocusOut = (e: FocusEvent) => {
+      if (readField(e.target) == null) return;
+      focusedFieldRef.current = null;
+      visitSocketRef.current?.setFocus(null, encounterRef.current?.id ?? null);
+    };
+    document.addEventListener('focusin', onFocusIn);
+    document.addEventListener('focusout', onFocusOut);
+    return () => {
+      document.removeEventListener('focusin', onFocusIn);
+      document.removeEventListener('focusout', onFocusOut);
+    };
+  }, []);
+
+  /** Everyone else on this visit, most recent first. */
+  const otherPeers = useMemo(
+    () => peers.filter((p) => employeeId == null || String(p.employeeId ?? '') !== employeeId),
+    [peers, employeeId]
+  );
+  const otherRecorderName = useMemo(() => {
+    const recorder = otherPeers.find((p) => p.recording);
+    return recorder ? peerShortName(recorder) : null;
+  }, [otherPeers]);
+
   // Other pets from the same household visit (docs/ai-scribe.md "Multi-pet visits") — drives the
-  // pet-switcher tabs below the header and the combined checkout summary in the aside. Keyed off
+  // pet-switcher tabs below the header and per-pet invoice grouping in checkout. Keyed off
   // `encounter?.id` (stable across in-place saves) rather than the whole `encounter` object, and
   // independent of ScribePanel's own roster fetch so tabs show up even before AI Scribe is used.
   useEffect(() => {
@@ -400,6 +701,31 @@ export default function SoapEncounterPage() {
     (async () => {
       setLoading(true);
       setError(null);
+      // Switching pets remounts this load — park the previous chart first so a mid-type
+      // tab click does not drop the last few seconds, and so we never write pet A's
+      // text onto pet B while the new row is hydrating.
+      const previous = encounterRef.current;
+      const previousSaved = lastSavedRef.current;
+      lastSavedRef.current = null;
+      if (previous && previous.status !== 'completed' && previousSaved) {
+        const parked = snapshotSoapDraft({
+          subjective: subjectiveRef.current,
+          email: emailDraftRef.current,
+          objectiveNotes: objectiveNotesRef.current,
+          reasoning: reasoningRef.current,
+          planNotes: planNotesRef.current,
+          vitals: vitalsRef.current,
+          exam: examRef.current,
+          linkedProblemIds: linkedProblemIdsRef.current,
+        });
+        if (soapDraftDirty(parked, previousSaved)) {
+          writeSoapChartDraft(previous.id, parked);
+          const leftover = patchFromDraftDiff(parked, previousSaved);
+          if (Object.keys(leftover).length > 0) {
+            void updateEncounter(previous.id, leftover).catch(() => undefined);
+          }
+        }
+      }
       // Switching pet tabs navigates within the same page instance (no remount), so transient
       // scribe UI state from the previous pet needs an explicit reset here — everything else
       // (subjective/vitals/orders/invoice/etc.) is already fully re-derived from the freshly
@@ -434,12 +760,10 @@ export default function SoapEncounterPage() {
         let subjectiveHistory =
           typeof enc.subjective?.history === 'string' ? enc.subjective.history : '';
 
-        // Subjective always opens with the pre-visit check-in block: the client's answers
-        // when they filled the form out, otherwise a line saying they didn't, so the doctor
-        // knows the difference between "no answers" and "not loaded". Self-healing — a chart
-        // whose history was written without the block (scribe applied first) gets it back on
-        // the next open, above what's already there.
-        if (!hasPreVisitAnswersBlock(subjectiveHistory)) {
+        // Before SOAP is written, Subjective opens with the pre-visit check-in block.
+        // After Process, that block is folded into the visit history — don't paste it
+        // back on top.
+        if (!hasPreVisitAnswersBlock(subjectiveHistory) && !subjectiveHasVisitSoap(subjectiveHistory)) {
           let intake = '';
           try {
             if (looksLikeRawRoomLoaderSubjective(subjectiveHistory)) {
@@ -551,14 +875,44 @@ export default function SoapEncounterPage() {
         }
 
         setEncounter(enc);
-        setSubjective(subjectiveHistory);
-        setEmailDraft(emailDraftFromSubjective(enc.subjective));
-        setVitals(vitalsFromValue(enc.objectiveVitals));
-        setExam(peExamFromValue(enc.objectiveExam));
-        setObjectiveNotes(enc.objectiveNotes ?? '');
-        setReasoning(enc.assessmentReasoning ?? '');
-        setPlanNotes(enc.planNotes ?? '');
-        setLinkedProblemIds(enc.assessmentProblemIds ?? []);
+        const serverEmail = emailDraftFromSubjective(enc.subjective);
+        const hydrated = snapshotSoapDraft({
+          subjective: subjectiveHistory,
+          email: serverEmail,
+          objectiveNotes: enc.objectiveNotes ?? '',
+          reasoning: enc.assessmentReasoning ?? '',
+          planNotes: enc.planNotes ?? '',
+          vitals: vitalsFromValue(enc.objectiveVitals),
+          exam: peExamFromValue(enc.objectiveExam),
+          linkedProblemIds: enc.assessmentProblemIds ?? [],
+        });
+        lastSavedRef.current = hydrated;
+
+        const parked =
+          enc.status !== 'completed' ? readSoapChartDraft(enc.id) : null;
+        if (parked && soapChartDraftIsNewer(parked, enc.updated)) {
+          setSubjective(parked.subjective);
+          setEmailDraft({ subject: parked.emailSubject, body: parked.emailBody });
+          setVitals(parked.vitals);
+          setExam(parked.exam);
+          setObjectiveNotes(parked.objectiveNotes);
+          setReasoning(parked.reasoning);
+          setPlanNotes(parked.planNotes);
+          setLinkedProblemIds(parked.linkedProblemIds);
+          showCoEditNotice(
+            'Restored unsaved chart text from this device. It will save again in a few seconds.'
+          );
+        } else {
+          setSubjective(subjectiveHistory);
+          setEmailDraft(serverEmail);
+          setVitals(hydrated.vitals);
+          setExam(hydrated.exam);
+          setObjectiveNotes(hydrated.objectiveNotes);
+          setReasoning(hydrated.reasoning);
+          setPlanNotes(hydrated.planNotes);
+          setLinkedProblemIds(hydrated.linkedProblemIds);
+          clearSoapChartDraft(enc.id);
+        }
 
         const [probs, chronicMeds, profileResult] = await Promise.all([
           listProblems(patientId).catch(() => [] as PatientProblem[]),
@@ -638,85 +992,27 @@ export default function SoapEncounterPage() {
         setProblems(probs);
         setChronicMedications(chronicMeds);
 
-        // Seed Case summary from Jot cache (or a light chart summarize) once per chart.
-        // Always use THIS open patientId + resolved profile name — never React state from a
-        // prior pet tab (that swapped Simon/Charlie names in dual-appointment tests).
-        // Also replace a stored block that clearly names the wrong pet.
-        try {
-          const partsNow = splitSubjectiveHistoryParts(subjectiveHistory);
-          const resolvedName =
-            profileResult?.name?.trim() || `Patient #${patientId}`;
-          const existingWrong =
-            Boolean(partsNow.caseSummary.trim()) &&
-            caseSummaryLooksWrongForPatient(partsNow.caseSummary, resolvedName);
-          if ((!partsNow.caseSummary.trim() || existingWrong) && scribeEnabled) {
-            const today = new Date().toISOString().slice(0, 10);
-            let summary =
-              listCaseHistorySummaries(String(patientId))[0]?.summary?.trim() ?? '';
-            // Drop a cached summary that clearly names a different patient as the subject.
-            if (
-              summary &&
-              caseSummaryLooksWrongForPatient(summary, resolvedName)
-            ) {
-              summary = '';
+        // Case summary used to auto-seed from chart-chat and land as "unspecified species /
+        // no chronic meds" above the visit. Drop those dumps; keep a summary only if a
+        // doctor wrote it. Once a visit SOAP exists, fold check-in into that history.
+        const cleanedParts = cleanSubjectiveAfterVisit(
+          splitSubjectiveHistoryParts(subjectiveHistory)
+        );
+        const cleanedHistory = joinSubjectiveHistoryParts(cleanedParts);
+        if (cleanedHistory !== subjectiveHistory.trim()) {
+          subjectiveHistory = cleanedHistory;
+          const emailFields = emailDraftFromSubjective(enc.subjective);
+          try {
+            enc = await updateEncounter(enc.id, {
+              subjective: buildSubjectivePayload(cleanedHistory, emailFields),
+            });
+            if (!canceled) {
+              setEncounter(enc);
+              setSubjective(subjectiveHistory);
             }
-            if (!summary) {
-              const openProblems = probs.filter((p) => p.status !== 'resolved');
-              const lines = [
-                `THIS PATIENT ONLY (do not describe housemates as if they are this patient):`,
-                `Patient: ${resolvedName} (patientId ${patientId})`,
-                `As of: ${today}`,
-                '',
-                'Problems on THIS patient chart:',
-                ...(openProblems.length
-                  ? openProblems.map((p) => `- ${p.label} (${p.kind}, ${p.acuity})`)
-                  : ['- None listed']),
-                '',
-                'Current medications / preventatives for THIS patient:',
-                ...(chronicMeds.length
-                  ? chronicMeds.map((rx) => {
-                      const extra = [rx.strength, rx.instructions]
-                        .filter(Boolean)
-                        .join(' · ');
-                      return `- ${rx.name}${extra ? ` — ${extra}` : ''}`;
-                    })
-                  : ['- None listed as chronic']),
-              ];
-              const sourceText = lines.join('\n');
-              // Thin SOAP-only fallback for Subjective — do NOT write into the Prep
-              // Case history cache (that is reserved for an explicit Summarize click).
-              if (openProblems.length || chronicMeds.length) {
-                summary = await summarizeChartText({
-                  mode: 'case-history',
-                  sourceText,
-                  patientName: resolvedName,
-                  asOfDate: today,
-                });
-              }
-            }
-            if (summary.trim()) {
-              const next = mergeCaseSummaryNotes(subjectiveHistory, summary, {
-                patientName: resolvedName,
-              });
-              if (next !== subjectiveHistory.trim()) {
-                subjectiveHistory = next;
-                const emailFields = emailDraftFromSubjective(enc.subjective);
-                try {
-                  enc = await updateEncounter(enc.id, {
-                    subjective: buildSubjectivePayload(next, emailFields),
-                  });
-                  if (!canceled) {
-                    setEncounter(enc);
-                    setSubjective(subjectiveHistory);
-                  }
-                } catch (err) {
-                  console.warn('Failed to save case summary into Subjective', err);
-                }
-              }
-            }
+          } catch (err) {
+            console.warn('Failed to clean Subjective after visit', err);
           }
-        } catch (err) {
-          console.warn('Case summary seed failed', err);
         }
 
         const [ords] = await Promise.all([
@@ -761,15 +1057,49 @@ export default function SoapEncounterPage() {
   const save = useCallback(
     async (patch: Parameters<typeof updateEncounter>[1]) => {
       const id = encounterRef.current?.id;
-      if (!id || locked) return;
+      if (!id || locked) return false;
       try {
-        const updated = await updateEncounter(id, patch);
+        const updated = await updateEncounter(id, patch, {
+          expectedUpdatedAt: encounterRef.current?.updated ?? null,
+        });
         setEncounter(updated);
+        if (lastSavedRef.current) {
+          const next = { ...lastSavedRef.current, at: updated.updated };
+          if (patch.subjective !== undefined) {
+            next.subjective = subjectiveRef.current;
+            next.emailSubject = emailDraftRef.current.subject;
+            next.emailBody = emailDraftRef.current.body;
+          }
+          if (patch.objectiveVitals !== undefined) next.vitals = vitalsRef.current;
+          if (patch.objectiveExam !== undefined) next.exam = examRef.current;
+          if (patch.objectiveNotes !== undefined) next.objectiveNotes = objectiveNotesRef.current;
+          if (patch.assessmentReasoning !== undefined) next.reasoning = reasoningRef.current;
+          if (patch.planNotes !== undefined) next.planNotes = planNotesRef.current;
+          if (patch.assessmentProblemIds !== undefined) {
+            next.linkedProblemIds = linkedProblemIdsRef.current;
+          }
+          lastSavedRef.current = next;
+        }
+        return true;
       } catch (e) {
+        // Somebody else wrote this same field first. Keep their version — it is the
+        // one on the chart — and hand this text back so nothing is lost silently.
+        const conflict = soapFieldConflictFrom(e);
+        if (conflict) {
+          const labels = Array.from(
+            new Set(conflict.conflicts.map((f) => soapFieldLabel(f) ?? f))
+          );
+          void applyRemoteEncounter(conflict.conflicts, null, { notify: false });
+          setError(
+            `${labels.join(' and ')} was edited by someone else, so your change was not saved. Their version is now on screen — re-apply your edit if it still belongs.`
+          );
+          return false;
+        }
         setError(e instanceof Error ? e.message : 'Failed to save');
+        return false;
       }
     },
-    [locked]
+    [locked, applyRemoteEncounter]
   );
 
   const effectiveEntryMode = scribeEnabled ? entryMode : 'manual';
@@ -780,6 +1110,62 @@ export default function SoapEncounterPage() {
     },
     [save]
   );
+
+  /**
+   * The chart used to save only on blur. A laptop left in the truck (or a tab
+   * the OS killed) would lose whatever was still in the focused field. Flush
+   * dirty fields every few seconds, when the tab hides, and when this page
+   * unmounts. A local copy covers the no-signal case.
+   */
+  useEffect(() => {
+    if (locked) {
+      const id = encounterRef.current?.id;
+      if (id) clearSoapChartDraft(id);
+      return;
+    }
+
+    const liveDraft = () =>
+      snapshotSoapDraft({
+        subjective: subjectiveRef.current,
+        email: emailDraftRef.current,
+        objectiveNotes: objectiveNotesRef.current,
+        reasoning: reasoningRef.current,
+        planNotes: planNotesRef.current,
+        vitals: vitalsRef.current,
+        exam: examRef.current,
+        linkedProblemIds: linkedProblemIdsRef.current,
+      });
+
+    const flush = () => {
+      const enc = encounterRef.current;
+      const saved = lastSavedRef.current;
+      if (!enc || enc.status === 'completed' || !saved) return;
+      const now = liveDraft();
+      writeSoapChartDraft(enc.id, now);
+      if (!soapDraftDirty(now, saved)) {
+        clearSoapChartDraft(enc.id);
+        return;
+      }
+      const patch = patchFromDraftDiff(now, saved);
+      if (Object.keys(patch).length === 0) return;
+      void save(patch).then((ok) => {
+        if (ok) clearSoapChartDraft(enc.id);
+      });
+    };
+
+    const timer = window.setInterval(flush, 8_000);
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') flush();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pagehide', flush);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pagehide', flush);
+      flush();
+    };
+  }, [locked, save]);
 
   const applyScribeSubjective = useCallback(
     (text: string) => {
@@ -831,6 +1217,45 @@ export default function SoapEncounterPage() {
     (text: string) => {
       setPlanNotes(text);
       void save({ planNotes: text });
+    },
+    [save]
+  );
+
+  const applyScribeChart = useCallback(
+    (patch: {
+      subjective?: string;
+      vitals?: Vitals;
+      exam?: PeExamState;
+      objectiveNotes?: string;
+      reasoning?: string;
+      planNotes?: string;
+    }) => {
+      const body: Parameters<typeof updateEncounter>[1] = {};
+      if (patch.subjective != null) {
+        setSubjective(patch.subjective);
+        body.subjective = buildSubjectivePayload(patch.subjective, emailDraftRef.current);
+      }
+      if (patch.vitals) {
+        setVitals(patch.vitals);
+        body.objectiveVitals = { ...patch.vitals };
+      }
+      if (patch.exam) {
+        setExam(patch.exam);
+        body.objectiveExam = patch.exam;
+      }
+      if (patch.objectiveNotes != null) {
+        setObjectiveNotes(patch.objectiveNotes);
+        body.objectiveNotes = patch.objectiveNotes;
+      }
+      if (patch.reasoning != null) {
+        setReasoning(patch.reasoning);
+        body.assessmentReasoning = patch.reasoning;
+      }
+      if (patch.planNotes != null) {
+        setPlanNotes(patch.planNotes);
+        body.planNotes = patch.planNotes;
+      }
+      if (Object.keys(body).length > 0) void save(body);
     },
     [save]
   );
@@ -905,24 +1330,46 @@ export default function SoapEncounterPage() {
     [save]
   );
 
-  /** Follow-up choice recorded for this visit, from whichever surface asked. */
-  const dispositionValue = useMemo<ForwardBookingDisposition | null>(() => {
-    const d = encounter?.forwardBookingDisposition;
-    if (d && typeof d === 'object' && typeof (d as { mode?: unknown }).mode === 'string') {
-      return d as unknown as ForwardBookingDisposition;
-    }
-    return null;
-  }, [encounter?.forwardBookingDisposition]);
-
   const clientQuery = clientIdParam ? `?clientId=${encodeURIComponent(clientIdParam)}` : '';
-  const soapPath = `/schedule/soap/${appointmentId}/${patientId}${clientQuery}`;
 
   /**
    * Hand off to the wrap-up, which owns forward booking, the client recap, and
    * locking the record for every pet on the visit.
    */
-  const goToWrapUp = () => {
+  const goToWrapUp = async () => {
+    if (checkoutPrepPendingCount > 0) {
+      const proceed = await appConfirm({
+        title: 'Checkout prep still open',
+        message: `You still have ${checkoutPrepPendingCount} plan item${
+          checkoutPrepPendingCount === 1 ? '' : 's'
+        } to match or dismiss. Continue to wrap-up anyway?`,
+        confirmLabel: 'Continue anyway',
+        cancelLabel: 'Go to Checkout prep',
+      });
+      if (!proceed) {
+        setActiveTab('checkout-prep');
+        return;
+      }
+    }
     navigate(`/schedule/soap/${appointmentId}/${patientId}/wrap-up${clientQuery}`);
+  };
+
+  const goToCheckout = async () => {
+    if (checkoutPrepPendingCount > 0) {
+      const proceed = await appConfirm({
+        title: 'Checkout prep still open',
+        message: `You still have ${checkoutPrepPendingCount} plan item${
+          checkoutPrepPendingCount === 1 ? '' : 's'
+        } to match or dismiss. Continue to checkout anyway?`,
+        confirmLabel: 'Continue anyway',
+        cancelLabel: 'Go to Checkout prep',
+      });
+      if (!proceed) {
+        setActiveTab('checkout-prep');
+        return;
+      }
+    }
+    navigate(`/schedule/soap/${appointmentId}/${patientId}/checkout${clientQuery}`);
   };
 
   const toggleProblemLink = (problemId: string, linked: boolean) => {
@@ -966,6 +1413,23 @@ export default function SoapEncounterPage() {
     setOrders((prev) => [...prev, order]);
   };
 
+  // Somebody else changed an order on this visit — reload ours rather than trust local state.
+  useEffect(() => {
+    if (ordersRevision === 0) return;
+    const id = encounterRef.current?.id;
+    if (!id) return;
+    let canceled = false;
+    void listOrders(id)
+      .then((next) => {
+        if (!canceled) setOrders(next);
+      })
+      .catch(() => undefined);
+    void refreshInvoice();
+    return () => {
+      canceled = true;
+    };
+  }, [ordersRevision, refreshInvoice]);
+
   const signalment = useMemo(() => {
     const sex = patientProfile ? patientSexDisplayFromRecord(patientProfile) : null;
     const age = patientAge(patientProfile, appointmentStart);
@@ -976,7 +1440,7 @@ export default function SoapEncounterPage() {
     return [age, sex, breed, weight].filter((part): part is string => Boolean(part));
   }, [appointmentStart, patientProfile, vitals]);
 
-  if (loading) {
+  if (loading && !encounter) {
     return <div className="soap-page soap-loading">Loading encounter…</div>;
   }
   if (error && !encounter) {
@@ -984,10 +1448,15 @@ export default function SoapEncounterPage() {
   }
 
   return (
-    <div className="soap-page">
+    <div className={`soap-page soap-page--workspace${splitDragging ? ' is-resizing' : ''}`}>
       {planToast && (
         <div className="soap-plan-toast" role="status" aria-live="polite">
           {planToast}
+        </div>
+      )}
+      {coEditNotice && (
+        <div className="soap-coedit-toast" role="status" aria-live="polite">
+          {coEditNotice}
         </div>
       )}
       <header className="soap-header">
@@ -1015,6 +1484,29 @@ export default function SoapEncounterPage() {
               Exam: {examDayLabel(appointmentStart)} · Visit #{appointmentId} ·{' '}
               {mode === 'quick' ? 'Quick' : 'Comprehensive'} SOAP
             </span>
+            {otherPeers.length > 0 && (
+              <div className="soap-presence">
+                {otherPeers.map((peer) => {
+                  const cap = peerPresenceCaption(peer);
+                  return (
+                    <span
+                      key={peer.socketId}
+                      className={`soap-presence-chip${
+                        cap.kind === 'recording'
+                          ? ' is-recording'
+                          : cap.kind === 'editing'
+                            ? ' is-editing'
+                            : ''
+                      }`}
+                      title={cap.title}
+                    >
+                      {cap.kind === 'recording' ? <Mic size={12} /> : <Users size={12} />}
+                      {cap.label}
+                    </span>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
         <div className="soap-header-actions">
@@ -1069,7 +1561,7 @@ export default function SoapEncounterPage() {
               type="button"
               className="soap-btn primary"
               title="Review the charts, set follow-up, and send the client recap"
-              onClick={goToWrapUp}
+              onClick={() => void goToWrapUp()}
             >
               <ArrowRight size={15} /> Wrap up visit
             </button>
@@ -1096,51 +1588,6 @@ export default function SoapEncounterPage() {
         </div>
       )}
 
-      <SoapPatientChronicSummary
-        patientId={patientId}
-        practiceId={VISIT_WORKFLOW_PRACTICE_ID}
-        createdInEncounterId={encounter?.id}
-        problems={problems}
-        chronicMedications={chronicMedications}
-        disabled={locked}
-        onProblemCreated={onScribeProblemCreated}
-        onProblemUpdated={onScribeProblemUpdated}
-        onMedicationCreated={onChronicMedicationCreated}
-        onMedicationUpdated={onChronicMedicationUpdated}
-      />
-
-      {effectiveEntryMode === 'scribe' && encounter && (
-        <ScribePanel
-          // Switching pet tabs navigates within this same page instance rather than remounting it
-          // (docs/ai-scribe.md "Multi-pet visits") — keying on the encounter forces a fresh
-          // ScribePanel per pet so a leftover transcript/suggestion review from the previous pet
-          // never bleeds into the next one's chart.
-          key={encounter.id}
-          soapEncounterId={encounter.id}
-          patientId={patientId}
-          disabled={locked}
-          examEnabled={mode === 'comprehensive'}
-          currentSubjective={subjective}
-          currentVitals={vitals}
-          currentExam={exam}
-          currentObjectiveNotes={objectiveNotes}
-          currentReasoning={reasoning}
-          currentPlanNotes={planNotes}
-          problems={problems}
-          orders={orders}
-          onApplySubjective={applyScribeSubjective}
-          onApplyVitals={applyScribeVitals}
-          onApplyExam={applyScribeExam}
-          onApplyObjectiveNotes={applyScribeObjectiveNotes}
-          onApplyReasoning={applyScribeReasoning}
-          onApplyPlanNotes={applyScribePlanNotes}
-          onProblemCreated={onScribeProblemCreated}
-          onOrderCreated={onScribeOrderCreated}
-          onPlanItemsChange={setScribePlanItems}
-          onHouseholdOrdersChanged={() => setHouseholdRefreshTick((t) => t + 1)}
-        />
-      )}
-
       {showPromptOverrides && primaryProviderId != null && (
         <ScribePromptOverridesModal
           providerId={primaryProviderId}
@@ -1149,24 +1596,106 @@ export default function SoapEncounterPage() {
         />
       )}
 
-      <div className="soap-body">
+      <div
+        ref={workspaceRef}
+        className="soap-body soap-workspace"
+        style={{ ['--soap-chart-pct' as string]: `${chartPct}%` }}
+      >
         <main className="soap-main">
+          <SoapPatientChronicSummary
+            patientId={patientId}
+            practiceId={VISIT_WORKFLOW_PRACTICE_ID}
+            createdInEncounterId={encounter?.id}
+            problems={problems}
+            chronicMedications={chronicMedications}
+            disabled={locked}
+            onProblemCreated={onScribeProblemCreated}
+            onProblemUpdated={onScribeProblemUpdated}
+            onMedicationCreated={onChronicMedicationCreated}
+            onMedicationUpdated={onChronicMedicationUpdated}
+          />
+
+          {effectiveEntryMode === 'scribe' && encounter && (
+            <ScribePanel
+              // Switching pet tabs navigates within this same page instance rather than remounting it
+              // (docs/ai-scribe.md "Multi-pet visits") — keying on the encounter forces a fresh
+              // ScribePanel per pet so a leftover transcript/suggestion review from the previous pet
+              // never bleeds into the next one's chart.
+              key={encounter.id}
+              soapEncounterId={encounter.id}
+              patientId={patientId}
+              disabled={locked}
+              examEnabled={mode === 'comprehensive'}
+              currentSubjective={subjective}
+              currentVitals={vitals}
+              currentExam={exam}
+              currentObjectiveNotes={objectiveNotes}
+              currentReasoning={reasoning}
+              currentPlanNotes={planNotes}
+              problems={problems}
+              orders={orders}
+              onApplySubjective={applyScribeSubjective}
+              onApplyVitals={applyScribeVitals}
+              onApplyExam={applyScribeExam}
+              onApplyObjectiveNotes={applyScribeObjectiveNotes}
+              onApplyReasoning={applyScribeReasoning}
+              onApplyPlanNotes={applyScribePlanNotes}
+              onApplyChart={applyScribeChart}
+              onProblemCreated={onScribeProblemCreated}
+              onOrderCreated={onScribeOrderCreated}
+              onPlanItemsChange={setScribePlanItems}
+              onHouseholdOrdersChanged={() => void refreshInvoice()}
+              otherRecorderName={otherRecorderName}
+              onRecordingChange={(recording) => {
+                visitSocketRef.current?.setRecording(recording, encounter.id);
+              }}
+            />
+          )}
+
           {effectiveEntryMode === 'scribe' ? (
             <ScribeDocumentView
               disabled={locked}
               subjective={subjective}
               onSubjectiveChange={setSubjective}
-              onSubjectiveBlur={() => void saveSubjective(subjective)}
+              onSubjectiveBlur={(text) => {
+                setSubjective(text);
+                void saveSubjective(text);
+              }}
               objectiveNotes={objectiveNotes}
               onObjectiveNotesChange={setObjectiveNotes}
-              onObjectiveNotesBlur={() => save({ objectiveNotes })}
+              onObjectiveNotesBlur={(text) => {
+                setObjectiveNotes(text);
+                void save({ objectiveNotes: text });
+              }}
               assessment={reasoning}
               onAssessmentChange={setReasoning}
-              onAssessmentBlur={() => save({ assessmentReasoning: reasoning })}
+              onAssessmentBlur={(text) => {
+                setReasoning(text);
+                void save({ assessmentReasoning: text });
+              }}
               planNotes={planNotes}
               onPlanNotesChange={setPlanNotes}
-              onPlanNotesBlur={() => save({ planNotes })}
-              planItemsSlot={
+              onPlanNotesBlur={(text) => {
+                setPlanNotes(text);
+                void save({ planNotes: text });
+              }}
+              objectiveNeedsAttention={!isWeightAddressed(vitals)}
+              activeTab={activeTab}
+              onActiveTabChange={setActiveTab}
+              checkoutPrepPendingCount={checkoutPrepPendingCount}
+              vitalsSlot={
+                <SoapVitalsFields
+                  vitals={vitals}
+                  disabled={locked}
+                  radioGroupName="soap-doc-weight-unit"
+                  onChange={setVitals}
+                  onCommit={(next) => {
+                    setVitals(next);
+                    void save({ objectiveVitals: { ...next } });
+                  }}
+                />
+              }
+              checkoutPrepSlot={
                 encounter && (
                   <>
                     <ScribeSuggestedPlanItems
@@ -1179,6 +1708,7 @@ export default function SoapEncounterPage() {
                       patientId={patientId}
                       clientId={clientIdParam ? Number(clientIdParam) : undefined}
                       practiceId={VISIT_WORKFLOW_PRACTICE_ID}
+                      onPendingCountChange={setCheckoutPrepPendingCount}
                       onOrderAdded={(order, meta) => {
                         onScribeOrderCreated(order);
                         if (
@@ -1204,30 +1734,11 @@ export default function SoapEncounterPage() {
                       clientId={clientIdParam ? Number(clientIdParam) : undefined}
                       practiceId={VISIT_WORKFLOW_PRACTICE_ID}
                       excludeOrderIds={roomLoaderOrderIds}
+                      showSearch={false}
                       onChange={setOrders}
                       onInvoiceShouldRefresh={() => void refreshInvoice()}
                       onInventoryItemAdded={appendInventoryToTreatmentPlan}
                       onInventoryItemRemoved={removeInventoryFromTreatmentPlan}
-                    />
-                    <VisitDoseAndRxSection
-                      key={`dose-rx-${encounter.id}`}
-                      encounterId={encounter.id}
-                      orders={orders}
-                      disabled={locked}
-                      patientId={patientId}
-                      clientId={clientIdParam ? Number(clientIdParam) : undefined}
-                      practiceId={VISIT_WORKFLOW_PRACTICE_ID}
-                      providerId={primaryProviderId}
-                      patientName={patientName}
-                      patientSpecies={patientField(patientProfile, 'species')}
-                      ownerName={clientName}
-                      providerName={primaryProviderName}
-                      providerLicense={primaryProviderLicense}
-                      onOrderUpdated={(updated) =>
-                        setOrders((prev) => prev.map((o) => (o.id === updated.id ? updated : o)))
-                      }
-                      onInvoiceShouldRefresh={() => void refreshInvoice()}
-                      onChronicMedicationsMaybeChanged={refreshChronicMedications}
                     />
                   </>
                 )
@@ -1250,6 +1761,29 @@ export default function SoapEncounterPage() {
                     <span className="soap-tab-short">{short}</span>
                   </button>
                 ))}
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === 'checkout-prep'}
+                  className={`soap-tab${activeTab === 'checkout-prep' ? ' active' : ''}${
+                    checkoutPrepPendingCount > 0 ? ' needs-attention' : ''
+                  }`}
+                  title={
+                    checkoutPrepPendingCount > 0
+                      ? `${checkoutPrepPendingCount} item${
+                          checkoutPrepPendingCount === 1 ? '' : 's'
+                        } still to match`
+                      : 'Match plan items to charges — not part of the signed chart'
+                  }
+                  onClick={() => setActiveTab('checkout-prep')}
+                >
+                  <Receipt size={15} aria-hidden />
+                  <span className="soap-tab-label">Checkout prep</span>
+                  <span className="soap-tab-short">$</span>
+                  {checkoutPrepPendingCount > 0 ? (
+                    <span className="soap-tab-badge">{checkoutPrepPendingCount}</span>
+                  ) : null}
+                </button>
               </div>
 
               <div className="soap-tab-panel">
@@ -1259,8 +1793,9 @@ export default function SoapEncounterPage() {
                       <ClipboardList size={16} /> Subjective
                     </h2>
                     <p className="soap-section-hint">
-                      Pre-visit check-in is summarized automatically. Confirm or edit — don&apos;t
-                      re-key what the client already provided.
+                      Check-in stands on its own until SOAP is written, then those answers are
+                      folded into this history. Facts only on the form are tagged (Pre-Exam
+                      Check-In).
                     </p>
                     <textarea
                       className="soap-textarea soap-textarea--subjective"
@@ -1268,8 +1803,13 @@ export default function SoapEncounterPage() {
                       placeholder="Presenting history, owner concerns…"
                       value={subjective}
                       disabled={locked}
+                      data-soap-field="subjective"
                       onChange={(e) => setSubjective(e.target.value)}
-                      onBlur={() => void saveSubjective(subjective)}
+                      onBlur={(e) => {
+                        const text = e.target.value;
+                        setSubjective(text);
+                        void saveSubjective(text);
+                      }}
                     />
                   </section>
                 )}
@@ -1279,134 +1819,15 @@ export default function SoapEncounterPage() {
                     <h2>
                       <Activity size={16} /> Objective
                     </h2>
-                    <div className="soap-subhead">Vitals (TPR, weight, BCS /9, FAS /5)</div>
-                    <div
-                      className={
-                        isWeightAddressed(vitals)
-                          ? 'soap-weight'
-                          : 'soap-weight soap-weight--required'
-                      }
-                    >
-                      <div className="soap-weight__row">
-                        <label className="soap-vital soap-weight__value">
-                          <span>
-                            Weight <span className="soap-weight__req" aria-hidden>*</span>
-                          </span>
-                          <input
-                            className="soap-input"
-                            inputMode="decimal"
-                            placeholder="e.g. 12.4"
-                            value={vitals.weightNotTaken ? '' : vitals.weight}
-                            disabled={locked || vitals.weightNotTaken}
-                            onChange={(e) => {
-                              const weight = e.target.value;
-                              setVitals((v) => ({
-                                ...v,
-                                weight,
-                                weightNotTaken: false,
-                              }));
-                            }}
-                            onBlur={(e) => {
-                              if (vitals.weightNotTaken) return;
-                              const weight = e.currentTarget.value;
-                              setVitals((v) => {
-                                const next = { ...v, weight, weightNotTaken: false as const };
-                                void save({ objectiveVitals: { ...next } });
-                                return next;
-                              });
-                            }}
-                          />
-                        </label>
-                        <fieldset className="soap-weight__units" disabled={locked || vitals.weightNotTaken}>
-                          <legend className="soap-sr-only">Weight unit</legend>
-                          {(
-                            [
-                              ['lb', 'Lb'],
-                              ['kg', 'kg'],
-                            ] as const
-                          ).map(([unit, label]) => (
-                            <label
-                              key={unit}
-                              className={
-                                vitals.weightUnit === unit && !vitals.weightNotTaken
-                                  ? 'soap-weight__unit is-selected'
-                                  : 'soap-weight__unit'
-                              }
-                            >
-                              <input
-                                type="radio"
-                                name="soap-weight-unit"
-                                value={unit}
-                                checked={vitals.weightUnit === unit && !vitals.weightNotTaken}
-                                disabled={locked || vitals.weightNotTaken}
-                                onChange={() => {
-                                  const next = {
-                                    ...vitals,
-                                    weightUnit: unit,
-                                    weightNotTaken: false,
-                                  };
-                                  setVitals(next);
-                                  void save({ objectiveVitals: { ...next } });
-                                }}
-                              />
-                              {label}
-                            </label>
-                          ))}
-                        </fieldset>
-                      </div>
-                      <label className="soap-weight__none">
-                        <input
-                          type="checkbox"
-                          checked={vitals.weightNotTaken}
-                          disabled={locked}
-                          onChange={(e) => {
-                            const weightNotTaken = e.target.checked;
-                            const next: Vitals = {
-                              ...vitals,
-                              weightNotTaken,
-                              weight: weightNotTaken ? '' : vitals.weight,
-                            };
-                            setVitals(next);
-                            void save({ objectiveVitals: { ...next } });
-                          }}
-                        />
-                        No weight taken
-                      </label>
-                      {!isWeightAddressed(vitals) && !locked && (
-                        <p className="soap-weight__hint">
-                          Enter a weight and choose Lb or kg, or select &ldquo;No weight taken.&rdquo;
-                          Required before signing.
-                        </p>
-                      )}
-                    </div>
-                    <div className="soap-vitals">
-                      {(
-                        [
-                          ['tempF', 'Temp °F'],
-                          ['hr', 'HR (bpm)'],
-                          ['rr', 'RR (rpm)'],
-                          ['bcs', 'BCS /9'],
-                          ['painScore', 'FAS /5'],
-                        ] as const
-                      ).map(([key, label]) => (
-                        <label key={key} className="soap-vital">
-                          <span>{label}</span>
-                          <input
-                            className="soap-input"
-                            inputMode="decimal"
-                            value={vitals[key]}
-                            disabled={locked}
-                            onChange={(e) => setVitals((v) => ({ ...v, [key]: e.target.value }))}
-                            onBlur={() => save({ objectiveVitals: { ...vitals } })}
-                          />
-                        </label>
-                      ))}
-                    </div>
-                    <p className="soap-section-hint">
-                      BCS: 1 skeletal → 9 obese. FAS (fear/anxiety): 1 relaxed → 5 extremely
-                      reactive. Exam aids (treats, Calm &amp; Cozy, muzzle, etc.) go in Objective
-                      notes.
-                    </p>
+                    <SoapVitalsFields
+                      vitals={vitals}
+                      disabled={locked}
+                      onChange={setVitals}
+                      onCommit={(next) => {
+                        setVitals(next);
+                        void save({ objectiveVitals: { ...next } });
+                      }}
+                    />
 
                     {mode === 'comprehensive' && (
                       <>
@@ -1430,8 +1851,12 @@ export default function SoapEncounterPage() {
                       disabled={locked}
                       placeholder="Additional objective observations…"
                       minHeightPx={120}
+                      dataField="objectiveNotes"
                       onChange={setObjectiveNotes}
-                      onBlur={() => save({ objectiveNotes })}
+                      onBlur={(text) => {
+                        setObjectiveNotes(text);
+                        void save({ objectiveNotes: text });
+                      }}
                     />
                   </section>
                 )}
@@ -1460,8 +1885,13 @@ export default function SoapEncounterPage() {
                       placeholder={`Problem List:\n- Apparently healthy\n- Neck dermatitis - r/o contact dermatitis, food allergy`}
                       value={reasoning}
                       disabled={locked}
+                      data-soap-field="assessmentReasoning"
                       onChange={(e) => setReasoning(e.target.value)}
-                      onBlur={() => save({ assessmentReasoning: reasoning })}
+                      onBlur={(e) => {
+                        const text = e.target.value;
+                        setReasoning(text);
+                        void save({ assessmentReasoning: text });
+                      }}
                     />
                   </section>
                 )}
@@ -1472,10 +1902,70 @@ export default function SoapEncounterPage() {
                       <ClipboardList size={16} /> Plan
                     </h2>
                     <p className="soap-section-hint">
-                      Every order is both a record entry and an invoice line. Meds also generate a
-                      label and discharge instruction.
+                      Treatment narrative for the chart. Match bullets to catalog charges on the
+                      Checkout prep tab — that step is not part of the signed record.
                     </p>
-                    {encounter && (
+                    <div className="soap-subhead">Notes (also shown in Document view)</div>
+                    <textarea
+                      className="soap-textarea"
+                      rows={8}
+                      placeholder="Diagnostics, treatment plan, client communication…"
+                      value={planNotes}
+                      disabled={locked}
+                      data-soap-field="planNotes"
+                      onChange={(e) => setPlanNotes(e.target.value)}
+                      onBlur={(e) => {
+                        const text = e.target.value;
+                        setPlanNotes(text);
+                        void save({ planNotes: text });
+                      }}
+                    />
+                  </section>
+                )}
+
+                {/* Always mounted so the pending badge stays accurate before the tab is opened. */}
+                <section
+                  className="soap-section"
+                  role="tabpanel"
+                  aria-label="Checkout prep"
+                  hidden={activeTab !== 'checkout-prep'}
+                >
+                  <h2>
+                    <Receipt size={16} /> Checkout prep
+                  </h2>
+                  <p className="soap-section-hint">
+                    Optional — match today&apos;s plan to catalog charges. This step is not saved as
+                    part of the medical record when you wrap up.
+                  </p>
+                  {encounter && (
+                    <>
+                      <ScribeSuggestedPlanItems
+                        key={`plan-items-manual-${encounter.id}`}
+                        encounterId={encounter.id}
+                        suggestions={[...deferredScribePlanItems, ...scribePlanItems]}
+                        planNotes={planNotes}
+                        orders={orders}
+                        disabled={locked}
+                        patientId={patientId}
+                        clientId={clientIdParam ? Number(clientIdParam) : undefined}
+                        practiceId={VISIT_WORKFLOW_PRACTICE_ID}
+                        onPendingCountChange={setCheckoutPrepPendingCount}
+                        onOrderAdded={(order, meta) => {
+                          onScribeOrderCreated(order);
+                          if (
+                            order.catalogItemType === 'inventory' &&
+                            !meta?.skipPlanNarrative &&
+                            !/sharps/i.test(order.name)
+                          ) {
+                            appendInventoryToTreatmentPlan({
+                              name: order.name,
+                              isVaccine: meta?.isVaccine,
+                            });
+                          }
+                        }}
+                        onInvoiceShouldRefresh={() => void refreshInvoice()}
+                        onAppendToSoapSection={appendBulletToSoapSection}
+                      />
                       <PlanOrdersSection
                         key={`plan-orders-manual-${encounter.id}`}
                         encounterId={encounter.id}
@@ -1485,47 +1975,15 @@ export default function SoapEncounterPage() {
                         clientId={clientIdParam ? Number(clientIdParam) : undefined}
                         practiceId={VISIT_WORKFLOW_PRACTICE_ID}
                         excludeOrderIds={roomLoaderOrderIds}
+                        showSearch={false}
                         onChange={setOrders}
                         onInvoiceShouldRefresh={() => void refreshInvoice()}
                         onInventoryItemAdded={appendInventoryToTreatmentPlan}
                         onInventoryItemRemoved={removeInventoryFromTreatmentPlan}
                       />
-                    )}
-                    {encounter && (
-                      <VisitDoseAndRxSection
-                        key={`dose-rx-manual-${encounter.id}`}
-                        encounterId={encounter.id}
-                        orders={orders}
-                        disabled={locked}
-                        patientId={patientId}
-                        clientId={clientIdParam ? Number(clientIdParam) : undefined}
-                        practiceId={VISIT_WORKFLOW_PRACTICE_ID}
-                        providerId={primaryProviderId}
-                        patientName={patientName}
-                        patientSpecies={patientField(patientProfile, 'species')}
-                        ownerName={clientName}
-                        providerName={primaryProviderName}
-                        providerLicense={primaryProviderLicense}
-                        onOrderUpdated={(updated) =>
-                          setOrders((prev) => prev.map((o) => (o.id === updated.id ? updated : o)))
-                        }
-                        onInvoiceShouldRefresh={() => void refreshInvoice()}
-                        onChronicMedicationsMaybeChanged={refreshChronicMedications}
-                      />
-                    )}
-
-                    <div className="soap-subhead">Notes (also shown in Document view)</div>
-                    <textarea
-                      className="soap-textarea"
-                      rows={4}
-                      placeholder="Diagnostics, treatment plan, client communication…"
-                      value={planNotes}
-                      disabled={locked}
-                      onChange={(e) => setPlanNotes(e.target.value)}
-                      onBlur={() => save({ planNotes })}
-                    />
-                  </section>
-                )}
+                    </>
+                  )}
+                </section>
               </div>
             </>
           )}
@@ -1541,27 +1999,31 @@ export default function SoapEncounterPage() {
           )}
         </main>
 
+        <div
+          className="soap-split-handle"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize chart and invoice"
+          aria-valuenow={Math.round(chartPct)}
+          aria-valuemin={SOAP_SPLIT_MIN}
+          aria-valuemax={SOAP_SPLIT_MAX}
+          tabIndex={0}
+          onPointerDown={onSplitPointerDown}
+          onPointerMove={onSplitPointerMove}
+          onPointerUp={onSplitPointerUp}
+          onPointerCancel={onSplitPointerUp}
+          onKeyDown={(e) => {
+            if (e.key === 'ArrowLeft') {
+              e.preventDefault();
+              persistChartPct(chartPct - 2);
+            } else if (e.key === 'ArrowRight') {
+              e.preventDefault();
+              persistChartPct(chartPct + 2);
+            }
+          }}
+        />
+
         <aside className="soap-aside">
-          {encounter && (
-            <ProposedOrdersPanel
-              key={`proposed-orders-${encounter.id}`}
-              encounterId={encounter.id}
-              orders={orders}
-              disabled={locked}
-              patientId={patientId}
-              clientId={clientIdParam ? Number(clientIdParam) : undefined}
-              practiceId={VISIT_WORKFLOW_PRACTICE_ID}
-              onChange={setOrders}
-              onInvoiceShouldRefresh={() => void refreshInvoice()}
-              onRoomLoaderOrderIds={rememberRoomLoaderOrderIds}
-            />
-          )}
-          <HouseholdInvoiceSummary
-            roster={roster}
-            currentInvoice={invoice}
-            refreshSignal={householdRefreshTick}
-            onSwitchPet={switchToPet}
-          />
           <EuthanasiaConsentPanel
             appointmentId={appointmentId}
             patientId={patientId}
@@ -1582,6 +2044,17 @@ export default function SoapEncounterPage() {
             invoice={invoice}
             orders={orders}
             disabled={locked}
+            clinicalRefreshSignal={clinicalRefreshTick}
+            remoteRefreshSignal={ordersRevision}
+            clientId={
+              encounter?.clientId ??
+              (clientIdParam ? Number(clientIdParam) : null)
+            }
+            patientId={patientId}
+            roster={roster}
+            practiceId={VISIT_WORKFLOW_PRACTICE_ID}
+            onClinicalRecorded={() => setClinicalRefreshTick((t) => t + 1)}
+            onChronicMedicationsMaybeChanged={refreshChronicMedications}
             rxLabel={{
               patientId,
               patientName,
@@ -1596,7 +2069,11 @@ export default function SoapEncounterPage() {
               setOrders(next);
               void refreshInvoice();
             }}
+            onInvoiceShouldRefresh={() => void refreshInvoice()}
+            onInventoryItemAdded={appendInventoryToTreatmentPlan}
+            onInventoryItemRemoved={removeInventoryFromTreatmentPlan}
             onOpenEuthanasiaPrepay={() => setShowEuthanasia(true)}
+            onRoomLoaderOrderIds={rememberRoomLoaderOrderIds}
             onOrderRemoved={(orderId) => {
               const removed = orders.find((o) => o.id === orderId);
               setOrders((prev) => prev.filter((o) => o.id !== orderId));
@@ -1605,35 +2082,10 @@ export default function SoapEncounterPage() {
                 removeInventoryFromTreatmentPlan(removed.name);
               }
             }}
-            followUpSlot={
-              encounter && (
-                <CheckoutFollowUpPrompt
-                  appointmentId={appointmentId}
-                  patientId={patientId}
-                  patientName={patientName}
-                  clientId={encounter.clientId}
-                  soapEncounterId={encounter.id}
-                  providerId={primaryProviderId}
-                  disposition={dispositionValue}
-                  forwardBookingEntryId={encounter.forwardBookingEntryId}
-                  disabled={locked}
-                  returnTo={soapPath}
-                  onSaved={(disposition) =>
-                    setEncounter((prev) =>
-                      prev
-                        ? {
-                            ...prev,
-                            forwardBookingDisposition: disposition as unknown as Record<
-                              string,
-                              unknown
-                            >,
-                          }
-                        : prev
-                    )
-                  }
-                />
-              )
-            }
+            // Payment and forward booking happen on the checkout screen, where the
+            // household pays once for every pet on the visit.
+            showPayment={false}
+            onCheckout={() => void goToCheckout()}
           />
         </aside>
       </div>

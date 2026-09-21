@@ -96,8 +96,47 @@
   color: var(--muted);
 }
 
+.pvms-owner-sees {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  font-size: 0.9rem;
+  line-height: 1.45;
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  border-radius: 9px;
+}
+
 .pvms-agenote {
   margin-top: 10px;
+}
+
+.pvms-card-block {
+  margin: 14px 0 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+}
+
+.pvms-card-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.pvms-card-box {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.pvms-form-error {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--error);
 }
 
 /* ------------------------------------------------------------------- plans */
@@ -106,6 +145,14 @@
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   gap: 10px;
+}
+
+.pvms-assign {
+  width: 100%;
+  min-width: 10rem;
+  max-width: 16rem;
+  font: inherit;
+  font-size: 0.82rem;
 }
 
 .pvms-plan {
@@ -154,9 +201,26 @@
   color: var(--accent-strong);
 }
 
+.pvms-plan.is-recommended {
+  position: relative;
+}
+
+.pvms-plan__badge {
+  align-self: flex-start;
+  margin-bottom: 2px;
+  padding: 1px 6px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #fff;
+  background: var(--accent);
+  border-radius: 4px;
+}
+
 .pvms-interval {
   display: inline-flex;
-  margin-top: 12px;
+  margin: 0 0 12px;
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -401,4 +465,37 @@
   to {
     transform: rotate(360deg);
   }
+}
+
+.pvms-lookback-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.pvms-invoice-list {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.pvms-invoice-row {
+  align-items: flex-start;
+}
+
+.pvms-override {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface) 92%, #fef3c7);
 }

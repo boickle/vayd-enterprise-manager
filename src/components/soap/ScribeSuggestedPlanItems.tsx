@@ -6,8 +6,11 @@ import {
   getCatalogLinePrice,
   type CatalogPricingItem,
 } from '../../utils/catalogItemPricing';
-import type { EncounterOrder, EncounterOrderKind } from '../../api/visitWorkflow';
+import { createOrder, type EncounterOrder, type EncounterOrderKind } from '../../api/visitWorkflow';
 import { ensureSharpsFeeOrder, isVaccineSearchItem } from '../../utils/visitSharpsFee';
+import { appendCheckoutPrepDrafts } from '../../api/visitWrapUp';
+import { appDeclineHow } from '../../utils/appDialog';
+import { offRecordDeclineNote } from '../../api/declinedTreatments';
 
 export type SuggestedPlanItem = {
   key: string;
@@ -44,8 +47,10 @@ type Props = {
     meta?: { isVaccine?: boolean; skipPlanNarrative?: boolean }
   ) => void;
   onInvoiceShouldRefresh: () => void;
-  /** Freeform text that isn't a catalog charge — append as a bullet on the chosen SOAP section. */
-  onAppendToSoapSection: (section: SoapNarrativeSection, text: string) => void;
+  /** @deprecated Checkout prep no longer writes SOAP bullets. Kept so existing callers compile. */
+  onAppendToSoapSection?: (section: SoapNarrativeSection, text: string) => void;
+  /** Unmatched rows left (after dismiss / match) — drives the Checkout prep tab badge. */
+  onPendingCountChange?: (count: number) => void;
 };
 
 function norm(s: string): string {
@@ -56,23 +61,60 @@ function norm(s: string): string {
 const RXED_BULLET = /^rx'?ed\s+/i;
 const VX_ADMINISTERED_BULLET = /^vx\s+administered:\s*/i;
 
-/**
- * A narrative bullet and an order are the same item when one name starts with the other:
- * `shortenForSearch` truncates at the first comma, so "Bravecto 10-22lb (3 month dose) ADD
- * REBATE FOR 2" has to still match the order's full "… FOR 2, 3, OR 4 DOSES".
- */
-function matchesExistingOrder(name: string, orderNames: string[]): boolean {
-  const candidate = norm(name)
+/** Route, form and packaging words that differ between how a doctor says an item and how the
+ * catalog spells it ("Lyme vaccine annual SQ" vs "crLyme Vaccine- Annual"). */
+const NOISE_TOKENS = new Set([
+  'sq',
+  'subq',
+  'sub',
+  'im',
+  'iv',
+  'sc',
+  'po',
+  'inj',
+  'injection',
+  'oral',
+  'dose',
+  'doses',
+  'add',
+  'rebate',
+  'for',
+  'and',
+  'the',
+  'with',
+  'per',
+  'each',
+]);
+
+function significantTokens(name: string): string[] {
+  return norm(name)
     .replace(RXED_BULLET, '')
     .replace(VX_ADMINISTERED_BULLET, '')
-    .replace(/\s+sq\.?$/i, '')
-    .trim();
-  if (!candidate) return false;
-  return orderNames.some(
-    (order) =>
-      order === candidate ||
-      (candidate.length >= 6 && (order.startsWith(candidate) || candidate.startsWith(order)))
-  );
+    .split(/[^a-z0-9]+/)
+    .filter((t) => t.length >= 3 && !NOISE_TOKENS.has(t));
+}
+
+/**
+ * A suggestion and an order are the same item when every meaningful word of the suggestion is
+ * present in the order name. Substring containment on each token handles the catalog's species
+ * prefixes — "lyme" has to match "crLyme" — which plain prefix comparison of the whole string
+ * missed, so "Lyme vaccine annual SQ" kept reappearing next to "crLyme Vaccine- Annual".
+ *
+ * Requiring *all* tokens keeps "Rabies vaccine annual" from collapsing onto "crLyme Vaccine-
+ * Annual" just because both are annual vaccines. Genuine paraphrases the transcript and catalog
+ * word completely differently ("Heartworm/tick-borne disease screening" vs "Heartworm / Tick Test
+ * (4dx)") are handled upstream instead, by telling the model what is already on the invoice.
+ */
+function matchesExistingOrder(name: string, orderNames: string[]): boolean {
+  const candidate = significantTokens(name);
+  if (!candidate.length) return false;
+  return orderNames.some((order) => {
+    const orderTokens = significantTokens(order);
+    if (!orderTokens.length) return false;
+    return candidate.every((t) =>
+      orderTokens.some((o) => o === t || (t.length >= 4 && o.includes(t)) || (o.length >= 4 && t.includes(o)))
+    );
+  });
 }
 
 const SECTION_KIND: { pattern: RegExp; kind: EncounterOrderKind }[] = [
@@ -140,13 +182,6 @@ const TYPE_LABEL: Record<string, string> = {
   inventory: 'Inventory',
 };
 
-const SOAP_ADD_TO: { section: SoapNarrativeSection; label: string }[] = [
-  { section: 'subjective', label: 'Subjective' },
-  { section: 'objective', label: 'Objective' },
-  { section: 'assessment', label: 'Assessment' },
-  { section: 'plan', label: 'Plan' },
-];
-
 function money(n: number): string {
   return `$${(Number(n) || 0).toFixed(2)}`;
 }
@@ -158,13 +193,10 @@ function displayPrice(item: SearchableItem): number {
 let extraRowSeq = 0;
 
 /**
- * Sits below the Plan text box in the AI Scribe Document view (docs/ai-scribe.md). Unlike the
- * generic search box in `PlanOrdersSection`, each row here is seeded with one specific thing the
- * AI heard mentioned (e.g. "Blood work", "Heartworm prevention") so the doctor just has to pick
- * the right catalog match rather than re-type it — resolving a row creates the exact same
- * priced, `accepted` order as a manual-mode search pick, so it shows up for checkout/invoice
- * immediately. "+ Add item" adds a blank row for anything the transcript didn't mention.
- * Freeform text that isn't a charge goes to a SOAP section via "Add to", not the invoice.
+ * Checkout prep: match transcript / Plan mentions to catalog charges. Not part of the signed
+ * SOAP — lives on its own tab after Plan. Resolving a row creates the same priced, accepted
+ * order as a manual search pick. "+ Add item" covers anything the transcript missed; freeform
+ * text that isn't a charge can be declined or parked as a callback / reminder draft.
  */
 export default function ScribeSuggestedPlanItems({
   encounterId,
@@ -177,7 +209,7 @@ export default function ScribeSuggestedPlanItems({
   practiceId,
   onOrderAdded,
   onInvoiceShouldRefresh,
-  onAppendToSoapSection,
+  onPendingCountChange,
 }: Props) {
   const [resolvedKeys, setResolvedKeys] = useState<Set<string>>(new Set());
   const [extraRows, setExtraRows] = useState<string[]>([]);
@@ -216,22 +248,27 @@ export default function ScribeSuggestedPlanItems({
     });
   }, [mergedSuggestions]);
 
+  const suggestedRows = mergedSuggestions.filter((s) => !resolvedKeys.has(s.key));
+
+  useEffect(() => {
+    onPendingCountChange?.(disabled ? 0 : suggestedRows.length);
+  }, [disabled, suggestedRows.length, onPendingCountChange]);
+
   if (disabled) return null;
 
-  const suggestedRows = mergedSuggestions.filter((s) => !resolvedKeys.has(s.key));
   const hasAnyRows = suggestedRows.length > 0 || extraRows.length > 0;
 
   return (
     <div className="soap-scribe-planitems">
       <div className="soap-scribe-planitems-head">
-        <span>Plan items for checkout</span>
+        <span>Match charges from today</span>
         {suggestedRows.length > 0 && (
-          <span className="soap-scribe-tag">{suggestedRows.length} from transcript</span>
+          <span className="soap-scribe-tag">{suggestedRows.length} open</span>
         )}
       </div>
       <p className="soap-scribe-planitems-hint">
-        Match a catalog item to charge at checkout. If it isn&apos;t a product/service, use Add to
-        and put a bullet on Subjective, Objective, Assessment, or Plan.
+        Optional checkout prep — not part of the signed medical record. Match a catalog item to
+        charge, or mark it Declined / Add Callback / Add Reminder (those last two wait until wrap-up).
       </p>
 
       {hasAnyRows && (
@@ -252,10 +289,7 @@ export default function ScribeSuggestedPlanItems({
                 onInvoiceShouldRefresh();
                 setResolvedKeys((prev) => new Set(prev).add(s.key));
               }}
-              onAppendToSoap={(section, text) => {
-                onAppendToSoapSection(section, text);
-                setResolvedKeys((prev) => new Set(prev).add(s.key));
-              }}
+              onResolved={() => setResolvedKeys((prev) => new Set(prev).add(s.key))}
               onDismiss={() => setResolvedKeys((prev) => new Set(prev).add(s.key))}
             />
           ))}
@@ -275,10 +309,7 @@ export default function ScribeSuggestedPlanItems({
                 onInvoiceShouldRefresh();
                 setExtraRows((prev) => prev.filter((k) => k !== key));
               }}
-              onAppendToSoap={(section, text) => {
-                onAppendToSoapSection(section, text);
-                setExtraRows((prev) => prev.filter((k) => k !== key));
-              }}
+              onResolved={() => setExtraRows((prev) => prev.filter((k) => k !== key))}
               onDismiss={() => setExtraRows((prev) => prev.filter((k) => k !== key))}
             />
           ))}
@@ -306,7 +337,7 @@ function PlanItemSearchRow({
   practiceId,
   existingOrders,
   onAdded,
-  onAppendToSoap,
+  onResolved,
   onDismiss,
 }: {
   initialQuery: string;
@@ -321,7 +352,7 @@ function PlanItemSearchRow({
     order: EncounterOrder,
     meta?: { isVaccine?: boolean; skipPlanNarrative?: boolean }
   ) => void;
-  onAppendToSoap: (section: SoapNarrativeSection, text: string) => void;
+  onResolved: () => void;
   onDismiss: () => void;
 }) {
   const [query, setQuery] = useState(initialQuery);
@@ -335,8 +366,8 @@ function PlanItemSearchRow({
 
   useEffect(() => {
     const q = query.trim();
-    if (q.length < 2) {
-      setResults([]);
+    if (!open || q.length < 2) {
+      if (!open) setResults([]);
       setSearchError(null);
       setSearching(false);
       return;
@@ -363,7 +394,7 @@ function PlanItemSearchRow({
       canceled = true;
       clearTimeout(handle);
     };
-  }, [query, practiceId, patientId, clientId]);
+  }, [open, query, practiceId, patientId, clientId]);
 
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
@@ -404,10 +435,68 @@ function PlanItemSearchRow({
     }
   };
 
-  const addToSection = (section: SoapNarrativeSection) => {
-    const text = query.trim();
-    if (!text || adding) return;
-    onAppendToSoap(section, text);
+  const label = query.trim() || initialQuery.trim();
+
+  const declineItem = async () => {
+    if (!label || adding) return;
+    const how = await appDeclineHow({
+      title: 'Decline this item?',
+      itemName: label,
+      message: '',
+      placeholder: 'Add a note',
+    });
+    if (!how) return;
+    setAdding(true);
+    try {
+      const order = await createOrder(encounterId, {
+        name: label,
+        kind: 'treatment',
+        state: 'declined',
+        qty: 1,
+        unitPrice: 0,
+        note: how.recordOnChart
+          ? how.note.trim() || undefined
+          : offRecordDeclineNote(how.note),
+      });
+      onAdded(order, { skipPlanNarrative: true });
+      onResolved();
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const addCallbackDraft = async () => {
+    if (!label || adding) return;
+    setAdding(true);
+    try {
+      await appendCheckoutPrepDrafts(encounterId, {
+        callback: {
+          key: `cb-${Date.now()}`,
+          title: label,
+          body: note,
+        },
+      });
+      onResolved();
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const addReminderDraft = async () => {
+    if (!label || adding) return;
+    setAdding(true);
+    try {
+      await appendCheckoutPrepDrafts(encounterId, {
+        extra: {
+          key: `rm-${Date.now()}`,
+          description: label,
+          reminderType: 'Wellness',
+        },
+      });
+      onResolved();
+    } finally {
+      setAdding(false);
+    }
   };
 
   return (
@@ -461,33 +550,34 @@ function PlanItemSearchRow({
                 <span className="soap-plan-result-price">{money(displayPrice(item))}</span>
               </button>
             ))}
-          <div
-            className="soap-plan-result soap-plan-result-add-to"
-            role="option"
-            aria-selected={false}
-          >
-            <div className="soap-plan-add-to-head">
-              <span className="soap-tag type-add-to">Add to</span>
-              <span className="soap-plan-result-name">
-                <strong>{query.trim()}</strong>
-              </span>
-            </div>
-            <div className="soap-plan-add-to-sections">
-              {SOAP_ADD_TO.map(({ section, label }) => (
-                <button
-                  key={section}
-                  type="button"
-                  className="soap-btn small ghost"
-                  disabled={adding || !query.trim()}
-                  onClick={() => addToSection(section)}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
         </div>
       )}
+      <div className="soap-plan-add-to-sections">
+        <button
+          type="button"
+          className="soap-btn small ghost"
+          disabled={adding || !label}
+          onClick={() => void declineItem()}
+        >
+          Declined
+        </button>
+        <button
+          type="button"
+          className="soap-btn small ghost"
+          disabled={adding || !label}
+          onClick={() => void addCallbackDraft()}
+        >
+          Add Callback
+        </button>
+        <button
+          type="button"
+          className="soap-btn small ghost"
+          disabled={adding || !label}
+          onClick={() => void addReminderDraft()}
+        >
+          Add Reminder
+        </button>
+      </div>
     </div>
   );
 }

@@ -170,6 +170,7 @@ export function CareOutreachPetDetailsButton({
                     error={error}
                     showAlerts
                     showHeader={false}
+                    onChanged={() => void loadSummary()}
                   />
                   {visibleOutreach.length > 0 ? (
                     <section className="care-outreach-pet-details-outreach" style={{ marginTop: 14 }}>

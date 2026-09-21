@@ -12,6 +12,10 @@ import PimsPatientDetailView from '../components/pims/PimsPatientDetailView';
 import AddPatientModal from '../components/pims/AddPatientModal';
 import { enrichPatientSearchRowsSex } from '../utils/enrichPatientSearchRowsSex';
 import { patientSexDisplayFromRecord } from '../utils/schedulerVisitDisplay';
+import {
+  patientActiveChip,
+  patientStatusChip,
+} from '../utils/patientStatusDisplay';
 import './PimsClientsPage.css';
 
 function pickStr(v: unknown): string | null {
@@ -70,16 +74,15 @@ function sexDisplay(row: PatientSearchRow): string {
   return patientSexDisplayFromRecord(row as Record<string, unknown>) ?? '—';
 }
 
-function patientListStatus(row: PatientSearchRow): { active: boolean; text: string } {
+function patientListStatus(row: PatientSearchRow): { active: boolean; text: string; status: string | null } {
   const r = row as Record<string, unknown>;
-  const st = (pickStr(r.status) ?? pickStr(r.patientStatus) ?? '').toLowerCase();
-  if (st.includes('euthan') || st.includes('deceas') || st.includes('died')) {
-    return { active: false, text: 'Inactive' };
-  }
-  if (r.isActive === false || r.active === false || st.includes('inactive')) {
-    return { active: false, text: 'Inactive' };
-  }
-  return { active: true, text: 'Active' };
+  const active = patientActiveChip(r);
+  const status = patientStatusChip(r);
+  return {
+    active: active.label === 'Active',
+    text: active.label,
+    status: status?.label ?? null,
+  };
 }
 
 export default function PimsPatientsPage() {
@@ -308,6 +311,9 @@ export default function PimsPatientsPage() {
                         }
                       />
                       {st.text}
+                      {st.status ? (
+                        <span className="pims-clients__status-extra"> · {st.status}</span>
+                      ) : null}
                     </span>
                   </td>
                   <td>

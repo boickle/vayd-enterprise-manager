@@ -28,12 +28,23 @@ import {
   type BundleItemInput,
   type GroupSelectionMode,
   type ItemCoverage,
+  type ItemProductionBasis,
   type MembershipAuditEntry,
   type MembershipItemType,
   type PropagationResult,
 } from '../../api/memberships';
 import { searchItems, type SearchableItem } from '../../api/roomLoader';
 import { getToken } from '../../api/http';
+import {
+  getPracticeSettings,
+  isOnlineStoreImplemented,
+  MEMBERSHIP_ASSIGN_FEE_TO_PROVIDER_KEY,
+  MEMBERSHIP_POST_VISIT_SIGNUP_WINDOW_HOURS_DEFAULT,
+  MEMBERSHIP_POST_VISIT_SIGNUP_WINDOW_HOURS_KEY,
+  membershipAssignFeeToProvider,
+  membershipPostVisitSignupWindowHours,
+  updatePracticeSettings,
+} from '../../api/practiceSettings';
 import { resolvePracticeIdFromToken } from '../../utils/practiceIdFromToken';
 import { appAlert, appConfirm } from '../../utils/appDialog';
 import './SettingsMemberships.css';
@@ -61,6 +72,18 @@ const COVERAGE_LABELS: Record<ItemCoverage, string> = {
 
 const COVERAGE_ORDER: ItemCoverage[] = ['included', 'copay', 'percent_off'];
 
+const PRODUCTION_BASIS_ORDER: ItemProductionBasis[] = [
+  'full_price',
+  'membership_price',
+  'custom',
+];
+
+const PRODUCTION_BASIS_LABELS: Record<ItemProductionBasis, string> = {
+  full_price: 'Based on full item price',
+  membership_price: 'Based on membership price',
+  custom: 'Custom',
+};
+
 /* ------------------------------------------------------------------ drafts */
 
 type ItemDraft = {
@@ -75,6 +98,8 @@ type ItemDraft = {
   coverage: ItemCoverage;
   copayPrice: string;
   percentOff: string;
+  productionBasis: ItemProductionBasis;
+  productionOverride: string;
   note: string;
 };
 
@@ -94,21 +119,16 @@ type PlanDraft = {
   description: string;
   marketingSummary: string;
   species: string;
-  tier: string;
   minAgeYears: string;
   maxAgeYears: string;
   termMonths: string;
   renewalSuccessorPackageId: string;
   ageLimitSuccessorPackageId: string;
-  priceMonthly: string;
-  priceAnnual: string;
+  price: string;
   outOfPlanDiscount: string;
+  onlineStoreDiscount: string;
   renewalMonths: string;
-  isAutoRenew: boolean;
   isActive: boolean;
-  stripeProductId: string;
-  stripeMonthlyPriceId: string;
-  stripeAnnualPriceId: string;
   portalSlug: string;
   sortOrder: string;
 };
@@ -140,6 +160,28 @@ function intOr(value: string, fallback: number): number {
   return Math.max(0, Math.round(parsed));
 }
 
+/** Matches the API sentinel for "every visit gets member pricing". */
+const UNLIMITED_ALLOWANCE = -1;
+const UNLIMITED_TOKEN = 'unlimited';
+
+function isUnlimitedDraft(value: string | null | undefined): boolean {
+  return (value ?? '').trim().toLowerCase() === UNLIMITED_TOKEN;
+}
+
+function allowanceDraftText(value: number | null | undefined): string {
+  if (value != null && Number.isFinite(Number(value)) && Number(value) < 0) {
+    return UNLIMITED_TOKEN;
+  }
+  return numText(value) || '1';
+}
+
+function allowanceFromDraft(value: string, fallback = 1): number {
+  if (isUnlimitedDraft(value)) return UNLIMITED_ALLOWANCE;
+  const parsed = numOrNull(value);
+  if (parsed == null || parsed < 1) return fallback;
+  return Math.round(parsed);
+}
+
 function idOrNull(value: string): number | null {
   const trimmed = value.trim();
   if (trimmed === '') return null;
@@ -159,12 +201,34 @@ function yearsToMonths(years: string): number | null {
   return Math.round(parsed * 12);
 }
 
+function planCadence(plan: {
+  name?: string;
+  priceMonthly?: number | null;
+  priceAnnual?: number | null;
+}): 'monthly' | 'annual' | null {
+  if (/\bmonthly\b/i.test(plan.name ?? '')) return 'monthly';
+  if (/\b(annual|yearly)\b/i.test(plan.name ?? '')) return 'annual';
+  if (plan.priceMonthly != null && plan.priceAnnual == null) return 'monthly';
+  if (plan.priceAnnual != null && plan.priceMonthly == null) return 'annual';
+  return null;
+}
+
 function planCadenceLabel(plan: Bundle): string {
-  if (plan.priceMonthly != null) return 'Monthly';
-  if (plan.priceAnnual != null) return 'Annual';
-  if (/\bmonthly\b/i.test(plan.name)) return 'Monthly';
-  if (/\bannual\b/i.test(plan.name)) return 'Annual';
+  const cadence = planCadence(plan);
+  if (cadence === 'monthly') return 'Monthly';
+  if (cadence === 'annual') return 'Annual';
   return '';
+}
+
+function listedAmount(plan: Bundle): number | null {
+  const cadence = planCadence(plan);
+  if (cadence === 'monthly') {
+    if (plan.priceMonthly != null) return plan.priceMonthly;
+    if (plan.price != null) return plan.price / 12;
+    return null;
+  }
+  if (cadence === 'annual') return plan.priceAnnual ?? plan.price ?? null;
+  return plan.priceMonthly ?? plan.priceAnnual ?? plan.price ?? null;
 }
 
 function speciesLabel(species: string | null | undefined): string {
@@ -186,21 +250,16 @@ function emptyPlanDraft(): PlanDraft {
     description: '',
     marketingSummary: '',
     species: '',
-    tier: '',
     minAgeYears: '',
     maxAgeYears: '',
     termMonths: '12',
     renewalSuccessorPackageId: '',
     ageLimitSuccessorPackageId: '',
-    priceMonthly: '',
-    priceAnnual: '',
+    price: '',
     outOfPlanDiscount: '',
+    onlineStoreDiscount: '',
     renewalMonths: '12',
-    isAutoRenew: true,
     isActive: true,
-    stripeProductId: '',
-    stripeMonthlyPriceId: '',
-    stripeAnnualPriceId: '',
     portalSlug: '',
     sortOrder: '',
   };
@@ -213,27 +272,30 @@ function planDraftFrom(bundle: Bundle): PlanDraft {
     description: text(bundle.description),
     marketingSummary: text(bundle.marketingSummary),
     species: text(bundle.species),
-    tier: text(bundle.tier),
     minAgeYears: monthsToYearsText(bundle.minAgeMonths),
     maxAgeYears: monthsToYearsText(bundle.maxAgeMonths),
     termMonths: numText(bundle.termMonths) || '12',
     renewalSuccessorPackageId: numText(bundle.renewalSuccessorPackageId),
     ageLimitSuccessorPackageId: numText(bundle.ageLimitSuccessorPackageId),
-    priceMonthly: numText(bundle.priceMonthly),
-    priceAnnual: numText(bundle.priceAnnual),
+    price: numText(listedAmount(bundle)),
     outOfPlanDiscount: numText(bundle.outOfPlanDiscount),
-    renewalMonths: numText(bundle.renewalMonths),
-    isAutoRenew: bundle.isAutoRenew === true,
+    onlineStoreDiscount: numText(bundle.onlineStoreDiscount),
+    renewalMonths: numText(bundle.renewalMonths) || '12',
     isActive: bundle.isActive !== false,
-    stripeProductId: text(bundle.stripeProductId),
-    stripeMonthlyPriceId: text(bundle.stripeMonthlyPriceId),
-    stripeAnnualPriceId: text(bundle.stripeAnnualPriceId),
     portalSlug: text(bundle.portalSlug),
     sortOrder: numText(bundle.sortOrder),
   };
 }
 
 function itemDraftFrom(item: BundleItem): ItemDraft {
+  const basis =
+    item.productionBasis === 'membership_price' ||
+    item.productionBasis === 'custom' ||
+    item.productionBasis === 'full_price'
+      ? item.productionBasis
+      : item.productionOverride != null
+        ? 'custom'
+        : 'full_price';
   return {
     key: nextKey('item'),
     id: item.id,
@@ -242,10 +304,12 @@ function itemDraftFrom(item: BundleItem): ItemDraft {
     name: item.name,
     code: item.code,
     catalogPrice: item.catalogPrice,
-    quantity: numText(item.quantity) || '1',
+    quantity: allowanceDraftText(item.quantity),
     coverage: item.coverage,
     copayPrice: numText(item.copayPrice),
     percentOff: numText(item.percentOff),
+    productionBasis: basis,
+    productionOverride: numText(item.productionOverride),
     note: text(item.note),
   };
 }
@@ -257,7 +321,7 @@ function groupDraftFrom(group: BundleGroup): GroupDraft {
     name: group.name,
     description: text(group.description),
     selectionMode: group.selectionMode,
-    allowedQuantity: numText(group.allowedQuantity) || '1',
+    allowedQuantity: allowanceDraftText(group.allowedQuantity),
     items: [...group.items].sort((a, b) => a.sortOrder - b.sortOrder).map(itemDraftFrom),
   };
 }
@@ -312,23 +376,26 @@ function groupDraftsFrom(bundle: Bundle): GroupDraft[] {
 }
 
 function planFieldsFrom(draft: PlanDraft): BundleFields & { name: string } {
+  const cadence = planCadence(draft);
+  const amount = numOrNull(draft.price);
   return {
     name: draft.name.trim(),
     code: draft.code.trim() || null,
     description: draft.description.trim() || null,
     marketingSummary: draft.marketingSummary.trim() || null,
     species: draft.species.trim() || null,
-    tier: draft.tier.trim() || null,
+    tier: null,
     minAgeMonths: yearsToMonths(draft.minAgeYears),
     maxAgeMonths: yearsToMonths(draft.maxAgeYears),
     termMonths: numOrNull(draft.termMonths) ?? 12,
     renewalSuccessorPackageId: idOrNull(draft.renewalSuccessorPackageId),
     ageLimitSuccessorPackageId: idOrNull(draft.ageLimitSuccessorPackageId),
-    priceMonthly: numOrNull(draft.priceMonthly),
-    priceAnnual: numOrNull(draft.priceAnnual),
+    priceMonthly: cadence === 'monthly' ? amount : null,
+    priceAnnual: cadence === 'annual' ? amount : null,
     outOfPlanDiscount: numOrNull(draft.outOfPlanDiscount),
-    renewalMonths: numOrNull(draft.renewalMonths),
-    isAutoRenew: draft.isAutoRenew,
+    onlineStoreDiscount: numOrNull(draft.onlineStoreDiscount),
+    renewalMonths: numOrNull(draft.renewalMonths) ?? 12,
+    isAutoRenew: true,
     isActive: draft.isActive,
     portalSlug: draft.portalSlug.trim() || null,
     ...(draft.sortOrder.trim() === '' ? {} : { sortOrder: intOr(draft.sortOrder, 0) }),
@@ -360,17 +427,21 @@ function groupInputsFrom(groups: GroupDraft[]): BundleGroupInput[] {
     name: group.selectionMode === 'choice' ? autoGroupName(group) : group.name.trim() || 'Included',
     description: group.description.trim() || null,
     selectionMode: group.selectionMode,
-    allowedQuantity: group.selectionMode === 'choice' ? intOr(group.allowedQuantity, 1) : 1,
+    allowedQuantity:
+      group.selectionMode === 'choice' ? allowanceFromDraft(group.allowedQuantity, 1) : 1,
     sortOrder: groupIndex,
     items: group.items.map(
       (item, itemIndex): BundleItemInput => ({
         ...(item.id == null ? {} : { id: item.id }),
         itemType: item.itemType,
         catalogItemId: item.catalogItemId,
-        quantity: group.selectionMode === 'choice' ? 1 : intOr(item.quantity, 1),
+        quantity: group.selectionMode === 'choice' ? 1 : allowanceFromDraft(item.quantity, 1),
         coverage: item.coverage,
         copayPrice: item.coverage === 'copay' ? numOrNull(item.copayPrice) : null,
         percentOff: item.coverage === 'percent_off' ? numOrNull(item.percentOff) : null,
+        productionBasis: item.productionBasis,
+        productionOverride:
+          item.productionBasis === 'custom' ? numOrNull(item.productionOverride) : null,
         sortOrder: itemIndex,
         note: item.note.trim() || null,
       })
@@ -410,12 +481,23 @@ function validate(
     if (group.selectionMode === 'choice' && group.items.length < 2) {
       return `${label} needs another option so the member can pick between them.`;
     }
-    if (group.selectionMode === 'choice' && intOr(group.allowedQuantity, 0) < 1) {
-      return `${label} needs an allowance of at least 1.`;
+    if (
+      group.selectionMode === 'choice' &&
+      !isUnlimitedDraft(group.allowedQuantity) &&
+      allowanceFromDraft(group.allowedQuantity, 0) < 1
+    ) {
+      return `${label} needs an allowance of at least 1, or Unlimited.`;
     }
     for (const item of group.items) {
       if (!Number.isFinite(item.catalogItemId) || item.catalogItemId <= 0) {
         return `${label} has a line with no catalog item picked.`;
+      }
+      if (
+        group.selectionMode !== 'choice' &&
+        !isUnlimitedDraft(item.quantity) &&
+        allowanceFromDraft(item.quantity, 0) < 1
+      ) {
+        return `${item.name} needs an allowance of at least 1, or Unlimited.`;
       }
       if (item.coverage === 'copay' && numOrNull(item.copayPrice) == null) {
         return `${item.name} needs a copay amount.`;
@@ -425,6 +507,9 @@ function validate(
         if (pct == null || pct <= 0 || pct > 100) {
           return `${item.name} needs a percent off between 1 and 100.`;
         }
+      }
+      if (item.productionBasis === 'custom' && numOrNull(item.productionOverride) == null) {
+        return `${item.name} needs a custom doctor production amount.`;
       }
     }
   }
@@ -440,6 +525,141 @@ function validate(
     }
   }
   return null;
+}
+
+type BenefitSnap = {
+  id: number | null;
+  name: string;
+  itemType: MembershipItemType;
+  catalogItemId: number;
+  quantity: number;
+  coverage: ItemCoverage;
+  copayPrice: number | null;
+  percentOff: number | null;
+};
+
+function snapQuantityLabel(quantity: number): string {
+  return quantity === UNLIMITED_ALLOWANCE ? 'unlimited' : `×${quantity}`;
+}
+
+function snapCoverageLabel(snap: BenefitSnap): string {
+  if (snap.coverage === 'percent_off') return `${snap.percentOff ?? '?'}% off`;
+  if (snap.coverage === 'copay') return `copay ${snap.copayPrice ?? '?'}`;
+  return 'included';
+}
+
+function formatBenefitSnap(snap: BenefitSnap): string {
+  return `• ${snap.name} — ${snapCoverageLabel(snap)}, ${snapQuantityLabel(snap.quantity)}`;
+}
+
+function snapsFromGroups(groups: GroupDraft[]): BenefitSnap[] {
+  return groups.flatMap((group) =>
+    group.items.map((item) => ({
+      id: item.id ?? null,
+      name: item.name,
+      itemType: item.itemType,
+      catalogItemId: item.catalogItemId,
+      quantity:
+        group.selectionMode === 'choice' ? 1 : allowanceFromDraft(item.quantity, 1),
+      coverage: item.coverage,
+      copayPrice: item.coverage === 'copay' ? numOrNull(item.copayPrice) : null,
+      percentOff: item.coverage === 'percent_off' ? numOrNull(item.percentOff) : null,
+    })),
+  );
+}
+
+function snapsFromBundle(bundle: Bundle): BenefitSnap[] {
+  return (bundle.groups ?? []).flatMap((group) =>
+    group.items.map((item) => ({
+      id: item.id,
+      name: item.name,
+      itemType: item.itemType,
+      catalogItemId: item.catalogItemId,
+      quantity: group.selectionMode === 'choice' ? 1 : item.quantity,
+      coverage: item.coverage,
+      copayPrice: item.coverage === 'copay' ? item.copayPrice : null,
+      percentOff: item.coverage === 'percent_off' ? item.percentOff : null,
+    })),
+  );
+}
+
+function sameBenefitLine(a: BenefitSnap, b: BenefitSnap): boolean {
+  return (
+    a.itemType === b.itemType &&
+    a.catalogItemId === b.catalogItemId &&
+    a.quantity === b.quantity &&
+    a.coverage === b.coverage &&
+    a.copayPrice === b.copayPrice &&
+    a.percentOff === b.percentOff
+  );
+}
+
+function benefitFieldsChanged(a: BenefitSnap, b: BenefitSnap): boolean {
+  return (
+    a.quantity !== b.quantity ||
+    a.coverage !== b.coverage ||
+    a.copayPrice !== b.copayPrice ||
+    a.percentOff !== b.percentOff
+  );
+}
+
+function diffBenefits(baseline: BenefitSnap[], current: BenefitSnap[]) {
+  const baseById = new Map(
+    baseline.filter((row) => row.id != null).map((row) => [row.id as number, row]),
+  );
+  const added: BenefitSnap[] = [];
+  const updated: BenefitSnap[] = [];
+  for (const row of current) {
+    if (row.id == null || !baseById.has(row.id)) {
+      added.push(row);
+      continue;
+    }
+    if (benefitFieldsChanged(baseById.get(row.id)!, row)) updated.push(row);
+  }
+  const currentIds = new Set(current.map((row) => row.id).filter((id): id is number => id != null));
+  const removed = baseline.filter((row) => row.id != null && !currentIds.has(row.id));
+  return { added, updated, removed };
+}
+
+function baselineStorageKey(planId: number): string {
+  return `vayd.membershipApplyBaseline.${planId}`;
+}
+
+function readStoredBaseline(planId: number): BenefitSnap[] | null {
+  try {
+    const raw = sessionStorage.getItem(baselineStorageKey(planId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as BenefitSnap[];
+    return Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredBaseline(planId: number, snaps: BenefitSnap[]): void {
+  try {
+    sessionStorage.setItem(baselineStorageKey(planId), JSON.stringify(snaps));
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
+
+function resolveAddedIds(pending: BenefitSnap[], saved: BenefitSnap[], baselineIds: Set<number>) {
+  const unused = saved.filter((row) => row.id != null && !baselineIds.has(row.id));
+  const ids: number[] = [];
+  for (const row of pending) {
+    if (row.id != null && !baselineIds.has(row.id)) {
+      ids.push(row.id);
+      continue;
+    }
+    const match = unused.findIndex((candidate) => sameBenefitLine(row, candidate));
+    if (match >= 0) {
+      const id = unused[match].id;
+      unused.splice(match, 1);
+      if (id != null) ids.push(id);
+    }
+  }
+  return [...new Set(ids)];
 }
 
 function propagationSummary(result: PropagationResult, planName: string): string {
@@ -491,6 +711,8 @@ function catalogPickFrom(row: SearchableItem): ItemDraft | null {
     coverage: 'included',
     copayPrice: '',
     percentOff: '',
+    productionBasis: 'full_price',
+    productionOverride: '',
     note: '',
   };
 }
@@ -625,6 +847,7 @@ export default function SettingsMemberships({ onMessage }: Props) {
 
   const [planDraft, setPlanDraft] = useState<PlanDraft>(emptyPlanDraft());
   const [groups, setGroups] = useState<GroupDraft[]>([]);
+  const [baselineSnaps, setBaselineSnaps] = useState<BenefitSnap[]>([]);
   const [pickerGroupKey, setPickerGroupKey] = useState<string | null>(null);
 
   useEffect(() => {
@@ -634,15 +857,87 @@ export default function SettingsMemberships({ onMessage }: Props) {
     });
   }, [groups]);
 
-  const [applyToExisting, setApplyToExisting] = useState(false);
   const [removeDropped, setRemoveDropped] = useState(false);
-  const [priceApplyTo, setPriceApplyTo] = useState<'future' | 'current'>('future');
   const [saving, setSaving] = useState(false);
 
   const [auditOpen, setAuditOpen] = useState(false);
   const [audit, setAudit] = useState<MembershipAuditEntry[]>([]);
   const [auditLoading, setAuditLoading] = useState(false);
   const [auditError, setAuditError] = useState<string | null>(null);
+
+  const [assignFeeToProvider, setAssignFeeToProvider] = useState(false);
+  const [postVisitWindowHours, setPostVisitWindowHours] = useState(
+    String(MEMBERSHIP_POST_VISIT_SIGNUP_WINDOW_HOURS_DEFAULT),
+  );
+  const [onlineStoreEnabled, setOnlineStoreEnabled] = useState(false);
+  const [feeSettingLoading, setFeeSettingLoading] = useState(true);
+  const [feeSettingSaving, setFeeSettingSaving] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setFeeSettingLoading(true);
+    getPracticeSettings(PRACTICE_ID)
+      .then((settings) => {
+        if (!cancelled) {
+          setAssignFeeToProvider(membershipAssignFeeToProvider(settings));
+          setPostVisitWindowHours(
+            String(membershipPostVisitSignupWindowHours(settings)),
+          );
+          setOnlineStoreEnabled(isOnlineStoreImplemented(settings));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setAssignFeeToProvider(false);
+      })
+      .finally(() => {
+        if (!cancelled) setFeeSettingLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function saveFeeProviderSetting(next: boolean) {
+    setAssignFeeToProvider(next);
+    setFeeSettingSaving(true);
+    try {
+      await updatePracticeSettings(PRACTICE_ID, {
+        [MEMBERSHIP_ASSIGN_FEE_TO_PROVIDER_KEY]: next ? 'true' : 'false',
+      });
+      onMessage?.(
+        next
+          ? 'Membership fees will be assigned to a provider’s VSD.'
+          : 'Membership fees will go to Not Specified (no provider).',
+        'success',
+      );
+    } catch (e) {
+      setAssignFeeToProvider(!next);
+      onMessage?.(extractErr(e), 'error');
+    } finally {
+      setFeeSettingSaving(false);
+    }
+  }
+
+  async function savePostVisitWindowHours() {
+    const hours = membershipPostVisitSignupWindowHours({
+      [MEMBERSHIP_POST_VISIT_SIGNUP_WINDOW_HOURS_KEY]: postVisitWindowHours,
+    });
+    setPostVisitWindowHours(String(hours));
+    setFeeSettingSaving(true);
+    try {
+      await updatePracticeSettings(PRACTICE_ID, {
+        [MEMBERSHIP_POST_VISIT_SIGNUP_WINDOW_HOURS_KEY]: String(hours),
+      });
+      onMessage?.(
+        `Post-visit signup window set to ${hours} hour${hours === 1 ? '' : 's'}.`,
+        'success',
+      );
+    } catch (e) {
+      onMessage?.(extractErr(e), 'error');
+    } finally {
+      setFeeSettingSaving(false);
+    }
+  }
 
   const loadAudit = useCallback(async (id: number) => {
     setAuditLoading(true);
@@ -682,15 +977,17 @@ export default function SettingsMemberships({ onMessage }: Props) {
     setDetailLoading(true);
     setDetailError(null);
     setAuditOpen(false);
-    setApplyToExisting(false);
     setRemoveDropped(false);
-    setPriceApplyTo('future');
     void getBundle(selectedId)
       .then((bundle) => {
         if (cancelled) return;
         setDetail(bundle);
         setPlanDraft(planDraftFrom(bundle));
         setGroups(groupDraftsFrom(bundle));
+        const snaps = snapsFromBundle(bundle);
+        const stored = readStoredBaseline(bundle.id);
+        setBaselineSnaps(stored ?? snaps);
+        if (!stored) writeStoredBaseline(bundle.id, snaps);
       })
       .catch((e) => {
         if (cancelled) return;
@@ -705,11 +1002,19 @@ export default function SettingsMemberships({ onMessage }: Props) {
     };
   }, [selectedId]);
 
+  useEffect(() => {
+    if (!detail || baselineSnaps.length > 0) return;
+    const stored = readStoredBaseline(detail.id);
+    const snaps = stored ?? snapsFromBundle(detail);
+    setBaselineSnaps(snaps);
+    if (!stored) writeStoredBaseline(detail.id, snaps);
+  }, [detail, baselineSnaps.length]);
+
   const visiblePlans = useMemo(() => {
     const q = search.trim().toLowerCase();
     const rows = q
       ? plans.filter((plan) =>
-          [plan.name, plan.code, plan.species, plan.tier, plan.description]
+          [plan.name, plan.code, plan.species, plan.description]
             .filter(Boolean)
             .some((value) => String(value).toLowerCase().includes(q))
         )
@@ -735,10 +1040,9 @@ export default function SettingsMemberships({ onMessage }: Props) {
     setDetailError(null);
     setPlanDraft(emptyPlanDraft());
     setGroups([]);
+    setBaselineSnaps([]);
     setPickerGroupKey(null);
-    setApplyToExisting(false);
     setRemoveDropped(false);
-    setPriceApplyTo('future');
     setAuditOpen(false);
   }
 
@@ -889,21 +1193,56 @@ export default function SettingsMemberships({ onMessage }: Props) {
   }
 
   function pickItem(groupKey: string, item: ItemDraft) {
-    setGroups((cur) =>
-      cur.map((group) => {
-        if (group.key !== groupKey) return group;
-        const items = [...group.items, item];
-        return {
-          ...group,
-          items,
-          name:
-            group.selectionMode === 'choice'
-              ? autoGroupName({ ...group, items })
-              : item.name,
-        };
-      })
-    );
-    setPickerGroupKey(null);
+    void (async () => {
+      const existing = groups.flatMap((group) =>
+        group.items
+          .filter(
+            (row) =>
+              row.itemType === item.itemType && row.catalogItemId === item.catalogItemId,
+          )
+          .map((row) => {
+            const coverage =
+              row.coverage === 'percent_off'
+                ? `${row.percentOff || '?'}% off`
+                : row.coverage === 'copay'
+                  ? `copay ${row.copayPrice || '?'}`
+                  : 'included';
+            const qty = isUnlimitedDraft(row.quantity)
+              ? 'unlimited'
+              : `×${allowanceFromDraft(row.quantity, 1)}`;
+            return `• ${row.name} — ${coverage}, ${qty}`;
+          }),
+      );
+      if (existing.length > 0) {
+        const ok = await appConfirm({
+          title: 'Already on this plan',
+          message:
+            `${item.name} is already on this plan:\n\n${existing.join('\n')}\n\n` +
+            'Add another benefit line anyway? Use this when the first is fully included and later visits get a different discount (for example 50% off).',
+          confirmLabel: 'Add another line',
+          cancelLabel: 'Cancel',
+        });
+        if (!ok) {
+          setPickerGroupKey(null);
+          return;
+        }
+      }
+      setGroups((cur) =>
+        cur.map((group) => {
+          if (group.key !== groupKey) return group;
+          const items = [...group.items, item];
+          return {
+            ...group,
+            items,
+            name:
+              group.selectionMode === 'choice'
+                ? autoGroupName({ ...group, items })
+                : item.name,
+          };
+        }),
+      );
+      setPickerGroupKey(null);
+    })();
   }
 
   function removeItem(groupKey: string, itemKey: string) {
@@ -967,43 +1306,13 @@ export default function SettingsMemberships({ onMessage }: Props) {
 
     if (!detail) return;
 
-    const pricesChanged =
-      numOrNull(planDraft.priceMonthly) !== (detail.priceMonthly ?? null) ||
-      numOrNull(planDraft.priceAnnual) !== (detail.priceAnnual ?? null);
-
-    if (applyToExisting) {
-      const members = detail.activeMemberCount;
-      const ok = await appConfirm({
-        title: `Apply this to all current ${detail.name} memberships?`,
-        message:
-          `${members} patient${members === 1 ? ' is' : 's are'} on ${detail.name} right now. ` +
-          'Saving will push the plan onto every one of them.' +
-          (removeDropped
-            ? ` Because "remove benefits that are no longer on the plan" is on, benefits you took off the plan will also be taken away from those ${members} patient${members === 1 ? '' : 's'}. This cannot be undone.`
-            : ' Benefits you removed from the plan stay on those patients; only additions and changes are pushed.'),
-        confirmLabel: `Save and apply to ${members} membership${members === 1 ? '' : 's'}`,
-        danger: removeDropped,
-      });
-      if (!ok) return;
-    }
-
     setSaving(true);
     try {
       const saved = await updateBundle(detail.id, fields, {
         groups: groupInputs,
-        ...(applyToExisting
-          ? { applyToExistingMemberships: true, removeBenefitsDroppedFromPlan: removeDropped }
-          : {}),
-        ...(pricesChanged ? { priceApplyTo } : {}),
       });
       absorbSaved(saved);
-      const propagation = saved.propagation;
-      onMessage?.(
-        propagation
-          ? `Saved ${saved.name}. ${propagationSummary(propagation, saved.name)}`
-          : `Saved ${saved.name}.`,
-        'success'
-      );
+      onMessage?.(`Saved ${saved.name}.`, 'success');
       if (auditOpen) void loadAudit(saved.id);
     } catch (e) {
       onMessage?.(extractErr(e), 'error');
@@ -1012,28 +1321,75 @@ export default function SettingsMemberships({ onMessage }: Props) {
     }
   }
 
-  async function applyOnly() {
+  async function applyBenefitsToExisting() {
     if (!detail) return;
     const members = detail.activeMemberCount;
+    if (members <= 0) {
+      onMessage?.('No current members on this plan to update.', 'error');
+      return;
+    }
+    const problem = validate(planDraft, groups, detail.id);
+    if (problem) {
+      onMessage?.(problem, 'error');
+      return;
+    }
+    const pending = diffBenefits(baselineSnaps, snapsFromGroups(groups));
+    const removals = removeDropped ? pending.removed : [];
+    if (pending.added.length === 0 && pending.updated.length === 0 && removals.length === 0) {
+      onMessage?.(
+        'Nothing to apply. This only pushes benefits you changed since opening this plan — not the rest of the plan.',
+        'error',
+      );
+      return;
+    }
+    const sections: string[] = [
+      `This only applies the ${pending.added.length + pending.updated.length + removals.length} change${pending.added.length + pending.updated.length + removals.length === 1 ? '' : 's'} you made since opening this plan. Other benefits already on the plan are left alone.`,
+    ];
+    if (pending.added.length) {
+      sections.push(`Add:\n${pending.added.map(formatBenefitSnap).join('\n')}`);
+    }
+    if (pending.updated.length) {
+      sections.push(`Update:\n${pending.updated.map(formatBenefitSnap).join('\n')}`);
+    }
+    if (removals.length) {
+      sections.push(`Take away:\n${removals.map(formatBenefitSnap).join('\n')}`);
+    }
     const ok = await appConfirm({
-      title: `Apply ${detail.name} to all current memberships?`,
-      message:
-        `${members} patient${members === 1 ? ' is' : 's are'} on ${detail.name} right now. ` +
-        'The saved plan will be pushed onto every one of them. Unsaved edits on this screen are not included.' +
-        (removeDropped
-          ? ' Benefits that are no longer on the plan will also be taken away from those patients. This cannot be undone.'
-          : ''),
-      confirmLabel: `Apply to ${members} membership${members === 1 ? '' : 's'}`,
-      danger: removeDropped,
+      title: `Apply these changes to current ${detail.name} members?`,
+      message: `${members} patient${members === 1 ? ' is' : 's are'} on ${detail.name} right now.\n\n${sections.join('\n\n')}`,
+      confirmLabel: `Apply ${pending.added.length + pending.updated.length + removals.length} change${pending.added.length + pending.updated.length + removals.length === 1 ? '' : 's'} to ${members} membership${members === 1 ? '' : 's'}`,
+      danger: removals.length > 0,
     });
     if (!ok) return;
+
     setSaving(true);
     try {
-      const result = await applyBundleToExistingMemberships(detail.id, {
-        removeBenefitsDroppedFromPlan: removeDropped,
+      const saved = await updateBundle(detail.id, planFieldsFrom(planDraft), {
+        groups: groupInputsFrom(groups),
       });
-      onMessage?.(propagationSummary(result, detail.name), 'success');
-      if (auditOpen) void loadAudit(detail.id);
+      absorbSaved(saved);
+      const savedSnaps = snapsFromBundle(saved);
+      const baselineIds = new Set(
+        baselineSnaps.map((row) => row.id).filter((id): id is number => id != null),
+      );
+      const packageItemIds = [
+        ...resolveAddedIds(pending.added, savedSnaps, baselineIds),
+        ...pending.updated.map((row) => row.id).filter((id): id is number => id != null),
+      ];
+      const result = await applyBundleToExistingMemberships(saved.id, {
+        removeBenefitsDroppedFromPlan: removals.length > 0,
+        packageItemIds,
+        removePackageItemIds: removals
+          .map((row) => row.id)
+          .filter((id): id is number => id != null),
+      });
+      setBaselineSnaps(savedSnaps);
+      writeStoredBaseline(saved.id, savedSnaps);
+      onMessage?.(
+        `Saved ${saved.name}. ${propagationSummary(result, saved.name)}`,
+        'success',
+      );
+      if (auditOpen) void loadAudit(saved.id);
     } catch (e) {
       onMessage?.(extractErr(e), 'error');
     } finally {
@@ -1047,7 +1403,7 @@ export default function SettingsMemberships({ onMessage }: Props) {
     const ok = await appConfirm({
       title: `Archive ${detail.name}?`,
       message:
-        'Archiving takes the plan off the list staff and the portal can enrol into. ' +
+        'Archiving takes the plan off the list staff and the portal can enroll into. ' +
         (members > 0
           ? `The ${members} patient${members === 1 ? '' : 's'} already on it keep their benefits.`
           : 'No one is enrolled on it right now.'),
@@ -1140,18 +1496,41 @@ export default function SettingsMemberships({ onMessage }: Props) {
             {isChoice ? null : (
               <label className="settings-label memberships-item__qty">
                 Allowance
-                <input
-                  className="settings-input"
-                  type="number"
-                  min={1}
-                  step={1}
-                  value={item.quantity}
+                <select
+                  className="settings-select"
+                  value={isUnlimitedDraft(item.quantity) ? UNLIMITED_TOKEN : 'limited'}
                   onChange={(e) =>
                     updateItem(group.key, item.key, {
-                      quantity: e.target.value,
+                      quantity:
+                        e.target.value === UNLIMITED_TOKEN
+                          ? UNLIMITED_TOKEN
+                          : item.quantity === UNLIMITED_TOKEN
+                            ? '1'
+                            : item.quantity || '1',
                     })
                   }
-                />
+                >
+                  <option value="limited">Limited</option>
+                  <option value={UNLIMITED_TOKEN}>Unlimited</option>
+                </select>
+                {isUnlimitedDraft(item.quantity) ? (
+                  <span className="settings-muted memberships-item__qty-hint">
+                    Every visit gets member pricing
+                  </span>
+                ) : (
+                  <input
+                    className="settings-input"
+                    type="number"
+                    min={1}
+                    step={1}
+                    value={item.quantity}
+                    onChange={(e) =>
+                      updateItem(group.key, item.key, {
+                        quantity: e.target.value,
+                      })
+                    }
+                  />
+                )}
               </label>
             )}
             <label className="settings-label memberships-item__coverage">
@@ -1202,6 +1581,41 @@ export default function SettingsMemberships({ onMessage }: Props) {
                   onChange={(e) =>
                     updateItem(group.key, item.key, {
                       percentOff: e.target.value,
+                    })
+                  }
+                />
+              </label>
+            ) : null}
+            <label className="settings-label memberships-item__production">
+              Doctor production
+              <select
+                className="settings-select"
+                value={item.productionBasis}
+                onChange={(e) =>
+                  updateItem(group.key, item.key, {
+                    productionBasis: e.target.value as ItemProductionBasis,
+                  })
+                }
+              >
+                {PRODUCTION_BASIS_ORDER.map((basis) => (
+                  <option key={basis} value={basis}>
+                    {PRODUCTION_BASIS_LABELS[basis]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {item.productionBasis === 'custom' ? (
+              <label className="settings-label memberships-item__money">
+                Production ($)
+                <input
+                  className="settings-input"
+                  type="number"
+                  min={0}
+                  step={0.01}
+                  value={item.productionOverride}
+                  onChange={(e) =>
+                    updateItem(group.key, item.key, {
+                      productionOverride: e.target.value,
                     })
                   }
                 />
@@ -1268,9 +1682,102 @@ export default function SettingsMemberships({ onMessage }: Props) {
       <p className="settings-section-description">
         Wellness plans patients subscribe to. Each line is included with the membership. Add an{' '}
         <strong>OR</strong> to a line when the member picks one of several options — this lab{' '}
-        <em>or</em> that lab — while other lines stay included. Edits here only reach patients
-        already on a plan when you apply the plan to existing memberships.
+        <em>or</em> that lab — while other lines stay included. Price and restrictions apply to
+        new enrollments only. Current members keep what they have unless you push benefits from
+        the items section.
       </p>
+
+      <div className="settings-card" style={{ marginBottom: 16 }}>
+        <h3 className="settings-card-title">Membership fee on invoices</h3>
+        <p className="settings-muted" style={{ marginBottom: 12, fontSize: 13 }}>
+          When a pet is enrolled and the plan is added to an invoice, should that fee count toward
+          a provider’s VSD, or stay unassigned in Not Specified?
+        </p>
+        {feeSettingLoading ? (
+          <p className="settings-muted">Loading…</p>
+        ) : (
+          <fieldset style={{ border: 'none', padding: 0, margin: 0 }}>
+            <legend className="settings-label" style={{ marginBottom: 8 }}>
+              Assign membership fees to a provider?
+            </legend>
+            <label
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                marginRight: 16,
+                cursor: 'pointer',
+                fontSize: 14,
+              }}
+            >
+              <input
+                type="radio"
+                name="membershipAssignFeeToProvider"
+                checked={assignFeeToProvider}
+                onChange={() => void saveFeeProviderSetting(true)}
+                disabled={feeSettingSaving}
+              />
+              Yes — assign to a provider
+            </label>
+            <label
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                cursor: 'pointer',
+                fontSize: 14,
+              }}
+            >
+              <input
+                type="radio"
+                name="membershipAssignFeeToProvider"
+                checked={!assignFeeToProvider}
+                onChange={() => void saveFeeProviderSetting(false)}
+                disabled={feeSettingSaving}
+              />
+              No — Not Specified VSD
+            </label>
+          </fieldset>
+        )}
+      </div>
+
+      <div className="settings-card" style={{ marginBottom: 16 }}>
+        <h3 className="settings-card-title">Post-visit membership signup</h3>
+        <p className="settings-muted" style={{ marginBottom: 12, fontSize: 13 }}>
+          How long after a visit (or store) payment a care lead can re-price that bill under a
+          new membership without an override. The financial workspace lists invoices from the
+          last 48 business hours, with Load more for older ones. Outside this window, staff must
+          confirm an override — it is written to the membership audit.
+        </p>
+        {feeSettingLoading ? (
+          <p className="settings-muted">Loading…</p>
+        ) : (
+          <label className="settings-field" style={{ maxWidth: 280 }}>
+            <span className="settings-label">Signup window (calendar hours)</span>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <input
+                className="settings-input"
+                type="number"
+                min={1}
+                max={720}
+                step={1}
+                value={postVisitWindowHours}
+                disabled={feeSettingSaving}
+                onChange={(e) => setPostVisitWindowHours(e.target.value)}
+                onBlur={() => void savePostVisitWindowHours()}
+              />
+              <button
+                type="button"
+                className="btn secondary"
+                disabled={feeSettingSaving}
+                onClick={() => void savePostVisitWindowHours()}
+              >
+                Save
+              </button>
+            </div>
+          </label>
+        )}
+      </div>
 
       <div className="memberships-layout">
         <div className="settings-card memberships-rail">
@@ -1332,11 +1839,14 @@ export default function SettingsMemberships({ onMessage }: Props) {
                       ) : null}
                     </span>
                     <span className="settings-muted memberships-rail__item-meta">
-                      {[plan.species, plan.tier].filter(Boolean).join(' · ') || 'Any species'}
+                      {speciesLabel(plan.species)}
                     </span>
                     <span className="memberships-rail__item-prices">
-                      {plan.priceMonthly == null ? '—' : `${money(plan.priceMonthly)}/mo`}
-                      {plan.priceAnnual == null ? '' : ` · ${money(plan.priceAnnual)}/yr`}
+                      {listedAmount(plan) == null
+                        ? '—'
+                        : planCadence(plan) === 'annual'
+                          ? `${money(listedAmount(plan))}/yr`
+                          : `${money(listedAmount(plan))}/mo`}
                     </span>
                     <span className="memberships-rail__item-members">
                       <Users size={12} aria-hidden /> {plan.activeMemberCount} member
@@ -1436,34 +1946,18 @@ export default function SettingsMemberships({ onMessage }: Props) {
                     />
                   </label>
                   <label className="settings-label">
-                    Tier
-                    <input
-                      className="settings-input"
-                      value={planDraft.tier}
-                      placeholder="Plus"
-                      onChange={(e) => setField('tier', e.target.value)}
-                    />
-                  </label>
-                  <label className="settings-label">
-                    Monthly price
+                    {planCadence(planDraft) === 'annual'
+                      ? 'Annual price'
+                      : planCadence(planDraft) === 'monthly'
+                        ? 'Monthly price'
+                        : 'Price'}
                     <input
                       className="settings-input"
                       type="number"
                       min={0}
                       step={0.01}
-                      value={planDraft.priceMonthly}
-                      onChange={(e) => setField('priceMonthly', e.target.value)}
-                    />
-                  </label>
-                  <label className="settings-label">
-                    Annual price
-                    <input
-                      className="settings-input"
-                      type="number"
-                      min={0}
-                      step={0.01}
-                      value={planDraft.priceAnnual}
-                      onChange={(e) => setField('priceAnnual', e.target.value)}
+                      value={planDraft.price}
+                      onChange={(e) => setField('price', e.target.value)}
                     />
                   </label>
                   <label className="settings-label">
@@ -1478,6 +1972,21 @@ export default function SettingsMemberships({ onMessage }: Props) {
                       onChange={(e) => setField('outOfPlanDiscount', e.target.value)}
                     />
                   </label>
+                  {onlineStoreEnabled ? (
+                    <label className="settings-label">
+                      Online store discount (%)
+                      <input
+                        className="settings-input"
+                        type="number"
+                        min={0}
+                        max={100}
+                        step={0.01}
+                        value={planDraft.onlineStoreDiscount}
+                        onChange={(e) => setField('onlineStoreDiscount', e.target.value)}
+                        placeholder="10"
+                      />
+                    </label>
+                  ) : null}
                   <label className="settings-label">
                     Renewal (months)
                     <input
@@ -1527,47 +2036,9 @@ export default function SettingsMemberships({ onMessage }: Props) {
                       onChange={(e) => setField('portalSlug', e.target.value)}
                     />
                   </label>
-                  <label className="settings-label">
-                    Stripe product ID
-                    <input
-                      className="settings-input memberships-stripe-id"
-                      value={planDraft.stripeProductId}
-                      readOnly
-                      placeholder="Set by Stripe sync"
-                      title="Managed by Stripe; not editable here"
-                    />
-                  </label>
-                  <label className="settings-label">
-                    Stripe monthly price ID
-                    <input
-                      className="settings-input memberships-stripe-id"
-                      value={planDraft.stripeMonthlyPriceId}
-                      readOnly
-                      placeholder="Set by Stripe sync"
-                      title="Managed by Stripe; not editable here"
-                    />
-                  </label>
-                  <label className="settings-label">
-                    Stripe annual price ID
-                    <input
-                      className="settings-input memberships-stripe-id"
-                      value={planDraft.stripeAnnualPriceId}
-                      readOnly
-                      placeholder="Set by Stripe sync"
-                      title="Managed by Stripe; not editable here"
-                    />
-                  </label>
                 </div>
 
                 <div className="memberships-flags">
-                  <label className="settings-checkbox-item">
-                    <input
-                      type="checkbox"
-                      checked={planDraft.isAutoRenew}
-                      onChange={(e) => setField('isAutoRenew', e.target.checked)}
-                    />
-                    Renews automatically
-                  </label>
                   <label className="settings-checkbox-item">
                     <input
                       type="checkbox"
@@ -1583,7 +2054,7 @@ export default function SettingsMemberships({ onMessage }: Props) {
                 <div className="memberships-restrictions__head">
                   <h3 className="settings-card-title memberships-detail__title">Restrictions</h3>
                   <p className="settings-muted">
-                    Who may enrol on this plan, the length of a membership year, and where they
+                    Who may enroll on this plan, the length of a membership year, and where they
                     move at renewal or when they age out. Owners are emailed 14 days before the
                     year ends.
                   </p>
@@ -1736,7 +2207,10 @@ export default function SettingsMemberships({ onMessage }: Props) {
                     {groups.map((group, groupIndex) => {
                       const isChoice = group.selectionMode === 'choice';
                       const picking = pickerGroupKey === group.key;
-                      const allowance = intOr(group.allowedQuantity, 1);
+                      const allowanceUnlimited = isUnlimitedDraft(group.allowedQuantity);
+                      const allowance = allowanceUnlimited
+                        ? 'any'
+                        : String(allowanceFromDraft(group.allowedQuantity, 1));
                       const tooFewAlternatives = isChoice && group.items.length < 2;
 
                       if (group.items.length === 0) {
@@ -1785,16 +2259,39 @@ export default function SettingsMemberships({ onMessage }: Props) {
                             </p>
                             <label className="settings-label memberships-or-cluster__allowance">
                               Allowance
-                              <input
-                                className="settings-input"
-                                type="number"
-                                min={1}
-                                step={1}
-                                value={group.allowedQuantity}
-                                onChange={(e) =>
-                                  updateGroup(group.key, { allowedQuantity: e.target.value })
+                              <select
+                                className="settings-select"
+                                value={
+                                  isUnlimitedDraft(group.allowedQuantity)
+                                    ? UNLIMITED_TOKEN
+                                    : 'limited'
                                 }
-                              />
+                                onChange={(e) =>
+                                  updateGroup(group.key, {
+                                    allowedQuantity:
+                                      e.target.value === UNLIMITED_TOKEN
+                                        ? UNLIMITED_TOKEN
+                                        : group.allowedQuantity === UNLIMITED_TOKEN
+                                          ? '1'
+                                          : group.allowedQuantity || '1',
+                                  })
+                                }
+                              >
+                                <option value="limited">Limited</option>
+                                <option value={UNLIMITED_TOKEN}>Unlimited</option>
+                              </select>
+                              {isUnlimitedDraft(group.allowedQuantity) ? null : (
+                                <input
+                                  className="settings-input"
+                                  type="number"
+                                  min={1}
+                                  step={1}
+                                  value={group.allowedQuantity}
+                                  onChange={(e) =>
+                                    updateGroup(group.key, { allowedQuantity: e.target.value })
+                                  }
+                                />
+                              )}
                             </label>
                             <div className="memberships-group__tools">
                               <button
@@ -1870,76 +2367,44 @@ export default function SettingsMemberships({ onMessage }: Props) {
                     </button>
                   </div>
                 )}
-              </div>
 
-              <div className="settings-card">
-                {detail ? (
+                {detail && !isNew && detail.activeMemberCount > 0 ? (
                   <div className="memberships-apply">
-                    {(numOrNull(planDraft.priceMonthly) !== (detail.priceMonthly ?? null) ||
-                    numOrNull(planDraft.priceAnnual) !== (detail.priceAnnual ?? null)) ? (
-                      <fieldset className="memberships-price-apply">
-                        <legend>This listed price also changes Stripe</legend>
-                        <label className="settings-checkbox-item">
-                          <input
-                            type="radio"
-                            name="priceApplyTo"
-                            checked={priceApplyTo === 'future'}
-                            onChange={() => setPriceApplyTo('future')}
-                          />
-                          Future enrollments and renewals only
-                        </label>
-                        <label className="settings-checkbox-item">
-                          <input
-                            type="radio"
-                            name="priceApplyTo"
-                            checked={priceApplyTo === 'current'}
-                            onChange={() => setPriceApplyTo('current')}
-                          />
-                          Also update everyone currently on {detail.name} (next invoice, no proration)
-                        </label>
-                        <p className="settings-muted memberships-apply__hint">
-                          Stripe prices cannot be edited in place, so we create a new price and
-                          archive the old one. Renewal emails always quote this new listed price.
-                        </p>
-                      </fieldset>
-                    ) : null}
-                    <label className="settings-checkbox-item">
-                      <input
-                        type="checkbox"
-                        checked={applyToExisting}
-                        onChange={(e) => {
-                          setApplyToExisting(e.target.checked);
-                          if (!e.target.checked) setRemoveDropped(false);
-                        }}
-                      />
-                      Apply this to all current {detail.name} memberships
-                    </label>
                     <p className="settings-muted memberships-apply__hint">
                       {detail.activeMemberCount} patient
-                      {detail.activeMemberCount === 1 ? '' : 's'} on this plan right now. Leave it
-                      off to change the plan template only — new enrolments get the new benefits,
-                      current members keep what they have.
+                      {detail.activeMemberCount === 1 ? ' is' : 's are'} already on this plan.
+                      Saving does not change what they get. Apply only pushes benefits you
+                      changed since opening this plan — not the rest of the list, and not
+                      price, species, age, or other restrictions.
                     </p>
-                    {applyToExisting ? (
-                      <label className="settings-checkbox-item memberships-apply__danger">
-                        <input
-                          type="checkbox"
-                          checked={removeDropped}
-                          onChange={(e) => setRemoveDropped(e.target.checked)}
-                        />
-                        Also take away benefits that are no longer on the plan
-                      </label>
-                    ) : null}
-                    {applyToExisting && removeDropped ? (
+                    <label className="settings-checkbox-item memberships-apply__danger">
+                      <input
+                        type="checkbox"
+                        checked={removeDropped}
+                        onChange={(e) => setRemoveDropped(e.target.checked)}
+                      />
+                      Also take away benefits that are no longer on the plan
+                    </label>
+                    {removeDropped ? (
                       <p className="memberships-apply__warning">
                         This removes benefits from patients who are already on {detail.name}, even
                         if they have not used them. Leave it off unless you mean to claw something
                         back.
                       </p>
                     ) : null}
+                    <button
+                      type="button"
+                      className="btn secondary memberships-apply__button"
+                      disabled={saving}
+                      onClick={() => void applyBenefitsToExisting()}
+                    >
+                      Apply benefits to existing members
+                    </button>
                   </div>
                 ) : null}
+              </div>
 
+              <div className="settings-card">
                 <div className="settings-action-bar memberships-actions">
                   <button
                     type="button"
@@ -1949,16 +2414,6 @@ export default function SettingsMemberships({ onMessage }: Props) {
                   >
                     {saving ? 'Saving…' : isNew ? 'Create plan' : 'Save plan'}
                   </button>
-                  {detail ? (
-                    <button
-                      type="button"
-                      className="btn secondary"
-                      disabled={saving}
-                      onClick={() => void applyOnly()}
-                    >
-                      Apply saved plan to existing memberships
-                    </button>
-                  ) : null}
                   <button
                     type="button"
                     className="btn secondary"

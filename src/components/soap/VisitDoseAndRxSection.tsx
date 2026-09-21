@@ -22,7 +22,6 @@ import {
   type PrescriptionAcuity,
   type PrescriptionDefaults,
   type StockDraw,
-  type VaccineDosageType,
 } from '../../api/visitWorkflow';
 import {
   fetchCatalogPricingForOrder,
@@ -61,9 +60,20 @@ type Props = {
   onInvoiceShouldRefresh: () => void;
   /** Fired after a prescription is saved so the chronic-meds pin can refresh. */
   onChronicMedicationsMaybeChanged?: () => void;
+  /** Fired after any vaccine or prescription is recorded so checkout Approve can refresh. */
+  onClinicalRecorded?: () => void;
+  /** When set, only these order ids are listed (for per-line expand in checkout). */
+  onlyOrderIds?: ReadonlySet<string> | string[];
+  /** Hide the section chrome — used when embedded under an invoice line. */
+  embedded?: boolean;
+  /** Force a single row open (embedded expand). */
+  forceOpenOrderId?: string | null;
+  /** Lot chosen on the linked inventory invoice row (not the billed service). */
+  invoiceLots?: Record<string, { lotId: number | null; lotNumber: string | null }>;
+  inventoryBranchId?: number | null;
+  inventoryLocationId?: number | null;
 };
 
-const VACCINE_TYPES = ['Killed', 'Modified Live', 'Recombinant'];
 const PRACTICE_TZ =
   (import.meta.env.VITE_PRACTICE_TIMEZONE as string | undefined)?.trim() || 'America/New_York';
 
@@ -104,20 +114,13 @@ function applyExpiration(start: string, period: PrescriptionDefaults['refillExpi
   return period.unit === 'months' ? addMonths(start, period.amount) : addDays(start, period.amount);
 }
 
-/** eVet stores dosage type numerically; 1 = booster, 2 = initial. */
-function dosageTypeFromValue(value: number | null): VaccineDosageType | '' {
-  if (value === 1) return 'booster';
-  if (value === 2) return 'initial';
-  return '';
-}
-
 /**
  * The doses given and prescriptions written on this visit.
  *
- * Kept as its own section rather than a row expander because vaccines usually arrive on the
- * Room Loader estimate, and those lines charge straight to Checkout without ever appearing in
- * the Plan list — so a per-row editor there would leave them with nowhere to record a lot
- * number. One list of everything that needs recording also doubles as the checklist.
+ * Lives inside Checkout (alongside the invoice lines) so the tech flow matches counter
+ * checkout: clinical details and the bill stay together. Vaccines often arrive from the
+ * Room Loader estimate and charge straight to Checkout without ever appearing in the Plan
+ * list — so recording them here (not only under Plan search) is required.
  *
  * Saving writes a real `vaccination_logs` / `prescriptions` row, which is what puts the dose on
  * the patient chart, on the vaccination certificate, and in the reminder queue.
@@ -138,6 +141,13 @@ export default function VisitDoseAndRxSection({
   onOrderUpdated,
   onInvoiceShouldRefresh,
   onChronicMedicationsMaybeChanged,
+  onClinicalRecorded,
+  onlyOrderIds,
+  embedded,
+  forceOpenOrderId,
+  invoiceLots,
+  inventoryBranchId,
+  inventoryLocationId,
 }: Props) {
   const [vaccineOrderIds, setVaccineOrderIds] = useState<ReadonlySet<string>>(new Set());
   const [vaccinations, setVaccinations] = useState<Record<string, OrderVaccination>>({});
@@ -226,8 +236,18 @@ export default function VisitDoseAndRxSection({
     ]
   );
 
-  const vaccineOrders = accepted.filter((o) => vaccineOrderIds.has(o.id));
-  const medOrders = accepted.filter((o) => o.kind === 'med');
+  const onlySet =
+    onlyOrderIds == null
+      ? null
+      : onlyOrderIds instanceof Set
+        ? onlyOrderIds
+        : new Set(onlyOrderIds);
+  const vaccineOrders = accepted
+    .filter((o) => vaccineOrderIds.has(o.id))
+    .filter((o) => (onlySet ? onlySet.has(o.id) : true));
+  const medOrders = accepted
+    .filter((o) => o.kind === 'med')
+    .filter((o) => (onlySet ? onlySet.has(o.id) : true));
 
   if (!loaded || (vaccineOrders.length === 0 && medOrders.length === 0)) return null;
 
@@ -236,21 +256,23 @@ export default function VisitDoseAndRxSection({
     medOrders.filter((o) => !prescriptions[o.id]?.acuity).length;
 
   return (
-    <div className="soap-dose-rx">
-      <div className="soap-dose-rx-head">
-        <span className="soap-dose-rx-title">
-          <Syringe size={14} /> Doses given &amp; prescriptions
-        </span>
-        {missing > 0 ? (
-          <span className="soap-dose-rx-missing">
-            <AlertCircle size={12} /> {missing} still to record
+    <div className={`soap-dose-rx${embedded ? ' soap-dose-rx--embedded' : ''}`}>
+      {!embedded ? (
+        <div className="soap-dose-rx-head">
+          <span className="soap-dose-rx-title">
+            <Syringe size={14} /> Doses given &amp; prescriptions
           </span>
-        ) : (
-          <span className="soap-dose-rx-done">
-            <Check size={12} /> All recorded
-          </span>
-        )}
-      </div>
+          {missing > 0 ? (
+            <span className="soap-dose-rx-missing">
+              <AlertCircle size={12} /> {missing} still to record
+            </span>
+          ) : (
+            <span className="soap-dose-rx-done">
+              <Check size={12} /> All recorded
+            </span>
+          )}
+        </div>
+      ) : null}
 
       {vaccineOrders.map((order) => (
         <VaccineRow
@@ -259,15 +281,24 @@ export default function VisitDoseAndRxSection({
           order={order}
           recorded={vaccinations[order.id] ?? null}
           stockDraw={stockDraws[order.id] ?? null}
+          invoiceLot={invoiceLots?.[order.id]}
           practiceId={practiceId}
           providerId={providerId}
+          branchId={inventoryBranchId}
+          locationId={inventoryLocationId}
           disabled={disabled}
-          open={expanded === order.id}
-          onToggle={() => setExpanded(expanded === order.id ? null : order.id)}
+          embedded={Boolean(embedded)}
+          open={forceOpenOrderId != null ? forceOpenOrderId === order.id : expanded === order.id}
+          onToggle={() =>
+            forceOpenOrderId != null
+              ? undefined
+              : setExpanded(expanded === order.id ? null : order.id)
+          }
           onQtyChange={repriceQty}
           onSaved={(saved) => {
             setVaccinations((prev) => ({ ...prev, [order.id]: saved }));
-            setExpanded(null);
+            if (forceOpenOrderId == null) setExpanded(null);
+            onClinicalRecorded?.();
           }}
         />
       ))}
@@ -280,6 +311,7 @@ export default function VisitDoseAndRxSection({
           recorded={prescriptions[order.id] ?? null}
           stockDraw={stockDraws[order.id] ?? null}
           disabled={disabled}
+          embedded={Boolean(embedded)}
           patientId={patientId}
           practiceId={practiceId}
           patientName={patientName}
@@ -288,13 +320,18 @@ export default function VisitDoseAndRxSection({
           providerName={providerName}
           providerLicense={providerLicense}
           providerId={providerId}
-          open={expanded === order.id}
-          onToggle={() => setExpanded(expanded === order.id ? null : order.id)}
+          open={forceOpenOrderId != null ? forceOpenOrderId === order.id : expanded === order.id}
+          onToggle={() =>
+            forceOpenOrderId != null
+              ? undefined
+              : setExpanded(expanded === order.id ? null : order.id)
+          }
           onQtyChange={repriceQty}
           onSaved={(saved) => {
             setPrescriptions((prev) => ({ ...prev, [order.id]: saved }));
-            setExpanded(null);
+            if (forceOpenOrderId == null) setExpanded(null);
             onChronicMedicationsMaybeChanged?.();
+            onClinicalRecorded?.();
           }}
         />
       ))}
@@ -436,9 +473,13 @@ function VaccineRow({
   order,
   recorded,
   stockDraw,
+  invoiceLot,
   practiceId,
   providerId,
+  branchId,
+  locationId,
   disabled,
+  embedded,
   open,
   onToggle,
   onQtyChange,
@@ -448,9 +489,13 @@ function VaccineRow({
   order: EncounterOrder;
   recorded: OrderVaccination | null;
   stockDraw: StockDraw | null;
+  invoiceLot?: { lotId: number | null; lotNumber: string | null };
   practiceId: number;
   providerId?: number | null;
+  branchId?: number | null;
+  locationId?: number | null;
   disabled?: boolean;
+  embedded?: boolean;
   open: boolean;
   onToggle: () => void;
   onQtyChange: (order: EncounterOrder, qty: number) => Promise<void>;
@@ -458,6 +503,8 @@ function VaccineRow({
 }) {
   const [lotNumber, setLotNumber] = useState('');
   const [lotBalanceId, setLotBalanceId] = useState<number | null>(null);
+  const [lotQoh, setLotQoh] = useState<number | null>(null);
+  const [zeroOverrideReason, setZeroOverrideReason] = useState('');
   const [serialNumber, setSerialNumber] = useState('');
   const [vaccineExpiration, setVaccineExpiration] = useState('');
   const [dateVaccinated, setDateVaccinated] = useState(today());
@@ -465,13 +512,16 @@ function VaccineRow({
   const [tagNumber, setTagNumber] = useState('');
   const [manufacturer, setManufacturer] = useState('');
   const [vaccineType, setVaccineType] = useState('');
-  const [dosageType, setDosageType] = useState<VaccineDosageType | ''>('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [prefilled, setPrefilled] = useState(false);
 
   const isRabies = /rabies/i.test(order.name);
   const lotInventoryItemId = stockDraw?.inventoryItemId ?? order.catalogItemId ?? null;
+  const lotsOnLinkedStock =
+    stockDraw != null &&
+    order.catalogItemId != null &&
+    Number(stockDraw.inventoryItemId) !== Number(order.catalogItemId);
 
   useEffect(() => {
     if (recorded) {
@@ -481,13 +531,18 @@ function VaccineRow({
       setVaccineExpiration(toDateInput(recorded.vaccineExpiration));
       setDateVaccinated(toDateInput(recorded.dateVaccinated) || today());
       setNextDue(toDateInput(recorded.nextVaccinationDate));
-      setTagNumber(recorded.tagNumber ?? '');
+      const tag = (recorded.tagNumber ?? '').trim();
+      setTagNumber(!tag || tag === '0' ? '' : tag);
       setManufacturer(recorded.manufacturer ?? '');
       setVaccineType(recorded.vaccineType ?? '');
-      setDosageType(dosageTypeFromValue(recorded.dosageType));
       setPrefilled(true);
+      return;
     }
-  }, [recorded]);
+    if (invoiceLot?.lotId != null || invoiceLot?.lotNumber) {
+      setLotBalanceId(invoiceLot.lotId ?? null);
+      setLotNumber(invoiceLot.lotNumber ?? '');
+    }
+  }, [recorded, invoiceLot?.lotId, invoiceLot?.lotNumber]);
 
   // eVet pre-fills next-due from the vaccine's licensing period. Scout doesn't import that yet,
   // so the interval comes from the last time this practice gave the same vaccine.
@@ -516,17 +571,38 @@ function VaccineRow({
   function applyLot(lot: InventoryLotBalance | null) {
     if (!lot) {
       setLotBalanceId(null);
+      setLotNumber('');
+      setLotQoh(null);
+      setVaccineExpiration('');
+      setZeroOverrideReason('');
       return;
     }
     setLotBalanceId(lot.id);
     setLotNumber(lot.lotNumber);
+    setLotQoh(Number(lot.quantityOnHand) || 0);
     if (lot.serialNumber) setSerialNumber(lot.serialNumber);
     if (lot.expirationDate) setVaccineExpiration(lot.expirationDate.slice(0, 10));
+    if (Number(lot.quantityOnHand) > 0) setZeroOverrideReason('');
   }
 
   const save = async () => {
     if (!nextDue) {
       setError('Next due date is required so the patient gets a reminder.');
+      return;
+    }
+    if (isRabies) {
+      const tag = tagNumber.trim();
+      if (!tag || tag === '0') {
+        setError('Rabies tag is required.');
+        return;
+      }
+    }
+    if (lotInventoryItemId != null && lotBalanceId == null) {
+      setError('Select a vaccine lot from inventory.');
+      return;
+    }
+    if (lotQoh != null && lotQoh <= 0 && !zeroOverrideReason.trim()) {
+      setError('This lot shows zero on hand. Enter a reason to use it anyway.');
       return;
     }
     setSaving(true);
@@ -542,8 +618,10 @@ function VaccineRow({
         tagNumber: tagNumber.trim() || undefined,
         manufacturer: manufacturer.trim() || undefined,
         vaccineType: vaccineType || undefined,
-        dosageType: dosageType || undefined,
         inventoryLotBalanceId: lotBalanceId,
+        ...(lotQoh != null && lotQoh <= 0
+          ? { lotZeroOverrideReason: zeroOverrideReason.trim() }
+          : {}),
       });
       onSaved(saved);
     } catch (e) {
@@ -558,46 +636,60 @@ function VaccineRow({
     : 'Needs lot & expiration';
 
   return (
-    <div className={`soap-dose-row ${recorded ? 'recorded' : ''}`}>
-      <RowHeader
-        order={order}
-        summary={summary}
-        complete={Boolean(recorded)}
-        open={open}
-        onToggle={onToggle}
-      />
+    <div className={`soap-dose-row ${recorded ? 'recorded' : ''}${embedded ? ' soap-dose-row--embedded' : ''}`}>
+      {!embedded ? (
+        <RowHeader
+          order={order}
+          summary={summary}
+          complete={Boolean(recorded)}
+          open={open}
+          onToggle={onToggle}
+        />
+      ) : null}
       {open && (
         <div className="soap-dose-body">
-          {stockDraw && <StockDrawBanner stockDraw={stockDraw} />}
+          {stockDraw && !lotsOnLinkedStock ? <StockDrawBanner stockDraw={stockDraw} /> : null}
           <div className="soap-dose-grid">
-            <QtyField order={order} disabled={disabled} onQtyChange={onQtyChange} />
-            {lotInventoryItemId != null ? (
+            {!embedded ? (
+              <QtyField order={order} disabled={disabled} onQtyChange={onQtyChange} />
+            ) : null}
+            {!lotsOnLinkedStock && lotInventoryItemId != null ? (
               <div style={{ gridColumn: '1 / -1' }}>
                 <VaccineLotPicker
                   practiceId={practiceId}
                   inventoryItemId={lotInventoryItemId}
+                  itemName={order.name}
                   providerId={providerId}
+                  branchId={branchId}
+                  locationId={locationId}
                   disabled={disabled || saving}
                   selectedLotId={lotBalanceId}
-                  lotNumber={lotNumber}
                   onSelectLot={applyLot}
-                  onLotNumberChange={(v) => {
-                    setLotBalanceId(null);
-                    setLotNumber(v);
-                  }}
+                  zeroOverrideReason={zeroOverrideReason}
+                  onZeroOverrideReasonChange={setZeroOverrideReason}
                 />
               </div>
-            ) : (
-              <label>
-                Lot number
-                <input
-                  className="soap-input"
-                  value={lotNumber}
-                  disabled={disabled || saving}
-                  onChange={(e) => setLotNumber(e.target.value)}
-                />
-              </label>
-            )}
+            ) : !lotsOnLinkedStock ? (
+              <p className="soap-dose-stock" style={{ gridColumn: '1 / -1' }}>
+                No linked inventory item — lot details are not available on this order.
+              </p>
+            ) : null}
+            {!lotsOnLinkedStock ? (
+              <>
+            <div className="soap-dose-readonly">
+              <span className="soap-dose-readonly-label">Lot number</span>
+              <span className="soap-dose-readonly-value">{lotNumber || '—'}</span>
+            </div>
+            <div className="soap-dose-readonly">
+              <span className="soap-dose-readonly-label">Drug expiration</span>
+              <span className="soap-dose-readonly-value">
+                {vaccineExpiration || '—'}
+              </span>
+            </div>
+            <div className="soap-dose-readonly">
+              <span className="soap-dose-readonly-label">Manufacturer</span>
+              <span className="soap-dose-readonly-value">{manufacturer || '—'}</span>
+            </div>
             <label>
               Serial number
               <input
@@ -607,16 +699,8 @@ function VaccineRow({
                 onChange={(e) => setSerialNumber(e.target.value)}
               />
             </label>
-            <label>
-              Drug expiration
-              <input
-                className="soap-input"
-                type="date"
-                value={vaccineExpiration}
-                disabled={disabled || saving}
-                onChange={(e) => setVaccineExpiration(e.target.value)}
-              />
-            </label>
+              </>
+            ) : null}
             <label>
               Date given
               <input
@@ -639,7 +723,7 @@ function VaccineRow({
             </label>
             {isRabies && (
               <label>
-                Rabies tag
+                Rabies tag *
                 <input
                   className="soap-input"
                   value={tagNumber}
@@ -648,44 +732,10 @@ function VaccineRow({
                 />
               </label>
             )}
-            <label>
-              Manufacturer
-              <input
-                className="soap-input"
-                value={manufacturer}
-                disabled={disabled || saving}
-                onChange={(e) => setManufacturer(e.target.value)}
-              />
-            </label>
-            <label>
-              Vaccine type
-              <select
-                className="soap-input"
-                value={vaccineType}
-                disabled={disabled || saving}
-                onChange={(e) => setVaccineType(e.target.value)}
-              >
-                <option value="">—</option>
-                {VACCINE_TYPES.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Dose
-              <select
-                className="soap-input"
-                value={dosageType}
-                disabled={disabled || saving}
-                onChange={(e) => setDosageType(e.target.value as VaccineDosageType | '')}
-              >
-                <option value="">—</option>
-                <option value="initial">Initial</option>
-                <option value="booster">Booster</option>
-              </select>
-            </label>
+            <div className="soap-dose-readonly">
+              <span className="soap-dose-readonly-label">Vaccine type</span>
+              <span className="soap-dose-readonly-value">{vaccineType || '—'}</span>
+            </div>
           </div>
 
           {error && <p className="soap-dose-error">{error}</p>}
@@ -713,6 +763,7 @@ function PrescriptionRow({
   recorded,
   stockDraw,
   disabled,
+  embedded,
   patientId,
   practiceId,
   patientName,
@@ -731,6 +782,7 @@ function PrescriptionRow({
   recorded: OrderPrescription | null;
   stockDraw: StockDraw | null;
   disabled?: boolean;
+  embedded?: boolean;
   patientId?: number;
   practiceId: number;
   patientName: string;
@@ -849,14 +901,16 @@ function PrescriptionRow({
     : 'Needs acute/chronic + sig';
 
   return (
-    <div className={`soap-dose-row ${recorded?.acuity ? 'recorded' : ''}`}>
-      <RowHeader
-        order={order}
-        summary={summary}
-        complete={Boolean(recorded?.acuity)}
-        open={open}
-        onToggle={onToggle}
-      />
+    <div className={`soap-dose-row ${recorded?.acuity ? 'recorded' : ''}${embedded ? ' soap-dose-row--embedded' : ''}`}>
+      {!embedded ? (
+        <RowHeader
+          order={order}
+          summary={summary}
+          complete={Boolean(recorded?.acuity)}
+          open={open}
+          onToggle={onToggle}
+        />
+      ) : null}
       {open && (
         <div className="soap-dose-body">
           {stockDraw && <StockDrawBanner stockDraw={stockDraw} />}
@@ -872,7 +926,9 @@ function PrescriptionRow({
             </p>
           )}
           <div className="soap-dose-grid">
-            <QtyField order={order} disabled={disabled} onQtyChange={onQtyChange} />
+            {!embedded ? (
+              <QtyField order={order} disabled={disabled} onQtyChange={onQtyChange} />
+            ) : null}
             <label>
               Name
               <input

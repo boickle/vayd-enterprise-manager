@@ -26,14 +26,21 @@ function pathInGroup(pathname: string, items: NavItem[]): boolean {
 function InventoryNavGroup({
   label,
   items,
+  alsoActiveFor = [],
 }: {
   label: string;
   items: NavItem[];
+  /** Extra paths that should light up this group (e.g. full-count under Counts). */
+  alsoActiveFor?: string[];
 }) {
   const location = useLocation();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
-  const groupActive = pathInGroup(location.pathname, items);
+  const groupActive =
+    pathInGroup(location.pathname, items) ||
+    alsoActiveFor.some(
+      (path) => location.pathname === path || location.pathname.startsWith(`${path}/`),
+    );
 
   useEffect(() => {
     if (!open) return;
@@ -96,7 +103,9 @@ export default function InventoryLayout({
 
   const onAdminPath =
     location.pathname.includes('/inventory/suppliers') ||
-    location.pathname.includes('/inventory/count-report');
+    location.pathname.includes('/inventory/count-report') ||
+    location.pathname.includes('/inventory/expiring') ||
+    location.pathname.includes('/inventory/cost-reviews');
   if (!isAdmin && onAdminPath) {
     return <Navigate to={`${basePath}/items`} replace />;
   }
@@ -111,7 +120,6 @@ export default function InventoryLayout({
 
   const catalogItems: NavItem[] = [
     { to: `${basePath}/items`, label: 'Items' },
-    { to: `${basePath}/subscriptions`, label: 'Subscriptions' },
     ...(isAdmin ? [{ to: `${basePath}/suppliers`, label: 'Suppliers' }] : []),
   ];
   const storeItems: NavItem[] = [
@@ -120,22 +128,28 @@ export default function InventoryLayout({
     { to: `${basePath}/abandoned-carts`, label: 'Abandoned carts' },
   ];
   const mailOrdersTo = '/schedule/mail-orders';
+  const autoShipsTo = `${basePath}/auto-ships`;
   const pharmacySection = isInventoryOpsNavPath(location.pathname);
   const sectionTitle = pharmacySection ? 'Pharmacy' : 'Catalog';
   const countItems: NavItem[] = [
     { to: `${basePath}/par-levels`, label: 'Par Levels' },
     { to: `${basePath}/counts`, label: 'Weekly count list' },
-    { to: `${basePath}/full-count`, label: 'Counts for all items' },
-    ...(isAdmin ? [{ to: `${basePath}/count-report`, label: 'Count report' }] : []),
+    ...(isAdmin
+      ? [
+          { to: `${basePath}/count-report`, label: 'Count report' },
+          { to: `${basePath}/expiring`, label: 'Expiring' },
+          { to: `${basePath}/cost-reviews`, label: 'Cost Reviews' },
+        ]
+      : []),
   ];
   const flowItems: NavItem[] = [
+    { to: `${basePath}/initial-entry`, label: 'Initial entry' },
     { to: `${basePath}/receive`, label: 'Receive' },
     { to: `${basePath}/move`, label: 'Move Items' },
     { to: `${basePath}/waste`, label: 'Waste / Adjust' },
     { to: `${basePath}/activity`, label: 'Activity' },
-    { to: `${basePath}/fill-list`, label: 'Fill List' },
-    { to: `${basePath}/order-list`, label: 'Order List' },
     { to: `${basePath}/transfer-list`, label: 'Transfer List' },
+    { to: `${basePath}/order-list`, label: 'Order List' },
   ];
 
   return (
@@ -144,7 +158,11 @@ export default function InventoryLayout({
       <div className="settings-tabs" role="navigation" aria-label={sectionTitle}>
         {pharmacySection ? (
           <>
-            <InventoryNavGroup label="Counts" items={countItems} />
+            <InventoryNavGroup
+              label="Counts"
+              items={countItems}
+              alsoActiveFor={[`${basePath}/full-count`]}
+            />
             <InventoryNavGroup label="Flow" items={flowItems} />
             <InventoryNavGroup label="Store" items={storeItems} />
             <NavLink
@@ -152,6 +170,12 @@ export default function InventoryLayout({
               className={({ isActive }) => `settings-tab${isActive ? ' active' : ''}`}
             >
               Mail Order Queue
+            </NavLink>
+            <NavLink
+              to={autoShipsTo}
+              className={({ isActive }) => `settings-tab${isActive ? ' active' : ''}`}
+            >
+              Auto-ships
             </NavLink>
           </>
         ) : (

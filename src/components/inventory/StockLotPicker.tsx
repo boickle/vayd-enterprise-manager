@@ -3,6 +3,8 @@ import {
   listInventoryLots,
   type InventoryLotBalance,
 } from '../../api/branchInventory';
+import AddInventoryLotModal from './AddInventoryLotModal';
+import './StockLotPicker.css';
 
 export type StockLotPick = {
   lotId: number | null;
@@ -19,6 +21,12 @@ type Props = {
   disabled?: boolean;
   /** Receive / unbox: pick an existing lot to add onto, or start a new one. */
   allowNew?: boolean;
+  /**
+   * Show “Add lot” that creates a real inventory lot via modal (invoice /
+   * checkout when none exist at this location).
+   */
+  allowAddLot?: boolean;
+  itemName?: string | null;
   requireExpiration?: boolean;
   requireLotNumber?: boolean;
   selectedLotId: number | null;
@@ -27,6 +35,8 @@ type Props = {
   onChange: (next: StockLotPick) => void;
   label?: string;
   className?: string;
+  /** Bump to reload lots (e.g. after editing the inventory item). */
+  refreshKey?: number;
 };
 
 function dateInputValue(value: string | null | undefined): string {
@@ -70,6 +80,8 @@ export default function StockLotPicker({
   required = true,
   disabled,
   allowNew = false,
+  allowAddLot = true,
+  itemName,
   requireExpiration = true,
   requireLotNumber = false,
   selectedLotId,
@@ -78,11 +90,14 @@ export default function StockLotPicker({
   onChange,
   label = 'Lot / expiration',
   className,
+  refreshKey = 0,
 }: Props) {
   const [lots, setLots] = useState<InventoryLotBalance[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [newLot, setNewLot] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
+  const [reloadTick, setReloadTick] = useState(0);
 
   useEffect(() => {
     if (inventoryItemId == null) {
@@ -112,7 +127,7 @@ export default function StockLotPicker({
     return () => {
       canceled = true;
     };
-  }, [practiceId, inventoryItemId, branchId, locationId, allowNew]);
+  }, [practiceId, inventoryItemId, branchId, locationId, allowNew, refreshKey, reloadTick]);
 
   useEffect(() => {
     if (!allowNew || selectedLotId != null || loading) return;
@@ -175,61 +190,76 @@ export default function StockLotPicker({
   const selectValue = newLot ? 'new' : selectedLotId != null ? String(selectedLotId) : '';
   const showEditableLotFields =
     allowNew && (newLot || (selectedLotId == null && lotNumber.trim() !== ''));
+  const canAddLot = allowAddLot && !allowNew && !disabled;
 
   return (
     <div className={className}>
-      <label className="settings-label" style={{ marginBottom: 0 }}>
-        {label}
-        {required ? ' *' : ''}
-        <select
-          className="settings-input"
-          value={selectValue}
-          disabled={disabled || loading}
-          required={required && !allowNew}
-          onChange={(e) => {
-            const value = e.target.value;
-            if (value === 'new') {
-              setNewLot(true);
-              onChange({
-                lotId: null,
-                lotNumber,
-                expirationDate: expirationDate ?? null,
-              });
-              return;
-            }
-            setNewLot(false);
-            const id = value ? Number(value) : null;
-            if (id == null || !Number.isFinite(id)) {
-              onChange({ lotId: null, lotNumber: '', expirationDate: null });
-              return;
-            }
-            const lot = byId.get(id);
+      <div className="stock-lot-picker__head">
+        <label className="settings-label" style={{ marginBottom: 0 }}>
+          {label}
+          {required ? ' *' : ''}
+        </label>
+        {canAddLot ? (
+          <button
+            type="button"
+            className="btn secondary stock-lot-picker__add"
+            disabled={loading}
+            onClick={() => setAddOpen(true)}
+          >
+            Add lot
+          </button>
+        ) : null}
+      </div>
+      <select
+        className="settings-input"
+        value={selectValue}
+        disabled={disabled || loading}
+        required={required && !allowNew}
+        onChange={(e) => {
+          const value = e.target.value;
+          if (value === 'new') {
+            setNewLot(true);
             onChange({
-              lotId: id,
-              lotNumber: lot?.lotNumber ?? '',
-              expirationDate: dateInputValue(lot?.expirationDate),
+              lotId: null,
+              lotNumber,
+              expirationDate: expirationDate ?? null,
             });
-          }}
-        >
-          <option value="">
-            {loading
-              ? 'Loading lots…'
-              : lots.length === 0
-                ? allowNew
-                  ? 'New lot…'
+            return;
+          }
+          setNewLot(false);
+          const id = value ? Number(value) : null;
+          if (id == null || !Number.isFinite(id)) {
+            onChange({ lotId: null, lotNumber: '', expirationDate: null });
+            return;
+          }
+          const lot = byId.get(id);
+          onChange({
+            lotId: id,
+            lotNumber: lot?.lotNumber ?? '',
+            expirationDate: dateInputValue(lot?.expirationDate),
+          });
+        }}
+      >
+        <option value="">
+          {loading
+            ? 'Loading lots…'
+            : lots.length === 0
+              ? allowNew
+                ? 'New lot…'
+                : locationId != null
+                  ? 'No lots at this location — receive here or pick another location'
                   : 'No lots here — receive this item first'
-                : lots.length > 1
-                  ? 'Choose the soonest-exp lot…'
-                  : 'Select a lot…'}
+              : lots.length > 1
+                ? 'Choose the soonest-exp lot…'
+                : 'Select a lot…'}
+        </option>
+        {lots.map((lot) => (
+          <option key={lot.id} value={lot.id}>
+            {lotLabel(lot, showLocation)}
           </option>
-          {lots.map((lot) => (
-            <option key={lot.id} value={lot.id}>
-              {lotLabel(lot, showLocation)}
-            </option>
-          ))}
-          {allowNew ? <option value="new">New lot…</option> : null}
-        </select>
-      </label>
+        ))}
+        {allowNew ? <option value="new">New lot…</option> : null}
+      </select>
       {showEditableLotFields ? (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
           <label className="settings-label" style={{ marginBottom: 0 }}>
@@ -280,6 +310,27 @@ export default function StockLotPicker({
         <p className="settings-muted" style={{ margin: '4px 0 0', fontSize: 12 }}>
           Soonest expiration is listed first — use that bottle unless you know otherwise.
         </p>
+      ) : null}
+      {canAddLot && inventoryItemId != null ? (
+        <AddInventoryLotModal
+          open={addOpen}
+          practiceId={practiceId}
+          inventoryItemId={inventoryItemId}
+          itemName={itemName}
+          defaultBranchId={branchId}
+          defaultLocationId={locationId}
+          requireLotNumber={requireLotNumber}
+          onClose={() => setAddOpen(false)}
+          onCreated={(lot) => {
+            setNewLot(false);
+            setReloadTick((n) => n + 1);
+            onChange({
+              lotId: lot.id,
+              lotNumber: lot.lotNumber,
+              expirationDate: dateInputValue(lot.expirationDate),
+            });
+          }}
+        />
       ) : null}
     </div>
   );

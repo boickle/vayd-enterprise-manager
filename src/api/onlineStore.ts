@@ -77,6 +77,28 @@ export type StoreVariant = {
   recommendedFrequency?: string | null;
   taxLevelValue?: number | null;
   approvalTag?: 'approved' | 'needs_doctor_approval';
+  tagalongs?: StoreTagalongPreview[];
+  reminderCadence?: StoreReminderCadence | null;
+};
+
+export type StoreReminderCadence = {
+  dueAt: number;
+  periodUnit: string;
+  adjustByQuantity: boolean;
+};
+
+export type StoreTagalongPreview = {
+  ruleId: number;
+  addItemType: string;
+  addItemId: number;
+  name: string;
+  unitPrice: number;
+  minQty: number;
+  maxQty: number | null;
+  addQty: number;
+  addQtyMode: 'fixed' | 'match_trigger';
+  taxMode: 'after_tax' | 'before_tax';
+  taxLevelValue: number | null;
 };
 
 export type StoreSaleType = 'amount' | 'percent';
@@ -151,6 +173,7 @@ export type MailOrderLine = {
   renewalDate: string | null;
   lineStatus: 'ok_to_mail' | 'awaiting_doctor_approval' | 'rejected' | 'send_back';
   approvalDecision?: 'approved' | 'rejected' | 'send_back' | null;
+  approvalTaskId?: number | null;
   refillNote?: string | null;
   /** Refills the approving doctor wants the filler to put on this Rx. */
   authorizedRefills?: number | null;
@@ -159,15 +182,21 @@ export type MailOrderLine = {
   refillExpiresAt?: string | null;
   scriptText?: string | null;
   autoship?: boolean;
+  subscriptionId?: number | null;
+  subscriptionPaused?: boolean;
   kitKind: 'fecal' | 'urine' | null;
   inventoryLotBalanceId?: number | null;
   lotNumber?: string | null;
   stockInventoryItemId?: number | null;
   trackLots?: boolean;
+  checkedAt?: string | null;
+  checkedByEmployeeId?: number | null;
+  checkedByName?: string | null;
 };
 
 export type MailPharmacyStage =
   | 'needs_approval'
+  | 'pending_client'
   | 'needs_payment'
   | 'fill'
   | 'check'
@@ -193,6 +222,8 @@ export type MailOrder = {
   status: string;
   paymentStatus?: 'paid' | 'awaiting_payment';
   shippingPaymentStatus?: 'paid' | 'awaiting_payment';
+  /** Staff waived payment before fill/ship; order is not done until paid. */
+  sendWithoutPayment?: boolean;
   processStatus?: MailProcessStatus;
   approvalStatus?:
     | 'needs_doctor_approval'
@@ -224,6 +255,7 @@ export type MailOrder = {
   secondCheckedAt?: string | null;
   clientContactedAt?: string | null;
   clientContactKind?: 'email' | 'sms' | 'none' | null;
+  clientQuestionPendingAt?: string | null;
   firstCheckerName?: string | null;
   secondCheckerName?: string | null;
   doctorEmployeeId?: number | null;
@@ -246,6 +278,11 @@ export type MailOrder = {
   discount: number;
   shipping: number;
   total: number;
+  /**
+   * Open Scout account balance excluding this mail order’s linked invoice.
+   * Shown in red when the household owes money beyond this order.
+   */
+  otherBalanceDue?: number | null;
   freeShipping: boolean;
   shippingChargeName: string | null;
   labelUrl: string | null;
@@ -581,6 +618,7 @@ export async function createStaffMailOrder(
     notes?: string;
     paymentStatus?: MailOrder['paymentStatus'];
     shippingPaymentStatus?: MailOrder['shippingPaymentStatus'];
+    sendWithoutPayment?: boolean;
     doctorEmployeeId?: number | null;
     createdByEmployeeId?: number | null;
     shippingChargeName?: string | null;
@@ -644,7 +682,11 @@ export async function requestMailLineApproval(
 export async function sendMailApprovalTask(
   practiceId: number,
   orderId: number,
-  body: { assignedToEmployeeId: number; notes?: string },
+  body: {
+    assignedToEmployeeId: number;
+    notes?: string;
+    lineIds?: number[];
+  },
 ) {
   const { data } = await http.post<MailOrder>(
     `/practice/${practiceId}/mail-orders/${orderId}/approval-task`,
@@ -659,6 +701,9 @@ export async function respondMailApproval(
   body: {
     outcome: 'approved' | 'rejected' | 'send_back';
     notes?: string;
+    approvalBasis?: 'standard' | 'chart' | 'refills';
+    taskId?: number;
+    lineIds?: number[];
     lineRefills?: Array<{ lineId: number; refills: number; expiration?: string | null }>;
     lineScripts?: Array<{ lineId: number; scriptText: string }>;
   },
@@ -666,6 +711,31 @@ export async function respondMailApproval(
   const { data } = await http.post<MailOrder>(
     `/practice/${practiceId}/mail-orders/${orderId}/approval-response`,
     body,
+  );
+  return data;
+}
+
+export async function overrideMailLineApproval(
+  practiceId: number,
+  orderId: number,
+  lineId: number,
+  reason: string,
+) {
+  const { data } = await http.post<MailOrder>(
+    `/practice/${practiceId}/mail-orders/${orderId}/lines/${lineId}/override-approval`,
+    { reason },
+  );
+  return data;
+}
+
+export async function splitMailOrder(
+  practiceId: number,
+  orderId: number,
+  lineIds: number[],
+) {
+  const { data } = await http.post<{ original: MailOrder; split: MailOrder }>(
+    `/practice/${practiceId}/mail-orders/${orderId}/split`,
+    { lineIds },
   );
   return data;
 }
@@ -687,15 +757,20 @@ export async function pharmacyMailAction(
       | 'update_script'
       | 'skip_contact'
       | 'thanks'
-      | 'check_override';
+      | 'check_override'
+      | 'pending_client'
+      | 'clear_client_pending';
     notes?: string;
     checkNotes?: string;
     message?: string;
     subject?: string;
     fillBranchId?: number;
+    fillLocationId?: number;
     lineId?: number;
     scriptText?: string;
     recordContact?: boolean;
+    patientId?: number | null;
+    lineIds?: number[];
     lineLots?: Array<{
       lineId: number;
       inventoryLotBalanceId?: number | null;
@@ -827,10 +902,38 @@ export async function patchStoreSubscription(
     cancel?: boolean;
     renewalDate?: string;
     active?: boolean;
+    inventoryItemId?: number;
+    unitPrice?: number;
+    settleMode?: 'charge' | 'refund' | 'credit' | 'auto';
+    mailOrderLineId?: number;
+    productChangeDisposition?: 'request_approval' | 'staff_override';
+    overrideReason?: string;
+    assignedToEmployeeId?: number;
+    approvalNotes?: string;
+    pausedUntil?: string | null;
   },
 ) {
-  const { data } = await http.patch<StoreStaffSubscription>(
-    `/practice/${practiceId}/online-store/subscriptions/${id}`,
+  const { data } = await http.patch<
+    StoreStaffSubscription & {
+      settlement?: {
+        delta: number;
+        mode: string;
+        stripeOk?: boolean;
+        invoiceId?: string | null;
+        message?: string;
+      } | null;
+    }
+  >(`/practice/${practiceId}/online-store/subscriptions/${id}`, body);
+  return data;
+}
+
+export async function emailStoreSubscriptionUpdate(
+  practiceId: number,
+  id: number,
+  body: { subject: string; message: string },
+) {
+  const { data } = await http.post<{ ok: boolean; emailed: string }>(
+    `/practice/${practiceId}/online-store/subscriptions/${id}/email`,
     body,
   );
   return data;
@@ -1100,8 +1203,21 @@ export type StoreAutoship = {
   patientName?: string | null;
   active: boolean;
   paused: boolean;
+  pausedUntil?: string | null;
   stripeSubscriptionId: string | null;
 };
+
+export type StoreMemberDiscount = {
+  patientId: number;
+  percent: number;
+};
+
+export async function listMyStoreMemberDiscounts(practiceId: number) {
+  const { data } = await http.get<StoreMemberDiscount[]>(`/store/autoship/member-discounts`, {
+    params: { practiceId },
+  });
+  return data;
+}
 
 export async function listMyAutoship(practiceId: number) {
   const { data } = await http.get<StoreAutoship[]>(`/store/autoship`, {

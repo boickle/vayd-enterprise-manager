@@ -272,6 +272,19 @@ export async function addShipmentLine(
   return data;
 }
 
+export async function updateShipmentLine(
+  practiceId: number,
+  shipmentId: number,
+  lineId: number,
+  body: Record<string, unknown>
+) {
+  const { data } = await http.patch<InventoryShipmentLine>(
+    `/practice/${practiceId}/inventory-shipments/${shipmentId}/lines/${lineId}`,
+    body
+  );
+  return data;
+}
+
 export async function removeShipmentLine(
   practiceId: number,
   shipmentId: number,
@@ -604,6 +617,8 @@ export async function resolveCostReview(
   body: {
     action: 'apply_catalog' | 'apply_branch' | 'dismiss';
     note?: string | null;
+    appliedCost?: number | null;
+    suggestedPrice?: number | null;
   }
 ) {
   const { data } = await http.post<InventoryCostReview>(

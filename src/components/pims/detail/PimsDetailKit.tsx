@@ -39,7 +39,7 @@ export type FieldSpec = {
   }) => ReactNode;
 };
 
-export type BadgeTone = 'ok' | 'danger' | 'warn' | 'muted' | 'info';
+export type BadgeTone = 'ok' | 'danger' | 'warn' | 'muted' | 'info' | 'male' | 'female';
 
 export function PimsBadge({
   tone = 'muted',

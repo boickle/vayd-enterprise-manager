@@ -5,6 +5,11 @@ import { fetchPatientAppointmentsStaff } from '../api/pimsAppointments';
 import { fetchPatientMedicalRecordStaff, fetchPatientProfileForRow } from '../api/patients';
 import type { MedicalRecordBundle } from './patientChartFromMedicalRecord';
 import {
+  formatDeclinedDate,
+  parseDeclinedItems,
+  type DeclinedTreatmentItem,
+} from '../api/declinedTreatments';
+import {
   appointmentNotesDisplay,
   appointmentTypeDisplayName,
   formatVisitHighlightsNextAppointmentLine,
@@ -165,6 +170,7 @@ export type RoutingPatientHoverSummary = {
   nextAppointmentLine: string | null;
   activeReminders: RoutingPatientReminderLine[];
   overdueReminders: RoutingPatientReminderLine[];
+  declinedItems: DeclinedTreatmentItem[];
 };
 
 function providerLabelFromAppointment(a: Appointment): string {
@@ -356,5 +362,8 @@ export async function loadRoutingPatientHoverSummary(
       : null,
     activeReminders: active,
     overdueReminders: overdue,
+    declinedItems: parseDeclinedItems(
+      (medicalRecord as MedicalRecordBundle | null)?.declinedItems
+    ),
   };
 }

@@ -39,6 +39,7 @@ import ExitSurveyPage from './pages/ExitSurveyPage';
 import RoomLoaderPage from './pages/RoomLoader';
 import SoapEncounterPage from './pages/SoapEncounterPage';
 import VisitWrapUpPage from './pages/VisitWrapUpPage';
+import VisitCheckoutPage from './pages/VisitCheckoutPage';
 import DoctorWorklistPage from './pages/DoctorWorklistPage';
 import BriefWorkspacePage from './pages/BriefWorkspacePage';
 import PracticeChatPage from './pages/PracticeChatPage';
@@ -49,12 +50,15 @@ import Catalog from './pages/Catalog';
 import { LegacyCatalogRedirect } from './pages/CatalogLayout';
 import InventoryLayout from './pages/InventoryLayout';
 import ReceiveShipmentPage from './pages/ReceiveShipmentPage';
+import InitialInventoryEntryPage from './pages/InitialInventoryEntryPage';
 import MoveItemsPage from './pages/MoveItemsPage';
 import WasteAdjustPage from './pages/WasteAdjustPage';
 import InventoryActivityPage from './pages/InventoryActivityPage';
 import InventoryParLevelsPage from './pages/InventoryParLevelsPage';
 import InventoryCountsPage from './pages/InventoryCountsPage';
 import InventoryCountReportPage from './pages/InventoryCountReportPage';
+import InventoryCostReviewsPage from './pages/InventoryCostReviewsPage';
+import InventoryExpiringReportPage from './pages/InventoryExpiringReportPage';
 import InventoryStockRequestsPage from './pages/InventoryStockRequestsPage';
 import SuppliersAdminPage from './pages/SuppliersAdminPage';
 import OnlineStoreImportPage from './pages/OnlineStoreImportPage';
@@ -74,6 +78,7 @@ import PimsPatientsPage from './pages/PimsPatientsPage';
 import PimsTasksPage from './pages/PimsTasksPage';
 import Settings from './pages/Settings';
 import GmailInbox from './pages/GmailInbox';
+import BankDepositsPage from './pages/BankDepositsPage';
 import Scheduler from './pages/Scheduler';
 import Analytics from './pages/Analytics';
 import PostAppointmentSurvey from './pages/PostAppointmentSurvey';
@@ -589,6 +594,10 @@ export default function App() {
               }
             >
               <Route path="/home" element={<Home />} />
+              <Route
+                path="/analytics/bank-deposits"
+                element={<Navigate to="/schedule/deposits" replace />}
+              />
               <Route path="/scout/*" element={<ScoutLegacyRedirect />} />
               <Route path="/routing" element={<Navigate to="/schedule/routing" replace />} />
               <Route path="/doctor" element={<Navigate to="/schedule/my-day" replace />} />
@@ -662,6 +671,10 @@ export default function App() {
                       path="soap/:appointmentId/:patientId/wrap-up"
                       element={<VisitWrapUpPage />}
                     />
+                    <Route
+                      path="soap/:appointmentId/:patientId/checkout"
+                      element={<VisitCheckoutPage />}
+                    />
                     <Route path="scheduler" element={<Scheduler />} />
                     <Route
                       path="mail-orders"
@@ -685,8 +698,13 @@ export default function App() {
                       <Route path="store-categories" element={<StoreCategoriesPage />} />
                       <Route path="mail-orders" element={<LegacyMailOrdersRedirect />} />
                       <Route path="abandoned-carts" element={<AbandonedCartsPage />} />
-                      <Route path="subscriptions" element={<StoreSubscriptionsPage />} />
+                      <Route path="auto-ships" element={<StoreSubscriptionsPage />} />
+                      <Route
+                        path="subscriptions"
+                        element={<Navigate to="/schedule/inventory/auto-ships" replace />}
+                      />
                       <Route path="receive" element={<ReceiveShipmentPage />} />
+                      <Route path="initial-entry" element={<InitialInventoryEntryPage />} />
                       <Route path="move" element={<MoveItemsPage />} />
                       <Route path="waste" element={<WasteAdjustPage />} />
                       <Route path="activity" element={<InventoryActivityPage />} />
@@ -698,9 +716,11 @@ export default function App() {
                       <Route path="counts" element={<InventoryCountsPage kind="weekly" />} />
                       <Route path="full-count" element={<InventoryCountsPage kind="full" />} />
                       <Route path="count-report" element={<InventoryCountReportPage />} />
+                      <Route path="expiring" element={<InventoryExpiringReportPage />} />
+                      <Route path="cost-reviews" element={<InventoryCostReviewsPage />} />
                       <Route
                         path="fill-list"
-                        element={<InventoryStockRequestsPage kind="fill" />}
+                        element={<Navigate to="/schedule/inventory/transfer-list" replace />}
                       />
                       <Route
                         path="order-list"
@@ -709,12 +729,6 @@ export default function App() {
                       <Route
                         path="transfer-list"
                         element={<InventoryStockRequestsPage kind="transfer" />}
-                      />
-                      <Route
-                        path="cost-reviews"
-                        element={
-                          <Navigate to="/schedule/admin/inventory/cost-reviews" replace />
-                        }
                       />
                       <Route path="suppliers" element={<SuppliersAdminPage />} />
                       <Route
@@ -737,6 +751,11 @@ export default function App() {
                     <Route path="clients" element={<PimsClientsPage />} />
                     <Route path="patients" element={<PimsPatientsPage />} />
                     <Route path="email" element={<GmailInbox />} />
+                    <Route path="deposits" element={<BankDepositsPage />} />
+                    <Route
+                      path="analytics/bank-deposits"
+                      element={<Navigate to="/schedule/deposits" replace />}
+                    />
                     <Route path="analytics" element={<Analytics basePath="/schedule/analytics" />}>
                       <Route index element={<Navigate to="/schedule/analytics/payments" replace />} />
                       <Route

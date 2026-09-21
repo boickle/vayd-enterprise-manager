@@ -11,7 +11,7 @@ import {
 import {
   orderQtyForDefault,
   shortBy,
-  surplusBy,
+  spareForTransfer,
 } from './inventoryLocationTargets';
 
 export type OtherOfficeRef = { branchId: number; name: string };
@@ -48,9 +48,31 @@ export type FillSource = {
   overPar: boolean;
 };
 
+export type OrderNeedLine = {
+  locationId: number;
+  locationName: string;
+  onHand: number;
+  par: number | null;
+  short: number;
+  coveredFromMain: number;
+};
+
+export type OrderBreakdown = {
+  inventoryItemId: number;
+  branchLocationId: number;
+  quantity: number;
+  mainOnHand: number;
+  mainOut: number;
+  effectiveOnHand: number;
+  reorderPoint: number | null;
+  max: number | null;
+  locationNeeds: OrderNeedLine[];
+};
+
 export type StockPlan = {
   requests: PlannedRequest[];
   fillSources: FillSource[];
+  orderBreakdowns: OrderBreakdown[];
 };
 
 function requestKey(row: {
@@ -62,11 +84,13 @@ function requestKey(row: {
 }
 
 /**
- * 1. Non-default locations short of par → fill list.
- * 2. Cover those shorts from over-target locations first (this office, then others)
- *    → transfer list for the giving location. Default surplus is on-hand above max.
- * 3. Leftover need decrements the default location.
- * 4. If default on-hand is then at or below min → order list, qty back to max.
+ * 1. Non-default locations short of par → need to receive.
+ * 2. Cover shorts in order: Main (down to 0), then other locations over par,
+ *    then other offices over par, then other locations down to 0 if Main is empty.
+ *    Prefer depleting Main over pulling another location below par.
+ * 3. Each covered short becomes a transfer From → To (not a separate fill row).
+ * 4. Uncovered shorts stay as fill (To only, From —).
+ * 5. If default on-hand after planned gives is at or below min → order list back to max.
  */
 export function planStockLists(
   branchId: number,
@@ -77,6 +101,7 @@ export function planStockLists(
 ): StockPlan {
   const planned: PlannedRequest[] = [];
   const fillSources: FillSource[] = [];
+  const orderBreakdowns: OrderBreakdown[] = [];
   const otherByItem = new Map<number, OtherOfficeStockLoc[]>();
   for (const loc of otherLocs) {
     const list = otherByItem.get(loc.inventoryItemId) ?? [];
@@ -93,19 +118,52 @@ export function planStockLists(
         : null) ?? locs[0];
 
     const remaining = new Map<number, number>();
+    const needLines = new Map<number, OrderNeedLine>();
     for (const loc of locs) {
       if (loc.branchLocationId === defaultLoc.branchLocationId) continue;
       const need = shortBy(loc.quantityOnHand, loc.parLevel);
       if (need != null) {
         remaining.set(loc.branchLocationId, need);
-        planned.push({
-          kind: 'fill',
-          branchId,
-          branchLocationId: loc.branchLocationId,
-          inventoryItemId: item.inventoryItemId,
-          quantity: need,
+        needLines.set(loc.branchLocationId, {
+          locationId: loc.branchLocationId,
+          locationName: loc.name ?? 'Location',
+          onHand: Number(loc.quantityOnHand) || 0,
+          par: loc.parLevel,
+          short: need,
+          coveredFromMain: 0,
         });
       }
+    }
+    const pushOrder = (defaultOut: number) => {
+      const effectiveOnHand = Number(defaultLoc.quantityOnHand) - defaultOut;
+      const orderQty = orderQtyForDefault({
+        effectiveOnHand,
+        min: item.reorderPoint,
+        max: defaultLoc.parLevel,
+      });
+      if (orderQty <= 0) return;
+      planned.push({
+        kind: 'order',
+        branchId,
+        branchLocationId: defaultLoc.branchLocationId,
+        inventoryItemId: item.inventoryItemId,
+        quantity: orderQty,
+      });
+      orderBreakdowns.push({
+        inventoryItemId: item.inventoryItemId,
+        branchLocationId: defaultLoc.branchLocationId,
+        quantity: orderQty,
+        mainOnHand: Number(defaultLoc.quantityOnHand) || 0,
+        mainOut: defaultOut,
+        effectiveOnHand,
+        reorderPoint: item.reorderPoint,
+        max: defaultLoc.parLevel,
+        locationNeeds: [...needLines.values()].filter((n) => n.short > 0),
+      });
+    };
+    if (remaining.size === 0) {
+      pushOrder(0);
+      continue;
     }
 
     const locName = (fromBranchId: number, fromLocId: number): { office: string; loc: string } => {
@@ -126,8 +184,7 @@ export function planStockLists(
       fromBranchId: number,
       fromLocId: number,
       destLocId: number,
-      qty: number,
-      overPar: boolean
+      qty: number
     ) => {
       const names = locName(fromBranchId, fromLocId);
       fillSources.push({
@@ -139,94 +196,154 @@ export function planStockLists(
         fromBranchName: names.office,
         fromLocationName: names.loc,
         quantity: qty,
-        overPar,
+        overPar: true,
       });
       if (
         fromBranchId === branchId &&
         fromLocId === defaultLoc.branchLocationId
       ) {
         defaultOut += qty;
+        const line = needLines.get(destLocId);
+        if (line) line.coveredFromMain += qty;
       }
-      if (overPar) {
-        planned.push({
-          kind: 'transfer',
-          branchId: fromBranchId,
-          branchLocationId: fromLocId,
-          toBranchId: branchId,
-          toBranchLocationId: destLocId,
-          inventoryItemId: item.inventoryItemId,
-          quantity: qty,
-        });
-      }
+      planned.push({
+        kind: 'transfer',
+        branchId: fromBranchId,
+        branchLocationId: fromLocId,
+        toBranchId: branchId,
+        toBranchLocationId: destLocId,
+        inventoryItemId: item.inventoryItemId,
+        quantity: qty,
+      });
     };
-
-    const pools = locs
-      .map((loc) => ({
-        branchId,
-        locId: loc.branchLocationId,
-        extra: surplusBy(loc.quantityOnHand, loc.parLevel) ?? 0,
-      }))
-      .filter((p) => p.extra > 0)
-      .sort((a, b) => b.extra - a.extra);
 
     const dests = () =>
       [...remaining.entries()]
         .filter(([, need]) => need > 0)
         .sort((a, b) => b[1] - a[1]);
 
-    for (const pool of pools) {
-      for (const [destId, need] of dests()) {
-        if (pool.extra <= 0) break;
-        if (destId === pool.locId) continue;
-        const take = Math.min(pool.extra, need);
-        if (take <= 0) continue;
-        pool.extra -= take;
-        remaining.set(destId, need - take);
-        addGive(pool.branchId, pool.locId, destId, take, true);
-      }
+    /** Remaining units each source can still give (starts at on-hand). */
+    const available = new Map<string, number>();
+    const availKey = (b: number, locId: number) => `${b}:${locId}`;
+    available.set(
+      availKey(branchId, defaultLoc.branchLocationId),
+      Math.max(0, Number(defaultLoc.quantityOnHand) || 0)
+    );
+    for (const loc of locs) {
+      if (loc.branchLocationId === defaultLoc.branchLocationId) continue;
+      available.set(
+        availKey(branchId, loc.branchLocationId),
+        Math.max(0, Number(loc.quantityOnHand) || 0)
+      );
+    }
+    for (const loc of otherByItem.get(item.inventoryItemId) ?? []) {
+      available.set(
+        availKey(loc.branchId, loc.branchLocationId),
+        Math.max(0, Number(loc.quantityOnHand) || 0)
+      );
     }
 
-    const otherPools = (otherByItem.get(item.inventoryItemId) ?? [])
-      .map((loc) => ({
-        branchId: loc.branchId,
-        locId: loc.branchLocationId,
-        extra: surplusBy(loc.quantityOnHand, loc.parLevel) ?? 0,
-      }))
-      .filter((p) => p.extra > 0)
-      .sort((a, b) => b.extra - a.extra);
-
-    for (const pool of otherPools) {
-      for (const [destId, need] of dests()) {
-        if (pool.extra <= 0) break;
-        const take = Math.min(pool.extra, need);
-        if (take <= 0) continue;
-        pool.extra -= take;
-        remaining.set(destId, need - take);
-        addGive(pool.branchId, pool.locId, destId, take, true);
+    const drainPools = (
+      pools: { branchId: number; locId: number; cap: number }[]
+    ) => {
+      for (const pool of pools) {
+        const key = availKey(pool.branchId, pool.locId);
+        let left = Math.min(pool.cap, available.get(key) ?? 0);
+        for (const [destId, need] of dests()) {
+          if (left <= 0) break;
+          if (pool.branchId === branchId && destId === pool.locId) continue;
+          const take = Math.min(left, need);
+          if (take <= 0) continue;
+          left -= take;
+          available.set(key, (available.get(key) ?? 0) - take);
+          remaining.set(destId, need - take);
+          addGive(pool.branchId, pool.locId, destId, take);
+        }
       }
+    };
+
+    // 1) Prefer Main — give all on-hand (down to 0).
+    drainPools([
+      {
+        branchId,
+        locId: defaultLoc.branchLocationId,
+        cap: spareForTransfer({
+          isDefault: true,
+          onHand: defaultLoc.quantityOnHand,
+          parOrMax: defaultLoc.parLevel,
+        }),
+      },
+    ]);
+
+    // 2) Same-office locations only while over par.
+    drainPools(
+      locs
+        .filter((loc) => loc.branchLocationId !== defaultLoc.branchLocationId)
+        .map((loc) => ({
+          branchId,
+          locId: loc.branchLocationId,
+          cap: spareForTransfer({
+            isDefault: false,
+            onHand: loc.quantityOnHand,
+            parOrMax: loc.parLevel,
+          }),
+        }))
+        .filter((p) => p.cap > 0)
+        .sort((a, b) => b.cap - a.cap)
+    );
+
+    // 3) Other offices over par.
+    drainPools(
+      (otherByItem.get(item.inventoryItemId) ?? [])
+        .map((loc) => ({
+          branchId: loc.branchId,
+          locId: loc.branchLocationId,
+          cap: spareForTransfer({
+            isDefault: false,
+            onHand: loc.quantityOnHand,
+            parOrMax: loc.parLevel,
+          }),
+        }))
+        .filter((p) => p.cap > 0)
+        .sort((a, b) => b.cap - a.cap)
+    );
+
+    // 4) Last resort: same-office non-default remaining on-hand (below par) if Main is empty.
+    if (dests().length > 0) {
+      drainPools(
+        locs
+          .filter((loc) => loc.branchLocationId !== defaultLoc.branchLocationId)
+          .map((loc) => ({
+            branchId,
+            locId: loc.branchLocationId,
+            cap: spareForTransfer({
+              isDefault: false,
+              onHand: available.get(availKey(branchId, loc.branchLocationId)) ?? 0,
+              parOrMax: loc.parLevel,
+              allowBelowPar: true,
+            }),
+          }))
+          .filter((p) => p.cap > 0)
+          .sort((a, b) => b.cap - a.cap)
+      );
     }
 
+    // Uncovered shorts — show on transfer list as To with no From yet.
     for (const [destId, need] of remaining) {
       if (need <= 0) continue;
-      addGive(branchId, defaultLoc.branchLocationId, destId, need, false);
-    }
-    const orderQty = orderQtyForDefault({
-      effectiveOnHand: Number(defaultLoc.quantityOnHand) - defaultOut,
-      min: item.reorderPoint,
-      max: defaultLoc.parLevel,
-    });
-    if (orderQty > 0) {
       planned.push({
-        kind: 'order',
+        kind: 'fill',
         branchId,
-        branchLocationId: defaultLoc.branchLocationId,
+        branchLocationId: destId,
         inventoryItemId: item.inventoryItemId,
-        quantity: orderQty,
+        quantity: need,
       });
     }
+
+    pushOrder(defaultOut);
   }
 
-  return { requests: planned, fillSources };
+  return { requests: planned, fillSources, orderBreakdowns };
 }
 
 async function applyKind(
@@ -238,23 +355,45 @@ async function applyKind(
 ): Promise<void> {
   const wanted = planned.filter((p) => p.kind === kind);
   const wantedKeys = new Set(wanted.map((p) => requestKey(p)));
-  await Promise.all([
-    ...wanted.map((p) =>
-      createStockRequest(practiceId, {
-        kind: p.kind,
-        branchId: p.branchId,
-        branchLocationId: p.branchLocationId,
-        inventoryItemId: p.inventoryItemId,
-        quantity: p.quantity,
-        toBranchId: p.toBranchId,
-        toBranchLocationId: p.toBranchLocationId,
-        automatic: true,
-      })
-    ),
-    ...open
-      .filter((row) => cancelIf(row) && !wantedKeys.has(requestKey(row)))
-      .map((row) => resolveStockRequest(practiceId, row.id, 'cancelled')),
-  ]);
+  const cancelIds = new Set<number>();
+
+  // Collapse every open twin for a wanted key (any requester), keep lowest id.
+  const byKey = new Map<string, InventoryStockRequest[]>();
+  for (const row of open) {
+    const key = requestKey(row);
+    if (!wantedKeys.has(key)) continue;
+    const list = byKey.get(key) ?? [];
+    list.push(row);
+    byKey.set(key, list);
+  }
+  for (const list of byKey.values()) {
+    list.sort((a, b) => a.id - b.id);
+    for (const extra of list.slice(1)) cancelIds.add(extra.id);
+  }
+
+  // Drop obsolete automatic rows for this office/scope.
+  for (const row of open.filter(cancelIf)) {
+    if (!wantedKeys.has(requestKey(row))) cancelIds.add(row.id);
+  }
+
+  if (cancelIds.size > 0) {
+    await Promise.all(
+      [...cancelIds].map((id) => resolveStockRequest(practiceId, id, 'cancelled'))
+    );
+  }
+
+  for (const p of wanted) {
+    await createStockRequest(practiceId, {
+      kind: p.kind,
+      branchId: p.branchId,
+      branchLocationId: p.branchLocationId,
+      inventoryItemId: p.inventoryItemId,
+      quantity: p.quantity,
+      toBranchId: p.toBranchId,
+      toBranchLocationId: p.toBranchLocationId,
+      automatic: true,
+    });
+  }
 }
 
 export async function syncStockListsFromPars(
@@ -276,21 +415,20 @@ export async function syncStockListsFromPars(
       if (defaultLocationId != null && loc.branchLocationId === defaultLocationId) return sum;
       return sum + (shortBy(loc.quantityOnHand, loc.parLevel) ?? 0);
     }, 0);
-  const maybeNeedsOutside = items.some((item) => {
-    const extra = item.locations.reduce(
-      (sum, loc) => sum + (surplusBy(loc.quantityOnHand, loc.parLevel) ?? 0),
+  const officeSpare = (item: BranchParItem) =>
+    item.locations.reduce(
+      (sum, loc) =>
+        sum +
+        spareForTransfer({
+          isDefault: defaultLocationId != null && loc.branchLocationId === defaultLocationId,
+          onHand: loc.quantityOnHand,
+          parOrMax: loc.parLevel,
+        }),
       0
     );
-    return fillNeed(item) > extra;
-  });
+  const maybeNeedsOutside = items.some((item) => fillNeed(item) > officeSpare(item));
   if (others.length > 0 && maybeNeedsOutside) {
-    const leftoverItems = items.filter((item) => {
-      const extra = item.locations.reduce(
-        (sum, loc) => sum + (surplusBy(loc.quantityOnHand, loc.parLevel) ?? 0),
-        0
-      );
-      return fillNeed(item) > extra;
-    });
+    const leftoverItems = items.filter((item) => fillNeed(item) > officeSpare(item));
     const rows = await Promise.all(
       leftoverItems.flatMap((item) =>
         others.map(async (office) => {

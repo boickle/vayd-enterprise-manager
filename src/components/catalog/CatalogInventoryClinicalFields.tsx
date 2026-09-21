@@ -4,6 +4,7 @@ import {
   type InventoryVaccineDetails,
 } from '../../api/inventoryTools';
 import type { InventoryItem } from '../../api/quantityPriceBreaks';
+import { listPatientStatuses, type PatientStatusRow } from '../../api/patientStatuses';
 
 type Props = {
   practiceId: number;
@@ -323,11 +324,27 @@ export default function CatalogInventoryClinicalFields({
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [patientStatuses, setPatientStatuses] = useState<PatientStatusRow[]>([]);
 
   useEffect(() => {
     setDraft(fromItem(item));
     setVaccineDraft(vaccineFromItem(item));
   }, [item]);
+
+  useEffect(() => {
+    if (!detailsOpen) return;
+    let cancelled = false;
+    void listPatientStatuses()
+      .then((rows) => {
+        if (!cancelled) setPatientStatuses(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setPatientStatuses([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [detailsOpen]);
 
   async function save() {
     setSaving(true);
@@ -949,14 +966,30 @@ export default function CatalogInventoryClinicalFields({
 
           <label className="settings-label" style={{ maxWidth: 320, marginBottom: 16 }}>
             Change patient status to
-            <input
+            <FlagHelp text="When this item is charged and the invoice is finalized, the patient’s status is updated. Managed under Settings → Patient Statuses." />
+            <select
               className="settings-input"
               value={draft.changePatientStatusTo}
               onChange={(e) =>
                 setDraft((d) => ({ ...d, changePatientStatusTo: e.target.value }))
               }
-              placeholder="Optional (e.g. Euthanized)"
-            />
+            >
+              <option value="">No change</option>
+              {patientStatuses.map((s) => (
+                <option key={s.id} value={s.name}>
+                  {s.name}
+                  {s.marksInactive ? ' (marks inactive)' : ''}
+                </option>
+              ))}
+              {draft.changePatientStatusTo &&
+              !patientStatuses.some(
+                (s) => s.name.toLowerCase() === draft.changePatientStatusTo.toLowerCase(),
+              ) ? (
+                <option value={draft.changePatientStatusTo}>
+                  {draft.changePatientStatusTo} (legacy)
+                </option>
+              ) : null}
+            </select>
           </label>
 
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>

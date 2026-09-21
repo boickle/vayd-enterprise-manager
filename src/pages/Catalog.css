@@ -231,6 +231,11 @@
   color: #92400e;
 }
 
+.inv-catalog-results__type-tag--bundle {
+  background: #f0fdfa;
+  color: #0f766e;
+}
+
 .inv-catalog-results__row-actions {
   display: flex;
   justify-content: flex-end;

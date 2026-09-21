@@ -38,9 +38,12 @@ import {
   type StoreCategory,
 } from '../api/onlineStore';
 import CatalogBundles from '../components/catalog/CatalogBundles';
+import { listBundles, type Bundle } from '../api/memberships';
 import CatalogInventoryClinicalFields from '../components/catalog/CatalogInventoryClinicalFields';
 import CatalogItemRemindersEditor from '../components/catalog/CatalogItemRemindersEditor';
 import CatalogItemLotsEditor from '../components/catalog/CatalogItemLotsEditor';
+import CatalogTagalongsEditor from '../components/catalog/CatalogTagalongsEditor';
+import { listPatientStatuses, type PatientStatusRow } from '../api/patientStatuses';
 import {
   listPracticeBranches,
   listInventoryBranchLocations,
@@ -367,7 +370,14 @@ function locationLabel(loc: InventoryBranchLocation): string {
   return `${loc.name} (${loc.code})`;
 }
 
-export default function Catalog() {
+export type CatalogEmbedProps = {
+  itemId: number;
+  itemType?: ItemType;
+  label?: string;
+  onClose: () => void;
+};
+
+export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
   const { token, doctorId } = useAuth() as { token: string | null; doctorId: string | null };
   const practiceId = useMemo(() => resolvePracticeId(token), [token]);
 
@@ -376,6 +386,8 @@ export default function Catalog() {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SearchResultItem[]>([]);
+  const [bundleHits, setBundleHits] = useState<Bundle[]>([]);
+  const [focusBundleId, setFocusBundleId] = useState<number | null>(null);
   const [searching, setSearching] = useState(false);
   const searchSeq = useRef(0);
   const [searchParams, setSearchParams] = useSearchParams();
@@ -387,6 +399,23 @@ export default function Catalog() {
   const [createSaving, setCreateSaving] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [createForm, setCreateForm] = useState(EMPTY_INVENTORY_CREATE);
+  const [createPatientStatuses, setCreatePatientStatuses] = useState<PatientStatusRow[]>([]);
+
+  useEffect(() => {
+    if (!createOpen) return;
+    let cancelled = false;
+    void listPatientStatuses()
+      .then((rows) => {
+        if (!cancelled) setCreatePatientStatuses(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setCreatePatientStatuses([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [createOpen]);
+
   const [coreDraft, setCoreDraft] = useState({
     name: '',
     code: '',
@@ -470,8 +499,18 @@ export default function Catalog() {
     setSearchParams(next, { replace: true });
   }, [searchParams, setSearchParams]);
 
+  useEffect(() => {
+    if (!embed) return;
+    setSelected({
+      itemType: embed.itemType ?? 'inventory',
+      itemId: embed.itemId,
+      label: embed.label?.trim() || 'Item',
+    });
+  }, [embed?.itemId, embed?.itemType, embed?.label]);
+
   // Deep-link from counts / other pages: /inventory/items?itemId=123&name=...
   useEffect(() => {
+    if (embed) return;
     const raw = searchParams.get('itemId');
     if (raw == null || String(raw).trim() === '') return;
     const itemId = Number(raw);
@@ -485,7 +524,7 @@ export default function Catalog() {
       }
       return { itemType, itemId, label: name };
     });
-  }, [searchParams]);
+  }, [searchParams, embed]);
 
   function catalogReturnTo() {
     const raw = searchParams.get('returnTo');
@@ -495,6 +534,10 @@ export default function Catalog() {
   }
 
   function closeItemDetailModal() {
+    if (embed) {
+      embed.onClose();
+      return;
+    }
     setSelected(null);
     const dest = catalogReturnTo();
     if (dest) {
@@ -528,6 +571,8 @@ export default function Catalog() {
   const [reorderDraftByBranchId, setReorderDraftByBranchId] = useState<Record<number, string>>({});
   const [parDraftByBranchId, setParDraftByBranchId] = useState<Record<number, string>>({});
   const [parDraftByLocationKey, setParDraftByLocationKey] = useState<Record<string, string>>({});
+  /** Manual on-hand drafts keyed by `${branchId}:${branchLocationId}`. */
+  const [qtyDraftByLocationKey, setQtyDraftByLocationKey] = useState<Record<string, string>>({});
   const [stockLoading, setStockLoading] = useState(false);
   const [stockSaving, setStockSaving] = useState(false);
   const [stockError, setStockError] = useState<string | null>(null);
@@ -973,19 +1018,43 @@ export default function Catalog() {
     const q = searchQuery.trim();
     if (!q || typeFilter === 'bundle') {
       setSearchResults([]);
+      setBundleHits([]);
       return;
     }
     const seq = ++searchSeq.current;
     const t = window.setTimeout(async () => {
       setSearching(true);
       try {
-        const rows = await searchItems(q, practiceId, 50, {
-          includeInactive: showArchived,
-        });
+        const [rows, bundles] = await Promise.all([
+          searchItems(q, practiceId, 50, {
+            includeInactive: showArchived,
+          }),
+          typeFilter === 'all'
+            ? listBundles({
+                kind: 'bundle',
+                includeArchived: showArchived,
+                q,
+              }).catch(() => [] as Bundle[])
+            : Promise.resolve([] as Bundle[]),
+        ]);
         if (searchSeq.current !== seq) return;
         setSearchResults(applyCatalogTypeFilter(rows, typeFilter));
+        const needle = q.toLowerCase();
+        setBundleHits(
+          bundles
+            .filter(
+              (b) =>
+                b.name.toLowerCase().includes(needle) ||
+                (b.code ?? '').toLowerCase().includes(needle) ||
+                (b.marketingSummary ?? '').toLowerCase().includes(needle),
+            )
+            .slice(0, 25),
+        );
       } catch {
-        if (searchSeq.current === seq) setSearchResults([]);
+        if (searchSeq.current === seq) {
+          setSearchResults([]);
+          setBundleHits([]);
+        }
       } finally {
         if (searchSeq.current === seq) setSearching(false);
       }
@@ -1011,6 +1080,7 @@ export default function Catalog() {
         const reorderMap: Record<number, string> = {};
         const parMap: Record<number, string> = {};
         const locParMap: Record<string, string> = {};
+        const locQtyMap: Record<string, string> = {};
         for (const row of stockSettled) {
           if (row.ok && row.stock) {
             stockMap[row.id] = row.stock;
@@ -1023,10 +1093,15 @@ export default function Catalog() {
                 ? ''
                 : String(row.stock.parLevel);
             for (const loc of row.stock.locations ?? []) {
-              locParMap[`${row.id}:${loc.branchLocationId}`] =
+              const locKey = `${row.id}:${loc.branchLocationId}`;
+              locParMap[locKey] =
                 loc.parLevel == null || Number.isNaN(Number(loc.parLevel))
                   ? ''
                   : String(loc.parLevel);
+              locQtyMap[locKey] =
+                loc.quantityOnHand == null || Number.isNaN(Number(loc.quantityOnHand))
+                  ? ''
+                  : String(loc.quantityOnHand);
             }
           }
         }
@@ -1034,11 +1109,13 @@ export default function Catalog() {
         setReorderDraftByBranchId(reorderMap);
         setParDraftByBranchId(parMap);
         setParDraftByLocationKey((prev) => ({ ...prev, ...locParMap }));
+        setQtyDraftByLocationKey((prev) => ({ ...prev, ...locQtyMap }));
       } catch {
         setStockByBranchId({});
         setReorderDraftByBranchId({});
         setParDraftByBranchId({});
         setParDraftByLocationKey({});
+        setQtyDraftByLocationKey({});
       } finally {
         setStockLoading(false);
       }
@@ -1356,6 +1433,36 @@ export default function Catalog() {
         setStockError('Re-order point cannot be greater than max');
         return;
       }
+
+      // Location qty edits post as adjustments. Prefer Lots for lot-tracked items so
+      // lot balances stay aligned (role gating for inventory manager+ comes later).
+      for (const { loc } of locations) {
+        const key = `${forBranchId}:${loc.branchLocationId}`;
+        const draftRaw = (qtyDraftByLocationKey[key] ?? '').trim();
+        const current =
+          loc.quantityOnHand == null || Number.isNaN(Number(loc.quantityOnHand))
+            ? 0
+            : Number(loc.quantityOnHand);
+        if (draftRaw === '') continue;
+        const target = Number(draftRaw);
+        if (!Number.isFinite(target) || target < 0) {
+          setStockError(`${loc.name} qty must be a number 0 or greater`);
+          return;
+        }
+        const delta = target - current;
+        if (delta === 0) continue;
+        const up = delta > 0;
+        const body: PostInventoryMovementBody = {
+          movementType: up ? 'adjustment_increase' : 'adjustment_decrease',
+          inventoryItemId: stockItemId,
+          quantity: Math.abs(delta),
+          note: 'Manual count adjustment',
+        };
+        if (up) body.toBranchLocationId = loc.branchLocationId;
+        else body.fromBranchLocationId = loc.branchLocationId;
+        await postInventoryMovement(practiceId, forBranchId, body);
+      }
+
       const updated = await upsertInventoryBranchStock(
         practiceId,
         forBranchId,
@@ -1396,7 +1503,11 @@ export default function Catalog() {
         }
         return next;
       });
-      setToast('Re-order point, max, and par saved');
+      if (stockItemId != null) {
+        await loadBranchStock(stockItemId, branches);
+        void reloadMovements();
+      }
+      setToast('Counts, re-order point, max, and par saved');
       window.setTimeout(() => setToast(null), 3500);
     } catch (e: unknown) {
       setStockError(e instanceof Error ? e.message : 'Save failed');
@@ -1998,19 +2109,29 @@ export default function Catalog() {
         <div className="settings-form-group" style={{ marginBottom: 24 }}>
           {typeFilterBar}
         </div>
-        <CatalogBundles practiceId={practiceId} />
+        <CatalogBundles
+          practiceId={practiceId}
+          focusBundleId={focusBundleId}
+          initialQuery={searchQuery}
+          onFocusBundleConsumed={() => setFocusBundleId(null)}
+        />
       </div>
     );
   }
 
   return (
-    <div className="settings-section">
+    <>
       {toast && (
-        <div className="settings-message settings-success-message" style={{ marginBottom: 16 }}>
+        <div
+          className="settings-message settings-success-message"
+          style={{ marginBottom: embed ? 0 : 16 }}
+        >
           {toast}
         </div>
       )}
 
+      {!embed ? (
+      <div className="settings-section">
       <div className="settings-form-group" style={{ marginBottom: 24 }}>
         {typeFilterBar}
         <div
@@ -2111,7 +2232,11 @@ export default function Catalog() {
             </button>
             <span className="inv-catalog-results__count">
               Total count:{' '}
-              {searchQuery.trim() ? (searching ? '…' : searchResults.length) : 0}
+              {searchQuery.trim()
+                ? searching
+                  ? '…'
+                  : searchResults.length + bundleHits.length
+                : 0}
             </span>
           </div>
           <div className="inv-catalog-results__toolbar-right" aria-label="Export (coming soon)">
@@ -2129,12 +2254,15 @@ export default function Catalog() {
             Type to search. Results appear here.
           </p>
         )}
-        {searchQuery.trim() && !searching && searchResults.length === 0 && (
+        {searchQuery.trim() &&
+          !searching &&
+          searchResults.length === 0 &&
+          bundleHits.length === 0 && (
           <p className="settings-muted" style={{ marginTop: 0 }}>
             No matches.
           </p>
         )}
-        {searchResults.length > 0 && (
+        {(searchResults.length > 0 || bundleHits.length > 0) && (
           <div className="inv-catalog-results__table-scroll">
             <table className="inv-catalog-results__table">
               <thead>
@@ -2157,6 +2285,58 @@ export default function Catalog() {
                 </tr>
               </thead>
               <tbody>
+                {bundleHits.map((bundle) => (
+                  <tr
+                    key={`bundle-${bundle.id}`}
+                    onClick={() => {
+                      setFocusBundleId(bundle.id);
+                      setTypeFilter('bundle');
+                    }}
+                  >
+                    {bulkSelectMode ? <td /> : null}
+                    <td>
+                      <div className="inv-catalog-results__item">
+                        <span className="inv-catalog-results__type-tag inv-catalog-results__type-tag--bundle">
+                          Bundle
+                        </span>
+                        <div className="inv-catalog-results__item-text">
+                          <span className="inv-catalog-results__name">{bundle.name}</span>
+                          <span className="inv-catalog-results__code">
+                            {bundle.code || 'No code'}
+                            {bundle.marketingSummary
+                              ? ` · ${bundle.marketingSummary}`
+                              : ''}
+                          </span>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="inv-catalog-results__empty">—</td>
+                    <td className="inv-catalog-results__empty">—</td>
+                    <td className="inv-catalog-results__td-num inv-catalog-results__empty">—</td>
+                    <td className="inv-catalog-results__td-num inv-catalog-results__empty">—</td>
+                    <td className="inv-catalog-results__td-num">
+                      {bundle.price != null ? formatUsd(bundle.price) : '—'}
+                    </td>
+                    <td className="inv-catalog-results__td-num inv-catalog-results__empty">—</td>
+                    <td className="inv-catalog-results__empty">—</td>
+                    <td>
+                      <span
+                        className={
+                          bundle.isActive && !bundle.isArchived
+                            ? 'inv-catalog-results__status inv-catalog-results__status--ok'
+                            : 'inv-catalog-results__status inv-catalog-results__status--off'
+                        }
+                      >
+                        {bundle.isArchived
+                          ? 'Archived'
+                          : bundle.isActive
+                            ? 'Active'
+                            : 'Inactive'}
+                      </span>
+                    </td>
+                    <td />
+                  </tr>
+                ))}
                 {searchResults.map((row, i) => {
                   const itemType = row.itemType;
                   const itemId = entityIdFromSelection(itemType, row);
@@ -2277,6 +2457,8 @@ export default function Catalog() {
           </div>
         )}
       </div>
+      </div>
+      ) : null}
 
       {selected && (
         <div
@@ -2641,8 +2823,11 @@ export default function Catalog() {
                     practiceId={practiceId}
                     inventoryItemId={selected!.itemId}
                     stockItemId={stockItemId}
+                    stockItemName={stockLinkItemLabel}
                     branches={branches}
-                    trackLots={(detail.item as InventoryItem).trackLots === true}
+                    trackLots={
+                      (detail.item as InventoryItem).trackLots === true || stockItemId != null
+                    }
                     requireExpirationOnLots
                     requireLotNumber={
                       (detail.item as InventoryItem).requireLotNumber === true
@@ -2651,6 +2836,18 @@ export default function Catalog() {
                       if (stockItemId != null) void loadBranchStock(stockItemId, branches);
                       void reloadMovements();
                     }}
+                    onOpenStockItem={
+                      stockItemId != null &&
+                      selected != null &&
+                      stockItemId !== selected.itemId
+                        ? () =>
+                            setSelected({
+                              itemType: 'inventory',
+                              itemId: stockItemId,
+                              label: stockLinkItemLabel || `Item #${stockItemId}`,
+                            })
+                        : undefined
+                    }
                   />
                 </>
               )}
@@ -2857,6 +3054,16 @@ export default function Catalog() {
                 </div>
               )}
 
+              {selected ? (
+                <CatalogTagalongsEditor
+                  key={`tagalong-${detail.itemType}-${selected.itemId}`}
+                  practiceId={practiceId}
+                  itemType={detail.itemType}
+                  itemId={selected.itemId}
+                  onlineStoreEnabled={onlineStoreImplemented}
+                />
+              ) : null}
+
               <div style={{ marginBottom: 16 }}>
                   <h4 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 8px' }}>
                     Prices by branch
@@ -3015,22 +3222,46 @@ export default function Catalog() {
                     Counts by branch
                   </h4>
                   <p className="settings-muted" style={{ marginBottom: 10, fontSize: 13 }}>
-                    Click a branch to set default re-order point/max and location pars.
-                    {stockLinkItemId != null && (
+                    {stockLinkItemId != null && stockLinkItemId !== selected?.itemId ? (
+                      <>
+                        This sellable has no count of its own. On-hand, reorder points, and
+                        movements live on{' '}
+                        <strong>{stockLinkItemLabel || `item #${stockLinkItemId}`}</strong>.
+                        <button
+                          type="button"
+                          className="btn"
+                          style={{ marginLeft: 8 }}
+                          onClick={() =>
+                            setSelected({
+                              itemType: 'inventory',
+                              itemId: stockLinkItemId,
+                              label: stockLinkItemLabel || `Item #${stockLinkItemId}`,
+                            })
+                          }
+                        >
+                          Open inventory item
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                    Click a branch to edit on-hand counts, default re-order point/max, and location
+                    pars.
+                    {(detail.item as InventoryItem).trackLots === true && (
                       <>
                         {' '}
-                        Counts, reorder points and movements below belong to{' '}
-                        <strong>{stockLinkItemLabel || `item #${stockLinkItemId}`}</strong>, the
-                        stock item this one draws from.
+                        Lot-tracked items: change on-hand under <strong>Lots</strong> so lot balances
+                        stay aligned.
+                      </>
+                    )}
                       </>
                     )}
                   </p>
-                  {stockError && (
+                  {stockLinkItemId != null && stockLinkItemId !== selected?.itemId ? null : stockError && (
                     <div className="settings-message settings-error-message" style={{ marginBottom: 8 }}>
                       {stockError}
                     </div>
                   )}
-                  {stockLoading && Object.keys(stockByBranchId).length === 0 ? (
+                  {stockLinkItemId != null && stockLinkItemId !== selected?.itemId ? null : stockLoading && Object.keys(stockByBranchId).length === 0 ? (
                     <p className="settings-muted">Loading stock…</p>
                   ) : (
                     <table className="settings-table inv-counts-by-branch">
@@ -3123,6 +3354,7 @@ export default function Catalog() {
                                               const isDefault =
                                                 defaultLoc?.branchLocationId ===
                                                 row.branchLocationId;
+                                              const qtyKey = `${b.id}:${row.branchLocationId}`;
                                               return (
                                               <tr key={row.branchLocationId}>
                                                 <td>
@@ -3132,10 +3364,22 @@ export default function Catalog() {
                                                 <td>
                                                   <code>{row.code}</code>
                                                 </td>
-                                                <td>
-                                                  {row.quantityOnHand == null
-                                                    ? '—'
-                                                    : String(row.quantityOnHand)}
+                                                <td onClick={(e) => e.stopPropagation()}>
+                                                  <input
+                                                    type="text"
+                                                    inputMode="decimal"
+                                                    className="settings-input"
+                                                    style={{ maxWidth: 88 }}
+                                                    value={qtyDraftByLocationKey[qtyKey] ?? ''}
+                                                    onChange={(e) =>
+                                                      setQtyDraftByLocationKey((prev) => ({
+                                                        ...prev,
+                                                        [qtyKey]: e.target.value,
+                                                      }))
+                                                    }
+                                                    placeholder="—"
+                                                    aria-label={`${row.name} on hand`}
+                                                  />
                                                 </td>
                                                 <td onClick={(e) => e.stopPropagation()}>
                                                   {isDefault ? (
@@ -3208,7 +3452,9 @@ export default function Catalog() {
                                         disabled={stockSaving}
                                         onClick={() => void saveReorderPoint(b.id)}
                                       >
-                                        {stockSaving ? 'Saving…' : 'Save re-order point, max & par'}
+                                        {stockSaving
+                                          ? 'Saving…'
+                                          : 'Save counts, re-order point, max & par'}
                                       </button>
                                     </div>
                                   </td>
@@ -4088,7 +4334,7 @@ export default function Catalog() {
               )}
               <label className="settings-label" style={{ maxWidth: 280, marginBottom: 16 }}>
                 Change patient status to
-                <input
+                <select
                   className="settings-input"
                   value={createForm.changePatientStatusTo}
                   onChange={(e) =>
@@ -4097,8 +4343,15 @@ export default function Catalog() {
                       changePatientStatusTo: e.target.value,
                     }))
                   }
-                  placeholder="Optional"
-                />
+                >
+                  <option value="">No change</option>
+                  {createPatientStatuses.map((s) => (
+                    <option key={s.id} value={s.name}>
+                      {s.name}
+                      {s.marksInactive ? ' (marks inactive)' : ''}
+                    </option>
+                  ))}
+                </select>
               </label>
 
               {createForm.isVaccine && (
@@ -4613,6 +4866,6 @@ export default function Catalog() {
         </div>
       )}
 
-    </div>
+    </>
   );
 }

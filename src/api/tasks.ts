@@ -3,6 +3,9 @@ import { http } from './http';
 export type TaskStatus = 'open' | 'assigned' | 'done';
 export type TaskSource = 'manual' | 'trigger' | 'system';
 
+/** What a task is for, beyond being a to-do. */
+export type TaskKind = 'callback';
+
 export const TASK_LINK_ENTITY_TYPES = [
   'appointment',
   'patient',
@@ -34,6 +37,8 @@ export type TaskListItem = {
   dueAt: string | null;
   priority: number | null;
   source: TaskSource;
+  /** `callback` is the vet-med sense: ring the owner and see how the patient is doing. */
+  kind: TaskKind | null;
   triggerDefinitionId: string | null;
   completedAt: string | null;
   created: string;
@@ -98,6 +103,9 @@ export type ListTasksParams = {
   branchId?: number;
   includeDone?: boolean;
   involvement?: TaskInvolvementFilter;
+  kind?: TaskKind;
+  /** Only tasks linked to this patient — e.g. the callbacks open on one pet. */
+  patientId?: number;
   limit?: number;
   offset?: number;
 };
@@ -126,7 +134,9 @@ export async function listTasks(params?: ListTasksParams): Promise<TaskListRespo
   };
 }
 
-export async function fetchTasksSummary(params?: { branchId?: number }): Promise<TaskSummaryResponse> {
+export async function fetchTasksSummary(params?: {
+  branchId?: number;
+}): Promise<TaskSummaryResponse> {
   const { data } = await http.get<TaskSummaryResponse>('/tasks/summary', { params });
   const empty: TaskSummaryBucket = { active: 0, expired: 0, upcoming: 0, total: 0 };
   const assigned = data?.assigned ?? empty;
@@ -167,6 +177,7 @@ export type CreateTaskBody = {
   watcherEmployeeIds?: number[];
   links?: TaskLinkInput[];
   source?: TaskSource;
+  kind?: TaskKind | null;
   triggerDefinitionId?: string | null;
   idempotencyKey?: string | null;
   escalationIntervalSeconds?: number | null;

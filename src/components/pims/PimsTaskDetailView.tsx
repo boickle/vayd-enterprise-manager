@@ -29,6 +29,7 @@ import {
 import { TaskBodyContent } from './TaskBodyContent';
 import { ForwardBookingFromTaskLink } from './ForwardBookingFromTaskLink';
 import MailOrderTaskPanel from './MailOrderTaskPanel';
+import CallbackJotPanel from './CallbackJotPanel';
 import TaskReassignModal from './TaskReassignModal';
 import {
   mailOrderTaskStatusClass,
@@ -225,6 +226,7 @@ export default function PimsTaskDetailView({
     outcome: 'approved' | 'rejected' | 'send_back',
     lineRefills?: Array<{ lineId: number; refills: number; expiration?: string | null }>,
     lineScripts?: Array<{ lineId: number; scriptText: string }>,
+    approvalBasis?: 'standard' | 'chart' | 'refills',
   ) => {
     if (!task || mailOrderId == null || !canMutate) return;
     setBusy(true);
@@ -233,6 +235,8 @@ export default function PimsTaskDetailView({
       await respondMailApproval(task.practiceId, mailOrderId, {
         outcome,
         notes: approvalNote.trim() || undefined,
+        approvalBasis: outcome === 'approved' ? approvalBasis || 'standard' : undefined,
+        taskId: task.id,
         lineRefills,
         lineScripts,
       });
@@ -424,14 +428,26 @@ export default function PimsTaskDetailView({
         <MailOrderTaskPanel
           practiceId={task.practiceId}
           mailOrderId={mailOrderId}
+          taskId={task.id}
           canApprove={canMutate && task.status !== 'done'}
           busy={busy}
           approvalNote={approvalNote}
           onApprovalNoteChange={setApprovalNote}
-          onApprove={(outcome, lineRefills, lineScripts) =>
-            void handleMailApproval(outcome, lineRefills, lineScripts)
+          onApprove={(outcome, lineRefills, lineScripts, approvalBasis) =>
+            void handleMailApproval(outcome, lineRefills, lineScripts, approvalBasis)
           }
           onPresentationSynced={() => {
+            void getTask(task.id).then(setTask).catch(() => undefined);
+          }}
+        />
+      ) : null}
+
+      {/* A callback is only finished when the conversation is in the medical record, so the
+          recorder lives on the task rather than in the wrap-up that created it. */}
+      {task.kind === 'callback' && task.status !== 'done' ? (
+        <CallbackJotPanel
+          task={task}
+          onDone={() => {
             void getTask(task.id).then(setTask).catch(() => undefined);
           }}
         />

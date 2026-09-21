@@ -330,12 +330,59 @@
   table-layout: fixed;
 }
 
+.client-fin__bundle-head td {
+  background: #f3f4f6;
+  border-top: 1px solid #e5e7eb;
+  vertical-align: middle;
+}
+
+.client-fin__bundle-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  padding: 0.15rem 0;
+}
+
+.client-fin__bundle-name {
+  font-weight: 650;
+  color: #111827;
+}
+
+.client-fin__bundle-meta {
+  font-size: 0.75rem;
+  color: #6b7280;
+}
+
+.client-fin__bundle-child > .client-fin__col-item {
+  padding-left: 1.35rem;
+}
+
+.client-fin__bundle-child > .client-fin__col-item::before {
+  content: '';
+  float: left;
+  width: 0.55rem;
+  height: 0.55rem;
+  margin: 0.45rem 0.45rem 0 0;
+  border-left: 1px solid #d1d5db;
+  border-bottom: 1px solid #d1d5db;
+}
+
 .client-fin__col-item {
   width: 26%;
 }
 
 .client-fin__col-pet {
   width: 15%;
+}
+
+.client-fin__pet-link {
+  color: #0f766e;
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.client-fin__pet-link:hover {
+  text-decoration: underline;
 }
 
 .client-fin__col-provider {
@@ -635,6 +682,144 @@
   margin-left: auto;
 }
 
+.client-fin__line--stock > .client-fin__col-item {
+  padding-left: 1.35rem;
+}
+
+.client-fin__line--stock > .client-fin__col-item::before {
+  content: '';
+  float: left;
+  width: 0.55rem;
+  height: 0.55rem;
+  margin: 0.45rem 0.45rem 0 0;
+  border-left: 1px solid #d1d5db;
+  border-bottom: 1px solid #d1d5db;
+}
+
+.client-fin__vax-stock {
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 11.5px;
+}
+
+.client-fin__vax-stock strong {
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.client-fin__line-meta .linked-stock-invoice {
+  margin-bottom: 10px;
+}
+
+.client-fin__invoice .soap-dose-lot-picker__zero {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  width: auto;
+  max-width: 100%;
+  font-weight: 600;
+}
+
+.client-fin__invoice .soap-dose-lot-picker__zero input[type='checkbox'] {
+  width: 16px;
+  min-width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0;
+  border-radius: 3px;
+}
+
+.client-fin__invoice .soap-dose-lot-picker__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.client-fin__invoice .soap-dose-lot-picker__actions .soap-btn {
+  display: inline-flex;
+  align-items: center;
+  width: auto;
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  border-radius: 8px;
+  padding: 5px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #0f172a;
+  cursor: pointer;
+}
+
+.client-fin__invoice .soap-dose-lot-picker__actions .soap-btn:hover:not(:disabled) {
+  background: #f8fafc;
+}
+
+.client-fin__invoice .soap-dose-lot-picker__actions .soap-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.client-fin__vax-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 0 8px;
+  max-width: 52rem;
+}
+
+.client-fin__vax-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px 12px;
+  align-items: end;
+}
+
+.client-fin__vax-readonly {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 0.875rem;
+}
+
+.client-fin__vax-label {
+  font-size: 0.75rem;
+  color: #64748b;
+}
+
+.client-fin__vax-error {
+  margin: 0;
+  color: #b91c1c;
+  font-size: 0.875rem;
+}
+
+.client-fin__vax-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.client-fin__rx-lot .settings-input,
+.client-fin__rx-lot select.settings-input {
+  width: 100%;
+}
+
+.client-fin__rx-approve {
+  display: flex;
+  justify-content: flex-start;
+  margin-top: 2px;
+}
+
+.client-fin__rx-approve .client-fin__btn-approve,
+.client-fin__rx-approve .client-fin__entered {
+  width: 100%;
+  text-align: center;
+}
+
 .client-fin__line-fulfill td {
   padding-top: 0;
   padding-bottom: 12px;
@@ -674,6 +859,47 @@
   font-size: 12px;
   font-style: italic;
   color: #6b7280;
+}
+
+.client-fin__fulfill-pill {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: #334155;
+  background: #e2e8f0;
+  vertical-align: middle;
+}
+
+.client-fin__fulfill-pill--mail {
+  color: #0f766e;
+  background: #ccfbf1;
+}
+
+.client-fin__line--mail-split > td:first-child {
+  padding-left: 1.25rem;
+  box-shadow: inset 3px 0 0 #99f6e4;
+}
+
+.client-fin__line--mail-split .client-fin__item-name {
+  font-weight: 650;
+}
+
+.client-fin__line--clinic-split {
+  border-bottom-color: transparent;
+}
+
+.client-fin__invoice .client-fin__line--shipping-child > td:first-child {
+  padding-left: 1.25rem;
+}
+
+.client-fin__invoice .client-fin__line--tagalong .client-fin__item-name {
+  font-weight: 550;
+  color: #475569;
 }
 
 .client-fin__fulfill-fields .client-fin__rx-field,
@@ -1164,6 +1390,58 @@
   flex-wrap: wrap;
   gap: 8px;
   margin-top: 12px;
+}
+
+.client-fin__actions--stack {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.client-fin__refund-panel {
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+  display: grid;
+  gap: 10px;
+}
+
+.client-fin__refund-panel h4 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.client-fin__refund-scope {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.client-fin__refund-scope legend {
+  padding: 0;
+  margin-bottom: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+}
+
+.client-fin__refund-scope label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.client-fin__refund-peers {
+  margin: 4px 0 0;
+  padding-left: 1.4em;
+  font-size: 12px;
+  color: #64748b;
 }
 
 .client-fin__tender {

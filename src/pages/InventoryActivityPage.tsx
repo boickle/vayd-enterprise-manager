@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../auth/AuthProvider';
 import {
+  listInventoryBranchLocations,
   listInventoryMovements,
   listPracticeBranches,
+  type InventoryBranchLocation,
   type InventoryStockMovement,
   type PracticeBranch,
 } from '../api/branchInventory';
@@ -42,10 +44,13 @@ export default function InventoryActivityPage() {
   const { token } = useAuth() as { token: string | null };
   const practiceId = useMemo(() => resolvePracticeIdFromToken(token), [token]);
   const [branches, setBranches] = useState<PracticeBranch[]>([]);
+  const [locations, setLocations] = useState<InventoryBranchLocation[]>([]);
   const [branchId, setBranchId] = useState<number | ''>('');
+  const [locationId, setLocationId] = useState<number | ''>('');
   const [rows, setRows] = useState<InventoryStockMovement[]>([]);
   const [total, setTotal] = useState(0);
   const [action, setAction] = useState('');
+  const [exceptionsOnly, setExceptionsOnly] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -60,6 +65,20 @@ export default function InventoryActivityPage() {
       .catch(() => setError('Could not load offices'));
   }, [practiceId]);
 
+  useEffect(() => {
+    if (branchId === '') {
+      setLocations([]);
+      setLocationId('');
+      return;
+    }
+    void listInventoryBranchLocations(practiceId, Number(branchId))
+      .then((locs) => {
+        setLocations(locs.filter((l) => l.isActive !== false));
+      })
+      .catch(() => setLocations([]));
+    setLocationId('');
+  }, [practiceId, branchId]);
+
   const load = useCallback(async () => {
     if (branchId === '') return;
     setBusy(true);
@@ -67,6 +86,7 @@ export default function InventoryActivityPage() {
     try {
       const result = await listInventoryMovements(practiceId, Number(branchId), {
         limit: 200,
+        ...(locationId !== '' ? { branchLocationId: Number(locationId) } : {}),
       });
       setRows(result.rows);
       setTotal(result.total);
@@ -75,15 +95,28 @@ export default function InventoryActivityPage() {
     } finally {
       setBusy(false);
     }
-  }, [branchId, practiceId]);
+  }, [branchId, locationId, practiceId]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  const visibleRows = action
-    ? rows.filter((row) => row.movementType === action)
-    : rows;
+  const visibleRows = rows.filter((row) => {
+    if (action && row.movementType !== action) return false;
+    if (!exceptionsOnly) return true;
+    const note = (row.note ?? '').toLowerCase();
+    const isOverride = note.includes('zero-qoh override');
+    const wentNegative =
+      row.movementType === 'sold' &&
+      row.fromQuantityAfter != null &&
+      Number(row.fromQuantityAfter) < 0;
+    return isOverride || wentNegative;
+  });
+
+  const locationLabel =
+    locationId === ''
+      ? null
+      : locations.find((l) => l.id === locationId)?.name ?? `Location #${locationId}`;
 
   return (
     <div className="settings-card" style={{ maxWidth: 900, margin: '0 auto', padding: 16 }}>
@@ -130,6 +163,21 @@ export default function InventoryActivityPage() {
           </select>
         </label>
         <label className="settings-label">
+          Location
+          <select
+            className="settings-input"
+            value={locationId}
+            onChange={(e) => setLocationId(e.target.value ? Number(e.target.value) : '')}
+          >
+            <option value="">All locations</option>
+            {locations.map((loc) => (
+              <option key={loc.id} value={loc.id}>
+                {loc.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="settings-label">
           Action
           <select
             className="settings-input"
@@ -144,7 +192,23 @@ export default function InventoryActivityPage() {
             ))}
           </select>
         </label>
+        <label className="settings-label" style={{ justifyContent: 'flex-end' }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 22 }}>
+            <input
+              type="checkbox"
+              checked={exceptionsOnly}
+              onChange={(e) => setExceptionsOnly(e.target.checked)}
+            />
+            Exceptions only (zero-QOH overrides / negative QOH)
+          </span>
+        </label>
       </div>
+
+      {locationLabel ? (
+        <p className="settings-muted" style={{ margin: '0 0 12px', fontSize: 13 }}>
+          Showing activity into or out of <strong>{locationLabel}</strong>.
+        </p>
+      ) : null}
 
       {error && <div className="settings-message settings-error-message">{error}</div>}
       {busy && rows.length === 0 ? (
@@ -182,8 +246,26 @@ export default function InventoryActivityPage() {
               <div style={{ marginTop: 5 }}>
                 {Number(row.quantity ?? 0)} unit{Number(row.quantity ?? 0) === 1 ? '' : 's'}
                 {locationText(row) ? ` · ${locationText(row)}` : ''}
+                {row.fromQuantityAfter != null
+                  ? ` · QOH after ${Number(row.fromQuantityAfter)}`
+                  : ''}
                 {' · '}
                 <strong>{actorLabel(row)}</strong>
+                {(row.note ?? '').toLowerCase().includes('zero-qoh override') ||
+                (row.fromQuantityAfter != null && Number(row.fromQuantityAfter) < 0) ? (
+                  <span
+                    style={{
+                      marginLeft: 8,
+                      fontSize: 11,
+                      fontWeight: 700,
+                      color: '#b45309',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.04em',
+                    }}
+                  >
+                    Exception
+                  </span>
+                ) : null}
               </div>
               {row.note && (
                 <div className="settings-muted" style={{ marginTop: 4 }}>

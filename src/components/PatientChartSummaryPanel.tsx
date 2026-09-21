@@ -1,16 +1,24 @@
 import { AlertTriangle, Heart } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import type { RoutingPatientHoverSummary } from '../utils/routingPatientHoverData';
+import { declineReminder, formatDeclinedDate } from '../api/declinedTreatments';
+import { appConfirm, appPrompt } from '../utils/appDialog';
 import './PatientChartSummary.css';
 
 function ReminderRow({
+  id,
   label,
   dueDateInput,
   onApplyRefillExpiration,
+  onDecline,
+  declining,
 }: {
+  id: string;
   label: string;
   dueDateInput: string | null;
   onApplyRefillExpiration?: (dateInput: string) => void;
+  onDecline?: (id: string) => void;
+  declining?: boolean;
 }) {
   return (
     <li>
@@ -22,6 +30,16 @@ function ReminderRow({
           onClick={() => onApplyRefillExpiration(dueDateInput)}
         >
           Refill exp
+        </button>
+      ) : null}
+      {onDecline ? (
+        <button
+          type="button"
+          className="patient-chart-summary-refill-exp"
+          disabled={declining}
+          onClick={() => onDecline(id)}
+        >
+          Decline
         </button>
       ) : null}
     </li>
@@ -62,6 +80,9 @@ type Props = {
   className?: string;
   /** Apply a reminder due date to the open prescription's refill expiration. */
   onApplyRefillExpiration?: (dateInput: string) => void;
+  /** Reload the summary after a staff decline. */
+  onChanged?: () => void;
+  allowDecline?: boolean;
 };
 
 export function PatientChartSummaryPanel({
@@ -75,8 +96,37 @@ export function PatientChartSummaryPanel({
   showHeader = true,
   className,
   onApplyRefillExpiration,
+  onChanged,
+  allowDecline = true,
 }: Props) {
   const membershipLabel = membershipName?.trim() || 'Member';
+  const [decliningId, setDecliningId] = useState<string | null>(null);
+
+  const declineRow = async (id: string) => {
+    const numeric = Number(id);
+    if (!Number.isFinite(numeric) || numeric <= 0) return;
+    const proceed = await appConfirm({
+      title: 'Decline this reminder',
+      message: 'This will stop reminding and keep a declined date on the chart. Continue?',
+      confirmLabel: 'Decline',
+      cancelLabel: 'Cancel',
+    });
+    if (!proceed) return;
+    const note = await appPrompt({
+      title: 'Decline note (optional)',
+      message: 'Why was this declined?',
+      placeholder: 'Optional',
+      confirmLabel: 'Save',
+      cancelLabel: 'Skip note',
+    });
+    setDecliningId(id);
+    try {
+      await declineReminder(numeric, note);
+      onChanged?.();
+    } finally {
+      setDecliningId(null);
+    }
+  };
   return (
     <div className={['patient-chart-summary-panel', className].filter(Boolean).join(' ')}>
       {showHeader ? (
@@ -140,9 +190,12 @@ export function PatientChartSummaryPanel({
                 {summary.activeReminders.map((r) => (
                   <ReminderRow
                     key={r.id}
+                    id={r.id}
                     label={r.label}
                     dueDateInput={r.dueDateInput}
                     onApplyRefillExpiration={onApplyRefillExpiration}
+                    onDecline={allowDecline ? declineRow : undefined}
+                    declining={decliningId === r.id}
                   />
                 ))}
               </ul>
@@ -157,10 +210,32 @@ export function PatientChartSummaryPanel({
                 {summary.overdueReminders.map((r) => (
                   <ReminderRow
                     key={r.id}
+                    id={r.id}
                     label={r.label}
                     dueDateInput={r.dueDateInput}
                     onApplyRefillExpiration={onApplyRefillExpiration}
+                    onDecline={allowDecline ? declineRow : undefined}
+                    declining={decliningId === r.id}
                   />
+                ))}
+              </ul>
+            ) : (
+              <p className="patient-chart-summary-muted">None</p>
+            )}
+          </SummarySection>
+
+          <SummarySection title="Declined">
+            {(summary.declinedItems ?? []).length > 0 ? (
+              <ul className="patient-chart-summary-list">
+                {(summary.declinedItems ?? []).map((item) => (
+                  <li key={item.id} className="patient-chart-summary-declined">
+                    <span>{item.label}</span>
+                    <span>
+                      {item.declinedAt
+                        ? `declined ${formatDeclinedDate(item.declinedAt)}`
+                        : 'declined'}
+                    </span>
+                  </li>
                 ))}
               </ul>
             ) : (

@@ -428,6 +428,10 @@ export default function RoutingClientPatientsList({
                   showAlerts
                   isMember={hover.patient.isMember}
                   membershipName={hover.patient.membershipName}
+                  onChanged={() => {
+                    summaryCacheRef.current.delete(hover.patient.id);
+                    void loadSummary(hover.patient);
+                  }}
                 />
               </div>
             </div>,

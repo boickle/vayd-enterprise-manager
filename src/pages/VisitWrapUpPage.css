@@ -312,3 +312,274 @@
   color: #15803d;
   font-weight: 600;
 }
+
+/* Reminders the visit is about to create, editable before it creates them. */
+.soap-wrapup-section--warn {
+  border-color: #fcd34d;
+  background: #fffbeb;
+}
+
+.soap-wrapup-reminders {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.soap-wrapup-rem-pet {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--soap-bg);
+  border: 1px solid var(--soap-border);
+  border-radius: 10px;
+}
+
+.soap-wrapup-rem-pet-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.soap-wrapup-rem-pet-head .soap-wrapup-hint {
+  margin: 0;
+}
+
+.soap-wrapup-rem-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  background: #fff;
+  border: 1px solid var(--soap-border);
+  border-radius: 8px;
+}
+
+.soap-wrapup-rem-row-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.soap-wrapup-rem-desc {
+  flex: 1 1 auto;
+  font-weight: 600;
+}
+
+/* Three dates side by side: the window opens, the thing is due, the window closes. */
+.soap-wrapup-rem-dates {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.soap-wrapup-rem-dates label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--soap-muted);
+}
+
+@media (max-width: 720px) {
+  .soap-wrapup-rem-dates {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.soap-wrapup-rem-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 11.5px;
+  color: var(--soap-muted);
+}
+
+.soap-wrapup-rem-meta .is-edited {
+  color: #b45309;
+  font-weight: 600;
+}
+
+.soap-wrapup-rem-dropped {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.soap-wrapup-rem-dropped-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--soap-muted);
+  text-decoration: line-through;
+}
+
+.soap-wrapup-rem-dropped-row button {
+  text-decoration: none;
+}
+
+.soap-wrapup-rem-add {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  background: #fff;
+  border: 1px dashed var(--soap-border);
+  border-radius: 8px;
+}
+
+.soap-wrapup-rem-add-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--soap-muted);
+}
+
+.soap-wrapup-rem-add-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.soap-wrapup-rem-match {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.soap-wrapup-rem-match em {
+  font-weight: 500;
+  color: var(--soap-muted);
+}
+
+.soap-wrapup-rem-results {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 200px;
+  overflow-y: auto;
+  border: 1px solid var(--soap-border);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.soap-wrapup-rem-results button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  background: transparent;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.soap-wrapup-rem-results button:hover {
+  background: var(--soap-bg);
+}
+
+.soap-wrapup-rem-results em {
+  font-size: 11px;
+  color: var(--soap-muted);
+}
+
+/* Callbacks: written here, recorded and filed to the chart on the task itself. */
+.soap-wrapup-subsection {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--soap-border);
+}
+
+.soap-wrapup-subsection > h3 {
+  margin: 0 0 4px;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #374151;
+}
+
+.soap-wrapup-callbacks {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.soap-wrapup-cb-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.soap-wrapup-cb-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--soap-bg);
+  border: 1px solid var(--soap-border);
+  border-radius: 8px;
+  font-size: 12.5px;
+}
+
+.soap-wrapup-cb-title {
+  font-weight: 600;
+  color: #111827;
+}
+
+.soap-wrapup-cb-list .soap-wrapup-hint {
+  margin: 0 0 0 auto;
+}
+
+.soap-wrapup-cb-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  padding: 12px;
+  background: #fff;
+  border: 1px dashed var(--soap-border);
+  border-radius: 8px;
+}
+
+.soap-wrapup-cb-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--soap-muted);
+}
+
+.soap-wrapup-cb-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+@media (max-width: 720px) {
+  .soap-wrapup-cb-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.soap-wrapup-cb-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}

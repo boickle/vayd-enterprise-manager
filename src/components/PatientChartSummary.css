@@ -109,6 +109,10 @@
   margin-top: 4px;
 }
 
+.patient-chart-summary-declined {
+  color: #b91c1c;
+}
+
 .patient-chart-summary-muted {
   margin: 0;
   color: #64748b;

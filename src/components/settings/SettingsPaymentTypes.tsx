@@ -157,7 +157,9 @@ export default function SettingsPaymentTypes({ onMessage }: Props) {
           <h3 className="settings-card-title">Payment types</h3>
           <p className="settings-muted">
             Same options as eVet. Inactivate a type to hide it from take-payment without
-            deleting history. When staff pick an active type, Scout copies these settings
+            deleting history. Mark one type as default — invoices use that unless the
+            client has an unexpired card on file, in which case take-payment starts on
+            Card on file. When staff pick an active type, Scout copies these settings
             onto that payment: discount percent (0% means they type the dollars), and
             whether it is left off income on the sales report.
           </p>

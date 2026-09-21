@@ -680,7 +680,7 @@ export default function BriefWorkspacePage() {
               className="brief-btn primary"
               onClick={() => patchParams({ new: '1' })}
             >
-              <Mic size={15} /> Start an Jot
+              <Mic size={15} /> Start a Jot
             </button>
             <p className="brief-welcome__foot">
               Need the full chart? <Link to="/schedule/patients">Open Patients</Link>
