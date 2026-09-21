@@ -30,6 +30,7 @@ import { uploadPetImage } from '../api/patients';
 import VaccinationCertificateModal from '../components/VaccinationCertificateModal';
 import { updateCommunicationPreferences, getCurrentUser } from '../api/users';
 import { trackEvent } from '../utils/analytics';
+import { filterClientPortalUpcomingAppointments } from '../utils/clientPortalUpcomingAppointments';
 
 type PetWithWellness = Pet & {
   wellnessPlans?: WellnessPlan[];
@@ -468,10 +469,10 @@ export default function ClientPortal() {
     return emailPart.charAt(0).toUpperCase() + emailPart.slice(1);
   }, [clientInfo, localClientInfo, appts, userEmail, pets, rawApptsData]);
 
-  const upcomingAppts = useMemo(() => {
-    const now = Date.now();
-    return appts.filter((a) => new Date(a.startIso).getTime() >= now);
-  }, [appts]);
+  const upcomingAppts = useMemo(
+    () => filterClientPortalUpcomingAppointments(appts),
+    [appts]
+  );
   const upcomingByDay = useMemo(() => groupApptsByDay(upcomingAppts), [upcomingAppts]);
   const pastAppts = useMemo(() => {
     const now = Date.now();
