@@ -66,7 +66,12 @@ import {
   formatDoctorZoneInlineWarning,
   getDoctorClientZoneStatus,
   distinctDaysOfWeekInDateRange,
+  doctorPimsIdsAcceptingAppointmentType,
 } from '../utils/veterinarianZoneLookup';
+import {
+  collectRoutingResultDoctorIds,
+  filterRoutingResultByAppointmentType,
+} from '../utils/routingAppointmentTypeFilter';
 import {
   normalizeRoutingV2SlotSearchResponse,
   type RoutingSlotSearchOptionalFlags,
@@ -188,6 +193,10 @@ import {
   resolveRoutingCandidateIndex,
   routingTopCandidatesFromResult,
 } from '../utils/routingCandidates';
+import {
+  buildDoctorFallbackNotice,
+  slotIsFallbackDoctor,
+} from '../utils/routingDoctorFallback';
 import { submitRoutingFeedback } from '../api/routingFeedback';
 import { DEFAULT_PRACTICE_TIMEZONE } from '../utils/practiceTimezone';
 import HouseholdScheduledVisitsWarningModal from '../components/HouseholdScheduledVisitsWarningModal';
@@ -5232,9 +5241,28 @@ export default function Routing({
     setLoading(true);
     try {
       const { data } = await http.post<Result>(endpoint, payload);
-      const normalized = normalizeRoutingV2SlotSearchResponse(
+      let normalized = normalizeRoutingV2SlotSearchResponse(
         data as RoutingV2SlotSearchResult
       ) as Result;
+      // Auto-widen must still honor Settings → appointment types (NP + Follow-Up).
+      if (
+        routingTypeId != null &&
+        !isAsapSearch &&
+        !multiDoctor &&
+        form.doctorId.trim()
+      ) {
+        const accepting = await doctorPimsIdsAcceptingAppointmentType(
+          collectRoutingResultDoctorIds(normalized),
+          routingTypeId
+        );
+        normalized = filterRoutingResultByAppointmentType(normalized, {
+          requestedDoctorId: form.doctorId.trim(),
+          appointmentTypeId: routingTypeId,
+          doctorsAcceptingType: accepting,
+          asapAllDoctorSearch: isAsapSearch,
+          multiDoctor,
+        }) as Result;
+      }
       setResult(normalized);
       setEtaWindowWarningsByOptionKey({});
       setFeedbackSuccessKey(null);
@@ -5631,11 +5659,17 @@ export default function Routing({
       rows.sort(sortRows);
     }
 
-    return rows.map((r, idx) => {
+    const requestedDoctorId = form.doctorId.trim();
+    return rows.map((r) => {
       // Force index look nice for EMPTY day
       const empty = isEmptyDay(r);
       const displayInsertionIndex = empty ? 1 : (r.insertionIndex ?? 0) + 1;
       const positionInDay = r.positionInDay ?? displayInsertionIndex;
+      const inferredFallback = slotIsFallbackDoctor(r, requestedDoctorId, {
+        asapAllDoctorSearch,
+        multiDoctor,
+        apiFallback: result?.doctorFallback,
+      });
       return {
         ...r,
         displayInsertionIndex,
@@ -5643,10 +5677,13 @@ export default function Routing({
         routingRequestId: r.routingRequestId ?? requestIdFromResult,
         candidateIndex:
           r.candidateIndex ?? resolveRoutingCandidateIndex(r, topForSingleDoctor),
+        // Prefer API flag; otherwise mark when single-doctor search returned someone else.
+        isFallbackDoctor: r.isFallbackDoctor === true || inferredFallback,
       };
     });
   }, [
     multiDoctor,
+    asapAllDoctorSearch,
     result,
     doctorNames,
     form.doctorId,
@@ -5725,37 +5762,33 @@ export default function Routing({
    * Leads with the fact that the requested doctor had nothing, before any slot is
    * visible. Without that framing a booker sees a normal-looking list and has no
    * reason to suspect it belongs to someone else.
+   *
+   * Also infer when the API omits `doctorFallback` / `isFallbackDoctor` but every
+   * returned slot is still a different doctor than the single-doctor search asked for
+   * (LB-only → BQ/NP case).
    */
   const doctorFallbackNotice = useMemo(() => {
-    if (!result?.doctorFallback?.requestedDoctorHadNoAvailability) return null;
-    if (displayOptions.length === 0) return null;
-
-    const requestedName =
-      result.selectedDoctorDisplayName?.trim() ||
-      result.selectedDoctor?.name?.trim() ||
-      'The requested doctor';
-    const otherNames = Array.from(
-      new Set(
-        displayOptions
-          .filter((o) => o.isFallbackDoctor)
-          .map((o) => o.doctorName?.trim())
-          .filter((n): n is string => Boolean(n))
-      )
-    );
-    const who =
-      otherNames.length === 0
-        ? 'other doctors'
-        : otherNames.length === 1
-          ? otherNames[0]
-          : `${otherNames.length} other doctors`;
-
-    return {
-      headline: `${requestedName} has no availability for this request`,
-      detail: `The ${displayOptions.length} slot${
-        displayOptions.length === 1 ? '' : 's'
-      } below belong to ${who}, shown because the original search found nothing.`,
-    };
-  }, [result, displayOptions]);
+    if (!result || displayOptions.length === 0) return null;
+    return buildDoctorFallbackNotice({
+      apiFallback: result.doctorFallback,
+      requestedDoctorId: form.doctorId.trim(),
+      requestedDoctorName:
+        result.selectedDoctorDisplayName?.trim() ||
+        result.selectedDoctor?.name?.trim() ||
+        selectedDoctorDisplayName ||
+        null,
+      asapAllDoctorSearch,
+      multiDoctor,
+      options: displayOptions,
+    });
+  }, [
+    result,
+    displayOptions,
+    form.doctorId,
+    selectedDoctorDisplayName,
+    asapAllDoctorSearch,
+    multiDoctor,
+  ]);
 
   const depotLookupKey = useMemo(
     () =>
