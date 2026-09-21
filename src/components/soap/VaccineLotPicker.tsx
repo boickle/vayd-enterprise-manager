@@ -363,6 +363,7 @@ export default function VaccineLotPicker({
         inventoryItemId={inventoryItemId}
         itemName={itemName}
         defaultBranchId={preferredBranchId}
+        defaultLocationId={preferredLocationId}
         requireLotNumber
         defaultQuantity={1}
         onClose={() => setAddOpen(false)}

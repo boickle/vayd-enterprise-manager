@@ -5,6 +5,7 @@ import {
   type ScribeSocketStatus,
 } from '../api/soapScribe';
 import { startScribeAudioCapture, type ScribeAudioCapture } from '../utils/scribeAudioCapture';
+import { requestKeepAwake, type KeepAwakeHandle } from '../utils/keepAwake';
 
 export type BriefRecorderStatus = ScribeSocketStatus | 'listening';
 
@@ -46,6 +47,7 @@ export function useBriefRecorder(soapEncounterId?: string | null) {
 
   const socketRef = useRef<ScribeSocketHandle | null>(null);
   const audioRef = useRef<ScribeAudioCapture | null>(null);
+  const keepAwakeRef = useRef<KeepAwakeHandle | null>(null);
   const speechRef = useRef<{ stop: () => void } | null>(null);
   const timerRef = useRef<number | null>(null);
   const transcriptRef = useRef('');
@@ -67,6 +69,8 @@ export function useBriefRecorder(soapEncounterId?: string | null) {
     audioRef.current = null;
     speechRef.current?.stop();
     speechRef.current = null;
+    keepAwakeRef.current?.release();
+    keepAwakeRef.current = null;
   }, [clearTimer]);
 
   useEffect(() => () => teardown(), [teardown]);
@@ -75,6 +79,8 @@ export function useBriefRecorder(soapEncounterId?: string | null) {
     setError(null);
     setInterim('');
     setElapsed(0);
+    const awake = await requestKeepAwake();
+    keepAwakeRef.current = awake;
 
     const encounterId = soapEncounterId?.trim();
     if (encounterId) {

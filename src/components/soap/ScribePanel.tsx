@@ -24,6 +24,7 @@ import {
   type ScribeSuggestion,
 } from '../../api/soapScribe';
 import { startScribeAudioCapture, type ScribeAudioCapture } from '../../utils/scribeAudioCapture';
+import { requestKeepAwake, type KeepAwakeHandle } from '../../utils/keepAwake';
 import {
   createProblem,
   getEncounter,
@@ -43,12 +44,19 @@ import ScribeConsentModal from './ScribeConsentModal';
 import type { SuggestedPlanItem } from './ScribeSuggestedPlanItems';
 import { formatSoapSectionSpacing } from '../../utils/soapSectionSpacing';
 import {
+  cleanSubjectiveAfterVisit,
+  extractTaggedPreExamFacts,
   joinSubjectiveHistoryParts,
   splitSubjectiveHistoryParts,
   VISIT_DISCUSSION_HEADER,
 } from '../../utils/roomLoaderSubjectiveText';
 import { stashDeferredPlanItems } from '../../utils/deferredScribePlanItems';
-import { vitalsFromValue, type Vitals } from '../../pages/SoapEncounterPage';
+import {
+  stashDeferredProblems,
+  takeDeferredProblems,
+  type DeferredScribeProblem,
+} from '../../utils/deferredScribeProblems';
+import { vitalsFromValue, type Vitals } from '../../utils/soapVitals';
 import { appConfirm } from '../../utils/appDialog';
 
 type NumericVitalKey = 'tempF' | 'weight' | 'hr' | 'rr' | 'bcs' | 'painScore';
@@ -93,7 +101,7 @@ type Props = {
   onProblemCreated: (problem: PatientProblem) => void;
   onOrderCreated: (order: EncounterOrder) => void;
   /** Products/services the AI heard mentioned in the plan, not yet added as real orders — feeds
-   * `ScribeSuggestedPlanItems` (rendered below the Plan text box in the Document view) so the
+   * `ScribeSuggestedPlanItems` (Checkout prep tab in the Document view) so the
    * doctor can match each one to a catalog item instead of it just sitting in a review card. */
   onPlanItemsChange?: (items: SuggestedPlanItem[]) => void;
   /** Fired after a multi-pet suggestion is applied to *any* pet's chart (including one that
@@ -101,6 +109,10 @@ type Props = {
    * since that write happens directly against the other pet's encounter/orders with no other
    * signal back to this page. */
   onHouseholdOrdersChanged?: () => void;
+  /** Someone else on this visit already has the scribe live. */
+  otherRecorderName?: string | null;
+  /** So the rest of the visit can show "Hannah is recording". */
+  onRecordingChange?: (recording: boolean) => void;
 };
 
 const PE_LABEL_BY_KEY = Object.fromEntries(PE_SYSTEMS.map((s) => [s.key, s.label]));
@@ -123,9 +135,14 @@ function chartHasRewritableContent(
   planNotes: string
 ): boolean {
   if (objectiveNotes.trim() || reasoning.trim() || planNotes.trim()) return true;
-  // Pre-visit check-in alone does not count — Process keeps that block. A prior "Visit discussion"
-  // section means we're about to replace doctor-facing narrative.
-  return subjective.includes(VISIT_DISCUSSION_HEADER);
+  // Standalone pre-visit check-in does not count. A prior visit SOAP (or the old
+  // "Visit discussion" label) means we're about to replace doctor-facing narrative.
+  return (
+    subjective.includes(VISIT_DISCUSSION_HEADER) ||
+    (/presenting complaint:/i.test(subjective) &&
+      /patient history:/i.test(subjective) &&
+      !/^pre-visit check-in information/i.test(subjective.trim()))
+  );
 }
 
 /** A saved suggestion can be either shape — multi-pet runs store a per-patient breakdown. */
@@ -162,8 +179,8 @@ function writeDismissedKeys(soapEncounterId: string, keys: Set<string>): void {
 
 const OVERWRITE_CONFIRM =
   'You are about to overwrite your current SOAP work.\n\n' +
-  'Re-load rewrites Subjective (visit discussion), Objective notes, Assessment, and Plan from this transcript. ' +
-  'Pre-visit check-in and checkout orders stay. Vitals and exam findings you already entered are kept.\n\n' +
+  'Re-load rewrites Subjective, Objective notes, Assessment, and Plan from this transcript. ' +
+  'Check-in answers are folded back into the new history; checkout orders stay. Vitals and exam findings you already entered are kept.\n\n' +
   'Proceed?';
 
 const DELETE_TRANSCRIPT_CONFIRM =
@@ -188,10 +205,28 @@ function toSuggestedPlanItems(
 }
 
 /**
- * Merge AI visit-conversation history into Subjective without clobbering Room Loader /
- * pre-visit text or clinician prep notes from Jot. Process keeps those blocks and
- * replaces (or adds) the Visit discussion section. With neither block, replace Subjective
- * with the new AI history so Re-load SOAP doesn't stack duplicate visit notes.
+ * Same shape the single-pet review cards expect. Problems are never auto-created from a
+ * multi-pet Process — without an Acute/Chronic click they stay off "Chronic problems on
+ * record" and the doctor never gets to fix the wording.
+ */
+function toSuggestedProblems(
+  problems: MultiPatientSuggestionEntry['problems'],
+  existing: PatientProblem[]
+): DeferredScribeProblem[] {
+  const existingLabels = new Set(existing.map((p) => norm(p.label)));
+  return problems
+    .filter((p) => p.label?.trim() && !existingLabels.has(norm(p.label)))
+    .map((p) => ({
+      key: `problem:${norm(p.label)}|${p.kind}`,
+      label: p.label.trim(),
+      kind: p.kind,
+    }));
+}
+
+/**
+ * Merge AI visit-conversation history into Subjective. Check-in is folded into that
+ * history (additive form answers tagged). Clinician prep / a real case summary stay
+ * above. Re-load recovers tagged check-in facts so they are not lost.
  */
 function mergeSubjectiveHistory(existing: string, aiHistory: string): string {
   const delta = formatSoapSectionSpacing(aiHistory);
@@ -202,9 +237,13 @@ function mergeSubjectiveHistory(existing: string, aiHistory: string): string {
     return formatSoapSectionSpacing(cur);
   }
   const parts = splitSubjectiveHistoryParts(cur);
+  if (!parts.checkin.trim()) {
+    const recovered = extractTaggedPreExamFacts(parts.visitDiscussion || cur);
+    if (recovered) parts.checkin = recovered;
+  }
   if (!parts.checkin && !parts.clinicianPrevisit && !parts.caseSummary) return delta;
   parts.visitDiscussion = delta;
-  return formatSoapSectionSpacing(joinSubjectiveHistoryParts(parts));
+  return formatSoapSectionSpacing(joinSubjectiveHistoryParts(cleanSubjectiveAfterVisit(parts)));
 }
 
 /** Only fills vitals the doctor hasn't already entered — never overwrites (mirrors the live
@@ -234,6 +273,8 @@ function fillEmptyVitals(
       patch[k] = suggestedVal;
       if (k === 'weight') {
         patch.weightNotTaken = false;
+        // Heard, not weighed — the tech confirms it against the scale before it counts.
+        patch.weightConfirmed = false;
         const unit = suggested.weightUnit;
         patch.weightUnit = unit === 'kg' || unit === 'lb' ? unit : current.weightUnit || 'lb';
       }
@@ -329,6 +370,8 @@ export default function ScribePanel({
   onOrderCreated,
   onPlanItemsChange,
   onHouseholdOrdersChanged,
+  otherRecorderName,
+  onRecordingChange,
 }: Props) {
   const [status, setStatus] = useState<ScribeSocketStatus>('idle');
   const [showConsent, setShowConsent] = useState(false);
@@ -359,9 +402,20 @@ export default function ScribePanel({
   const multiAppliedFingerprintRef = useRef<string | null>(null);
   /** Multi-pet plan items for the open pet — fed to the catalog matcher, not created as $0 orders. */
   const [multiPlanItemsForCurrent, setMultiPlanItemsForCurrent] = useState<SuggestedPlanItem[]>([]);
+  /**
+   * Multi-pet problem suggestions for the open pet — same Acute/Chronic cards as single-pet.
+   * Housemates' suggestions are stashed until their tab is opened (see deferredScribeProblems).
+   */
+  const [multiProblemsForCurrent, setMultiProblemsForCurrent] = useState<DeferredScribeProblem[]>(
+    []
+  );
 
   const socketRef = useRef<ScribeSocketHandle | null>(null);
   const audioRef = useRef<ScribeAudioCapture | null>(null);
+  const keepAwakeRef = useRef<KeepAwakeHandle | null>(null);
+  const onRecordingChangeRef = useRef(onRecordingChange);
+  onRecordingChangeRef.current = onRecordingChange;
+  const [screenHeld, setScreenHeld] = useState(false);
   const timerRef = useRef<number | null>(null);
   const prevSuggestionRef = useRef<ScribeSuggestion | null>(null);
   const logKeyRef = useRef(0);
@@ -396,9 +450,37 @@ export default function ScribePanel({
     }
     audioRef.current?.stop();
     audioRef.current = null;
+    keepAwakeRef.current?.release();
+    keepAwakeRef.current = null;
+    setScreenHeld(false);
+    onRecordingChangeRef.current?.(false);
   }, []);
 
   useEffect(() => teardown, [teardown]);
+
+  // A mid-recording sleep can kill the tab. Keep the spoken words on this device
+  // so "Continue AI scribe" can pick them up.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(`scout.scribe.liveTranscript:${soapEncounterId}`);
+      if (raw?.trim()) {
+        setPasteText((prev) => prev.trim() ? prev : raw);
+        setFinalTranscript((prev) => prev.trim() ? prev : raw);
+      }
+    } catch {
+      /* private mode */
+    }
+  }, [soapEncounterId]);
+
+  useEffect(() => {
+    const text = (pasteText.trim() || finalTranscript.trim());
+    if (!text) return;
+    try {
+      localStorage.setItem(`scout.scribe.liveTranscript:${soapEncounterId}`, text);
+    } catch {
+      /* quota */
+    }
+  }, [pasteText, finalTranscript, soapEncounterId]);
   useEffect(() => {
     return () => {
       socketRef.current?.dispose();
@@ -428,6 +510,12 @@ export default function ScribePanel({
     };
   }, [soapEncounterId, patientId]);
 
+  // Housemate problem cards parked during a multi-pet Process — pick them up when this tab opens
+  // so Acute/Chronic appears the same way it does after a single-pet Process.
+  useEffect(() => {
+    setMultiProblemsForCurrent(takeDeferredProblems(soapEncounterId));
+  }, [soapEncounterId]);
+
   // Restore the last scribe run when returning to this chart: the transcript, plus the review
   // cards (problems / plan items) that are otherwise lost with in-memory state. Sessions are
   // audit-only — nothing here is part of the printed medical record.
@@ -454,10 +542,19 @@ export default function ScribePanel({
         if (!last) return;
 
         if (isMultiPatientSuggestion(last)) {
-          // Multi-pet runs write each chart directly, so only the plan-item matcher needs
-          // rehydrating. `multiSuggestion` stays null — setting it would re-apply the whole run.
+          // Multi-pet runs write each chart's narratives directly, so only the review cards
+          // (problems + plan items) need rehydrating. `multiSuggestion` stays null — setting
+          // it would re-apply the whole run.
           const entry = last.patients.find((p) => p.patientId === patientId);
-          if (entry) setMultiPlanItemsForCurrent(toSuggestedPlanItems(entry.planItems, []));
+          if (entry) {
+            setMultiPlanItemsForCurrent(toSuggestedPlanItems(entry.planItems, []));
+            // Merge with anything already taken from the deferred stash for this tab.
+            const fromSession = toSuggestedProblems(entry.problems, []);
+            setMultiProblemsForCurrent((prev) => {
+              const seen = new Set(fromSession.map((p) => p.key));
+              return [...fromSession, ...prev.filter((p) => !seen.has(p.key))];
+            });
+          }
           return;
         }
 
@@ -502,6 +599,8 @@ export default function ScribePanel({
           vitalsPatch[k] = suggested;
           if (k === 'weight') {
             vitalsPatch.weightNotTaken = false;
+            // Heard, not weighed — the tech confirms it against the scale before it counts.
+            vitalsPatch.weightConfirmed = false;
             const unit = suggestion.vitals.weightUnit;
             vitalsPatch.weightUnit =
               unit === 'kg' || unit === 'lb' ? unit : current.weightUnit || 'lb';
@@ -608,6 +707,10 @@ export default function ScribePanel({
   const startRecording = useCallback(async () => {
     setErrorMessage(null);
     setInterimText('');
+    // Must run in this click — silent-audio fallback is otherwise blocked as autoplay.
+    const awake = await requestKeepAwake();
+    keepAwakeRef.current = awake;
+    setScreenHeld(awake.screenHeld);
     // Keep pasteText / prior transcript so a second take appends on stop ("continue from where
     // you left off"). Only clear the live capture buffer for this segment.
     setFinalTranscript('');
@@ -639,6 +742,7 @@ export default function ScribePanel({
         onError: (err) => setErrorMessage(err instanceof Error ? err.message : 'Microphone error'),
       });
       audioRef.current = audio;
+      onRecordingChangeRef.current?.(true);
       setElapsed(0);
       timerRef.current = window.setInterval(() => setElapsed((e) => e + 1), 1000);
     } catch (err) {
@@ -684,12 +788,21 @@ export default function ScribePanel({
     }
   }, [teardown, finalTranscript]);
 
-  const onRecordClick = () => {
+  const onRecordClick = async () => {
     if (recording) {
       void stopRecording();
-    } else {
-      setShowConsent(true);
+      return;
     }
+    if (otherRecorderName) {
+      const ok = await appConfirm({
+        title: 'Someone is already recording',
+        message: `${otherRecorderName} is already recording this visit. Process rewrites Subjective, Objective, Assessment, and Plan from that one transcript — a second mic means two overlapping rewrites of the same chart. Start anyway?`,
+        confirmLabel: 'Start anyway',
+        danger: true,
+      });
+      if (!ok) return;
+    }
+    setShowConsent(true);
   };
 
   // Multi-pet mode kicks in whenever the doctor has checked anyone besides just the current
@@ -738,6 +851,7 @@ export default function ScribePanel({
         setInterimText('');
         multiAppliedFingerprintRef.current = null;
         setMultiPlanItemsForCurrent([]);
+        setMultiProblemsForCurrent([]);
         setMultiSuggestion(result as MultiPatientScribeSuggestion);
         setPasteOpen(false);
         setPasteText(text);
@@ -848,21 +962,11 @@ export default function ScribePanel({
             onApplyPlanNotes(formatSoapSectionSpacing(sugg.planNotes));
           }
 
-          const existingLabels = new Set(problems.map((p) => norm(p.label)));
-          const newProblems = sugg.problems.filter(
-            (p) => p.label?.trim() && !existingLabels.has(norm(p.label))
-          );
-          for (const p of newProblems) {
-            const created = await createProblem({
-              patientId: entry.patientId,
-              label: p.label,
-              kind: p.kind,
-              createdInEncounterId: entry.soapEncounterId,
-            });
-            onProblemCreated(created);
-          }
-          // Plan items are only *suggestions* — they go to the catalog matcher below the Plan
-          // box so they become priced orders, never straight to an unpriced $0 order line.
+          // Problems need an Acute/Chronic click — same cards as single-pet. Auto-creating
+          // them with null acuity left "Chronic problems on record" empty forever.
+          setMultiProblemsForCurrent(toSuggestedProblems(sugg.problems, problems));
+          // Plan items are only *suggestions* — they go to the Checkout prep catalog matcher
+          // so they become priced orders, never straight to an unpriced $0 order line.
           setMultiPlanItemsForCurrent(toSuggestedPlanItems(sugg.planItems, orders));
         } else {
           const [enc, existingProblems, existingOrders] = await Promise.all([
@@ -875,19 +979,10 @@ export default function ScribePanel({
             await updateEncounter(entry.soapEncounterId, patch);
           }
 
-          const existingLabels = new Set(existingProblems.map((p) => norm(p.label)));
-          const newProblems = sugg.problems.filter(
-            (p) => p.label?.trim() && !existingLabels.has(norm(p.label))
-          );
-          await Promise.all(
-            newProblems.map((p) =>
-              createProblem({
-                patientId: entry.patientId,
-                label: p.label,
-                kind: p.kind,
-                createdInEncounterId: entry.soapEncounterId,
-              })
-            )
+          // Park for this pet's tab — accepting creates the record with a real acuity.
+          stashDeferredProblems(
+            entry.soapEncounterId,
+            toSuggestedProblems(sugg.problems, existingProblems)
           );
           // This pet's chart isn't open, so its plan items wait for the matcher on that tab.
           stashDeferredPlanItems(
@@ -911,8 +1006,6 @@ export default function ScribePanel({
       onApplySubjective,
       onApplyVitals,
       onHouseholdOrdersChanged,
-      onOrderCreated,
-      onProblemCreated,
       orders,
       problems,
     ]
@@ -989,13 +1082,24 @@ export default function ScribePanel({
   // Plan items still need a review click since accepting them creates real records.
 
   const problemDiffs = useMemo(() => {
-    if (!suggestion) return [];
     const existingLabels = new Set(problems.map((p) => norm(p.label)));
-    return suggestion.problems
-      .filter((p) => p.label?.trim() && !existingLabels.has(norm(p.label)))
-      .map((p) => ({ key: `problem:${norm(p.label)}|${p.kind}`, ...p }))
-      .filter((p) => !dismissed.has(p.key));
-  }, [suggestion, problems, dismissed]);
+    const fromSingle = suggestion
+      ? suggestion.problems
+          .filter((p) => p.label?.trim() && !existingLabels.has(norm(p.label)))
+          .map((p) => ({ key: `problem:${norm(p.label)}|${p.kind}`, ...p }))
+      : [];
+    const fromMulti = multiProblemsForCurrent.filter(
+      (p) => p.label?.trim() && !existingLabels.has(norm(p.label))
+    );
+    const seen = new Set(fromSingle.map((p) => p.key));
+    const merged = [...fromSingle];
+    for (const p of fromMulti) {
+      if (seen.has(p.key) || dismissed.has(p.key)) continue;
+      seen.add(p.key);
+      merged.push(p);
+    }
+    return merged.filter((p) => !dismissed.has(p.key));
+  }, [suggestion, problems, dismissed, multiProblemsForCurrent]);
 
   const planDiffs = useMemo(() => {
     const existingNames = new Set(orders.map((o) => norm(o.name)));
@@ -1022,8 +1126,8 @@ export default function ScribePanel({
     return merged;
   }, [suggestion, orders, multiPlanItemsForCurrent]);
 
-  // Plan items get their own dedicated section (with per-item catalog search) below the Plan text
-  // box in the Document view, rather than a plain review card here — see ScribeSuggestedPlanItems.
+  // Plan items get their own Checkout prep tab (with per-item catalog search) rather than a
+  // plain review card here — see ScribeSuggestedPlanItems.
   useEffect(() => {
     onPlanItemsChange?.(planDiffs);
   }, [planDiffs, onPlanItemsChange]);
@@ -1089,6 +1193,13 @@ export default function ScribePanel({
                 : 'Start AI scribe'}
         </button>
         {recording && <span className="soap-scribe-live-dot" aria-hidden />}
+        {recording && (
+          <p className="soap-scribe-awake-hint">
+            {screenHeld
+              ? 'Screen will stay on while this records. Locking the phone or closing the lid still stops it.'
+              : 'Keep this screen on — sleep or a locked phone will stop the recording.'}
+          </p>
+        )}
         {!recording && (
           <button
             type="button"
@@ -1233,7 +1344,7 @@ export default function ScribePanel({
         <div className="soap-scribe-autolog">
           <p className="soap-scribe-autolog-hint">
             Written straight into Subjective/Vitals/Exam/Assessment/Objective/Plan from the
-            transcript. Re-load SOAP replaces those narrative fields (pre-visit check-in is kept);
+            transcript. Re-load SOAP replaces those narrative fields (check-in is folded in);
             existing vitals/exam entries are never overwritten.
           </p>
           <ul>

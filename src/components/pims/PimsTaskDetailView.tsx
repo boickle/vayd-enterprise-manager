@@ -29,6 +29,7 @@ import {
 import { TaskBodyContent } from './TaskBodyContent';
 import { ForwardBookingFromTaskLink } from './ForwardBookingFromTaskLink';
 import MailOrderTaskPanel from './MailOrderTaskPanel';
+import CallbackJotPanel from './CallbackJotPanel';
 import TaskReassignModal from './TaskReassignModal';
 import {
   mailOrderTaskStatusClass,
@@ -436,6 +437,17 @@ export default function PimsTaskDetailView({
             void handleMailApproval(outcome, lineRefills, lineScripts, approvalBasis)
           }
           onPresentationSynced={() => {
+            void getTask(task.id).then(setTask).catch(() => undefined);
+          }}
+        />
+      ) : null}
+
+      {/* A callback is only finished when the conversation is in the medical record, so the
+          recorder lives on the task rather than in the wrap-up that created it. */}
+      {task.kind === 'callback' && task.status !== 'done' ? (
+        <CallbackJotPanel
+          task={task}
+          onDone={() => {
             void getTask(task.id).then(setTask).catch(() => undefined);
           }}
         />

@@ -69,6 +69,121 @@ export async function getVisitWrapUp(encounterId: string): Promise<VisitWrapUp> 
   return data;
 }
 
+export type ReminderSourceType = 'inventory' | 'procedure' | 'lab';
+
+/** One reminder this visit will create, as it stands after the wrap-up's edits. */
+export type ProposedReminder = {
+  /** Stable key — proposals are recomputed on every load, edits are merged over them. */
+  key: string;
+  description: string;
+  reminderType: string;
+  startReminding: string | null;
+  dueDate: string | null;
+  stopReminding: string | null;
+  sourceCatalogItemType: ReminderSourceType | null;
+  sourceCatalogItemId: number | null;
+  sourceDefinitionId: number | null;
+  /** What on the visit produced it, e.g. "Rabies 1yr". */
+  sourceLabel: string | null;
+  origin: 'catalog' | 'manual';
+  removed: boolean;
+  edited: boolean;
+};
+
+export type VisitReminderPet = {
+  patientId: number;
+  patientName: string;
+  soapEncounterId: string;
+  /** Chart signed — reminders already created, no longer editable here. */
+  locked: boolean;
+  reminders: ProposedReminder[];
+  /** The stored edits behind `reminders`, which is what the UI mutates and saves back. */
+  plan: {
+    overrides: Record<string, ReminderPlanOverride>;
+    extras: ReminderPlanExtra[];
+    callbacks?: ReminderPlanCallback[];
+  };
+  declinedItems?: import('./declinedTreatments').DeclinedTreatmentItem[];
+};
+
+export type ReminderPlanOverride = {
+  description?: string;
+  startReminding?: string | null;
+  dueDate?: string | null;
+  stopReminding?: string | null;
+  removed?: boolean;
+};
+
+export type ReminderPlanExtra = {
+  key: string;
+  description: string;
+  reminderType?: string;
+  startReminding?: string | null;
+  dueDate?: string | null;
+  stopReminding?: string | null;
+  sourceCatalogItemType?: ReminderSourceType | null;
+  sourceCatalogItemId?: number | null;
+};
+
+export type ReminderPlanCallback = {
+  key: string;
+  title: string;
+  body?: string | null;
+  dueAt?: string | null;
+};
+
+/**
+ * What the visit is about to remind this household about — a preview, nothing written
+ * until the charts are signed.
+ */
+export async function getVisitReminders(
+  encounterId: string
+): Promise<{ pets: VisitReminderPet[] }> {
+  const { data } = await http.get<{ pets: VisitReminderPet[] }>(
+    `/soap-encounters/${encodeURIComponent(encounterId)}/reminders`,
+    { params: { practiceId: pid() } }
+  );
+  return data;
+}
+
+/**
+ * Save one pet's reminder edits. `encounterId` is that pet's own encounter, and the
+ * response is the refreshed household preview.
+ */
+export async function appendCheckoutPrepDrafts(
+  encounterId: string,
+  patch: {
+    extra?: ReminderPlanExtra;
+    callback?: ReminderPlanCallback;
+  }
+): Promise<{ pets: VisitReminderPet[] }> {
+  const { pets } = await getVisitReminders(encounterId);
+  const pet = pets.find((p) => p.soapEncounterId === encounterId) ?? pets[0];
+  if (!pet) throw new Error('Could not load this visit’s reminder plan.');
+  return saveReminderPlan(pet.soapEncounterId, {
+    overrides: pet.plan.overrides ?? {},
+    extras: patch.extra ? [...(pet.plan.extras ?? []), patch.extra] : pet.plan.extras ?? [],
+    callbacks: patch.callback
+      ? [...(pet.plan.callbacks ?? []), patch.callback]
+      : pet.plan.callbacks ?? [],
+  });
+}
+
+export async function saveReminderPlan(
+  encounterId: string,
+  plan: {
+    overrides?: Record<string, ReminderPlanOverride>;
+    extras?: ReminderPlanExtra[];
+    callbacks?: ReminderPlanCallback[];
+  }
+): Promise<{ pets: VisitReminderPet[] }> {
+  const { data } = await http.put<{ pets: VisitReminderPet[] }>(
+    `/soap-encounters/${encodeURIComponent(encounterId)}/reminders/plan`,
+    { practiceId: pid(), ...plan }
+  );
+  return data;
+}
+
 /**
  * Rebuilds the recap from the doctor's edited charts (not the raw transcript), so
  * regenerating after chart edits describes the visit as it was actually recorded.

@@ -60,6 +60,13 @@
   gap: 10px;
 }
 
+.pmp-empty__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
 .pmp-empty--inactive {
   align-items: center;
   flex-direction: row;
@@ -652,6 +659,57 @@
   justify-content: flex-end;
   gap: 8px;
   margin-top: 12px;
+}
+
+.pmp-cancel {
+  scroll-margin-top: 16px;
+}
+
+.pmp-owner-sees {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  font-size: 13.5px;
+  line-height: 1.45;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  border-radius: 9px;
+}
+
+.pmp-cancel-totals {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0 0 12px;
+}
+
+.pmp-cancel-totals div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.pmp-cancel-totals span {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.pmp-cancel-totals strong {
+  font-size: 15px;
+}
+
+.pmp-cancel-lines {
+  margin: 0 0 10px;
+  padding: 0 0 0 18px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.pmp-input[rows] {
+  resize: vertical;
+  min-height: 4.5rem;
 }
 
 .pmp-form__error {

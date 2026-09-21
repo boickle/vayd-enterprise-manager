@@ -1,4 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { Link } from 'react-router';
 import { DateTime } from 'luxon';
 import { Check, ChevronDown, ChevronRight, Plus, Search, X } from 'lucide-react';
 import { isAppointmentCancelledOnPracticeCalendar } from '../../api/appointments';
@@ -37,6 +38,7 @@ import {
   getInvoiceCardOnFile,
   discardVisitInvoice,
   ensureCounterInvoice,
+  finalizeInvoice,
   getInvoice,
   listClientVisitInvoices,
   patchVisitInvoice,
@@ -68,6 +70,7 @@ import {
   pricingItemFromSearchAndCheck,
 } from '../../utils/catalogItemPricing';
 import TerminalReaderPicker from '../soap/TerminalReaderPicker';
+import PostVisitMembershipSignup from '../soap/PostVisitMembershipSignup';
 import DirectionsLimitHint, { directionsMaxLength } from '../soap/DirectionsLimitHint';
 import { BookPatientChartButton } from '../BookPatientChartButton';
 import {
@@ -351,8 +354,10 @@ function ledgerArStatus(args: {
   if (status === 'void') return 'void';
   const due = (Number(args.total) || 0) - (Number(args.paid) || 0);
   if (due > 0.009) return 'open';
-  if ((Number(args.paid) || 0) > 0.009 || status === 'paid') return 'paid';
-  return status === 'finalized' ? 'open' : status;
+  if ((Number(args.paid) || 0) > 0.009 || status === 'paid' || status === 'finalized') {
+    return 'paid';
+  }
+  return status;
 }
 
 function voidedPaymentNote(
@@ -372,6 +377,8 @@ type InvoiceFacePayment = {
   receiptNumber?: string | null;
   cashier?: string | null;
   extra?: string | null;
+  /** Shown in place of the Refund button when this payment was already refunded. */
+  refundedNote?: string | null;
   onVoid?: () => void;
   onRefund?: () => void;
 };
@@ -876,6 +883,7 @@ export default function ClientFinancialWorkspace({
   const [shippingTypeIds, setShippingTypeIds] = useState<number[]>([]);
   const [sigNeedsReapprove, setSigNeedsReapprove] = useState<Record<string, boolean>>({});
   const [mailOrders, setMailOrders] = useState<MailOrder[]>([]);
+  const [postVisitSignupOpen, setPostVisitSignupOpen] = useState(false);
   const splitRef = useRef<HTMLDivElement>(null);
   const splitDragRef = useRef<{ startX: number; startPct: number } | null>(null);
   const catalogSearchRef = useRef<HTMLInputElement>(null);
@@ -995,6 +1003,19 @@ export default function ClientFinancialWorkspace({
     const known = allPets.find((p) => p.id === id)?.name;
     if (known && !isPlaceholderPetName(known)) return known;
     return fallbackName?.trim() || `Pet #${id}`;
+  };
+
+  const patientChartName = (id: number | null | undefined, fallbackName?: string | null) => {
+    const label = petName(id, fallbackName);
+    if (id == null || label === '—') return label;
+    return (
+      <Link
+        className="client-fin__pet-link"
+        to={`/schedule/patients?patientId=${encodeURIComponent(String(id))}`}
+      >
+        {label}
+      </Link>
+    );
   };
 
   async function refreshList(preferId?: string | null) {
@@ -1179,8 +1200,8 @@ export default function ClientFinancialWorkspace({
     }
     let cancelled = false;
     void getInvoiceCardOnFile(selected.id)
-      .then((card) => {
-        if (!cancelled) setCardOnFile(card);
+      .then((lookup) => {
+        if (!cancelled) setCardOnFile(lookup.card);
       })
       .catch(() => {
         if (!cancelled) setCardOnFile(null);
@@ -1391,6 +1412,12 @@ export default function ClientFinancialWorkspace({
   useEffect(() => {
     if (isUnsavedInvoice(selected)) catalogSearchRef.current?.focus();
   }, [selected?.id]);
+
+  function focusChargeSearch() {
+    window.setTimeout(() => {
+      requestAnimationFrame(() => catalogSearchRef.current?.focus());
+    }, 0);
+  }
 
   const vaccineLoadKey = selected
     ? `${selected.id}:${activeLines(selected)
@@ -2097,6 +2124,16 @@ export default function ClientFinancialWorkspace({
         return line.inventoryLotBalanceId == null;
       })
   );
+  const canCloseZero =
+    Boolean(selected) &&
+    !invoiceGone &&
+    selected?.status === 'open' &&
+    remaining <= 0.009 &&
+    !hasUnsavedDeletes &&
+    !rxBlocksPay &&
+    !lotBlocksPay &&
+    (!needsLocalFill ||
+      (selected.inventoryBranchId != null && selected.inventoryLocationId != null));
   const canPay =
     selected &&
     !invoiceGone &&
@@ -2330,6 +2367,7 @@ export default function ClientFinancialWorkspace({
         setHits([]);
         setBundleHits([]);
         await refreshList(next.id);
+        focusChargeSearch();
       } catch (err) {
         if (wasDraft && activeLines(invoice).length === 0) {
           try {
@@ -2449,6 +2487,7 @@ export default function ClientFinancialWorkspace({
           ? `Added ${resolution.bundleName}.`
           : `Added ${resolution.lines.length} lines from ${resolution.bundleName}.`,
       );
+      focusChargeSearch();
     } catch (e: unknown) {
       setError(apiErr(e));
     } finally {
@@ -2759,6 +2798,30 @@ export default function ClientFinancialWorkspace({
       setSelected(next);
       await refreshList(next.id);
       setNote('Invoice saved.');
+    } catch (e: unknown) {
+      setError(apiErr(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function closeZeroInvoice() {
+    if (!selected || isUnsavedInvoice(selected)) return;
+    if (lotBlocksPay) {
+      setError('Choose a lot before closing this invoice.');
+      return;
+    }
+    if (rxBlocksPay) {
+      setError('Approve each prescription before closing this invoice.');
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const next = await finalizeInvoice(selected.id);
+      setSelected(next);
+      await refreshList(next.id);
+      setNote('Invoice closed.');
     } catch (e: unknown) {
       setError(apiErr(e));
     } finally {
@@ -3286,6 +3349,15 @@ export default function ClientFinancialWorkspace({
             >
               Add credit
             </button>
+            <button
+              type="button"
+              className="client-fin__btn-ghost"
+              disabled={busy}
+              title="Enroll a pet and re-price recent paid invoices under a membership"
+              onClick={() => setPostVisitSignupOpen(true)}
+            >
+              Post-visit membership
+            </button>
           </div>
           <div className="client-fin__pay-links client-fin__pay-links--ledger">
             <button
@@ -3525,7 +3597,7 @@ export default function ClientFinancialWorkspace({
                         }
                       >
                         <td>{line.date !== '—' ? line.date : evetSelected.date}</td>
-                        <td>{petName(line.patientId, line.patient)}</td>
+                        <td>{patientChartName(line.patientId, line.patient)}</td>
                         <td>
                           <div className="client-fin__item-name">{line.description}</div>
                           {line.isRemoved ? (
@@ -3792,6 +3864,21 @@ export default function ClientFinancialWorkspace({
                       }}
                     >
                       Return items
+                    </button>
+                  ) : null}
+                  {selected &&
+                  !invoiceGone &&
+                  !returning &&
+                  (Number(selected.amountPaid) || 0) > 0.009 &&
+                  selected.status !== 'void' ? (
+                    <button
+                      type="button"
+                      className="client-fin__btn-ghost"
+                      disabled={busy}
+                      title="Re-price this receipt under a new membership"
+                      onClick={() => setPostVisitSignupOpen(true)}
+                    >
+                      Post-visit membership
                     </button>
                   ) : null}
                   <button type="button" className="client-fin__btn-ghost" onClick={() => window.print()}>
@@ -4347,7 +4434,7 @@ export default function ClientFinancialWorkspace({
                           </td>
                           <td className="client-fin__col-pet">
                             {isMailSplitChild ? (
-                              <span className="client-fin__muted">{petName(line.patientId, line.patientName)}</span>
+                              <span className="client-fin__muted">{patientChartName(line.patientId, line.patientName)}</span>
                             ) : canEdit ? (
                               <select
                                 value={line.patientId ?? ''}
@@ -4380,7 +4467,7 @@ export default function ClientFinancialWorkspace({
                                 ))}
                               </select>
                             ) : (
-                              petName(line.patientId, line.patientName)
+                              patientChartName(line.patientId, line.patientName)
                             )}
                           </td>
                           <td className="client-fin__col-provider">
@@ -5116,12 +5203,18 @@ export default function ClientFinancialWorkspace({
                           : who,
                         extra: [
                           t.checkNumber ? `Check ${t.checkNumber}` : null,
-                          Number(t.refundedAmount) > 0.009
+                          Number(t.refundedAmount) > 0.009 &&
+                          !/post-visit sign-up/i.test(t.voidReason || '')
                             ? `Refunded ${money(Number(t.refundedAmount))}`
                             : null,
                         ]
                           .filter(Boolean)
                           .join(' · ') || null,
+                        refundedNote:
+                          Number(t.refundedAmount) > 0.009 &&
+                          /post-visit sign-up/i.test(t.voidReason || '')
+                            ? `Refunded ${money(Number(t.refundedAmount))} after post-visit sign-up`
+                            : null,
                         onVoid:
                           selected.status !== 'void' && !tenderCanStripeRefund(t)
                             ? () => {
@@ -5147,7 +5240,11 @@ export default function ClientFinancialWorkspace({
                           <span>{paymentFaceLabel(face)}</span>
                           <b>
                             {money(face.amount)}
-                            {face.onRefund ? (
+                            {face.refundedNote ? (
+                              <span className="client-fin__muted client-fin__no-print">
+                                {face.refundedNote}
+                              </span>
+                            ) : face.onRefund ? (
                               <button
                                 type="button"
                                 className="client-fin__btn-ghost client-fin__no-print"
@@ -5559,6 +5656,27 @@ export default function ClientFinancialWorkspace({
                 </>
               ) : selected && !invoiceGone && selected.status !== 'void' ? (
                 <div className="client-fin__actions">
+                  {selected.status === 'open' && remaining <= 0.009 ? (
+                    <button
+                      type="button"
+                      className="client-fin__btn"
+                      disabled={busy || !canCloseZero}
+                      title={
+                        lotBlocksPay
+                          ? 'Choose a lot before closing'
+                          : rxBlocksPay
+                            ? 'Approve each prescription before closing'
+                            : needsLocalFill &&
+                                (selected.inventoryBranchId == null ||
+                                  selected.inventoryLocationId == null)
+                              ? 'Select a branch and location before closing'
+                              : undefined
+                      }
+                      onClick={() => void closeZeroInvoice()}
+                    >
+                      Close invoice
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     className="client-fin__btn-ghost"
@@ -5791,6 +5909,25 @@ export default function ClientFinancialWorkspace({
           bundle={bundlePicker}
           onCancel={() => setBundlePicker(null)}
           onResolved={(resolution) => addBundleSaleLines(resolution)}
+        />
+      ) : null}
+      {postVisitSignupOpen ? (
+        <PostVisitMembershipSignup
+          clientId={clientId}
+          choosePet
+          householdPets={allPets.map((p) => ({ id: p.id, name: p.name }))}
+          seedInvoices={scoutInvoices}
+          initialInvoiceIds={
+            selected && (Number(selected.amountPaid) || 0) > 0.009 && selected.status !== 'void'
+              ? [selected.id]
+              : undefined
+          }
+          onClose={() => setPostVisitSignupOpen(false)}
+          onCompleted={() => {
+            void refreshList(selected?.id).then(() => {
+              setNote('Post-visit membership signup completed.');
+            });
+          }}
         />
       ) : null}
       {coveragePrompt ? (

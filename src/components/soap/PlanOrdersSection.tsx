@@ -428,7 +428,7 @@ export default function PlanOrdersSection({
 
   // Charging items live in Checkout only. Plan keeps notes (and anything not yet
   // charged) so Revolution / Solensia / Trip Fee don't also sit here with a Decline.
-  // Room Loader proposed/declined lines stay in `ProposedOrdersPanel` on the right.
+  // Room Loader proposed/declined lines show as PRE-VISIT ACCEPTS under each pet in Checkout.
   const active = orders.filter(
     (o) =>
       o.state === 'accepted' &&

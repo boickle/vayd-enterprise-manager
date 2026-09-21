@@ -75,6 +75,26 @@ export async function startScribeAudioCapture(opts: {
     silentGain.gain.value = 0;
     workletNode.connect(silentGain);
     silentGain.connect(audioContext.destination);
+
+    // Sleep / lock / another app taking the mic ends the track. The page cannot
+    // keep recording on a black screen — tell the caller so they can say so.
+    const [micTrack] = stream.getAudioTracks();
+    if (micTrack) {
+      micTrack.onended = () => {
+        if (stopped) return;
+        opts.onError?.(
+          new Error(
+            'The microphone stopped. Unlock the phone or wake the laptop and tap Start to continue — sleep ends the recording.'
+          )
+        );
+      };
+    }
+    audioContext.onstatechange = () => {
+      if (stopped) return;
+      if (audioContext.state === 'suspended') {
+        void audioContext.resume().catch(() => undefined);
+      }
+    };
   } catch (err) {
     stream.getTracks().forEach((t) => t.stop());
     void audioContext.close();

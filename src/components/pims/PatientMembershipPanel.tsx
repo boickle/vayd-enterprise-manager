@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import {
   ArrowLeftRight,
@@ -8,6 +8,7 @@ import {
   History,
   Pencil,
   Plus,
+  ShieldCheck,
   Trash2,
   UserPlus,
   X,
@@ -15,6 +16,7 @@ import {
 import {
   addMembershipItem,
   cancelMembership,
+  previewMembershipCancel,
   changeMembershipPlan,
   createPatientMembership,
   getPatientMembership,
@@ -29,16 +31,20 @@ import {
   type MembershipBenefit,
   type MembershipBillingInterval,
   type MembershipGroup,
+  type MembershipCancelPreview,
   type PatientMembership,
 } from '../../api/memberships';
 import {
   addCounterInvoiceLine,
   ensureCounterInvoice,
+  listClientVisitInvoices,
+  type VisitInvoice,
 } from '../../api/visitWorkflow';
 import { apiErrorMessage, getToken } from '../../api/http';
 import {
   getPracticeSettings,
   membershipAssignFeeToProvider,
+  membershipPostVisitSignupWindowHours,
 } from '../../api/practiceSettings';
 import { resolvePracticeIdFromToken } from '../../utils/practiceIdFromToken';
 import {
@@ -46,6 +52,7 @@ import {
 } from '../../utils/clientFinancial';
 import { appConfirm, appPrompt } from '../../utils/appDialog';
 import CatalogItemPicker, { type PickedCatalogItem } from '../catalog/CatalogItemPicker';
+import PostVisitMembershipSignup from '../soap/PostVisitMembershipSignup';
 import { Card, FactGrid, PimsBadge } from './detail/PimsDetailKit';
 import './PatientMembershipPanel.css';
 
@@ -227,15 +234,19 @@ type Props = {
   patientName?: string | null;
   /** Owner client — used to open a counter invoice after enrollment. */
   clientId?: number | null;
+  patientSpecies?: string | null;
+  patientAgeYears?: number | null;
 };
 
-type PanelMode = 'none' | 'add' | 'change' | 'enrol';
+type PanelMode = 'none' | 'add' | 'change' | 'enrol' | 'cancel';
 
 export default function PatientMembershipPanel({
   patientId,
   practiceId: practiceIdProp,
   patientName,
   clientId,
+  patientSpecies,
+  patientAgeYears,
 }: Props) {
   const navigate = useNavigate();
   const practiceId = practiceIdProp ?? resolvePracticeIdFromToken(getToken());
@@ -250,6 +261,11 @@ export default function PatientMembershipPanel({
   const [mode, setMode] = useState<PanelMode>('none');
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [postVisitOpen, setPostVisitOpen] = useState(false);
+  const [postVisitWindowHours, setPostVisitWindowHours] = useState(24);
+  const [postVisitHoursLeft, setPostVisitHoursLeft] = useState<number | null>(null);
+  const [postVisitInvoiceIds, setPostVisitInvoiceIds] = useState<string[]>([]);
+  const [postVisitSeedInvoices, setPostVisitSeedInvoices] = useState<VisitInvoice[]>([]);
 
   // Add-a-benefit form.
   const [addItem, setAddItem] = useState<PickedCatalogItem | null>(null);
@@ -263,6 +279,10 @@ export default function PatientMembershipPanel({
   // Inline benefit edit.
   const [editId, setEditId] = useState<number | null>(null);
   const [editDraft, setEditDraft] = useState<BenefitDraft | null>(null);
+  const [cancelPreview, setCancelPreview] = useState<MembershipCancelPreview | null>(null);
+  const [cancelReason, setCancelReason] = useState('');
+  const [cancelLoading, setCancelLoading] = useState(false);
+  const cancelSectionRef = useRef<HTMLDivElement | null>(null);
 
   // Plan change / enrolment.
   const [changeReason, setChangeReason] = useState('');
@@ -299,6 +319,68 @@ export default function PatientMembershipPanel({
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Post-visit signup window: hours left since newest paid invoice for this pet.
+  useEffect(() => {
+    if (!clientId) {
+      setPostVisitHoursLeft(null);
+      setPostVisitInvoiceIds([]);
+      setPostVisitSeedInvoices([]);
+      return;
+    }
+    const ownerPaidStripe =
+      membership?.status === 'active' &&
+      Boolean(membership.stripeSubscriptionId?.startsWith('sub_'));
+    if (membership?.status === 'active' && !ownerPaidStripe) {
+      setPostVisitHoursLeft(null);
+      setPostVisitInvoiceIds([]);
+      setPostVisitSeedInvoices([]);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const [settings, invoices] = await Promise.all([
+          getPracticeSettings(practiceId),
+          listClientVisitInvoices(clientId, { lite: true }),
+        ]);
+        if (cancelled) return;
+        const windowHours = membershipPostVisitSignupWindowHours(settings);
+        setPostVisitWindowHours(windowHours);
+        const paid = invoices.filter((inv) => {
+          if ((Number(inv.amountPaid) || 0) <= 0 || inv.status === 'void') return false;
+          if (inv.patientId === patientId) return true;
+          return (inv.lines ?? []).some(
+            (l) => l.patientId == null || l.patientId === patientId,
+          );
+        });
+        setPostVisitSeedInvoices(invoices);
+        setPostVisitInvoiceIds(paid.slice(0, 5).map((i) => i.id));
+        let newest: number | null = null;
+        for (const inv of paid) {
+          const stamp = inv.paidAt || inv.finalizedAt || inv.created;
+          if (!stamp) continue;
+          const ms = Date.parse(stamp);
+          if (!Number.isFinite(ms)) continue;
+          if (newest == null || ms > newest) newest = ms;
+        }
+        if (newest == null) {
+          setPostVisitHoursLeft(null);
+          return;
+        }
+        const ageHours = (Date.now() - newest) / 3_600_000;
+        setPostVisitHoursLeft(windowHours - ageHours);
+      } catch {
+        if (!cancelled) {
+          setPostVisitHoursLeft(null);
+          setPostVisitInvoiceIds([]);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [clientId, membership?.status, membership?.stripeSubscriptionId, patientId, practiceId]);
 
   // Prefetched so "Change plan" opens straight onto the list of plans.
   useEffect(() => {
@@ -373,6 +455,8 @@ export default function PatientMembershipPanel({
     setFormError(null);
     setEditId(null);
     setEditDraft(null);
+    setCancelPreview(null);
+    setCancelReason('');
     resetAddForm();
   }
 
@@ -603,27 +687,65 @@ export default function PatientMembershipPanel({
     }
   }
 
+  useEffect(() => {
+    if (mode !== 'cancel') return;
+    cancelSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [mode, cancelLoading]);
+
+  async function openCancel() {
+    if (!membership) return;
+    setFormError(null);
+    setError(null);
+    setMode(mode === 'cancel' ? 'none' : 'cancel');
+    if (mode === 'cancel') {
+      setCancelPreview(null);
+      return;
+    }
+    setCancelLoading(true);
+    try {
+      const preview = await previewMembershipCancel(membership.id);
+      setCancelPreview(preview);
+    } catch (e) {
+      setFormError(apiErrorMessage(e));
+      setCancelPreview(null);
+    } finally {
+      setCancelLoading(false);
+    }
+  }
+
   async function cancel() {
     if (!membership) return;
-    const reason = await appPrompt({
-      title: `Cancel ${membership.planName}`,
-      message:
-        'The membership stops renewing and its remaining benefits close. Tell us why — the reason is stored on the audit trail.',
-      placeholder: 'e.g. client requested cancellation',
-      confirmLabel: 'Cancel membership',
-      danger: true,
-    });
-    if (reason == null) return;
+    const reason = cancelReason.trim();
+    if (!reason) {
+      setFormError('Tell us why the owner is canceling.');
+      return;
+    }
     setBusy(true);
     setError(null);
+    setFormError(null);
     try {
-      const next = await cancelMembership(membership.id, reason.trim() || undefined);
-      setMembership(next);
+      const result = await cancelMembership(membership.id, reason, {
+        chargeAmount: cancelPreview?.chargeAmount,
+        refundAmount: cancelPreview?.refundAmount,
+      });
+      setMembership(result.membership);
       setInactiveDetailsOpen(false);
       closePanels();
-      await refreshAudit(next.id);
+      await refreshAudit(result.membership.id);
+      if (result.moneyError) {
+        setError(result.moneyError);
+      }
+      if (clientId != null && result.invoiceId) {
+        navigate(
+          buildClientFinancialHref({
+            clientId,
+            invoice: result.invoiceId,
+            patientId,
+          }),
+        );
+      }
     } catch (e) {
-      setError(apiErrorMessage(e));
+      setFormError(apiErrorMessage(e));
     } finally {
       setBusy(false);
     }
@@ -634,6 +756,13 @@ export default function PatientMembershipPanel({
   const groupOptions = membership?.groups ?? [];
   /** A cancelled membership still shows its history, but the pet can be put on a plan again. */
   const canEnrol = !loading && (!membership || membership.status !== 'active');
+  const ownerPaidRecently = (() => {
+    if (membership?.status !== 'active') return false;
+    if (!membership.stripeSubscriptionId?.startsWith('sub_')) return false;
+    if (!membership.startDate) return false;
+    const ageHours = (Date.now() - Date.parse(membership.startDate)) / 3_600_000;
+    return ageHours >= -1 && ageHours <= postVisitWindowHours + 1;
+  })();
 
   function renderBenefitRow(benefit: MembershipBenefit, group: MembershipGroup) {
     const editing = editId === benefit.id && editDraft != null;
@@ -964,18 +1093,43 @@ export default function PatientMembershipPanel({
                   {`${patientName ?? 'This pet'} is not on a membership plan.`}
                 </p>
               )}
-              <button
-                type="button"
-                className="pims-detail__btn-primary"
-                disabled={busy}
-                onClick={() => {
-                  setFormError(null);
-                  setMode(mode === 'enrol' ? 'none' : 'enrol');
-                }}
-              >
-                <UserPlus size={14} aria-hidden />
-                Enroll in a plan
-              </button>
+              <div className="pmp-empty__actions">
+                <button
+                  type="button"
+                  className="pims-detail__btn-primary"
+                  disabled={busy}
+                  onClick={() => {
+                    setFormError(null);
+                    setMode(mode === 'enrol' ? 'none' : 'enrol');
+                  }}
+                >
+                  <UserPlus size={14} aria-hidden />
+                  Enroll in a plan
+                </button>
+                {clientId ? (
+                  <button
+                    type="button"
+                    className="pims-detail__btn-ghost"
+                    disabled={busy}
+                    title={
+                      postVisitHoursLeft == null
+                        ? 'Re-price a recent paid visit under a new membership'
+                        : postVisitHoursLeft <= 0
+                          ? `Outside the ${postVisitWindowHours}h post-visit window — override required`
+                          : `${Math.max(0, Math.ceil(postVisitHoursLeft))}h left in the post-visit window`
+                    }
+                    onClick={() => setPostVisitOpen(true)}
+                  >
+                    <ShieldCheck size={14} aria-hidden />
+                    Post-visit signup
+                    {postVisitHoursLeft == null
+                      ? null
+                      : postVisitHoursLeft <= 0
+                        ? ' · EXPIRED'
+                        : ` · ${Math.max(0, Math.ceil(postVisitHoursLeft))}h left`}
+                  </button>
+                ) : null}
+              </div>
             </div>
           ) : null}
 
@@ -1061,6 +1215,29 @@ export default function PatientMembershipPanel({
                     </div>
                   </div>
                   <div className="pmp-summary__actions">
+                    {ownerPaidRecently && clientId ? (
+                      <button
+                        type="button"
+                        className="pims-detail__btn-ghost"
+                        disabled={busy}
+                        title={
+                          postVisitHoursLeft == null
+                            ? 'Owner already paid in Stripe. Refund the covered visit only.'
+                            : postVisitHoursLeft <= 0
+                              ? `Outside the ${postVisitWindowHours}h post-visit window — override required`
+                              : `Owner already paid. ${Math.max(0, Math.ceil(postVisitHoursLeft))}h left to refund the visit.`
+                        }
+                        onClick={() => setPostVisitOpen(true)}
+                      >
+                        <ShieldCheck size={15} aria-hidden />
+                        Owner paid — refund visit
+                        {postVisitHoursLeft == null
+                          ? null
+                          : postVisitHoursLeft <= 0
+                            ? ' · EXPIRED'
+                            : ` · ${Math.max(0, Math.ceil(postVisitHoursLeft))}h left`}
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       className="pmp-btn-change"
@@ -1089,7 +1266,7 @@ export default function PatientMembershipPanel({
                       type="button"
                       className="pims-detail__btn-danger"
                       disabled={busy || membership.status !== 'active'}
-                      onClick={() => void cancel()}
+                      onClick={() => void openCancel()}
                     >
                       <X size={14} aria-hidden />
                       Cancel
@@ -1118,8 +1295,12 @@ export default function PatientMembershipPanel({
                           : null,
                     },
                     {
-                      label: 'Benefit groups',
-                      value: String(membership.groups.length),
+                      label: 'Online store discount',
+                      value:
+                        membership.onlineStoreDiscount != null &&
+                        Number(membership.onlineStoreDiscount) > 0
+                          ? `${membership.onlineStoreDiscount}% off store orders`
+                          : null,
                     },
                   ]}
                 />
@@ -1203,6 +1384,108 @@ export default function PatientMembershipPanel({
                     </ul>
                   )}
                 </Card>
+              ) : null}
+
+              {mode === 'cancel' ? (
+                <div ref={cancelSectionRef} className="pmp-cancel">
+                <Card title={`Cancel ${membership.planName}`} icon={<X size={16} aria-hidden />}>
+                  {cancelLoading ? (
+                    <p className="pmp-muted">Working out this term’s paid vs used…</p>
+                  ) : cancelPreview ? (
+                    <>
+                      <p className="pmp-owner-sees">{cancelPreview.ownerWillSee}</p>
+                      <div className="pmp-cancel-totals">
+                        <div>
+                          <span>Paid this {cancelPreview.termLabel}</span>
+                          <strong>{money(cancelPreview.paidThisTerm)}</strong>
+                        </div>
+                        <div>
+                          <span>Covered services used</span>
+                          <strong>{money(cancelPreview.usedThisTerm)}</strong>
+                        </div>
+                        <div>
+                          <span>
+                            {cancelPreview.chargeAmount > 0.009
+                              ? 'Owner owes'
+                              : cancelPreview.refundAmount > 0.009
+                                ? 'Refund to owner'
+                                : 'Settlement'}
+                          </span>
+                          <strong>
+                            {money(
+                              cancelPreview.chargeAmount > 0.009
+                                ? cancelPreview.chargeAmount
+                                : cancelPreview.refundAmount,
+                            )}
+                          </strong>
+                        </div>
+                      </div>
+                      {cancelPreview.paidLines.length ? (
+                        <ul className="pmp-cancel-lines">
+                          {cancelPreview.paidLines.map((line) => (
+                            <li key={`paid-${line.description}`}>
+                              Paid: {line.description} · {money(line.amount)}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null}
+                      {cancelPreview.coveredLines.length ? (
+                        <ul className="pmp-cancel-lines">
+                          {cancelPreview.coveredLines.map((line) => (
+                            <li key={`used-${line.description}`}>
+                              Used: {line.description} · {money(line.amount)}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="pmp-muted">No covered services were used this term.</p>
+                      )}
+                    </>
+                  ) : (
+                    <p className="pmp-muted">
+                      We could not calculate the settlement. You can still cancel after entering a
+                      reason — try again if this stays empty.
+                    </p>
+                  )}
+                  <label className="pmp-field pmp-field--full">
+                    <span className="pmp-field__label">Why is the owner canceling?</span>
+                    <textarea
+                      className="pmp-input"
+                      rows={3}
+                      value={cancelReason}
+                      placeholder="e.g. moving away, cost, pet passed"
+                      onChange={(e) => setCancelReason(e.target.value)}
+                    />
+                  </label>
+                  {formError ? (
+                    <p className="pmp-form__error" role="alert">
+                      {formError}
+                    </p>
+                  ) : null}
+                  <div className="pmp-form__actions">
+                    <button
+                      type="button"
+                      className="pims-detail__btn-secondary"
+                      disabled={busy}
+                      onClick={closePanels}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      className="pims-detail__btn-danger"
+                      disabled={busy || cancelLoading || !cancelReason.trim()}
+                      onClick={() => void cancel()}
+                    >
+                      {cancelPreview?.chargeAmount && cancelPreview.chargeAmount > 0.009
+                        ? `Cancel & charge ${money(cancelPreview.chargeAmount)}`
+                        : cancelPreview?.refundAmount && cancelPreview.refundAmount > 0.009
+                          ? `Cancel & refund ${money(cancelPreview.refundAmount)}`
+                          : 'Cancel membership'}
+                    </button>
+                  </div>
+                </Card>
+                </div>
               ) : null}
 
               {mode === 'add' ? (
@@ -1391,6 +1674,22 @@ export default function PatientMembershipPanel({
             </>
           ) : null}
         </div>
+      ) : null}
+      {postVisitOpen && clientId ? (
+        <PostVisitMembershipSignup
+          clientId={clientId}
+          patientId={patientId}
+          patientName={patientName}
+          patientSpecies={patientSpecies}
+          patientAgeYears={patientAgeYears}
+          initialInvoiceIds={postVisitInvoiceIds}
+          seedInvoices={postVisitSeedInvoices}
+          onClose={() => setPostVisitOpen(false)}
+          onCompleted={() => {
+            setPostVisitOpen(false);
+            void load();
+          }}
+        />
       ) : null}
     </section>
   );

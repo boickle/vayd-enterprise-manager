@@ -18,6 +18,7 @@ import {
   getClientRoomLoaderPdfHref,
   getClientRoomLoaderFormPath,
 } from '../api/clientPortal';
+import { formatDeclinedDate, type DeclinedTreatmentItem } from '../api/declinedTreatments';
 import { fetchClientChatHoursOfOperation } from '../api/chatHoursOfOperation';
 import {
   defaultChatHoursOfOperation,
@@ -215,6 +216,7 @@ export default function ClientPortal() {
   const [appts, setAppts] = useState<ClientAppointment[]>([]);
   const [rawApptsData, setRawApptsData] = useState<any[]>([]); // Store raw appointment data for client info
   const [reminders, setReminders] = useState<ClientReminder[]>([]);
+  const [declinedItems, setDeclinedItems] = useState<DeclinedTreatmentItem[]>([]);
   const [showReminderModal, setShowReminderModal] = useState(false);
   const [selectedPetReminders, setSelectedPetReminders] = useState<{
     pet: PetWithWellness;
@@ -426,8 +428,9 @@ export default function ClientPortal() {
         }
         setAppts([...a].sort((x, y) => +new Date(x.startIso) - +new Date(y.startIso)));
         setReminders(
-          [...r].sort((x, y) => Date.parse(x.dueIso ?? '') - Date.parse(y.dueIso ?? ''))
+          [...r.reminders].sort((x, y) => Date.parse(x.dueIso ?? '') - Date.parse(y.dueIso ?? ''))
         );
+        setDeclinedItems(r.declinedItems);
       } catch (e: any) {
         if (!alive) return;
         setError(e?.message || 'Failed to load your portal.');
@@ -2171,8 +2174,17 @@ export default function ClientPortal() {
                           const allPetReminders = getAllPetReminders(p);
                           const displayedReminders = allPetReminders.slice(0, 3);
                           const hasMore = allPetReminders.length > 3;
+                          const petDeclined = declinedItems.filter((item) => {
+                            const petId = p.id;
+                            const petDbId = (p as { dbId?: string }).dbId;
+                            return (
+                              item.patientId == null ||
+                              String(item.patientId) === String(petId) ||
+                              String(item.patientId) === String(petDbId)
+                            );
+                          });
 
-                          if (allPetReminders.length === 0) return null;
+                          if (allPetReminders.length === 0 && petDeclined.length === 0) return null;
 
                           return (
                             <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #e5e7eb' }}>
@@ -2196,6 +2208,24 @@ export default function ClientPortal() {
                                     </div>
                                   );
                                 })}
+                                {petDeclined.length > 0 ? (
+                                  <div style={{ marginTop: 8 }}>
+                                    <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6, color: '#b91c1c' }}>
+                                      Declined
+                                    </div>
+                                    {petDeclined.map((item) => (
+                                      <div
+                                        key={item.id}
+                                        style={{ fontSize: 12, color: '#b91c1c' }}
+                                      >
+                                        {item.label}
+                                        {item.declinedAt
+                                          ? ` — declined ${formatDeclinedDate(item.declinedAt)}`
+                                          : ''}
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : null}
                                 {hasMore && (
                                   <button
                                     onClick={() => {
@@ -2801,6 +2831,37 @@ export default function ClientPortal() {
                       </div>
                     );
                   })}
+                  {declinedItems
+                    .filter((item) => {
+                      const petId = selectedPetReminders.pet.id;
+                      const petDbId = (selectedPetReminders.pet as { dbId?: string }).dbId;
+                      return (
+                        item.patientId == null ||
+                        String(item.patientId) === String(petId) ||
+                        String(item.patientId) === String(petDbId)
+                      );
+                    })
+                    .map((item) => (
+                      <div
+                        key={`declined-${item.id}`}
+                        style={{
+                          padding: '12px',
+                          borderRadius: 8,
+                          border: '1px solid #fecaca',
+                          backgroundColor: '#fef2f2',
+                          color: '#b91c1c',
+                          fontSize: 14,
+                        }}
+                      >
+                        <div style={{ fontWeight: 600, marginBottom: 4 }}>Declined</div>
+                        <div>
+                          {item.label}
+                          {item.declinedAt
+                            ? ` — ${formatDeclinedDate(item.declinedAt)}`
+                            : ''}
+                        </div>
+                      </div>
+                    ))}
                 </div>
                 <div style={{ marginTop: 20, paddingTop: 20, borderTop: '1px solid #e5e7eb' }}>
                   <a

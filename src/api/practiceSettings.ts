@@ -28,6 +28,10 @@ export const EXCLUDE_PRODUCTION_WHEN_REFILLING_KEY =
  */
 export const MEMBERSHIP_ASSIGN_FEE_TO_PROVIDER_KEY =
   'membership.assignFeeToProvider' as const;
+/** Calendar hours after payment during which post-visit signup re-prices without override. */
+export const MEMBERSHIP_POST_VISIT_SIGNUP_WINDOW_HOURS_KEY =
+  'membership.postVisitSignupWindowHours' as const;
+export const MEMBERSHIP_POST_VISIT_SIGNUP_WINDOW_HOURS_DEFAULT = 24;
 
 export type ReminderSettings = {
   'reminders.enableEmail'?: string;
@@ -71,6 +75,11 @@ export type ReminderSettings = {
    * When Yes, membership plan fees on invoices are assigned to a provider’s VSD.
    */
   'membership.assignFeeToProvider'?: string;
+  /**
+   * Calendar hours after invoice payment for post-visit membership signup
+   * without an audited override. Unset = 24.
+   */
+  'membership.postVisitSignupWindowHours'?: string;
   /**
    * Practice daily appointment bookings goals by day of week (JSON string).
    * Shape: { "0": 37, "1": 37, ... } where 0=Sunday … 6=Saturday.
@@ -149,6 +158,19 @@ export function membershipAssignFeeToProvider(
   settings: Pick<ReminderSettings, 'membership.assignFeeToProvider'> | null | undefined,
 ): boolean {
   return settings?.[MEMBERSHIP_ASSIGN_FEE_TO_PROVIDER_KEY] === 'true';
+}
+
+/** Default 24 calendar hours. */
+export function membershipPostVisitSignupWindowHours(
+  settings: Pick<
+    ReminderSettings,
+    'membership.postVisitSignupWindowHours'
+  > | null | undefined,
+): number {
+  const raw = settings?.[MEMBERSHIP_POST_VISIT_SIGNUP_WINDOW_HOURS_KEY];
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 1) return MEMBERSHIP_POST_VISIT_SIGNUP_WINDOW_HOURS_DEFAULT;
+  return Math.min(720, Math.round(n));
 }
 
 export type ReminderSettingsForm = {

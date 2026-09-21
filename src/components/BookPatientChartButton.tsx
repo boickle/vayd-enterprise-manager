@@ -142,6 +142,7 @@ export function BookPatientChartButton({
                     error={error}
                     showAlerts={showAlerts}
                     showHeader={false}
+                    onChanged={() => void loadSummary()}
                     onApplyRefillExpiration={
                       onApplyRefillExpiration
                         ? (dateInput) => {

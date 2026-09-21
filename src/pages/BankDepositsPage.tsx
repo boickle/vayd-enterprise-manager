@@ -320,7 +320,7 @@ export default function BankDepositsPage() {
     <LocalizationProvider dateAdapter={AdapterDayjs}>
       <Box sx={{ p: 2, maxWidth: 1280, mx: 'auto' }}>
         <Typography variant="h5" sx={{ mb: 1 }}>
-          Bank deposits
+          Create deposit
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
           Grab undeposited cash and check payments into a posted deposit so they cannot

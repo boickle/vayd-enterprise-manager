@@ -39,7 +39,10 @@ import {
   getPracticeSettings,
   isOnlineStoreImplemented,
   MEMBERSHIP_ASSIGN_FEE_TO_PROVIDER_KEY,
+  MEMBERSHIP_POST_VISIT_SIGNUP_WINDOW_HOURS_DEFAULT,
+  MEMBERSHIP_POST_VISIT_SIGNUP_WINDOW_HOURS_KEY,
   membershipAssignFeeToProvider,
+  membershipPostVisitSignupWindowHours,
   updatePracticeSettings,
 } from '../../api/practiceSettings';
 import { resolvePracticeIdFromToken } from '../../utils/practiceIdFromToken';
@@ -524,6 +527,141 @@ function validate(
   return null;
 }
 
+type BenefitSnap = {
+  id: number | null;
+  name: string;
+  itemType: MembershipItemType;
+  catalogItemId: number;
+  quantity: number;
+  coverage: ItemCoverage;
+  copayPrice: number | null;
+  percentOff: number | null;
+};
+
+function snapQuantityLabel(quantity: number): string {
+  return quantity === UNLIMITED_ALLOWANCE ? 'unlimited' : `×${quantity}`;
+}
+
+function snapCoverageLabel(snap: BenefitSnap): string {
+  if (snap.coverage === 'percent_off') return `${snap.percentOff ?? '?'}% off`;
+  if (snap.coverage === 'copay') return `copay ${snap.copayPrice ?? '?'}`;
+  return 'included';
+}
+
+function formatBenefitSnap(snap: BenefitSnap): string {
+  return `• ${snap.name} — ${snapCoverageLabel(snap)}, ${snapQuantityLabel(snap.quantity)}`;
+}
+
+function snapsFromGroups(groups: GroupDraft[]): BenefitSnap[] {
+  return groups.flatMap((group) =>
+    group.items.map((item) => ({
+      id: item.id ?? null,
+      name: item.name,
+      itemType: item.itemType,
+      catalogItemId: item.catalogItemId,
+      quantity:
+        group.selectionMode === 'choice' ? 1 : allowanceFromDraft(item.quantity, 1),
+      coverage: item.coverage,
+      copayPrice: item.coverage === 'copay' ? numOrNull(item.copayPrice) : null,
+      percentOff: item.coverage === 'percent_off' ? numOrNull(item.percentOff) : null,
+    })),
+  );
+}
+
+function snapsFromBundle(bundle: Bundle): BenefitSnap[] {
+  return (bundle.groups ?? []).flatMap((group) =>
+    group.items.map((item) => ({
+      id: item.id,
+      name: item.name,
+      itemType: item.itemType,
+      catalogItemId: item.catalogItemId,
+      quantity: group.selectionMode === 'choice' ? 1 : item.quantity,
+      coverage: item.coverage,
+      copayPrice: item.coverage === 'copay' ? item.copayPrice : null,
+      percentOff: item.coverage === 'percent_off' ? item.percentOff : null,
+    })),
+  );
+}
+
+function sameBenefitLine(a: BenefitSnap, b: BenefitSnap): boolean {
+  return (
+    a.itemType === b.itemType &&
+    a.catalogItemId === b.catalogItemId &&
+    a.quantity === b.quantity &&
+    a.coverage === b.coverage &&
+    a.copayPrice === b.copayPrice &&
+    a.percentOff === b.percentOff
+  );
+}
+
+function benefitFieldsChanged(a: BenefitSnap, b: BenefitSnap): boolean {
+  return (
+    a.quantity !== b.quantity ||
+    a.coverage !== b.coverage ||
+    a.copayPrice !== b.copayPrice ||
+    a.percentOff !== b.percentOff
+  );
+}
+
+function diffBenefits(baseline: BenefitSnap[], current: BenefitSnap[]) {
+  const baseById = new Map(
+    baseline.filter((row) => row.id != null).map((row) => [row.id as number, row]),
+  );
+  const added: BenefitSnap[] = [];
+  const updated: BenefitSnap[] = [];
+  for (const row of current) {
+    if (row.id == null || !baseById.has(row.id)) {
+      added.push(row);
+      continue;
+    }
+    if (benefitFieldsChanged(baseById.get(row.id)!, row)) updated.push(row);
+  }
+  const currentIds = new Set(current.map((row) => row.id).filter((id): id is number => id != null));
+  const removed = baseline.filter((row) => row.id != null && !currentIds.has(row.id));
+  return { added, updated, removed };
+}
+
+function baselineStorageKey(planId: number): string {
+  return `vayd.membershipApplyBaseline.${planId}`;
+}
+
+function readStoredBaseline(planId: number): BenefitSnap[] | null {
+  try {
+    const raw = sessionStorage.getItem(baselineStorageKey(planId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as BenefitSnap[];
+    return Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredBaseline(planId: number, snaps: BenefitSnap[]): void {
+  try {
+    sessionStorage.setItem(baselineStorageKey(planId), JSON.stringify(snaps));
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
+
+function resolveAddedIds(pending: BenefitSnap[], saved: BenefitSnap[], baselineIds: Set<number>) {
+  const unused = saved.filter((row) => row.id != null && !baselineIds.has(row.id));
+  const ids: number[] = [];
+  for (const row of pending) {
+    if (row.id != null && !baselineIds.has(row.id)) {
+      ids.push(row.id);
+      continue;
+    }
+    const match = unused.findIndex((candidate) => sameBenefitLine(row, candidate));
+    if (match >= 0) {
+      const id = unused[match].id;
+      unused.splice(match, 1);
+      if (id != null) ids.push(id);
+    }
+  }
+  return [...new Set(ids)];
+}
+
 function propagationSummary(result: PropagationResult, planName: string): string {
   const parts = [
     `${result.benefitsAdded} added`,
@@ -709,6 +847,7 @@ export default function SettingsMemberships({ onMessage }: Props) {
 
   const [planDraft, setPlanDraft] = useState<PlanDraft>(emptyPlanDraft());
   const [groups, setGroups] = useState<GroupDraft[]>([]);
+  const [baselineSnaps, setBaselineSnaps] = useState<BenefitSnap[]>([]);
   const [pickerGroupKey, setPickerGroupKey] = useState<string | null>(null);
 
   useEffect(() => {
@@ -727,6 +866,9 @@ export default function SettingsMemberships({ onMessage }: Props) {
   const [auditError, setAuditError] = useState<string | null>(null);
 
   const [assignFeeToProvider, setAssignFeeToProvider] = useState(false);
+  const [postVisitWindowHours, setPostVisitWindowHours] = useState(
+    String(MEMBERSHIP_POST_VISIT_SIGNUP_WINDOW_HOURS_DEFAULT),
+  );
   const [onlineStoreEnabled, setOnlineStoreEnabled] = useState(false);
   const [feeSettingLoading, setFeeSettingLoading] = useState(true);
   const [feeSettingSaving, setFeeSettingSaving] = useState(false);
@@ -738,6 +880,9 @@ export default function SettingsMemberships({ onMessage }: Props) {
       .then((settings) => {
         if (!cancelled) {
           setAssignFeeToProvider(membershipAssignFeeToProvider(settings));
+          setPostVisitWindowHours(
+            String(membershipPostVisitSignupWindowHours(settings)),
+          );
           setOnlineStoreEnabled(isOnlineStoreImplemented(settings));
         }
       })
@@ -767,6 +912,27 @@ export default function SettingsMemberships({ onMessage }: Props) {
       );
     } catch (e) {
       setAssignFeeToProvider(!next);
+      onMessage?.(extractErr(e), 'error');
+    } finally {
+      setFeeSettingSaving(false);
+    }
+  }
+
+  async function savePostVisitWindowHours() {
+    const hours = membershipPostVisitSignupWindowHours({
+      [MEMBERSHIP_POST_VISIT_SIGNUP_WINDOW_HOURS_KEY]: postVisitWindowHours,
+    });
+    setPostVisitWindowHours(String(hours));
+    setFeeSettingSaving(true);
+    try {
+      await updatePracticeSettings(PRACTICE_ID, {
+        [MEMBERSHIP_POST_VISIT_SIGNUP_WINDOW_HOURS_KEY]: String(hours),
+      });
+      onMessage?.(
+        `Post-visit signup window set to ${hours} hour${hours === 1 ? '' : 's'}.`,
+        'success',
+      );
+    } catch (e) {
       onMessage?.(extractErr(e), 'error');
     } finally {
       setFeeSettingSaving(false);
@@ -818,6 +984,10 @@ export default function SettingsMemberships({ onMessage }: Props) {
         setDetail(bundle);
         setPlanDraft(planDraftFrom(bundle));
         setGroups(groupDraftsFrom(bundle));
+        const snaps = snapsFromBundle(bundle);
+        const stored = readStoredBaseline(bundle.id);
+        setBaselineSnaps(stored ?? snaps);
+        if (!stored) writeStoredBaseline(bundle.id, snaps);
       })
       .catch((e) => {
         if (cancelled) return;
@@ -831,6 +1001,14 @@ export default function SettingsMemberships({ onMessage }: Props) {
       cancelled = true;
     };
   }, [selectedId]);
+
+  useEffect(() => {
+    if (!detail || baselineSnaps.length > 0) return;
+    const stored = readStoredBaseline(detail.id);
+    const snaps = stored ?? snapsFromBundle(detail);
+    setBaselineSnaps(snaps);
+    if (!stored) writeStoredBaseline(detail.id, snaps);
+  }, [detail, baselineSnaps.length]);
 
   const visiblePlans = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -862,6 +1040,7 @@ export default function SettingsMemberships({ onMessage }: Props) {
     setDetailError(null);
     setPlanDraft(emptyPlanDraft());
     setGroups([]);
+    setBaselineSnaps([]);
     setPickerGroupKey(null);
     setRemoveDropped(false);
     setAuditOpen(false);
@@ -1154,16 +1333,32 @@ export default function SettingsMemberships({ onMessage }: Props) {
       onMessage?.(problem, 'error');
       return;
     }
+    const pending = diffBenefits(baselineSnaps, snapsFromGroups(groups));
+    const removals = removeDropped ? pending.removed : [];
+    if (pending.added.length === 0 && pending.updated.length === 0 && removals.length === 0) {
+      onMessage?.(
+        'Nothing to apply. This only pushes benefits you changed since opening this plan — not the rest of the plan.',
+        'error',
+      );
+      return;
+    }
+    const sections: string[] = [
+      `This only applies the ${pending.added.length + pending.updated.length + removals.length} change${pending.added.length + pending.updated.length + removals.length === 1 ? '' : 's'} you made since opening this plan. Other benefits already on the plan are left alone.`,
+    ];
+    if (pending.added.length) {
+      sections.push(`Add:\n${pending.added.map(formatBenefitSnap).join('\n')}`);
+    }
+    if (pending.updated.length) {
+      sections.push(`Update:\n${pending.updated.map(formatBenefitSnap).join('\n')}`);
+    }
+    if (removals.length) {
+      sections.push(`Take away:\n${removals.map(formatBenefitSnap).join('\n')}`);
+    }
     const ok = await appConfirm({
-      title: `Apply these benefits to current ${detail.name} members?`,
-      message:
-        `${members} patient${members === 1 ? ' is' : 's are'} on ${detail.name} right now. ` +
-        'This copies the items on this plan onto those memberships. It does not change their price, species, age window, or other restrictions.' +
-        (removeDropped
-          ? ' Benefits that are no longer on the plan will also be taken away. This cannot be undone.'
-          : ' Benefits you removed from the plan stay on those patients unless you choose to take them away.'),
-      confirmLabel: `Apply benefits to ${members} membership${members === 1 ? '' : 's'}`,
-      danger: removeDropped,
+      title: `Apply these changes to current ${detail.name} members?`,
+      message: `${members} patient${members === 1 ? ' is' : 's are'} on ${detail.name} right now.\n\n${sections.join('\n\n')}`,
+      confirmLabel: `Apply ${pending.added.length + pending.updated.length + removals.length} change${pending.added.length + pending.updated.length + removals.length === 1 ? '' : 's'} to ${members} membership${members === 1 ? '' : 's'}`,
+      danger: removals.length > 0,
     });
     if (!ok) return;
 
@@ -1173,9 +1368,23 @@ export default function SettingsMemberships({ onMessage }: Props) {
         groups: groupInputsFrom(groups),
       });
       absorbSaved(saved);
+      const savedSnaps = snapsFromBundle(saved);
+      const baselineIds = new Set(
+        baselineSnaps.map((row) => row.id).filter((id): id is number => id != null),
+      );
+      const packageItemIds = [
+        ...resolveAddedIds(pending.added, savedSnaps, baselineIds),
+        ...pending.updated.map((row) => row.id).filter((id): id is number => id != null),
+      ];
       const result = await applyBundleToExistingMemberships(saved.id, {
-        removeBenefitsDroppedFromPlan: removeDropped,
+        removeBenefitsDroppedFromPlan: removals.length > 0,
+        packageItemIds,
+        removePackageItemIds: removals
+          .map((row) => row.id)
+          .filter((id): id is number => id != null),
       });
+      setBaselineSnaps(savedSnaps);
+      writeStoredBaseline(saved.id, savedSnaps);
       onMessage?.(
         `Saved ${saved.name}. ${propagationSummary(result, saved.name)}`,
         'success',
@@ -1529,6 +1738,44 @@ export default function SettingsMemberships({ onMessage }: Props) {
               No — Not Specified VSD
             </label>
           </fieldset>
+        )}
+      </div>
+
+      <div className="settings-card" style={{ marginBottom: 16 }}>
+        <h3 className="settings-card-title">Post-visit membership signup</h3>
+        <p className="settings-muted" style={{ marginBottom: 12, fontSize: 13 }}>
+          How long after a visit (or store) payment a care lead can re-price that bill under a
+          new membership without an override. The financial workspace lists invoices from the
+          last 48 business hours, with Load more for older ones. Outside this window, staff must
+          confirm an override — it is written to the membership audit.
+        </p>
+        {feeSettingLoading ? (
+          <p className="settings-muted">Loading…</p>
+        ) : (
+          <label className="settings-field" style={{ maxWidth: 280 }}>
+            <span className="settings-label">Signup window (calendar hours)</span>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <input
+                className="settings-input"
+                type="number"
+                min={1}
+                max={720}
+                step={1}
+                value={postVisitWindowHours}
+                disabled={feeSettingSaving}
+                onChange={(e) => setPostVisitWindowHours(e.target.value)}
+                onBlur={() => void savePostVisitWindowHours()}
+              />
+              <button
+                type="button"
+                className="btn secondary"
+                disabled={feeSettingSaving}
+                onClick={() => void savePostVisitWindowHours()}
+              >
+                Save
+              </button>
+            </div>
+          </label>
         )}
       </div>
 
@@ -2126,8 +2373,9 @@ export default function SettingsMemberships({ onMessage }: Props) {
                     <p className="settings-muted memberships-apply__hint">
                       {detail.activeMemberCount} patient
                       {detail.activeMemberCount === 1 ? ' is' : 's are'} already on this plan.
-                      Saving does not change what they get. This copies the benefits above onto
-                      those memberships — not price, species, age, or other restrictions.
+                      Saving does not change what they get. Apply only pushes benefits you
+                      changed since opening this plan — not the rest of the list, and not
+                      price, species, age, or other restrictions.
                     </p>
                     <label className="settings-checkbox-item memberships-apply__danger">
                       <input

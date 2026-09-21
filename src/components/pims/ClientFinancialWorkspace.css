@@ -375,6 +375,16 @@
   width: 15%;
 }
 
+.client-fin__pet-link {
+  color: #0f766e;
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.client-fin__pet-link:hover {
+  text-decoration: underline;
+}
+
 .client-fin__col-provider {
   width: 24%;
 }
@@ -702,6 +712,56 @@
 
 .client-fin__line-meta .linked-stock-invoice {
   margin-bottom: 10px;
+}
+
+.client-fin__invoice .soap-dose-lot-picker__zero {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  width: auto;
+  max-width: 100%;
+  font-weight: 600;
+}
+
+.client-fin__invoice .soap-dose-lot-picker__zero input[type='checkbox'] {
+  width: 16px;
+  min-width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0;
+  border-radius: 3px;
+}
+
+.client-fin__invoice .soap-dose-lot-picker__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.client-fin__invoice .soap-dose-lot-picker__actions .soap-btn {
+  display: inline-flex;
+  align-items: center;
+  width: auto;
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  border-radius: 8px;
+  padding: 5px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #0f172a;
+  cursor: pointer;
+}
+
+.client-fin__invoice .soap-dose-lot-picker__actions .soap-btn:hover:not(:disabled) {
+  background: #f8fafc;
+}
+
+.client-fin__invoice .soap-dose-lot-picker__actions .soap-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .client-fin__vax-editor {

@@ -29,6 +29,10 @@
   letter-spacing: -0.01em;
 }
 
+.app-dialog__lead .app-dialog__title {
+  margin: 0;
+}
+
 .app-dialog__body {
   margin: 0;
   font-size: 14px;
@@ -62,6 +66,147 @@
   flex-wrap: wrap;
   gap: 8px;
   margin-top: 18px;
+}
+
+.app-dialog--decline-how {
+  width: min(440px, 100%);
+  padding: 22px 22px 16px;
+}
+
+.app-dialog__lead {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.app-dialog__icon {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.app-dialog__item {
+  margin: 4px 0 0;
+  font-size: 14px;
+  font-weight: 650;
+  color: #0f172a;
+  line-height: 1.35;
+}
+
+.app-dialog__hint {
+  margin: 14px 0 8px;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.app-dialog__choices {
+  display: grid;
+  gap: 8px;
+}
+
+.app-dialog__choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  margin: 0;
+  padding: 12px 12px 12px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #fff;
+  color: #0f172a;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+
+.app-dialog__choice svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: #64748b;
+}
+
+.app-dialog__choice span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.app-dialog__choice strong {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.app-dialog__choice em {
+  font-style: normal;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: #64748b;
+}
+
+.app-dialog__choice:hover:not(:disabled) {
+  border-color: #cbd5e1;
+  background: #f8fafc;
+}
+
+.app-dialog__choice:focus-visible {
+  outline: 2px solid #93c5fd;
+  outline-offset: 1px;
+}
+
+.app-dialog__choice--chart:hover:not(:disabled) {
+  border-color: #fecaca;
+  background: #fff7f7;
+}
+
+.app-dialog__choice--chart:hover:not(:disabled) svg {
+  color: #b91c1c;
+}
+
+.app-dialog__choice--bill:hover:not(:disabled) {
+  border-color: #bfdbfe;
+  background: #f8fbff;
+}
+
+.app-dialog__choice--bill:hover:not(:disabled) svg {
+  color: #1d4ed8;
+}
+
+.app-dialog__choice:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.app-dialog__label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 16px 0 6px;
+  font-size: 12px;
+  font-weight: 650;
+  color: #334155;
+}
+
+.app-dialog__label span {
+  font-weight: 550;
+  color: #94a3b8;
+}
+
+.app-dialog__btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .app-dialog__btn {

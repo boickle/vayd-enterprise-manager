@@ -1419,6 +1419,11 @@
   background: #eff6ff;
 }
 
+.pims-patient-detail__mr-row--declined td,
+.pims-patient-detail__declined-line,
+.pims-emr-story__reminder--declined {
+  color: #b91c1c;
+}
 @keyframes pims-chart-row-highlight {
   0% {
     background: #fef08a;

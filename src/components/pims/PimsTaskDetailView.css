@@ -601,3 +601,53 @@
 .pims-task-detail__icon-btn:hover:not(:disabled) {
   text-decoration: underline;
 }
+
+/* Callback recorder: the call is only finished once it is in the medical record. */
+.pims-callback-jot {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 14px 0;
+  padding: 14px 16px;
+  background: #fff;
+  border: 1px solid #d5dbe4;
+  border-radius: 10px;
+}
+
+.pims-callback-jot.is-done {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  border-color: #86efac;
+  background: #f0fdf4;
+  color: #15803d;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.pims-callback-jot__head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.pims-callback-jot__head h3 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.pims-callback-jot__controls {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.pims-callback-jot__actions {
+  display: flex;
+  justify-content: flex-end;
+}

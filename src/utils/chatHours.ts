@@ -279,7 +279,7 @@ export function buildMembershipAgreementText(hours: ChatHoursOfOperation): strin
     'Memberships do not automatically cancel when the VCPR expires. It is the client\'s responsibility to ensure their pet remains current.',
     'Membership Rules',
     'Benefits apply only to the enrolled pet and cannot be shared or transferred, including to another pet in the same household. Misuse may result in cancellation and repayment of any discounts received.',
-    'Memberships bill monthly or annually, renew automatically, and may transition from Foundations to Golden when your pet reaches eight (8) years of age for dogs and cats. We will email you twenty (20) to thirty (30) days before renewal with a recommendation. You may change your selection or cancel at that time.',
+    'Memberships bill monthly or annually, renew automatically, and may transition from Foundations to Golden when your pet reaches eight (8) years of age for dogs and cats. We will email you fourteen (14) days before renewal with a recommendation. You may change your selection or cancel at that time.',
     'Foundations, Golden, and Puppy / Kitten plans require a twelve (12) month term. Annual billing saves ten percent (10%) compared with paying monthly.',
     'If your pet passes away or moves, the value of used services will be deducted from the payments you have made. If the value of services used exceeds payments made, the remaining balance will be due before the plan is closed. No partial refunds are issued. Re-enrollment requires a new registration fee if charged.',
     'If the client moves, any refund will be issued only after we receive both a record request from a veterinary hospital outside our service area and a copy of the client\'s new lease or mortgage agreement.',

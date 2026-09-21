@@ -159,8 +159,12 @@ function normalizeLine(row: unknown, idx: number): NormalizedLine | null {
       : 0;
   const lineTax = tax || computedTax;
   const isCovered = chargedTotal === 0 && originalPrice != null && originalPrice > 0;
+  // eVet write-offs are their own negative lines. Do not match product names
+  // that merely mention a rebate (e.g. "ADD REBATE FOR 6 or 12PK").
   const isWriteOff =
-    chargedTotal < -0.005 || /discount|write[- ]?off|adjustment|rebate/i.test(description);
+    chargedTotal < -0.005 ||
+    (/^(discount|write[- ]?off|adjustment|courtesy)\b/i.test(description.trim()) &&
+      chargedTotal <= 0.005);
   const isRemoved = o.isRemoved === true;
   return {
     key: String(id),

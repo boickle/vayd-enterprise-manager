@@ -7,6 +7,7 @@ import OpenPhoneCoaching from './pages/OpenPhoneCoaching';
 import SurveyResults from './pages/SurveyResults';
 import AdminUsers from './pages/AdminUsers';
 import RoutingScoreThresholdsPage from './pages/RoutingScoreThresholds';
+import RoomLoaderDeclinesReportPage from './pages/RoomLoaderDeclinesReportPage';
 import { getFrontendPaymentProvider } from './config/paymentProvider';
 
 export type AdminTabPage = {
@@ -67,6 +68,13 @@ export const ADMIN_TAB_PAGES: AdminTabPage[] = [
     label: 'Expiring',
     group: 'Inventory',
     element: <Navigate to="/schedule/inventory/expiring" replace />,
+    role: ['admin', 'superadmin'],
+  },
+  {
+    path: 'reports/room-loader-declines',
+    label: 'Room Loader declines',
+    group: 'Reports',
+    element: <RoomLoaderDeclinesReportPage />,
     role: ['admin', 'superadmin'],
   },
 ];

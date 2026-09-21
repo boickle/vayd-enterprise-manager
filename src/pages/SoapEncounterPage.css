@@ -17,6 +17,35 @@
   color: #111827;
 }
 
+/* Chart fills the schedule outlet so left (SOAP) and right (invoice) scroll on their own. */
+.soap-page--workspace {
+  box-sizing: border-box;
+  height: 100%;
+  max-height: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 12px 16px 12px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.soap-page--workspace.is-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+.soap-page--workspace .soap-header {
+  margin-bottom: 10px;
+  padding-bottom: 10px;
+  flex: 0 0 auto;
+}
+.soap-page--workspace .soap-pet-tabs {
+  flex: 0 0 auto;
+  margin-bottom: 10px;
+}
+.soap-page--workspace .soap-error-banner {
+  flex: 0 0 auto;
+}
+
 .soap-loading,
 .soap-error-page {
   padding: 48px;
@@ -72,6 +101,55 @@
   display: flex;
   align-items: center;
   gap: 12px;
+}
+/* Who else has this visit open, and where they are typing. Advisory — nothing is locked. */
+.soap-presence {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+.soap-presence-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid #d4d4d8;
+  background: #fafafa;
+  color: #52525b;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+.soap-presence-chip.is-editing {
+  border-color: #fcd34d;
+  background: #fffbeb;
+  color: #92400e;
+}
+.soap-presence-chip.is-recording {
+  border-color: #fca5a5;
+  background: #fef2f2;
+  color: #b91c1c;
+}
+.soap-coedit-toast {
+  position: fixed;
+  left: 50%;
+  top: max(16px, env(safe-area-inset-top, 0px));
+  transform: translateX(-50%);
+  z-index: 2400;
+  max-width: min(520px, calc(100vw - 24px));
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid #fcd34d;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: 0 10px 28px rgba(146, 64, 14, 0.18);
+  pointer-events: none;
 }
 .soap-plan-toast {
   position: fixed;
@@ -173,9 +251,95 @@
   gap: 20px;
   align-items: start;
 }
+.soap-workspace {
+  --soap-chart-pct: 52%;
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  grid-template-columns: unset;
+}
+.soap-workspace .soap-main {
+  flex: 0 0 var(--soap-chart-pct);
+  width: var(--soap-chart-pct);
+  max-width: var(--soap-chart-pct);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding-right: 4px;
+  gap: 12px;
+}
+.soap-workspace .soap-aside {
+  flex: 1 1 0;
+  position: static;
+  top: auto;
+  align-self: stretch;
+  max-height: none;
+  width: auto;
+  min-width: 280px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding-left: 4px;
+  padding-bottom: 8px;
+}
+.soap-split-handle {
+  flex: 0 0 10px;
+  position: relative;
+  margin: 0 2px;
+  cursor: col-resize;
+  touch-action: none;
+  align-self: stretch;
+  border-radius: 4px;
+  background: transparent;
+}
+.soap-split-handle::before {
+  content: '';
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: 50%;
+  width: 3px;
+  transform: translateX(-50%);
+  border-radius: 2px;
+  background: #cbd5e1;
+}
+.soap-split-handle:hover::before,
+.soap-split-handle:focus-visible::before,
+.soap-page--workspace.is-resizing .soap-split-handle::before {
+  background: var(--soap-accent);
+}
+.soap-split-handle:focus-visible {
+  outline: 2px solid var(--soap-accent);
+  outline-offset: 1px;
+}
 @media (max-width: 980px) {
   .soap-body {
     grid-template-columns: 1fr;
+  }
+  .soap-workspace {
+    display: flex;
+    flex-direction: column;
+    overflow: auto;
+  }
+  .soap-workspace .soap-main,
+  .soap-workspace .soap-aside {
+    flex: none;
+    width: auto;
+    max-width: none;
+    overflow: visible;
+    min-width: 0;
+  }
+  .soap-split-handle {
+    display: none;
+  }
+  .soap-page--workspace {
+    height: auto;
+    max-height: none;
+    overflow: auto;
   }
 }
 .soap-main {
@@ -222,6 +386,24 @@
   color: #b45309;
   box-shadow: inset 0 0 0 1px #fcd34d;
 }
+.soap-tab-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.25rem;
+  height: 1.25rem;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #d97706;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+.soap-tab.active .soap-tab-badge {
+  background: rgba(255, 255, 255, 0.28);
+  color: #fff;
+}
 .soap-tab-short {
   display: none;
   font-size: 11px;
@@ -250,25 +432,13 @@
 .soap-tab-panel .soap-section:last-child {
   border-radius: 0 0 12px 12px;
 }
-/* Proposed + checkout pin beside the left column and scroll on their own when taller than the
-   space available, so they stay reachable while the doctor works down the left column. The
-   max-height has to stay inside the visible scrollport (viewport minus app chrome, minus the
-   16px sticky offset top and bottom) or the column's own scrollbar sits off-screen. */
+/* Proposed + checkout sit in the right pane and scroll with that column. */
 .soap-aside {
-  position: sticky;
-  top: 16px;
-  align-self: start;
   display: flex;
   flex-direction: column;
   gap: 14px;
   min-height: 0;
-  max-height: calc(100vh - var(--soap-chrome-top) - 32px);
-  max-height: calc(100dvh - var(--soap-chrome-top) - 32px);
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-gutter: stable;
-  padding-bottom: 4px;
+  min-width: 0;
 }
 /* Single column: no separate scrollport — the aside flows with the page. */
 @media (max-width: 980px) {
@@ -278,6 +448,77 @@
     overflow: visible;
   }
 }
+.soap-invoice-previsit {
+  background: #fff7ed;
+  border-bottom: 1px solid #fed7aa;
+  padding: 8px 10px 10px;
+}
+.soap-invoice-previsit-banner {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #c2410c;
+  background: #ffedd5;
+  border: 1px solid #fdba74;
+  border-radius: 4px;
+  padding: 2px 7px;
+  margin-bottom: 4px;
+}
+.soap-invoice-previsit-hint {
+  margin: 0 0 8px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: #9a3412;
+}
+.soap-invoice-previsit-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 4.75rem auto;
+  column-gap: 8px;
+  row-gap: 4px;
+  align-items: center;
+  padding: 7px 8px;
+  margin-top: 4px;
+  background: #fff;
+  border: 1px solid #fed7aa;
+  border-radius: 8px;
+  font-size: 13px;
+}
+.soap-invoice-previsit-row.is-declined {
+  opacity: 0.78;
+  background: #fffaf5;
+}
+.soap-invoice-previsit-name {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  color: #9a3412;
+  min-width: 0;
+}
+.soap-invoice-previsit-amt {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: #7c2d12;
+}
+.soap-invoice-previsit-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  justify-content: flex-end;
+}
+.soap-invoice-previsit-reason {
+  grid-column: 1 / -1;
+  font-size: 11px;
+  color: #9a3412;
+  line-height: 1.35;
+}
+
+/* Legacy proposed panel styles (kept for any leftover markup). */
 .soap-aside-proposed {
   background: #fff;
   border: 1px solid var(--soap-border);
@@ -579,6 +820,27 @@
   color: #b45309;
 }
 
+/* A weight the scribe heard but nobody has checked against the scale yet. */
+.soap-weight--unconfirmed {
+  border-color: #fcd34d;
+  background: #fffbeb;
+}
+.soap-weight__confirm {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 10px 0 0;
+}
+.soap-weight__confirm p {
+  margin: 0;
+  flex: 1 1 260px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #92400e;
+}
+
 /* PE template */
 .soap-pe {
   display: flex;
@@ -815,37 +1077,79 @@
   padding-left: 32px;
 }
 
-/* Checkout add-charge bar — same green treatment as the ledger invoice search */
+/* Checkout add-charge bar — pet dropdown + green search share one baseline */
+.soap-checkout-add-block {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 0 10px;
+}
+/* Pet name first; "Charge to" caption sits under it so the controls line up. */
+.soap-checkout-charge-to {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 3px;
+  margin: 0;
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--soap-muted);
+  line-height: 1.2;
+}
+.soap-checkout-charge-to .soap-select {
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  width: auto;
+  min-width: 5.5rem;
+  max-width: 7.5rem;
+  height: 34px;
+  padding: 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+  color: #111827;
+}
 .soap-checkout-add {
-  margin: 0 0 12px;
+  margin: 0;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 .soap-checkout-add .soap-plan-search {
   margin-top: 0;
 }
 .soap-checkout-add .soap-plan-search-input {
-  padding: 12px 14px;
+  box-sizing: border-box;
+  height: 34px;
+  padding: 0 10px;
   border: 1.5px solid #86efac;
-  border-radius: 10px;
+  border-radius: 8px;
   background: #ecfdf5;
-  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.12);
+  box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.1);
   color: #166534;
 }
 .soap-checkout-add .soap-plan-search-input:focus-within {
   border-color: #22c55e;
-  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.22);
+  box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.2);
 }
 .soap-checkout-add .soap-plan-search-icon {
-  left: 14px;
+  left: 10px;
   color: #166534;
 }
 .soap-checkout-add .soap-plan-search-input .soap-input {
   border: none;
   background: transparent;
   box-shadow: none;
-  padding: 0 0 0 28px;
-  font-size: 15px;
+  padding: 0 0 0 24px;
+  font-size: 13px;
   font-weight: 600;
   color: #14532d;
+  min-height: 0;
+  height: 100%;
+  line-height: 1;
 }
 .soap-checkout-add .soap-plan-search-input .soap-input:focus {
   outline: none;
@@ -856,8 +1160,9 @@
   opacity: 1;
 }
 .soap-checkout-add .soap-hint {
-  margin: 8px 0 0;
-  font-size: 12px;
+  margin: 4px 0 0;
+  font-size: 11px;
+  line-height: 1.35;
   color: var(--soap-muted);
 }
 .soap-checkout-add .soap-plan-results {
@@ -1033,92 +1338,49 @@
 }
 
 /* Checkout */
-/* Household checkout summary — read-only rollup of every pet's invoice on a multi-pet visit
-   (HouseholdInvoiceSummary.tsx). VisitCheckoutPanel below it is unchanged and always acts on
-   whichever pet's tab is currently open. */
-.soap-household-checkout {
-  background: #fff;
-  border: 1px solid var(--soap-border);
-  border-radius: 12px;
-  padding: 14px 16px;
-}
-.soap-household-checkout-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-weight: 700;
-  font-size: 13.5px;
-  margin-bottom: 10px;
-  color: #374151;
-}
-.soap-household-pets {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.soap-household-pet {
-  border: 1px solid var(--soap-border);
-  border-radius: 8px;
-  padding: 8px 10px;
-}
-.soap-household-pet.current {
-  border-color: var(--soap-accent);
-  background: #f5f8ff;
-}
-.soap-household-pet-head {
+.soap-invoice-pet-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  font-size: 13px;
+  width: 100%;
+  margin: 0;
+  padding: 5px 10px;
+  border: none;
+  border-bottom: 1px solid #e2e8f0;
+  background: #f8fafc;
+  color: #334155;
+  font: inherit;
+  font-size: 12px;
   font-weight: 600;
+  text-align: left;
+  cursor: pointer;
 }
-.soap-household-pet-name {
+.soap-invoice-pet-head > span:first-child {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
 }
-.soap-household-pet-total {
+.soap-invoice-pet-head > span:last-child {
   font-variant-numeric: tabular-nums;
-}
-.soap-household-pet-lines {
-  margin-top: 6px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.soap-household-pet-line {
-  display: flex;
-  justify-content: space-between;
-  font-size: 12px;
-  color: var(--soap-muted);
-}
-.soap-household-pet-empty {
-  margin-top: 4px;
-  font-size: 12px;
-  color: var(--soap-muted);
-}
-.soap-household-pet-switch {
-  margin-top: 8px;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  border: none;
-  background: none;
-  color: var(--soap-accent);
-  font-size: 12px;
+  color: #64748b;
   font-weight: 600;
-  cursor: pointer;
-  padding: 0;
 }
-.soap-household-checkout-total {
-  display: flex;
-  justify-content: space-between;
-  border-top: 1px solid var(--soap-border);
-  margin-top: 10px;
-  padding-top: 10px;
-  font-weight: 700;
-  font-size: 14px;
+.soap-invoice-pet-head.is-current {
+  background: #eef4ff;
+}
+.soap-invoice-pet-head.is-charging {
+  box-shadow: inset 3px 0 0 var(--soap-accent);
+}
+.soap-invoice-pet-head:hover {
+  background: #eef2f7;
+}
+.soap-invoice-pet-head.is-current:hover {
+  background: #e4edff;
+}
+.soap-invoice-pet-block {
+  scroll-margin-top: 0;
 }
 
 .soap-checkout {
@@ -1201,7 +1463,7 @@
 }
 .soap-invoice-lines-head {
   display: grid;
-  grid-template-columns: 22px minmax(0, 1fr) 7.25rem 2.75rem 5.75rem 22px;
+  grid-template-columns: 22px minmax(0, 1fr) 7.25rem 2.75rem 5.75rem 44px;
   column-gap: 6px;
   align-items: center;
   padding: 6px 10px;
@@ -1219,7 +1481,7 @@
 }
 .soap-invoice-line {
   display: grid;
-  grid-template-columns: 22px minmax(0, 1fr) 7.25rem 2.75rem 5.75rem 22px;
+  grid-template-columns: 22px minmax(0, 1fr) 7.25rem 2.75rem 5.75rem 44px;
   align-items: start;
   column-gap: 6px;
   row-gap: 6px;
@@ -1236,6 +1498,65 @@
 }
 .soap-invoice-line.is-ready {
   background: #fff;
+}
+.soap-invoice-line.is-declined,
+.soap-invoice-line.is-off-record {
+  grid-template-columns: 22px minmax(0, 1fr) 7.25rem 2.75rem 5.75rem auto;
+}
+.soap-invoice-line.is-declined {
+  color: #b91c1c;
+}
+.soap-invoice-line.is-declined .soap-invoice-line-title,
+.soap-invoice-line.is-declined .soap-invoice-line-amt {
+  color: #b91c1c;
+  font-weight: 600;
+}
+.soap-invoice-line.is-declined .soap-invoice-line-title,
+.soap-invoice-line.is-off-record .soap-invoice-line-title {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.soap-invoice-line.is-off-record {
+  color: #94a3b8;
+}
+.soap-invoice-line.is-off-record .soap-invoice-line-title {
+  color: #94a3b8;
+}
+.soap-invoice-line.is-off-record .soap-invoice-line-name {
+  text-decoration: line-through;
+}
+.soap-invoice-line.is-off-record .soap-invoice-line-amt {
+  color: #94a3b8;
+}
+.soap-tag.off-record {
+  background: #f1f5f9;
+  color: #64748b;
+  text-decoration: none;
+}
+.soap-invoice-line-readd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  height: 22px;
+  padding: 0 4px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #b91c1c;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.soap-invoice-line-readd:hover:not(:disabled) {
+  background: #fef2f2;
+}
+.soap-invoice-line-readd:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 .soap-invoice-line--stock {
   background: #f8fafc;
@@ -1371,13 +1692,39 @@
   width: 100%;
   resize: vertical;
 }
+.soap-invoice-line-actions {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 2px;
+  margin-top: 1px;
+}
+.soap-invoice-line-decline {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #b45309;
+  cursor: pointer;
+}
+.soap-invoice-line-decline:hover:not(:disabled) {
+  color: #9a3412;
+  background: #fff7ed;
+}
+.soap-invoice-line-decline:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
 .soap-invoice-line-remove {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 22px;
   height: 22px;
-  margin-top: 1px;
   padding: 0;
   border: none;
   border-radius: 6px;
@@ -1486,6 +1833,24 @@
   flex-wrap: wrap;
   gap: 8px;
   margin-top: 14px;
+}
+/* Card-on-file consent, asked out loud before the tap. */
+.soap-checkout-consent {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--soap-border, #d8dee9);
+  border-radius: 8px;
+  background: var(--soap-subtle-bg, #f7f9fc);
+  font-size: 13px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+.soap-checkout-consent input {
+  margin-top: 2px;
+  flex: none;
 }
 /* Follow-up prompt at checkout — asked while the client is still here. */
 .soap-checkout-followup {
@@ -1627,6 +1992,14 @@
   background: #fef2f2;
   border-color: #ef4444;
   color: #b91c1c;
+}
+.soap-scribe-awake-hint {
+  flex: 1 1 100%;
+  margin: 0;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--soap-muted);
 }
 .soap-scribe-live-dot {
   width: 9px;
@@ -1776,7 +2149,12 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 10px;
-  margin: 0 0 14px;
+  margin: 0 0 4px;
+}
+@media (max-width: 1180px) {
+  .soap-workspace .soap-patient-chronic-grid {
+    grid-template-columns: 1fr;
+  }
 }
 .soap-scribe-chronic {
   background: #fffbeb;
@@ -2216,10 +2594,54 @@
   font-size: 12.5px;
   color: var(--soap-muted);
 }
+/* S/O/A/P as tabs on a file: one section at a time, with the strip showing which
+   sections already have something in them. */
+.soap-doc-tabbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.soap-tab.is-filled:not(.active)::after {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--soap-accent);
+}
+.soap-tab.active.is-filled::after {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.75);
+}
+.soap-doc-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px solid var(--soap-border);
+}
+
 .soap-doc-section {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+.soap-doc-section[hidden],
+.soap-section[hidden] {
+  display: none;
+}
+.soap-doc-view > .soap-doc-section {
+  background: #fff;
+  border: 1px solid var(--soap-border);
+  border-radius: 12px;
+  padding: 14px 16px 16px;
+  gap: 10px;
 }
 .soap-doc-section-head {
   display: flex;

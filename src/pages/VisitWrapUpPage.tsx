@@ -27,11 +27,14 @@ import {
 } from '../api/visitWorkflow';
 import {
   generateClientRecap,
+  getVisitReminders,
   getVisitWrapUp,
   recordClientEmailDecision,
   type VisitWrapUp,
   type VisitWrapUpPet,
 } from '../api/visitWrapUp';
+import { createTask } from '../api/tasks';
+import { listPracticeBranches } from '../api/branchInventory';
 import { fetchGmailMailboxes, fetchGmailSendAs, sendGmailMessage } from '../api/gmail';
 import { forwardBookingDispositionIsComplete } from '../utils/forwardBookingDisposition';
 import {
@@ -40,8 +43,10 @@ import {
   resolveRecapMailbox,
 } from '../utils/visitRecapSender';
 import WrapUpForwardBooking from '../components/soap/WrapUpForwardBooking';
+import WrapUpReminders from '../components/soap/WrapUpReminders';
+import WrapUpCallbacks from '../components/soap/WrapUpCallbacks';
 import { reconcileBookedFollowUp } from '../components/forwardBooking/bookFollowUpNow';
-import { isWeightAddressed, vitalsFromValue } from './SoapEncounterPage';
+import { isWeightAddressed, vitalsFromValue } from '../utils/soapVitals';
 
 /** `Name <a@b.com>` → `a@b.com`, for the address we hand back to the recorder. */
 function bareAddress(value: string): string {
@@ -441,8 +446,38 @@ export default function VisitWrapUpPage() {
     setError(null);
     try {
       // Sequential so a failure leaves the remaining charts untouched.
+      let branchIds: number[] = [];
+      try {
+        branchIds = (await listPracticeBranches(VISIT_WORKFLOW_PRACTICE_ID)).map((b) => b.id);
+      } catch {
+        branchIds = [];
+      }
       for (const pet of pets) {
         if (pet.status === 'completed') continue;
+        try {
+          const { pets: reminderPets } = await getVisitReminders(pet.soapEncounterId);
+          const plan = reminderPets.find((p) => p.soapEncounterId === pet.soapEncounterId)?.plan;
+          for (const cb of plan?.callbacks ?? []) {
+            if (!cb.title.trim() || branchIds.length === 0) continue;
+            const links: { entityType: 'patient' | 'client'; entityId: number }[] = [
+              { entityType: 'patient', entityId: pet.patientId },
+            ];
+            if (wrapUp?.clientId != null) {
+              links.push({ entityType: 'client', entityId: wrapUp.clientId });
+            }
+            await createTask({
+              title: cb.title.trim(),
+              body: cb.body?.trim() || null,
+              kind: 'callback',
+              branchIds,
+              ...(cb.dueAt ? { dueAt: cb.dueAt } : {}),
+              links,
+              idempotencyKey: `soap-cb-${pet.soapEncounterId}-${cb.key}`,
+            });
+          }
+        } catch {
+          /* reminder drafts still persist; staff can add the callback on wrap-up */
+        }
         await completeEncounter(pet.soapEncounterId);
       }
       await loadWrapUp(encounterId);
@@ -591,13 +626,41 @@ export default function VisitWrapUpPage() {
 
         <section className="soap-wrapup-section">
           <h2>
-            <span className="soap-wrapup-step">2</span> Follow-up
-            {followUpComplete && <Check className="soap-wrapup-done" size={16} />}
+            <span className="soap-wrapup-step">2</span> Reminders &amp; callbacks
           </h2>
           <p className="soap-wrapup-hint">
-            Required for every pet, same as End Visit on the schedule.
+            What the catalog will remind this household about, before it does. Change the
+            dates, drop one that does not apply, or add your own.
           </p>
-          {encounterId && wrapUp && (
+          {encounterId && (
+            <WrapUpReminders encounterId={encounterId} disabled={allLocked} />
+          )}
+
+          <div className="soap-wrapup-subsection">
+            <h3>Callbacks</h3>
+            <p className="soap-wrapup-hint">
+              Someone rings the owner in a few days to see how things are going. Whoever makes
+              the call records it on the task, and it files to the patient&apos;s record.
+            </p>
+            <WrapUpCallbacks
+              pets={pets}
+              clientId={wrapUp?.clientId ?? null}
+              defaultAssigneeEmployeeId={wrapUp?.provider?.id ?? null}
+              disabled={allLocked}
+            />
+          </div>
+        </section>
+
+        {/* Forward booking is settled at checkout, while the client is still there. It stays
+            reachable here only when something is outstanding, so a chart can't be signed on a
+            follow-up nobody answered. */}
+        {!followUpComplete && encounterId && wrapUp && (
+          <section className="soap-wrapup-section soap-wrapup-section--warn">
+            <h2>Follow-up still needed</h2>
+            <p className="soap-wrapup-hint">
+              This is normally answered at checkout. Finish it here if the client has already
+              left.
+            </p>
             <WrapUpForwardBooking
               pets={pets}
               clientId={wrapUp.clientId}
@@ -608,8 +671,8 @@ export default function VisitWrapUpPage() {
                 await loadWrapUp(encounterId);
               }}
             />
-          )}
-        </section>
+          </section>
+        )}
 
         <section className="soap-wrapup-section">
           <h2>

@@ -338,13 +338,57 @@ export async function updateEncounter(
       | 'forwardBookingEntryId'
       | 'forwardBookingTaskId'
     >
-  >
+  >,
+  opts?: {
+    /**
+     * `updated` from the copy this screen is editing. Sending it asks the server to
+     * reject (409) when somebody else changed one of these same fields meanwhile,
+     * instead of silently overwriting their work.
+     */
+    expectedUpdatedAt?: string | null;
+  }
 ): Promise<SoapEncounter> {
   const { data } = await http.patch<SoapEncounter>(`/soap-encounters/${encodeURIComponent(id)}`, {
     practiceId: pid(),
     ...body,
+    ...(opts?.expectedUpdatedAt ? { expectedUpdatedAt: opts.expectedUpdatedAt } : {}),
   });
   return data;
+}
+
+/** SOAP fields two people can be in at once; the server stamps a last writer per field. */
+export type CoEditedSoapField =
+  | 'subjective'
+  | 'objectiveVitals'
+  | 'objectiveExam'
+  | 'objectiveNotes'
+  | 'assessmentProblemIds'
+  | 'assessmentReasoning'
+  | 'planNotes';
+
+export type SoapFieldConflict = {
+  conflicts: CoEditedSoapField[];
+  /** The values that won, so the screen can show what is actually on the chart. */
+  current: Partial<Record<CoEditedSoapField, unknown>>;
+  updated: string | null;
+};
+
+/** 409 from `updateEncounter` when someone else wrote the same field first. */
+export function soapFieldConflictFrom(e: unknown): SoapFieldConflict | null {
+  const res = (e as { response?: { status?: number; data?: unknown } })?.response;
+  if (res?.status !== 409) return null;
+  const data = res.data as
+    | { code?: string; conflicts?: unknown; current?: unknown; updated?: unknown }
+    | undefined;
+  if (data?.code !== 'SOAP_FIELD_CONFLICT' || !Array.isArray(data.conflicts)) return null;
+  return {
+    conflicts: data.conflicts.filter((f): f is CoEditedSoapField => typeof f === 'string'),
+    current:
+      data.current && typeof data.current === 'object'
+        ? (data.current as Partial<Record<CoEditedSoapField, unknown>>)
+        : {},
+    updated: typeof data.updated === 'string' ? data.updated : null,
+  };
 }
 
 export async function completeEncounter(id: string): Promise<SoapEncounter> {
@@ -440,13 +484,14 @@ export async function updateOrder(
 export async function setOrderState(
   encounterId: string,
   orderId: string,
-  state: EncounterOrderState
+  state: EncounterOrderState,
+  opts?: { recordOnChart?: boolean }
 ): Promise<EncounterOrder> {
   const { data } = await http.patch<EncounterOrder>(
     `/soap-encounters/${encodeURIComponent(encounterId)}/orders/${encodeURIComponent(
       orderId
     )}/state`,
-    { practiceId: pid(), state }
+    { practiceId: pid(), state, ...(opts?.recordOnChart === false ? { recordOnChart: false } : {}) }
   );
   return data;
 }
@@ -817,10 +862,18 @@ export type CounterInvoiceLineInput = {
   excludeFromProduction?: boolean;
 };
 
-export async function listClientVisitInvoices(clientId: number): Promise<VisitInvoice[]> {
+export async function listClientVisitInvoices(
+  clientId: number,
+  opts?: { lite?: boolean },
+): Promise<VisitInvoice[]> {
   const { data } = await http.get<VisitInvoice[]>(
     `/visit-invoices/client/${encodeURIComponent(String(clientId))}`,
-    { params: { practiceId: pid() } }
+    {
+      params: {
+        practiceId: pid(),
+        ...(opts?.lite ? { lite: '1' } : {}),
+      },
+    },
   );
   return data;
 }
@@ -1158,12 +1211,24 @@ export type InvoiceCardOnFile = {
   expYear: number | null;
 };
 
-export async function getInvoiceCardOnFile(invoiceId: string): Promise<InvoiceCardOnFile | null> {
-  const { data } = await http.get<InvoiceCardOnFile | null>(
+export type InvoiceCardOnFileLookup = {
+  card: InvoiceCardOnFile | null;
+  declinedAt: string | null;
+};
+
+export async function getInvoiceCardOnFile(
+  invoiceId: string,
+): Promise<InvoiceCardOnFileLookup> {
+  const { data } = await http.get<InvoiceCardOnFileLookup | InvoiceCardOnFile | null>(
     `/visit-payments/${encodeURIComponent(invoiceId)}/card-on-file`,
     { params: { practiceId: pid() } }
   );
-  return data ?? null;
+  if (!data) return { card: null, declinedAt: null };
+  if ('card' in data || 'declinedAt' in data) {
+    const lookup = data as InvoiceCardOnFileLookup;
+    return { card: lookup.card ?? null, declinedAt: lookup.declinedAt ?? null };
+  }
+  return { card: data as InvoiceCardOnFile, declinedAt: null };
 }
 
 export async function chargeSavedCard(invoiceId: string): Promise<VisitInvoice> {
@@ -1296,11 +1361,15 @@ export async function getTerminalPresence(): Promise<TerminalPresence> {
 /** Start Scout Terminal handoff: creates PI + checkout job and notifies devices. */
 export async function startTerminalCheckout(
   invoiceId: string,
-  opts?: { targetDeviceId?: string }
+  opts?: { targetDeviceId?: string; saveCard?: boolean }
 ): Promise<TerminalCheckoutSession> {
   const { data } = await http.post<TerminalCheckoutSession>(
     `/visit-payments/${encodeURIComponent(invoiceId)}/terminal/checkout`,
-    { practiceId: pid(), targetDeviceId: opts?.targetDeviceId }
+    {
+      practiceId: pid(),
+      targetDeviceId: opts?.targetDeviceId,
+      saveCard: opts?.saveCard === true,
+    }
   );
   return data;
 }

@@ -39,6 +39,7 @@ import ExitSurveyPage from './pages/ExitSurveyPage';
 import RoomLoaderPage from './pages/RoomLoader';
 import SoapEncounterPage from './pages/SoapEncounterPage';
 import VisitWrapUpPage from './pages/VisitWrapUpPage';
+import VisitCheckoutPage from './pages/VisitCheckoutPage';
 import DoctorWorklistPage from './pages/DoctorWorklistPage';
 import BriefWorkspacePage from './pages/BriefWorkspacePage';
 import PracticeChatPage from './pages/PracticeChatPage';
@@ -77,6 +78,7 @@ import PimsPatientsPage from './pages/PimsPatientsPage';
 import PimsTasksPage from './pages/PimsTasksPage';
 import Settings from './pages/Settings';
 import GmailInbox from './pages/GmailInbox';
+import BankDepositsPage from './pages/BankDepositsPage';
 import Scheduler from './pages/Scheduler';
 import Analytics from './pages/Analytics';
 import PostAppointmentSurvey from './pages/PostAppointmentSurvey';
@@ -583,6 +585,10 @@ export default function App() {
               }
             >
               <Route path="/home" element={<Home />} />
+              <Route
+                path="/analytics/bank-deposits"
+                element={<Navigate to="/schedule/deposits" replace />}
+              />
               <Route path="/scout/*" element={<ScoutLegacyRedirect />} />
               <Route path="/routing" element={<Navigate to="/schedule/routing" replace />} />
               <Route path="/doctor" element={<Navigate to="/schedule/my-day" replace />} />
@@ -655,6 +661,10 @@ export default function App() {
                     <Route
                       path="soap/:appointmentId/:patientId/wrap-up"
                       element={<VisitWrapUpPage />}
+                    />
+                    <Route
+                      path="soap/:appointmentId/:patientId/checkout"
+                      element={<VisitCheckoutPage />}
                     />
                     <Route path="scheduler" element={<Scheduler />} />
                     <Route
@@ -732,6 +742,11 @@ export default function App() {
                     <Route path="clients" element={<PimsClientsPage />} />
                     <Route path="patients" element={<PimsPatientsPage />} />
                     <Route path="email" element={<GmailInbox />} />
+                    <Route path="deposits" element={<BankDepositsPage />} />
+                    <Route
+                      path="analytics/bank-deposits"
+                      element={<Navigate to="/schedule/deposits" replace />}
+                    />
                     <Route path="analytics" element={<Analytics basePath="/schedule/analytics" />}>
                       <Route index element={<Navigate to="/schedule/analytics/payments" replace />} />
                       <Route

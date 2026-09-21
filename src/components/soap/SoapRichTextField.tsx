@@ -16,6 +16,8 @@ type Props = {
   className?: string;
   /** Prefer taller document-view editors. */
   minHeightPx?: number;
+  /** SoapEncounter column this edits, so live co-editing can tell the room where you are. */
+  dataField?: string;
 };
 
 /** Turn plain SOAP notes into editable HTML while preserving line breaks. */
@@ -44,6 +46,7 @@ export default function SoapRichTextField({
   placeholder,
   className,
   minHeightPx = 220,
+  dataField,
 }: Props) {
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -73,7 +76,10 @@ export default function SoapRichTextField({
   }
 
   return (
-    <div className={`soap-rich${disabled ? ' is-disabled' : ''}${className ? ` ${className}` : ''}`}>
+    <div
+      className={`soap-rich${disabled ? ' is-disabled' : ''}${className ? ` ${className}` : ''}`}
+      data-soap-field={dataField}
+    >
       <div className="soap-rich__bar" role="toolbar" aria-label="SOAP formatting">
         <button
           type="button"

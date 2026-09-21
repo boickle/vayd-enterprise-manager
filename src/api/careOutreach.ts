@@ -42,6 +42,9 @@ export type UnscheduledReminder = {
   notes?: string | null;
   /** When true, reminder may be omitted from fill-day / outreach lists unless explicitly shown. */
   isHidden?: boolean | null;
+  /** Inventory item that created this reminder (catalog sale), when known. */
+  sourceInventoryItemId?: number | null;
+  sourceDefinitionId?: number | null;
   patient?: CareOutreachPatientRef | null;
   employee?: CareOutreachEmployeeRef | null;
   practice?: { id: number; name?: string };

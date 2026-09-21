@@ -1157,6 +1157,11 @@ export function SchedulerActualVisitTimeModal({
     if (!requiresForwardBooking) return true;
     if (dispositionLocked) return true;
 
+    // Checkout owns the follow-up now — it is asked while the client is still at the door,
+    // and payment will not go through until it is answered. This prompt stays as a fallback
+    // for visits that never charted, so an untouched form must not block the visit time.
+    if (!forwardBookingUserEditedRef.current) return true;
+
     if (householdVisits.length > 1 && selectedHouseholdPatientIds.size === 0) {
       setError('Select at least one pet for the follow-up choice.');
       return false;
@@ -1583,6 +1588,13 @@ export function SchedulerActualVisitTimeModal({
                   <span className="settings-muted scheduler-forward-booking-save-hint">Saved</span>
                 ) : null}
               </div>
+
+              {dispositionLocked ? null : (
+                <p className="settings-muted" style={{ fontSize: 13, margin: '0 0 10px' }}>
+                  Optional here — checkout asks this while the client is still at the door. Answer
+                  it now only if this visit is not going through checkout.
+                </p>
+              )}
 
               {householdVisits.length > 1 ? (
                 <div className="scheduler-forward-booking-household-pets">

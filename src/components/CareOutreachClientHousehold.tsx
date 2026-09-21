@@ -313,6 +313,7 @@ export function CareOutreachOtherHouseholdPets({
                   membershipName={pet.membershipName}
                   showHeader={false}
                   showAlerts={false}
+                  allowDecline={false}
                   className="care-outreach-household-pet-card__summary"
                 />
               )}

@@ -34,6 +34,7 @@ export const SCHEDULE_OUTLET_EXTRA_SEGMENTS: string[] = [
   'settings',
   'admin',
   'analytics',
+  'deposits',
   'email',
   'appointments',
   'holds',

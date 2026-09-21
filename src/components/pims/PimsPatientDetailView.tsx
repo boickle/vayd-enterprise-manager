@@ -41,6 +41,11 @@ import {
 import { formatClientDisplayName } from '../../utils/clientNamePrefix';
 import { patchReminder } from '../../api/careOutreach';
 import {
+  declineReminder,
+  formatDeclinedDate,
+  parseDeclinedItems,
+} from '../../api/declinedTreatments';
+import {
   deactivatePatient,
   fetchPatientByIdStaff,
   fetchPatientMedicalRecordStaff,
@@ -78,6 +83,7 @@ import {
   chartRowsFromScoutNotes,
   filterRowsByDateRange,
   groupChartRowsByLocalDate,
+  laterReceivedDateForDeclinedItem,
   treatmentItemBelongsOnChart,
   treatmentPlanBelongsOnChart,
   type ChartRow,
@@ -125,7 +131,7 @@ import {
   patientMembershipFromRecord,
   splitActiveAndOverdueReminders,
 } from '../../utils/routingPatientHoverData';
-import { appConfirm } from '../../utils/appDialog';
+import { appConfirm, appPrompt } from '../../utils/appDialog';
 import { pushRecentRecord } from '../../utils/recentRecordsStore';
 import '../../pages/BriefWorkspacePage.css';
 import { scoutManagedState } from '../../utils/pimsScoutManaged';
@@ -1418,6 +1424,10 @@ export default function PimsPatientDetailView({
     const lines = parseRemindersFromMedicalRecord(medicalRecord, practiceTz);
     return splitActiveAndOverdueReminders(lines);
   }, [medicalRecord, practiceTz]);
+  const declinedReminderItems = useMemo(
+    () => parseDeclinedItems(medicalRecord?.declinedItems),
+    [medicalRecord]
+  );
 
   const weightHistoryPoints = useMemo(() => {
     const wh = medicalRecord?.weightHistory ?? [];
@@ -1600,6 +1610,48 @@ export default function PimsPatientDetailView({
     }
     markSchedulerHandoffPreferRoutingDoctor();
     navigate('/schedule/routing');
+  }
+
+  async function handleDeclineReminder(reminder: { id: string; label: string }) {
+    const reminderId = Number(reminder.id);
+    if (!Number.isFinite(reminderId) || reminderId <= 0) {
+      setSaveError('Could not decline this reminder.');
+      return;
+    }
+    const proceed = await appConfirm({
+      title: 'Decline this reminder',
+      message: `Stop reminding for “${reminder.label}”? A declined date stays on the chart.`,
+      confirmLabel: 'Decline',
+      cancelLabel: 'Cancel',
+    });
+    if (!proceed) return;
+    const note = await appPrompt({
+      title: 'Decline note (optional)',
+      message: 'Why was this declined?',
+      placeholder: 'Optional',
+      confirmLabel: 'Save',
+      cancelLabel: 'Skip note',
+    });
+    setRemovingReminderId(reminder.id);
+    setSaveError(null);
+    try {
+      const declined = await declineReminder(reminderId, note);
+      setMedicalRecord((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          reminders: (prev.reminders ?? []).filter((row) => {
+            if (!row || typeof row !== 'object') return true;
+            return String((row as Record<string, unknown>).id) !== reminder.id;
+          }),
+          declinedItems: [...parseDeclinedItems(prev.declinedItems), declined],
+        };
+      });
+    } catch (err) {
+      setSaveError(extractPatientSaveErr(err));
+    } finally {
+      setRemovingReminderId(null);
+    }
   }
 
   async function handleRemoveReminder(reminder: { id: string; label: string }) {
@@ -2310,6 +2362,15 @@ export default function PimsPatientDetailView({
                         <button
                           type="button"
                           className="pims-emr-story__reminder-remove"
+                          aria-label={`Decline reminder ${r.label}`}
+                          disabled={removingReminderId === r.id}
+                          onClick={() => void handleDeclineReminder(r)}
+                        >
+                          Decline
+                        </button>
+                        <button
+                          type="button"
+                          className="pims-emr-story__reminder-remove"
                           aria-label={`Delete reminder ${r.label}`}
                           disabled={removingReminderId === r.id}
                           onClick={() => setPendingDeleteReminder(r)}
@@ -2333,6 +2394,15 @@ export default function PimsPatientDetailView({
                         <button
                           type="button"
                           className="pims-emr-story__reminder-remove"
+                          aria-label={`Decline reminder ${r.label}`}
+                          disabled={removingReminderId === r.id}
+                          onClick={() => void handleDeclineReminder(r)}
+                        >
+                          Decline
+                        </button>
+                        <button
+                          type="button"
+                          className="pims-emr-story__reminder-remove"
                           aria-label={`Delete reminder ${r.label}`}
                           disabled={removingReminderId === r.id}
                           onClick={() => setPendingDeleteReminder(r)}
@@ -2343,10 +2413,29 @@ export default function PimsPatientDetailView({
                     ))}
                   </ul>
                 )}
-              </div>
-            </>
-          ) : null}
-        </section>
+                </div>
+                <div className="pims-emr-story__block">
+                  <h4 className="pims-emr-story__sub">Declined ({declinedReminderItems.length})</h4>
+                  {declinedReminderItems.length === 0 ? (
+                    <p className="pims-emr-story__muted">None</p>
+                  ) : (
+                    <ul className="pims-emr-story__list">
+                      {declinedReminderItems.map((item) => (
+                        <li key={item.id} className="pims-emr-story__reminder pims-emr-story__reminder--declined">
+                          <span>{item.label}</span>
+                          <span>
+                            {item.declinedAt
+                              ? `declined ${formatDeclinedDate(item.declinedAt)}`
+                              : 'declined'}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </>
+            ) : null}
+          </section>
         </div>
 
         {Number.isFinite(Number(patientId)) ? (
@@ -2354,6 +2443,23 @@ export default function PimsPatientDetailView({
             patientId={Number(patientId)}
             patientName={pname || null}
             clientId={clientId ? Number(clientId) : null}
+            patientSpecies={speciesName || null}
+            patientAgeYears={
+              (() => {
+                const dob =
+                  pickStr(payload?.dateOfBirth) ?? pickStr(payload?.dob) ?? null;
+                if (dob) {
+                  const d = new Date(dob);
+                  if (!Number.isNaN(d.getTime())) {
+                    return Math.max(
+                      0,
+                      (Date.now() - d.getTime()) / (1000 * 60 * 60 * 24 * 365.25),
+                    );
+                  }
+                }
+                return null;
+              })()
+            }
           />
         ) : null}
 
@@ -2559,6 +2665,7 @@ export default function PimsPatientDetailView({
                               canExpand ? 'pims-patient-detail__mr-row--clickable' : '',
                               highlighted ? 'pims-patient-detail__mr-row--highlight' : '',
                               r.removed ? 'pims-patient-detail__mr-row--removed' : '',
+                              r.isDeclined ? 'pims-patient-detail__mr-row--declined' : '',
                             ]
                               .filter(Boolean)
                               .join(' ') || undefined}
@@ -2666,6 +2773,7 @@ export default function PimsPatientDetailView({
                               'pims-patient-detail__mr-row--clickable',
                               highlighted ? 'pims-patient-detail__mr-row--highlight' : '',
                               r.removed ? 'pims-patient-detail__mr-row--removed' : '',
+                              r.isDeclined ? 'pims-patient-detail__mr-row--declined' : '',
                             ]
                               .filter(Boolean)
                               .join(' ')}
@@ -2819,6 +2927,9 @@ export default function PimsPatientDetailView({
                           {treatments.filter(treatmentPlanBelongsOnChart).map((t) => {
                             const items = (t.treatmentItems ?? []).filter(treatmentItemBelongsOnChart);
                             if (items.length === 0) return null;
+                            const allItems = treatments.flatMap((plan) =>
+                              treatmentPlanBelongsOnChart(plan) ? plan.treatmentItems ?? [] : []
+                            );
                             return (
                             <div key={t.id} className="pims-patient-detail__group-line">
                               <strong>Plan #{t.id}</strong>
@@ -2830,11 +2941,25 @@ export default function PimsPatientDetailView({
                                       item.procedure?.name ||
                                       item.lab?.name ||
                                       'Line';
+                                    const later = item.isDeclined
+                                      ? laterReceivedDateForDeclinedItem(item, allItems)
+                                      : null;
                                     return (
-                                      <li key={item.id}>
+                                      <li
+                                        key={item.id}
+                                        className={
+                                          item.isDeclined
+                                            ? 'pims-patient-detail__declined-line'
+                                            : undefined
+                                        }
+                                      >
                                         {name}
+                                        {item.isDeclined ? ' — declined' : ''}
                                         {item.serviceDate
                                           ? ` — ${formatChartDateTime(item.serviceDate)}`
+                                          : ''}
+                                        {later
+                                          ? ` — later received on ${formatChartDateTime(later)}`
                                           : ''}
                                       </li>
                                     );

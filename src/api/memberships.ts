@@ -232,6 +232,7 @@ export type PatientMembership = {
   billingInterval: string | null;
   price: number | null;
   outOfPlanDiscount: number | null;
+  onlineStoreDiscount: number | null;
   stripeSubscriptionId: string | null;
   notes: string | null;
   createdByEmployeeId: number | null;
@@ -366,7 +367,11 @@ export async function updateBundle(
 /** Pushes the saved plan onto existing memberships without other edits. */
 export async function applyBundleToExistingMemberships(
   id: number,
-  opts?: { removeBenefitsDroppedFromPlan?: boolean },
+  opts?: {
+    removeBenefitsDroppedFromPlan?: boolean;
+    packageItemIds?: number[];
+    removePackageItemIds?: number[];
+  },
 ): Promise<PropagationResult> {
   const { data } = await http.post<PropagationResult>(
     `/memberships/bundles/${encodeURIComponent(id)}/apply-to-existing`,
@@ -374,6 +379,10 @@ export async function applyBundleToExistingMemberships(
       practiceId: currentPracticeId(),
       ...(opts?.removeBenefitsDroppedFromPlan
         ? { removeBenefitsDroppedFromPlan: true }
+        : {}),
+      ...(opts?.packageItemIds?.length ? { packageItemIds: opts.packageItemIds } : {}),
+      ...(opts?.removePackageItemIds?.length
+        ? { removePackageItemIds: opts.removePackageItemIds }
         : {}),
     },
   );
@@ -527,13 +536,72 @@ export async function changeMembershipPlan(
   return data;
 }
 
+export type MembershipCancelLine = {
+  description: string;
+  amount: number;
+};
+
+export type MembershipCancelPreview = {
+  membershipId: number;
+  planName: string;
+  petName: string;
+  billingInterval: 'monthly' | 'annual';
+  termStart: string;
+  termLabel: string;
+  paidThisTerm: number;
+  usedThisTerm: number;
+  chargeAmount: number;
+  refundAmount: number;
+  hasCard: boolean;
+  coveredLines: MembershipCancelLine[];
+  paidLines: MembershipCancelLine[];
+  ownerWillSee: string;
+};
+
+export type MembershipCancelResult = {
+  membership: PatientMembership;
+  invoiceId?: string | null;
+  paidThisTerm: number;
+  usedThisTerm: number;
+  chargeAmount: number;
+  refundAmount: number;
+  chargeIssued?: boolean;
+  refundIssued?: boolean;
+  chargeByHand?: boolean;
+  refundByHand?: boolean;
+  stripeCanceled?: boolean;
+  emailSent?: boolean;
+  moneyError?: string | null;
+  ownerWillSee?: string;
+};
+
+export async function previewMembershipCancel(
+  membershipId: number,
+): Promise<MembershipCancelPreview> {
+  const { data } = await http.get<MembershipCancelPreview>(
+    `/memberships/patient-memberships/${encodeURIComponent(membershipId)}/cancel-preview`,
+    { params: { practiceId: currentPracticeId() } },
+  );
+  return data;
+}
+
 export async function cancelMembership(
   membershipId: number,
-  reason?: string,
-): Promise<PatientMembership> {
-  const { data } = await http.post<PatientMembership>(
+  reason: string,
+  confirm?: { chargeAmount?: number; refundAmount?: number },
+): Promise<MembershipCancelResult> {
+  const { data } = await http.post<MembershipCancelResult>(
     `/memberships/patient-memberships/${encodeURIComponent(membershipId)}/cancel`,
-    { practiceId: currentPracticeId(), ...(reason ? { reason } : {}) },
+    {
+      practiceId: currentPracticeId(),
+      reason,
+      ...(confirm?.chargeAmount != null
+        ? { confirmChargeAmount: confirm.chargeAmount }
+        : {}),
+      ...(confirm?.refundAmount != null
+        ? { confirmRefundAmount: confirm.refundAmount }
+        : {}),
+    },
   );
   return data;
 }
@@ -541,6 +609,7 @@ export async function cancelMembership(
 /* ------------------------------------------------- post-visit membership signup */
 
 export type PostVisitSignupLine = {
+  visitInvoiceId?: string;
   visitInvoiceLineId: string;
   description: string;
   itemType: MembershipItemType | null;
@@ -552,9 +621,12 @@ export type PostVisitSignupLine = {
   coveredByMembership: boolean;
   /** Human-readable and safe to show to staff in the line table. */
   coverageReason: string;
+  /** When not covered, plan benefit this line would map to. */
+  recommendedBenefitName?: string | null;
 };
 
 export type PostVisitSignupBenefit = {
+  visitInvoiceId?: string;
   visitInvoiceLineId: string;
   description: string;
   itemType: MembershipItemType;
@@ -563,18 +635,24 @@ export type PostVisitSignupBenefit = {
   amountCovered: number;
 };
 
+export type PostVisitSignupInvoiceSummary = {
+  id: string;
+  status: 'open' | 'finalized' | 'paid' | 'void';
+  total: number;
+  amountPaid: number;
+  lineCount: number;
+  patientId: number | null;
+  clientId: number | null;
+  visitAt: string | null;
+  visitAgeHours: number | null;
+  newTotal?: number;
+  refundDue?: number;
+  balanceDue?: number;
+};
+
 export type PostVisitSignupPreview = {
-  invoice: {
-    id: string;
-    status: 'open' | 'finalized' | 'paid' | 'void';
-    total: number;
-    amountPaid: number;
-    lineCount: number;
-    patientId: number | null;
-    clientId: number | null;
-    visitAt: string | null;
-    visitAgeHours: number | null;
-  };
+  invoice: PostVisitSignupInvoiceSummary;
+  invoices?: PostVisitSignupInvoiceSummary[];
   lines: PostVisitSignupLine[];
   newSubtotal: number;
   newTaxTotal: number;
@@ -584,10 +662,22 @@ export type PostVisitSignupPreview = {
   amountAlreadyPaid: number;
   refundDue: number;
   balanceDue: number;
+  /** First Stripe subscription invoice collected today. Zero when there is no card. */
+  subscriptionAmount?: number;
   benefitsToCredit: PostVisitSignupBenefit[];
   planName: string;
   planPrice: number | null;
+  windowHours?: number;
+  outsideWindow?: boolean;
+  oldestInvoiceAgeHours?: number | null;
   warnings: string[];
+  /** Paid in eVet, not Stripe — refund or collect the balance by hand. */
+  manualSettlement?: boolean;
+  /** Owner already paid in Stripe. Refund the covered visit only. */
+  ownerAlreadyPaid?: boolean;
+  /** Enter a card — the visit payment cannot start the subscription. */
+  needsCard?: boolean;
+  paidInStripe?: boolean;
 };
 
 export type PostVisitSignupResult = {
@@ -598,6 +688,15 @@ export type PostVisitSignupResult = {
   refundAmount: number;
   refundReference: string | null;
   refundError: string | null;
+  chargeStatus?: 'issued' | 'skipped' | 'not_needed' | 'failed';
+  chargeAmount?: number;
+  chargeReference?: string | null;
+  chargeError?: string | null;
+  subscriptionStatus?: 'issued' | 'skipped' | 'not_needed' | 'failed';
+  subscriptionAmount?: number;
+  subscriptionId?: string | null;
+  subscriptionError?: string | null;
+  ownerAlreadyPaid?: boolean;
   invoice: {
     id: string;
     status: 'open' | 'finalized' | 'paid' | 'void';
@@ -608,16 +707,39 @@ export type PostVisitSignupResult = {
     amountPaid: number;
     balanceDue: number;
   };
+  invoices?: Array<{
+    id: string;
+    status: 'open' | 'finalized' | 'paid' | 'void';
+    subtotal: number;
+    taxTotal: number;
+    total: number;
+    membershipAdjustments: number;
+    amountPaid: number;
+    balanceDue: number;
+    refundStatus: 'issued' | 'skipped' | 'not_needed' | 'failed';
+    refundAmount: number;
+  }>;
   benefitsCredited: PostVisitSignupBenefit[];
   emailSent: boolean;
+  windowOverridden?: boolean;
   warnings: string[];
 };
 
 /** Dry run: what the refund and re-priced bill would be. Writes nothing. */
+export type PostVisitLineSubstitution = {
+  visitInvoiceLineId: string;
+  itemType: MembershipItemType;
+  catalogItemId: number;
+};
+
 export async function previewPostVisitSignup(input: {
-  visitInvoiceId: string;
+  visitInvoiceId?: string;
+  visitInvoiceIds?: string[];
   packageId: number;
   billingInterval?: MembershipBillingInterval;
+  patientId?: number;
+  substitutions?: PostVisitLineSubstitution[];
+  paymentMethodId?: string;
 }): Promise<PostVisitSignupPreview> {
   const { data } = await http.post<PostVisitSignupPreview>(
     '/memberships/post-visit-signup/preview',
@@ -634,12 +756,20 @@ export async function previewPostVisitSignup(input: {
  * if the bill moved underneath them.
  */
 export async function executePostVisitSignup(input: {
-  visitInvoiceId: string;
+  visitInvoiceId?: string;
+  visitInvoiceIds?: string[];
   packageId: number;
   billingInterval?: MembershipBillingInterval;
+  patientId?: number;
+  substitutions?: PostVisitLineSubstitution[];
   confirmRefundAmount?: number;
+  confirmChargeAmount?: number;
+  confirmSubscriptionAmount?: number;
   skipRefund?: boolean;
   note?: string;
+  overrideWindow?: boolean;
+  overrideWindowReason?: string;
+  paymentMethodId?: string;
 }): Promise<PostVisitSignupResult> {
   const { data } = await http.post<PostVisitSignupResult>(
     '/memberships/post-visit-signup/execute',

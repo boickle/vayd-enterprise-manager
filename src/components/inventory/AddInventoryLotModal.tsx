@@ -74,8 +74,12 @@ export default function AddInventoryLotModal({
       .then((rows) => {
         if (canceled) return;
         setLocations(rows);
-        if (defaultLocationId != null && rows.some((r) => r.id === defaultLocationId)) {
-          setLocationId(defaultLocationId);
+        const wanted =
+          defaultLocationId != null && Number.isFinite(Number(defaultLocationId))
+            ? Number(defaultLocationId)
+            : null;
+        if (wanted != null && rows.some((r) => Number(r.id) === wanted)) {
+          setLocationId(wanted);
           return;
         }
         const def = rows.find((r) => r.isDefault) ?? rows[0];
