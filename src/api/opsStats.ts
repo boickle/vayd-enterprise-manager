@@ -478,6 +478,71 @@ export async function fetchCollectibleRevenueRates(params: {
   };
 }
 
+export type SeasonalWeekPoint = {
+  week: number;
+  index: number;
+  vsdPerDoctorDay: number | null;
+  doctorDays: number;
+  pharmacyIndex: number;
+  pharmacyPerDoctorDay: number | null;
+};
+
+export type SeasonalIndexResponse = {
+  timezone: string;
+  asOf: string;
+  minDate: string | null;
+  maxDate: string | null;
+  ready: boolean;
+  yearsUsed: number[];
+  sampleDoctorDays: number;
+  annualVsdPerDoctorDay: number | null;
+  annualPharmacyPerDoctorDay: number | null;
+  weeks: SeasonalWeekPoint[];
+};
+
+/**
+ * GET /analytics/ops/revenue/seasonal-index
+ * ISO-week indexes of VSD (and pharmacy) per working doctor-day.
+ */
+export async function fetchSeasonalIndex(): Promise<SeasonalIndexResponse> {
+  const { data } = await http.get('/analytics/ops/revenue/seasonal-index');
+  const resp = data ?? {};
+  const n = (v: unknown) => {
+    const x = Number(v);
+    return Number.isFinite(x) ? x : 0;
+  };
+  const weeks: SeasonalWeekPoint[] = Array.isArray(resp.weeks)
+    ? resp.weeks.map((w: any) => ({
+        week: n(w?.week),
+        index: n(w?.index) || 1,
+        vsdPerDoctorDay:
+          w?.vsdPerDoctorDay == null ? null : n(w.vsdPerDoctorDay),
+        doctorDays: n(w?.doctorDays),
+        pharmacyIndex: n(w?.pharmacyIndex) || 1,
+        pharmacyPerDoctorDay:
+          w?.pharmacyPerDoctorDay == null ? null : n(w.pharmacyPerDoctorDay),
+      }))
+    : [];
+  return {
+    timezone: String(resp.timezone ?? 'America/New_York'),
+    asOf: String(resp.asOf ?? '').slice(0, 10),
+    minDate: resp.minDate ? String(resp.minDate).slice(0, 10) : null,
+    maxDate: resp.maxDate ? String(resp.maxDate).slice(0, 10) : null,
+    ready: resp.ready === true && weeks.length > 0,
+    yearsUsed: Array.isArray(resp.yearsUsed)
+      ? resp.yearsUsed.map((y: unknown) => n(y)).filter((y: number) => y > 0)
+      : [],
+    sampleDoctorDays: n(resp.sampleDoctorDays),
+    annualVsdPerDoctorDay:
+      resp.annualVsdPerDoctorDay == null ? null : n(resp.annualVsdPerDoctorDay),
+    annualPharmacyPerDoctorDay:
+      resp.annualPharmacyPerDoctorDay == null
+        ? null
+        : n(resp.annualPharmacyPerDoctorDay),
+    weeks,
+  };
+}
+
 function mapMatchInvoice(r: any): VsdPaymentsMatchInvoice {
   const status = r?.status;
   return {

@@ -12,8 +12,10 @@ import { fetchEmployeeGoals, type EmployeeGoalsResponseDto } from '../api/employ
 import {
   fetchCollectibleRevenueRates,
   fetchDoctorRevenueSeries,
+  fetchSeasonalIndex,
   type CollectibleRevenueRatesResponse,
   type DoctorRevenueSeriesResponse,
+  type SeasonalIndexResponse,
 } from '../api/opsStats';
 import { fetchPaymentsAnalytics, type PaymentPoint } from '../api/payments';
 import { fetchScheduleOverridesByDate } from './scheduleOverrideMerge';
@@ -100,6 +102,24 @@ export async function fetchCollectibleRevenueRatesCached(params: {
       }
     },
     LOOKBACK_TTL_MS
+  );
+}
+
+/** Historical seasonal index changes only after the nightly snapshot job. */
+const SEASONAL_INDEX_TTL_MS = 12 * 60 * 60_000;
+
+export async function fetchSeasonalIndexCached(): Promise<SeasonalIndexResponse | null> {
+  return cache.getOrFetch(
+    'seasonal-index',
+    async () => {
+      try {
+        return await fetchSeasonalIndex();
+      } catch (e) {
+        console.error('Seasonal index for projected revenue failed:', e);
+        return null;
+      }
+    },
+    SEASONAL_INDEX_TTL_MS
   );
 }
 

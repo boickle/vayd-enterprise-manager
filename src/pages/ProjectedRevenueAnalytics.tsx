@@ -10,6 +10,7 @@ import {
   InputLabel,
   MenuItem,
   Select,
+  Chip,
   Table,
   TableBody,
   TableCell,
@@ -33,7 +34,7 @@ import {
   Legend,
 } from 'recharts';
 import { fetchPrimaryProviders, isHospitalAccountProvider, type Provider } from '../api/employee';
-import { type DoctorRevenueSeriesResponse } from '../api/opsStats';
+import { type DoctorRevenueSeriesResponse, type SeasonalIndexResponse } from '../api/opsStats';
 import { type DoctorMonthDay } from '../api/appointments';
 import {
   scheduleOverrideIsOff,
@@ -51,6 +52,7 @@ import {
   fetchEmployeeWeeklySchedulesCached,
   fetchPaymentsAnalyticsCached,
   fetchScheduleOverridesCached,
+  fetchSeasonalIndexCached,
   PROJECTED_REVENUE_FETCH_CONCURRENCY,
 } from '../utils/projectedRevenueFetch';
 import {
@@ -73,6 +75,13 @@ import {
   projectDoctorWeekdayPoints,
   type DoctorPointsCapacity,
 } from '../utils/doctorPointsCapacity';
+import {
+  isoWeekNumber,
+  lookbackMidpointIso,
+  seasonalFactorsForDate,
+  seasonalIndexReady,
+  weekIndexMap,
+} from '../utils/seasonalIndex';
 import { useAuth } from '../auth/useAuth';
 import { useCommittedDateRange } from '../hooks/useCommittedDateRange';
 import { isEmployeeAnalyticsRestricted, normalizeAuthRoles } from '../utils/analyticsAccess';
@@ -354,6 +363,7 @@ export default function ProjectedRevenueAnalyticsPage() {
   const [paymentHistorySeries, setPaymentHistorySeries] = useState<PaymentPoint[]>([]);
   const [collectibleRates, setCollectibleRates] =
     useState<CollectibleRevenueRates>(EMPTY_COLLECTIBLE_RATES);
+  const [seasonalIndex, setSeasonalIndex] = useState<SeasonalIndexResponse | null>(null);
   const [doctorSchedulesBase, setDoctorSchedulesBase] = useState<
     Record<string, Omit<DoctorScheduleInfo, 'timeOffDates'>>
   >({});
@@ -420,6 +430,7 @@ export default function ProjectedRevenueAnalyticsPage() {
       start: toLocalDateStr(rateHistStart),
       end: toLocalDateStr(rateHistEnd),
     });
+    void fetchSeasonalIndexCached();
   }, []);
 
   // Load booked appointment points, trailing point/VSD history, schedules, and payments.
@@ -430,6 +441,7 @@ export default function ProjectedRevenueAnalyticsPage() {
       setRateHistDoctorResponses([]);
       setPaymentHistorySeries([]);
       setCollectibleRates(EMPTY_COLLECTIBLE_RATES);
+      setSeasonalIndex(null);
       setDoctorSchedulesBase({});
       setLoading(false);
       return;
@@ -475,7 +487,7 @@ export default function ProjectedRevenueAnalyticsPage() {
           id: String(p.id),
           name: p.name,
         }));
-        const [revenueResults, rateHistResults, pointResults, paymentsSeries, collectible, scheduleResults] =
+        const [revenueResults, rateHistResults, pointResults, paymentsSeries, collectible, seasonal, scheduleResults] =
           await Promise.all([
           fetchDoctorRevenueSeriesCachedMany(
             doctorsForRevenue,
@@ -497,6 +509,7 @@ export default function ProjectedRevenueAnalyticsPage() {
             start: toLocalDateStr(rateHistStart),
             end: toLocalDateStr(rateHistEnd),
           }),
+          fetchSeasonalIndexCached(),
           mapPool(providersForApi, PROJECTED_REVENUE_FETCH_CONCURRENCY, async (p) => {
             const id = String(p.id);
             const empId = Number(p.id);
@@ -554,6 +567,7 @@ export default function ProjectedRevenueAnalyticsPage() {
         setMonthDaysByDoctor(daysByDoctor);
         setPaymentHistorySeries(Array.isArray(paymentsSeries) ? paymentsSeries : []);
         setCollectibleRates(ratesFromApi(collectible));
+        setSeasonalIndex(seasonal);
         setDoctorSchedulesBase(schedulesById);
       } catch (e) {
         if (!alive) return;
@@ -564,6 +578,7 @@ export default function ProjectedRevenueAnalyticsPage() {
         setRateHistDoctorResponses([]);
         setPaymentHistorySeries([]);
         setCollectibleRates(EMPTY_COLLECTIBLE_RATES);
+        setSeasonalIndex(null);
         setDoctorSchedulesBase({});
       } finally {
         if (alive) setLoading(false);
@@ -738,6 +753,19 @@ export default function ProjectedRevenueAnalyticsPage() {
 
   const includeAncillary = graphSelection === PRACTICE_TOTAL_ID;
   const todayCalStr = toLocalDateStr(dayjs().startOf('day'));
+  const seasonalReady = seasonalIndexReady(seasonalIndex);
+  const seasonalByWeek = useMemo(
+    () => weekIndexMap(seasonalIndex?.weeks),
+    [seasonalIndex]
+  );
+  const lookbackWeek = useMemo(() => {
+    const todayD = dayjs().startOf('day');
+    const histEnd = todayD.subtract(1, 'day');
+    const histStart = histEnd.subtract(VSD_ESTIMATE_LOOKBACK_DAYS - 1, 'day');
+    return isoWeekNumber(
+      lookbackMidpointIso(toLocalDateStr(histStart), toLocalDateStr(histEnd))
+    );
+  }, []);
 
   /** Per-day revenue: actuals through today, projections for future days. */
   const dailyTreatmentEstimates = useMemo(() => {
@@ -748,6 +776,8 @@ export default function ProjectedRevenueAnalyticsPage() {
       const vsd = projectVsdPerPoint(ratesByDoctor.byDoctor[id]?.trend, daysUntil);
       return vsd != null ? scaleCollectible(vsd, share) : null;
     };
+    const factorsFor = (date: string) =>
+      seasonalFactorsForDate(date, lookbackWeek, seasonalByWeek, seasonalReady);
 
     return dates.map((date) => {
       const isActual = !dayjs(date).startOf('day').isAfter(todayD);
@@ -848,9 +878,11 @@ export default function ProjectedRevenueAnalyticsPage() {
       }
 
       const daysUntil = Math.max(0, dayjs(date).startOf('day').diff(todayD, 'day'));
+      const seasonal = factorsFor(date);
       const ancillary = includeAncillary
         ? ancillaryForDate(ancillaryRates)
         : { pharmacy: 0, membership: 0 };
+      const pharmacyEstimated = ancillary.pharmacy * seasonal.pharmacy;
       // Revenue already invoiced against this future date. It is a floor, not an addition: the
       // points estimate is predicting the same visits this money was billed for.
       const postedFor = (id: string) => actualTreatmentByDoctorByDate[id]?.[date] ?? 0;
@@ -916,9 +948,9 @@ export default function ProjectedRevenueAnalyticsPage() {
             date,
             bookedEstimated: 0,
             treatmentEstimated: 0,
-            pharmacyEstimated: ancillary.pharmacy,
+            pharmacyEstimated,
             membershipEstimated: ancillary.membership,
-            estimated: ancillary.pharmacy + ancillary.membership,
+            estimated: pharmacyEstimated + ancillary.membership,
             points: 0,
             projectedPoints: 0,
             typicalDayPoints: 0,
@@ -932,15 +964,18 @@ export default function ProjectedRevenueAnalyticsPage() {
           };
         }
 
-        const treatmentEstimated = Math.max(projectedTreatment, postedTotal);
+        const treatmentEstimated = Math.max(
+          projectedTreatment * seasonal.treatment,
+          postedTotal
+        );
         const bookedEstimated = Math.max(bookedTreatment, postedTotal);
         return {
           date,
           bookedEstimated,
           treatmentEstimated,
-          pharmacyEstimated: ancillary.pharmacy,
+          pharmacyEstimated,
           membershipEstimated: ancillary.membership,
-          estimated: treatmentEstimated + ancillary.pharmacy + ancillary.membership,
+          estimated: treatmentEstimated + pharmacyEstimated + ancillary.membership,
           points,
           projectedPoints,
           typicalDayPoints,
@@ -979,10 +1014,13 @@ export default function ProjectedRevenueAnalyticsPage() {
       return {
         date,
         bookedEstimated: doctor.bookedTreatment,
-        treatmentEstimated: doctor.projectedTreatment,
+        treatmentEstimated: Math.max(
+          doctor.projectedTreatment * seasonal.treatment,
+          doctor.posted
+        ),
         pharmacyEstimated: 0,
         membershipEstimated: 0,
-        estimated: doctor.projectedTreatment,
+        estimated: Math.max(doctor.projectedTreatment * seasonal.treatment, doctor.posted),
         points: doctor.points,
         projectedPoints: doctor.projectedPoints,
         typicalDayPoints: doctor.typicalDayPoints,
@@ -1011,6 +1049,9 @@ export default function ProjectedRevenueAnalyticsPage() {
     doctorSchedules,
     weekdayCapacityByDoctor,
     collectibleRates,
+    lookbackWeek,
+    seasonalByWeek,
+    seasonalReady,
   ]);
 
   const dailyEstimates = dailyTreatmentEstimates;
@@ -1178,6 +1219,23 @@ export default function ProjectedRevenueAnalyticsPage() {
     [dailyEstimates]
   );
   const hasMixedActualProjected = totals.actualDayCount > 0 && totals.projectedDayCount > 0;
+  const seasonalChip = useMemo(() => {
+    if (!seasonalReady) return null;
+    const future = dailyEstimates.filter((d) => !d.isActual);
+    const sample = future[Math.floor(Math.max(0, future.length - 1) / 2)];
+    if (!sample) return null;
+    const f = seasonalFactorsForDate(
+      sample.date,
+      lookbackWeek,
+      seasonalByWeek,
+      seasonalReady
+    );
+    return {
+      factor: f.treatment,
+      targetWeek: f.targetWeek,
+      lookbackWeek: f.lookbackWeek,
+    };
+  }, [dailyEstimates, lookbackWeek, seasonalByWeek, seasonalReady]);
   const chartLabel = (name: string) => {
     switch (name) {
       case 'estimated':
@@ -1250,7 +1308,19 @@ export default function ProjectedRevenueAnalyticsPage() {
           {VSD_ESTIMATE_LOOKBACK_DAYS}-day window, plus the measured half-to-half slope out to that
           day (capped so the rate stays between 70% and 150% of the recent-half baseline). Pharmacy
           and Square + Stripe membership stay at that same recent-half daily average rather than
-          compounding a $/day trend across the horizon. Because visits are billed at booking, a
+          compounding a $/day trend across the horizon. Future treatment (and pharmacy) is then
+          scaled by a relative seasonal factor: VSD per doctor who actually worked that ISO week,
+          divided by the same metric for the trailing lookback week, clamped between 70% and 130%.
+          That uses stored completed doctor-days
+          {seasonalReady && seasonalIndex?.yearsUsed?.length
+            ? ` (${seasonalIndex.yearsUsed[0]}–${
+                seasonalIndex.yearsUsed[seasonalIndex.yearsUsed.length - 1]
+              }, ${seasonalIndex.sampleDoctorDays.toLocaleString()} doctor-days)`
+            : ''}
+          , not practice totals, so older years with fewer doctors do not shrink the forecast.
+          Dollar levels still come from the trailing {VSD_ESTIMATE_LOOKBACK_DAYS}-day rates, and
+          future doctor-days still come from today&apos;s schedule. Membership stays at its recent
+          daily average. Because visits are billed at booking, a
           future day never projects below the collectible treatment already invoiced against it.
           Days nobody is scheduled get no expected volume (weekly schedules, OFF overrides, and
           calendar time off all count), and cancelled visits never count as booked points.
@@ -1338,7 +1408,16 @@ export default function ProjectedRevenueAnalyticsPage() {
                     : ''
             }`}
             action={
-              <FormControl size="small" sx={{ minWidth: 220, mr: 1, mt: 0.5 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mr: 1, mt: 0.5 }}>
+                {seasonalChip && (
+                  <Chip
+                    size="small"
+                    color="primary"
+                    variant="outlined"
+                    label={`Seasonal ${seasonalChip.factor.toFixed(2)}× (week ${seasonalChip.targetWeek} vs week ${seasonalChip.lookbackWeek})`}
+                  />
+                )}
+                <FormControl size="small" sx={{ minWidth: 220 }}>
                 <InputLabel id="projected-scope-label">Show for</InputLabel>
                 <Select
                   labelId="projected-scope-label"
@@ -1353,6 +1432,7 @@ export default function ProjectedRevenueAnalyticsPage() {
                   ))}
                 </Select>
               </FormControl>
+              </Box>
             }
           />
           <CardContent>
