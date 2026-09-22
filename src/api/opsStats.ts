@@ -430,6 +430,54 @@ export async function fetchVsdPaymentsMatch(params: {
   };
 }
 
+export type CollectibleRevenueRatesResponse = {
+  start: string;
+  end: string;
+  timezone: string;
+  vsd: number;
+  membershipDiscount: number;
+  membershipCoveredVsd: number;
+  memberVsd: number;
+  memberBilled: number;
+  openToCollect: number;
+  lookbackDays: number;
+};
+
+/**
+ * GET /analytics/ops/revenue/collectible-rates
+ * Membership coverage of VSD and open-to-collect A/R for a date range.
+ */
+export async function fetchCollectibleRevenueRates(params: {
+  start: string;
+  end: string;
+}): Promise<CollectibleRevenueRatesResponse> {
+  const { data } = await http.get('/analytics/ops/revenue/collectible-rates', {
+    params: { start: params.start, end: params.end },
+  });
+  const resp = data ?? {};
+  const n = (v: unknown) => Number(v) || 0;
+  const start = String(resp.start ?? params.start);
+  const end = String(resp.end ?? params.end);
+  const lookbackFromDates = (() => {
+    const a = Date.parse(`${start}T00:00:00`);
+    const b = Date.parse(`${end}T00:00:00`);
+    if (!Number.isFinite(a) || !Number.isFinite(b) || b < a) return 0;
+    return Math.floor((b - a) / 86_400_000) + 1;
+  })();
+  return {
+    start,
+    end,
+    timezone: String(resp.timezone ?? 'America/New_York'),
+    vsd: n(resp.vsd),
+    membershipDiscount: n(resp.membershipDiscount),
+    membershipCoveredVsd: n(resp.membershipCoveredVsd),
+    memberVsd: n(resp.memberVsd),
+    memberBilled: n(resp.memberBilled),
+    openToCollect: Math.max(0, n(resp.openToCollect)),
+    lookbackDays: Math.max(1, n(resp.lookbackDays) || lookbackFromDates || 1),
+  };
+}
+
 function mapMatchInvoice(r: any): VsdPaymentsMatchInvoice {
   const status = r?.status;
   return {

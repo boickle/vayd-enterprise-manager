@@ -57,23 +57,50 @@ function collectClumpPatientIds(clump: Appointment[]): number[] {
   return [...ids];
 }
 
+function sentStatusRank(sentStatus: string | null | undefined): number {
+  const s = (sentStatus ?? '').trim().toLowerCase().replace(/\s+/g, '_');
+  if (s === 'completed' || s === 'complete') return 3;
+  if (s === 'sent' || s.startsWith('sent_')) return 2;
+  if (s && s !== 'not_sent') return 1;
+  return 0;
+}
+
+/**
+ * Prefer appointment-id overlap; fall back to same-day patient overlap so a
+ * doctor-to-doctor move (new appointment id / stale RL links) still honors the
+ * filled-out room loader instead of creating a blank not_sent one.
+ */
 function findBestRoomLoaderForClump(
   rows: RoomLoader[],
-  clumpAppointmentIds: number[]
+  clumpAppointmentIds: number[],
+  clumpPatientIds: number[] = []
 ): RoomLoader | null {
-  if (clumpAppointmentIds.length === 0) return null;
+  if (clumpAppointmentIds.length === 0 && clumpPatientIds.length === 0) return null;
 
-  const clumpSet = new Set(clumpAppointmentIds);
+  const clumpApptSet = new Set(clumpAppointmentIds);
+  const clumpPatientSet = new Set(clumpPatientIds);
   let best: RoomLoader | null = null;
   let bestScore = -1;
 
   for (const row of rows) {
     const rlApptIds = roomLoaderAppointmentIds(row);
-    const overlap = rlApptIds.filter((id) => clumpSet.has(id)).length;
-    if (overlap === 0) continue;
+    const rlPatientIds = roomLoaderPatientIds(row);
+    const apptOverlap = rlApptIds.filter((id) => clumpApptSet.has(id)).length;
+    const patientOverlap = rlPatientIds.filter((id) => clumpPatientSet.has(id)).length;
+    if (apptOverlap === 0 && patientOverlap === 0) continue;
 
-    const coversAll = overlap === clumpSet.size;
-    const score = overlap * 100 + (coversAll ? 10_000 : 0);
+    const coversAllAppts =
+      clumpApptSet.size > 0 && apptOverlap === clumpApptSet.size;
+    const coversAllPatients =
+      clumpPatientSet.size > 0 && patientOverlap === clumpPatientSet.size;
+    const score =
+      // Prefer filled-out loaders over blank not_sent rows that may have been
+      // auto-linked to a re-keyed appointment after a doctor move.
+      sentStatusRank(row.sentStatus) * 1_000_000 +
+      apptOverlap * 100_000 +
+      (coversAllAppts ? 50_000 : 0) +
+      patientOverlap * 1_000 +
+      (coversAllPatients ? 500 : 0);
     if (score > bestScore) {
       bestScore = score;
       best = row;
@@ -90,6 +117,7 @@ export async function findRoomLoaderForAppointment(
 ): Promise<RoomLoader | null> {
   const clump = resolveVisitClump(appt, allAppointments, practiceTz);
   const clumpAppointmentIds = collectClumpAppointmentIds(clump);
+  const clumpPatientIds = collectClumpPatientIds(clump);
 
   const dt = DateTime.fromISO(appt.appointmentStart, { zone: 'utc' }).setZone(practiceTz);
   const apptDay = dt.isValid ? dt.toISODate() : null;
@@ -102,7 +130,7 @@ export async function findRoomLoaderForAppointment(
     activeOnly: true,
   });
 
-  return findBestRoomLoaderForClump(rows, clumpAppointmentIds);
+  return findBestRoomLoaderForClump(rows, clumpAppointmentIds, clumpPatientIds);
 }
 
 async function mergeClumpIntoRoomLoader(

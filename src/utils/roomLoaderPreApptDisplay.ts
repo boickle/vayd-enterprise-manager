@@ -110,14 +110,59 @@ export function roomLoaderPreApptDisplayColor(status: RoomLoaderPreApptUiStatus)
 
 type RoomLoaderStatusSource = {
   sentStatus?: string | null;
-  appointments?: readonly { id?: number | null }[] | null;
+  appointments?: readonly {
+    id?: number | null;
+    patient?: { id?: number | null } | null;
+  }[] | null;
+  patients?: readonly { id?: number | null }[] | null;
 };
+
+type CalendarAppointmentForRoomLoaderStatus = {
+  id?: number | null;
+  patient?: { id?: number | null } | null;
+  patients?: readonly { id?: number | null }[] | null;
+  patientId?: number | string | null;
+};
+
+function roomLoaderPatientIdsFromStatusSource(rl: RoomLoaderStatusSource): number[] {
+  const ids = new Set<number>();
+  for (const p of rl.patients ?? []) {
+    const id = Number(p?.id);
+    if (Number.isFinite(id) && id > 0) ids.add(id);
+  }
+  for (const a of rl.appointments ?? []) {
+    const id = Number(a?.patient?.id);
+    if (Number.isFinite(id) && id > 0) ids.add(id);
+  }
+  return [...ids];
+}
+
+function calendarAppointmentPatientIds(a: CalendarAppointmentForRoomLoaderStatus): number[] {
+  const ids = new Set<number>();
+  for (const p of a.patients ?? []) {
+    const id = Number(p?.id);
+    if (Number.isFinite(id) && id > 0) ids.add(id);
+  }
+  const nested = Number(a.patient?.id);
+  if (Number.isFinite(nested) && nested > 0) ids.add(nested);
+  const flat = Number(a.patientId);
+  if (Number.isFinite(flat) && flat > 0) ids.add(flat);
+  return [...ids];
+}
 
 /** Map appointment id → best Scout room-loader UI status for calendar RL badges. */
 export function buildRoomLoaderPreApptStatusByAppointmentId(
-  loaders: readonly RoomLoaderStatusSource[]
+  loaders: readonly RoomLoaderStatusSource[],
+  /**
+   * When provided, also attribute sent/completed status onto calendar appointments that share
+   * patients with a room loader but are not linked by appointment id yet (e.g. after a
+   * doctor-to-doctor move that recreates or re-keys the visit).
+   */
+  calendarAppointments?: readonly CalendarAppointmentForRoomLoaderStatus[] | null
 ): Map<number, RoomLoaderPreApptUiStatus> {
   const map = new Map<number, RoomLoaderPreApptUiStatus>();
+  const byPatient = new Map<number, RoomLoaderPreApptUiStatus>();
+
   for (const rl of loaders) {
     const ui = roomLoaderPreApptUiStatusFromSentStatus(rl.sentStatus);
     if (ui === 'none') continue;
@@ -127,7 +172,29 @@ export function buildRoomLoaderPreApptStatusByAppointmentId(
       const prev = map.get(id) ?? 'none';
       map.set(id, preferRoomLoaderPreApptStatus(prev, ui));
     }
+    for (const patientId of roomLoaderPatientIdsFromStatusSource(rl)) {
+      const prev = byPatient.get(patientId) ?? 'none';
+      byPatient.set(patientId, preferRoomLoaderPreApptStatus(prev, ui));
+    }
   }
+
+  if (!calendarAppointments?.length || byPatient.size === 0) return map;
+
+  for (const appt of calendarAppointments) {
+    const apptId = Number(appt?.id);
+    if (!Number.isFinite(apptId) || apptId <= 0) continue;
+    let bestFromPatients: RoomLoaderPreApptUiStatus = 'none';
+    for (const patientId of calendarAppointmentPatientIds(appt)) {
+      bestFromPatients = preferRoomLoaderPreApptStatus(
+        bestFromPatients,
+        byPatient.get(patientId) ?? 'none'
+      );
+    }
+    if (bestFromPatients === 'none') continue;
+    const prev = map.get(apptId) ?? 'none';
+    map.set(apptId, preferRoomLoaderPreApptStatus(prev, bestFromPatients));
+  }
+
   return map;
 }
 

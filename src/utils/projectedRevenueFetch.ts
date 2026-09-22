@@ -10,7 +10,9 @@ import {
 } from '../api/appointmentSettings';
 import { fetchEmployeeGoals, type EmployeeGoalsResponseDto } from '../api/employeeGoals';
 import {
+  fetchCollectibleRevenueRates,
   fetchDoctorRevenueSeries,
+  type CollectibleRevenueRatesResponse,
   type DoctorRevenueSeriesResponse,
 } from '../api/opsStats';
 import { fetchPaymentsAnalytics, type PaymentPoint } from '../api/payments';
@@ -19,6 +21,10 @@ import { createAsyncTtlCache, mapPool } from './asyncTtlCache';
 
 /** Shared cache for Projected Revenue — survives date-range switches within a session. */
 const cache = createAsyncTtlCache(3 * 60_000);
+
+export function clearProjectedRevenueFetchCache(prefix?: string) {
+  cache.clear(prefix);
+}
 
 /** Lookback / fill-curve history changes slowly; keep longer. */
 const LOOKBACK_TTL_MS = 5 * 60_000;
@@ -79,6 +85,24 @@ export async function fetchBookingsAnalyticsCached(params: {
   );
 }
 
+export async function fetchCollectibleRevenueRatesCached(params: {
+  start: string;
+  end: string;
+}): Promise<CollectibleRevenueRatesResponse | null> {
+  return cache.getOrFetch(
+    `collectible:${params.start}:${params.end}`,
+    async () => {
+      try {
+        return await fetchCollectibleRevenueRates(params);
+      } catch (e) {
+        console.error('Collectible rates for projected revenue failed:', e);
+        return null;
+      }
+    },
+    LOOKBACK_TTL_MS
+  );
+}
+
 export async function fetchPaymentsAnalyticsCached(params: {
   start: string;
   end: string;
@@ -122,9 +146,7 @@ export async function fetchScheduleOverridesCached(
   return cache.getOrFetch(
     `overrides:${empId}:${startDate}:${endDate}`,
     () =>
-      fetchScheduleOverridesByDate(empId, dates).catch(
-        () => new Map<string, ScheduleOverride>()
-      ),
+      fetchScheduleOverridesByDate(empId, dates).catch(() => new Map<string, ScheduleOverride>()),
     2 * 60_000
   );
 }
@@ -146,9 +168,7 @@ export async function fetchDoctorMonthsCached(
   doctorIds: string[],
   monthPairs: { year: number; month: number }[]
 ): Promise<CachedDoctorMonth[]> {
-  const jobs = doctorIds.flatMap((doctorId) =>
-    monthPairs.map((pair) => ({ doctorId, ...pair }))
-  );
+  const jobs = doctorIds.flatMap((doctorId) => monthPairs.map((pair) => ({ doctorId, ...pair })));
   return mapPool(jobs, PROJECTED_REVENUE_FETCH_CONCURRENCY, ({ doctorId, year, month }) =>
     fetchDoctorMonthCached(year, month, doctorId)
   );

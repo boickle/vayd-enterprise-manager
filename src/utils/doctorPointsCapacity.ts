@@ -13,10 +13,13 @@ export type DoctorWeekdayAverage = {
 export type DoctorPointsCapacity = {
   /** JavaScript day-of-week (0 = Sunday, 6 = Saturday) → that doctor's average. */
   byDayOfWeek: Partial<Record<number, DoctorWeekdayAverage>>;
+  /** Mean points across all sampled workdays in the window (any weekday). */
+  overallAvgPoints: number | null;
 };
 
 const EMPTY_CAPACITY: DoctorPointsCapacity = {
   byDayOfWeek: {},
+  overallAvgPoints: null,
 };
 
 /**
@@ -50,15 +53,20 @@ export function buildDoctorPointsCapacity(
   }
 
   const byDayOfWeek: DoctorPointsCapacity['byDayOfWeek'] = {};
+  let overallSum = 0;
+  let overallDays = 0;
   for (let dayOfWeek = 0; dayOfWeek <= 6; dayOfWeek += 1) {
     const sampleDays = counts[dayOfWeek] ?? 0;
     if (sampleDays <= 0) continue;
-    byDayOfWeek[dayOfWeek] = {
-      avgPoints: (sums[dayOfWeek] ?? 0) / sampleDays,
-      sampleDays,
-    };
+    const avgPoints = (sums[dayOfWeek] ?? 0) / sampleDays;
+    byDayOfWeek[dayOfWeek] = { avgPoints, sampleDays };
+    overallSum += sums[dayOfWeek] ?? 0;
+    overallDays += sampleDays;
   }
-  return { byDayOfWeek };
+  return {
+    byDayOfWeek,
+    overallAvgPoints: overallDays > 0 ? overallSum / overallDays : null,
+  };
 }
 
 export type DoctorTypicalDay = {
@@ -83,14 +91,22 @@ export function projectDoctorWeekdayPoints(args: {
   const booked = Math.max(0, Number(args.bookedPoints) || 0);
   const weekday =
     args.capacity?.byDayOfWeek[args.date ? new Date(`${args.date}T12:00:00`).getDay() : -1];
+  // A 0 average usually means this weekday was not actually worked in the lookback
+  // (e.g. a newly added Saturday) rather than a true empty workday.
+  const weekdayAvg =
+    weekday != null && weekday.avgPoints > 0 ? weekday.avgPoints : null;
   const goal = Number(args.dailyPointGoal);
-  const fallback = Number.isFinite(goal) && goal > 0 ? goal : null;
-  const typical = weekday?.avgPoints ?? fallback;
+  const goalFallback = Number.isFinite(goal) && goal > 0 ? goal : null;
+  const overall =
+    args.capacity?.overallAvgPoints != null && args.capacity.overallAvgPoints > 0
+      ? args.capacity.overallAvgPoints
+      : null;
+  const typical = weekdayAvg ?? goalFallback ?? overall;
 
   return {
     points: typical,
-    sampleDays: weekday?.sampleDays ?? 0,
-    usedGoalFallback: weekday == null && fallback != null,
+    sampleDays: weekdayAvg != null ? (weekday?.sampleDays ?? 0) : 0,
+    usedGoalFallback: weekdayAvg == null && typical != null,
     projectedPoints: Math.max(booked, typical ?? 0),
   };
 }
