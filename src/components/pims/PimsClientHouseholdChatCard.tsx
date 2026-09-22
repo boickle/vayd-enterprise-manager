@@ -22,6 +22,7 @@ import {
   type VisitInvoice,
 } from '../../api/visitWorkflow';
 import { appConfirm } from '../../utils/appDialog';
+import { toggleWithoutScrollJump } from '../../utils/toggleWithoutScrollJump';
 import {
   appendCaseHistoryChat,
   clearCaseHistoryChat,
@@ -375,7 +376,12 @@ export default function PimsClientHouseholdChatCard({
             )}
             <p className="pims-emr-prep__meta">As of {formatAsOfLabel(today, practiceTz)}</p>
             <div className="pims-emr-story__actions">
-              <button type="button" onClick={() => setExpanded((v) => !v)}>
+              <button
+                type="button"
+                onClick={(e) => {
+                  toggleWithoutScrollJump(e.currentTarget, () => setExpanded((v) => !v));
+                }}
+              >
                 {expanded ? (
                   <>
                     <ChevronUp size={14} aria-hidden />

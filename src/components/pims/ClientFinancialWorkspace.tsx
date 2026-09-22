@@ -31,6 +31,7 @@ import {
 import {
   addCounterInvoiceLine,
   addVisitTender,
+  deleteOrder,
   adoptEvetInvoice,
   createClientPayLink,
   cancelTerminalCheckout,
@@ -99,6 +100,7 @@ import {
 import { appAlert, appConfirm, appPrompt } from '../../utils/appDialog';
 import {
   INVOICE_DIRECTIONS_LEAVE_MESSAGE,
+  registerInvoiceDirectionsLeaveSave,
   setInvoiceDirectionsDirty,
 } from '../../utils/invoiceDirectionsLeaveGuard';
 import {
@@ -128,6 +130,7 @@ import MailInvoiceLineCheckbox, {
   isMailOrderShipped,
   matchingMailOrderForLine,
   shippedMailMessage,
+  shippingLineFromNotes,
 } from '../soap/MailInvoiceLineCheckbox';
 import { listMailOrders, type MailOrder } from '../../api/onlineStore';
 import { getPracticeSettings } from '../../api/practiceSettings';
@@ -1104,21 +1107,31 @@ export default function ClientFinancialWorkspace({
           });
           onSelectInvoice?.('new');
         } else {
-          // Open the newest unpaid Scout invoice in the detail pane by default.
           const openRows = rows
             .filter(
               (inv) =>
                 inv.isDeleted !== true &&
-                inv.status !== 'void' &&
-                !isEmptyOpenInvoice(inv) &&
-                dueOf(inv) > 0.009,
+                inv.status === 'open' &&
+                !isEmptyOpenInvoice(inv),
             )
             .sort(
               (a, b) =>
                 ledgerTime(b.paidAt ?? b.finalizedAt ?? b.created) -
                 ledgerTime(a.paidAt ?? a.finalizedAt ?? a.created),
             );
-          next = openRows[0] ?? null;
+          const forPatient =
+            initialPatientId != null
+              ? openRows.filter(
+                  (inv) =>
+                    inv.patientId === initialPatientId ||
+                    (inv.lines ?? []).some((l) => l.patientId === initialPatientId),
+                )
+              : [];
+          next =
+            forPatient.find((inv) => dueOf(inv) > 0.009) ??
+            openRows.find((inv) => dueOf(inv) > 0.009) ??
+            forPatient[0] ??
+            null;
           if (next) onSelectInvoice?.(next.id);
         }
         if (!cancelled) {
@@ -2031,9 +2044,21 @@ export default function ClientFinancialWorkspace({
       attachShippingLines(
         [...tagalongGroups.parents, ...tagalongGroups.leftover],
         (line) => isInvoiceShippingLine(line, shippingIdSet),
-        (line) => isPrescriptionLine(line)
+        (line) =>
+          isPrescriptionLine(line) ||
+          String(line.catalogItemType ?? '').toLowerCase() === 'inventory',
+        (ship) => {
+          if (!selected) return null;
+          for (const order of mailOrders) {
+            if (order.status === 'cancelled') continue;
+            if (shippingLineFromNotes(order.notes) !== ship.id) continue;
+            const m = (order.notes || '').match(/invoiceLine:([0-9a-f-]{36})/i);
+            return m?.[1] ?? null;
+          }
+          return null;
+        },
       ),
-    [tagalongGroups, shippingIdSet]
+    [tagalongGroups, shippingIdSet, selected, mailOrders]
   );
   const invoiceLineBlocks = useMemo(
     () => groupLinesByBundleSale([...lineGroups.parents, ...lineGroups.leftover]),
@@ -2151,21 +2176,48 @@ export default function ClientFinancialWorkspace({
     (selected.status === 'paid' || selected.status === 'finalized') &&
     !lines.some((l) => l.returnOfLineId);
   const isSoapInvoice = lines.some((l) => l.orderId);
-  /** SOAP visit invoices: edit sig/qty/provider from the ledger; remove/void stay on SOAP. */
   const canRemoveLines = Boolean(
     selected &&
       !invoiceGone &&
       selected.status !== 'void' &&
-      !isSoapInvoice &&
       (canEdit || editing)
   );
   const hasUnsavedEdits = editing || hasUnsavedDeletes;
+
+  const workspaceMountedRef = useRef(true);
+  const leaveSaveRef = useRef<() => Promise<void>>(async () => {});
+  leaveSaveRef.current = async () => {
+    if (!selected || !canEdit || dirtySigLines.length === 0) return;
+    let next = selected;
+    for (const line of dirtySigLines) {
+      const d = draftOf(line);
+      next = await updateCounterInvoiceLine(next.id, line.id, {
+        instructions: d.instructions.trim() || null,
+      });
+    }
+    if (!workspaceMountedRef.current) return;
+    setSigDrafts((prev) => {
+      const copy = { ...prev };
+      for (const line of dirtySigLines) {
+        const kept = copy[line.id] ?? draftOf(line);
+        copy[line.id] = { ...kept, instructions: kept.instructions.trim() };
+      }
+      return copy;
+    });
+    setSelected(next);
+  };
 
   useEffect(() => {
     setInvoiceDirectionsDirty(clientId, hasDirtySigs);
   }, [clientId, hasDirtySigs]);
   useEffect(() => {
-    return () => setInvoiceDirectionsDirty(null, false);
+    workspaceMountedRef.current = true;
+    registerInvoiceDirectionsLeaveSave(() => leaveSaveRef.current());
+    return () => {
+      workspaceMountedRef.current = false;
+      registerInvoiceDirectionsLeaveSave(null);
+      setInvoiceDirectionsDirty(null, false);
+    };
   }, [clientId]);
   const canUnlock =
     selected &&
@@ -2653,6 +2705,14 @@ export default function ClientFinancialWorkspace({
     return match && isMailOrderShipped(match) ? match : null;
   };
 
+  async function removeInvoiceLine(invoice: VisitInvoice, line: VisitInvoiceLine) {
+    if (line.orderId && line.encounterId && !line.tagalongOfLineId) {
+      await deleteOrder(line.encounterId, line.orderId);
+      return getInvoice(invoice.id);
+    }
+    return removeCounterInvoiceLine(invoice.id, line.id);
+  }
+
   async function removeLine(line: VisitInvoiceLine) {
     if (!selected) return;
     const shipped = shippedMailForLine(line);
@@ -2681,7 +2741,7 @@ export default function ClientFinancialWorkspace({
         if (shippingId === line.id) continue;
         next = await removeCounterInvoiceLine(next.id, shippingId).catch(() => next);
       }
-      next = await removeCounterInvoiceLine(next.id, line.id);
+      next = await removeInvoiceLine(next, line);
       setSigDrafts((prev) => {
         if (!(line.id in prev)) return prev;
         const copy = { ...prev };
@@ -2733,7 +2793,7 @@ export default function ClientFinancialWorkspace({
         next = await removeCounterInvoiceLine(next.id, shippingId).catch(() => next);
       }
       for (const row of memberLines) {
-        next = await removeCounterInvoiceLine(next.id, row.id);
+        next = await removeInvoiceLine(next, row);
       }
       setSigDrafts((prev) => {
         let changed = false;
@@ -2791,7 +2851,10 @@ export default function ClientFinancialWorkspace({
         return !row?.tagalongOfLineId || !pendingSet.has(row.tagalongOfLineId);
       });
       for (const lineId of deleteIds) {
-        next = await removeCounterInvoiceLine(next.id, lineId);
+        const row = lineById.get(lineId);
+        next = row
+          ? await removeInvoiceLine(next, row)
+          : await removeCounterInvoiceLine(next.id, lineId);
       }
       setPendingDeleteIds([]);
       setEditing(false);
@@ -4679,6 +4742,7 @@ export default function ClientFinancialWorkspace({
                                     ) : sigEnteredBy ? (
                                       <span className="client-fin__entered">Entered by {sigEnteredBy}</span>
                                     ) : null}
+                                    {approveButton}
                                     {rxPrintButton}
                                   </span>
                                   <textarea
@@ -4696,6 +4760,7 @@ export default function ClientFinancialWorkspace({
                                     {sigEnteredBy ? (
                                       <span className="client-fin__entered">Entered by {sigEnteredBy}</span>
                                     ) : null}
+                                    {approveButton}
                                     {rxPrintButton}
                                   </span>
                                   <div>{directions || 'No written directions yet.'}</div>
@@ -4704,7 +4769,25 @@ export default function ClientFinancialWorkspace({
                             </td>
                             <td colSpan={returning && canReturn ? 4 : 3}>
                               <div className="client-fin__rx-extras">
-                                {line.trackLots && !mailedLineOrder && !linkedStock.linked ? (
+                                {linkedStock.linked && !mailedLineOrder ? (
+                                  <div className="client-fin__rx-field client-fin__rx-lot">
+                                    <LinkedStockInvoiceDetails
+                                      line={line}
+                                      stockDraw={stockDraw}
+                                      practiceId={VISIT_WORKFLOW_PRACTICE_ID}
+                                      providerId={line.providerEmployeeId}
+                                      branchId={selected?.inventoryBranchId}
+                                      locationId={selected?.inventoryLocationId}
+                                      disabled={!canEdit || busy}
+                                      onSelectLot={(lot) => {
+                                        void patchLine(line, {
+                                          inventoryLotBalanceId: lot?.id ?? null,
+                                          lotNumber: lot?.lotNumber || null,
+                                        });
+                                      }}
+                                    />
+                                  </div>
+                                ) : line.trackLots && !mailedLineOrder && !linkedStock.linked ? (
                                   <div className="client-fin__rx-field client-fin__rx-lot">
                                     <StockLotPicker
                                       practiceId={VISIT_WORKFLOW_PRACTICE_ID}
@@ -4843,9 +4926,6 @@ export default function ClientFinancialWorkspace({
                                     }}
                                   />
                                 </label>
-                                {approveButton ? (
-                                  <div className="client-fin__rx-approve">{approveButton}</div>
-                                ) : null}
                               </div>
                             </td>
                             {canRemoveLines ? <td className="client-fin__row-action" /> : null}

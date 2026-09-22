@@ -389,6 +389,7 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
   const [bundleHits, setBundleHits] = useState<Bundle[]>([]);
   const [focusBundleId, setFocusBundleId] = useState<number | null>(null);
   const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
   const searchSeq = useRef(0);
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -563,6 +564,12 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
   const [detail, setDetail] = useState<ItemWithPriceBreaks | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
+  const [detailTab, setDetailTab] = useState<'details' | 'clinical' | 'lots' | 'stock' | 'pricing' | 'online-store' | 'associations'>('details');
+
+  // Reset to Details tab whenever a new item is opened
+  useEffect(() => {
+    setDetailTab('details');
+  }, [selected?.itemType, selected?.itemId]);
 
   const [stockByBranchId, setStockByBranchId] = useState<Record<number, InventoryBranchStock>>({});
   /** Item the counts / reorder / movements apply to: the linked stock item, else this item. */
@@ -595,6 +602,7 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
   const [movements, setMovements] = useState<InventoryStockMovement[]>([]);
   const [movementTotal, setMovementTotal] = useState(0);
   const [movementsLoading, setMovementsLoading] = useState(false);
+  const [movementHistoryOpen, setMovementHistoryOpen] = useState(false);
 
   const [effective, setEffective] = useState<MoneyFields | null>(null);
   /** Effective money for every active practice branch (item pricing table). */
@@ -681,7 +689,7 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
     try {
       const r = await listInventoryMovements(practiceId, movementBranchId, {
         inventoryItemId: stockItemId,
-        limit: 50,
+        limit: 10,
         offset: 0,
       });
       setMovements(r.rows);
@@ -1015,15 +1023,21 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
   }, [reloadMovements]);
 
   useEffect(() => {
+    setMovementHistoryOpen(false);
+  }, [selected?.itemId, stockItemId]);
+
+  useEffect(() => {
     const q = searchQuery.trim();
     if (!q || typeFilter === 'bundle') {
       setSearchResults([]);
       setBundleHits([]);
+      setSearchError(null);
       return;
     }
     const seq = ++searchSeq.current;
     const t = window.setTimeout(async () => {
       setSearching(true);
+      setSearchError(null);
       try {
         const [rows, bundles] = await Promise.all([
           searchItems(q, practiceId, 50, {
@@ -1050,10 +1064,13 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
             )
             .slice(0, 25),
         );
-      } catch {
+      } catch (e: unknown) {
         if (searchSeq.current === seq) {
           setSearchResults([]);
           setBundleHits([]);
+          setSearchError(
+            e instanceof Error ? e.message : 'Search failed. Try again.',
+          );
         }
       } finally {
         if (searchSeq.current === seq) setSearching(false);
@@ -1583,7 +1600,7 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
     try {
       const r = await listInventoryMovements(practiceId, movementBranchId, {
         inventoryItemId: stockItemId,
-        limit: 50,
+        limit: 10,
         offset: movements.length,
       });
       setMovements((prev) => [...prev, ...r.rows]);
@@ -2256,6 +2273,14 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
         )}
         {searchQuery.trim() &&
           !searching &&
+          searchError && (
+          <p className="settings-error-message" style={{ marginTop: 0 }}>
+            {searchError}
+          </p>
+        )}
+        {searchQuery.trim() &&
+          !searching &&
+          !searchError &&
           searchResults.length === 0 &&
           bundleHits.length === 0 && (
           <p className="settings-muted" style={{ marginTop: 0 }}>
@@ -2535,7 +2560,69 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                 )}
               </p>
 
-              <div style={{ marginBottom: 20 }}>
+              {/* ── Tab bar ─────────────────────────────────────── */}
+              <div className="inv-detail-tabs">
+                <button
+                  type="button"
+                  className={`inv-detail-tab${detailTab === 'details' ? ' inv-detail-tab--active' : ''}`}
+                  onClick={() => setDetailTab('details')}
+                >
+                  Details
+                </button>
+                {detail.itemType === 'inventory' && (
+                  <button
+                    type="button"
+                    className={`inv-detail-tab${detailTab === 'clinical' ? ' inv-detail-tab--active' : ''}`}
+                    onClick={() => setDetailTab('clinical')}
+                  >
+                    Clinical
+                  </button>
+                )}
+                {detail.itemType === 'inventory' && (
+                  <button
+                    type="button"
+                    className={`inv-detail-tab${detailTab === 'lots' ? ' inv-detail-tab--active' : ''}`}
+                    onClick={() => setDetailTab('lots')}
+                  >
+                    Lots
+                  </button>
+                )}
+                {detail.itemType === 'inventory' && (
+                  <button
+                    type="button"
+                    className={`inv-detail-tab${detailTab === 'stock' ? ' inv-detail-tab--active' : ''}`}
+                    onClick={() => setDetailTab('stock')}
+                  >
+                    Stock
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className={`inv-detail-tab${detailTab === 'pricing' ? ' inv-detail-tab--active' : ''}`}
+                  onClick={() => setDetailTab('pricing')}
+                >
+                  Pricing
+                </button>
+                {detail.itemType === 'inventory' && (
+                  <button
+                    type="button"
+                    className={`inv-detail-tab${detailTab === 'online-store' ? ' inv-detail-tab--active' : ''}`}
+                    onClick={() => setDetailTab('online-store')}
+                  >
+                    Online Store
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className={`inv-detail-tab${detailTab === 'associations' ? ' inv-detail-tab--active' : ''}`}
+                  onClick={() => setDetailTab('associations')}
+                >
+                  Associations
+                </button>
+              </div>
+
+              {/* ── Details tab ─────────────────────────────────── */}
+              {detailTab === 'details' && <div style={{ marginBottom: 20 }}>
                 <h4 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 8px' }}>
                   Catalog fields
                 </h4>
@@ -2802,57 +2889,57 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                 >
                   {coreSaving ? 'Saving…' : 'Save catalog fields'}
                 </button>
-              </div>
+              </div>}
 
-              {detail.itemType === 'inventory' && (
-                <>
-                  <CatalogInventoryClinicalFields
-                    practiceId={practiceId}
-                    item={detail.item as InventoryItem}
-                    onSaved={() => {
-                      setToast('Supply & clinical flags saved');
-                      window.setTimeout(() => setToast(null), 3500);
-                      if (selected) void refreshDetailBundle(selected);
-                    }}
-                  />
-                  <CatalogItemRemindersEditor
-                    practiceId={practiceId}
-                    inventoryItemId={selected!.itemId}
-                  />
-                  <CatalogItemLotsEditor
-                    practiceId={practiceId}
-                    inventoryItemId={selected!.itemId}
-                    stockItemId={stockItemId}
-                    stockItemName={stockLinkItemLabel}
-                    branches={branches}
-                    trackLots={
-                      (detail.item as InventoryItem).trackLots === true || stockItemId != null
-                    }
-                    requireExpirationOnLots
-                    requireLotNumber={
-                      (detail.item as InventoryItem).requireLotNumber === true
-                    }
-                    onLotsChanged={() => {
-                      if (stockItemId != null) void loadBranchStock(stockItemId, branches);
-                      void reloadMovements();
-                    }}
-                    onOpenStockItem={
-                      stockItemId != null &&
-                      selected != null &&
-                      stockItemId !== selected.itemId
-                        ? () =>
-                            setSelected({
-                              itemType: 'inventory',
-                              itemId: stockItemId,
-                              label: stockLinkItemLabel || `Item #${stockItemId}`,
-                            })
-                        : undefined
-                    }
-                  />
-                </>
+              {/* ── Clinical tab (inventory only) ────────────────── */}
+              {detailTab === 'clinical' && detail.itemType === 'inventory' && (
+                <CatalogInventoryClinicalFields
+                  practiceId={practiceId}
+                  item={detail.item as InventoryItem}
+                  alwaysExpanded
+                  onSaved={() => {
+                    setToast('Supply & clinical flags saved');
+                    window.setTimeout(() => setToast(null), 3500);
+                    if (selected) void refreshDetailBundle(selected);
+                  }}
+                />
               )}
 
-              {detail.itemType === 'inventory' && (
+              {/* ── Lots tab (inventory only) ─────────────────────── */}
+              {detailTab === 'lots' && detail.itemType === 'inventory' && (
+                <CatalogItemLotsEditor
+                  practiceId={practiceId}
+                  inventoryItemId={selected!.itemId}
+                  stockItemId={stockItemId}
+                  stockItemName={stockLinkItemLabel}
+                  branches={branches}
+                  trackLots={
+                    (detail.item as InventoryItem).trackLots === true || stockItemId != null
+                  }
+                  requireExpirationOnLots
+                  requireLotNumber={
+                    (detail.item as InventoryItem).requireLotNumber === true
+                  }
+                  onLotsChanged={() => {
+                    if (stockItemId != null) void loadBranchStock(stockItemId, branches);
+                    void reloadMovements();
+                  }}
+                  onOpenStockItem={
+                    stockItemId != null &&
+                    selected != null &&
+                    stockItemId !== selected.itemId
+                      ? () =>
+                          setSelected({
+                            itemType: 'inventory',
+                            itemId: stockItemId,
+                            label: stockLinkItemLabel || `Item #${stockItemId}`,
+                          })
+                      : undefined
+                  }
+                />
+              )}
+
+              {detailTab === 'clinical' && detail.itemType === 'inventory' && (
                 <div style={{ marginBottom: 20 }}>
                   <h4 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 8px' }}>
                     Sell / dispense units
@@ -2911,7 +2998,8 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                       />
                     </label>
                     <label className="settings-label">
-                      Alternate sell unit (optional)
+                      Secondary unit (optional)
+                      <small style={{ display: 'block', color: '#6b7280', fontWeight: 400 }}>A second way to sell this — e.g. single capsule alongside a bottle of 100.</small>
                       <select
                         className="settings-input"
                         value={catalogDraft.alternateSellUnitType}
@@ -2927,7 +3015,7 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                       </select>
                     </label>
                     <label className="settings-label">
-                      Units per alt package (optional)
+                      Units per secondary package (optional)
                       <input
                         className="settings-input"
                         value={catalogDraft.alternateUnitsPerPackage}
@@ -2952,7 +3040,7 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                 </div>
               )}
 
-              {detail.itemType === 'inventory' && (
+              {detailTab === 'associations' && detail.itemType === 'inventory' && (
                 <div style={{ marginBottom: 20 }}>
                   <h4 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 8px' }}>Stock item</h4>
                   <p className="settings-muted" style={{ marginBottom: 12, fontSize: 13 }}>
@@ -3054,7 +3142,16 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                 </div>
               )}
 
-              {selected ? (
+              {/* ── Associations tab ─────────────────────────────── */}
+              {detailTab === 'associations' && selected && (
+                <CatalogItemRemindersEditor
+                  practiceId={practiceId}
+                  itemType={detail.itemType}
+                  itemId={selected.itemId}
+                  itemName={String(detail.item.name ?? selected.label)}
+                />
+              )}
+              {detailTab === 'associations' && selected && (
                 <CatalogTagalongsEditor
                   key={`tagalong-${detail.itemType}-${selected.itemId}`}
                   practiceId={practiceId}
@@ -3062,9 +3159,10 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                   itemId={selected.itemId}
                   onlineStoreEnabled={onlineStoreImplemented}
                 />
-              ) : null}
+              )}
 
-              <div style={{ marginBottom: 16 }}>
+              {/* ── Pricing tab ──────────────────────────────────── */}
+              {detailTab === 'pricing' && <div style={{ marginBottom: 16 }}>
                   <h4 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 8px' }}>
                     Prices by branch
                   </h4>
@@ -3214,9 +3312,10 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                       Refresh
                     </button>
                   </div>
-                </div>
+                </div>}
 
-              {detail.itemType === 'inventory' && (
+              {/* ── Stock tab ────────────────────────────────────── */}
+              {detailTab === 'stock' && detail.itemType === 'inventory' && (
                 <div style={{ marginBottom: 20 }}>
                   <h4 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 8px' }}>
                     Counts by branch
@@ -3469,23 +3568,19 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                 </div>
               )}
 
-              {(detail.itemType === 'inventory' || detail.itemType === 'procedure') && (
+              {/* ── Online Store tab ─────────────────────────────── */}
+              {detailTab === 'online-store' && detail.itemType === 'inventory' && (
                 <div
                   style={{
                     marginBottom: 20,
-                    padding: 16,
-                    border: '1px solid rgba(0,0,0,0.08)',
-                    borderRadius: 8,
                   }}
                 >
                   <h4 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 8px' }}>
-                    Online store details
+                    Online store
                   </h4>
                   <p className="settings-muted" style={{ marginBottom: 12, fontSize: 13 }}>
                     {onlineStoreImplemented
-                      ? detail.itemType === 'procedure'
-                        ? 'List this procedure in the shop (urns, memorial items, and other services) and assign an online store category.'
-                        : 'Description, shipping, picture, listing, online store category, and web price for this SKU.'
+                      ? 'Description, shipping, picture, listing, online store category, and web price for this SKU. Labs and procedures are not listed here — they can still appear as a tagalong on a listed product.'
                       : 'Online store listing is off for this practice — enable it under Settings → Inventory.'}
                   </p>
                   {catalogError && (
@@ -3495,8 +3590,29 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                   )}
                   {onlineStoreImplemented ? (
                     <>
+                      <label
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 8,
+                          marginBottom: 16,
+                          cursor: 'pointer',
+                          fontSize: 14,
+                          fontWeight: 500,
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={catalogDraft.showOnOnlineStore}
+                          onChange={(e) =>
+                            setCatalogDraft((d) => ({ ...d, showOnOnlineStore: e.target.checked }))
+                          }
+                        />
+                        Listed on online store
+                      </label>
                       <label className="settings-label" style={{ display: 'block', marginBottom: 12 }}>
-                        Description
+                        Store listing description
+                        <small style={{ display: 'block', color: '#6b7280', fontWeight: 400 }}>Shows below the product name on the online store. Leave blank to use no description.</small>
                         <textarea
                           className="settings-input"
                           rows={3}
@@ -3504,7 +3620,7 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                           onChange={(e) =>
                             setCatalogDraft((d) => ({ ...d, description: e.target.value }))
                           }
-                          placeholder="Storefront / catalog description"
+                          placeholder="e.g. Annual vaccination against Lyme disease."
                         />
                       </label>
                       <label className="settings-label" style={{ display: 'block', marginBottom: 12 }}>
@@ -3576,21 +3692,17 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                       )}
                       <div className="inv-item-picture" style={{ marginBottom: 14 }}>
                         <div className="settings-label" style={{ marginBottom: 6 }}>
-                          Picture
+                          Store listing picture
                         </div>
                         <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
                           <div className="inv-item-picture__preview">
                             {itemHasImage ? (
                               <img
-                                src={
-                                  detail.itemType === 'procedure' && storeListing
-                                    ? `${storeListingImageUrl(practiceId, storeListing) || ''}?v=${itemImageVersion}`
-                                    : inventoryItemImageUrl(
-                                        practiceId,
-                                        selected.itemId,
-                                        itemImageVersion
-                                      )
-                                }
+                                src={inventoryItemImageUrl(
+                                  practiceId,
+                                  selected.itemId,
+                                  itemImageVersion
+                                )}
                                 alt=""
                               />
                             ) : (
@@ -3632,25 +3744,6 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                           </div>
                         </div>
                       </div>
-                      <label
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 8,
-                          marginBottom: 12,
-                          cursor: 'pointer',
-                          fontSize: 14,
-                        }}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={catalogDraft.showOnOnlineStore}
-                          onChange={(e) =>
-                            setCatalogDraft((d) => ({ ...d, showOnOnlineStore: e.target.checked }))
-                          }
-                        />
-                        Show on online store
-                      </label>
                       <label
                         style={{
                           display: 'flex',
@@ -3720,26 +3813,26 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                           ) : null}
                         </>
                       )}
-                      {detail.itemType === 'inventory' ? (
-                      <label className="settings-label">
-                        Online store price
-                        <input
-                          type="number"
-                          step="0.01"
-                          className="settings-input"
-                          disabled={!catalogDraft.showOnOnlineStore}
-                          value={catalogDraft.onlineStorePrice}
-                          onChange={(e) =>
-                            setCatalogDraft((d) => ({ ...d, onlineStorePrice: e.target.value }))
-                          }
-                          placeholder="0.00"
-                        />
-                      </label>
-                      ) : (
-                        <p className="settings-muted" style={{ fontSize: 13 }}>
+                      {detail.itemType === 'inventory' && catalogDraft.showOnOnlineStore ? (
+                        <label className="settings-label" style={{ marginBottom: 12 }}>
+                          Online store price
+                          <small style={{ display: 'block', color: '#6b7280', fontWeight: 400 }}>Leave blank to use the catalog price.</small>
+                          <input
+                            type="number"
+                            step="0.01"
+                            className="settings-input"
+                            value={catalogDraft.onlineStorePrice}
+                            onChange={(e) =>
+                              setCatalogDraft((d) => ({ ...d, onlineStorePrice: e.target.value }))
+                            }
+                            placeholder={coreDraft.price.trim() || '0.00'}
+                          />
+                        </label>
+                      ) : detail.itemType !== 'inventory' && catalogDraft.showOnOnlineStore ? (
+                        <p className="settings-muted" style={{ fontSize: 13, marginBottom: 12 }}>
                           Shop price uses the catalog price ({coreDraft.price.trim() || 'not set'}).
                         </p>
-                      )}
+                      ) : null}
                       <button
                         type="button"
                         className="btn primary"
@@ -3758,7 +3851,7 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                 </div>
               )}
 
-              {detail.itemType === 'inventory' && (
+              {detailTab === 'stock' && detail.itemType === 'inventory' && (
                 <div style={{ marginBottom: 20 }}>
                   <h4 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 8px' }}>
                     Stock movements
@@ -3900,92 +3993,121 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                   </div>
 
                   <div>
-                    <h4 style={{ fontSize: 14, fontWeight: 600, margin: '0 0 8px' }}>
+                    <button
+                      type="button"
+                      className="btn"
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        marginBottom: movementHistoryOpen ? 8 : 0,
+                      }}
+                      onClick={() => setMovementHistoryOpen((open) => !open)}
+                    >
+                      {movementHistoryOpen ? (
+                        <ChevronDown size={16} aria-hidden />
+                      ) : (
+                        <ChevronRight size={16} aria-hidden />
+                      )}
                       Movement history
-                    </h4>
-                    {movementsLoading && movements.length === 0 ? (
-                      <p className="settings-muted">Loading history…</p>
-                    ) : movements.length === 0 ? (
-                      <p className="settings-muted">No movements yet for this item at this branch.</p>
-                    ) : (
-                      <>
-                        <div className="settings-table-container">
-                          <table className="settings-table">
-                            <thead>
-                              <tr>
-                                <th>When</th>
-                                <th>Type</th>
-                                <th>Qty</th>
-                                <th>From</th>
-                                <th>To</th>
-                                <th>Who</th>
-                                <th>Note</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {movements.map((m, idx) => (
-                                <tr key={String(m.id ?? idx)}>
-                                  <td style={{ whiteSpace: 'nowrap', fontSize: 12 }}>
-                                    {m.created
-                                      ? new Date(String(m.created)).toLocaleString()
-                                      : '—'}
-                                  </td>
-                                  <td style={{ fontSize: 12 }}>{String(m.movementType ?? '—')}</td>
-                                  <td>{m.quantity != null ? String(m.quantity) : '—'}</td>
-                                  <td style={{ fontSize: 12 }}>
-                                    {resolveLocationName(m.fromBranchLocationId as number)}
-                                  </td>
-                                  <td style={{ fontSize: 12 }}>
-                                    {resolveLocationName(m.toBranchLocationId as number)}
-                                  </td>
-                                  <td style={{ fontSize: 12 }}>{movementActorName(m)}</td>
-                                  <td
-                                    style={{ fontSize: 12, maxWidth: 160 }}
-                                    title={String(m.note ?? '')}
-                                  >
-                                    {m.note ? String(m.note) : '—'}
-                                  </td>
+                      {movementTotal > 0 ? (
+                        <span className="settings-muted" style={{ fontWeight: 400 }}>
+                          ({movementTotal})
+                        </span>
+                      ) : null}
+                    </button>
+                    {movementHistoryOpen ? (
+                      movementsLoading && movements.length === 0 ? (
+                        <p className="settings-muted">Loading history…</p>
+                      ) : movements.length === 0 ? (
+                        <p className="settings-muted">
+                          No movements yet for this item at this branch.
+                        </p>
+                      ) : (
+                        <>
+                          <div className="settings-table-container">
+                            <table className="settings-table">
+                              <thead>
+                                <tr>
+                                  <th>When</th>
+                                  <th>Type</th>
+                                  <th>Qty</th>
+                                  <th>From</th>
+                                  <th>To</th>
+                                  <th>Who</th>
+                                  <th>Note</th>
                                 </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                        {movements.length < movementTotal && (
-                          <button
-                            type="button"
-                            className="btn secondary"
-                            style={{ marginTop: 10 }}
-                            disabled={movementsLoading}
-                            onClick={() => void loadMoreMovements()}
-                          >
-                            {movementsLoading
-                              ? 'Loading…'
-                              : `Load more (${movements.length} of ${movementTotal})`}
-                          </button>
-                        )}
-                      </>
-                    )}
+                              </thead>
+                              <tbody>
+                                {movements.map((m, idx) => (
+                                  <tr key={String(m.id ?? idx)}>
+                                    <td style={{ whiteSpace: 'nowrap', fontSize: 12 }}>
+                                      {m.created
+                                        ? new Date(String(m.created)).toLocaleString()
+                                        : '—'}
+                                    </td>
+                                    <td style={{ fontSize: 12 }}>
+                                      {String(m.movementType ?? '—')}
+                                    </td>
+                                    <td>{m.quantity != null ? String(m.quantity) : '—'}</td>
+                                    <td style={{ fontSize: 12 }}>
+                                      {resolveLocationName(m.fromBranchLocationId as number)}
+                                    </td>
+                                    <td style={{ fontSize: 12 }}>
+                                      {resolveLocationName(m.toBranchLocationId as number)}
+                                    </td>
+                                    <td style={{ fontSize: 12 }}>{movementActorName(m)}</td>
+                                    <td
+                                      style={{ fontSize: 12, maxWidth: 160 }}
+                                      title={String(m.note ?? '')}
+                                    >
+                                      {m.note ? String(m.note) : '—'}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                          {movements.length < movementTotal && (
+                            <button
+                              type="button"
+                              className="btn secondary"
+                              style={{ marginTop: 10 }}
+                              disabled={movementsLoading}
+                              onClick={() => void loadMoreMovements()}
+                            >
+                              {movementsLoading
+                                ? 'Loading…'
+                                : `Load more (${movements.length} of ${movementTotal})`}
+                            </button>
+                          )}
+                        </>
+                      )
+                    ) : null}
                   </div>
                 </div>
               )}
 
-              {detail.itemType !== 'inventory' && (
-                <p className="settings-muted" style={{ marginBottom: 16 }}>
-                  On-hand quantity applies to inventory items only. You can still override prices for
-                  this {detail.itemType} by branch.
-                </p>
+              {detailTab === 'pricing' && (
+                <>
+                  {detail.itemType !== 'inventory' && (
+                    <p className="settings-muted" style={{ marginBottom: 16 }}>
+                      On-hand quantity applies to inventory items only. You can still override prices for
+                      this {detail.itemType} by branch.
+                    </p>
+                  )}
+                  <QuantityPriceBreaksEditor
+                    itemType={detail.itemType}
+                    itemId={selected.itemId}
+                    practiceId={practiceId}
+                    item={detail.item}
+                    priceBreaks={detail.priceBreaks}
+                    onChanged={async () => {
+                      await refreshDetailBundle(selected);
+                    }}
+                  />
+                </>
               )}
-
-              <QuantityPriceBreaksEditor
-                itemType={detail.itemType}
-                itemId={selected.itemId}
-                practiceId={practiceId}
-                item={detail.item}
-                priceBreaks={detail.priceBreaks}
-                onChanged={async () => {
-                  await refreshDetailBundle(selected);
-                }}
-              />
             </>
           )}
               </div>

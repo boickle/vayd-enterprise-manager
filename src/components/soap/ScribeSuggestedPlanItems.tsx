@@ -9,8 +9,14 @@ import {
 import { createOrder, type EncounterOrder, type EncounterOrderKind } from '../../api/visitWorkflow';
 import { ensureSharpsFeeOrder, isVaccineSearchItem } from '../../utils/visitSharpsFee';
 import { appendCheckoutPrepDrafts } from '../../api/visitWrapUp';
+import { createTask } from '../../api/tasks';
+import { fetchAllEmployees, type Employee } from '../../api/appointmentSettings';
+import { listPracticeBranches } from '../../api/branchInventory';
+import { formatEmployeeDisplayName } from '../../utils/employeeDisplayName';
+import { toDatetimeLocalValue, fromDatetimeLocalValue } from '../../utils/taskDateTime';
 import { appDeclineHow } from '../../utils/appDialog';
 import { offRecordDeclineNote } from '../../api/declinedTreatments';
+import { AddReminderForm } from './WrapUpReminders';
 
 export type SuggestedPlanItem = {
   key: string;
@@ -192,6 +198,40 @@ function displayPrice(item: SearchableItem): number {
 
 let extraRowSeq = 0;
 
+/** Dismissed / matched checkout-prep rows — per encounter, localStorage so leaving
+ * the browser and coming back does not resurrect items the doctor already cleared. */
+const RESOLVED_KEY_PREFIX = 'soap-checkout-prep-resolved:';
+
+function readResolvedKeys(encounterId: string): Set<string> {
+  try {
+    const token = `${RESOLVED_KEY_PREFIX}${encounterId}`;
+    const raw =
+      localStorage.getItem(token) ??
+      // Migrate dismissals from the short-lived session key used briefly earlier.
+      sessionStorage.getItem(token);
+    if (raw && !localStorage.getItem(token)) {
+      localStorage.setItem(token, raw);
+      sessionStorage.removeItem(token);
+    }
+    const parsed: unknown = raw ? JSON.parse(raw) : null;
+    return new Set(
+      Array.isArray(parsed) ? parsed.filter((k): k is string => typeof k === 'string') : []
+    );
+  } catch {
+    return new Set();
+  }
+}
+
+function writeResolvedKeys(encounterId: string, keys: Set<string>): void {
+  try {
+    const token = `${RESOLVED_KEY_PREFIX}${encounterId}`;
+    if (keys.size === 0) localStorage.removeItem(token);
+    else localStorage.setItem(token, JSON.stringify([...keys]));
+  } catch {
+    /* private mode / quota */
+  }
+}
+
 /**
  * Checkout prep: match transcript / Plan mentions to catalog charges. Not part of the signed
  * SOAP — lives on its own tab after Plan. Resolving a row creates the same priced, accepted
@@ -211,8 +251,25 @@ export default function ScribeSuggestedPlanItems({
   onInvoiceShouldRefresh,
   onPendingCountChange,
 }: Props) {
-  const [resolvedKeys, setResolvedKeys] = useState<Set<string>>(new Set());
+  const [resolvedKeys, setResolvedKeys] = useState<Set<string>>(() =>
+    readResolvedKeys(encounterId),
+  );
   const [extraRows, setExtraRows] = useState<string[]>([]);
+
+  // Household pet switch remounts this with a new encounter id — reload that chart's dismissals.
+  useEffect(() => {
+    setResolvedKeys(readResolvedKeys(encounterId));
+    setExtraRows([]);
+  }, [encounterId]);
+
+  const markResolved = (key: string) => {
+    setResolvedKeys((prev) => {
+      if (prev.has(key)) return prev;
+      const next = new Set(prev).add(key);
+      writeResolvedKeys(encounterId, next);
+      return next;
+    });
+  };
 
   const mergedSuggestions = useMemo(() => {
     const existingOrderNames = orders.map((o) => norm(o.name));
@@ -230,23 +287,6 @@ export default function ScribeSuggestedPlanItems({
     );
     return [...transcriptRows, ...extra];
   }, [suggestions, planNotes, orders]);
-
-  useEffect(() => {
-    // A fresh "Process" pass can re-suggest an item under the same key (e.g. re-derived on a
-    // second recording segment) — let it show up again rather than staying hidden forever.
-    setResolvedKeys((prev) => {
-      const validKeys = new Set(mergedSuggestions.map((s) => s.key));
-      let changed = false;
-      const next = new Set(prev);
-      for (const k of prev) {
-        if (!validKeys.has(k)) {
-          next.delete(k);
-          changed = true;
-        }
-      }
-      return changed ? next : prev;
-    });
-  }, [mergedSuggestions]);
 
   const suggestedRows = mergedSuggestions.filter((s) => !resolvedKeys.has(s.key));
 
@@ -268,7 +308,8 @@ export default function ScribeSuggestedPlanItems({
       </div>
       <p className="soap-scribe-planitems-hint">
         Optional checkout prep — not part of the signed medical record. Match a catalog item to
-        charge, or mark it Declined / Add Callback / Add Reminder (those last two wait until wrap-up).
+        charge, or mark it Declined. Add Callback creates a task now; Add Reminder waits until
+        wrap-up.
       </p>
 
       {hasAnyRows && (
@@ -287,10 +328,10 @@ export default function ScribeSuggestedPlanItems({
               onAdded={(order, meta) => {
                 onOrderAdded(order, meta);
                 onInvoiceShouldRefresh();
-                setResolvedKeys((prev) => new Set(prev).add(s.key));
+                markResolved(s.key);
               }}
-              onResolved={() => setResolvedKeys((prev) => new Set(prev).add(s.key))}
-              onDismiss={() => setResolvedKeys((prev) => new Set(prev).add(s.key))}
+              onResolved={() => markResolved(s.key)}
+              onDismiss={() => markResolved(s.key)}
             />
           ))}
           {extraRows.map((key) => (
@@ -362,6 +403,7 @@ function PlanItemSearchRow({
   // Only open catalog / Add to for the row currently focused — not every seeded row at once.
   const [open, setOpen] = useState(false);
   const [adding, setAdding] = useState(false);
+  const [compose, setCompose] = useState<null | 'callback' | 'reminder'>(null);
   const boxRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -465,38 +507,14 @@ function PlanItemSearchRow({
     }
   };
 
-  const addCallbackDraft = async () => {
+  const addCallbackDraft = () => {
     if (!label || adding) return;
-    setAdding(true);
-    try {
-      await appendCheckoutPrepDrafts(encounterId, {
-        callback: {
-          key: `cb-${Date.now()}`,
-          title: label,
-          body: note,
-        },
-      });
-      onResolved();
-    } finally {
-      setAdding(false);
-    }
+    setCompose('callback');
   };
 
-  const addReminderDraft = async () => {
+  const addReminderDraft = () => {
     if (!label || adding) return;
-    setAdding(true);
-    try {
-      await appendCheckoutPrepDrafts(encounterId, {
-        extra: {
-          key: `rm-${Date.now()}`,
-          description: label,
-          reminderType: 'Wellness',
-        },
-      });
-      onResolved();
-    } finally {
-      setAdding(false);
-    }
+    setCompose('reminder');
   };
 
   return (
@@ -565,7 +583,7 @@ function PlanItemSearchRow({
           type="button"
           className="soap-btn small ghost"
           disabled={adding || !label}
-          onClick={() => void addCallbackDraft()}
+          onClick={addCallbackDraft}
         >
           Add Callback
         </button>
@@ -573,9 +591,184 @@ function PlanItemSearchRow({
           type="button"
           className="soap-btn small ghost"
           disabled={adding || !label}
-          onClick={() => void addReminderDraft()}
+          onClick={addReminderDraft}
         >
           Add Reminder
+        </button>
+      </div>
+      {compose === 'callback' && (
+        <CheckoutPrepCallbackForm
+          title={label}
+          body={note}
+          patientId={patientId}
+          clientId={clientId}
+          disabled={adding}
+          onCancel={() => setCompose(null)}
+          onSaved={() => {
+            setCompose(null);
+            onResolved();
+          }}
+        />
+      )}
+      {compose === 'reminder' && (
+        <AddReminderForm
+          patientId={patientId ?? 0}
+          initialDescription={label}
+          onCancel={() => setCompose(null)}
+          onAdd={(extra) => {
+            void (async () => {
+              setAdding(true);
+              try {
+                await appendCheckoutPrepDrafts(encounterId, { extra });
+                setCompose(null);
+                onResolved();
+              } finally {
+                setAdding(false);
+              }
+            })();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function defaultCallbackDueLocal(): string {
+  const d = new Date();
+  d.setDate(d.getDate() + 2);
+  d.setHours(10, 0, 0, 0);
+  return toDatetimeLocalValue(d.toISOString());
+}
+
+function CheckoutPrepCallbackForm({
+  title: initialTitle,
+  body: initialBody,
+  patientId,
+  clientId,
+  disabled,
+  onCancel,
+  onSaved,
+}: {
+  title: string;
+  body: string | null;
+  patientId?: number;
+  clientId?: number;
+  disabled?: boolean;
+  onCancel: () => void;
+  onSaved: () => void;
+}) {
+  const [title, setTitle] = useState(initialTitle);
+  const [body, setBody] = useState(initialBody?.trim() ?? '');
+  const [dueLocal, setDueLocal] = useState(defaultCallbackDueLocal);
+  const [assignee, setAssignee] = useState<number | null>(null);
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [branchIds, setBranchIds] = useState<number[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    void Promise.all([
+      fetchAllEmployees(),
+      listPracticeBranches(Number(import.meta.env.VITE_PRACTICE_ID) || 1),
+    ])
+      .then(([emps, branches]) => {
+        setEmployees(emps);
+        setBranchIds(branches.map((b) => b.id));
+      })
+      .catch(() => setError('Could not load staff or branches.'));
+  }, []);
+
+  const save = async () => {
+    if (!title.trim() || patientId == null) return;
+    if (branchIds.length === 0) {
+      setError('Could not determine which branch this callback belongs to.');
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const due = fromDatetimeLocalValue(dueLocal);
+      await createTask({
+        title: title.trim(),
+        body: body.trim() || null,
+        kind: 'callback',
+        branchIds,
+        assignedToEmployeeId: assignee,
+        ...(due ? { dueAt: due } : {}),
+        links: [
+          { entityType: 'patient', entityId: patientId },
+          ...(clientId != null ? [{ entityType: 'client' as const, entityId: clientId }] : []),
+        ],
+      });
+      onSaved();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not create that callback.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="soap-scribe-planitem-compose">
+      {error && <div className="soap-error">{error}</div>}
+      <label className="soap-wrapup-cb-field">
+        <span>What to say</span>
+        <input
+          className="soap-input"
+          value={title}
+          disabled={disabled || saving}
+          onChange={(e) => setTitle(e.target.value)}
+        />
+      </label>
+      <label className="soap-wrapup-cb-field">
+        <span>Notes for whoever calls (optional)</span>
+        <textarea
+          className="soap-textarea"
+          rows={3}
+          value={body}
+          disabled={disabled || saving}
+          onChange={(e) => setBody(e.target.value)}
+        />
+      </label>
+      <div className="soap-wrapup-cb-row">
+        <label className="soap-wrapup-cb-field">
+          <span>Who calls</span>
+          <select
+            className="soap-select"
+            value={assignee ?? ''}
+            disabled={disabled || saving}
+            onChange={(e) => setAssignee(Number(e.target.value) || null)}
+          >
+            <option value="">Queue (unassigned)</option>
+            {employees.map((em) => (
+              <option key={em.id} value={em.id}>
+                {formatEmployeeDisplayName(em) || em.email}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="soap-wrapup-cb-field">
+          <span>Call by</span>
+          <input
+            type="datetime-local"
+            className="soap-input"
+            value={dueLocal}
+            disabled={disabled || saving}
+            onChange={(e) => setDueLocal(e.target.value)}
+          />
+        </label>
+      </div>
+      <div className="soap-wrapup-cb-actions">
+        <button type="button" className="soap-btn ghost" disabled={saving} onClick={onCancel}>
+          Cancel
+        </button>
+        <button
+          type="button"
+          className="soap-btn"
+          disabled={disabled || saving || !title.trim() || patientId == null}
+          onClick={() => void save()}
+        >
+          {saving ? 'Creating…' : 'Create callback'}
         </button>
       </div>
     </div>

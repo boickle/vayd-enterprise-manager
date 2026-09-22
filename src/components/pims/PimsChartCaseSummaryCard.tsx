@@ -48,6 +48,7 @@ import { clientIdFromPatientRow, clientNameFromPatientRow } from '../../utils/br
 import { pickPracticeMainPhone } from '../../utils/practicePhone';
 import type { MedicalRecordBundle } from '../../utils/patientChartFromMedicalRecord';
 import BriefChartCitedText from '../brief/BriefChartCitedText';
+import { toggleWithoutScrollJump } from '../../utils/toggleWithoutScrollJump';
 import { PimsExamDetailModal } from './PimsExamDetailModal';
 import { PimsMedicalNoteModal } from './PimsMedicalNoteModal';
 import PimsSoapNoteModal from './PimsSoapNoteModal';
@@ -526,7 +527,12 @@ export default function PimsChartCaseSummaryCard({
               As of {formatAsOfLabel(row?.asOfDate || today, practiceTz)}
             </p>
             <div className="pims-emr-story__actions">
-              <button type="button" onClick={() => setExpanded((v) => !v)}>
+              <button
+                type="button"
+                onClick={(e) => {
+                  toggleWithoutScrollJump(e.currentTarget, () => setExpanded((v) => !v));
+                }}
+              >
                 {expanded ? (
                   <>
                     <ChevronUp size={14} aria-hidden />

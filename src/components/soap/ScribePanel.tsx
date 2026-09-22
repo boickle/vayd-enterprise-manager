@@ -44,6 +44,10 @@ import ScribeConsentModal from './ScribeConsentModal';
 import type { SuggestedPlanItem } from './ScribeSuggestedPlanItems';
 import { formatSoapSectionSpacing } from '../../utils/soapSectionSpacing';
 import {
+  fillEmptySoapNarratives,
+  narrativesFromScribeSuggestion,
+} from '../../utils/soapNarrativesFromScribe';
+import {
   cleanSubjectiveAfterVisit,
   extractTaggedPreExamFacts,
   joinSubjectiveHistoryParts,
@@ -425,6 +429,9 @@ export default function ScribePanel({
   const currentSubjectiveRef = useRef(currentSubjective);
   const currentVitalsRef = useRef(currentVitals);
   const currentExamRef = useRef(currentExam);
+  const currentObjectiveNotesRef = useRef(currentObjectiveNotes);
+  const currentReasoningRef = useRef(currentReasoning);
+  const currentPlanNotesRef = useRef(currentPlanNotes);
   useEffect(() => {
     currentSubjectiveRef.current = currentSubjective;
   }, [currentSubjective]);
@@ -434,6 +441,15 @@ export default function ScribePanel({
   useEffect(() => {
     currentExamRef.current = currentExam;
   }, [currentExam]);
+  useEffect(() => {
+    currentObjectiveNotesRef.current = currentObjectiveNotes;
+  }, [currentObjectiveNotes]);
+  useEffect(() => {
+    currentReasoningRef.current = currentReasoning;
+  }, [currentReasoning]);
+  useEffect(() => {
+    currentPlanNotesRef.current = currentPlanNotes;
+  }, [currentPlanNotes]);
 
   const logApplied = useCallback((text: string) => {
     logKeyRef.current += 1;
@@ -555,13 +571,43 @@ export default function ScribePanel({
               return [...fromSession, ...prev.filter((p) => !seen.has(p.key))];
             });
           }
-          return;
+        } else {
+          // Mark this suggestion as already applied *before* storing it, so the auto-apply
+          // effect treats a restore as read-only and never rewrites the doctor's edits.
+          prevSuggestionRef.current = last;
+          setSuggestion(last);
         }
 
-        // Mark this suggestion as already applied *before* storing it, so the auto-apply
-        // effect treats a restore as read-only and never rewrites the doctor's edits.
-        prevSuggestionRef.current = last;
-        setSuggestion(last);
+        const filled = fillEmptySoapNarratives(
+          {
+            objectiveNotes: currentObjectiveNotesRef.current,
+            reasoning: currentReasoningRef.current,
+            planNotes: currentPlanNotesRef.current,
+          },
+          narrativesFromScribeSuggestion(last, patientId)
+        );
+        if (filled.changed) {
+          const patch: {
+            objectiveNotes?: string;
+            reasoning?: string;
+            planNotes?: string;
+          } = {};
+          if (filled.next.objectiveNotes !== currentObjectiveNotesRef.current) {
+            patch.objectiveNotes = filled.next.objectiveNotes;
+          }
+          if (filled.next.reasoning !== currentReasoningRef.current) {
+            patch.reasoning = filled.next.reasoning;
+          }
+          if (filled.next.planNotes !== currentPlanNotesRef.current) {
+            patch.planNotes = filled.next.planNotes;
+          }
+          if (onApplyChart) onApplyChart(patch);
+          else {
+            if (patch.objectiveNotes) onApplyObjectiveNotes(patch.objectiveNotes);
+            if (patch.reasoning) onApplyReasoning(patch.reasoning);
+            if (patch.planNotes) onApplyPlanNotes(patch.planNotes);
+          }
+        }
       })
       .catch((err) => {
         console.warn('Could not restore the last scribe run for this chart', err);

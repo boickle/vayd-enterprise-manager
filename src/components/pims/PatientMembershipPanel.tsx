@@ -13,6 +13,12 @@ import {
   UserPlus,
   X,
 } from 'lucide-react';
+import { useAuth } from '../../auth/AuthProvider';
+import {
+  readStaffPatientLayout,
+  writeStaffPatientLayout,
+  STAFF_UI_PREFS_EVENT,
+} from '../../utils/staffUiPrefs';
 import {
   addMembershipItem,
   cancelMembership,
@@ -249,8 +255,25 @@ export default function PatientMembershipPanel({
   patientAgeYears,
 }: Props) {
   const navigate = useNavigate();
+  const { userId } = useAuth() as { userId?: string | null };
   const practiceId = practiceIdProp ?? resolvePracticeIdFromToken(getToken());
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(() => readStaffPatientLayout(userId).membership);
+
+  useEffect(() => {
+    const sync = () => setOpen(readStaffPatientLayout(userId).membership);
+    sync();
+    window.addEventListener(STAFF_UI_PREFS_EVENT, sync);
+    return () => window.removeEventListener(STAFF_UI_PREFS_EVENT, sync);
+  }, [userId]);
+
+  const toggleOpen = useCallback(() => {
+    setOpen((v) => {
+      const next = !v;
+      writeStaffPatientLayout(userId, { membership: next });
+      return next;
+    });
+  }, [userId]);
+
   const [inactiveDetailsOpen, setInactiveDetailsOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1062,7 +1085,7 @@ export default function PatientMembershipPanel({
           type="button"
           id="pims-emr-membership"
           className="pims-emr-story__collapse"
-          onClick={() => setOpen((v) => !v)}
+          onClick={toggleOpen}
           aria-expanded={open}
         >
           {open ? <ChevronDown size={15} aria-hidden /> : <ChevronRight size={15} aria-hidden />}

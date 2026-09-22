@@ -3,7 +3,7 @@ import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { http, setToken } from '../api/http';
 import { setLogoutHandler } from '../api/http';
 import { getCurrentUser } from '../api/users';
-import { applyStaffUiPrefsFromServer } from '../utils/staffUiPrefs';
+import { applyStaffUiPrefsFromServer, migrateStaffUiPrefsKeys } from '../utils/staffUiPrefs';
 import { trackLogin, trackLogout } from '../utils/analytics';
 import { collectAssignedDoctorIds } from '../utils/analyticsAccess';
 
@@ -589,7 +589,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           if (fromJwt) setEmployeeId(fromJwt);
         }
         if (data?.id != null) {
-          applyStaffUiPrefsFromServer(String(data.id), data.uiPrefs);
+          const idStr = String(data.id);
+          // Prefs are keyed by users.id; earlier toggles may have used the JWT claim.
+          migrateStaffUiPrefsKeys(userId, idStr);
+          applyStaffUiPrefsFromServer(idStr, data.uiPrefs);
         }
         const collected = collectAssignedDoctorIds((data ?? {}) as Record<string, unknown>);
         if (collected.length > 0) {

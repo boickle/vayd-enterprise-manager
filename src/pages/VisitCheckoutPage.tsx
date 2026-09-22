@@ -46,6 +46,7 @@ export default function VisitCheckoutPage() {
   const appointmentId = Number(appointmentIdParam);
   const patientId = Number(patientIdParam);
   const clientIdParam = searchParams.get('clientId');
+  const focusOrderId = searchParams.get('focusOrder');
 
   const [encounterId, setEncounterId] = useState<string | null>(null);
   /** Read inside the socket handler, which must not resubscribe when the id lands. */
@@ -252,6 +253,19 @@ export default function VisitCheckoutPage() {
             onInvoiceShouldRefresh={() => void refreshInvoice()}
             onOrderRemoved={() => void refreshInvoice()}
             onOpenEuthanasiaPrepay={() => navigate(soapPath)}
+            focusOrderId={focusOrderId}
+            rxLabel={{
+              patientId,
+              patientName:
+                roster.find((r) => r.patientId === patientId)?.patientName ??
+                wrapUp?.pets.find((p) => p.patientId === patientId)?.patientName ??
+                'Patient',
+              species: roster.find((r) => r.patientId === patientId)?.species ?? null,
+              ownerName: wrapUp?.clientName ?? 'Client',
+              veterinarianName: wrapUp?.provider?.name ?? null,
+              veterinarianLicense: null,
+              veterinarianEmployeeId: wrapUp?.provider?.id ?? null,
+            }}
           />
         </section>
       </div>

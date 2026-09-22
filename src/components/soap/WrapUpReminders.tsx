@@ -1,16 +1,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BellRing, Link2, Plus, RotateCcw, Trash2 } from 'lucide-react';
+import { BellRing, Link2, Pencil, Plus, RotateCcw, Trash2, X } from 'lucide-react';
 import {
   getVisitReminders,
   saveReminderPlan,
+  type PastDueReminder,
   type ProposedReminder,
   type ReminderPlanExtra,
   type ReminderPlanOverride,
   type ReminderSourceType,
   type VisitReminderPet,
 } from '../../api/visitWrapUp';
-import { formatDeclinedDate } from '../../api/declinedTreatments';
+import {
+  declineReminder,
+  formatDeclinedDate,
+  isOffRecordDeclineNote,
+} from '../../api/declinedTreatments';
+import { patchReminder } from '../../api/careOutreach';
+import { listOrders } from '../../api/visitWorkflow';
 import { searchItems, type SearchableItem } from '../../api/roomLoader';
+import { appConfirm, appPrompt } from '../../utils/appDialog';
 
 const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
 
@@ -28,6 +36,17 @@ function fromDateInput(value: string): string | null {
   // Noon local, so a timezone shift can't roll the date back a day.
   const d = new Date(`${value}T12:00:00`);
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+/** Offset a `yyyy-mm-dd` due date by weeks and/or months (local noon). */
+function offsetDateInput(dueYmd: string, weeks = 0, months = 0): string {
+  if (!dueYmd.trim()) return '';
+  const d = new Date(`${dueYmd}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return '';
+  if (months) d.setMonth(d.getMonth() + months);
+  if (weeks) d.setDate(d.getDate() + weeks * 7);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 function itemId(item: SearchableItem): number | null {
@@ -57,15 +76,38 @@ type Props = {
  */
 export default function WrapUpReminders({ encounterId, disabled }: Props) {
   const [pets, setPets] = useState<VisitReminderPet[]>([]);
+  const [visitDeclines, setVisitDeclines] = useState<
+    Record<string, { key: string; label: string; declinedAt: string | null; onChart: boolean }[]>
+  >({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [savingFor, setSavingFor] = useState<string | null>(null);
   const [addingFor, setAddingFor] = useState<string | null>(null);
+  const [pastDueBusyId, setPastDueBusyId] = useState<number | null>(null);
+  /** Which upcoming reminder row is open for date/name edits. */
+  const [editingKey, setEditingKey] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
       const data = await getVisitReminders(encounterId);
       setPets(data.pets);
+      const declined = await Promise.all(
+        data.pets.map(async (pet) => {
+          const orders = await listOrders(pet.soapEncounterId).catch(() => []);
+          return [
+            pet.soapEncounterId,
+            orders
+              .filter((o) => o.state === 'declined')
+              .map((o) => ({
+                key: o.id,
+                label: o.name.trim() || 'Declined treatment',
+                declinedAt: o.updated ?? o.created ?? null,
+                onChart: !isOffRecordDeclineNote(o.note),
+              })),
+          ] as const;
+        }),
+      );
+      setVisitDeclines(Object.fromEntries(declined));
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not load reminders.');
@@ -100,7 +142,7 @@ export default function WrapUpReminders({ encounterId, disabled }: Props) {
     [load]
   );
 
-  const patchReminder = useCallback(
+  const patchReminderRow = useCallback(
     (pet: VisitReminderPet, reminder: ProposedReminder, patch: ReminderPlanOverride) => {
       if (reminder.origin === 'manual') {
         const extras = pet.plan.extras.map((e) =>
@@ -129,17 +171,81 @@ export default function WrapUpReminders({ encounterId, disabled }: Props) {
         });
         return;
       }
-      patchReminder(pet, reminder, { removed: true });
+      patchReminderRow(pet, reminder, { removed: true });
     },
-    [patchReminder, persist]
+    [patchReminderRow, persist]
   );
 
   const addReminder = useCallback(
     (pet: VisitReminderPet, extra: ReminderPlanExtra) => {
       void persist(pet, { ...pet.plan, extras: [...pet.plan.extras, extra] });
       setAddingFor(null);
+      setEditingKey(extra.key);
     },
     [persist]
+  );
+
+  const removePastDueFromState = useCallback((reminderId: number) => {
+    setPets((prev) =>
+      prev.map((p) => ({
+        ...p,
+        pastDueReminders: (p.pastDueReminders ?? []).filter((r) => r.id !== reminderId),
+      }))
+    );
+  }, []);
+
+  const handleDeclinePastDue = useCallback(
+    async (reminder: PastDueReminder) => {
+      const proceed = await appConfirm({
+        title: 'Owner declined this?',
+        message: `Record “${reminder.description}” under Declined on the chart.`,
+        confirmLabel: 'Record decline',
+        cancelLabel: 'Cancel',
+      });
+      if (!proceed) return;
+      const note = await appPrompt({
+        title: 'Decline note (optional)',
+        message: 'Why was this declined?',
+        placeholder: 'Optional',
+        confirmLabel: 'Save',
+        cancelLabel: 'Skip note',
+      });
+      setPastDueBusyId(reminder.id);
+      setError(null);
+      try {
+        await declineReminder(reminder.id, note);
+        removePastDueFromState(reminder.id);
+        void load();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Could not decline that reminder.');
+      } finally {
+        setPastDueBusyId(null);
+      }
+    },
+    [load, removePastDueFromState]
+  );
+
+  const handleDeletePastDue = useCallback(
+    async (reminder: PastDueReminder) => {
+      const proceed = await appConfirm({
+        title: 'Remove this reminder?',
+        message: `“${reminder.description}” will leave the reminder list (not recorded as declined).`,
+        confirmLabel: 'Remove',
+        cancelLabel: 'Cancel',
+      });
+      if (!proceed) return;
+      setPastDueBusyId(reminder.id);
+      setError(null);
+      try {
+        await patchReminder(reminder.id, { isHidden: true });
+        removePastDueFromState(reminder.id);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Could not remove that reminder.');
+      } finally {
+        setPastDueBusyId(null);
+      }
+    },
+    [removePastDueFromState]
   );
 
   if (loading) return <p className="soap-wrapup-hint">Loading reminders…</p>;
@@ -166,15 +272,109 @@ export default function WrapUpReminders({ encounterId, disabled }: Props) {
               </span>
             </div>
 
-            {active.map((reminder) => (
-              <ReminderRow
-                key={reminder.key}
-                reminder={reminder}
-                disabled={Boolean(busy)}
-                onPatch={(patch) => patchReminder(pet, reminder, patch)}
-                onRemove={() => removeReminder(pet, reminder)}
-              />
-            ))}
+            {(pet.pastDueReminders ?? []).length > 0 ? (
+              <div className="soap-wrapup-rem-pastdue">
+                <div className="soap-wrapup-rem-pastdue-head">
+                  <strong>Past due on chart ({pet.pastDueReminders!.length})</strong>
+                  <span className="soap-wrapup-hint">
+                    Ones this visit will clear (catalog clear-tags / same wording) are
+                    hidden. Decline (owner said no) or remove (cleanup only) for the rest.
+                  </span>
+                </div>
+                {pet.pastDueReminders!.map((reminder) => {
+                  const rowBusy = pastDueBusyId === reminder.id;
+                  return (
+                    <div className="soap-wrapup-rem-pastdue-row" key={reminder.id}>
+                      <div className="soap-wrapup-rem-pastdue-text">
+                        <strong>{reminder.description}</strong>
+                        <span>
+                          Due{' '}
+                          {reminder.dueDate
+                            ? formatDeclinedDate(reminder.dueDate)
+                            : '—'}
+                        </span>
+                      </div>
+                      <div className="soap-wrapup-rem-pastdue-actions">
+                        <button
+                          type="button"
+                          className="soap-btn ghost small"
+                          disabled={Boolean(rowBusy || disabled)}
+                          title="Owner declined — stays on the chart as declined"
+                          onClick={() => void handleDeclinePastDue(reminder)}
+                        >
+                          🚫 Decline
+                        </button>
+                        <button
+                          type="button"
+                          className="soap-btn ghost small danger"
+                          disabled={Boolean(rowBusy || disabled)}
+                          title="Remove from the reminder list only"
+                          onClick={() => void handleDeletePastDue(reminder)}
+                        >
+                          <X size={13} /> Remove
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null}
+
+            {active.length > 0 ? (
+              <ul className="soap-wrapup-rem-list">
+                {active.map((reminder) => {
+                  const isEditing = editingKey === reminder.key;
+                  if (isEditing && !pet.locked) {
+                    return (
+                      <li key={reminder.key} className="soap-wrapup-rem-list-edit">
+                        <ReminderRow
+                          reminder={reminder}
+                          disabled={Boolean(busy)}
+                          onPatch={(patch) => patchReminderRow(pet, reminder, patch)}
+                          onRemove={() => {
+                            removeReminder(pet, reminder);
+                            setEditingKey(null);
+                          }}
+                          onDone={() => setEditingKey(null)}
+                        />
+                      </li>
+                    );
+                  }
+                  return (
+                    <li key={reminder.key} className="soap-wrapup-rem-list-row">
+                      <span className="soap-wrapup-rem-list-label">{reminder.description}</span>
+                      {reminder.dueDate ? (
+                        <em className="soap-wrapup-rem-list-due">
+                          Due {toDateInput(reminder.dueDate)}
+                        </em>
+                      ) : null}
+                      {!pet.locked ? (
+                        <span className="soap-wrapup-rem-list-actions">
+                          <button
+                            type="button"
+                            className="soap-btn ghost small"
+                            disabled={Boolean(busy)}
+                            title="Edit reminder"
+                            onClick={() => setEditingKey(reminder.key)}
+                          >
+                            <Pencil size={13} />
+                          </button>
+                          <button
+                            type="button"
+                            className="soap-btn ghost small danger"
+                            disabled={Boolean(busy)}
+                            title="Do not create this reminder"
+                            onClick={() => removeReminder(pet, reminder)}
+                          >
+                            <X size={13} />
+                          </button>
+                        </span>
+                      ) : null}
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : null}
 
             {dropped.length > 0 && (
               <div className="soap-wrapup-rem-dropped">
@@ -185,7 +385,7 @@ export default function WrapUpReminders({ encounterId, disabled }: Props) {
                       type="button"
                       className="soap-btn ghost small"
                       disabled={Boolean(busy)}
-                      onClick={() => patchReminder(pet, reminder, { removed: false })}
+                      onClick={() => patchReminderRow(pet, reminder, { removed: false })}
                     >
                       <RotateCcw size={13} /> Put back
                     </button>
@@ -194,32 +394,51 @@ export default function WrapUpReminders({ encounterId, disabled }: Props) {
               </div>
             )}
 
-            {(pet.declinedItems ?? []).length > 0 ? (
-              <div className="soap-wrapup-rem-dropped">
-                {(pet.declinedItems ?? []).map((item) => (
-                  <div className="soap-wrapup-rem-dropped-row" key={item.id}>
-                    <span>
-                      {item.label} — declined
-                      {item.declinedAt ? ` ${formatDeclinedDate(item.declinedAt)}` : ''}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            ) : null}
-
-            {(pet.plan.callbacks ?? []).length > 0 ? (
-              <div className="soap-wrapup-rem-dropped">
-                {(pet.plan.callbacks ?? []).map((cb) => (
-                  <div className="soap-wrapup-rem-dropped-row" key={cb.key}>
-                    <span>
-                      Callback preview: {cb.title}
-                      {cb.dueAt ? ` · due ${new Date(cb.dueAt).toLocaleDateString()}` : ''}
-                      {' — created when the chart is signed'}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            ) : null}
+            {(() => {
+              const fromChart = (pet.declinedItems ?? []).map((item) => {
+                const catalogMatch =
+                  item.catalogItemId != null
+                    ? pet.reminders.find((r) => r.sourceCatalogItemId === item.catalogItemId)
+                    : null;
+                const label =
+                  item.label && item.label.toLowerCase() !== 'declined item'
+                    ? item.label
+                    : catalogMatch?.description ||
+                      catalogMatch?.sourceLabel ||
+                      'Declined treatment';
+                return {
+                  key: `ti-${item.id}`,
+                  label,
+                  declinedAt: item.declinedAt,
+                  onChart: item.onChart !== false,
+                };
+              });
+              const fromVisit = visitDeclines[pet.soapEncounterId] ?? [];
+              const seen = new Set(fromChart.map((d) => d.label.toLowerCase()));
+              const merged = [
+                ...fromChart,
+                ...fromVisit.filter((d) => !seen.has(d.label.toLowerCase())),
+              ];
+              if (merged.length === 0) return null;
+              return (
+                <div className="soap-wrapup-rem-declined">
+                  {merged.map((item) => (
+                    <div className="soap-wrapup-rem-declined-row" key={item.key}>
+                      <strong>{item.label}</strong>
+                      <span>
+                        Declined
+                        {item.declinedAt ? ` ${formatDeclinedDate(item.declinedAt)}` : ''}
+                      </span>
+                      <em>
+                        {item.onChart
+                          ? 'Will show on the chart'
+                          : 'Will not show on the chart'}
+                      </em>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
 
             {!pet.locked &&
               (addingFor === pet.soapEncounterId ? (
@@ -245,16 +464,116 @@ export default function WrapUpReminders({ encounterId, disabled }: Props) {
   );
 }
 
+function ReminderDateFields({
+  dueYmd,
+  startYmd,
+  stopYmd,
+  disabled,
+  onDue,
+  onStart,
+  onStop,
+}: {
+  dueYmd: string;
+  startYmd: string;
+  stopYmd: string;
+  disabled?: boolean;
+  onDue: (ymd: string) => void;
+  onStart: (ymd: string) => void;
+  onStop: (ymd: string) => void;
+}) {
+  const canQuick = Boolean(dueYmd) && !disabled;
+  return (
+    <div className="soap-wrapup-rem-dates">
+      <label>
+        <span>Due</span>
+        <input
+          type="date"
+          className="soap-input"
+          value={dueYmd}
+          disabled={disabled}
+          onChange={(e) => onDue(e.target.value)}
+        />
+      </label>
+      <label>
+        <span>Start reminding</span>
+        <div className="soap-wrapup-rem-date-stack">
+          <input
+            type="date"
+            className="soap-input"
+            value={startYmd}
+            disabled={disabled}
+            onChange={(e) => onStart(e.target.value)}
+          />
+          <span className="soap-wrapup-rem-quick">
+            <button
+              type="button"
+              className="soap-wrapup-rem-quick-btn"
+              disabled={!canQuick}
+              title="One week before due"
+              onClick={() => onStart(offsetDateInput(dueYmd, -1, 0))}
+            >
+              −1w
+            </button>
+            <button
+              type="button"
+              className="soap-wrapup-rem-quick-btn"
+              disabled={!canQuick}
+              title="One month before due"
+              onClick={() => onStart(offsetDateInput(dueYmd, 0, -1))}
+            >
+              −1m
+            </button>
+          </span>
+        </div>
+      </label>
+      <label>
+        <span>Stop reminding</span>
+        <div className="soap-wrapup-rem-date-stack">
+          <input
+            type="date"
+            className="soap-input"
+            value={stopYmd}
+            disabled={disabled}
+            onChange={(e) => onStop(e.target.value)}
+          />
+          <span className="soap-wrapup-rem-quick">
+            <button
+              type="button"
+              className="soap-wrapup-rem-quick-btn"
+              disabled={!canQuick}
+              title="One week after due"
+              onClick={() => onStop(offsetDateInput(dueYmd, 1, 0))}
+            >
+              +1w
+            </button>
+            <button
+              type="button"
+              className="soap-wrapup-rem-quick-btn"
+              disabled={!canQuick}
+              title="One month after due"
+              onClick={() => onStop(offsetDateInput(dueYmd, 0, 1))}
+            >
+              +1m
+            </button>
+          </span>
+        </div>
+      </label>
+    </div>
+  );
+}
+
 function ReminderRow({
   reminder,
   disabled,
   onPatch,
   onRemove,
+  onDone,
 }: {
   reminder: ProposedReminder;
   disabled: boolean;
   onPatch: (patch: ReminderPlanOverride) => void;
   onRemove: () => void;
+  onDone?: () => void;
 }) {
   return (
     <div className="soap-wrapup-rem-row">
@@ -266,6 +585,16 @@ function ReminderRow({
           aria-label="Reminder description"
           onChange={(e) => onPatch({ description: e.target.value })}
         />
+        {onDone ? (
+          <button
+            type="button"
+            className="soap-btn ghost small"
+            disabled={disabled}
+            onClick={onDone}
+          >
+            Done
+          </button>
+        ) : null}
         <button
           type="button"
           className="soap-btn ghost small danger"
@@ -277,38 +606,15 @@ function ReminderRow({
         </button>
       </div>
 
-      <div className="soap-wrapup-rem-dates">
-        <label>
-          <span>Start reminding</span>
-          <input
-            type="date"
-            className="soap-input"
-            value={toDateInput(reminder.startReminding)}
-            disabled={disabled}
-            onChange={(e) => onPatch({ startReminding: fromDateInput(e.target.value) })}
-          />
-        </label>
-        <label>
-          <span>Due</span>
-          <input
-            type="date"
-            className="soap-input"
-            value={toDateInput(reminder.dueDate)}
-            disabled={disabled}
-            onChange={(e) => onPatch({ dueDate: fromDateInput(e.target.value) })}
-          />
-        </label>
-        <label>
-          <span>Stop reminding</span>
-          <input
-            type="date"
-            className="soap-input"
-            value={toDateInput(reminder.stopReminding)}
-            disabled={disabled}
-            onChange={(e) => onPatch({ stopReminding: fromDateInput(e.target.value) })}
-          />
-        </label>
-      </div>
+      <ReminderDateFields
+        dueYmd={toDateInput(reminder.dueDate)}
+        startYmd={toDateInput(reminder.startReminding)}
+        stopYmd={toDateInput(reminder.stopReminding)}
+        disabled={disabled}
+        onDue={(ymd) => onPatch({ dueDate: fromDateInput(ymd) })}
+        onStart={(ymd) => onPatch({ startReminding: fromDateInput(ymd) })}
+        onStop={(ymd) => onPatch({ stopReminding: fromDateInput(ymd) })}
+      />
 
       <div className="soap-wrapup-rem-meta">
         {reminder.sourceLabel && <span>From {reminder.sourceLabel}</span>}
@@ -326,16 +632,18 @@ function ReminderRow({
  * already has on autoship, and "liver panel" as free text can't be tied back to the lab
  * it means.
  */
-function AddReminderForm({
+export function AddReminderForm({
   patientId,
   onCancel,
   onAdd,
+  initialDescription = '',
 }: {
   patientId: number;
   onCancel: () => void;
   onAdd: (extra: ReminderPlanExtra) => void;
+  initialDescription?: string;
 }) {
-  const [description, setDescription] = useState('');
+  const [description, setDescription] = useState(initialDescription);
   const [dueDate, setDueDate] = useState('');
   const [startReminding, setStartReminding] = useState('');
   const [stopReminding, setStopReminding] = useState('');
@@ -384,35 +692,14 @@ function AddReminderForm({
         />
       </label>
 
-      <div className="soap-wrapup-rem-dates">
-        <label>
-          <span>Start reminding</span>
-          <input
-            type="date"
-            className="soap-input"
-            value={startReminding}
-            onChange={(e) => setStartReminding(e.target.value)}
-          />
-        </label>
-        <label>
-          <span>Due</span>
-          <input
-            type="date"
-            className="soap-input"
-            value={dueDate}
-            onChange={(e) => setDueDate(e.target.value)}
-          />
-        </label>
-        <label>
-          <span>Stop reminding</span>
-          <input
-            type="date"
-            className="soap-input"
-            value={stopReminding}
-            onChange={(e) => setStopReminding(e.target.value)}
-          />
-        </label>
-      </div>
+      <ReminderDateFields
+        dueYmd={dueDate}
+        startYmd={startReminding}
+        stopYmd={stopReminding}
+        onDue={setDueDate}
+        onStart={setStartReminding}
+        onStop={setStopReminding}
+      />
 
       <label className="soap-wrapup-rem-add-field">
         <span>Match to a catalog item (optional)</span>

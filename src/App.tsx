@@ -40,10 +40,10 @@ import RoomLoaderPage from './pages/RoomLoader';
 import SoapEncounterPage from './pages/SoapEncounterPage';
 import VisitWrapUpPage from './pages/VisitWrapUpPage';
 import VisitCheckoutPage from './pages/VisitCheckoutPage';
-import DoctorWorklistPage from './pages/DoctorWorklistPage';
 import BriefWorkspacePage from './pages/BriefWorkspacePage';
 import PracticeChatPage from './pages/PracticeChatPage';
 import { ScheduleIndexRedirect } from './pages/ScheduleLayout';
+import MyCallIndicator from './components/pims/MyCallIndicator';
 import ScheduleHomePage from './pages/ScheduleHomePage';
 import LegacySchedulingToolsRedirect from './components/LegacySchedulingToolsRedirect';
 import Catalog from './pages/Catalog';
@@ -83,6 +83,7 @@ import Scheduler from './pages/Scheduler';
 import Analytics from './pages/Analytics';
 import PostAppointmentSurvey from './pages/PostAppointmentSurvey';
 import EuthanasiaConsentForm from './pages/EuthanasiaConsentForm';
+import FormSignPage from './pages/FormSignPage';
 import RecordsUploadPage from './pages/RecordsUploadPage';
 import PublicReferAFriend from './pages/PublicReferAFriend';
 import SlotOfferConfirmPage from './pages/SlotOfferConfirmPage';
@@ -558,6 +559,8 @@ export default function App() {
           <Route path="/survey/:surveySlug" element={<PostAppointmentSurvey />} />
           <Route path="/survey/:surveySlug/*" element={<PostAppointmentSurvey />} />
           <Route path="/consent/euthanasia" element={<EuthanasiaConsentForm />} />
+          {/* Generic signed forms — public, token-based, no login required */}
+          <Route path="/forms/:token" element={<FormSignPage />} />
           {/* Outside hospital uploads previous records from an emailed link */}
           <Route path="/records/upload" element={<RecordsUploadPage />} />
           <Route path="/share" element={<PublicReferAFriend />} />
@@ -653,7 +656,7 @@ export default function App() {
                     <Route path="epiphany" element={<Navigate to="/schedule/jot" replace />} />
                     <Route path="brief" element={<Navigate to="/schedule/jot" replace />} />
                     <Route path="chat" element={<PracticeChatPage />} />
-                    <Route path="soap" element={<DoctorWorklistPage />} />
+                    <Route path="soap" element={<Navigate to="/schedule/home" replace />} />
                     <Route
                       path="soap/:appointmentId/:patientId"
                       element={<SoapEncounterPage />}
@@ -739,6 +742,10 @@ export default function App() {
                     <Route path="catalog/*" element={<LegacyCatalogRedirect />} />
                     <Route path="tasks" element={<PimsTasksPage />} />
                     <Route path="settings" element={<Settings />} />
+                    <Route
+                      path="settings/forms"
+                      element={<Navigate to="/schedule/settings?tab=forms" replace />}
+                    />
                     <Route path="clients" element={<PimsClientsPage />} />
                     <Route path="patients" element={<PimsPatientsPage />} />
                     <Route path="email" element={<GmailInbox />} />
@@ -808,6 +815,7 @@ export default function App() {
       location.pathname.startsWith('/store/') ? (
         <StoreCartFloat />
       ) : null}
+      {token && !isClient ? <MyCallIndicator /> : null}
     </div>
   );
 }

@@ -1,9 +1,11 @@
 import { useEffect } from 'react';
-import { appAlert } from './appDialog';
+import { useNavigate } from 'react-router';
 
 const DIRTY_EVENT = 'vayd:invoice-directions-dirty';
 
 let dirtyClientId: string | null = null;
+let leaveSave: (() => Promise<void>) | null = null;
+let leaveSaveInFlight: Promise<void> | null = null;
 
 export const INVOICE_DIRECTIONS_LEAVE_MESSAGE =
   'Save or delete the directions on this invoice before leaving the client.';
@@ -19,17 +21,27 @@ export function hasUnsavedInvoiceDirections(): boolean {
   return dirtyClientId != null;
 }
 
-export function alertAndBlockInvoiceDirectionsLeave(): boolean {
-  if (!dirtyClientId) return false;
-  void appAlert({
-    title: 'Directions not saved',
-    message: INVOICE_DIRECTIONS_LEAVE_MESSAGE,
-  });
-  return true;
+export function registerInvoiceDirectionsLeaveSave(fn: (() => Promise<void>) | null): void {
+  leaveSave = fn;
 }
 
+/** Persist listed directions so staff can leave the invoice. Does not approve the script. */
+export function flushInvoiceDirectionsOnLeave(): Promise<void> {
+  if (!dirtyClientId || !leaveSave) return Promise.resolve();
+  if (leaveSaveInFlight) return leaveSaveInFlight;
+  leaveSaveInFlight = leaveSave()
+    .catch(() => undefined)
+    .finally(() => {
+      leaveSaveInFlight = null;
+      setInvoiceDirectionsDirty(null, false);
+    });
+  return leaveSaveInFlight;
+}
+
+/** Leaving the app is allowed; listed directions are saved in the background. */
 export function blockInvoiceDirectionsLeave(): boolean {
-  return alertAndBlockInvoiceDirectionsLeave();
+  if (dirtyClientId) void flushInvoiceDirectionsOnLeave();
+  return false;
 }
 
 function hrefStaysOnLockedClient(href: string): boolean {
@@ -45,8 +57,19 @@ function hrefStaysOnLockedClient(href: string): boolean {
   }
 }
 
-/** Blocks navbar links and other in-app anchors while invoice directions are unsaved. */
+function destinationFromHref(href: string): string | null {
+  try {
+    const url = new URL(href, window.location.origin);
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    return null;
+  }
+}
+
+/** Saves listed directions, then lets navbar / in-app links leave the invoice. */
 export function useInvoiceDirectionsNavigationGuard(): void {
+  const navigate = useNavigate();
+
   useEffect(() => {
     const onClickCapture = (e: MouseEvent) => {
       if (!dirtyClientId) return;
@@ -66,23 +89,25 @@ export function useInvoiceDirectionsNavigationGuard(): void {
         return;
       }
       if (hrefStaysOnLockedClient(href)) return;
-      if (alertAndBlockInvoiceDirectionsLeave()) {
-        e.preventDefault();
-        e.stopPropagation();
-      }
+
+      const dest = destinationFromHref(href);
+      if (!dest) return;
+      e.preventDefault();
+      e.stopPropagation();
+      void flushInvoiceDirectionsOnLeave().then(() => {
+        navigate(dest);
+      });
     };
 
-    const onBeforeUnload = (e: BeforeUnloadEvent) => {
-      if (!dirtyClientId) return;
-      e.preventDefault();
-      e.returnValue = '';
+    const onPageHide = () => {
+      void flushInvoiceDirectionsOnLeave();
     };
 
     document.addEventListener('click', onClickCapture, true);
-    window.addEventListener('beforeunload', onBeforeUnload);
+    window.addEventListener('pagehide', onPageHide);
     return () => {
       document.removeEventListener('click', onClickCapture, true);
-      window.removeEventListener('beforeunload', onBeforeUnload);
+      window.removeEventListener('pagehide', onPageHide);
     };
-  }, []);
+  }, [navigate]);
 }

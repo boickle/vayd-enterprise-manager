@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import {
   ArrowRight,
@@ -34,12 +34,18 @@ import {
   type VisitInvoice,
   VISIT_WORKFLOW_PRACTICE_ID,
 } from '../api/visitWorkflow';
-import { polishSpokenNotes, summarizeIntakeHistory } from '../api/soapScribe';
+import { listScribeSessions, polishSpokenNotes, summarizeIntakeHistory } from '../api/soapScribe';
 import { fetchAppointmentById } from '../api/appointments';
 import { fetchEmployee } from '../api/appointmentSettings';
 import { fetchPatientProfileForRow } from '../api/patients';
 import { useAuth } from '../auth/useAuth';
 import { pushRecentRecord } from '../utils/recentRecordsStore';
+import {
+  emptySoapChronicDraft,
+  readSoapChronicDraft,
+  writeSoapChronicDraft,
+  type SoapChronicDraft,
+} from '../utils/soapChronicDraft';
 import {
   peerPresenceCaption,
   peerShortName,
@@ -79,11 +85,19 @@ import ScribeSuggestedPlanItems, {
 import { appConfirm } from '../utils/appDialog';
 import {
   clearSoapChartDraft,
+  mergeParkedSoapDraft,
   readSoapChartDraft,
   soapChartDraftIsNewer,
+  soapTextIsBlank,
   writeSoapChartDraft,
+  type LastSavedSoapChart,
   type SoapChartDraft,
 } from '../utils/soapChartDraft';
+import {
+  fillEmptySoapNarratives,
+  latestScribeSuggestion,
+  narrativesFromScribeSuggestion,
+} from '../utils/soapNarrativesFromScribe';
 import type { PeSystemFinding } from '../components/soap/peTemplate';
 import {
   appointmentReasonFromSentToClient,
@@ -244,14 +258,28 @@ function patchFromDraftDiff(
     live.emailSubject !== saved.emailSubject ||
     live.emailBody !== saved.emailBody
   ) {
-    patch.subjective = buildSubjectivePayload(live.subjective, {
-      subject: live.emailSubject,
-      body: live.emailBody,
-    });
+    if (!soapTextIsBlank(live.subjective) || soapTextIsBlank(saved.subjective)) {
+      patch.subjective = buildSubjectivePayload(live.subjective, {
+        subject: live.emailSubject,
+        body: live.emailBody,
+      });
+    }
   }
-  if (live.objectiveNotes !== saved.objectiveNotes) patch.objectiveNotes = live.objectiveNotes;
-  if (live.reasoning !== saved.reasoning) patch.assessmentReasoning = live.reasoning;
-  if (live.planNotes !== saved.planNotes) patch.planNotes = live.planNotes;
+  if (live.objectiveNotes !== saved.objectiveNotes) {
+    if (!soapTextIsBlank(live.objectiveNotes) || soapTextIsBlank(saved.objectiveNotes)) {
+      patch.objectiveNotes = live.objectiveNotes;
+    }
+  }
+  if (live.reasoning !== saved.reasoning) {
+    if (!soapTextIsBlank(live.reasoning) || soapTextIsBlank(saved.reasoning)) {
+      patch.assessmentReasoning = live.reasoning;
+    }
+  }
+  if (live.planNotes !== saved.planNotes) {
+    if (!soapTextIsBlank(live.planNotes) || soapTextIsBlank(saved.planNotes)) {
+      patch.planNotes = live.planNotes;
+    }
+  }
   if (JSON.stringify(live.vitals) !== JSON.stringify(saved.vitals)) {
     patch.objectiveVitals = { ...live.vitals };
   }
@@ -299,6 +327,7 @@ export default function SoapEncounterPage() {
   const appointmentId = Number(params.appointmentId);
   const patientId = Number(params.patientId);
   const clientIdParam = searchParams.get('clientId');
+  const focusOrderId = searchParams.get('focusOrder');
 
   const workspaceRef = useRef<HTMLDivElement>(null);
   const splitDragRef = useRef<{ startX: number; startPct: number } | null>(null);
@@ -361,9 +390,14 @@ export default function SoapEncounterPage() {
   const encounterRef = useRef(encounter);
   encounterRef.current = encounter;
   /** Last snapshot we know is on the server (or just hydrated). Auto-save diffs against this. */
-  const lastSavedRef = useRef<SoapChartDraft | null>(null);
+  const lastSavedRef = useRef<LastSavedSoapChart | null>(null);
+  const pendingHydrationRef = useRef<{
+    encounterId: string;
+    serverDraft: SoapChartDraft;
+  } | null>(null);
   const [problems, setProblems] = useState<PatientProblem[]>([]);
   const [chronicMedications, setChronicMedications] = useState<PatientPrescription[]>([]);
+  const [chronicDraft, setChronicDraft] = useState<SoapChronicDraft>(() => emptySoapChronicDraft());
   const [orders, setOrders] = useState<EncounterOrder[]>([]);
   const [invoice, setInvoice] = useState<VisitInvoice | null>(null);
   const [patientName, setPatientName] = useState<string>('');
@@ -546,41 +580,64 @@ export default function SoapEncounterPage() {
       const focused = focusedFieldRef.current;
       const takes = (field: string) => fields.includes(field) && field !== focused;
 
-      if (takes('subjective')) {
-        setSubjective(
-          typeof fresh.subjective?.history === 'string' ? fresh.subjective.history : ''
-        );
-        setEmailDraft(emailDraftFromSubjective(fresh.subjective));
-      }
       if (takes('objectiveVitals')) setVitals(vitalsFromValue(fresh.objectiveVitals));
       if (takes('objectiveExam')) setExam(peExamFromValue(fresh.objectiveExam));
-      if (takes('objectiveNotes')) setObjectiveNotes(fresh.objectiveNotes ?? '');
-      if (takes('assessmentReasoning')) setReasoning(fresh.assessmentReasoning ?? '');
-      if (takes('planNotes')) setPlanNotes(fresh.planNotes ?? '');
+      const takeText = (
+        field: 'objectiveNotes' | 'assessmentReasoning' | 'planNotes' | 'subjective',
+        incoming: string,
+        local: string
+      ) =>
+        takes(field) && (!soapTextIsBlank(incoming) || soapTextIsBlank(local));
+      const incomingObjective = fresh.objectiveNotes ?? '';
+      const incomingReasoning = fresh.assessmentReasoning ?? '';
+      const incomingPlan = fresh.planNotes ?? '';
+      const incomingSubjective =
+        typeof fresh.subjective?.history === 'string' ? fresh.subjective.history : '';
+      if (takeText('subjective', incomingSubjective, subjectiveRef.current)) {
+        setSubjective(incomingSubjective);
+        setEmailDraft(emailDraftFromSubjective(fresh.subjective));
+      }
+      if (takeText('objectiveNotes', incomingObjective, objectiveNotesRef.current)) {
+        setObjectiveNotes(incomingObjective);
+      }
+      if (takeText('assessmentReasoning', incomingReasoning, reasoningRef.current)) {
+        setReasoning(incomingReasoning);
+      }
+      if (takeText('planNotes', incomingPlan, planNotesRef.current)) {
+        setPlanNotes(incomingPlan);
+      }
       if (takes('assessmentProblemIds')) {
         setLinkedProblemIds(fresh.assessmentProblemIds ?? []);
       }
 
       // Auto-save diffs against lastSaved — mark remote-applied fields as already stored
       // so we don't immediately write our stale copy back over them.
-      if (lastSavedRef.current) {
-        const next = { ...lastSavedRef.current };
-        if (takes('subjective')) {
-          next.subjective =
-            typeof fresh.subjective?.history === 'string' ? fresh.subjective.history : '';
+      if (
+        lastSavedRef.current &&
+        lastSavedRef.current.encounterId === encounterRef.current?.id
+      ) {
+        const next = { ...lastSavedRef.current.draft };
+        if (takeText('subjective', incomingSubjective, lastSavedRef.current.draft.subjective)) {
+          next.subjective = incomingSubjective;
           const email = emailDraftFromSubjective(fresh.subjective);
           next.emailSubject = email.subject;
           next.emailBody = email.body;
         }
         if (takes('objectiveVitals')) next.vitals = vitalsFromValue(fresh.objectiveVitals);
         if (takes('objectiveExam')) next.exam = peExamFromValue(fresh.objectiveExam);
-        if (takes('objectiveNotes')) next.objectiveNotes = fresh.objectiveNotes ?? '';
-        if (takes('assessmentReasoning')) next.reasoning = fresh.assessmentReasoning ?? '';
-        if (takes('planNotes')) next.planNotes = fresh.planNotes ?? '';
+        if (takeText('objectiveNotes', incomingObjective, lastSavedRef.current.draft.objectiveNotes)) {
+          next.objectiveNotes = incomingObjective;
+        }
+        if (takeText('assessmentReasoning', incomingReasoning, lastSavedRef.current.draft.reasoning)) {
+          next.reasoning = incomingReasoning;
+        }
+        if (takeText('planNotes', incomingPlan, lastSavedRef.current.draft.planNotes)) {
+          next.planNotes = incomingPlan;
+        }
         if (takes('assessmentProblemIds')) {
           next.linkedProblemIds = fresh.assessmentProblemIds ?? [];
         }
-        lastSavedRef.current = next;
+        lastSavedRef.current = { ...lastSavedRef.current, draft: next };
       }
 
       if (opts?.notify === false) return;
@@ -687,6 +744,10 @@ export default function SoapEncounterPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [encounter?.id]);
 
+  useEffect(() => {
+    setChronicDraft(readSoapChronicDraft(encounter?.id));
+  }, [encounter?.id]);
+
   const switchToPet = useCallback(
     (entry: HouseholdRosterEntry) => {
       if (entry.isCurrent) return;
@@ -707,7 +768,12 @@ export default function SoapEncounterPage() {
       const previous = encounterRef.current;
       const previousSaved = lastSavedRef.current;
       lastSavedRef.current = null;
-      if (previous && previous.status !== 'completed' && previousSaved) {
+      pendingHydrationRef.current = null;
+      if (
+        previous &&
+        previous.status !== 'completed' &&
+        previousSaved?.encounterId === previous.id
+      ) {
         const parked = snapshotSoapDraft({
           subjective: subjectiveRef.current,
           email: emailDraftRef.current,
@@ -718,9 +784,10 @@ export default function SoapEncounterPage() {
           exam: examRef.current,
           linkedProblemIds: linkedProblemIdsRef.current,
         });
-        if (soapDraftDirty(parked, previousSaved)) {
-          writeSoapChartDraft(previous.id, parked);
-          const leftover = patchFromDraftDiff(parked, previousSaved);
+        if (soapDraftDirty(parked, previousSaved.draft)) {
+          const safeParked = mergeParkedSoapDraft(parked, previousSaved.draft);
+          writeSoapChartDraft(previous.id, safeParked);
+          const leftover = patchFromDraftDiff(safeParked, previousSaved.draft);
           if (Object.keys(leftover).length > 0) {
             void updateEncounter(previous.id, leftover).catch(() => undefined);
           }
@@ -874,7 +941,6 @@ export default function SoapEncounterPage() {
           }
         }
 
-        setEncounter(enc);
         const serverEmail = emailDraftFromSubjective(enc.subjective);
         const hydrated = snapshotSoapDraft({
           subjective: subjectiveHistory,
@@ -886,31 +952,88 @@ export default function SoapEncounterPage() {
           exam: peExamFromValue(enc.objectiveExam),
           linkedProblemIds: enc.assessmentProblemIds ?? [],
         });
-        lastSavedRef.current = hydrated;
 
         const parked =
           enc.status !== 'completed' ? readSoapChartDraft(enc.id) : null;
-        if (parked && soapChartDraftIsNewer(parked, enc.updated)) {
-          setSubjective(parked.subjective);
-          setEmailDraft({ subject: parked.emailSubject, body: parked.emailBody });
-          setVitals(parked.vitals);
-          setExam(parked.exam);
-          setObjectiveNotes(parked.objectiveNotes);
-          setReasoning(parked.reasoning);
-          setPlanNotes(parked.planNotes);
-          setLinkedProblemIds(parked.linkedProblemIds);
+        const useParked = Boolean(parked && soapChartDraftIsNewer(parked, enc.updated));
+        let display = useParked && parked ? mergeParkedSoapDraft(parked, hydrated) : hydrated;
+
+        const needsScribeFill =
+          enc.status !== 'completed' &&
+          (soapTextIsBlank(display.objectiveNotes) ||
+            soapTextIsBlank(display.reasoning) ||
+            soapTextIsBlank(display.planNotes));
+        if (needsScribeFill) {
+          try {
+            const sessions = await listScribeSessions(enc.id);
+            const filled = fillEmptySoapNarratives(
+              {
+                objectiveNotes: display.objectiveNotes,
+                reasoning: display.reasoning,
+                planNotes: display.planNotes,
+              },
+              narrativesFromScribeSuggestion(latestScribeSuggestion(sessions), patientId)
+            );
+            if (filled.changed) {
+              display = {
+                ...display,
+                objectiveNotes: filled.next.objectiveNotes,
+                reasoning: filled.next.reasoning,
+                planNotes: filled.next.planNotes,
+              };
+              try {
+                enc = await updateEncounter(enc.id, {
+                  ...(soapTextIsBlank(hydrated.objectiveNotes) &&
+                  !soapTextIsBlank(filled.next.objectiveNotes)
+                    ? { objectiveNotes: filled.next.objectiveNotes }
+                    : {}),
+                  ...(soapTextIsBlank(hydrated.reasoning) && !soapTextIsBlank(filled.next.reasoning)
+                    ? { assessmentReasoning: filled.next.reasoning }
+                    : {}),
+                  ...(soapTextIsBlank(hydrated.planNotes) && !soapTextIsBlank(filled.next.planNotes)
+                    ? { planNotes: filled.next.planNotes }
+                    : {}),
+                });
+                showCoEditNotice(
+                  'Restored Objective, Assessment, and Plan from the last Process run.'
+                );
+              } catch (err) {
+                console.warn('Failed to restore SOAP narratives from the last Process run', err);
+              }
+            }
+          } catch (err) {
+            console.warn('Could not look up the last Process run for this chart', err);
+          }
+        }
+
+        if (canceled) return;
+        setEncounter(enc);
+        pendingHydrationRef.current = {
+          encounterId: enc.id,
+          serverDraft: snapshotSoapDraft({
+            subjective: typeof enc.subjective?.history === 'string' ? enc.subjective.history : hydrated.subjective,
+            email: emailDraftFromSubjective(enc.subjective),
+            objectiveNotes: enc.objectiveNotes ?? display.objectiveNotes,
+            reasoning: enc.assessmentReasoning ?? display.reasoning,
+            planNotes: enc.planNotes ?? display.planNotes,
+            vitals: vitalsFromValue(enc.objectiveVitals),
+            exam: peExamFromValue(enc.objectiveExam),
+            linkedProblemIds: enc.assessmentProblemIds ?? hydrated.linkedProblemIds,
+          }),
+        };
+        setSubjective(display.subjective);
+        setEmailDraft({ subject: display.emailSubject, body: display.emailBody });
+        setVitals(display.vitals);
+        setExam(display.exam);
+        setObjectiveNotes(display.objectiveNotes);
+        setReasoning(display.reasoning);
+        setPlanNotes(display.planNotes);
+        setLinkedProblemIds(display.linkedProblemIds);
+        if (useParked) {
           showCoEditNotice(
             'Restored unsaved chart text from this device. It will save again in a few seconds.'
           );
         } else {
-          setSubjective(subjectiveHistory);
-          setEmailDraft(serverEmail);
-          setVitals(hydrated.vitals);
-          setExam(hydrated.exam);
-          setObjectiveNotes(hydrated.objectiveNotes);
-          setReasoning(hydrated.reasoning);
-          setPlanNotes(hydrated.planNotes);
-          setLinkedProblemIds(hydrated.linkedProblemIds);
           clearSoapChartDraft(enc.id);
         }
 
@@ -1051,34 +1174,103 @@ export default function SoapEncounterPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appointmentId, patientId]);
 
+  // lastSaved stays null until this paint, so the 8s autosave cannot flush empty
+  // O/A/P over the server row while the chart is still hydrating.
+  useLayoutEffect(() => {
+    const pending = pendingHydrationRef.current;
+    if (!pending || pending.encounterId !== encounter?.id) return;
+    lastSavedRef.current = {
+      encounterId: pending.encounterId,
+      draft: pending.serverDraft,
+    };
+    pendingHydrationRef.current = null;
+  }, [
+    encounter?.id,
+    subjective,
+    objectiveNotes,
+    reasoning,
+    planNotes,
+  ]);
+
   // Reads the encounter through a ref so saving doesn't change this function's identity. The
   // scribe auto-apply effects take the handlers built on `save` as dependencies, so a new `save`
   // after every PATCH would re-fire them against their own writes.
   const save = useCallback(
-    async (patch: Parameters<typeof updateEncounter>[1]) => {
+    async (
+      patch: Parameters<typeof updateEncounter>[1],
+      opts?: {
+        allowBlankFields?: Array<
+          'subjective' | 'objectiveNotes' | 'assessmentReasoning' | 'planNotes'
+        >;
+      }
+    ) => {
       const id = encounterRef.current?.id;
       if (!id || locked) return false;
+      const allowBlank = new Set(opts?.allowBlankFields ?? []);
+      const nextPatch = { ...patch };
+      const dropBlank = (
+        field: 'objectiveNotes' | 'assessmentReasoning' | 'planNotes',
+        incoming: string | null | undefined,
+        stored: string | null | undefined
+      ) => {
+        if (incoming === undefined) return;
+        if (allowBlank.has(field)) return;
+        if (soapTextIsBlank(incoming) && !soapTextIsBlank(stored)) {
+          delete nextPatch[field];
+        }
+      };
+      const stored = lastSavedRef.current?.encounterId === id
+        ? lastSavedRef.current.draft
+        : null;
+      dropBlank(
+        'objectiveNotes',
+        nextPatch.objectiveNotes,
+        stored?.objectiveNotes ?? encounterRef.current?.objectiveNotes
+      );
+      dropBlank(
+        'assessmentReasoning',
+        nextPatch.assessmentReasoning,
+        stored?.reasoning ?? encounterRef.current?.assessmentReasoning
+      );
+      dropBlank(
+        'planNotes',
+        nextPatch.planNotes,
+        stored?.planNotes ?? encounterRef.current?.planNotes
+      );
+      if (nextPatch.subjective != null && !allowBlank.has('subjective')) {
+        const incomingHist =
+          typeof nextPatch.subjective.history === 'string' ? nextPatch.subjective.history : '';
+        const storedHist = stored?.subjective ??
+          (typeof encounterRef.current?.subjective?.history === 'string'
+            ? encounterRef.current.subjective.history
+            : '');
+        if (soapTextIsBlank(incomingHist) && !soapTextIsBlank(storedHist)) {
+          delete nextPatch.subjective;
+        }
+      }
+      if (Object.keys(nextPatch).length === 0) return true;
       try {
-        const updated = await updateEncounter(id, patch, {
+        const updated = await updateEncounter(id, nextPatch, {
           expectedUpdatedAt: encounterRef.current?.updated ?? null,
+          allowBlankFields: opts?.allowBlankFields,
         });
         setEncounter(updated);
-        if (lastSavedRef.current) {
-          const next = { ...lastSavedRef.current, at: updated.updated };
-          if (patch.subjective !== undefined) {
+        if (lastSavedRef.current?.encounterId === id) {
+          const next = { ...lastSavedRef.current.draft, at: updated.updated };
+          if (nextPatch.subjective !== undefined) {
             next.subjective = subjectiveRef.current;
             next.emailSubject = emailDraftRef.current.subject;
             next.emailBody = emailDraftRef.current.body;
           }
-          if (patch.objectiveVitals !== undefined) next.vitals = vitalsRef.current;
-          if (patch.objectiveExam !== undefined) next.exam = examRef.current;
-          if (patch.objectiveNotes !== undefined) next.objectiveNotes = objectiveNotesRef.current;
-          if (patch.assessmentReasoning !== undefined) next.reasoning = reasoningRef.current;
-          if (patch.planNotes !== undefined) next.planNotes = planNotesRef.current;
-          if (patch.assessmentProblemIds !== undefined) {
+          if (nextPatch.objectiveVitals !== undefined) next.vitals = vitalsRef.current;
+          if (nextPatch.objectiveExam !== undefined) next.exam = examRef.current;
+          if (nextPatch.objectiveNotes !== undefined) next.objectiveNotes = objectiveNotesRef.current;
+          if (nextPatch.assessmentReasoning !== undefined) next.reasoning = reasoningRef.current;
+          if (nextPatch.planNotes !== undefined) next.planNotes = planNotesRef.current;
+          if (nextPatch.assessmentProblemIds !== undefined) {
             next.linkedProblemIds = linkedProblemIdsRef.current;
           }
-          lastSavedRef.current = next;
+          lastSavedRef.current = { encounterId: id, draft: next };
         }
         return true;
       } catch (e) {
@@ -1106,7 +1298,10 @@ export default function SoapEncounterPage() {
 
   const saveSubjective = useCallback(
     async (history: string, email: { subject: string; body: string } = emailDraftRef.current) => {
-      await save({ subjective: buildSubjectivePayload(history, email) });
+      await save(
+        { subjective: buildSubjectivePayload(history, email) },
+        { allowBlankFields: ['subjective'] }
+      );
     },
     [save]
   );
@@ -1140,13 +1335,16 @@ export default function SoapEncounterPage() {
       const enc = encounterRef.current;
       const saved = lastSavedRef.current;
       if (!enc || enc.status === 'completed' || !saved) return;
+      if (saved.encounterId !== enc.id) return;
+      if (pendingHydrationRef.current) return;
       const now = liveDraft();
-      writeSoapChartDraft(enc.id, now);
-      if (!soapDraftDirty(now, saved)) {
+      const safeNow = mergeParkedSoapDraft(now, saved.draft);
+      writeSoapChartDraft(enc.id, safeNow);
+      if (!soapDraftDirty(safeNow, saved.draft)) {
         clearSoapChartDraft(enc.id);
         return;
       }
-      const patch = patchFromDraftDiff(now, saved);
+      const patch = patchFromDraftDiff(safeNow, saved.draft);
       if (Object.keys(patch).length === 0) return;
       void save(patch).then((ok) => {
         if (ok) clearSoapChartDraft(enc.id);
@@ -1387,22 +1585,6 @@ export default function SoapEncounterPage() {
     toggleProblemLink(problem.id, true);
   };
 
-  const onScribeProblemUpdated = (problem: PatientProblem) => {
-    setProblems((prev) => prev.map((p) => (p.id === problem.id ? problem : p)));
-  };
-
-  const onChronicMedicationUpdated = (rx: PatientPrescription) => {
-    setChronicMedications((prev) =>
-      rx.discontinuedAt
-        ? prev.filter((m) => m.id !== rx.id)
-        : prev.map((m) => (m.id === rx.id ? rx : m))
-    );
-  };
-
-  const onChronicMedicationCreated = (rx: PatientPrescription) => {
-    setChronicMedications((prev) => [rx, ...prev.filter((m) => m.id !== rx.id)]);
-  };
-
   const refreshChronicMedications = useCallback(() => {
     void listPatientPrescriptions(patientId, { activeChronicOnly: true })
       .then(setChronicMedications)
@@ -1605,14 +1787,21 @@ export default function SoapEncounterPage() {
           <SoapPatientChronicSummary
             patientId={patientId}
             practiceId={VISIT_WORKFLOW_PRACTICE_ID}
-            createdInEncounterId={encounter?.id}
+            encounterId={encounter?.id}
             problems={problems}
             chronicMedications={chronicMedications}
+            draft={chronicDraft}
             disabled={locked}
-            onProblemCreated={onScribeProblemCreated}
-            onProblemUpdated={onScribeProblemUpdated}
-            onMedicationCreated={onChronicMedicationCreated}
-            onMedicationUpdated={onChronicMedicationUpdated}
+            onDraftChange={(next) => {
+              setChronicDraft(next);
+              writeSoapChronicDraft(encounter?.id, next);
+            }}
+            onProblemSaved={(updated) =>
+              setProblems((prev) => prev.map((p) => (p.id === updated.id ? updated : p)))
+            }
+            onProblemRemoved={(id) =>
+              setProblems((prev) => prev.filter((p) => p.id !== id))
+            }
           />
 
           {effectiveEntryMode === 'scribe' && encounter && (
@@ -1665,19 +1854,22 @@ export default function SoapEncounterPage() {
               onObjectiveNotesChange={setObjectiveNotes}
               onObjectiveNotesBlur={(text) => {
                 setObjectiveNotes(text);
-                void save({ objectiveNotes: text });
+                void save({ objectiveNotes: text }, { allowBlankFields: ['objectiveNotes'] });
               }}
               assessment={reasoning}
               onAssessmentChange={setReasoning}
               onAssessmentBlur={(text) => {
                 setReasoning(text);
-                void save({ assessmentReasoning: text });
+                void save(
+                  { assessmentReasoning: text },
+                  { allowBlankFields: ['assessmentReasoning'] }
+                );
               }}
               planNotes={planNotes}
               onPlanNotesChange={setPlanNotes}
               onPlanNotesBlur={(text) => {
                 setPlanNotes(text);
-                void save({ planNotes: text });
+                void save({ planNotes: text }, { allowBlankFields: ['planNotes'] });
               }}
               objectiveNeedsAttention={!isWeightAddressed(vitals)}
               activeTab={activeTab}
@@ -1855,7 +2047,7 @@ export default function SoapEncounterPage() {
                       onChange={setObjectiveNotes}
                       onBlur={(text) => {
                         setObjectiveNotes(text);
-                        void save({ objectiveNotes: text });
+                        void save({ objectiveNotes: text }, { allowBlankFields: ['objectiveNotes'] });
                       }}
                     />
                   </section>
@@ -1890,7 +2082,10 @@ export default function SoapEncounterPage() {
                       onBlur={(e) => {
                         const text = e.target.value;
                         setReasoning(text);
-                        void save({ assessmentReasoning: text });
+                        void save(
+                          { assessmentReasoning: text },
+                          { allowBlankFields: ['assessmentReasoning'] }
+                        );
                       }}
                     />
                   </section>
@@ -1917,7 +2112,7 @@ export default function SoapEncounterPage() {
                       onBlur={(e) => {
                         const text = e.target.value;
                         setPlanNotes(text);
-                        void save({ planNotes: text });
+                        void save({ planNotes: text }, { allowBlankFields: ['planNotes'] });
                       }}
                     />
                   </section>
@@ -2074,6 +2269,7 @@ export default function SoapEncounterPage() {
             onInventoryItemRemoved={removeInventoryFromTreatmentPlan}
             onOpenEuthanasiaPrepay={() => setShowEuthanasia(true)}
             onRoomLoaderOrderIds={rememberRoomLoaderOrderIds}
+            focusOrderId={focusOrderId}
             onOrderRemoved={(orderId) => {
               const removed = orders.find((o) => o.id === orderId);
               setOrders((prev) => prev.filter((o) => o.id !== orderId));

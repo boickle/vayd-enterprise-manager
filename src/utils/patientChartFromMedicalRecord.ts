@@ -156,6 +156,8 @@ export type ChartRow = {
   removeScoutNoteId?: string;
   isDeclined?: boolean;
   laterReceivedOn?: string | null;
+  /** Form / consent emails — driven by communication `statusDetails`. */
+  communicationStatusBadge?: 'pending' | 'signed' | 'expired';
 };
 
 export type ChartRowSource =
@@ -219,6 +221,16 @@ function communicationTypeLabel(o: Record<string, unknown>): string {
     pickStr(o.messageType) ??
     'Client communication'
   );
+}
+
+function communicationStatusBadge(
+  o: Record<string, unknown>,
+): ChartRow['communicationStatusBadge'] | undefined {
+  const details = (pickStr(o.statusDetails) ?? '').trim().toLowerCase();
+  if (details === 'pending') return 'pending';
+  if (details === 'signed') return 'signed';
+  if (details === 'expired') return 'expired';
+  return undefined;
 }
 
 function communicationLogSummary(o: Record<string, unknown>): string {
@@ -504,9 +516,23 @@ export function buildChartRowsFromMedicalRecord(
   emrOnly = false,
   medicationHistory?: unknown[] | null,
   patientId?: number | null,
+  /** Signed form invites — attaches Open PDF on matching communication rows. */
+  formInvites?: Array<{
+    communicationLogId?: number | null;
+    chartDocumentId?: number | null;
+    patientId?: number | null;
+  }> | null,
 ): ChartRow[] {
   if (!mr && !problems?.length && !visitCharges?.length && !treatments?.length) return [];
   const out: ChartRow[] = [];
+  const formDocByCommLog = new Map<number, number>();
+  for (const inv of formInvites ?? []) {
+    const logId = Number(inv.communicationLogId);
+    const docId = Number(inv.chartDocumentId);
+    if (Number.isFinite(logId) && logId > 0 && Number.isFinite(docId) && docId > 0) {
+      formDocByCommLog.set(logId, docId);
+    }
+  }
   const keep = (row: ChartRow) => {
     if (!emrOnly) return true;
     if (!EMR_SOURCES.has(row.source)) return false;
@@ -602,6 +628,42 @@ export function buildChartRowsFromMedicalRecord(
     }
   }
 
+  const seenTreatmentIds = new Set(
+    out.filter((row) => row.id.startsWith('treatment:')).map((row) => row.id)
+  );
+  for (const raw of mr?.declinedItems ?? []) {
+    const o = asObj(raw);
+    if (!o) continue;
+    const itemId = o.id != null ? String(o.id) : '';
+    if (!itemId) continue;
+    const rowId = `treatment:${itemId}`;
+    const label = pickStr(o.label) ?? pickStr(o.description) ?? 'Declined';
+    const recordedBy = pickStr(o.declinedByName);
+    const recordedNote = recordedBy ? `Recorded by ${recordedBy}` : null;
+    const existing = out.find((row) => row.id === rowId);
+    if (existing) {
+      if (!existing.provider && recordedBy) existing.provider = recordedBy;
+      if (recordedNote && !(existing.detailText ?? '').includes(recordedNote)) {
+        existing.detailText = [existing.detailText, recordedNote].filter(Boolean).join('\n');
+      }
+      continue;
+    }
+    if (seenTreatmentIds.has(rowId)) continue;
+    const serviceDateIso =
+      pickStr(o.declinedAt) ?? pickStr(o.serviceDate) ?? pickStr(o.created);
+    out.push({
+      id: rowId,
+      source: 'treatment',
+      typeLabel: 'Declined',
+      description: label,
+      provider: recordedBy ?? '—',
+      serviceDateIso,
+      sortTime: parseSortTime(serviceDateIso),
+      detailText: ['Owner declined.', recordedNote].filter(Boolean).join(' '),
+      isDeclined: true,
+    });
+  }
+
   const finish = (rows: ChartRow[]) =>
     rows.filter(keep).sort((a, b) => b.sortTime - a.sortTime);
 
@@ -615,10 +677,13 @@ export function buildChartRowsFromMedicalRecord(
       pickStr(o.serviceDate) ?? pickStr(o.sentAt) ?? pickStr(o.createdAt) ?? pickStr(o.deliveredAt);
     const summary = communicationLogSummary(o);
     const status = (pickStr(o.status) ?? pickStr(o.deliveryStatus) ?? '').toLowerCase();
+    const statusBadge = communicationStatusBadge(o);
     const detailBits = [
       pickStr(o.channel) && `Channel: ${pickStr(o.channel)}`,
       pickStr(o.recipient) && `Recipient: ${pickStr(o.recipient)}`,
       pickStr(o.status) && `Status: ${pickStr(o.status)}`,
+      statusBadge === 'pending' && 'Awaiting client signature',
+      statusBadge === 'signed' && 'Client signed',
     ].filter(Boolean);
     const rawBody = communicationRawBody(o);
     let detailText = detailBits.join('\n');
@@ -634,6 +699,7 @@ export function buildChartRowsFromMedicalRecord(
         detailText = [detailText, parsed.text].filter(Boolean).join('\n\n');
       }
     }
+    const chartDocId = formDocByCommLog.get(Number(id));
     out.push({
       id: `communication:${id}`,
       source: 'communication',
@@ -650,13 +716,24 @@ export function buildChartRowsFromMedicalRecord(
       sortTime: parseSortTime(serviceDateIso),
       detailText,
       detailHtml,
-      hasResult: status.includes('deliver') || status.includes('sent') || status === 'complete',
+      hasResult:
+        statusBadge === 'signed' ||
+        status.includes('deliver') ||
+        status.includes('sent') ||
+        status === 'complete',
+      communicationStatusBadge: statusBadge,
+      filePatientId:
+        chartDocId && patientId && Number.isFinite(patientId) ? patientId : undefined,
+      fileDocumentId: chartDocId,
     });
   }
 
   for (const rem of mr.reminders ?? []) {
     const o = asObj(rem);
     if (!o) continue;
+    const reminderType = pickStr(o.reminderType) ?? pickStr(o.type);
+    if ((reminderType ?? '').trim().toLowerCase() === 'callback') continue;
+    if ((reminderType ?? '').trim().toLowerCase() === 'todo') continue;
     const hidden = o.isHidden ?? o.is_hidden ?? o.hidden;
     if (hidden === true || hidden === 1) continue;
     if (typeof hidden === 'string') {
@@ -1185,7 +1262,9 @@ export function chartRowsFromScoutNotes(notes: ScoutChartNote[] | null | undefin
     .map((n) => {
       const removedAt = n.removedAt ?? null;
       const removed = Boolean(removedAt);
-      const when = removedAt || n.finalizedAt || n.updated || n.created;
+      // noteDate wins for notes written after the fact — a call transcribed on Friday
+      // belongs on Tuesday's line, not at the top of today.
+      const when = removedAt || n.noteDate || n.finalizedAt || n.updated || n.created;
       const preview = n.body.trim().slice(0, 120) + (n.body.trim().length > 120 ? '…' : '');
       return {
         id: `scoutNote:${n.id}`,

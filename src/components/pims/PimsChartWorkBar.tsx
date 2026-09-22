@@ -16,6 +16,8 @@ import { PimsChartMessageComposeModal } from './PimsChartMessageComposeModal';
 import { PimsChartNoteComposeModal } from './PimsChartNoteComposeModal';
 import PimsChartCallModal from './PimsChartCallModal';
 import PimsStartSoapModal from './PimsStartSoapModal';
+import ClientCallPill from './ClientCallPill';
+import ChartSendForm from './ChartSendForm';
 import BriefMergePanel from '../brief/BriefMergePanel';
 import BriefRecordReview from '../brief/BriefRecordReview';
 import type { OutsideRecordAcceptResult } from '../../utils/briefRecordStore';
@@ -34,11 +36,14 @@ type Props = {
   onRecordsChanged?: (result?: OutsideRecordAcceptResult) => void;
   onTextClient?: () => void;
   onEmailClient?: () => void;
+  clientDefaultEmail?: string | null;
   onOpenCallSession: (sessionId: string) => void;
   onStartCallNote: () => void;
   launchNote?: boolean;
   launchCommunicate?: boolean;
   onLaunchConsumed?: () => void;
+  /** Other household pets the call can be filed to, besides the open chart. */
+  householdPatients?: { id: number; name: string }[];
 };
 
 export default function PimsChartWorkBar({
@@ -55,19 +60,23 @@ export default function PimsChartWorkBar({
   onRecordsChanged,
   onTextClient,
   onEmailClient,
+  clientDefaultEmail = null,
   onOpenCallSession,
   onStartCallNote,
   launchNote = false,
   launchCommunicate = false,
   onLaunchConsumed,
+  householdPatients = [],
 }: Props) {
   const [noteOpen, setNoteOpen] = useState(false);
   const [messageOpen, setMessageOpen] = useState(false);
   const [messagePick, setMessagePick] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
   const [callOpen, setCallOpen] = useState(false);
+  const [pasteOpen, setPasteOpen] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [soapPickOpen, setSoapPickOpen] = useState(false);
+  const [formSendOpen, setFormSendOpen] = useState(false);
 
   useEffect(() => {
     if (!launchNote && !launchCommunicate) return;
@@ -86,6 +95,27 @@ export default function PimsChartWorkBar({
 
   return (
     <>
+      {/* Sits above the toolbar rather than inside it: a live call is status, not an action,
+          and it must not reflow the buttons when it appears mid-call. */}
+      <ClientCallPill
+        clientId={clientIdNum}
+        clientName={clientName}
+        patients={
+          householdPatients.length > 0
+            ? householdPatients
+            : Number.isFinite(patientIdNum)
+              ? [{ id: patientIdNum, name: patientName }]
+              : []
+        }
+        defaultPatientId={Number.isFinite(patientIdNum) ? patientIdNum : null}
+        pasteOpen={pasteOpen}
+        onPasteClose={() => setPasteOpen(false)}
+        onNoteFiled={(noteId) => {
+          if (noteId) onRecordsChanged?.({ scoutNoteId: noteId });
+          else onRecordsChanged?.();
+        }}
+      />
+
       <div className="pims-chart-work" role="toolbar" aria-label="Chart actions">
         <div className="pims-chart-work__group">
           <span className="pims-chart-work__label">Write</span>
@@ -134,7 +164,7 @@ export default function PimsChartWorkBar({
           </button>
           <button type="button" className="brief-btn" onClick={() => setSoapPickOpen(true)}>
             <Stethoscope size={15} aria-hidden />
-            Start SOAP
+            Start/Continue SOAP
           </button>
         </div>
       </div>
@@ -155,6 +185,8 @@ export default function PimsChartWorkBar({
         onClose={() => setCallOpen(false)}
         patientId={patientId}
         patientName={patientName}
+        clientId={clientIdNum}
+        onPasteTranscript={() => setPasteOpen(true)}
         clientName={clientName}
         clientPhone={clientPhone}
         practiceTz={practiceTz}
@@ -247,7 +279,8 @@ export default function PimsChartWorkBar({
                 </div>
                 <p className="pims-chart-pick__empty">
                   Text and email stay in your workflow unless you add them to the record. Call
-                  starts a phone session. Log saves a communication on the chart.
+                  starts a phone session. Log saves a communication on the chart. Send form emails
+                  a link for the client to sign.
                 </p>
                 <div className="pims-chart-pick__foot">
                   <button
@@ -300,6 +333,18 @@ export default function PimsChartWorkBar({
                     <FileText size={14} aria-hidden />
                     Log
                   </button>
+                  <button
+                    type="button"
+                    className="brief-btn"
+                    disabled={!Number.isFinite(patientIdNum)}
+                    onClick={() => {
+                      setMessagePick(false);
+                      setFormSendOpen(true);
+                    }}
+                  >
+                    <FileText size={14} aria-hidden />
+                    Send form / consent
+                  </button>
                   <button type="button" className="brief-btn" onClick={() => setMessagePick(false)}>
                     Cancel
                   </button>
@@ -309,6 +354,18 @@ export default function PimsChartWorkBar({
             document.body,
           )
         : null}
+
+      {Number.isFinite(patientIdNum) ? (
+        <ChartSendForm
+          open={formSendOpen}
+          onClose={() => setFormSendOpen(false)}
+          patientId={patientIdNum}
+          patientName={patientName}
+          clientId={clientIdNum}
+          defaultEmail={clientDefaultEmail}
+          onSent={() => onRecordsChanged?.()}
+        />
+      ) : null}
 
       {logOpen && clientIdNum != null && Number.isFinite(patientIdNum)
         ? createPortal(

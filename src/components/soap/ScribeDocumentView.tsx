@@ -156,22 +156,8 @@ export default function ScribeDocumentView({
     plan: { value: planNotes, onChange: onPlanNotesChange, onBlur: onPlanNotesBlur },
   };
 
-  const soapIndex = SOAP_TABS.findIndex((t) => t.id === activeTab);
-  const activeSoap = soapIndex >= 0 ? SOAP_TABS[soapIndex] : null;
   const previous =
-    activeTab === 'checkout-prep'
-      ? SOAP_TABS[SOAP_TABS.length - 1]!
-      : soapIndex > 0
-        ? SOAP_TABS[soapIndex - 1]!
-        : null;
-  const next =
-    activeTab === 'checkout-prep'
-      ? null
-      : soapIndex >= 0 && soapIndex < SOAP_TABS.length - 1
-        ? SOAP_TABS[soapIndex + 1]!
-        : activeTab === 'plan'
-          ? { id: 'checkout-prep' as const, label: 'Checkout prep' }
-          : null;
+    activeTab === 'checkout-prep' ? SOAP_TABS[SOAP_TABS.length - 1]! : null;
 
   async function copyAllSoap() {
     const text = formatFullSoap(subjective, objectiveNotes, assessment, planNotes);
@@ -296,49 +282,64 @@ export default function ScribeDocumentView({
         </div>
       </section>
 
-      {activeTab !== 'checkout-prep' && activeSoap ? (
-        <section className="soap-doc-section" role="tabpanel" aria-label={activeSoap.label}>
-          {activeTab === 'objective' && vitalsSlot}
+      {SOAP_TABS.map((tab) => {
+        const isActive = activeTab === tab.id;
+        const tabPrevious =
+          SOAP_TABS.findIndex((row) => row.id === tab.id) > 0
+            ? SOAP_TABS[SOAP_TABS.findIndex((row) => row.id === tab.id) - 1]!
+            : null;
+        const tabIndex = SOAP_TABS.findIndex((row) => row.id === tab.id);
+        const tabNext =
+          tabIndex < SOAP_TABS.length - 1
+            ? SOAP_TABS[tabIndex + 1]!
+            : { id: 'checkout-prep' as const, label: 'Checkout prep' };
+        return (
+          <section
+            key={tab.id}
+            className="soap-doc-section"
+            role="tabpanel"
+            aria-label={tab.label}
+            hidden={!isActive}
+          >
+            {tab.id === 'objective' ? vitalsSlot : null}
 
-          <div className="soap-doc-section-head">
-            <h3>
-              <span className="soap-doc-letter">{activeSoap.letter}</span> {activeSoap.label}
-              {activeTab === 'objective' ? ' notes' : ''}
-            </h3>
-          </div>
-          <SoapRichTextField
-            key={activeSoap.id}
-            value={fields[activeSoap.id].value}
-            onChange={fields[activeSoap.id].onChange}
-            onBlur={fields[activeSoap.id].onBlur}
-            disabled={disabled}
-            placeholder={activeSoap.placeholder}
-            minHeightPx={activeSoap.minHeightPx}
-            dataField={ENCOUNTER_FIELD_BY_TAB[activeSoap.id]}
-          />
+            <div className="soap-doc-section-head">
+              <h3>
+                <span className="soap-doc-letter">{tab.letter}</span> {tab.label}
+                {tab.id === 'objective' ? ' notes' : ''}
+              </h3>
+            </div>
+            <SoapRichTextField
+              value={fields[tab.id].value}
+              onChange={fields[tab.id].onChange}
+              onBlur={fields[tab.id].onBlur}
+              disabled={disabled}
+              placeholder={tab.placeholder}
+              minHeightPx={tab.minHeightPx}
+              dataField={ENCOUNTER_FIELD_BY_TAB[tab.id]}
+            />
 
-          <div className="soap-doc-nav">
-            {previous ? (
-              <button
-                type="button"
-                className="soap-btn ghost"
-                onClick={() => setActiveTab(previous.id)}
-              >
-                <ArrowLeft size={14} /> {previous.label}
-              </button>
-            ) : (
-              <span />
-            )}
-            {next ? (
-              <button type="button" className="soap-btn" onClick={() => setActiveTab(next.id)}>
-                {next.label} <ArrowRight size={14} />
-              </button>
-            ) : (
-              <span />
-            )}
-          </div>
-        </section>
-      ) : null}
+            {isActive ? (
+              <div className="soap-doc-nav">
+                {tabPrevious ? (
+                  <button
+                    type="button"
+                    className="soap-btn ghost"
+                    onClick={() => setActiveTab(tabPrevious.id)}
+                  >
+                    <ArrowLeft size={14} /> {tabPrevious.label}
+                  </button>
+                ) : (
+                  <span />
+                )}
+                <button type="button" className="soap-btn" onClick={() => setActiveTab(tabNext.id)}>
+                  {tabNext.label} <ArrowRight size={14} />
+                </button>
+              </div>
+            ) : null}
+          </section>
+        );
+      })}
     </div>
   );
 }

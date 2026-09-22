@@ -1,45 +1,67 @@
-import { AlertTriangle, Heart } from 'lucide-react';
+import { AlertTriangle, Heart, X } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
-import type { RoutingPatientHoverSummary } from '../utils/routingPatientHoverData';
+import type { RoutingPatientHoverSummary, RoutingPatientReminderLine } from '../utils/routingPatientHoverData';
 import { declineReminder, formatDeclinedDate } from '../api/declinedTreatments';
+import { patchReminder } from '../api/careOutreach';
 import { appConfirm, appPrompt } from '../utils/appDialog';
 import './PatientChartSummary.css';
 
 function ReminderRow({
-  id,
-  label,
-  dueDateInput,
+  reminder,
   onApplyRefillExpiration,
   onDecline,
-  declining,
+  onRemove,
+  busy,
+  callback = false,
 }: {
-  id: string;
-  label: string;
-  dueDateInput: string | null;
+  reminder: RoutingPatientReminderLine;
   onApplyRefillExpiration?: (dateInput: string) => void;
-  onDecline?: (id: string) => void;
-  declining?: boolean;
+  onDecline?: (reminder: RoutingPatientReminderLine) => void;
+  onRemove?: (reminder: RoutingPatientReminderLine) => void;
+  busy?: boolean;
+  callback?: boolean;
 }) {
   return (
-    <li>
-      <span>{label}</span>
-      {onApplyRefillExpiration && dueDateInput ? (
+    <li className="patient-chart-summary-reminder">
+      <span>
+        {reminder.label}
+        {callback ? (
+          <span className="patient-chart-summary-callback-meta">
+            {reminder.assigneeName ? `Assigned to ${reminder.assigneeName}` : 'Unassigned'}
+          </span>
+        ) : null}
+      </span>
+      {onApplyRefillExpiration && reminder.dueDateInput ? (
         <button
           type="button"
           className="patient-chart-summary-refill-exp"
-          onClick={() => onApplyRefillExpiration(dueDateInput)}
+          onClick={() => onApplyRefillExpiration(reminder.dueDateInput!)}
         >
           Refill exp
         </button>
       ) : null}
-      {onDecline ? (
+      {!callback && onDecline ? (
         <button
           type="button"
-          className="patient-chart-summary-refill-exp"
-          disabled={declining}
-          onClick={() => onDecline(id)}
+          className="patient-chart-summary-reminder-no"
+          title="Owner declined — stays on the chart"
+          aria-label={`Owner declined ${reminder.label}`}
+          disabled={busy}
+          onClick={() => onDecline(reminder)}
         >
-          Decline
+          🚫
+        </button>
+      ) : null}
+      {onRemove ? (
+        <button
+          type="button"
+          className="patient-chart-summary-reminder-x"
+          title={callback ? 'Remove this callback' : 'Remove from this list only'}
+          aria-label={`Remove ${reminder.label}`}
+          disabled={busy}
+          onClick={() => onRemove(reminder)}
+        >
+          <X size={14} aria-hidden />
         </button>
       ) : null}
     </li>
@@ -102,13 +124,13 @@ export function PatientChartSummaryPanel({
   const membershipLabel = membershipName?.trim() || 'Member';
   const [decliningId, setDecliningId] = useState<string | null>(null);
 
-  const declineRow = async (id: string) => {
-    const numeric = Number(id);
+  const declineRow = async (reminder: RoutingPatientReminderLine) => {
+    const numeric = Number(reminder.id);
     if (!Number.isFinite(numeric) || numeric <= 0) return;
     const proceed = await appConfirm({
-      title: 'Decline this reminder',
-      message: 'This will stop reminding and keep a declined date on the chart. Continue?',
-      confirmLabel: 'Decline',
+      title: 'Owner declined this?',
+      message: `Record “${reminder.label}” under Declined and as a red note on the medical record, with your name.`,
+      confirmLabel: 'Record decline',
       cancelLabel: 'Cancel',
     });
     if (!proceed) return;
@@ -119,7 +141,7 @@ export function PatientChartSummaryPanel({
       confirmLabel: 'Save',
       cancelLabel: 'Skip note',
     });
-    setDecliningId(id);
+    setDecliningId(reminder.id);
     try {
       await declineReminder(numeric, note);
       onChanged?.();
@@ -127,6 +149,31 @@ export function PatientChartSummaryPanel({
       setDecliningId(null);
     }
   };
+
+  const removeRow = async (reminder: RoutingPatientReminderLine) => {
+    const numeric = Number(reminder.id);
+    if (!Number.isFinite(numeric) || numeric <= 0) return;
+    const proceed = await appConfirm({
+      title: 'Remove this reminder?',
+      message: reminder.reminderType && /^(callback|todo)$/i.test(reminder.reminderType)
+        ? 'It will come off the staff callbacks & tasks list. It will not stay on the chart or under Declined.'
+        : 'It will come off this list. Nothing is written to the chart.',
+      confirmLabel: 'Remove',
+      cancelLabel: 'Keep it',
+    });
+    if (!proceed) return;
+    setDecliningId(reminder.id);
+    try {
+      await patchReminder(numeric, { isHidden: true });
+      onChanged?.();
+    } finally {
+      setDecliningId(null);
+    }
+  };
+
+  const actions = allowDecline
+    ? { onDecline: declineRow, onRemove: removeRow }
+    : {};
   return (
     <div className={['patient-chart-summary-panel', className].filter(Boolean).join(' ')}>
       {showHeader ? (
@@ -184,18 +231,55 @@ export function PatientChartSummaryPanel({
             )}
           </SummarySection>
 
-          <SummarySection title="Active Reminders">
-            {summary.activeReminders.length > 0 ? (
+          <SummarySection title="Callbacks & Tasks">
+            {(summary.callbackReminders ?? []).length > 0 ||
+            (summary.staffTasks ?? []).length > 0 ? (
               <ul className="patient-chart-summary-list">
-                {summary.activeReminders.map((r) => (
+                {(summary.callbackReminders ?? []).map((r) => (
+                  <ReminderRow
+                    key={`reminder:${r.id}`}
+                    reminder={r}
+                    callback
+                    busy={decliningId === r.id}
+                    onRemove={allowDecline ? removeRow : undefined}
+                  />
+                ))}
+                {(summary.staffTasks ?? []).map((t) => (
+                  <li
+                    key={`task:${t.id}`}
+                    className={`patient-chart-summary-reminder${
+                      t.overdue ? ' patient-chart-summary-reminder--overdue' : ''
+                    }`}
+                  >
+                    <span>
+                      {t.title}
+                      <span className="patient-chart-summary-callback-meta">
+                        {[
+                          t.assigneeName ? `Assigned to ${t.assigneeName}` : 'Unassigned',
+                          t.dueLabel ? `${t.overdue ? 'Past due' : 'Due'} ${t.dueLabel}` : null,
+                        ]
+                          .filter(Boolean)
+                          .join(' · ')}
+                      </span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="patient-chart-summary-muted">None</p>
+            )}
+          </SummarySection>
+
+          <SummarySection title="Past due" tone="overdue">
+            {summary.overdueReminders.length > 0 ? (
+              <ul className="patient-chart-summary-list patient-chart-summary-list--overdue">
+                {summary.overdueReminders.map((r) => (
                   <ReminderRow
                     key={r.id}
-                    id={r.id}
-                    label={r.label}
-                    dueDateInput={r.dueDateInput}
+                    reminder={r}
                     onApplyRefillExpiration={onApplyRefillExpiration}
-                    onDecline={allowDecline ? declineRow : undefined}
-                    declining={decliningId === r.id}
+                    busy={decliningId === r.id}
+                    {...actions}
                   />
                 ))}
               </ul>
@@ -204,18 +288,16 @@ export function PatientChartSummaryPanel({
             )}
           </SummarySection>
 
-          <SummarySection title="Overdue Reminders" tone="overdue">
-            {summary.overdueReminders.length > 0 ? (
-              <ul className="patient-chart-summary-list patient-chart-summary-list--overdue">
-                {summary.overdueReminders.map((r) => (
+          <SummarySection title="Upcoming">
+            {summary.activeReminders.length > 0 ? (
+              <ul className="patient-chart-summary-list">
+                {summary.activeReminders.map((r) => (
                   <ReminderRow
                     key={r.id}
-                    id={r.id}
-                    label={r.label}
-                    dueDateInput={r.dueDateInput}
+                    reminder={r}
                     onApplyRefillExpiration={onApplyRefillExpiration}
-                    onDecline={allowDecline ? declineRow : undefined}
-                    declining={decliningId === r.id}
+                    busy={decliningId === r.id}
+                    {...actions}
                   />
                 ))}
               </ul>

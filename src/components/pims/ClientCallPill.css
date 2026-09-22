@@ -1,0 +1,198 @@
+/* Live call status on the chart — see ClientCallPill.tsx. */
+
+.pims-call-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px 5px 10px;
+  border: 1px solid #e7e5e4;
+  border-radius: 999px;
+  background: #fafaf9;
+  color: #44403c;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+/* Follows the user around Scout, so it floats clear of whatever page is underneath. */
+.pims-call-pill--floating {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 1200;
+  cursor: pointer;
+  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.18);
+}
+
+.pims-call-pill--floating:disabled {
+  cursor: default;
+}
+
+.pims-call-pill.is-live {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  color: #166534;
+}
+
+.pims-call-pill.is-ready {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #1e40af;
+}
+
+/* Admin call on its way out — present, but visibly not asking for anything. */
+.pims-call-pill.is-muted {
+  color: #78716c;
+  font-weight: 500;
+}
+
+.pims-call-pill.is-muted .pims-call-pill__action {
+  background: transparent;
+  border: 1px solid #d6d3d1;
+  color: #57534e;
+  font-weight: 600;
+}
+
+.pims-call-pill.is-muted .pims-call-pill__action:hover {
+  background: #f5f5f4;
+}
+
+.pims-call-pill__label {
+  display: inline-flex;
+  align-items: baseline;
+}
+
+/* Ellipsis that keeps moving, so a call waiting on Quo never reads as frozen. */
+.pims-call-pill__ellipsis {
+  display: inline-flex;
+  gap: 2px;
+  margin-left: 3px;
+}
+
+.pims-call-pill__ellipsis i {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.25;
+  animation: pims-call-pill-dot 1.2s infinite ease-in-out;
+}
+
+.pims-call-pill__ellipsis i:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.pims-call-pill__ellipsis i:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes pims-call-pill-dot {
+  0%,
+  60%,
+  100% {
+    opacity: 0.25;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+
+.pims-call-pill__action {
+  border: 0;
+  border-radius: 999px;
+  padding: 4px 9px;
+  background: #1d4ed8;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.pims-call-pill__action:hover {
+  background: #1e40af;
+}
+
+.pims-call-pill__dismiss {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 50%;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  opacity: 0.55;
+  cursor: pointer;
+}
+
+.pims-call-pill__dismiss:hover {
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.pims-call-file__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin: 0 0 10px;
+}
+
+.pims-call-file__pet {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 200px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #44403c;
+}
+
+.pims-call-file__pet select,
+.pims-call-file__pet input[type='date'] {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid #e7e5e4;
+  border-radius: 6px;
+  font: inherit;
+  font-weight: 500;
+}
+
+.pims-call-file__dest {
+  flex: 1 1 100%;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid #e7e5e4;
+  border-radius: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+
+.pims-call-file__dest legend {
+  padding: 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #44403c;
+}
+
+.pims-call-file__dest label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #44403c;
+  cursor: pointer;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pims-call-pill__ellipsis i {
+    animation: none;
+    opacity: 0.6;
+  }
+}

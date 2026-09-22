@@ -14,6 +14,8 @@ export type CatalogReminderDefinition = {
   isActive: boolean;
 };
 
+export type ReminderCatalogItemType = 'inventory' | 'procedure' | 'lab';
+
 export type CatalogItemReminderCreate = {
   id: number;
   definitionId: number;
@@ -24,6 +26,9 @@ export type CatalogItemReminderCreate = {
   dueAt: number;
   expireAt: number;
   adjustByQuantity: boolean;
+  associatedCatalogItemType: ReminderCatalogItemType;
+  associatedCatalogItemId: number;
+  associatedCatalogItemName: string;
 };
 
 export type CatalogItemReminderClearDef = {
@@ -83,12 +88,44 @@ export async function patchCatalogReminderDefinition(
   return data;
 }
 
-export async function getInventoryItemReminders(
+function catalogReminderPath(
   practiceId: number,
-  inventoryItemId: number
+  itemType: ReminderCatalogItemType,
+  itemId: number
+): string {
+  if (itemType === 'procedure') {
+    return `/practice/${practiceId}/procedures/${itemId}/reminders`;
+  }
+  if (itemType === 'lab') {
+    return `/practice/${practiceId}/labs/${itemId}/reminders`;
+  }
+  return `/practice/${practiceId}/inventory-items/${itemId}/reminders`;
+}
+
+export type CatalogItemReminderWrite = {
+  creates?: Array<{
+    definitionId?: number;
+    reminderType?: string;
+    description?: string;
+    periodUnit?: string;
+    remindAt?: number;
+    dueAt?: number;
+    expireAt?: number;
+    adjustByQuantity?: boolean;
+    associatedCatalogItemType?: ReminderCatalogItemType | null;
+    associatedCatalogItemId?: number | null;
+  }>;
+  clearDefinitionIds?: number[];
+  clearTags?: string[];
+};
+
+export async function getCatalogItemReminders(
+  practiceId: number,
+  itemType: ReminderCatalogItemType,
+  itemId: number
 ): Promise<CatalogItemReminderBundle> {
   const { data } = await http.get<CatalogItemReminderBundle>(
-    `/practice/${practiceId}/inventory-items/${inventoryItemId}/reminders`
+    catalogReminderPath(practiceId, itemType, itemId)
   );
   return (
     data ?? {
@@ -100,26 +137,14 @@ export async function getInventoryItemReminders(
   );
 }
 
-export async function putInventoryItemReminders(
+export async function putCatalogItemReminders(
   practiceId: number,
-  inventoryItemId: number,
-  body: {
-    creates?: Array<{
-      definitionId?: number;
-      reminderType?: string;
-      description?: string;
-      periodUnit?: string;
-      remindAt?: number;
-      dueAt?: number;
-      expireAt?: number;
-      adjustByQuantity?: boolean;
-    }>;
-    clearDefinitionIds?: number[];
-    clearTags?: string[];
-  }
+  itemType: ReminderCatalogItemType,
+  itemId: number,
+  body: CatalogItemReminderWrite
 ): Promise<CatalogItemReminderBundle> {
   const { data } = await http.put<CatalogItemReminderBundle>(
-    `/practice/${practiceId}/inventory-items/${inventoryItemId}/reminders`,
+    catalogReminderPath(practiceId, itemType, itemId),
     body
   );
   return (
@@ -130,4 +155,19 @@ export async function putInventoryItemReminders(
       scoutEdited: true,
     }
   );
+}
+
+export async function getInventoryItemReminders(
+  practiceId: number,
+  inventoryItemId: number
+): Promise<CatalogItemReminderBundle> {
+  return getCatalogItemReminders(practiceId, 'inventory', inventoryItemId);
+}
+
+export async function putInventoryItemReminders(
+  practiceId: number,
+  inventoryItemId: number,
+  body: CatalogItemReminderWrite
+): Promise<CatalogItemReminderBundle> {
+  return putCatalogItemReminders(practiceId, 'inventory', inventoryItemId, body);
 }

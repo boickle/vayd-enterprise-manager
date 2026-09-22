@@ -4,17 +4,22 @@ import { Phone, ChevronRight } from 'lucide-react';
 import { listLocalBriefsForPatient } from '../../utils/briefStore';
 import { formatBriefDateTime } from '../../utils/briefDisplay';
 import { buildPhoneDialHref } from '../../utils/quoContact';
+import { markClientCallStarted } from '../../hooks/useClientCallActivity';
+import { useOutboundCallFromLine } from '../../hooks/useOutboundCallFromLine';
 
 type Props = {
   open: boolean;
   onClose: () => void;
   patientId: string;
   patientName: string;
+  clientId: number | null;
   clientName: string;
   clientPhone: string | null;
   practiceTz: string;
   onOpenCallSession: (sessionId: string) => void;
   onStartCallNote: () => void;
+  /** Called a client straight from Quo? Paste what Quo transcribed instead of re-recording. */
+  onPasteTranscript: () => void;
 };
 
 export default function PimsChartCallModal({
@@ -22,12 +27,15 @@ export default function PimsChartCallModal({
   onClose,
   patientId,
   patientName,
+  clientId,
   clientName,
   clientPhone,
   practiceTz,
   onOpenCallSession,
   onStartCallNote,
+  onPasteTranscript,
 }: Props) {
+  const fromLine = useOutboundCallFromLine();
   const [tick, setTick] = useState(0);
   const calls = useMemo(() => {
     void tick;
@@ -52,17 +60,22 @@ export default function PimsChartCallModal({
         </div>
 
         <p className="pims-chart-pick__empty">
-          Place the call in Quo. Jot transcribes while you talk — the transcript is saved with
-          the call and is not on the medical record unless you add it.
+          Quo places the call and transcribes both sides of it — nothing to start, and no need
+          for speaker. The transcript comes back to this chart a minute or two after you hang
+          up, and is not on the medical record unless you file it.
         </p>
 
         <div className="pims-chart-pick__foot" style={{ justifyContent: 'flex-start', marginBottom: 12 }}>
           {clientPhone ? (
             <a
               className="brief-btn primary"
-              href={buildPhoneDialHref(clientPhone)}
+              href={buildPhoneDialHref(clientPhone, { fromLine })}
               onClick={() => {
-                onStartCallNote();
+                markClientCallStarted(
+                  clientId,
+                  clientName,
+                  Number.isFinite(Number(patientId)) ? Number(patientId) : null,
+                );
                 onClose();
               }}
             >
@@ -82,7 +95,18 @@ export default function PimsChartCallModal({
               onClose();
             }}
           >
-            Start call note only
+            Dictate a note instead
+          </button>
+          <button
+            type="button"
+            className="brief-btn"
+            title="Paste a transcript from a call you placed directly in Quo"
+            onClick={() => {
+              onPasteTranscript();
+              onClose();
+            }}
+          >
+            Paste a transcript
           </button>
         </div>
 

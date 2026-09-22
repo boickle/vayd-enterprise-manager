@@ -30,6 +30,12 @@ export function resolveRecapMailbox(mailboxes: GmailMailboxStatus[]): string | n
   return connected[0]?.email ?? null;
 }
 
+/** `Name <a@b.com>` or bare address, for the From field / send-as select. */
+export function formatSendAsLabel(alias: GmailSendAsAlias): string {
+  const email = alias.sendAsEmail.trim();
+  return alias.displayName?.trim() ? `${alias.displayName.trim()} <${email}>` : email;
+}
+
 /**
  * The address the recap should appear to come from: the visit provider's work
  * alias when the shared mailbox genuinely has it configured, otherwise the shared
@@ -48,22 +54,19 @@ export function resolveRecapFromAddress(
   const wanted = normalize(providerEmail);
   if (wanted) {
     const alias = aliases.find((a) => normalize(a.sendAsEmail) === wanted);
-    if (alias) {
-      return alias.displayName?.trim()
-        ? `${alias.displayName.trim()} <${alias.sendAsEmail}>`
-        : alias.sendAsEmail;
-    }
+    if (alias) return formatSendAsLabel(alias);
   }
   const self = aliases.find((a) => normalize(a.sendAsEmail) === normalize(mailbox));
-  if (self) {
-    return self.displayName?.trim()
-      ? `${self.displayName.trim()} <${self.sendAsEmail}>`
-      : self.sendAsEmail;
-  }
+  if (self) return formatSendAsLabel(self);
   return mailbox;
 }
 
 /** True when the recap will go out as the shared inbox rather than the provider. */
 export function isFallbackSender(fromAddress: string, mailbox: string): boolean {
   return bareAddress(fromAddress) === normalize(mailbox);
+}
+
+/** Bare email of a From label (`Name <a@b.com>` or `a@b.com`). */
+export function bareSendAsAddress(value: string): string {
+  return bareAddress(value);
 }

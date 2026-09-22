@@ -109,6 +109,59 @@
   margin-top: 4px;
 }
 
+.patient-chart-summary-reminder {
+  flex-wrap: nowrap;
+  align-items: flex-start;
+  border-radius: 4px;
+}
+
+.patient-chart-summary-reminder > span {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.patient-chart-summary-callback-meta {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.patient-chart-summary-reminder--overdue .patient-chart-summary-callback-meta,
+.patient-chart-summary-list--overdue .patient-chart-summary-callback-meta {
+  color: #b91c1c;
+}
+
+.patient-chart-summary-reminder:has(.patient-chart-summary-reminder-no:hover),
+.patient-chart-summary-reminder:has(.patient-chart-summary-reminder-x:hover) {
+  background: #f1f5f9;
+}
+
+.patient-chart-summary-reminder-no,
+.patient-chart-summary-reminder-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.patient-chart-summary-reminder-x {
+  color: #64748b;
+}
+
+.patient-chart-summary-reminder-no:disabled,
+.patient-chart-summary-reminder-x:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 .patient-chart-summary-declined {
   color: #b91c1c;
 }

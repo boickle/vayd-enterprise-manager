@@ -20,6 +20,9 @@ export type DeclinedTreatmentItem = {
   catalogItemType?: 'inventory' | 'procedure' | 'lab' | null;
   catalogItemId?: number | null;
   patientId?: number;
+  declinedByName?: string | null;
+  /** False when the decline was marked off-record (invoice only). */
+  onChart?: boolean;
 };
 
 export function formatDeclinedDate(iso: string | null | undefined): string {
@@ -41,9 +44,17 @@ export function parseDeclinedItems(raw: unknown): DeclinedTreatmentItem[] {
         o.catalogItemType === 'lab'
           ? o.catalogItemType
           : null;
+      const note = typeof o.note === 'string' ? o.note : null;
+      const labelCandidates = [o.label, o.description, o.name, o.treatmentName, o.itemName];
+      const label =
+        labelCandidates
+          .map((v) => (typeof v === 'string' ? v.trim() : ''))
+          .find((v) => v && v.toLowerCase() !== 'declined item') ||
+        (typeof o.label === 'string' && o.label.trim()) ||
+        'Declined treatment';
       return {
         id: Number(o.id) || 0,
-        label: String(o.label ?? o.description ?? 'Declined item'),
+        label,
         declinedAt:
           typeof o.declinedAt === 'string'
             ? o.declinedAt
@@ -61,6 +72,11 @@ export function parseDeclinedItems(raw: unknown): DeclinedTreatmentItem[] {
           o.patientId != null && Number.isFinite(Number(o.patientId))
             ? Number(o.patientId)
             : undefined,
+        declinedByName:
+          typeof o.declinedByName === 'string' && o.declinedByName.trim()
+            ? o.declinedByName.trim()
+            : null,
+        onChart: o.onChart !== false && !isOffRecordDeclineNote(note),
       };
     })
     .filter((row) => row.id > 0 || row.label);

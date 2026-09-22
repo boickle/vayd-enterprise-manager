@@ -98,7 +98,6 @@ export function DetailHeader({
         {summary ? <p className="pims-detail__signalment">{summary}</p> : null}
         {belowTitle}
         {reach ? <ul className="pims-detail__reach">{reach}</ul> : null}
-        {afterReach}
       </div>
       {stat || actions ? (
         <div className="pims-detail__header-side">
@@ -106,6 +105,7 @@ export function DetailHeader({
           {actions ? <div className="pims-detail__header-actions">{actions}</div> : null}
         </div>
       ) : null}
+      {afterReach ? <div className="pims-detail__header-span">{afterReach}</div> : null}
     </header>
   );
 }

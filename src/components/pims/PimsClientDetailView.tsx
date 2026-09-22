@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import {
@@ -16,6 +16,7 @@ import {
   Plus,
   Settings,
   Sparkles,
+  Stethoscope,
   User,
   UserCheck,
   UserX,
@@ -57,6 +58,8 @@ import ClientCommunicationsPanel from './ClientCommunicationsPanel';
 import ClientFinancialWorkspace from './ClientFinancialWorkspace';
 import PimsClientHouseholdChatCard from './PimsClientHouseholdChatCard';
 import AddPatientModal from './AddPatientModal';
+import PimsStartSoapModal from './PimsStartSoapModal';
+import ClientCallPill from './ClientCallPill';
 import {
   ClientReachEmailLink,
   ClientReachHost,
@@ -64,6 +67,8 @@ import {
   useClientReach,
 } from './ClientReachHub';
 import { useAuth } from '../../auth/useAuth';
+import { markClientCallStarted } from '../../hooks/useClientCallActivity';
+import { useOutboundCallFromLine } from '../../hooks/useOutboundCallFromLine';
 import {
   readStaffClientLayout,
   writeStaffClientLayout,
@@ -84,8 +89,9 @@ import {
   enrichRoutingClientPatientsMembership,
   patientMembershipFromRecord,
 } from '../../utils/routingPatientHoverData';
-import { writeRoutingChartBookIntent } from '../../utils/routingChartBookIntent';
+import { patientSexHighlightTone } from '../../utils/schedulerVisitDisplay';
 import { startFreshNewAppointmentRouting } from '../../utils/routingNewAppointment';
+import { writeRoutingChartBookIntent } from '../../utils/routingChartBookIntent';
 import { markSchedulerHandoffPreferRoutingDoctor } from '../../utils/schedulerCalendarHandoff';
 import {
   DetailHeader,
@@ -420,6 +426,15 @@ const EMAIL_FIELDS: FieldSpec[] = [
 
 type HeaderEdit = 'name' | 'phone' | 'email' | 'address' | 'alerts' | 'connectionNotes' | null;
 
+const HEADER_EDIT_TITLE: Record<Exclude<HeaderEdit, null>, string> = {
+  name: 'Contact',
+  phone: 'Phone',
+  email: 'Email',
+  address: 'Address',
+  alerts: 'Client alerts',
+  connectionNotes: 'Connection notes',
+};
+
 function recordToAddressFields(c: Record<string, unknown>): AddressFields {
   return {
     line1: pickStr(c.address1) ?? '',
@@ -676,11 +691,9 @@ function ClientHouseholdDefaultsCard({
 
 function ReachEditButton({
   label,
-  expanded,
   onClick,
 }: {
   label: string;
-  expanded: boolean;
   onClick: () => void;
 }) {
   return (
@@ -688,11 +701,51 @@ function ReachEditButton({
       type="button"
       className="pims-client-detail__reach-edit"
       aria-label={label}
-      aria-expanded={expanded}
+      aria-haspopup="dialog"
       onClick={onClick}
     >
       <Pencil size={13} aria-hidden />
     </button>
+  );
+}
+
+function HeaderEditModal({
+  title,
+  onClose,
+  children,
+}: {
+  title: string;
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  if (typeof document === 'undefined') return null;
+  return createPortal(
+    <div
+      className="pims-chart-pick pims-client-edit-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="pims-client-edit-title"
+    >
+      <button type="button" className="pims-chart-pick__backdrop" aria-label="Close" onClick={onClose} />
+      <div className="pims-chart-pick__card pims-client-edit-modal__card">
+        <div className="pims-chart-pick__head">
+          <h3 id="pims-client-edit-title">{title}</h3>
+          <button type="button" className="pims-chart-pick__close" onClick={onClose} aria-label="Close">
+            ×
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -1259,8 +1312,11 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
   const [summaryOpen, toggleSummaryOpen] = useClientSectionOpen(userId ?? null, 'summary');
   const [syncOpen, toggleSyncOpen] = useClientSectionOpen(userId ?? null, 'sync');
   const reach = useClientReach();
+  const fromLine = useOutboundCallFromLine();
   const [addPetOpen, setAddPetOpen] = useState(false);
   const [communicatePick, setCommunicatePick] = useState(false);
+  const [soapPetPick, setSoapPetPick] = useState(false);
+  const [soapPatient, setSoapPatient] = useState<{ id: string; name: string } | null>(null);
   const [logOpen, setLogOpen] = useState(false);
   const [logBody, setLogBody] = useState('');
   const [logSaving, setLogSaving] = useState(false);
@@ -1352,6 +1408,12 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
     });
   }, [payload]);
 
+  const soapPetChoices = useMemo(() => {
+    const withId = patients.filter((p) => p.id != null && String(p.id).trim() !== '');
+    const active = withId.filter((p) => p.isActive !== false);
+    return active.length > 0 ? active : withId;
+  }, [patients]);
+
   const [petMembershipById, setPetMembershipById] = useState<
     Record<string, { isMember: boolean; membershipName: string | null }>
   >({});
@@ -1412,6 +1474,25 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
     });
     markSchedulerHandoffPreferRoutingDoctor();
     navigate('/schedule/routing');
+  }
+
+  function openSoapForPatient(appointmentId: number, pid: string, cid: string | null) {
+    const qs =
+      cid != null && cid !== '' ? `?clientId=${encodeURIComponent(cid)}` : '';
+    navigate(`/schedule/soap/${appointmentId}/${encodeURIComponent(pid)}${qs}`);
+  }
+
+  function startSoapFromClient() {
+    if (soapPetChoices.length === 0) return;
+    if (soapPetChoices.length === 1) {
+      const only = soapPetChoices[0];
+      setSoapPatient({
+        id: String(only.id),
+        name: pickStr(only.name) ?? 'Patient',
+      });
+      return;
+    }
+    setSoapPetPick(true);
   }
 
   const toggleHeaderEdit = useCallback((next: HeaderEdit) => {
@@ -1581,6 +1662,16 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
     } => p != null);
 
   const zoneText = zone ? `Zone ${zone.replace(/^Zone\s+/i, '')}` : null;
+  const clientPrimaryProviderLabel = (() => {
+    const flat = pickStr(record.primaryProviderName);
+    if (flat) return flat;
+    const pp = record.primaryProvider;
+    if (pp && typeof pp === 'object') {
+      const p = pp as Record<string, unknown>;
+      return [pickStr(p.firstName), pickStr(p.lastName)].filter(Boolean).join(' ') || null;
+    }
+    return null;
+  })();
 
   return (
     <div className="pims-detail pims-detail--emr">
@@ -1595,7 +1686,6 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
             {name}
             <ReachEditButton
               label="Edit contact"
-              expanded={headerEdit === 'name'}
               onClick={() => toggleHeaderEdit('name')}
             />
           </span>
@@ -1623,6 +1713,73 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
             )}
           </>
         }
+        summary={
+          clientPrimaryProviderLabel ? (
+            <span className="pims-emr-primary-provider">
+              <Stethoscope size={12} aria-hidden />
+              {clientPrimaryProviderLabel}
+            </span>
+          ) : undefined
+        }
+        belowTitle={
+          patients.length ? (
+            <ul className="pims-emr-household__pets pims-emr-household__pets--under-name" aria-label="Patients">
+              {[...patients]
+                .sort((a, b) => {
+                  const aActive = a.isActive !== false;
+                  const bActive = b.isActive !== false;
+                  if (aActive !== bActive) return aActive ? -1 : 1;
+                  return (pickStr(a.name) ?? '').localeCompare(pickStr(b.name) ?? '');
+                })
+                .map((p, idx) => {
+                  const pid = p.id != null ? String(p.id) : '';
+                  const href = pid
+                    ? `${patientsBasePath}?patientId=${encodeURIComponent(pid)}`
+                    : patientsBasePath;
+                  const sexTone = patientSexHighlightTone(p as never);
+                  const sexClass =
+                    sexTone === 'female' ? ' is-female' : sexTone === 'male' ? ' is-male' : '';
+                  const petActive = p.isActive !== false;
+                  const membership =
+                    (pid ? petMembershipById[pid] : null) ?? patientMembershipFromRecord(p);
+                  const heart = membership.isMember ? (
+                    <span title={membership.membershipName?.trim() || 'On a membership'}>
+                      <Heart
+                        className="pims-emr-household__pet-heart"
+                        size={12}
+                        fill="currentColor"
+                        strokeWidth={1.75}
+                        aria-label={membership.membershipName?.trim() || 'Membership'}
+                      />
+                    </span>
+                  ) : null;
+                  return (
+                    <li key={pid || pickStr(p.pimsId) || `pet-chip-${idx}`}>
+                      {pid ? (
+                        <Link
+                          className={`pims-emr-household__pet${sexClass}${petActive ? '' : ' is-inactive'}`}
+                          to={href}
+                        >
+                          <PetThumb
+                            src={petImageSrc(pid, p.imageUrl)}
+                            size={22}
+                            className="pims-emr-household__pet-img"
+                          />
+                          {pickStr(p.name) ?? `Pet #${pid}`}
+                          {heart}
+                        </Link>
+                      ) : (
+                        <span className={`pims-emr-household__pet${sexClass}`}>
+                          {pickStr(p.name) ?? 'Pet'}
+                          {heart}
+                        </span>
+                      )}
+                    </li>
+                  );
+                })}
+            </ul>
+          ) : null
+        }
         reach={
           <>
             {phoneRows.length ? (
@@ -1639,7 +1796,6 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
                   {i === 0 ? (
                     <ReachEditButton
                       label="Edit phone"
-                      expanded={headerEdit === 'phone'}
                       onClick={() => toggleHeaderEdit('phone')}
                     />
                   ) : null}
@@ -1651,7 +1807,6 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
                 <span className="pims-client-detail__reach-empty">No phone</span>
                 <ReachEditButton
                   label="Edit phone"
-                  expanded={headerEdit === 'phone'}
                   onClick={() => toggleHeaderEdit('phone')}
                 />
               </li>
@@ -1669,7 +1824,6 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
                   {i === 0 ? (
                     <ReachEditButton
                       label="Edit email"
-                      expanded={headerEdit === 'email'}
                       onClick={() => toggleHeaderEdit('email')}
                     />
                   ) : null}
@@ -1681,7 +1835,6 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
                 <span className="pims-client-detail__reach-empty">No email</span>
                 <ReachEditButton
                   label="Edit email"
-                  expanded={headerEdit === 'email'}
                   onClick={() => toggleHeaderEdit('email')}
                 />
               </li>
@@ -1696,7 +1849,6 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
               {zoneText ? <span className="pims-emr-zone-badge">{zoneText}</span> : null}
               <ReachEditButton
                 label="Edit address"
-                expanded={headerEdit === 'address'}
                 onClick={() => toggleHeaderEdit('address')}
               />
             </li>
@@ -1734,7 +1886,6 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
                   <span className="pims-emr-alert-box__label">Client alerts</span>
                   <ReachEditButton
                     label="Edit client alerts"
-                    expanded={headerEdit === 'alerts'}
                     onClick={() => toggleHeaderEdit('alerts')}
                   />
                 </div>
@@ -1755,7 +1906,6 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
                   <span className="pims-emr-alert-box__label">Connection Notes (staff only)</span>
                   <ReachEditButton
                     label="Edit connection notes"
-                    expanded={headerEdit === 'connectionNotes'}
                     onClick={() => toggleHeaderEdit('connectionNotes')}
                   />
                 </div>
@@ -1808,8 +1958,15 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
               <Plus size={14} aria-hidden />
               Appointment
             </button>
-            <button type="button" className="pims-detail__btn-secondary" onClick={() => openFinancial()}>
-              Invoices
+            <button
+              type="button"
+              className="pims-detail__btn-secondary"
+              onClick={startSoapFromClient}
+              disabled={soapPetChoices.length === 0}
+              title="Continue an open SOAP, or start one from a visit on the books"
+            >
+              <Stethoscope size={14} aria-hidden />
+              Start/Continue SOAP
             </button>
             <button
               type="button"
@@ -1844,133 +2001,135 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
 
       {actionError ? <p className="pims-detail__banner-error">{actionError}</p> : null}
 
-      {headerEdit === 'name' ? (
-        <div className="pims-client-detail__header-edit">
-          <EditableCard
-            title="Contact"
-            icon={<User size={16} aria-hidden />}
-            fields={NAME_FIELDS}
-            values={nameValues}
-            defaultEditing
-            onCancel={() => setHeaderEdit(null)}
-            onSave={async (v) => {
-              await saveFields({
-                namePrefix: v.namePrefix.trim() || null,
-                firstName: v.firstName.trim() || null,
-                lastName: v.lastName.trim() || null,
-                secondFirstName: v.secondFirstName.trim() || null,
-                secondLastName: v.secondLastName.trim() || null,
-                referralSource: v.referralSource.trim() || null,
-              });
-              setHeaderEdit(null);
-            }}
-          />
-        </div>
-      ) : null}
+      <ClientCallPill
+        clientId={Number.isFinite(Number(clientId)) ? Number(clientId) : null}
+        clientName={name}
+        patients={financialPets.map((p) => ({ id: p.id, name: p.name }))}
+        onNoteFiled={() => setCommsTick((n) => n + 1)}
+      />
 
-      {headerEdit === 'alerts' ? (
-        <div className="pims-client-detail__header-edit">
-          <EditableCard
-            title="Client alerts"
-            icon={<AlertTriangle size={16} aria-hidden />}
-            fields={ALERT_FIELDS}
-            values={{ alerts: alerts ?? '' }}
-            defaultEditing
-            onCancel={() => setHeaderEdit(null)}
-            emptyHint="No client alerts."
-            onSave={async (v) => {
-              await saveFields({ alerts: v.alerts.trim() || null });
-              setHeaderEdit(null);
-            }}
-          />
-        </div>
-      ) : null}
+      {headerEdit ? (
+        <HeaderEditModal
+          title={HEADER_EDIT_TITLE[headerEdit]}
+          onClose={() => setHeaderEdit(null)}
+        >
+          {headerEdit === 'name' ? (
+            <EditableCard
+              title="Contact"
+              icon={<User size={16} aria-hidden />}
+              fields={NAME_FIELDS}
+              values={nameValues}
+              defaultEditing
+              onCancel={() => setHeaderEdit(null)}
+              onSave={async (v) => {
+                await saveFields({
+                  namePrefix: v.namePrefix.trim() || null,
+                  firstName: v.firstName.trim() || null,
+                  lastName: v.lastName.trim() || null,
+                  secondFirstName: v.secondFirstName.trim() || null,
+                  secondLastName: v.secondLastName.trim() || null,
+                  referralSource: v.referralSource.trim() || null,
+                });
+                setHeaderEdit(null);
+              }}
+            />
+          ) : null}
 
-      {headerEdit === 'connectionNotes' ? (
-        <div className="pims-client-detail__header-edit">
-          <EditableCard
-            title="Connection Notes"
-            icon={<MessageSquare size={16} aria-hidden />}
-            fields={CONNECTION_NOTES_FIELDS}
-            values={{ connectionNotes: connectionNotes ?? '' }}
-            defaultEditing
-            onCancel={() => setHeaderEdit(null)}
-            emptyHint="No connection notes."
-            onSave={async (v) => {
-              await saveFields({ connectionNotes: v.connectionNotes.trim() || null });
-              setHeaderEdit(null);
-            }}
-          />
-        </div>
-      ) : null}
+          {headerEdit === 'alerts' ? (
+            <EditableCard
+              title="Client alerts"
+              icon={<AlertTriangle size={16} aria-hidden />}
+              fields={ALERT_FIELDS}
+              values={{ alerts: alerts ?? '' }}
+              defaultEditing
+              onCancel={() => setHeaderEdit(null)}
+              emptyHint="No client alerts."
+              onSave={async (v) => {
+                await saveFields({ alerts: v.alerts.trim() || null });
+                setHeaderEdit(null);
+              }}
+            />
+          ) : null}
 
-      {headerEdit === 'phone' ? (
-        <div className="pims-client-detail__header-edit">
-          <EditableCard
-            title="Phone"
-            icon={<Phone size={16} aria-hidden />}
-            fields={PHONE_FIELDS}
-            values={phoneValues}
-            defaultEditing
-            onCancel={() => setHeaderEdit(null)}
-            emptyHint="No phone on file."
-            onSave={async (v) => {
-              await saveFields({
-                phone1: v.phone1.trim() || null,
-                phone1Type: v.phone1Type.trim() || null,
-                phone2: v.phone2.trim() || null,
-                phone2Type: v.phone2Type.trim() || null,
-                phone1SmsEnabled: v.phone1SmsEnabled !== '0',
-                phone2SmsEnabled: v.phone2SmsEnabled !== '0',
-              });
-              setHeaderEdit(null);
-            }}
-          />
-        </div>
-      ) : null}
+          {headerEdit === 'connectionNotes' ? (
+            <EditableCard
+              title="Connection Notes"
+              icon={<MessageSquare size={16} aria-hidden />}
+              fields={CONNECTION_NOTES_FIELDS}
+              values={{ connectionNotes: connectionNotes ?? '' }}
+              defaultEditing
+              onCancel={() => setHeaderEdit(null)}
+              emptyHint="No connection notes."
+              onSave={async (v) => {
+                await saveFields({ connectionNotes: v.connectionNotes.trim() || null });
+                setHeaderEdit(null);
+              }}
+            />
+          ) : null}
 
-      {headerEdit === 'email' ? (
-        <div className="pims-client-detail__header-edit">
-          <EditableCard
-            title="Email"
-            icon={<Mail size={16} aria-hidden />}
-            fields={EMAIL_FIELDS}
-            values={emailValues}
-            defaultEditing
-            onCancel={() => setHeaderEdit(null)}
-            emptyHint="No email on file."
-            onSave={async (v) => {
-              const noEmail = v.noEmail === '1' || v.noEmail === 'true';
-              await saveFields({
-                noEmail,
-                email: noEmail ? null : v.email.trim() || null,
-                secondEmail: v.secondEmail.trim() || null,
-              });
-              setHeaderEdit(null);
-            }}
-          >
-            {extraEmails.length ? (
-              <p className="pims-detail__muted pims-client-detail__extra-emails">
-                Also on file from eVet: {extraEmails.join(', ')}
-              </p>
-            ) : null}
-          </EditableCard>
-        </div>
-      ) : null}
+          {headerEdit === 'phone' ? (
+            <EditableCard
+              title="Phone"
+              icon={<Phone size={16} aria-hidden />}
+              fields={PHONE_FIELDS}
+              values={phoneValues}
+              defaultEditing
+              onCancel={() => setHeaderEdit(null)}
+              emptyHint="No phone on file."
+              onSave={async (v) => {
+                await saveFields({
+                  phone1: v.phone1.trim() || null,
+                  phone1Type: v.phone1Type.trim() || null,
+                  phone2: v.phone2.trim() || null,
+                  phone2Type: v.phone2Type.trim() || null,
+                  phone1SmsEnabled: v.phone1SmsEnabled !== '0',
+                  phone2SmsEnabled: v.phone2SmsEnabled !== '0',
+                });
+                setHeaderEdit(null);
+              }}
+            />
+          ) : null}
 
-      {headerEdit === 'address' ? (
-        <div className="pims-client-detail__address-edit">
-          <ClientAddressEditor
-            record={record}
-            zoneText={zoneText}
-            geo={geo}
-            onCancel={() => setHeaderEdit(null)}
-            onSave={async (body) => {
-              await saveFields(body);
-              setHeaderEdit(null);
-            }}
-          />
-        </div>
+          {headerEdit === 'email' ? (
+            <EditableCard
+              title="Email"
+              icon={<Mail size={16} aria-hidden />}
+              fields={EMAIL_FIELDS}
+              values={emailValues}
+              defaultEditing
+              onCancel={() => setHeaderEdit(null)}
+              emptyHint="No email on file."
+              onSave={async (v) => {
+                const noEmail = v.noEmail === '1' || v.noEmail === 'true';
+                await saveFields({
+                  noEmail,
+                  email: noEmail ? null : v.email.trim() || null,
+                  secondEmail: v.secondEmail.trim() || null,
+                });
+                setHeaderEdit(null);
+              }}
+            >
+              {extraEmails.length ? (
+                <p className="pims-detail__muted pims-client-detail__extra-emails">
+                  Also on file from eVet: {extraEmails.join(', ')}
+                </p>
+              ) : null}
+            </EditableCard>
+          ) : null}
+
+          {headerEdit === 'address' ? (
+            <ClientAddressEditor
+              record={record}
+              zoneText={zoneText}
+              geo={geo}
+              onCancel={() => setHeaderEdit(null)}
+              onSave={async (body) => {
+                await saveFields(body);
+                setHeaderEdit(null);
+              }}
+            />
+          ) : null}
+        </HeaderEditModal>
       ) : null}
 
       <ClientHouseholdDefaultsCard
@@ -2326,6 +2485,79 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
         }}
       />
 
+      {soapPetPick && typeof document !== 'undefined'
+        ? createPortal(
+            <div
+              className="pims-chart-pick"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="pims-client-soap-pet"
+            >
+              <button
+                type="button"
+                className="pims-chart-pick__backdrop"
+                aria-label="Close"
+                onClick={() => setSoapPetPick(false)}
+              />
+              <div className="pims-chart-pick__card">
+                <div className="pims-chart-pick__head">
+                  <h3 id="pims-client-soap-pet">
+                    <Stethoscope size={16} aria-hidden /> Start/Continue SOAP
+                  </h3>
+                  <button
+                    type="button"
+                    className="pims-chart-pick__close"
+                    onClick={() => setSoapPetPick(false)}
+                    aria-label="Close"
+                  >
+                    ×
+                  </button>
+                </div>
+                <p className="pims-chart-pick__empty" style={{ marginBottom: 10 }}>
+                  Which pet is this visit for?
+                </p>
+                <ul className="pims-chart-pick__list">
+                  {soapPetChoices.map((p) => {
+                    const pid = String(p.id);
+                    const petName = pickStr(p.name) ?? `Pet #${pid}`;
+                    return (
+                      <li key={pid}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSoapPetPick(false);
+                            setSoapPatient({ id: pid, name: petName });
+                          }}
+                        >
+                          <strong>{petName}</strong>
+                          <span>Open SOAPs and visits for this pet</span>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+                <div className="pims-chart-pick__foot">
+                  <button type="button" className="brief-btn" onClick={() => setSoapPetPick(false)}>
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
+
+      <PimsStartSoapModal
+        open={soapPatient != null}
+        onClose={() => setSoapPatient(null)}
+        patientId={soapPatient?.id ?? ''}
+        patientName={soapPatient?.name ?? ''}
+        clientId={clientId}
+        practiceTz={PIMS_CLIENT_DETAIL_TZ}
+        onOpenSoap={openSoapForPatient}
+        onBookAppointment={canBookAppointment ? startAppointmentForThisClient : undefined}
+      />
+
       {communicatePick && typeof document !== 'undefined'
         ? createPortal(
             <div className="pims-chart-pick" role="dialog" aria-modal="true" aria-labelledby="pims-client-msg-pick">
@@ -2375,7 +2607,8 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
                     onClick={() => {
                       if (!phone1) return;
                       setCommunicatePick(false);
-                      window.location.href = buildPhoneDialHref(phone1);
+                      markClientCallStarted(Number(clientId), name);
+                      window.location.href = buildPhoneDialHref(phone1, { fromLine });
                     }}
                   >
                     <Phone size={14} aria-hidden />

@@ -81,6 +81,7 @@ import SettingsClientStatuses from '../components/settings/SettingsClientStatuse
 import SettingsPatientStatuses from '../components/settings/SettingsPatientStatuses';
 import SettingsMemberships from '../components/settings/SettingsMemberships';
 import SettingsMessageTemplates from '../components/settings/SettingsMessageTemplates';
+import FormsAdmin from './FormsAdmin';
 import WasteAdminPage from './WasteAdminPage';
 import SettingsMailShippingTypes from '../components/settings/SettingsMailShippingTypes';
 import SettingsChatHours from '../components/settings/SettingsChatHours';
@@ -114,6 +115,7 @@ const SETTINGS_TAB_IDS = [
   'patient-statuses',
   'memberships',
   'message-templates',
+  'forms',
 ] as const;
 type SettingsTabId = (typeof SETTINGS_TAB_IDS)[number];
 
@@ -166,6 +168,7 @@ const COMMUNICATION_SETTINGS_ITEMS: SettingsMenuItem[] = [
   { id: 'chat-hours', label: 'Live Chat Hours' },
   { id: 'reminders', label: 'Reminders' },
   { id: 'message-templates', label: 'Email & Text Templates' },
+  { id: 'forms', label: 'Forms' },
 ];
 
 const INVENTORY_SETTINGS_ITEMS: SettingsMenuItem[] = [
@@ -1470,6 +1473,7 @@ export default function Settings() {
         )}
 
         {activeTab === 'euthanasia-consent' && <SettingsEuthanasiaConsent />}
+
 
         {activeTab === 'outside-hospitals' && <SettingsOutsideHospitals />}
 
@@ -3438,30 +3442,6 @@ export default function Settings() {
                   />
                 </div>
 
-                <h3 className="settings-card-title" style={{ marginTop: '24px' }}>Include reminder types</h3>
-                <div className="settings-form-group">
-                  <label className="settings-label">Included reminder types</label>
-                  <span className="settings-muted" style={{ display: 'block', marginBottom: '8px' }}>
-                    Only send reminders whose type is in this list (one type name per line). Leave empty to include all types.
-                  </span>
-                  <textarea
-                    className="settings-input"
-                    value={reminderForm.includedReminderTypes.join('\n')}
-                    onChange={(e) =>
-                      setReminderForm((prev) => ({
-                        ...prev,
-                        includedReminderTypes: e.target.value
-                          .split(/\r?\n/)
-                          .map((s) => s.trim())
-                          .filter(Boolean),
-                      }))
-                    }
-                    placeholder={'e.g. vaccination\nannual exam\nwellness'}
-                    rows={4}
-                    style={{ resize: 'vertical', minHeight: '80px' }}
-                  />
-                </div>
-
                 <h3 className="settings-card-title" style={{ marginTop: '24px' }}>Test redirects (non-production)</h3>
                 <div className="settings-form-group">
                   <label className="settings-label">Test redirect email</label>
@@ -3558,6 +3538,12 @@ export default function Settings() {
                 else setSuccess(msg);
               }}
             />
+          </div>
+        )}
+
+        {activeTab === 'forms' && (
+          <div className="settings-section settings-section--forms">
+            <FormsAdmin />
           </div>
         )}
       </div>

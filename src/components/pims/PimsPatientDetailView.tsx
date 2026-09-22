@@ -76,6 +76,7 @@ import {
   type PostedVisitCharge,
   type SoapEncounter,
 } from '../../api/visitWorkflow';
+import { listFormInvites, type FormInvite } from '../../api/forms';
 import {
   buildChartRowsFromMedicalRecord,
   chartRowsFromClientRoomLoaders,
@@ -130,12 +131,17 @@ import {
   parseRemindersFromMedicalRecord,
   patientMembershipFromRecord,
   splitActiveAndOverdueReminders,
+  type RoutingPatientReminderLine,
 } from '../../utils/routingPatientHoverData';
+import { listTasks, type TaskListItem } from '../../api/tasks';
+import ChartAddFollowUp, { staffWorkKindLabel } from './ChartAddFollowUp';
+import { fetchAllEmployees, type Employee } from '../../api/appointmentSettings';
+import { formatEmployeeDisplayName } from '../../utils/employeeDisplayName';
 import { appConfirm, appPrompt } from '../../utils/appDialog';
 import { pushRecentRecord } from '../../utils/recentRecordsStore';
 import '../../pages/BriefWorkspacePage.css';
 import { scoutManagedState } from '../../utils/pimsScoutManaged';
-import { patientSexDisplayFromRecord, patientSexHighlightTone } from '../../utils/schedulerVisitDisplay';
+import { patientSexDisplayFromRecord, patientSexHighlightTone, primaryProviderFromPatientRecord } from '../../utils/schedulerVisitDisplay';
 import { useAuth } from '../../auth/AuthProvider';
 import {
   readStaffPatientLayout,
@@ -352,7 +358,7 @@ function formatChartDateShort(iso: string | null): string {
 function usePatientSectionOpen(
   userId: string | null | undefined,
   key: keyof StaffPatientLayout,
-): [boolean, () => void] {
+): [boolean, () => void, () => void] {
   const [open, setOpen] = useState(() => readStaffPatientLayout(userId)[key]);
 
   useEffect(() => {
@@ -370,7 +376,15 @@ function usePatientSectionOpen(
     });
   }, [userId, key]);
 
-  return [open, toggle];
+  const ensureOpen = useCallback(() => {
+    setOpen((v) => {
+      if (v) return v;
+      writeStaffPatientLayout(userId, { [key]: true });
+      return true;
+    });
+  }, [userId, key]);
+
+  return [open, toggle, ensureOpen];
 }
 
 function chartRowHasBody(r: ChartRow): boolean {
@@ -882,7 +896,7 @@ function DeleteReminderConfirm({
   onCancel,
   onConfirm,
 }: {
-  reminder: { id: string; label: string };
+  reminder: { id: string; label: string; callback?: boolean };
   patientName: string;
   busy: boolean;
   onCancel: () => void;
@@ -927,7 +941,9 @@ function DeleteReminderConfirm({
           </button>
         </div>
         <p className="pims-chart-confirm__body">
-          It will come off {whose}’s chart and the client portal.
+          {reminder.callback
+            ? `It will come off ${whose}’s callbacks & tasks. It will not stay on the chart or under Declined.`
+            : `It will come off ${whose}’s chart and the client portal.`}
         </p>
         <p className="pims-chart-confirm__quote">{reminder.label}</p>
         <div className="pims-chart-pick__foot pims-chart-confirm__foot">
@@ -1002,6 +1018,7 @@ type MrTab =
   | 'monitoring'
   | 'prescriptions'
   | 'wellness'
+  | 'soaps'
   | 'labs';
 
 type Props = {
@@ -1035,12 +1052,19 @@ export default function PimsPatientDetailView({
   const canBookAppointment = !abilities || abilities.includes('canSeeRouting');
   const practiceTz = practiceTimeZoneOrDefault(DEFAULT_PRACTICE_TIMEZONE);
   const [visitsOpen, toggleVisitsOpen] = usePatientSectionOpen(userId, 'visits');
-  const [remindersOpen, toggleRemindersOpen] = usePatientSectionOpen(userId, 'reminders');
-  const [casePrepOpen, toggleCasePrepOpen] = usePatientSectionOpen(userId, 'casePrep');
+  const [remindersOpen, toggleRemindersOpen, ensureRemindersOpen] = usePatientSectionOpen(
+    userId,
+    'reminders',
+  );
+  const [casePrepOpen, toggleCasePrepOpen, ensureCasePrepOpen] = usePatientSectionOpen(
+    userId,
+    'casePrep'
+  );
   const [weightOpen, toggleWeightOpen] = usePatientSectionOpen(userId, 'weight');
   const [syncOpen, toggleSyncOpen] = usePatientSectionOpen(userId, 'sync');
   const [summarizeRequestId, setSummarizeRequestId] = useState(0);
   const [summarizeConsumedId, setSummarizeConsumedId] = useState(0);
+  const casePrepWrapRef = useRef<HTMLDivElement>(null);
   const [payload, setPayload] = useState<Record<string, unknown> | null>(null);
   const [medicalRecord, setMedicalRecord] = useState<MedicalRecordBundle | null>(null);
   const [mrLoadError, setMrLoadError] = useState<string | null>(null);
@@ -1076,6 +1100,7 @@ export default function PimsPatientDetailView({
   const [clientRoomLoaders, setClientRoomLoaders] = useState<RoomLoader[]>([]);
   const [scoutNotes, setScoutNotes] = useState<ScoutChartNote[]>([]);
   const [mailOrders, setMailOrders] = useState<MailOrder[]>([]);
+  const [formInvites, setFormInvites] = useState<FormInvite[]>([]);
   const [embeddedRoomLoaderId, setEmbeddedRoomLoaderId] = useState<number | null>(null);
   const [selectedSoapNote, setSelectedSoapNote] = useState<SoapEncounter | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -1088,8 +1113,11 @@ export default function PimsPatientDetailView({
   const [pendingDeleteReminder, setPendingDeleteReminder] = useState<{
     id: string;
     label: string;
+    callback?: boolean;
   } | null>(null);
   const [removingReminderId, setRemovingReminderId] = useState<string | null>(null);
+  const [callbackTasks, setCallbackTasks] = useState<TaskListItem[]>([]);
+  const [callbackEmployees, setCallbackEmployees] = useState<Employee[]>([]);
   const [pendingRemoveRow, setPendingRemoveRow] = useState<ChartRow | null>(null);
   const [removingChartRow, setRemovingChartRow] = useState(false);
   const [removeChartError, setRemoveChartError] = useState<string | null>(null);
@@ -1119,6 +1147,7 @@ export default function PimsPatientDetailView({
         completedRoomLoaders,
         scoutNoteRows,
         mailOrderRows,
+        formInviteRows,
       ] = await Promise.all([
           fetchPatientByIdStaff(id),
           fetchPatientMedicalRecordStaff(id).catch((e: unknown) => {
@@ -1154,6 +1183,7 @@ export default function PimsPatientDetailView({
           listMailOrders(PIMS_DETAIL_PRACTICE_ID, undefined, Number(id)).catch(
             () => [] as MailOrder[],
           ),
+          listFormInvites({ patientId: Number(id) }).catch(() => [] as FormInvite[]),
         ]);
       if (isStale?.()) return;
       if (patientData && typeof patientData === 'object') {
@@ -1171,6 +1201,7 @@ export default function PimsPatientDetailView({
       setClientRoomLoaders(completedRoomLoaders);
       setScoutNotes(scoutNoteRows);
       setMailOrders(mailOrderRows);
+      setFormInvites(formInviteRows);
     },
     [patientId]
   );
@@ -1191,6 +1222,7 @@ export default function PimsPatientDetailView({
         setClientRoomLoaders([]);
         setScoutNotes([]);
         setMailOrders([]);
+        setFormInvites([]);
         setEmbeddedRoomLoaderId(null);
         setTreatments([]);
     setPhotoFailed(false);
@@ -1286,12 +1318,36 @@ export default function PimsPatientDetailView({
       true,
       [...rxItems, ...prescriptions],
       Number(patientId) || null,
+      formInvites,
     );
     const loaders = chartRowsFromClientRoomLoaders(clientRoomLoaders, patientId);
     const notes = chartRowsFromScoutNotes(scoutNotes);
     const mail = chartRowsFromMailOrders(mailOrders, patientId);
     return [...base, ...loaders, ...notes, ...mail].sort((a, b) => b.sortTime - a.sortTime);
-  }, [medicalRecord, problems, visitCharges, treatments, rxItems, prescriptions, clientRoomLoaders, scoutNotes, mailOrders, patientId]);
+  }, [medicalRecord, problems, visitCharges, treatments, rxItems, prescriptions, clientRoomLoaders, scoutNotes, mailOrders, formInvites, patientId]);
+
+  /**
+   * Unsigned SOAPs. The timeline only carries locked material, so these would otherwise
+   * be invisible from the chart until someone signs them.
+   */
+  const openSoapNotes = useMemo(
+    () => soapNotes.filter((n) => n.status !== 'completed'),
+    [soapNotes]
+  );
+
+  /** Open charts first — they are the ones needing work — then newest signed. */
+  const sortedSoapNotes = useMemo(() => {
+    const when = (n: SoapEncounter) => {
+      const ms = Date.parse((n.status === 'completed' ? n.completedAt : n.created) ?? '');
+      return Number.isNaN(ms) ? 0 : ms;
+    };
+    return [...soapNotes].sort((a, b) => {
+      const aOpen = a.status !== 'completed';
+      const bOpen = b.status !== 'completed';
+      if (aOpen !== bOpen) return aOpen ? -1 : 1;
+      return when(b) - when(a);
+    });
+  }, [soapNotes]);
 
   /** Ongoing problems, pinned above the record so they are not buried in the timeline. */
   const chronicProblems = useMemo(
@@ -1300,6 +1356,13 @@ export default function PimsPatientDetailView({
   );
 
   const resolveProblem = async (p: PatientProblem) => {
+    const ok = await appConfirm({
+      title: 'Resolve this problem?',
+      message: `Are you sure you want to resolve “${p.label}”? The resolved date will be added to this problem on the medical record.`,
+      confirmLabel: 'Resolve',
+      cancelLabel: 'Keep',
+    });
+    if (!ok) return;
     setResolvingProblemId(p.id);
     try {
       const updated = await updateProblem(p.id, { status: 'resolved' });
@@ -1429,6 +1492,76 @@ export default function PimsPatientDetailView({
     [medicalRecord]
   );
 
+  useEffect(() => {
+    const pid = Number(patientId);
+    if (!Number.isFinite(pid) || pid <= 0) {
+      setCallbackTasks([]);
+      return;
+    }
+    let canceled = false;
+    void Promise.all([
+      listTasks({ patientId: pid, includeDone: false, limit: 50 }),
+      fetchAllEmployees().catch(() => [] as Employee[]),
+    ])
+      .then(([page, employees]) => {
+        if (canceled) return;
+        setCallbackTasks(page.items.filter((t) => t.status !== 'done'));
+        setCallbackEmployees(employees);
+      })
+      .catch(() => {
+        if (!canceled) setCallbackTasks([]);
+      });
+    return () => {
+      canceled = true;
+    };
+  }, [patientId, medicalRecord]);
+
+  const staffCallbacks = useMemo(() => {
+    const asOf = Date.now();
+    const empById = new Map(
+      callbackEmployees.map((e) => [Number(e.id), e] as const).filter(([id]) => Number.isFinite(id))
+    );
+    const fromReminders = reminderSplit.callbacks.map((r) => {
+      const dueLabel =
+        r.dueDateInput != null
+          ? DateTime.fromISO(r.dueDateInput, { zone: practiceTz }).toFormat('M/d/yyyy')
+          : null;
+      return {
+        key: `reminder:${r.id}`,
+        kind: 'callback' as const,
+        title: r.label.replace(/\s+-\s+\d{1,2}\/\d{1,2}\/\d{4}\s*$/, '').trim() || r.label,
+        dueMs: r.dueMs,
+        dueLabel,
+        assigneeName: r.assigneeName,
+        overdue: r.dueMs != null && r.dueMs < asOf,
+        reminder: r as RoutingPatientReminderLine,
+      };
+    });
+    const fromTasks = callbackTasks.map((t) => {
+      const dueMs = t.dueAt ? Date.parse(t.dueAt) : NaN;
+      const assigneeId = t.assignedToEmployeeId ?? t.defaultAssigneeEmployeeId;
+      const emp =
+        assigneeId != null && Number.isFinite(Number(assigneeId))
+          ? empById.get(Number(assigneeId))
+          : undefined;
+      return {
+        key: `task:${t.id}`,
+        title: t.title,
+        kind: t.kind,
+        dueMs: Number.isFinite(dueMs) ? dueMs : null,
+        dueLabel: t.dueAt
+          ? DateTime.fromISO(t.dueAt, { zone: practiceTz }).toFormat('M/d/yyyy')
+          : null,
+        assigneeName: emp ? formatEmployeeDisplayName(emp) : null,
+        overdue: Number.isFinite(dueMs) && dueMs < asOf,
+        reminder: null as RoutingPatientReminderLine | null,
+      };
+    });
+    return [...fromReminders, ...fromTasks].sort(
+      (a, b) => (a.dueMs ?? Number.MAX_SAFE_INTEGER) - (b.dueMs ?? Number.MAX_SAFE_INTEGER)
+    );
+  }, [reminderSplit.callbacks, callbackTasks, callbackEmployees, practiceTz]);
+
   const weightHistoryPoints = useMemo(() => {
     const wh = medicalRecord?.weightHistory ?? [];
     const pts: { serviceDate: string; weight: number }[] = [];
@@ -1459,7 +1592,6 @@ export default function PimsPatientDetailView({
     navigate(
       buildClientFinancialHref({
         clientId,
-        invoice: 'new',
         patientId,
       })
     );
@@ -1503,6 +1635,14 @@ export default function PimsPatientDetailView({
       window.clearTimeout(clearTimer);
     };
   }, [highlightedChartRowIds]);
+
+  useEffect(() => {
+    if (summarizeRequestId <= 0 || !casePrepOpen) return;
+    const scrollTimer = window.setTimeout(() => {
+      casePrepWrapRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 60);
+    return () => window.clearTimeout(scrollTimer);
+  }, [summarizeRequestId, casePrepOpen]);
 
   const setGroupExpanded = (key: string, open: boolean) => {
     setGroupOpen((o) => ({ ...o, [key]: open }));
@@ -1583,6 +1723,7 @@ export default function PimsPatientDetailView({
   }
 
   function requestSummarize() {
+    ensureCasePrepOpen();
     setSummarizeRequestId((n) => n + 1);
   }
 
@@ -1619,9 +1760,9 @@ export default function PimsPatientDetailView({
       return;
     }
     const proceed = await appConfirm({
-      title: 'Decline this reminder',
-      message: `Stop reminding for “${reminder.label}”? A declined date stays on the chart.`,
-      confirmLabel: 'Decline',
+      title: 'Owner declined this?',
+      message: `Record “${reminder.label}” under Declined and as a red note on the medical record, with your name.`,
+      confirmLabel: 'Record decline',
       cancelLabel: 'Cancel',
     });
     if (!proceed) return;
@@ -1767,6 +1908,7 @@ export default function PimsPatientDetailView({
   const latestWeightPoint = weightHistoryPoints[weightHistoryPoints.length - 1];
 
   const signalment = signalmentParts(record, ageStr, weightLine);
+  const primaryProviderLabel = primaryProviderFromPatientRecord(record);
   const clientId = client?.id != null ? String(client.id) : null;
   const petPhotoBase = petImageSrc(patientId, record.imageUrl);
   const petPhoto = petPhotoBase
@@ -1838,12 +1980,12 @@ export default function PimsPatientDetailView({
 
   return (
     <div className="pims-detail pims-detail--emr">
-      {householdClientId || householdPets.length ? (
+      {clientId || householdPets.length ? (
         <nav className="pims-emr-household" aria-label="Household">
-          {householdClientId ? (
+          {clientId ? (
             <Link
               className="pims-emr-household__client"
-              to={`${clientsBasePath}?clientId=${encodeURIComponent(householdClientId)}`}
+              to={`${clientsBasePath}?clientId=${encodeURIComponent(clientId)}`}
             >
               <User size={14} aria-hidden />
               <span>
@@ -1851,9 +1993,17 @@ export default function PimsPatientDetailView({
                 {cname}
               </span>
             </Link>
-          ) : null}
+          ) : (
+            <span className="pims-emr-household__client">
+              <User size={14} aria-hidden />
+              <span>
+                <span className="pims-emr-household__kind">Client</span>
+                {cname}
+              </span>
+            </span>
+          )}
           {householdPets.length ? (
-            <ul className="pims-emr-household__pets">
+            <ul className="pims-emr-household__pets" aria-label="Patients">
               {householdPets.map((pet) => {
                 const current = pet.id === patientId;
                 const sexClass =
@@ -1984,23 +2134,16 @@ export default function PimsPatientDetailView({
               </span>
             ) : null}
             {signalment.length ? signalment.join(' · ') : 'No signalment recorded'}
+            {primaryProviderLabel ? (
+              <span className="pims-emr-primary-provider">
+                <Stethoscope size={12} aria-hidden />
+                {primaryProviderLabel}
+              </span>
+            ) : null}
           </>
         }
         reach={
           <>
-            <li>
-              <User size={15} aria-hidden />
-              {clientId ? (
-                <Link
-                  className="pims-detail__reach-client"
-                  to={`${clientsBasePath}?clientId=${encodeURIComponent(clientId)}`}
-                >
-                  {cname}
-                </Link>
-              ) : (
-                cname
-              )}
-            </li>
             {addressLine && addressLine !== '—' ? (
               <li>
                 <MapPin size={15} aria-hidden />
@@ -2100,10 +2243,13 @@ export default function PimsPatientDetailView({
                       <span>{p.label}</span>
                       <button
                         type="button"
+                        className="pims-emr-story__chip-x"
                         disabled={resolvingProblemId != null}
+                        title={`Resolve ${p.label}`}
+                        aria-label={`Resolve ${p.label}`}
                         onClick={() => void resolveProblem(p)}
                       >
-                        Resolved
+                        <X size={12} />
                       </button>
                     </li>
                   ))}
@@ -2268,6 +2414,15 @@ export default function PimsPatientDetailView({
       <PimsChartWorkBar
         patientId={patientId}
         patientName={pname}
+        householdPatients={
+          householdPets.length
+            ? householdPets
+                .map((p) => ({ id: Number(p.id), name: p.name }))
+                .filter((p) => Number.isFinite(p.id))
+            : Number.isFinite(Number(patientId))
+              ? [{ id: Number(patientId), name: pname }]
+              : []
+        }
         clientId={clientId}
         clientName={cname !== '—' ? cname : 'Client'}
         clientPhone={clientPhone || reachPhones[0]?.phone || null}
@@ -2295,6 +2450,7 @@ export default function PimsPatientDetailView({
         }}
         onTextClient={clientId ? () => reach.openSms(reachPhones[0]?.phone ?? clientPhone, false) : undefined}
         onEmailClient={clientId ? () => reach.openEmail(reachEmails[0]?.email ?? clientEmail) : undefined}
+        clientDefaultEmail={reachEmails[0]?.email ?? clientEmail ?? null}
         onOpenCallSession={(id) =>
           navigate(`/schedule/jot?sessionId=${encodeURIComponent(id)}&view=patients`)
         }
@@ -2344,10 +2500,83 @@ export default function PimsPatientDetailView({
                   ({reminderSplit.active.length})
                 </span>
               ) : null}
+              {staffCallbacks.length > 0 ? (
+                <span className="pims-emr-story__count pims-emr-story__count--callback">
+                  ({staffCallbacks.length})
+                </span>
+              ) : null}
             </button>
+            {Number.isFinite(Number(patientId)) ? (
+              <ChartAddFollowUp
+                patientId={Number(patientId)}
+                clientId={clientId ? Number(clientId) : null}
+                practiceId={PIMS_DETAIL_PRACTICE_ID}
+                onNeedOpen={ensureRemindersOpen}
+                onCreated={() => void reloadChartData()}
+              />
+            ) : null}
           </div>
           {remindersOpen ? (
             <>
+              <div className="pims-emr-story__block">
+                <h4 className="pims-emr-story__sub pims-emr-story__sub--callback">
+                  <Phone size={13} aria-hidden /> Callbacks &amp; Tasks ({staffCallbacks.length})
+                </h4>
+                <p className="pims-emr-story__muted pims-emr-story__callback-hint">
+                  Staff only — callbacks and tasks. Not on the client portal. Completed items
+                  drop off this list.
+                </p>
+                {staffCallbacks.length === 0 ? (
+                  <p className="pims-emr-story__muted">None</p>
+                ) : (
+                  <ul className="pims-emr-story__list">
+                    {staffCallbacks.map((row) => (
+                      <li
+                        key={row.key}
+                        className={`pims-emr-story__reminder${
+                          row.overdue ? ' pims-emr-story__reminder--callback-overdue' : ''
+                        }`}
+                      >
+                        <span>
+                          <span className="pims-emr-story__callback-title">
+                            <span className="pims-emr-story__kind">
+                              {staffWorkKindLabel(row.kind)}
+                            </span>
+                            {row.title}
+                          </span>
+                          <span className="pims-emr-story__callback-meta">
+                            {[
+                              row.assigneeName ? `Assigned to ${row.assigneeName}` : 'Unassigned',
+                              row.dueLabel
+                                ? `${row.overdue ? 'Past due' : 'Due'} ${row.dueLabel}`
+                                : null,
+                            ]
+                              .filter(Boolean)
+                              .join(' · ')}
+                          </span>
+                        </span>
+                        {row.reminder ? (
+                          <button
+                            type="button"
+                            className="pims-emr-story__reminder-remove"
+                            aria-label={`Delete callback ${row.title}`}
+                            disabled={removingReminderId === row.reminder.id}
+                            onClick={() =>
+                              setPendingDeleteReminder({
+                                id: row.reminder!.id,
+                                label: row.reminder!.label,
+                                callback: true,
+                              })
+                            }
+                          >
+                            <X size={14} aria-hidden />
+                          </button>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
               <div className="pims-emr-story__block">
                 <h4 className="pims-emr-story__sub pims-emr-story__sub--overdue">
                   Past due ({reminderSplit.overdue.length})
@@ -2361,17 +2590,19 @@ export default function PimsPatientDetailView({
                         <span>{r.label}</span>
                         <button
                           type="button"
-                          className="pims-emr-story__reminder-remove"
-                          aria-label={`Decline reminder ${r.label}`}
+                          className="pims-emr-story__reminder-no"
+                          title="Owner declined — stays on the chart"
+                          aria-label={`Owner declined ${r.label}`}
                           disabled={removingReminderId === r.id}
                           onClick={() => void handleDeclineReminder(r)}
                         >
-                          Decline
+                          🚫
                         </button>
                         <button
                           type="button"
                           className="pims-emr-story__reminder-remove"
-                          aria-label={`Delete reminder ${r.label}`}
+                          title="Remove from this list only"
+                          aria-label={`Remove reminder ${r.label}`}
                           disabled={removingReminderId === r.id}
                           onClick={() => setPendingDeleteReminder(r)}
                         >
@@ -2393,17 +2624,19 @@ export default function PimsPatientDetailView({
                         <span>{r.label}</span>
                         <button
                           type="button"
-                          className="pims-emr-story__reminder-remove"
-                          aria-label={`Decline reminder ${r.label}`}
+                          className="pims-emr-story__reminder-no"
+                          title="Owner declined — stays on the chart"
+                          aria-label={`Owner declined ${r.label}`}
                           disabled={removingReminderId === r.id}
                           onClick={() => void handleDeclineReminder(r)}
                         >
-                          Decline
+                          🚫
                         </button>
                         <button
                           type="button"
                           className="pims-emr-story__reminder-remove"
-                          aria-label={`Delete reminder ${r.label}`}
+                          title="Remove from this list only"
+                          aria-label={`Remove reminder ${r.label}`}
                           disabled={removingReminderId === r.id}
                           onClick={() => setPendingDeleteReminder(r)}
                         >
@@ -2424,9 +2657,14 @@ export default function PimsPatientDetailView({
                         <li key={item.id} className="pims-emr-story__reminder pims-emr-story__reminder--declined">
                           <span>{item.label}</span>
                           <span>
-                            {item.declinedAt
-                              ? `declined ${formatDeclinedDate(item.declinedAt)}`
-                              : 'declined'}
+                            {[
+                              item.declinedByName ? `recorded by ${item.declinedByName}` : null,
+                              item.declinedAt
+                                ? `declined ${formatDeclinedDate(item.declinedAt)}`
+                                : 'declined',
+                            ]
+                              .filter(Boolean)
+                              .join(' · ')}
                           </span>
                         </li>
                       ))}
@@ -2463,7 +2701,10 @@ export default function PimsPatientDetailView({
           />
         ) : null}
 
-        <div className={`pims-emr-case-prep-wrap${casePrepOpen ? '' : ' is-collapsed'}`}>
+        <div
+          ref={casePrepWrapRef}
+          className={`pims-emr-case-prep-wrap${casePrepOpen ? '' : ' is-collapsed'}`}
+        >
           <div className="pims-emr-story__collapse-row pims-emr-case-prep-wrap__head">
             <button
               type="button"
@@ -2573,6 +2814,12 @@ export default function PimsPatientDetailView({
           {(
             [
               ['byDate', 'By date'],
+              [
+                'soaps',
+                openSoapNotes.length
+                  ? `SOAPs (${soapNotes.length}) · ${openSoapNotes.length} open`
+                  : `SOAPs (${soapNotes.length})`,
+              ],
               ['prescriptions', `Rx (${prescriptionCount})`],
               ['labs', `Labs (${labPairs.length})`],
               ['wellness', `Wellness (${wellnessPlanCount})`],
@@ -2697,6 +2944,20 @@ export default function PimsPatientDetailView({
                                   ❤️{' '}
                                 </span>
                               ) : null}
+                              {r.communicationStatusBadge === 'pending' ? (
+                                <span
+                                  className="pims-patient-detail__comm-badge pims-patient-detail__comm-badge--pending"
+                                >
+                                  Pending
+                                </span>
+                              ) : null}
+                              {r.communicationStatusBadge === 'signed' ? (
+                                <span
+                                  className="pims-patient-detail__comm-badge pims-patient-detail__comm-badge--signed"
+                                >
+                                  Signed
+                                </span>
+                              ) : null}
                               {r.description}
                             </td>
                             <td className="pims-patient-detail__provider">{r.provider}</td>
@@ -2800,6 +3061,20 @@ export default function PimsPatientDetailView({
                                   ❤️{' '}
                                 </span>
                               ) : null}
+                              {r.communicationStatusBadge === 'pending' ? (
+                                <span
+                                  className="pims-patient-detail__comm-badge pims-patient-detail__comm-badge--pending"
+                                >
+                                  Pending
+                                </span>
+                              ) : null}
+                              {r.communicationStatusBadge === 'signed' ? (
+                                <span
+                                  className="pims-patient-detail__comm-badge pims-patient-detail__comm-badge--signed"
+                                >
+                                  Signed
+                                </span>
+                              ) : null}
                               {r.description}
                             </td>
                             <td
@@ -2856,6 +3131,58 @@ export default function PimsPatientDetailView({
               </table>
             </div>
           </>
+        )}
+
+        {mrTab === 'soaps' && (
+          <div className="pims-patient-detail__soaps">
+            {soapNotes.length === 0 ? (
+              <p className="pims-patient-detail__muted">
+                No SOAP notes charted in Scout for this patient.
+              </p>
+            ) : (
+              <>
+                <p className="pims-patient-detail__mr-count">
+                  {openSoapNotes.length
+                    ? `${openSoapNotes.length} open · ${
+                        soapNotes.length - openSoapNotes.length
+                      } signed. Open charts are not on the record until they are signed.`
+                    : `${soapNotes.length} signed.`}
+                </p>
+                {sortedSoapNotes.map((note) => {
+                  const signed = note.status === 'completed';
+                  const when = signed ? note.completedAt : note.created;
+                  return (
+                    <button
+                      key={note.id}
+                      type="button"
+                      className="pims-patient-detail__exam-row"
+                      onClick={() => setSelectedSoapNote(note)}
+                    >
+                      <span className="pims-patient-detail__exam-row-icons" aria-hidden>
+                        {signed ? <Lock size={13} /> : <ChevronRight size={14} />}
+                      </span>
+                      <span className="pims-patient-detail__exam-row-name">
+                        {note.mode === 'quick' ? 'Quick SOAP' : 'Comprehensive SOAP'}
+                        <span
+                          className={`pims-patient-detail__soap-badge${
+                            signed ? '' : ' pims-patient-detail__soap-badge--open'
+                          }`}
+                        >
+                          {signed ? 'Signed & locked' : 'Open'}
+                        </span>
+                      </span>
+                      <span className="pims-patient-detail__exam-row-visit">
+                        Visit #{note.appointmentId}
+                      </span>
+                      <span className="pims-patient-detail__exam-row-date">
+                        {formatChartDateTime(when)}
+                      </span>
+                    </button>
+                  );
+                })}
+              </>
+            )}
+          </div>
         )}
 
         {mrTab === 'groups' && (

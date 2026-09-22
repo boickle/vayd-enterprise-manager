@@ -346,12 +346,17 @@ export async function updateEncounter(
      * instead of silently overwriting their work.
      */
     expectedUpdatedAt?: string | null;
+    /** Required to persist an empty SOAP text field — autosave never sends this. */
+    allowBlankFields?: Array<
+      'subjective' | 'objectiveNotes' | 'assessmentReasoning' | 'planNotes'
+    >;
   }
 ): Promise<SoapEncounter> {
   const { data } = await http.patch<SoapEncounter>(`/soap-encounters/${encodeURIComponent(id)}`, {
     practiceId: pid(),
     ...body,
     ...(opts?.expectedUpdatedAt ? { expectedUpdatedAt: opts.expectedUpdatedAt } : {}),
+    ...(opts?.allowBlankFields?.length ? { allowBlankFields: opts.allowBlankFields } : {}),
   });
   return data;
 }

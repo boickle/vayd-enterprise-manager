@@ -22,6 +22,7 @@ export type StaffPatientLayout = {
   casePrep: boolean;
   weight: boolean;
   sync: boolean;
+  membership: boolean;
 };
 
 export const DEFAULT_STAFF_CLIENT_LAYOUT: StaffClientLayout = {
@@ -41,6 +42,7 @@ export const DEFAULT_STAFF_PATIENT_LAYOUT: StaffPatientLayout = {
   casePrep: true,
   weight: false,
   sync: false,
+  membership: false,
 };
 
 function clientStorageKey(userId: string): string {
@@ -82,6 +84,8 @@ function asPatientLayout(raw: unknown): StaffPatientLayout | null {
     casePrep: parsed.casePrep !== false,
     weight: parsed.weight === true,
     sync: parsed.sync === true,
+    // Prefer explicit saved value; missing key stays collapsed (was never persisted before).
+    membership: parsed.membership === true,
   };
 }
 
@@ -230,4 +234,30 @@ export function writeStaffPatientLayout(
   writePatientLocal(userId, next);
   schedulePersistPatient(userId, next);
   return next;
+}
+
+/**
+ * Copy layout keys from a JWT/legacy id into the canonical users.id key when the
+ * destination is empty — so collapses survive the first prefs hydrate.
+ */
+export function migrateStaffUiPrefsKeys(
+  fromUserId: string | null | undefined,
+  toUserId: string | null | undefined,
+) {
+  if (!fromUserId || !toUserId || fromUserId === toUserId) return;
+  if (typeof localStorage === 'undefined') return;
+  try {
+    const clientTo = clientStorageKey(toUserId);
+    const patientTo = patientStorageKey(toUserId);
+    const clientFrom = localStorage.getItem(clientStorageKey(fromUserId));
+    const patientFrom = localStorage.getItem(patientStorageKey(fromUserId));
+    if (clientFrom && !localStorage.getItem(clientTo)) {
+      localStorage.setItem(clientTo, clientFrom);
+    }
+    if (patientFrom && !localStorage.getItem(patientTo)) {
+      localStorage.setItem(patientTo, patientFrom);
+    }
+  } catch {
+    /* ignore */
+  }
 }

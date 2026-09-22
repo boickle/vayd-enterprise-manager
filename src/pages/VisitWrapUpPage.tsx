@@ -35,9 +35,10 @@ import {
 } from '../api/visitWrapUp';
 import { createTask } from '../api/tasks';
 import { listPracticeBranches } from '../api/branchInventory';
-import { fetchGmailMailboxes, fetchGmailSendAs, sendGmailMessage } from '../api/gmail';
+import { fetchGmailMailboxes, fetchGmailSendAs, sendGmailMessage, type GmailSendAsAlias } from '../api/gmail';
 import { forwardBookingDispositionIsComplete } from '../utils/forwardBookingDisposition';
 import {
+  formatSendAsLabel,
   isFallbackSender,
   resolveRecapFromAddress,
   resolveRecapMailbox,
@@ -45,6 +46,8 @@ import {
 import WrapUpForwardBooking from '../components/soap/WrapUpForwardBooking';
 import WrapUpReminders from '../components/soap/WrapUpReminders';
 import WrapUpCallbacks from '../components/soap/WrapUpCallbacks';
+import WrapUpChronicReview from '../components/soap/WrapUpChronicReview';
+import { commitSoapChronicDraft, readSoapChronicDraft } from '../utils/soapChronicDraft';
 import { reconcileBookedFollowUp } from '../components/forwardBooking/bookFollowUpNow';
 import { isWeightAddressed, vitalsFromValue } from '../utils/soapVitals';
 
@@ -136,6 +139,7 @@ export default function VisitWrapUpPage() {
 
   const [mailbox, setMailbox] = useState<string | null>(null);
   const [fromAddress, setFromAddress] = useState<string | null>(null);
+  const [sendAsOptions, setSendAsOptions] = useState<GmailSendAsAlias[]>([]);
   /** True after the initial wrap-up email hydrate/generate finishes — gates draft autosave. */
   const [emailHydrated, setEmailHydrated] = useState(false);
 
@@ -261,8 +265,8 @@ export default function VisitWrapUpPage() {
     }, 800);
     return () => window.clearTimeout(t);
   }, [subject, body, encounterId, emailHydrated, regenerating, wrapUp?.clientEmailDelivery?.status]);
-  // Which mailbox and which From the recap will use. Resolved up front so the
-  // doctor can see it before sending rather than discovering it in the sent folder.
+  // Which mailbox and which From the recap will use. Defaults to the visit
+  // provider's send-as alias on the field inbox; the doctor can switch aliases.
   useEffect(() => {
     if (!wrapUp) return;
     let canceled = false;
@@ -272,8 +276,9 @@ export default function VisitWrapUpPage() {
         const resolved = resolveRecapMailbox(mailboxes);
         if (canceled || !resolved) return;
         setMailbox(resolved);
-        const { aliases } = await fetchGmailSendAs(resolved).catch(() => ({ aliases: [] }));
+        const { aliases } = await fetchGmailSendAs(resolved).catch(() => ({ aliases: [] as GmailSendAsAlias[] }));
         if (canceled) return;
+        setSendAsOptions(aliases);
         setFromAddress(resolveRecapFromAddress(aliases, resolved, wrapUp.provider?.email ?? null));
       } catch {
         /* Sending surfaces its own error; the recap can still be skipped. */
@@ -337,6 +342,16 @@ export default function VisitWrapUpPage() {
   const backToSoap = (pet: VisitWrapUpPet) => {
     const qs = clientIdParam ? `?clientId=${encodeURIComponent(clientIdParam)}` : '';
     navigate(`/schedule/soap/${pet.appointmentId}/${pet.patientId}${qs}`);
+  };
+
+  const goToClinicalGap = (pet: VisitWrapUpPet) => {
+    const first =
+      pet.outstandingClinical?.missingMeds[0] ?? pet.outstandingClinical?.missingVaccines[0];
+    if (!first) return;
+    const qs = new URLSearchParams();
+    if (clientIdParam) qs.set('clientId', clientIdParam);
+    qs.set('focusOrder', first.orderId);
+    navigate(`/schedule/soap/${pet.appointmentId}/${pet.patientId}?${qs.toString()}`);
   };
 
   const togglePet = (id: number) => {
@@ -478,6 +493,11 @@ export default function VisitWrapUpPage() {
         } catch {
           /* reminder drafts still persist; staff can add the callback on wrap-up */
         }
+        await commitSoapChronicDraft(
+          pet.soapEncounterId,
+          pet.patientId,
+          readSoapChronicDraft(pet.soapEncounterId),
+        );
         await completeEncounter(pet.soapEncounterId);
       }
       await loadWrapUp(encounterId);
@@ -565,10 +585,17 @@ export default function VisitWrapUpPage() {
             const open = expandedPetId === pet.patientId;
             return (
               <div className="soap-wrapup-chart" key={pet.patientId}>
-                <button
-                  type="button"
+                <div
                   className="soap-wrapup-chart-head"
+                  role="button"
+                  tabIndex={0}
                   onClick={() => setExpandedPetId(open ? null : pet.patientId)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      setExpandedPetId(open ? null : pet.patientId);
+                    }
+                  }}
                 >
                   {open ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
                   <PawPrint size={14} />
@@ -577,7 +604,16 @@ export default function VisitWrapUpPage() {
                   {((pet.outstandingClinical?.missingMeds.length ?? 0) > 0 ||
                     (pet.outstandingClinical?.missingVaccines.length ?? 0) > 0) &&
                     pet.status !== 'completed' && (
-                      <span className="soap-wrapup-chart-pending">Rx/dose details needed</span>
+                      <button
+                        type="button"
+                        className="soap-wrapup-chart-pending soap-wrapup-chart-pending--link"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          goToClinicalGap(pet);
+                        }}
+                      >
+                        Rx/dose details needed
+                      </button>
                     )}
                   {!isWeightAddressed(vitalsFromValue(pet.objectiveVitals)) &&
                     pet.status !== 'completed' && (
@@ -588,7 +624,7 @@ export default function VisitWrapUpPage() {
                       <Lock size={12} /> Signed
                     </span>
                   )}
-                </button>
+                </div>
                 {open && (
                   <div className="soap-wrapup-chart-body">
                     {(
@@ -624,9 +660,11 @@ export default function VisitWrapUpPage() {
           })}
         </section>
 
+        <WrapUpChronicReview pets={pets} />
+
         <section className="soap-wrapup-section">
           <h2>
-            <span className="soap-wrapup-step">2</span> Reminders &amp; callbacks
+            <span className="soap-wrapup-step">3</span> Reminders &amp; callbacks
           </h2>
           <p className="soap-wrapup-hint">
             What the catalog will remind this household about, before it does. Change the
@@ -642,12 +680,15 @@ export default function VisitWrapUpPage() {
               Someone rings the owner in a few days to see how things are going. Whoever makes
               the call records it on the task, and it files to the patient&apos;s record.
             </p>
-            <WrapUpCallbacks
-              pets={pets}
-              clientId={wrapUp?.clientId ?? null}
-              defaultAssigneeEmployeeId={wrapUp?.provider?.id ?? null}
-              disabled={allLocked}
-            />
+            {encounterId ? (
+              <WrapUpCallbacks
+                encounterId={encounterId}
+                pets={pets}
+                clientId={wrapUp?.clientId ?? null}
+                defaultAssigneeEmployeeId={wrapUp?.provider?.id ?? null}
+                disabled={allLocked}
+              />
+            ) : null}
           </div>
         </section>
 
@@ -676,7 +717,7 @@ export default function VisitWrapUpPage() {
 
         <section className="soap-wrapup-section">
           <h2>
-            <span className="soap-wrapup-step">3</span> Client recap
+            <span className="soap-wrapup-step">4</span> Client recap
             {emailDecided && <Check className="soap-wrapup-done" size={16} />}
           </h2>
 
@@ -692,8 +733,8 @@ export default function VisitWrapUpPage() {
                   })
                 : ''}{' '}
               to {delivery.recipients.join(', ')}
-              {delivery.fromAddress ? ` from ${delivery.fromAddress}` : ''}. Filed on the chart
-              under Communications.
+              {delivery.fromAddress ? ` from ${delivery.fromAddress}` : ''}. Filed on each
+              covered pet&apos;s EMR under Communications.
             </div>
           )}
           {delivery?.status === 'skipped' && (
@@ -730,12 +771,34 @@ export default function VisitWrapUpPage() {
                 />
               </label>
 
-              {mailbox && fromAddress && (
-                <p className="soap-wrapup-from">
-                  Sending as <strong>{fromAddress}</strong> through {mailbox}.
-                  {isFallbackSender(fromAddress, mailbox) &&
-                    ' Your work alias is not set up on this inbox, so the shared address is used.'}
-                </p>
+              {mailbox && (
+                <label className="soap-wrapup-field">
+                  Send as
+                  {sendAsOptions.length > 0 ? (
+                    <select
+                      className="soap-input"
+                      value={fromAddress ?? ''}
+                      onChange={(e) => setFromAddress(e.target.value)}
+                    >
+                      {sendAsOptions.map((alias) => {
+                        const label = formatSendAsLabel(alias);
+                        return (
+                          <option key={alias.sendAsEmail} value={label}>
+                            {label}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  ) : (
+                    <input className="soap-input" value={fromAddress ?? mailbox} readOnly />
+                  )}
+                  <span className="soap-wrapup-from-hint">
+                    Through {mailbox}.
+                    {fromAddress &&
+                      isFallbackSender(fromAddress, mailbox) &&
+                      ' Your work alias is not set up on this inbox, so the shared address is used.'}
+                  </span>
+                </label>
               )}
 
               <label className="soap-wrapup-field">

@@ -7,6 +7,8 @@ import { buildPhoneDialHref } from '../../utils/quoContact';
 import { ClientEmailComposeModal } from '../ClientEmailComposeModal';
 import { ClientEmailHistoryModal } from '../ClientEmailHistoryModal';
 import { ClientSmsWorkspaceModal } from './ClientSmsWorkspaceModal';
+import { markClientCallStarted } from '../../hooks/useClientCallActivity';
+import { useOutboundCallFromLine } from '../../hooks/useOutboundCallFromLine';
 import './ClientReachHub.css';
 
 export type ClientReachAction =
@@ -37,12 +39,8 @@ export function useClientReach() {
     setAction({ kind: 'email', email });
   }, []);
 
-  const openCall = useCallback((phone: string) => {
-    window.location.href = buildPhoneDialHref(phone);
-    setAction({ kind: 'call', phone });
-  }, []);
-
-  return { action, setAction, close, openPhoneMenu, openSms, openEmail, openCall };
+  // Dialing lives in ClientReachHost, which knows the client id the call pill needs.
+  return { action, setAction, close, openPhoneMenu, openSms, openEmail };
 }
 
 type HostProps = {
@@ -70,6 +68,7 @@ export function ClientReachHost({
   jotPatientId,
   onRecordsChanged,
 }: HostProps) {
+  const fromLine = useOutboundCallFromLine();
   const [includeInPatientEmr, setIncludeInPatientEmr] = useState((defaultPatientIds ?? []).length > 0);
   const [regardingPatientIds, setRegardingPatientIds] = useState<number[]>(defaultPatientIds ?? []);
 
@@ -99,8 +98,16 @@ export function ClientReachHost({
               >
                 <p className="client-reach-menu__num">{action.phone}</p>
                 <button type="button" role="menuitem" onClick={() => {
-                  window.location.href = buildPhoneDialHref(action.phone);
-                  onAction({ kind: 'call', phone: action.phone });
+                  markClientCallStarted(
+                    clientId,
+                    clientLabel,
+                    jotPatientId != null && Number.isFinite(Number(jotPatientId))
+                      ? Number(jotPatientId)
+                      : null,
+                  );
+                  window.location.href = buildPhoneDialHref(action.phone, { fromLine });
+                  // The dock follows the call — do not leave this picker sitting on top of it.
+                  close();
                 }}>
                   <Phone size={15} aria-hidden />
                   Call
@@ -135,19 +142,29 @@ export function ClientReachHost({
                   </button>
                 </div>
                 <p className="client-reach-call__body">
-                  Quo (OpenPhone) places the call. Scout cannot nest a live phone inside this tab —
-                  Quo has no in-app widget we can embed.
+                  Quo (OpenPhone) places the call and transcribes both sides of it. Nothing needs
+                  to be started on your end, and the phone does not need to be on speaker.
                 </p>
                 <p className="client-reach-call__body">
-                  After you hang up, call events and transcripts come back through Quo webhooks when
-                  they are connected. That is not live transcription here.
-                </p>
-                <p className="client-reach-call__body">
-                  Jot can transcribe while you talk. The transcript is saved with the call and
-                  stays off the medical record unless you add it. You still place the call in Quo.
+                  This page follows the call and shows the transcript when Quo finishes with it,
+                  usually a minute or two after you hang up. Review it there and file it to the
+                  pet&apos;s record — nothing lands on the chart until you do.
                 </p>
                 <div className="pims-chart-pick__foot">
-                  <a className="brief-btn primary" href={buildPhoneDialHref(action.phone)}>
+                  <a
+                    className="brief-btn primary"
+                    href={buildPhoneDialHref(action.phone, { fromLine })}
+                    onClick={() => {
+                      markClientCallStarted(
+                        clientId,
+                        clientLabel,
+                        jotPatientId != null && Number.isFinite(Number(jotPatientId))
+                          ? Number(jotPatientId)
+                          : null,
+                      );
+                      close();
+                    }}
+                  >
                     <Phone size={15} aria-hidden />
                     Open Quo call
                   </a>
@@ -159,7 +176,7 @@ export function ClientReachHost({
                         : '/schedule/jot?new=1&kind=callback'
                     }
                   >
-                    Start call note in Jot
+                    Dictate a note instead
                   </a>
                   <button type="button" className="brief-btn" onClick={close}>
                     Close

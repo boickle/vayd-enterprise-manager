@@ -302,19 +302,45 @@ export function isInvoiceShippingLine(line: {
 export function attachShippingLines<T extends { id: string; patientId?: number | null }>(
   lines: T[],
   isShipping: (line: T) => boolean,
-  canReceiveShipping?: (line: T) => boolean
+  canReceiveShipping?: (line: T) => boolean,
+  /**
+   * When a shipping row was created for a specific product (mail-order notes),
+   * return that parent line id so we do not nest Brunswick pickup under the
+   * next Rx on another pet.
+   */
+  resolveParentId?: (shipping: T) => string | null | undefined,
 ): { parents: T[]; attached: Map<string, T[]>; leftover: T[] } {
   const claimed = new Set<string>();
   const parents = lines.filter((line) => !isShipping(line));
   const attached = new Map<string, T[]>(parents.map((parent) => [parent.id, []]));
+  const parentById = new Map(parents.map((p) => [p.id, p]));
   let current: T | null = null;
   for (const line of lines) {
     if (!isShipping(line)) {
       if (!canReceiveShipping || canReceiveShipping(line)) current = line;
       continue;
     }
-    if (!current) continue;
-    attached.get(current.id)?.push(line);
+    const preferredId = resolveParentId?.(line) ?? null;
+    const preferred =
+      preferredId && parentById.has(preferredId) ? parentById.get(preferredId)! : null;
+    const samePatient = (candidate: T | null): T | null => {
+      if (!candidate) return null;
+      if (line.patientId == null || candidate.patientId == null) return candidate;
+      return Number(line.patientId) === Number(candidate.patientId) ? candidate : null;
+    };
+    let samePatientFallback: T | null = null;
+    if (!preferred && !samePatient(current)) {
+      for (let i = parents.length - 1; i >= 0; i -= 1) {
+        const hit = samePatient(parents[i] ?? null);
+        if (hit) {
+          samePatientFallback = hit;
+          break;
+        }
+      }
+    }
+    const parent = preferred ?? samePatient(current) ?? samePatientFallback;
+    if (!parent) continue;
+    attached.get(parent.id)?.push(line);
     claimed.add(line.id);
   }
   return {

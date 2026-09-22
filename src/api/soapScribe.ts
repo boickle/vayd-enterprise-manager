@@ -168,6 +168,8 @@ export async function polishSpokenNotes(opts: {
   kind: 'visit' | 'previsit' | 'callback' | 'huddle' | 'review';
   patientName?: string | null;
   clientName?: string | null;
+  /** ISO date the conversation happened — a pasted transcript is often not from today. */
+  asOfDate?: string | null;
 }): Promise<string> {
   const { data } = await http.post<{ summary: string }>('/scribe/polish-transcript', {
     practiceId: VISIT_WORKFLOW_PRACTICE_ID,
@@ -175,6 +177,7 @@ export async function polishSpokenNotes(opts: {
     kind: opts.kind,
     ...(opts.patientName?.trim() ? { patientName: opts.patientName.trim() } : {}),
     ...(opts.clientName?.trim() ? { clientName: opts.clientName.trim() } : {}),
+    ...(opts.asOfDate?.trim() ? { asOfDate: opts.asOfDate.trim() } : {}),
   });
   return typeof data?.summary === 'string' ? data.summary.trim() : '';
 }

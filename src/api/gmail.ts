@@ -120,6 +120,31 @@ export const GMAIL_MESSAGES_PAGE_SIZE = 50;
 /** While the inbox is open, refetch from Gmail API on this interval (fallback if WebSocket/push lag). */
 export const GMAIL_INBOX_POLL_MS = 30_000;
 
+/** Pause polling after Google returns 429 / quota so we do not keep flipping the list. */
+export const GMAIL_QUOTA_BACKOFF_MS = 90_000;
+
+export const GMAIL_QUOTA_KEEP_LIST_MESSAGE =
+  'Gmail hit a one-minute rate limit. Showing the last good inbox — wait about a minute, and do not keep clicking Refresh.';
+
+export function isGmailQuotaErrorMessage(message: string): boolean {
+  return /quota exceeded|rateLimitExceeded|userRateLimitExceeded/i.test(message);
+}
+
+export function isGmailQuotaError(err: unknown): boolean {
+  return isGmailQuotaErrorMessage(gmailErrorMessage(err));
+}
+
+/** Rate-limited thread.list rows use this stub when threads.get fails. */
+export function isGmailFallbackListRow(msg: GmailMessageSummary): boolean {
+  return msg.from?.email === 'unknown' && (!msg.subject || msg.subject === '(no subject)');
+}
+
+export function isMostlyFallbackGmailList(msgs: GmailMessageSummary[]): boolean {
+  if (msgs.length === 0) return false;
+  const fallbacks = msgs.filter(isGmailFallbackListRow).length;
+  return fallbacks >= Math.ceil(msgs.length * 0.5);
+}
+
 function messageTimestamp(iso: string): number {
   const t = new Date(iso).getTime();
   return Number.isNaN(t) ? 0 : t;

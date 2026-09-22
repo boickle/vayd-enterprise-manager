@@ -189,6 +189,28 @@
   margin: 0 0 12px;
 }
 
+.pims-client-edit-modal {
+  align-items: center;
+  padding: 24px 16px;
+  z-index: 9200;
+}
+
+.pims-client-edit-modal__card {
+  width: min(720px, 100%);
+}
+
+.pims-client-edit-modal .pims-detail__card {
+  border: none;
+  box-shadow: none;
+  background: transparent;
+  margin: 0;
+  padding: 0;
+}
+
+.pims-client-edit-modal .pims-detail__card-head {
+  display: none;
+}
+
 .pims-client-detail__financial {
   margin: 8px 0 16px;
   scroll-margin-top: 16px;

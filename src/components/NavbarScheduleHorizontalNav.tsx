@@ -30,7 +30,6 @@ type SchedNavItemKey =
   | 'clients'
   | 'patients'
   | 'scheduling'
-  | 'visits'
   | 'catalog'
   | 'inventory'
   | 'tasks'
@@ -42,7 +41,6 @@ const MEASURE_LABEL: Record<SchedNavItemKey, string> = {
   clients: 'Clients',
   patients: 'Patients',
   scheduling: 'Scheduling',
-  visits: 'Visits',
   catalog: 'Catalog',
   inventory: 'Pharmacy',
   tasks: 'Tasks',
@@ -329,7 +327,7 @@ export default function NavbarScheduleHorizontalNav() {
   const itemKeys = useMemo((): SchedNavItemKey[] => {
     const keys: SchedNavItemKey[] = [];
     if (homeTab) keys.push('home');
-    keys.push('scheduling', 'visits');
+    keys.push('scheduling');
     if (SHOW_NAV_CATALOG) keys.push('catalog', 'inventory');
     keys.push('tasks');
     if (showAdminTab) keys.push('settings', 'admin');
@@ -469,8 +467,6 @@ export default function NavbarScheduleHorizontalNav() {
         return location.pathname.startsWith('/schedule/clients');
       case 'patients':
         return location.pathname.startsWith('/schedule/patients');
-      case 'visits':
-        return location.pathname.startsWith('/schedule/soap');
       case 'catalog':
         return isCatalogNavPath(location.pathname);
       case 'inventory':
@@ -531,16 +527,6 @@ export default function NavbarScheduleHorizontalNav() {
             className={({ isActive }) => `schedule-app__tab${isActive ? ' schedule-app__tab--active' : ''}`}
           >
             Patients
-          </NavLink>
-        );
-      case 'visits':
-        return (
-          <NavLink
-            key="visits"
-            to="/schedule/soap"
-            className={({ isActive }) => `schedule-app__tab${isActive ? ' schedule-app__tab--active' : ''}`}
-          >
-            Visits
           </NavLink>
         );
       case 'catalog':
@@ -724,23 +710,6 @@ export default function NavbarScheduleHorizontalNav() {
                         }}
                       >
                         Patients
-                      </NavLink>
-                    );
-                  case 'visits':
-                    return (
-                      <NavLink
-                        key="more-visits"
-                        to="/schedule/soap"
-                        className={({ isActive }) =>
-                          `schedule-app__settings-link${isActive ? ' schedule-app__settings-link--active' : ''}`
-                        }
-                        role="menuitem"
-                        onClick={(e) => {
-                          if (blockScheduleNavLeave(e)) return;
-                          closeMoreMenu();
-                        }}
-                      >
-                        Visits
                       </NavLink>
                     );
                   case 'catalog':

@@ -396,6 +396,46 @@
   border: 1px solid #e2e8f0;
 }
 
+/* ── Catalog detail tabs ─────────────────────────────────────────────────── */
+.inv-detail-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0 0 20px;
+  padding-bottom: 12px;
+  border-bottom: 2px solid #e2e8f0;
+}
+
+.inv-detail-tab {
+  padding: 6px 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #fff;
+  color: #475569;
+  font-size: 13.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+  white-space: nowrap;
+}
+
+.inv-detail-tab:hover {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+  color: #0f172a;
+}
+
+.inv-detail-tab--active {
+  background: #0f172a;
+  border-color: #0f172a;
+  color: #fff;
+}
+
+.inv-detail-tab--active:hover {
+  background: #1e293b;
+  border-color: #1e293b;
+}
+
 .inv-counts-by-branch__row {
   cursor: pointer;
 }

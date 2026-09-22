@@ -50,6 +50,51 @@ export function sanitizeStoreDescriptionHtml(html: string): string {
   });
 }
 
+/**
+ * Client form templates (waiver paragraphs, headings, checkbox copy).
+ * Plain text keeps newlines as breaks; HTML markup is allow-listed (no scripts).
+ * Practice-logo merge may inject a data:image <img>.
+ */
+export function sanitizeFormTemplateHtml(raw: string): string {
+  const input = raw ?? '';
+  if (!input) return '';
+  if (!looksLikeHtmlFragment(input)) {
+    return escapePlainTextAsHtml(input);
+  }
+  return DOMPurify.sanitize(input, {
+    ALLOWED_TAGS: [
+      'p',
+      'br',
+      'strong',
+      'b',
+      'em',
+      'i',
+      'u',
+      'ul',
+      'ol',
+      'li',
+      'h1',
+      'h2',
+      'h3',
+      'h4',
+      'div',
+      'span',
+      'a',
+      'img',
+    ],
+    ALLOWED_ATTR: ['href', 'rel', 'target', 'src', 'alt', 'style'],
+    ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel):|data:image\/|\/|#)/i,
+  });
+}
+
+function escapePlainTextAsHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\n/g, '<br>');
+}
+
 /** Plain text for clipboard / consumers that cannot render SOAP HTML. */
 export function soapHtmlToPlainText(html: string): string {
   if (!html) return '';

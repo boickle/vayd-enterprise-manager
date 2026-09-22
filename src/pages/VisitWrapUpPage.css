@@ -83,6 +83,62 @@
   font-size: 12px;
 }
 
+.soap-wrapup-chronic {
+  border: 1px solid var(--soap-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+
+.soap-wrapup-chronic > strong {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 13.5px;
+}
+
+.soap-wrapup-chronic-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.soap-wrapup-chronic .soap-patient-chronic-grid {
+  margin-top: 4px;
+}
+
+.soap-wrapup-chronic h3 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.soap-wrapup-chronic ul {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+}
+
+.soap-wrapup-chronic li + li {
+  margin-top: 4px;
+}
+
+.soap-wrapup-chronic-tag {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #1d4ed8;
+}
+
+@media (max-width: 720px) {
+  .soap-wrapup-chronic-cols {
+    grid-template-columns: 1fr;
+  }
+}
+
 .soap-wrapup-chart-locked {
   display: inline-flex;
   align-items: center;
@@ -119,6 +175,19 @@
   border: 1px solid #fcd34d;
   border-radius: 999px;
   padding: 2px 8px;
+}
+
+.soap-wrapup-chart-pending--link {
+  cursor: pointer;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #b45309;
+}
+
+.soap-wrapup-chart-pending--link:hover {
+  background: #fef3c7;
+  text-decoration: underline;
 }
 
 .soap-wrapup-chart-body {
@@ -241,6 +310,14 @@
 .soap-wrapup-from {
   margin: -4px 0 10px;
   font-size: 12px;
+  color: var(--soap-muted);
+}
+
+.soap-wrapup-from-hint {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  font-weight: 500;
   color: var(--soap-muted);
 }
 
@@ -367,7 +444,7 @@
   font-weight: 600;
 }
 
-/* Three dates side by side: the window opens, the thing is due, the window closes. */
+/* Due first, then start (−1w/−1m) and stop (+1w/+1m) relative to due. */
 .soap-wrapup-rem-dates {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -381,6 +458,85 @@
   font-size: 11.5px;
   font-weight: 600;
   color: var(--soap-muted);
+}
+
+.soap-wrapup-rem-date-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.soap-wrapup-rem-quick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.soap-wrapup-rem-quick-btn {
+  border: 1px solid var(--soap-border);
+  background: #fff;
+  color: #374151;
+  border-radius: 5px;
+  padding: 2px 7px;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.3;
+  cursor: pointer;
+}
+
+.soap-wrapup-rem-quick-btn:hover:not(:disabled) {
+  background: var(--soap-bg);
+  border-color: #cbd5e1;
+}
+
+.soap-wrapup-rem-quick-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.soap-wrapup-rem-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.soap-wrapup-rem-list-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: #fff;
+  border: 1px solid var(--soap-border);
+  border-radius: 8px;
+  font-size: 12.5px;
+  color: #111827;
+}
+
+.soap-wrapup-rem-list-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-weight: 600;
+}
+
+.soap-wrapup-rem-list-due {
+  flex-shrink: 0;
+  font-style: normal;
+  font-size: 11.5px;
+  color: var(--soap-muted);
+}
+
+.soap-wrapup-rem-list-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.soap-wrapup-rem-list-edit {
+  list-style: none;
 }
 
 @media (max-width: 720px) {
@@ -420,6 +576,87 @@
 
 .soap-wrapup-rem-dropped-row button {
   text-decoration: none;
+}
+
+.soap-wrapup-rem-declined {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.soap-wrapup-rem-pastdue {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #fcd34d;
+  border-radius: 8px;
+  background: #fffbeb;
+}
+
+.soap-wrapup-rem-pastdue-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.soap-wrapup-rem-pastdue-head strong {
+  font-size: 13px;
+  color: #92400e;
+}
+
+.soap-wrapup-rem-pastdue-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid #fde68a;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.soap-wrapup-rem-pastdue-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-size: 12.5px;
+  color: #78350f;
+}
+
+.soap-wrapup-rem-pastdue-text strong {
+  font-size: 13px;
+  color: #1f2937;
+}
+
+.soap-wrapup-rem-pastdue-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.soap-wrapup-rem-declined-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  background: #fef2f2;
+  color: #991b1b;
+  font-size: 12.5px;
+}
+
+.soap-wrapup-rem-declined-row strong {
+  font-size: 13px;
+}
+
+.soap-wrapup-rem-declined-row em {
+  font-style: normal;
+  font-weight: 600;
+  color: #7f1d1d;
 }
 
 .soap-wrapup-rem-add {
@@ -582,4 +819,162 @@
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+.soap-wrapup-cb-pets-hint {
+  margin: 0;
+}
+
+.soap-wrapup-cb-pet {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--soap-bg);
+  border: 1px solid var(--soap-border);
+  border-radius: 8px;
+}
+
+.soap-wrapup-cb-pet-head {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.soap-wrapup-cb-pet-head .soap-wrapup-cb-field {
+  flex: 1 1 auto;
+}
+
+.soap-wrapup-cb-list--pending li.soap-wrapup-cb-pending {
+  display: none;
+}
+
+.soap-wrapup-cb-card {
+  display: grid !important;
+  grid-template-columns: minmax(7.5rem, 9.5rem) minmax(0, 1fr);
+  gap: 0;
+  align-items: stretch;
+  padding: 0 !important;
+  overflow: hidden;
+  background: #fff !important;
+  border: 1px solid #bfdbfe !important;
+  border-radius: 10px !important;
+}
+
+.soap-wrapup-cb-card--open {
+  border-color: var(--soap-border) !important;
+}
+
+.soap-wrapup-cb-card__when {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  padding: 12px 14px;
+  background: #eff6ff;
+  border-right: 1px solid #bfdbfe;
+}
+
+.soap-wrapup-cb-card--open .soap-wrapup-cb-card__when {
+  background: #f8fafc;
+  border-right-color: var(--soap-border);
+}
+
+.soap-wrapup-cb-card__when-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.soap-wrapup-cb-card__when-value {
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.25;
+  color: #0f172a;
+}
+
+.soap-wrapup-cb-card__body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 12px 14px;
+}
+
+.soap-wrapup-cb-card__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.soap-wrapup-cb-card__pet {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #334155;
+  font-size: 11.5px;
+  font-weight: 700;
+}
+
+.soap-wrapup-cb-card__actions {
+  display: flex;
+  gap: 2px;
+}
+
+.soap-wrapup-cb-card__ask {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: #0f172a;
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.soap-wrapup-cb-card__ask svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: #2563eb;
+}
+
+.soap-wrapup-cb-card__notes {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: #475569;
+  white-space: pre-wrap;
+}
+
+.soap-wrapup-cb-card__meta {
+  margin: 0;
+  font-size: 11.5px;
+  color: #94a3b8;
+}
+
+.soap-wrapup-cb-pending-edit {
+  display: block !important;
+  padding: 0 !important;
+  background: transparent !important;
+  border: none !important;
+}
+
+.soap-wrapup-cb-form--inline {
+  border-style: solid;
+  border-color: #bfdbfe;
+  background: #eff6ff;
+}
+
+@media (max-width: 560px) {
+  .soap-wrapup-cb-card {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .soap-wrapup-cb-card__when {
+    border-right: none;
+    border-bottom: 1px solid #bfdbfe;
+  }
 }

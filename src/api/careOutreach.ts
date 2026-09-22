@@ -99,6 +99,24 @@ export type PatchReminderBody = {
   isHidden?: boolean;
 };
 
+export type CreatePatientReminderBody = {
+  patientId: number;
+  description: string;
+  reminderType?: string;
+  dueDate: string;
+  startReminding?: string;
+  stopReminding?: string;
+  sourceCatalogItemType?: 'inventory' | 'procedure' | 'lab' | null;
+  sourceCatalogItemId?: number | null;
+};
+
+export async function createPatientReminder(
+  body: CreatePatientReminderBody,
+): Promise<UnscheduledReminder> {
+  const { data } = await http.post<unknown>('/reminders', body);
+  return unwrapReminderResponse(data);
+}
+
 export async function patchReminder(
   reminderId: number,
   body: PatchReminderBody

@@ -66,12 +66,16 @@ export function scoutTabPermissionOk(perm: string | undefined, abilities?: strin
 /** Legacy full-page My Week (`/schedule/my-week`) — tab config kept for future use; hidden from nav in favor of Practice calendar (`/schedule/scheduler`). */
 export const SHOW_MY_WEEK_SCOUT_TAB = false;
 
+/** Doctor worklist (`/schedule/soap`) — SOAP encounters open from the chart or calendar instead. */
+export const SHOW_SOAP_SCOUT_TAB = false;
+
 /** Tabs the current user should see in the Schedule hub. */
 export function getVisibleScoutTabs(abilities?: string[], roles?: string[]): ScoutTabConfig[] {
   const userRoles = (roles ?? []).map((r) => String(r).toLowerCase().trim()).filter(Boolean);
   if (!matchesRole(userRoles)) return [];
   return SCOUT_TABS.filter((tab) => {
     if (!SHOW_MY_WEEK_SCOUT_TAB && tab.id === 'my-week') return false;
+    if (!SHOW_SOAP_SCOUT_TAB && tab.id === 'soap') return false;
     return scoutTabPermissionOk(tab.permission, abilities);
   });
 }

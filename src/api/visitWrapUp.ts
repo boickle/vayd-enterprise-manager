@@ -104,6 +104,16 @@ export type VisitReminderPet = {
     callbacks?: ReminderPlanCallback[];
   };
   declinedItems?: import('./declinedTreatments').DeclinedTreatmentItem[];
+  /** Existing chart reminders already past due — cleanup targets. */
+  pastDueReminders?: PastDueReminder[];
+};
+
+export type PastDueReminder = {
+  id: number;
+  description: string;
+  reminderType?: string | null;
+  dueDate: string | null;
+  startReminding?: string | null;
 };
 
 export type ReminderPlanOverride = {

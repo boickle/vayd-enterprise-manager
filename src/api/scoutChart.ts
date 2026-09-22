@@ -22,6 +22,8 @@ export type ScoutChartNote = {
     lastName?: string | null;
   } | null;
   finalizedAt: string | null;
+  /** When the documented event happened, when that is not when it was written. */
+  noteDate?: string | null;
   removedAt?: string | null;
   removedByEmployeeId?: number | null;
   removedByName?: string | null;
@@ -44,12 +46,15 @@ export async function createScoutChartNote(body: {
   patientId: number;
   clientId?: number | null;
   body?: string;
+  /** ISO datetime the documented event happened, for notes written after the fact. */
+  noteDate?: string | null;
 }): Promise<ScoutChartNote> {
   const { data } = await http.post<ScoutChartNote>('/scout-chart/notes', {
     practiceId: PRACTICE_ID,
     patientId: body.patientId,
     clientId: body.clientId ?? undefined,
     body: body.body ?? '',
+    ...(body.noteDate ? { noteDate: body.noteDate } : {}),
   });
   return data;
 }

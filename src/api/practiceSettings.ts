@@ -278,6 +278,7 @@ export function formToSettings(form: ReminderSettingsForm): ReminderSettings {
     [REMINDER_KEYS.testRedirectPhone]: form.testRedirectPhone || '',
     [REMINDER_KEYS.excludedNamePhrases]: form.excludedNamePhrases.filter((s) => s.trim() !== ''),
     [REMINDER_KEYS.smsExcludedNamePhrases]: form.smsExcludedNamePhrases.filter((s) => s.trim() !== ''),
-    [REMINDER_KEYS.includedReminderTypes]: form.includedReminderTypes.filter((s) => s.trim() !== ''),
+    // Scout sends every client reminder (not Callback / ToDo). Do not persist an eVet include-list.
+    [REMINDER_KEYS.includedReminderTypes]: [],
   };
 }

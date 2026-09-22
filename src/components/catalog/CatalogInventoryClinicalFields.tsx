@@ -10,6 +10,8 @@ type Props = {
   practiceId: number;
   item: InventoryItem;
   onSaved: () => void;
+  /** When true, show the full edit form inline (no modal, no summary chips). Used inside the Clinical tab. */
+  alwaysExpanded?: boolean;
 };
 
 type ClinicalDraft = {
@@ -316,6 +318,7 @@ export default function CatalogInventoryClinicalFields({
   practiceId,
   item,
   onSaved,
+  alwaysExpanded = false,
 }: Props) {
   const [draft, setDraft] = useState<ClinicalDraft>(() => fromItem(item));
   const [vaccineDraft, setVaccineDraft] = useState<VaccineDraft>(() =>
@@ -331,8 +334,9 @@ export default function CatalogInventoryClinicalFields({
     setVaccineDraft(vaccineFromItem(item));
   }, [item]);
 
+  // Load patient statuses when the form is open (modal or always-expanded)
   useEffect(() => {
-    if (!detailsOpen) return;
+    if (!detailsOpen && !alwaysExpanded) return;
     let cancelled = false;
     void listPatientStatuses()
       .then((rows) => {
@@ -344,7 +348,7 @@ export default function CatalogInventoryClinicalFields({
     return () => {
       cancelled = true;
     };
-  }, [detailsOpen]);
+  }, [detailsOpen, alwaysExpanded]);
 
   async function save() {
     setSaving(true);
@@ -421,84 +425,9 @@ export default function CatalogInventoryClinicalFields({
   const chips = summaryChips(fromItem(item));
   const savedDraft = fromItem(item);
 
-  return (
-    <div style={{ marginBottom: 20 }}>
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: 8,
-          marginBottom: 8,
-        }}
-      >
-        <h4 style={{ fontSize: 15, fontWeight: 600, margin: 0 }}>
-          Supply &amp; clinical flags
-        </h4>
-        <button
-          type="button"
-          className="btn secondary"
-          onClick={() => {
-            setError(null);
-            setDraft(fromItem(item));
-            setDetailsOpen(true);
-          }}
-        >
-          Edit details
-        </button>
-      </div>
-      <p className="settings-muted" style={{ marginBottom: 10, fontSize: 13 }}>
-        Manufacturer, vendor, lot tracking, and how this item behaves on a SOAP.
-        Values sync from eVet when available; saving here stops eVet from overwriting them.
-      </p>
-
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
-          gap: 8,
-          marginBottom: 10,
-          fontSize: 13,
-        }}
-      >
-        <SummaryField label="Manufacturer" value={savedDraft.manufacturer} />
-        <SummaryField label="Vendor" value={savedDraft.vendorName} />
-        <SummaryField label="Default qty" value={savedDraft.defaultQuantity} />
-        <SummaryField
-          label="Barcode"
-          value={savedDraft.barcode}
-        />
-      </div>
-
-      {chips.length > 0 ? (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
-          {chips.map((c) => (
-            <span
-              key={c}
-              style={{
-                fontSize: 12,
-                padding: '3px 8px',
-                borderRadius: 6,
-                background: '#f1f5f9',
-                color: '#334155',
-              }}
-            >
-              {c}
-            </span>
-          ))}
-        </div>
-      ) : (
-        <p className="settings-muted" style={{ fontSize: 13, marginBottom: 10 }}>
-          No clinical flags set yet.
-        </p>
-      )}
-
-      {detailsOpen && (
-        <ModalShell
-          title="Edit supply & clinical details"
-          onClose={() => setDetailsOpen(false)}
-          width={640}
-        >
+  // The form body is shared between inline (alwaysExpanded) and modal modes.
+  const formBody = (
+    <>
           {error && (
             <div
               className="settings-message settings-error-message"
@@ -992,14 +921,16 @@ export default function CatalogInventoryClinicalFields({
             </select>
           </label>
 
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-            <button
-              type="button"
-              className="btn"
-              onClick={() => setDetailsOpen(false)}
-            >
-              Cancel
-            </button>
+          <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+            {!alwaysExpanded && (
+              <button
+                type="button"
+                className="btn"
+                onClick={() => setDetailsOpen(false)}
+              >
+                Cancel
+              </button>
+            )}
             <button
               type="button"
               className="btn primary"
@@ -1009,9 +940,95 @@ export default function CatalogInventoryClinicalFields({
               {saving ? 'Saving…' : 'Save details'}
             </button>
           </div>
-        </ModalShell>
+      </>
+    );
+
+  if (alwaysExpanded) {
+    return (
+      <div style={{ marginBottom: 20 }}>
+        {formBody}
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ marginBottom: 20 }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 8,
+          marginBottom: 8,
+        }}
+      >
+        <h4 style={{ fontSize: 15, fontWeight: 600, margin: 0 }}>
+          Supply &amp; clinical flags
+        </h4>
+        <button
+          type="button"
+          className="btn secondary"
+          onClick={() => {
+            setError(null);
+            setDraft(fromItem(item));
+            setDetailsOpen(true);
+          }}
+        >
+          Edit details
+        </button>
+      </div>
+      <p className="settings-muted" style={{ marginBottom: 10, fontSize: 13 }}>
+        Manufacturer, vendor, lot tracking, and how this item behaves on a SOAP.
+        Values sync from eVet when available; saving here stops eVet from overwriting them.
+      </p>
+
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
+          gap: 8,
+          marginBottom: 10,
+          fontSize: 13,
+        }}
+      >
+        <SummaryField label="Manufacturer" value={savedDraft.manufacturer} />
+        <SummaryField label="Vendor" value={savedDraft.vendorName} />
+        <SummaryField label="Default qty" value={savedDraft.defaultQuantity} />
+        <SummaryField label="Barcode" value={savedDraft.barcode} />
+      </div>
+
+      {chips.length > 0 ? (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
+          {chips.map((c) => (
+            <span
+              key={c}
+              style={{
+                fontSize: 12,
+                padding: '3px 8px',
+                borderRadius: 6,
+                background: '#f1f5f9',
+                color: '#334155',
+              }}
+            >
+              {c}
+            </span>
+          ))}
+        </div>
+      ) : (
+        <p className="settings-muted" style={{ fontSize: 13, marginBottom: 10 }}>
+          No clinical flags set yet.
+        </p>
       )}
 
+      {detailsOpen && (
+        <ModalShell
+          title="Edit supply & clinical details"
+          onClose={() => setDetailsOpen(false)}
+          width={640}
+        >
+          {formBody}
+        </ModalShell>
+      )}
     </div>
   );
 }

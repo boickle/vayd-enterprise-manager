@@ -466,6 +466,7 @@ export default function ScheduleLayout() {
           <Outlet context={{ schedulingToolsLinkPrefix: '/schedule/scheduling-tools' }} />
         </div>
       </div>
+
     </div>
   );
 }

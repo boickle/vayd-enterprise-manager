@@ -3,9 +3,10 @@ import { truthyApiFlag } from '../api/appointments';
 import type { Appointment } from '../api/roomLoader';
 import { fetchPatientAppointmentsStaff } from '../api/pimsAppointments';
 import { fetchPatientMedicalRecordStaff, fetchPatientProfileForRow } from '../api/patients';
+import { fetchAllEmployees } from '../api/appointmentSettings';
+import { listTasks } from '../api/tasks';
 import type { MedicalRecordBundle } from './patientChartFromMedicalRecord';
 import {
-  formatDeclinedDate,
   parseDeclinedItems,
   type DeclinedTreatmentItem,
 } from '../api/declinedTreatments';
@@ -15,6 +16,7 @@ import {
   formatVisitHighlightsNextAppointmentLine,
 } from './nextScheduledAppointmentForVisit';
 import { primaryProviderFromPatientRecord } from './schedulerVisitDisplay';
+import { formatEmployeeDisplayName } from './employeeDisplayName';
 
 function pickStr(v: unknown): string | null {
   if (v == null) return null;
@@ -68,7 +70,46 @@ export type RoutingPatientReminderLine = {
   dueMs: number | null;
   /** yyyy-MM-dd in the practice timezone, when a due date is known. */
   dueDateInput: string | null;
+  /** Raw `reminderType` (e.g. Callback, Wellness). */
+  reminderType: string | null;
+  /** Staff assigned to this reminder, when known. */
+  assigneeName: string | null;
 };
+
+/**
+ * Staff-only follow-ups (eVet Callback + ToDo). Merged with open Scout patient tasks
+ * in the chart Callbacks & Tasks section — not client due notices.
+ */
+export function isCallbackReminderType(
+  reminderType: string | null | undefined
+): boolean {
+  const type = (reminderType ?? '').trim().toLowerCase();
+  return type === 'callback' || type === 'todo';
+}
+
+/** Open Scout task linked to a patient (kind callback or plain to-do). */
+export type RoutingPatientStaffTaskLine = {
+  id: number;
+  title: string;
+  assigneeName: string | null;
+  dueMs: number | null;
+  dueLabel: string | null;
+  overdue: boolean;
+};
+
+function decodeReminderText(raw: string): string {
+  return raw
+    .replace(/<br\s*\/?>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
 export type RoutingClientPatientRow = {
   id: string;
@@ -170,6 +211,10 @@ export type RoutingPatientHoverSummary = {
   nextAppointmentLine: string | null;
   activeReminders: RoutingPatientReminderLine[];
   overdueReminders: RoutingPatientReminderLine[];
+  /** eVet Callback + ToDo reminder rows. */
+  callbackReminders: RoutingPatientReminderLine[];
+  /** Open Scout tasks for this patient (callbacks and plain to-dos). */
+  staffTasks: RoutingPatientStaffTaskLine[];
   declinedItems: DeclinedTreatmentItem[];
 };
 
@@ -214,13 +259,13 @@ function reminderDurationLabel(raw: Record<string, unknown>): string | null {
 }
 
 function reminderTitle(raw: Record<string, unknown>): string {
-  return (
+  const title =
     pickStr(raw.description) ??
     pickStr(raw.title) ??
     pickStr(raw.name) ??
     pickStr(raw.serviceName) ??
-    'Reminder'
-  );
+    'Reminder';
+  return decodeReminderText(title);
 }
 
 function formatReminderDueLabel(dueMs: number | null, practiceTz: string): string | null {
@@ -247,6 +292,20 @@ function reminderIsHidden(o: Record<string, unknown>): boolean {
   return false;
 }
 
+function reminderAssigneeName(raw: Record<string, unknown>): string | null {
+  const emp =
+    raw.employee && typeof raw.employee === 'object' && !Array.isArray(raw.employee)
+      ? (raw.employee as Record<string, unknown>)
+      : null;
+  if (!emp) return null;
+  const name = [pickStr(emp.firstName), pickStr(emp.lastName)].filter(Boolean).join(' ').trim();
+  return name || pickStr(emp.name) || pickStr(emp.displayName) || null;
+}
+
+function reminderTypeOf(raw: Record<string, unknown>): string | null {
+  return pickStr(raw.reminderType) ?? pickStr(raw.type) ?? null;
+}
+
 export function parseRemindersFromMedicalRecord(
   raw: MedicalRecordBundle | null | undefined,
   practiceTz: string
@@ -262,6 +321,8 @@ export function parseRemindersFromMedicalRecord(
       const title = reminderTitle(o);
       const duration = reminderDurationLabel(o);
       const dueLabel = formatReminderDueLabel(dueMs, practiceTz);
+      const reminderType = reminderTypeOf(o);
+      const assigneeName = reminderAssigneeName(o);
       const parts = [title];
       if (duration) parts.push(duration);
       if (dueLabel) parts.push(dueLabel);
@@ -270,6 +331,8 @@ export function parseRemindersFromMedicalRecord(
         label: parts.join(' - '),
         dueMs,
         dueDateInput: reminderDueDateInput(dueMs, practiceTz),
+        reminderType,
+        assigneeName,
       };
     })
     .sort((a, b) => {
@@ -283,14 +346,23 @@ export function parseRemindersFromMedicalRecord(
 export function splitActiveAndOverdueReminders(
   reminders: RoutingPatientReminderLine[],
   asOfMs = Date.now()
-): { active: RoutingPatientReminderLine[]; overdue: RoutingPatientReminderLine[] } {
+): {
+  active: RoutingPatientReminderLine[];
+  overdue: RoutingPatientReminderLine[];
+  callbacks: RoutingPatientReminderLine[];
+} {
   const active: RoutingPatientReminderLine[] = [];
   const overdue: RoutingPatientReminderLine[] = [];
+  const callbacks: RoutingPatientReminderLine[] = [];
   for (const r of reminders) {
+    if (isCallbackReminderType(r.reminderType)) {
+      callbacks.push(r);
+      continue;
+    }
     if (r.dueMs != null && r.dueMs < asOfMs) overdue.push(r);
     else active.push(r);
   }
-  return { active, overdue };
+  return { active, overdue, callbacks };
 }
 
 function isBookablePastAppointment(a: Appointment, asOfMs: number): boolean {
@@ -326,10 +398,19 @@ export async function loadRoutingPatientHoverSummary(
   const asOfMs = Date.now();
   const excludeAppointmentId = opts?.excludeAppointmentId;
 
-  const [medicalRecord, appointments, patientProfile] = await Promise.all([
+  const patientIdNum = Number(patientId);
+  const [medicalRecord, appointments, patientProfile, tasksPage] = await Promise.all([
     fetchPatientMedicalRecordStaff(patientId).catch(() => null),
     fetchPatientAppointmentsStaff(patientId, { practiceId }).catch(() => [] as Appointment[]),
     fetchPatientProfileForRow({ id: patientId }).catch(() => null),
+    Number.isFinite(patientIdNum) && patientIdNum > 0
+      ? listTasks({ patientId: patientIdNum, includeDone: false, limit: 50 }).catch(() => ({
+          items: [],
+          total: 0,
+          limit: 50,
+          offset: 0,
+        }))
+      : Promise.resolve({ items: [], total: 0, limit: 50, offset: 0 }),
   ]);
 
   const alerts = opts?.alerts?.trim() || patientAlertsFromRecord(patientProfile) || null;
@@ -351,7 +432,34 @@ export async function loadRoutingPatientHoverSummary(
     .sort((a, b) => Date.parse(a.appointmentStart) - Date.parse(b.appointmentStart))[0];
 
   const parsedReminders = parseRemindersFromMedicalRecord(medicalRecord, practiceTz);
-  const { active, overdue } = splitActiveAndOverdueReminders(parsedReminders, asOfMs);
+  const { active, overdue, callbacks } = splitActiveAndOverdueReminders(parsedReminders, asOfMs);
+
+  const openTasks = tasksPage.items.filter((t) => t.status !== 'done');
+  let staffTasks: RoutingPatientStaffTaskLine[] = [];
+  if (openTasks.length > 0) {
+    const employees = await fetchAllEmployees().catch(() => []);
+    const empById = new Map(
+      employees.map((e) => [Number(e.id), e] as const).filter(([id]) => Number.isFinite(id))
+    );
+    staffTasks = openTasks.map((t) => {
+      const dueMs = t.dueAt ? Date.parse(t.dueAt) : NaN;
+      const assigneeId = t.assignedToEmployeeId ?? t.defaultAssigneeEmployeeId;
+      const emp =
+        assigneeId != null && Number.isFinite(Number(assigneeId))
+          ? empById.get(Number(assigneeId))
+          : undefined;
+      return {
+        id: t.id,
+        title: t.title,
+        assigneeName: emp ? formatEmployeeDisplayName(emp) : null,
+        dueMs: Number.isFinite(dueMs) ? dueMs : null,
+        dueLabel: t.dueAt
+          ? DateTime.fromISO(t.dueAt, { zone: practiceTz }).toFormat('M/d/yyyy')
+          : null,
+        overdue: Number.isFinite(dueMs) && dueMs < asOfMs,
+      };
+    });
+  }
 
   return {
     alerts,
@@ -362,6 +470,8 @@ export async function loadRoutingPatientHoverSummary(
       : null,
     activeReminders: active,
     overdueReminders: overdue,
+    callbackReminders: callbacks,
+    staffTasks,
     declinedItems: parseDeclinedItems(
       (medicalRecord as MedicalRecordBundle | null)?.declinedItems
     ),

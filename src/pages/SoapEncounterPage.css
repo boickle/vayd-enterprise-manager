@@ -360,6 +360,14 @@
   border-radius: 12px 12px 0 0;
   border-bottom: none;
 }
+
+/* Classic (non-scribe) chart: same sticky section strip. */
+.soap-workspace .soap-main > .soap-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  box-shadow: 0 6px 10px -8px rgba(15, 23, 42, 0.18);
+}
 .soap-tab {
   display: inline-flex;
   align-items: center;
@@ -1496,6 +1504,15 @@
 .soap-invoice-line.is-pending {
   background: #fff7f7;
 }
+.soap-invoice-line.is-focus {
+  outline: 2px solid #2563eb;
+  background: #eff6ff;
+  animation: soap-invoice-focus 1.6s ease;
+}
+@keyframes soap-invoice-focus {
+  0% { background: #dbeafe; }
+  100% { background: #eff6ff; }
+}
 .soap-invoice-line.is-ready {
   background: #fff;
 }
@@ -1575,6 +1592,13 @@
   display: inline-flex;
   margin-left: 4px;
   color: #059669;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+.soap-invoice-line-alert {
+  display: inline-flex;
+  margin-left: 4px;
+  color: #dc2626;
   vertical-align: middle;
   flex-shrink: 0;
 }
@@ -2203,6 +2227,37 @@
 .soap-scribe-chronic-item-label {
   min-width: 0;
   overflow-wrap: anywhere;
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.soap-scribe-chronic-edit-btn {
+  border: none;
+  background: transparent;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.soap-scribe-chronic-edit-btn:hover:not(:disabled) {
+  text-decoration: underline;
+}
+.soap-scribe-chronic-edit {
+  min-width: 140px;
+  max-width: 280px;
+}
+.soap-scribe-chronic-new {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: #9a3412;
+  background: #ffedd5;
+  border: 1px solid #fdba74;
+  border-radius: 999px;
+  padding: 1px 7px;
 }
 .soap-scribe-chronic-action {
   display: inline-flex;
@@ -2595,13 +2650,21 @@
   color: var(--soap-muted);
 }
 /* S/O/A/P as tabs on a file: one section at a time, with the strip showing which
-   sections already have something in them. */
+   sections already have something in them. Stays visible while the chart scrolls. */
 .soap-doc-tabbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
   flex-wrap: wrap;
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  background: var(--soap-bg);
+  padding: 8px 0 10px;
+  margin: 0 0 2px;
+  border-bottom: 1px solid var(--soap-border);
+  box-shadow: 0 6px 10px -8px rgba(15, 23, 42, 0.18);
 }
 .soap-tab.is-filled:not(.active)::after {
   content: '';
@@ -2832,6 +2895,16 @@
   font-size: 11.5px;
   font-style: italic;
   color: var(--soap-muted);
+}
+.soap-scribe-planitem-compose {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--soap-border);
+  border-radius: 8px;
+  background: #f8fafc;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 .soap-scribe-planitem-results {
   position: absolute;
@@ -3183,6 +3256,48 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+.soap-checkout-invoice-rx-match {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(16rem, 1fr);
+  gap: 12px 20px;
+  align-items: start;
+  width: 100%;
+}
+.soap-checkout-invoice-rx-match .client-fin__sig textarea {
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font: inherit;
+}
+.soap-checkout-invoice-rx {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 7.5rem;
+  gap: 10px 12px;
+  align-items: start;
+}
+.soap-checkout-invoice-rx__sig,
+.soap-checkout-invoice-rx__refill {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #64748b;
+}
+.soap-checkout-invoice-rx__sig textarea.soap-input {
+  min-height: 4.5rem;
+  resize: vertical;
+  font-weight: 400;
+}
+.soap-checkout-invoice-rx__refill .soap-input {
+  font-weight: 400;
+}
+@media (max-width: 720px) {
+  .soap-checkout-invoice-rx,
+  .soap-checkout-invoice-rx-match {
+    grid-template-columns: 1fr;
+  }
 }
 .soap-dose-rx--embedded,
 .soap-dose-row--embedded {
