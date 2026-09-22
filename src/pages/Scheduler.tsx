@@ -3320,10 +3320,21 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   const [onMyWaySmsAppt, setOnMyWaySmsAppt] = useState<Appointment | null>(null);
   const [embeddedRoomLoaderId, setEmbeddedRoomLoaderId] = useState<number | null>(null);
   const [roomLoaderPdfModalAppt, setRoomLoaderPdfModalAppt] = useState<Appointment | null>(null);
-  /** Scout room-loader sentStatus → RL badge color when PIMS confirmStatusName lags behind. */
-  const [roomLoaderStatusByApptId, setRoomLoaderStatusByApptId] = useState<
-    Map<number, RoomLoaderPreApptUiStatus>
-  >(() => new Map());
+  /**
+   * Scout room-loader rows for the visible range. Badge color prefers these over PIMS
+   * confirmStatusName, and patient overlap covers doctor-to-doctor moves that drop appt links.
+   */
+  const [roomLoaderStatusSources, setRoomLoaderStatusSources] = useState<
+    {
+      sentStatus?: string | null;
+      appointments?: { id?: number | null; patient?: { id?: number | null } | null }[] | null;
+      patients?: { id?: number | null }[] | null;
+    }[]
+  >([]);
+  const roomLoaderStatusByApptId = useMemo(
+    () => buildRoomLoaderPreApptStatusByAppointmentId(roomLoaderStatusSources, rawAppointments),
+    [roomLoaderStatusSources, rawAppointments]
+  );
   const [workZonesMapOpen, setWorkZonesMapOpen] = useState(false);
   const [roomLoaderOpening, setRoomLoaderOpening] = useState(false);
   /** null = not applicable or loading; true = at least one pet can be added; false = none left */
@@ -4703,7 +4714,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     const from = rangeUtc.startLocal.toISODate();
     const toExclusive = rangeUtc.endLocalExclusive.toISODate();
     if (!from || !toExclusive) {
-      setRoomLoaderStatusByApptId(new Map());
+      setRoomLoaderStatusSources([]);
       return;
     }
     const toInclusive = rangeUtc.endLocalExclusive.minus({ days: 1 }).toISODate() ?? from;
@@ -4714,9 +4725,9 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         appointmentTo: toInclusive,
         activeOnly: true,
       });
-      setRoomLoaderStatusByApptId(buildRoomLoaderPreApptStatusByAppointmentId(rows ?? []));
+      setRoomLoaderStatusSources(rows ?? []);
     } catch {
-      // Keep prior map on transient failures so badges don't flash red.
+      // Keep prior sources on transient failures so badges don't flash red.
     }
   }, [rangeUtc.startLocal, rangeUtc.endLocalExclusive]);
 
