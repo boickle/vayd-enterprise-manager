@@ -21,6 +21,21 @@ export function shouldPreserveManualRoutingMinutes(minutesManuallyOverridden: bo
 }
 
 /**
+ * Passive Calculate Time sync (stats load / type+pets effect) should not overwrite a
+ * reschedule visit's original duration. User-driven type/pet changes still apply minutes
+ * from the Routing form handlers. When minutes are missing/invalid during reschedule,
+ * allow passive fill so the field is not left at 0.
+ */
+export function shouldPassiveAutofillRoutingMinutes(opts: {
+  hasActiveRescheduleIntent: boolean;
+  currentServiceMinutes: number;
+}): boolean {
+  if (!opts.hasActiveRescheduleIntent) return true;
+  const mins = Number(opts.currentServiceMinutes);
+  return !(Number.isFinite(mins) && mins > 0);
+}
+
+/**
  * After ASAP / multi-doctor modal confirm: only replace Minutes from averaged stats
  * when the user has not typed a manual override. Returns undefined to keep the form value.
  */
