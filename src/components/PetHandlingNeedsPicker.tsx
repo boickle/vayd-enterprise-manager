@@ -92,12 +92,11 @@ export function hasSpecialHandlingNeeds(pet: PetHandlingFields): boolean {
 }
 
 /**
- * Online self-scheduling is only offered when every pet with a handling question
- * explicitly chose "None" (not unanswered, not calming/muzzle/extra).
+ * Handling answers do not hide the date picker. Near-term times are removed by
+ * the new-client lead time instead of requiring "None".
  */
-export function petsAllowOnlineScheduling(pets: PetHandlingFields[]): boolean {
-  if (pets.length === 0) return true;
-  return pets.every((p) => p.handlingNeedsExplicitNone === true);
+export function petsAllowOnlineScheduling(_pets: PetHandlingFields[]): boolean {
+  return true;
 }
 
 function HandlingNeedCard({

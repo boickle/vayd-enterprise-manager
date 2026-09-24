@@ -62,6 +62,8 @@ export type AvailabilityRequest = {
   lon?: number;
   allowOtherDoctors?: boolean;
   doctorId?: string | number; // Optional: specific doctor
+  /** When set, routing searches these doctors together (emergent same-day). */
+  doctorIds?: Array<string | number>;
   /** Required for online booking validation on POST /public/appointments/availability */
   appointmentTypeId?: number;
   /** Per-pet types for server-side routing duration (preferred over serviceMinutes). */
@@ -73,6 +75,10 @@ export type AvailabilityRequest = {
 export type RoutingVisitPetInput = {
   appointmentTypeId: number;
   isNewPatient?: boolean;
+  /** When true, availability uses the new-patient lead time instead of the pre-meds window. */
+  needsCalmingMedications?: boolean;
+  /** Muzzle or extra handling — same lead time as a new client. */
+  needsSpecialHandling?: boolean;
 };
 
 export type RoutingServiceMinutesResponse = {
