@@ -130,14 +130,31 @@ export function routingVisitPetCount(input: {
 export type RoutingVisitPetInput = {
   appointmentTypeId: number;
   isNewPatient?: boolean;
+  /** When true, availability uses the new-patient lead time instead of the pre-meds window. */
+  needsCalmingMedications?: boolean;
+  /** Muzzle or extra handling — same lead time as a new client. */
+  needsSpecialHandling?: boolean;
 };
 
 export function buildRoutingVisitPetsFromFormData(
   formData: {
     selectedPetIds?: readonly string[];
-    newClientPets?: readonly { id?: string }[];
-    existingClientNewPets?: readonly { id?: string }[];
-    petSpecificData?: Record<string, { appointmentTypeId?: number } | undefined>;
+    newClientPets?: readonly {
+      id?: string;
+      needsCalmingMedications?: string;
+      needsMuzzleOrSpecialHandling?: string;
+      needsExtraHandling?: string;
+    }[];
+    existingClientNewPets?: readonly {
+      id?: string;
+      needsCalmingMedications?: string;
+      needsMuzzleOrSpecialHandling?: string;
+      needsExtraHandling?: string;
+    }[];
+    petSpecificData?: Record<
+      string,
+      { appointmentTypeId?: number; needsCalmingMedications?: string } | undefined
+    >;
   },
   opts: {
     isNewPatientRequest: boolean;
@@ -166,6 +183,22 @@ export function buildRoutingVisitPetsFromFormData(
       ? formData.existingClientNewPets.map((p) => String(p.id ?? '').trim()).filter(Boolean)
       : []),
   ]);
+  const calmingPetIds = new Set<string>();
+  const specialHandlingPetIds = new Set<string>();
+  for (const pet of [
+    ...(formData.newClientPets ?? []),
+    ...(formData.existingClientNewPets ?? []),
+  ]) {
+    if (!pet.id) continue;
+    const id = String(pet.id);
+    if (pet.needsCalmingMedications === 'Yes') calmingPetIds.add(id);
+    if (
+      pet.needsMuzzleOrSpecialHandling === 'Yes' ||
+      pet.needsExtraHandling === 'Yes'
+    ) {
+      specialHandlingPetIds.add(id);
+    }
+  }
 
   const visitPets: RoutingVisitPetInput[] = [];
   for (const petId of petIds) {
@@ -173,9 +206,15 @@ export function buildRoutingVisitPetsFromFormData(
       formData.petSpecificData?.[petId]?.appointmentTypeId ??
       opts.primaryAppointmentTypeId;
     if (typeId == null || !Number.isFinite(typeId) || typeId <= 0) continue;
+    const needsCalmingMedications =
+      formData.petSpecificData?.[petId]?.needsCalmingMedications === 'Yes' ||
+      calmingPetIds.has(petId);
+    const needsSpecialHandling = specialHandlingPetIds.has(petId);
     visitPets.push({
       appointmentTypeId: typeId,
       isNewPatient: opts.isNewPatientRequest || newPetIdSet.has(petId),
+      ...(needsCalmingMedications ? { needsCalmingMedications: true } : {}),
+      ...(needsSpecialHandling ? { needsSpecialHandling: true } : {}),
     });
   }
 

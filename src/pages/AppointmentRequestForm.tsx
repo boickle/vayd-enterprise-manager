@@ -21,7 +21,6 @@ import {
   PetHandlingNeedsPicker,
   hasHandlingNeedsAnswer,
   hasSpecialHandlingNeeds,
-  petsAllowOnlineScheduling,
   type PetHandlingFields,
 } from '../components/PetHandlingNeedsPicker';
 import { getSelectedAppointmentType, EUTHANASIA_AFTERCARE_LABEL, EUTHANASIA_AFTERCARE_OPTIONS } from '../utils/petVisitQuestionUtils';
@@ -30,7 +29,6 @@ import {
   isAbandonedAppointmentRequestPetStub,
 } from '../utils/appointmentRequestPetCompleteness';
 import { appointmentTypeIsCalmingPremed, findCalmingPremedAppointmentType, sortAppointmentTypesForPicker } from '../utils/appointmentTypeSettings';
-import { resolveClientArrivalWindowForScheduledStart } from '../utils/appointmentArrivalWindow';
 import { DEFAULT_PRACTICE_TIMEZONE } from '../utils/practiceTimezone';
 import { formatAutobookDateTimePreferenceDisplay } from '../utils/appointmentRequestDisplay';
 import { appointmentTypeForRoutingStatsKey } from '../utils/routingCalculateTimeType';
@@ -59,6 +57,7 @@ import {
   anyDoctorCanBookOnlineForNewPatientRequestForVisitTypes,
   canBookOnlineForVisitTypes,
   canBookOnlineForNewPatientRequestForVisitTypes,
+  findVeterinarianById,
   isVeterinarianAcceptingNewPatientsInClientZone,
   isOnlineBookingUnavailableError,
   ONLINE_BOOKING_UNAVAILABLE_MESSAGE,
@@ -279,10 +278,7 @@ function resolveProviderFromDoctorName(
 }
 
 function resolveRawVeterinarianById(rawVets: any[], doctorId: string | number | undefined): any | null {
-  if (doctorId == null) return null;
-  return (
-    rawVets.find((v) => String(v.id ?? v.employeeId ?? v.pimsId) === String(doctorId)) ?? null
-  );
+  return findVeterinarianById(rawVets, doctorId);
 }
 
 type SchedulingProviderLike = {
@@ -774,7 +770,6 @@ export default function AppointmentRequestForm() {
   const [recommendedSlots, setRecommendedSlots] = useState<Array<{ date: string; time: string; display: string; iso: string }>>([]);
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [serviceMinutesUsed, setServiceMinutesUsed] = useState<number | null>(null); // Service minutes used for routing request
-  const [showSelfScheduleModal, setShowSelfScheduleModal] = useState(false); // Self-schedule calendar modal
   const [scheduleModalRefreshKey, setScheduleModalRefreshKey] = useState(0);
   const [selfScheduleSlotError, setSelfScheduleSlotError] = useState<string | null>(null);
   const [highlightSchedulingNotes, setHighlightSchedulingNotes] = useState(false); // Briefly glow the preferences box
@@ -1742,38 +1737,15 @@ export default function AppointmentRequestForm() {
     };
   }, [calmingPremedAppointmentType]);
 
-  // Prefer the Pre-Meds type when any pet uses it: availability search and the
-  // slot arrival window then use its (wider) window for the whole household,
-  // while each pet keeps its own appointment type on the booked calendar visits.
-  const selectedChartPetUsesCalmingMedications = useMemo(
-    () =>
-      formData.selectedPetIds.some(
-        (petId) =>
-          formData.petSpecificData?.[petId]?.needsCalmingMedications === 'Yes',
-      ),
-    [formData.selectedPetIds, formData.petSpecificData],
-  );
+  // Availability uses the visit reason the client picked. Calming meds no longer
+  // swap the search onto the Pre-Meds type; those visits use the new-patient lead time.
   const primaryAppointmentTypeId = useMemo(
-    () => {
-      // The checkbox is authoritative for the household window. Do not rely on
-      // the per-pet type update having rendered before availability opens.
-      if (
-        selectedChartPetUsesCalmingMedications &&
-        calmingPremedAppointmentType?.id != null
-      ) {
-        return Number(calmingPremedAppointmentType.id);
-      }
-      return resolvePrimaryAppointmentTypeId(formData, {
-        preferredTypeId: calmingPremedAppointmentType?.id,
-      });
-    },
+    () => resolvePrimaryAppointmentTypeId(formData),
     [
       formData.selectedPetIds,
       formData.newClientPets,
       formData.existingClientNewPets,
       formData.petSpecificData,
-      calmingPremedAppointmentType?.id,
-      selectedChartPetUsesCalmingMedications,
     ],
   );
 
@@ -1805,11 +1777,6 @@ export default function AppointmentRequestForm() {
     [formData.newClientPets, formData.existingClientNewPets],
   );
 
-  const handlingNeedsAllowOnlineScheduling = useMemo(
-    () => petsAllowOnlineScheduling(petsInVisitWithHandlingQuestion),
-    [petsInVisitWithHandlingQuestion],
-  );
-
   const speciesAllowOnlineScheduling = useMemo(
     () => petsSpeciesAllowOnlineScheduling(petsInVisitWithHandlingQuestion),
     [petsInVisitWithHandlingQuestion],
@@ -1817,7 +1784,6 @@ export default function AppointmentRequestForm() {
 
   const onlineBookingOffered = useMemo(() => {
     if (zoneCheckStatus === 'out_of_service') return false;
-    if (!handlingNeedsAllowOnlineScheduling) return false;
     if (!speciesAllowOnlineScheduling) return false;
     if (visitAppointmentTypeIds.length === 0) return false;
     if (isNewPatientRequest) {
@@ -1832,7 +1798,6 @@ export default function AppointmentRequestForm() {
     visitAppointmentTypeIds,
     rawVeterinarianList,
     isNewPatientRequest,
-    handlingNeedsAllowOnlineScheduling,
     speciesAllowOnlineScheduling,
   ]);
 
@@ -2027,7 +1992,7 @@ export default function AppointmentRequestForm() {
 
   /** True while vet list is still loading — avoids flashing the manual-scheduling banner. */
   const onlineBookingAvailabilityPending = useMemo(() => {
-    if (!handlingNeedsAllowOnlineScheduling || visitAppointmentTypeIds.length === 0) return false;
+    if (visitAppointmentTypeIds.length === 0) return false;
     if (errors.zoneNotServiced) return false;
     if (loadingVeterinarians) return true;
 
@@ -2043,7 +2008,6 @@ export default function AppointmentRequestForm() {
 
     return !veterinariansFetchResolved;
   }, [
-    handlingNeedsAllowOnlineScheduling,
     visitAppointmentTypeIds,
     errors.zoneNotServiced,
     loadingVeterinarians,
@@ -2055,24 +2019,8 @@ export default function AppointmentRequestForm() {
     veterinariansFetchResolved,
   ]);
 
-  const slotDoctorAllowsOnlineBooking = useMemo(() => {
-    if (!formData.selfScheduledSlot || visitAppointmentTypeIds.length === 0) return false;
-    const raw = resolveRawVeterinarianById(rawVeterinarianList, formData.selfScheduledSlot.doctorId);
-    if (isNewPatientRequest) {
-      return canBookOnlineForNewPatientRequestForVisitTypes(raw, visitAppointmentTypeIds);
-    }
-    return canBookOnlineForVisitTypes(raw, visitAppointmentTypeIds);
-  }, [
-    formData.selfScheduledSlot,
-    visitAppointmentTypeIds,
-    rawVeterinarianList,
-    isNewPatientRequest,
-  ]);
-
   const isOnlineBookingSubmit = Boolean(
-    formData.selfScheduledSlot &&
-      slotDoctorAllowsOnlineBooking &&
-      speciesAllowOnlineScheduling,
+    formData.selfScheduledSlot && speciesAllowOnlineScheduling,
   );
 
   const selfScheduleExpectedServiceMinutes = resolvedServiceMinutes;
@@ -2103,12 +2051,21 @@ export default function AppointmentRequestForm() {
   }, [selfScheduleExpectedServiceMinutes, formData.selfScheduledSlot]);
 
   useEffect(() => {
+    if (!formData.selfScheduledSlot) return;
+    setErrors((prev) => {
+      if (prev.selfScheduledSlot !== ONLINE_BOOKING_UNAVAILABLE_MESSAGE) return prev;
+      const next = { ...prev };
+      delete next.selfScheduledSlot;
+      return next;
+    });
+  }, [formData.selfScheduledSlot]);
+
+  useEffect(() => {
     if (!onlineBookingOffered) {
       setFormData((prev) => {
         if (!prev.selfScheduledSlot) return prev;
         return { ...prev, selfScheduledSlot: null };
       });
-      setShowSelfScheduleModal(false);
     }
   }, [onlineBookingOffered]);
 
@@ -3959,9 +3916,6 @@ export default function AppointmentRequestForm() {
     if (SHOW_DOCTOR_SELECTION && !formData.preferredDoctorExisting && !formData.preferredDoctor) {
       newErrors.preferredDoctorExisting = 'Please select a preferred doctor';
     }
-    if (formData.selfScheduledSlot && !slotDoctorAllowsOnlineBooking) {
-      newErrors.selfScheduledSlot = ONLINE_BOOKING_UNAVAILABLE_MESSAGE;
-    }
     if (formData.selfScheduledSlot && !speciesAllowOnlineScheduling) {
       newErrors.selfScheduledSlot = ONLINE_BOOKING_OTHER_SPECIES_MESSAGE;
     }
@@ -4962,7 +4916,6 @@ export default function AppointmentRequestForm() {
         updateFormData('selfScheduledSlot', null);
         setSelfScheduleSlotError(errorMessage);
         setScheduleModalRefreshKey((k) => k + 1);
-        setShowSelfScheduleModal(true);
         trackFormEvent('appointment_form_submit_failed', {
           error_message: errorMessage,
           appointment_type: appointmentType,
@@ -5216,7 +5169,6 @@ export default function AppointmentRequestForm() {
   // attention to the scheduling-preferences field so they can tell us their times.
   const focusSchedulingNotes = useCallback(() => {
     setSelfScheduleSlotError(null);
-    setShowSelfScheduleModal(false);
     setHighlightSchedulingNotes(true);
     window.setTimeout(() => {
       const el = schedulingNotesRef.current;
@@ -5358,7 +5310,7 @@ export default function AppointmentRequestForm() {
 
   const renderSelfScheduleOrPreferencesBlock = (options: {
     hasAddress: boolean;
-    onPickDate: () => void;
+    schedulePicker?: React.ReactNode;
     schedulingNotesStyle?: {
       labelFontSize?: string;
       labelMb?: string | number;
@@ -5380,44 +5332,100 @@ export default function AppointmentRequestForm() {
           {errors.selfScheduledSlot}
         </div>
       )}
-      <div style={{ display: 'flex', justifyContent: 'center' }}>
-        <button
-          type="button"
-          onClick={options.onPickDate}
-          disabled={!options.hasAddress}
+      {formData.selfScheduledSlot ? (
+        <div
           style={{
-            width: isMobile ? '100%' : 'auto',
-            minWidth: isMobile ? undefined : '280px',
-            padding: '12px 22px',
-            backgroundColor: options.hasAddress ? '#0d9488' : '#e5e7eb',
-            color: options.hasAddress ? '#ffffff' : '#9ca3af',
-            border: options.hasAddress ? '2px solid #0f766e' : 'none',
-            borderRadius: '8px',
-            fontSize: '15px',
-            fontWeight: 700,
-            cursor: options.hasAddress ? 'pointer' : 'not-allowed',
+            marginBottom: '12px',
+            padding: '12px 14px',
+            backgroundColor: '#f0fdf4',
+            border: '1px solid #10b981',
+            borderRadius: '10px',
             display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: '8px',
-            boxShadow: options.hasAddress ? '0 2px 5px rgba(13,148,136,0.22)' : 'none',
-            transition: 'background-color 0.15s',
+            alignItems: 'flex-start',
+            gap: '12px',
           }}
         >
-          <span style={{ fontSize: 18 }}>📅</span>
-          Pick a Date &amp; Time Now
-        </button>
-      </div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 700, fontSize: '14px', color: '#065f46', marginBottom: '2px' }}>
+              Time selected
+            </div>
+            <div style={{ fontSize: '14px', color: '#065f46' }}>
+              {DateTime.fromISO(formData.selfScheduledSlot.appointmentStart).toFormat('cccc, LLLL d')} with{' '}
+              {formData.selfScheduledSlot.doctorName}
+            </div>
+            {formData.selfScheduledSlot.windowDisplay && (
+              <div style={{ fontSize: '13px', color: '#047857', marginTop: '4px' }}>
+                {formData.selfScheduledSlot.windowDisplay}
+              </div>
+            )}
+            <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>
+              We&apos;ll book this time when you submit.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => updateFormData('selfScheduledSlot', null)}
+            style={{
+              background: 'none',
+              border: '1px solid #10b981',
+              borderRadius: '6px',
+              padding: '4px 10px',
+              fontSize: '12px',
+              color: '#065f46',
+              cursor: 'pointer',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            Clear
+          </button>
+        </div>
+      ) : null}
+      {options.hasAddress ? (
+        options.schedulePicker
+      ) : null}
       {!options.hasAddress && (
         <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '6px', textAlign: 'center' }}>
           {isLoggedIn ? 'Loading your address…' : 'Please enter your complete address above to choose a time.'}
         </div>
       )}
-      {renderSchedulingOrDivider()}
-      {renderSchedulingNotesField({
-        ...options.schedulingNotesStyle,
-        label: 'Tell us your preferred times',
-      })}
+      {formData.selfScheduledSlot ? (
+        <label
+          style={{
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: 10,
+            marginTop: 12,
+            padding: '12px 14px',
+            border: '1px solid #d1d5db',
+            borderRadius: 10,
+            background: '#fff',
+            cursor: 'pointer',
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={!!formData.joinWaitlistIfSooner}
+            onChange={(e) => updateFormData('joinWaitlistIfSooner', e.target.checked)}
+            style={{ marginTop: 3, width: 16, height: 16, flexShrink: 0 }}
+          />
+          <span>
+            <span style={{ display: 'block', fontWeight: 700, fontSize: 14, color: '#111827' }}>
+              I&apos;d like an earlier appointment if one opens up
+            </span>
+            <span style={{ display: 'block', fontSize: 13, color: '#6b7280', marginTop: 2, fontWeight: 400 }}>
+              We&apos;ll keep this time. If a cancellation opens before then, we&apos;ll reach out.
+            </span>
+          </span>
+        </label>
+      ) : (
+        <>
+          {renderSchedulingOrDivider()}
+          {renderSchedulingNotesField({
+            ...options.schedulingNotesStyle,
+            label: 'Tell us your preferred times',
+          })}
+        </>
+      )}
     </div>
   );
 
@@ -8074,8 +8082,6 @@ export default function AppointmentRequestForm() {
 
             {/* Self-scheduling + fallback liaison banner */}
             {(() => {
-              if (!formData.howSoon) return null;
-
               const schedulingNotesStyle = embedded && newClientCompactForm
                 ? {
                     labelFontSize: '13px',
@@ -8088,12 +8094,53 @@ export default function AppointmentRequestForm() {
                   : undefined;
 
               const isManualScheduling = isManualSchedulingHowSoon(formData.howSoon);
+              const emergentHowSoon = EMERGENT_HOW_SOON_VALUES.has(formData.howSoon || '');
+              const emergentBlocked =
+                isNewPatientRequest ||
+                petsInVisitWithHandlingQuestion.some(hasSpecialHandlingNeeds) ||
+                formData.selectedPetIds.some(
+                  (petId) =>
+                    formData.petSpecificData?.[petId]?.needsCalmingMedications === 'Yes',
+                );
+              const emergentSelfSchedule =
+                emergentHowSoon && !emergentBlocked && onlineBookingOffered;
+              const preloadSchedulePicker =
+                !formData.howSoon &&
+                onlineBookingOffered &&
+                !onlineBookingAvailabilityPending;
 
-              // Emergent / Other → liaison banner only
-              if (isManualScheduling) {
+              if (formData.howSoon) {
+              // Emergent for new clients or special handling, and Other → contact / liaison
+              if (isManualScheduling && !emergentSelfSchedule) {
                 return (
                   <div style={{ marginBottom: '20px' }}>
-                    {renderManualSchedulingLiaisonBanner()}
+                    {emergentHowSoon ? (
+                      <div
+                        style={{
+                          marginBottom: '16px',
+                          padding: '14px 16px',
+                          backgroundColor: '#fef3c7',
+                          border: '1px solid #d97706',
+                          borderRadius: '8px',
+                          fontSize: '14px',
+                          color: '#92400e',
+                          lineHeight: 1.5,
+                        }}
+                      >
+                        Emergent online booking is for existing clients only, and not when a pet needs
+                        calming meds, a muzzle, or extra handling. Please{' '}
+                        <a href="tel:+12075368387" style={{ color: '#92400e', fontWeight: 700 }}>
+                          call
+                        </a>{' '}
+                        or{' '}
+                        <a href="sms:+12075368387" style={{ color: '#92400e', fontWeight: 700 }}>
+                          text
+                        </a>{' '}
+                        us at (207) 536-8387 and we&apos;ll look at the schedule together to try to fit you in.
+                      </div>
+                    ) : (
+                      renderManualSchedulingLiaisonBanner()
+                    )}
                     {renderSchedulingNotesField(schedulingNotesStyle)}
                   </div>
                 );
@@ -8125,25 +8172,12 @@ export default function AppointmentRequestForm() {
                   </div>
                 );
               }
+              } else if (!preloadSchedulePicker) {
+                return null;
+              }
 
               // Online booking: offer self-scheduling
               const confirmedSlot = formData.selfScheduledSlot;
-
-              const confirmedSlotWindowDisplay =
-                confirmedSlot?.windowDisplay ??
-                (confirmedSlot
-                  ? resolveClientArrivalWindowForScheduledStart(
-                      confirmedSlot.appointmentStart,
-                      primaryAppointmentType,
-                      DEFAULT_PRACTICE_TIMEZONE,
-                      {
-                        appointmentEndIso:
-                          DateTime.fromISO(confirmedSlot.appointmentStart)
-                            .plus({ minutes: confirmedSlot.serviceMinutes })
-                            .toISO() ?? undefined,
-                      },
-                    )?.windowDisplay
-                  : undefined);
 
               // Build address string for modal.
               // When the client entered a new visit address, prefer that over the
@@ -8191,215 +8225,130 @@ export default function AppointmentRequestForm() {
                 existingClientNewPets: formData.existingClientNewPets,
               });
 
-              return (
-                <div style={{ marginBottom: '20px' }}>
-                  {confirmedSlot ? (
-                    /* ── Confirmed slot chip ── */
-                    <>
-                    <div style={{
-                      padding: '14px 16px',
-                      backgroundColor: '#f0fdf4',
-                      border: '2px solid #10b981',
-                      borderRadius: '10px',
-                      display: 'flex',
-                      alignItems: 'flex-start',
-                      gap: '12px',
-                    }}>
-                      <span style={{ fontSize: 22, lineHeight: 1 }}>✅</span>
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontWeight: 700, fontSize: '14px', color: '#065f46', marginBottom: '2px' }}>
-                          Appointment Scheduled
-                        </div>
-                        <div style={{ fontSize: '14px', color: '#065f46' }}>
-                          {DateTime.fromISO(confirmedSlot.appointmentStart).toFormat('cccc, LLLL d')} with{' '}
-                          {confirmedSlot.doctorName}
-                        </div>
-                        {confirmedSlotWindowDisplay && (
-                          <div style={{ fontSize: '13px', color: '#047857', marginTop: '4px' }}>
-                            {confirmedSlotWindowDisplay}
-                          </div>
-                        )}
-                        <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>
-                          Your appointment will be booked when you submit this form.
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          updateFormData('selfScheduledSlot', null);
-                          setShowSelfScheduleModal(true);
-                        }}
-                        style={{
-                          background: 'none',
-                          border: '1px solid #10b981',
-                          borderRadius: '6px',
-                          padding: '4px 10px',
-                          fontSize: '12px',
-                          color: '#065f46',
-                          cursor: 'pointer',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        Change
-                      </button>
-                    </div>
-                    <label
-                      style={{
-                        display: 'flex',
-                        alignItems: 'flex-start',
-                        gap: 10,
-                        marginTop: 12,
-                        padding: '12px 14px',
-                        border: '1px solid #d1d5db',
-                        borderRadius: 10,
-                        background: '#fff',
-                        cursor: 'pointer',
-                      }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={!!formData.joinWaitlistIfSooner}
-                        onChange={(e) => updateFormData('joinWaitlistIfSooner', e.target.checked)}
-                        style={{ marginTop: 3, width: 16, height: 16, flexShrink: 0 }}
-                      />
-                      <span>
-                        <span style={{ display: 'block', fontWeight: 700, fontSize: 14, color: '#111827' }}>
-                          I&apos;d like an earlier appointment if one opens up
-                        </span>
-                        <span style={{ display: 'block', fontSize: 13, color: '#6b7280', marginTop: 2, fontWeight: 400 }}>
-                          We&apos;ll keep this time. If a cancellation opens before then, we&apos;ll reach out.
-                        </span>
-                      </span>
-                    </label>
-                    </>
-                  ) : (
-                    renderSelfScheduleOrPreferencesBlock({
-                      hasAddress,
-                      schedulingNotesStyle,
-                      onPickDate: () => setShowSelfScheduleModal(true),
-                    })
-                  )}
-
-                  {/* Self-schedule modal */}
-                  {showSelfScheduleModal && hasAddress && primaryAppointmentTypeId != null && (
-                    <SelfScheduleCalendarModal
-                      key={`${scheduleModalRefreshKey}-${lat ?? ''}-${lon ?? ''}-${builtAddress}-${primaryProviderDoctorId ?? ''}-${primaryAppointmentTypeId}-${onlineBookingPatientIds.join(',')}`}
-                      practiceId={practiceId}
-                      address={fullAddress}
-                      lat={lat ?? undefined}
-                      lon={lon ?? undefined}
-                      numPets={numPets}
-                      appointmentTypes={appointmentTypes}
-                      appointmentTypeId={primaryAppointmentTypeId}
-                      appointmentType={primaryAppointmentType}
-                      preferredDoctorId={primaryProviderDoctorId}
-                      chartPrimaryProviderId={chartPrimaryProviderDoctorId}
-                      initialDoctorId={confirmedSlot?.doctorId ?? primaryProviderDoctorId}
-                      isNewClient={!isLoggedIn}
-                      newPatientCount={newPatientCount}
-                      isNewPatientRequest={isNewPatientRequest}
-                      visitPets={routingVisitPets}
-                      patientIds={
-                        onlineBookingPatientIds.length > 0
-                          ? onlineBookingPatientIds
-                          : undefined
-                      }
-                      rawVeterinarians={rawVeterinarianList}
-                      slotPickerError={selfScheduleSlotError}
-                      // Pass the already-fetched provider list so the modal doesn't need
-                      // a second API call. Logged-in clients use the authenticated
-                      // /employees/veterinarians endpoint (providers); new clients use
-                      // the public endpoint (publicProviders).
-                      preloadedDoctors={(() => {
-                        if (bookableProvidersForScheduling.length === 0) return undefined;
-                        return bookableProvidersForScheduling.map((p) =>
-                          mapDoctorForSelfScheduleModal(p, rawVeterinarianList),
-                        );
-                      })()}
-                      // In-zone doctors who can't be booked online for this visit type —
-                      // shown greyed so the client can still request them.
-                      requestOnlyDoctors={(() => {
-                        if (visitAppointmentTypeIds.length === 0) return undefined;
-                        const list = isLoggedIn
-                          ? providers
-                          : (publicProviders.length > 0 ? publicProviders : providers);
-                        const reqOnly = list.filter((p) => {
-                          const raw = resolveRawVeterinarianById(rawVeterinarianList, p.id);
-                          const bookable = isNewPatientRequest
-                            ? canBookOnlineForNewPatientRequestForVisitTypes(
-                                raw,
-                                visitAppointmentTypeIds,
-                              )
-                            : canBookOnlineForVisitTypes(raw, visitAppointmentTypeIds);
-                          if (bookable) return false;
-                          // For new-patient requests, only surface vets actually accepting
-                          // new patients in this zone.
-                          if (isNewPatientRequest && !isVeterinarianAcceptingNewPatientsInClientZone(raw)) {
-                            return false;
-                          }
-                          return true;
-                        });
-                        if (reqOnly.length === 0) return undefined;
-                        return reqOnly.map((p) =>
-                          mapDoctorForSelfScheduleModal(p, rawVeterinarianList),
-                        );
-                      })()}
-                      onRequestDoctor={({ doctorName, preferredTimes }) => {
-                        const doctorField =
-                          isLoggedIn || formData.haveUsedServicesBefore === 'Yes'
-                            ? 'preferredDoctorExisting'
-                            : 'preferredDoctor';
-                        const doctorLabel = doctorName.startsWith('Dr. ')
-                          ? doctorName
-                          : `Dr. ${doctorName}`;
-                        setFormData((prev) => {
-                          const requestLine = preferredTimes
-                            ? `Requested ${doctorLabel} — preferred times: ${preferredTimes}`
-                            : `Requested ${doctorLabel}`;
-                          const existingNotes = prev.schedulingNotes?.trim();
-                          const mergedNotes = existingNotes
-                            ? `${existingNotes}\n${requestLine}`
-                            : requestLine;
-                          return {
-                            ...prev,
-                            selfScheduledSlot: null,
-                            [doctorField]: doctorLabel,
-                            schedulingNotes: mergedNotes,
-                          };
-                        });
-                        focusSchedulingNotes();
-                      }}
-                      onConfirm={(slot) => {
-                        const doctorField =
-                          isLoggedIn || formData.haveUsedServicesBefore === 'Yes'
-                            ? 'preferredDoctorExisting'
-                            : 'preferredDoctor';
-                        const doctorLabel = slot.doctorName.startsWith('Dr. ')
-                          ? slot.doctorName
-                          : `Dr. ${slot.doctorName}`;
-                        setFormData((prev) => ({
+              const inlineSchedulePicker =
+                hasAddress && primaryAppointmentTypeId != null ? (
+                  <SelfScheduleCalendarModal
+                    embedded
+                    key={`${scheduleModalRefreshKey}-${lat ?? ''}-${lon ?? ''}-${builtAddress}-${primaryProviderDoctorId ?? ''}-${primaryAppointmentTypeId}-${onlineBookingPatientIds.join(',')}`}
+                    practiceId={practiceId}
+                    address={fullAddress}
+                    lat={lat ?? undefined}
+                    lon={lon ?? undefined}
+                    numPets={numPets}
+                    appointmentTypes={appointmentTypes}
+                    appointmentTypeId={primaryAppointmentTypeId}
+                    appointmentType={primaryAppointmentType}
+                    preferredDoctorId={primaryProviderDoctorId}
+                    chartPrimaryProviderId={chartPrimaryProviderDoctorId}
+                    initialDoctorId={confirmedSlot?.doctorId ?? primaryProviderDoctorId}
+                    isNewClient={!isLoggedIn}
+                    newPatientCount={newPatientCount}
+                    isNewPatientRequest={isNewPatientRequest}
+                    visitPets={routingVisitPets}
+                    patientIds={
+                      onlineBookingPatientIds.length > 0
+                        ? onlineBookingPatientIds
+                        : undefined
+                    }
+                    rawVeterinarians={rawVeterinarianList}
+                    slotPickerError={selfScheduleSlotError}
+                    preloadedDoctors={(() => {
+                      if (bookableProvidersForScheduling.length === 0) return undefined;
+                      return bookableProvidersForScheduling.map((p) =>
+                        mapDoctorForSelfScheduleModal(p, rawVeterinarianList),
+                      );
+                    })()}
+                    requestOnlyDoctors={(() => {
+                      if (visitAppointmentTypeIds.length === 0) return undefined;
+                      const list = isLoggedIn
+                        ? providers
+                        : (publicProviders.length > 0 ? publicProviders : providers);
+                      const reqOnly = list.filter((p) => {
+                        const raw = resolveRawVeterinarianById(rawVeterinarianList, p.id);
+                        const bookable = isNewPatientRequest
+                          ? canBookOnlineForNewPatientRequestForVisitTypes(
+                              raw,
+                              visitAppointmentTypeIds,
+                            )
+                          : canBookOnlineForVisitTypes(raw, visitAppointmentTypeIds);
+                        if (bookable) return false;
+                        if (isNewPatientRequest && !isVeterinarianAcceptingNewPatientsInClientZone(raw)) {
+                          return false;
+                        }
+                        return true;
+                      });
+                      if (reqOnly.length === 0) return undefined;
+                      return reqOnly.map((p) =>
+                        mapDoctorForSelfScheduleModal(p, rawVeterinarianList),
+                      );
+                    })()}
+                    onRequestDoctor={({ doctorName, preferredTimes }) => {
+                      const doctorField =
+                        isLoggedIn || formData.haveUsedServicesBefore === 'Yes'
+                          ? 'preferredDoctorExisting'
+                          : 'preferredDoctor';
+                      const doctorLabel = doctorName.startsWith('Dr. ')
+                        ? doctorName
+                        : `Dr. ${doctorName}`;
+                      setFormData((prev) => {
+                        const requestLine = preferredTimes
+                          ? `Requested ${doctorLabel} — preferred times: ${preferredTimes}`
+                          : `Requested ${doctorLabel}`;
+                        const existingNotes = prev.schedulingNotes?.trim();
+                        const mergedNotes = existingNotes
+                          ? `${existingNotes}\n${requestLine}`
+                          : requestLine;
+                        return {
                           ...prev,
-                          selfScheduledSlot: slot,
+                          selfScheduledSlot: null,
                           [doctorField]: doctorLabel,
-                        }));
-                        // Picking a slot satisfies the timing requirement.
-                        setErrors((prev) => {
-                          if (!prev.schedulingNotes && !prev.selfScheduledSlot) return prev;
-                          const next = { ...prev };
-                          delete next.schedulingNotes;
-                          delete next.selfScheduledSlot;
-                          return next;
-                        });
-                        setSelfScheduleSlotError(null);
-                        setShowSelfScheduleModal(false);
-                      }}
-                      onClose={() => {
-                        setSelfScheduleSlotError(null);
-                        setShowSelfScheduleModal(false);
-                      }}
-                      onRequestPreferences={focusSchedulingNotes}
-                    />
-                  )}
+                          schedulingNotes: mergedNotes,
+                        };
+                      });
+                      focusSchedulingNotes();
+                    }}
+                    onConfirm={(slot) => {
+                      const doctorField =
+                        isLoggedIn || formData.haveUsedServicesBefore === 'Yes'
+                          ? 'preferredDoctorExisting'
+                          : 'preferredDoctor';
+                      const doctorLabel = slot.doctorName.startsWith('Dr. ')
+                        ? slot.doctorName
+                        : `Dr. ${slot.doctorName}`;
+                      setFormData((prev) => ({
+                        ...prev,
+                        selfScheduledSlot: slot,
+                        [doctorField]: doctorLabel,
+                      }));
+                      setErrors((prev) => {
+                        if (!prev.schedulingNotes && !prev.selfScheduledSlot) return prev;
+                        const next = { ...prev };
+                        delete next.schedulingNotes;
+                        delete next.selfScheduledSlot;
+                        return next;
+                      });
+                      setSelfScheduleSlotError(null);
+                    }}
+                    onRequestPreferences={focusSchedulingNotes}
+                    howSoon={formData.howSoon || undefined}
+                    searchAllDoctors={emergentSelfSchedule}
+                    selectedAppointmentStart={confirmedSlot?.appointmentStart ?? null}
+                  />
+                ) : null;
+
+              return (
+                <div
+                  style={{
+                    marginBottom: formData.howSoon ? '20px' : 0,
+                    display: formData.howSoon ? 'block' : 'none',
+                  }}
+                  aria-hidden={formData.howSoon ? undefined : true}
+                >
+                  {renderSelfScheduleOrPreferencesBlock({
+                    hasAddress,
+                    schedulingNotesStyle,
+                    schedulePicker: inlineSchedulePicker,
+                  })}
                 </div>
               );
             })()}
