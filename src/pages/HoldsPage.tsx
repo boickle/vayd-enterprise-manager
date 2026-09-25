@@ -79,6 +79,7 @@ import { holdHouseholdGroupMatchesSearch } from '../utils/holdsSearch';
 import {
   buildHoldSmsMessage,
   holdGroupHasSmsPhone,
+  resolveHoldSmsBookedSlot,
 } from '../utils/holdsSmsMessage';
 import {
   clientHasEffectiveEmail,
@@ -263,6 +264,7 @@ export default function HoldsPage() {
   const [emailHistoryClientLabel, setEmailHistoryClientLabel] = useState('');
 
   const loadGenRef = useRef(0);
+  const holdOutreachGenRef = useRef(0);
   const pendingHoldsReturnRef = useRef<ReturnType<typeof readHoldsBoardReturnSession>>(null);
   const pendingDepartGroupKeyRef = useRef<string | null>(null);
   const restoredDepartScrollRef = useRef(false);
@@ -457,12 +459,22 @@ export default function HoldsPage() {
 
   const openSmsModal = useCallback((group: HoldHouseholdGroup) => {
     if (!holdGroupHasSmsPhone(group)) return;
+    const gen = ++holdOutreachGenRef.current;
     setSmsError(null);
-    setSmsMessage(buildHoldSmsMessage(group, PRACTICE_TZ));
     setSmsGroup(group);
+    // Immediate type ±N window (not service end); refine from appointment effectiveWindow.
+    setSmsMessage(buildHoldSmsMessage(group, PRACTICE_TZ));
+    const slotHold = group.visitSlots[0]?.anchor ?? group.anchor;
+    void resolveHoldSmsBookedSlot(slotHold.id, PRACTICE_ID, PRACTICE_TZ, slotHold).then(
+      (bookedSlot) => {
+        if (gen !== holdOutreachGenRef.current) return;
+        setSmsMessage(buildHoldSmsMessage(group, PRACTICE_TZ, { bookedSlot }));
+      },
+    );
   }, []);
 
   const closeSmsModal = useCallback(() => {
+    holdOutreachGenRef.current += 1;
     setSmsGroup(null);
     setSmsMessage('');
     setSmsError(null);
@@ -471,11 +483,23 @@ export default function HoldsPage() {
   const openEmailModal = useCallback((group: HoldHouseholdGroup) => {
     const clientId = group.anchor.client?.id;
     if (clientId == null || !clientHasEffectiveEmail(group.anchor.client?.email)) return;
-    const sms = buildHoldSmsMessage(group, PRACTICE_TZ);
-    const email = holdSmsToEmail(sms, group.anchor.primaryProvider?.lastName);
-    setEmailSubject(email.subject);
-    setEmailBodyText(email.bodyText);
+    const gen = ++holdOutreachGenRef.current;
+    const providerLast = group.anchor.primaryProvider?.lastName;
+    const smsFallback = buildHoldSmsMessage(group, PRACTICE_TZ);
+    const emailFallback = holdSmsToEmail(smsFallback, providerLast);
+    setEmailSubject(emailFallback.subject);
+    setEmailBodyText(emailFallback.bodyText);
     setEmailGroup(group);
+    const slotHold = group.visitSlots[0]?.anchor ?? group.anchor;
+    void resolveHoldSmsBookedSlot(slotHold.id, PRACTICE_ID, PRACTICE_TZ, slotHold).then(
+      (bookedSlot) => {
+        if (gen !== holdOutreachGenRef.current) return;
+        const sms = buildHoldSmsMessage(group, PRACTICE_TZ, { bookedSlot });
+        const email = holdSmsToEmail(sms, providerLast);
+        setEmailSubject(email.subject);
+        setEmailBodyText(email.bodyText);
+      },
+    );
   }, []);
 
   const openMessagesHistoryForGroup = useCallback((group: HoldHouseholdGroup) => {
@@ -493,6 +517,7 @@ export default function HoldsPage() {
   }, []);
 
   const closeEmailModal = useCallback(() => {
+    holdOutreachGenRef.current += 1;
     setEmailGroup(null);
     setEmailSubject('');
     setEmailBodyText('');
