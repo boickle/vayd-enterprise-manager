@@ -12,10 +12,16 @@ import {
   fetchClientLiaisons,
   fetchHolds,
   HOLD_SOURCE_LABELS,
+  reconcileHoldOwnerIsCurrentUser,
   type ClientLiaisonOption,
   type HoldListItem,
   type HoldOwnerFilter,
 } from '../api/holds';
+import { useAuth } from '../auth/useAuth';
+import {
+  resolveStaffEmployeeIdForHoldClaim,
+} from '../utils/holdOwnership';
+import { normalizeEmployeeId } from '../utils/taskOwnership';
 import type { AppointmentRequestSubmissionItem } from '../api/appointmentRequestSubmissions';
 import { fetchSchedulingOutreachSmsFrom, sendClientSms } from '../api/clientSms';
 import { ClientSmsComposeModal } from '../components/ClientSmsComposeModal';
@@ -168,14 +174,22 @@ function providerLabel(hold: HoldListItem): string {
   return 'No provider';
 }
 
-function ownerChip(hold: HoldListItem): {
+function ownerChip(
+  hold: HoldListItem,
+  currentUserEmployeeId?: number | null
+): {
   label: string;
   color: 'success' | 'warning' | 'default';
 } {
   if (hold.ownerBucket === 'owned') {
     const name = employeeName(hold.holdOwner ?? hold.createdByEmployee);
+    const isMine =
+      hold.ownerIsCurrentUser ||
+      (currentUserEmployeeId != null &&
+        (hold.holdOwner?.id === currentUserEmployeeId ||
+          hold.effectiveOwnerEmployeeId === currentUserEmployeeId));
     return {
-      label: hold.ownerIsCurrentUser ? 'Mine' : name ? `Owner: ${name}` : 'Owned',
+      label: isMine ? 'Mine' : name ? `Owner: ${name}` : 'Owned',
       color: 'success',
     };
   }
@@ -203,6 +217,18 @@ function noteForPatch(value: string): string | null {
 export default function HoldsPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  const { token, employeeId: authEmployeeId } = useAuth() as {
+    token?: string | null;
+    employeeId?: string | null;
+  };
+  const authResolvedEmployeeId = useMemo(
+    () =>
+      resolveStaffEmployeeIdForHoldClaim({
+        token: token ?? null,
+        employeeId: authEmployeeId ?? null,
+      }),
+    [token, authEmployeeId]
+  );
   const owner = useMemo(
     () => parseHoldsOwnerParam(searchParams.get(HOLDS_OWNER_PARAM)),
     [searchParams]
@@ -225,8 +251,11 @@ export default function HoldsPage() {
     [setSearchParams]
   );
   const [holds, setHolds] = useState<HoldListItem[]>([]);
-  const [currentUserEmployeeId, setCurrentUserEmployeeId] = useState<number | null>(
-    null
+  const [holdsApiEmployeeId, setHoldsApiEmployeeId] = useState<number | null>(null);
+  /** Prefer JWT/auth employee id so Mine matches Assign-to-me even if GET /holds mis-labels ownerIsCurrentUser. */
+  const currentUserEmployeeId = useMemo(
+    () => authResolvedEmployeeId ?? holdsApiEmployeeId,
+    [authResolvedEmployeeId, holdsApiEmployeeId]
   );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -360,8 +389,10 @@ export default function HoldsPage() {
     try {
       const res = await fetchHolds(PRACTICE_ID, fetchOwner);
       if (gen !== loadGenRef.current) return;
-      setHolds(res.holds);
-      setCurrentUserEmployeeId(res.currentUserEmployeeId);
+      const apiEmpId = normalizeEmployeeId(res.currentUserEmployeeId);
+      setHoldsApiEmployeeId(apiEmpId);
+      const myId = authResolvedEmployeeId ?? apiEmpId;
+      setHolds(reconcileHoldOwnerIsCurrentUser(res.holds, myId));
 
       if (!silent) {
         const pending = pendingHoldsReturnRef.current;
@@ -372,8 +403,12 @@ export default function HoldsPage() {
             pending.groupKey?.trim() || pendingDepartGroupKeyRef.current?.trim() || null;
           const freshGrouped = sortHoldHouseholdGroupsByAppointmentStart(
             filterHoldHouseholdGroupsByOwner(
-              groupHoldsByClientHousehold(res.holds, PRACTICE_TZ),
+              groupHoldsByClientHousehold(
+                reconcileHoldOwnerIsCurrentUser(res.holds, myId),
+                PRACTICE_TZ
+              ),
               owner,
+              myId,
             ),
           );
           const remaining =
@@ -403,7 +438,7 @@ export default function HoldsPage() {
     } finally {
       if (gen === loadGenRef.current && !silent) setLoading(false);
     }
-  }, [fetchOwner, owner]);
+  }, [fetchOwner, owner, authResolvedEmployeeId]);
 
   const beginGroupExit = useCallback(
     (group: HoldHouseholdGroup, exitKind: HoldsBoardReturnExitKind) => {
@@ -761,9 +796,10 @@ export default function HoldsPage() {
         filterHoldHouseholdGroupsByOwner(
           groupHoldsByClientHousehold(holds, PRACTICE_TZ),
           searchActive ? 'all' : owner,
+          currentUserEmployeeId,
         ),
       ),
-    [holds, owner, searchActive]
+    [holds, owner, searchActive, currentUserEmployeeId]
   );
 
   const filteredGroups = useMemo(() => {
@@ -1015,14 +1051,19 @@ export default function HoldsPage() {
               const multiHold = holdsInGroup.length > 1;
               const exitKind = exitingGroups.get(group.key);
               const rowExiting = exitKind != null;
-              const oc = holdHouseholdSharedOwnerLabel(holdsInGroup, ownerChip);
+              const oc = holdHouseholdSharedOwnerLabel(holdsInGroup, (h) =>
+                ownerChip(h, currentUserEmployeeId)
+              );
               const urgent = holdHouseholdWithin3BusinessDays(holdsInGroup, PRACTICE_TZ);
               const stale = holdHouseholdAnyStale(holdsInGroup);
               const phone = hold.client?.phone1?.trim() || '';
               const hasEmail = clientHasEffectiveEmail(hold.client?.email);
               const clientId = hold.client?.id ?? null;
               const canSms = holdGroupHasSmsPhone(group);
-              const ownerIsMine = holdHouseholdOwnerIsCurrentUser(holdsInGroup);
+              const ownerIsMine = holdHouseholdOwnerIsCurrentUser(
+                holdsInGroup,
+                currentUserEmployeeId
+              );
               const busy = busyGroupKey === group.key;
               const createdByNames = [
                 ...new Set(

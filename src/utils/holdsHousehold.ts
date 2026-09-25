@@ -56,17 +56,40 @@ export function holdSoftClientKey(h: HoldListItem): string | null {
   return null;
 }
 
+/** True when the hold is owned by the given staff employee (explicit owner or effective). */
+export function holdOwnedByEmployee(
+  hold: HoldListItem,
+  employeeId: number | null | undefined
+): boolean {
+  if (employeeId == null || !Number.isFinite(employeeId) || employeeId <= 0) return false;
+  return (
+    hold.holdOwner?.id === employeeId ||
+    hold.effectiveOwnerEmployeeId === employeeId
+  );
+}
+
+/** Mine / me_unassigned — trust API flag, then fall back to employee id match. */
+export function holdIsOwnedByCurrentUser(
+  hold: HoldListItem,
+  currentUserEmployeeId?: number | null
+): boolean {
+  if (hold.ownerIsCurrentUser) return true;
+  return holdOwnedByEmployee(hold, currentUserEmployeeId ?? null);
+}
+
 /** Whether a hold belongs in the given Holds-board owner filter. */
 export function holdMatchesOwnerFilter(
   hold: HoldListItem,
-  owner: HoldOwnerFilter
+  owner: HoldOwnerFilter,
+  currentUserEmployeeId?: number | null
 ): boolean {
   if (owner === 'all') return true;
-  if (owner === 'me') return hold.ownerIsCurrentUser;
+  const isMine = holdIsOwnedByCurrentUser(hold, currentUserEmployeeId);
+  if (owner === 'me') return isMine;
   const isUnassignedBucket =
     hold.ownerBucket === 'unassigned' || hold.ownerBucket === 'non_cl_unassigned';
   if (owner === 'unassigned') return isUnassignedBucket;
-  if (owner === 'me_unassigned') return hold.ownerIsCurrentUser || isUnassignedBucket;
+  if (owner === 'me_unassigned') return isMine || isUnassignedBucket;
   return (
     hold.effectiveOwnerEmployeeId === owner ||
     hold.holdOwner?.id === owner
@@ -79,10 +102,13 @@ export function holdMatchesOwnerFilter(
  */
 export function filterHoldHouseholdGroupsByOwner(
   groups: readonly HoldHouseholdGroup[],
-  owner: HoldOwnerFilter
+  owner: HoldOwnerFilter,
+  currentUserEmployeeId?: number | null
 ): HoldHouseholdGroup[] {
   if (owner === 'all') return [...groups];
-  return groups.filter((g) => g.holds.some((h) => holdMatchesOwnerFilter(h, owner)));
+  return groups.filter((g) =>
+    g.holds.some((h) => holdMatchesOwnerFilter(h, owner, currentUserEmployeeId))
+  );
 }
 
 function samePracticeDay(isoA: string, isoB: string, practiceTz: string): boolean {
@@ -505,8 +531,14 @@ export function sortHoldHouseholdGroupsByPriority(
   return sortHoldHouseholdGroupsByAppointmentStart(groups);
 }
 
-export function holdHouseholdOwnerIsCurrentUser(holds: readonly HoldListItem[]): boolean {
-  return holds.length > 0 && holds.every((h) => h.ownerIsCurrentUser);
+export function holdHouseholdOwnerIsCurrentUser(
+  holds: readonly HoldListItem[],
+  currentUserEmployeeId?: number | null
+): boolean {
+  return (
+    holds.length > 0 &&
+    holds.every((h) => holdIsOwnedByCurrentUser(h, currentUserEmployeeId))
+  );
 }
 
 export function holdHouseholdSharedOwnerLabel(

@@ -69,19 +69,32 @@ function holdSoftClientKey(h) {
   return null;
 }
 
-function holdMatchesOwnerFilter(hold, owner) {
+function holdOwnedByEmployee(hold, employeeId) {
+  if (employeeId == null || !Number.isFinite(employeeId) || employeeId <= 0) return false;
+  return hold.holdOwner?.id === employeeId || hold.effectiveOwnerEmployeeId === employeeId;
+}
+
+function holdIsOwnedByCurrentUser(hold, currentUserEmployeeId) {
+  if (hold.ownerIsCurrentUser) return true;
+  return holdOwnedByEmployee(hold, currentUserEmployeeId ?? null);
+}
+
+function holdMatchesOwnerFilter(hold, owner, currentUserEmployeeId) {
   if (owner === 'all') return true;
-  if (owner === 'me') return hold.ownerIsCurrentUser;
+  const isMine = holdIsOwnedByCurrentUser(hold, currentUserEmployeeId);
+  if (owner === 'me') return isMine;
   const isUnassignedBucket =
     hold.ownerBucket === 'unassigned' || hold.ownerBucket === 'non_cl_unassigned';
   if (owner === 'unassigned') return isUnassignedBucket;
-  if (owner === 'me_unassigned') return hold.ownerIsCurrentUser || isUnassignedBucket;
+  if (owner === 'me_unassigned') return isMine || isUnassignedBucket;
   return hold.effectiveOwnerEmployeeId === owner || hold.holdOwner?.id === owner;
 }
 
-function filterHoldHouseholdGroupsByOwner(groups, owner) {
+function filterHoldHouseholdGroupsByOwner(groups, owner, currentUserEmployeeId) {
   if (owner === 'all') return [...groups];
-  return groups.filter((g) => g.holds.some((h) => holdMatchesOwnerFilter(h, owner)));
+  return groups.filter((g) =>
+    g.holds.some((h) => holdMatchesOwnerFilter(h, owner, currentUserEmployeeId))
+  );
 }
 
 function samePracticeDay(isoA, isoB) {
@@ -266,6 +279,43 @@ const otherOwnerOnly = groupHoldsByClientHousehold([
 assert(
   filterHoldHouseholdGroupsByOwner(otherOwnerOnly, 'me').length === 0,
   'Mine must not show unrelated owned-by-others groups'
+);
+
+// Assigned to staff but API left ownerIsCurrentUser false (owner=all payloads).
+const assignedNoFlag = baseHold({
+  id: 42,
+  client: {
+    id: 42,
+    firstName: 'Michelle',
+    lastName: 'Hold',
+    phone1: null,
+    email: null,
+    address1: null,
+    city: null,
+    state: null,
+    zipcode: null,
+  },
+  ownerBucket: 'owned',
+  ownerIsCurrentUser: false,
+  effectiveOwnerEmployeeId: 7,
+  holdOwner: { id: 7, firstName: 'Michelle', lastName: 'M' },
+});
+const assignedNoFlagGroups = groupHoldsByClientHousehold([assignedNoFlag]);
+assert(
+  filterHoldHouseholdGroupsByOwner(assignedNoFlagGroups, 'me', 7).length === 1,
+  'Mine matches holdOwner id when ownerIsCurrentUser is false'
+);
+assert(
+  filterHoldHouseholdGroupsByOwner(assignedNoFlagGroups, 'me_unassigned', 7).length === 1,
+  'Me+unassigned keeps id-matched owned hold'
+);
+assert(
+  filterHoldHouseholdGroupsByOwner(assignedNoFlagGroups, 'me', 8).length === 0,
+  'Mine excludes holds owned by another employee id'
+);
+assert(
+  filterHoldHouseholdGroupsByOwner(assignedNoFlagGroups, 'me').length === 0,
+  'Mine without currentUserEmployeeId still requires ownerIsCurrentUser'
 );
 
 // --- Case: two unlinked online holds, different days, same client name ---
