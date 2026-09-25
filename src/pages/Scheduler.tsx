@@ -7782,6 +7782,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         token: authToken,
         userEmail: authUserEmail,
         doctorId: authDoctorId,
+        employeeId: authEmployeeId,
         appointmentTypes: typeList,
         existingAppointments: rawAppointments,
       });
