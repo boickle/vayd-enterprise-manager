@@ -1,6 +1,10 @@
 import type { HoldListItem } from '../api/holds';
+import { fetchAppointmentById } from '../api/appointments';
 import { buildCareOutreachSmsMessage, careOutreachClientHasSmsPhone } from './careOutreachSmsMessage';
-import { formatForwardBookingSmsBookedSlot } from './forwardBookingSmsMessage';
+import {
+  formatForwardBookingSmsBookedSlotFromAppointment,
+  type ForwardBookingSmsBookedSlot,
+} from './forwardBookingSmsMessage';
 import { appendHoldSpotReleaseClause } from './holdSpotReleaseSmsClause';
 import { buildWaitlistBookedSmsMessage } from './waitlistSmsMessage';
 import {
@@ -40,9 +44,58 @@ export function holdGroupHasSmsPhone(group: HoldHouseholdGroup): boolean {
   return careOutreachClientHasSmsPhone(group.anchor.client?.phone1);
 }
 
+/**
+ * Client-facing arrival window from hold list fields.
+ * Prefer type ±N (default 60) around scheduled start — never the service end time.
+ */
+export function bookedSlotFromHoldListItem(
+  hold: HoldListItem,
+  practiceTz: string
+): ForwardBookingSmsBookedSlot | undefined {
+  const start = hold.appointmentStart?.trim();
+  if (!start) return undefined;
+  const type = hold.appointmentType;
+  return (
+    formatForwardBookingSmsBookedSlotFromAppointment(
+      {
+        appointmentStart: start,
+        appointmentEnd: hold.appointmentEnd?.trim() || start,
+      },
+      practiceTz,
+      type
+        ? {
+            name: type.name ?? type.prettyName ?? '',
+            prettyName: type.prettyName ?? type.name ?? '',
+          }
+        : null
+    ) ?? undefined
+  );
+}
+
+/** Prefer GET /appointments/:id effectiveWindow / arrivalWindow; else type ±N from hold. */
+export async function resolveHoldSmsBookedSlot(
+  appointmentId: number,
+  practiceId: number,
+  practiceTz: string,
+  fallbackHold?: HoldListItem
+): Promise<ForwardBookingSmsBookedSlot | undefined> {
+  try {
+    const appt = await fetchAppointmentById(appointmentId, { practiceId });
+    if (appt) {
+      const fromAppt = formatForwardBookingSmsBookedSlotFromAppointment(appt, practiceTz);
+      if (fromAppt) return fromAppt;
+    }
+  } catch {
+    /* fall through */
+  }
+  if (fallbackHold) return bookedSlotFromHoldListItem(fallbackHold, practiceTz);
+  return undefined;
+}
+
 export function buildHoldSmsMessage(
   group: HoldHouseholdGroup,
-  practiceTz: string
+  practiceTz: string,
+  opts?: { bookedSlot?: ForwardBookingSmsBookedSlot }
 ): string {
   const hold = group.anchor;
   const petNames = holdHouseholdPatientNames(group.holds);
@@ -91,13 +144,10 @@ export function buildHoldSmsMessage(
 
   const slotHold = group.visitSlots[0]?.anchor ?? hold;
   const bookedSlot =
-    slotHold.appointmentStart?.trim()
-      ? formatForwardBookingSmsBookedSlot(
-          slotHold.appointmentStart,
-          slotHold.appointmentEnd,
-          practiceTz
-        )
-      : undefined;
+    opts?.bookedSlot ??
+    (slotHold.appointmentStart?.trim()
+      ? bookedSlotFromHoldListItem(slotHold, practiceTz)
+      : undefined);
   const slotHoldRelease =
     slotHold.appointmentStart?.trim()
       ? { practiceTz, appointmentStartIso: slotHold.appointmentStart.trim() }
