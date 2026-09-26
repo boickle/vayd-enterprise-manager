@@ -36,12 +36,17 @@ import { fetchPrimaryProviders, isHospitalAccountProvider, type Provider } from 
 import { type DoctorRevenueSeriesResponse } from '../api/opsStats';
 import { type DoctorMonthDay } from '../api/appointments';
 import {
+  fetchAllAppointmentTypes,
   scheduleOverrideIsOff,
   type EmployeeWeeklySchedule,
   type ScheduleOverride,
 } from '../api/appointmentSettings';
 import { membershipRevenueForPoint, type PaymentPoint } from '../api/payments';
-import { pointsFromAppointmentRows } from '../utils/appointmentTypeSettings';
+import {
+  buildAppointmentTypeCatalog,
+  pointsFromAppointmentRows,
+  type AppointmentTypeCatalog,
+} from '../utils/appointmentTypeSettings';
 import { monthDayIsTimeOff } from '../utils/doctorTimeOff';
 import {
   fetchCollectibleRevenueRatesCached,
@@ -126,14 +131,14 @@ function histResponseForDoctor(
   return histResponses.find((x) => String(x.doctorId) === key);
 }
 
-function pointsFromMonthDay(day: DoctorMonthDay): number {
+function pointsFromMonthDay(day: DoctorMonthDay, catalog?: AppointmentTypeCatalog): number {
   const apptsWithType = (day.appts ?? []).map((a) => ({
     appointmentType: a.appointmentType,
     appointmentTypeId: (a as { appointmentTypeId?: number }).appointmentTypeId,
     isPersonalBlock: false,
   }));
   const blocksAsPersonal = (day.blocks ?? []).map(() => ({ isPersonalBlock: true }));
-  return pointsFromAppointmentRows([...apptsWithType, ...blocksAsPersonal]);
+  return pointsFromAppointmentRows([...apptsWithType, ...blocksAsPersonal], catalog);
 }
 
 type AncillaryDailyRates = {
@@ -342,8 +347,10 @@ export default function ProjectedRevenueAnalyticsPage() {
   const [preset, setPreset] = useState<string>('7D');
   const [providers, setProviders] = useState<Provider[]>([]);
   const [graphSelection, setGraphSelection] = useState<string>(PRACTICE_TOTAL_ID);
-  /** Raw doctor/month days — points are derived with the same 1 / 0.5 / 2 weights as the VSD estimate. */
+  /** Raw doctor/month days — points use configured appointment-type points, same as the schedule. */
   const [monthDaysByDoctor, setMonthDaysByDoctor] = useState<Record<string, DoctorMonthDay[]>>({});
+  const [typeCatalog, setTypeCatalog] = useState<AppointmentTypeCatalog | undefined>();
+  const [typeCatalogReady, setTypeCatalogReady] = useState(false);
   const [histDoctorResponses, setHistDoctorResponses] = useState<
     { doctorId: string; name: string; response: DoctorRevenueSeriesResponse }[]
   >([]);
@@ -401,6 +408,23 @@ export default function ProjectedRevenueAnalyticsPage() {
         setError('Failed to load providers');
       }
     })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    void fetchAllAppointmentTypes(PRACTICE_ID, { activeOnly: false })
+      .then((rows) => {
+        if (alive) setTypeCatalog(buildAppointmentTypeCatalog(Array.isArray(rows) ? rows : []));
+      })
+      .catch(() => {
+        if (alive) setTypeCatalog(undefined);
+      })
+      .finally(() => {
+        if (alive) setTypeCatalogReady(true);
+      });
     return () => {
       alive = false;
     };
@@ -594,7 +618,7 @@ export default function ProjectedRevenueAnalyticsPage() {
       for (const day of days) {
         const date = day?.date?.slice(0, 10);
         if (!date) continue;
-        pointsByDoctor[doctorId][date] = pointsFromMonthDay(day);
+        pointsByDoctor[doctorId][date] = pointsFromMonthDay(day, typeCatalog);
         countsByDoctor[doctorId][date] = (day.appts ?? []).length;
         if (monthDayIsTimeOff(day)) timeOffByDoctor[doctorId].add(date);
       }
@@ -614,7 +638,7 @@ export default function ProjectedRevenueAnalyticsPage() {
       apptCountByDoctorByDate: countsByDoctor,
       doctorSchedules: schedules,
     };
-  }, [monthDaysByDoctor, doctorSchedulesBase]);
+  }, [monthDaysByDoctor, doctorSchedulesBase, typeCatalog]);
 
   const ratesByDoctor = useMemo(() => {
     const todayD = dayjs().startOf('day');
@@ -1202,7 +1226,7 @@ export default function ProjectedRevenueAnalyticsPage() {
     return 'Projected';
   }
 
-  if (loading) {
+  if (loading || !typeCatalogReady) {
     return (
       <LocalizationProvider dateAdapter={AdapterDayjs}>
         <Box
@@ -1235,7 +1259,7 @@ export default function ProjectedRevenueAnalyticsPage() {
           it is unpaid invoices already on the books, not cash expected in this window, and new A/R
           versus collections tends to average out. For today, each
           doctor&apos;s treatment starts from recent-half VSD per point (total VSD ÷ total
-          appointment points, 1 / 0.5 / 2 by type), then that amount is reduced by the collectible
+          appointment points, using each visit&apos;s configured type points), then that amount is reduced by the collectible
           share. The day shows
           the greater of posted collectible treatment and that
           estimate — treatment is often invoiced at booking, so the two are never added together. A
