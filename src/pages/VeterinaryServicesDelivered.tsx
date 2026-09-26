@@ -307,6 +307,7 @@ export default function VeterinaryServicesDeliveredPage() {
   >({});
   const [pointsLoading, setPointsLoading] = useState(false);
   const [typeCatalog, setTypeCatalog] = useState<AppointmentTypeCatalog | undefined>();
+  const [typeCatalogReady, setTypeCatalogReady] = useState(false);
   const [itemsModalOpen, setItemsModalOpen] = useState(false);
   const [itemsModalDoctor, setItemsModalDoctor] = useState<{ id: string; name: string } | null>(null);
   const [itemsModalData, setItemsModalData] = useState<DoctorRevenueSeriesResponse | null>(null);
@@ -496,6 +497,9 @@ export default function VeterinaryServicesDeliveredPage() {
       })
       .catch(() => {
         if (alive) setTypeCatalog(undefined);
+      })
+      .finally(() => {
+        if (alive) setTypeCatalogReady(true);
       });
     return () => {
       alive = false;
@@ -508,6 +512,10 @@ export default function VeterinaryServicesDeliveredPage() {
       setPointsByDoctorByDate({});
       setServiceMinutesByDoctorByDate({});
       setPointsLoading(false);
+      return;
+    }
+    if (!typeCatalogReady) {
+      setPointsLoading(true);
       return;
     }
     const monthPairs = monthsInRange(start, end);
@@ -552,7 +560,7 @@ export default function VeterinaryServicesDeliveredPage() {
     return () => {
       alive = false;
     };
-  }, [providersForApi, startStr, endStr, typeCatalog]);
+  }, [providersForApi, startStr, endStr, typeCatalog, typeCatalogReady]);
 
   // Trailing history for "estimated day revenue" when the selected day is calendar today
   useEffect(() => {
@@ -560,6 +568,10 @@ export default function VeterinaryServicesDeliveredPage() {
       setEstHistDoctorResponses([]);
       setEstHistPointsByDoctorByDate({});
       setEstHistLoading(false);
+      return;
+    }
+    if (!typeCatalogReady) {
+      setEstHistLoading(true);
       return;
     }
 
@@ -614,8 +626,7 @@ export default function VeterinaryServicesDeliveredPage() {
           for (const day of days) {
             const date = day?.date?.slice(0, 10);
             if (date) {
-              // Estimate uses legacy 1 / 0.5 / 2 weights, not catalog points.
-              byDoctorByDate[doctorId][date] = pointsFromMonthDay(day);
+              byDoctorByDate[doctorId][date] = pointsFromMonthDay(day, typeCatalog);
             }
           }
         }
@@ -635,7 +646,7 @@ export default function VeterinaryServicesDeliveredPage() {
     return () => {
       alive = false;
     };
-  }, [isViewingCalendarToday, providersForApi, restrictEmployeeAnalytics]);
+  }, [isViewingCalendarToday, providersForApi, restrictEmployeeAnalytics, typeCatalog, typeCatalogReady]);
 
   const practiceSeries = useMemo(() => {
     if (loading) return [];
@@ -1421,7 +1432,7 @@ export default function VeterinaryServicesDeliveredPage() {
                     </Typography>
                     <Typography variant="caption" color="text.secondary" component="p" sx={{ mt: 0.5, mb: 0 }}>
                       Trailing {VSD_ESTIMATE_LOOKBACK_DAYS}-day total VSD ÷ total appointment points
-                      (excluding today), using 1 / 0.5 / 2 by appointment type. Doctors without enough
+                      (excluding today), using each visit&apos;s configured type points. Doctors without enough
                       personal history use the practice-wide total for that window.
                     </Typography>
                     {todayRevenueEstimates.doctorsUsingPracticeFallback > 0 && (
