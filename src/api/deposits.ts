@@ -1,4 +1,5 @@
 import { http } from './http';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
 export type UndepositedTender = {
   tenderId: string;
@@ -46,7 +47,7 @@ export type PracticeDeposit = {
   lines: DepositLine[];
 };
 
-const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_ID = currentPracticeId();
 
 export async function listUndepositedTenders(opts?: {
   practiceId?: number;

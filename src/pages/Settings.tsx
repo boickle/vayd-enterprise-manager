@@ -86,6 +86,7 @@ import WasteAdminPage from './WasteAdminPage';
 import SettingsMailShippingTypes from '../components/settings/SettingsMailShippingTypes';
 import SettingsChatHours from '../components/settings/SettingsChatHours';
 import { appointmentTypeIsArchived } from '../utils/appointmentTypeSettings';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
 const SETTINGS_TAB_IDS = [
   'practice-letterhead',
@@ -210,7 +211,7 @@ function parseEmployeeHubSection(
 }
 
 /** Practice ID for reminder settings (default 1; override via env if needed) */
-const REMINDERS_PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const REMINDERS_PRACTICE_ID = currentPracticeId();
 
 /** Placeholder when GET /employees/:id/image returns 404 or fails */
 const EMPLOYEE_IMAGE_PLACEHOLDER =
@@ -420,7 +421,7 @@ export default function Settings() {
   const [scheduleUpdates, setScheduleUpdates] = useState<Map<string, Partial<EmployeeWeeklySchedule>>>(new Map());
 
   // Inventory / online-store settings (practice-scoped)
-  const [practiceId] = useState(1); // Default practice ID, could be made configurable
+  const [practiceId] = useState(currentPracticeId);
 
   const [overrideModalOpen, setOverrideModalOpen] = useState(false);
   const [overrideModalInitial, setOverrideModalInitial] = useState<{
@@ -1457,7 +1458,7 @@ export default function Settings() {
               staging, etc.). Stock transfers and receiving under Inventory use these buckets.
             </p>
             <SettingsBranchesLocations
-              practiceId={Number(import.meta.env.VITE_PRACTICE_ID) || practiceId}
+              practiceId={practiceId}
               onMessage={(msg, kind) => {
                 if (kind === 'success') {
                   setSuccess(msg);

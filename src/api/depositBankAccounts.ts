@@ -1,4 +1,5 @@
 import { http } from './http';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
 export type DepositBankAccount = {
   id: number;
@@ -16,7 +17,7 @@ export type DepositBankAccountWrite = {
   sortOrder?: number;
 };
 
-const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_ID = currentPracticeId();
 
 export async function listDepositBankAccounts(opts?: {
   practiceId?: number;

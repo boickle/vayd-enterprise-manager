@@ -18,8 +18,9 @@ import {
   type VisitReminderPet,
   type VisitWrapUpPet,
 } from '../../api/visitWrapUp';
+import { currentPracticeId } from '../../utils/practiceIdFromToken';
 
-const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_ID = currentPracticeId();
 
 /** Two days out is the usual "how is the rash doing" window. */
 function defaultDueLocal(): string {

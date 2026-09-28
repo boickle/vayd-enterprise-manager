@@ -5,8 +5,9 @@
 import { http } from './http';
 import type { ForwardBookingDisposition } from './forwardBookingDisposition';
 import type { HouseholdRosterEntry, SoapEncounterStatus } from './visitWorkflow';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
-const pid = () => Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const pid = () => currentPracticeId();
 
 export type ClientRecapEmailStatus = 'sent' | 'skipped';
 

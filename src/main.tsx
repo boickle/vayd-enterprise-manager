@@ -9,6 +9,7 @@ import AppDialogProvider from './components/AppDialogProvider';
 import { ensureGtagReady, initGA } from './utils/analytics';
 import { initGtm } from './utils/gtm';
 import { captureMarketingAttribution } from './utils/marketingAttribution';
+import { loadHostPractice } from './api/practices';
 
 // Prevent iOS Safari address bar from showing on scroll
 if (typeof window !== 'undefined') {
@@ -31,6 +32,8 @@ if (typeof window !== 'undefined') {
     }
     lastTouchEnd = now;
   }, false);
+
+  loadHostPractice().catch(() => {});
 
   // Capture ad click IDs before SPA navigation can drop the query string.
   captureMarketingAttribution();

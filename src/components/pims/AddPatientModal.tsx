@@ -9,8 +9,9 @@ import {
   type SpeciesBreedsBreed,
   type SpeciesBreedsSpecies,
 } from '../../api/speciesBreedsPublic';
+import { currentPracticeId } from '../../utils/practiceIdFromToken';
 
-const DEFAULT_PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const DEFAULT_PRACTICE_ID = currentPracticeId();
 
 function extractErr(err: unknown): string {
   const e = err as { response?: { data?: { message?: string } }; message?: string };

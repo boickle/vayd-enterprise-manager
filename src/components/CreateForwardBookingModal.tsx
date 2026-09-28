@@ -20,8 +20,9 @@ import { clientsForPatientSearchRow, primaryClientLabelForPatientRow } from '../
 import { practiceTimeZoneOrDefault } from '../utils/practiceTimezone';
 import '../pages/Scheduler.css';
 import '../pages/Settings.css';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
-const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_ID = currentPracticeId();
 
 /** Select value when staff adds forward booking without a linked source visit. */
 const NO_ASSOCIATED_VISIT = '__no_source_visit__';

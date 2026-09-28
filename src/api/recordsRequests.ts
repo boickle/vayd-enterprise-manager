@@ -1,8 +1,9 @@
 import axios from 'axios';
 import { http } from './http';
 import type { OutsideHospital } from './outsideHospitals';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
-const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_ID = currentPracticeId();
 const baseURL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000';
 
 /**

@@ -20,6 +20,7 @@ import {
   refillExpirationExceedsMax,
 } from '../../utils/printRxLabel';
 import './RxLabelModal.css';
+import { currentPracticeId } from '../../utils/practiceIdFromToken';
 
 export type RxLabelPrescriptionInput = {
   name: string;
@@ -52,7 +53,7 @@ type Props = {
 };
 
 const LAST_PRINTER_KEY = 'soap-rx-label-dymo-printer';
-const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_ID = currentPracticeId();
 
 function dateForInput(date: Date): string {
   const month = String(date.getMonth() + 1).padStart(2, '0');

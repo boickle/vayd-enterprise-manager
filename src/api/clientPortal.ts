@@ -5,6 +5,7 @@ import {
   parseDeclinedItems,
   type DeclinedTreatmentItem,
 } from './declinedTreatments';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
 /** ---------- Types ---------- **/
 export type Vaccination = {
@@ -407,7 +408,7 @@ export async function fetchClientAppointments(): Promise<ClientAppointment[]> {
  */
 export async function fetchClientChronicMeds(
   patientId: number,
-  practiceId = Number(import.meta.env.VITE_PRACTICE_ID) || 1
+  practiceId = currentPracticeId()
 ) {
   const { data } = await http.get('/patient-prescriptions/mine', {
     params: { patientId, practiceId, activeChronicOnly: true },

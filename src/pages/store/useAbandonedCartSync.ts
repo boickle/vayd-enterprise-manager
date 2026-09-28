@@ -2,8 +2,9 @@ import { useEffect } from 'react';
 import { publicStoreCartActivity } from '../../api/onlineStore';
 import { readStoreCart } from './storeCartState';
 import { useStoreCart } from './useStoreCart';
+import { currentPracticeId } from '../../utils/practiceIdFromToken';
 
-const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_ID = currentPracticeId();
 
 export function useAbandonedCartSync(
   email: string | null | undefined,

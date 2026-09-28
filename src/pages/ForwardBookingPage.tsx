@@ -151,8 +151,9 @@ import { practiceTimeZoneOrDefault } from '../utils/practiceTimezone';
 import { buildSchedulerFocusAppointmentUrl, writeSchedulerFocusSession } from '../utils/schedulerFocusAppointment';
 import { DateTime } from 'luxon';
 import './Settings.css';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
-const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_ID = currentPracticeId();
 
 type StatusFilter = ForwardBookingListTab;
 

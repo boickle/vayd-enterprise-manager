@@ -1,5 +1,6 @@
 // src/api/practices.ts
 import { http } from './http';
+import { HOST_PRACTICE_ID_STORAGE_KEY } from '../utils/practiceIdFromToken';
 
 export type PracticeSummary = {
   key: string;
@@ -12,6 +13,16 @@ export type PracticeHandoff = {
   code: string;
   practice: PracticeSummary;
 };
+
+/** Asks the API which practice owns this host and remembers its id for signed-out pages. */
+export async function loadHostPractice(): Promise<void> {
+  const { data } = await http.get<{ key: string; practiceId: number; name: string | null }>(
+    '/public/practice/current'
+  );
+  if (Number.isInteger(data?.practiceId) && data.practiceId > 0) {
+    localStorage.setItem(HOST_PRACTICE_ID_STORAGE_KEY, String(data.practiceId));
+  }
+}
 
 export async function fetchMyPractices() {
   const { data } = await http.get<{ current: string; practices: PracticeSummary[] }>(

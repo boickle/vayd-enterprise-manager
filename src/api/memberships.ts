@@ -1,15 +1,6 @@
 import axios from 'axios';
-import { getToken, http } from './http';
-import { resolvePracticeIdFromToken } from '../utils/practiceIdFromToken';
-
-/**
- * Resolved per call rather than at module load: the token is not present until
- * sign-in, and a staff member whose JWT practice differs from `VITE_PRACTICE_ID`
- * must not read or write another practice's plans. Falls back to the env var.
- */
-function currentPracticeId(): number {
-  return resolvePracticeIdFromToken(getToken());
-}
+import { http } from './http';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
 /** Catalog tables a plan line can point at. */
 export type MembershipItemType = 'lab' | 'procedure' | 'inventory';

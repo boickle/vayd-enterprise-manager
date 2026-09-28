@@ -38,8 +38,9 @@ import {
   type ClSeat,
 } from '../utils/clPoints';
 import { formatEmployeeDisplayName } from '../utils/employeeDisplayName';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
-const DEFAULT_PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const DEFAULT_PRACTICE_ID = currentPracticeId();
 
 const ALL_SEATS: ClSeat[] = ['phones', 'outreach', 'email'];
 

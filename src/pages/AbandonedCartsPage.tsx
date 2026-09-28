@@ -10,10 +10,11 @@ import { formatAutoshipFrequency } from './store/storeCartState';
 import './Settings.css';
 import './MailOrders.css';
 import './StoreOps.css';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
 function practiceIdFromToken(token: string | null): number {
   try {
-    if (!token) return Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+    if (!token) return currentPracticeId();
     const p = JSON.parse(atob(token.split('.')[1]!.replace(/-/g, '+').replace(/_/g, '/')));
     return Number(p.practiceId ?? p.practice_id) || 1;
   } catch {

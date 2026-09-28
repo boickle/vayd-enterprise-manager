@@ -529,8 +529,9 @@ import {
 import { fetchAppointmentsRangeForLocalDay } from '../api/appointments';
 import { exportMyDayVisualPdf } from '../utils/myDayVisualPdfExport';
 import './Scheduler.css';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
-const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_ID = currentPracticeId();
 const PRACTICE_TZ =
   (import.meta.env.VITE_PRACTICE_TIMEZONE as string | undefined)?.trim() || 'America/New_York';
 

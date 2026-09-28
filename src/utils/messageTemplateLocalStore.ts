@@ -1,8 +1,9 @@
 import { STARTER_STAFF_TEMPLATES, SYSTEM_TEMPLATE_SEEDS } from './messageTemplateSeeds';
 import type { MessageTemplate, MessageTemplateWrite } from './messageTemplateTypes';
+import { currentPracticeId } from './practiceIdFromToken';
 
 const KEY = 'scout.messageTemplates.v1';
-const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_ID = currentPracticeId();
 
 function newId(prefix: string): string {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
