@@ -166,6 +166,7 @@ import {
   fetchScheduleOverridesByDate,
 } from '../utils/scheduleOverrideMerge';
 import { effectiveWindowForScheduledStart } from '../utils/appointmentArrivalWindow';
+import { applyCalmingPremedHouseholdArrivalWindowOverrides } from '../utils/householdCalmingPremedArrivalWindow';
 import { resolveArrivalWindowIsos } from '../utils/appointmentRoutedArrivalWindow';
 import {
   buildEditVisitTimePreview,
@@ -5214,53 +5215,59 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       }
       return true;
     });
-    if (
+    const withDoctorDay =
       doctorDayMembershipByApptId.size === 0 &&
       doctorDayZonesByApptId.size === 0 &&
       doctorDayPatientPcpByApptId.size === 0 &&
       doctorDayEffectiveWindowByApptId.size === 0 &&
       doctorDayIsCompleteByApptId.size === 0
-    ) {
-      return filtered;
-    }
-    return filtered.map((a) => {
-      let next: Appointment = a;
-      const doc = doctorDayMembershipByApptId.get(String(a.id));
-      if (doc) {
-        const isMember = Boolean(a.isMember || doc.isMember);
-        const nameFromAppt = pickStr(a.membershipName);
-        const membershipName = nameFromAppt ?? doc.membershipName;
-        if (isMember || membershipName || a.isMember || pickStr(a.membershipName)) {
-          next = { ...next, isMember, membershipName: membershipName ?? null };
-        }
-      }
-      const z = doctorDayZonesByApptId.get(String(a.id));
-      if (z && (z.clientZone != null || z.effectiveZone != null)) {
-        next = {
-          ...next,
-          clientZone: z.clientZone ?? next.clientZone,
-          effectiveZone: z.effectiveZone ?? next.effectiveZone,
-        };
-      }
-      if (doctorDayPatientPcpByApptId.has(String(a.id))) {
-        next = {
-          ...next,
-          patientPrimaryProvider: doctorDayPatientPcpByApptId.get(String(a.id)) ?? null,
-        };
-      }
-      const doctorDayWindow = doctorDayEffectiveWindowByApptId.get(String(a.id));
-      if (doctorDayWindow) {
-        next = { ...next, effectiveWindow: doctorDayWindow };
-      }
-      if (doctorDayIsCompleteByApptId.has(String(a.id))) {
-        const doctorComplete = doctorDayIsCompleteByApptId.get(String(a.id)) === true;
-        next = { ...next, isComplete: doctorComplete || next.isComplete === true };
-      }
-      return next;
+        ? filtered
+        : filtered.map((a) => {
+            let next: Appointment = a;
+            const doc = doctorDayMembershipByApptId.get(String(a.id));
+            if (doc) {
+              const isMember = Boolean(a.isMember || doc.isMember);
+              const nameFromAppt = pickStr(a.membershipName);
+              const membershipName = nameFromAppt ?? doc.membershipName;
+              if (isMember || membershipName || a.isMember || pickStr(a.membershipName)) {
+                next = { ...next, isMember, membershipName: membershipName ?? null };
+              }
+            }
+            const z = doctorDayZonesByApptId.get(String(a.id));
+            if (z && (z.clientZone != null || z.effectiveZone != null)) {
+              next = {
+                ...next,
+                clientZone: z.clientZone ?? next.clientZone,
+                effectiveZone: z.effectiveZone ?? next.effectiveZone,
+              };
+            }
+            if (doctorDayPatientPcpByApptId.has(String(a.id))) {
+              next = {
+                ...next,
+                patientPrimaryProvider: doctorDayPatientPcpByApptId.get(String(a.id)) ?? null,
+              };
+            }
+            const doctorDayWindow = doctorDayEffectiveWindowByApptId.get(String(a.id));
+            if (doctorDayWindow) {
+              next = { ...next, effectiveWindow: doctorDayWindow };
+            }
+            if (doctorDayIsCompleteByApptId.has(String(a.id))) {
+              const doctorComplete = doctorDayIsCompleteByApptId.get(String(a.id)) === true;
+              next = { ...next, isComplete: doctorComplete || next.isComplete === true };
+            }
+            return next;
+          });
+
+    // Mixed Pre-Meds + other types at one stop: share the Pre-Meds (~1hr) window on
+    // every sibling while keeping each pet's appointment type / calendar color.
+    return applyCalmingPremedHouseholdArrivalWindowOverrides(withDoctorDay, {
+      practiceTz: PRACTICE_TZ,
+      catalog: typeList,
     });
   }, [
     rawAppointments,
     typeFilter,
+    typeList,
     doctorDayMembershipByApptId,
     doctorDayZonesByApptId,
     doctorDayPatientPcpByApptId,

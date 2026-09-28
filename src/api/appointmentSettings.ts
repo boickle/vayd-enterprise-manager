@@ -49,8 +49,9 @@ export type AppointmentType = {
   /** Placeholder HOLD type — shown on the Holds board and classified as on hold (server-side) */
   isHold?: boolean;
   /**
-   * Calming / Pre-Meds visit type — suggested when a client reports calming medications
-   * for the appointment (typically a wider arrival window).
+   * Calming / Pre-Meds visit type — suggested when a client reports calming medications.
+   * Its arrival window (typically ~1 hour) drives the household stop when mixed with
+   * other types.
    */
   isCalmingPremedType?: boolean;
   /** Use legacy routing rules for this type (server-side) */

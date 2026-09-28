@@ -33,6 +33,8 @@ import {
   SCHEDULER_ROUTING_PREVIEW_SYNTHETIC_APPT_ID,
   type RoutingCalendarPreviewPayloadV1,
 } from './routingCalendarPreviewStorage';
+import { resolveClumpArrivalWindowWithCalmingPremedOverride } from './householdCalmingPremedArrivalWindow';
+import { carrierIsCalmingPremed } from './appointmentTypeSettings';
 import {
   buildEtaCandidateSlot,
   mapRoutableInsertionIndexToFullIndex,
@@ -490,9 +492,6 @@ function householdFromApptClump(
   const sourceAppointmentIds: (string | number)[] = [];
   let primary = a0;
   let firstApptIndex = first.index;
-  let windowStartIso: string | undefined;
-  let windowEndIso: string | undefined;
-  let effectiveWindow: { startIso: string; endIso: string } | undefined;
 
   for (const { appt: a, index: idx } of clump) {
     firstApptIndex = Math.min(firstApptIndex, idx);
@@ -513,24 +512,21 @@ function householdFromApptClump(
     }
     const apptId = (a as { id?: string | number }).id;
     if (apptId != null) sourceAppointmentIds.push(apptId);
-    const ew = (a as { effectiveWindow?: { startIso?: string; endIso?: string } }).effectiveWindow;
-    if (ew?.startIso && ew?.endIso) {
-      if (!effectiveWindow) {
-        effectiveWindow = { startIso: ew.startIso, endIso: ew.endIso };
-        windowStartIso = ew.startIso;
-        windowEndIso = ew.endIso;
-      } else {
-        const w0 = DateTime.fromISO(effectiveWindow.startIso);
-        const w1 = DateTime.fromISO(effectiveWindow.endIso);
-        const n0 = DateTime.fromISO(ew.startIso);
-        const n1 = DateTime.fromISO(ew.endIso);
-        if (n0.isValid && (!w0.isValid || n0 < w0)) effectiveWindow.startIso = ew.startIso;
-        if (n1.isValid && (!w1.isValid || n1 > w1)) effectiveWindow.endIso = ew.endIso;
-        windowStartIso = effectiveWindow.startIso;
-        windowEndIso = effectiveWindow.endIso;
-      }
-    }
   }
+
+  // Mixed Pre-Meds + other types: pin the stop to the Pre-Meds (~1hr) window so
+  // non-premed siblings do not widen the household back to a 2hr arrival.
+  const windowResolved = resolveClumpArrivalWindowWithCalmingPremedOverride(
+    clump.map(({ appt: a }) => ({
+      appointmentType: a.appointmentType,
+      effectiveWindow: a.effectiveWindow,
+      scheduledStartIso: getStartISO(a),
+      scheduledEndIso: getEndISO(a),
+    })),
+  );
+  const effectiveWindow = windowResolved.effectiveWindow;
+  const windowStartIso = effectiveWindow?.startIso;
+  const windowEndIso = effectiveWindow?.endIso;
 
   return {
     key: initialKey,
@@ -878,6 +874,28 @@ function effectiveWindowMapFromDoctorDayAppointments(
     const endIso = ew?.endIso?.trim();
     if (!startIso || !endIso) continue;
     out.set(id, { startIso, endIso });
+  }
+
+  // Same-stop mixed Pre-Meds: stamp the Pre-Meds window onto every sibling id so
+  // schedule cards keep type colors but share the ~1hr arrival window.
+  const households = buildHouseholdsWithSourceIds(appts);
+  for (const h of households) {
+    if (!h.effectiveWindow?.startIso || !h.effectiveWindow?.endIso) continue;
+    if (h.sourceAppointmentIds.length <= 1) continue;
+    const hasPremed = h.sourceAppointmentIds.some((sid) => {
+      const row = appts.find((a) => a.id != null && String(a.id) === String(sid));
+      return row != null && carrierIsCalmingPremed(row.appointmentType);
+    });
+    if (!hasPremed) continue;
+    const pinned = {
+      startIso: h.effectiveWindow.startIso,
+      endIso: h.effectiveWindow.endIso,
+    };
+    for (const sid of h.sourceAppointmentIds) {
+      const key = String(sid);
+      if (!key) continue;
+      out.set(key, pinned);
+    }
   }
   return out;
 }

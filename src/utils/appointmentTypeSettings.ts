@@ -226,10 +226,28 @@ export function appointmentTypeIsCalmingPremed(
   return type.isCalmingPremedType === true;
 }
 
+/** True when a type name/prettyName looks like the calming / Pre-Meds visit. */
+export function appointmentTypeNameLooksLikeCalmingPremed(
+  name: string | null | undefined,
+  prettyName?: string | null,
+): boolean {
+  const key = normalizeAppointmentTypeName(name);
+  const pretty = normalizeAppointmentTypeName(prettyName);
+  const blob = `${key} ${pretty}`.trim();
+  if (!blob) return false;
+  return (
+    blob.includes('pre med') ||
+    blob.includes('premed') ||
+    blob.includes('pre appt med') ||
+    blob.includes('pre-appt med') ||
+    (blob.includes('pre') && blob.includes('med'))
+  );
+}
+
 /**
  * Among the visit's appointment type ids, prefer the calming / Pre-Meds type so
- * its (wider) arrival window drives routing for the whole household. Falls back
- * to the first id when no Pre-Meds type is in the visit.
+ * its arrival window (typically ~1 hour) drives routing for the whole household.
+ * Falls back to the first id when no Pre-Meds type is in the visit.
  */
 export function preferCalmingPremedVisitTypeId(
   typeIds: readonly number[],
@@ -266,17 +284,68 @@ export function findCalmingPremedAppointmentType<
   if (flagged) return flagged;
   return types.find((t) => {
     if (t.isDeleted === true) return false;
-    const key = normalizeAppointmentTypeName(t.name);
-    const pretty = normalizeAppointmentTypeName(t.prettyName);
-    const blob = `${key} ${pretty}`;
-    return (
-      blob.includes('pre med') ||
-      blob.includes('premed') ||
-      blob.includes('pre appt med') ||
-      blob.includes('pre-appt med') ||
-      (blob.includes('pre') && blob.includes('med'))
-    );
+    return appointmentTypeNameLooksLikeCalmingPremed(t.name, t.prettyName);
   });
+}
+
+export type CalmingPremedTypeCarrier =
+  | string
+  | {
+      id?: number | null;
+      name?: string | null;
+      prettyName?: string | null;
+      isCalmingPremedType?: boolean | null;
+    }
+  | null
+  | undefined;
+
+/**
+ * True when this appointment type is (or matches) the calming / Pre-Meds type.
+ * Prefers `isCalmingPremedType` / catalog id; falls back to Pre-Meds-style names.
+ */
+export function carrierIsCalmingPremed(
+  carrier: CalmingPremedTypeCarrier,
+  catalog?:
+    | ReadonlyArray<{
+        id?: number;
+        isCalmingPremedType?: boolean | null;
+        name?: string | null;
+        prettyName?: string | null;
+        isDeleted?: boolean | null;
+      }>
+    | null,
+): boolean {
+  if (carrier == null) return false;
+
+  const catalogPremed = findCalmingPremedAppointmentType(catalog);
+
+  if (typeof carrier === 'string') {
+    const name = carrier.trim();
+    if (!name) return false;
+    if (catalogPremed) {
+      const n = normalizeAppointmentTypeName(name);
+      if (
+        n === normalizeAppointmentTypeName(catalogPremed.name) ||
+        n === normalizeAppointmentTypeName(catalogPremed.prettyName)
+      ) {
+        return true;
+      }
+    }
+    return appointmentTypeNameLooksLikeCalmingPremed(name);
+  }
+
+  if (carrier.isCalmingPremedType === true) return true;
+
+  if (catalogPremed?.id != null && carrier.id != null && Number(carrier.id) === Number(catalogPremed.id)) {
+    return true;
+  }
+
+  if (catalog?.length && carrier.id != null) {
+    const row = catalog.find((t) => t.id != null && Number(t.id) === Number(carrier.id));
+    if (row?.isCalmingPremedType === true) return true;
+  }
+
+  return appointmentTypeNameLooksLikeCalmingPremed(carrier.name, carrier.prettyName);
 }
 
 function appointmentTypePickerLabel(type: {
