@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import LoginPage from './pages/Login';
 import RequestReset from './pages/RequestReset';
 import ResetPass from './pages/ResetPass';
+import PracticeHandoffPage from './pages/PracticeHandoff';
 import { ProtectedRoute } from './auth/ProtectedRoute';
 import { useAuth } from './auth/useAuth';
 import Home from './pages/Home';
@@ -524,6 +525,7 @@ export default function App() {
           <Route path="/requestreset" element={<Navigate to="/request-reset" replace />} />
           <Route path="/reset-password" element={<ResetPass />} />
           <Route path="/resetpass" element={<ResetPass />} />
+          <Route path="/auth/handoff" element={<PracticeHandoffPage />} />
           <Route path="/error" element={<ErrorPage />} />
 
           {/* Client portal (standalone) */}
