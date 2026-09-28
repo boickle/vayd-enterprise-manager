@@ -27,18 +27,20 @@ export function resolveVeterinarianRecordId(vet: {
   return id != null ? String(id) : null;
 }
 
+function veterinarianLookupIds(vet: VeterinarianWithAppointmentTypes): string[] {
+  const extra = vet as VeterinarianWithAppointmentTypes & { pimsUserId?: number | string };
+  return [vet.id, vet.employeeId, vet.pimsId, extra.pimsUserId]
+    .filter((value) => value != null && String(value).trim() !== '')
+    .map((value) => String(value));
+}
+
 export function findVeterinarianById(
   veterinarians: VeterinarianWithAppointmentTypes[],
   doctorId: string | number | undefined,
 ): VeterinarianWithAppointmentTypes | null {
   if (doctorId == null) return null;
   const target = String(doctorId);
-  return (
-    veterinarians.find((v) => {
-      const id = resolveVeterinarianRecordId(v);
-      return id != null && id === target;
-    }) ?? null
-  );
+  return veterinarians.find((v) => veterinarianLookupIds(v).includes(target)) ?? null;
 }
 
 /** Goals API dayOfWeek: 0 = Sunday … 6 = Saturday. */

@@ -23,8 +23,26 @@ export function householdsInRoutingDisplayOrder<H extends MapsRoutableHousehold>
   return households;
 }
 
+/** True when coords are usable for Google Maps Directions (not missing / 0,0). */
+function hasRoutableCoords(s: Stop): boolean {
+  return (
+    Number.isFinite(s.lat) &&
+    Number.isFinite(s.lon) &&
+    Math.abs(s.lat) > 1e-6 &&
+    Math.abs(s.lon) > 1e-6
+  );
+}
+
+/**
+ * Day Maps links must match Scout routing: use stored lat/lon when present.
+ * Preferring address text made Google Maps fail on unmappable / stale strings while
+ * Scout still scored the day from coordinates and showed no location issue.
+ * Falls back to address only when coords are missing (same as single-visit Maps links).
+ */
 function toLocationString(s: Stop): string {
-  // Prefer address if available, otherwise fall back to lat/lon
+  if (hasRoutableCoords(s)) {
+    return `${s.lat},${s.lon}`;
+  }
   if (s.address && s.address.trim()) {
     return s.address.trim();
   }

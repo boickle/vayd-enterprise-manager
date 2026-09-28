@@ -90,14 +90,61 @@ export function isNewClientOrNewPatientVisit(
   return visitPets.some((pet) => pet.isNewPatient === true);
 }
 
+/** Calming meds, muzzle, or extra handling use the new-patient lead time. */
+export function visitNeedsCalmingLeadTime(
+  visitPets?: readonly {
+    needsCalmingMedications?: boolean;
+    needsSpecialHandling?: boolean;
+  }[],
+): boolean {
+  return !!visitPets?.some(
+    (pet) => pet.needsCalmingMedications === true || pet.needsSpecialHandling === true,
+  );
+}
+
 export function resolveOnlineBookingLeadTimeHours(
   settings: OnlineBookingAutoBookSettings,
   visitPets?: readonly RoutingVisitPetInput[],
   isNewPatientRequest?: boolean,
 ): number {
-  return isNewClientOrNewPatientVisit(visitPets, isNewPatientRequest)
+  return isNewClientOrNewPatientVisit(visitPets, isNewPatientRequest) ||
+    visitNeedsCalmingLeadTime(visitPets)
     ? settings.newClientLeadTimeHours
     : settings.existingClientLeadTimeHours;
+}
+
+/**
+ * Urgent and Soon limit the online calendar to that timeframe.
+ * Other how-soon answers keep the open-ended search.
+ */
+export function onlineBookingHowSoonSearchEnd(
+  howSoon: string | undefined,
+  practiceTz?: string,
+  now: DateTime = DateTime.now(),
+): { endDate: string; endMillis: number } | null {
+  const raw = howSoon?.trim();
+  if (!raw) return null;
+  const n = raw.toLowerCase().replace(/[–—]/g, '-').replace(/\s+/g, ' ');
+  const zoned = now.setZone(practiceTimeZoneOrDefault(practiceTz));
+  if (n.includes('emergent') || n.includes('emergency')) {
+    const end = zoned.plus({ hours: 24 });
+    const endDate = end.toISODate();
+    if (!endDate) return null;
+    return { endDate, endMillis: end.toMillis() };
+  }
+  if (n.includes('urgent')) {
+    const end = zoned.plus({ hours: 48 });
+    const endDate = end.toISODate();
+    if (!endDate) return null;
+    return { endDate, endMillis: end.toMillis() };
+  }
+  if (n.startsWith('soon') || n.includes('this week') || n.includes('next few days')) {
+    const end = zoned.endOf('week');
+    const endDate = end.toISODate();
+    if (!endDate) return null;
+    return { endDate, endMillis: end.toMillis() };
+  }
+  return null;
 }
 
 export function computeEarliestOnlineBookingDateTime(
