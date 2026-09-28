@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { loadStripe, type Stripe, type StripeCardElement } from '@stripe/stripe-js';
-import { getStripePublishableKey } from '../config/paymentProvider';
+import { loadStripePublishableKey } from '../api/practicePublicConfig';
 
 export default function ConsentCardPay({
   name,
@@ -27,7 +27,7 @@ export default function ConsentCardPay({
     const host = hostRef.current;
     if (!host) return undefined;
     void (async () => {
-      const pk = getStripePublishableKey();
+      const pk = await loadStripePublishableKey();
       if (!pk) {
         setError('Card payment is not configured.');
         return;
