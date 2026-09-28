@@ -8,6 +8,7 @@ import SurveyResults from './pages/SurveyResults';
 import AdminUsers from './pages/AdminUsers';
 import RoutingScoreThresholdsPage from './pages/RoutingScoreThresholds';
 import RoomLoaderDeclinesReportPage from './pages/RoomLoaderDeclinesReportPage';
+import PlatformPractices from './pages/PlatformPractices';
 import { getFrontendPaymentProvider } from './config/paymentProvider';
 
 export type AdminTabPage = {
@@ -17,6 +18,8 @@ export type AdminTabPage = {
   role?: string | string[];
   /** When set, this tab is listed under a dropdown with this label (e.g. Inventory). */
   group?: string;
+  /** Only shown to platform admins, whatever their role in this practice. */
+  platformAdminOnly?: boolean;
 };
 
 export const ADMIN_TAB_PAGES: AdminTabPage[] = [
@@ -76,6 +79,13 @@ export const ADMIN_TAB_PAGES: AdminTabPage[] = [
     group: 'Reports',
     element: <RoomLoaderDeclinesReportPage />,
     role: ['admin', 'superadmin'],
+  },
+  {
+    path: 'practices',
+    label: 'Practices',
+    element: <PlatformPractices />,
+    role: ['admin', 'superadmin'],
+    platformAdminOnly: true,
   },
 ];
 
