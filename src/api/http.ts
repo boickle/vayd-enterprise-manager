@@ -48,20 +48,15 @@ function clearRefreshLock(): void {
   }
 }
 
-/** Wait for another tab to finish refresh (poll until lock is gone or stale), then return current accessToken or null. */
+/** Wait for another tab to finish refresh, then return a still-valid access token or null. */
 function waitForOtherTabRefresh(): Promise<string | null> {
   const deadline = Date.now() + REFRESH_LOCK_TTL_MS + 2000;
   return new Promise<string | null>((resolve) => {
     const poll = () => {
-      if (Date.now() > deadline) {
-        resolve(null);
-        return;
-      }
       const lock = getRefreshLock();
-      if (!lock || Date.now() - lock.ts > REFRESH_LOCK_TTL_MS) {
-        const accessToken = localStorage.getItem('accessToken');
-        const refreshToken = localStorage.getItem('refreshToken');
-        resolve(accessToken && refreshToken ? accessToken : null);
+      const lockCleared = !lock || Date.now() - lock.ts > REFRESH_LOCK_TTL_MS;
+      if (Date.now() > deadline || lockCleared) {
+        resolve(storedUsableAccessToken());
         return;
       }
       setTimeout(poll, 100);
@@ -86,6 +81,59 @@ function decodeJwtExp(t: string): number | null {
   } catch {
     return null;
   }
+}
+
+function readStoredTokens(): { accessToken: string | null; refreshToken: string | null } {
+  try {
+    return {
+      accessToken: localStorage.getItem('accessToken'),
+      refreshToken: localStorage.getItem('refreshToken'),
+    };
+  } catch {
+    return { accessToken: null, refreshToken: null };
+  }
+}
+
+/** True when the access token is not already inside the refresh skew window. */
+function isAccessTokenUsable(accessToken: string | null, skewMs = 15_000): boolean {
+  if (!accessToken) return false;
+  const exp = decodeJwtExp(accessToken);
+  if (exp == null) return true;
+  return exp * 1000 > Date.now() + skewMs;
+}
+
+function storedUsableAccessToken(): string | null {
+  const { accessToken, refreshToken } = readStoredTokens();
+  if (!accessToken || !refreshToken) return null;
+  return isAccessTokenUsable(accessToken) ? accessToken : null;
+}
+
+/**
+ * After our refresh is rejected, another tab may still be writing the rotated pair.
+ * Accept storage only when the refresh token changed and the access token is still valid.
+ */
+function waitForRotatedAccessToken(usedRefreshToken: string): Promise<string | null> {
+  const deadline = Date.now() + 2000;
+  return new Promise((resolve) => {
+    const poll = () => {
+      const { accessToken, refreshToken } = readStoredTokens();
+      if (
+        accessToken &&
+        refreshToken &&
+        refreshToken !== usedRefreshToken &&
+        isAccessTokenUsable(accessToken)
+      ) {
+        resolve(accessToken);
+        return;
+      }
+      if (Date.now() >= deadline) {
+        resolve(null);
+        return;
+      }
+      setTimeout(poll, 100);
+    };
+    poll();
+  });
 }
 
 function clearAutoLogout() {
@@ -311,16 +359,18 @@ async function _performTokenRefresh(shouldLogoutOnFailure: boolean = true): Prom
       data: errorData
     });
     
-    // If we get 401, the refresh token was already used/rotated (e.g. another tab refreshed)
+    // 401 means this refresh token is already revoked. Keep the session only if another
+    // tab stored a different, still-valid pair. Otherwise the access token in storage is
+    // the expired one and staying logged in wedges pages that fetch on entry.
     if (status === 401) {
-      console.warn('[Token Refresh] 🔐 Got 401 on refresh - token was rotated by another tab/request');
-      const currentAccessToken = localStorage.getItem('accessToken');
-      const currentRefreshToken = localStorage.getItem('refreshToken');
-      if (currentAccessToken && currentRefreshToken) {
-        console.log('[Token Refresh] 🔐 Using new tokens from another tab, not logging out');
-        token = currentAccessToken;
-        return currentAccessToken;
+      console.warn('[Token Refresh] 🔐 Got 401 on refresh - refresh token rejected');
+      const rotatedAccessToken = await waitForRotatedAccessToken(refreshToken);
+      if (rotatedAccessToken) {
+        console.log('[Token Refresh] 🔐 Another tab stored a new access token, not logging out');
+        token = rotatedAccessToken;
+        return rotatedAccessToken;
       }
+      console.warn('[Token Refresh] 🔐 No rotated token in storage; session cannot be refreshed');
     }
     
     // Refresh failed, clear tokens and logout (only if shouldLogoutOnFailure is true)
@@ -362,8 +412,13 @@ async function refreshAccessToken(shouldLogoutOnFailure: boolean = true): Promis
       if (result) {
         token = result;
         scheduleAutoLogout(result);
+        return result;
       }
-      return result;
+      if (shouldLogoutOnFailure && !storedUsableAccessToken()) {
+        console.warn('[Token Refresh] 🔐 Other tab did not leave a usable access token, logging out');
+        forceLogout();
+      }
+      return null;
     } finally {
       refreshPromise = null;
     }
@@ -381,8 +436,13 @@ async function refreshAccessToken(shouldLogoutOnFailure: boolean = true): Promis
       if (result) {
         token = result;
         scheduleAutoLogout(result);
+        return result;
       }
-      return result;
+      if (shouldLogoutOnFailure && !storedUsableAccessToken()) {
+        console.warn('[Token Refresh] 🔐 Lost refresh lock and no usable access token remains, logging out');
+        forceLogout();
+      }
+      return null;
     } finally {
       refreshPromise = null;
     }
