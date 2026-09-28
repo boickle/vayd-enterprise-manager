@@ -1,6 +1,12 @@
 import type { CSSProperties } from 'react';
 import type { RoomLoaderSimulateBillPublicResponse } from '../api/roomLoader';
 import {
+  cleanDuplicatedMembershipPlanDisplayName,
+  computeMissingPlanIncludedWellnessVisitCoverageDelta,
+  findMembershipCoverageAdjustmentIndex,
+  isPlanIncludedWellnessVisitLineName,
+} from '../utils/membershipCoverageCompare';
+import {
   computeFoundationsSeniorScreenFalseCoverageVisitDelta,
   seniorScreenLineNameFalseFoundationsFullCoverage,
 } from '../utils/membershipFoundationsSimulate';
@@ -135,7 +141,9 @@ export default function MembershipRecommendationPanel({
         const petName = petPlans.patientName || 'your pet';
         const showSharedOneTeamIntro = pets.length === 1 || petIndex === 0;
         const monthly = membershipPanelByPatientId[petPlans.patientId]?.monthly;
-        const planDisplayName = rec.planName || membershipPlanDisplayName[rec.planId] || rec.planId;
+        const planDisplayName = cleanDuplicatedMembershipPlanDisplayName(
+          rec.planName || membershipPlanDisplayName[rec.planId] || rec.planId
+        );
         const planBase = normalizePlanBaseId(rec.planId);
         const planShortLabel =
           planBase === 'golden' ? 'Golden' : planDisplayName.replace(/\s+Plan$/i, '').replace(/\s+Care$/i, '').trim();
@@ -157,13 +165,21 @@ export default function MembershipRecommendationPanel({
           adjustments,
           normItemName
         );
+        const missingWellnessVisitCoverageDelta = computeMissingPlanIncludedWellnessVisitCoverageDelta(
+          planBase,
+          petPlans.patientId,
+          filteredLines,
+          adjustments,
+          normItemName
+        );
         const coverageRows = comparisonLines.map((line) => {
           const declinedForVisit = line.membershipComparisonDeclinedOnly === true;
-          const matchIdx = adjustments.findIndex(
-            (a, i) =>
-              !usedAdj.has(i) &&
-              a.patientId === petPlans.patientId &&
-              normItemName(a.name) === normItemName(line.name)
+          const matchIdx = findMembershipCoverageAdjustmentIndex(
+            line,
+            adjustments,
+            usedAdj,
+            petPlans.patientId,
+            normItemName
           );
           let right: string;
           let covered: boolean;
@@ -188,6 +204,21 @@ export default function MembershipRecommendationPanel({
               right = 'Not included in membership';
               covered = false;
             }
+            // Simulate left a plan-included wellness visit at full price — still treat as covered for Golden/Foundations.
+            if (
+              !covered &&
+              (planBase === 'golden' || planBase === 'foundations') &&
+              isPlanIncludedWellnessVisitLineName(line.name)
+            ) {
+              right = `✔ Covered by ${planShortLabel} Plan`;
+              covered = true;
+            }
+          } else if (
+            (planBase === 'golden' || planBase === 'foundations') &&
+            isPlanIncludedWellnessVisitLineName(line.name)
+          ) {
+            right = `✔ Covered by ${planShortLabel} Plan`;
+            covered = true;
           } else {
             right = 'Not included in membership';
             covered = false;
@@ -250,7 +281,8 @@ export default function MembershipRecommendationPanel({
                 monthly.originalVisitSubtotal -
                   monthly.withMembershipVisitSubtotal +
                   multiPetCreditUsd -
-                  foundationsSeniorFalseVisitDelta
+                  foundationsSeniorFalseVisitDelta +
+                  missingWellnessVisitCoverageDelta
               )
             : null;
         /** Store / add-on subtotal + sales tax (not part of `originalVisitSubtotal` per simulate API). */
@@ -262,10 +294,14 @@ export default function MembershipRecommendationPanel({
          * Membership-priced visit plus store add-ons & tax, then minus multi-pet credit (shown as a separate −$75 line).
          * Avoid `withMembershipTotal` — it can include bundled annual membership amounts.
          * `foundationsSeniorFalseVisitDelta`: simulate may wrongly zero senior screen on Foundations — add back so due matches row-level “not included”.
+         * `missingWellnessVisitCoverageDelta`: simulate may omit plan-included annual wellness visit coverage — subtract so due matches row-level “covered”.
          */
         const dueBeforeMultiPetCredit =
           monthly != null
-            ? Number(monthly.withMembershipVisitSubtotal) + storeAndTaxPortion + foundationsSeniorFalseVisitDelta
+            ? Number(monthly.withMembershipVisitSubtotal) +
+              storeAndTaxPortion +
+              foundationsSeniorFalseVisitDelta -
+              missingWellnessVisitCoverageDelta
             : null;
         const dueAtVisit =
           monthly != null ? (dueBeforeMultiPetCredit ?? 0) - multiPetCreditUsd : null;

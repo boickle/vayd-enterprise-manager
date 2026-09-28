@@ -52,6 +52,10 @@ import {
 } from '../utils/roomLoaderSharps';
 import { computeFoundationsSeniorScreenFalseCoverageVisitDelta } from '../utils/membershipFoundationsSimulate';
 import {
+  cleanDuplicatedMembershipPlanDisplayName,
+  computeMissingPlanIncludedWellnessVisitCoverageDelta,
+} from '../utils/membershipCoverageCompare';
+import {
   BUNDLED_LAB_PANEL_CODES,
   codeIsBundledFecal,
   patientHasReminderDueAtLeastMonthsAhead,
@@ -552,6 +556,7 @@ function estimatedDueTodayWithMembershipForUpsellPets(
     const rec = getRecommendedWellnessPlanFromList(petPlans.plans, petPlans.meetsGolden);
     const planBase = rec ? normalizePlanBaseId(rec.planId) : '';
     let foundationsSeniorFalseVisitDelta = 0;
+    let missingWellnessVisitCoverageDelta = 0;
     if (membershipFooterOpts && planBase) {
       const filtered = filterLineItemsForPatientSimulate(
         membershipFooterOpts.summaryLineItems,
@@ -559,6 +564,13 @@ function estimatedDueTodayWithMembershipForUpsellPets(
         membershipFooterOpts.firstPatientId
       ).filter((li) => (li as { category?: string }).category !== 'store');
       foundationsSeniorFalseVisitDelta = computeFoundationsSeniorScreenFalseCoverageVisitDelta(
+        planBase,
+        petPlans.patientId,
+        filtered,
+        adjustments,
+        normItemName
+      );
+      missingWellnessVisitCoverageDelta = computeMissingPlanIncludedWellnessVisitCoverageDelta(
         planBase,
         petPlans.patientId,
         filtered,
@@ -585,8 +597,15 @@ function estimatedDueTodayWithMembershipForUpsellPets(
     const multiPetCreditUsd = qualifiesForMultiPetCredit ? VAYD_MULTI_PET_MEMBERSHIP_CREDIT_USD_FOOTER : 0;
 
     sumMemberVisit +=
+<<<<<<< HEAD
       Number(monthly.withMembershipVisitSubtotal) - multiPetCreditUsd + foundationsSeniorFalseVisitDelta;
     sumOriginalVisit += Number(monthly.originalVisitSubtotal);
+=======
+      Number(monthly.withMembershipVisitSubtotal) -
+      multiPetCreditUsd +
+      foundationsSeniorFalseVisitDelta -
+      missingWellnessVisitCoverageDelta;
+>>>>>>> 6acdb61 (Fix Care Coverage Comparison for Annual Wellness Visit on Golden/Foundations.)
 
     const st = Math.max(0, Number(monthly.originalTotal) - Number(monthly.originalVisitSubtotal));
     if (storeTax === null) storeTax = st;
@@ -4266,7 +4285,9 @@ export default function PublicRoomLoaderForm() {
         );
         return {
           planId,
-          planName: speciesResolved ?? details?.name ?? planId,
+          planName: cleanDuplicatedMembershipPlanDisplayName(
+            speciesResolved ?? details?.name ?? planId
+          ),
           tagLine: details?.tagLine ?? '',
         };
       });
