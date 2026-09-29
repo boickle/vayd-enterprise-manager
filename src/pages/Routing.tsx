@@ -222,6 +222,7 @@ import {
   SCHEDULER_HANDOFF_ROUTING_DOCTOR_EVENT,
 } from '../utils/schedulerCalendarHandoff';
 import './Routing.css';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
 /** Yellow wrap when an optional routing preference is on—makes checked state obvious at a glance. */
 const ROUTING_PREF_CHECKED_LABEL: CSSProperties = {
@@ -1589,7 +1590,7 @@ function pickStr(v: unknown): string | null {
   return s || null;
 }
 
-const ROUTING_PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const ROUTING_PRACTICE_ID = currentPracticeId();
 
 function SlotChip({ slot }: { slot?: Slot | null }) {
   return null; // Slot labels (Early / Mid / Late) not shown

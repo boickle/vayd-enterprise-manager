@@ -1,6 +1,7 @@
 import { http } from './http';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
-const pid = () => Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const pid = () => currentPracticeId();
 
 // ─── Field types ──────────────────────────────────────────────────────────────
 

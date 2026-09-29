@@ -1,5 +1,6 @@
 import { fetchPracticeInfo, fetchPracticeInfoById } from '../api/clientPortal';
 import { getPracticeSettings, updatePracticeSettings } from '../api/practiceSettings';
+import { currentPracticeId } from './practiceIdFromToken';
 
 export type PracticeLetterhead = {
   name: string;
@@ -8,7 +9,7 @@ export type PracticeLetterhead = {
   logoDataUrl: string | null;
 };
 
-const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_ID = currentPracticeId();
 
 function infoAddress(info: {
   address?: string;

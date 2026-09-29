@@ -37,8 +37,9 @@ import { appAlert } from '../utils/appDialog';
 import { publicStoreProducts } from '../api/onlineStore';
 import { addToStoreCart } from './store/storeCartState';
 import type { PatientPrescription } from '../api/visitWorkflow';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
-const STORE_PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const STORE_PRACTICE_ID = currentPracticeId();
 
 type PetWithWellness = Pet & {
   wellnessPlans?: WellnessPlan[];

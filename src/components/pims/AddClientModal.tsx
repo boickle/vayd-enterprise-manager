@@ -14,8 +14,9 @@ import { formatAddressLine } from '../../utils/clientVisitAddresses';
 import { EMPTY_ADDRESS_FIELDS } from '../../utils/verifiedAddress';
 import { clientSearchRowHomeAddress } from '../../utils/visitAddressMatch';
 import AddPatientModal from './AddPatientModal';
+import { currentPracticeId } from '../../utils/practiceIdFromToken';
 
-const DEFAULT_PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const DEFAULT_PRACTICE_ID = currentPracticeId();
 
 const PHONE_TYPES = [
   { value: 'mobile', label: 'Mobile' },

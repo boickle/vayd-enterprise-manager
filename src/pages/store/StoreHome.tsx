@@ -2,8 +2,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import { publicStoreProducts, storeListingImageUrl, type StoreListing } from '../../api/onlineStore';
 import './Store.css';
+import { currentPracticeId } from '../../utils/practiceIdFromToken';
 
-const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_ID = currentPracticeId();
 
 function categoryParts(raw: string | null | undefined): string[] {
   return String(raw || '')

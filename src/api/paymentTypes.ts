@@ -1,4 +1,5 @@
 import { http } from './http';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
 export const PAYMENT_OPTION_TYPES = [
   'cash',
@@ -43,7 +44,7 @@ export type PaymentTypeWrite = {
   isActive?: boolean;
 };
 
-const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_ID = currentPracticeId();
 
 function normalizeRow(row: PracticePaymentType): PracticePaymentType {
   const optionType = (PAYMENT_OPTION_TYPES as readonly string[]).includes(row.optionType)

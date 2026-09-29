@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { loadStripe, type Stripe, type StripeCardElement } from '@stripe/stripe-js';
 import { ShieldCheck, X } from 'lucide-react';
-import { getStripePublishableKey } from '../../config/paymentProvider';
+import { loadStripePublishableKey } from '../../api/practicePublicConfig';
 import {
   createEuthanasiaSetupIntent,
   savePaymentMethod,
@@ -52,7 +52,7 @@ export default function EuthanasiaPrepayModal({
         setInvoiceId(setup.invoiceId);
         setClientSecret(setup.setupIntentClientSecret);
 
-        const pk = getStripePublishableKey();
+        const pk = await loadStripePublishableKey();
         if (!pk) {
           setError('Stripe is not configured (missing publishable key).');
           return;

@@ -31,6 +31,7 @@ import {
 } from '../utils/euthanasiaConsentSettings';
 import { EMPTY_ADDRESS_FIELDS } from '../utils/verifiedAddress';
 import './EuthanasiaConsentForm.css';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
 const publicStoreClient = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000',
@@ -227,7 +228,7 @@ export default function EuthanasiaConsentForm() {
   };
 
   const openStoreListing = (listingId: string) => {
-    const practiceId = form?.practiceId || Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+    const practiceId = form?.practiceId || currentPracticeId();
     if (!listingId) return;
     setClayStoreOpen(true);
     setClayStoreError(null);
@@ -1092,7 +1093,7 @@ export default function EuthanasiaConsentForm() {
                 const clayStoreImage =
                   row.value === 'clayCharge' && clayStore
                     ? storeListingImageUrl(
-                        form.practiceId || Number(import.meta.env.VITE_PRACTICE_ID) || 1,
+                        form.practiceId || currentPracticeId(),
                         {
                           imageInventoryItemId: clayStore.imageInventoryItemId ?? null,
                           imageProductId: clayStore.imageProductId ?? null,
@@ -1183,7 +1184,7 @@ export default function EuthanasiaConsentForm() {
             ) : null}
             {clayStoreOpen ? (
               <ConsentStoreListingModal
-                practiceId={form.practiceId || Number(import.meta.env.VITE_PRACTICE_ID) || 1}
+                practiceId={form.practiceId || currentPracticeId()}
                 listing={clayStoreDetail}
                 loading={clayStoreLoading}
                 error={clayStoreError}
@@ -1202,7 +1203,7 @@ export default function EuthanasiaConsentForm() {
               />
             ) : null}
             <ConsentMemorialPicker
-              practiceId={form.practiceId || Number(import.meta.env.VITE_PRACTICE_ID) || 1}
+              practiceId={form.practiceId || currentPracticeId()}
               category={form.memorialStoreCategory || 'Memorial Items'}
               petName={pet}
               selected={memorialItems}

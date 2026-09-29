@@ -13,8 +13,9 @@ import { expandStoreTagalongs } from '../../utils/storeTagalongs';
 import { storeRecommendedFrequency } from '../../utils/storeReminderFrequency';
 import StoreRebatePromo from './StoreRebatePromo';
 import './Store.css';
+import { currentPracticeId } from '../../utils/practiceIdFromToken';
 
-const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_ID = currentPracticeId();
 
 export default function StoreProduct() {
   const { id } = useParams();

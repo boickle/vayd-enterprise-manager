@@ -18,8 +18,9 @@ import { evetPatientLink } from '../utils/evet';
 import { PatientChartSummaryPanel } from './PatientChartSummaryPanel';
 import { CareOutreachPetDetailsButton, PatientMembershipHeart } from './CareOutreachPetDetailsButton';
 import './CareOutreachHousehold.css';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
-const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_ID = currentPracticeId();
 
 export type CareOutreachHouseholdPet = {
   id: string;

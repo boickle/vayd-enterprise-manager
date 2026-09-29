@@ -105,8 +105,9 @@ import {
 import './detail/PimsDetailKit.css';
 import './PimsPatientDetailView.css';
 import './PimsClientDetailView.css';
+import { currentPracticeId } from '../../utils/practiceIdFromToken';
 
-const PIMS_CLIENT_DETAIL_PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PIMS_CLIENT_DETAIL_PRACTICE_ID = currentPracticeId();
 const PIMS_CLIENT_DETAIL_TZ =
   (import.meta.env.VITE_PRACTICE_TIMEZONE as string | undefined)?.trim() || 'America/New_York';
 

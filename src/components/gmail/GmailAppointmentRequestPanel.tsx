@@ -70,8 +70,9 @@ import {
   type ApptRequestOutcome,
 } from '../../utils/gmailAppointmentRequestLabels';
 import type { GmailLabelApplyUpdate } from './GmailBulkToolbar';
+import { currentPracticeId } from '../../utils/practiceIdFromToken';
 
-const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_ID = currentPracticeId();
 
 const NOT_BOOKED_REASON_OPTIONS = [
   'Aggression concerns',

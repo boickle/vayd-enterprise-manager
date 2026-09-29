@@ -13,7 +13,8 @@ import {
   resolveMembershipDiscountByCode,
 } from '../api/payments';
 import { useAuth } from '../auth/useAuth';
-import { getFrontendPaymentProvider, getStripePublishableKey } from '../config/paymentProvider';
+import { getFrontendPaymentProvider } from '../config/paymentProvider';
+import { loadStripePublishableKey } from '../api/practicePublicConfig';
 import { trackPurchase } from '../utils/analytics';
 
 declare global {
@@ -190,6 +191,7 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
 
   const [loadingScript, setLoadingScript] = useState(true);
   const [initializingPaymentForm, setInitializingPaymentForm] = useState(false);
+  const [stripeKeyMissing, setStripeKeyMissing] = useState(false);
   const [card, setCard] = useState<any>(null);
   const [paymentsInstance, setPaymentsInstance] = useState<any>(null);
   const [processing, setProcessing] = useState(false);
@@ -304,8 +306,10 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
       // Do NOT clear error here — a payment failure may have just set it and
       // triggered this re-init via formResetKey. Errors before a new payment
       // attempt are cleared inside handlePaymentSubmit instead.
-      const pk = getStripePublishableKey();
+      const pk = await loadStripePublishableKey();
+      if (canceled) return;
       if (!pk) {
+        setStripeKeyMissing(true);
         setError('Stripe is not fully configured. Please contact support.');
         setInitializingPaymentForm(false);
         return;
@@ -1447,7 +1451,7 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
               <p className="cp-muted" style={{ color: '#b91c1c' }}>
                 Square configuration is missing. Please contact support.
               </p>
-            ) : paymentProvider === 'stripe' && !getStripePublishableKey() ? (
+            ) : paymentProvider === 'stripe' && stripeKeyMissing ? (
               <p className="cp-muted" style={{ color: '#b91c1c' }}>
                 Stripe configuration is missing (publishable key). Please contact support.
               </p>

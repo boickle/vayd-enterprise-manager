@@ -17,6 +17,7 @@ import { toDatetimeLocalValue, fromDatetimeLocalValue } from '../../utils/taskDa
 import { appDeclineHow } from '../../utils/appDialog';
 import { offRecordDeclineNote } from '../../api/declinedTreatments';
 import { AddReminderForm } from './WrapUpReminders';
+import { currentPracticeId } from '../../utils/practiceIdFromToken';
 
 export type SuggestedPlanItem = {
   key: string;
@@ -669,7 +670,7 @@ function CheckoutPrepCallbackForm({
   useEffect(() => {
     void Promise.all([
       fetchAllEmployees(),
-      listPracticeBranches(Number(import.meta.env.VITE_PRACTICE_ID) || 1),
+      listPracticeBranches(currentPracticeId()),
     ])
       .then(([emps, branches]) => {
         setEmployees(emps);

@@ -32,8 +32,9 @@ import {
   groupEmployeeRolesByName,
   isEmployeeRoleNameGroupSelected,
 } from '../../utils/employeeRoleDisplay';
+import { currentPracticeId } from '../../utils/practiceIdFromToken';
 
-const DEFAULT_PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const DEFAULT_PRACTICE_ID = currentPracticeId();
 
 function extractErr(err: unknown): string {
   const e = err as { response?: { data?: { message?: string } }; message?: string };

@@ -7,8 +7,9 @@ import {
 } from '../api/roomLoader';
 import { practiceTimeZoneOrDefault } from './practiceTimezone';
 import { formatSoapSectionSpacing } from './soapSectionSpacing';
+import { currentPracticeId } from './practiceIdFromToken';
 
-const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_ID = currentPracticeId();
 
 type AnyRecord = Record<string, unknown>;
 

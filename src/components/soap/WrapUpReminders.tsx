@@ -19,8 +19,9 @@ import { patchReminder } from '../../api/careOutreach';
 import { listOrders } from '../../api/visitWorkflow';
 import { searchItems, type SearchableItem } from '../../api/roomLoader';
 import { appConfirm, appPrompt } from '../../utils/appDialog';
+import { currentPracticeId } from '../../utils/practiceIdFromToken';
 
-const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_ID = currentPracticeId();
 
 /** `2027-09-19T…` → `2027-09-19` for a date input, and back. */
 function toDateInput(iso: string | null): string {

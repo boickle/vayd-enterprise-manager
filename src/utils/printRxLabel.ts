@@ -10,9 +10,10 @@ import {
   type PrescriptionLabelData,
 } from './dymoPrescriptionLabel';
 import { loadPracticeLetterhead, loadProviderSignature } from './practiceLetterhead';
+import { currentPracticeId } from './practiceIdFromToken';
 
 export const LAST_DYMO_PRINTER_KEY = 'soap-rx-label-dymo-printer';
-const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_ID = currentPracticeId();
 
 export function dateForInput(date: Date): string {
   const month = String(date.getMonth() + 1).padStart(2, '0');

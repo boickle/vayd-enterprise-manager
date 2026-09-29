@@ -32,8 +32,9 @@ import {
   type ProviderPawPrintOffering,
   type StoreListingRef,
 } from '../../utils/euthanasiaConsentSettings';
+import { currentPracticeId } from '../../utils/practiceIdFromToken';
 
-const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_ID = currentPracticeId();
 
 function employeeName(emp: Employee): string {
   return [emp.firstName, emp.lastName].filter(Boolean).join(' ').trim() || `Employee #${emp.id}`;
