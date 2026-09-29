@@ -830,6 +830,7 @@ export function SchedulerActualVisitTimeModal({
         await createTask({
           title,
           body: LABS_PENDING_FORWARD_BOOKING_TASK_BODY,
+          kind: 'forward_booking',
           branchIds,
           assignedToEmployeeId: assigneeId,
           startAt,

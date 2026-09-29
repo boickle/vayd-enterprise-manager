@@ -1132,7 +1132,7 @@ export default function PatientMembershipPanel({
                 {clientId ? (
                   <button
                     type="button"
-                    className="pims-detail__btn-ghost"
+                    className="pims-detail__btn-secondary pmp-signup-btn"
                     disabled={busy}
                     title={
                       postVisitHoursLeft == null
@@ -1144,12 +1144,18 @@ export default function PatientMembershipPanel({
                     onClick={() => setPostVisitOpen(true)}
                   >
                     <ShieldCheck size={14} aria-hidden />
-                    Post-visit signup
-                    {postVisitHoursLeft == null
-                      ? null
-                      : postVisitHoursLeft <= 0
-                        ? ' · EXPIRED'
-                        : ` · ${Math.max(0, Math.ceil(postVisitHoursLeft))}h left`}
+                    Post-appointment sign-up
+                    {postVisitHoursLeft == null ? null : (
+                      <span
+                        className={`pmp-signup-window${
+                          postVisitHoursLeft <= 0 ? ' is-expired' : ''
+                        }`}
+                      >
+                        {postVisitHoursLeft <= 0
+                          ? 'Window closed'
+                          : `${Math.max(0, Math.ceil(postVisitHoursLeft))}h left`}
+                      </span>
+                    )}
                   </button>
                 ) : null}
               </div>

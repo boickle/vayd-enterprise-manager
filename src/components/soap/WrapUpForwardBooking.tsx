@@ -37,6 +37,35 @@ function isFollowUpSaved(pet: VisitWrapUpPet): boolean {
   return forwardBookingDispositionIsComplete(pet.forwardBookingDisposition);
 }
 
+/**
+ * Build per-pet forms. When applying one choice to the remaining pets, copy a
+ * complete sibling form (saved checkout choice first) onto unfinished pets so
+ * Save does not persist empty interval fields.
+ */
+function seedForms(
+  pets: VisitWrapUpPet[],
+  prev?: Record<number, ForwardBookingDispositionFormState>,
+  sameForRemaining = false
+): Record<number, ForwardBookingDispositionFormState> {
+  const next = Object.fromEntries(
+    pets.map((p) => [p.patientId, prev?.[p.patientId] ?? defaultFormState(p)])
+  ) as Record<number, ForwardBookingDispositionFormState>;
+  if (!sameForRemaining) return next;
+
+  const remaining = pets.filter((p) => !isFollowUpSaved(p));
+  const saved = pets.find((p) => isFollowUpSaved(p));
+  const source =
+    remaining.map((p) => next[p.patientId]).find((f) => forwardBookingFormStateIsComplete(f)) ??
+    (saved ? defaultFormState(saved) : null);
+  if (!source) return next;
+  for (const pet of remaining) {
+    if (!forwardBookingFormStateIsComplete(next[pet.patientId])) {
+      next[pet.patientId] = { ...source };
+    }
+  }
+  return next;
+}
+
 type Props = {
   pets: VisitWrapUpPet[];
   clientId: number | null;
@@ -73,10 +102,13 @@ export default function WrapUpForwardBooking({
   onSaved,
 }: Props) {
   const navigate = useNavigate();
+  const remainingPets = useMemo(() => pets.filter((p) => !isFollowUpSaved(p)), [pets]);
+  const savedPets = useMemo(() => pets.filter((p) => isFollowUpSaved(p)), [pets]);
+
   const [forms, setForms] = useState<Record<number, ForwardBookingDispositionFormState>>(() =>
-    Object.fromEntries(pets.map((p) => [p.patientId, defaultFormState(p)]))
+    seedForms(pets, undefined, pets.filter((p) => !isFollowUpSaved(p)).length > 1)
   );
-  const [sameForAll, setSameForAll] = useState(pets.length > 1);
+  const [sameForAll, setSameForAll] = useState(remainingPets.length > 1);
   const [savingPatientId, setSavingPatientId] = useState<number | null>(null);
   /** Guards against a second submit while a save (and its side effects) is in flight;
    * a ref rather than the state above so the "save for all" loop can hold one lock. */
@@ -87,11 +119,15 @@ export default function WrapUpForwardBooking({
   const [labsMetaLoading, setLabsMetaLoading] = useState(false);
 
   // Re-seed when the saved dispositions change underneath us (e.g. after a save).
+  // Remaining pets inherit a saved sibling's choice when "same for remaining" is on,
+  // so Save does not write empty interval/mode onto the unfinished pets.
   useEffect(() => {
-    setForms((prev) =>
-      Object.fromEntries(pets.map((p) => [p.patientId, prev[p.patientId] ?? defaultFormState(p)]))
-    );
-  }, [pets]);
+    setForms((prev) => seedForms(pets, prev, sameForAll));
+  }, [pets, sameForAll]);
+
+  useEffect(() => {
+    if (remainingPets.length <= 1 && sameForAll) setSameForAll(false);
+  }, [remainingPets.length, sameForAll]);
 
   const needsLabsMeta = useMemo(
     () => Object.values(forms).some((f) => f.mode === 'labs_pending'),
@@ -134,14 +170,17 @@ export default function WrapUpForwardBooking({
     (patientId: number, patch: Partial<ForwardBookingDispositionFormState>) => {
       setForms((prev) => {
         if (sameForAll) {
+          const remainingIds = new Set(remainingPets.map((p) => p.patientId));
           return Object.fromEntries(
-            Object.entries(prev).map(([id, form]) => [id, { ...form, ...patch }])
+            Object.entries(prev).map(([id, form]) =>
+              remainingIds.has(Number(id)) ? [id, { ...form, ...patch }] : [id, form]
+            )
           );
         }
         return { ...prev, [patientId]: { ...prev[patientId], ...patch } };
       });
     },
-    [sameForAll]
+    [remainingPets, sameForAll]
   );
 
   /**
@@ -150,8 +189,11 @@ export default function WrapUpForwardBooking({
    * chases the result.
    */
   const persist = useCallback(
-    async (pet: VisitWrapUpPet): Promise<ForwardBookingDecisionResult | null> => {
-      const form = forms[pet.patientId];
+    async (
+      pet: VisitWrapUpPet,
+      formOverride?: ForwardBookingDispositionFormState
+    ): Promise<ForwardBookingDecisionResult | null> => {
+      const form = formOverride ?? forms[pet.patientId];
       if (!form) return null;
       setSavingPatientId(pet.patientId);
       setErrors((e) => ({ ...e, [pet.patientId]: null }));
@@ -197,9 +239,12 @@ export default function WrapUpForwardBooking({
         const results: ForwardBookingDecisionResult[] = [];
         // Skip pets that already have a settled choice: re-saving would duplicate the
         // queue row or the labs task, and the API refuses to overwrite it anyway.
-        const targets = (sameForAll ? pets : [pet]).filter((p) => !isFollowUpSaved(p));
+        const targets = (sameForAll ? remainingPets : [pet]).filter((p) => !isFollowUpSaved(p));
+        const sharedForm = sameForAll
+          ? forms[pet.patientId] ?? remainingPets.map((p) => forms[p.patientId]).find(Boolean)
+          : undefined;
         for (const target of targets) {
-          const result = await persist(target);
+          const result = await persist(target, sharedForm);
           if (result) results.push(result);
         }
         return results;
@@ -207,7 +252,7 @@ export default function WrapUpForwardBooking({
         savingRef.current = false;
       }
     },
-    [persist, pets, sameForAll]
+    [forms, persist, remainingPets, sameForAll]
   );
 
   /**
@@ -235,9 +280,27 @@ export default function WrapUpForwardBooking({
     [navigate, returnTo, save]
   );
 
+  const editorPetId = remainingPets[0]?.patientId ?? null;
+  const remainingNames = remainingPets.map((p) => p.patientName).join(', ');
+  const savedNames = savedPets.map((p) => p.patientName).join(', ');
+
   return (
     <div className="soap-wrapup-fb">
-      {pets.length > 1 && (
+      {savedPets.length > 0 && remainingPets.length > 0 && (
+        <p className="soap-wrapup-hint soap-wrapup-fb-already">
+          {savedNames} already {savedPets.length === 1 ? 'has' : 'have'} a follow-up
+          {savedPets.length === 1 && savedPets[0].forwardBookingDisposition
+            ? ` (${dispositionLabel(savedPets[0].forwardBookingDisposition)})`
+            : ''}
+          . {remainingPets.length === 1
+            ? `Set follow-up for ${remainingNames}.`
+            : sameForAll
+              ? `The choice below applies to the remaining ${remainingPets.length}.`
+              : `Set follow-up for each of the remaining ${remainingPets.length}.`}
+        </p>
+      )}
+
+      {remainingPets.length > 1 && (
         <label className="soap-wrapup-fb-sameforall">
           <input
             type="checkbox"
@@ -245,20 +308,17 @@ export default function WrapUpForwardBooking({
             disabled={disabled}
             onChange={(e) => setSameForAll(e.target.checked)}
           />
-          Same follow-up for all {pets.length} pets
+          Same follow-up for remaining {remainingPets.length} pets
         </label>
       )}
 
-      {pets.map((pet, index) => {
+      {pets.map((pet) => {
         const form = forms[pet.patientId];
         if (!form) return null;
-        // With one shared choice, only the first pet renders the controls.
-        const collapsed = sameForAll && index > 0;
         const saved = pet.forwardBookingDisposition;
         const complete = forwardBookingFormStateIsComplete(form);
         const savedComplete = isFollowUpSaved(pet);
-        // Shared controls save every pet at once, so they stay open until none are left.
-        const readOnly = sameForAll ? pets.every(isFollowUpSaved) : savedComplete;
+        const showEditor = !savedComplete && (!sameForAll || pet.patientId === editorPetId);
 
         return (
           <div className="soap-wrapup-fb-pet" key={pet.patientId}>
@@ -273,13 +333,11 @@ export default function WrapUpForwardBooking({
               )}
             </div>
 
-            {/* Saved is final — the choice was made with the client present, so the wrap-up
-                reports it rather than re-opening it. The API rejects changes too. */}
-            {!collapsed && readOnly && (
+            {savedComplete && (
               <p className="soap-hint">Saved for this visit — this choice cannot be changed.</p>
             )}
 
-            {!collapsed && !readOnly && (
+            {showEditor && (
               <>
                 <ForwardBookingDecisionFields
                   radioGroupName={`wrapup-forward-booking-${pet.patientId}`}
@@ -288,7 +346,7 @@ export default function WrapUpForwardBooking({
                   disabled={disabled}
                   metaLoading={labsMetaLoading}
                   employees={employees}
-                  multiPetLabsTasks={sameForAll && pets.length > 1}
+                  multiPetLabsTasks={sameForAll && remainingPets.length > 1}
                 />
 
                 {errors[pet.patientId] && <div className="soap-error">{errors[pet.patientId]}</div>}
@@ -304,8 +362,8 @@ export default function WrapUpForwardBooking({
                       <CalendarClock size={14} />{' '}
                       {savingPatientId != null
                         ? 'Saving…'
-                        : sameForAll && pets.length > 1
-                          ? `Save follow-up for all ${pets.length} pets`
+                        : sameForAll && remainingPets.length > 1
+                          ? `Save follow-up for remaining ${remainingPets.length} pets`
                           : 'Save follow-up'}
                     </button>
                     {form.mode === 'forward_book_fields' && (

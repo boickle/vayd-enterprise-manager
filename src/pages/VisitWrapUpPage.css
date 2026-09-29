@@ -164,10 +164,11 @@
 }
 
 .soap-wrapup-chart-pending {
+  appearance: none;
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  margin-left: auto;
+  margin-left: 0;
   font-size: 11.5px;
   font-weight: 700;
   color: #b45309;
@@ -178,11 +179,13 @@
 }
 
 .soap-wrapup-chart-pending--link {
+  appearance: none;
   cursor: pointer;
   font: inherit;
   font-size: 11.5px;
   font-weight: 700;
   color: #b45309;
+  margin-left: 0;
 }
 
 .soap-wrapup-chart-pending--link:hover {
@@ -219,6 +222,10 @@
 }
 
 /* --- Follow-up --- */
+
+.soap-wrapup-fb-already {
+  margin: 0 0 10px;
+}
 
 .soap-wrapup-fb-sameforall {
   display: flex;
@@ -284,6 +291,12 @@
   color: var(--soap-muted);
 }
 
+.soap-wrapup-field-hint {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--soap-muted);
+}
+
 .soap-wrapup-petpick {
   display: flex;
   align-items: center;
@@ -319,6 +332,38 @@
   font-size: 11px;
   font-weight: 500;
   color: var(--soap-muted);
+}
+
+/* Gmail send-as signature sits under the recap editor the way it does in compose:
+   visible, not editable, so the letter and the practice block stay separate. */
+.soap-wrapup-field:has(.soap-wrapup-sendas-sig) .soap-rich__editor,
+.soap-wrapup-field:has(.soap-wrapup-farewell) .soap-rich__editor {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.soap-wrapup-farewell {
+  margin: -1px 0 0;
+  padding: 10px 12px 2px;
+  border-left: 1px solid var(--soap-border);
+  border-right: 1px solid var(--soap-border);
+  background: #fff;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: #111827;
+}
+.soap-wrapup-sendas-sig {
+  margin-top: -1px;
+  padding: 10px 12px;
+  border: 1px solid var(--soap-border);
+  border-radius: 0 0 8px 8px;
+  background: #f9fafb;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #374151;
+}
+.soap-wrapup-sendas-sig img {
+  max-width: 220px;
+  height: auto;
 }
 
 .soap-wrapup-email-actions {
@@ -977,4 +1022,284 @@
     border-right: none;
     border-bottom: 1px solid #bfdbfe;
   }
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   Per-pet card layout
+   Each pet gets one card: SOAP · chronic · declined · past-due ·
+   reminders going in · callbacks — laid out as compact stacked rows.
+   ══════════════════════════════════════════════════════════════════════ */
+
+.soap-wrapup-pet-card {
+  padding: 0;
+  /* No overflow restriction — overflow:hidden/clip confine sticky to the card
+     instead of the viewport. Corners are handled on the first/last child instead. */
+}
+
+/* ── Inline SOAP textarea editing ── */
+/* Same bold-only rich text editor as the SOAP Document view, sized down for the
+   wrap-up card: four of these stack per pet, so the toolbar sits tight to the box. */
+.soap-wrapup-soap-rich {
+  gap: 4px;
+}
+
+.soap-wrapup-soap-rich .soap-rich__btn {
+  padding: 2px 7px;
+  font-size: 11px;
+}
+
+.soap-wrapup-soap-rich .soap-rich__editor {
+  font-size: 12.5px;
+  line-height: 1.6;
+  padding: 8px 10px;
+  border-radius: 6px;
+}
+
+/* Signed chart — same typography, no editor chrome. */
+.soap-wrapup-soap-read {
+  padding: 8px 10px;
+  background: var(--soap-bg);
+  border-radius: 6px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: #374151;
+  white-space: pre-wrap;
+}
+
+.soap-wrapup-soap-read strong,
+.soap-wrapup-soap-read b {
+  font-weight: 700;
+  color: #111827;
+}
+
+.soap-wrapup-soap-saving {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--soap-muted);
+  font-style: italic;
+}
+
+/* ── Combined sticky header: pet name + SOAP toggle in one row ── */
+.soap-wrapup-pet-head {
+  width: 100%;
+  /* Sticky — top: 0 because the scroll container already starts below the fixed navbar */
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: var(--soap-bg);
+  border-bottom: 1px solid var(--soap-border);
+  border-radius: 10px 10px 0 0;
+  box-shadow: 0 3px 6px rgba(0, 0, 0, 0.08);
+}
+
+.soap-wrapup-pet-head-toggle {
+  appearance: none;
+  border: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.soap-wrapup-pet-head-toggle:hover {
+  background: transparent;
+}
+
+.soap-wrapup-pet-head:hover {
+  background: #eef2f7;
+}
+
+.soap-wrapup-pet-chevron {
+  color: var(--soap-muted);
+  flex-shrink: 0;
+}
+
+.soap-wrapup-pet-soap-meta {
+  /* takes remaining space before right-side badges */
+  flex: 1;
+}
+
+.soap-wrapup-pet-head-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.soap-wrapup-pet-paw {
+  color: var(--soap-muted);
+  flex-shrink: 0;
+}
+
+.soap-wrapup-pet-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: #111827;
+}
+
+/* ── Generic pet sub-row (one row per section inside the card) ── */
+.soap-wrapup-pet-row {
+  border-top: 1px solid var(--soap-border);
+  padding: 8px 14px;
+}
+
+/* Accordion toggle rows let the button control its own padding */
+.soap-wrapup-pet-row--accordion {
+  padding: 0;
+}
+
+.soap-wrapup-pet-row--pastdue {
+  background: #fffbeb;
+}
+
+.soap-wrapup-pet-row--callbacks {
+  padding: 0;
+}
+
+/* ── Sub-section label ── */
+.soap-wrapup-pet-sub-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--soap-muted);
+  margin-bottom: 5px;
+}
+
+.soap-wrapup-pet-sub-label--warn {
+  color: #92400e;
+}
+
+/* ── SOAP accordion toggle ── */
+.soap-wrapup-pet-accordion-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 7px 14px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+  color: #374151;
+  text-align: left;
+}
+
+.soap-wrapup-pet-accordion-toggle:hover {
+  background: #f1f5f9;
+}
+
+.soap-wrapup-pet-acc-label {
+  font-weight: 600;
+}
+
+.soap-wrapup-pet-accordion-toggle--minor {
+  font-size: 12.5px;
+  color: var(--soap-muted);
+  padding: 5px 0;
+  border-top: none;
+}
+
+.soap-wrapup-pet-accordion-toggle--minor:hover {
+  background: none;
+  color: #374151;
+}
+
+.soap-wrapup-pet-edit-link {
+  appearance: none;
+  border: none;
+  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 0;
+  padding: 0;
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--soap-accent);
+  cursor: pointer;
+}
+
+.soap-wrapup-pet-edit-link:hover {
+  text-decoration: underline;
+}
+
+/* ── SOAP body (expanded) — sits directly under the sticky combined header ── */
+.soap-wrapup-pet-soap-body {
+  margin: 0;
+  border-top: 1px solid var(--soap-border);
+  padding: 12px 14px;
+  background: #fff;
+}
+
+/* ── Chronic section embedded in pet card ── */
+.soap-wrapup-chronic--embedded {
+  border: none;
+  border-top: 1px solid var(--soap-border);
+  border-radius: 0;
+  padding: 8px 14px;
+  margin: 0;
+}
+
+/* ── Declined chips ── */
+.soap-wrapup-pet-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.soap-wrapup-pet-chip {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+}
+
+.soap-wrapup-pet-chip--declined {
+  background: #fee2e2;
+  color: #991b1b;
+  border: 1px solid #fca5a5;
+}
+
+/* ── Reminders going in (expanded list) ── */
+.soap-wrapup-pet-rem-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 14px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.soap-wrapup-pet-rem-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  font-size: 12.5px;
+  color: #374151;
+}
+
+.soap-wrapup-pet-rem-icon {
+  color: var(--soap-muted);
+  flex-shrink: 0;
+  position: relative;
+  top: 1px;
+}
+
+/* ── Callbacks row — WrapUpCallbacks provides its own padding ── */
+.soap-wrapup-pet-row--callbacks .soap-wrapup-callbacks {
+  padding: 8px 14px 10px;
 }

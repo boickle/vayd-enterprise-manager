@@ -264,6 +264,7 @@ import {
   type EuthanasiaConsentUiStatus,
 } from '../utils/euthanasiaConsentSettings';
 import { SchedulerEuthanasiaConsentModal } from './SchedulerEuthanasiaConsentModal';
+import EuthanasiaEstimateModal from '../components/soap/EuthanasiaEstimateModal';
 import {
   RECORDS_REQUEST_STATUS_CHANGED_EVENT,
   getRecordsRequestStatuses,
@@ -271,10 +272,6 @@ import {
   type RecordsRequestUiStatus,
 } from '../api/recordsRequests';
 import { SchedulerRecordsRequestModal } from './SchedulerRecordsRequestModal';
-import {
-  RECORDS_URGENT_DAYS_BEFORE_VISIT,
-  daysUntilVisit,
-} from '../utils/recordsRequestUrgency';
 
 const RoomLoaderPage = lazy(() => import('./RoomLoader'));
 import {
@@ -3129,8 +3126,6 @@ const RECORDS_REQUEST_STATUS_COLOR: Record<
   received: '#16a34a',
 };
 
-const RECORDS_REQUEST_URGENT_COLOR = '#dc2626';
-
 /** Mirrors the Room Loader menu: the label says what the next action actually is. */
 function schedulerRecordsRequestMenuLabel(status: RecordsRequestUiStatus): string {
   if (status === 'received') return 'Records — view / request more';
@@ -3141,22 +3136,12 @@ function schedulerRecordsRequestMenuLabel(status: RecordsRequestUiStatus): strin
 
 function SchedulerRecordsRequestIcon({
   status,
-  appointmentStart,
 }: {
   status: RecordsRequestUiStatus;
-  appointmentStart?: string | null;
 }) {
   if (status === 'none') return null;
-  // Records that are still out stop being a nice-to-have once the visit is days
-  // away — the doctor walks in without them. Anything already back stays green.
-  const daysOut = appointmentStart ? daysUntilVisit({ appointmentStart }) : null;
-  const urgent =
-    status !== 'received' &&
-    daysOut != null &&
-    daysOut <= RECORDS_URGENT_DAYS_BEFORE_VISIT;
-  const title = urgent
-    ? `Records still outstanding and the visit is ${daysOut <= 0 ? 'here' : `${daysOut} day(s) away`}`
-    : status === 'received'
+  const title =
+    status === 'received'
       ? 'Records request: all records received'
       : status === 'partial'
         ? 'Records request: some received, some still outstanding'
@@ -3165,17 +3150,13 @@ function SchedulerRecordsRequestIcon({
     <span
       className={[
         'scheduler-preappt-rl-icon',
-        status === 'pending' && !urgent ? 'scheduler-preappt-rl-icon--sent' : '',
+        status === 'pending' ? 'scheduler-preappt-rl-icon--sent' : '',
       ]
         .filter(Boolean)
         .join(' ')}
       title={title}
       aria-hidden
-      style={{
-        backgroundColor: urgent
-          ? RECORDS_REQUEST_URGENT_COLOR
-          : RECORDS_REQUEST_STATUS_COLOR[status],
-      }}
+      style={{ backgroundColor: RECORDS_REQUEST_STATUS_COLOR[status] }}
     >
       RR
     </span>
@@ -3518,6 +3499,16 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   const [euthanasiaConsentModalAppt, setEuthanasiaConsentModalAppt] = useState<Appointment | null>(
     null
   );
+  /** Price the visit before the consent goes out — the form quotes the total. */
+  const [euthanasiaEstimateTarget, setEuthanasiaEstimateTarget] = useState<{
+    appointmentId: number;
+    patientId: number;
+    patientName: string | null;
+    clientId: number | null;
+    clientName: string | null;
+    clientEmail: string | null;
+    isResend: boolean;
+  } | null>(null);
   const [recordsRequestModalAppt, setRecordsRequestModalAppt] = useState<Appointment | null>(null);
   const [actualVisitModal, setActualVisitModal] = useState<Appointment | null>(null);
   const [removeVisitModal, setRemoveVisitModal] = useState<Appointment | null>(null);
@@ -10931,20 +10922,19 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               setEuthanasiaConsentModalAppt(appt);
               return;
             }
-            const result = await sendEuthanasiaConsent({
+            // The form quotes a total and asks for a card against it, so the
+            // estimate has to exist before the send.
+            setEuthanasiaEstimateTarget({
               appointmentId: consentApptId,
               patientId: Number(firstPatient.id),
-              clientId: client?.id != null ? Number(client.id) : undefined,
+              patientName: firstPatient.name ?? null,
+              clientId: client?.id != null ? Number(client.id) : null,
+              clientName:
+                [client?.firstName, client?.lastName].filter(Boolean).join(' ').trim() ||
+                null,
+              clientEmail: client?.email ?? null,
+              isResend: euthanasiaConsentMode === 'resend',
             });
-            setEuthanasiaConsentMode('resend');
-            notifyEuthanasiaConsentStatusChanged();
-            await navigator.clipboard.writeText(result.formUrl).catch(() => undefined);
-            const intended = result.intendedRecipientEmail?.trim();
-            if (intended && intended !== result.sentTo) {
-              showToast(`Consent sent to ${result.sentTo} (intended ${intended}). Link copied.`);
-            } else {
-              showToast(`Consent sent to ${result.sentTo}. Link copied.`);
-            }
             return;
           }
           case 'roomLoader': {
@@ -11762,7 +11752,6 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                             ) : null}
                             <SchedulerRecordsRequestIcon
                               status={recordsRequestStatusByApptId.get(Number(appt.id)) ?? 'none'}
-                              appointmentStart={appt.appointmentStart}
                             />
                             {showPreApptRoomLoaderIcon(appt) ? (
                               <SchedulerPreApptRlIcon
@@ -12309,7 +12298,6 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                                   ) : null}
                                   <SchedulerRecordsRequestIcon
                                     status={recordsRequestStatusByApptId.get(Number(appt.id)) ?? 'none'}
-                                    appointmentStart={appt.appointmentStart}
                                   />
                                   {showPreApptRoomLoaderIcon(appt) ? (
                                     <SchedulerPreApptRlIcon
@@ -13663,6 +13651,23 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           appt={euthanasiaConsentModalAppt}
           accentColor={colorsForAppointment(euthanasiaConsentModalAppt, typeList, typeFillMap).fill}
           onClose={() => setEuthanasiaConsentModalAppt(null)}
+        />
+      ) : null}
+
+      {euthanasiaEstimateTarget ? (
+        <EuthanasiaEstimateModal
+          appointmentId={euthanasiaEstimateTarget.appointmentId}
+          patientId={euthanasiaEstimateTarget.patientId}
+          patientName={euthanasiaEstimateTarget.patientName}
+          clientId={euthanasiaEstimateTarget.clientId}
+          clientName={euthanasiaEstimateTarget.clientName}
+          clientEmail={euthanasiaEstimateTarget.clientEmail}
+          isResend={euthanasiaEstimateTarget.isResend}
+          onClose={() => setEuthanasiaEstimateTarget(null)}
+          onSent={({ sentTo }) => {
+            setEuthanasiaConsentMode('resend');
+            showToast(`Consent sent to ${sentTo}. Link copied.`);
+          }}
         />
       ) : null}
 

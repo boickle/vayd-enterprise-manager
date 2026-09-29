@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { Link } from 'react-router';
 import { DateTime } from 'luxon';
-import { Check, ChevronDown, ChevronRight, Plus, Search, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Pencil, Plus, Search, X } from 'lucide-react';
 import { isAppointmentCancelledOnPracticeCalendar } from '../../api/appointments';
 import { fetchClientAppointmentsStaff } from '../../api/pimsAppointments';
 import { fetchAllEmployees, fetchEmployee, type Employee } from '../../api/appointmentSettings';
@@ -29,6 +29,12 @@ import {
   type CoverageChoicePrompt,
 } from '../../utils/membershipCoverageChoice';
 import {
+  createVisitEstimate,
+  listClientEstimates,
+  type VisitEstimate,
+} from '../../api/visitEstimates';
+import EstimateEditorModal from '../estimates/EstimateEditorModal';
+import {
   addCounterInvoiceLine,
   addVisitTender,
   deleteOrder,
@@ -48,6 +54,7 @@ import {
   returnVisitInvoiceLines,
   refundVisitTender,
   listVisitRefundPeers,
+  saveOrderPrescription,
   startTerminalCheckout,
   type TerminalReaderCatalog,
   type VisitRefundPeer,
@@ -61,6 +68,7 @@ import {
   type VisitInvoiceTender,
   type InvoiceCardOnFile,
   type VisitTenderMethod,
+  type OrderPrescription,
   type OrderVaccination,
   type StockDraw,
 } from '../../api/visitWorkflow';
@@ -71,7 +79,6 @@ import {
   pricingItemFromSearchAndCheck,
 } from '../../utils/catalogItemPricing';
 import TerminalReaderPicker from '../soap/TerminalReaderPicker';
-import PostVisitMembershipSignup from '../soap/PostVisitMembershipSignup';
 import DirectionsLimitHint, { directionsMaxLength } from '../soap/DirectionsLimitHint';
 import { BookPatientChartButton } from '../BookPatientChartButton';
 import {
@@ -247,6 +254,14 @@ function parsedRefillCount(raw: string): number | null {
   return n;
 }
 
+/** Persist date-only inputs as noon-local ISO so the API date validator accepts them. */
+function toRxDatePayload(value: string | null | undefined): string | undefined {
+  if (!value?.trim()) return undefined;
+  const day = value.trim().slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(day)) return `${day}T12:00:00`;
+  return value.trim();
+}
+
 function refillCountIsZero(raw: string): boolean {
   const n = parsedRefillCount(raw);
   return n === 0;
@@ -278,28 +293,66 @@ function lineExcludesFromProduction(
   );
 }
 
-function approveScriptMissing(
+type RxMissingField =
+  | 'provider'
+  | 'instructions'
+  | 'refillCount'
+  | 'refillExpiration'
+  | 'acuity'
+  | 'discardAfter'
+  | 'branch'
+  | 'location'
+  | 'lot';
+
+function approveScriptMissingFields(
   line: VisitInvoiceLine,
   draft: SigDraft,
   invoice: { inventoryBranchId?: number | null; inventoryLocationId?: number | null } | null,
   /** Mail order chooses where it fills from, so it needs no branch here. */
   mailed = false
-): string | null {
-  if (line.providerEmployeeId == null) return 'Provider is required';
-  if (!draft.instructions.trim()) return 'Enter the script first';
-  if (draft.refillCount.trim() === '') return 'Enter 0 if there are no refills';
+): RxMissingField[] {
+  const missing: RxMissingField[] = [];
+  if (line.providerEmployeeId == null) missing.push('provider');
+  if (!draft.instructions.trim()) missing.push('instructions');
   const refillCount = parsedRefillCount(draft.refillCount);
-  if (refillCount == null) return 'Refills must be a whole number';
-  if (refillCount > 0) {
-    const exp = futureDateMissing('refill expiration', draft.refillExpiration);
-    if (exp) return exp;
+  if (draft.refillCount.trim() === '' || refillCount == null) missing.push('refillCount');
+  else if (refillCount > 0 && futureDateMissing('refill expiration', draft.refillExpiration)) {
+    missing.push('refillExpiration');
   }
-  if (!draft.acuity) return 'Select acute or chronic';
-  const discard = futureDateMissing('discard after', draft.discardAfter);
-  if (discard) return discard;
-  if (mailed) return null;
-  if (invoice?.inventoryBranchId == null) return 'Select a branch';
-  if (invoice?.inventoryLocationId == null) return 'Select a fill location';
+  if (!draft.acuity) missing.push('acuity');
+  if (futureDateMissing('discard after', draft.discardAfter)) missing.push('discardAfter');
+  if (!mailed) {
+    if (invoice?.inventoryBranchId == null) missing.push('branch');
+    if (invoice?.inventoryLocationId == null) missing.push('location');
+    if (line.trackLots && line.inventoryLotBalanceId == null) missing.push('lot');
+  }
+  return missing;
+}
+
+function approveScriptMissing(
+  line: VisitInvoiceLine,
+  draft: SigDraft,
+  invoice: { inventoryBranchId?: number | null; inventoryLocationId?: number | null } | null,
+  mailed = false
+): string | null {
+  const missing = approveScriptMissingFields(line, draft, invoice, mailed);
+  if (missing.includes('provider')) return 'Provider is required';
+  if (missing.includes('instructions')) return 'Enter the script first';
+  if (missing.includes('refillCount')) {
+    return draft.refillCount.trim() === ''
+      ? 'Enter 0 if there are no refills'
+      : 'Refills must be a whole number';
+  }
+  if (missing.includes('refillExpiration')) {
+    return futureDateMissing('refill expiration', draft.refillExpiration);
+  }
+  if (missing.includes('acuity')) return 'Select acute or chronic';
+  if (missing.includes('discardAfter')) {
+    return futureDateMissing('discard after', draft.discardAfter);
+  }
+  if (missing.includes('branch')) return 'Select a branch';
+  if (missing.includes('location')) return 'Select a fill location';
+  if (missing.includes('lot')) return 'Choose a lot';
   return null;
 }
 
@@ -327,12 +380,115 @@ function PriceShown({
   list?: number | null;
   covered?: boolean;
 }) {
-  if (covered) return <span className="client-fin__covered">Covered ❤️</span>;
+  if (covered) return <span className="client-fin__covered">covered</span>;
   const showList = list != null && list > charged + 0.009;
   return (
     <span className="client-fin__price">
       {showList ? <span className="client-fin__was">{money(list)}</span> : null}
       {money(charged)}
+    </span>
+  );
+}
+
+function listPriceAbove(list: number | null | undefined, charged: number): boolean {
+  return list != null && Number(list) > charged + 0.009;
+}
+
+/** Pencil only when the catalog item allows a price change (or there is no catalog item). */
+function lineAllowsPriceEdit(line: Pick<VisitInvoiceLine, 'catalogItemId' | 'catalogItemType' | 'catalogAllowPriceChange'>): boolean {
+  if (line.catalogItemId == null) return true;
+  if (line.catalogItemType !== 'inventory' && line.catalogItemType !== 'procedure') {
+    return true;
+  }
+  return line.catalogAllowPriceChange === true;
+}
+
+function EditableUnitPrice({
+  line,
+  canEdit,
+  editing,
+  disabled,
+  onEdit,
+  onCancel,
+  onCommit,
+}: {
+  line: Pick<VisitInvoiceLine, 'id' | 'unitPrice' | 'listUnitPrice'>;
+  canEdit: boolean;
+  editing: boolean;
+  disabled?: boolean;
+  onEdit: () => void;
+  onCancel: () => void;
+  onCommit: (unitPrice: number) => Promise<boolean>;
+}) {
+  const charged = Number(line.unitPrice) || 0;
+  const showList = listPriceAbove(line.listUnitPrice, charged);
+  if (!canEdit) {
+    return (
+      <PriceShown charged={charged} list={line.listUnitPrice} />
+    );
+  }
+  if (editing) {
+    return (
+      <span className="client-fin__price-edit">
+        {showList ? (
+          <span className="client-fin__was">{money(line.listUnitPrice)}</span>
+        ) : null}
+        <label className="client-fin__price-wrap">
+          <span className="client-fin__price-prefix" aria-hidden>
+            $
+          </span>
+          <input
+            key={`price-${line.id}-${line.unitPrice}`}
+            className="client-fin__price"
+            inputMode="decimal"
+            autoFocus
+            defaultValue={moneyInput(line.unitPrice)}
+            disabled={disabled}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') e.currentTarget.blur();
+              if (e.key === 'Escape') {
+                e.preventDefault();
+                onCancel();
+              }
+            }}
+            onBlur={(e) => {
+              const input = e.currentTarget;
+              const unitPrice = Math.round(Number(input.value) * 100) / 100;
+              if (
+                Number.isFinite(unitPrice) &&
+                unitPrice !== Math.round(charged * 100) / 100
+              ) {
+                void onCommit(unitPrice).then((ok) => {
+                  if (!ok) input.value = moneyInput(line.unitPrice);
+                  onCancel();
+                });
+                return;
+              }
+              input.value = moneyInput(line.unitPrice);
+              onCancel();
+            }}
+          />
+        </label>
+      </span>
+    );
+  }
+  return (
+    <span className="client-fin__price-edit">
+      {showList ? (
+        <span className="client-fin__was">{money(line.listUnitPrice)}</span>
+      ) : null}
+      <span className="client-fin__price-shown-row">
+        {money(charged)}
+        <button
+          type="button"
+          className="client-fin__price-pencil"
+          title="Edit unit price"
+          disabled={disabled}
+          onClick={onEdit}
+        >
+          <Pencil size={12} />
+        </button>
+      </span>
     </span>
   );
 }
@@ -533,6 +689,86 @@ function groupLinesByBundleSale(lines: VisitInvoiceLine[]): InvoiceLineDisplayBl
   return blocks;
 }
 
+type InvoicePetSection = {
+  key: string;
+  label: string;
+  patientId: number | null;
+  amount: number;
+  blocks: InvoiceLineDisplayBlock[];
+};
+
+function blockPrimaryLine(block: InvoiceLineDisplayBlock): VisitInvoiceLine {
+  return block.kind === 'bundle' ? block.lines[0]! : block.line;
+}
+
+function lineChargeAmount(line: VisitInvoiceLine): number {
+  return line.isCovered ? 0 : Number(line.amount) || 0;
+}
+
+/**
+ * One invoice, split by pet the way SOAP checkout is, so a household visit is not
+ * a flat list with the pet name repeated on every row.
+ */
+function groupInvoiceBlocksByPet(
+  blocks: InvoiceLineDisplayBlock[],
+  pets: FinancialPet[],
+  extraAmountFor: (line: VisitInvoiceLine) => number
+): InvoicePetSection[] {
+  const nameFor = (id: number | null, fallback?: string | null) => {
+    if (id != null) {
+      const known = pets.find((p) => p.id === id)?.name?.trim();
+      if (known) return known;
+    }
+    return fallback?.trim() || (id != null ? `Pet #${id}` : 'Whole visit');
+  };
+  const amountOf = (block: InvoiceLineDisplayBlock) => {
+    const lines = block.kind === 'bundle' ? block.lines : [block.line];
+    return lines.reduce(
+      (sum, line) => sum + lineChargeAmount(line) + extraAmountFor(line),
+      0
+    );
+  };
+
+  const byPet = new Map<number, InvoiceLineDisplayBlock[]>();
+  const leftover: InvoiceLineDisplayBlock[] = [];
+  for (const block of blocks) {
+    const id = blockPrimaryLine(block).patientId ?? null;
+    if (id == null) {
+      leftover.push(block);
+      continue;
+    }
+    const list = byPet.get(id);
+    if (list) list.push(block);
+    else byPet.set(id, [block]);
+  }
+
+  const sections: InvoicePetSection[] = [...byPet.entries()]
+    .sort((a, b) => {
+      const byName = nameFor(a[0]).localeCompare(nameFor(b[0]), undefined, {
+        sensitivity: 'base',
+      });
+      return byName !== 0 ? byName : a[0] - b[0];
+    })
+    .map(([patientId, petBlocks]) => ({
+      key: `pet:${patientId}`,
+      label: nameFor(patientId, blockPrimaryLine(petBlocks[0]!).patientName),
+      patientId,
+      amount: petBlocks.reduce((sum, block) => sum + amountOf(block), 0),
+      blocks: petBlocks,
+    }));
+
+  if (leftover.length) {
+    sections.push({
+      key: 'visit',
+      label: 'Whole visit',
+      patientId: null,
+      amount: leftover.reduce((sum, block) => sum + amountOf(block), 0),
+      blocks: leftover,
+    });
+  }
+  return sections;
+}
+
 const DRAFT_INVOICE_ID = 'draft';
 
 function isUnsavedInvoice(invoice: VisitInvoice | null | undefined): boolean {
@@ -552,24 +788,28 @@ function isFinancialPetActive(pet: FinancialPet): boolean {
   return pet.isActive !== false;
 }
 
+/** Active pets first — inactive ones stay available for final / cleanup bills. */
+function sortPetsForCharge(pets: FinancialPet[]): FinancialPet[] {
+  return [...pets].sort((a, b) => {
+    const aActive = isFinancialPetActive(a) ? 0 : 1;
+    const bActive = isFinancialPetActive(b) ? 0 : 1;
+    if (aActive !== bActive) return aActive - bActive;
+    return a.name.localeCompare(b.name);
+  });
+}
+
 function defaultChargePatientId(
   pets: FinancialPet[],
   preferred?: number | null,
 ): number | null {
-  if (preferred != null) {
-    const hit = pets.find((p) => p.id === preferred);
-    if (hit && isFinancialPetActive(hit)) return preferred;
-  }
-  return pets.find(isFinancialPetActive)?.id ?? null;
+  if (preferred != null && pets.some((p) => p.id === preferred)) return preferred;
+  // Prefer a live pet, but an all-inactive household still needs a charge target
+  // (final invoice after euthanasia, cleanup charges, etc.).
+  return pets.find(isFinancialPetActive)?.id ?? pets[0]?.id ?? null;
 }
 
-function petsForChargeSelect(
-  pets: FinancialPet[],
-  includeInactive: boolean,
-  keepId?: number | null,
-): FinancialPet[] {
-  if (includeInactive) return pets;
-  return pets.filter((p) => isFinancialPetActive(p) || (keepId != null && p.id === keepId));
+function petsForChargeSelect(pets: FinancialPet[]): FinancialPet[] {
+  return sortPetsForCharge(pets);
 }
 
 function emptyDraftInvoice(opts: {
@@ -644,6 +884,33 @@ function statusLabel(status: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
 }
 
+/** Compact provider label for tight invoice columns — e.g. "H. Crispell". */
+function shortProviderName(
+  full?: string | null,
+  firstName?: string | null,
+  lastName?: string | null
+): string {
+  const first = firstName?.trim();
+  const last = lastName?.trim();
+  if (first && last) return `${first[0]!.toUpperCase()}. ${last}`;
+  const cleaned = (full ?? '')
+    .replace(/^(dr|dra|mr|mrs|ms)\.?\s+/i, '')
+    .trim();
+  const parts = cleaned.split(/\s+/).filter(Boolean);
+  while (
+    parts.length > 1 &&
+    /^(dvm|vmd|phd|dacv[a-z]*|vm\.?d)\.?$/i.test(parts[parts.length - 1]!)
+  ) {
+    parts.pop();
+  }
+  if (parts.length >= 2) {
+    const given = parts[0]!;
+    const surname = parts[parts.length - 1]!;
+    return `${given[0]!.toUpperCase()}. ${surname}`;
+  }
+  return cleaned || '—';
+}
+
 function staffName(employee: Employee | undefined, fallbackId?: number | null): string {
   if (employee) {
     const name = [employee.firstName, employee.lastName].filter(Boolean).join(' ').trim();
@@ -683,12 +950,6 @@ function savedDirections(line: VisitInvoiceLine): string {
   return line.instructions?.trim() || '';
 }
 
-function savedRefills(line: VisitInvoiceLine): string {
-  return line.refillCount == null || !Number.isFinite(Number(line.refillCount))
-    ? ''
-    : String(line.refillCount);
-}
-
 type PrescriptionAcuityDraft = '' | 'acute' | 'chronic';
 
 type SigDraft = {
@@ -699,12 +960,24 @@ type SigDraft = {
   discardAfter: string;
 };
 
-function defaultSigDraft(line: VisitInvoiceLine, prescribedDate: string): SigDraft {
+/**
+ * Starting values for the Rx panel. Acuity and refill expiration live on the
+ * prescriptions row, not the invoice line, so they have to be read back from
+ * `recorded` — seeding them blank is what made a saved script reopen empty and red.
+ */
+function defaultSigDraft(
+  line: VisitInvoiceLine,
+  prescribedDate: string,
+  recorded?: OrderPrescription | null
+): SigDraft {
   return {
-    instructions: lineDirections(line),
-    refillCount: lineRefills(line),
-    acuity: '',
-    refillExpiration: '',
+    instructions: recorded?.instructions?.trim() || lineDirections(line),
+    refillCount: recorded?.refill != null ? String(recorded.refill) : lineRefills(line),
+    acuity: recorded?.acuity ?? '',
+    refillExpiration:
+      toDateInput(recorded?.refillExpiration) ||
+      toDateInput(line.catalogRefillExpiration) ||
+      '',
     discardAfter: line.catalogDiscardAfter || addCalendarYear(prescribedDate),
   };
 }
@@ -778,6 +1051,25 @@ function visitTypeLabel(appt: Appointment): string | null {
   return t.prettyName?.trim() || t.name?.trim() || null;
 }
 
+function estimateStatusLabel(status: VisitEstimate['status']): string {
+  switch (status) {
+    case 'draft':
+      return 'Draft';
+    case 'sent':
+      return 'Sent';
+    case 'accepted':
+      return 'Accepted';
+    case 'converted':
+      return 'Converted';
+    case 'declined':
+      return 'Declined';
+    case 'expired':
+      return 'Expired';
+    default:
+      return status;
+  }
+}
+
 function formatVisitOption(appt: Appointment, pets: FinancialPet[]): string {
   const start = DateTime.fromISO(appt.appointmentStart).setZone(PRACTICE_TZ);
   const datePart = start.isValid ? start.toLocaleString(DateTime.DATE_MED) : 'Visit';
@@ -807,6 +1099,8 @@ export default function ClientFinancialWorkspace({
   onCombinedBalance,
 }: Props) {
   const [scoutInvoices, setScoutInvoices] = useState<VisitInvoice[]>([]);
+  const [estimates, setEstimates] = useState<VisitEstimate[]>([]);
+  const [estimateEditorId, setEstimateEditorId] = useState<string | null>(null);
   const [selected, setSelected] = useState<VisitInvoice | null>(null);
   const [evetSelected, setEvetSelected] = useState<NormalizedInvoice | null>(null);
   const [evetLoaded, setEvetLoaded] = useState<NormalizedInvoice[]>(evetInvoices);
@@ -825,7 +1119,6 @@ export default function ClientFinancialWorkspace({
   const [linePatientId, setLinePatientId] = useState<number | null>(() =>
     defaultChargePatientId(pets, initialPatientId),
   );
-  const [useInactivePets, setUseInactivePets] = useState(false);
   const [visits, setVisits] = useState<Appointment[]>([]);
   const [tenderMethod, setTenderMethod] = useState<VisitTenderMethod>('cash');
   const [tenderAmount, setTenderAmount] = useState('');
@@ -844,10 +1137,15 @@ export default function ClientFinancialWorkspace({
   }>(null);
   const refundPanelRef = useRef<HTMLDivElement | null>(null);
   const [editing, setEditing] = useState(false);
+  const [editingPriceLineId, setEditingPriceLineId] = useState<string | null>(null);
   const [pendingDeleteIds, setPendingDeleteIds] = useState<string[]>([]);
   const [sigDrafts, setSigDrafts] = useState<Record<string, SigDraft>>({});
+  const [rxApproveTried, setRxApproveTried] = useState<Record<string, true>>({});
   const [rxRowOpenIds, setRxRowOpenIds] = useState<Record<string, true>>({});
   const [vaccineByOrderId, setVaccineByOrderId] = useState<Record<string, OrderVaccination>>({});
+  const [prescriptionByOrderId, setPrescriptionByOrderId] = useState<
+    Record<string, OrderPrescription>
+  >({});
   const [stockDrawsByOrderId, setStockDrawsByOrderId] = useState<Record<string, StockDraw>>({});
   const [printedLineId, setPrintedLineId] = useState<string | null>(null);
   const [extraPets, setExtraPets] = useState<FinancialPet[]>([]);
@@ -886,7 +1184,6 @@ export default function ClientFinancialWorkspace({
   const [shippingTypeIds, setShippingTypeIds] = useState<number[]>([]);
   const [sigNeedsReapprove, setSigNeedsReapprove] = useState<Record<string, boolean>>({});
   const [mailOrders, setMailOrders] = useState<MailOrder[]>([]);
-  const [postVisitSignupOpen, setPostVisitSignupOpen] = useState(false);
   const splitRef = useRef<HTMLDivElement>(null);
   const splitDragRef = useRef<{ startX: number; startPct: number } | null>(null);
   const catalogSearchRef = useRef<HTMLInputElement>(null);
@@ -966,18 +1263,17 @@ export default function ClientFinancialWorkspace({
     return [...byId.values()];
   }, [pets, extraPets]);
 
-  const chargePets = useMemo(
-    () => petsForChargeSelect(allPets, useInactivePets, linePatientId),
-    [allPets, useInactivePets, linePatientId],
-  );
+  const chargePets = useMemo(() => petsForChargeSelect(allPets), [allPets]);
 
+  // When pets load (or the preferred pet is missing), pick someone to charge.
   useEffect(() => {
-    if (useInactivePets || linePatientId == null) return;
-    const cur = allPets.find((p) => p.id === linePatientId);
-    if (cur && !isFinancialPetActive(cur)) {
-      setLinePatientId(defaultChargePatientId(allPets));
+    if (!allPets.length) {
+      if (linePatientId != null) setLinePatientId(null);
+      return;
     }
-  }, [allPets, linePatientId, useInactivePets]);
+    if (linePatientId != null && allPets.some((p) => p.id === linePatientId)) return;
+    setLinePatientId(defaultChargePatientId(allPets, initialPatientId));
+  }, [allPets, linePatientId, initialPatientId]);
 
   const providerOptions = useMemo(() => {
     const rows = providers.filter((e) => e?.id != null && Number(e.id) > 0);
@@ -998,6 +1294,17 @@ export default function ClientFinancialWorkspace({
     const first = providerOptions[0];
     const id = first?.id != null ? Number(first.id) : NaN;
     return Number.isFinite(id) && id > 0 ? id : null;
+  };
+
+  const providerChoiceLabel = (emp: { name?: string | null; firstName?: string | null; lastName?: string | null }) =>
+    shortProviderName(emp.name, emp.firstName, emp.lastName);
+
+  const providerIdLabel = (id: number | null | undefined): string => {
+    if (id == null) return '—';
+    const fromList = providerOptions.find((e) => Number(e.id) === id);
+    if (fromList) return providerChoiceLabel(fromList);
+    const staff = staffById.get(id);
+    return shortProviderName(staffName(staff, id), staff?.firstName, staff?.lastName);
   };
 
   const petName = (id: number | null | undefined, fallbackName?: string | null) => {
@@ -1021,9 +1328,16 @@ export default function ClientFinancialWorkspace({
     );
   };
 
+  async function refreshEstimates() {
+    const rows = await listClientEstimates(clientId, { includeClosed: true });
+    setEstimates(rows);
+    return rows;
+  }
+
   async function refreshList(preferId?: string | null) {
     const rows = await listClientVisitInvoices(clientId);
     setScoutInvoices(rows);
+    void refreshEstimates().catch(() => undefined);
     const keep = preferId ?? selected?.id;
     if (keep && !isUnsavedInvoice({ id: keep } as VisitInvoice)) {
       const found = rows.find((r) => r.id === keep);
@@ -1092,9 +1406,13 @@ export default function ClientFinancialWorkspace({
     setError(null);
     void (async () => {
       try {
-        const rows = await listClientVisitInvoices(clientId);
+        const [rows, quoteRows] = await Promise.all([
+          listClientVisitInvoices(clientId),
+          listClientEstimates(clientId, { includeClosed: true }).catch(() => [] as VisitEstimate[]),
+        ]);
         if (cancelled) return;
         setScoutInvoices(rows);
+        setEstimates(quoteRows);
         setEvetSelected(null);
         let next: VisitInvoice | null = null;
         if (initialInvoiceId && initialInvoiceId !== 'new') {
@@ -1442,6 +1760,7 @@ export default function ClientFinancialWorkspace({
   useEffect(() => {
     if (!selected) {
       setVaccineByOrderId({});
+      setPrescriptionByOrderId({});
       setStockDrawsByOrderId({});
       return;
     }
@@ -1450,11 +1769,13 @@ export default function ClientFinancialWorkspace({
       .then((result) => {
         if (canceled) return;
         setVaccineByOrderId(result.vaccinations);
+        setPrescriptionByOrderId(result.prescriptions);
         setStockDrawsByOrderId(result.stockDraws);
       })
       .catch(() => {
         if (!canceled) {
           setVaccineByOrderId({});
+          setPrescriptionByOrderId({});
           setStockDrawsByOrderId({});
         }
       });
@@ -1463,26 +1784,8 @@ export default function ClientFinancialWorkspace({
     };
   }, [vaccineLoadKey]);
 
-  useEffect(() => {
-    if (!selected) return;
-    setRxRowOpenIds((prev) => {
-      const next = { ...prev };
-      let changed = false;
-      for (const line of activeLines(selected)) {
-        const needsDose =
-          isVaccineLine(line) &&
-          Boolean(line.orderId) &&
-          !vaccineByOrderId[line.orderId!];
-        const needsLot = Boolean(line.trackLots) && line.inventoryLotBalanceId == null;
-        if ((needsDose || needsLot) && !next[line.id]) {
-          next[line.id] = true;
-          changed = true;
-        }
-      }
-      return changed ? next : prev;
-    });
-  }, [selected?.id, vaccineLoadKey, vaccineByOrderId]);
-
+  // Newly added meds still open so the sig can be written. Vaccines and existing
+  // lines stay collapsed, same as the SOAP invoice: expand only when you tap them.
   useEffect(() => {
     const invoiceId = selected?.id ?? null;
     const lineIds = new Set(activeLines(selected).map((line) => line.id));
@@ -1933,7 +2236,7 @@ export default function ClientFinancialWorkspace({
         invoice_html: invoiceTableHtml(model),
       });
       setInvoiceEmail({
-        kind: model.kind,
+        kind: isReceipt ? 'receipt' : 'invoice',
         subject: applySystemSubject(
           templateKey,
           merge,
@@ -2064,6 +2367,18 @@ export default function ClientFinancialWorkspace({
     () => groupLinesByBundleSale([...lineGroups.parents, ...lineGroups.leftover]),
     [lineGroups],
   );
+  const invoicePetSections = useMemo(
+    () =>
+      groupInvoiceBlocksByPet(invoiceLineBlocks, allPets, (line) => {
+        const ships = lineGroups.attached.get(line.id) ?? [];
+        const kids = tagalongGroups.attached.get(line.id) ?? [];
+        return [...ships, ...kids].reduce((sum, row) => sum + lineChargeAmount(row), 0);
+      }),
+    [invoiceLineBlocks, allPets, lineGroups, tagalongGroups]
+  );
+  const showPetGroups = invoicePetSections.length > 1;
+  const showPetColumn = !showPetGroups;
+  const invoiceBaseCols = showPetColumn ? 6 : 5;
   const hasUnsavedDeletes = pendingDeleteIds.length > 0;
   const hasShippedMail = useMemo(
     () =>
@@ -2099,21 +2414,30 @@ export default function ClientFinancialWorkspace({
     [visibleLines, shippingIdSet, mailOrderForLine]
   );
   const invoicePrescribedDate = toDateInput(selected?.created ?? selected?.paidAt) || dateForInput(new Date());
+  const recordedRxFor = (line: VisitInvoiceLine): OrderPrescription | null =>
+    line.orderId ? prescriptionByOrderId[line.orderId] ?? null : null;
   const draftOf = (line: VisitInvoiceLine): SigDraft =>
-    sigDrafts[line.id] ?? defaultSigDraft(line, invoicePrescribedDate);
+    sigDrafts[line.id] ??
+    defaultSigDraft(line, invoicePrescribedDate, recordedRxFor(line));
   const patchSigDraft = (line: VisitInvoiceLine, patch: Partial<SigDraft>) => {
     setSigDrafts((prev) => ({
       ...prev,
-      [line.id]: { ...(prev[line.id] ?? defaultSigDraft(line, invoicePrescribedDate)), ...patch },
+      [line.id]: { ...(prev[line.id] ?? draftOf(line)), ...patch },
     }));
-    if (line.rxApprovedAt) {
+    // Changing the written directions after approve is a new sig. Refill
+    // edits are not — those already have their own save path.
+    if (line.rxApprovedAt && patch.instructions !== undefined) {
       setSigNeedsReapprove((prev) => (prev[line.id] ? prev : { ...prev, [line.id]: true }));
     }
   };
   const lineSigDirty = (line: VisitInvoiceLine): boolean => {
     const d = draftOf(line);
+    // Only the written directions are the sig. Refill / acuity edits save on
+    // their own and must not bring Save sig back after it was already stored.
     return d.instructions.trim() !== savedDirections(line);
   };
+  const lineNeedsSigSave = (line: VisitInvoiceLine): boolean =>
+    lineSigDirty(line) || !line.instructionsEnteredByEmployeeId;
   const previewSubtotal = displayLines
     .filter((l) => !l.isCovered)
     .reduce((sum, l) => sum + (Number(l.amount) || 0), 0);
@@ -2130,6 +2454,10 @@ export default function ClientFinancialWorkspace({
   const canEdit = !invoiceGone && selected?.status === 'open';
   const dirtySigLines = canEdit ? visibleLines.filter((l) => isPrescriptionLine(l) && lineSigDirty(l)) : [];
   const hasDirtySigs = dirtySigLines.length > 0;
+  const sigSaveLines = canEdit
+    ? visibleLines.filter((l) => isPrescriptionLine(l) && lineNeedsSigSave(l))
+    : [];
+  const hasSigsToSave = sigSaveLines.length > 0;
   const selectedPayType =
     paymentTypes.find((r) => r.name === tenderPaymentType) ?? null;
   const rxBlocksPay = Boolean(
@@ -2176,6 +2504,7 @@ export default function ClientFinancialWorkspace({
     (selected.status === 'paid' || selected.status === 'finalized') &&
     !lines.some((l) => l.returnOfLineId);
   const isSoapInvoice = lines.some((l) => l.orderId);
+  const invoiceMetaCols = invoiceBaseCols + (returning && canReturn ? 1 : 0);
   const canRemoveLines = Boolean(
     selected &&
       !invoiceGone &&
@@ -2191,8 +2520,10 @@ export default function ClientFinancialWorkspace({
     let next = selected;
     for (const line of dirtySigLines) {
       const d = draftOf(line);
+      const refillCount = parsedRefillCount(d.refillCount);
       next = await updateCounterInvoiceLine(next.id, line.id, {
         instructions: d.instructions.trim() || null,
+        ...(refillCount != null ? { refillCount } : {}),
       });
     }
     if (!workspaceMountedRef.current) return;
@@ -2627,19 +2958,74 @@ export default function ClientFinancialWorkspace({
     };
   }
 
+  /**
+   * Acuity and refill expiration have no column on the invoice line — they belong to the
+   * `prescriptions` row behind the order. Without this the two fields lived only in local
+   * draft state and were gone the next time the invoice was opened.
+   *
+   * Counter lines with no order have no prescription row to write to; those keep the old
+   * behaviour rather than inventing one mid-checkout.
+   * Refill / acuity edits persist here and must not reopen Save sig.
+   */
+  async function persistRxExtras(line: VisitInvoiceLine, patch?: Partial<SigDraft>) {
+    if (!selected) return;
+    const d = { ...draftOf(line), ...patch };
+    const refillCount = parsedRefillCount(d.refillCount);
+    try {
+      await persistRxDetails(line, d);
+      if (refillCount != null && refillCount !== line.refillCount) {
+        const next = await updateCounterInvoiceLine(selected.id, line.id, { refillCount });
+        setSelected(next);
+      }
+    } catch (e: unknown) {
+      setError(apiErr(e));
+    }
+  }
+
+  async function persistRxDetails(line: VisitInvoiceLine, d: SigDraft) {
+    if (!line.encounterId || !line.orderId) return;
+    const refillCount = parsedRefillCount(d.refillCount);
+    if (refillCount == null || (d.acuity !== 'acute' && d.acuity !== 'chronic')) return;
+    const saved = await saveOrderPrescription(line.encounterId, line.orderId, {
+      name: line.description,
+      instructions: d.instructions.trim() || undefined,
+      refill: refillCount,
+      refillExpiration:
+        refillCount > 0 ? toRxDatePayload(d.refillExpiration) : undefined,
+      startDate: toRxDatePayload(invoicePrescribedDate),
+      acuity: d.acuity,
+      employeeId: line.providerEmployeeId ?? undefined,
+    });
+    if (saved.encounterOrderId) {
+      setPrescriptionByOrderId((prev) => ({
+        ...prev,
+        [saved.encounterOrderId as string]: saved,
+      }));
+    }
+  }
+
   async function approveScript(line: VisitInvoiceLine) {
     if (!selected) return;
     const d = draftOf(line);
-    const missing = approveScriptMissing(line, d, selected);
+    const mailed = Boolean(mailOrderForLine(line));
+    const missing = approveScriptMissing(line, d, selected, mailed);
     if (missing) {
       setError(missing);
+      setRxApproveTried((prev) => ({ ...prev, [line.id]: true }));
       setRxRowOpenIds((prev) => ({ ...prev, [line.id]: true }));
       return;
     }
+    setRxApproveTried((prev) => {
+      if (!prev[line.id]) return prev;
+      const copy = { ...prev };
+      delete copy[line.id];
+      return copy;
+    });
     const refillCount = Number(d.refillCount.trim());
     setBusy(true);
     setError(null);
     try {
+      await persistRxDetails(line, d);
       const next = await updateCounterInvoiceLine(selected.id, line.id, {
         instructions: d.instructions.trim(),
         refillCount,
@@ -2675,8 +3061,13 @@ export default function ClientFinancialWorkspace({
           setRxRowOpenIds((prev) => ({ ...prev, [line.id]: true }));
           return;
         }
+        await persistRxDetails(line, d);
+        // Refills ride along with the sig: saving the directions and silently dropping
+        // an edited refill count is the other half of what looked like "nothing saved".
+        const refillCount = parsedRefillCount(d.refillCount);
         next = await updateCounterInvoiceLine(next.id, line.id, {
           instructions: d.instructions.trim() || null,
+          ...(refillCount != null ? { refillCount } : {}),
         });
       }
       setSigDrafts((prev) => {
@@ -3412,15 +3803,6 @@ export default function ClientFinancialWorkspace({
             >
               Add credit
             </button>
-            <button
-              type="button"
-              className="client-fin__btn-ghost"
-              disabled={busy}
-              title="Enroll a pet and re-price recent paid invoices under a membership"
-              onClick={() => setPostVisitSignupOpen(true)}
-            >
-              Post-visit membership
-            </button>
           </div>
           <div className="client-fin__pay-links client-fin__pay-links--ledger">
             <button
@@ -3564,6 +3946,83 @@ export default function ClientFinancialWorkspace({
               </table>
             </div>
           )}
+
+          <div className="client-fin__estimates">
+            <div className="client-fin__pane-head">
+              <h2>Estimates</h2>
+              <button
+                type="button"
+                className="client-fin__btn"
+                disabled={busy}
+                onClick={() => {
+                  void (async () => {
+                    setBusy(true);
+                    setError(null);
+                    try {
+                      const created = await createVisitEstimate({
+                        clientId,
+                        patientId: initialPatientId ?? linePatientId ?? allPets[0]?.id ?? null,
+                      });
+                      setEstimates((rows) => [created, ...rows.filter((r) => r.id !== created.id)]);
+                      setEstimateEditorId(created.id);
+                    } catch (e: unknown) {
+                      setError(apiErr(e));
+                    } finally {
+                      setBusy(false);
+                    }
+                  })();
+                }}
+              >
+                New estimate
+              </button>
+            </div>
+            {estimates.length === 0 ? (
+              <p className="client-fin__muted">No estimates yet. Quotes live here, not on the ledger.</p>
+            ) : (
+              <div className="client-fin__table-wrap">
+                <table className="client-fin__table">
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Estimate</th>
+                      <th>Status</th>
+                      <th>Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {estimates.map((row) => (
+                      <tr
+                        key={row.id}
+                        className={`is-click${row.status === 'converted' ? ' is-muted' : ''}`}
+                        onClick={() => setEstimateEditorId(row.id)}
+                      >
+                        <td>{row.created ? formatTs(row.created) : '—'}</td>
+                        <td>
+                          <button
+                            type="button"
+                            className="client-fin__linkish"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setEstimateEditorId(row.id);
+                            }}
+                          >
+                            {row.estimateNumber != null
+                              ? `Estimate #${row.estimateNumber}`
+                              : row.title?.trim() || 'Estimate'}
+                          </button>
+                          {row.title?.trim() && row.estimateNumber != null ? (
+                            <div className="client-fin__muted">{row.title.trim()}</div>
+                          ) : null}
+                        </td>
+                        <td>{estimateStatusLabel(row.status)}</td>
+                        <td>{money(Number(row.total) || 0)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </section>
 
         {hasDetail ? (
@@ -3848,6 +4307,9 @@ export default function ClientFinancialWorkspace({
                                 : selected.status === 'open'
                                   ? 'Open invoice'
                                   : `Invoice · ${statusLabel(selected.status)}`}
+                  {selected.created ? (
+                    <span className="client-fin__opened">Opened {formatTs(selected.created)}</span>
+                  ) : null}
                 </h2>
                 <div className="client-fin__pane-actions">
                   {returning ? (
@@ -3874,19 +4336,19 @@ export default function ClientFinancialWorkspace({
                       Back
                     </button>
                   ) : null}
-                  {hasDirtySigs ? (
+                  {hasSigsToSave ? (
                     <button
                       type="button"
                       className="client-fin__btn"
                       disabled={
-                        busy || dirtySigLines.some((line) => Boolean(saveScriptMissing(draftOf(line))))
+                        busy || sigSaveLines.some((line) => Boolean(saveScriptMissing(draftOf(line))))
                       }
                       title={
-                        dirtySigLines
+                        sigSaveLines
                           .map((line) => saveScriptMissing(draftOf(line)))
                           .find(Boolean) || undefined
                       }
-                      onClick={() => void persistDirections(dirtySigLines)}
+                      onClick={() => void persistDirections(sigSaveLines)}
                     >
                       Save sig
                     </button>
@@ -3927,21 +4389,6 @@ export default function ClientFinancialWorkspace({
                       }}
                     >
                       Return items
-                    </button>
-                  ) : null}
-                  {selected &&
-                  !invoiceGone &&
-                  !returning &&
-                  (Number(selected.amountPaid) || 0) > 0.009 &&
-                  selected.status !== 'void' ? (
-                    <button
-                      type="button"
-                      className="client-fin__btn-ghost"
-                      disabled={busy}
-                      title="Re-price this receipt under a new membership"
-                      onClick={() => setPostVisitSignupOpen(true)}
-                    >
-                      Post-visit membership
                     </button>
                   ) : null}
                   <button type="button" className="client-fin__btn-ghost" onClick={() => window.print()}>
@@ -3990,23 +4437,6 @@ export default function ClientFinancialWorkspace({
                             </option>
                           ))}
                         </select>
-                      </label>
-                      <label className="client-fin__use-inactive">
-                        <input
-                          type="checkbox"
-                          checked={useInactivePets}
-                          onChange={(e) => {
-                            const on = e.target.checked;
-                            setUseInactivePets(on);
-                            if (!on && linePatientId != null) {
-                              const cur = allPets.find((p) => p.id === linePatientId);
-                              if (cur && !isFinancialPetActive(cur)) {
-                                setLinePatientId(defaultChargePatientId(allPets));
-                              }
-                            }
-                          }}
-                        />
-                        Use inactive
                       </label>
                     </div>
                     <div className="client-fin__search client-fin__search--add">
@@ -4087,21 +4517,50 @@ export default function ClientFinancialWorkspace({
                 <p className="client-fin__muted">No lines yet.</p>
               ) : (
                 <div className="client-fin__table-wrap client-fin__table-wrap--doc">
-                  <table className="client-fin__table client-fin__invoice">
+                  <table className={`client-fin__table client-fin__invoice${showPetGroups ? ' client-fin__invoice--pets' : ''}`}>
                     <thead>
                       <tr>
                         <th className="client-fin__col-item">Item</th>
-                        <th className="client-fin__col-pet">Pet</th>
+                        {showPetColumn ? <th className="client-fin__col-pet">Pet</th> : null}
                         <th className="client-fin__col-provider">Provider</th>
                         <th className="client-fin__col-qty">Qty</th>
                         <th className="client-fin__col-price">Price</th>
-                        <th className="client-fin__col-amount">Amount</th>
+                        <th className="client-fin__col-amount">Amt</th>
                         {returning && canReturn ? <th>Return</th> : null}
                         {canRemoveLines ? <th className="client-fin__row-action" /> : null}
                       </tr>
                     </thead>
                     <tbody>
-                      {invoiceLineBlocks.map((block) => {
+                      {invoicePetSections.map((section) => (
+                      <Fragment key={section.key}>
+                      {showPetGroups ? (
+                        <tr
+                          className={`client-fin__pet-head${
+                            section.patientId != null && section.patientId === linePatientId
+                              ? ' is-current'
+                              : ''
+                          }`}
+                        >
+                          <td
+                            className="client-fin__col-item"
+                            colSpan={showPetColumn ? 3 : 2}
+                          >
+                            <span className="client-fin__pet-head-name">
+                              {section.patientId != null
+                                ? patientChartName(section.patientId, section.label)
+                                : section.label}
+                            </span>
+                          </td>
+                          <td className="client-fin__col-qty" />
+                          <td className="client-fin__col-price" />
+                          <td className="client-fin__col-amount client-fin__num">
+                            {money(section.amount)}
+                          </td>
+                          {returning && canReturn ? <td /> : null}
+                          {canRemoveLines ? <td className="client-fin__row-action" /> : null}
+                        </tr>
+                      ) : null}
+                      {section.blocks.map((block) => {
                         const blockLines = block.kind === 'bundle' ? block.lines : [block.line];
                         const bundleAmount =
                           block.kind === 'bundle'
@@ -4122,7 +4581,7 @@ export default function ClientFinancialWorkspace({
                           >
                             {block.kind === 'bundle' ? (
                               <tr className="client-fin__bundle-head">
-                                <td className="client-fin__col-item" colSpan={3}>
+                                <td className="client-fin__col-item" colSpan={showPetColumn ? 3 : 2}>
                                   <div className="client-fin__bundle-label">
                                     <span className="client-fin__bundle-name">{block.name}</span>
                                     <span className="client-fin__bundle-meta">
@@ -4181,6 +4640,7 @@ export default function ClientFinancialWorkspace({
                         const attachedShipping = lineGroups.attached.get(line.id) ?? [];
                         const attachedTagalongs = tagalongGroups.attached.get(line.id) ?? [];
                         const dirty = canEdit && showRxMeta && lineSigDirty(line);
+                        const needsSigSave = canEdit && showRxMeta && lineNeedsSigSave(line);
                         const needsReapprove = Boolean(sigNeedsReapprove[line.id]);
                         const mailedLineOrder = mailOrderForLine(line);
                         const fulfillSibling = visibleLines.find(
@@ -4369,12 +4829,21 @@ export default function ClientFinancialWorkspace({
                             }}
                           />
                         ) : null;
+                        const missingFields = showRxMeta && rxApproveTried[line.id]
+                          ? approveScriptMissingFields(
+                              line,
+                              draft,
+                              selected,
+                              Boolean(mailedLineOrder),
+                            )
+                          : [];
+                        const rxMissing = (field: RxMissingField) => missingFields.includes(field);
                         const approveButton =
                           showRxMeta && canEdit && !scriptApproved ? (
                             <button
                               type="button"
                               className="client-fin__btn client-fin__btn-approve"
-                              disabled={busy || Boolean(approveMissing)}
+                              disabled={busy}
                               title={approveMissing || (dirty || needsReapprove ? 'Saves the sig and approves the script' : 'Approve this script')}
                               onClick={() => {
                                 setRxRowOpenIds((prev) => ({ ...prev, [line.id]: true }));
@@ -4416,6 +4885,9 @@ export default function ClientFinancialWorkspace({
                               >
                                 {rxOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                                 <span className="client-fin__item-name">
+                                  {!isMailSplitChild && line.isCovered ? (
+                                    <span className="client-fin__covered-heart" title="Membership covered" aria-label="Membership covered">❤️{' '}</span>
+                                  ) : null}
                                   {isMailSplitChild ? 'Mailing' : line.description}
                                 </span>
                                 {isMailSplitChild || mailedLineOrder ? (
@@ -4432,6 +4904,9 @@ export default function ClientFinancialWorkspace({
                               </button>
                             ) : (
                               <div className="client-fin__item-name">
+                                {!isMailSplitChild && line.isCovered ? (
+                                  <span className="client-fin__covered-heart" title="Membership covered" aria-label="Membership covered">❤️{' '}</span>
+                                ) : null}
                                 {isMailSplitChild ? 'Mailing' : line.description}
                                 {isMailSplitChild || mailedLineOrder ? (
                                   <span className="client-fin__fulfill-pill client-fin__fulfill-pill--mail">
@@ -4495,6 +4970,7 @@ export default function ClientFinancialWorkspace({
                             ) : null}
                             {isPrescriptionLine(line) && !showMeta ? rxPrintButton : null}
                           </td>
+                          {showPetColumn ? (
                           <td className="client-fin__col-pet">
                             {isMailSplitChild ? (
                               <span className="client-fin__muted">{patientChartName(line.patientId, line.patientName)}</span>
@@ -4522,7 +4998,7 @@ export default function ClientFinancialWorkspace({
                                     Select pet…
                                   </option>
                                 ) : null}
-                                {petsForChargeSelect(allPets, useInactivePets, line.patientId).map((p) => (
+                                {petsForChargeSelect(allPets).map((p) => (
                                   <option key={p.id} value={p.id}>
                                     {p.name}
                                     {p.isActive === false ? ' (inactive)' : ''}
@@ -4533,7 +5009,8 @@ export default function ClientFinancialWorkspace({
                               patientChartName(line.patientId, line.patientName)
                             )}
                           </td>
-                          <td className="client-fin__col-provider">
+                          ) : null}
+                          <td className={`client-fin__col-provider${rxMissing('provider') ? ' is-missing' : ''}`}>
                             {noProviderLine ? (
                               '—'
                             ) : canEdit ? (
@@ -4556,18 +5033,18 @@ export default function ClientFinancialWorkspace({
                                 ) : null}
                                 {providerOptions.map((emp) => (
                                   <option key={String(emp.id)} value={emp.id}>
-                                    {emp.name}
+                                    {providerChoiceLabel(emp)}
                                   </option>
                                 ))}
                                 {line.providerEmployeeId != null &&
                                 !providerOptions.some((e) => Number(e.id) === line.providerEmployeeId) ? (
                                   <option value={line.providerEmployeeId}>
-                                    {staffName(staffById.get(line.providerEmployeeId), line.providerEmployeeId)}
+                                    {providerIdLabel(line.providerEmployeeId)}
                                   </option>
                                 ) : null}
                               </select>
                             ) : line.providerEmployeeId != null ? (
-                              staffName(staffById.get(line.providerEmployeeId), line.providerEmployeeId)
+                              providerIdLabel(line.providerEmployeeId)
                             ) : (
                               ''
                             )}
@@ -4595,48 +5072,18 @@ export default function ClientFinancialWorkspace({
                             )}
                           </td>
                           <td className="client-fin__col-price client-fin__num">
-                            {canEdit ? (
-                              <label className="client-fin__price-wrap">
-                                <span className="client-fin__price-prefix" aria-hidden>
-                                  $
-                                </span>
-                                <input
-                                  key={`price-${line.id}-${line.unitPrice}`}
-                                  className="client-fin__price"
-                                  inputMode="decimal"
-                                  defaultValue={moneyInput(line.unitPrice)}
-                                  onBlur={(e) => {
-                                    const input = e.currentTarget;
-                                    const unitPrice = Math.round(Number(input.value) * 100) / 100;
-                                    if (
-                                      Number.isFinite(unitPrice) &&
-                                      unitPrice !== Math.round(Number(line.unitPrice) * 100) / 100
-                                    ) {
-                                      // Catalog items with Allow price change off are
-                                      // refused by the API; show the real price again.
-                                      void patchLine(line, { unitPrice }).then((ok) => {
-                                        if (!ok) input.value = moneyInput(line.unitPrice);
-                                      });
-                                    } else {
-                                      input.value = moneyInput(line.unitPrice);
-                                    }
-                                  }}
-                                />
-                              </label>
-                            ) : (
-                              <PriceShown
-                                charged={Number(line.unitPrice) || 0}
-                                list={line.listUnitPrice}
-                                covered={line.isCovered}
-                              />
-                            )}
+                            <EditableUnitPrice
+                              line={line}
+                              canEdit={canEdit && lineAllowsPriceEdit(line)}
+                              editing={editingPriceLineId === line.id}
+                              disabled={busy}
+                              onEdit={() => setEditingPriceLineId(line.id)}
+                              onCancel={() => setEditingPriceLineId(null)}
+                              onCommit={(unitPrice) => patchLine(line, { unitPrice })}
+                            />
                           </td>
                           <td className="client-fin__col-amount client-fin__num">
-                            {line.isCovered ? (
-                              <span className="client-fin__covered">Covered ❤️</span>
-                            ) : (
-                              money(line.amount)
-                            )}
+                            {line.isCovered ? 'covered' : money(line.amount)}
                           </td>
                           {returning && canReturn ? (
                             <td>
@@ -4671,7 +5118,7 @@ export default function ClientFinancialWorkspace({
                         {showMeta && rxOpen ? (
                           showVaxMeta ? (
                           <tr className={`client-fin__line-meta ${lineReady ? 'client-fin__line--ready' : 'client-fin__line--pending'}${isMailSplitChild ? ' client-fin__line--mail-split' : ''}`}>
-                            <td colSpan={returning && canReturn ? 7 : 6}>
+                            <td colSpan={invoiceMetaCols}>
                               {linkedStock.linked && !mailedLineOrder ? (
                                 <LinkedStockInvoiceDetails
                                   line={line}
@@ -4724,12 +5171,12 @@ export default function ClientFinancialWorkspace({
                           ) : (
                           <>
                           <tr className={`client-fin__line-meta ${lineReady ? 'client-fin__line--ready' : 'client-fin__line--pending'}${isMailSplitChild ? ' client-fin__line--mail-split' : ''}`}>
-                            <td colSpan={3}>
+                            <td colSpan={showPetColumn ? 3 : 2}>
                               {canEdit ? (
-                                <label className="client-fin__sig">
+                                <label className={`client-fin__sig${rxMissing('instructions') ? ' is-missing' : ''}`}>
                                   <span className="client-fin__sig-label">
                                     Directions (sig)
-                                    {dirty ? (
+                                    {needsSigSave ? (
                                       <button
                                         type="button"
                                         className="client-fin__btn"
@@ -4770,7 +5217,7 @@ export default function ClientFinancialWorkspace({
                             <td colSpan={returning && canReturn ? 4 : 3}>
                               <div className="client-fin__rx-extras">
                                 {linkedStock.linked && !mailedLineOrder ? (
-                                  <div className="client-fin__rx-field client-fin__rx-lot">
+                                  <div className={`client-fin__rx-field client-fin__rx-lot${rxMissing('lot') ? ' is-missing' : ''}`}>
                                     <LinkedStockInvoiceDetails
                                       line={line}
                                       stockDraw={stockDraw}
@@ -4788,7 +5235,7 @@ export default function ClientFinancialWorkspace({
                                     />
                                   </div>
                                 ) : line.trackLots && !mailedLineOrder && !linkedStock.linked ? (
-                                  <div className="client-fin__rx-field client-fin__rx-lot">
+                                  <div className={`client-fin__rx-field client-fin__rx-lot${rxMissing('lot') ? ' is-missing' : ''}`}>
                                     <StockLotPicker
                                       practiceId={VISIT_WORKFLOW_PRACTICE_ID}
                                       inventoryItemId={
@@ -4811,7 +5258,7 @@ export default function ClientFinancialWorkspace({
                                 ) : line.trackLots && mailedLineOrder ? (
                                   <p className="client-fin__fulfill-note">Lot chosen when filled</p>
                                 ) : null}
-                                <label className="client-fin__rx-field client-fin__refill">
+                                <label className={`client-fin__rx-field client-fin__refill${rxMissing('refillCount') ? ' is-missing' : ''}`}>
                                   <span>
                                     # refills *
                                     {line.patientId != null ? (
@@ -4839,6 +5286,7 @@ export default function ClientFinancialWorkspace({
                                           }
                                           setError(null);
                                           patchSigDraft(line, { refillExpiration: dateInput });
+                                          void persistRxExtras(line, { refillExpiration: dateInput });
                                         }}
                                       />
                                     ) : null}
@@ -4858,13 +5306,14 @@ export default function ClientFinancialWorkspace({
                                             : { refillCount: next },
                                         );
                                       }}
+                                      onBlur={() => void persistRxExtras(line)}
                                     />
                                   ) : (
                                     <div>{refills === '' ? '—' : refills}</div>
                                   )}
                                 </label>
                                 {Number.isFinite(refillCount) && refillCount > 0 ? (
-                                  <label className="client-fin__rx-field">
+                                  <label className={`client-fin__rx-field${rxMissing('refillExpiration') ? ' is-missing' : ''}`}>
                                     <span>Refill expiration *</span>
                                     <input
                                       type="date"
@@ -4889,27 +5338,28 @@ export default function ClientFinancialWorkspace({
                                         setError(null);
                                         patchSigDraft(line, { refillExpiration: next });
                                       }}
+                                      onBlur={() => void persistRxExtras(line)}
                                     />
                                   </label>
                                 ) : null}
-                                <label className="client-fin__rx-field">
+                                <label className={`client-fin__rx-field${rxMissing('acuity') ? ' is-missing' : ''}`}>
                                   <span>Acute or chronic *</span>
                                   <select
                                     className="client-fin__rx-select"
                                     aria-label="Acute or chronic prescription"
                                     value={draft.acuity}
-                                    onChange={(e) =>
-                                      patchSigDraft(line, {
-                                        acuity: e.target.value as PrescriptionAcuityDraft,
-                                      })
-                                    }
+                                    onChange={(e) => {
+                                      const acuity = e.target.value as PrescriptionAcuityDraft;
+                                      patchSigDraft(line, { acuity });
+                                      void persistRxExtras(line, { acuity });
+                                    }}
                                   >
                                     <option value="">Select…</option>
                                     <option value="acute">Acute</option>
                                     <option value="chronic">Chronic</option>
                                   </select>
                                 </label>
-                                <label className="client-fin__rx-field">
+                                <label className={`client-fin__rx-field${rxMissing('discardAfter') ? ' is-missing' : ''}`}>
                                   <span>Discard after *</span>
                                   <input
                                     type="date"
@@ -4924,6 +5374,7 @@ export default function ClientFinancialWorkspace({
                                       setError(null);
                                       patchSigDraft(line, { discardAfter: next });
                                     }}
+                                    onBlur={() => void persistRxExtras(line)}
                                   />
                                 </label>
                               </div>
@@ -4931,7 +5382,7 @@ export default function ClientFinancialWorkspace({
                             {canRemoveLines ? <td className="client-fin__row-action" /> : null}
                           </tr>
                           <tr className={`client-fin__line-fulfill ${lineReady ? 'client-fin__line--ready' : 'client-fin__line--pending'}`}>
-                            <td colSpan={returning && canReturn ? 7 : 6}>
+                            <td colSpan={invoiceMetaCols}>
                               <div className="client-fin__rx-fulfill">
                                 {mailedLineOrder ? (
                                   <p className="client-fin__fulfill-note">
@@ -4949,6 +5400,8 @@ export default function ClientFinancialWorkspace({
                                     }}
                                     className="client-fin__fulfill-fields"
                                     fieldClassName="client-fin__rx-field"
+                                    highlightBranch={rxMissing('branch')}
+                                    highlightLocation={rxMissing('location')}
                                   />
                                 ) : null}
                               </div>
@@ -4964,7 +5417,7 @@ export default function ClientFinancialWorkspace({
                               nestedUnderBundle ? ' client-fin__bundle-child' : ''
                             }${isMailSplitChild ? ' client-fin__line--mail-split' : ''}`}
                           >
-                            <td colSpan={returning && canReturn ? 7 : 6}>
+                            <td colSpan={invoiceMetaCols}>
                               <div className="client-fin__rx-fulfill">{mailCheckbox}</div>
                             </td>
                             {canRemoveLines ? <td className="client-fin__row-action" /> : null}
@@ -4975,7 +5428,7 @@ export default function ClientFinancialWorkspace({
                               isMailSplitChild ? ' client-fin__line--mail-split' : ''
                             }`}
                           >
-                            <td colSpan={returning && canReturn ? 7 : 6}>
+                            <td colSpan={invoiceMetaCols}>
                               <div className="client-fin__rx-fulfill">{mailCheckbox}</div>
                             </td>
                             {canRemoveLines ? <td className="client-fin__row-action" /> : null}
@@ -4999,8 +5452,14 @@ export default function ClientFinancialWorkspace({
                           }`}
                         >
                           <td className="client-fin__col-item">
-                            <div className="client-fin__item-name">{ship.description}</div>
+                            <div className="client-fin__item-name">
+                              {ship.isCovered ? (
+                                <span className="client-fin__covered-heart" title="Membership covered" aria-label="Membership covered">❤️{' '}</span>
+                              ) : null}
+                              {ship.description}
+                            </div>
                           </td>
+                          {showPetColumn ? (
                           <td className="client-fin__col-pet">
                             {canEdit ? (
                               <select
@@ -5026,7 +5485,7 @@ export default function ClientFinancialWorkspace({
                                     Select pet…
                                   </option>
                                 ) : null}
-                                {petsForChargeSelect(allPets, useInactivePets, ship.patientId).map((p) => (
+                                {petsForChargeSelect(allPets).map((p) => (
                                   <option key={p.id} value={p.id}>
                                     {p.name}
                                     {p.isActive === false ? ' (inactive)' : ''}
@@ -5037,6 +5496,7 @@ export default function ClientFinancialWorkspace({
                               petName(ship.patientId, ship.patientName)
                             )}
                           </td>
+                          ) : null}
                           <td className="client-fin__col-provider">
                             {shipNoProvider ? (
                               '—'
@@ -5060,18 +5520,18 @@ export default function ClientFinancialWorkspace({
                                 ) : null}
                                 {providerOptions.map((emp) => (
                                   <option key={String(emp.id)} value={emp.id}>
-                                    {emp.name}
+                                    {providerChoiceLabel(emp)}
                                   </option>
                                 ))}
                                 {ship.providerEmployeeId != null &&
                                 !providerOptions.some((e) => Number(e.id) === ship.providerEmployeeId) ? (
                                   <option value={ship.providerEmployeeId}>
-                                    {staffName(staffById.get(ship.providerEmployeeId), ship.providerEmployeeId)}
+                                    {providerIdLabel(ship.providerEmployeeId)}
                                   </option>
                                 ) : null}
                               </select>
                             ) : ship.providerEmployeeId != null ? (
-                              staffName(staffById.get(ship.providerEmployeeId), ship.providerEmployeeId)
+                              providerIdLabel(ship.providerEmployeeId)
                             ) : (
                               ''
                             )}
@@ -5095,46 +5555,18 @@ export default function ClientFinancialWorkspace({
                             )}
                           </td>
                           <td className="client-fin__col-price client-fin__num">
-                            {canEdit ? (
-                              <label className="client-fin__price-wrap">
-                                <span className="client-fin__price-prefix" aria-hidden>
-                                  $
-                                </span>
-                                <input
-                                  key={`price-${ship.id}-${ship.unitPrice}`}
-                                  className="client-fin__price"
-                                  inputMode="decimal"
-                                  defaultValue={moneyInput(ship.unitPrice)}
-                                  onBlur={(e) => {
-                                    const input = e.currentTarget;
-                                    const unitPrice = Math.round(Number(input.value) * 100) / 100;
-                                    if (
-                                      Number.isFinite(unitPrice) &&
-                                      unitPrice !== Math.round(Number(ship.unitPrice) * 100) / 100
-                                    ) {
-                                      void patchLine(ship, { unitPrice }).then((ok) => {
-                                        if (!ok) input.value = moneyInput(ship.unitPrice);
-                                      });
-                                    } else {
-                                      input.value = moneyInput(ship.unitPrice);
-                                    }
-                                  }}
-                                />
-                              </label>
-                            ) : (
-                              <PriceShown
-                                charged={Number(ship.unitPrice) || 0}
-                                list={ship.listUnitPrice}
-                                covered={ship.isCovered}
-                              />
-                            )}
+                            <EditableUnitPrice
+                              line={ship}
+                              canEdit={canEdit && lineAllowsPriceEdit(ship)}
+                              editing={editingPriceLineId === ship.id}
+                              disabled={busy}
+                              onEdit={() => setEditingPriceLineId(ship.id)}
+                              onCancel={() => setEditingPriceLineId(null)}
+                              onCommit={(unitPrice) => patchLine(ship, { unitPrice })}
+                            />
                           </td>
                           <td className="client-fin__col-amount client-fin__num">
-                            {ship.isCovered ? (
-                              <span className="client-fin__covered">Covered ❤️</span>
-                            ) : (
-                              money(ship.amount)
-                            )}
+                            {ship.isCovered ? 'covered' : money(ship.amount)}
                           </td>
                           {returning && canReturn ? (
                             <td>
@@ -5174,14 +5606,21 @@ export default function ClientFinancialWorkspace({
                             className="client-fin__line--ready client-fin__line--shipping-child client-fin__line--tagalong"
                           >
                             <td className="client-fin__col-item">
-                              <div className="client-fin__item-name">{child.description}</div>
+                              <div className="client-fin__item-name">
+                                {child.isCovered ? (
+                                  <span className="client-fin__covered-heart" title="Membership covered" aria-label="Membership covered">❤️{' '}</span>
+                                ) : null}
+                                {child.description}
+                              </div>
                               {tagalongTaxHint(child) ? (
                                 <div className="client-fin__item-by">{tagalongTaxHint(child)}</div>
                               ) : null}
                             </td>
+                            {showPetColumn ? (
                             <td className="client-fin__col-pet">
                               {petName(child.patientId, child.patientName)}
                             </td>
+                            ) : null}
                             <td className="client-fin__col-provider">—</td>
                             <td className="client-fin__col-qty client-fin__num">{child.qty}</td>
                             <td className="client-fin__col-price client-fin__num">
@@ -5192,11 +5631,7 @@ export default function ClientFinancialWorkspace({
                               />
                             </td>
                             <td className="client-fin__col-amount client-fin__num">
-                              {child.isCovered ? (
-                                <span className="client-fin__covered">Covered ❤️</span>
-                              ) : (
-                                money(child.amount)
-                              )}
+                              {child.isCovered ? 'covered' : money(child.amount)}
                             </td>
                             {returning && canReturn ? (
                               <td>
@@ -5234,6 +5669,8 @@ export default function ClientFinancialWorkspace({
                           </Fragment>
                         );
                       })}
+                      </Fragment>
+                      ))}
                     </tbody>
                   </table>
                 </div>
@@ -5991,25 +6428,6 @@ export default function ClientFinancialWorkspace({
           onResolved={(resolution) => addBundleSaleLines(resolution)}
         />
       ) : null}
-      {postVisitSignupOpen ? (
-        <PostVisitMembershipSignup
-          clientId={clientId}
-          choosePet
-          householdPets={allPets.map((p) => ({ id: p.id, name: p.name }))}
-          seedInvoices={scoutInvoices}
-          initialInvoiceIds={
-            selected && (Number(selected.amountPaid) || 0) > 0.009 && selected.status !== 'void'
-              ? [selected.id]
-              : undefined
-          }
-          onClose={() => setPostVisitSignupOpen(false)}
-          onCompleted={() => {
-            void refreshList(selected?.id).then(() => {
-              setNote('Post-visit membership signup completed.');
-            });
-          }}
-        />
-      ) : null}
       {coveragePrompt ? (
         <MembershipCoveragePickerModal
           itemName={coveragePrompt.itemName}
@@ -6024,6 +6442,19 @@ export default function ClientFinancialWorkspace({
             coverageChoiceResolveRef.current?.(id);
             coverageChoiceResolveRef.current = null;
             setCoveragePrompt(null);
+          }}
+        />
+      ) : null}
+      {estimateEditorId ? (
+        <EstimateEditorModal
+          estimateId={estimateEditorId}
+          clientId={clientId}
+          clientName={clientName}
+          pets={allPets}
+          patientId={initialPatientId ?? linePatientId}
+          onClose={() => setEstimateEditorId(null)}
+          onSaved={() => {
+            void refreshEstimates();
           }}
         />
       ) : null}

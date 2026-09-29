@@ -1774,10 +1774,22 @@
   margin-bottom: 4px;
 }
 
-.settings-appt-type-actions-cell {
+.settings-appt-type-actions-cell,
+.settings-row-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  align-items: center;
+}
+
+.settings-row-actions {
+  justify-content: flex-end;
+}
+
+.settings-row-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .settings-appt-type-archive-btn {

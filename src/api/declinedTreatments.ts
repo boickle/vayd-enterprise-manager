@@ -92,3 +92,19 @@ export async function declineReminder(
   );
   return data;
 }
+
+export type CreateDeclinedItemBody = {
+  patientId: number;
+  label?: string;
+  declinedAt?: string;
+  catalogItemType?: 'inventory' | 'procedure' | 'lab' | null;
+  catalogItemId?: number | null;
+  note?: string | null;
+};
+
+export async function createDeclinedItem(
+  body: CreateDeclinedItemBody
+): Promise<DeclinedTreatmentItem> {
+  const { data } = await http.post<DeclinedTreatmentItem>('/reminders/declined', body);
+  return data;
+}

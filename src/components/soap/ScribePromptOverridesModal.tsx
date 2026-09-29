@@ -33,7 +33,7 @@ function errMessage(err: unknown, fallback: string): string {
 
 /**
  * Edit AI scribe custom instructions for a provider.
- * Saved on the employee record and injected into SOAP + Jot polish prompts.
+ * Saved on the employee record: SOAP/Jot notes and the client recap email are separate.
  */
 export default function ScribePromptOverridesModal({
   providerId: initialProviderId,
@@ -47,7 +47,8 @@ export default function ScribePromptOverridesModal({
   }, [providerOptions]);
 
   const [providerId, setProviderId] = useState(initialProviderId);
-  const [text, setText] = useState('');
+  const [soapText, setSoapText] = useState('');
+  const [emailText, setEmailText] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -65,7 +66,10 @@ export default function ScribePromptOverridesModal({
     setError(null);
     getScribePromptOverrides(providerId)
       .then((res) => {
-        if (!canceled) setText(res.scribePromptOverrides ?? '');
+        if (!canceled) {
+          setSoapText(res.scribePromptOverrides ?? '');
+          setEmailText(res.clientEmailPromptOverrides ?? '');
+        }
       })
       .catch((e) => {
         if (!canceled) {
@@ -85,8 +89,11 @@ export default function ScribePromptOverridesModal({
     setSaving(true);
     setError(null);
     try {
-      const trimmed = text.trim();
-      await updateScribePromptOverrides(providerId, trimmed === '' ? null : trimmed);
+      await updateScribePromptOverrides(
+        providerId,
+        soapText.trim() === '' ? null : soapText.trim(),
+        emailText.trim() === '' ? null : emailText.trim()
+      );
       onClose();
     } catch (e) {
       setError(errMessage(e, 'Could not save instructions.'));
@@ -113,10 +120,10 @@ export default function ScribePromptOverridesModal({
           </button>
         </div>
         <p className="soap-modal-sub">
-          Provider-wide instructions for <strong>{providerName}</strong>. They add to the shared AI
-          defaults for SOAP structuring and Jot note cleanup — for example vaccine sites, or
-          default Heart wording when nothing abnormal was said. Only this provider (or an admin)
-          can edit them.
+          Provider-wide instructions for <strong>{providerName}</strong>. SOAP notes stay in the
+          chart; the client email is the letter the owner receives after wrap-up. Each box adds
+          to the shared defaults for that piece only. Only this provider (or an admin) can edit
+          them.
         </p>
         {options && options.length > 1 ? (
           <label className="soap-modal-sub" style={{ display: 'block', marginBottom: 8 }}>
@@ -139,19 +146,42 @@ export default function ScribePromptOverridesModal({
         {loading ? (
           <p className="soap-modal-sub">Loading…</p>
         ) : (
-          <textarea
-            className="soap-input soap-scribe-prompt-textarea"
-            rows={12}
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            placeholder={
-              'Examples:\n' +
-              '• Give leptospirosis in the LH (left hind)\n' +
-              '• Default Heart section to: No murmurs or arrhythmias\n' +
-              '• Bordetella is oral unless otherwise stated'
-            }
-            disabled={saving}
-          />
+          <>
+            <label className="soap-scribe-prompt-label" htmlFor="scribe-prompt-soap">
+              SOAP and Jot notes
+            </label>
+            <textarea
+              id="scribe-prompt-soap"
+              className="soap-input soap-scribe-prompt-textarea"
+              rows={8}
+              value={soapText}
+              onChange={(e) => setSoapText(e.target.value)}
+              placeholder={
+                'Examples:\n' +
+                '• Give leptospirosis in the LH (left hind)\n' +
+                '• Default Heart section to: No murmurs or arrhythmias\n' +
+                '• Bordetella is oral unless otherwise stated'
+              }
+              disabled={saving}
+            />
+            <label className="soap-scribe-prompt-label" htmlFor="scribe-prompt-email">
+              Client recap email
+            </label>
+            <textarea
+              id="scribe-prompt-email"
+              className="soap-input soap-scribe-prompt-textarea soap-scribe-prompt-textarea--email"
+              rows={8}
+              value={emailText}
+              onChange={(e) => setEmailText(e.target.value)}
+              placeholder={
+                'Examples:\n' +
+                '• Open with a short hello and close as Dr. Heather\n' +
+                '• Keep wellness visits to a few short paragraphs\n' +
+                '• Always mention how to reach the field team after hours'
+              }
+              disabled={saving}
+            />
+          </>
         )}
         {error && <p className="soap-scribe-prompt-error">{error}</p>}
         <div className="soap-modal-actions">

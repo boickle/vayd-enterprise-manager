@@ -26,8 +26,11 @@ type PetReview = {
 
 export default function WrapUpChronicReview({
   pets,
+  noWrapper = false,
 }: {
   pets: VisitWrapUpPet[];
+  /** Suppress the outer <section> + heading — use when embedding inside a pet card. */
+  noWrapper?: boolean;
 }) {
   const [rows, setRows] = useState<PetReview[]>([]);
 
@@ -69,15 +72,13 @@ export default function WrapUpChronicReview({
 
   if (rows.length === 0) return null;
 
-  return (
-    <section className="soap-wrapup-section">
-      <h2>
-        <span className="soap-wrapup-step">2</span> Chronic problems &amp; medications
-      </h2>
-      {rows.map((pet) => (
-        <div className="soap-wrapup-chronic" key={pet.patientId}>
-          <strong>{pet.patientName}</strong>
-          <SoapPatientChronicSummary
+  const petRows = rows.map((pet) => (
+    <div
+      className={noWrapper ? 'soap-wrapup-chronic soap-wrapup-chronic--embedded' : 'soap-wrapup-chronic'}
+      key={pet.patientId}
+    >
+      {!noWrapper && <strong>{pet.patientName}</strong>}
+      <SoapPatientChronicSummary
             patientId={pet.patientId}
             practiceId={VISIT_WORKFLOW_PRACTICE_ID}
             encounterId={pet.encounterId}
@@ -110,7 +111,18 @@ export default function WrapUpChronicReview({
             }
           />
         </div>
-      ))}
+  ));
+
+  if (noWrapper) {
+    return <>{petRows}</>;
+  }
+
+  return (
+    <section className="soap-wrapup-section">
+      <h2>
+        <span className="soap-wrapup-step">2</span> Chronic problems &amp; medications
+      </h2>
+      {petRows}
     </section>
   );
 }

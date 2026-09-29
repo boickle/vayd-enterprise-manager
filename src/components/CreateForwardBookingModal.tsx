@@ -313,6 +313,10 @@ export function CreateForwardBookingModal({
       setError('Select how far out to forward book (number and days, weeks, or months).');
       return;
     }
+    if (!bookingNotes.trim()) {
+      setError('Enter a forward booking note.');
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -337,7 +341,7 @@ export function CreateForwardBookingModal({
           { amount, unit: forwardUnit },
           practiceId,
           {
-            bookingNotes: bookingNotes.trim() || null,
+            bookingNotes: bookingNotes.trim(),
             ...(Number.isFinite(providerId) && providerId > 0
               ? { primaryProviderId: providerId }
               : {}),
@@ -378,7 +382,7 @@ export function CreateForwardBookingModal({
         { amount, unit: forwardUnit },
         practiceId,
         {
-          bookingNotes: bookingNotes.trim() || null,
+          bookingNotes: bookingNotes.trim(),
           appointmentTypes,
           patientId: selectedPatient.id,
           clientId: Number.isFinite(clientId) ? clientId : undefined,
@@ -569,9 +573,9 @@ export function CreateForwardBookingModal({
           </label>
 
           <label className="scheduler-edit-field" style={{ display: 'block', marginTop: 10 }}>
-            <span>Forward booking note</span>
+            <span>Forward booking note *</span>
             <p className="settings-muted" style={{ fontSize: 13, margin: '4px 0 8px', fontWeight: 400 }}>
-              Optional — shown on the forward booking list and prefilled when booking the follow-up visit.
+              Required — shown on the forward booking list and prefilled when booking the follow-up visit.
             </p>
             <textarea
               className="settings-input"
@@ -579,6 +583,8 @@ export function CreateForwardBookingModal({
               value={bookingNotes}
               onChange={(e) => setBookingNotes(e.target.value)}
               disabled={busy}
+              required
+              aria-required="true"
               placeholder="e.g. Prefers AM slots, same provider"
               style={{ width: '100%', resize: 'vertical', fontFamily: 'inherit', fontSize: 14 }}
             />

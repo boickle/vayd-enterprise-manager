@@ -20,7 +20,8 @@ export type InvoiceEmailPayment = {
 };
 
 export type InvoiceEmailModel = {
-  kind: 'invoice' | 'receipt';
+  /** `estimate` drops Paid/Due and the pay button — nothing is owed on a quote. */
+  kind: 'invoice' | 'receipt' | 'estimate';
   label: string;
   date?: string;
   clientName: string;
@@ -81,6 +82,7 @@ export function invoiceTableHtml(model: InvoiceEmailModel): string {
       </div>`;
   });
   const paidColor = model.paid > 0.009 ? '#15803d' : '#111827';
+  const isEstimate = model.kind === 'estimate';
   return `<div style="margin:16px 0;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;font-family:Arial,sans-serif;font-size:14px;color:#111827">
     <div style="background:#f3f4f6;padding:10px 12px;font-weight:700">${escapeHtml(model.label)}${model.date ? ` · ${escapeHtml(model.date)}` : ''}</div>
     <table style="width:100%;border-collapse:collapse">
@@ -97,23 +99,75 @@ export function invoiceTableHtml(model: InvoiceEmailModel): string {
     <div style="padding:10px 12px;text-align:right;line-height:1.6">
       <div>Subtotal ${money(model.subtotal)}</div>
       ${model.tax > 0.004 ? `<div>Tax ${money(model.tax)}</div>` : ''}
-      <div><strong>Total ${money(model.total)}</strong></div>
+      <div><strong>${isEstimate ? 'Estimated total' : 'Total'} ${money(model.total)}</strong></div>
       ${
-        pays.length
-          ? `<div style="margin-top:10px;text-align:left;font-size:11px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:#15803d">Payments</div>
+        isEstimate
+          ? ''
+          : `${
+              pays.length
+                ? `<div style="margin-top:10px;text-align:left;font-size:11px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:#15803d">Payments</div>
       <div style="text-align:left">${pays.join('')}</div>
       <div style="border-top:1px solid #86efac;margin:6px 0 8px"></div>`
-          : ''
-      }
+                : ''
+            }
       <div style="color:${paidColor}">Paid ${money(model.paid)}</div>
-      <div><strong>Due ${money(model.due)}</strong></div>
+      <div><strong>Due ${money(model.due)}</strong></div>`
+      }
     </div>
     ${
-      model.payLink && model.due > 0.009
-        ? `<div style="padding:0 12px 12px;text-align:left">${payButtonHtml(model.payLink)}</div>`
-        : ''
+      isEstimate
+        ? `<div style="padding:0 12px 12px;color:#6b7280;font-size:13px">This is an estimate, not a bill. Prices can change if your pet needs something different on the day.</div>`
+        : model.payLink && model.due > 0.009
+          ? `<div style="padding:0 12px 12px;text-align:left">${payButtonHtml(model.payLink)}</div>`
+          : ''
     }
   </div>`;
+}
+
+/**
+ * Shape a quote for the same email pipeline invoices use. Covered lines show as
+ * $0 rather than being dropped, so the family can see what their membership took
+ * off rather than wondering why an item is missing.
+ */
+export function estimateEmailModel(estimate: {
+  estimateNumber: number | null;
+  created: string;
+  subtotal: number;
+  taxTotal: number;
+  total: number;
+  lines: Array<{
+    description: string;
+    patientName?: string | null;
+    qty: number;
+    amount: number;
+    listUnitPrice: number | null;
+    hideOnInvoice: boolean;
+  }>;
+}, clientName: string): InvoiceEmailModel {
+  return {
+    kind: 'estimate',
+    label: `Estimate${estimate.estimateNumber != null ? ` #${estimate.estimateNumber}` : ''}`,
+    date: new Date(estimate.created).toLocaleDateString('en-US'),
+    clientName,
+    lines: estimate.lines
+      .filter((line) => !line.hideOnInvoice)
+      .map((line) => {
+        const qty = Number(line.qty) || 1;
+        const list = line.listUnitPrice != null ? Number(line.listUnitPrice) * qty : null;
+        return {
+          description: line.description,
+          pet: line.patientName ?? undefined,
+          qty,
+          amount: Number(line.amount) || 0,
+          listAmount: list,
+        };
+      }),
+    subtotal: Number(estimate.subtotal) || 0,
+    tax: Number(estimate.taxTotal) || 0,
+    total: Number(estimate.total) || 0,
+    paid: 0,
+    due: 0,
+  };
 }
 
 export type LedgerEmailRow = {
@@ -229,7 +283,7 @@ export async function invoicePdfAttachment(
     'position:fixed;left:-10000px;top:0;width:760px;background:#fff;padding:28px;font-family:Arial,sans-serif;color:#111827';
   host.innerHTML = `
     <h1 style="margin:0 0 4px;font-size:22px">Vet At Your Door</h1>
-    <p style="margin:0 0 16px;color:#6b7280">${model.kind === 'receipt' ? 'Receipt' : 'Invoice'} for ${escapeHtml(model.clientName)}</p>
+    <p style="margin:0 0 16px;color:#6b7280">${model.kind === 'receipt' ? 'Receipt' : model.kind === 'estimate' ? 'Estimate' : 'Invoice'} for ${escapeHtml(model.clientName)}</p>
     ${invoiceTableHtml(model)}
   `;
   document.body.appendChild(host);
@@ -257,7 +311,9 @@ export async function invoicePdfAttachment(
     }
     const dataUrl = pdf.output('datauristring');
     const contentBase64 = dataUrl.split(',')[1] || '';
-    const safe = model.label.replace(/[^\w.-]+/g, '-').replace(/^-|-$/g, '') || 'Invoice';
+    const safe =
+      model.label.replace(/[^\w.-]+/g, '-').replace(/^-|-$/g, '') ||
+      (model.kind === 'estimate' ? 'Estimate' : 'Invoice');
     return {
       filename: `${safe}.pdf`,
       mimeType: 'application/pdf',

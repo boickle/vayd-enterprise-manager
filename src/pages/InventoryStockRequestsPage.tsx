@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router';
 import { useAuth } from '../auth/useAuth';
 import {
   getInventoryBranchStock,
@@ -173,7 +174,9 @@ type Props = { kind: InventoryStockRequestKind };
 
 export default function InventoryStockRequestsPage({ kind }: Props) {
   const { token } = useAuth() as { token: string | null };
+  const [searchParams] = useSearchParams();
   const practiceId = useMemo(() => resolvePracticeIdFromToken(token), [token]);
+  const branchFromUrl = Number(searchParams.get('branchId'));
   const [branches, setBranches] = useState<PracticeBranch[]>([]);
   const [branchId, setBranchId] = useState<number | ''>('');
   const [locations, setLocations] = useState<InventoryBranchLocation[]>([]);
@@ -221,24 +224,28 @@ export default function InventoryStockRequestsPage({ kind }: Props) {
         const active = list.filter((b) => b.isActive !== false);
         setBranches(active);
         let initial: number | '' = '';
-        try {
-          const stored = localStorage.getItem(`${BRANCH_STORAGE_PREFIX}${practiceId}`);
-          if (stored) {
-            const n = Number(stored);
-            if (Number.isFinite(n) && active.some((b) => b.id === n)) initial = n;
+        if (Number.isFinite(branchFromUrl) && active.some((b) => b.id === branchFromUrl)) {
+          initial = branchFromUrl;
+        } else {
+          try {
+            const stored = localStorage.getItem(`${BRANCH_STORAGE_PREFIX}${practiceId}`);
+            if (stored) {
+              const n = Number(stored);
+              if (Number.isFinite(n) && active.some((b) => b.id === n)) initial = n;
+            }
+          } catch {
+            /* ignore */
           }
-        } catch {
-          /* ignore */
-        }
-        if (initial === '') {
-          initial = active.find((b) => b.isDefault)?.id ?? active[0]?.id ?? '';
+          if (initial === '') {
+            initial = active.find((b) => b.isDefault)?.id ?? active[0]?.id ?? '';
+          }
         }
         setBranchId(initial);
       })
       .catch((e: unknown) => {
         setError(e instanceof Error ? e.message : 'Could not load offices');
       });
-  }, [practiceId]);
+  }, [practiceId, branchFromUrl]);
 
   useEffect(() => {
     if (branchId === '') {

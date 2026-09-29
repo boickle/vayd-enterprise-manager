@@ -125,9 +125,16 @@ export type ReminderWithPrice = {
         discountType: string;
         clientStatusName?: string;
         clientStatusCode?: string;
+        itemType?: string;
       };
       personalDiscount?: {
         discount: number;
+      };
+      staffItemDiscount?: {
+        mode?: 'percent' | 'charge' | string;
+        percent?: number;
+        staffCharge?: number;
+        label?: string;
       };
       totalDiscountAmount?: number;
       totalDiscountPercentage?: number;
@@ -608,9 +615,16 @@ export type SearchableItem = {
         discountType: string;
         clientStatusName?: string;
         clientStatusCode?: string;
+        itemType?: string;
       };
       personalDiscount?: {
         discount: number;
+      };
+      staffItemDiscount?: {
+        mode?: 'percent' | 'charge' | string;
+        percent?: number;
+        staffCharge?: number;
+        label?: string;
       };
       totalDiscountAmount?: number;
       totalDiscountPercentage?: number;
@@ -714,6 +728,18 @@ export async function submitReminderFeedback(request: ReminderMappingFeedbackReq
   return data;
 }
 
+/** Learned matches for this reminder text (global and patient-specific). */
+export async function listReminderMappings(
+  reminderText: string,
+  practiceId: number
+): Promise<ReminderItemMapping[]> {
+  const { data } = await http.get<ReminderItemMapping[]>(
+    '/room-loader/reminder-matches/mappings/reminder',
+    { params: { reminderText, practiceId } }
+  );
+  return Array.isArray(data) ? data : [];
+}
+
 // Check item pricing for a patient. Pass the full item object (e.g. from search) so backend has all fields.
 export type CheckItemPricingRequest = {
   patientId: number;
@@ -776,9 +802,16 @@ export type CheckItemPricingResponse = {
         discountType: string;
         clientStatusName?: string;
         clientStatusCode?: string;
+        itemType?: string;
       };
       personalDiscount?: {
         discount: number;
+      };
+      staffItemDiscount?: {
+        mode?: 'percent' | 'charge' | string;
+        percent?: number;
+        staffCharge?: number;
+        label?: string;
       };
       totalDiscountAmount?: number;
       totalDiscountPercentage?: number;

@@ -3,22 +3,23 @@ import {
   formatMemorialItemLine,
   getEuthanasiaConsentStatus,
   parseMemorialItems,
-  sendEuthanasiaConsent,
   type EuthanasiaConsentStatus,
 } from '../../api/consent';
 import { createOrder } from '../../api/visitWorkflow';
 import { apiErrorMessage } from '../../api/http';
-import { notifyEuthanasiaConsentStatusChanged } from '../../utils/euthanasiaConsentSettings';
+import EuthanasiaEstimateModal from './EuthanasiaEstimateModal';
 
 export default function EuthanasiaConsentPanel({
   appointmentId,
   patientId,
+  patientName,
   clientId,
   encounterId,
   onAddedToPlan,
 }: {
   appointmentId: number;
   patientId: number;
+  patientName?: string | null;
   clientId?: number;
   encounterId?: string;
   onAddedToPlan?: () => void;
@@ -28,6 +29,7 @@ export default function EuthanasiaConsentPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [estimateOpen, setEstimateOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     const next = await getEuthanasiaConsentStatus(appointmentId, patientId);
@@ -53,25 +55,8 @@ export default function EuthanasiaConsentPanel({
   if (loading) return null;
   if (!status?.isEuthanasia && !status?.invite) return null;
 
-  const send = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      const result = await sendEuthanasiaConsent({
-        appointmentId,
-        patientId,
-        clientId,
-      });
-      await refresh();
-      notifyEuthanasiaConsentStatusChanged();
-      await navigator.clipboard.writeText(result.formUrl).catch(() => undefined);
-      setCopied(true);
-    } catch (err) {
-      setError(apiErrorMessage(err));
-    } finally {
-      setBusy(false);
-    }
-  };
+  /** Sending runs through the estimate modal — the form quotes the total. */
+  const send = () => setEstimateOpen(true);
 
   const copyLink = async () => {
     if (!status?.invite?.formUrl) return;
@@ -207,10 +192,46 @@ export default function EuthanasiaConsentPanel({
                 : ''}
             </p>
           ) : null}
+          {typeof answers.visitAddressConfirmed === 'string' ? (
+            <p>
+              <strong>Visit address</strong>{' '}
+              {answers.visitAddressConfirmed === 'yes'
+                ? 'Confirmed'
+                : typeof answers.visitAddress === 'object' && answers.visitAddress
+                  ? [
+                      (answers.visitAddress as { line1?: string }).line1,
+                      (answers.visitAddress as { city?: string }).city,
+                      (answers.visitAddress as { state?: string }).state,
+                      (answers.visitAddress as { zip?: string }).zip,
+                    ]
+                      .filter(Boolean)
+                      .join(', ')
+                  : 'Updated'}
+            </p>
+          ) : null}
+          {typeof answers.mailingAddressConfirmed === 'string' ? (
+            <p>
+              <strong>Mailing address</strong>{' '}
+              {answers.mailingAddressConfirmed === 'yes'
+                ? 'Confirmed'
+                : typeof answers.mailingAddress === 'object' && answers.mailingAddress
+                  ? [
+                      (answers.mailingAddress as { line1?: string }).line1,
+                      (answers.mailingAddress as { city?: string }).city,
+                      (answers.mailingAddress as { state?: string }).state,
+                      (answers.mailingAddress as { zip?: string }).zip,
+                    ]
+                      .filter(Boolean)
+                      .join(', ')
+                  : 'Updated'}
+            </p>
+          ) : null}
           {typeof answers.vetsToNotify === 'string' && answers.vetsToNotify && (
             <p>
               <strong>Notify</strong> {answers.vetsToNotify}
-              {typeof answers.otherVetsToNotify === 'string' && answers.otherVetsToNotify
+              {typeof answers.otherVetsToNotify === 'string' &&
+              answers.otherVetsToNotify.trim() &&
+              !/^none$/i.test(answers.otherVetsToNotify.trim())
                 ? `; ${answers.otherVetsToNotify}`
                 : ''}
             </p>
@@ -224,8 +245,22 @@ export default function EuthanasiaConsentPanel({
           ) : null}
         </div>
       )}
+      {estimateOpen && (
+        <EuthanasiaEstimateModal
+          appointmentId={appointmentId}
+          patientId={patientId}
+          patientName={patientName}
+          clientId={clientId ?? null}
+          isResend={Boolean(status.invite)}
+          onClose={() => setEstimateOpen(false)}
+          onSent={() => {
+            setCopied(true);
+            void refresh();
+          }}
+        />
+      )}
       <div className="soap-checkout-actions">
-        <button type="button" className="soap-btn" disabled={busy} onClick={() => void send()}>
+        <button type="button" className="soap-btn" disabled={busy} onClick={send}>
           {status.invite && !status.response ? 'Resend form' : 'Send consent form'}
         </button>
         {status.invite?.formUrl && !status.response && (

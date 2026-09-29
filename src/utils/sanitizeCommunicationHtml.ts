@@ -6,6 +6,20 @@ export function looksLikeHtmlFragment(s: string): boolean {
   return /<[a-z][\s\S]*>/i.test(s);
 }
 
+/**
+ * Turn newlines into breaks when a fragment has no structure of its own.
+ *
+ * A client recap comes back as prose with <strong> on the action items and paragraphs
+ * separated by blank lines, nothing more. That counts as HTML, so it skips the
+ * plain-text escaping path, and the newlines then collapse into spaces and the whole
+ * letter renders as one block. Once the markup carries its own breaks or blocks the
+ * newlines are just source formatting, so leave them be.
+ */
+export function preserveInlineNewlines(html: string): string {
+  if (/<(br|p|div|ul|ol|li|table|h[1-6])\b/i.test(html)) return html;
+  return html.replace(/\n/g, '<br>');
+}
+
 /** Strip tags for one-line summaries and collapsed previews (safe, no script execution). */
 export function htmlToPlainText(html: string): string {
   if (typeof document !== 'undefined') {

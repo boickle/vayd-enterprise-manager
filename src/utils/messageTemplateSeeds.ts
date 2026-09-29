@@ -152,6 +152,19 @@ export const SYSTEM_TEMPLATE_SEEDS: MessageTemplateSeed[] = [
 <p>{{clinic_name}} · {{clinic_phone}}</p>`,
   },
   {
+    systemKey: 'estimate_email',
+    name: 'Estimate — email',
+    description: 'Quote sent before the visit. No pay button — nothing is owed yet.',
+    channel: 'email',
+    category: 'billing',
+    subject: 'Your estimate from {{clinic_name}}',
+    body: `<p>Hi {{client_first_name}},</p>
+<p>Here is the estimate we put together for {{patient_name}}. The estimated total is <strong>{{invoice_total}}</strong>.</p>
+{{invoice_html}}
+<p>Nothing is owed yet — this is just so you know what to expect. Questions? Just reply here.</p>
+<p>{{clinic_name}} · {{clinic_phone}}</p>`,
+  },
+  {
     systemKey: 'receipt_email',
     name: 'Receipt — email',
     description: 'Used when emailing a paid invoice / receipt from the client ledger.',

@@ -71,6 +71,9 @@ export default function SettingsScoutRoles({
   const [manualLoading, setManualLoading] = useState(false);
   const [manualSaving, setManualSaving] = useState(false);
   const selectAllRef = useRef<HTMLInputElement>(null);
+  const onMessageRef = useRef(onMessage);
+  onMessageRef.current = onMessage;
+  const hydratedRoleIdRef = useRef<number | null>(null);
 
   const selectedRole = useMemo(
     () => roles.find((r) => r.id === selectedRoleId) ?? null,
@@ -112,12 +115,12 @@ export default function SettingsScoutRoles({
       const list = await fetchEmployeeRoles({ owner: 'scout' });
       setRoles(Array.isArray(list) ? list : []);
     } catch (e) {
-      onMessage?.(extractErr(e), 'error');
+      onMessageRef.current?.(extractErr(e), 'error');
       setRoles([]);
     } finally {
       setRolesLoading(false);
     }
-  }, [onMessage]);
+  }, []);
 
   useEffect(() => {
     void loadRoles();
@@ -140,7 +143,8 @@ export default function SettingsScoutRoles({
   }, [roles]);
 
   useEffect(() => {
-    if (!selectedRole) {
+    if (selectedRoleId == null) {
+      hydratedRoleIdRef.current = null;
       setEditName('');
       setEditDescription('');
       setEditSlug('');
@@ -151,11 +155,15 @@ export default function SettingsScoutRoles({
       setManualTypeIds([]);
       return;
     }
-    setEditName(selectedRole.name);
-    setEditDescription(selectedRole.description ?? '');
-    setEditSlug(selectedRole.slug ?? '');
-    setEditBranchSpecific(Boolean(selectedRole.isBranchSpecific));
-  }, [selectedRole]);
+    if (hydratedRoleIdRef.current === selectedRoleId) return;
+    const role = roles.find((r) => r.id === selectedRoleId);
+    if (!role) return;
+    hydratedRoleIdRef.current = selectedRoleId;
+    setEditName(role.name);
+    setEditDescription(role.description ?? '');
+    setEditSlug(role.slug ?? '');
+    setEditBranchSpecific(Boolean(role.isBranchSpecific));
+  }, [selectedRoleId, roles]);
 
   const loadAssignments = useCallback(
     async (roleId: number) => {
@@ -176,13 +184,13 @@ export default function SettingsScoutRoles({
           setSelectedByBranch({});
         }
       } catch (e) {
-        onMessage?.(extractErr(e), 'error');
+        onMessageRef.current?.(extractErr(e), 'error');
         setAssignments([]);
       } finally {
         setAssignLoading(false);
       }
     },
-    [onMessage, practiceId]
+    [practiceId]
   );
 
   useEffect(() => {
@@ -203,12 +211,12 @@ export default function SettingsScoutRoles({
         );
       } catch (e) {
         setManualTypeIds([]);
-        onMessage?.(extractErr(e), 'error');
+        onMessageRef.current?.(extractErr(e), 'error');
       } finally {
         setManualLoading(false);
       }
     },
-    [onMessage]
+    []
   );
 
   useEffect(() => {

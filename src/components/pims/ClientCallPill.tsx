@@ -34,7 +34,7 @@ function todayISO(): string {
  * Quo labels turns by OpenPhone user id, which is noise on a chart. Keep the shape of the
  * dialogue but drop the ids — who said what is obvious from two alternating speakers.
  */
-function tidyQuoTranscript(raw: string): string {
+export function tidyQuoTranscript(raw: string): string {
   return raw
     .split('\n')
     .map((line) => line.replace(/^\[[^\]]*\]\s*/, '').trim())

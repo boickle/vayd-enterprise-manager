@@ -43,6 +43,25 @@ export function buildCreateForwardBookingUrl(args: {
 export const LABS_PENDING_FORWARD_BOOKING_TASK_BODY =
   'When lab results are back, add to the forward booking list.';
 
+/**
+ * Whether putting this on the forward booking list is the work. Patient +
+ * appointment links alone are not enough — an invoice or callback task carries
+ * those too, and would otherwise sprout a booking panel it has no use for.
+ */
+export function isForwardBookingTask(task: {
+  body?: string | null;
+  links?: ReadonlyArray<{ entityType: string; entityId: number }>;
+}): boolean {
+  if (!getForwardBookingPrefillFromTaskLinks(task.links)) return false;
+  const body = task.body?.trim();
+  if (!body) return false;
+  if (body === LABS_PENDING_FORWARD_BOOKING_TASK_BODY) return true;
+  // Older tasks carried the booking link in the notes instead of a marker body.
+  return body
+    .split('\n')
+    .some((line) => parseCreateForwardBookingPrefillFromUrl(line.trim()) != null);
+}
+
 export function getForwardBookingPrefillFromTaskLinks(
   links: ReadonlyArray<{ entityType: string; entityId: number }> | undefined
 ): CreateForwardBookingPrefill | null {

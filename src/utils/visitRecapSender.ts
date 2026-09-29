@@ -70,3 +70,90 @@ export function isFallbackSender(fromAddress: string, mailbox: string): boolean 
 export function bareSendAsAddress(value: string): string {
   return bareAddress(value);
 }
+
+/**
+ * Split a To field into unique addresses. Commas and semicolons separate
+ * recipients, but not when they sit inside quotes or `<angle brackets>` so
+ * "Cheeseman, BVM&S <kate@…>" stays one address.
+ */
+export function parseRecapRecipients(raw: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const part of splitRecipientList(raw)) {
+    const email = extractRecipientEmail(part);
+    if (!email) continue;
+    const key = email.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(email);
+  }
+  return out;
+}
+
+function splitRecipientList(raw: string): string[] {
+  if (!raw.trim()) return [];
+  const out: string[] = [];
+  let cur = '';
+  let inQuotes = false;
+  let inAngles = false;
+  for (const ch of raw) {
+    if (ch === '"') {
+      inQuotes = !inQuotes;
+      cur += ch;
+      continue;
+    }
+    if (ch === '<' && !inQuotes) {
+      inAngles = true;
+      cur += ch;
+      continue;
+    }
+    if (ch === '>' && !inQuotes) {
+      inAngles = false;
+      cur += ch;
+      continue;
+    }
+    if ((ch === ',' || ch === ';' || ch === '\n') && !inQuotes && !inAngles) {
+      const trimmed = cur.trim();
+      if (trimmed) out.push(trimmed);
+      cur = '';
+      continue;
+    }
+    cur += ch;
+  }
+  const trimmed = cur.trim();
+  if (trimmed) out.push(trimmed);
+  return out;
+}
+
+function extractRecipientEmail(part: string): string | null {
+  const angled = part.match(/<([^>]+)>/);
+  const email = (angled ? angled[1] : part).trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return null;
+  return email;
+}
+
+/** Closing the Gmail signature sits under. The model often skips it, so send always adds it. */
+export const RECAP_FAREWELL = 'Take care,';
+
+export function recapHasFarewell(text: string): boolean {
+  const tail = (text ?? '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return /(?:take care|warmly|best regards|best wishes|sincerely|with care|all the best)\s*,?$/i.test(
+    tail
+  );
+}
+
+/** Append "Take care," when the letter has no closing of its own. */
+export function ensureRecapFarewell(parts: {
+  html: string;
+  text: string;
+}): { html: string; text: string } {
+  if (recapHasFarewell(parts.text) || recapHasFarewell(parts.html)) return parts;
+  return {
+    text: `${parts.text.replace(/\s+$/, '')}\n\n${RECAP_FAREWELL}`,
+    html: `${parts.html.replace(/(<br\s*\/?>|\s)+$/gi, '')}<br><br>${RECAP_FAREWELL}`,
+  };
+}

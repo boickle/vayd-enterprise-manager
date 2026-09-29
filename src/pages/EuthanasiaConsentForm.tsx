@@ -11,11 +11,16 @@ import {
 } from '../api/consent';
 import axios from 'axios';
 import { storeListingImageUrl, type StoreListing, type StoreVariant } from '../api/onlineStore';
+import { AddressAutocomplete, type AddressFields } from '../components/AddressAutocomplete';
 import ConsentCardPay from '../components/ConsentCardPay';
+import { ManualAddressFields } from '../components/ManualAddressFields';
+import OutsideHospitalPicker, {
+  pickedHospitalsToText,
+  type PickedHospital,
+} from '../components/OutsideHospitalPicker';
 import ConsentMemorialPicker, {
   CLAY_PAW_PRINT_CART_ID,
   ConsentCartFloat,
-  ConsentMemorialList,
   ConsentStoreListingModal,
 } from '../components/ConsentMemorialPicker';
 import SignaturePad from '../components/SignaturePad';
@@ -24,6 +29,7 @@ import {
   DEFAULT_MEMORIAL_SUBCATEGORY,
   DEFAULT_PRIVATE_CREMATION_URNS,
 } from '../utils/euthanasiaConsentSettings';
+import { EMPTY_ADDRESS_FIELDS } from '../utils/verifiedAddress';
 import './EuthanasiaConsentForm.css';
 
 const publicStoreClient = axios.create({
@@ -48,10 +54,13 @@ type ConsentField =
   | 'clientFirstName'
   | 'clientLastName'
   | 'clientEmail'
+  | 'visitAddressConfirmed'
+  | 'visitAddress'
+  | 'mailingAddressConfirmed'
+  | 'mailingAddress'
   | 'petName'
   | 'petWeightLbs'
   | 'vetsToNotify'
-  | 'otherVetsToNotify'
   | 'aftercare'
   | 'aftercareConfirmed'
   | 'nameplateLine1'
@@ -83,6 +92,47 @@ const AFTERCARE: Array<{ value: AftercareChoice; label: string }> = [
 ];
 
 
+function addressIsComplete(addr: AddressFields): boolean {
+  return Boolean(addr.line1.trim() && addr.city.trim() && addr.state.trim() && addr.zip.trim());
+}
+
+function addressDisplayLines(addr: {
+  line1?: string;
+  line2?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+  displayText?: string;
+} | null | undefined): string[] {
+  if (!addr) return [];
+  if (addr.displayText?.trim() && !addr.city?.trim()) return [addr.displayText.trim()];
+  const locality = [addr.city?.trim(), addr.state?.trim()].filter(Boolean).join(', ');
+  return [
+    addr.line1?.trim(),
+    addr.line2?.trim(),
+    [locality, addr.zip?.trim()].filter(Boolean).join(' '),
+  ].filter(Boolean) as string[];
+}
+
+function toAddressFields(addr: {
+  line1?: string;
+  line2?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+  country?: string;
+} | null | undefined): AddressFields {
+  return {
+    ...EMPTY_ADDRESS_FIELDS,
+    line1: addr?.line1 ?? '',
+    line2: addr?.line2 || undefined,
+    city: addr?.city ?? '',
+    state: addr?.state ?? '',
+    zip: addr?.zip ?? '',
+    country: addr?.country || 'US',
+  };
+}
+
 function aftercareLabel(value: AftercareChoice | ''): string {
   return AFTERCARE.find((row) => row.value === value)?.label ?? '';
 }
@@ -112,10 +162,15 @@ export default function EuthanasiaConsentForm() {
   const [clientFirstName, setClientFirstName] = useState('');
   const [clientLastName, setClientLastName] = useState('');
   const [clientEmail, setClientEmail] = useState('');
+  const [visitAddressConfirmed, setVisitAddressConfirmed] = useState<'yes' | 'no' | ''>('');
+  const [visitAddress, setVisitAddress] = useState<AddressFields>({ ...EMPTY_ADDRESS_FIELDS });
+  const [mailingAddressConfirmed, setMailingAddressConfirmed] = useState<'yes' | 'no' | ''>('');
+  const [mailingAddress, setMailingAddress] = useState<AddressFields>({ ...EMPTY_ADDRESS_FIELDS });
+  const [mailingManualEntry, setMailingManualEntry] = useState(false);
   const [petName, setPetName] = useState('');
   const [petWeightLbs, setPetWeightLbs] = useState('');
-  const [vetsToNotify, setVetsToNotify] = useState('');
-  const [otherVetsToNotify, setOtherVetsToNotify] = useState('');
+  const [notifyNone, setNotifyNone] = useState(false);
+  const [notifyHospitals, setNotifyHospitals] = useState<PickedHospital[]>([]);
   const [aftercare, setAftercare] = useState<AftercareChoice | ''>('');
   const [aftercareConfirmed, setAftercareConfirmed] = useState<'yes' | 'no' | ''>('');
   const [nameplateLine1, setNameplateLine1] = useState('');
@@ -213,6 +268,8 @@ export default function EuthanasiaConsentForm() {
         setClientFirstName(payload.client.firstName);
         setClientLastName(payload.client.lastName);
         setClientEmail(payload.client.email);
+        setVisitAddress(toAddressFields(payload.visitAddress));
+        setMailingAddress(toAddressFields(payload.mailingAddress));
         setPetName(payload.pet.name);
         setPetWeightLbs(payload.pet.weightLbs);
       })
@@ -241,7 +298,9 @@ export default function EuthanasiaConsentForm() {
     pawPrintClay && clayIsCharged && form?.pawPrint.clayChargePayment
       ? form.pawPrint.clayChargePayment.amount
       : 0;
-  const payTotal = clayAmount + memorialTotal;
+  // One number for the family: what staff quoted plus anything they picked here.
+  const visitEstimateTotal = Number(form?.visitEstimate?.total ?? 0);
+  const payTotal = visitEstimateTotal + clayAmount + memorialTotal;
   const clayCartItem: ConsentMemorialItem | null = pawPrintClay
     ? {
         listingId: CLAY_PAW_PRINT_CART_ID,
@@ -258,23 +317,39 @@ export default function EuthanasiaConsentForm() {
 
   const validatePage = (index: number): FieldIssue | null => {
     if (index === 0) {
-      if (!clientFirstName.trim()) return { field: 'clientFirstName', message: 'Please enter your first name.' };
-      if (!clientLastName.trim()) return { field: 'clientLastName', message: 'Please enter your last name.' };
-      if (!clientEmail.trim()) return { field: 'clientEmail', message: 'Please enter your email.' };
-      if (!petName.trim()) return { field: 'petName', message: 'Please enter your pet’s name.' };
+      const hasVisitOnFile = addressDisplayLines(form?.visitAddress).length > 0;
+      const hasMailingOnFile = addressDisplayLines(form?.mailingAddress).length > 0;
+      if (hasVisitOnFile && !visitAddressConfirmed) {
+        return {
+          field: 'visitAddressConfirmed',
+          message: 'Please confirm the address we are coming to.',
+        };
+      }
+      if (
+        (!hasVisitOnFile || visitAddressConfirmed === 'no') &&
+        !addressIsComplete(visitAddress)
+      ) {
+        return { field: 'visitAddress', message: 'Please enter the address we should come to.' };
+      }
+      if (hasMailingOnFile && !mailingAddressConfirmed) {
+        return {
+          field: 'mailingAddressConfirmed',
+          message: 'Please confirm your mailing address.',
+        };
+      }
+      if (
+        (!hasMailingOnFile || mailingAddressConfirmed === 'no') &&
+        !addressIsComplete(mailingAddress)
+      ) {
+        return { field: 'mailingAddress', message: 'Please enter your mailing address.' };
+      }
       if (!petWeightLbs.trim()) {
         return { field: 'petWeightLbs', message: 'Please enter your pet’s approximate weight.' };
       }
-      if (!vetsToNotify.trim()) {
+      if (!notifyNone && notifyHospitals.length === 0) {
         return {
           field: 'vetsToNotify',
-          message: 'Please list veterinary practices to notify, or type None.',
-        };
-      }
-      if (!otherVetsToNotify.trim()) {
-        return {
-          field: 'otherVetsToNotify',
-          message: 'Please list any other veterinarians to notify, or type none.',
+          message: 'Please choose who to notify, or select None.',
         };
       }
     }
@@ -368,6 +443,12 @@ export default function EuthanasiaConsentForm() {
       showFieldIssue(issue);
       return;
     }
+    const hasVisitOnFile = addressDisplayLines(form?.visitAddress).length > 0;
+    const hasMailingOnFile = addressDisplayLines(form?.mailingAddress).length > 0;
+    if (hasVisitOnFile && visitAddressConfirmed !== 'yes' && visitAddressConfirmed !== 'no') return;
+    if (hasMailingOnFile && mailingAddressConfirmed !== 'yes' && mailingAddressConfirmed !== 'no') {
+      return;
+    }
     if (!aftercare || aftercareConfirmed !== 'yes') return;
     if (!pawPrintInk && !pawPrintClay && !pawPrintNone) return;
     const memorialTotal = memorialCartTotal(memorialItems);
@@ -397,10 +478,27 @@ export default function EuthanasiaConsentForm() {
           clientFirstName: clientFirstName.trim(),
           clientLastName: clientLastName.trim(),
           clientEmail: clientEmail.trim(),
+          visitAddressConfirmed:
+            visitAddressConfirmed === 'yes' && addressDisplayLines(form?.visitAddress).length
+              ? 'yes'
+              : 'no',
+          visitAddress:
+            visitAddressConfirmed === 'yes' && addressDisplayLines(form?.visitAddress).length
+              ? undefined
+              : visitAddress,
+          mailingAddressConfirmed:
+            mailingAddressConfirmed === 'yes' && addressDisplayLines(form?.mailingAddress).length
+              ? 'yes'
+              : 'no',
+          mailingAddress:
+            mailingAddressConfirmed === 'yes' && addressDisplayLines(form?.mailingAddress).length
+              ? undefined
+              : mailingAddress,
           petName: petName.trim(),
           petWeightLbs: petWeightLbs.trim(),
-          vetsToNotify: vetsToNotify.trim(),
-          otherVetsToNotify: otherVetsToNotify.trim(),
+          vetsToNotify: notifyNone ? 'None' : pickedHospitalsToText(notifyHospitals),
+          // Kept for older staff views / API shape; everything lives in vetsToNotify now.
+          otherVetsToNotify: 'none',
           aftercare,
           aftercareConfirmed: 'yes',
           nameplateLine1: nameplateLine1.trim() || undefined,
@@ -498,126 +596,265 @@ export default function EuthanasiaConsentForm() {
 
         {page === 0 && (
           <>
-            <p>
+            <p className="consent-intro">
               We know this is a difficult time and we hope you are doing okay. This form collects
               a little information about you and {pet}, your aftercare preferences, and your
               consent.
             </p>
-            <label
-              className={`consent-field${fieldError?.field === 'clientFirstName' ? ' is-invalid' : ''}`}
-              data-error-anchor="clientFirstName"
+            <div className="consent-row">
+              <div className="consent-field">
+                <span className="consent-question">First name</span>
+                <div className="consent-readonly">{clientFirstName || '—'}</div>
+              </div>
+              <div className="consent-field">
+                <span className="consent-question">Last name</span>
+                <div className="consent-readonly">{clientLastName || '—'}</div>
+              </div>
+            </div>
+            <div className="consent-field">
+              <span className="consent-question">Your email</span>
+              <div className="consent-readonly">{clientEmail || '—'}</div>
+            </div>
+            <div
+              className={`consent-address-block${fieldError?.field === 'visitAddressConfirmed' || fieldError?.field === 'visitAddress' ? ' is-invalid' : ''}`}
+              data-error-anchor="visitAddressConfirmed"
             >
-              Your first name
-              <input
-                value={clientFirstName}
-                onChange={(e) => {
-                  setClientFirstName(e.target.value);
-                  clearField('clientFirstName');
-                }}
-              />
-              <FieldHint field="clientFirstName" />
-            </label>
-            <label
-              className={`consent-field${fieldError?.field === 'clientLastName' ? ' is-invalid' : ''}`}
-              data-error-anchor="clientLastName"
+              <p className="consent-question">Please confirm the address we are coming to.</p>
+              {addressDisplayLines(form.visitAddress).length ? (
+                <>
+                  <div className="consent-address-card">
+                    {addressDisplayLines(form.visitAddress).map((line) => (
+                      <div key={line}>{line}</div>
+                    ))}
+                  </div>
+                  <div className="consent-options">
+                    {(
+                      [
+                        { value: 'yes', label: 'Yes — that is the address we should come to' },
+                        { value: 'no', label: 'No — we will be at a different address' },
+                      ] as const
+                    ).map((row) => (
+                      <label
+                        key={row.value}
+                        className={`consent-option ${visitAddressConfirmed === row.value ? 'selected' : ''}`}
+                      >
+                        <input
+                          type="radio"
+                          name="visitAddressConfirmed"
+                          checked={visitAddressConfirmed === row.value}
+                          onChange={() => {
+                            setVisitAddressConfirmed(row.value);
+                            clearField('visitAddressConfirmed');
+                            clearField('visitAddress');
+                          }}
+                        />
+                        <span>{row.label}</span>
+                      </label>
+                    ))}
+                  </div>
+                  <FieldHint field="visitAddressConfirmed" />
+                </>
+              ) : (
+                <p className="consent-muted">
+                  We do not have a visit address on file yet. Please enter where we should come.
+                </p>
+              )}
+              {visitAddressConfirmed === 'no' || !addressDisplayLines(form.visitAddress).length ? (
+                <div className="consent-address-edit" data-error-anchor="visitAddress">
+                  {addressDisplayLines(form.visitAddress).length ? (
+                    <p className="consent-question">Where should we come?</p>
+                  ) : null}
+                  <AddressAutocomplete
+                    id="consent-visit-address"
+                    value={visitAddress}
+                    onChange={(next) => {
+                      setVisitAddress(next);
+                      clearField('visitAddress');
+                    }}
+                    error={fieldError?.field === 'visitAddress' ? fieldError.message : undefined}
+                    placeholder="Start typing the address"
+                  />
+                </div>
+              ) : null}
+            </div>
+            <div
+              className={`consent-address-block${fieldError?.field === 'mailingAddressConfirmed' || fieldError?.field === 'mailingAddress' ? ' is-invalid' : ''}`}
+              data-error-anchor="mailingAddressConfirmed"
             >
-              Your last name
-              <input
-                value={clientLastName}
-                onChange={(e) => {
-                  setClientLastName(e.target.value);
-                  clearField('clientLastName');
-                }}
-              />
-              <FieldHint field="clientLastName" />
-            </label>
-            <label
-              className={`consent-field${fieldError?.field === 'clientEmail' ? ' is-invalid' : ''}`}
-              data-error-anchor="clientEmail"
-            >
-              Your email
-              <input
-                type="email"
-                value={clientEmail}
-                onChange={(e) => {
-                  setClientEmail(e.target.value);
-                  clearField('clientEmail');
-                }}
-              />
-              <FieldHint field="clientEmail" />
-            </label>
-            <label
-              className={`consent-field${fieldError?.field === 'petName' ? ' is-invalid' : ''}`}
-              data-error-anchor="petName"
-            >
-              Pet we are helping
-              <input
-                value={petName}
-                onChange={(e) => {
-                  setPetName(e.target.value);
-                  clearField('petName');
-                }}
-              />
-              <FieldHint field="petName" />
-            </label>
-            <label
-              className={`consent-field${fieldError?.field === 'petWeightLbs' ? ' is-invalid' : ''}`}
-              data-error-anchor="petWeightLbs"
-            >
-              Approximate weight (lbs)
-              <input
-                value={petWeightLbs}
-                onChange={(e) => {
-                  setPetWeightLbs(e.target.value);
-                  clearField('petWeightLbs');
-                }}
-              />
-              <FieldHint field="petWeightLbs" />
-            </label>
-            <label
+              <p className="consent-question">
+                Please confirm the mailing address we have on file.
+              </p>
+              <p className="consent-muted">
+                We use this if we need to mail ashes, prescriptions, or other information. PO Boxes
+                are fine.
+              </p>
+              {addressDisplayLines(form.mailingAddress).length ? (
+                <>
+                  <div className="consent-address-card">
+                    {addressDisplayLines(form.mailingAddress).map((line) => (
+                      <div key={line}>{line}</div>
+                    ))}
+                    {form.mailingSameAsVisit ? (
+                      <div className="consent-address-note">Same as the visit address</div>
+                    ) : null}
+                  </div>
+                  <div className="consent-options">
+                    {(
+                      [
+                        { value: 'yes', label: 'Yes — that mailing address is correct' },
+                        { value: 'no', label: 'No — I need to update my mailing address' },
+                      ] as const
+                    ).map((row) => (
+                      <label
+                        key={row.value}
+                        className={`consent-option ${mailingAddressConfirmed === row.value ? 'selected' : ''}`}
+                      >
+                        <input
+                          type="radio"
+                          name="mailingAddressConfirmed"
+                          checked={mailingAddressConfirmed === row.value}
+                          onChange={() => {
+                            setMailingAddressConfirmed(row.value);
+                            clearField('mailingAddressConfirmed');
+                            clearField('mailingAddress');
+                          }}
+                        />
+                        <span>{row.label}</span>
+                      </label>
+                    ))}
+                  </div>
+                  <FieldHint field="mailingAddressConfirmed" />
+                </>
+              ) : (
+                <p className="consent-muted">
+                  We do not have a mailing address on file yet. Please enter the mailing address we
+                  should use.
+                </p>
+              )}
+              {mailingAddressConfirmed === 'no' || !addressDisplayLines(form.mailingAddress).length ? (
+                <div className="consent-address-edit" data-error-anchor="mailingAddress">
+                  <p className="consent-help">
+                    Predictive search works for street addresses; check the box below if yours is a
+                    PO Box or is not listed.
+                  </p>
+                  <label className="consent-po-box">
+                    <input
+                      type="checkbox"
+                      checked={mailingManualEntry}
+                      onChange={(e) => {
+                        const manual = e.target.checked;
+                        setMailingManualEntry(manual);
+                        setMailingAddress({ ...EMPTY_ADDRESS_FIELDS });
+                        clearField('mailingAddress');
+                      }}
+                    />
+                    <span>My mailing address is a PO Box or isn&apos;t listed — I&apos;ll enter it manually</span>
+                  </label>
+                  {mailingManualEntry ? (
+                    <ManualAddressFields
+                      value={mailingAddress}
+                      onChange={(next) => {
+                        setMailingAddress(next);
+                        clearField('mailingAddress');
+                      }}
+                      errors={
+                        fieldError?.field === 'mailingAddress'
+                          ? { 'mailingAddress.line1': fieldError.message }
+                          : {}
+                      }
+                      errorPrefix="mailingAddress"
+                      line1Placeholder="PO Box 123 or street address"
+                    />
+                  ) : (
+                    <AddressAutocomplete
+                      id="consent-mailing-address"
+                      value={mailingAddress}
+                      onChange={(next) => {
+                        setMailingAddress(next);
+                        clearField('mailingAddress');
+                      }}
+                      error={fieldError?.field === 'mailingAddress' ? fieldError.message : undefined}
+                      placeholder="Start typing your mailing address"
+                    />
+                  )}
+                </div>
+              ) : null}
+            </div>
+            <div className="consent-row consent-row--pet">
+              <div className="consent-field">
+                <span className="consent-question">Pet we are helping</span>
+                <div className="consent-readonly">{petName || '—'}</div>
+              </div>
+              <label
+                className={`consent-field consent-field--narrow${fieldError?.field === 'petWeightLbs' ? ' is-invalid' : ''}`}
+                data-error-anchor="petWeightLbs"
+              >
+                <span className="consent-question">Weight (lbs)</span>
+                <input
+                  value={petWeightLbs}
+                  onChange={(e) => {
+                    setPetWeightLbs(e.target.value);
+                    clearField('petWeightLbs');
+                  }}
+                  inputMode="decimal"
+                />
+                <FieldHint field="petWeightLbs" />
+              </label>
+            </div>
+            <div
               className={`consent-field${fieldError?.field === 'vetsToNotify' ? ' is-invalid' : ''}`}
               data-error-anchor="vetsToNotify"
             >
-              Which veterinary practices should we inform about {pet}’s passing? Type “None” if
-              none.
-              <textarea
-                rows={3}
-                value={vetsToNotify}
-                onChange={(e) => {
-                  setVetsToNotify(e.target.value);
-                  clearField('vetsToNotify');
-                }}
-              />
+              <span className="consent-question">
+                Who should we inform about {pet}’s passing?
+              </span>
+              <p className="consent-help">
+                Choose practices from our list, or type a practice or doctor name that is not
+                listed. You can select more than one.
+              </p>
+              {!notifyNone ? (
+                <div className="consent-hospital-picker">
+                  <OutsideHospitalPicker
+                    practiceId={form.practiceId || Number(import.meta.env.VITE_PRACTICE_ID) || 1}
+                    value={notifyHospitals}
+                    onChange={(next) => {
+                      setNotifyHospitals(next);
+                      if (next.length) setNotifyNone(false);
+                      clearField('vetsToNotify');
+                    }}
+                    placeholder="Search or add a practice or doctor…"
+                  />
+                </div>
+              ) : null}
+              <label className={`consent-none-option${notifyNone ? ' is-on' : ''}`}>
+                <input
+                  type="checkbox"
+                  checked={notifyNone}
+                  onChange={(e) => {
+                    const none = e.target.checked;
+                    setNotifyNone(none);
+                    if (none) setNotifyHospitals([]);
+                    clearField('vetsToNotify');
+                  }}
+                />
+                <span>None — there is no one to notify</span>
+              </label>
               <FieldHint field="vetsToNotify" />
-            </label>
-            <label
-              className={`consent-field${fieldError?.field === 'otherVetsToNotify' ? ' is-invalid' : ''}`}
-              data-error-anchor="otherVetsToNotify"
-            >
-              What other veterinarian(s), if any, should we inform? Type “none” if none.
-              <textarea
-                rows={2}
-                value={otherVetsToNotify}
-                onChange={(e) => {
-                  setOtherVetsToNotify(e.target.value);
-                  clearField('otherVetsToNotify');
-                }}
-              />
-              <FieldHint field="otherVetsToNotify" />
-            </label>
+            </div>
           </>
         )}
 
         {page === 1 && (
           <>
             <h2>Aftercare preferences</h2>
-            <p>
+            <p className="consent-intro">
               After {pet} has passed, you may care for them on your own. We also provide
               cremation with return of ashes (private cremation, including a wood urn and
               nameplate) or without return of ashes. Pets whose ashes are not returned are given
               a burial at sea, added with other beloved pets to a Memorial Reef Sphere on the
               ocean floor.
             </p>
+            <p className="consent-question">What aftercare would you like for {pet}?</p>
             <div
               className={`consent-options${fieldError?.field === 'aftercare' ? ' is-invalid' : ''}`}
               data-error-anchor="aftercare"
@@ -653,8 +890,10 @@ export default function EuthanasiaConsentForm() {
                 className={`consent-field${fieldError?.field === 'aftercareConfirmed' ? ' is-invalid' : ''}`}
                 data-error-anchor="aftercareConfirmed"
               >
-                We want to double check. You selected “{aftercareLabel(aftercare)}”. Is that
-                correct?
+                <span className="consent-question">
+                  We want to double check. You selected “{aftercareLabel(aftercare)}”. Is that
+                  correct?
+                </span>
                 <select
                   value={aftercareConfirmed}
                   onChange={(e) => {
@@ -680,7 +919,7 @@ export default function EuthanasiaConsentForm() {
                   className={`consent-field${fieldError?.field === 'nameplateLine1' ? ' is-invalid' : ''}`}
                   data-error-anchor="nameplateLine1"
                 >
-                  Line 1
+                  <span className="consent-question">Line 1</span>
                   <input
                     maxLength={20}
                     value={nameplateLine1}
@@ -692,7 +931,7 @@ export default function EuthanasiaConsentForm() {
                   <FieldHint field="nameplateLine1" />
                 </label>
                 <label className="consent-field">
-                  Line 2 (optional)
+                  <span className="consent-question">Line 2 (optional)</span>
                   <input
                     maxLength={20}
                     value={nameplateLine2}
@@ -700,14 +939,14 @@ export default function EuthanasiaConsentForm() {
                   />
                 </label>
                 <label className="consent-field">
-                  Line 3 (optional)
+                  <span className="consent-question">Line 3 (optional)</span>
                   <input
                     maxLength={20}
                     value={nameplateLine3}
                     onChange={(e) => setNameplateLine3(e.target.value)}
                   />
                 </label>
-                <p>How should we return {pet}’s ashes?</p>
+                <p className="consent-question">How should we return {pet}’s ashes?</p>
                 <div
                   className={`consent-options${fieldError?.field === 'ashReturnMethod' ? ' is-invalid' : ''}`}
                   data-error-anchor="ashReturnMethod"
@@ -788,7 +1027,7 @@ export default function EuthanasiaConsentForm() {
                         className={`consent-field${fieldError?.field === 'ashLeaveNotes' ? ' is-invalid' : ''}`}
                         data-error-anchor="ashLeaveNotes"
                       >
-                        Please describe the safe location
+                        <span className="consent-question">Please describe the safe location</span>
                         <textarea
                           rows={2}
                           value={ashLeaveNotes}
@@ -934,12 +1173,12 @@ export default function EuthanasiaConsentForm() {
             </div>
             {pawPrintClay && form.pawPrint.clayChargePayment ? (
               <p>
-                You chose {form.pawPrint.clayChargePayment.itemName}. We will charge{' '}
+                You chose {form.pawPrint.clayChargePayment.itemName}, which adds{' '}
                 {form.pawPrint.clayChargePayment.amount.toLocaleString('en-US', {
                   style: 'currency',
                   currency: 'USD',
                 })}{' '}
-                on the last page when you submit this form.
+                to your total.
               </p>
             ) : null}
             {clayStoreOpen ? (
@@ -1003,23 +1242,20 @@ export default function EuthanasiaConsentForm() {
                 liability for performing said after-death care.
               </p>
             </div>
-            {cartItems.length > 0 ? (
-              <ConsentMemorialList
-                selected={cartItems}
-                title="Invoice"
-                footer={
-                  payTotal > 0 ? (
-                    <p className="consent-invoice-note">
-                      Your card will be charged{' '}
-                      {payTotal.toLocaleString('en-US', {
-                        style: 'currency',
-                        currency: 'USD',
-                      })}{' '}
-                      when you submit this form.
-                    </p>
-                  ) : null
-                }
-              />
+            {payTotal > 0 ? (
+              <div className="consent-quote">
+                <span className="consent-quote-label">Estimated total for {pet}’s visit</span>
+                <strong className="consent-quote-amount">
+                  {payTotal.toLocaleString('en-US', {
+                    style: 'currency',
+                    currency: 'USD',
+                  })}
+                </strong>
+                <p className="consent-quote-note">
+                  This includes everything you have chosen. Nothing is charged today — we
+                  place a hold on your card and settle the final amount after the visit.
+                </p>
+              </div>
             ) : null}
             <label
               className={`consent-field${fieldError?.field === 'consentAcknowledged' ? ' is-invalid' : ''}`}
@@ -1055,7 +1291,7 @@ export default function EuthanasiaConsentForm() {
             </div>
             {payTotal > 0 ? (
               <div className="consent-pay-block" data-error-anchor="payment">
-                <h3>Payment</h3>
+                <h3>Card on file</h3>
                 <ConsentCardPay
                   name={clientName}
                   email={clientEmail}
@@ -1067,7 +1303,7 @@ export default function EuthanasiaConsentForm() {
               </div>
             ) : null}
             <label className="consent-field">
-              Additional information for us (optional)
+              <span className="consent-question">Additional information for us (optional)</span>
               <textarea
                 rows={3}
                 value={additionalInfo}

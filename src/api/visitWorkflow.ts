@@ -128,6 +128,8 @@ export type VisitInvoiceLine = {
   catalogIsDispensable?: boolean;
   /** Catalog Vaccine flag — hide mail-order. */
   catalogIsVaccine?: boolean;
+  /** Catalog “Allow price change”. Missing/non-catalog lines stay editable. */
+  catalogAllowPriceChange?: boolean;
   /** Encounter for the linked order — vaccine dose save path. */
   encounterId?: string | null;
   catalogChangePatientStatusTo?: string | null;

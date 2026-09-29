@@ -76,6 +76,7 @@ import SettingsPaymentTypes from '../components/settings/SettingsPaymentTypes';
 import SettingsPracticeLetterhead from '../components/settings/SettingsPracticeLetterhead';
 import SettingsEuthanasiaConsent from '../components/settings/SettingsEuthanasiaConsent';
 import SettingsOutsideHospitals from '../components/settings/SettingsOutsideHospitals';
+import SettingsAutomaticTasks from '../components/settings/SettingsAutomaticTasks';
 import SettingsDepositBankAccounts from '../components/settings/SettingsDepositBankAccounts';
 import SettingsClientStatuses from '../components/settings/SettingsClientStatuses';
 import SettingsPatientStatuses from '../components/settings/SettingsPatientStatuses';
@@ -116,6 +117,7 @@ const SETTINGS_TAB_IDS = [
   'memberships',
   'message-templates',
   'forms',
+  'automatic-tasks',
 ] as const;
 type SettingsTabId = (typeof SETTINGS_TAB_IDS)[number];
 
@@ -124,8 +126,10 @@ type SettingsMenuItem = { id: SettingsTabId; label: string };
 const PRACTICE_SETTINGS_ITEMS: SettingsMenuItem[] = [
   { id: 'practice-letterhead', label: 'Letterhead' },
   { id: 'branches-locations', label: 'Branches & Locations' },
+  { id: 'patient-statuses', label: 'Patient Statuses' },
   { id: 'euthanasia-consent', label: 'Euthanasia Consent' },
   { id: 'outside-hospitals', label: 'Outside Hospitals' },
+  { id: 'automatic-tasks', label: 'Automatic Tasks' },
 ];
 
 const SCHEDULING_SETTINGS_ITEMS: SettingsMenuItem[] = [
@@ -159,7 +163,6 @@ const LEGACY_EMPLOYEE_TAB_TO_SECTION: Record<string, EmployeeHubSection> = {
 const FINANCE_SETTINGS_ITEMS: SettingsMenuItem[] = [
   { id: 'payment-types', label: 'Payment Types' },
   { id: 'client-statuses', label: 'Client Discounts' },
-  { id: 'patient-statuses', label: 'Patient Statuses' },
   { id: 'memberships', label: 'Memberships' },
 ];
 
@@ -3121,6 +3124,31 @@ export default function Settings() {
               hours shown in membership agreement copy are generated from this schedule.
             </p>
             <SettingsChatHours
+              practiceId={REMINDERS_PRACTICE_ID}
+              onMessage={(msg, kind) => {
+                if (kind === 'success') {
+                  setSuccess(msg);
+                  setError(null);
+                  window.setTimeout(() => setSuccess(null), 4000);
+                } else {
+                  setError(msg);
+                  setSuccess(null);
+                }
+              }}
+            />
+          </div>
+        )}
+
+        {activeTab === 'automatic-tasks' && (
+          <div className="settings-section">
+            <h2 className="settings-section-title">Automatic Tasks</h2>
+            <p className="settings-section-description">
+              Work that Scout chases on its own — an unfinished chart, an invoice left open, an
+              order nobody placed. Each rule decides how long something may sit, who the task goes
+              to, and who else should see it. A task is only ever created once per thing, so a rule
+              cannot nag twice about the same chart.
+            </p>
+            <SettingsAutomaticTasks
               practiceId={REMINDERS_PRACTICE_ID}
               onMessage={(msg, kind) => {
                 if (kind === 'success') {

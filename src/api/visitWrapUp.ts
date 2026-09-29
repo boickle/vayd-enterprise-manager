@@ -140,6 +140,8 @@ export type ReminderPlanCallback = {
   title: string;
   body?: string | null;
   dueAt?: string | null;
+  /** Applied when the chart is signed — drafts never create a task. */
+  assignedToEmployeeId?: number | null;
 };
 
 /**

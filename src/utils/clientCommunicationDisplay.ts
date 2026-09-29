@@ -1,6 +1,7 @@
 import {
   htmlToPlainText,
   looksLikeHtmlFragment,
+  preserveInlineNewlines,
   sanitizeCommunicationHtml,
 } from './sanitizeCommunicationHtml';
 
@@ -123,7 +124,7 @@ export function communicationBodyForDisplay(raw: string): {
   if (looksLikeHtmlFragment(body)) {
     return {
       subject,
-      html: sanitizeCommunicationHtml(body),
+      html: sanitizeCommunicationHtml(preserveInlineNewlines(body)),
       text: htmlToPlainText(body),
     };
   }
