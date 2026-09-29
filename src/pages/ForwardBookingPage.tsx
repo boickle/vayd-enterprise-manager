@@ -67,7 +67,7 @@ import {
 import {
   buildForwardBookingSmsMessage,
   clientHasSmsPhone,
-  formatForwardBookingSmsBookedSlot,
+  formatForwardBookingSmsBookedSlotFromEntry,
   holdReleaseOptsForAppointment,
   resolveForwardBookingSmsBookedSlot,
 } from '../utils/forwardBookingSmsMessage';
@@ -126,7 +126,10 @@ import {
   type BookedAppointmentMeta,
   type ForwardBookingListTab,
 } from '../utils/forwardBookingListVisibility';
-import type { AppointmentTypeCatalog } from '../utils/appointmentTypeSettings';
+import {
+  resolveAppointmentType,
+  type AppointmentTypeCatalog,
+} from '../utils/appointmentTypeSettings';
 import {
   formatForwardBookingBookAfterDate,
   forwardBookingBookAfterDateIso,
@@ -485,15 +488,6 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
   const isOnHoldView = variant === 'onHold';
   const isBookedView = variant === 'booked';
 
-  const resolveBookedSlotForSms = useCallback(
-    async (entry: ForwardBookingEntry) => {
-      return resolveForwardBookingSmsBookedSlot(entry, practiceTz, {
-        practiceId: PRACTICE_ID,
-      });
-    },
-    [practiceTz]
-  );
-
   const statusFilter: StatusFilter = isOnHoldView
     ? 'onHold'
     : isBookedView
@@ -603,6 +597,32 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
     null
   );
   const typeCatalogRef = useRef<AppointmentTypeCatalog | null>(null);
+
+  const resolveBookedSlotForSms = useCallback(
+    async (entry: ForwardBookingEntry) => {
+      const catalog = typeCatalogRef.current;
+      const typeName =
+        (entry.bookedAppointmentId != null
+          ? bookedApptMeta?.get(entry.bookedAppointmentId)?.typeName
+          : null) ??
+        entry.appointmentTypeName ??
+        null;
+      const type = resolveAppointmentType(catalog ?? undefined, { typeName });
+      return resolveForwardBookingSmsBookedSlot(entry, practiceTz, {
+        practiceId: PRACTICE_ID,
+        appointmentType: type
+          ? {
+              name: type.name,
+              prettyName: type.prettyName,
+              windowBeforeMinutes: type.windowBeforeMinutes,
+              windowAfterMinutes: type.windowAfterMinutes,
+            }
+          : null,
+      });
+    },
+    [practiceTz, bookedApptMeta]
+  );
+
   const [listPage, setListPage] = useState(1);
   const [highlightEntryId, setHighlightEntryId] = useState<number | null>(null);
   const [exitingRows, setExitingRows] = useState<Map<number, 'booked' | 'removed' | 'onHold'>>(() => new Map());
@@ -847,14 +867,6 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
       );
     };
 
-    const bookedSlotFallback = pending.bookedAppointmentStart?.trim()
-      ? formatForwardBookingSmsBookedSlot(
-          pending.bookedAppointmentStart,
-          pending.bookedAppointmentEnd ?? pending.bookedAppointmentStart,
-          practiceTz,
-        )
-      : undefined;
-
     void (async () => {
       let entry: ForwardBookingEntry | undefined;
       let nextRows = rowsRef.current;
@@ -895,6 +907,7 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
       let points =
         bookedApptMeta?.get(pending.bookedAppointmentId)?.points ??
         forwardBookingLinkedAppointmentPoints(entry, bookedApptMeta, catalog);
+      let fetchedBookedTypeName: string | null = null;
       if (points == null && pending.bookedAppointmentId) {
         try {
           const appt = await fetchAppointmentById(pending.bookedAppointmentId, {
@@ -903,14 +916,15 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
           if (appt && catalog) {
             const resolvedPoints = opsPointsForAppointment(appt, catalog);
             points = resolvedPoints;
+            fetchedBookedTypeName =
+              appt.appointmentType?.prettyName?.trim() ||
+              appt.appointmentType?.name?.trim() ||
+              null;
             setBookedApptMeta((prev) => {
               const next = new Map(prev ?? []);
               next.set(pending.bookedAppointmentId, {
                 points: resolvedPoints,
-                typeName:
-                  appt.appointmentType?.prettyName?.trim() ||
-                  appt.appointmentType?.name?.trim() ||
-                  null,
+                typeName: fetchedBookedTypeName,
                 providerInternalId:
                   appt.primaryProvider?.id != null
                     ? String(appt.primaryProvider.id)
@@ -978,7 +992,12 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
 
       if (!isHoldBook) return;
 
-      const smsTarget = await enrichForwardBookingEntryClientPhone(entry);
+      const smsTarget = await enrichForwardBookingEntryClientPhone({
+        ...entry,
+        bookedAppointmentId: pending.bookedAppointmentId,
+        bookedAppointmentStart: pending.bookedAppointmentStart,
+        bookedAppointmentEnd: pending.bookedAppointmentEnd ?? pending.bookedAppointmentStart,
+      });
       const canText = clientHasSmsPhone(smsTarget);
       if (!canText && !canAccessGmailInbox) return;
 
@@ -993,39 +1012,67 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
         ? [smsTarget.patient.name.trim()]
         : [];
 
-      let smsText = '';
-      if (smsTemplate === 'schedule_loader') {
-        const petNames =
-          pending.scheduleLoaderPetNames?.length
+      const typeName =
+        fetchedBookedTypeName ||
+        bookedApptMeta?.get(pending.bookedAppointmentId)?.typeName ||
+        smsTarget.appointmentTypeName ||
+        null;
+      const catalogType = resolveAppointmentType(catalog ?? undefined, { typeName });
+      const appointmentTypeForSms = catalogType
+        ? {
+            name: catalogType.name,
+            prettyName: catalogType.prettyName,
+            windowBeforeMinutes: catalogType.windowBeforeMinutes,
+            windowAfterMinutes: catalogType.windowAfterMinutes,
+          }
+        : null;
+
+      // Prefer resolved arrival window (type ±N / effectiveWindow). Never use the
+      // service block (appointmentStart→End) as the client-facing SMS window.
+      const resolved = await resolveForwardBookingSmsBookedSlot(smsTarget, practiceTz, {
+        practiceId: PRACTICE_ID,
+        appointmentType: appointmentTypeForSms,
+      });
+      const bookedSlot =
+        resolved.bookedSlot ??
+        formatForwardBookingSmsBookedSlotFromEntry(
+          smsTarget,
+          practiceTz,
+          appointmentTypeForSms,
+        );
+
+      const petNames =
+        smsTemplate === 'schedule_loader'
+          ? pending.scheduleLoaderPetNames?.length
             ? pending.scheduleLoaderPetNames
             : forwardPetNames.length
               ? forwardPetNames
-              : petNamesFromEntry;
-        smsText = buildCareOutreachSmsMessage({
-          clientFirstName: smsTarget.client?.firstName,
-          clientDisplayName:
-            pending.scheduleLoaderClientDisplayName?.trim() ||
-            [smsTarget.client?.firstName, smsTarget.client?.lastName]
-              .filter(Boolean)
-              .join(' ')
-              .trim() ||
-            undefined,
-          petNames,
-          providerLastName:
-            pending.scheduleLoaderProviderLastName ?? smsTarget.primaryProvider?.lastName,
-          anyPastDue: pending.scheduleLoaderAnyPastDue !== false,
-          ...(bookedSlotFallback ? { bookedSlot: bookedSlotFallback } : {}),
-          holdRelease,
-        });
-      } else {
-        const petNames =
-          smsTemplate === 'care_outreach' && pending.careOutreachPetNames?.length
+              : petNamesFromEntry
+          : smsTemplate === 'care_outreach' && pending.careOutreachPetNames?.length
             ? pending.careOutreachPetNames
             : forwardPetNames.length
               ? forwardPetNames
               : petNamesFromEntry;
-        smsText =
-          smsTemplate === 'care_outreach'
+
+      const smsText =
+        smsTemplate === 'schedule_loader'
+          ? buildCareOutreachSmsMessage({
+              clientFirstName: smsTarget.client?.firstName,
+              clientDisplayName:
+                pending.scheduleLoaderClientDisplayName?.trim() ||
+                [smsTarget.client?.firstName, smsTarget.client?.lastName]
+                  .filter(Boolean)
+                  .join(' ')
+                  .trim() ||
+                undefined,
+              petNames,
+              providerLastName:
+                pending.scheduleLoaderProviderLastName ?? smsTarget.primaryProvider?.lastName,
+              anyPastDue: pending.scheduleLoaderAnyPastDue !== false,
+              ...(bookedSlot ? { bookedSlot } : {}),
+              holdRelease,
+            })
+          : smsTemplate === 'care_outreach'
             ? buildCareOutreachSmsMessage({
                 clientFirstName: smsTarget.client?.firstName,
                 clientDisplayName: [smsTarget.client?.firstName, smsTarget.client?.lastName]
@@ -1035,15 +1082,14 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
                 petNames,
                 providerLastName: smsTarget.primaryProvider?.lastName,
                 anyPastDue: pending.careOutreachAnyPastDue === true,
-                ...(bookedSlotFallback ? { bookedSlot: bookedSlotFallback } : {}),
+                ...(bookedSlot ? { bookedSlot } : {}),
                 holdRelease,
               })
             : buildForwardBookingSmsMessage(smsTarget, {
-                ...(bookedSlotFallback ? { bookedSlot: bookedSlotFallback } : {}),
+                ...(bookedSlot ? { bookedSlot } : {}),
                 holdRelease,
                 ...(petNames.length ? { petNames } : {}),
               });
-      }
 
       const sourceChip = forwardBookingEntrySourceChip(smsTarget);
       setContactCanText(canText);
@@ -1059,43 +1105,10 @@ export default function ForwardBookingPage({ variant = 'default' }: { variant?: 
       setContactSmsMessage(smsText);
       setContactEntry(smsTarget);
       setContactOpen(true);
-
-      void resolveBookedSlotForSms(smsTarget).then((resolved) => {
-        if (!resolved.bookedSlot) return;
-        const petNames =
-          smsTemplate === 'care_outreach' && pending.careOutreachPetNames?.length
-            ? pending.careOutreachPetNames
-            : forwardPetNames.length
-              ? forwardPetNames
-              : petNamesFromEntry;
-        const refined =
-          smsTemplate === 'care_outreach' || smsTemplate === 'schedule_loader'
-            ? buildCareOutreachSmsMessage({
-                clientFirstName: smsTarget.client?.firstName,
-                clientDisplayName: [smsTarget.client?.firstName, smsTarget.client?.lastName]
-                  .filter(Boolean)
-                  .join(' ')
-                  .trim() || undefined,
-                petNames,
-                providerLastName: smsTarget.primaryProvider?.lastName,
-                anyPastDue:
-                  smsTemplate === 'schedule_loader'
-                    ? pending.scheduleLoaderAnyPastDue !== false
-                    : pending.careOutreachAnyPastDue === true,
-                bookedSlot: resolved.bookedSlot,
-                holdRelease,
-              })
-            : buildForwardBookingSmsMessage(smsTarget, {
-                bookedSlot: resolved.bookedSlot,
-                holdRelease,
-                ...(petNames.length ? { petNames } : {}),
-              });
-        setContactSmsMessage(refined);
-      });
     })().finally(() => {
       postBookReturnProcessingRef.current = false;
     });
-  }, [loading, practiceTz, statusFilter, navigate, beginRowExit, canAccessGmailInbox, resolveBookedSlotForSms]);
+  }, [loading, practiceTz, statusFilter, navigate, beginRowExit, canAccessGmailInbox, bookedApptMeta]);
 
   useEffect(() => {
     void load();

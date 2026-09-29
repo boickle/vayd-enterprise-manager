@@ -3,7 +3,6 @@ import { buildCareOutreachSmsMessage } from './careOutreachSmsMessage';
 import type { ForwardBookingSmsBookedSlot } from './forwardBookingSmsMessage';
 import type { HoldSpotReleaseSmsOpts } from './holdSpotReleaseSmsClause';
 import {
-  formatForwardBookingSmsBookedSlot,
   formatForwardBookingSmsBookedSlotFromAppointment,
 } from './forwardBookingSmsMessage';
 
@@ -58,11 +57,15 @@ export async function resolveScheduleLoaderSmsBookedSlot(
     /* fall through */
   }
   if (fallback?.startIso?.trim()) {
-    return formatForwardBookingSmsBookedSlot(
-      fallback.startIso,
-      fallback.endIso ?? fallback.startIso,
-      practiceTz,
-      fallback.startIso
+    return (
+      formatForwardBookingSmsBookedSlotFromAppointment(
+        {
+          appointmentStart: fallback.startIso.trim(),
+          appointmentEnd: (fallback.endIso ?? fallback.startIso).trim(),
+        },
+        practiceTz,
+        null
+      ) ?? undefined
     );
   }
   return undefined;

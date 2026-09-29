@@ -328,6 +328,7 @@ export default function SoapEncounterPage() {
   const patientId = Number(params.patientId);
   const clientIdParam = searchParams.get('clientId');
   const focusOrderId = searchParams.get('focusOrder');
+  const focusSection = searchParams.get('focus');
 
   const workspaceRef = useRef<HTMLDivElement>(null);
   const splitDragRef = useRef<{ startX: number; startPct: number } | null>(null);
@@ -457,6 +458,17 @@ export default function SoapEncounterPage() {
   const linkedProblemIdsRef = useRef(linkedProblemIds);
   linkedProblemIdsRef.current = linkedProblemIds;
   const [activeTab, setActiveTab] = useState<SoapTabId>('subjective');
+  useEffect(() => {
+    if (focusSection !== 'weight') return;
+    setActiveTab('objective');
+    const handle = window.setTimeout(() => {
+      document.getElementById('soap-weight')?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+      });
+    }, 120);
+    return () => window.clearTimeout(handle);
+  }, [focusSection, patientId]);
   /** Unmatched checkout-prep rows (dismiss / match lowers this). */
   const [checkoutPrepPendingCount, setCheckoutPrepPendingCount] = useState(0);
   const [entryMode, setEntryMode] = useState<'manual' | 'scribe'>('scribe');
@@ -819,6 +831,21 @@ export default function SoapEncounterPage() {
           clientId: clientIdParam ? Number(clientIdParam) : undefined,
         });
         if (canceled) return;
+        setEncounter(enc);
+
+        // Room Loader proposed orders are ready as soon as create/preload returns.
+        // Don't wait for intake summarize — checkout would look empty on first paint.
+        void Promise.all([
+          listOrders(enc.id).catch(() => [] as EncounterOrder[]),
+          refreshInvoice(),
+        ]).then(([ords]) => {
+          if (canceled) return;
+          setOrders(ords);
+          const fromPending = ords
+            .filter((o) => o.state === 'proposed' || o.state === 'declined')
+            .map((o) => o.id);
+          rememberRoomLoaderOrderIds(fromPending);
+        });
 
         // Multi-pet scribe may have parked plan-item suggestions for this chart — hold them
         // separately so ScribePanel's onPlanItemsChange([]) doesn't wipe them on mount.
@@ -2222,6 +2249,7 @@ export default function SoapEncounterPage() {
           <EuthanasiaConsentPanel
             appointmentId={appointmentId}
             patientId={patientId}
+            patientName={patientName}
             clientId={
               encounter?.clientId ??
               (clientIdParam ? Number(clientIdParam) : undefined)

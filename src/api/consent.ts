@@ -27,12 +27,26 @@ export type ProviderPawPrintOffering = {
   clayFree: boolean;
 };
 
+export type ConsentAddress = {
+  line1: string;
+  line2?: string;
+  city: string;
+  state: string;
+  zip: string;
+  country?: string;
+  displayText?: string;
+};
+
 export type EuthanasiaConsentAnswers = {
   clientFirstName: string;
   clientLastName: string;
   clientEmail: string;
   petName: string;
   petWeightLbs: string;
+  visitAddressConfirmed: 'yes' | 'no';
+  visitAddress?: ConsentAddress;
+  mailingAddressConfirmed: 'yes' | 'no';
+  mailingAddress?: ConsentAddress;
   vetsToNotify: string;
   otherVetsToNotify: string;
   aftercare: AftercareChoice;
@@ -142,7 +156,12 @@ export type EuthanasiaConsentForm = {
   token: string;
   expiresAt: string | null;
   providerName: string | null;
+  /** What staff quoted for the visit itself. One number — never itemized here. */
+  visitEstimate: { id: string; total: number } | null;
   client: { firstName: string; lastName: string; email: string };
+  visitAddress?: ConsentAddress | null;
+  mailingAddress?: ConsentAddress | null;
+  mailingSameAsVisit?: boolean;
   pet: { name: string; weightLbs: string };
   pawPrint: {
     offering: ProviderPawPrintOffering;
@@ -245,6 +264,8 @@ export async function sendEuthanasiaConsent(body: {
   appointmentId: number;
   patientId: number;
   clientId?: number;
+  /** Create the form without emailing — tablet / in-person signing. */
+  skipEmail?: boolean;
 }): Promise<{
   inviteId: number;
   sentTo: string;

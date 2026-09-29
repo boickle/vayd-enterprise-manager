@@ -895,7 +895,7 @@ export default function CatalogInventoryClinicalFields({
 
           <label className="settings-label" style={{ maxWidth: 320, marginBottom: 16 }}>
             Change patient status to
-            <FlagHelp text="When this item is charged and the invoice is finalized, the patient’s status is updated. Managed under Settings → Patient Statuses." />
+            <FlagHelp text="When this item is charged and the invoice is finalized, the patient’s status is updated. Managed under Settings → Practice → Patient Statuses." />
             <select
               className="settings-input"
               value={draft.changePatientStatusTo}

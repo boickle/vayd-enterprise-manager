@@ -4,6 +4,7 @@ import {
   getVaccineDefaults,
   saveOrderVaccination,
   VISIT_WORKFLOW_PRACTICE_ID,
+  type OrderPrescription,
   type OrderVaccination,
   type StockDraw,
   type VisitInvoiceLine,
@@ -320,31 +321,38 @@ export default function InvoiceVaccineDoseEditor({
   );
 }
 
-/** Load vaccinations and stock draws for encounters on these invoice lines. */
+/** Load vaccinations, prescriptions and stock draws for encounters on these invoice lines. */
 export async function loadClinicalForInvoiceLines(
   lines: VisitInvoiceLine[]
 ): Promise<{
   vaccinations: Record<string, OrderVaccination>;
+  prescriptions: Record<string, OrderPrescription>;
   stockDraws: Record<string, StockDraw>;
 }> {
   const encounterIds = [
     ...new Set(lines.map((l) => l.encounterId).filter((id): id is string => Boolean(id))),
   ];
   const vaccinations: Record<string, OrderVaccination> = {};
+  const prescriptions: Record<string, OrderPrescription> = {};
   const stockDraws: Record<string, StockDraw> = {};
-  if (!encounterIds.length) return { vaccinations, stockDraws };
+  if (!encounterIds.length) return { vaccinations, prescriptions, stockDraws };
   await Promise.all(
     encounterIds.map(async (encounterId) => {
       const details = await getOrderClinicalDetails(encounterId);
       for (const v of details.vaccinations) {
         if (v.encounterOrderId) vaccinations[v.encounterOrderId] = v;
       }
+      for (const rx of details.prescriptions) {
+        if (rx.encounterOrderId && !rx.discontinuedAt) {
+          prescriptions[rx.encounterOrderId] = rx;
+        }
+      }
       for (const draw of details.stockDraws) {
         stockDraws[draw.orderId] = draw;
       }
     })
   );
-  return { vaccinations, stockDraws };
+  return { vaccinations, prescriptions, stockDraws };
 }
 
 /** Load vaccinations for every encounter represented on vaccine invoice lines. */

@@ -68,47 +68,19 @@ type Props = {
 };
 
 /**
- * The reminders this visit is about to create, before it creates them.
- *
- * Reminders used to appear only after the chart was signed, straight from catalog rules,
- * so a wrong interval had to be chased down on the chart afterwards and a one-off recheck
- * could not be added at all. Editing here writes a plan on the encounter that completion
- * replays, which is why nothing saves once a chart is signed.
+ * Past-due chart reminders this visit will not automatically clear — decline or remove
+ * before sign. Upcoming catalog reminders are created on sign without a review step.
  */
 export default function WrapUpReminders({ encounterId, disabled }: Props) {
   const [pets, setPets] = useState<VisitReminderPet[]>([]);
-  const [visitDeclines, setVisitDeclines] = useState<
-    Record<string, { key: string; label: string; declinedAt: string | null; onChart: boolean }[]>
-  >({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [savingFor, setSavingFor] = useState<string | null>(null);
-  const [addingFor, setAddingFor] = useState<string | null>(null);
   const [pastDueBusyId, setPastDueBusyId] = useState<number | null>(null);
-  /** Which upcoming reminder row is open for date/name edits. */
-  const [editingKey, setEditingKey] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
       const data = await getVisitReminders(encounterId);
       setPets(data.pets);
-      const declined = await Promise.all(
-        data.pets.map(async (pet) => {
-          const orders = await listOrders(pet.soapEncounterId).catch(() => []);
-          return [
-            pet.soapEncounterId,
-            orders
-              .filter((o) => o.state === 'declined')
-              .map((o) => ({
-                key: o.id,
-                label: o.name.trim() || 'Declined treatment',
-                declinedAt: o.updated ?? o.created ?? null,
-                onChart: !isOffRecordDeclineNote(o.note),
-              })),
-          ] as const;
-        }),
-      );
-      setVisitDeclines(Object.fromEntries(declined));
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not load reminders.');
@@ -120,71 +92,6 @@ export default function WrapUpReminders({ encounterId, disabled }: Props) {
   useEffect(() => {
     void load();
   }, [load]);
-
-  const persist = useCallback(
-    async (pet: VisitReminderPet, plan: VisitReminderPet['plan']) => {
-      setSavingFor(pet.soapEncounterId);
-      // Optimistic: the inputs are controlled, so waiting on the round trip would
-      // fight the typist.
-      setPets((prev) =>
-        prev.map((p) => (p.soapEncounterId === pet.soapEncounterId ? { ...p, plan } : p))
-      );
-      try {
-        const data = await saveReminderPlan(pet.soapEncounterId, plan);
-        setPets(data.pets);
-        setError(null);
-      } catch (e) {
-        setError(e instanceof Error ? e.message : 'Could not save that reminder.');
-        void load();
-      } finally {
-        setSavingFor(null);
-      }
-    },
-    [load]
-  );
-
-  const patchReminderRow = useCallback(
-    (pet: VisitReminderPet, reminder: ProposedReminder, patch: ReminderPlanOverride) => {
-      if (reminder.origin === 'manual') {
-        const extras = pet.plan.extras.map((e) =>
-          e.key === reminder.key ? { ...e, ...patch } : e
-        );
-        void persist(pet, { ...pet.plan, extras });
-        return;
-      }
-      const overrides = {
-        ...pet.plan.overrides,
-        [reminder.key]: { ...(pet.plan.overrides[reminder.key] ?? {}), ...patch },
-      };
-      void persist(pet, { ...pet.plan, overrides });
-    },
-    [persist]
-  );
-
-  const removeReminder = useCallback(
-    (pet: VisitReminderPet, reminder: ProposedReminder) => {
-      if (reminder.origin === 'manual') {
-        // Nothing generated it, so dropping it entirely is right — there is no
-        // catalog proposal underneath for a "removed" flag to sit on.
-        void persist(pet, {
-          ...pet.plan,
-          extras: pet.plan.extras.filter((e) => e.key !== reminder.key),
-        });
-        return;
-      }
-      patchReminderRow(pet, reminder, { removed: true });
-    },
-    [patchReminderRow, persist]
-  );
-
-  const addReminder = useCallback(
-    (pet: VisitReminderPet, extra: ReminderPlanExtra) => {
-      void persist(pet, { ...pet.plan, extras: [...pet.plan.extras, extra] });
-      setAddingFor(null);
-      setEditingKey(extra.key);
-    },
-    [persist]
-  );
 
   const removePastDueFromState = useCallback((reminderId: number) => {
     setPets((prev) =>
@@ -255,212 +162,54 @@ export default function WrapUpReminders({ encounterId, disabled }: Props) {
     <div className="soap-wrapup-reminders">
       {error && <div className="soap-error">{error}</div>}
 
-      {pets.map((pet) => {
-        const active = pet.reminders.filter((r) => !r.removed);
-        const dropped = pet.reminders.filter((r) => r.removed);
-        const busy = disabled || pet.locked || savingFor === pet.soapEncounterId;
-
-        return (
+      {pets
+        .filter((pet) => (pet.pastDueReminders ?? []).length > 0)
+        .map((pet) => (
           <div className="soap-wrapup-rem-pet" key={pet.soapEncounterId}>
             <div className="soap-wrapup-rem-pet-head">
               <strong>{pet.patientName}</strong>
               <span className="soap-wrapup-hint">
-                {pet.locked
-                  ? 'Chart signed — these reminders have been created.'
-                  : active.length === 0
-                    ? 'Nothing on this visit generates a reminder.'
-                    : `${active.length} reminder${active.length === 1 ? '' : 's'} will be created when the chart is signed.`}
+                Past due that this visit will not clear
               </span>
             </div>
-
-            {(pet.pastDueReminders ?? []).length > 0 ? (
-              <div className="soap-wrapup-rem-pastdue">
-                <div className="soap-wrapup-rem-pastdue-head">
-                  <strong>Past due on chart ({pet.pastDueReminders!.length})</strong>
-                  <span className="soap-wrapup-hint">
-                    Ones this visit will clear (catalog clear-tags / same wording) are
-                    hidden. Decline (owner said no) or remove (cleanup only) for the rest.
-                  </span>
-                </div>
-                {pet.pastDueReminders!.map((reminder) => {
-                  const rowBusy = pastDueBusyId === reminder.id;
-                  return (
-                    <div className="soap-wrapup-rem-pastdue-row" key={reminder.id}>
-                      <div className="soap-wrapup-rem-pastdue-text">
-                        <strong>{reminder.description}</strong>
-                        <span>
-                          Due{' '}
-                          {reminder.dueDate
-                            ? formatDeclinedDate(reminder.dueDate)
-                            : '—'}
-                        </span>
-                      </div>
-                      <div className="soap-wrapup-rem-pastdue-actions">
-                        <button
-                          type="button"
-                          className="soap-btn ghost small"
-                          disabled={Boolean(rowBusy || disabled)}
-                          title="Owner declined — stays on the chart as declined"
-                          onClick={() => void handleDeclinePastDue(reminder)}
-                        >
-                          🚫 Decline
-                        </button>
-                        <button
-                          type="button"
-                          className="soap-btn ghost small danger"
-                          disabled={Boolean(rowBusy || disabled)}
-                          title="Remove from the reminder list only"
-                          onClick={() => void handleDeletePastDue(reminder)}
-                        >
-                          <X size={13} /> Remove
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : null}
-
-            {active.length > 0 ? (
-              <ul className="soap-wrapup-rem-list">
-                {active.map((reminder) => {
-                  const isEditing = editingKey === reminder.key;
-                  if (isEditing && !pet.locked) {
-                    return (
-                      <li key={reminder.key} className="soap-wrapup-rem-list-edit">
-                        <ReminderRow
-                          reminder={reminder}
-                          disabled={Boolean(busy)}
-                          onPatch={(patch) => patchReminderRow(pet, reminder, patch)}
-                          onRemove={() => {
-                            removeReminder(pet, reminder);
-                            setEditingKey(null);
-                          }}
-                          onDone={() => setEditingKey(null)}
-                        />
-                      </li>
-                    );
-                  }
-                  return (
-                    <li key={reminder.key} className="soap-wrapup-rem-list-row">
-                      <span className="soap-wrapup-rem-list-label">{reminder.description}</span>
-                      {reminder.dueDate ? (
-                        <em className="soap-wrapup-rem-list-due">
-                          Due {toDateInput(reminder.dueDate)}
-                        </em>
-                      ) : null}
-                      {!pet.locked ? (
-                        <span className="soap-wrapup-rem-list-actions">
-                          <button
-                            type="button"
-                            className="soap-btn ghost small"
-                            disabled={Boolean(busy)}
-                            title="Edit reminder"
-                            onClick={() => setEditingKey(reminder.key)}
-                          >
-                            <Pencil size={13} />
-                          </button>
-                          <button
-                            type="button"
-                            className="soap-btn ghost small danger"
-                            disabled={Boolean(busy)}
-                            title="Do not create this reminder"
-                            onClick={() => removeReminder(pet, reminder)}
-                          >
-                            <X size={13} />
-                          </button>
-                        </span>
-                      ) : null}
-                    </li>
-                  );
-                })}
-              </ul>
-            ) : null}
-
-            {dropped.length > 0 && (
-              <div className="soap-wrapup-rem-dropped">
-                {dropped.map((reminder) => (
-                  <div className="soap-wrapup-rem-dropped-row" key={reminder.key}>
-                    <span>{reminder.description} — will not be created</span>
-                    <button
-                      type="button"
-                      className="soap-btn ghost small"
-                      disabled={Boolean(busy)}
-                      onClick={() => patchReminderRow(pet, reminder, { removed: false })}
-                    >
-                      <RotateCcw size={13} /> Put back
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {(() => {
-              const fromChart = (pet.declinedItems ?? []).map((item) => {
-                const catalogMatch =
-                  item.catalogItemId != null
-                    ? pet.reminders.find((r) => r.sourceCatalogItemId === item.catalogItemId)
-                    : null;
-                const label =
-                  item.label && item.label.toLowerCase() !== 'declined item'
-                    ? item.label
-                    : catalogMatch?.description ||
-                      catalogMatch?.sourceLabel ||
-                      'Declined treatment';
-                return {
-                  key: `ti-${item.id}`,
-                  label,
-                  declinedAt: item.declinedAt,
-                  onChart: item.onChart !== false,
-                };
-              });
-              const fromVisit = visitDeclines[pet.soapEncounterId] ?? [];
-              const seen = new Set(fromChart.map((d) => d.label.toLowerCase()));
-              const merged = [
-                ...fromChart,
-                ...fromVisit.filter((d) => !seen.has(d.label.toLowerCase())),
-              ];
-              if (merged.length === 0) return null;
-              return (
-                <div className="soap-wrapup-rem-declined">
-                  {merged.map((item) => (
-                    <div className="soap-wrapup-rem-declined-row" key={item.key}>
-                      <strong>{item.label}</strong>
+            <div className="soap-wrapup-rem-pastdue">
+              {pet.pastDueReminders!.map((reminder) => {
+                const rowBusy = pastDueBusyId === reminder.id;
+                return (
+                  <div className="soap-wrapup-rem-pastdue-row" key={reminder.id}>
+                    <div className="soap-wrapup-rem-pastdue-text">
+                      <strong>{reminder.description}</strong>
                       <span>
-                        Declined
-                        {item.declinedAt ? ` ${formatDeclinedDate(item.declinedAt)}` : ''}
+                        Due{' '}
+                        {reminder.dueDate ? formatDeclinedDate(reminder.dueDate) : '—'}
                       </span>
-                      <em>
-                        {item.onChart
-                          ? 'Will show on the chart'
-                          : 'Will not show on the chart'}
-                      </em>
                     </div>
-                  ))}
-                </div>
-              );
-            })()}
-
-            {!pet.locked &&
-              (addingFor === pet.soapEncounterId ? (
-                <AddReminderForm
-                  patientId={pet.patientId}
-                  onCancel={() => setAddingFor(null)}
-                  onAdd={(extra) => addReminder(pet, extra)}
-                />
-              ) : (
-                <button
-                  type="button"
-                  className="soap-btn ghost small"
-                  disabled={Boolean(disabled)}
-                  onClick={() => setAddingFor(pet.soapEncounterId)}
-                >
-                  <Plus size={13} /> Add a reminder for {pet.patientName}
-                </button>
-              ))}
+                    <div className="soap-wrapup-rem-pastdue-actions">
+                      <button
+                        type="button"
+                        className="soap-btn ghost small"
+                        disabled={Boolean(rowBusy || disabled)}
+                        title="Owner declined — stays on the chart as declined"
+                        onClick={() => void handleDeclinePastDue(reminder)}
+                      >
+                        🚫 Decline
+                      </button>
+                      <button
+                        type="button"
+                        className="soap-btn ghost small danger"
+                        disabled={Boolean(rowBusy || disabled)}
+                        title="Remove from the reminder list only"
+                        onClick={() => void handleDeletePastDue(reminder)}
+                      >
+                        <X size={13} /> Remove
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
-        );
-      })}
+        ))}
     </div>
   );
 }

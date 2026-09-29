@@ -300,6 +300,10 @@ const EMPTY_INVENTORY_CREATE = {
   minimumPrice: '',
   isMedication: false,
   excludePercentageDiscount: false,
+  staffDiscountEnabled: false,
+  staffDiscountMode: 'charge' as StaffDiscountMode,
+  staffDiscountPercent: '',
+  staffCharge: '0',
   isShippingType: false,
   taxLevelValue: 1,
   category: '',
@@ -341,6 +345,187 @@ function optionalNumber(value: string): number | null {
   if (!trimmed) return null;
   const n = Number(trimmed);
   return Number.isFinite(n) ? n : null;
+}
+
+type StaffDiscountMode = 'percent' | 'charge' | 'cost_plus';
+
+type CatalogDiscountDraft = {
+  excludePercentageDiscount: boolean;
+  staffDiscountEnabled: boolean;
+  staffDiscountMode: StaffDiscountMode;
+  staffDiscountPercent: string;
+  staffCharge: string;
+};
+
+const EMPTY_CATALOG_DISCOUNT: CatalogDiscountDraft = {
+  excludePercentageDiscount: false,
+  staffDiscountEnabled: false,
+  staffDiscountMode: 'charge',
+  staffDiscountPercent: '',
+  staffCharge: '0',
+};
+
+function catalogDiscountFromItem(item: Lab | Procedure | InventoryItem): CatalogDiscountDraft {
+  const row = item as Lab & Procedure & InventoryItem;
+  return {
+    excludePercentageDiscount: Boolean(row.excludePercentageDiscount),
+    staffDiscountEnabled: Boolean(row.staffDiscountEnabled),
+    staffDiscountMode:
+      row.staffDiscountMode === 'percent' || row.staffDiscountMode === 'cost_plus'
+        ? row.staffDiscountMode
+        : 'charge',
+    staffDiscountPercent:
+      row.staffDiscountPercent != null && row.staffDiscountPercent !== ''
+        ? String(row.staffDiscountPercent)
+        : '',
+    staffCharge:
+      row.staffCharge != null && row.staffCharge !== '' ? String(row.staffCharge) : '0',
+  };
+}
+
+function catalogDiscountBody(d: CatalogDiscountDraft): Record<string, unknown> {
+  return {
+    excludePercentageDiscount: d.excludePercentageDiscount,
+    staffDiscountEnabled: d.staffDiscountEnabled,
+    staffDiscountMode: d.staffDiscountMode,
+    staffDiscountPercent:
+      d.staffDiscountEnabled &&
+      (d.staffDiscountMode === 'percent' || d.staffDiscountMode === 'cost_plus')
+        ? optionalNumber(d.staffDiscountPercent) ??
+          (d.staffDiscountMode === 'cost_plus' ? 10 : null)
+        : null,
+    staffCharge:
+      d.staffDiscountEnabled && d.staffDiscountMode === 'charge'
+        ? optionalNumber(d.staffCharge) ?? 0
+        : null,
+  };
+}
+
+function CatalogDiscountRulesFields({
+  value,
+  onChange,
+  namePrefix = 'staff-discount-mode',
+}: {
+  value: CatalogDiscountDraft;
+  onChange: (patch: Partial<CatalogDiscountDraft>) => void;
+  namePrefix?: string;
+}) {
+  return (
+    <div style={{ marginTop: 16, marginBottom: 8 }}>
+      <h4 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 6px' }}>Discounts</h4>
+      <p className="settings-muted" style={{ marginBottom: 10, fontSize: 13 }}>
+        These rules apply in room loader, SOAP, and invoicing. Staff pricing only
+        applies when the household is a staff member.
+      </p>
+      <label className="settings-checkbox-item" style={{ marginBottom: 8 }}>
+        <input
+          type="checkbox"
+          checked={value.excludePercentageDiscount}
+          onChange={(e) =>
+            onChange({ excludePercentageDiscount: e.target.checked })
+          }
+        />
+        <span>
+          Exclude percentage discounts
+          <small style={{ display: 'block', color: '#6b7280' }}>
+            Client status (including Employee type rates) and personal % off will
+            not apply to this item.
+          </small>
+        </span>
+      </label>
+      <label className="settings-checkbox-item" style={{ marginBottom: 8 }}>
+        <input
+          type="checkbox"
+          checked={value.staffDiscountEnabled}
+          onChange={(e) => onChange({ staffDiscountEnabled: e.target.checked })}
+        />
+        <span>
+          Discounted for staff
+          <small style={{ display: 'block', color: '#6b7280' }}>
+            Staff households pay a staff discount, cost plus a markup, or a
+            staff charge (often $0) instead of the usual status %.
+          </small>
+        </span>
+      </label>
+      {value.staffDiscountEnabled && (
+        <div
+          style={{
+            marginLeft: 28,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 8,
+            maxWidth: 320,
+          }}
+        >
+          <label className="settings-checkbox-item">
+            <input
+              type="radio"
+              name={namePrefix}
+              checked={value.staffDiscountMode === 'percent'}
+              onChange={() => onChange({ staffDiscountMode: 'percent' })}
+            />
+            <span>Staff discount %</span>
+          </label>
+          {value.staffDiscountMode === 'percent' && (
+            <input
+              type="number"
+              min={0}
+              max={100}
+              step="0.1"
+              className="settings-input"
+              value={value.staffDiscountPercent}
+              onChange={(e) => onChange({ staffDiscountPercent: e.target.value })}
+            />
+          )}
+          <label className="settings-checkbox-item">
+            <input
+              type="radio"
+              name={namePrefix}
+              checked={value.staffDiscountMode === 'cost_plus'}
+              onChange={() =>
+                onChange({
+                  staffDiscountMode: 'cost_plus',
+                  staffDiscountPercent: value.staffDiscountPercent.trim() || '10',
+                })
+              }
+            />
+            <span>Cost + %</span>
+          </label>
+          {value.staffDiscountMode === 'cost_plus' && (
+            <input
+              type="number"
+              min={0}
+              step="0.1"
+              className="settings-input"
+              placeholder="10"
+              value={value.staffDiscountPercent}
+              onChange={(e) => onChange({ staffDiscountPercent: e.target.value })}
+            />
+          )}
+          <label className="settings-checkbox-item">
+            <input
+              type="radio"
+              name={namePrefix}
+              checked={value.staffDiscountMode === 'charge'}
+              onChange={() => onChange({ staffDiscountMode: 'charge' })}
+            />
+            <span>Staff charge</span>
+          </label>
+          {value.staffDiscountMode === 'charge' && (
+            <input
+              type="number"
+              min={0}
+              step="0.01"
+              className="settings-input"
+              placeholder="0.00"
+              value={value.staffCharge}
+              onChange={(e) => onChange({ staffCharge: e.target.value })}
+            />
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 /** Markup % over cost, blank when cost is missing or not positive. */
@@ -428,6 +613,10 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
     minimumPrice: '',
     isMedication: false,
     excludePercentageDiscount: false,
+    staffDiscountEnabled: false,
+    staffDiscountMode: 'charge' as StaffDiscountMode,
+    staffDiscountPercent: '',
+    staffCharge: '0',
     isShippingType: false,
     hideOnInvoice: false,
     excludeFromProduction: false,
@@ -811,9 +1000,7 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
           : '',
       isMedication:
         detail.itemType === 'inventory' && (item as InventoryItem).isMedication === true,
-      excludePercentageDiscount: Boolean(
-        (item as Lab | Procedure).excludePercentageDiscount
-      ),
+      ...catalogDiscountFromItem(item as Lab | Procedure | InventoryItem),
       isShippingType: Boolean((item as Procedure).isShippingType),
       hideOnInvoice: Boolean((item as Procedure).hideOnInvoice),
       excludeFromProduction: Boolean((item as Procedure).excludeFromProduction),
@@ -1678,8 +1865,8 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
         body.excludeFromProduction = coreDraft.excludeFromProduction;
         body.allowPriceChange = coreDraft.allowPriceChange;
       }
+      Object.assign(body, catalogDiscountBody(coreDraft));
       if (selected.itemType === 'lab' || selected.itemType === 'procedure') {
-        body.excludePercentageDiscount = coreDraft.excludePercentageDiscount;
         body.taxLevelValue = coreDraft.taxLevelValue;
         body.category =
           coreDraft.category.trim() === '' ? null : Number(coreDraft.category);
@@ -1713,7 +1900,7 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
         minimumPrice: optionalNumber(createForm.minimumPrice),
         markup: optionalNumber(createForm.markup),
         isMedication: createForm.isMedication,
-        excludePercentageDiscount: createForm.excludePercentageDiscount,
+        ...catalogDiscountBody(createForm),
         taxLevelValue: createForm.taxLevelValue,
         category:
           createForm.category.trim() === '' ? null : Number(createForm.category),
@@ -1775,7 +1962,7 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
               cost: optionalNumber(createForm.cost),
               serviceFee: optionalNumber(createForm.serviceFee),
               minimumPrice: optionalNumber(createForm.minimumPrice),
-              excludePercentageDiscount: createForm.excludePercentageDiscount,
+              ...catalogDiscountBody(createForm),
               taxLevelValue: createForm.taxLevelValue,
               category: createForm.category.trim() === '' ? null : Number(createForm.category),
             }
@@ -2797,21 +2984,6 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                     }
                   />
                 </div>
-                {detail.itemType === 'lab' && (
-                  <label className="settings-checkbox-item" style={{ marginBottom: 8 }}>
-                    <input
-                      type="checkbox"
-                      checked={coreDraft.excludePercentageDiscount}
-                      onChange={(e) =>
-                        setCoreDraft((d) => ({
-                          ...d,
-                          excludePercentageDiscount: e.target.checked,
-                        }))
-                      }
-                    />
-                    <span>Exclude percentage discounts</span>
-                  </label>
-                )}
                 {/*
                   Worded the way eVet words them, and stored the way eVet stores
                   them — hence the inversions. Staff recognize these four labels.
@@ -2866,19 +3038,6 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                           Off fixes the price; staff cannot edit it on an invoice.
                         </small>
                       </span>
-                    </label>
-                    <label className="settings-checkbox-item">
-                      <input
-                        type="checkbox"
-                        checked={!coreDraft.excludePercentageDiscount}
-                        onChange={(e) =>
-                          setCoreDraft((d) => ({
-                            ...d,
-                            excludePercentageDiscount: !e.target.checked,
-                          }))
-                        }
-                      />
-                      <span>Allow discount</span>
                     </label>
                   </div>
                 )}
@@ -3313,6 +3472,20 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                       Refresh
                     </button>
                   </div>
+                  <CatalogDiscountRulesFields
+                    namePrefix="catalog-edit-staff-mode"
+                    value={coreDraft}
+                    onChange={(patch) => setCoreDraft((d) => ({ ...d, ...patch }))}
+                  />
+                  <button
+                    type="button"
+                    className="btn primary"
+                    style={{ marginTop: 8 }}
+                    disabled={coreSaving}
+                    onClick={() => void saveCoreFields()}
+                  >
+                    {coreSaving ? 'Saving…' : 'Save discount rules'}
+                  </button>
                 </div>}
 
               {/* ── Stock tab ────────────────────────────────────── */}
@@ -4286,21 +4459,11 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                   }
                 />
               </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 18 }}>
-                <label className="settings-checkbox-item">
-                  <input
-                    type="checkbox"
-                    checked={createForm.excludePercentageDiscount}
-                    onChange={(e) =>
-                      setCreateForm((f) => ({
-                        ...f,
-                        excludePercentageDiscount: e.target.checked,
-                      }))
-                    }
-                  />
-                  <span>Exclude percentage discounts</span>
-                </label>
-              </div>
+              <CatalogDiscountRulesFields
+                namePrefix="catalog-create-staff-mode"
+                value={createForm}
+                onChange={(patch) => setCreateForm((f) => ({ ...f, ...patch }))}
+              />
 
               {createType === 'inventory' && (
               <>

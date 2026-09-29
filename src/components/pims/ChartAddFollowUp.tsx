@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { Bell, CheckSquare, Phone, Plus } from 'lucide-react';
+import { Ban, Bell, CheckSquare, Phone, Plus } from 'lucide-react';
 import { createPatientReminder } from '../../api/careOutreach';
+import { createDeclinedItem } from '../../api/declinedTreatments';
 import { createTask, type TaskLinkInput } from '../../api/tasks';
 import { fetchAllEmployees, type Employee } from '../../api/appointmentSettings';
 import { listPracticeBranches } from '../../api/branchInventory';
@@ -8,7 +9,7 @@ import { searchItems, type SearchableItem } from '../../api/roomLoader';
 import { formatEmployeeDisplayName } from '../../utils/employeeDisplayName';
 import { fromDatetimeLocalValue, toDatetimeLocalValue } from '../../utils/taskDateTime';
 
-type ComposeKind = 'reminder' | 'callback' | 'task';
+type ComposeKind = 'reminder' | 'callback' | 'task' | 'declined';
 
 type CatalogMatch = {
   type: 'inventory' | 'procedure' | 'lab';
@@ -47,6 +48,12 @@ function fromDateInput(value: string): string | null {
   if (!value.trim()) return null;
   const d = new Date(`${value}T12:00:00`);
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+function todayYmd(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 function defaultTaskDueLocal(): string {
@@ -113,11 +120,25 @@ export default function ChartAddFollowUp({
             <button type="button" role="menuitem" onClick={() => start('task')}>
               <CheckSquare size={13} aria-hidden /> Task
             </button>
+            <button type="button" role="menuitem" onClick={() => start('declined')}>
+              <Ban size={13} aria-hidden /> Declined
+            </button>
           </div>
         ) : null}
       </div>
       {compose === 'reminder' ? (
         <ReminderForm
+          patientId={patientId}
+          practiceId={practiceId}
+          onCancel={() => setCompose(null)}
+          onSaved={() => {
+            setCompose(null);
+            onCreated();
+          }}
+        />
+      ) : null}
+      {compose === 'declined' ? (
+        <DeclinedForm
           patientId={patientId}
           practiceId={practiceId}
           onCancel={() => setCompose(null)}
@@ -308,6 +329,155 @@ function ReminderForm({
           onClick={() => void save()}
         >
           {saving ? 'Saving…' : 'Save reminder'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function DeclinedForm({
+  patientId,
+  practiceId,
+  onCancel,
+  onSaved,
+}: {
+  patientId: number;
+  practiceId: number;
+  onCancel: () => void;
+  onSaved: () => void;
+}) {
+  const [description, setDescription] = useState('');
+  const [declinedAt, setDeclinedAt] = useState(todayYmd);
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<SearchableItem[]>([]);
+  const [match, setMatch] = useState<CatalogMatch | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const searchSeq = useRef(0);
+
+  useEffect(() => {
+    const q = query.trim();
+    if (q.length < 2 || match) {
+      setResults([]);
+      return;
+    }
+    const seq = ++searchSeq.current;
+    const timer = window.setTimeout(() => {
+      void searchItems({ q, practiceId, limit: 8, patientId })
+        .then((rows) => {
+          if (seq === searchSeq.current) setResults(rows);
+        })
+        .catch(() => {
+          if (seq === searchSeq.current) setResults([]);
+        });
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [query, match, practiceId, patientId]);
+
+  const canSave = Boolean(description.trim()) && Boolean(declinedAt);
+
+  const save = async () => {
+    const when = fromDateInput(declinedAt);
+    if (!description.trim() || !when) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await createDeclinedItem({
+        patientId,
+        label: description.trim(),
+        declinedAt: when,
+        catalogItemType: match?.type ?? null,
+        catalogItemId: match?.id ?? null,
+      });
+      onSaved();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not record that declined item.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="pims-emr-add-followup__form">
+      <h4>Add declined</h4>
+      <p className="pims-emr-story__muted">
+        Inventory, procedure, or lab — or write in a name. Stays on the chart under Declined.
+      </p>
+      {error ? <p className="pims-emr-add-followup__error">{error}</p> : null}
+      <label>
+        <span>What was declined</span>
+        <input
+          value={description}
+          placeholder="Search the catalog or type your own…"
+          onChange={(e) => {
+            setDescription(e.target.value);
+            if (match && e.target.value.trim() !== match.name) {
+              setMatch(null);
+            }
+            setQuery(e.target.value);
+          }}
+        />
+      </label>
+      {results.length > 0 && !match ? (
+        <ul className="pims-emr-add-followup__results">
+          {results.map((item) => {
+            const id = catalogSearchId(item);
+            if (id == null) return null;
+            return (
+              <li key={`${item.itemType}-${id}`}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMatch({
+                      type: item.itemType as CatalogMatch['type'],
+                      id,
+                      name: item.name,
+                    });
+                    setDescription(item.name);
+                    setResults([]);
+                    setQuery('');
+                  }}
+                >
+                  {item.name} <em>({item.itemType})</em>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+      {match ? (
+        <span className="pims-emr-add-followup__match">
+          {match.name} <em>({match.type})</em>
+          <button
+            type="button"
+            onClick={() => {
+              setMatch(null);
+              setQuery(description);
+            }}
+          >
+            Change
+          </button>
+        </span>
+      ) : null}
+      <label>
+        <span>Declined date</span>
+        <input
+          type="date"
+          value={declinedAt}
+          onChange={(e) => setDeclinedAt(e.target.value)}
+        />
+      </label>
+      <div className="pims-emr-add-followup__actions">
+        <button type="button" onClick={onCancel}>
+          Cancel
+        </button>
+        <button
+          type="button"
+          className="is-primary"
+          disabled={!canSave || saving}
+          onClick={() => void save()}
+        >
+          {saving ? 'Saving…' : 'Save declined'}
         </button>
       </div>
     </div>

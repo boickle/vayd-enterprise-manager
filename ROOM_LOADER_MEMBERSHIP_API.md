@@ -11,10 +11,9 @@
 
 ### When to show the comparison UI
 
-Show the "See how a membership could change your bill" section only when:
+Show the "See how a membership could change your bill" section when there is at least one **non-member** pet with plans available (e.g. `availablePlansForPets` / per-pet FE plan list is non-empty after excluding pets that already have membership).
 
-- `clientHasMembership === false`
-- `availablePlansForPets` is non-empty (e.g. `availablePlansForPets?.length > 0`).
+Do **not** hide the pitch for the whole household just because one pet is already a member — still pitch for the remaining non-member pets (mixed household). Suppress only for QOL/hospice visits or when every pet on the form is already a member.
 
 ### Shape of availablePlansForPets
 

@@ -1,14 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Pencil, PhoneCall, Plus, Trash2 } from 'lucide-react';
-import {
-  createTask,
-  listTasks,
-  patchTask,
-  type TaskLinkInput,
-  type TaskListItem,
-} from '../../api/tasks';
+import { listTasks, type TaskListItem } from '../../api/tasks';
 import { fetchAllEmployees, type Employee } from '../../api/appointmentSettings';
-import { listPracticeBranches } from '../../api/branchInventory';
 import { formatEmployeeDisplayName } from '../../utils/employeeDisplayName';
 import { toDatetimeLocalValue, fromDatetimeLocalValue } from '../../utils/taskDateTime';
 import {
@@ -18,9 +11,6 @@ import {
   type VisitReminderPet,
   type VisitWrapUpPet,
 } from '../../api/visitWrapUp';
-import { currentPracticeId } from '../../utils/practiceIdFromToken';
-
-const PRACTICE_ID = currentPracticeId();
 
 /** Two days out is the usual "how is the rash doing" window. */
 function defaultDueLocal(): string {
@@ -67,6 +57,8 @@ type Props = {
   /** Pre-selected assignee — the doctor's tech does the calling. */
   defaultAssigneeEmployeeId: number | null;
   disabled?: boolean;
+  /** When set, only show pending callbacks for this patient (for per-pet card embeds). */
+  filterPatientId?: number;
 };
 
 /**
@@ -83,15 +75,15 @@ type Props = {
 export default function WrapUpCallbacks({
   encounterId,
   pets,
-  clientId,
+  clientId: _clientId,
   defaultAssigneeEmployeeId,
   disabled,
+  filterPatientId,
 }: Props) {
   const [existing, setExisting] = useState<TaskListItem[]>([]);
   const [pending, setPending] = useState<PendingCallback[]>([]);
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [employees, setEmployees] = useState<Employee[]>([]);
-  const [branchIds, setBranchIds] = useState<number[]>([]);
   const [composing, setComposing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -161,12 +153,9 @@ export default function WrapUpCallbacks({
   // Only fetched once the doctor opens the form — most visits set no callback at all.
   useEffect(() => {
     if ((!composing && !editingKey) || employees.length > 0) return;
-    void Promise.all([fetchAllEmployees(), listPracticeBranches(PRACTICE_ID)])
-      .then(([emps, branches]) => {
-        setEmployees(emps);
-        setBranchIds(branches.map((b) => b.id));
-      })
-      .catch(() => setError('Could not load staff or branches.'));
+    void fetchAllEmployees()
+      .then((emps) => setEmployees(emps))
+      .catch(() => setError('Could not load staff.'));
   }, [composing, editingKey, employees.length]);
 
   const persistPetCallbacks = async (
@@ -230,79 +219,56 @@ export default function WrapUpCallbacks({
 
   const save = async () => {
     if (!canSave) return;
-    if (branchIds.length === 0) {
-      setError('Could not determine which branch this callback belongs to.');
-      return;
-    }
     setSaving(true);
     setError(null);
     try {
       const due = fromDatetimeLocalValue(dueLocal);
-      const created: {
-        id: number;
-        patientId: number;
-        patientName: string;
-        title: string;
-        body: string | null;
-      }[] = [];
-
+      const { pets: reminderPets } = await getVisitReminders(encounterId);
       for (const row of petRows) {
-        const patientName = petNameById.get(row.patientId) ?? 'Patient';
-        const links: TaskLinkInput[] = [{ entityType: 'patient', entityId: row.patientId }];
-        if (clientId != null) links.push({ entityType: 'client', entityId: clientId });
-        const title = row.title.trim();
-        const body = row.body.trim() || null;
-        const task = await createTask({
-          title,
-          body,
-          kind: 'callback',
-          branchIds,
+        const remPet =
+          reminderPets.find((p) => p.patientId === row.patientId) ??
+          reminderPets.find(
+            (p) =>
+              p.soapEncounterId ===
+              pets.find((x) => x.patientId === row.patientId)?.soapEncounterId
+          );
+        if (!remPet) {
+          throw new Error('Could not load the reminder plan for that pet.');
+        }
+        const callback: ReminderPlanCallback = {
+          key: `cb-${crypto.randomUUID()}`,
+          title: row.title.trim(),
+          body: row.body.trim() || null,
+          dueAt: due ?? null,
           assignedToEmployeeId: assignee ?? null,
-          ...(due ? { dueAt: due } : {}),
-          links,
-        });
-        created.push({
-          id: task.id,
-          patientId: row.patientId,
-          patientName,
-          title,
-          body,
+        };
+        await saveReminderPlan(remPet.soapEncounterId, {
+          overrides: remPet.plan.overrides ?? {},
+          extras: remPet.plan.extras ?? [],
+          callbacks: [...(remPet.plan.callbacks ?? []), callback],
         });
       }
-
-      // Separate tasks so each chart gets its own call note — cross-link same-day siblings.
-      if (created.length > 1) {
-        await Promise.all(
-          created.map((task) => {
-            const siblings = created.filter((s) => s.id !== task.id);
-            const linkNote = [
-              'Same-day household callback — file each pet’s conversation on its own task/chart.',
-              ...siblings.map(
-                (s) => `Also ask about ${s.patientName}: “${s.title}” (task #${s.id})`
-              ),
-            ].join('\n');
-            const nextBody = [task.body?.trim(), linkNote].filter(Boolean).join('\n\n');
-            return patchTask(task.id, { body: nextBody });
-          })
-        );
-      }
-
-      await loadExisting();
+      await loadPending();
       reset();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not create that callback.');
+      setError(e instanceof Error ? e.message : 'Could not save that callback.');
     } finally {
       setSaving(false);
     }
   };
 
+  // When embedded in a per-pet card, only show callbacks for that pet.
+  const visiblePending = filterPatientId != null
+    ? pending.filter((r) => r.patientId === filterPatientId)
+    : pending;
+
   return (
     <div className="soap-wrapup-callbacks">
       {error && <div className="soap-error">{error}</div>}
 
-      {pending.length > 0 && (
+      {visiblePending.length > 0 && (
         <ul className="soap-wrapup-cb-list soap-wrapup-cb-list--pending">
-          {pending.map((row) =>
+          {visiblePending.map((row) =>
             editingKey === row.key ? (
               <li key={row.key} className="soap-wrapup-cb-pending-edit">
                 <PendingCallbackEditor
@@ -541,10 +507,10 @@ export default function WrapUpCallbacks({
             >
               <PhoneCall size={14} />{' '}
               {saving
-                ? 'Creating…'
+                ? 'Saving…'
                 : petRows.length > 1
-                  ? `Create ${petRows.length} callbacks`
-                  : 'Create callback'}
+                  ? `Save ${petRows.length} callbacks`
+                  : 'Save callback'}
             </button>
           </div>
         </div>

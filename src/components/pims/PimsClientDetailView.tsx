@@ -23,6 +23,7 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { listClientStatuses, type ClientStatusRow } from '../../api/clientStatuses';
+import { clientDiscountBadge } from '../../utils/clientDiscountDisplay';
 import { fetchPrimaryProviders, type Provider } from '../../api/employee';
 import { fetchClientByIdStaff, searchClientsStaff, type ClientSearchRow } from '../../api/clientsStaff';
 import {
@@ -1549,7 +1550,7 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
   const address = addressLines(record);
   const geo = geocodeSummary(record);
   const zone = zoneLabel(record);
-  const discount = toNum(record.discount);
+  const discountBadge = clientDiscountBadge(record);
 
   async function handleToggleActive() {
     if (isActive) {
@@ -1699,8 +1700,10 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
                 {scoutState.label}
               </PimsBadge>
             ) : null}
-            {discount != null && discount > 0 ? (
-              <PimsBadge tone="warn">{discount}% discount</PimsBadge>
+            {discountBadge ? (
+              <PimsBadge tone="warn" title={discountBadge.title}>
+                {discountBadge.label}
+              </PimsBadge>
             ) : null}
             {doNotEmail ? <PimsBadge tone="warn">Do not email</PimsBadge> : null}
             {doNotSms ? <PimsBadge tone="warn">Do not SMS</PimsBadge> : null}

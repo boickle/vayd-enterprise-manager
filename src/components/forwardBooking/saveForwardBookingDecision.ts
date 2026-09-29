@@ -89,6 +89,7 @@ export async function saveForwardBookingDecision(
         labs?.title?.trim() ||
         `${opts.labsTaskTitleFallback}${target.patientName ? ` — ${target.patientName}` : ''}`,
       body: LABS_PENDING_FORWARD_BOOKING_TASK_BODY,
+      kind: 'forward_booking',
       branchIds: opts.branchIds,
       assignedToEmployeeId: labs?.assignedToEmployeeId ?? null,
       startAt: labs?.startAt ?? null,

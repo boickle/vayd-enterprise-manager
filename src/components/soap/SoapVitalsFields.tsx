@@ -52,6 +52,7 @@ export default function SoapVitalsFields({
     <>
       <div className="soap-subhead">Vitals (TPR, weight, BCS /9, FAS /5)</div>
       <div
+        id="soap-weight"
         className={[
           'soap-weight',
           addressed ? '' : 'soap-weight--required',

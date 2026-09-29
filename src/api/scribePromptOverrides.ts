@@ -2,6 +2,7 @@ import { http } from './http';
 
 export type ScribePromptOverridesResponse = {
   scribePromptOverrides: string | null;
+  clientEmailPromptOverrides: string | null;
 };
 
 export async function getScribePromptOverrides(
@@ -15,11 +16,12 @@ export async function getScribePromptOverrides(
 
 export async function updateScribePromptOverrides(
   employeeId: number,
-  scribePromptOverrides: string | null
+  scribePromptOverrides: string | null,
+  clientEmailPromptOverrides: string | null
 ): Promise<ScribePromptOverridesResponse> {
   const { data } = await http.put<ScribePromptOverridesResponse>(
     `/employees/${employeeId}/scribe-prompt-overrides`,
-    { scribePromptOverrides }
+    { scribePromptOverrides, clientEmailPromptOverrides }
   );
   return data;
 }

@@ -156,9 +156,10 @@ export function SchedulerEuthanasiaConsentModal({
               {answerStr(answers, 'vetsToNotify') ? (
                 <p>
                   <strong>Notify</strong> {answerStr(answers, 'vetsToNotify')}
-                  {answerStr(answers, 'otherVetsToNotify')
-                    ? `; ${answerStr(answers, 'otherVetsToNotify')}`
-                    : ''}
+                  {(() => {
+                    const other = answerStr(answers, 'otherVetsToNotify');
+                    return other && !/^none$/i.test(other) ? `; ${other}` : '';
+                  })()}
                 </p>
               ) : null}
               {answers.clayChargePayment && typeof answers.clayChargePayment === 'object' ? (

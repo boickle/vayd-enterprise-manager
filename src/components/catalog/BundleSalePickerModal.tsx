@@ -16,6 +16,9 @@ type Props = {
   bundle: Bundle;
   onCancel: () => void;
   onResolved: (resolution: BundleSaleResolution) => void | Promise<void>;
+  /** Estimates: staff can uncheck included add-ons so they are not auto-added. */
+  allowOmitIncluded?: boolean;
+  confirmLabel?: string;
 };
 
 function money(n: number | null | undefined): string {
@@ -61,7 +64,13 @@ function groupReady(group: BundleGroup, selected: number[]): boolean {
  * Step-through picker for sell-once bundle OR / ANY groups. One group per
  * step; Add to invoice only after the last choice.
  */
-export default function BundleSalePickerModal({ bundle, onCancel, onResolved }: Props) {
+export default function BundleSalePickerModal({
+  bundle,
+  onCancel,
+  onResolved,
+  allowOmitIncluded,
+  confirmLabel,
+}: Props) {
   const pickGroups = useMemo(
     () =>
       [...bundle.groups]
@@ -96,6 +105,15 @@ export default function BundleSalePickerModal({ bundle, onCancel, onResolved }: 
     for (const g of pickGroups) init[g.id] = [];
     return init;
   });
+  const [includedOn, setIncludedOn] = useState<Record<number, boolean>>(() => {
+    const init: Record<number, boolean> = {};
+    for (const item of includedItems) {
+      // Same-day / urgent add-ons sit in the package so they can be chosen,
+      // but they should not land on the quote unless staff check them.
+      init[item.id] = !/urgent|same\s*day|add-?on/i.test(item.name);
+    }
+    return init;
+  });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -116,7 +134,23 @@ export default function BundleSalePickerModal({ bundle, onCancel, onResolved }: 
     }));
     try {
       const resolution = await resolveBundleForSale(bundle.id, selections);
-      await onResolved(resolution);
+      const omittedKeys = new Set(
+        allowOmitIncluded
+          ? includedItems
+              .filter((item) => includedOn[item.id] === false)
+              .map((item) => `${item.itemType}:${item.catalogItemId}`)
+          : [],
+      );
+      await onResolved(
+        omittedKeys.size
+          ? {
+              ...resolution,
+              lines: resolution.lines.filter(
+                (line) => !omittedKeys.has(`${line.itemType}:${line.catalogItemId}`),
+              ),
+            }
+          : resolution,
+      );
     } catch (e: unknown) {
       setError(apiErrorMessage(e) || 'Could not expand this bundle.');
       setSubmitting(false);
@@ -153,7 +187,9 @@ export default function BundleSalePickerModal({ bundle, onCancel, onResolved }: 
             <p className="bsp-modal__hint">
               {pickGroups.length > 1
                 ? `Step ${stepIndex + 1} of ${pickGroups.length} — choose for this group, then continue.`
-                : 'Choose options to put on this invoice. Included items are added automatically.'}
+                : allowOmitIncluded
+                  ? 'Choose options. Uncheck anything you do not want on this estimate.'
+                  : 'Choose options to put on this invoice. Included items are added automatically.'}
             </p>
           </div>
           <button type="button" className="bsp-icon-btn" aria-label="Close" onClick={onCancel}>
@@ -227,13 +263,37 @@ export default function BundleSalePickerModal({ bundle, onCancel, onResolved }: 
           {isLast && includedItems.length > 0 ? (
             <section className="bsp-group">
               <header className="bsp-group__head">
-                <h3 className="bsp-group__title">Also included</h3>
+                <h3 className="bsp-group__title">
+                  {allowOmitIncluded ? 'Included — uncheck to leave off' : 'Also included'}
+                </h3>
               </header>
-              <ul className="bsp-included">
-                {includedItems.map((item) => (
-                  <li key={item.id}>{itemLabel(item)}</li>
-                ))}
-              </ul>
+              {allowOmitIncluded ? (
+                <ul className="bsp-options">
+                  {includedItems.map((item) => {
+                    const on = includedOn[item.id] !== false;
+                    return (
+                      <li key={item.id}>
+                        <label className={`bsp-option${on ? ' is-on' : ''}`}>
+                          <input
+                            type="checkbox"
+                            checked={on}
+                            onChange={() =>
+                              setIncludedOn((prev) => ({ ...prev, [item.id]: !on }))
+                            }
+                          />
+                          <span>{itemLabel(item)}</span>
+                        </label>
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : (
+                <ul className="bsp-included">
+                  {includedItems.map((item) => (
+                    <li key={item.id}>{itemLabel(item)}</li>
+                  ))}
+                </ul>
+              )}
             </section>
           ) : null}
         </div>
@@ -269,7 +329,7 @@ export default function BundleSalePickerModal({ bundle, onCancel, onResolved }: 
                 disabled={!stepReady || submitting}
                 onClick={() => void confirm()}
               >
-                {submitting ? 'Adding…' : 'Add to invoice'}
+                {submitting ? 'Adding…' : confirmLabel ?? 'Add to invoice'}
               </button>
             ) : (
               <button

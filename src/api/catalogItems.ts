@@ -26,6 +26,10 @@ export type CatalogCoreFields = {
   category?: number | null;
   taxLevelValue?: number | null;
   excludePercentageDiscount?: boolean;
+  staffDiscountEnabled?: boolean;
+  staffDiscountMode?: 'percent' | 'charge' | 'cost_plus';
+  staffDiscountPercent?: number | null;
+  staffCharge?: number | null;
   isShippingType?: boolean;
   /** eVet flags, procedures only — inventory items have their own editor. */
   hideOnInvoice?: boolean;

@@ -6,7 +6,6 @@ import type { HoldSpotReleaseSmsOpts } from './holdSpotReleaseSmsClause';
 import { appendHoldSpotReleaseClause } from './holdSpotReleaseSmsClause';
 import { fetchAppointmentById } from '../api/appointments';
 import {
-  formatForwardBookingSmsBookedSlot,
   formatForwardBookingSmsBookedSlotFromAppointment,
 } from './forwardBookingSmsMessage';
 
@@ -104,11 +103,15 @@ export async function resolveWaitlistSmsBookedSlot(
     /* fall through */
   }
   if (fallback?.startIso?.trim()) {
-    return formatForwardBookingSmsBookedSlot(
-      fallback.startIso,
-      fallback.endIso ?? fallback.startIso,
-      practiceTz,
-      fallback.startIso,
+    return (
+      formatForwardBookingSmsBookedSlotFromAppointment(
+        {
+          appointmentStart: fallback.startIso.trim(),
+          appointmentEnd: (fallback.endIso ?? fallback.startIso).trim(),
+        },
+        practiceTz,
+        null,
+      ) ?? undefined
     );
   }
   return undefined;

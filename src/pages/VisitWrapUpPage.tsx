@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import {
   ArrowLeft,
+  BellRing,
   CalendarClock,
   Check,
   CheckCircle2,
@@ -11,10 +12,11 @@ import {
   Mail,
   MailX,
   PawPrint,
-  Pencil,
   RefreshCw,
   Send,
+  SlidersHorizontal,
   Syringe,
+  X,
 } from 'lucide-react';
 import './SoapEncounterPage.css';
 import './VisitWrapUpPage.css';
@@ -30,26 +32,52 @@ import {
   getVisitReminders,
   getVisitWrapUp,
   recordClientEmailDecision,
+  type PastDueReminder,
+  type VisitReminderPet,
   type VisitWrapUp,
   type VisitWrapUpPet,
 } from '../api/visitWrapUp';
+import { declineReminder, formatDeclinedDate } from '../api/declinedTreatments';
+import { patchReminder } from '../api/careOutreach';
+import { appConfirm, appPrompt } from '../utils/appDialog';
 import { createTask } from '../api/tasks';
 import { listPracticeBranches } from '../api/branchInventory';
-import { fetchGmailMailboxes, fetchGmailSendAs, sendGmailMessage, type GmailSendAsAlias } from '../api/gmail';
+import {
+  fetchGmailMailboxes,
+  fetchGmailSendAs,
+  fetchGmailSendAsAlias,
+  sendGmailMessage,
+  type GmailSendAsAlias,
+} from '../api/gmail';
+import {
+  plainTextFromHtml,
+  signatureHtmlForFromAlias,
+} from '../components/gmail/gmailCompose';
+import { sanitizeCommunicationHtml } from '../utils/sanitizeCommunicationHtml';
 import { forwardBookingDispositionIsComplete } from '../utils/forwardBookingDisposition';
 import {
   formatSendAsLabel,
   isFallbackSender,
+  ensureRecapFarewell,
+  recapHasFarewell,
+  RECAP_FAREWELL,
+  parseRecapRecipients,
   resolveRecapFromAddress,
   resolveRecapMailbox,
 } from '../utils/visitRecapSender';
 import WrapUpForwardBooking from '../components/soap/WrapUpForwardBooking';
-import WrapUpReminders from '../components/soap/WrapUpReminders';
+// WrapUpReminders is now inlined per-pet — see per-pet card render below.
 import WrapUpCallbacks from '../components/soap/WrapUpCallbacks';
 import WrapUpChronicReview from '../components/soap/WrapUpChronicReview';
+import SoapRichTextField, {
+  soapTextToEditorHtml,
+} from '../components/soap/SoapRichTextField';
+import { soapHtmlToPlainText } from '../utils/sanitizeCommunicationHtml';
 import { commitSoapChronicDraft, readSoapChronicDraft } from '../utils/soapChronicDraft';
 import { reconcileBookedFollowUp } from '../components/forwardBooking/bookFollowUpNow';
 import { isWeightAddressed, vitalsFromValue } from '../utils/soapVitals';
+import { useAuth } from '../auth/useAuth';
+import ScribePromptOverridesModal from '../components/soap/ScribePromptOverridesModal';
 
 /** `Name <a@b.com>` → `a@b.com`, for the address we hand back to the recorder. */
 function bareAddress(value: string): string {
@@ -123,7 +151,21 @@ export default function VisitWrapUpPage() {
   const [wrapUp, setWrapUp] = useState<VisitWrapUp | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [expandedPetId, setExpandedPetId] = useState<number | null>(null);
+
+  // Per-pet card expand state
+  const [expandedSoaps, setExpandedSoaps] = useState<Set<number>>(new Set());
+  const [expandedReminders, setExpandedReminders] = useState<Set<number>>(new Set());
+
+  // Inline SOAP editing — keyed by patientId
+  type SoapDraft = { S: string; O: string; A: string; P: string };
+  const [soapDrafts, setSoapDrafts] = useState<Map<number, SoapDraft>>(new Map());
+  const [soapSaving, setSoapSaving] = useState<Set<number>>(new Set());
+  const [soapSaveError, setSoapSaveError] = useState<Map<number, string>>(new Map());
+
+  // Reminder data (past-due, proposed, declined items) — one fetch covers the household
+  const [reminderPets, setReminderPets] = useState<VisitReminderPet[]>([]);
+  const [pastDueBusyId, setPastDueBusyId] = useState<number | null>(null);
+  const [reminderError, setReminderError] = useState<string | null>(null);
 
   // Email state
   const [selectedPetIds, setSelectedPetIds] = useState<Set<number>>(new Set());
@@ -136,6 +178,8 @@ export default function VisitWrapUpPage() {
   const [skipping, setSkipping] = useState(false);
   const [skipReason, setSkipReason] = useState('');
   const [showSkip, setShowSkip] = useState(false);
+  /** Reopen the composer after a recap was already sent or skipped, to correct a mistake. */
+  const [redoingEmail, setRedoingEmail] = useState(false);
 
   const [mailbox, setMailbox] = useState<string | null>(null);
   const [fromAddress, setFromAddress] = useState<string | null>(null);
@@ -144,6 +188,16 @@ export default function VisitWrapUpPage() {
   const [emailHydrated, setEmailHydrated] = useState(false);
 
   const [completing, setCompleting] = useState(false);
+  const [showPromptOverrides, setShowPromptOverrides] = useState(false);
+
+  const { employeeId, role } = useAuth() as {
+    employeeId?: string | null;
+    role?: string | string[] | null;
+  };
+  const scribeEnabled = String(import.meta.env.VITE_ENABLE_SCRIBE ?? '').toLowerCase() === 'true';
+  const rolesLower = (Array.isArray(role) ? role : []).map((r) => String(r).toLowerCase());
+  const isAdmin = rolesLower.some((r) => r === 'admin' || r === 'superadmin');
+  const selfEmployeeId = employeeId != null && employeeId !== '' ? Number(employeeId) : NaN;
 
   const wrapUpPath = `/schedule/soap/${appointmentId}/${patientId}/wrap-up${
     clientIdParam ? `?clientId=${encodeURIComponent(clientIdParam)}` : ''
@@ -198,6 +252,10 @@ export default function VisitWrapUpPage() {
         });
         if (canceled) return;
         setEncounterId(enc.id);
+        // Load reminder data in parallel — past-due, proposed, declined items
+        void getVisitReminders(enc.id)
+          .then(({ pets: rp }) => { if (!canceled) setReminderPets(rp); })
+          .catch(() => { /* non-critical; actions still work */ });
         const data = await loadWrapUp(enc.id);
         if (canceled) return;
         const petIds = data.pets.map((p) => p.patientId);
@@ -289,6 +347,35 @@ export default function VisitWrapUpPage() {
     };
   }, [wrapUp]);
 
+  const signatureHtml = useMemo(
+    () => (fromAddress ? signatureHtmlForFromAlias(sendAsOptions, fromAddress) : ''),
+    [fromAddress, sendAsOptions]
+  );
+
+  // The list endpoint sometimes omits the HTML signature; fetch the alias if we
+  // still don't have one for the chosen From.
+  useEffect(() => {
+    if (!mailbox || !fromAddress || signatureHtml.trim()) return;
+    const email = bareAddress(fromAddress);
+    if (!email) return;
+    let canceled = false;
+    void fetchGmailSendAsAlias(mailbox, email)
+      .then((detail) => {
+        if (canceled || !detail.signature?.trim()) return;
+        setSendAsOptions((prev) =>
+          prev.map((a) =>
+            a.sendAsEmail.toLowerCase() === email ? { ...a, ...detail } : a
+          )
+        );
+      })
+      .catch(() => {
+        /* Signature is optional; the recap still sends. */
+      });
+    return () => {
+      canceled = true;
+    };
+  }, [mailbox, fromAddress, signatureHtml]);
+
   const pets = useMemo(() => wrapUp?.pets ?? [], [wrapUp]);
   const selectedPets = useMemo(
     () => pets.filter((p) => selectedPetIds.has(p.patientId)),
@@ -339,6 +426,130 @@ export default function VisitWrapUpPage() {
   const canComplete =
     followUpComplete && emailDecided && clinicalComplete && weightComplete && !allLocked;
 
+  const toggleSoap = useCallback((pet: VisitWrapUpPet) => {
+    const { patientId } = pet;
+    setExpandedSoaps((prev) => {
+      const next = new Set(prev);
+      if (next.has(patientId)) next.delete(patientId);
+      else next.add(patientId);
+      return next;
+    });
+    // Initialise the local draft on first open so textareas have something to bind
+    setSoapDrafts((prev) => {
+      if (prev.has(patientId)) return prev;
+      const next = new Map(prev);
+      next.set(patientId, {
+        S: pet.subjectiveHistory ?? '',
+        O: pet.objectiveNotes ?? '',
+        A: pet.assessmentReasoning ?? '',
+        P: pet.planNotes ?? '',
+      });
+      return next;
+    });
+  }, []);
+
+  const toggleReminders = useCallback((patientId: number) => {
+    setExpandedReminders((prev) => {
+      const next = new Set(prev);
+      if (next.has(patientId)) next.delete(patientId);
+      else next.add(patientId);
+      return next;
+    });
+  }, []);
+
+  const saveSoapField = useCallback(
+    async (pet: VisitWrapUpPet, field: 'S' | 'O' | 'A' | 'P', value: string) => {
+      if (!encounterId) return;
+      setSoapSaving((prev) => new Set(prev).add(pet.patientId));
+      setSoapSaveError((prev) => { const n = new Map(prev); n.delete(pet.patientId); return n; });
+      try {
+        if (field === 'S') {
+          // subjectiveHistory lives inside enc.subjective.history (JSON object)
+          const enc = await getEncounter(pet.soapEncounterId);
+          const prev =
+            enc.subjective && typeof enc.subjective === 'object'
+              ? (enc.subjective as Record<string, unknown>)
+              : {};
+          await updateEncounter(pet.soapEncounterId, { subjective: { ...prev, history: value } });
+        } else if (field === 'O') {
+          await updateEncounter(pet.soapEncounterId, { objectiveNotes: value || null });
+        } else if (field === 'A') {
+          await updateEncounter(pet.soapEncounterId, { assessmentReasoning: value || null });
+        } else {
+          await updateEncounter(pet.soapEncounterId, { planNotes: value || null });
+        }
+        // Refresh wrapUp so petSummaryLine / recap-generate sees the new text
+        await loadWrapUp(encounterId);
+      } catch (e) {
+        setSoapSaveError((prev) => {
+          const n = new Map(prev);
+          n.set(pet.patientId, e instanceof Error ? e.message : 'Could not save that note.');
+          return n;
+        });
+      } finally {
+        setSoapSaving((prev) => { const n = new Set(prev); n.delete(pet.patientId); return n; });
+      }
+    },
+    [encounterId, loadWrapUp]
+  );
+
+  const handleDeclinePastDue = useCallback(async (reminder: PastDueReminder) => {
+    const proceed = await appConfirm({
+      title: 'Owner declined this?',
+      message: `Record "${reminder.description}" under Declined on the chart.`,
+      confirmLabel: 'Record decline',
+      cancelLabel: 'Cancel',
+    });
+    if (!proceed) return;
+    const note = await appPrompt({
+      title: 'Decline note (optional)',
+      message: 'Why was this declined?',
+      placeholder: 'Optional',
+      confirmLabel: 'Save',
+      cancelLabel: 'Skip note',
+    });
+    setPastDueBusyId(reminder.id);
+    setReminderError(null);
+    try {
+      await declineReminder(reminder.id, note);
+      setReminderPets((prev) =>
+        prev.map((p) => ({
+          ...p,
+          pastDueReminders: (p.pastDueReminders ?? []).filter((r) => r.id !== reminder.id),
+        }))
+      );
+    } catch (e) {
+      setReminderError(e instanceof Error ? e.message : 'Could not decline that reminder.');
+    } finally {
+      setPastDueBusyId(null);
+    }
+  }, []);
+
+  const handleDeletePastDue = useCallback(async (reminder: PastDueReminder) => {
+    const proceed = await appConfirm({
+      title: 'Remove this reminder?',
+      message: `"${reminder.description}" will leave the reminder list (not recorded as declined).`,
+      confirmLabel: 'Remove',
+      cancelLabel: 'Cancel',
+    });
+    if (!proceed) return;
+    setPastDueBusyId(reminder.id);
+    setReminderError(null);
+    try {
+      await patchReminder(reminder.id, { isHidden: true });
+      setReminderPets((prev) =>
+        prev.map((p) => ({
+          ...p,
+          pastDueReminders: (p.pastDueReminders ?? []).filter((r) => r.id !== reminder.id),
+        }))
+      );
+    } catch (e) {
+      setReminderError(e instanceof Error ? e.message : 'Could not remove that reminder.');
+    } finally {
+      setPastDueBusyId(null);
+    }
+  }, []);
+
   const backToSoap = (pet: VisitWrapUpPet) => {
     const qs = clientIdParam ? `?clientId=${encodeURIComponent(clientIdParam)}` : '';
     navigate(`/schedule/soap/${pet.appointmentId}/${pet.patientId}${qs}`);
@@ -351,6 +562,13 @@ export default function VisitWrapUpPage() {
     const qs = new URLSearchParams();
     if (clientIdParam) qs.set('clientId', clientIdParam);
     qs.set('focusOrder', first.orderId);
+    navigate(`/schedule/soap/${pet.appointmentId}/${pet.patientId}?${qs.toString()}`);
+  };
+
+  const goToWeight = (pet: VisitWrapUpPet) => {
+    const qs = new URLSearchParams();
+    if (clientIdParam) qs.set('clientId', clientIdParam);
+    qs.set('focus', 'weight');
     navigate(`/schedule/soap/${pet.appointmentId}/${pet.patientId}?${qs.toString()}`);
   };
 
@@ -387,12 +605,9 @@ export default function VisitWrapUpPage() {
 
   const onSend = async () => {
     if (!encounterId || sending) return;
-    const to = recipients
-      .split(',')
-      .map((r) => r.trim())
-      .filter(Boolean);
+    const to = parseRecapRecipients(recipients);
     if (to.length === 0) {
-      setEmailError('Add at least one recipient address.');
+      setEmailError('Add at least one recipient address. Separate multiple emails with commas.');
       return;
     }
     if (!mailbox || !fromAddress) {
@@ -408,11 +623,27 @@ export default function VisitWrapUpPage() {
     setSending(true);
     setEmailError(null);
     try {
+      // The recap carries bold on the things the client has to do or watch for, so it
+      // goes out as HTML. The Gmail send-as signature (Dr. Heather, practice block, etc.)
+      // is attached here, not stored in the draft, so switching From swaps it cleanly.
+      const closed = ensureRecapFarewell({
+        html: soapTextToEditorHtml(body),
+        text: soapHtmlToPlainText(body),
+      });
+      const sigHtml = fromAddress
+        ? signatureHtmlForFromAlias(sendAsOptions, fromAddress).trim()
+        : '';
       const sent = await sendGmailMessage(mailbox, {
         from: bareAddress(fromAddress),
         to,
         subject,
-        bodyText: body,
+        // Blank line between "Take care," and the Gmail signature, the way a
+        // person would space a letter. The farewell is added here if the draft
+        // skipped it, so a missing closing never reaches the client.
+        bodyText: sigHtml
+          ? `${closed.text}\n\n${plainTextFromHtml(sigHtml)}`
+          : closed.text,
+        bodyHtml: sigHtml ? `${closed.html}<br><br>${sigHtml}` : closed.html,
       });
       const updated = await recordClientEmailDecision(encounterId, {
         status: 'sent',
@@ -426,6 +657,7 @@ export default function VisitWrapUpPage() {
         gmailThreadId: sent.threadId,
       });
       setWrapUp(updated);
+      setRedoingEmail(false);
     } catch (e) {
       setEmailError(e instanceof Error ? e.message : 'Could not send the recap.');
     } finally {
@@ -448,6 +680,7 @@ export default function VisitWrapUpPage() {
       });
       setWrapUp(updated);
       setShowSkip(false);
+      setRedoingEmail(false);
     } catch (e) {
       setEmailError(e instanceof Error ? e.message : 'Could not record that decision.');
     } finally {
@@ -485,6 +718,7 @@ export default function VisitWrapUpPage() {
               body: cb.body?.trim() || null,
               kind: 'callback',
               branchIds,
+              assignedToEmployeeId: cb.assignedToEmployeeId ?? null,
               ...(cb.dueAt ? { dueAt: cb.dueAt } : {}),
               links,
               idempotencyKey: `soap-cb-${pet.soapEncounterId}-${cb.key}`,
@@ -532,6 +766,21 @@ export default function VisitWrapUpPage() {
           </div>
         </div>
         <div className="soap-header-actions">
+          {scribeEnabled &&
+            wrapUp?.provider?.id != null &&
+            (isAdmin ||
+              (Number.isFinite(selfEmployeeId) && selfEmployeeId === wrapUp.provider.id)) && (
+              <button
+                type="button"
+                className="soap-provider-prompt-btn"
+                onClick={() => setShowPromptOverrides(true)}
+                title={`Edit provider-wide AI instructions for ${
+                  wrapUp.provider.name ?? `Provider #${wrapUp.provider.id}`
+                }`}
+              >
+                <SlidersHorizontal size={13} /> Scribe prompt
+              </button>
+            )}
           {currentPet && (
             <Link
               className="soap-btn"
@@ -570,127 +819,257 @@ export default function VisitWrapUpPage() {
         </div>
       </header>
 
+      {showPromptOverrides && wrapUp?.provider?.id != null && (
+        <ScribePromptOverridesModal
+          providerId={wrapUp.provider.id}
+          providerName={wrapUp.provider.name?.trim() || `Provider #${wrapUp.provider.id}`}
+          onClose={() => setShowPromptOverrides(false)}
+        />
+      )}
+
       {error && <div className="soap-error soap-error-banner">{error}</div>}
 
       <div className="soap-wrapup-body">
-        <section className="soap-wrapup-section">
-          <h2>
-            <span className="soap-wrapup-step">1</span> Review the charts
-          </h2>
-          <p className="soap-wrapup-hint">
-            Read what you actually recorded before the recap goes out — the recap is written from
-            these notes.
-          </p>
-          {pets.map((pet) => {
-            const open = expandedPetId === pet.patientId;
-            return (
-              <div className="soap-wrapup-chart" key={pet.patientId}>
-                <div
-                  className="soap-wrapup-chart-head"
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => setExpandedPetId(open ? null : pet.patientId)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      setExpandedPetId(open ? null : pet.patientId);
-                    }
-                  }}
+        {/* ── Per-pet cards — SOAP · chronic · declined · past-due · reminders going in · callbacks ── */}
+        {pets.map((pet) => {
+          const remPet = reminderPets.find((r) => r.patientId === pet.patientId);
+          const soapOpen = expandedSoaps.has(pet.patientId);
+          const remOpen = expandedReminders.has(pet.patientId);
+          const pastDues = remPet?.pastDueReminders ?? [];
+          const goingIn = (remPet?.reminders ?? []).filter((r) => !r.removed);
+          const declinedItems = (remPet?.declinedItems ?? []).filter(
+            (d) => d.onChart !== false
+          );
+
+          return (
+            <section key={pet.patientId} className="soap-wrapup-section soap-wrapup-pet-card">
+              {/* ── Sticky combined header: pet name + SOAP toggle (one row, sticks together) ── */}
+              <div className="soap-wrapup-pet-head">
+                <button
+                  type="button"
+                  className="soap-wrapup-pet-head-toggle"
+                  onClick={() => toggleSoap(pet)}
                 >
-                  {open ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
-                  <PawPrint size={14} />
-                  <strong>{pet.patientName}</strong>
-                  <span className="soap-wrapup-chart-meta">{petSummaryLine(pet)}</span>
-                  {((pet.outstandingClinical?.missingMeds.length ?? 0) > 0 ||
-                    (pet.outstandingClinical?.missingVaccines.length ?? 0) > 0) &&
-                    pet.status !== 'completed' && (
-                      <button
-                        type="button"
-                        className="soap-wrapup-chart-pending soap-wrapup-chart-pending--link"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          goToClinicalGap(pet);
-                        }}
-                      >
-                        Rx/dose details needed
-                      </button>
-                    )}
-                  {!isWeightAddressed(vitalsFromValue(pet.objectiveVitals)) &&
-                    pet.status !== 'completed' && (
-                      <span className="soap-wrapup-chart-pending">Weight needed</span>
-                    )}
-                  {pet.status === 'completed' && (
+                  <PawPrint size={14} className="soap-wrapup-pet-paw" />
+                  <strong className="soap-wrapup-pet-name">{pet.patientName}</strong>
+                  {soapOpen ? <ChevronDown size={13} className="soap-wrapup-pet-chevron" /> : <ChevronRight size={13} className="soap-wrapup-pet-chevron" />}
+                  <span className="soap-wrapup-chart-meta soap-wrapup-pet-soap-meta">{petSummaryLine(pet)}</span>
+                </button>
+                <span className="soap-wrapup-pet-head-right">
+                  {pet.status === 'completed' ? (
                     <span className="soap-wrapup-chart-locked">
                       <Lock size={12} /> Signed
                     </span>
+                  ) : (
+                    <>
+                      {((pet.outstandingClinical?.missingMeds.length ?? 0) > 0 ||
+                        (pet.outstandingClinical?.missingVaccines.length ?? 0) > 0) && (
+                        <button
+                          type="button"
+                          className="soap-wrapup-chart-pending soap-wrapup-chart-pending--link"
+                          onClick={() => goToClinicalGap(pet)}
+                        >
+                          {(pet.outstandingClinical?.missingVaccines[0]
+                            ? `Dose needed: ${pet.outstandingClinical.missingVaccines[0].name}`
+                            : pet.outstandingClinical?.missingMeds[0]
+                              ? `Rx needed: ${pet.outstandingClinical.missingMeds[0].name}`
+                              : 'Rx/dose details needed')}
+                        </button>
+                      )}
+                      {!isWeightAddressed(vitalsFromValue(pet.objectiveVitals)) && (
+                        <button
+                          type="button"
+                          className="soap-wrapup-chart-pending soap-wrapup-chart-pending--link"
+                          onClick={() => goToWeight(pet)}
+                        >
+                          Weight needed
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="soap-wrapup-pet-edit-link"
+                        title="Open full SOAP (orders, Rx, vitals)"
+                        onClick={() => backToSoap(pet)}
+                      >
+                        Full SOAP
+                      </button>
+                    </>
                   )}
-                </div>
-                {open && (
-                  <div className="soap-wrapup-chart-body">
+                </span>
+              </div>
+                {soapOpen && (
+                  <div className="soap-wrapup-chart-body soap-wrapup-pet-soap-body">
                     {(
                       [
-                        ['Subjective', pet.subjectiveHistory],
-                        ['Objective', pet.objectiveNotes],
-                        ['Assessment', pet.assessmentReasoning],
-                        ['Plan', pet.planNotes],
-                      ] as const
-                    ).map(([label, text]) => (
-                      <div className="soap-wrapup-chart-section" key={label}>
-                        <h4>{label}</h4>
-                        <pre>{text?.trim() || '—'}</pre>
-                      </div>
-                    ))}
-                    {pet.status === 'completed' ? (
+                        ['Subjective', 'S', pet.subjectiveHistory],
+                        ['Objective', 'O', pet.objectiveNotes],
+                        ['Assessment', 'A', pet.assessmentReasoning],
+                        ['Plan', 'P', pet.planNotes],
+                      ] as [string, 'S' | 'O' | 'A' | 'P', string | null][]
+                    ).map(([label, field, serverText]) => {
+                      const draft = soapDrafts.get(pet.patientId);
+                      const value = draft ? draft[field] : (serverText ?? '');
+                      const locked = pet.status === 'completed';
+                      return (
+                        <div className="soap-wrapup-chart-section" key={label}>
+                          <h4>{label}</h4>
+                          {locked ? (
+                            serverText?.trim() ? (
+                              <div
+                                className="soap-wrapup-soap-read"
+                                dangerouslySetInnerHTML={{
+                                  __html: soapTextToEditorHtml(serverText),
+                                }}
+                              />
+                            ) : (
+                              <p className="soap-wrapup-hint">—</p>
+                            )
+                          ) : (
+                            <SoapRichTextField
+                              className="soap-wrapup-soap-rich"
+                              value={value}
+                              minHeightPx={64}
+                              disabled={soapSaving.has(pet.patientId)}
+                              placeholder={`${label}…`}
+                              onChange={(next) => {
+                                setSoapDrafts((prev) => {
+                                  const n = new Map(prev);
+                                  const cur = n.get(pet.patientId) ?? { S: '', O: '', A: '', P: '' };
+                                  n.set(pet.patientId, { ...cur, [field]: next });
+                                  return n;
+                                });
+                              }}
+                              onBlur={(next) => {
+                                if (next !== (serverText ?? '')) {
+                                  void saveSoapField(pet, field, next);
+                                }
+                              }}
+                            />
+                          )}
+                        </div>
+                      );
+                    })}
+                    {soapSaveError.get(pet.patientId) && (
+                      <p className="soap-error soap-wrapup-hint">{soapSaveError.get(pet.patientId)}</p>
+                    )}
+                    {soapSaving.has(pet.patientId) && (
+                      <p className="soap-wrapup-hint soap-wrapup-soap-saving">Saving…</p>
+                    )}
+                    {pet.status === 'completed' && (
                       <p className="soap-wrapup-signature">
                         <Lock size={13} /> {signatureLine(pet)}
                       </p>
-                    ) : (
-                      <button
-                        type="button"
-                        className="soap-btn small"
-                        onClick={() => backToSoap(pet)}
-                      >
-                        <Pencil size={13} /> Edit in SOAP
-                      </button>
                     )}
                   </div>
                 )}
-              </div>
-            );
-          })}
-        </section>
 
-        <WrapUpChronicReview pets={pets} />
+              {/* ── Chronic problems & medications ── */}
+              <WrapUpChronicReview pets={[pet]} noWrapper />
 
-        <section className="soap-wrapup-section">
-          <h2>
-            <span className="soap-wrapup-step">3</span> Reminders &amp; callbacks
-          </h2>
-          <p className="soap-wrapup-hint">
-            What the catalog will remind this household about, before it does. Change the
-            dates, drop one that does not apply, or add your own.
-          </p>
-          {encounterId && (
-            <WrapUpReminders encounterId={encounterId} disabled={allLocked} />
-          )}
+              {/* ── Declined this visit ── */}
+              {declinedItems.length > 0 && (
+                <div className="soap-wrapup-pet-row">
+                  <span className="soap-wrapup-pet-sub-label">Declined this visit</span>
+                  <div className="soap-wrapup-pet-chips">
+                    {declinedItems.map((d) => (
+                      <span key={d.id} className="soap-wrapup-pet-chip soap-wrapup-pet-chip--declined">
+                        {d.label}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
 
-          <div className="soap-wrapup-subsection">
-            <h3>Callbacks</h3>
-            <p className="soap-wrapup-hint">
-              Someone rings the owner in a few days to see how things are going. Whoever makes
-              the call records it on the task, and it files to the patient&apos;s record.
-            </p>
-            {encounterId ? (
-              <WrapUpCallbacks
-                encounterId={encounterId}
-                pets={pets}
-                clientId={wrapUp?.clientId ?? null}
-                defaultAssigneeEmployeeId={wrapUp?.provider?.id ?? null}
-                disabled={allLocked}
-              />
-            ) : null}
-          </div>
-        </section>
+              {/* ── Past-due reminders that won't be cleared ── */}
+              {pastDues.length > 0 && (
+                <div className="soap-wrapup-pet-row soap-wrapup-pet-row--pastdue">
+                  <span className="soap-wrapup-pet-sub-label soap-wrapup-pet-sub-label--warn">
+                    ⚠ Past-due — won&apos;t be cleared
+                  </span>
+                  {reminderError && <div className="soap-error">{reminderError}</div>}
+                  {pastDues.map((reminder) => {
+                    const busy = pastDueBusyId === reminder.id;
+                    return (
+                      <div key={reminder.id} className="soap-wrapup-rem-pastdue-row">
+                        <div className="soap-wrapup-rem-pastdue-text">
+                          <strong>{reminder.description}</strong>
+                          <span>
+                            Due{' '}
+                            {reminder.dueDate ? formatDeclinedDate(reminder.dueDate) : '—'}
+                          </span>
+                        </div>
+                        <div className="soap-wrapup-rem-pastdue-actions">
+                          <button
+                            type="button"
+                            className="soap-btn ghost small"
+                            disabled={Boolean(busy || allLocked)}
+                            title="Owner declined — stays on the chart as declined"
+                            onClick={() => void handleDeclinePastDue(reminder)}
+                          >
+                            🚫 Decline
+                          </button>
+                          <button
+                            type="button"
+                            className="soap-btn ghost small danger"
+                            disabled={Boolean(busy || allLocked)}
+                            title="Remove from the reminder list only"
+                            onClick={() => void handleDeletePastDue(reminder)}
+                          >
+                            <X size={13} /> Remove
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* ── Reminders going in — collapsed summary, expandable ── */}
+              {goingIn.length > 0 && (
+                <div className="soap-wrapup-pet-row soap-wrapup-pet-row--accordion">
+                  <button
+                    type="button"
+                    className="soap-wrapup-pet-accordion-toggle soap-wrapup-pet-accordion-toggle--minor"
+                    onClick={() => toggleReminders(pet.patientId)}
+                  >
+                    {remOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                    <BellRing size={13} />
+                    <span>Reminders going in ({goingIn.length})</span>
+                  </button>
+                  {remOpen && (
+                    <ul className="soap-wrapup-pet-rem-list">
+                      {goingIn.map((r) => (
+                        <li key={r.key}>
+                          <Syringe size={11} className="soap-wrapup-pet-rem-icon" />
+                          <span>{r.description}</span>
+                          {r.dueDate && (
+                            <span className="soap-wrapup-chart-meta">
+                              {' '}— due {formatDeclinedDate(r.dueDate)}
+                            </span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+
+              {/* ── Callbacks ── */}
+              {encounterId && (
+                <div className="soap-wrapup-pet-row soap-wrapup-pet-row--accordion soap-wrapup-pet-row--callbacks">
+                  <WrapUpCallbacks
+                    encounterId={encounterId}
+                    pets={[pet]}
+                    clientId={wrapUp?.clientId ?? null}
+                    defaultAssigneeEmployeeId={wrapUp?.provider?.id ?? null}
+                    disabled={allLocked}
+                    filterPatientId={pet.patientId}
+                  />
+                </div>
+              )}
+            </section>
+          );
+        })}
 
         {/* Forward booking is settled at checkout, while the client is still there. It stays
             reachable here only when something is outstanding, so a chart can't be signed on a
@@ -717,7 +1096,7 @@ export default function VisitWrapUpPage() {
 
         <section className="soap-wrapup-section">
           <h2>
-            <span className="soap-wrapup-step">4</span> Client recap
+            Client recap
             {emailDecided && <Check className="soap-wrapup-done" size={16} />}
           </h2>
 
@@ -743,7 +1122,27 @@ export default function VisitWrapUpPage() {
             </div>
           )}
 
-          {!emailDecided && (
+          {/* A recap that went out with a mistake in it needs a correction sent, not a
+              locked card. Reopening keeps the original on the EMR and files the new one
+              alongside it, so the client's inbox and the chart still agree. */}
+          {emailDecided && !redoingEmail && (
+            <div className="soap-wrapup-email-actions">
+              <button
+                type="button"
+                className="soap-btn subtle"
+                onClick={() => {
+                  setEmailError(null);
+                  setShowSkip(false);
+                  setRedoingEmail(true);
+                }}
+              >
+                <RefreshCw size={14} />{' '}
+                {delivery?.status === 'sent' ? 'Redo client email' : 'Write a recap after all'}
+              </button>
+            </div>
+          )}
+
+          {(!emailDecided || redoingEmail) && (
             <>
               {pets.length > 1 && (
                 <div className="soap-wrapup-petpick">
@@ -766,9 +1165,12 @@ export default function VisitWrapUpPage() {
                 <input
                   className="soap-input"
                   value={recipients}
-                  placeholder="client@example.com"
+                  placeholder="owner@example.com, other@example.com"
                   onChange={(e) => setRecipients(e.target.value)}
                 />
+                <span className="soap-wrapup-field-hint">
+                  Both owners when two are on file. Separate more addresses with commas.
+                </span>
               </label>
 
               {mailbox && (
@@ -811,16 +1213,28 @@ export default function VisitWrapUpPage() {
                 />
               </label>
 
-              <label className="soap-wrapup-field">
+              <div className="soap-wrapup-field">
                 Message
-                <textarea
-                  className="soap-doc-textarea"
-                  rows={16}
+                <SoapRichTextField
                   value={body}
+                  minHeightPx={340}
                   disabled={regenerating}
-                  onChange={(e) => setBody(e.target.value)}
+                  placeholder="The recap the client will receive…"
+                  onChange={setBody}
+                  onBlur={setBody}
                 />
-              </label>
+                {!recapHasFarewell(body) ? (
+                  <p className="soap-wrapup-farewell">{RECAP_FAREWELL}</p>
+                ) : null}
+                {signatureHtml.trim() ? (
+                  <div
+                    className="soap-wrapup-sendas-sig"
+                    dangerouslySetInnerHTML={{
+                      __html: sanitizeCommunicationHtml(signatureHtml),
+                    }}
+                  />
+                ) : null}
+              </div>
 
               {regenerating && (
                 <p className="soap-hint">Writing the recap from the charts as they read now…</p>
@@ -853,6 +1267,20 @@ export default function VisitWrapUpPage() {
                 >
                   <MailX size={14} /> Don&apos;t email
                 </button>
+                {redoingEmail && (
+                  <button
+                    type="button"
+                    className="soap-btn subtle"
+                    onClick={() => {
+                      setEmailError(null);
+                      setShowSkip(false);
+                      setRedoingEmail(false);
+                    }}
+                    disabled={sending || regenerating}
+                  >
+                    <X size={14} /> Cancel
+                  </button>
+                )}
               </div>
 
               {showSkip && (

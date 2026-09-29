@@ -168,6 +168,7 @@ import {
   patientActiveChip,
   patientStatusChip as statusChipFromRecord,
 } from '../../utils/patientStatusDisplay';
+import { clientDiscountBadge } from '../../utils/clientDiscountDisplay';
 import './detail/PimsDetailKit.css';
 import './PimsPatientDetailView.css';
 import { currentPracticeId } from '../../utils/practiceIdFromToken';
@@ -1924,6 +1925,7 @@ export default function PimsPatientDetailView({
         pickStr((wellnessPlans[0] as Record<string, unknown>).planName)
       : null) ||
     'Member';
+  const ownerDiscount = clientDiscountBadge(householdClient ?? client);
 
   const detailValues: CardValues = {
     name: pickStr(record.name) ?? pname,
@@ -1993,6 +1995,11 @@ export default function PimsPatientDetailView({
                 <span className="pims-emr-household__kind">Client</span>
                 {cname}
               </span>
+              {ownerDiscount ? (
+                <span className="pims-emr-household__discount" title={ownerDiscount.title}>
+                  {ownerDiscount.label}
+                </span>
+              ) : null}
             </Link>
           ) : (
             <span className="pims-emr-household__client">
@@ -2001,6 +2008,11 @@ export default function PimsPatientDetailView({
                 <span className="pims-emr-household__kind">Client</span>
                 {cname}
               </span>
+              {ownerDiscount ? (
+                <span className="pims-emr-household__discount" title={ownerDiscount.title}>
+                  {ownerDiscount.label}
+                </span>
+              ) : null}
             </span>
           )}
           {householdPets.length ? (
@@ -2122,6 +2134,11 @@ export default function PimsPatientDetailView({
             {scoutState.scoutManaged ? (
               <PimsBadge tone="info" title={scoutState.title}>
                 {scoutState.label}
+              </PimsBadge>
+            ) : null}
+            {ownerDiscount ? (
+              <PimsBadge tone="warn" title={ownerDiscount.title}>
+                {ownerDiscount.label}
               </PimsBadge>
             ) : null}
           </>

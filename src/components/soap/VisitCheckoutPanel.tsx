@@ -52,6 +52,7 @@ import {
   offRecordDeclineNote,
 } from '../../api/declinedTreatments';
 import TerminalReaderPicker from './TerminalReaderPicker';
+import EstimateSettlePanel from '../estimates/EstimateSettlePanel';
 import CheckoutInventoryBranchField from './CheckoutInventoryBranchField';
 import SendRxLabelButton, { type SendRxLabelSource } from './SendRxLabelButton';
 import MailInvoiceLineCheckbox, {
@@ -65,7 +66,6 @@ import { listMailOrders, type MailOrder } from '../../api/onlineStore';
 import { attachShippingLines, isInvoiceShippingLine } from '../../utils/mailShippingTypes';
 import { attachTagalongLines, tagalongTaxHint } from '../../utils/invoiceTagalongs';
 import { ensurePrintRxNumber } from '../../utils/ensurePrintRxNumber';
-import PostVisitMembershipSignup from './PostVisitMembershipSignup';
 import StockLotPicker from '../inventory/StockLotPicker';
 import LinkedStockInvoiceDetails from '../invoice/LinkedStockInvoiceDetails';
 import InvoiceVaccineDoseEditor from '../pims/InvoiceVaccineDoseEditor';
@@ -74,8 +74,12 @@ import VisitDoseAndRxSection from './VisitDoseAndRxSection';
 import PlanOrdersSection from './PlanOrdersSection';
 import type { HouseholdRosterEntry } from '../../api/visitWorkflow';
 import { fetchPrimaryProviders, type Provider } from '../../api/employee';
+
+const PRACTICE_TZ =
+  (import.meta.env.VITE_PRACTICE_TIMEZONE as string | undefined)?.trim() || 'America/New_York';
 import { fetchCatalogPricingForOrder, getCatalogLinePrice } from '../../utils/catalogItemPricing';
 import DirectionsLimitHint, { directionsMaxLength } from './DirectionsLimitHint';
+import { BookPatientChartButton } from '../BookPatientChartButton';
 import '../pims/ClientFinancialWorkspace.css';
 import {
   addCalendarYear,
@@ -86,6 +90,14 @@ import {
   toDateInput,
   tomorrowInput,
 } from '../../utils/printRxLabel';
+
+/** Persist date-only inputs as noon-local ISO so the API date validator accepts them. */
+function toRxDatePayload(value: string | null | undefined): string | undefined {
+  if (!value?.trim()) return undefined;
+  const day = value.trim().slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(day)) return `${day}T12:00:00`;
+  return value.trim();
+}
 
 export type CheckoutRxLabelContext = {
   patientId?: number | null;
@@ -166,6 +178,65 @@ function isCheckoutRxLine(line: VisitInvoiceLine, order: EncounterOrder | null):
   return Boolean(line.instructions?.trim() || line.refillCount != null);
 }
 
+type CheckoutRxMissingField =
+  | 'provider'
+  | 'instructions'
+  | 'refillCount'
+  | 'refillExpiration'
+  | 'acuity'
+  | 'discardAfter'
+  | 'branch'
+  | 'location'
+  | 'lot';
+
+function checkoutRxMissingFields(args: {
+  instructions: string;
+  refills: string;
+  refillExpiration: string;
+  acuity: string;
+  discardAfter: string;
+  providerId: number | null | undefined;
+  invoice: VisitInvoice;
+  mailed: boolean;
+  trackLots?: boolean;
+  lotId?: number | null;
+}): CheckoutRxMissingField[] {
+  const missing: CheckoutRxMissingField[] = [];
+  if (args.providerId == null) missing.push('provider');
+  if (!args.instructions.trim()) missing.push('instructions');
+  const refillCount = args.refills.trim() === '' ? NaN : Number(args.refills);
+  if (args.refills.trim() === '' || !Number.isFinite(refillCount) || refillCount < 0 || !Number.isInteger(refillCount)) {
+    missing.push('refillCount');
+  } else if (refillCount > 0) {
+    if (!args.refillExpiration || dateIsTodayOrBefore(args.refillExpiration) || refillExpirationExceedsMax(args.refillExpiration)) {
+      missing.push('refillExpiration');
+    }
+  }
+  if (args.acuity !== 'acute' && args.acuity !== 'chronic') missing.push('acuity');
+  if (!args.discardAfter || dateIsTodayOrBefore(args.discardAfter)) missing.push('discardAfter');
+  if (!args.mailed) {
+    if (args.invoice.inventoryBranchId == null) missing.push('branch');
+    if (args.invoice.inventoryLocationId == null) missing.push('location');
+    if (args.trackLots && args.lotId == null) missing.push('lot');
+  }
+  return missing;
+}
+
+function checkoutRxMissingMessage(field: CheckoutRxMissingField, refills: string): string {
+  if (field === 'provider') return 'Set the visit provider before approving';
+  if (field === 'instructions') return 'Enter the script first';
+  if (field === 'refillCount') {
+    return refills.trim() === '' ? 'Enter 0 if there are no refills' : 'Refills must be a whole number';
+  }
+  if (field === 'refillExpiration') return 'Enter refill expiration';
+  if (field === 'acuity') return 'Select acute or chronic';
+  if (field === 'discardAfter') return 'Enter discard after';
+  if (field === 'branch') return 'Select a branch';
+  if (field === 'location') return 'Select a fill location';
+  if (field === 'lot') return 'Choose a lot';
+  return 'Select a fill location';
+}
+
 /** Same Rx block as the client invoice: sig + Approve + DYMO on the left, lot/refills on the right. */
 function CheckoutInvoiceRxFields({
   line,
@@ -178,15 +249,19 @@ function CheckoutInvoiceRxFields({
   employeeId,
   disabled,
   scriptApproved,
-  approveBlockedReason,
+  approveTried,
   approvedByName,
   mailed,
   hideLotPicker,
   dymoSource,
+  patientId,
+  patientName,
   onSaved,
   onPrescriptionSaved,
   onError,
   onApproved,
+  onSavedAndCollapse,
+  onApproveTried,
 }: {
   line: VisitInvoiceLine;
   invoice: VisitInvoice;
@@ -198,7 +273,7 @@ function CheckoutInvoiceRxFields({
   employeeId?: number | null;
   disabled: boolean;
   scriptApproved: boolean;
-  approveBlockedReason: string | null;
+  approveTried?: boolean;
   approvedByName?: string | null;
   mailed: boolean;
   hideLotPicker: boolean;
@@ -211,11 +286,16 @@ function CheckoutInvoiceRxFields({
     | 'acuity'
     | 'onSavePrescription'
   > | null;
+  patientId?: number | null;
+  patientName?: string | null;
   onSaved: (invoice: VisitInvoice) => void;
   onPrescriptionSaved: (saved: OrderPrescription) => void;
   onError: (message: string) => void;
   /** Called after Rx is saved + approved — e.g. set provider on the line. */
   onApproved: () => void;
+  /** After a successful Save Rx — collapse the line. */
+  onSavedAndCollapse?: () => void;
+  onApproveTried?: () => void;
 }) {
   const prescribed = toDateInput(invoice.created ?? invoice.paidAt) || dateForInput(new Date());
   const [instructions, setInstructions] = useState(
@@ -248,6 +328,9 @@ function CheckoutInvoiceRxFields({
   const [savedFlash, setSavedFlash] = useState(false);
   const canWriteRx = Boolean(encounterId && orderId);
 
+  // Re-hydrate when the saved Rx row arrives (navigate away + back). The recorded
+  // row is the only source of truth here: if it has no expiration/acuity, these
+  // fields must read empty, because that is exactly what the line is red about.
   useEffect(() => {
     setInstructions(
       recorded?.instructions?.trim() ||
@@ -268,48 +351,49 @@ function CheckoutInvoiceRxFields({
         toDateInput(line.catalogRefillExpiration) ||
         '',
     );
-  }, [
-    line.id,
-    line.instructions,
-    line.catalogInstructions,
-    line.refillCount,
-    line.catalogRefillExpiration,
-    recorded?.id,
-    recorded?.instructions,
-    recorded?.refill,
-    recorded?.refillExpiration,
-    recorded?.acuity,
-  ]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [line.id, recorded?.id, recorded?.refillExpiration, recorded?.acuity, recorded?.refill]);
 
   const refillCount = refills.trim() === '' ? NaN : Number(refills);
-
+  const providerId = line.providerEmployeeId ?? employeeId ?? null;
+  const missingFields = checkoutRxMissingFields({
+    instructions,
+    refills,
+    refillExpiration,
+    acuity,
+    discardAfter,
+    providerId,
+    invoice,
+    mailed,
+    trackLots: line.trackLots,
+    lotId: line.inventoryLotBalanceId,
+  });
   const missingBeforeSave = (): string | null => {
-    if (refills.trim() === '') return 'Enter 0 if there are no refills';
-    if (!Number.isFinite(refillCount) || refillCount < 0 || !Number.isInteger(refillCount)) {
-      return 'Refills must be a whole number';
-    }
-    if (refillCount > 0) {
-      if (!refillExpiration) return 'Enter refill expiration';
-      if (dateIsTodayOrBefore(refillExpiration)) return 'Refill expiration must be after today';
-      if (refillExpirationExceedsMax(refillExpiration)) {
-        return 'Refill expiration cannot be more than 1 year from today';
-      }
-    }
-    if (acuity !== 'acute' && acuity !== 'chronic') return 'Select acute or chronic';
-    if (!discardAfter) return 'Enter discard after';
-    if (dateIsTodayOrBefore(discardAfter)) return 'Discard after must be after today';
-    return null;
+    const first = missingFields.find(
+      (field) => field !== 'provider' && field !== 'branch' && field !== 'location' && field !== 'lot'
+    );
+    return first ? checkoutRxMissingMessage(first, refills) : null;
   };
+  const highlight = (field: CheckoutRxMissingField) =>
+    Boolean(approveTried && missingFields.includes(field));
+  const needsSigSave =
+    !disabled &&
+    (instructions.trim() !== (line.instructions ?? '').trim() ||
+      !line.instructionsEnteredByEmployeeId);
 
   const persistRx = async (opts?: { approve?: boolean }): Promise<boolean> => {
-    const missing = missingBeforeSave();
-    if (missing) {
-      onError(missing);
-      return false;
-    }
-    if (!opts?.approve && !scriptApproved) {
-      onError('Approve the sig first, then you can save Rx changes.');
-      return false;
+    if (opts?.approve) {
+      onApproveTried?.();
+      if (missingFields.length) {
+        onError(checkoutRxMissingMessage(missingFields[0], refills));
+        return false;
+      }
+    } else {
+      const extrasMissing = missingBeforeSave();
+      if (extrasMissing) {
+        onError(extrasMissing);
+        return false;
+      }
     }
     if (!canWriteRx) {
       onError('This charge is not linked to a visit order, so the Rx cannot be saved here.');
@@ -323,8 +407,11 @@ function CheckoutInvoiceRxFields({
         strength: strength || undefined,
         instructions: nextInstructions || undefined,
         refill: refillCount,
-        refillExpiration: refillCount > 0 ? refillExpiration || undefined : undefined,
-        startDate: prescribed || undefined,
+        refillExpiration:
+          refillCount > 0
+            ? toRxDatePayload(refillExpiration || recorded?.refillExpiration)
+            : undefined,
+        startDate: toRxDatePayload(prescribed),
         acuity: acuity as 'acute' | 'chronic',
         employeeId: employeeId ?? undefined,
       });
@@ -346,10 +433,10 @@ function CheckoutInvoiceRxFields({
     }
   };
 
-  const persistInstructionsOnly = async () => {
+  const persistSig = async (force = false) => {
     const next = instructions.trim();
     const saved = (line.instructions ?? '').trim();
-    if (next === saved) return;
+    if (!force && next === saved && line.instructionsEnteredByEmployeeId) return;
     setSaving(true);
     try {
       onSaved(
@@ -364,21 +451,37 @@ function CheckoutInvoiceRxFields({
     }
   };
 
+  const persistExtrasIfReady = async () => {
+    if (!canWriteRx || missingBeforeSave()) return;
+    await persistRx();
+  };
+
   return (
     <div className="client-fin__line-meta soap-checkout-invoice-rx-match">
-      <label className="client-fin__sig">
+      <label className={`client-fin__sig${highlight('instructions') ? ' is-missing' : ''}`}>
         <span className="client-fin__sig-label">
           Directions (sig)
+          {needsSigSave ? (
+            <button
+              type="button"
+              className="client-fin__btn"
+              disabled={saving}
+              title="Save the written directions"
+              onClick={() => void persistSig(true)}
+            >
+              Save sig
+            </button>
+          ) : line.instructionsEnteredByName ? (
+            <span className="client-fin__entered">
+              Entered by {line.instructionsEnteredByName}
+            </span>
+          ) : null}
           {!disabled && !scriptApproved ? (
             <button
               type="button"
               className="client-fin__btn client-fin__btn-approve"
-              disabled={saving || Boolean(approveBlockedReason) || Boolean(missingBeforeSave())}
-              title={
-                approveBlockedReason ??
-                missingBeforeSave() ??
-                'Approve this script'
-              }
+              disabled={saving}
+              title="Approve this script"
               onClick={() => {
                 void (async () => {
                   const ok = await persistRx({ approve: true });
@@ -425,8 +528,12 @@ function CheckoutInvoiceRxFields({
                     strength: value.strength,
                     instructions: value.instructions,
                     refill: value.refill,
-                    refillExpiration: value.refillExpiration || undefined,
-                    startDate: value.startDate || undefined,
+                    refillExpiration: toRxDatePayload(
+                      value.refillExpiration ||
+                        refillExpiration ||
+                        recorded?.refillExpiration,
+                    ),
+                    startDate: toRxDatePayload(value.startDate) || undefined,
                     acuity:
                       value.acuity === 'acute' || value.acuity === 'chronic'
                         ? value.acuity
@@ -464,13 +571,13 @@ function CheckoutInvoiceRxFields({
           disabled={disabled || saving}
           maxLength={directionsMaxLength()}
           onChange={(e) => setInstructions(e.target.value)}
-          onBlur={() => void persistInstructionsOnly()}
+          onBlur={() => void persistSig()}
         />
         <DirectionsLimitHint value={instructions} className="client-fin__sig-limit" />
       </label>
       <div className="client-fin__rx-extras">
         {line.trackLots && !mailed && !hideLotPicker ? (
-          <div className="client-fin__rx-field client-fin__rx-lot">
+          <div className={`client-fin__rx-field client-fin__rx-lot${highlight('lot') ? ' is-missing' : ''}`}>
             <StockLotPicker
               practiceId={VISIT_WORKFLOW_PRACTICE_ID}
               inventoryItemId={line.stockInventoryItemId ?? line.catalogItemId ?? null}
@@ -502,19 +609,60 @@ function CheckoutInvoiceRxFields({
         ) : line.trackLots && mailed ? (
           <p className="client-fin__fulfill-note">Lot chosen when filled</p>
         ) : null}
-        <label className="client-fin__rx-field client-fin__refill">
-          <span># refills *</span>
+        <label className={`client-fin__rx-field client-fin__refill${highlight('refillCount') ? ' is-missing' : ''}`}>
+          <span>
+            # refills *
+            {patientId != null ? (
+              <BookPatientChartButton
+                patientId={String(patientId)}
+                patientName={patientName?.trim() || 'Patient'}
+                practiceId={VISIT_WORKFLOW_PRACTICE_ID}
+                practiceTz={PRACTICE_TZ}
+                showAlerts
+                label="View details"
+                className="client-fin__details-link"
+                onApplyRefillExpiration={(dateInput) => {
+                  if (dateIsTodayOrBefore(dateInput)) {
+                    onError('Refill expiration must be after today.');
+                    return;
+                  }
+                  if (refillExpirationExceedsMax(dateInput)) {
+                    onError('Refill expiration cannot be more than 1 year from today.');
+                    setRefillExpiration(maxRefillExpirationInput());
+                    return;
+                  }
+                  setRefillExpiration(dateInput);
+                }}
+              />
+            ) : null}
+          </span>
           <input
             className="client-fin__refill-input"
             inputMode="numeric"
             placeholder="0 if none"
             value={refills}
             disabled={disabled || saving}
-            onChange={(e) => setRefills(e.target.value)}
+            onChange={(e) => {
+              const next = e.target.value;
+              setRefills(next);
+              const n = Number(next);
+              if (
+                next.trim() !== '' &&
+                Number.isFinite(n) &&
+                n > 0 &&
+                !refillExpiration
+              ) {
+                setRefillExpiration(
+                  toDateInput(line.catalogRefillExpiration) ||
+                    maxRefillExpirationInput(),
+                );
+              }
+            }}
+            onBlur={() => void persistExtrasIfReady()}
           />
         </label>
         {Number.isFinite(refillCount) && refillCount > 0 ? (
-          <label className="client-fin__rx-field">
+          <label className={`client-fin__rx-field${highlight('refillExpiration') ? ' is-missing' : ''}`}>
             <span>Refill expiration *</span>
             <input
               type="date"
@@ -535,10 +683,11 @@ function CheckoutInvoiceRxFields({
                 }
                 setRefillExpiration(next);
               }}
+              onBlur={() => void persistExtrasIfReady()}
             />
           </label>
         ) : null}
-        <label className="client-fin__rx-field">
+        <label className={`client-fin__rx-field${highlight('acuity') ? ' is-missing' : ''}`}>
           <span>Acute or chronic *</span>
           <select
             className="client-fin__rx-select"
@@ -552,7 +701,7 @@ function CheckoutInvoiceRxFields({
             <option value="chronic">Chronic</option>
           </select>
         </label>
-        <label className="client-fin__rx-field">
+        <label className={`client-fin__rx-field${highlight('discardAfter') ? ' is-missing' : ''}`}>
           <span>Discard after *</span>
           <input
             type="date"
@@ -567,6 +716,7 @@ function CheckoutInvoiceRxFields({
               }
               setDiscardAfter(next);
             }}
+            onBlur={() => void persistExtrasIfReady()}
           />
         </label>
         {!disabled ? (
@@ -574,23 +724,21 @@ function CheckoutInvoiceRxFields({
             <button
               type="button"
               className="client-fin__btn client-fin__btn-save-rx"
-              disabled={saving || !canWriteRx || !scriptApproved}
+              disabled={saving || !canWriteRx}
               title={
                 !canWriteRx
                   ? 'Not linked to a visit order'
-                  : !scriptApproved
-                    ? 'Approve the sig first'
-                    : missingBeforeSave() ?? 'Save refills, expiration, and acute/chronic'
+                  : missingBeforeSave() ?? 'Save refills, expiration, and acute/chronic'
               }
-              onClick={() => void persistRx()}
+              onClick={() => {
+                void persistRx().then((ok) => {
+                  if (ok) onSavedAndCollapse?.();
+                });
+              }}
             >
               {saving ? 'Saving…' : savedFlash ? 'Saved' : 'Save Rx'}
             </button>
-            {!scriptApproved && canWriteRx ? (
-              <span className="client-fin__rx-incomplete">
-                Approve the sig first, then Save Rx for later edits
-              </span>
-            ) : missingBeforeSave() && canWriteRx ? (
+            {missingBeforeSave() && canWriteRx ? (
               <span className="client-fin__rx-incomplete">{missingBeforeSave()}</span>
             ) : null}
           </div>
@@ -793,7 +941,6 @@ export default function VisitCheckoutPanel({
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [postVisitSignupOpen, setPostVisitSignupOpen] = useState(false);
   const [activeCheckoutId, setActiveCheckoutId] = useState<string | null>(null);
   const [readerCatalog, setReaderCatalog] = useState<TerminalReaderCatalog | null>(null);
   // Asked out loud at the door. Starts unchecked if this household said no before.
@@ -809,7 +956,17 @@ export default function VisitCheckoutPanel({
   const [stockDrawsByOrderId, setStockDrawsByOrderId] = useState<Record<string, StockDraw>>({});
   const [mailOrders, setMailOrders] = useState<MailOrder[]>([]);
   const [expandedLineId, setExpandedLineId] = useState<string | null>(null);
+  const [rxApproveTried, setRxApproveTried] = useState<Record<string, true>>({});
+  const [drawerLineId, setDrawerLineId] = useState<string | null>(null);
   const [focusedLineId, setFocusedLineId] = useState<string | null>(null);
+  useEffect(() => {
+    if (expandedLineId) {
+      setDrawerLineId(expandedLineId);
+      return;
+    }
+    const close = window.setTimeout(() => setDrawerLineId(null), 240);
+    return () => window.clearTimeout(close);
+  }, [expandedLineId]);
   useEffect(() => {
     const pending = (invoice?.lines ?? []).find(
       (l) => !l.isDeleted && isCheckoutRxLine(l, null) && !l.rxApprovedAt,
@@ -1097,39 +1254,64 @@ export default function VisitCheckoutPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [invoice?.id]);
 
+  const clinicalEncounterIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (encounterId) ids.add(encounterId);
+    for (const row of roster) {
+      if (row.soapEncounterId) ids.add(row.soapEncounterId);
+    }
+    for (const line of invoice?.lines ?? []) {
+      if (line.encounterId) ids.add(line.encounterId);
+    }
+    for (const order of orders) {
+      if (order.encounterId) ids.add(order.encounterId);
+    }
+    return [...ids];
+  }, [encounterId, roster, invoice?.lines, orders]);
+
+  // Household invoice: each pet's Rx lives on that pet's encounter. Loading only
+  // the open SOAP chart is why Save Rx looked gone after leaving and coming back.
   useEffect(() => {
-    if (!encounterId) return;
+    if (clinicalEncounterIds.length === 0) return;
     let canceled = false;
-    void getOrderClinicalDetails(encounterId)
-      .then((details) => {
+    void Promise.all(
+      clinicalEncounterIds.map((id) => getOrderClinicalDetails(id).catch(() => null)),
+    )
+      .then((pages) => {
         if (canceled) return;
         const next: Record<string, OrderPrescription> = {};
-        for (const rx of details.prescriptions) {
-          if (rx.encounterOrderId) next[rx.encounterOrderId] = rx;
-        }
-        setPrescriptionsByOrderId(next);
-        setVaccineOrderIds(new Set(details.vaccineOrderIds));
+        const vaxIds = new Set<string>();
         const shots: Record<string, OrderVaccination> = {};
-        for (const shot of details.vaccinations) {
-          if (shot.encounterOrderId) shots[shot.encounterOrderId] = shot;
+        const draws: Record<string, StockDraw> = {};
+        let any = false;
+        for (const details of pages) {
+          if (!details) continue;
+          any = true;
+          for (const rx of details.prescriptions) {
+            if (rx.encounterOrderId) next[rx.encounterOrderId] = rx;
+          }
+          for (const id of details.vaccineOrderIds) vaxIds.add(id);
+          for (const shot of details.vaccinations) {
+            if (shot.encounterOrderId) shots[shot.encounterOrderId] = shot;
+          }
+          for (const draw of details.stockDraws) draws[draw.orderId] = draw;
         }
-        setVaccinationsByOrderId(shots);
-        setStockDrawsByOrderId(
-          Object.fromEntries(details.stockDraws.map((d) => [d.orderId, d])),
-        );
-      })
-      .catch(() => {
-        if (!canceled) {
+        if (!any) {
           setPrescriptionsByOrderId({});
           setVaccineOrderIds(new Set());
           setVaccinationsByOrderId({});
           setStockDrawsByOrderId({});
+          return;
         }
+        setPrescriptionsByOrderId(next);
+        setVaccineOrderIds(vaxIds);
+        setVaccinationsByOrderId(shots);
+        setStockDrawsByOrderId(draws);
       });
     return () => {
       canceled = true;
     };
-  }, [encounterId, invoice?.id, clinicalRefreshSignal]);
+  }, [clinicalEncounterIds.join(','), invoice?.id, clinicalRefreshSignal]);
 
   // Stamp the visit provider onto production lines that still lack one (SOAP used to leave these blank).
   useEffect(() => {
@@ -1374,41 +1556,50 @@ export default function VisitCheckoutPanel({
   );
 
   /**
-   * Is this line finished enough to collect on — dose or script recorded, provider
-   * attributed, lot picked? Single source of truth for both the per-line tick and the
-   * Checkout gate, so the button can't go green while a line is still outstanding.
+   * What still has to happen on this line before the visit can be collected on — dose or
+   * script recorded, provider attributed, lot picked. Null means ready. Single source of
+   * truth for the per-line tick and the Checkout gate, and the text is shown on the row:
+   * a line going red with no explanation is indistinguishable from a bug.
+   *
+   * Note the Rx checks read `recorded` (the saved prescriptions row), never the form
+   * inputs — the whole point is to say when what's on screen has not reached the server.
    */
-  const computeLineReady = (l: VisitInvoiceLine): boolean => {
+  const lineNotReadyReason = (l: VisitInvoiceLine): string | null => {
     const order = l.orderId != null ? orders.find((o) => o.id === l.orderId) ?? null : null;
     const recorded = l.orderId ? prescriptionsByOrderId[l.orderId] ?? null : null;
     const showRxLabel = Boolean(rxLabel) && isCheckoutRxLine(l, order);
     const instructions =
       recorded?.instructions || l.instructions || l.catalogInstructions || '';
     const isVaccineLine =
-      Boolean(order && vaccineOrderIds.has(order.id)) || l.catalogIsVaccine === true;
+      Boolean(l.orderId && vaccineOrderIds.has(l.orderId)) || l.catalogIsVaccine === true;
     const excludesProduction =
       order?.catalogFlags?.excludeFromProduction === true ||
       l.excludeFromProduction === true;
     const needsProvider = !excludesProduction && !isInvoiceShippingLine(l);
     const mailed = invoice ? matchingMailOrderForLine(mailOrders, invoice.id, l) : null;
-    const lotReady =
-      !l.trackLots || Boolean(mailed) || isVaccineLine || l.inventoryLotBalanceId != null;
     const refillN = recorded?.refill ?? l.refillCount ?? 0;
-    const rxComplete =
-      Boolean(String(instructions).trim()) &&
-      Boolean(l.rxApprovedAt) &&
-      (recorded?.acuity === 'acute' || recorded?.acuity === 'chronic') &&
-      (refillN <= 0 || Boolean(recorded?.refillExpiration));
-    const clinicalReady =
-      order && vaccineOrderIds.has(order.id)
-        ? Boolean(vaccinationsByOrderId[order.id])
-        : showRxLabel
-          ? rxComplete
-          : true;
-    return (
-      clinicalReady && (!needsProvider || l.providerEmployeeId != null) && lotReady
-    );
+
+    if (l.orderId && vaccineOrderIds.has(l.orderId)) {
+      if (!vaccinationsByOrderId[l.orderId]) return 'Record the dose given';
+    } else if (showRxLabel) {
+      if (!String(instructions).trim()) return 'Enter the directions (sig)';
+      if (!l.rxApprovedAt) return 'Approve the sig';
+      if (recorded?.acuity !== 'acute' && recorded?.acuity !== 'chronic') {
+        return 'Select acute or chronic, then Save Rx';
+      }
+      if (refillN > 0 && !recorded?.refillExpiration) {
+        return 'Enter the refill expiration, then Save Rx';
+      }
+    }
+    if (needsProvider && l.providerEmployeeId == null) return 'Pick a provider';
+    if (l.trackLots && !mailed && !isVaccineLine && l.inventoryLotBalanceId == null) {
+      return 'Pick a lot';
+    }
+    return null;
   };
+
+  const computeLineReady = (l: VisitInvoiceLine): boolean =>
+    lineNotReadyReason(l) === null;
 
   const visibleCheckoutLines = [
     ...checkoutLineGroups.parents,
@@ -1497,6 +1688,15 @@ export default function VisitCheckoutPanel({
         <Receipt size={16} />
         <span>Checkout</span>
         <span className={`soap-invoice-badge status-${status}`}>{status}</span>
+        {invoice?.created ? (
+          <span className="soap-checkout-opened">
+            Opened{' '}
+            {new Date(invoice.created).toLocaleString(undefined, {
+              dateStyle: 'medium',
+              timeStyle: 'short',
+            })}
+          </span>
+        ) : null}
         {invoice?.isEuthanasiaPrepay && (
           <span className="soap-invoice-badge euthanasia">
             {invoice.lastChargeStatus === 'requires_capture' ? 'authorized' : 'euthanasia auth'}
@@ -1559,9 +1759,102 @@ export default function VisitCheckoutPanel({
         </div>
       ) : null}
 
-      {!invoice ? (
+      {!invoice && previsitOrders.length === 0 ? (
         <div className="soap-empty">
           No invoice yet — add a charge above to open one.
+        </div>
+      ) : !invoice ? (
+        <div className="soap-invoice-lines">
+          {groupCheckoutLinesByPet([], roster).map((section) => {
+            const sectionPrevisit =
+              section.key === 'visit'
+                ? []
+                : previsitOrders.filter((o) => {
+                    if (section.patientId != null) return o.patientId === section.patientId;
+                    return patientId == null || o.patientId === patientId;
+                  });
+            if (sectionPrevisit.length === 0) return null;
+            return (
+              <div
+                key={section.key}
+                id={
+                  section.patientId != null
+                    ? `soap-invoice-pet-${section.patientId}`
+                    : undefined
+                }
+                className="soap-invoice-pet-block"
+              >
+                {roster.length > 1 ? (
+                  <div className="soap-invoice-pet-head">
+                    <span>{section.label}</span>
+                    <span>{sectionPrevisit.length} pre-visit</span>
+                  </div>
+                ) : null}
+                <div className="soap-invoice-previsit">
+                  <div className="soap-invoice-previsit-banner">Pre-visit accepts</div>
+                  <p className="soap-invoice-previsit-hint">
+                    Owner already agreed on the pre-visit form. Accept to charge, or decline
+                    with a reason if you won&apos;t do it.
+                  </p>
+                  {sectionPrevisit.map((o) => (
+                    <div
+                      key={o.id}
+                      className={`soap-invoice-previsit-row${
+                        o.state === 'declined' ? ' is-declined' : ''
+                      }`}
+                    >
+                      <span className="soap-invoice-previsit-name">
+                        {o.name}
+                        {Number(o.qty) > 1 ? ` ×${Number(o.qty)}` : ''}
+                        {o.state === 'declined' ? (
+                          <span className="soap-tag declined">declined</span>
+                        ) : null}
+                      </span>
+                      <span className="soap-invoice-previsit-amt">
+                        {o.isCovered
+                          ? 'covered'
+                          : money(Number(o.qty) * Number(o.unitPrice))}
+                      </span>
+                      <div className="soap-invoice-previsit-actions">
+                        {o.state === 'declined' ? (
+                          <button
+                            type="button"
+                            className="soap-btn small ok"
+                            disabled={disabled || previsitBusyId != null}
+                            onClick={() => void applyPrevisitState(o, 'accepted')}
+                          >
+                            <RotateCcw size={12} /> Re-add
+                          </button>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              className="soap-btn small ok"
+                              disabled={disabled || previsitBusyId != null}
+                              onClick={() => void applyPrevisitState(o, 'accepted')}
+                            >
+                              <Check size={12} /> Accept
+                            </button>
+                            <button
+                              type="button"
+                              className="soap-btn small danger"
+                              disabled={disabled || previsitBusyId != null}
+                              onClick={() => void applyPrevisitState(o, 'declined')}
+                            >
+                              <X size={12} /> Decline
+                            </button>
+                          </>
+                        )}
+                      </div>
+                      {o.state === 'declined' && o.note?.trim() ? (
+                        <div className="soap-invoice-previsit-reason">{o.note.trim()}</div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
         </div>
       ) : (
         <>
@@ -1571,6 +1864,12 @@ export default function VisitCheckoutPanel({
             onInvoiceChange={onInvoiceChange}
             className="soap-checkout-branch"
             selectClassName="soap-select"
+            highlightBranch={
+              Object.keys(rxApproveTried).length > 0 && invoice.inventoryBranchId == null
+            }
+            highlightLocation={
+              Object.keys(rxApproveTried).length > 0 && invoice.inventoryLocationId == null
+            }
           />
           <div className="soap-invoice-lines">
             <div className="soap-invoice-lines-head" aria-hidden>
@@ -1726,14 +2025,15 @@ export default function VisitCheckoutPanel({
                 const attachedTagalongs = checkoutTagalongs.attached.get(l.id) ?? [];
                 const mailed = matchingMailOrderForLine(mailOrders, invoice.id, l);
                 const isVaccineLine =
-                  Boolean(order && vaccineOrderIds.has(order.id)) ||
+                  Boolean(l.orderId && vaccineOrderIds.has(l.orderId)) ||
                   l.catalogIsVaccine === true;
                 const excludesProduction =
                   order?.catalogFlags?.excludeFromProduction === true ||
                   l.excludeFromProduction === true;
                 const needsProvider =
                   !excludesProduction && !isInvoiceShippingLine(l);
-                const lineReady = computeLineReady(l);
+                const notReadyReason = lineNotReadyReason(l);
+                const lineReady = notReadyReason === null;
                 const effectiveProviderId =
                   providerId ?? rxLabel?.veterinarianEmployeeId ?? null;
                 const needsClinical =
@@ -1748,11 +2048,6 @@ export default function VisitCheckoutPanel({
                   isVaccineLine ||
                   Boolean(l.trackLots && !stock.linked);
                 const lineExpanded = expandedLineId === l.id;
-                const approveBlockedReason = !String(instructions).trim()
-                  ? 'Record the script (sig) first — expand this line'
-                  : effectiveProviderId == null
-                    ? 'Set the visit provider before approving'
-                    : null;
                 const mailBlockedReason = showRxLabel
                   ? effectiveProviderId == null
                     ? 'Provider is required'
@@ -1810,18 +2105,25 @@ export default function VisitCheckoutPanel({
                         {lineReady ? (
                           <Check className="soap-invoice-line-check" size={14} aria-label="All set" />
                         ) : (
-                          <AlertCircle
-                            className="soap-invoice-line-alert"
-                            size={14}
-                            aria-label="Still needs details"
-                          />
+                          <>
+                            <AlertCircle
+                              className="soap-invoice-line-alert"
+                              size={14}
+                              aria-hidden
+                            />
+                            <span className="soap-invoice-line-todo">{notReadyReason}</span>
+                          </>
                         )}
                       </span>
                     </span>
                     {needsProvider ? (
                       canEditLines ? (
                         <select
-                          className="soap-select soap-checkout-provider-select"
+                          className={`soap-select soap-checkout-provider-select${
+                            rxApproveTried[l.id] && l.providerEmployeeId == null
+                              ? ' is-missing'
+                              : ''
+                          }`}
                           title="Provider"
                           aria-label="Provider"
                           value={l.providerEmployeeId ?? ''}
@@ -2004,21 +2306,32 @@ export default function VisitCheckoutPanel({
                     )}
 
                     {attachedShipping.map((ship) => (
-                      <div key={ship.id} className="soap-invoice-line-extra soap-invoice-line-ship">
-                        <span>{ship.description}</span>
+                      <div key={ship.id} className="soap-invoice-line-ship">
+                        <span className="soap-invoice-line-expand" aria-hidden />
+                        <span className="soap-invoice-line-desc">
+                          <span className="soap-invoice-line-ship-name">{ship.description}</span>
+                        </span>
+                        <span />
+                        <span />
                         <span className="soap-invoice-line-amt">
+                          <span className="soap-invoice-line-ship-kind">Shipping</span>
                           {ship.isCovered ? 'covered' : money(ship.amount)}
                         </span>
+                        <span className="soap-invoice-line-remove" aria-hidden />
                       </div>
                     ))}
                     {attachedTagalongs.map((child) => (
-                      <div key={child.id} className="soap-invoice-line-extra soap-invoice-line-ship soap-invoice-line-tagalong">
-                        <span>
-                          {child.description}
-                          {tagalongTaxHint(child) ? (
-                            <span className="settings-muted"> · {tagalongTaxHint(child)}</span>
-                          ) : null}
+                      <div key={child.id} className="soap-invoice-line-ship soap-invoice-line-tagalong">
+                        <span className="soap-invoice-line-expand" aria-hidden />
+                        <span className="soap-invoice-line-desc">
+                          <span className="soap-invoice-line-ship-name">
+                            {child.description}
+                            {tagalongTaxHint(child) ? (
+                              <span className="settings-muted"> · {tagalongTaxHint(child)}</span>
+                            ) : null}
+                          </span>
                         </span>
+                        <span />
                         <span className="soap-checkout-line-qty--ro">{Number(child.qty) || 1}</span>
                         <span className="soap-invoice-line-amt">
                           {child.isCovered ? 'covered' : money(child.amount)}
@@ -2033,11 +2346,17 @@ export default function VisitCheckoutPanel({
                           >
                             <X size={14} />
                           </button>
-                        ) : null}
+                        ) : (
+                          <span className="soap-invoice-line-remove" aria-hidden />
+                        )}
                       </div>
                     ))}
 
-                    {lineExpanded ? (
+                    {drawerLineId === l.id ? (
+                      <div
+                        className={`soap-invoice-line-drawer${lineExpanded ? ' is-open' : ''}`}
+                      >
+                      <div className="soap-invoice-line-drawer-inner">
                       <div className="soap-invoice-line-extra">
                         {showRxLabel && stock.linked && !mailed ? (
                           <LinkedStockInvoiceDetails
@@ -2060,7 +2379,7 @@ export default function VisitCheckoutPanel({
                           <CheckoutInvoiceRxFields
                             line={l}
                             invoice={invoice}
-                            encounterId={encounterId}
+                            encounterId={l.encounterId || order?.encounterId || encounterId}
                             orderId={l.orderId}
                             recorded={recorded}
                             rxName={recorded?.name || order?.name || l.description}
@@ -2068,18 +2387,17 @@ export default function VisitCheckoutPanel({
                             employeeId={rxLabel?.veterinarianEmployeeId ?? l.providerEmployeeId}
                             disabled={disabled || !canEditLines}
                             scriptApproved={scriptApproved}
-                            approveBlockedReason={
-                              !String(instructions).trim() && !l.catalogInstructions?.trim()
-                                ? 'Enter the script first'
-                                : effectiveProviderId == null
-                                  ? 'Set the visit provider before approving'
-                                  : null
+                            approveTried={Boolean(rxApproveTried[l.id])}
+                            onApproveTried={() =>
+                              setRxApproveTried((prev) => ({ ...prev, [l.id]: true }))
                             }
                             approvedByName={
                               l.rxApprovedByName ? shortProviderName(l.rxApprovedByName) : null
                             }
                             mailed={Boolean(mailed)}
                             hideLotPicker={isVaccineLine || stock.linked}
+                            patientId={l.patientId ?? invoice.patientId ?? rxLabel?.patientId}
+                            patientName={rxLabel?.patientName}
                             dymoSource={
                               rxLabel
                                 ? {
@@ -2107,6 +2425,7 @@ export default function VisitCheckoutPanel({
                               }));
                             }}
                             onError={setError}
+                            onSavedAndCollapse={() => setExpandedLineId(null)}
                             onApproved={() => {
                               if (
                                 l.providerEmployeeId != null ||
@@ -2287,6 +2606,8 @@ export default function VisitCheckoutPanel({
                           </div>
                         ) : null}
                       </div>
+                      </div>
+                      </div>
                     ) : null}
                   </div>
                   </Fragment>
@@ -2380,34 +2701,6 @@ export default function VisitCheckoutPanel({
             )}
           </div>
 
-          {/* Clients can join within 24h of the visit; this re-prices the bill,
-              refunds the difference and emails them, instead of the manual
-              void / refund / re-enter dance. */}
-          {Number(invoice.amountPaid) > 0 && (
-            <button
-              type="button"
-              className="btn secondary soap-postvisit-signup-btn"
-              onClick={() => setPostVisitSignupOpen(true)}
-              disabled={disabled || busy != null}
-            >
-              <ShieldCheck size={14} aria-hidden="true" />
-              Post-visit sign-up for membership
-            </button>
-          )}
-
-          {postVisitSignupOpen && (
-            <PostVisitMembershipSignup
-              visitInvoiceId={invoice.id}
-              patientId={patientId ?? invoice.patientId ?? null}
-              patientName={rxLabel?.patientName ?? null}
-              patientSpecies={rxLabel?.species ?? null}
-              onClose={() => setPostVisitSignupOpen(false)}
-              onCompleted={() => {
-                void getInvoice(invoice.id).then(onInvoiceChange).catch(() => undefined);
-              }}
-            />
-          )}
-
           {error && <div className="soap-error">{error}</div>}
           {note && <div className="soap-note-banner">{note}</div>}
           {isVoid && (
@@ -2441,6 +2734,16 @@ export default function VisitCheckoutPanel({
               </p>
             </div>
           ) : null}
+
+          {showPayment && !isPaid && !isVoid && (
+            <EstimateSettlePanel
+              appointmentId={invoice?.appointmentId ?? null}
+              disabled={disabled || busy != null}
+              onSettled={(invoiceId) => {
+                void getInvoice(invoiceId).then(onInvoiceChange).catch(() => undefined);
+              }}
+            />
+          )}
 
           {showPayment && !isPaid && !isVoid && (
             <TerminalReaderPicker

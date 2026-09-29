@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { Bold } from 'lucide-react';
 import {
   looksLikeHtmlFragment,
+  preserveInlineNewlines,
   sanitizeSoapHtml,
   soapHtmlToPlainText,
 } from '../../utils/sanitizeCommunicationHtml';
@@ -24,7 +25,7 @@ type Props = {
 export function soapTextToEditorHtml(value: string): string {
   const raw = value ?? '';
   if (!raw.trim()) return '';
-  if (looksLikeHtmlFragment(raw)) return sanitizeSoapHtml(raw);
+  if (looksLikeHtmlFragment(raw)) return sanitizeSoapHtml(preserveInlineNewlines(raw));
   return sanitizeSoapHtml(
     raw
       .replace(/&/g, '&amp;')

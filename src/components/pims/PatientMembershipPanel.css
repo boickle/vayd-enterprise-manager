@@ -67,6 +67,33 @@
   align-items: center;
 }
 
+.pmp-empty__actions .pims-detail__btn-primary,
+.pmp-empty__actions .pims-detail__btn-secondary {
+  border-radius: 999px;
+  padding: 8px 16px;
+}
+
+.pmp-signup-btn {
+  gap: 8px;
+}
+
+.pmp-signup-window {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: #eef2ff;
+  color: #3730a3;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.pmp-signup-window.is-expired {
+  background: #fef3c7;
+  color: #92400e;
+}
+
 .pmp-empty--inactive {
   align-items: center;
   flex-direction: row;

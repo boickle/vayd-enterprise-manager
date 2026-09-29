@@ -22,6 +22,8 @@ type Props = {
   className?: string;
   fieldClassName?: string;
   selectClassName?: string;
+  highlightBranch?: boolean;
+  highlightLocation?: boolean;
 };
 
 function employeeDefaultBranchId(
@@ -50,6 +52,8 @@ export default function CheckoutInventoryBranchField({
   className,
   fieldClassName,
   selectClassName,
+  highlightBranch,
+  highlightLocation,
 }: Props) {
   const { employeeId } = useAuth();
   const empId =
@@ -164,7 +168,7 @@ export default function CheckoutInventoryBranchField({
 
   return (
     <div className={className}>
-      <label className={fieldClassName}>
+      <label className={`${fieldClassName ?? ''}${highlightBranch ? ' is-missing' : ''}`.trim()}>
         Branch
         <select
           className={selectClassName}
@@ -180,7 +184,7 @@ export default function CheckoutInventoryBranchField({
           ))}
         </select>
       </label>
-      <label className={fieldClassName}>
+      <label className={`${fieldClassName ?? ''}${highlightLocation ? ' is-missing' : ''}`.trim()}>
         Location *
         <select
           className={selectClassName}

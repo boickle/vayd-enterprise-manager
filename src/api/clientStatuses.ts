@@ -8,16 +8,27 @@ export type ClientStatusRow = {
   code: string;
   name: string;
   discount: number;
+  labDiscount: number | null;
+  procedureDiscount: number | null;
+  inventoryDiscount: number | null;
+  inventoryDiscountMode: 'percent' | 'cost_plus';
   discountType: number;
   lowerPriceToCost: boolean;
+  isStaff: boolean;
   isActive: boolean;
 };
 
 export type ClientStatusWrite = {
   name?: string;
   discount?: number;
+  labDiscount?: number | null;
+  procedureDiscount?: number | null;
+  inventoryDiscount?: number | null;
+  inventoryDiscountMode?: 'percent' | 'cost_plus';
+  /** 0 = none, 1 = percent off (the usual employee / VIP cut). */
   discountType?: number;
   lowerPriceToCost?: boolean;
+  isStaff?: boolean;
   isActive?: boolean;
 };
 
@@ -27,8 +38,25 @@ function normalizeRow(row: Partial<ClientStatusRow> & { id: number }): ClientSta
     code: String(row.code ?? ''),
     name: String(row.name ?? row.code ?? ''),
     discount: Number(row.discount) || 0,
+    labDiscount:
+      row.labDiscount == null || row.labDiscount === ('' as unknown as number)
+        ? null
+        : Number(row.labDiscount),
+    procedureDiscount:
+      row.procedureDiscount == null ||
+      row.procedureDiscount === ('' as unknown as number)
+        ? null
+        : Number(row.procedureDiscount),
+    inventoryDiscount:
+      row.inventoryDiscount == null ||
+      row.inventoryDiscount === ('' as unknown as number)
+        ? null
+        : Number(row.inventoryDiscount),
+    inventoryDiscountMode:
+      row.inventoryDiscountMode === 'cost_plus' ? 'cost_plus' : 'percent',
     discountType: Number(row.discountType) || 0,
     lowerPriceToCost: row.lowerPriceToCost === true,
+    isStaff: row.isStaff === true,
     isActive: row.isActive !== false,
   };
 }
