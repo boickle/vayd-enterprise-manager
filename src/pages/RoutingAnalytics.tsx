@@ -63,6 +63,7 @@ import {
   formatHoursMinutes,
   summarizeScheduleOptimizeSavings,
 } from '../utils/scheduleOptimizeSavings';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
 function toLocalDateStr(d: Dayjs) {
   return d.format('YYYY-MM-DD');
@@ -148,7 +149,7 @@ function addTotalBookedTrend<T extends { totalBooked: number }>(
 
 const ALL_USERS = '';
 
-const APPOINTMENT_REQUEST_PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const APPOINTMENT_REQUEST_PRACTICE_ID = currentPracticeId();
 
 /** Classify persisted public form payload: euthanasia / end-of-life vs other appointment requests. */
 function isEuthanasiaRequestSubmission(requestData: Record<string, unknown>): boolean {

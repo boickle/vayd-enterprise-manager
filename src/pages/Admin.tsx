@@ -4,6 +4,7 @@ import { NavLink, Navigate, Outlet, useLocation } from 'react-router';
 import { ChevronDown } from 'lucide-react';
 import { useAuth } from '../auth/useAuth';
 import { getAdminTabPages, type AdminTabPage } from '../admin-tabs';
+import { fetchIsPlatformAdmin } from '../api/platformPractices';
 import './Settings.css';
 
 function matchesRole(required: AdminTabPage['role'], userRoles: string[]): boolean {
@@ -95,9 +96,7 @@ function AdminTabMenu({
               key={item.path}
               to={`${base}/${item.path}`}
               role="menuitem"
-              className={({ isActive }) =>
-                `settings-tab-menu__item${isActive ? ' active' : ''}`
-              }
+              className={({ isActive }) => `settings-tab-menu__item${isActive ? ' active' : ''}`}
               onClick={() => setOpen(false)}
             >
               {item.label}
@@ -115,7 +114,19 @@ type AdminProps = {
 };
 
 export default function Admin({ basePath = '/admin' }: AdminProps) {
-  const { role } = useAuth() as { role?: string | string[] };
+  const { role, token } = useAuth() as { role?: string | string[]; token?: string | null };
+  const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    if (!token) {
+      setIsPlatformAdmin(false);
+      return;
+    }
+    fetchIsPlatformAdmin(token).then((result) => !cancelled && setIsPlatformAdmin(result));
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
   const roles = Array.isArray(role) ? role : role ? [String(role)] : [];
   const normalizedRoles = roles.map((r) => String(r).toLowerCase().trim()).filter(Boolean);
 
@@ -126,7 +137,9 @@ export default function Admin({ basePath = '/admin' }: AdminProps) {
   }
 
   const base = basePath.replace(/\/$/, '');
-  const visibleTabs = getAdminTabPages().filter((tab) => matchesRole(tab.role, normalizedRoles));
+  const visibleTabs = getAdminTabPages().filter(
+    (tab) => matchesRole(tab.role, normalizedRoles) && (!tab.platformAdminOnly || isPlatformAdmin)
+  );
   const navItems = groupAdminTabs(visibleTabs);
 
   return (

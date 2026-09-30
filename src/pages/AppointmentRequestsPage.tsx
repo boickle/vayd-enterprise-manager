@@ -169,8 +169,9 @@ import {
   writeAppointmentRequestListReturnTab,
 } from '../utils/appointmentRequestListReturnTab';
 import './Settings.css';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
-const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_ID = currentPracticeId();
 
 type BookedApptSummary = AppointmentRequestBookedApptSummary;
 

@@ -4,8 +4,9 @@
 // Mirrors the backend visitWorkflow module. All calls go through the shared
 // authenticated axios instance.
 import { apiBaseUrl, http } from './http';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
-export const VISIT_WORKFLOW_PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+export const VISIT_WORKFLOW_PRACTICE_ID = currentPracticeId();
 
 export type SoapEncounterMode = 'quick' | 'comprehensive';
 export type SoapEncounterStatus = 'draft' | 'completed';

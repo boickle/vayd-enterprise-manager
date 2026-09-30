@@ -86,6 +86,7 @@ import { getPreDiscountForOneUnit } from '../utils/catalogItemPricing';
 import { Archive, ArchiveRestore, Copy, X, ChevronDown, ChevronRight } from 'lucide-react';
 import './Settings.css';
 import './Catalog.css';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
 const BRANCH_STORAGE_PREFIX = 'vayd_inventory_branch:';
 /** Pseudo-id in priceTargetBranchIds for the Online Store price target (not a real branch). */
@@ -117,7 +118,7 @@ function resolvePracticeId(token: string | null): number {
       if (Number.isFinite(n)) return n;
     }
   }
-  return Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+  return currentPracticeId();
 }
 
 function toMoneyNumber(v: unknown): number {

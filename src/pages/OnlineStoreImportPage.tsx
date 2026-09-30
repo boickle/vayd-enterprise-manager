@@ -35,6 +35,7 @@ import { appConfirm, appPrompt } from '../utils/appDialog';
 import StoreDescriptionEditor from './store/StoreDescriptionEditor';
 import './Settings.css';
 import './Catalog.css';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
 type StoreAdminTab = 'items' | 'coupons' | 'import';
 
@@ -516,7 +517,7 @@ function practiceIdFromAuth(token: string | null): number {
   const raw = p?.practiceId ?? p?.practice_id;
   const n = Number(raw);
   if (Number.isFinite(n) && n > 0) return n;
-  return Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+  return currentPracticeId();
 }
 
 export default function OnlineStoreImportPage() {

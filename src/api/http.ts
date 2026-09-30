@@ -4,6 +4,13 @@ import axios, { AxiosError, AxiosHeaders, AxiosRequestHeaders, InternalAxiosRequ
 export const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000';
 const baseURL = apiBaseUrl;
 
+/** The API picks the practice from this host (e.g. acme.scoutpims.com) when there is no token. */
+export const PRACTICE_HOST_HEADER = 'X-Scout-Host';
+
+export function practiceHostHeaders(): Record<string, string> {
+  return typeof window === 'undefined' ? {} : { [PRACTICE_HOST_HEADER]: window.location.host };
+}
+
 // Initialize token from localStorage on module load
 // Support both old token format and new accessToken format for migration
 let token: string | null = (() => {
@@ -302,7 +309,7 @@ async function _performTokenRefresh(shouldLogoutOnFailure: boolean = true): Prom
     const response = await axios.post(
       `${baseURL}/auth/refresh`,
       { refreshToken },
-      { withCredentials: false }
+      { withCredentials: false, headers: practiceHostHeaders() }
     );
     console.log('[Token Refresh] 🔐 Refresh response received:', {
       hasAccessToken: !!response.data?.accessToken,
@@ -522,6 +529,9 @@ http.interceptors.request.use((config) => {
   // Only attach if not already present (case-insensitive handled by AxiosHeaders)
   if (!headers.has('Authorization') && currentToken) {
     headers.set('Authorization', `Bearer ${currentToken}`);
+  }
+  for (const [name, value] of Object.entries(practiceHostHeaders())) {
+    if (!headers.has(name)) headers.set(name, value);
   }
 
   config.headers = headers as AxiosRequestHeaders;

@@ -13,8 +13,9 @@ import type {
 import { assignedWeekZones, type WeekZoneAssign } from '../../utils/employeeWeekZones';
 import { WorkZonesMapModal } from '../WorkZonesMapModal';
 import DepotBranchField from './DepotBranchField';
+import { currentPracticeId } from '../../utils/practiceIdFromToken';
 
-const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_ID = currentPracticeId();
 
 type Props = {
   employee: Employee;

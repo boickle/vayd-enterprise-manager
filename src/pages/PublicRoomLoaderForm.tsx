@@ -513,6 +513,9 @@ function getRecommendedWellnessPlanFromList(
  * Same total as each pet card’s “If you enroll in membership today” (`dueAtVisit`): member-priced visit + store/tax,
  * with multi-pet credit applied — does not add the first month’s membership charge (that’s called out separately in the panel).
  * Can be negative when the multi-pet credit exceeds visit due; the summary footer shows that as “-$X.XX (credit)”.
+ *
+ * Mixed households (some pets already members): keep existing members’ current summary pricing and swap only
+ * non-member (upsell) pets to simulated member pricing via `canonicalGrandTotal`.
  */
 const VAYD_MULTI_PET_MEMBERSHIP_CREDIT_USD_FOOTER = 75;
 
@@ -531,10 +534,13 @@ function estimatedDueTodayWithMembershipForUpsellPets(
   membershipFooterOpts?: {
     summaryLineItems: Array<{ name: string; price: number; quantity: number; patientId?: number; category?: string }>;
     firstPatientId: number;
+    /** Full summary grand total (includes existing members + store). Required for mixed-household footer math. */
+    canonicalGrandTotal?: number;
   }
 ): number | null {
   if (pets.length === 0) return null;
   let sumMemberVisit = 0;
+  let sumOriginalVisit = 0;
   let storeTax: number | null = null;
 
   for (const petPlans of pets) {
@@ -580,9 +586,17 @@ function estimatedDueTodayWithMembershipForUpsellPets(
 
     sumMemberVisit +=
       Number(monthly.withMembershipVisitSubtotal) - multiPetCreditUsd + foundationsSeniorFalseVisitDelta;
+    sumOriginalVisit += Number(monthly.originalVisitSubtotal);
 
     const st = Math.max(0, Number(monthly.originalTotal) - Number(monthly.originalVisitSubtotal));
     if (storeTax === null) storeTax = st;
+  }
+
+  const householdHasExistingMember = allPatients.some((p: any) => patientHasMembershipFlag(p));
+  const grand = membershipFooterOpts?.canonicalGrandTotal;
+  if (householdHasExistingMember && grand != null && Number.isFinite(grand)) {
+    // Keep member pets’ current summary amounts; replace only upsell pets’ full-price visit with simulated member pricing.
+    return grand - sumOriginalVisit + sumMemberVisit;
   }
 
   return sumMemberVisit + (storeTax ?? 0);
@@ -4236,21 +4250,13 @@ export default function PublicRoomLoaderForm() {
       });
   }, [data?.patients, data?.appointments]);
 
-  /** If any pet on the form already has membership, hide the visit-summary membership upsell (mixed household). */
-  const roomLoaderHasAnyPetWithMembership = useMemo(
-    () =>
-      Array.isArray(data?.patients) &&
-      data.patients.some((p: any) => roomLoaderPatientHasMembership(p, data?.appointments)),
-    [data?.patients, data?.appointments]
-  );
-
   /** Close membership bill explainer when no pets remain eligible for upsell (e.g. after enrollment refetch). */
   useEffect(() => {
-    if (availablePlansForPetsForDisplay.length === 0 || roomLoaderHasAnyPetWithMembership) {
+    if (availablePlansForPetsForDisplay.length === 0) {
       setMembershipBillSectionExpanded(false);
       setMembershipPanelByPatientId({});
     }
-  }, [availablePlansForPetsForDisplay.length, roomLoaderHasAnyPetWithMembership]);
+  }, [availablePlansForPetsForDisplay.length]);
 
   useEffect(() => {
     /** Keep modal open for multi-pet households after first enrollment; only close when no pets remain eligible. */
@@ -4470,7 +4476,6 @@ export default function PublicRoomLoaderForm() {
     const shouldLoadMembershipSimulate =
       !visitIsQOLExamForMembership &&
       !formAlreadySubmitted &&
-      !roomLoaderHasAnyPetWithMembership &&
       availablePlansForPetsForDisplay.length > 0 &&
       (membershipBillSectionExpanded || onVisitSummaryPage);
 
@@ -4589,7 +4594,6 @@ export default function PublicRoomLoaderForm() {
   }, [
     membershipBillSectionExpanded,
     formAlreadySubmitted,
-    roomLoaderHasAnyPetWithMembership,
     availablePlansForPetsForDisplay,
     currentPage,
     data?.patients?.length,
@@ -10638,12 +10642,12 @@ export default function PublicRoomLoaderForm() {
           {
             summaryLineItems: summarySnapshot.summaryLineItems ?? [],
             firstPatientId: summaryFirstPatientId,
+            canonicalGrandTotal,
           }
         );
         const showMembershipFooterComparison =
           !summaryPageVisitIsQOLExam &&
           !readOnly &&
-          !roomLoaderHasAnyPetWithMembership &&
           availablePlansForPetsForDisplay.length > 0 &&
           !membershipPanelLoading &&
           estimatedDueTodayWithMembership != null;
@@ -10768,9 +10772,11 @@ export default function PublicRoomLoaderForm() {
                 !Number.isNaN(pidN) && roomLoaderSessionMembership.multiPetCreditPatientIds[pidN]
                   ? VAYD_MULTI_PET_MEMBERSHIP_CREDIT_USD
                   : 0;
-              const showMultiPetMembershipUpsellBlurb =
-                !roomLoaderHasAnyPetWithMembership &&
-                roomLoaderPetEligibleForMultiPetMembershipUpsell(patient, patients, appointments);
+              const showMultiPetMembershipUpsellBlurb = roomLoaderPetEligibleForMultiPetMembershipUpsell(
+                patient,
+                patients,
+                appointments
+              );
 
               const renderDisplayRow = (item: any, idx: number) => {
                 const isVisitOrConsult = hasPhrase(item, 'visit') || hasPhrase(item, 'consult');
@@ -12084,8 +12090,7 @@ export default function PublicRoomLoaderForm() {
             <div style={{ width: '100%' }}>
               {!readOnly &&
                 !summaryPageVisitIsQOLExam &&
-                availablePlansForPetsForDisplay.length > 0 &&
-                !roomLoaderHasAnyPetWithMembership && (
+                availablePlansForPetsForDisplay.length > 0 && (
                 <div
                   className="public-room-loader-summary-total-row"
                   style={{
@@ -12145,7 +12150,6 @@ export default function PublicRoomLoaderForm() {
               {membershipBillSectionExpanded &&
                 !summaryPageVisitIsQOLExam &&
                 !readOnly &&
-                !roomLoaderHasAnyPetWithMembership &&
                 availablePlansForPetsForDisplay.length > 0 &&
                 (() => {
                   const patientsData = data?.patients ?? [];
@@ -12161,7 +12165,9 @@ export default function PublicRoomLoaderForm() {
                       membershipComparisonDeclinedLines={summarySnapshot?.membershipComparisonDeclinedLines ?? []}
                       firstPatientId={firstPid}
                       todayVisitTotalAlignedWithSummary={
-                        availablePlansForPetsForDisplay.length === 1 ? canonicalGrandTotal : undefined
+                        availablePlansForPetsForDisplay.length === 1 && patientsData.length === 1
+                          ? canonicalGrandTotal
+                          : undefined
                       }
                       allPatients={patientsData}
                       membershipPlanDisplayName={membershipPlanDisplayName}
@@ -12188,22 +12194,19 @@ export default function PublicRoomLoaderForm() {
                   marginTop:
                     !readOnly &&
                     !summaryPageVisitIsQOLExam &&
-                    availablePlansForPetsForDisplay.length > 0 &&
-                    !roomLoaderHasAnyPetWithMembership
+                    availablePlansForPetsForDisplay.length > 0
                       ? '20px'
                       : '24px',
                   paddingTop:
                     !readOnly &&
                     !summaryPageVisitIsQOLExam &&
-                    availablePlansForPetsForDisplay.length > 0 &&
-                    !roomLoaderHasAnyPetWithMembership
+                    availablePlansForPetsForDisplay.length > 0
                       ? 0
                       : '20px',
                   borderTop:
                     !readOnly &&
                     !summaryPageVisitIsQOLExam &&
-                    availablePlansForPetsForDisplay.length > 0 &&
-                    !roomLoaderHasAnyPetWithMembership
+                    availablePlansForPetsForDisplay.length > 0
                       ? undefined
                       : '3px solid #e0e0e0',
                   display: 'flex',
@@ -12287,9 +12290,7 @@ export default function PublicRoomLoaderForm() {
               <button
                 type="button"
                 className={`public-room-loader-btn${
-                  !readOnly &&
-                  !submitting &&
-                  (roomLoaderMembershipEligiblePets.length === 0 || roomLoaderHasAnyPetWithMembership)
+                  !readOnly && !submitting && roomLoaderMembershipEligiblePets.length === 0
                     ? ' public-room-loader-submit-btn-throb'
                     : ''
                 }`}

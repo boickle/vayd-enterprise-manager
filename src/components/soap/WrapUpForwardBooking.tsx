@@ -20,8 +20,9 @@ import {
   type ForwardBookingDecisionResult,
 } from '../forwardBooking/saveForwardBookingDecision';
 import { startFollowUpBooking } from '../forwardBooking/bookFollowUpNow';
+import { currentPracticeId } from '../../utils/practiceIdFromToken';
 
-const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_ID = currentPracticeId();
 
 const LABS_TASK_TITLE_DEFAULT = 'Review labs and set follow-up timing';
 

@@ -1,0 +1,109 @@
+.platform-practices {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.platform-row {
+  cursor: pointer;
+}
+
+.platform-row:hover td {
+  background: #f8fdfa;
+}
+
+.platform-row--selected td {
+  background: #eef8f2;
+}
+
+.platform-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.platform-detail .settings-section-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.platform-status {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  background: #e2e8f0;
+  color: #334155;
+}
+
+.platform-status--active,
+.platform-status--succeeded {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.platform-status--suspended,
+.platform-status--maintenance,
+.platform-status--running,
+.platform-status--provisioning {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.platform-status--failed,
+.platform-status--offboarded {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.platform-warn {
+  color: #b45309;
+  font-size: 13px;
+}
+
+.platform-inline-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.platform-inline-form .settings-input {
+  width: auto;
+  min-width: 220px;
+}
+
+.platform-inline-form .platform-value-input {
+  flex: 1;
+  min-width: 280px;
+}
+
+.platform-switches {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.platform-hosts {
+  width: 100%;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.platform-value {
+  word-break: break-all;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+}
+
+.platform-row-actions {
+  white-space: nowrap;
+  text-align: right;
+}
+
+.platform-row-actions .btn + .btn {
+  margin-left: 6px;
+}

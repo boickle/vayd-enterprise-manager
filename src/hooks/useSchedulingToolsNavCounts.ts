@@ -33,8 +33,9 @@ import {
   countQueuedScheduleOptimizeItems,
   SCHEDULE_OPTIMIZE_QUEUE_EVENT,
 } from '../utils/scheduleOptimizeQueue';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
-const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_ID = currentPracticeId();
 
 export const SCHEDULING_TOOLS_COUNTS_REFRESH_EVENT = 'vayd:scheduling-tools-counts-refresh';
 export const SCHEDULING_TOOLS_PAGE_REFRESH_EVENT = 'vayd:scheduling-tools-page-refresh';

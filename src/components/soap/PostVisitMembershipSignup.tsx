@@ -48,6 +48,7 @@ import {
   membershipPostVisitSignupWindowHours,
 } from '../../api/practiceSettings';
 import './PostVisitMembershipSignup.css';
+import { currentPracticeId } from '../../utils/practiceIdFromToken';
 
 const PICKER_BAND_BUSINESS_HOURS = 48;
 
@@ -555,12 +556,12 @@ export default function PostVisitMembershipSignup({
 
     Promise.all([
       listClientVisitInvoices(clientId, { lite: true }),
-      fetchChatHoursOfOperation(Number(import.meta.env.VITE_PRACTICE_ID) || 1).catch(
+      fetchChatHoursOfOperation(currentPracticeId()).catch(
         () => null,
       ),
       fetchClientBillingStaff(
         clientId,
-        Number(import.meta.env.VITE_PRACTICE_ID) || 1,
+        currentPracticeId(),
       ).catch(() => ({})),
     ])
       .then(([rows, hours, billing]) => {

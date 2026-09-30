@@ -4,8 +4,9 @@ import { useAuth } from '../../auth/useAuth';
 import { listMyAutoship, patchMyAutoship, type StoreAutoship } from '../../api/onlineStore';
 import { AUTOSHIP_FREQS, formatAutoshipFrequency } from './storeCartState';
 import './Store.css';
+import { currentPracticeId } from '../../utils/practiceIdFromToken';
 
-const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_ID = currentPracticeId();
 
 export default function StoreAutoshipPage() {
   const auth = useAuth() as { token?: string | null };

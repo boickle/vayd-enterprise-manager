@@ -30,6 +30,7 @@ import TaxLevelSelect, {
 import CategorySelect from '../components/catalog/CategorySelect';
 import './Settings.css';
 import './Catalog.css';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
 type ManagedType = Extract<ItemType, 'lab' | 'procedure'>;
 type FormState = {
@@ -97,7 +98,7 @@ function practiceIdFromToken(token: string | null): number {
   } catch {
     // Use configured fallback.
   }
-  return Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+  return currentPracticeId();
 }
 
 function entityFor(row: SearchResultItem): Lab | Procedure | undefined {

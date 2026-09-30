@@ -8,8 +8,9 @@ import {
   localResetMessageTemplate,
 } from '../utils/messageTemplateLocalStore';
 import type { MessageTemplate, MessageTemplateWrite } from '../utils/messageTemplateTypes';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
-const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_ID = currentPracticeId();
 
 let preferLocal = false;
 

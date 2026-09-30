@@ -51,6 +51,7 @@ import { applyMemberStoreDiscount, memberDiscountForPets } from '../../utils/sto
 import { petDbId, useStoreMemberPricing } from './useStoreMemberPricing';
 import StoreRebatePromo from './StoreRebatePromo';
 import './Store.css';
+import { currentPracticeId } from '../../utils/practiceIdFromToken';
 
 function customFreqParts(frequency: string | null | undefined) {
   const match = /^every_(\d+)_(days|weeks|months)$/i.exec(frequency || '');
@@ -88,7 +89,7 @@ function autoshipPlaceOrderNote(lines: StoreCartLine[]): string | null {
   return `You'll receive shipments and be charged on each item's schedule (${schedule}) until you cancel.`;
 }
 
-const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_ID = currentPracticeId();
 
 function lineNeedsApproval(line: StoreCartLine) {
   return line.approvalTag === 'needs_doctor_approval';

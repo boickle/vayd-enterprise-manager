@@ -177,8 +177,9 @@ import { clientDiscountBadge } from '../../utils/clientDiscountDisplay';
 import LabResultsPanel from '../labs/LabResultsPanel';
 import './detail/PimsDetailKit.css';
 import './PimsPatientDetailView.css';
+import { currentPracticeId } from '../../utils/practiceIdFromToken';
 
-const PIMS_DETAIL_PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PIMS_DETAIL_PRACTICE_ID = currentPracticeId();
 
 function pickStr(v: unknown): string | null {
   if (v == null) return null;
@@ -1134,7 +1135,7 @@ export default function PimsPatientDetailView({
   const [householdClient, setHouseholdClient] = useState<Record<string, unknown> | null>(null);
   const reach = useClientReach();
 
-  const practiceId = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+  const practiceId = currentPracticeId();
   const speciesOptions = useSpeciesCatalog(practiceId);
 
   const clientsBasePath = '/schedule/clients';
