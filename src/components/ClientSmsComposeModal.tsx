@@ -25,6 +25,11 @@ type Props = {
   primarySendLabel?: string;
   /** Shown under the title — e.g. the Quo line this thread uses. */
   fromLineLabel?: string | null;
+  /** Optional pay / portal URL shown above the message so it can be edited or copied. */
+  payLink?: string;
+  payLinkCopied?: boolean;
+  onPayLinkChange?: (value: string) => void;
+  onCopyPayLink?: () => void;
   mergeValues?: MergeValues;
 };
 
@@ -45,6 +50,10 @@ export function ClientSmsComposeModal({
   showProductionOverride = true,
   primarySendLabel = 'Send message',
   fromLineLabel,
+  payLink,
+  payLinkCopied = false,
+  onPayLinkChange,
+  onCopyPayLink,
   mergeValues,
 }: Props) {
   const allowOverride = showProductionOverride && smsAllowsProductionOverride();
@@ -164,6 +173,43 @@ export function ClientSmsComposeModal({
           <p role="alert" style={{ color: '#b91c1c', fontSize: 14, margin: '0 0 12px' }}>
             {sendError}
           </p>
+        ) : null}
+
+        {payLink != null && onPayLinkChange ? (
+          <label style={{ display: 'block', marginBottom: 16 }}>
+            <span style={{ display: 'block', marginBottom: 8, fontSize: 14, fontWeight: 600 }}>
+              Pay link
+            </span>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'stretch' }}>
+              <input
+                type="url"
+                value={payLink}
+                onChange={(e) => onPayLinkChange(e.target.value)}
+                disabled={sending}
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  padding: '10px 12px',
+                  background: '#f9fafb',
+                  border: '1px solid #e5e7eb',
+                  borderRadius: 8,
+                  fontSize: 13,
+                  fontFamily: 'inherit',
+                  boxSizing: 'border-box',
+                }}
+              />
+              {onCopyPayLink ? (
+                <button
+                  type="button"
+                  className="btn secondary"
+                  disabled={sending || !payLink.trim()}
+                  onClick={onCopyPayLink}
+                >
+                  {payLinkCopied ? 'Copied' : 'Copy'}
+                </button>
+              ) : null}
+            </div>
+          </label>
         ) : null}
 
         <MessageTemplatePicker

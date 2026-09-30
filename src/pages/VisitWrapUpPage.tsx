@@ -3,7 +3,6 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import {
   ArrowLeft,
   BellRing,
-  CalendarClock,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -31,6 +30,8 @@ import {
   generateClientRecap,
   getVisitReminders,
   getVisitWrapUp,
+  persistClientRecapDraft,
+  prefetchClientRecap,
   recordClientEmailDecision,
   type PastDueReminder,
   type VisitReminderPet,
@@ -54,7 +55,6 @@ import {
   signatureHtmlForFromAlias,
 } from '../components/gmail/gmailCompose';
 import { sanitizeCommunicationHtml } from '../utils/sanitizeCommunicationHtml';
-import { forwardBookingDispositionIsComplete } from '../utils/forwardBookingDisposition';
 import {
   formatSendAsLabel,
   isFallbackSender,
@@ -65,8 +65,6 @@ import {
   resolveRecapFromAddress,
   resolveRecapMailbox,
 } from '../utils/visitRecapSender';
-import WrapUpForwardBooking from '../components/soap/WrapUpForwardBooking';
-// WrapUpReminders is now inlined per-pet — see per-pet card render below.
 import WrapUpCallbacks from '../components/soap/WrapUpCallbacks';
 import WrapUpChronicReview from '../components/soap/WrapUpChronicReview';
 import SoapRichTextField, {
@@ -74,7 +72,6 @@ import SoapRichTextField, {
 } from '../components/soap/SoapRichTextField';
 import { soapHtmlToPlainText } from '../utils/sanitizeCommunicationHtml';
 import { commitSoapChronicDraft, readSoapChronicDraft } from '../utils/soapChronicDraft';
-import { reconcileBookedFollowUp } from '../components/forwardBooking/bookFollowUpNow';
 import { isWeightAddressed, vitalsFromValue } from '../utils/soapVitals';
 import { useAuth } from '../auth/useAuth';
 import ScribePromptOverridesModal from '../components/soap/ScribePromptOverridesModal';
@@ -111,29 +108,10 @@ function petSummaryLine(pet: VisitWrapUpPet): string {
   return `${charted} of 4 sections charted`;
 }
 
-/** Persist the wrap-up recap onto the encounter so reopening wrap-up keeps the doctor's draft. */
-async function persistRecapDraft(
-  encounterId: string,
-  draft: { subject: string; body: string }
-): Promise<void> {
-  const enc = await getEncounter(encounterId);
-  const prev =
-    enc.subjective && typeof enc.subjective === 'object'
-      ? (enc.subjective as Record<string, unknown>)
-      : {};
-  await updateEncounter(encounterId, {
-    subjective: {
-      ...prev,
-      clientEmailSubject: draft.subject.trim() ? draft.subject : null,
-      clientEmailBody: draft.body.trim() ? draft.body : null,
-    },
-  });
-}
-
 /**
  * Visit wrap-up — the step after the SOAP, where the doctor reviews the household's
- * finished charts, settles forward booking, and sends (or deliberately declines) the
- * client recap.
+ * finished charts and sends (or deliberately declines) the client recap. Follow-up
+ * is settled on End Visit and checkout.
  *
  * The client recap starts blank. The first time wrap-up opens with an empty draft, it
  * generates from the finished charts and saves that draft. Later visits keep the saved
@@ -199,35 +177,8 @@ export default function VisitWrapUpPage() {
   const isAdmin = rolesLower.some((r) => r === 'admin' || r === 'superadmin');
   const selfEmployeeId = employeeId != null && employeeId !== '' ? Number(employeeId) : NaN;
 
-  const wrapUpPath = `/schedule/soap/${appointmentId}/${patientId}/wrap-up${
-    clientIdParam ? `?clientId=${encodeURIComponent(clientIdParam)}` : ''
-  }`;
-
-  /**
-   * Promote "Forward book" to "Booked at appointment" for any pet whose follow-up
-   * was actually booked through "Book it now", so the chart records what happened
-   * at the visit rather than the intention we started with.
-   */
   const loadWrapUp = useCallback(async (id: string) => {
-    let data = await getVisitWrapUp(id);
-    const promoted = await Promise.all(
-      data.pets.map((pet) =>
-        reconcileBookedFollowUp(
-          {
-            appointmentId: pet.appointmentId,
-            patientId: pet.patientId,
-            clientId: data.clientId,
-            soapEncounterId: pet.soapEncounterId,
-          },
-          pet.forwardBookingEntryId,
-          {
-            practiceId: VISIT_WORKFLOW_PRACTICE_ID,
-            currentMode: pet.forwardBookingDisposition?.mode,
-          }
-        ).catch(() => false)
-      )
-    );
-    if (promoted.some(Boolean)) data = await getVisitWrapUp(id);
+    const data = await getVisitWrapUp(id);
     setWrapUp(data);
     return data;
   }, []);
@@ -261,47 +212,45 @@ export default function VisitWrapUpPage() {
         const petIds = data.pets.map((p) => p.patientId);
         setSelectedPetIds(new Set(petIds));
         setRecipients(data.clientEmails.join(', '));
+        setLoading(false);
 
-        // Already sent or deliberately skipped — leave that decision alone.
         if (data.clientEmailDelivery?.status) {
           setSubject(data.emailDraft.subject);
           setBody(data.emailDraft.body);
+          setEmailHydrated(true);
           return;
         }
 
         const hasDraft =
           Boolean(data.emailDraft.subject.trim()) || Boolean(data.emailDraft.body.trim());
         if (hasDraft) {
-          // Keep the doctor's saved draft — do not overwrite when returning after SOAP edits.
           setSubject(data.emailDraft.subject);
           setBody(data.emailDraft.body);
+          setEmailHydrated(true);
           return;
         }
 
-        // First wrap-up with a blank email: generate once from the finished charts and save.
         setRegenerating(true);
         try {
-          const draft = await generateClientRecap(enc.id, petIds);
+          const draft = await prefetchClientRecap(enc.id, petIds);
           if (canceled) return;
-          setSubject(draft.subject);
-          setBody(draft.body);
-          await persistRecapDraft(enc.id, draft);
-        } catch (e) {
-          if (canceled) return;
-          setSubject('');
-          setBody('');
-          setEmailError(
-            e instanceof Error ? e.message : 'Could not write the recap from the charts.'
-          );
+          if (draft) {
+            setSubject(draft.subject);
+            setBody(draft.body);
+          } else {
+            setSubject('');
+            setBody('');
+            setEmailError('Could not write the recap from the charts.');
+          }
         } finally {
-          if (!canceled) setRegenerating(false);
+          if (!canceled) {
+            setRegenerating(false);
+            setEmailHydrated(true);
+          }
         }
       } catch (e) {
         if (!canceled) {
           setError(e instanceof Error ? e.message : 'Could not load the visit wrap-up.');
-        }
-      } finally {
-        if (!canceled) {
           setLoading(false);
           setEmailHydrated(true);
         }
@@ -317,7 +266,7 @@ export default function VisitWrapUpPage() {
     if (!emailHydrated || !encounterId || regenerating) return;
     if (wrapUp?.clientEmailDelivery?.status) return;
     const t = window.setTimeout(() => {
-      void persistRecapDraft(encounterId, { subject, body }).catch(() => {
+      void persistClientRecapDraft(encounterId, { subject, body }).catch(() => {
         /* Autosave is best-effort; Send still records the final message. */
       });
     }, 800);
@@ -382,12 +331,6 @@ export default function VisitWrapUpPage() {
     [pets, selectedPetIds]
   );
 
-  const followUpComplete = useMemo(
-    () =>
-      pets.length > 0 &&
-      pets.every((p) => forwardBookingDispositionIsComplete(p.forwardBookingDisposition)),
-    [pets]
-  );
   const emailDecided = Boolean(wrapUp?.clientEmailDelivery?.status);
   const allLocked = pets.length > 0 && pets.every((p) => p.status === 'completed');
   const clinicalComplete = useMemo(
@@ -423,8 +366,7 @@ export default function VisitWrapUpPage() {
         .map((p) => p.patientName),
     [pets]
   );
-  const canComplete =
-    followUpComplete && emailDecided && clinicalComplete && weightComplete && !allLocked;
+  const canComplete = emailDecided && clinicalComplete && weightComplete && !allLocked;
 
   const toggleSoap = useCallback((pet: VisitWrapUpPet) => {
     const { patientId } = pet;
@@ -593,7 +535,7 @@ export default function VisitWrapUpPage() {
       const draft = await generateClientRecap(encounterId, petIds);
       setSubject(draft.subject);
       setBody(draft.body);
-      await persistRecapDraft(encounterId, draft);
+      await persistClientRecapDraft(encounterId, draft);
     } catch (e) {
       setEmailError(
         e instanceof Error ? e.message : 'Could not rewrite the recap from the charts.'
@@ -805,9 +747,7 @@ export default function VisitWrapUpPage() {
                   ? `Record weight (or No weight taken) first: ${missingWeightPets.join(', ')}`
                   : !clinicalComplete
                     ? `Record prescription/dose details first: ${outstandingClinicalLabels.join(', ')}`
-                    : !followUpComplete
-                      ? 'Every pet needs a complete follow-up choice first'
-                      : !emailDecided
+                    : !emailDecided
                         ? 'Send the client recap, or choose not to email'
                         : 'Sign and lock the medical record for every pet on this visit'
               }
@@ -1071,29 +1011,6 @@ export default function VisitWrapUpPage() {
           );
         })}
 
-        {/* Forward booking is settled at checkout, while the client is still there. It stays
-            reachable here only when something is outstanding, so a chart can't be signed on a
-            follow-up nobody answered. */}
-        {!followUpComplete && encounterId && wrapUp && (
-          <section className="soap-wrapup-section soap-wrapup-section--warn">
-            <h2>Follow-up still needed</h2>
-            <p className="soap-wrapup-hint">
-              This is normally answered at checkout. Finish it here if the client has already
-              left.
-            </p>
-            <WrapUpForwardBooking
-              pets={pets}
-              clientId={wrapUp.clientId}
-              providerId={wrapUp.provider?.id ?? null}
-              disabled={allLocked}
-              returnTo={wrapUpPath}
-              onSaved={async () => {
-                await loadWrapUp(encounterId);
-              }}
-            />
-          </section>
-        )}
-
         <section className="soap-wrapup-section">
           <h2>
             Client recap
@@ -1311,9 +1228,6 @@ export default function VisitWrapUpPage() {
         {!allLocked && (
           <div className="soap-wrapup-footer">
             <div className="soap-wrapup-gate">
-              <span className={followUpComplete ? 'ok' : ''}>
-                {followUpComplete ? <Check size={14} /> : <CalendarClock size={14} />} Follow-up
-              </span>
               <span className={emailDecided ? 'ok' : ''}>
                 {emailDecided ? <Check size={14} /> : <Mail size={14} />} Client recap
               </span>

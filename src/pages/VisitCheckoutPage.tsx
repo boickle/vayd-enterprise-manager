@@ -23,6 +23,18 @@ import {
 import { forwardBookingDispositionIsComplete } from '../utils/forwardBookingDisposition';
 import VisitCheckoutPanel from '../components/soap/VisitCheckoutPanel';
 import WrapUpForwardBooking from '../components/soap/WrapUpForwardBooking';
+import DeathWrapUpModal from '../components/soap/DeathWrapUpModal';
+import { fetchAppointmentById } from '../api/appointments';
+import { getEuthanasiaConsentStatus } from '../api/consent';
+import { isEuthanasiaAppointment } from '../utils/euthanasiaFutureAppointments';
+import {
+  deathWrapUpAlreadyAccepted,
+  deathWrapUpHasWork,
+  markDeathWrapUpAccepted,
+  previewDeathWrapUp,
+  type DeathWrapUpPreview,
+} from '../utils/deathWrapUp';
+import { DEFAULT_PRACTICE_TIMEZONE } from '../utils/practiceTimezone';
 
 /**
  * Checkout for the whole visit.
@@ -61,6 +73,8 @@ export default function VisitCheckoutPage() {
   const [wrapUp, setWrapUp] = useState<VisitWrapUp | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [deathWrapUp, setDeathWrapUp] = useState<DeathWrapUpPreview | null>(null);
+  const deathWrapUpRequestedRef = useRef(false);
   const soapPath = `/schedule/soap/${appointmentId}/${patientId}${
     clientIdParam ? `?clientId=${encodeURIComponent(clientIdParam)}` : ''
   }`;
@@ -168,6 +182,62 @@ export default function VisitCheckoutPage() {
           .join(', ')} before taking payment.`
     : null;
 
+  const invoiceIsPaid =
+    invoice?.status === 'paid' || invoice?.status === 'finalized';
+
+  useEffect(() => {
+    if (!invoiceIsPaid || !Number.isFinite(appointmentId) || !Number.isFinite(patientId)) {
+      return;
+    }
+    if (deathWrapUpAlreadyAccepted(appointmentId, patientId)) return;
+    if (deathWrapUpRequestedRef.current) return;
+    let cancelled = false;
+    void (async () => {
+      const [appt, consent] = await Promise.all([
+        fetchAppointmentById(appointmentId, {
+          practiceId: VISIT_WORKFLOW_PRACTICE_ID,
+        }).catch(() => null),
+        getEuthanasiaConsentStatus(appointmentId, patientId).catch(() => null),
+      ]);
+      const isDeathVisit =
+        Boolean(invoice?.isEuthanasiaPrepay) ||
+        isEuthanasiaAppointment(appt) ||
+        Boolean(consent?.isEuthanasia) ||
+        Boolean(consent?.invite) ||
+        Boolean(consent?.response);
+      if (cancelled) return;
+      if (!isDeathVisit) {
+        deathWrapUpRequestedRef.current = true;
+        return;
+      }
+      const patientName =
+        roster.find((r) => r.patientId === patientId)?.patientName ??
+        wrapUp?.pets.find((p) => p.patientId === patientId)?.patientName ??
+        null;
+      const preview = await previewDeathWrapUp({
+        patientId,
+        patientName,
+        appointmentId,
+        practiceId: VISIT_WORKFLOW_PRACTICE_ID,
+        practiceTz: DEFAULT_PRACTICE_TIMEZONE,
+      }).catch(() => null);
+      if (cancelled) return;
+      deathWrapUpRequestedRef.current = true;
+      if (!deathWrapUpHasWork(preview)) return;
+      setDeathWrapUp(preview);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    invoiceIsPaid,
+    invoice?.isEuthanasiaPrepay,
+    appointmentId,
+    patientId,
+    roster,
+    wrapUp,
+  ]);
+
   if (loading) {
     return <div className="soap-checkout-page soap-empty">Loading checkout…</div>;
   }
@@ -269,6 +339,18 @@ export default function VisitCheckoutPage() {
           />
         </section>
       </div>
+
+      {deathWrapUp ? (
+        <DeathWrapUpModal
+          previews={[deathWrapUp]}
+          kind="invoice"
+          onClose={() => setDeathWrapUp(null)}
+          onAccepted={() => {
+            markDeathWrapUpAccepted(appointmentId, patientId);
+            setDeathWrapUp(null);
+          }}
+        />
+      ) : null}
     </div>
   );
 }

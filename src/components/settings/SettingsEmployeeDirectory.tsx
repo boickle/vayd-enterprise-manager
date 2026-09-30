@@ -24,7 +24,9 @@ import {
   type PracticeBranch,
 } from '../../api/branchInventory';
 import { appConfirm } from '../../utils/appDialog';
+import { listTasks, reassignFromEmployee } from '../../api/tasks';
 import { fetchAdminUsers, type AdminManagedUser } from '../../api/users';
+import { formatEmployeeDisplayName } from '../../utils/employeeDisplayName';
 import { scoutManagedState } from '../../utils/pimsScoutManaged';
 import { loadProviderSignature, saveProviderSignature } from '../../utils/practiceLetterhead';
 import {
@@ -32,6 +34,7 @@ import {
   groupEmployeeRolesByName,
   isEmployeeRoleNameGroupSelected,
 } from '../../utils/employeeRoleDisplay';
+import SignaturePad from '../SignaturePad';
 
 const DEFAULT_PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
 
@@ -132,7 +135,7 @@ const HUB_SECTIONS: { id: EmployeeHubSection; label: string }[] = [
   { id: 'schedule', label: 'Schedule' },
   { id: 'types', label: 'Appointment types' },
   { id: 'goals', label: 'Goals' },
-  { id: 'photo', label: 'Photo' },
+  { id: 'photo', label: 'Photo & signature' },
 ];
 
 type Props = {
@@ -192,6 +195,12 @@ export default function SettingsEmployeeDirectory({
   const [defaultLocationId, setDefaultLocationId] = useState<number | null>(null);
   const [loginUser, setLoginUser] = useState<AdminManagedUser | null>(null);
   const [loadedEmployee, setLoadedEmployee] = useState<Employee | null>(null);
+  const [sigEditing, setSigEditing] = useState(false);
+  const [sigDraft, setSigDraft] = useState<string | null>(null);
+  const [sigSaving, setSigSaving] = useState(false);
+  const [deactivateEmp, setDeactivateEmp] = useState<Employee | null>(null);
+  const [deactivateToEmployeeId, setDeactivateToEmployeeId] = useState('');
+  const [deactivateOpenCount, setDeactivateOpenCount] = useState<number | null>(null);
 
   const practice = useMemo(() => ({ id: DEFAULT_PRACTICE_ID }), []);
 
@@ -287,6 +296,8 @@ export default function SettingsEmployeeDirectory({
         ? r.signatureImage
         : null;
     setSignatureImage(storedSig);
+    setSigEditing(false);
+    setSigDraft(null);
     if (full.id != null && !storedSig) {
       void loadProviderSignature(Number(full.id)).then((sig) => {
         if (sig) setSignatureImage(sig);
@@ -589,9 +600,7 @@ export default function SettingsEmployeeDirectory({
         isDeleted: prev.isDeleted === true,
       } as EmployeeDto;
       await saveEmployees(merged);
-      if (isProvider) {
-        await saveProviderSignature(editingId, signatureImage);
-      }
+      await saveProviderSignature(editingId, signatureImage);
       await saveOfficeAndRoles(editingId);
       const refreshed = await fetchEmployee(editingId);
       setLoadedEmployee(refreshed);
@@ -604,27 +613,54 @@ export default function SettingsEmployeeDirectory({
     }
   };
 
-  const deactivate = async (emp: Employee) => {
-    const ok = await appConfirm({
-      title: 'Deactivate employee?',
-      message: `Deactivate ${emp.firstName} ${emp.lastName}? They will be hidden from active lists.`,
-      confirmLabel: 'Deactivate',
-      danger: true,
-    });
-    if (!ok) return;
+  const beginDeactivate = (emp: Employee) => {
+    setDeactivateEmp(emp);
+    setDeactivateToEmployeeId('');
+    setDeactivateOpenCount(null);
+    void listTasks({ assignedToEmployeeId: emp.id, includeDone: false, limit: 1 })
+      .then((res) => setDeactivateOpenCount(res.total))
+      .catch(() => setDeactivateOpenCount(null));
+  };
+
+  const confirmDeactivate = async () => {
+    const emp = deactivateEmp;
+    if (!emp) return;
+    const toId = Number(deactivateToEmployeeId);
+    if (!Number.isFinite(toId) || toId === emp.id) {
+      onMessage?.('Pick who should receive this person’s incomplete and future automatic tasks.', 'error');
+      return;
+    }
     try {
+      setSaving(true);
+      const moved = await reassignFromEmployee({
+        fromEmployeeId: emp.id,
+        toEmployeeId: toId,
+        persistAsTaskForwarder: true,
+      });
       const full = await fetchEmployee(emp.id);
       const merged = {
         ...(full as unknown as Record<string, unknown>),
         id: emp.id,
         isActive: false,
         isDeleted: false,
+        taskForwarderEmployeeId: toId,
       } as EmployeeDto;
       await saveEmployees(merged);
-      onMessage?.('Employee deactivated.', 'success');
+      setDeactivateEmp(null);
+      setDeactivateToEmployeeId('');
+      onMessage?.(
+        moved.reassigned > 0
+          ? `Employee deactivated. Reassigned ${moved.reassigned} incomplete task${
+              moved.reassigned === 1 ? '' : 's'
+            } and set their task forwarder.`
+          : 'Employee deactivated. Future automatic tasks will go to the task forwarder.',
+        'success',
+      );
       await load();
     } catch (err) {
       onMessage?.(extractErr(err), 'error');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -676,6 +712,99 @@ export default function SettingsEmployeeDirectory({
     void openEdit(id);
   };
 
+  const persistSignature = async (value: string | null) => {
+    if (editingId == null) return;
+    setSigSaving(true);
+    try {
+      await saveProviderSignature(editingId, value);
+      setSignatureImage(value);
+      setSigEditing(false);
+      setSigDraft(null);
+      onMessage?.('Signature saved.', 'success');
+    } catch (err) {
+      onMessage?.(extractErr(err), 'error');
+    } finally {
+      setSigSaving(false);
+    }
+  };
+
+  const signatureEditor = (
+    <div className="settings-staff-signature">
+      {signatureImage && !sigEditing ? (
+        <img src={signatureImage} alt="Provider signature" className="settings-staff-signature__preview" />
+      ) : (
+        <p className="settings-muted" style={{ margin: '0 0 8px' }}>
+          {sigEditing ? 'Draw below or upload a PNG / JPEG.' : 'No signature on file yet.'}
+        </p>
+      )}
+      {sigEditing ? (
+        <>
+          <SignaturePad onChange={(dataUrl) => setSigDraft(dataUrl || null)} />
+          <input
+            className="settings-input"
+            type="file"
+            accept="image/png,image/jpeg"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (!file) return;
+              const reader = new FileReader();
+              reader.onload = () => {
+                setSigDraft(typeof reader.result === 'string' ? reader.result : null);
+              };
+              reader.readAsDataURL(file);
+            }}
+          />
+          {sigDraft ? (
+            <img src={sigDraft} alt="Signature preview" className="settings-staff-signature__preview" />
+          ) : null}
+          <div className="settings-staff-signature__actions">
+            <button
+              type="button"
+              className="btn"
+              disabled={sigSaving || !sigDraft}
+              onClick={() => void persistSignature(sigDraft)}
+            >
+              {sigSaving ? 'Saving…' : 'Save signature'}
+            </button>
+            <button
+              type="button"
+              className="btn secondary"
+              onClick={() => {
+                setSigEditing(false);
+                setSigDraft(null);
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </>
+      ) : (
+        <div className="settings-staff-signature__actions">
+          <button
+            type="button"
+            className="btn secondary"
+            onClick={() => {
+              setSigEditing(true);
+              setSigDraft(signatureImage);
+            }}
+          >
+            {signatureImage ? 'Replace signature' : 'Add signature'}
+          </button>
+          {signatureImage ? (
+            <button
+              type="button"
+              className="btn secondary"
+              disabled={sigSaving}
+              onClick={() => void persistSignature(null)}
+            >
+              Clear
+            </button>
+          ) : null}
+        </div>
+      )}
+    </div>
+  );
+
   const ownership = scoutManagedState(
     loadedEmployee as unknown as Record<string, unknown> | null,
     'employee'
@@ -686,7 +815,7 @@ export default function SettingsEmployeeDirectory({
     <div className="settings-employee-directory">
       <p className="settings-section-description" style={{ marginTop: 0 }}>
         Choose a person, then use the tabs for profile, schedule (hours, offices, and zones),
-        appointment types, goals, and photo.
+        appointment types, goals, photo, and signature.
       </p>
 
       <div className="settings-employee-hub">
@@ -898,6 +1027,15 @@ export default function SettingsEmployeeDirectory({
                   </fieldset>
 
                   <fieldset className="settings-employee-modal__fieldset">
+                    <legend className="settings-employee-modal__legend">Signature</legend>
+                    <p className="muted" style={{ fontSize: 12, margin: '0 0 8px' }}>
+                      Printed on written prescriptions and certificates when this person is the
+                      signer. You can also add it on the Photo &amp; signature tab.
+                    </p>
+                    {signatureEditor}
+                  </fieldset>
+
+                  <fieldset className="settings-employee-modal__fieldset">
                     <legend className="settings-employee-modal__legend">Bio</legend>
                     <textarea
                       className="input"
@@ -921,7 +1059,7 @@ export default function SettingsEmployeeDirectory({
                           <button
                             type="button"
                             className="btn secondary"
-                            onClick={() => void deactivate(rows.find((r) => r.id === editingId)!)}
+                            onClick={() => beginDeactivate(rows.find((r) => r.id === editingId)!)}
                           >
                             Deactivate
                           </button>
@@ -942,7 +1080,19 @@ export default function SettingsEmployeeDirectory({
                   </div>
                 </form>
               ) : (
-                extra
+                <>
+                  {extra}
+                  {section === 'photo' && editingId != null ? (
+                    <div className="settings-card" style={{ marginTop: 16 }}>
+                      <h3 className="settings-card-title">Signature</h3>
+                      <p className="settings-card-subtitle">
+                        Drawn or uploaded signatures print on written prescriptions and
+                        certificates when this person is the signer.
+                      </p>
+                      {signatureEditor}
+                    </div>
+                  ) : null}
+                </>
               )}
             </>
           )}
@@ -1117,7 +1267,10 @@ export default function SettingsEmployeeDirectory({
                           style={{ display: 'block', maxHeight: 56, marginTop: 8 }}
                         />
                       ) : (
-                        <span className="settings-muted">PNG or JPEG printed on Rx labels.</span>
+                        <span className="settings-muted">
+                          PNG or JPEG printed on written prescriptions and certificates. After
+                          they are added, you can also edit this on their Profile or Photo tab.
+                        </span>
                       )}
                     </label>
                   ) : null}
@@ -1294,6 +1447,79 @@ export default function SettingsEmployeeDirectory({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      ) : null}
+
+      {deactivateEmp ? (
+        <div className="settings-employee-modal-root" role="presentation">
+          <button
+            type="button"
+            className="settings-employee-modal-backdrop"
+            aria-label="Close"
+            onClick={() => {
+              if (!saving) setDeactivateEmp(null);
+            }}
+          />
+          <div
+            className="settings-employee-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="employee-deactivate-title"
+          >
+            <div className="settings-employee-modal__head">
+              <h3 id="employee-deactivate-title">
+                Deactivate {formatEmployeeDisplayName(deactivateEmp)}?
+              </h3>
+            </div>
+            <div className="settings-employee-modal__form">
+              <p className="muted" style={{ margin: '0 0 12px', fontSize: 13 }}>
+                They will be hidden from active lists. Pick who should receive
+                their incomplete tasks and any automatic work that would later
+                have gone to them.
+              </p>
+              <label>
+                <span className="label">Task forwarder</span>
+                <select
+                  className="input"
+                  value={deactivateToEmployeeId}
+                  onChange={(e) => setDeactivateToEmployeeId(e.target.value)}
+                  required
+                  disabled={saving}
+                >
+                  <option value="">
+                    {deactivateOpenCount != null && deactivateOpenCount > 0
+                      ? `Select a person (${deactivateOpenCount} open)…`
+                      : 'Select a person…'}
+                  </option>
+                  {rows
+                    .filter((r) => r.id !== deactivateEmp.id && empActive(r))
+                    .map((r) => (
+                      <option key={r.id} value={String(r.id)}>
+                        {formatEmployeeDisplayName(r)}
+                      </option>
+                    ))}
+                </select>
+              </label>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
+                <button
+                  type="button"
+                  className="btn secondary"
+                  onClick={() => setDeactivateEmp(null)}
+                  disabled={saving}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => void confirmDeactivate()}
+                  disabled={saving || !deactivateToEmployeeId}
+                >
+                  {saving ? 'Deactivating…' : 'Deactivate'}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       ) : null}

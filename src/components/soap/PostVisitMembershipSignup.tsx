@@ -31,11 +31,18 @@ import {
   invoiceInLookback,
 } from '../../utils/businessHoursLookback';
 import { DEFAULT_PRACTICE_TIMEZONE } from '../../utils/practiceTimezone';
-import type { ChatHoursOfOperation } from '../../utils/chatHours';
+import {
+  buildMembershipAgreementText,
+  defaultChatHoursOfOperation,
+  type ChatHoursOfOperation,
+} from '../../utils/chatHours';
 import { MEMBERSHIP_GOLDEN_MIN_AGE_YEARS } from '../../utils/membershipAge';
 import { resolveMembershipPetKind } from '../../utils/membershipSpecies';
 import { fetchPatientByIdStaff } from '../../api/patients';
 import PostVisitCardEntry from './PostVisitCardEntry';
+import MembershipAgreementWaiver, {
+  hasDrawnMembershipSignature,
+} from '../MembershipAgreementWaiver';
 import {
   getPracticeSettings,
   membershipPostVisitSignupWindowHours,
@@ -359,6 +366,9 @@ export default function PostVisitMembershipSignup({
   );
   const [memberPatientIds, setMemberPatientIds] = useState<Set<number>>(new Set());
   const [substitutions, setSubstitutions] = useState<Record<string, string>>({});
+  const [agreementAccepted, setAgreementAccepted] = useState(false);
+  const [agreementSignature, setAgreementSignature] = useState('');
+  const [agreementSignatureDrawing, setAgreementSignatureDrawing] = useState('');
   const previewSeq = useRef(0);
   const subKeyRef = useRef<string | null>(null);
 
@@ -688,6 +698,18 @@ export default function PostVisitMembershipSignup({
       setError('Confirm the window override and add a short reason before continuing.');
       return;
     }
+    if (!preview.ownerAlreadyPaid) {
+      if (
+        !agreementAccepted ||
+        !agreementSignature.trim() ||
+        !hasDrawnMembershipSignature(agreementSignatureDrawing)
+      ) {
+        setError(
+          'The owner must read the membership agreement, check the box, draw their signature, and type their name.',
+        );
+        return;
+      }
+    }
     setRunning(true);
     setError(null);
     try {
@@ -721,6 +743,17 @@ export default function PostVisitMembershipSignup({
               overrideWindowReason: overrideReason.trim(),
             }
           : {}),
+        ...(!preview.ownerAlreadyPaid
+          ? {
+              agreementAccepted: true,
+              agreementSignature: agreementSignature.trim(),
+              agreementSignatureData: agreementSignatureDrawing,
+              agreementSignedAt: new Date().toISOString(),
+              agreementText: buildMembershipAgreementText(
+                hoursOfOperation ?? defaultChatHoursOfOperation(),
+              ),
+            }
+          : {}),
       });
       setResult(res);
       onCompleted(res);
@@ -742,6 +775,10 @@ export default function PostVisitMembershipSignup({
     skipRefund,
     substitutions,
     billingInterval,
+    agreementAccepted,
+    agreementSignature,
+    agreementSignatureDrawing,
+    hoursOfOperation,
   ]);
 
   const substitutionKey = useMemo(
@@ -860,7 +897,11 @@ export default function PostVisitMembershipSignup({
     !running &&
     !previewing &&
     (!choosePet || enrollPatientId != null) &&
-    (!preview?.outsideWindow || (overrideWindow && Boolean(overrideReason.trim())));
+    (!preview?.outsideWindow || (overrideWindow && Boolean(overrideReason.trim()))) &&
+    (Boolean(preview?.ownerAlreadyPaid) ||
+      (agreementAccepted &&
+        Boolean(agreementSignature.trim()) &&
+        hasDrawnMembershipSignature(agreementSignatureDrawing)));
   const planStep = 1 + (choosePet ? 1 : 0) + (needsPicker ? 1 : 0);
   const numbersStep = planStep + 1;
   const ownerAlreadyPaid = preview
@@ -1329,6 +1370,23 @@ export default function PostVisitMembershipSignup({
                         disabled={running}
                       />
                     </label>
+
+                    {ownerAlreadyPaid ? (
+                      <p className="pvms-muted">
+                        They already signed the membership agreement when they enrolled online.
+                      </p>
+                    ) : (
+                      <MembershipAgreementWaiver
+                        hours={hoursOfOperation}
+                        accepted={agreementAccepted}
+                        signature={agreementSignature}
+                        signatureDrawing={agreementSignatureDrawing}
+                        onAcceptedChange={setAgreementAccepted}
+                        onSignatureChange={setAgreementSignature}
+                        onSignatureDrawingChange={setAgreementSignatureDrawing}
+                        disabled={running}
+                      />
+                    )}
                   </>
                 )}
               </section>
@@ -1356,7 +1414,12 @@ export default function PostVisitMembershipSignup({
                     ? 'Calculate the refund first'
                     : preview.outsideWindow && !overrideWindow
                       ? 'Override the window to continue'
-                      : undefined
+                      : !preview.ownerAlreadyPaid &&
+                          (!agreementAccepted ||
+                            !agreementSignature.trim() ||
+                            !hasDrawnMembershipSignature(agreementSignatureDrawing))
+                        ? 'The owner must draw their signature and type their name first'
+                        : undefined
                 }
               >
                 {running ? (

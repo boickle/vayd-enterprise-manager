@@ -39,6 +39,7 @@ export type SchedulerContextMenuAction =
   | { kind: 'viewClientInfo' }
   | { kind: 'roomLoader' }
   | { kind: 'euthanasiaConsent' }
+  | { kind: 'informDvmOfDeath' }
   | { kind: 'recordsRequest' }
   | { kind: 'recordsCall'; contact: RecordsRequestPendingContact }
   | { kind: 'recordsEmail'; contact: RecordsRequestPendingContact }
@@ -65,6 +66,7 @@ type Props = {
   showSendForms?: boolean;
   showRoomLoader?: boolean;
   showEuthanasiaConsent?: boolean;
+  showInformDvmOfDeath?: boolean;
   showRecordsRequest?: boolean;
   /** Hospitals still owing records on this visit — drives Call / Email rows. */
   recordsPendingContacts?: RecordsRequestPendingContact[];
@@ -102,6 +104,7 @@ export function SchedulerAppointmentContextMenu({
   showSendForms,
   showRoomLoader = true,
   showEuthanasiaConsent = false,
+  showInformDvmOfDeath = false,
   showRecordsRequest = false,
   recordsPendingContacts,
   roomLoaderMenuLabel,
@@ -247,6 +250,12 @@ export function SchedulerAppointmentContextMenu({
             <CtxSubRow
               label={euthanasiaConsentLabel}
               onPick={() => onAction({ kind: 'euthanasiaConsent' })}
+            />
+          ) : null}
+          {showInformDvmOfDeath ? (
+            <CtxSubRow
+              label="Inform DVM of death"
+              onPick={() => onAction({ kind: 'informDvmOfDeath' })}
             />
           ) : null}
           {showRecordsRequest ? (

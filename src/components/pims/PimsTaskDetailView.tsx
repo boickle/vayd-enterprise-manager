@@ -26,6 +26,7 @@ import { formatEmployeeDisplayName } from '../../utils/employeeDisplayName';
 import {
   formatTaskIso,
   fromDatetimeLocalValue,
+  taskStartIso,
   toDatetimeLocalValue,
   validateTaskScheduleOrder,
 } from '../../utils/taskDateTime';
@@ -39,6 +40,10 @@ import { TaskBodyContent } from './TaskBodyContent';
 import { ForwardBookingFromTaskLink } from './ForwardBookingFromTaskLink';
 import ForwardBookingTaskPanel from './ForwardBookingTaskPanel';
 import InvoiceTaskPanel from './InvoiceTaskPanel';
+import SoapTaskPanel from './SoapTaskPanel';
+import { getInvoice } from '../../api/visitWorkflow';
+import { invoiceIdFromTask } from '../../utils/invoiceTask';
+import { soapPathFromTaskLinks } from '../../utils/soapTask';
 import OrderListTaskPanel from './OrderListTaskPanel';
 import MailOrderTaskPanel from './MailOrderTaskPanel';
 import CallbackJotPanel from './CallbackJotPanel';
@@ -199,7 +204,7 @@ export default function PimsTaskDetailView({
           ? String((e as { response?: { data?: { message?: string } } }).response?.data?.message ?? 'Failed to load task')
           : 'Failed to load task';
       setLoadError(msg);
-      setTask(null);
+      setTask((cur) => cur);
     }
   }, [taskId]);
 
@@ -235,15 +240,55 @@ export default function PimsTaskDetailView({
   const isWatcherOnly = useMemo(() => {
     if (!task || myEmployeeId == null) return false;
     if (canMutate) return false;
-    return task.watchers.some((w) => w.employeeId === myEmployeeId);
+    return (task.watchers ?? []).some((w) => w.employeeId === myEmployeeId);
   }, [task, myEmployeeId, canMutate]);
 
   const latestEscalation = task?.events?.[0]?.eventType === 'escalation_sent';
   const linkLabels = useTaskLinkLabels(task?.links);
-  const patientLink = task?.links?.find((l) => l.entityType === 'patient') ?? null;
+  const patientLinks = useMemo(
+    () => (task?.links ?? []).filter((l) => l.entityType === 'patient'),
+    [task?.links],
+  );
   const clientLink = task?.links?.find((l) => l.entityType === 'client') ?? null;
-  const patientName = patientLink ? taskLinkDisplayLabel(patientLink, linkLabels) : null;
+  const patientName = patientLinks[0] ? taskLinkDisplayLabel(patientLinks[0], linkLabels) : null;
   const clientName = clientLink ? taskLinkDisplayLabel(clientLink, linkLabels) : null;
+  const invoiceId = task ? invoiceIdFromTask(task) : null;
+  const [invoicePets, setInvoicePets] = useState<{ id: number; name: string }[]>([]);
+
+  useEffect(() => {
+    if (!invoiceId) {
+      setInvoicePets([]);
+      return;
+    }
+    let canceled = false;
+    void getInvoice(invoiceId)
+      .then((invoice) => {
+        if (canceled) return;
+        const names = new Map<number, string>();
+        if (invoice.patientId != null) names.set(invoice.patientId, `Patient #${invoice.patientId}`);
+        for (const line of invoice.lines ?? []) {
+          if (line.patientId == null) continue;
+          const label = line.patientName?.trim() || `Patient #${line.patientId}`;
+          names.set(line.patientId, label);
+        }
+        setInvoicePets([...names.entries()].map(([id, name]) => ({ id, name })));
+      })
+      .catch(() => {
+        if (!canceled) setInvoicePets([]);
+      });
+    return () => {
+      canceled = true;
+    };
+  }, [invoiceId]);
+
+  const chartPets = useMemo(() => {
+    const byId = new Map<number, string>();
+    for (const pet of invoicePets) byId.set(pet.id, pet.name);
+    for (const link of patientLinks) {
+      byId.set(link.entityId, taskLinkDisplayLabel(link, linkLabels));
+    }
+    return [...byId.entries()].map(([id, name]) => ({ id, name }));
+  }, [invoicePets, patientLinks, linkLabels]);
   const taskDescriptionBody = useMemo(
     () => taskDescriptionDisplayBody(task?.body),
     [task?.body]
@@ -254,7 +299,10 @@ export default function PimsTaskDetailView({
     task != null && task.status !== 'done' && (canMutate || canClaim);
   /** Chart note / reassign / remove. Panels that own the whole task replace it. */
   const showJot =
-    showPanels && panelKind !== 'order_list' && panelKind !== 'mail_order';
+    showPanels &&
+    panelKind !== 'order_list' &&
+    panelKind !== 'mail_order' &&
+    panelKind !== 'soap';
 
   const eventsChronological = useMemo(() => {
     if (!task?.events?.length) return [];
@@ -440,7 +488,9 @@ export default function PimsTaskDetailView({
         <p className="pims-task-detail__hint">You are watching this task. Only the assignee, creator, or an admin can edit or complete it.</p>
       )}
 
-      {actionError && <p className="pims-task-detail__error">{actionError}</p>}
+      {(actionError || (loadError && task)) && (
+        <p className="pims-task-detail__error">{actionError || loadError}</p>
+      )}
 
       {editing ? (
         <TaskEditForm
@@ -467,21 +517,24 @@ export default function PimsTaskDetailView({
         <>
       <header className="pims-task-detail__head">
         <h1 className="pims-task-detail__title">{task.title}</h1>
-        {(patientLink || clientLink) && (
+        {(chartPets.length > 0 || clientLink) && (
           <p className="pims-task-detail__subject">
-            {patientLink ? (
-              <a
-                className="pims-task-detail__subject-link"
-                href={linkHref('patient', patientLink.entityId) ?? '#'}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                {patientName}
-                <ExternalLink size={14} aria-hidden />
-                <span className="pims-task-detail__subject-hint">Chart</span>
-              </a>
-            ) : null}
-            {patientLink && clientLink ? (
+            {chartPets.map((pet, i) => (
+              <span key={pet.id} className="pims-task-detail__subject-pet">
+                {i > 0 ? <span className="pims-task-detail__subject-sep">·</span> : null}
+                <a
+                  className="pims-task-detail__subject-link"
+                  href={linkHref('patient', pet.id) ?? '#'}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  {pet.name}
+                  <ExternalLink size={14} aria-hidden />
+                  <span className="pims-task-detail__subject-hint">Chart</span>
+                </a>
+              </span>
+            ))}
+            {chartPets.length > 0 && clientLink ? (
               <span className="pims-task-detail__subject-sep">·</span>
             ) : null}
             {clientLink ? (
@@ -517,8 +570,14 @@ export default function PimsTaskDetailView({
               {mailOrderTaskStatusLabel(task.status, task.links)}
             </span>
           )}
-          {(task.kind === 'callback' || task.kind === 'invoice') && (
-            <span className="pims-task-detail__kind">{taskKindLabel(task.kind)}</span>
+          {(task.kind === 'callback' || panelKind === 'invoice' || panelKind === 'soap') && (
+            <span className="pims-task-detail__kind">
+              {panelKind === 'invoice'
+                ? taskKindLabel('invoice')
+                : panelKind === 'soap'
+                  ? taskKindLabel('soap')
+                  : taskKindLabel(task.kind)}
+            </span>
           )}
           {task.source !== 'manual' && mailOrderId == null && (
             <span className="pims-task-detail__pill">
@@ -526,6 +585,15 @@ export default function PimsTaskDetailView({
             </span>
           )}
         </div>
+        <p className="pims-task-detail__schedule">
+          <span>
+            <strong>Start</strong> {formatTaskIso(taskStartIso(task))}
+          </span>
+          <span className="pims-task-detail__subject-sep">·</span>
+          <span>
+            <strong>Due</strong> {formatTaskIso(task.dueAt)}
+          </span>
+        </p>
         {task.status === 'done' && task.resolutionNote ? (
           <p className="pims-task-detail__resolution">
             {task.resolution === 'removed' ? 'Removed: ' : 'Closed: '}
@@ -579,13 +647,31 @@ export default function PimsTaskDetailView({
         />
       ) : null}
 
-      {panelKind === 'invoice' && showPanels ? (
-        <InvoiceTaskPanel
+      {panelKind === 'soap' && showPanels ? (
+        <SoapTaskPanel
           task={task}
-          clientName={clientName}
+          patientName={patientName}
           canComplete={canMutate}
           busy={busy}
           onComplete={() => void handleComplete()}
+        />
+      ) : null}
+
+      {panelKind === 'invoice' ? (
+        <InvoiceTaskPanel
+          task={task}
+          clientName={clientName}
+          employees={employees}
+          myEmployeeId={myEmployeeId}
+          canComplete={canMutate && task.status !== 'done'}
+          canAct={showPanels}
+          busy={busy}
+          onComplete={() => void handleComplete()}
+          onUpdated={(updated) => {
+            if (updated) setTask(updated);
+            else void getTask(task.id).then(setTask).catch(() => undefined);
+            onUpdated();
+          }}
         />
       ) : null}
 
@@ -599,7 +685,9 @@ export default function PimsTaskDetailView({
               employees={employees}
               myEmployeeId={myEmployeeId}
               patientName={patientName}
+              patients={chartPets}
               clientName={clientName}
+              defaultChartToClient={panelKind === 'invoice'}
               onDone={() => {
                 void getTask(task.id).then(setTask).catch(() => undefined);
                 onUpdated();
@@ -612,6 +700,7 @@ export default function PimsTaskDetailView({
             employees={employees}
             myEmployeeId={myEmployeeId}
             patientName={patientName}
+            patients={chartPets}
             clientName={clientName}
             onDone={() => {
               void getTask(task.id).then(setTask).catch(() => undefined);
@@ -624,7 +713,7 @@ export default function PimsTaskDetailView({
       <section className="pims-task-detail__section">
         <h2 className="pims-task-detail__h2">Details</h2>
         <dl className="pims-task-detail__dl">
-          {mailOrderId == null ? (
+          {mailOrderId == null && panelKind !== 'invoice' ? (
           <div>
             <dt>Description</dt>
             <dd>
@@ -645,16 +734,6 @@ export default function PimsTaskDetailView({
             </dd>
           </div>
           ) : null}
-          {mailOrderId == null ? (
-          <div>
-            <dt>Start</dt>
-            <dd>{formatTaskIso(task.startAt)}</dd>
-          </div>
-          ) : null}
-          <div>
-            <dt>Due</dt>
-            <dd>{formatTaskIso(task.dueAt)}</dd>
-          </div>
           {mailOrderId == null ? (
           <div>
             <dt>Branches</dt>
@@ -738,7 +817,11 @@ export default function PimsTaskDetailView({
         {task.links?.length ? (
           <ul className="pims-task-detail__list">
             {task.links.map((l) => {
-              const href = linkHref(l.entityType, l.entityId);
+              const soapHref =
+                panelKind === 'soap' && l.entityType === 'appointment'
+                  ? soapPathFromTaskLinks(task.links)
+                  : null;
+              const href = soapHref ?? linkHref(l.entityType, l.entityId);
               const label = taskLinkDisplayLabel(l, linkLabels);
               return (
                 <li key={l.id}>
@@ -859,7 +942,7 @@ function TaskEditForm({
 }: EditProps) {
   const [title, setTitle] = useState(task.title);
   const [body, setBody] = useState(task.body ?? '');
-  const [startLocal, setStartLocal] = useState(() => toDatetimeLocalValue(task.startAt));
+  const [startLocal, setStartLocal] = useState(() => toDatetimeLocalValue(taskStartIso(task)));
   const [dueLocal, setDueLocal] = useState(() => toDatetimeLocalValue(task.dueAt));
   const [branchSel, setBranchSel] = useState<Record<number, boolean>>(() => {
     const m: Record<number, boolean> = {};
@@ -872,7 +955,7 @@ function TaskEditForm({
   const [queueRoleId, setQueueRoleId] = useState(
     task.queueRoleId != null ? String(task.queueRoleId) : '',
   );
-  const [watchers, setWatchers] = useState<number[]>(() => task.watchers.map((w) => w.employeeId));
+  const [watchers, setWatchers] = useState<number[]>(() => (task.watchers ?? []).map((w) => w.employeeId));
   const [linkRows, setLinkRows] = useState<{ entityType: string; entityId: string }[]>(() =>
     task.links.map((l) => ({ entityType: l.entityType, entityId: String(l.entityId) }))
   );

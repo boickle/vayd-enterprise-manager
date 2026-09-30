@@ -1,15 +1,60 @@
 import { patchForwardBookingDisposition } from '../../api/forwardBookingDisposition';
 import type { ForwardBookingDisposition } from '../../api/forwardBookingDisposition';
 import { createForwardBooking, type ForwardBookingEntry } from '../../api/forwardBooking';
-import { createTask } from '../../api/tasks';
+import { createTask, type TaskLinkInput } from '../../api/tasks';
 import { updateEncounter } from '../../api/visitWorkflow';
 import {
   buildForwardBookingDispositionPayload,
+  labsPendingAssigneeIds,
+  uniqueEmployeeIds,
   type ForwardBookingDispositionFormState,
 } from '../../utils/forwardBookingDisposition';
 import { LABS_PENDING_FORWARD_BOOKING_TASK_BODY } from '../../utils/forwardBookingCreateLink';
 import { validateTaskScheduleOrder } from '../../utils/taskDateTime';
 import { notifyTasksChanged } from '../../utils/taskOwnership';
+
+export async function createLabsPendingForwardBookingTasks(opts: {
+  title: string;
+  branchIds: number[];
+  assigneeEmployeeIds: number[];
+  watcherEmployeeIds?: number[];
+  startAt: string | null;
+  dueAt: string | null;
+  links: TaskLinkInput[];
+}): Promise<number> {
+  const assignees = uniqueEmployeeIds(opts.assigneeEmployeeIds);
+  if (assignees.length === 0) {
+    throw new Error('Select at least one person to do this task.');
+  }
+  const watchers = uniqueEmployeeIds(opts.watcherEmployeeIds).filter(
+    (id) => !assignees.includes(id)
+  );
+  const [primary, ...rest] = assignees;
+  const first = await createTask({
+    title: opts.title,
+    body: LABS_PENDING_FORWARD_BOOKING_TASK_BODY,
+    kind: 'forward_booking',
+    branchIds: opts.branchIds,
+    assignedToEmployeeId: primary,
+    watcherEmployeeIds: watchers,
+    startAt: opts.startAt,
+    dueAt: opts.dueAt,
+    links: opts.links,
+  });
+  for (const extra of rest) {
+    await createTask({
+      title: opts.title,
+      body: LABS_PENDING_FORWARD_BOOKING_TASK_BODY,
+      kind: 'forward_booking',
+      branchIds: opts.branchIds,
+      assignedToEmployeeId: extra,
+      startAt: opts.startAt,
+      dueAt: opts.dueAt,
+      links: opts.links,
+    });
+  }
+  return Number(first.id);
+}
 
 export type ForwardBookingDecisionTarget = {
   appointmentId: number;
@@ -84,14 +129,13 @@ export async function saveForwardBookingDecision(
     }
     const scheduleError = validateTaskScheduleOrder(labs?.startAt ?? null, labs?.dueAt ?? null);
     if (scheduleError) throw new Error(scheduleError);
-    const task = await createTask({
+    taskId = await createLabsPendingForwardBookingTasks({
       title:
         labs?.title?.trim() ||
         `${opts.labsTaskTitleFallback}${target.patientName ? ` — ${target.patientName}` : ''}`,
-      body: LABS_PENDING_FORWARD_BOOKING_TASK_BODY,
-      kind: 'forward_booking',
       branchIds: opts.branchIds,
-      assignedToEmployeeId: labs?.assignedToEmployeeId ?? null,
+      assigneeEmployeeIds: labsPendingAssigneeIds(labs),
+      watcherEmployeeIds: labs?.watcherEmployeeIds,
       startAt: labs?.startAt ?? null,
       dueAt: labs?.dueAt ?? null,
       links: [
@@ -102,7 +146,6 @@ export async function saveForwardBookingDecision(
         { entityType: 'patient', entityId: target.patientId },
       ],
     });
-    taskId = Number(task.id);
     notifyTasksChanged();
   }
 

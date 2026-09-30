@@ -138,6 +138,11 @@ import ChartAddFollowUp, { staffWorkKindLabel } from './ChartAddFollowUp';
 import { fetchAllEmployees, type Employee } from '../../api/appointmentSettings';
 import { formatEmployeeDisplayName } from '../../utils/employeeDisplayName';
 import { appConfirm, appPrompt } from '../../utils/appDialog';
+import DeathWrapUpModal from '../soap/DeathWrapUpModal';
+import {
+  previewDeathWrapUp,
+  type DeathWrapUpPreview,
+} from '../../utils/deathWrapUp';
 import { pushRecentRecord } from '../../utils/recentRecordsStore';
 import '../../pages/BriefWorkspacePage.css';
 import { scoutManagedState } from '../../utils/pimsScoutManaged';
@@ -169,6 +174,7 @@ import {
   patientStatusChip as statusChipFromRecord,
 } from '../../utils/patientStatusDisplay';
 import { clientDiscountBadge } from '../../utils/clientDiscountDisplay';
+import LabResultsPanel from '../labs/LabResultsPanel';
 import './detail/PimsDetailKit.css';
 import './PimsPatientDetailView.css';
 
@@ -1106,6 +1112,7 @@ export default function PimsPatientDetailView({
   const [selectedSoapNote, setSelectedSoapNote] = useState<SoapEncounter | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [inactivateWrapUp, setInactivateWrapUp] = useState<DeathWrapUpPreview[] | null>(null);
   const [photoFailed, setPhotoFailed] = useState(false);
   const [photoGalleryOpen, setPhotoGalleryOpen] = useState(false);
   const [photoVersion, setPhotoVersion] = useState(0);
@@ -1851,20 +1858,26 @@ export default function PimsPatientDetailView({
 
   async function handleToggleActive() {
     if (isActive) {
-      const ok = await appConfirm({
-        title: 'Deactivate pet?',
-        message: `Deactivate ${pname}? The pet stays in Scout with its full medical history, but is hidden from active lists.`,
-        confirmLabel: 'Deactivate',
-        danger: true,
-      });
-      if (!ok) return;
+      setBusy(true);
+      setSaveError(null);
+      try {
+        const preview = await previewDeathWrapUp({
+          patientId: Number(patientId),
+          patientName: pname,
+          practiceTz,
+        });
+        setInactivateWrapUp([preview]);
+      } catch (err) {
+        setSaveError(extractPatientSaveErr(err));
+      } finally {
+        setBusy(false);
+      }
+      return;
     }
     setBusy(true);
     setSaveError(null);
     try {
-      await applyWriteResult(
-        isActive ? await deactivatePatient(patientId) : await reactivatePatient(patientId)
-      );
+      await applyWriteResult(await reactivatePatient(patientId));
     } catch (err) {
       setSaveError(extractPatientSaveErr(err));
     } finally {
@@ -2493,6 +2506,10 @@ export default function PimsPatientDetailView({
             collapsed={!visitsOpen}
             onToggleCollapse={toggleVisitsOpen}
           />
+        </section>
+
+        <section className="pims-emr-story__card" aria-labelledby="pims-emr-labs">
+          <LabResultsPanel patientId={Number(patientId)} />
         </section>
 
         <section className="pims-emr-story__card" aria-labelledby="pims-emr-reminders">
@@ -4106,6 +4123,27 @@ export default function PimsPatientDetailView({
           defaultPatientIds={defaultEmrPatientIds}
           jotPatientId={patientId}
           onRecordsChanged={() => void reloadChartData()}
+        />
+      ) : null}
+
+      {inactivateWrapUp ? (
+        <DeathWrapUpModal
+          previews={inactivateWrapUp}
+          kind="inactivate"
+          acceptLabel="Accept and inactivate"
+          onClose={() => setInactivateWrapUp(null)}
+          onAccepted={async () => {
+            setBusy(true);
+            setSaveError(null);
+            try {
+              await applyWriteResult(await deactivatePatient(patientId));
+              setInactivateWrapUp(null);
+            } catch (err) {
+              setSaveError(extractPatientSaveErr(err));
+            } finally {
+              setBusy(false);
+            }
+          }}
         />
       ) : null}
 

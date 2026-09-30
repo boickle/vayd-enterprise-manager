@@ -3239,7 +3239,6 @@ export default function AppointmentRequestForm() {
               physicalAddress: newAddress,
               extraVisitAddress: extraAddr,
               extraVisitAddressLabel: String(client.extraAddressLabel ?? '').trim() || 'Other address',
-              visitAddressChoice: prev.visitAddressChoice || (shouldRestoreAddress ? 'home' : prev.visitAddressChoice),
               mailingAddressSame: mailingDifferent
                 ? 'Yes, it is different.'
                 : prev.mailingAddressSame || 'No, it is the same.',
@@ -3853,6 +3852,36 @@ export default function AppointmentRequestForm() {
     }
   };
 
+  const setVisitAtThisAddress = (yes: boolean) => {
+    if (yes) {
+      setVisitAddressChoice('home');
+      return;
+    }
+    setFormData((prev) => {
+      const hasExtra = Boolean(prev.extraVisitAddress?.line1);
+      return {
+        ...prev,
+        isThisTheAddressWhereWeWillCome: 'No',
+        visitAddressChoice: hasExtra ? '' : 'other',
+        newPhysicalAddress: hasExtra
+          ? undefined
+          : {
+              line1: '',
+              city: '',
+              state: '',
+              zip: '',
+              country: 'US',
+            },
+      };
+    });
+    setErrors((prev) => {
+      const next = { ...prev };
+      delete next.isThisTheAddressWhereWeWillCome;
+      delete next['newPhysicalAddress.line1'];
+      return next;
+    });
+  };
+
   const setVisitAddressChoice = (choice: 'home' | 'extra' | 'other') => {
     setFormData((prev) => {
       if (choice === 'home') {
@@ -3989,9 +4018,19 @@ export default function AppointmentRequestForm() {
       : originalAddress;
     const hasAddressForVisit = addressToCheckExisting && (addressToCheckExisting.line1 || addressToCheckExisting.city || addressToCheckExisting.state || addressToCheckExisting.zip);
     if (hasAddressForVisit) {
-      if (!formData.isThisTheAddressWhereWeWillCome) newErrors.isThisTheAddressWhereWeWillCome = 'Please select an option';
+      if (!formData.isThisTheAddressWhereWeWillCome) {
+        newErrors.isThisTheAddressWhereWeWillCome = 'Please tell us if this is where we should come';
+      }
       if (formData.isThisTheAddressWhereWeWillCome === 'No') {
-        if (!formData.newPhysicalAddress?.line1?.trim() || !formData.newPhysicalAddress?.city?.trim() || !formData.newPhysicalAddress?.state?.trim() || !formData.newPhysicalAddress?.zip?.trim()) {
+        if (formData.extraVisitAddress?.line1 && !formData.visitAddressChoice) {
+          newErrors.isThisTheAddressWhereWeWillCome = 'Please choose where we should come instead';
+        } else if (
+          formData.visitAddressChoice !== 'extra' &&
+          (!formData.newPhysicalAddress?.line1?.trim() ||
+            !formData.newPhysicalAddress?.city?.trim() ||
+            !formData.newPhysicalAddress?.state?.trim() ||
+            !formData.newPhysicalAddress?.zip?.trim())
+        ) {
           newErrors['newPhysicalAddress.line1'] = 'Please select your address from the suggestions';
         }
       }
@@ -7078,132 +7117,193 @@ export default function AppointmentRequestForm() {
               />
               {errors.bestPhoneNumber && <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>{errors.bestPhoneNumber}</div>}
             </div>
-            {/* Display address on file - show if we have address data or original address */}
             {(() => {
-              const addressToShow = formData.physicalAddress && (formData.physicalAddress.line1 || formData.physicalAddress.city || formData.physicalAddress.state || formData.physicalAddress.zip)
-                ? formData.physicalAddress
-                : originalAddress;
-              
-              return addressToShow && (addressToShow.line1 || addressToShow.city || addressToShow.state || addressToShow.zip) ? (
-                <div style={{ marginBottom: '20px' }}>
-                  <div style={{
-                    padding: '12px',
-                    backgroundColor: '#f9fafb',
-                    border: '1px solid #d1d5db',
-                    borderRadius: '8px',
-                    fontSize: '14px',
-                    color: '#374151',
-                    lineHeight: '1.5',
-                  }}>
-                    {addressToShow.line1 && <div>{addressToShow.line1}</div>}
-                    {addressToShow.line2 && <div>{addressToShow.line2}</div>}
-                    {(addressToShow.city || addressToShow.state || addressToShow.zip) && (
+              const homeAddress =
+                formData.visitAddressChoice === 'home' ||
+                formData.isThisTheAddressWhereWeWillCome !== 'No'
+                  ? formData.physicalAddress &&
+                    (formData.physicalAddress.line1 ||
+                      formData.physicalAddress.city ||
+                      formData.physicalAddress.state ||
+                      formData.physicalAddress.zip)
+                    ? formData.physicalAddress
+                    : originalAddress
+                  : originalAddress;
+              const hasHome =
+                homeAddress &&
+                (homeAddress.line1 || homeAddress.city || homeAddress.state || homeAddress.zip);
+              if (!hasHome) return null;
+              const yesNo = formData.isThisTheAddressWhereWeWillCome;
+              return (
+                <div style={{ marginBottom: '20px' }} data-form-field="isThisTheAddressWhereWeWillCome">
+                  <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
+                    Is this the place we are doing the visit? <span style={{ color: '#ef4444' }}>*</span>
+                  </label>
+                  <div
+                    style={{
+                      padding: '12px',
+                      backgroundColor: '#f9fafb',
+                      border: '1px solid #d1d5db',
+                      borderRadius: '8px',
+                      fontSize: '14px',
+                      color: '#374151',
+                      lineHeight: '1.5',
+                      marginBottom: '12px',
+                    }}
+                  >
+                    {homeAddress.line1 ? <div>{homeAddress.line1}</div> : null}
+                    {homeAddress.line2 ? <div>{homeAddress.line2}</div> : null}
+                    {homeAddress.city || homeAddress.state || homeAddress.zip ? (
                       <div>
-                        {[addressToShow.city, addressToShow.state, addressToShow.zip]
+                        {[homeAddress.city, homeAddress.state, homeAddress.zip]
                           .filter(Boolean)
                           .join(', ')}
                       </div>
-                    )}
+                    ) : null}
                   </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {(
+                      [
+                        { value: 'Yes', label: 'Yes — come to this address' },
+                        { value: 'No', label: 'No — we need a different address' },
+                      ] as const
+                    ).map(({ value, label }) => (
+                      <label
+                        key={value}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '8px',
+                          cursor: 'pointer',
+                          padding: '12px',
+                          border: `1px solid ${yesNo === value ? '#10b981' : '#d1d5db'}`,
+                          borderRadius: '8px',
+                          backgroundColor: yesNo === value ? '#f0fdf4' : '#fff',
+                        }}
+                      >
+                        <input
+                          type="radio"
+                          name="isThisTheAddressWhereWeWillCome"
+                          value={value}
+                          checked={yesNo === value}
+                          onChange={() => setVisitAtThisAddress(value === 'Yes')}
+                          style={{ margin: 0 }}
+                        />
+                        <span>{label}</span>
+                      </label>
+                    ))}
+                  </div>
+                  {errors.isThisTheAddressWhereWeWillCome ? (
+                    <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '8px' }}>
+                      {errors.isThisTheAddressWhereWeWillCome}
+                    </div>
+                  ) : null}
+                  {yesNo === 'Yes'
+                    ? renderVisitZoneStatus(homeAddress.city, homeAddress.state)
+                    : null}
                 </div>
-              ) : null;
+              );
             })()}
 
-            {/* Where should we come? Home, saved extra address, or a one-off. */}
-            {(() => {
-              const addressToCheck = formData.physicalAddress && (formData.physicalAddress.line1 || formData.physicalAddress.city || formData.physicalAddress.state || formData.physicalAddress.zip)
-                ? formData.physicalAddress
-                : originalAddress;
-              
-              return addressToCheck && (addressToCheck.line1 || addressToCheck.city || addressToCheck.state || addressToCheck.zip);
-            })() && (
-              <div style={{ marginBottom: '20px' }} data-form-field="isThisTheAddressWhereWeWillCome">
-                <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }} htmlFor="visit-address-choice">
-                  Which address should we come to? <span style={{ color: '#ef4444' }}>*</span>
+            {formData.isThisTheAddressWhereWeWillCome === 'No' && formData.extraVisitAddress?.line1 ? (
+              <div style={{ marginBottom: '20px' }}>
+                <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
+                  Where should we come instead? <span style={{ color: '#ef4444' }}>*</span>
                 </label>
-                <select
-                  id="visit-address-choice"
-                  value={formData.visitAddressChoice || (formData.isThisTheAddressWhereWeWillCome === 'No' ? 'other' : formData.isThisTheAddressWhereWeWillCome === 'Yes' ? 'home' : '')}
-                  onChange={(e) => setVisitAddressChoice(e.target.value as 'home' | 'extra' | 'other')}
-                  style={{
-                    width: '100%',
-                    padding: '12px',
-                    border: `1px solid ${errors.isThisTheAddressWhereWeWillCome ? '#ef4444' : '#d1d5db'}`,
-                    borderRadius: '8px',
-                    fontSize: '14px',
-                    backgroundColor: '#fff',
-                  }}
-                >
-                  <option value="">Select…</option>
-                  <option value="home">Home (where we show up)</option>
-                  {formData.extraVisitAddress?.line1 ? (
-                    <option value="extra">
-                      {formData.extraVisitAddressLabel || 'Other address'}
-                    </option>
-                  ) : null}
-                  <option value="other">A different address</option>
-                </select>
-                {errors.isThisTheAddressWhereWeWillCome && <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>{errors.isThisTheAddressWhereWeWillCome}</div>}
-                {formData.visitAddressChoice === 'home' &&
-                  renderVisitZoneStatus(
-                    formData.physicalAddress?.city || originalAddress?.city,
-                    formData.physicalAddress?.state || originalAddress?.state,
-                  )}
-              </div>
-            )}
-
-            {formData.visitAddressChoice === 'extra' && formData.extraVisitAddress?.line1 ? (
-              <div style={{
-                marginBottom: '20px',
-                padding: '12px',
-                backgroundColor: '#f0fdf4',
-                border: '1px solid #bbf7d0',
-                borderRadius: '8px',
-                fontSize: '14px',
-                color: '#374151',
-              }}>
-                <div style={{ fontWeight: 600, marginBottom: 4 }}>{formData.extraVisitAddressLabel || 'Other address'}</div>
-                <div>{formData.extraVisitAddress.line1}</div>
-                {formData.extraVisitAddress.line2 ? <div>{formData.extraVisitAddress.line2}</div> : null}
-                <div>
-                  {[formData.extraVisitAddress.city, formData.extraVisitAddress.state, formData.extraVisitAddress.zip]
-                    .filter(Boolean)
-                    .join(', ')}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <label
+                    style={{
+                      display: 'flex',
+                      alignItems: 'flex-start',
+                      gap: '8px',
+                      cursor: 'pointer',
+                      padding: '12px',
+                      border: `1px solid ${formData.visitAddressChoice === 'extra' ? '#10b981' : '#d1d5db'}`,
+                      borderRadius: '8px',
+                      backgroundColor: formData.visitAddressChoice === 'extra' ? '#f0fdf4' : '#fff',
+                    }}
+                  >
+                    <input
+                      type="radio"
+                      name="visitAddressChoice"
+                      checked={formData.visitAddressChoice === 'extra'}
+                      onChange={() => setVisitAddressChoice('extra')}
+                      style={{ marginTop: 3 }}
+                    />
+                    <span>
+                      <span style={{ fontWeight: 600, display: 'block' }}>
+                        {formData.extraVisitAddressLabel || 'Other address'}
+                      </span>
+                      <span style={{ fontSize: '14px', color: '#374151' }}>
+                        {formData.extraVisitAddress.line1}
+                        {formData.extraVisitAddress.line2 ? `, ${formData.extraVisitAddress.line2}` : ''}
+                        {formData.extraVisitAddress.city ||
+                        formData.extraVisitAddress.state ||
+                        formData.extraVisitAddress.zip
+                          ? `, ${[formData.extraVisitAddress.city, formData.extraVisitAddress.state, formData.extraVisitAddress.zip].filter(Boolean).join(', ')}`
+                          : ''}
+                      </span>
+                    </span>
+                  </label>
+                  <label
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      cursor: 'pointer',
+                      padding: '12px',
+                      border: `1px solid ${formData.visitAddressChoice === 'other' ? '#10b981' : '#d1d5db'}`,
+                      borderRadius: '8px',
+                      backgroundColor: formData.visitAddressChoice === 'other' ? '#f0fdf4' : '#fff',
+                    }}
+                  >
+                    <input
+                      type="radio"
+                      name="visitAddressChoice"
+                      checked={formData.visitAddressChoice === 'other'}
+                      onChange={() => setVisitAddressChoice('other')}
+                      style={{ margin: 0 }}
+                    />
+                    <span>A different address</span>
+                  </label>
                 </div>
-                {renderVisitZoneStatus(formData.extraVisitAddress.city, formData.extraVisitAddress.state)}
+                {formData.visitAddressChoice === 'extra'
+                  ? renderVisitZoneStatus(
+                      formData.extraVisitAddress.city,
+                      formData.extraVisitAddress.state,
+                    )
+                  : null}
               </div>
             ) : null}
 
-            {/* Show new address fields if they chose a one-off visit address */}
-            {formData.visitAddressChoice === 'other' && (
-              <>
-                <div style={{ marginBottom: '20px' }} data-form-field="newPhysicalAddress.line1">
-                  <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
-                    Please let us know where we will meet you. <span style={{ color: '#ef4444' }}>*</span>
-                  </label>
-                  <AddressAutocomplete
-                    id="new-physical-address"
-                    value={
-                      formData.newPhysicalAddress ?? {
-                        line1: '',
-                        city: '',
-                        state: '',
-                        zip: '',
-                        country: 'US',
-                      }
+            {formData.isThisTheAddressWhereWeWillCome === 'No' &&
+            (formData.visitAddressChoice === 'other' || !formData.extraVisitAddress?.line1) ? (
+              <div style={{ marginBottom: '20px' }} data-form-field="newPhysicalAddress.line1">
+                <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>
+                  Please let us know where we will meet you. <span style={{ color: '#ef4444' }}>*</span>
+                </label>
+                <AddressAutocomplete
+                  id="new-physical-address"
+                  value={
+                    formData.newPhysicalAddress ?? {
+                      line1: '',
+                      city: '',
+                      state: '',
+                      zip: '',
+                      country: 'US',
                     }
-                    onChange={(address) => setAddressFields('newPhysicalAddress', address)}
-                    error={errors['newPhysicalAddress.line1']}
-                    placeholder="Start typing your address"
-                    suppressDropdown={showExistingClientModal || showMembershipModal || !!appointmentTypeChangeModal}
-                  />
-                  {renderVisitZoneStatus(
-                    formData.newPhysicalAddress?.city,
-                    formData.newPhysicalAddress?.state,
-                  )}
-                </div>
-              </>
-            )}
+                  }
+                  onChange={(address) => setAddressFields('newPhysicalAddress', address)}
+                  error={errors['newPhysicalAddress.line1']}
+                  placeholder="Start typing your address"
+                  suppressDropdown={showExistingClientModal || showMembershipModal || !!appointmentTypeChangeModal}
+                />
+                {renderVisitZoneStatus(
+                  formData.newPhysicalAddress?.city,
+                  formData.newPhysicalAddress?.state,
+                )}
+              </div>
+            ) : null}
 
             <div style={{ marginBottom: '20px' }} data-form-field="mailingAddressSame">
               <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600, color: '#374151' }}>

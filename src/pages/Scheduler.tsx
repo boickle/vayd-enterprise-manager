@@ -37,7 +37,7 @@ import {
 } from '../api/appointments';
 import { fetchSchedulingOutreachSmsFrom } from '../api/clientSms';
 import { fetchClientByIdStaff } from '../api/clientsStaff';
-import { http } from '../api/http';
+import { apiErrorMessage, http } from '../api/http';
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
 import {
   fetchEmployeeGoals,
@@ -255,9 +255,13 @@ import {
   euthanasiaConsentMenuMode,
   getEuthanasiaConsentStatus,
   getEuthanasiaConsentStatuses,
+  markEuthanasiaRdvmNotified,
   sendEuthanasiaConsent,
   type EuthanasiaConsentMenuMode,
+  type EuthanasiaRdvmUiStatus,
 } from '../api/consent';
+import { listOutsideHospitals } from '../api/outsideHospitals';
+import { ClientEmailComposeModal } from '../components/ClientEmailComposeModal';
 import {
   EUTHANASIA_CONSENT_STATUS_CHANGED_EVENT,
   notifyEuthanasiaConsentStatusChanged,
@@ -1506,6 +1510,79 @@ function titleCaseWords(raw: string | null | undefined): string | null {
 
 function patientBreedTitleCase(p: Patient): string | null {
   return titleCaseWords(patientBreedDisplayOnly(p));
+}
+
+function escapeHtmlText(raw: string): string {
+  return raw
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function rdvmSpeciesWord(p: Patient | undefined): string {
+  if (!p) return 'pet';
+  const kind = patientSpeciesIconKind(p);
+  if (kind === 'dog') return 'dog';
+  if (kind === 'cat') return 'cat';
+  return 'pet';
+}
+
+/** Letter wording: "12-year-old" / "8-month-old". Empty when we do not know. */
+function rdvmAgePhrase(p: Patient | undefined): string {
+  if (!p) return '';
+  const compact = patientAgeCompactYoDisplay(p);
+  if (!compact) return '';
+  const years = compact.match(/^(\d+)yo\b/);
+  if (years) return `${years[1]}-year-old`;
+  const months = compact.match(/^(\d+)mo\b/);
+  if (months) return `${months[1]}-month-old`;
+  return '';
+}
+
+function rdvmDoctorFullName(
+  appt: Appointment,
+  providers: Provider[],
+): string {
+  const fromAppt = [appt.primaryProvider?.firstName, appt.primaryProvider?.lastName]
+    .map((part) => pickStr(part))
+    .filter(Boolean)
+    .join(' ')
+    .trim();
+  const fromList = (() => {
+    const id = appt.primaryProvider?.id;
+    if (id == null) return '';
+    const match = providers.find((row) => Number(row.id) === Number(id));
+    if (!match) return '';
+    const named = [match.firstName, match.lastName].map((part) => pickStr(part)).filter(Boolean).join(' ').trim();
+    return named || pickStr(match.name) || '';
+  })();
+  const raw = fromAppt || fromList;
+  return raw.replace(/^dr\.?\s+/i, '').trim();
+}
+
+function rdvmDeathNoticeHtml(opts: {
+  pet: string;
+  owner: string;
+  ownerFirst: string;
+  age: string;
+  species: string;
+  date: string;
+  doctor: string;
+}): string {
+  const pet = escapeHtmlText(opts.pet);
+  const owner = escapeHtmlText(opts.owner);
+  const ownerFirst = escapeHtmlText(opts.ownerFirst || opts.owner);
+  const species = escapeHtmlText(opts.species);
+  const date = escapeHtmlText(opts.date);
+  const doctor = escapeHtmlText(opts.doctor || 'the attending veterinarian');
+  const beloved = [opts.age, species].filter(Boolean).join(' ');
+  const possessive = /s$/i.test(opts.pet) ? `${pet}'` : `${pet}'s`;
+  return [
+    '<p>Hello,</p>',
+    `<p>We wanted to let you know that ${pet}, the beloved ${escapeHtmlText(beloved)} of ${owner}, passed away peacefully on ${date} with our team at Vet At Your Door. ${ownerFirst} wanted you to know. Please feel free to update your records and send your condolences. We are grateful for the great care you provided to ${pet} and ${owner} throughout ${possessive} life.</p>`,
+    `<p>Warmly,<br>Dr. ${doctor}</p>`,
+  ].join('');
 }
 
 /** Dog vs cat icon in Visit Highlights when species is canine / feline. */
@@ -3088,6 +3165,24 @@ function resolveSchedulerRlStatus(
   );
 }
 
+function SchedulerRdvmIcon({ status }: { status: EuthanasiaRdvmUiStatus }) {
+  if (status === 'none') return null;
+  return (
+    <span
+      className="scheduler-preappt-rl-icon scheduler-preappt-rl-icon--rdvm"
+      title={
+        status === 'sent'
+          ? 'RDVM notified of this death'
+          : 'Owner asked us to inform the RDVM — not sent yet'
+      }
+      aria-hidden
+      style={{ backgroundColor: status === 'sent' ? '#16a34a' : '#dc2626' }}
+    >
+      RDVM
+    </span>
+  );
+}
+
 function SchedulerEuthanasiaConsentIcon({
   status,
 }: {
@@ -3507,6 +3602,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     clientId: number | null;
     clientName: string | null;
     clientEmail: string | null;
+    clientPhone: string | null;
     isResend: boolean;
   } | null>(null);
   const [recordsRequestModalAppt, setRecordsRequestModalAppt] = useState<Appointment | null>(null);
@@ -3534,6 +3630,17 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   const [euthanasiaConsentStatusByApptId, setEuthanasiaConsentStatusByApptId] = useState<
     Map<number, EuthanasiaConsentUiStatus>
   >(() => new Map());
+  const [rdvmStatusByApptId, setRdvmStatusByApptId] = useState<
+    Map<number, EuthanasiaRdvmUiStatus>
+  >(() => new Map());
+  const [rdvmEmailTarget, setRdvmEmailTarget] = useState<{
+    appointmentId: number;
+    clientId: number;
+    clientLabel: string;
+    to: string;
+    subject: string;
+    body: string;
+  } | null>(null);
   const [recordsRequestStatusByApptId, setRecordsRequestStatusByApptId] = useState<
     Map<number, RecordsRequestUiStatus>
   >(() => new Map());
@@ -4956,16 +5063,23 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       .filter((id) => Number.isFinite(id));
     if (!ids.length) {
       setEuthanasiaConsentStatusByApptId(new Map());
+      setRdvmStatusByApptId(new Map());
       return;
     }
     try {
-      const { statuses } = await getEuthanasiaConsentStatuses(ids);
+      const { statuses, rdvm } = await getEuthanasiaConsentStatuses(ids);
       const next = new Map<number, EuthanasiaConsentUiStatus>();
       for (const [key, value] of Object.entries(statuses ?? {})) {
         const id = Number(key);
         if (Number.isFinite(id)) next.set(id, value);
       }
       setEuthanasiaConsentStatusByApptId(next);
+      const nextRdvm = new Map<number, EuthanasiaRdvmUiStatus>();
+      for (const [key, value] of Object.entries(rdvm ?? {})) {
+        const id = Number(key);
+        if (Number.isFinite(id)) nextRdvm.set(id, value);
+      }
+      setRdvmStatusByApptId(nextRdvm);
     } catch {
       // Keep prior map on transient failures so badges don't flash red.
     }
@@ -5236,6 +5350,13 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     };
     window.addEventListener(EUTHANASIA_CONSENT_STATUS_CHANGED_EVENT, onConsentChanged);
     return () => window.removeEventListener(EUTHANASIA_CONSENT_STATUS_CHANGED_EVENT, onConsentChanged);
+  }, [loadEuthanasiaConsentStatuses]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      void loadEuthanasiaConsentStatuses();
+    }, 20000);
+    return () => window.clearInterval(timer);
   }, [loadEuthanasiaConsentStatuses]);
 
   useEffect(() => {
@@ -10904,6 +11025,79 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             )}`;
             return;
           }
+          case 'informDvmOfDeath': {
+            const consentApptId = Number(appt.id);
+            if (!Number.isFinite(consentApptId)) {
+              fail('This appointment cannot email the RDVM.');
+              return;
+            }
+            if (client?.id == null) {
+              fail('No client on this appointment.');
+              return;
+            }
+            try {
+              const [consent, hospitals] = await Promise.all([
+                getEuthanasiaConsentStatus(consentApptId, firstPatient?.id ? Number(firstPatient.id) : undefined),
+                listOutsideHospitals(),
+              ]);
+              const answers = consent.response?.answers ?? {};
+              const structured = Array.isArray(answers.notifyHospitals)
+                ? (answers.notifyHospitals as Array<{ outsideHospitalId?: number; name?: string }>)
+                : [];
+              const names = structured
+                .map((row) => String(row?.name || '').trim())
+                .filter(Boolean);
+              const fromText = String(answers.vetsToNotify || '')
+                .split(',')
+                .map((part) => part.replace(/\s*\([^)]*\)\s*$/, '').trim())
+                .filter((part) => part && !/^none$/i.test(part));
+              const clinicNames = names.length ? names : fromText;
+              if (!clinicNames.length) {
+                fail('The family did not ask us to inform an RDVM.');
+                return;
+              }
+              const emails: string[] = [];
+              for (const name of clinicNames) {
+                const id = structured.find((row) => row.name === name)?.outsideHospitalId;
+                const match = hospitals.find(
+                  (h) =>
+                    (id != null && h.id === id) ||
+                    h.name.trim().toLowerCase() === name.toLowerCase(),
+                );
+                const email = match?.email?.trim();
+                if (email && !emails.includes(email)) emails.push(email);
+              }
+              const pet =
+                firstPatient?.name?.trim() ||
+                String(answers.petName || '').trim() ||
+                'their patient';
+              const owner =
+                [pickStr(client.firstName), pickStr(client.lastName)].filter(Boolean).join(' ').trim() ||
+                'the owner';
+              const visitDay = DateTime.fromISO(appt.appointmentStart, { zone: 'utc' }).setZone(
+                PRACTICE_TZ,
+              );
+              setRdvmEmailTarget({
+                appointmentId: consentApptId,
+                clientId: Number(client.id),
+                clientLabel: clinicNames.join(', '),
+                to: emails.join(', '),
+                subject: `${pet} — notice of passing`,
+                body: rdvmDeathNoticeHtml({
+                  pet,
+                  owner,
+                  ownerFirst: pickStr(client.firstName) || owner,
+                  age: rdvmAgePhrase(firstPatient),
+                  species: rdvmSpeciesWord(firstPatient),
+                  date: visitDay.isValid ? visitDay.toFormat('LLLL d, yyyy') : 'the day of service',
+                  doctor: rdvmDoctorFullName(appt, providers),
+                }),
+              });
+            } catch (err) {
+              fail(apiErrorMessage(err) || 'Could not open the RDVM email.');
+            }
+            return;
+          }
           case 'euthanasiaConsent': {
             if (!isEuthanasiaAppointment(appt)) {
               fail('Euthanasia consent is only for euthanasia visits.');
@@ -10933,6 +11127,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                 [client?.firstName, client?.lastName].filter(Boolean).join(' ').trim() ||
                 null,
               clientEmail: client?.email ?? null,
+              clientPhone: pickStr(client?.phone1) ?? pickStr(client?.phone2) ?? null,
               isResend: euthanasiaConsentMode === 'resend',
             });
             return;
@@ -11750,6 +11945,9 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                                 }
                               />
                             ) : null}
+                            <SchedulerRdvmIcon
+                              status={rdvmStatusByApptId.get(Number(appt.id)) ?? 'none'}
+                            />
                             <SchedulerRecordsRequestIcon
                               status={recordsRequestStatusByApptId.get(Number(appt.id)) ?? 'none'}
                             />
@@ -12296,6 +12494,9 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                                       }
                                     />
                                   ) : null}
+                                  <SchedulerRdvmIcon
+                                    status={rdvmStatusByApptId.get(Number(appt.id)) ?? 'none'}
+                                  />
                                   <SchedulerRecordsRequestIcon
                                     status={recordsRequestStatusByApptId.get(Number(appt.id)) ?? 'none'}
                                   />
@@ -13443,6 +13644,9 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           }
           showRoomLoader={showPreApptRoomLoaderIcon(contextMenu.appt)}
           showEuthanasiaConsent={isEuthanasiaAppointment(contextMenu.appt)}
+          showInformDvmOfDeath={
+            (rdvmStatusByApptId.get(Number(contextMenu.appt.id)) ?? 'none') !== 'none'
+          }
           euthanasiaConsentLabel={euthanasiaConsentMenuLabel(euthanasiaConsentMode)}
           showRecordsRequest={patientsForAppointment(contextMenu.appt).length > 0}
           recordsRequestLabel={schedulerRecordsRequestMenuLabel(
@@ -13654,6 +13858,25 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
         />
       ) : null}
 
+      {rdvmEmailTarget ? (
+        <ClientEmailComposeModal
+          open
+          title="Inform DVM of death"
+          clientId={rdvmEmailTarget.clientId}
+          clientLabel={rdvmEmailTarget.clientLabel}
+          initialTo={rdvmEmailTarget.to}
+          initialSubject={rdvmEmailTarget.subject}
+          initialBodyText={rdvmEmailTarget.body}
+          onClose={() => setRdvmEmailTarget(null)}
+          onAfterSend={async () => {
+            await markEuthanasiaRdvmNotified(rdvmEmailTarget.appointmentId);
+            notifyEuthanasiaConsentStatusChanged();
+            void loadEuthanasiaConsentStatuses();
+            showToast('RDVM notice sent.');
+          }}
+        />
+      ) : null}
+
       {euthanasiaEstimateTarget ? (
         <EuthanasiaEstimateModal
           appointmentId={euthanasiaEstimateTarget.appointmentId}
@@ -13662,6 +13885,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           clientId={euthanasiaEstimateTarget.clientId}
           clientName={euthanasiaEstimateTarget.clientName}
           clientEmail={euthanasiaEstimateTarget.clientEmail}
+          clientPhone={euthanasiaEstimateTarget.clientPhone}
           isResend={euthanasiaEstimateTarget.isResend}
           onClose={() => setEuthanasiaEstimateTarget(null)}
           onSent={({ sentTo }) => {

@@ -117,7 +117,17 @@ function documentChartLabel(o: Record<string, unknown>): { typeLabel: string; de
     typeLabel = desc && /check|form/i.test(desc) ? desc : 'Pre-appt Check-in form';
   } else if (typeId === '285' || /previous medical|humane society|veterinary hospital/.test(blob)) {
     typeLabel = 'Previous Medical Records';
-  } else if (desc && !/certificate|generated/i.test(desc)) {
+  } else if (/rabies certificate/i.test(blob)) {
+    typeLabel = 'Rabies Certificate';
+  } else if (/vaccination certificate/i.test(blob)) {
+    typeLabel = 'Vaccination Certificate';
+  } else if (/death certificate/i.test(blob)) {
+    typeLabel = 'Death Certificate';
+  } else if (/spay|neuter certificate/i.test(blob)) {
+    typeLabel = 'Spay/Neuter Certificate';
+  } else if (/\bprescription\b|rx print/i.test(blob)) {
+    typeLabel = 'Prescription';
+  } else if (desc && !/generated/i.test(desc)) {
     typeLabel = desc;
   }
   return { typeLabel, description: `📥 ${name}` };
@@ -539,6 +549,12 @@ export function buildChartRowsFromMedicalRecord(
     if (row.source === 'treatment' && isStockInventoryName(row.description)) return false;
     return true;
   };
+  const skipPrintedRecord = (o: Record<string, unknown>) => {
+    if (!emrOnly) return false;
+    if (o.internalUse === true) return true;
+    if (o.includeOnMedicalRecordPrinting === false) return true;
+    return false;
+  };
 
   for (const p of problems ?? []) {
     if (!p.postedToRecordAt) continue;
@@ -671,7 +687,7 @@ export function buildChartRowsFromMedicalRecord(
 
   for (const log of mr.communicationLogs ?? []) {
     const o = asObj(log);
-    if (!o) continue;
+    if (!o || skipPrintedRecord(o)) continue;
     const id = o.id != null ? String(o.id) : `cc-${out.length}`;
     const serviceDateIso =
       pickStr(o.serviceDate) ?? pickStr(o.sentAt) ?? pickStr(o.createdAt) ?? pickStr(o.deliveredAt);
@@ -1009,7 +1025,7 @@ export function buildChartRowsFromMedicalRecord(
 
   for (const doc of mr.chartDocuments ?? []) {
     const o = asObj(doc);
-    if (!o) continue;
+    if (!o || skipPrintedRecord(o)) continue;
     const name = pickStr(o.name) ?? 'Document';
     const desc = pickStr(o.description) ?? '';
     if (

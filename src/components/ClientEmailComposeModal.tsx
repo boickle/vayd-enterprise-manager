@@ -40,6 +40,8 @@ type Props = {
   clientLabel: string;
   initialSubject: string;
   initialBodyText: string;
+  /** When set, skip the client inbox lookup and use this To line instead. */
+  initialTo?: string;
   mergeValues?: MergeValues;
   title?: string;
   initialAttachments?: GmailComposeAttachment[];
@@ -52,6 +54,9 @@ type Props = {
   patientEmrLogging?: 'default' | 'opt-in';
   includeInPatientEmr?: boolean;
   onIncludeInPatientEmrChange?: (next: boolean) => void;
+  /** Optional: offer to log this send on the client record. */
+  saveToClientCommunications?: boolean;
+  onSaveToClientCommunicationsChange?: (next: boolean) => void;
   onAfterSend?: (sent: {
     subject: string;
     bodyText: string;
@@ -69,6 +74,7 @@ export function ClientEmailComposeModal({
   clientLabel,
   initialSubject,
   initialBodyText,
+  initialTo,
   mergeValues,
   title = 'Email client',
   initialAttachments,
@@ -80,6 +86,8 @@ export function ClientEmailComposeModal({
   patientEmrLogging = 'default',
   includeInPatientEmr = false,
   onIncludeInPatientEmrChange,
+  saveToClientCommunications = false,
+  onSaveToClientCommunicationsChange,
   onAfterSend,
   onClose,
   onOpenEmailHistory,
@@ -167,11 +175,15 @@ export function ClientEmailComposeModal({
         ]);
         if (cancelled) return;
 
-        const emails = clientEmailsFromStaffPayload(clientRaw);
-        if (emails.length === 0) {
-          throw new Error('No client email address on file.');
+        if (initialTo != null) {
+          setTo(initialTo);
+        } else {
+          const emails = clientEmailsFromStaffPayload(clientRaw);
+          if (emails.length === 0) {
+            throw new Error('No client email address on file.');
+          }
+          setTo(emails.join(', '));
         }
-        setTo(emails.join(', '));
 
         const shared = sharedConnectedMailboxes(mailboxesRes.mailboxes);
         const sendMailbox = defaultSharedMailbox(shared)?.email ?? null;
@@ -190,7 +202,7 @@ export function ClientEmailComposeModal({
     return () => {
       cancelled = true;
     };
-  }, [open, clientId, initialSubject, initialBodyText, gmailAllowed]);
+  }, [open, clientId, initialSubject, initialBodyText, initialTo, gmailAllowed]);
 
   const handleFromChange = (nextFrom: string) => {
     setFrom(nextFrom);
@@ -533,6 +545,32 @@ export function ClientEmailComposeModal({
                     </option>
                   ))}
                 </select>
+              </label>
+            ) : null}
+
+            {onSaveToClientCommunicationsChange ? (
+              <label
+                style={{
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  gap: 8,
+                  marginBottom: 14,
+                  fontSize: 14,
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={saveToClientCommunications}
+                  disabled={sending}
+                  onChange={(e) => onSaveToClientCommunicationsChange(e.target.checked)}
+                  style={{ marginTop: 3 }}
+                />
+                <span>
+                  <strong>Add to client communications</strong>
+                  <span style={{ display: 'block', color: '#6b7280', fontSize: 13, marginTop: 2 }}>
+                    Saves a copy on the client record. Leave unchecked to keep it on this task only.
+                  </span>
+                </span>
               </label>
             ) : null}
 

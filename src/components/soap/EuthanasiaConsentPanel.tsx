@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
-  formatMemorialItemLine,
   getEuthanasiaConsentStatus,
   parseMemorialItems,
   type EuthanasiaConsentStatus,
 } from '../../api/consent';
 import { createOrder } from '../../api/visitWorkflow';
 import { apiErrorMessage } from '../../api/http';
+import ConsentAnswersView from '../consent/ConsentAnswersView';
+import { parseConsentWeightChange } from '../../utils/consentWeightAlert';
 import EuthanasiaEstimateModal from './EuthanasiaEstimateModal';
 
 export default function EuthanasiaConsentPanel({
@@ -16,6 +17,7 @@ export default function EuthanasiaConsentPanel({
   clientId,
   encounterId,
   onAddedToPlan,
+  onWeightAlert,
 }: {
   appointmentId: number;
   patientId: number;
@@ -23,6 +25,7 @@ export default function EuthanasiaConsentPanel({
   clientId?: number;
   encounterId?: string;
   onAddedToPlan?: () => void;
+  onWeightAlert?: (change: { previousLbs: number | null; nextLbs: number } | null) => void;
 }) {
   const [status, setStatus] = useState<EuthanasiaConsentStatus | null>(null);
   const [loading, setLoading] = useState(true);
@@ -34,8 +37,9 @@ export default function EuthanasiaConsentPanel({
   const refresh = useCallback(async () => {
     const next = await getEuthanasiaConsentStatus(appointmentId, patientId);
     setStatus(next);
+    onWeightAlert?.(parseConsentWeightChange(next.response?.answers ?? null));
     return next;
-  }, [appointmentId, patientId]);
+  }, [appointmentId, onWeightAlert, patientId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -143,108 +147,11 @@ export default function EuthanasiaConsentPanel({
           to sign.
         </p>
       )}
-      {status.response && (
-        <div style={{ fontSize: 13, lineHeight: 1.45, padding: '0 2px 8px' }}>
-          <p>
-            <strong>Signed by</strong> {status.response.signedName}
-          </p>
-          <p>
-            <strong>Aftercare</strong> {status.response.aftercareLabel}
-          </p>
-          {typeof answers.nameplateLine1 === 'string' && answers.nameplateLine1 && (
-            <p>
-              <strong>Nameplate</strong> {[answers.nameplateLine1, answers.nameplateLine2, answers.nameplateLine3]
-                .filter(Boolean)
-                .join(' / ')}
-            </p>
-          )}
-          <p>
-            <strong>Paw print</strong> {status.response.pawPrintLabel}
-          </p>
-          {parseMemorialItems(answers.memorialItems).length ? (
-            <div>
-              <p>
-                <strong>MEMORIAL ITEMS PURCHASED</strong>
-                {answers.memorialPayment && typeof answers.memorialPayment === 'object'
-                  ? ' — already paid'
-                  : ''}
-              </p>
-              {parseMemorialItems(answers.memorialItems).map((item) => (
-                <p key={`${item.listingId}-${item.procedureId ?? item.inventoryItemId ?? item.name}`}>
-                  {formatMemorialItemLine(item)}
-                  {answers.memorialPayment ? ' · already paid' : ''}
-                </p>
-              ))}
-            </div>
-          ) : null}
-          {answers.clayChargePayment && typeof answers.clayChargePayment === 'object' ? (
-            <p>
-              <strong>Clay print paid</strong>{' '}
-              {typeof (answers.clayChargePayment as { amount?: number }).amount === 'number'
-                ? (answers.clayChargePayment as { amount: number }).amount.toLocaleString('en-US', {
-                    style: 'currency',
-                    currency: 'USD',
-                  })
-                : 'Yes'}
-              {typeof (answers.clayChargePayment as { stripePaymentIntentId?: string })
-                .stripePaymentIntentId === 'string'
-                ? ` · ${(answers.clayChargePayment as { stripePaymentIntentId: string }).stripePaymentIntentId}`
-                : ''}
-            </p>
-          ) : null}
-          {typeof answers.visitAddressConfirmed === 'string' ? (
-            <p>
-              <strong>Visit address</strong>{' '}
-              {answers.visitAddressConfirmed === 'yes'
-                ? 'Confirmed'
-                : typeof answers.visitAddress === 'object' && answers.visitAddress
-                  ? [
-                      (answers.visitAddress as { line1?: string }).line1,
-                      (answers.visitAddress as { city?: string }).city,
-                      (answers.visitAddress as { state?: string }).state,
-                      (answers.visitAddress as { zip?: string }).zip,
-                    ]
-                      .filter(Boolean)
-                      .join(', ')
-                  : 'Updated'}
-            </p>
-          ) : null}
-          {typeof answers.mailingAddressConfirmed === 'string' ? (
-            <p>
-              <strong>Mailing address</strong>{' '}
-              {answers.mailingAddressConfirmed === 'yes'
-                ? 'Confirmed'
-                : typeof answers.mailingAddress === 'object' && answers.mailingAddress
-                  ? [
-                      (answers.mailingAddress as { line1?: string }).line1,
-                      (answers.mailingAddress as { city?: string }).city,
-                      (answers.mailingAddress as { state?: string }).state,
-                      (answers.mailingAddress as { zip?: string }).zip,
-                    ]
-                      .filter(Boolean)
-                      .join(', ')
-                  : 'Updated'}
-            </p>
-          ) : null}
-          {typeof answers.vetsToNotify === 'string' && answers.vetsToNotify && (
-            <p>
-              <strong>Notify</strong> {answers.vetsToNotify}
-              {typeof answers.otherVetsToNotify === 'string' &&
-              answers.otherVetsToNotify.trim() &&
-              !/^none$/i.test(answers.otherVetsToNotify.trim())
-                ? `; ${answers.otherVetsToNotify}`
-                : ''}
-            </p>
-          )}
-          {status.response.signatureDataUrl ? (
-            <img
-              src={status.response.signatureDataUrl}
-              alt="Client signature"
-              style={{ maxWidth: '100%', height: 64, objectFit: 'contain' }}
-            />
-          ) : null}
+      {status.response ? (
+        <div style={{ padding: '0 2px 8px' }}>
+          <ConsentAnswersView response={status.response} />
         </div>
-      )}
+      ) : null}
       {estimateOpen && (
         <EuthanasiaEstimateModal
           appointmentId={appointmentId}

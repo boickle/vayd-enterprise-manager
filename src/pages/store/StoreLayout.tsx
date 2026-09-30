@@ -4,6 +4,7 @@ import { useAuth } from '../../auth/useAuth';
 import { storeCartCount } from './storeCartState';
 import { useAbandonedCartSync } from './useAbandonedCartSync';
 import { useStoreCart } from './useStoreCart';
+import StoreMemberPromo from './StoreMemberPromo';
 import './Store.css';
 
 export default function StoreLayout() {
@@ -91,6 +92,7 @@ export default function StoreLayout() {
         </Link>
       </header>
       <div className="vayd-store__wrap">
+        <StoreMemberPromo />
         <Outlet />
       </div>
     </div>

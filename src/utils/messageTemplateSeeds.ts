@@ -132,11 +132,11 @@ export const SYSTEM_TEMPLATE_SEEDS: MessageTemplateSeed[] = [
   {
     systemKey: 'payment_link_sms',
     name: 'Payment link — text',
-    description: 'Used when texting a Stripe pay link from the client ledger.',
+    description: 'Used when texting a pay link from the client ledger or an invoice task.',
     channel: 'sms',
     category: 'billing',
     subject: '',
-    body: 'Hi {{client_first_name}}, here is a secure link to pay {{amount}} for {{invoice_labels}}: {{pay_link}}',
+    body: 'Hi {{client_first_name}}, here is a secure link to pay {{amount}} for {{invoice_labels}}: {{pay_link}}\n\nIf you want to see an itemized invoice, go to the portal.',
   },
   {
     systemKey: 'invoice_email',

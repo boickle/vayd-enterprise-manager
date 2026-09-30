@@ -5,7 +5,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { Plus, Pencil, Archive, ChevronDown, ChevronUp, Eye, GripVertical, Trash2 } from 'lucide-react';
 import {
-  listFormTemplates,
   createFormTemplate,
   updateFormTemplate,
   archiveFormTemplate,
@@ -14,6 +13,7 @@ import {
   type FormTemplate,
 } from '../api/forms';
 import { FORM_MERGE_FIELDS, mergeToken } from '../utils/formMergeFields';
+import { ensureDefaultFormTemplates } from '../utils/formTemplateSeeds';
 import FormOwnerPreview from '../components/forms/FormOwnerPreview';
 import './FormsAdmin.css';
 
@@ -523,7 +523,7 @@ export default function FormsAdmin() {
   const [listPreview, setListPreview] = useState<FormTemplate | null>(null);
 
   useEffect(() => {
-    listFormTemplates()
+    ensureDefaultFormTemplates()
       .then(setTemplates)
       .catch(() => setError('Could not load form templates'))
       .finally(() => setLoading(false));

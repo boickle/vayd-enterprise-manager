@@ -17,7 +17,7 @@ import {
 import { listPracticeBranches } from '../api/branchInventory';
 import { createForwardBooking, fetchForwardBookingCalendarIndex } from '../api/forwardBooking';
 import type { Appointment } from '../api/roomLoader';
-import { createTask, type TaskLinkInput } from '../api/tasks';
+import type { TaskLinkInput } from '../api/tasks';
 import {
   buildCreateForwardBookingPayloadFromAppointment,
   FORWARD_BOOKING_UNIT_OPTIONS,
@@ -36,7 +36,7 @@ import {
   validateTaskScheduleOrder,
 } from '../utils/taskDateTime';
 import { notifyTasksChanged } from '../utils/taskOwnership';
-import { LABS_PENDING_FORWARD_BOOKING_TASK_BODY } from '../utils/forwardBookingCreateLink';
+import { createLabsPendingForwardBookingTasks } from '../components/forwardBooking/saveForwardBookingDecision';
 import {
   followUpSideEffectsSessionKey,
   markFollowUpSideEffectsDone,
@@ -56,6 +56,12 @@ import ForwardBookingDecisionFields, {
 } from '../components/forwardBooking/ForwardBookingDecisionFields';
 import { SchedulerHouseholdPetRow } from '../components/SchedulerHouseholdPetRow';
 import EuthanasiaFutureAppointmentsModal from '../components/EuthanasiaFutureAppointmentsModal';
+import DeathWrapUpModal from '../components/soap/DeathWrapUpModal';
+import {
+  deathWrapUpHouseholdHasWork,
+  previewDeathWrapUpForPatients,
+  type DeathWrapUpPreview,
+} from '../utils/deathWrapUp';
 import { fetchClientByIdStaff } from '../api/clientsStaff';
 import { patientsForAppointment } from '../utils/schedulerAddPet';
 import {
@@ -344,9 +350,9 @@ function applyDefaultLabsAssignee(
   form: ForwardBookingDispositionFormState,
   appt: Appointment
 ): ForwardBookingDispositionFormState {
-  if (form.labsAssigneeEmployeeId.trim()) return form;
-  const def = defaultLabsAssigneeEmployeeId(appt);
-  return def ? { ...form, labsAssigneeEmployeeId: def } : form;
+  if (form.labsAssigneeEmployeeIds.length > 0) return form;
+  const def = Number(defaultLabsAssigneeEmployeeId(appt));
+  return Number.isFinite(def) && def > 0 ? { ...form, labsAssigneeEmployeeIds: [def] } : form;
 }
 
 function defaultStartTimeLocal(existingIso: string | null | undefined, practiceTz: string): string {
@@ -426,8 +432,11 @@ export function SchedulerActualVisitTimeModal({
     () => initialForwardBookingForm.forwardUnit
   );
   const [bookingNotes, setBookingNotes] = useState(() => initialForwardBookingForm.bookingNotes);
-  const [labsAssigneeEmployeeId, setLabsAssigneeEmployeeId] = useState(
-    () => initialForwardBookingForm.labsAssigneeEmployeeId
+  const [labsAssigneeEmployeeIds, setLabsAssigneeEmployeeIds] = useState<number[]>(
+    () => initialForwardBookingForm.labsAssigneeEmployeeIds
+  );
+  const [labsWatcherEmployeeIds, setLabsWatcherEmployeeIds] = useState<number[]>(
+    () => initialForwardBookingForm.labsWatcherEmployeeIds
   );
   const [labsTaskTitle, setLabsTaskTitle] = useState(() => initialForwardBookingForm.labsTaskTitle);
   const [labsTaskStartLocal, setLabsTaskStartLocal] = useState(
@@ -460,7 +469,8 @@ export function SchedulerActualVisitTimeModal({
     forwardAmount: initialForwardBookingForm.forwardAmount,
     forwardUnit: initialForwardBookingForm.forwardUnit,
     bookingNotes: initialForwardBookingForm.bookingNotes,
-    labsAssigneeEmployeeId: initialForwardBookingForm.labsAssigneeEmployeeId,
+    labsAssigneeEmployeeIds: initialForwardBookingForm.labsAssigneeEmployeeIds,
+    labsWatcherEmployeeIds: initialForwardBookingForm.labsWatcherEmployeeIds,
     labsTaskTitle: initialForwardBookingForm.labsTaskTitle,
     labsTaskStartLocal: initialForwardBookingForm.labsTaskStartLocal,
     labsTaskDueLocal: initialForwardBookingForm.labsTaskDueLocal,
@@ -480,11 +490,23 @@ export function SchedulerActualVisitTimeModal({
     [forwardBookingMode]
   );
   const savedLabsAssigneeLabel = useMemo(() => {
-    const id = Number(labsAssigneeEmployeeId);
-    if (!Number.isFinite(id)) return '—';
-    const em = employees.find((e) => Number(e.id) === id);
-    return em ? formatEmployeeDisplayName(em) || em.email || '—' : '—';
-  }, [employees, labsAssigneeEmployeeId]);
+    const names = labsAssigneeEmployeeIds
+      .map((id) => {
+        const em = employees.find((e) => Number(e.id) === id);
+        return em ? formatEmployeeDisplayName(em) || em.email || null : null;
+      })
+      .filter((name): name is string => Boolean(name));
+    return names.length ? names.join(', ') : '—';
+  }, [employees, labsAssigneeEmployeeIds]);
+  const savedLabsWatcherLabel = useMemo(() => {
+    const names = labsWatcherEmployeeIds
+      .map((id) => {
+        const em = employees.find((e) => Number(e.id) === id);
+        return em ? formatEmployeeDisplayName(em) || em.email || null : null;
+      })
+      .filter((name): name is string => Boolean(name));
+    return names.length ? names.join(', ') : 'None';
+  }, [employees, labsWatcherEmployeeIds]);
   const savedForwardBookingProviderLabel = useMemo(() => {
     const id = Number(forwardBookingProviderId);
     if (!Number.isFinite(id)) return '—';
@@ -533,6 +555,7 @@ export function SchedulerActualVisitTimeModal({
   const [euthanasiaFutureRows, setEuthanasiaFutureRows] = useState<
     EuthanasiaFutureAppointmentRow[] | null
   >(null);
+  const [euthanasiaWrapUp, setEuthanasiaWrapUp] = useState<DeathWrapUpPreview[] | null>(null);
   const [checkingEuthanasiaFuture, setCheckingEuthanasiaFuture] = useState(false);
   const euthanasiaEndConfirmedRef = useRef(false);
   const pendingEuthanasiaEndRef = useRef<{
@@ -648,7 +671,8 @@ export function SchedulerActualVisitTimeModal({
       forwardAmount,
       forwardUnit,
       bookingNotes,
-      labsAssigneeEmployeeId,
+      labsAssigneeEmployeeIds,
+      labsWatcherEmployeeIds,
       labsTaskTitle,
       labsTaskStartLocal,
       labsTaskDueLocal,
@@ -658,7 +682,8 @@ export function SchedulerActualVisitTimeModal({
     forwardAmount,
     forwardBookingMode,
     forwardUnit,
-    labsAssigneeEmployeeId,
+    labsAssigneeEmployeeIds,
+    labsWatcherEmployeeIds,
     labsTaskDueLocal,
     labsTaskStartLocal,
     labsTaskTitle,
@@ -679,7 +704,8 @@ export function SchedulerActualVisitTimeModal({
       setForwardAmount(form.forwardAmount);
       setForwardUnit(form.forwardUnit);
       setBookingNotes(form.bookingNotes);
-      setLabsAssigneeEmployeeId(form.labsAssigneeEmployeeId);
+      setLabsAssigneeEmployeeIds(form.labsAssigneeEmployeeIds);
+      setLabsWatcherEmployeeIds(form.labsWatcherEmployeeIds);
       setLabsTaskTitle(form.labsTaskTitle);
       setLabsTaskStartLocal(form.labsTaskStartLocal);
       setLabsTaskDueLocal(form.labsTaskDueLocal);
@@ -794,9 +820,8 @@ export function SchedulerActualVisitTimeModal({
         return;
       }
 
-      const assigneeId = Number(labsAssigneeEmployeeId);
-      if (!Number.isFinite(assigneeId)) {
-        throw new Error('Select a staff member to assign the labs pending task.');
+      if (labsAssigneeEmployeeIds.length === 0) {
+        throw new Error('Select at least one person to do the labs pending task.');
       }
       if (branchIds.length === 0) {
         throw new Error('Could not determine practice branches for the task.');
@@ -827,12 +852,11 @@ export function SchedulerActualVisitTimeModal({
         if (!title.trim()) {
           throw new Error('Enter a task description.');
         }
-        await createTask({
+        await createLabsPendingForwardBookingTasks({
           title,
-          body: LABS_PENDING_FORWARD_BOOKING_TASK_BODY,
-          kind: 'forward_booking',
           branchIds,
-          assignedToEmployeeId: assigneeId,
+          assigneeEmployeeIds: labsAssigneeEmployeeIds,
+          watcherEmployeeIds: labsWatcherEmployeeIds,
           startAt,
           dueAt,
           links: buildLabsPendingTaskLinksForVisit(visit, appt.client?.id),
@@ -921,7 +945,8 @@ export function SchedulerActualVisitTimeModal({
     householdFollowUpAppointmentIds,
     householdVisits,
     isStartOnly,
-    labsAssigneeEmployeeId,
+    labsAssigneeEmployeeIds,
+    labsWatcherEmployeeIds,
     labsTaskDueLocal,
     labsTaskStartLocal,
     labsTaskTitle,
@@ -1169,9 +1194,8 @@ export function SchedulerActualVisitTimeModal({
     }
 
     if (forwardBookingMode === 'labs_pending') {
-      const assigneeId = Number(labsAssigneeEmployeeId);
-      if (!Number.isFinite(assigneeId)) {
-        setError('Select a staff member to assign the labs pending task.');
+      if (labsAssigneeEmployeeIds.length === 0) {
+        setError('Select at least one person to do the labs pending task.');
         return false;
       }
       if (branchIds.length === 0) {
@@ -1261,6 +1285,19 @@ export function SchedulerActualVisitTimeModal({
           patientIdsToInactivate: euthPatients.map((p) => p.patientId),
           futureRows,
         };
+        const wrapUp = await previewDeathWrapUpForPatients({
+          patients: euthPatients.map((p) => ({
+            patientId: Number(p.patientId),
+            patientName: p.patientName,
+          })),
+          appointmentId: Number(appt.id),
+          practiceId,
+          practiceTz,
+        }).catch(() => []);
+        if (deathWrapUpHouseholdHasWork(wrapUp)) {
+          setEuthanasiaWrapUp(wrapUp);
+          return;
+        }
         if (futureRows.length > 0) {
           setEuthanasiaFutureRows(futureRows);
           return;
@@ -1738,8 +1775,12 @@ export function SchedulerActualVisitTimeModal({
                       {forwardBookingMode === 'labs_pending' ? (
                         <dl className="scheduler-forward-booking-saved-details">
                           <div>
-                            <dt>Assign task to</dt>
+                            <dt>Who does this</dt>
                             <dd>{savedLabsAssigneeLabel}</dd>
+                          </div>
+                          <div>
+                            <dt>Watchers</dt>
+                            <dd>{savedLabsWatcherLabel}</dd>
                           </div>
                           <div>
                             <dt>Task{labsPendingVisitsForTask.length > 1 ? 's' : ''}</dt>
@@ -1800,7 +1841,8 @@ export function SchedulerActualVisitTimeModal({
                     forwardAmount,
                     forwardUnit,
                     bookingNotes,
-                    labsAssigneeEmployeeId,
+                    labsAssigneeEmployeeIds,
+                    labsWatcherEmployeeIds,
                     labsTaskTitle,
                     labsTaskStartLocal,
                     labsTaskDueLocal,
@@ -1811,8 +1853,10 @@ export function SchedulerActualVisitTimeModal({
                     if (patch.forwardAmount !== undefined) setForwardAmount(patch.forwardAmount);
                     if (patch.forwardUnit !== undefined) setForwardUnit(patch.forwardUnit);
                     if (patch.bookingNotes !== undefined) setBookingNotes(patch.bookingNotes);
-                    if (patch.labsAssigneeEmployeeId !== undefined)
-                      setLabsAssigneeEmployeeId(patch.labsAssigneeEmployeeId);
+                    if (patch.labsAssigneeEmployeeIds !== undefined)
+                      setLabsAssigneeEmployeeIds(patch.labsAssigneeEmployeeIds);
+                    if (patch.labsWatcherEmployeeIds !== undefined)
+                      setLabsWatcherEmployeeIds(patch.labsWatcherEmployeeIds);
                     if (patch.labsTaskTitle !== undefined) setLabsTaskTitle(patch.labsTaskTitle);
                     if (patch.labsTaskStartLocal !== undefined)
                       setLabsTaskStartLocal(patch.labsTaskStartLocal);
@@ -1821,9 +1865,9 @@ export function SchedulerActualVisitTimeModal({
                   }}
                   onModeChange={(mode) => {
                     setError(null);
-                    if (mode === 'labs_pending' && !labsAssigneeEmployeeId.trim()) {
-                      const def = defaultLabsAssigneeEmployeeId(appt);
-                      if (def) setLabsAssigneeEmployeeId(def);
+                    if (mode === 'labs_pending' && labsAssigneeEmployeeIds.length === 0) {
+                      const def = Number(defaultLabsAssigneeEmployeeId(appt));
+                      if (Number.isFinite(def) && def > 0) setLabsAssigneeEmployeeIds([def]);
                     }
                     if (mode === 'forward_book_fields' && !forwardBookingProviderId.trim()) {
                       const def = defaultForwardBookingProviderId(appt);
@@ -1929,6 +1973,34 @@ export function SchedulerActualVisitTimeModal({
           void postBothWithEuthanasiaGuard(pending.postOpts, pending.saveOptions);
         }}
       />
+      {euthanasiaWrapUp ? (
+        <DeathWrapUpModal
+          previews={euthanasiaWrapUp}
+          kind="inactivate"
+          title={euthanasiaWrapUp.length > 1 ? 'Ending visit for these patients' : 'Ending this visit'}
+          lead={
+            euthanasiaWrapUp.length > 1
+              ? 'Accept will cancel the items below for every pet, then mark them inactive.'
+              : `Accept will cancel the items below for ${euthanasiaWrapUp[0]?.patientName ?? 'this patient'}, then mark them inactive.`
+          }
+          acceptLabel="Accept and end visit"
+          practiceId={practiceId}
+          onClose={() => {
+            if (saving) return;
+            setEuthanasiaWrapUp(null);
+            pendingEuthanasiaEndRef.current = null;
+            euthanasiaEndConfirmedRef.current = false;
+          }}
+          onAccepted={() => {
+            const pending = pendingEuthanasiaEndRef.current;
+            setEuthanasiaWrapUp(null);
+            if (!pending) return;
+            pending.futureRows = [];
+            euthanasiaEndConfirmedRef.current = true;
+            void postBothWithEuthanasiaGuard(pending.postOpts, pending.saveOptions);
+          }}
+        />
+      ) : null}
     </>
   );
 }

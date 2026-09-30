@@ -59,6 +59,15 @@ import {
 import { appConfirm, appPrompt } from '../../utils/appDialog';
 import CatalogItemPicker, { type PickedCatalogItem } from '../catalog/CatalogItemPicker';
 import PostVisitMembershipSignup from '../soap/PostVisitMembershipSignup';
+import MembershipAgreementWaiver, {
+  hasDrawnMembershipSignature,
+} from '../MembershipAgreementWaiver';
+import { fetchChatHoursOfOperation } from '../../api/chatHoursOfOperation';
+import {
+  buildMembershipAgreementText,
+  defaultChatHoursOfOperation,
+  type ChatHoursOfOperation,
+} from '../../utils/chatHours';
 import { Card, FactGrid, PimsBadge } from './detail/PimsDetailKit';
 import './PatientMembershipPanel.css';
 
@@ -289,6 +298,10 @@ export default function PatientMembershipPanel({
   const [postVisitHoursLeft, setPostVisitHoursLeft] = useState<number | null>(null);
   const [postVisitInvoiceIds, setPostVisitInvoiceIds] = useState<string[]>([]);
   const [postVisitSeedInvoices, setPostVisitSeedInvoices] = useState<VisitInvoice[]>([]);
+  const [agreementAccepted, setAgreementAccepted] = useState(false);
+  const [agreementSignature, setAgreementSignature] = useState('');
+  const [agreementSignatureDrawing, setAgreementSignatureDrawing] = useState('');
+  const [agreementHours, setAgreementHours] = useState<ChatHoursOfOperation | null>(null);
 
   // Add-a-benefit form.
   const [addItem, setAddItem] = useState<PickedCatalogItem | null>(null);
@@ -415,10 +428,19 @@ export default function PatientMembershipPanel({
       .catch(() => {
         if (!cancelled) setPlans([]);
       });
+    void fetchChatHoursOfOperation(
+      practiceId ?? (Number(import.meta.env.VITE_PRACTICE_ID) || 1),
+    )
+      .then((hours) => {
+        if (!cancelled) setAgreementHours(hours);
+      })
+      .catch(() => {
+        /* waiver still uses default hours */
+      });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [practiceId]);
 
   const refreshAudit = useCallback(async (membershipId: number) => {
     try {
@@ -480,6 +502,9 @@ export default function PatientMembershipPanel({
     setEditDraft(null);
     setCancelPreview(null);
     setCancelReason('');
+    setAgreementAccepted(false);
+    setAgreementSignature('');
+    setAgreementSignatureDrawing('');
     resetAddForm();
   }
 
@@ -647,24 +672,42 @@ export default function PatientMembershipPanel({
   }
 
   async function enrol(plan: Bundle) {
+    if (
+      !agreementAccepted ||
+      !agreementSignature.trim() ||
+      !hasDrawnMembershipSignature(agreementSignatureDrawing)
+    ) {
+      setFormError(
+        'The owner must read the membership agreement, check the box, draw their signature, and type their name.',
+      );
+      return;
+    }
     const interval = billingIntervalForPlan(plan);
     const price = listedPriceForPlan(plan, interval);
     const ok = await appConfirm({
       title: `Enroll in ${plan.name}?`,
       message: `${patientName ?? 'This pet'} will be enrolled in ${plan.name}, billed ${
         interval === 'annual' ? 'annually' : 'monthly'
-      }. Benefits are available right away — you’ll be taken to an invoice to collect payment.`,
+      } on an ongoing basis. Benefits are available right away — you’ll be taken to an invoice to collect payment.`,
       confirmLabel: 'Enroll',
     });
     if (!ok) return;
     setBusy(true);
     setFormError(null);
     try {
+      const signedAt = new Date().toISOString();
       const created = await createPatientMembership({
         patientId,
         packageId: plan.id,
         billingInterval: interval,
         price,
+        agreementAccepted: true,
+        agreementSignature: agreementSignature.trim(),
+        agreementSignatureData: agreementSignatureDrawing,
+        agreementSignedAt: signedAt,
+        agreementText: buildMembershipAgreementText(
+          agreementHours ?? defaultChatHoursOfOperation(),
+        ),
       });
       setMembership(created);
       await refreshAudit(created.id);
@@ -1123,6 +1166,9 @@ export default function PatientMembershipPanel({
                   disabled={busy}
                   onClick={() => {
                     setFormError(null);
+                    setAgreementAccepted(false);
+                    setAgreementSignature('');
+                    setAgreementSignatureDrawing('');
                     setMode(mode === 'enrol' ? 'none' : 'enrol');
                   }}
                 >
@@ -1169,6 +1215,21 @@ export default function PatientMembershipPanel({
                   {formError}
                 </p>
               ) : null}
+              <MembershipAgreementWaiver
+                key={mode}
+                hours={agreementHours}
+                accepted={agreementAccepted}
+                signature={agreementSignature}
+                signatureDrawing={agreementSignatureDrawing}
+                onAcceptedChange={setAgreementAccepted}
+                onSignatureChange={setAgreementSignature}
+                onSignatureDrawingChange={setAgreementSignatureDrawing}
+                disabled={busy}
+              />
+              <p className="pmp-muted">
+                Enroll starts benefits right away. The signed agreement is filed on this pet after
+                the membership is paid. It stays off the printed medical record.
+              </p>
               {plans.length === 0 ? (
                 <p className="pmp-muted">
                   No active membership plans yet. Plans are built in Settings → Memberships.
@@ -1191,7 +1252,19 @@ export default function PatientMembershipPanel({
                       <button
                         type="button"
                         className="pims-detail__btn-primary"
-                        disabled={busy}
+                        disabled={
+                          busy ||
+                          !agreementAccepted ||
+                          !agreementSignature.trim() ||
+                          !hasDrawnMembershipSignature(agreementSignatureDrawing)
+                        }
+                        title={
+                          !agreementAccepted ||
+                          !agreementSignature.trim() ||
+                          !hasDrawnMembershipSignature(agreementSignatureDrawing)
+                            ? 'The owner must draw their signature and type their name first'
+                            : undefined
+                        }
                         onClick={() => void enrol(plan)}
                       >
                         Enroll

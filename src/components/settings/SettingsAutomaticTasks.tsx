@@ -215,7 +215,10 @@ export default function SettingsAutomaticTasks({ practiceId, onMessage }: Props)
                       ? `Goes to the ${roleName(rule.assigneeRoleId) ?? 'chosen role'}.`
                       : rule.assigneeMode === 'employee'
                         ? 'Goes to one named person.'
-                        : 'Waits on the queue for someone to claim.'}
+                        : 'Waits on the queue for someone to claim.'}{' '}
+                  {rule.recreateIfIncomplete
+                    ? 'Comes back if they mark it done but the work is not.'
+                    : 'Stays closed if they mark it done or take it off the list.'}
                 </p>
               </div>
 
@@ -390,6 +393,27 @@ export default function SettingsAutomaticTasks({ practiceId, onMessage }: Props)
                         </option>
                       ))}
                     </select>
+                  </label>
+
+                  <label className="auto-tasks__check">
+                    <input
+                      type="checkbox"
+                      checked={rule.recreateIfIncomplete}
+                      disabled={saving}
+                      onChange={(e) =>
+                        void save(rule, { recreateIfIncomplete: e.target.checked })
+                      }
+                    />
+                    <span>
+                      <strong>Re-do if the work is still not done</strong>
+                      <em>
+                        After someone marks the task complete, make a new one once
+                        the wait has passed if the SOAP is still unsigned, the
+                        invoice is still open, or the order list still has items.
+                        Leave this off when choosing not to do the work is allowed
+                        — for example, a call they decided not to file.
+                      </em>
+                    </span>
                   </label>
 
                   <label className="auto-tasks__field">

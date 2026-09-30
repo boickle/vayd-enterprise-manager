@@ -77,6 +77,7 @@ import PimsClientsPage from './pages/PimsClientsPage';
 import PimsPatientsPage from './pages/PimsPatientsPage';
 import PimsTasksPage from './pages/PimsTasksPage';
 import Settings from './pages/Settings';
+import PendingLabsPage from './pages/PendingLabsPage';
 import GmailInbox from './pages/GmailInbox';
 import BankDepositsPage from './pages/BankDepositsPage';
 import Scheduler from './pages/Scheduler';
@@ -750,6 +751,7 @@ export default function App() {
                     <Route path="catalog" element={<LegacyCatalogRedirect />} />
                     <Route path="catalog/*" element={<LegacyCatalogRedirect />} />
                     <Route path="tasks" element={<PimsTasksPage />} />
+                    <Route path="in-house-labs" element={<PendingLabsPage />} />
                     <Route path="settings" element={<Settings />} />
                     <Route
                       path="settings/forms"

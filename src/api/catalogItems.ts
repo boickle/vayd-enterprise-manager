@@ -1,5 +1,6 @@
 import { http } from './http';
 import type { ItemType } from './quantityPriceBreaks';
+import type { AftercareItemType } from '../utils/aftercare';
 
 export type CatalogShippingType = {
   id: number;
@@ -35,6 +36,10 @@ export type CatalogCoreFields = {
   hideOnInvoice?: boolean;
   excludeFromProduction?: boolean;
   allowPriceChange?: boolean;
+  /** Marks the charge that decides what happens to a pet after euthanasia. */
+  isAftercare?: boolean;
+  aftercareType?: AftercareItemType | null;
+  aftercareDisplayName?: string | null;
   isMedication?: boolean;
   isActive?: boolean;
   description?: string | null;

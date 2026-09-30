@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
+  ClipboardSignature,
   FileText,
   GitMerge,
   Mail,
   MessageSquare,
   Phone,
+  Printer,
   Receipt,
   Sparkles,
   Stethoscope,
@@ -18,7 +20,9 @@ import PimsChartCallModal from './PimsChartCallModal';
 import PimsStartSoapModal from './PimsStartSoapModal';
 import ClientCallPill from './ClientCallPill';
 import ChartSendForm from './ChartSendForm';
+import ChartPrintDocumentModal from './ChartPrintDocumentModal';
 import BriefMergePanel from '../brief/BriefMergePanel';
+import BriefClientMergePanel from '../brief/BriefClientMergePanel';
 import BriefRecordReview from '../brief/BriefRecordReview';
 import type { OutsideRecordAcceptResult } from '../../utils/briefRecordStore';
 
@@ -77,6 +81,7 @@ export default function PimsChartWorkBar({
   const [uploadOpen, setUploadOpen] = useState(false);
   const [soapPickOpen, setSoapPickOpen] = useState(false);
   const [formSendOpen, setFormSendOpen] = useState(false);
+  const [printDocOpen, setPrintDocOpen] = useState(false);
 
   useEffect(() => {
     if (!launchNote && !launchCommunicate) return;
@@ -126,26 +131,32 @@ export default function PimsChartWorkBar({
           <button
             type="button"
             className="brief-btn"
+            disabled={!Number.isFinite(patientIdNum)}
+            title="Send a form or waiver for the client to sign (heartworm, consent, …)"
+            onClick={() => setFormSendOpen(true)}
+          >
+            <ClipboardSignature size={15} aria-hidden />
+            Send form
+          </button>
+          <button
+            type="button"
+            className="brief-btn"
+            disabled={!Number.isFinite(patientIdNum)}
+            title="Print a rabies certificate, vaccination certificate, Rx, death certificate, or spay/neuter certificate"
+            onClick={() => setPrintDocOpen(true)}
+          >
+            <Printer size={15} aria-hidden />
+            Print document
+          </button>
+          <button
+            type="button"
+            className="brief-btn"
             disabled={clientIdNum == null}
             title={clientIdNum == null ? 'This pet has no client on file' : 'Text, email, call, or log a communication'}
             onClick={() => setMessagePick(true)}
           >
             <MessageSquare size={15} aria-hidden />
             Communicate
-          </button>
-          <button
-            type="button"
-            className="brief-btn"
-            disabled={clientIdNum == null && !clientPhone}
-            title={
-              clientIdNum == null && !clientPhone
-                ? 'This pet has no client phone on file'
-                : 'Call the client — transcript stays off the EMR unless you add it'
-            }
-            onClick={() => setCallOpen(true)}
-          >
-            <Phone size={15} aria-hidden />
-            Call
           </button>
           <button type="button" className="brief-btn" onClick={onInvoice}>
             <Receipt size={15} aria-hidden />
@@ -279,8 +290,7 @@ export default function PimsChartWorkBar({
                 </div>
                 <p className="pims-chart-pick__empty">
                   Text and email stay in your workflow unless you add them to the record. Call
-                  starts a phone session. Log saves a communication on the chart. Send form emails
-                  a link for the client to sign.
+                  starts a phone session. Log saves a communication on the chart.
                 </p>
                 <div className="pims-chart-pick__foot">
                   <button
@@ -333,18 +343,6 @@ export default function PimsChartWorkBar({
                     <FileText size={14} aria-hidden />
                     Log
                   </button>
-                  <button
-                    type="button"
-                    className="brief-btn"
-                    disabled={!Number.isFinite(patientIdNum)}
-                    onClick={() => {
-                      setMessagePick(false);
-                      setFormSendOpen(true);
-                    }}
-                  >
-                    <FileText size={14} aria-hidden />
-                    Send form / consent
-                  </button>
                   <button type="button" className="brief-btn" onClick={() => setMessagePick(false)}>
                     Cancel
                   </button>
@@ -364,6 +362,19 @@ export default function PimsChartWorkBar({
           clientId={clientIdNum}
           defaultEmail={clientDefaultEmail}
           onSent={() => onRecordsChanged?.()}
+        />
+      ) : null}
+
+      {Number.isFinite(patientIdNum) ? (
+        <ChartPrintDocumentModal
+          open={printDocOpen}
+          onClose={() => setPrintDocOpen(false)}
+          patientId={patientIdNum}
+          patientName={patientName}
+          clientId={clientIdNum}
+          clientName={clientName}
+          clientDefaultEmail={clientDefaultEmail}
+          onFiled={() => onRecordsChanged?.()}
         />
       ) : null}
 
@@ -504,6 +515,58 @@ export function PimsPatientMergeButton({
                   </button>
                 </div>
                 <BriefMergePanel keepPatientId={patientId} keepPatientName={patientName} />
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
+    </>
+  );
+}
+
+/** Header Merge control — opens absorb-other-client panel. */
+export function PimsClientMergeButton({
+  clientId,
+  clientName,
+  onMerged,
+}: {
+  clientId: string | number;
+  clientName: string;
+  onMerged?: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button type="button" className="pims-detail__btn-secondary" onClick={() => setOpen(true)}>
+        <GitMerge size={14} aria-hidden />
+        Merge
+      </button>
+      {open && typeof document !== 'undefined'
+        ? createPortal(
+            <div className="pims-chart-pick" role="dialog" aria-modal="true" aria-labelledby="pims-client-merge-title">
+              <button
+                type="button"
+                className="pims-chart-pick__backdrop"
+                aria-label="Close"
+                onClick={() => setOpen(false)}
+              />
+              <div className="pims-chart-pick__card" style={{ width: 'min(520px, 100%)' }}>
+                <div className="pims-chart-pick__head">
+                  <h3 id="pims-client-merge-title">Merge into {clientName}</h3>
+                  <button
+                    type="button"
+                    className="pims-chart-pick__close"
+                    onClick={() => setOpen(false)}
+                    aria-label="Close"
+                  >
+                    ×
+                  </button>
+                </div>
+                <BriefClientMergePanel
+                  keepClientId={clientId}
+                  keepClientName={clientName}
+                  onMerged={onMerged}
+                />
               </div>
             </div>,
             document.body,

@@ -35,6 +35,7 @@ import {
   VISIT_WORKFLOW_PRACTICE_ID,
 } from '../api/visitWorkflow';
 import { listScribeSessions, polishSpokenNotes, summarizeIntakeHistory } from '../api/soapScribe';
+import { prefetchClientRecap } from '../api/visitWrapUp';
 import { fetchAppointmentById } from '../api/appointments';
 import { fetchEmployee } from '../api/appointmentSettings';
 import { fetchPatientProfileForRow } from '../api/patients';
@@ -66,6 +67,8 @@ import SoapAddendaSection from '../components/soap/SoapAddendaSection';
 import VisitCheckoutPanel from '../components/soap/VisitCheckoutPanel';
 import EuthanasiaPrepayModal from '../components/soap/EuthanasiaPrepayModal';
 import EuthanasiaConsentPanel from '../components/soap/EuthanasiaConsentPanel';
+import ConsentWeightAlert from '../components/consent/ConsentWeightAlert';
+import { type ConsentWeightChange } from '../utils/consentWeightAlert';
 import ScribePanel from '../components/soap/ScribePanel';
 import SoapPatientChronicSummary from '../components/soap/SoapPatientChronicSummary';
 import ScribeDocumentView, { type DocTabId } from '../components/soap/ScribeDocumentView';
@@ -171,8 +174,7 @@ function examDayLabel(iso: string | null): string {
   });
 }
 
-/** Forward booking is deliberately absent: it belongs to the wrap-up, which settles
- * it for every pet on the visit rather than one chart at a time. */
+/** Follow-up is settled on End Visit and checkout, not on this chart. */
 type SoapTabId = DocTabId;
 
 const SOAP_TABS: {
@@ -403,6 +405,7 @@ export default function SoapEncounterPage() {
   const [invoice, setInvoice] = useState<VisitInvoice | null>(null);
   const [patientName, setPatientName] = useState<string>('');
   const [patientProfile, setPatientProfile] = useState<Record<string, unknown> | null>(null);
+  const [consentWeightAlert, setConsentWeightAlert] = useState<ConsentWeightChange | null>(null);
   const [clientName, setClientName] = useState<string>('');
   const [appointmentStart, setAppointmentStart] = useState<string | null>(null);
   const [primaryProviderId, setPrimaryProviderId] = useState<number | null>(null);
@@ -1557,11 +1560,24 @@ export default function SoapEncounterPage() {
 
   const clientQuery = clientIdParam ? `?clientId=${encodeURIComponent(clientIdParam)}` : '';
 
+  useEffect(() => {
+    if (!encounter?.id) return;
+    const text = [subjective, objectiveNotes, reasoning, planNotes]
+      .map((s) => s.replace(/<[^>]+>/g, '').trim())
+      .join(' ');
+    if (text.length < 80) return;
+    const timer = window.setTimeout(() => {
+      void prefetchClientRecap(encounter.id);
+    }, 2500);
+    return () => window.clearTimeout(timer);
+  }, [encounter?.id, subjective, objectiveNotes, reasoning, planNotes]);
+
   /**
-   * Hand off to the wrap-up, which owns forward booking, the client recap, and
-   * locking the record for every pet on the visit.
+   * Hand off to the wrap-up, which owns the client recap and locking the record
+   * for every pet on the visit. Follow-up is End Visit / checkout.
    */
   const goToWrapUp = async () => {
+    if (encounter?.id) void prefetchClientRecap(encounter.id);
     if (checkoutPrepPendingCount > 0) {
       const proceed = await appConfirm({
         title: 'Checkout prep still open',
@@ -1649,6 +1665,10 @@ export default function SoapEncounterPage() {
     return [age, sex, breed, weight].filter((part): part is string => Boolean(part));
   }, [appointmentStart, patientProfile, vitals]);
 
+  const onConsentWeightAlert = useCallback((change: ConsentWeightChange | null) => {
+    setConsentWeightAlert(change);
+  }, []);
+
   if (loading && !encounter) {
     return <div className="soap-page soap-loading">Loading encounter…</div>;
   }
@@ -1682,8 +1702,15 @@ export default function SoapEncounterPage() {
               </Link>
             </h1>
             {signalment.length > 0 && (
-              <span className="soap-header-signalment">{signalment.join(' · ')}</span>
+              <span
+                className={`soap-header-signalment${consentWeightAlert ? ' is-weight-alert' : ''}`}
+              >
+                {signalment.join(' · ')}
+              </span>
             )}
+            {consentWeightAlert ? (
+              <ConsentWeightAlert change={consentWeightAlert} compact />
+            ) : null}
             {patientField(patientProfile, 'microchip') && (
               <span className="soap-header-signalment">
                 Microchip {patientField(patientProfile, 'microchip')}
@@ -1764,12 +1791,10 @@ export default function SoapEncounterPage() {
               </button>
             </>
           ) : (
-            /* Signing happens in the wrap-up, where forward booking and the client
-               recap are settled for the whole household rather than this chart alone. */
             <button
               type="button"
               className="soap-btn primary"
-              title="Review the charts, set follow-up, and send the client recap"
+              title="Review the charts and send the client recap"
               onClick={() => void goToWrapUp()}
             >
               <ArrowRight size={15} /> Wrap up visit
@@ -2261,6 +2286,7 @@ export default function SoapEncounterPage() {
               }
               void refreshInvoice();
             }}
+            onWeightAlert={onConsentWeightAlert}
           />
           <VisitCheckoutPanel
             encounterId={encounter?.id}

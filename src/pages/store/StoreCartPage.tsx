@@ -8,7 +8,6 @@ import {
   publicStoreCardOnFile,
   publicStoreFulfillment,
   publicStoreProducts,
-  listMyStoreMemberDiscounts,
   publicStoreTax,
   storeProductImageUrl,
   type StoreFulfillmentOption,
@@ -17,7 +16,13 @@ import {
   type StoreTagalongPreview,
 } from '../../api/onlineStore';
 import { AddressAutocomplete, type AddressFields } from '../../components/AddressAutocomplete';
-import { fetchClientInfo, fetchClientPets, type Pet } from '../../api/clientPortal';
+import { ManualAddressFields } from '../../components/ManualAddressFields';
+import { fetchClientInfo } from '../../api/clientPortal';
+import {
+  addressLinesFromParts,
+  mailingAddressFields,
+  mailingSameAsService,
+} from '../../utils/clientVisitAddresses';
 import {
   applyStoreSale,
   roundStoreMoney,
@@ -43,6 +48,7 @@ import {
 import { expandStoreTagalongs, storeRebatePromoCopy } from '../../utils/storeTagalongs';
 import { storeRecommendedFrequency } from '../../utils/storeReminderFrequency';
 import { applyMemberStoreDiscount, memberDiscountForPets } from '../../utils/storeMemberPrice';
+import { petDbId, useStoreMemberPricing } from './useStoreMemberPricing';
 import StoreRebatePromo from './StoreRebatePromo';
 import './Store.css';
 
@@ -84,12 +90,6 @@ function autoshipPlaceOrderNote(lines: StoreCartLine[]): string | null {
 
 const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
 
-function petDbId(pet: Pet): number | null {
-  const raw = pet.dbId ?? pet.id;
-  const n = Number(raw);
-  return Number.isFinite(n) ? n : null;
-}
-
 function lineNeedsApproval(line: StoreCartLine) {
   return line.approvalTag === 'needs_doctor_approval';
 }
@@ -101,6 +101,34 @@ function lineNeedsPet(line: StoreCartLine) {
 function titleCaseBrand(brand?: string | null) {
   const value = (brand || 'Card').trim();
   return value ? value.charAt(0).toUpperCase() + value.slice(1) : 'Card';
+}
+
+type OnFileShipAddress = {
+  fields: AddressFields;
+  lines: string[];
+  source: 'mailing' | 'home';
+};
+
+function shipAddressComplete(ship: { line1: string; city: string; state: string; postal: string }) {
+  return Boolean(ship.line1.trim() && ship.city.trim() && ship.state.trim() && ship.postal.trim());
+}
+
+function onFileShipAddress(info: Record<string, unknown> | null | undefined): OnFileShipAddress | null {
+  if (!info) return null;
+  const fields = mailingAddressFields(info);
+  const lines = addressLinesFromParts({
+    address1: fields.line1,
+    address2: fields.line2,
+    city: fields.city,
+    state: fields.state,
+    zip: fields.zip,
+  });
+  if (!lines.length) return null;
+  return {
+    fields,
+    lines,
+    source: mailingSameAsService(info) ? 'home' : 'mailing',
+  };
 }
 
 function formatSavedCard(card: StoreSavedCard) {
@@ -124,7 +152,7 @@ export default function StoreCartPage() {
   const loggedIn = Boolean(auth.token && clientId);
 
   const [lines, setLines] = useState(readStoreCart);
-  const [pets, setPets] = useState<Pet[]>([]);
+  const { pets, discounts: memberDiscounts } = useStoreMemberPricing();
   const [coupon, setCoupon] = useState('');
   const [couponOff, setCouponOff] = useState(0);
   const [couponFreeShip, setCouponFreeShip] = useState(false);
@@ -135,7 +163,6 @@ export default function StoreCartPage() {
   const [taxRates, setTaxRates] = useState({ name: 'Sales Tax', level1: 5.5, level2: 0, level3: 0 });
   const [tagalongsByItem, setTagalongsByItem] = useState<Record<number, StoreTagalongPreview[]>>({});
   const [cadenceByItem, setCadenceByItem] = useState<Record<number, StoreReminderCadence>>({});
-  const [memberDiscounts, setMemberDiscounts] = useState<Record<number, number>>({});
   const [cards, setCards] = useState<StoreSavedCard[]>([]);
   const [selectedCardId, setSelectedCardId] = useState('');
   const [enterNewCard, setEnterNewCard] = useState(false);
@@ -146,9 +173,13 @@ export default function StoreCartPage() {
     line1: '',
     line2: '',
     city: '',
-    state: 'ME',
+    state: '',
     postal: '',
   });
+  const [onFileAddress, setOnFileAddress] = useState<OnFileShipAddress | null>(null);
+  const [shipAddressConfirmed, setShipAddressConfirmed] = useState<'yes' | 'no' | ''>('');
+  const [shipManualEntry, setShipManualEntry] = useState(false);
+  const [updateMailingOnFile, setUpdateMailingOnFile] = useState<'yes' | 'no' | ''>('');
 
   const persist = (next: StoreCartLine[]) => {
     writeStoreCart(next);
@@ -231,16 +262,10 @@ export default function StoreCartPage() {
 
   useEffect(() => {
     if (!loggedIn || !clientId) return;
-    void fetchClientPets().then(setPets).catch(() => setPets([]));
-    void listMyStoreMemberDiscounts(PRACTICE_ID)
-      .then((rows) => {
-        setMemberDiscounts(
-          Object.fromEntries(rows.map((row) => [row.patientId, row.percent]))
-        );
-      })
-      .catch(() => setMemberDiscounts({}));
     void fetchClientInfo(clientId).then((info) => {
       if (!info) return;
+      const onFile = onFileShipAddress(info as Record<string, unknown>);
+      setOnFileAddress(onFile);
       setShip((prev) => ({
         ...prev,
         customerName:
@@ -249,11 +274,11 @@ export default function StoreCartPage() {
           auth.clientInfo?.firstName ||
           '',
         email: prev.email || info.email || auth.clientInfo?.email || '',
-        line1: prev.line1 || info.address1 || info.mailingAddress1 || '',
-        line2: prev.line2 || info.address2 || info.mailingAddress2 || '',
-        city: prev.city || info.city || info.mailingCity || '',
-        state: prev.state || info.state || info.mailingState || 'ME',
-        postal: prev.postal || info.zipcode || info.mailingZipcode || '',
+        line1: prev.line1 || onFile?.fields.line1 || '',
+        line2: prev.line2 || onFile?.fields.line2 || '',
+        city: prev.city || onFile?.fields.city || '',
+        state: prev.state || onFile?.fields.state || '',
+        postal: prev.postal || onFile?.fields.zip || '',
       }));
     });
   }, [auth.clientInfo, clientId, loggedIn]);
@@ -387,13 +412,28 @@ export default function StoreCartPage() {
     }
   }, [allAutoship, autoshipOption, fulfillmentId, selectedFulfillment]);
 
+  const hasOnFileShip = Boolean(onFileAddress?.lines.length);
+  const shipReady = pickup
+    ? true
+    : hasOnFileShip
+      ? shipAddressConfirmed === 'yes' ||
+        (shipAddressConfirmed === 'no' && shipAddressComplete(ship))
+      : shipAddressComplete(ship);
+  const askUpdateMailing =
+    loggedIn &&
+    !pickup &&
+    shipAddressComplete(ship) &&
+    (shipAddressConfirmed === 'no' || !hasOnFileShip);
+  const mailingUpdateReady =
+    !askUpdateMailing || updateMailingOnFile === 'yes' || updateMailingOnFile === 'no';
   const canPlace =
     lines.length > 0 &&
     !needsLogin &&
     !petsMissing &&
     Boolean(ship.customerName.trim()) &&
     Boolean(ship.email.trim()) &&
-    (pickup || Boolean(ship.line1.trim()));
+    shipReady &&
+    mailingUpdateReady;
 
   return (
     <div className="vayd-store__cart">
@@ -742,7 +782,6 @@ export default function StoreCartPage() {
             )}
 
             <h2>{pickup ? 'Your details' : 'Ship to'}</h2>
-            {!pickup ? <p className="vayd-store__note">PO Boxes are fine.</p> : null}
             <div className="vayd-store__cart-fields">
               <label>
                 Name
@@ -752,52 +791,186 @@ export default function StoreCartPage() {
                 Email
                 <input value={ship.email} onChange={(e) => setShip({ ...ship, email: e.target.value })} />
               </label>
-              {!pickup ? (
-                <>
-                  <label className="vayd-store__cart-wide">
-                    Address
-                    <AddressAutocomplete
-                      compact
-                      showConfirmedMessage={false}
-                      placeholder="Start typing the street address"
-                      inputClassName="vayd-store__address-input"
-                      value={{
-                        line1: ship.line1,
-                        city: ship.city,
-                        state: ship.state,
-                        zip: ship.postal,
-                        country: 'US',
-                      }}
-                      onChange={(next: AddressFields) => {
-                        setShip((prev) => ({
-                          ...prev,
-                          line1: next.line1 || prev.line1,
-                          city: next.city || prev.city,
-                          state: next.state || prev.state,
-                          postal: next.zip || prev.postal,
-                        }));
-                      }}
-                    />
-                  </label>
-                  <label>
-                    Apt / PO Box
-                    <input value={ship.line2} onChange={(e) => setShip({ ...ship, line2: e.target.value })} />
-                  </label>
-                  <label>
-                    City
-                    <input value={ship.city} onChange={(e) => setShip({ ...ship, city: e.target.value })} />
-                  </label>
-                  <label>
-                    State
-                    <input value={ship.state} onChange={(e) => setShip({ ...ship, state: e.target.value })} />
-                  </label>
-                  <label>
-                    ZIP
-                    <input value={ship.postal} onChange={(e) => setShip({ ...ship, postal: e.target.value })} />
-                  </label>
-                </>
-              ) : null}
             </div>
+            {!pickup ? (
+              <div className="vayd-store__ship-address">
+                {hasOnFileShip ? (
+                  <p className="vayd-store__question">
+                    Is this the mailing address you want us to send this to?
+                  </p>
+                ) : (
+                  <p className="vayd-store__question">Where should we send this?</p>
+                )}
+                <p className="vayd-store__muted">PO Boxes are fine.</p>
+                {hasOnFileShip && onFileAddress ? (
+                  <>
+                    <div className="vayd-store__address-card">
+                      {onFileAddress.lines.map((line) => (
+                        <div key={line}>{line}</div>
+                      ))}
+                      <div className="vayd-store__address-note">
+                        {onFileAddress.source === 'mailing'
+                          ? 'Mailing address on file'
+                          : 'Home address on file — we do not have a separate mailing address'}
+                      </div>
+                    </div>
+                    <div className="vayd-store__choices">
+                      {(
+                        [
+                          { value: 'yes', label: 'Yes — send it here' },
+                          { value: 'no', label: 'No — I’ll enter a different address' },
+                        ] as const
+                      ).map((row) => (
+                        <label
+                          key={row.value}
+                          className={`vayd-store__choice${shipAddressConfirmed === row.value ? ' is-on' : ''}`}
+                        >
+                          <input
+                            type="radio"
+                            name="store-ship-confirm"
+                            checked={shipAddressConfirmed === row.value}
+                            onChange={() => {
+                              setShipAddressConfirmed(row.value);
+                              setUpdateMailingOnFile('');
+                              setShipManualEntry(false);
+                              if (row.value === 'yes') {
+                                setShip((prev) => ({
+                                  ...prev,
+                                  line1: onFileAddress.fields.line1,
+                                  line2: onFileAddress.fields.line2 || '',
+                                  city: onFileAddress.fields.city,
+                                  state: onFileAddress.fields.state || '',
+                                  postal: onFileAddress.fields.zip,
+                                }));
+                              } else {
+                                setShip((prev) => ({
+                                  ...prev,
+                                  line1: '',
+                                  line2: '',
+                                  city: '',
+                                  state: '',
+                                  postal: '',
+                                }));
+                              }
+                            }}
+                          />
+                          <span>{row.label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </>
+                ) : null}
+                {!hasOnFileShip || shipAddressConfirmed === 'no' ? (
+                  <div className="vayd-store__address-edit">
+                    <p className="vayd-store__muted">
+                      Predictive search works for street addresses. Check the box below if
+                      yours is a PO Box or is not listed.
+                    </p>
+                    <label className="vayd-store__po-box">
+                      <input
+                        type="checkbox"
+                        checked={shipManualEntry}
+                        onChange={(e) => {
+                          const manual = e.target.checked;
+                          setShipManualEntry(manual);
+                          setShip((prev) => ({
+                            ...prev,
+                            line1: '',
+                            line2: '',
+                            city: '',
+                            state: '',
+                            postal: '',
+                          }));
+                        }}
+                      />
+                      <span>
+                        This address is a PO Box or isn&apos;t listed — I&apos;ll enter it
+                        manually
+                      </span>
+                    </label>
+                    {shipManualEntry ? (
+                      <ManualAddressFields
+                        value={{
+                          line1: ship.line1,
+                          line2: ship.line2 || undefined,
+                          city: ship.city,
+                          state: ship.state,
+                          zip: ship.postal,
+                          country: 'US',
+                        }}
+                        onChange={(next) => {
+                          setShip((prev) => ({
+                            ...prev,
+                            line1: next.line1 || '',
+                            line2: next.line2 || '',
+                            city: next.city || '',
+                            state: next.state || '',
+                            postal: next.zip || '',
+                          }));
+                        }}
+                        errors={{}}
+                        errorPrefix="ship"
+                        line1Placeholder="PO Box 123 or street address"
+                      />
+                    ) : (
+                      <AddressAutocomplete
+                        compact
+                        showConfirmedMessage={false}
+                        placeholder="Start typing the street address"
+                        inputClassName="vayd-store__address-input"
+                        value={{
+                          line1: ship.line1,
+                          line2: ship.line2 || undefined,
+                          city: ship.city,
+                          state: ship.state,
+                          zip: ship.postal,
+                          country: 'US',
+                        }}
+                        onChange={(next: AddressFields) => {
+                          setShip((prev) => ({
+                            ...prev,
+                            line1: next.line1 || prev.line1,
+                            line2: next.line2 || prev.line2,
+                            city: next.city || prev.city,
+                            state: next.state || prev.state,
+                            postal: next.zip || prev.postal,
+                          }));
+                        }}
+                      />
+                    )}
+                  </div>
+                ) : null}
+                {askUpdateMailing ? (
+                  <div className="vayd-store__update-mailing">
+                    <p className="vayd-store__question">
+                      Would you like us to update the mailing address we have on file
+                      with this one?
+                    </p>
+                    <div className="vayd-store__choices">
+                      {(
+                        [
+                          { value: 'yes', label: 'Yes — save this as my mailing address' },
+                          { value: 'no', label: 'No — just use it for this order' },
+                        ] as const
+                      ).map((row) => (
+                        <label
+                          key={row.value}
+                          className={`vayd-store__choice${updateMailingOnFile === row.value ? ' is-on' : ''}`}
+                        >
+                          <input
+                            type="radio"
+                            name="store-update-mailing"
+                            checked={updateMailingOnFile === row.value}
+                            onChange={() => setUpdateMailingOnFile(row.value)}
+                          />
+                          <span>{row.label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
           </section>
 
           <aside className="vayd-store__cart-summary">
@@ -917,6 +1090,7 @@ export default function StoreCartPage() {
                     fulfillmentId: fulfillment?.id || null,
                     paymentMethodId,
                     saveCard,
+                    updateMailingOnFile: askUpdateMailing && updateMailingOnFile === 'yes',
                     ship: {
                       name: ship.customerName,
                       line1: ship.line1,

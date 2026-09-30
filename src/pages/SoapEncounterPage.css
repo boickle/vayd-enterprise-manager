@@ -93,6 +93,9 @@
   font-size: 13px;
   font-weight: 600;
 }
+.soap-header-signalment.is-weight-alert {
+  color: #b91c1c;
+}
 .soap-header-sub {
   color: var(--soap-muted);
   font-size: 13px;

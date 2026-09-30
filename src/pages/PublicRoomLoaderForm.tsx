@@ -3,7 +3,7 @@ import { useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef } fr
 import type { ReactNode } from 'react';
 import { useSearchParams } from 'react-router';
 import { apiBaseUrl, http } from '../api/http';
-import { getEcwidProducts, type EcwidProduct, type EcwidChoice } from '../api/ecwid';
+import { publicStoreProducts, type StoreListing, type StoreVariant } from '../api/onlineStore';
 import {
   searchItemsPublic,
   type SearchableItem,
@@ -2569,8 +2569,20 @@ function buildPricingItemPayload(item: SearchableItem | null | undefined): Check
   return null;
 }
 
-/** Cache key for Ecwid “additional items” rows (customPrice check-item-pricing). */
-function getStoreItemPricingCacheKey(patientId: number, product: EcwidProduct, index: number): string {
+type RoomLoaderStoreProduct = {
+  id: string;
+  name: string;
+  price: number;
+  sku?: string;
+  listingId?: string;
+  inventoryItemId?: number | null;
+  procedureId?: number | null;
+  catalogItemType?: 'inventory' | 'procedure';
+  optionLabel?: string | null;
+};
+
+/** Cache key for store additional-item rows (membership / discount pricing). */
+function getStoreItemPricingCacheKey(patientId: number, product: RoomLoaderStoreProduct, index: number): string {
   return `p${patientId}-store-${String(product.id)}-${index}`;
 }
 
@@ -2711,151 +2723,88 @@ function catalogLabShowPricingFootnote(
   return hasDiscountPricingNote(pricing);
 }
 
-/** True if text looks like a question to ignore (e.g. "What/Which pet is this for?", prescription disclaimer). */
-function isQuestionLikeText(t: string): boolean {
-  const s = (t ?? '').trim();
-  if (!s) return true;
-  if (s.includes('?')) return true;
-  if (/^What\s/i.test(s)) return true;
-  if (/^Which\s/i.test(s)) return true;
-  if (/^This is a prescription item/i.test(s)) return true;
-  if (/Has a .* veterinarian seen your pet/i.test(s)) return true;
-  if (/Have a .* veterinarian examined .* pet/i.test(s)) return true;
-  return false;
-}
-
-function isQuestionChoice(choice: EcwidChoice): boolean {
-  const t = choice.textTranslated?.en ?? choice.text ?? '';
-  return isQuestionLikeText(t);
-}
-
-/** Remove any leading "Label: " (text + colon + space) from description for cleaner display. */
-function stripLeadingLabelPrefix(s: string): string {
-  return (s ?? '').trim().replace(/^[^:]+:\s*/, '').trim();
-}
-
-/** Strip leading "# doses: ", "size: ", "Size / Species: ", etc. from attribute value for cleaner display. */
-function stripAttributeLabelPrefix(s: string): string {
-  return stripLeadingLabelPrefix(s.trim());
-}
-
-/** Get display label from product attributes (e.g. "Master product options" = dose/weight). Prefer this for modal. */
-function getLabelFromAttributes(product: EcwidProduct): string | null {
-  const attrs = product.attributes;
-  if (!attrs || attrs.length === 0) return null;
-  const masterOptions = attrs.find(
-    (a) =>
-      (a.nameTranslated?.en ?? a.name ?? '').toLowerCase().includes('master product options') ||
-      (a.name ?? '').toLowerCase() === 'master product options'
-  );
-  if (!masterOptions) return null;
-  const v = (masterOptions.valueTranslated?.en ?? masterOptions.value ?? '').trim();
-  if (!v) return null;
-  const stripped = stripAttributeLabelPrefix(v);
-  return stripped || v;
-}
-
-/** First non-question choice/option text for display, or fallback so we never show the question. */
-function getProductOptionLabel(product: EcwidProduct, fallbackIdx: number): string | null {
-  // Prefer attributes (e.g. "Master product options" = "# doses: 4.1 - 17 lb - 6 doses (6 months' worth)")
-  const fromAttrs = getLabelFromAttributes(product);
-  if (fromAttrs) return fromAttrs;
-
-  const choices = product.choices;
-  if (choices && choices.length > 0) {
-    const firstReal = choices.find((c) => !isQuestionChoice(c));
-    if (firstReal) {
-      const t = firstReal.textTranslated?.en ?? firstReal.text;
-      return stripLeadingLabelPrefix(t) || t;
-    }
-    // only question choices — don't use them; fall through to options/sku/fallback
-  }
-  // Use options but skip any that are question-like (so we show dose/weight, not "What pet is this for?")
-  const options = product.options;
-  if (options && options.length > 0) {
-    const firstRealOption = options.find((o) => {
-      const v = (o.value ?? o.name ?? '').trim();
-      return v && !isQuestionLikeText(v);
-    });
-    if (firstRealOption) {
-      const v = (firstRealOption.value ?? firstRealOption.name ?? '').trim();
-      return stripLeadingLabelPrefix(v) || v;
-    }
-  }
-  return product.sku || `Option ${fallbackIdx + 1}`;
-}
-
 /** One row in the store option modal: label, price, and the item to add. */
-type StoreModalRow = { key: string; label: string; price: number; item: EcwidProduct };
+type StoreModalRow = { key: string; label: string; price: number; item: RoomLoaderStoreProduct };
 
-/** True if the label is descriptive enough to show in the modal (exclude e.g. "Size", "Option", "# doses"). */
-function isDescriptiveModalLabel(label: string | null | undefined): boolean {
-  const t = (label ?? '').trim();
-  if (!t) return false;
-  const lower = t.toLowerCase();
-  const generic = ['size', 'option', 'quantity', 'color', 'weight', '# doses', 'doses'];
-  if (generic.includes(lower)) return false;
-  if (/^#\s*doses$/i.test(lower)) return false;
-  if (/^option\s*\d+$/i.test(lower)) return false;
-  return true;
+function variantLabel(listing: StoreListing, variant: StoreVariant, idx: number): string {
+  const option = String(variant.optionLabel ?? '').trim();
+  if (option && option !== listing.name) return option;
+  const parts = [variant.strength, variant.pack]
+    .map((p) => String(p ?? '').trim())
+    .filter((p) => p && p !== listing.name);
+  if (parts.length) return parts.join(' · ');
+  const name = String(variant.name ?? '').trim();
+  if (name && name !== listing.name) return name;
+  return variant.code || `Option ${idx + 1}`;
 }
 
-/** Build modal rows: if single product with combinations, one row per combination; else one row per product. No duplicates. */
-function getStoreModalRows(products: EcwidProduct[]): StoreModalRow[] {
-  let rows: StoreModalRow[];
-  if (products.length === 1) {
-    const product = products[0];
-    const combinations = (product as any).combinations as Array<{
-      id?: number;
-      options?: Array<{ value?: string; valueTranslated?: { en?: string } }>;
-      price?: number;
-      defaultDisplayedPrice?: number;
-    }> | undefined;
-    if (combinations && combinations.length > 0) {
-      rows = combinations.map((comb, idx) => {
-        const opt = comb.options?.[0];
-        const rawLabel = (opt?.valueTranslated?.en ?? opt?.value ?? '').trim() || `Option ${idx + 1}`;
-        const label = stripLeadingLabelPrefix(rawLabel) || rawLabel;
-        const price = Number(comb.defaultDisplayedPrice ?? comb.price ?? product.price);
-        const item: EcwidProduct = {
-          id: comb.id ?? `${product.id}-comb-${idx}`,
-          name: `${product.name} - ${label}`,
-          price,
-          sku: product.sku,
-        };
-        return { key: String(comb.id ?? idx), label, price, item };
+function listingUnitPrice(listing: StoreListing, variant?: StoreVariant | null): number {
+  const n = Number(variant?.onlineStorePrice ?? listing.priceFrom ?? 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function listingToStoreProduct(
+  listing: StoreListing,
+  variant: StoreVariant | null,
+  idx: number,
+): RoomLoaderStoreProduct {
+  const label = variant ? variantLabel(listing, variant, idx) : listing.name;
+  return {
+    id: `${listing.listingId}-${variant?.inventoryItemId ?? variant?.procedureId ?? idx}`,
+    name: listing.name,
+    price: listingUnitPrice(listing, variant),
+    sku: variant?.code ?? undefined,
+    listingId: listing.listingId,
+    inventoryItemId: variant?.inventoryItemId ?? null,
+    procedureId: variant?.procedureId ?? null,
+    catalogItemType: variant?.catalogItemType ?? (variant?.procedureId ? 'procedure' : 'inventory'),
+    optionLabel: label,
+  };
+}
+
+function listingVariants(listing: StoreListing): StoreVariant[] {
+  if (listing.variants?.length) return listing.variants;
+  return [
+    {
+      inventoryItemId: listing.imageInventoryItemId,
+      name: listing.name,
+      code: null,
+      onlineStorePrice: listing.priceFrom,
+      strength: null,
+      pack: '',
+      optionLabel: listing.name,
+    },
+  ];
+}
+
+function listingMinPrice(listing: StoreListing): number {
+  const prices = listingVariants(listing).map((v) => listingUnitPrice(listing, v));
+  return prices.length ? Math.min(...prices) : Number(listing.priceFrom ?? 0) || 0;
+}
+
+/** Build modal rows from Scout store listings (one row per variant). */
+function getStoreModalRows(listings: StoreListing[]): StoreModalRow[] {
+  const rows: StoreModalRow[] = [];
+  listings.forEach((listing) => {
+    listingVariants(listing).forEach((variant, idx) => {
+      const item = listingToStoreProduct(listing, variant, idx);
+      rows.push({
+        key: item.id,
+        label: item.optionLabel || listing.name,
+        price: item.price,
+        item,
       });
-    } else {
-      rows = products
-        .map((product, idx) => ({
-          key: String(product.id),
-          label: getProductOptionLabel(product, idx),
-          price: Number(product.price),
-          item: product,
-        }))
-        .filter((row): row is StoreModalRow => row.label != null) as StoreModalRow[];
-    }
-  } else {
-    rows = products
-      .map((product, idx) => ({
-        key: String(product.id),
-        label: getProductOptionLabel(product, idx),
-        price: Number(product.price),
-        item: product,
-      }))
-      .filter((row): row is StoreModalRow => row.label != null) as StoreModalRow[];
-  }
-  // Exclude rows with no real description (e.g. "Size", "Option")
-  rows = rows.filter((row) => isDescriptiveModalLabel(row.label));
-  // Deduplicate by (label, price) so we show each option once even if API returns same variation multiple times
-  const seenLabelPrice = new Set<string>();
-  const deduped = rows.filter((row) => {
-    const labelPriceKey = `${row.label}\t${row.price}`;
-    if (seenLabelPrice.has(labelPriceKey)) return false;
-    seenLabelPrice.add(labelPriceKey);
-    return true;
+    });
   });
-  return deduped.sort((a, b) => a.price - b.price);
+  const seen = new Set<string>();
+  return rows
+    .filter((row) => {
+      const key = `${row.label}\t${row.price}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => a.price - b.price);
 }
 
 /** Get price from a search result; API may return it top-level or on nested inventoryItem/lab/procedure or wellness pricing. */
@@ -2875,7 +2824,7 @@ function getSearchItemPrice(item: SearchableItem | null | undefined): number | n
 
 /**
  * Fuzzy score for search: how well `text` matches `query` (0 = no match, 1 = exact).
- * Used to sort store (Ecwid) search results when the API may not do fuzzy matching.
+ * Used to sort store search results when the query is a partial name.
  */
 function fuzzyScoreQuery(query: string, text: string): number {
   const q = (query || '').trim().toLowerCase();
@@ -3982,16 +3931,16 @@ export default function PublicRoomLoaderForm() {
   const [clientPricingCache, setClientPricingCache] = useState<Record<string, CheckItemPricingResponse | null>>({});
   /** Bumped after room-loader refetch (e.g. post-enrollment) so check-item-pricing effect always re-runs. */
   const [pricingRefreshKey, setPricingRefreshKey] = useState(0);
-  /** Store (Ecwid) search on Summary page. */
+  /** Scout store search on Summary page. */
   const [storeSearchQuery, setStoreSearchQuery] = useState('');
-  const [storeSearchResults, setStoreSearchResults] = useState<EcwidProduct[]>([]);
+  const [storeSearchResults, setStoreSearchResults] = useState<StoreListing[]>([]);
   const [storeSearchLoading, setStoreSearchLoading] = useState(false);
   /** Store items added by client on Summary page (for subtotal + 5.5% tax). */
-  const [storeAdditionalItems, setStoreAdditionalItems] = useState<EcwidProduct[]>([]);
+  const [storeAdditionalItems, setStoreAdditionalItems] = useState<RoomLoaderStoreProduct[]>([]);
   /** Index of row to play a short “just added” animation (set only from Add, not on restore). */
   const [storeItemJustAddedIndex, setStoreItemJustAddedIndex] = useState<number | null>(null);
   /** When set, show modal to pick a variation of this product (same name, different options/SKU). */
-  const [storeOptionModalGroup, setStoreOptionModalGroup] = useState<EcwidProduct[] | null>(null);
+  const [storeOptionModalGroup, setStoreOptionModalGroup] = useState<StoreListing[] | null>(null);
   /** True when form was already submitted (client or admin viewing); show read-only or PDF view. */
   const [formAlreadySubmitted, setFormAlreadySubmitted] = useState(false);
   /** When submitStatus === 'completed', we show PDF view; this is the blob URL for the generated PDF. */
@@ -4109,14 +4058,19 @@ export default function PublicRoomLoaderForm() {
           }
         }
 
-        // Restore store additional items (Ecwid products) from saved formData
+        // Restore store additional items from saved formData
         if (savedForm?.storeAdditionalItems && Array.isArray(savedForm.storeAdditionalItems)) {
           setStoreAdditionalItems(
             savedForm.storeAdditionalItems.map((item: any) => ({
-              id: item.id,
+              id: String(item.id ?? item.listingId ?? item.sku ?? item.name ?? ''),
               name: item.name ?? '',
               price: Number(item.price ?? 0),
-              sku: item.sku,
+              sku: item.sku ?? item.code,
+              listingId: item.listingId,
+              inventoryItemId: item.inventoryItemId ?? null,
+              procedureId: item.procedureId ?? null,
+              catalogItemType: item.catalogItemType,
+              optionLabel: item.optionLabel,
             }))
           );
         }
@@ -5067,7 +5021,12 @@ export default function PublicRoomLoaderForm() {
           ? (getStoreAdjustedPrice(firstPidForStore, item, idx) ?? Number(item.price))
           : Number(item.price),
       sku: item.sku,
-      code: item.sku ?? (item as any).code,
+      code: item.sku ?? (item as { code?: string }).code,
+      listingId: item.listingId ?? null,
+      inventoryItemId: item.inventoryItemId ?? null,
+      procedureId: item.procedureId ?? null,
+      catalogItemType: item.catalogItemType ?? null,
+      optionLabel: item.optionLabel ?? null,
     }));
 
     // Explicitly include commonly selected items (summary_common_* keys) so they always appear in the JSON
@@ -7856,13 +7815,20 @@ export default function PublicRoomLoaderForm() {
         ? storeAdditionalItems.map((product, idx) => {
             const key = getStoreItemPricingCacheKey(firstPid, product, idx);
             const species = speciesByPatientId.get(Number(firstPid));
+            const catalogItem =
+              product.inventoryItemId != null
+                ? { inventoryItem: { id: product.inventoryItemId } }
+                : product.procedureId != null
+                  ? { procedure: { id: product.procedureId } }
+                  : undefined;
             return checkItemPricingPublic({
               token: tokenValue,
               patientId: firstPid,
               practiceId,
               clientId,
               ...(species ? { species } : {}),
-              itemType: 'inventory',
+              itemType: product.catalogItemType ?? 'inventory',
+              ...(catalogItem ? { item: catalogItem } : {}),
               customPrice: Number(product.price),
               customName: product.name,
             })
@@ -7922,7 +7888,7 @@ export default function PublicRoomLoaderForm() {
     pricingRefreshKey,
   ]);
 
-  /** Type-ahead store search: debounced 300ms. Fetch with full query and, for multi-word queries, with first word too to improve fuzzy-like results from Ecwid (which may not fuzzy match). */
+  /** Type-ahead Scout store search: debounced 300ms. */
   useEffect(() => {
     const q = storeSearchQuery.trim();
     if (q.length < 2) {
@@ -7934,16 +7900,16 @@ export default function PublicRoomLoaderForm() {
     const timeoutId = window.setTimeout(() => {
       const firstWord = q.split(/\s+/)[0];
       const queries = firstWord && firstWord !== q ? [q, firstWord] : [q];
-      Promise.all(queries.map((query) => getEcwidProducts(query)))
+      Promise.all(queries.map((query) => publicStoreProducts(Number(practiceId) || 1, query)))
         .then((responses) => {
-          const seen = new Set<string | number>();
-          const merged: EcwidProduct[] = [];
+          const seen = new Set<string>();
+          const merged: StoreListing[] = [];
           for (const r of responses) {
-            for (const p of r || []) {
-              const id = p.id;
+            for (const listing of r || []) {
+              const id = String(listing.listingId || listing.name);
               if (seen.has(id)) continue;
               seen.add(id);
-              merged.push(p);
+              merged.push(listing);
             }
           }
           setStoreSearchResults(merged);
@@ -7955,23 +7921,23 @@ export default function PublicRoomLoaderForm() {
       window.clearTimeout(timeoutId);
       setStoreSearchLoading(false);
     };
-  }, [storeSearchQuery]);
+  }, [storeSearchQuery, practiceId]);
 
-  /** Group Ecwid results by product name; sort by fuzzy match to query so best matches appear first (Ecwid may not do fuzzy matching). */
+  /** Group store listings by product name; sort by fuzzy match to the query. */
   const storeSearchResultsByName = useMemo(() => {
     const query = storeSearchQuery.trim().toLowerCase();
     const sorted = query
       ? [...storeSearchResults].sort((a, b) => {
-          const textA = `${a.name || ''} ${a.sku || ''}`.trim();
-          const textB = `${b.name || ''} ${b.sku || ''}`.trim();
+          const textA = `${a.name || ''} ${a.variants?.map((v) => v.code || '').join(' ') || ''}`.trim();
+          const textB = `${b.name || ''} ${b.variants?.map((v) => v.code || '').join(' ') || ''}`.trim();
           return fuzzyScoreQuery(storeSearchQuery, textB) - fuzzyScoreQuery(storeSearchQuery, textA);
         })
       : storeSearchResults;
-    const map = new Map<string, EcwidProduct[]>();
-    for (const p of sorted) {
-      const name = p.name || 'Unnamed';
+    const map = new Map<string, StoreListing[]>();
+    for (const listing of sorted) {
+      const name = listing.name || 'Unnamed';
       if (!map.has(name)) map.set(name, []);
-      map.get(name)!.push(p);
+      map.get(name)!.push(listing);
     }
     return Array.from(map.entries());
   }, [storeSearchResults, storeSearchQuery]);
@@ -7995,8 +7961,8 @@ export default function PublicRoomLoaderForm() {
     return getSearchItemPrice(item);
   };
 
-  /** Membership-adjusted unit price for Ecwid additional items (customPrice check-item-pricing). */
-  const getStoreAdjustedPrice = (patientId: number, product: EcwidProduct, index: number): number | null => {
+  /** Membership-adjusted unit price for store additional items. */
+  const getStoreAdjustedPrice = (patientId: number, product: RoomLoaderStoreProduct, index: number): number | null => {
     const pricing = clientPricingCache[getStoreItemPricingCacheKey(patientId, product, index)] ?? null;
     const picked = pickAdjustedUnitPriceFromCheckResponse(pricing);
     if (picked != null) return picked;
@@ -8004,7 +7970,7 @@ export default function PublicRoomLoaderForm() {
     return Number.isFinite(raw) ? raw : null;
   };
 
-  const getStoreItemPricing = (patientId: number, product: EcwidProduct, index: number): CheckItemPricingResponse | null => {
+  const getStoreItemPricing = (patientId: number, product: RoomLoaderStoreProduct, index: number): CheckItemPricingResponse | null => {
     return clientPricingCache[getStoreItemPricingCacheKey(patientId, product, index)] ?? null;
   };
 
@@ -11745,7 +11711,7 @@ export default function PublicRoomLoaderForm() {
               {storeSearchResultsByName.length > 0 && (
                 <ul style={{ margin: 0, padding: 0, listStyle: 'none', maxHeight: '200px', overflowY: 'auto', border: '1px solid #dee2e6', borderRadius: '6px', backgroundColor: '#fff' }}>
                   {storeSearchResultsByName.map(([productName, items]) => {
-                    const minPrice = Math.min(...items.map((p) => Number(p.price)));
+                    const minPrice = Math.min(...items.map((listing) => listingMinPrice(listing)));
                     return (
                       <li
                         key={productName}

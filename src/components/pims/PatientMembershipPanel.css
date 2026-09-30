@@ -11,6 +11,19 @@
   min-width: 0;
 }
 
+.pmp .membership-waiver {
+  margin-top: 0;
+  margin-bottom: 16px;
+}
+
+.pmp .membership-waiver h3 {
+  font-size: 15px;
+  font-weight: 700;
+  color: #1e3a8a;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
 /* The story column styles every h3/h4 as a tiny uppercase eyebrow; the card needs real headings. */
 .pmp h3,
 .pmp h4,

@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { http } from './http';
+import type { AftercareItemType } from '../utils/aftercare';
 
 const baseURL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000';
 const publicConsentClient = axios.create({ baseURL, withCredentials: false });
@@ -10,6 +11,7 @@ export type AftercareChoice =
   | 'burial_at_sea'
   | 'home_burial'
   | 'unsure';
+export type { AftercareItemType } from '../utils/aftercare';
 export type AshReturnChoice =
   | 'mail'
   | 'hand_deliver_in_person'
@@ -48,8 +50,10 @@ export type EuthanasiaConsentAnswers = {
   mailingAddressConfirmed: 'yes' | 'no';
   mailingAddress?: ConsentAddress;
   vetsToNotify: string;
+  notifyHospitals?: Array<{ outsideHospitalId?: number; name: string }>;
   otherVetsToNotify: string;
-  aftercare: AftercareChoice;
+  /** Echoed back so the API can refuse the signature if the quote changed. */
+  aftercare?: AftercareChoice;
   aftercareConfirmed: 'yes';
   nameplateLine1?: string;
   nameplateLine2?: string;
@@ -63,6 +67,7 @@ export type EuthanasiaConsentAnswers = {
   additionalInfo?: string;
   memorialItems?: ConsentMemorialItem[];
   consentAcknowledged: true;
+  saveCardOnFile?: boolean;
 };
 
 export type ConsentMemorialItem = {
@@ -156,8 +161,24 @@ export type EuthanasiaConsentForm = {
   token: string;
   expiresAt: string | null;
   providerName: string | null;
-  /** What staff quoted for the visit itself. One number — never itemized here. */
-  visitEstimate: { id: string; total: number } | null;
+  /** Visit start; when this is already past, submit charges the card now. */
+  appointmentStart?: string | null;
+  /** What staff quoted for the visit. The form shows the total, with lines behind a toggle. */
+  visitEstimate: {
+    id: string;
+    total: number;
+    lines?: Array<{ description: string; qty: number; amount: number }>;
+  } | null;
+  /**
+   * The plan already on the estimate, for the family to confirm. No aftercare
+   * charge is treated as home burial. `unresolved` is only set when the quote
+   * has two different aftercare plans — the form stops rather than guessing.
+   */
+  aftercare: {
+    type: AftercareItemType | null;
+    label: string | null;
+    unresolved: 'missing' | 'conflict' | null;
+  };
   client: { firstName: string; lastName: string; email: string };
   visitAddress?: ConsentAddress | null;
   mailingAddress?: ConsentAddress | null;
@@ -208,6 +229,19 @@ export type EuthanasiaConsentMenuMode = 'send' | 'resend' | 'view';
 
 export type EuthanasiaConsentStatus = {
   isEuthanasia: boolean;
+  /**
+   * The aftercare item on this visit's estimate — what the family will be asked
+   * to confirm. No aftercare charge is home burial. `unresolved` is only set
+   * when two different plans are quoted.
+   */
+  quotedAftercare: {
+    type: AftercareItemType | null;
+    label: string | null;
+    itemName: string | null;
+    unresolved: 'missing' | 'conflict' | null;
+    conflictingItems?: string[];
+    assumed?: boolean;
+  } | null;
   invite: {
     id: number;
     sentAt: string | null;
@@ -260,16 +294,37 @@ export async function submitEuthanasiaConsent(body: {
   return data;
 }
 
+/**
+ * The family says the quoted aftercare is wrong. Changes nothing on its own —
+ * it mails the office so a person updates the estimate and re-sends the form.
+ */
+export async function reportAftercareMismatch(body: {
+  token: string;
+  note: string;
+  contactName?: string;
+  contactPhone?: string;
+}): Promise<{ ok: boolean; reportedAt: string }> {
+  const { data } = await publicConsentClient.post(
+    '/consent/euthanasia/aftercare-mismatch',
+    body,
+  );
+  return data;
+}
+
 export async function sendEuthanasiaConsent(body: {
   appointmentId: number;
   patientId: number;
   clientId?: number;
   /** Create the form without emailing — tablet / in-person signing. */
   skipEmail?: boolean;
+  /** Deliver the link by email or text. Ignored when skipEmail is true. */
+  channel?: 'email' | 'sms';
 }): Promise<{
   inviteId: number;
   sentTo: string;
+  channel?: 'email' | 'sms' | 'none';
   intendedRecipientEmail: string | null;
+  intendedRecipientPhone?: string | null;
   formUrl: string;
   expiresAt: string;
 }> {
@@ -277,16 +332,31 @@ export async function sendEuthanasiaConsent(body: {
   return data;
 }
 
+export type EuthanasiaRdvmUiStatus = 'none' | 'needed' | 'sent';
+
 export async function getEuthanasiaConsentStatuses(
   appointmentIds: number[],
-): Promise<{ statuses: Record<number, 'none' | 'sent' | 'complete'> }> {
+): Promise<{
+  statuses: Record<number, 'none' | 'sent' | 'complete'>;
+  rdvm: Record<number, EuthanasiaRdvmUiStatus>;
+}> {
   const ids = appointmentIds.filter((id) => Number.isFinite(id) && id > 0);
-  if (!ids.length) return { statuses: {} };
-  const { data } = await http.get<{ statuses: Record<number, 'none' | 'sent' | 'complete'> }>(
-    '/consent/euthanasia/statuses',
-    { params: { appointmentIds: ids.join(',') } },
-  );
-  return data ?? { statuses: {} };
+  if (!ids.length) return { statuses: {}, rdvm: {} };
+  const { data } = await http.get<{
+    statuses: Record<number, 'none' | 'sent' | 'complete'>;
+    rdvm?: Record<number, EuthanasiaRdvmUiStatus>;
+  }>('/consent/euthanasia/statuses', {
+    params: { appointmentIds: ids.join(',') },
+  });
+  return { statuses: data?.statuses ?? {}, rdvm: data?.rdvm ?? {} };
+}
+
+export async function markEuthanasiaRdvmNotified(appointmentId: number): Promise<{
+  ok: true;
+  notifiedAt: string;
+}> {
+  const { data } = await http.post('/consent/euthanasia/rdvm-notified', { appointmentId });
+  return data;
 }
 
 export async function getEuthanasiaConsentStatus(

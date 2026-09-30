@@ -3,8 +3,9 @@ import { useSearchParams } from 'react-router';
 import {
   getEuthanasiaConsentForm,
   memorialCartTotal,
+  reportAftercareMismatch,
   submitEuthanasiaConsent,
-  type AftercareChoice,
+  type AftercareItemType,
   type AshReturnChoice,
   type ConsentMemorialItem,
   type EuthanasiaConsentForm as FormPayload,
@@ -63,6 +64,7 @@ type ConsentField =
   | 'vetsToNotify'
   | 'aftercare'
   | 'aftercareConfirmed'
+  | 'aftercareRequest'
   | 'nameplateLine1'
   | 'ashReturnMethod'
   | 'ashReturnHand'
@@ -74,23 +76,6 @@ type ConsentField =
   | 'payment';
 
 type FieldIssue = { field: ConsentField; message: string };
-
-const AFTERCARE: Array<{ value: AftercareChoice; label: string }> = [
-  {
-    value: 'private_cremation',
-    label: 'I would like my pet cremated WITH return of ashes (Private Cremation)',
-  },
-  {
-    value: 'burial_at_sea',
-    label: 'I would like my pet cremated with NO return of ashes (Burial at Sea)',
-  },
-  {
-    value: 'home_burial',
-    label: 'I will bury my pet at home / I will arrange for my pet’s aftercare',
-  },
-  { value: 'unsure', label: 'I am not sure yet what I would like' },
-];
-
 
 function addressIsComplete(addr: AddressFields): boolean {
   return Boolean(addr.line1.trim() && addr.city.trim() && addr.state.trim() && addr.zip.trim());
@@ -133,10 +118,6 @@ function toAddressFields(addr: {
   };
 }
 
-function aftercareLabel(value: AftercareChoice | ''): string {
-  return AFTERCARE.find((row) => row.value === value)?.label ?? '';
-}
-
 function todayParts() {
   const now = new Date();
   return {
@@ -169,10 +150,13 @@ export default function EuthanasiaConsentForm() {
   const [mailingManualEntry, setMailingManualEntry] = useState(false);
   const [petName, setPetName] = useState('');
   const [petWeightLbs, setPetWeightLbs] = useState('');
+  const [chartHadWeight, setChartHadWeight] = useState(false);
   const [notifyNone, setNotifyNone] = useState(false);
   const [notifyHospitals, setNotifyHospitals] = useState<PickedHospital[]>([]);
-  const [aftercare, setAftercare] = useState<AftercareChoice | ''>('');
   const [aftercareConfirmed, setAftercareConfirmed] = useState<'yes' | 'no' | ''>('');
+  const [aftercareRequest, setAftercareRequest] = useState('');
+  const [aftercareReported, setAftercareReported] = useState(false);
+  const [reportingAftercare, setReportingAftercare] = useState(false);
   const [nameplateLine1, setNameplateLine1] = useState('');
   const [nameplateLine2, setNameplateLine2] = useState('');
   const [nameplateLine3, setNameplateLine3] = useState('');
@@ -184,12 +168,21 @@ export default function EuthanasiaConsentForm() {
   const [pawPrintNone, setPawPrintNone] = useState(false);
   const [memorialItems, setMemorialItems] = useState<ConsentMemorialItem[]>([]);
   const [additionalInfo, setAdditionalInfo] = useState('');
+  const [saveCardOnFile, setSaveCardOnFile] = useState(true);
   const [consentAcknowledged, setConsentAcknowledged] = useState(false);
   const [clayStoreOpen, setClayStoreOpen] = useState(false);
   const [clayStoreDetail, setClayStoreDetail] = useState<StoreListing | null>(null);
   const [clayStoreLoading, setClayStoreLoading] = useState(false);
   const [clayStoreError, setClayStoreError] = useState<string | null>(null);
   const createPaymentMethodRef = useRef<(() => Promise<string>) | null>(null);
+  // The plan is whatever staff quoted. Nothing on this page can change it.
+  const aftercare: AftercareItemType | '' = form?.aftercare?.type ?? '';
+  const aftercareLabel = form?.aftercare?.label ?? '';
+  const aftercareUnresolved: 'missing' | 'conflict' | null = !form
+    ? null
+    : form.aftercare?.type
+      ? null
+      : form.aftercare?.unresolved ?? 'missing';
   const ashReturnLabels = { ...DEFAULT_ASH_RETURN_LABELS, ...form?.ashReturnLabels };
   const cremationUrns =
     aftercare === 'private_cremation'
@@ -271,7 +264,9 @@ export default function EuthanasiaConsentForm() {
         setVisitAddress(toAddressFields(payload.visitAddress));
         setMailingAddress(toAddressFields(payload.mailingAddress));
         setPetName(payload.pet.name);
-        setPetWeightLbs(payload.pet.weightLbs);
+        const chartWeight = usableConsentWeightLbs(payload.pet.weightLbs);
+        setPetWeightLbs(chartWeight);
+        setChartHadWeight(Boolean(chartWeight));
       })
       .catch((err) => {
         if (!cancelled) {
@@ -301,6 +296,35 @@ export default function EuthanasiaConsentForm() {
   // One number for the family: what staff quoted plus anything they picked here.
   const visitEstimateTotal = Number(form?.visitEstimate?.total ?? 0);
   const payTotal = visitEstimateTotal + clayAmount + memorialTotal;
+  const chargeNow = Boolean(
+    form?.appointmentStart && Date.parse(form.appointmentStart) < Date.now(),
+  );
+  const quoteLines = [
+    ...(form?.visitEstimate?.lines ?? []).map((line) => ({
+      description: line.description,
+      qty: Number(line.qty) || 1,
+      amount: Number(line.amount) || 0,
+    })),
+    ...(pawPrintClay && clayAmount > 0
+      ? [
+          {
+            description:
+              form?.pawPrint.clayChargePayment?.itemName ||
+              form?.pawPrint.items.clayCharge?.name ||
+              'Clay paw print',
+            qty: 1,
+            amount: clayAmount,
+          },
+        ]
+      : []),
+    ...memorialItems
+      .filter((item) => item.timing !== 'later')
+      .map((item) => ({
+        description: item.variantName ? `${item.name} (${item.variantName})` : item.name,
+        qty: item.quantity || 1,
+        amount: (Number(item.priceFrom) || 0) * (item.quantity || 1),
+      })),
+  ];
   const clayCartItem: ConsentMemorialItem | null = pawPrintClay
     ? {
         listingId: CLAY_PAW_PRINT_CART_ID,
@@ -343,8 +367,11 @@ export default function EuthanasiaConsentForm() {
       ) {
         return { field: 'mailingAddress', message: 'Please enter your mailing address.' };
       }
-      if (!petWeightLbs.trim()) {
-        return { field: 'petWeightLbs', message: 'Please enter your pet’s approximate weight.' };
+      if (!usableConsentWeightLbs(petWeightLbs)) {
+        return {
+          field: 'petWeightLbs',
+          message: 'Please enter your pet’s approximate weight in pounds.',
+        };
       }
       if (!notifyNone && notifyHospitals.length === 0) {
         return {
@@ -354,11 +381,16 @@ export default function EuthanasiaConsentForm() {
       }
     }
     if (index === 1) {
-      if (!aftercare) return { field: 'aftercare', message: 'Please choose an aftercare preference.' };
+      if (!aftercare) {
+        return {
+          field: 'aftercare',
+          message: 'Please call us — we need to sort out the aftercare plan before you sign.',
+        };
+      }
       if (aftercareConfirmed !== 'yes') {
         return {
           field: 'aftercareConfirmed',
-          message: 'Please confirm your aftercare preference (or go back and change it).',
+          message: 'Please let us know whether this is the plan you want.',
         };
       }
       if (aftercare === 'private_cremation') {
@@ -437,6 +469,40 @@ export default function EuthanasiaConsentForm() {
     setPage((cur) => Math.min(cur + 1, 3));
   };
 
+  /**
+   * Ends the form. We do not change the plan here — staff do that on the
+   * estimate and send a new form — so there is nothing left for the family to
+   * fill in once this is sent.
+   */
+  const reportAftercare = async () => {
+    const note = aftercareRequest.trim();
+    if (!note) {
+      showFieldIssue({
+        field: 'aftercareRequest',
+        message: 'Please tell us what you would like instead.',
+      });
+      return;
+    }
+    setReportingAftercare(true);
+    setFieldError(null);
+    setError(null);
+    try {
+      await reportAftercareMismatch({
+        token,
+        note,
+        contactName: clientName,
+      });
+      setAftercareReported(true);
+    } catch (err) {
+      setError(
+        axiosMessage(err) ||
+          'We could not send that. Please call us so we can get this right.',
+      );
+    } finally {
+      setReportingAftercare(false);
+    }
+  };
+
   const submit = async () => {
     const issue = validatePage(3);
     if (issue) {
@@ -463,7 +529,7 @@ export default function EuthanasiaConsentForm() {
       let paymentMethodId: string | undefined;
       if (needsPay) {
         if (!createPaymentMethodRef.current) {
-          showFieldIssue({ field: 'payment', message: 'Enter the card to pay for the selected items.' });
+          showFieldIssue({ field: 'payment', message: 'Enter the card to authorize for this visit.' });
           setSubmitting(false);
           return;
         }
@@ -497,9 +563,15 @@ export default function EuthanasiaConsentForm() {
           petName: petName.trim(),
           petWeightLbs: petWeightLbs.trim(),
           vetsToNotify: notifyNone ? 'None' : pickedHospitalsToText(notifyHospitals),
+          notifyHospitals: notifyNone
+            ? []
+            : notifyHospitals.map((h) => ({
+                outsideHospitalId: h.outsideHospitalId,
+                name: h.name,
+              })),
           // Kept for older staff views / API shape; everything lives in vetsToNotify now.
           otherVetsToNotify: 'none',
-          aftercare,
+          aftercare: aftercare || undefined,
           aftercareConfirmed: 'yes',
           nameplateLine1: nameplateLine1.trim() || undefined,
           nameplateLine2: nameplateLine2.trim() || undefined,
@@ -511,6 +583,7 @@ export default function EuthanasiaConsentForm() {
           additionalInfo: additionalInfo.trim() || undefined,
           memorialItems: memorialItems.length ? memorialItems : undefined,
           consentAcknowledged: true,
+          saveCardOnFile,
         },
       });
       setDone(true);
@@ -542,6 +615,25 @@ export default function EuthanasiaConsentForm() {
           <p>
             We received your consent for {pet}. If you have questions before the visit, please
             call us.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (aftercareReported) {
+    return (
+      <div className="consent-page">
+        <div className="consent-card">
+          <h1>Thank you for telling us</h1>
+          <p>
+            We have passed this along to our team. Someone will call you to go over what you
+            would like for {pet}, and once everything is updated we will send you a new form to
+            sign.
+          </p>
+          <p>
+            Nothing has been signed, and you do not need to do anything else right now. If you
+            would rather talk it through sooner, please call us any time.
           </p>
         </div>
       </div>
@@ -786,10 +878,14 @@ export default function EuthanasiaConsentForm() {
                 <div className="consent-readonly">{petName || '—'}</div>
               </div>
               <label
-                className={`consent-field consent-field--narrow${fieldError?.field === 'petWeightLbs' ? ' is-invalid' : ''}`}
+                className={`consent-field consent-field--narrow${fieldError?.field === 'petWeightLbs' ? ' is-invalid' : ''}${
+                  !chartHadWeight ? ' is-needed' : ''
+                }`}
                 data-error-anchor="petWeightLbs"
               >
-                <span className="consent-question">Weight (lbs)</span>
+                <span className="consent-question">
+                  Weight (lbs) <span className="consent-required">required</span>
+                </span>
                 <input
                   value={petWeightLbs}
                   onChange={(e) => {
@@ -797,10 +893,19 @@ export default function EuthanasiaConsentForm() {
                     clearField('petWeightLbs');
                   }}
                   inputMode="decimal"
+                  required
+                  aria-required="true"
+                  placeholder={chartHadWeight ? undefined : 'Enter weight'}
                 />
                 <FieldHint field="petWeightLbs" />
               </label>
             </div>
+            {!chartHadWeight ? (
+              <p className="consent-weight-needed" role="alert">
+                We do not have a weight on file. Please enter an approximate weight in pounds —
+                we use this to calculate medications.
+              </p>
+            ) : null}
             <div
               className={`consent-field${fieldError?.field === 'vetsToNotify' ? ' is-invalid' : ''}`}
               data-error-anchor="vetsToNotify"
@@ -846,67 +951,95 @@ export default function EuthanasiaConsentForm() {
 
         {page === 1 && (
           <>
-            <h2>Aftercare preferences</h2>
-            <p className="consent-intro">
-              After {pet} has passed, you may care for them on your own. We also provide
-              cremation with return of ashes (private cremation, including a wood urn and
-              nameplate) or without return of ashes. Pets whose ashes are not returned are given
-              a burial at sea, added with other beloved pets to a Memorial Reef Sphere on the
-              ocean floor.
-            </p>
-            <p className="consent-question">What aftercare would you like for {pet}?</p>
-            <div
-              className={`consent-options${fieldError?.field === 'aftercare' ? ' is-invalid' : ''}`}
-              data-error-anchor="aftercare"
-            >
-              {AFTERCARE.map((row) => (
-                <label
-                  key={row.value}
-                  className={`consent-option ${aftercare === row.value ? 'selected' : ''}`}
-                >
-                  <input
-                    type="radio"
-                    name="aftercare"
-                    checked={aftercare === row.value}
-                    onChange={() => {
-                      setAftercare(row.value);
-                      setAftercareConfirmed('');
-                      clearField('aftercare');
-                    }}
-                  />
-                  <span>{row.label}</span>
-                </label>
-              ))}
-              <FieldHint field="aftercare" />
-            </div>
-            {aftercare === 'home_burial' && (
-              <div className="consent-note">
-                If you bury {pet} at home, please use a proper, safe burial so wildlife and your
-                family stay safe.
-              </div>
-            )}
-            {aftercare && (
-              <label
-                className={`consent-field${fieldError?.field === 'aftercareConfirmed' ? ' is-invalid' : ''}`}
-                data-error-anchor="aftercareConfirmed"
+            <h2>Aftercare for {pet}</h2>
+            {aftercareUnresolved ? (
+              <div
+                className="consent-error"
+                data-error-anchor="aftercare"
+                role="alert"
               >
-                <span className="consent-question">
-                  We want to double check. You selected “{aftercareLabel(aftercare)}”. Is that
-                  correct?
-                </span>
-                <select
-                  value={aftercareConfirmed}
-                  onChange={(e) => {
-                    setAftercareConfirmed(e.target.value as 'yes' | 'no' | '');
-                    clearField('aftercareConfirmed');
-                  }}
+                <p>
+                  We are not able to show you {pet}’s aftercare plan right now, and this is far
+                  too important for us to guess at.
+                </p>
+                <p>
+                  Please call us before you go any further and we will get this sorted out
+                  together.
+                </p>
+              </div>
+            ) : (
+              <>
+                <p className="consent-intro">
+                  This is the aftercare we have planned for {pet}. Please read it over and tell
+                  us it is right.
+                </p>
+                <div className="consent-aftercare-plan" data-error-anchor="aftercare">
+                  <span className="consent-aftercare-plan-label">Our plan for {pet}</span>
+                  <strong>{aftercareLabel}</strong>
+                </div>
+                {aftercare === 'home_burial' && (
+                  <div className="consent-note">
+                    If you bury {pet} at home, please use a proper, safe burial so wildlife and
+                    your family stay safe.
+                  </div>
+                )}
+                <label
+                  className={`consent-field${fieldError?.field === 'aftercareConfirmed' ? ' is-invalid' : ''}`}
+                  data-error-anchor="aftercareConfirmed"
                 >
-                  <option value="">Please select</option>
-                  <option value="yes">Yes</option>
-                  <option value="no">No — I will change it above</option>
-                </select>
-                <FieldHint field="aftercareConfirmed" />
-              </label>
+                  <span className="consent-question">Is this what you would like for {pet}?</span>
+                  <select
+                    value={aftercareConfirmed}
+                    onChange={(e) => {
+                      setAftercareConfirmed(e.target.value as 'yes' | 'no' | '');
+                      clearField('aftercareConfirmed');
+                    }}
+                  >
+                    <option value="">Please select</option>
+                    <option value="yes">Yes — this is what we want</option>
+                    <option value="no">No — we would like something different</option>
+                  </select>
+                  <FieldHint field="aftercareConfirmed" />
+                </label>
+                {aftercareConfirmed === 'no' && (
+                  <div className="consent-aftercare-change">
+                    <p>
+                      That is completely okay. Changing your mind is allowed, and we would much
+                      rather hear it now than get this wrong.
+                    </p>
+                    <p>
+                      Tell us what you would like instead. We will call you, update everything on
+                      our end, and send you a fresh form to sign. Nothing is signed until then.
+                    </p>
+                    <label
+                      className={`consent-field${fieldError?.field === 'aftercareRequest' ? ' is-invalid' : ''}`}
+                      data-error-anchor="aftercareRequest"
+                    >
+                      <span className="consent-question">
+                        What would you like for {pet} instead?
+                      </span>
+                      <textarea
+                        rows={4}
+                        maxLength={2000}
+                        value={aftercareRequest}
+                        onChange={(e) => {
+                          setAftercareRequest(e.target.value);
+                          clearField('aftercareRequest');
+                        }}
+                      />
+                      <FieldHint field="aftercareRequest" />
+                    </label>
+                    <button
+                      type="button"
+                      className="consent-btn"
+                      disabled={reportingAftercare}
+                      onClick={() => void reportAftercare()}
+                    >
+                      {reportingAftercare ? 'Sending…' : 'Send this to our team'}
+                    </button>
+                  </div>
+                )}
+              </>
             )}
             {aftercare === 'private_cremation' && (
               <>
@@ -1233,7 +1366,7 @@ export default function EuthanasiaConsentForm() {
                 been exposed to rabies, has not bitten anyone, and has not displayed any signs of
                 unusual attitude or aggression in the last 15 days.
               </p>
-              <p>My aftercare preference is as follows: {aftercareLabel(aftercare)}.</p>
+              <p>My aftercare preference is as follows: {aftercareLabel}.</p>
               <p>
                 It is my desire to provide for {pet} decent and humane after-death care,
                 complying with all legal requirements of the area. If I choose or have chosen
@@ -1252,9 +1385,33 @@ export default function EuthanasiaConsentForm() {
                   })}
                 </strong>
                 <p className="consent-quote-note">
-                  This includes everything you have chosen. Nothing is charged today — we
-                  place a hold on your card and settle the final amount after the visit.
+                  {chargeNow
+                    ? 'This includes everything you have chosen. Because this visit has already happened, we will charge this card when you submit.'
+                    : 'This includes everything you have chosen. The next step is an authorization — a hold, not a charge. We will charge this card on the day of service.'}
                 </p>
+                {quoteLines.length > 0 ? (
+                  <details className="consent-quote-lines">
+                    <summary>See itemized estimate</summary>
+                    <table>
+                      <tbody>
+                        {quoteLines.map((line, i) => (
+                          <tr key={`${line.description}-${i}`}>
+                            <td>
+                              {line.description}
+                              {line.qty > 1 ? ` × ${line.qty}` : ''}
+                            </td>
+                            <td>
+                              {line.amount.toLocaleString('en-US', {
+                                style: 'currency',
+                                currency: 'USD',
+                              })}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </details>
+                ) : null}
               </div>
             ) : null}
             <label
@@ -1291,7 +1448,28 @@ export default function EuthanasiaConsentForm() {
             </div>
             {payTotal > 0 ? (
               <div className="consent-pay-block" data-error-anchor="payment">
-                <h3>Card on file</h3>
+                <h3>Card authorization</h3>
+                <p className="consent-pay-auth">
+                  {chargeNow ? (
+                    <>
+                      Because this visit has already happened, we will charge{' '}
+                      {payTotal.toLocaleString('en-US', {
+                        style: 'currency',
+                        currency: 'USD',
+                      })}{' '}
+                      on this card when you submit.
+                    </>
+                  ) : (
+                    <>
+                      This is an authorization, not a charge. We will hold{' '}
+                      {payTotal.toLocaleString('en-US', {
+                        style: 'currency',
+                        currency: 'USD',
+                      })}{' '}
+                      on this card now. We will charge this card on the day of service.
+                    </>
+                  )}
+                </p>
                 <ConsentCardPay
                   name={clientName}
                   email={clientEmail}
@@ -1299,6 +1477,14 @@ export default function EuthanasiaConsentForm() {
                     createPaymentMethodRef.current = create;
                   }}
                 />
+                <label className="consent-save-card">
+                  <input
+                    type="checkbox"
+                    checked={saveCardOnFile}
+                    onChange={(e) => setSaveCardOnFile(e.target.checked)}
+                  />
+                  <span>Save this card on file for this visit</span>
+                </label>
                 <FieldHint field="payment" />
               </div>
             ) : null}
@@ -1330,7 +1516,7 @@ export default function EuthanasiaConsentForm() {
               {submitting
                 ? 'Submitting…'
                 : payTotal > 0
-                  ? `Pay ${payTotal.toLocaleString('en-US', {
+                  ? `Authorize ${payTotal.toLocaleString('en-US', {
                       style: 'currency',
                       currency: 'USD',
                     })} and submit`
@@ -1341,6 +1527,12 @@ export default function EuthanasiaConsentForm() {
       </div>
     </div>
   );
+}
+
+function usableConsentWeightLbs(raw: string | null | undefined): string {
+  const n = Number(String(raw ?? '').trim().replace(/,/g, ''));
+  if (!Number.isFinite(n) || n <= 0) return '';
+  return String(n);
 }
 
 function axiosMessage(err: unknown): string | null {

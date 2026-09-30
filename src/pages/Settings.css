@@ -1615,6 +1615,57 @@
   gap: 8px;
 }
 
+.settings-staff-signature {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings-staff-signature__preview {
+  display: block;
+  height: 56px;
+  max-width: 240px;
+  object-fit: contain;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+
+.settings-staff-signature__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.settings-staff-signature .consent-signature-pad {
+  width: 100%;
+  max-width: 420px;
+  height: 140px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  touch-action: none;
+  cursor: crosshair;
+  background: #fafafa;
+}
+
+.settings-staff-signature .consent-btn {
+  margin-top: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: #1b4332;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.settings-staff-signature .consent-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 @media (max-width: 860px) {
   .settings-employee-hub__staff-field {
     max-width: none;

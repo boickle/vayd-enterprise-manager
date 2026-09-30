@@ -11,8 +11,9 @@ import {
   type AdminManagedUser,
   type ScoutUserRole,
 } from '../api/users';
-import { fetchAllEmployees, type Employee } from '../api/appointmentSettings';
+import { fetchAllEmployees, fetchEmployee, type Employee } from '../api/appointmentSettings';
 import { fetchPrimaryProviders, type Provider } from '../api/employee';
+import { saveEmployees, type EmployeeDto } from '../api/employeesMutations';
 import { listTasks, reassignFromEmployee } from '../api/tasks';
 import { formatEmployeeDisplayName } from '../utils/employeeDisplayName';
 import './Settings.css';
@@ -351,33 +352,45 @@ export default function AdminUsers() {
         editing.isActive !== false && editIsActive === false
           ? (editing.employeeId ?? null)
           : null;
+      const reactivatingEmployeeId =
+        editing.isActive === false && editIsActive === true
+          ? (editing.employeeId ?? null)
+          : null;
       let movedCount = 0;
       if (deactivatingEmployeeId != null) {
-        const hasOpen = openTaskCount == null || openTaskCount > 0;
-        if (hasOpen && !deactivateToEmployeeId) {
+        if (!deactivateToEmployeeId) {
           setMessage({
-            text: 'Pick who should receive this person’s incomplete tasks.',
+            text: 'Pick who should receive this person’s incomplete and future automatic tasks.',
             kind: 'error',
           });
           setSaving(false);
           return;
         }
-        if (deactivateToEmployeeId) {
-          const toId = Number(deactivateToEmployeeId);
-          if (!Number.isFinite(toId) || toId === deactivatingEmployeeId) {
-            setMessage({
-              text: 'Pick a different person to receive the incomplete tasks.',
-              kind: 'error',
-            });
-            setSaving(false);
-            return;
-          }
-          const moved = await reassignFromEmployee({
-            fromEmployeeId: deactivatingEmployeeId,
-            toEmployeeId: toId,
+        const toId = Number(deactivateToEmployeeId);
+        if (!Number.isFinite(toId) || toId === deactivatingEmployeeId) {
+          setMessage({
+            text: 'Pick a different person to receive the incomplete tasks.',
+            kind: 'error',
           });
-          movedCount = moved.reassigned;
+          setSaving(false);
+          return;
         }
+        const moved = await reassignFromEmployee({
+          fromEmployeeId: deactivatingEmployeeId,
+          toEmployeeId: toId,
+          persistAsTaskForwarder: true,
+        });
+        movedCount = moved.reassigned;
+      }
+      if (reactivatingEmployeeId != null) {
+        const full = await fetchEmployee(reactivatingEmployeeId);
+        await saveEmployees({
+          ...(full as unknown as EmployeeDto),
+          id: reactivatingEmployeeId,
+          isActive: true,
+          isDeleted: false,
+          taskForwarderEmployeeId: null,
+        });
       }
 
       if (Object.keys(payload).length === 0) {
@@ -394,8 +407,10 @@ export default function AdminUsers() {
           movedCount > 0
             ? `Updated ${who}. Reassigned ${movedCount} incomplete task${
                 movedCount === 1 ? '' : 's'
-              }.`
-            : `Updated ${who}.`,
+              } and set their task forwarder.`
+            : deactivatingEmployeeId != null
+              ? `Updated ${who}. Future automatic tasks will go to the task forwarder.`
+              : `Updated ${who}.`,
         kind: 'success',
       });
     } catch (err) {
@@ -743,22 +758,20 @@ export default function AdminUsers() {
                   </label>
                 </Field>
                 {!editIsActive && editing.employeeId != null && editing.isActive !== false && (
-                  <Field label="Reassign incomplete tasks to">
+                  <Field label="Task forwarder">
                     <select
                       className="input"
                       value={deactivateToEmployeeId}
                       onChange={(e) => setDeactivateToEmployeeId(e.target.value)}
-                      required={openTaskCount == null || openTaskCount > 0}
+                      required
                       disabled={lookupsLoading || openTaskCountLoading}
                     >
                       <option value="">
                         {openTaskCountLoading
                           ? 'Checking their tasks…'
-                          : openTaskCount === 0
-                            ? 'No incomplete tasks'
-                            : openTaskCount != null
-                              ? `Select a person (${openTaskCount} open)…`
-                              : 'Select a person…'}
+                          : openTaskCount != null && openTaskCount > 0
+                            ? `Select a person (${openTaskCount} open)…`
+                            : 'Select a person…'}
                       </option>
                       {employees
                         .filter(
@@ -771,8 +784,8 @@ export default function AdminUsers() {
                         ))}
                     </select>
                     <p className="settings-muted" style={{ margin: '6px 0 0', fontSize: 12 }}>
-                      Past and future incomplete tasks move to this person before the
-                      account is turned off.
+                      Incomplete tasks move to this person. Any automatic work that
+                      would later have gone to them goes here too.
                     </p>
                   </Field>
                 )}

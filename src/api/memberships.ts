@@ -455,6 +455,11 @@ export async function createPatientMembership(input: {
   stripeSubscriptionId?: string | null;
   membershipTransactionId?: number | null;
   notes?: string | null;
+  agreementAccepted?: boolean;
+  agreementSignature?: string;
+  agreementSignatureData?: string;
+  agreementSignedAt?: string;
+  agreementText?: string;
 }): Promise<PatientMembership> {
   const { data } = await http.post<PatientMembership>(
     '/memberships/patient-memberships',
@@ -588,7 +593,7 @@ export async function previewMembershipCancel(
 export async function cancelMembership(
   membershipId: number,
   reason: string,
-  confirm?: { chargeAmount?: number; refundAmount?: number },
+  confirm?: { chargeAmount?: number; refundAmount?: number; skipMoney?: boolean },
 ): Promise<MembershipCancelResult> {
   const { data } = await http.post<MembershipCancelResult>(
     `/memberships/patient-memberships/${encodeURIComponent(membershipId)}/cancel`,
@@ -601,6 +606,7 @@ export async function cancelMembership(
       ...(confirm?.refundAmount != null
         ? { confirmRefundAmount: confirm.refundAmount }
         : {}),
+      ...(confirm?.skipMoney ? { skipMoney: true } : {}),
     },
   );
   return data;
@@ -770,6 +776,11 @@ export async function executePostVisitSignup(input: {
   overrideWindow?: boolean;
   overrideWindowReason?: string;
   paymentMethodId?: string;
+  agreementAccepted?: boolean;
+  agreementSignature?: string;
+  agreementSignatureData?: string;
+  agreementSignedAt?: string;
+  agreementText?: string;
 }): Promise<PostVisitSignupResult> {
   const { data } = await http.post<PostVisitSignupResult>(
     '/memberships/post-visit-signup/execute',

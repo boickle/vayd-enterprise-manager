@@ -1,8 +1,12 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { CreditCard, ExternalLink, Send, X } from 'lucide-react';
+import { CreditCard, ExternalLink, Mail, MessageSquare, X } from 'lucide-react';
 import { apiErrorMessage } from '../../api/http';
-import { getEuthanasiaConsentStatus, sendEuthanasiaConsent } from '../../api/consent';
+import {
+  getEuthanasiaConsentStatus,
+  sendEuthanasiaConsent,
+  type EuthanasiaConsentStatus,
+} from '../../api/consent';
 import { fetchAppointmentById } from '../../api/appointments';
 import { fetchPatientByIdStaff } from '../../api/patients';
 import { VISIT_WORKFLOW_PRACTICE_ID } from '../../api/visitWorkflow';
@@ -15,6 +19,21 @@ import {
 import EstimateWorkspace from '../estimates/EstimateWorkspace';
 import EstimateCardModal from '../estimates/EstimateCardModal';
 import { notifyEuthanasiaConsentStatusChanged } from '../../utils/euthanasiaConsentSettings';
+import {
+  AFTERCARE_STAFF_LABELS,
+  parseAftercareNotConfirmedNote,
+} from '../../utils/aftercare';
+import ConsentWeightAlert from '../consent/ConsentWeightAlert';
+import {
+  parseConsentWeightChange,
+  parseWeightChangedNote,
+  type ConsentWeightChange,
+} from '../../utils/consentWeightAlert';
+import {
+  membershipCancelLineNote,
+  syncMembershipCancelLinesOnEstimate,
+} from '../../utils/membershipCancelEstimateLine';
+import type { MembershipCancelPreview } from '../../api/memberships';
 import './EuthanasiaEstimateModal.css';
 
 type Props = {
@@ -24,6 +43,7 @@ type Props = {
   clientId?: number | null;
   clientName?: string | null;
   clientEmail?: string | null;
+  clientPhone?: string | null;
   /** Wording changes for a form that already went out once. */
   isResend?: boolean;
   onClose: () => void;
@@ -75,6 +95,7 @@ export default function EuthanasiaEstimateModal({
   clientId,
   clientName,
   clientEmail,
+  clientPhone,
   isResend,
   onClose,
   onSent,
@@ -87,6 +108,43 @@ export default function EuthanasiaEstimateModal({
   const [sentNote, setSentNote] = useState<string | null>(null);
   const [visitNotes, setVisitNotes] = useState<string | null>(null);
   const [petWeight, setPetWeight] = useState<string | null>(null);
+  const [quotedAftercare, setQuotedAftercare] =
+    useState<EuthanasiaConsentStatus['quotedAftercare']>(null);
+  const [consentWeightChange, setConsentWeightChange] = useState<ConsentWeightChange | null>(
+    null,
+  );
+  const [membershipCancels, setMembershipCancels] = useState<MembershipCancelPreview[]>([]);
+  const [resolvedEmail, setResolvedEmail] = useState<string | null>(clientEmail ?? null);
+  const [resolvedPhone, setResolvedPhone] = useState<string | null>(clientPhone ?? null);
+  const [sendingChannel, setSendingChannel] = useState<'email' | 'sms' | null>(null);
+
+  /**
+   * The family confirms the aftercare on the quote rather than picking one, so
+   * staff have to see what they are about to be asked. Re-checked whenever the
+   * lines change, which is the moment the answer can change.
+   */
+  const lineItemKey = useMemo(
+    () =>
+      (estimate?.lines ?? [])
+        .map((line) => `${line.catalogItemType ?? ''}:${line.catalogItemId ?? ''}`)
+        .sort()
+        .join(','),
+    [estimate],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    void getEuthanasiaConsentStatus(appointmentId, patientId)
+      .then((status) => {
+        if (cancelled) return;
+        setQuotedAftercare(status.quotedAftercare ?? null);
+        setConsentWeightChange(parseConsentWeightChange(status.response?.answers ?? null));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [appointmentId, patientId, lineItemKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -103,10 +161,32 @@ export default function EuthanasiaEstimateModal({
       }).catch(() => null),
       fetchPatientByIdStaff(patientId).catch(() => null),
     ])
-      .then(([next, appt, patient]) => {
+      .then(async ([next, appt, patient]) => {
         if (cancelled) return;
-        setEstimate(next);
+        let estimate = next;
+        try {
+          const synced = await syncMembershipCancelLinesOnEstimate(next, patientId);
+          if (cancelled) return;
+          estimate = synced.estimate;
+          setMembershipCancels(synced.previews);
+        } catch {
+          if (!cancelled) setMembershipCancels([]);
+        }
+        if (cancelled) return;
+        setEstimate(estimate);
         setVisitNotes(pickStr(appt?.description));
+        const apptClient = appt?.client as {
+          email?: string | null;
+          phone1?: string | null;
+          phone2?: string | null;
+        } | undefined;
+        setResolvedEmail(clientEmail ?? pickStr(apptClient?.email) ?? null);
+        setResolvedPhone(
+          clientPhone ??
+            pickStr(apptClient?.phone1) ??
+            pickStr(apptClient?.phone2) ??
+            null,
+        );
         const fromPatient =
           patient && typeof patient === 'object'
             ? formatPetWeight(patient as Record<string, unknown>)
@@ -126,14 +206,32 @@ export default function EuthanasiaEstimateModal({
     return () => {
       cancelled = true;
     };
-  }, [appointmentId, patientId, clientId, patientName]);
+  }, [appointmentId, patientId, clientId, patientName, clientEmail, clientPhone]);
 
   const total = Number(estimate?.total ?? 0);
-  const canSend = !loading && !sending && total > 0;
+  const aftercareReady = quotedAftercare?.unresolved == null && Boolean(quotedAftercare?.type);
+  const canSend = !loading && !sending && total > 0 && aftercareReady;
+  const aftercareDispute = parseAftercareNotConfirmedNote(visitNotes);
+  const noteWeightChange = parseWeightChangedNote(
+    aftercareDispute ? aftercareDispute.otherNotes : visitNotes,
+  );
+  const weightChange = consentWeightChange ?? (noteWeightChange
+    ? { previousLbs: noteWeightChange.previousLbs, nextLbs: noteWeightChange.nextLbs }
+    : null);
+  const otherVisitNotes = noteWeightChange
+    ? noteWeightChange.otherNotes
+    : aftercareDispute
+      ? aftercareDispute.otherNotes
+      : visitNotes;
+  const aftercarePlanLabel =
+    quotedAftercare?.type && quotedAftercare.type in AFTERCARE_STAFF_LABELS
+      ? AFTERCARE_STAFF_LABELS[quotedAftercare.type]
+      : quotedAftercare?.itemName || quotedAftercare?.label || null;
 
-  const send = useCallback(async () => {
+  const send = useCallback(async (channel: 'email' | 'sms') => {
     if (!estimate) return;
     setSending(true);
+    setSendingChannel(channel);
     setError(null);
     try {
       setEstimate(await markEstimateSent(estimate.id));
@@ -141,15 +239,19 @@ export default function EuthanasiaEstimateModal({
         appointmentId,
         patientId,
         clientId: clientId ?? undefined,
+        channel,
       });
       notifyEuthanasiaConsentStatusChanged();
       await navigator.clipboard.writeText(result.formUrl).catch(() => undefined);
-      setSentNote(`Sent to ${result.sentTo}. Link copied.`);
+      setSentNote(
+        `${channel === 'sms' ? 'Texted' : 'Emailed'} to ${result.sentTo}. Link copied.`,
+      );
       onSent?.({ sentTo: result.sentTo, formUrl: result.formUrl });
     } catch (e) {
       setError(apiErrorMessage(e));
     } finally {
       setSending(false);
+      setSendingChannel(null);
     }
   }, [appointmentId, clientId, estimate, onSent, patientId]);
 
@@ -209,16 +311,62 @@ export default function EuthanasiaEstimateModal({
           charged until after the visit.
         </p>
 
+        {!loading && weightChange ? <ConsentWeightAlert change={weightChange} /> : null}
+
+        {!loading && membershipCancels.length > 0 ? (
+          <div className="euth-estimate-membership" role="status">
+            <strong>Membership cancellation on this quote</strong>
+            {membershipCancels.map((row) => (
+              <p key={row.membershipId}>{membershipCancelLineNote(row)}</p>
+            ))}
+          </div>
+        ) : null}
+
+        {!loading && aftercareDispute ? (
+          <div className="euth-estimate-dispute" role="status">
+            <strong>Aftercare was not confirmed</strong>
+            <p>
+              They asked for: {aftercareDispute.askedFor || 'a change'}
+              {aftercareDispute.quoted ? `. We had quoted ${aftercareDispute.quoted}` : ''}.
+              Nothing is signed.
+            </p>
+            <p>Update the estimate if needed, then re-send the consent.</p>
+          </div>
+        ) : null}
+
         {!loading && (
           <div className="euth-estimate-facts">
-            <div className="euth-estimate-fact">
+            <div className={`euth-estimate-fact${weightChange ? ' euth-estimate-fact--alert' : ''}`}>
               <span>Weight</span>
-              <strong>{petWeight || 'Not on file'}</strong>
+              <strong>
+                {weightChange
+                  ? `${weightChange.nextLbs} lbs (owner changed from ${
+                      weightChange.previousLbs != null ? `${weightChange.previousLbs} lbs` : 'none on file'
+                    })`
+                  : petWeight || 'Not on file'}
+              </strong>
+            </div>
+            <div
+              className={`euth-estimate-fact${aftercareReady ? '' : ' euth-estimate-fact--alert'}`}
+            >
+              <span>Aftercare the family will confirm</span>
+              <strong>
+                {aftercareReady
+                  ? aftercarePlanLabel
+                  : quotedAftercare?.unresolved === 'conflict'
+                    ? `Two plans quoted: ${(quotedAftercare.conflictingItems ?? []).join(', ')}`
+                    : 'Waiting on the estimate'}
+              </strong>
+              {aftercareReady &&
+              quotedAftercare?.itemName &&
+              quotedAftercare.itemName !== aftercarePlanLabel ? (
+                <p className="euth-estimate-fact-extra">{quotedAftercare.itemName}</p>
+              ) : null}
             </div>
             <div className="euth-estimate-fact euth-estimate-fact--notes">
               <span>Appointment notes</span>
-              {visitNotes ? (
-                <p>{visitNotes}</p>
+              {otherVisitNotes ? (
+                <p>{otherVisitNotes}</p>
               ) : (
                 <p className="is-empty">None on this visit</p>
               )}
@@ -259,6 +407,18 @@ export default function EuthanasiaEstimateModal({
               Add at least one charge before sending the consent.
             </p>
           )}
+          {total > 0 && !loading && !aftercareReady && quotedAftercare?.unresolved === 'conflict' && (
+            <p className="euth-estimate-hint">
+              This estimate quotes more than one aftercare plan. Remove the ones that do not apply.
+            </p>
+          )}
+          {total > 0 && aftercareReady && (
+            <p className="euth-estimate-dest">
+              {resolvedEmail ? `Email ${resolvedEmail}` : 'No email on file'}
+              {' · '}
+              {resolvedPhone ? `Text ${resolvedPhone}` : 'No mobile on file'}
+            </p>
+          )}
         </div>
 
         <div className="soap-modal-actions euth-estimate-actions">
@@ -284,22 +444,37 @@ export default function EuthanasiaEstimateModal({
             className="soap-btn ghost"
             onClick={() => void signHere()}
             disabled={!canSend}
-            title="Opens the consent form here so the family can sign on this tablet or computer. Does not email."
+            title="Opens the consent form here so the family can sign on this tablet or computer. Does not send."
           >
             <ExternalLink size={15} /> Have them sign here
           </button>
           <button
             type="button"
             className="soap-btn"
-            onClick={() => void send()}
-            disabled={!canSend}
+            onClick={() => void send('email')}
+            disabled={!canSend || sending}
+            title={resolvedEmail ? `Email ${resolvedEmail}` : 'Email the consent link'}
           >
-            <Send size={15} />
-            {sending
+            <Mail size={15} />
+            {sendingChannel === 'email'
               ? 'Sending…'
               : isResend
-                ? 'Resend consent'
-                : 'Send consent'}
+                ? 'Email again'
+                : 'Email consent'}
+          </button>
+          <button
+            type="button"
+            className="soap-btn"
+            onClick={() => void send('sms')}
+            disabled={!canSend || sending}
+            title={resolvedPhone ? `Text ${resolvedPhone}` : 'Text the consent link'}
+          >
+            <MessageSquare size={15} />
+            {sendingChannel === 'sms'
+              ? 'Sending…'
+              : isResend
+                ? 'Text again'
+                : 'Text consent'}
           </button>
         </div>
 

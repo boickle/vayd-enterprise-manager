@@ -151,6 +151,32 @@
   background: #fff;
 }
 
+.consent-required {
+  margin-left: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: #b91c1c;
+}
+
+.consent-field.is-needed input {
+  border-color: #ef4444;
+  background: #fff7f7;
+}
+
+.consent-weight-needed {
+  margin: -4px 0 16px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: #fef2f2;
+  border: 2px solid #ef4444;
+  color: #7f1d1d;
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.45;
+}
+
 .consent-help {
   margin: -2px 0 0;
   color: #475569;
@@ -345,6 +371,43 @@
   margin-top: 3px;
 }
 
+/* The one thing on this page that must not be skimmed past. */
+.consent-aftercare-plan {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: #f1fcf7;
+  border: 2px solid #10b981;
+  border-radius: 12px;
+  padding: 16px 18px;
+  margin: 16px 0;
+}
+
+.consent-aftercare-plan-label {
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #047857;
+}
+
+.consent-aftercare-plan strong {
+  font-family: 'Libre Baskerville', 'Times New Roman', serif;
+  font-size: 19px;
+  line-height: 1.4;
+}
+
+.consent-aftercare-change {
+  background: #fff7ed;
+  border: 1px solid #fdba74;
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin: 16px 0;
+}
+
+.consent-aftercare-change p:first-child {
+  margin-top: 0;
+}
+
 .consent-note {
   background: #fff7ed;
   border: 1px solid #fdba74;
@@ -416,6 +479,38 @@
 .consent-pay-block h3 {
   margin: 18px 0 8px;
   font-size: 18px;
+}
+
+.consent-pay-auth {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  color: #065f46;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.consent-save-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 12px 0 0;
+  padding: 11px 13px;
+  border: 1.5px solid #cbd5e1;
+  border-radius: 12px;
+  background: #f8fafc;
+  color: #0f172a;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.consent-save-card input {
+  width: auto;
+  margin-top: 3px;
+  padding: 0;
+  border: 0;
 }
 
 .consent-invoice {
@@ -537,6 +632,38 @@
   font-size: 13px;
   line-height: 1.5;
   color: var(--muted);
+}
+
+.consent-quote-lines {
+  margin-top: 14px;
+  text-align: left;
+}
+
+.consent-quote-lines summary {
+  cursor: pointer;
+  font-size: 14px;
+  color: #0f766e;
+  font-weight: 600;
+}
+
+.consent-quote-lines table {
+  width: 100%;
+  margin-top: 10px;
+  border-collapse: collapse;
+}
+
+.consent-quote-lines td {
+  padding: 6px 0;
+  border-top: 1px solid var(--border);
+  font-size: 14px;
+  vertical-align: top;
+}
+
+.consent-quote-lines td:last-child {
+  text-align: right;
+  white-space: nowrap;
+  padding-left: 16px;
+  font-variant-numeric: tabular-nums;
 }
 
 .consent-pay {

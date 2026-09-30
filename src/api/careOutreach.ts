@@ -125,6 +125,18 @@ export async function patchReminder(
   return unwrapReminderResponse(data);
 }
 
+/** Open chart reminders for one pet, including rows that still have a future appointment. */
+export async function listPatientOpenReminders(
+  patientId: number,
+): Promise<UnscheduledReminder[]> {
+  if (!Number.isFinite(patientId) || patientId <= 0) return [];
+  const { data } = await http.get<unknown>(`/reminders/patient/${patientId}`);
+  const rows = Array.isArray(data) ? data : [];
+  return rows
+    .map((row) => normalizeCareOutreachReminder(row as UnscheduledReminder))
+    .filter((row) => row.id > 0 && row.isHidden !== true);
+}
+
 export async function patchReminderOutreachNotes(
   reminderId: number,
   outreachNotes: string

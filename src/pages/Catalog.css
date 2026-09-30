@@ -133,6 +133,11 @@
   background: #f0fdf4;
 }
 
+.inv-catalog-results__table tbody tr.inv-catalog-results__row--just-saved {
+  background: #d1fae5;
+  box-shadow: inset 3px 0 0 #059669;
+}
+
 .inv-catalog-results__table td {
   padding: 12px;
   border-bottom: 1px solid #f1f5f9;

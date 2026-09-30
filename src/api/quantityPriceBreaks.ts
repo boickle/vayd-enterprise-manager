@@ -92,6 +92,8 @@ export type Lab = {
   [key: string]: any;
 };
 
+import type { AftercareItemType } from '../utils/aftercare';
+
 export type Procedure = {
   id: number;
   name: string;
@@ -107,6 +109,10 @@ export type Procedure = {
   hideOnInvoice?: boolean;
   excludeFromProduction?: boolean;
   allowPriceChange?: boolean;
+  /** The charge that decides what happens to a pet after euthanasia. */
+  isAftercare?: boolean;
+  aftercareType?: AftercareItemType | null;
+  aftercareDisplayName?: string | null;
   linkedInventoryItemId?: number | null;
   linkedInventoryItemDefaultQuantity?: number | string | null;
   isActive?: boolean;

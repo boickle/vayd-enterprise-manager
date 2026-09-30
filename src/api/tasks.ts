@@ -290,6 +290,7 @@ export type ReassignFromEmployeeBody = {
   toEmployeeId: number;
   upcomingOnly?: boolean;
   taskIds?: number[];
+  persistAsTaskForwarder?: boolean;
 };
 
 export type ReassignFromEmployeeResult = {

@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { apiErrorMessage } from '../../api/http';
 import {
+  convertEstimateToInvoice,
   createVisitEstimate,
   getVisitEstimate,
   type VisitEstimate,
@@ -19,6 +20,8 @@ type Props = {
   title?: string | null;
   onClose: () => void;
   onSaved?: (estimate: VisitEstimate) => void;
+  /** After the quote becomes a bill, so the ledger can open it. */
+  onConverted?: (invoiceId: string) => void;
 };
 
 /**
@@ -34,10 +37,12 @@ export default function EstimateEditorModal({
   title,
   onClose,
   onSaved,
+  onConverted,
 }: Props) {
   const [estimate, setEstimate] = useState<VisitEstimate | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [converting, setConverting] = useState(false);
   const defaultPetId = patientId ?? pets[0]?.id ?? null;
 
   useEffect(() => {
@@ -68,6 +73,50 @@ export default function EstimateEditorModal({
   const close = () => {
     if (estimate) onSaved?.(estimate);
     onClose();
+  };
+
+  const alreadyConverted = Boolean(estimate?.convertedInvoiceId || estimate?.status === 'converted');
+  const canConvert = Boolean(
+    estimate &&
+      !alreadyConverted &&
+      estimate.status !== 'declined' &&
+      (estimate.lines?.length ?? 0) > 0 &&
+      Number(estimate.total) > 0,
+  );
+
+  const convertHint = !estimate
+    ? ''
+    : alreadyConverted
+      ? 'This estimate is already an invoice.'
+      : estimate.status === 'declined'
+        ? 'A declined estimate cannot be converted.'
+        : !(estimate.lines?.length ?? 0)
+          ? 'Add at least one charge first.'
+          : Number(estimate.total) <= 0
+            ? 'Add a charge with a total before converting.'
+            : estimate.appointmentId == null
+              ? 'This estimate is not attached to a visit yet.'
+              : '';
+
+  const convert = async () => {
+    if (!estimate) return;
+    if (alreadyConverted && estimate.convertedInvoiceId) {
+      onConverted?.(estimate.convertedInvoiceId);
+      onClose();
+      return;
+    }
+    if (!canConvert) return;
+    setConverting(true);
+    setError(null);
+    try {
+      const invoice = await convertEstimateToInvoice(estimate.id);
+      onConverted?.(invoice.id);
+      onClose();
+    } catch (e) {
+      setError(apiErrorMessage(e));
+    } finally {
+      setConverting(false);
+    }
   };
 
   return createPortal(
@@ -105,9 +154,25 @@ export default function EstimateEditorModal({
           />
         ) : null}
         {error && <div className="soap-error">{error}</div>}
+        {convertHint && !alreadyConverted ? (
+          <p className="euth-estimate-hint">{convertHint}</p>
+        ) : null}
         <div className="soap-modal-actions euth-estimate-actions">
-          <button type="button" className="soap-btn" onClick={close}>
+          <button type="button" className="soap-btn ghost" onClick={close} disabled={converting}>
             Save estimate
+          </button>
+          <button
+            type="button"
+            className="soap-btn"
+            disabled={converting || (!alreadyConverted && !canConvert)}
+            title={convertHint}
+            onClick={() => void convert()}
+          >
+            {converting
+              ? 'Converting…'
+              : alreadyConverted
+                ? 'Open invoice'
+                : 'Convert to invoice'}
           </button>
         </div>
       </div>

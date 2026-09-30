@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   patchTask,
   reassignFromEmployee,
@@ -9,6 +10,7 @@ import type { Employee } from '../../api/appointmentSettings';
 import { formatEmployeeDisplayName } from '../../utils/employeeDisplayName';
 import {
   fromDatetimeLocalValue,
+  taskStartIso,
   toDatetimeLocalValue,
   validateTaskScheduleOrder,
 } from '../../utils/taskDateTime';
@@ -25,7 +27,7 @@ function errMsg(e: unknown): string {
 
 type TaskMoveTarget = Pick<
   TaskListItem,
-  'id' | 'title' | 'assignedToEmployeeId' | 'startAt' | 'dueAt'
+  'id' | 'title' | 'assignedToEmployeeId' | 'startAt' | 'dueAt' | 'created'
 > & { body?: string | null };
 
 type BulkReassign = {
@@ -62,7 +64,7 @@ export default function TaskReassignModal({
     !bulk && task?.assignedToEmployeeId != null ? String(task.assignedToEmployeeId) : '',
   );
   const [startLocal, setStartLocal] = useState(() =>
-    !bulk && task ? toDatetimeLocalValue(task.startAt) : '',
+    !bulk && task ? toDatetimeLocalValue(taskStartIso(task)) : '',
   );
   const [dueLocal, setDueLocal] = useState(() =>
     !bulk && task ? toDatetimeLocalValue(task.dueAt) : '',
@@ -134,7 +136,7 @@ export default function TaskReassignModal({
   // keeps the narrower name.
   const title = bulk ? 'Re-assign tasks' : 'Move this task';
 
-  return (
+  const modal = (
     <div
       className="task-reassign-modal__backdrop"
       role="presentation"
@@ -217,4 +219,6 @@ export default function TaskReassignModal({
       </div>
     </div>
   );
+
+  return typeof document !== 'undefined' ? createPortal(modal, document.body) : modal;
 }

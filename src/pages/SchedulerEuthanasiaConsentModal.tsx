@@ -1,13 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { Appointment } from '../api/roomLoader';
-import {
-  formatMemorialItemLine,
-  getEuthanasiaConsentStatus,
-  parseMemorialItems,
-  type EuthanasiaConsentStatus,
-} from '../api/consent';
+import { getEuthanasiaConsentStatus, type EuthanasiaConsentStatus } from '../api/consent';
 import { apiErrorMessage } from '../api/http';
+import ConsentAnswersView from '../components/consent/ConsentAnswersView';
 import { patientsForAppointment } from '../utils/schedulerAddPet';
 import './Scheduler.css';
 
@@ -22,11 +18,6 @@ function patientsLabel(appt: Appointment): string {
     .map((p) => pickStr(p.name))
     .filter(Boolean);
   return names.length ? names.join(', ') : '—';
-}
-
-function answerStr(answers: Record<string, unknown>, key: string): string {
-  const v = answers[key];
-  return typeof v === 'string' ? v.trim() : '';
 }
 
 export function SchedulerEuthanasiaConsentModal({
@@ -73,10 +64,6 @@ export function SchedulerEuthanasiaConsentModal({
   }, [appt.client]);
 
   const response = status?.response;
-  const answers = response?.answers ?? {};
-  const nameplate = [answers.nameplateLine1, answers.nameplateLine2, answers.nameplateLine3]
-    .filter((line) => typeof line === 'string' && line.trim())
-    .join(' / ');
 
   const modal = (
     <div
@@ -113,80 +100,7 @@ export function SchedulerEuthanasiaConsentModal({
           {loading ? <p>Loading consent…</p> : null}
           {error ? <p>{error}</p> : null}
           {!loading && !error && !response ? <p>No signed consent yet.</p> : null}
-          {response ? (
-            <div style={{ display: 'grid', gap: 10, fontSize: 14, lineHeight: 1.45 }}>
-              <p>
-                <strong>Signed by</strong> {response.signedName || '—'}
-              </p>
-              {Array.isArray(answers.consentLanguage) ? (
-                <div>
-                  <strong>Consent language</strong>
-                  {(answers.consentLanguage as unknown[]).map((para, idx) =>
-                    typeof para === 'string' ? <p key={idx}>{para}</p> : null,
-                  )}
-                </div>
-              ) : null}
-              <p>
-                <strong>Aftercare</strong> {response.aftercareLabel || '—'}
-              </p>
-              {nameplate ? (
-                <p>
-                  <strong>Nameplate</strong> {nameplate}
-                </p>
-              ) : null}
-              <p>
-                <strong>Paw print</strong> {response.pawPrintLabel || '—'}
-              </p>
-              {parseMemorialItems(answers.memorialItems).length ? (
-                <div>
-                  <p>
-                    <strong>MEMORIAL ITEMS PURCHASED</strong>
-                    {answers.memorialPayment && typeof answers.memorialPayment === 'object'
-                      ? ' — already paid'
-                      : ''}
-                  </p>
-                  {parseMemorialItems(answers.memorialItems).map((item) => (
-                    <p key={`${item.listingId}-${item.procedureId ?? item.inventoryItemId ?? item.name}`}>
-                      {formatMemorialItemLine(item)}
-                      {answers.memorialPayment ? ' · already paid' : ''}
-                    </p>
-                  ))}
-                </div>
-              ) : null}
-              {answerStr(answers, 'vetsToNotify') ? (
-                <p>
-                  <strong>Notify</strong> {answerStr(answers, 'vetsToNotify')}
-                  {(() => {
-                    const other = answerStr(answers, 'otherVetsToNotify');
-                    return other && !/^none$/i.test(other) ? `; ${other}` : '';
-                  })()}
-                </p>
-              ) : null}
-              {answers.clayChargePayment && typeof answers.clayChargePayment === 'object' ? (
-                <p>
-                  <strong>Clay print paid</strong>{' '}
-                  {typeof (answers.clayChargePayment as { amount?: number }).amount === 'number'
-                    ? (answers.clayChargePayment as { amount: number }).amount.toLocaleString('en-US', {
-                        style: 'currency',
-                        currency: 'USD',
-                      })
-                    : ''}
-                </p>
-              ) : null}
-              {answerStr(answers, 'additionalInfo') ? (
-                <p>
-                  <strong>Notes</strong> {answerStr(answers, 'additionalInfo')}
-                </p>
-              ) : null}
-              {response.signatureDataUrl ? (
-                <img
-                  src={response.signatureDataUrl}
-                  alt="Client signature"
-                  style={{ maxWidth: '100%', height: 80, objectFit: 'contain', background: '#fff' }}
-                />
-              ) : null}
-            </div>
-          ) : null}
+          {response ? <ConsentAnswersView response={response} /> : null}
         </div>
       </div>
     </div>

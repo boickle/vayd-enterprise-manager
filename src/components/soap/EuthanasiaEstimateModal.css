@@ -14,9 +14,49 @@
   color: #64748b;
 }
 
+.euth-estimate-membership {
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: #eff6ff;
+  border: 1px solid #93c5fd;
+  color: #1e3a8a;
+}
+
+.euth-estimate-membership strong {
+  display: block;
+  font-size: 14px;
+}
+
+.euth-estimate-membership p {
+  margin: 6px 0 0;
+  font-size: 13.5px;
+  line-height: 1.45;
+}
+
+.euth-estimate-dispute {
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: #fff7ed;
+  border: 1px solid #fdba74;
+  color: #9a3412;
+}
+
+.euth-estimate-dispute strong {
+  display: block;
+  font-size: 14px;
+}
+
+.euth-estimate-dispute p {
+  margin: 6px 0 0;
+  font-size: 13.5px;
+  line-height: 1.45;
+}
+
 .euth-estimate-facts {
   display: grid;
-  grid-template-columns: minmax(7.5rem, auto) minmax(0, 1fr);
+  grid-template-columns: minmax(7.5rem, 1fr) minmax(0, 1.4fr);
   gap: 10px 16px;
   margin: 0 0 14px;
   padding: 10px 12px;
@@ -53,9 +93,28 @@
   white-space: pre-wrap;
 }
 
+.euth-estimate-fact-extra {
+  margin-top: 2px !important;
+  font-size: 12.5px !important;
+  color: #64748b !important;
+}
+
+.euth-estimate-fact--notes {
+  grid-column: 1 / -1;
+}
+
 .euth-estimate-fact p.is-empty,
 .euth-estimate-staff-notes {
   color: #475569;
+}
+
+/* Sending without a settled aftercare plan is the mistake we cannot undo. */
+.euth-estimate-fact--alert strong {
+  color: #b91c1c;
+}
+
+.euth-estimate-fact--alert span {
+  color: #b91c1c;
 }
 
 @media (max-width: 520px) {
@@ -92,6 +151,12 @@
   margin: 6px 0 0;
   font-size: 12.5px;
   color: #b45309;
+}
+
+.euth-estimate-dest {
+  margin: 6px 0 0;
+  font-size: 12.5px;
+  color: #64748b;
 }
 
 .euth-estimate-sent {

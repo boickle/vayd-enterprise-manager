@@ -1420,6 +1420,21 @@ label.scheduler-go-date-heading {
   box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.35);
 }
 
+.scheduler-preappt-rl-icon--rdvm {
+  min-width: 28px;
+  font-size: 6px;
+}
+
+.scheduler-event:has(.scheduler-appt-card-icons-tr :nth-child(3)),
+.scheduler-all-day-span-bar:has(.scheduler-appt-card-icons-tr :nth-child(3)) {
+  padding-right: 52px;
+}
+
+.scheduler-event:has(.scheduler-appt-card-icons-tr :nth-child(4)),
+.scheduler-all-day-span-bar:has(.scheduler-appt-card-icons-tr :nth-child(4)) {
+  padding-right: 68px;
+}
+
 .scheduler-event:has(.scheduler-appt-card-icons-tr),
 .scheduler-all-day-span-bar:has(.scheduler-appt-card-icons-tr) {
   padding-right: 20px;

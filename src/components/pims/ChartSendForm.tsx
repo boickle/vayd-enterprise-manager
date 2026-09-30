@@ -1,17 +1,17 @@
 /**
- * Send a form to a client from the patient chart (Communicate → Send form / consent).
+ * Send a form to a client from the patient chart (Write → Send form).
  */
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import {
-  listFormTemplates,
   listFormInvites,
   sendFormInvite,
   type FormField,
   type FormInvite,
   type FormTemplate,
 } from '../../api/forms';
+import { ensureDefaultFormTemplates } from '../../utils/formTemplateSeeds';
 
 type Props = {
   patientId: number;
@@ -66,7 +66,7 @@ export default function ChartSendForm({
     setSelectedTemplateId('');
     setStaffNote('');
     setLoadingTemplates(true);
-    Promise.all([listFormTemplates(), listFormInvites({ patientId })])
+    Promise.all([ensureDefaultFormTemplates(), listFormInvites({ patientId })])
       .then(([tmpl, inv]) => {
         setTemplates(tmpl.filter((t) => t.isPublished));
         setInvites(inv);
@@ -142,7 +142,8 @@ export default function ChartSendForm({
         </div>
 
         <p className="pims-chart-pick__empty chart-send-form__intro">
-          Email a link for the client to fill out and sign. Signed responses are stored on this patient.
+          Email a link for the client to fill out and sign. Consent for Treatment and Medical Waiver
+          are included with the heartworm-style waivers. Signed responses are stored on this patient.
         </p>
 
         {invites.length > 0 && (

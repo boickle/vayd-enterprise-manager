@@ -544,7 +544,16 @@ export default function ScribePanel({
           (b.updated || b.created || '').localeCompare(a.updated || a.created || '')
         );
 
-        const saved = recent.find((s) => s.transcript?.trim())?.transcript?.trim() ?? '';
+        const parts = [...sessions]
+          .sort((a, b) => (a.created || '').localeCompare(b.created || ''))
+          .map((s) => s.transcript?.trim() ?? '')
+          .filter(Boolean);
+        const saved = parts.reduce((acc, part) => {
+          if (!acc) return part;
+          if (acc.includes(part)) return acc;
+          if (part.includes(acc)) return part;
+          return `${acc}\n\n${part}`;
+        }, '');
         if (saved) {
           setFinalTranscript((prev) => prev || saved);
           setPasteText((prev) => prev || saved);
@@ -757,8 +766,8 @@ export default function ScribePanel({
     const awake = await requestKeepAwake();
     keepAwakeRef.current = awake;
     setScreenHeld(awake.screenHeld);
-    // Keep pasteText / prior transcript so a second take appends on stop ("continue from where
-    // you left off"). Only clear the live capture buffer for this segment.
+    setPasteText((prev) => prev.trim() || finalTranscript.trim() || prev);
+    // This take is a new segment. Prior text stays in pasteText and is appended on stop.
     setFinalTranscript('');
     setSuggestion(null);
     setDismissed(new Set());
@@ -798,7 +807,7 @@ export default function ScribePanel({
       socketRef.current = null;
       setStatus('error');
     }
-  }, [soapEncounterId, teardown]);
+  }, [soapEncounterId, teardown, finalTranscript]);
 
   /**
    * Recording only ever captures a transcript — it never structures/applies anything on its
@@ -811,28 +820,27 @@ export default function ScribePanel({
   const stopRecording = useCallback(async () => {
     teardown();
     const socket = socketRef.current;
-    let transcript = finalTranscript;
+    let segment = finalTranscript.trim();
     if (socket) {
       const serverTranscript = await socket.stop();
-      if (serverTranscript.trim()) transcript = serverTranscript;
+      if (serverTranscript.trim()) segment = serverTranscript.trim();
       socket.dispose();
       socketRef.current = null;
     }
     setInterimText('');
-    const text = transcript.trim();
-    if (text) {
-      setFinalTranscript(text);
+    if (segment) {
       setPasteText((prev) => {
-        const prevTrimmed = prev.trim();
-        // Prefer the just-recorded segment alone when paste was empty; otherwise append.
-        return prevTrimmed ? `${prevTrimmed}\n\n${text}` : text;
+        const prior = prev.trim();
+        const combined = prior ? `${prior}\n\n${segment}` : segment;
+        setFinalTranscript(combined);
+        return combined;
       });
       setPasteOpen(true);
       setTranscriptOpen(false);
     } else {
-      setFinalTranscript('');
+      setFinalTranscript((prev) => prev || pasteText.trim());
     }
-  }, [teardown, finalTranscript]);
+  }, [teardown, finalTranscript, pasteText]);
 
   const onRecordClick = async () => {
     if (recording) {
@@ -847,6 +855,10 @@ export default function ScribePanel({
         danger: true,
       });
       if (!ok) return;
+    }
+    if (hasPriorTranscript) {
+      void startRecording();
+      return;
     }
     setShowConsent(true);
   };
@@ -1283,7 +1295,7 @@ export default function ScribePanel({
             {logOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
           </button>
         )}
-        {(finalTranscript || interimText) && (
+        {(finalTranscript || interimText || (recording && pasteText.trim())) && (
           <button
             type="button"
             className="soap-scribe-transcript-toggle"
@@ -1376,12 +1388,14 @@ export default function ScribePanel({
         </div>
       )}
 
-      {transcriptOpen && (finalTranscript || interimText) && (
+      {transcriptOpen && (finalTranscript || interimText || (recording && pasteText.trim())) && (
         <div className="soap-scribe-transcript">
           <p className="soap-scribe-transcript-meta">
             Saved with this visit for reference — not included on the printed medical record. Use
-            View / Re-load transcript to rewrite the SOAP from this text.
+            View / Re-load transcript to rewrite the SOAP from this text. Stop and start again to
+            add on — earlier takes stay.
           </p>
+          {recording && pasteText.trim() ? `${pasteText.trim()}\n\n` : ''}
           {finalTranscript} <span className="soap-scribe-interim">{interimText}</span>
         </div>
       )}

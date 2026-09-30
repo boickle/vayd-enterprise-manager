@@ -112,6 +112,83 @@
   mix-blend-mode: multiply;
 }
 .vayd-store__wrap { max-width: 1120px; margin: 0 auto; padding: 8px 16px 96px; }
+/* Membership savings strip. Quiet enough to shop past, clear enough to notice. */
+.vayd-store__member-promo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 10px 0 18px;
+  padding: 10px 14px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #ecfff8 0%, #f5fbff 100%);
+  border: 1px solid rgba(15, 118, 110, 0.2);
+  color: #0f5c56;
+  font-size: 14px;
+  line-height: 1.4;
+}
+.vayd-store__member-promo--member {
+  background: #f3fbf8;
+  border-color: rgba(15, 118, 110, 0.16);
+}
+.vayd-store__member-promo-badge {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 42px;
+  height: 42px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: #0f766e;
+  color: #fff;
+  font-weight: 800;
+  font-size: 14px;
+  letter-spacing: -0.02em;
+}
+.vayd-store__member-promo-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.vayd-store__member-promo-text strong {
+  font-size: 14px;
+  font-weight: 750;
+  color: #0f766e;
+}
+.vayd-store__member-promo-text span { color: #47605c; }
+.vayd-store__member-promo-link {
+  color: #0f766e;
+  font-weight: 700;
+  text-decoration: underline;
+  white-space: nowrap;
+}
+.vayd-store__member-promo-close {
+  flex: none;
+  margin-left: auto;
+  align-self: flex-start;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: #6b8c87;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+.vayd-store__member-promo-close:hover { background: rgba(15, 118, 110, 0.1); color: #0f766e; }
+
+/* The floating cart is fixed to the viewport edge; keep it off the dismiss button. */
+@media (max-width: 1272px) {
+  .vayd-store__member-promo { padding-right: 76px; }
+}
+
+@media (max-width: 640px) {
+  .vayd-store__member-promo { align-items: flex-start; }
+  .vayd-store__member-promo-badge { width: 36px; min-width: 36px; height: 36px; font-size: 13px; }
+}
+
 .vayd-store__note {
   background: #ecfff8;
   border: 1px solid #0f766e;
@@ -554,6 +631,17 @@
   border: 1px solid #d7e5df;
   margin-top: 4px;
 }
+.vayd-store input[type='radio'],
+.vayd-store input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  flex-shrink: 0;
+  accent-color: #0f766e;
+}
 .vayd-store .vayd-store__stepper input {
   width: 56px;
   margin-top: 0;
@@ -754,6 +842,83 @@
   gap: 10px 12px;
 }
 .vayd-store__cart-wide { grid-column: 1 / -1; position: relative; z-index: 3; }
+.vayd-store__ship-address { margin-top: 16px; }
+.vayd-store__question {
+  margin: 0 0 6px;
+  font-size: 15px;
+  font-weight: 650;
+  color: #134e4a;
+}
+.vayd-store__muted {
+  margin: 0 0 12px;
+  font-size: 13.5px;
+  line-height: 1.45;
+  color: #4b5563;
+}
+.vayd-store__address-card {
+  padding: 12px 14px;
+  background: #fff;
+  border: 1.5px solid #99f6e4;
+  border-radius: 12px;
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.5;
+  color: #134e4a;
+  margin: 0 0 12px;
+}
+.vayd-store__address-note {
+  margin-top: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #0f766e;
+}
+.vayd-store__choices {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 14px;
+}
+.vayd-store label.vayd-store__choice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  padding: 11px 14px;
+  border: 1.5px solid #d7e5df;
+  border-radius: 12px;
+  background: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.35;
+  cursor: pointer;
+}
+.vayd-store label.vayd-store__choice.is-on {
+  border-color: #0f766e;
+  background: #ecfff8;
+  color: #0f766e;
+}
+.vayd-store label.vayd-store__choice input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+.vayd-store label.vayd-store__po-box {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 10px 0 12px;
+  padding: 0;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.4;
+  cursor: pointer;
+}
+.vayd-store label.vayd-store__po-box input {
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+}
+.vayd-store__address-edit { margin-top: 4px; }
+.vayd-store__update-mailing { margin-top: 16px; }
 .vayd-store .vayd-store__address-input {
   width: 100%;
   max-width: none;

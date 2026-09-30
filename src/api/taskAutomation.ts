@@ -31,6 +31,7 @@ export type TaskAutomationRule = {
   bodyTemplate: string | null;
   priority: number | null;
   dueInHours: number | null;
+  recreateIfIncomplete: boolean;
   lastRunAt: string | null;
 };
 

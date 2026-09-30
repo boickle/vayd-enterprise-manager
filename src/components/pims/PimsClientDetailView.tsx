@@ -32,6 +32,7 @@ import {
   reactivateClient,
   type ScoutClientWrite,
 } from '../../api/clientsMutations';
+import { deactivatePatient } from '../../api/patients';
 import { sendClientPortalAccess } from '../../api/users';
 import { recordScoutChartCommunication } from '../../api/scoutChart';
 import { buildPhoneDialHref } from '../../utils/quoContact';
@@ -52,6 +53,7 @@ import {
   mailingSameAsService,
 } from '../../utils/clientVisitAddresses';
 import { BookPatientChartButton } from '../BookPatientChartButton';
+import { PimsClientMergeButton } from './PimsChartWorkBar';
 import { patientStatusChip } from '../../utils/patientStatusDisplay';
 import { PetThumb, patientPhotoSrc } from './PetThumb';
 import PimsAppointmentsSection from './PimsAppointmentsSection';
@@ -84,6 +86,12 @@ import {
 } from '../../utils/pimsInvoices';
 import { scoutManagedState } from '../../utils/pimsScoutManaged';
 import { appAlert, appConfirm } from '../../utils/appDialog';
+import DeathWrapUpModal from '../soap/DeathWrapUpModal';
+import {
+  previewDeathWrapUpForPatients,
+  type DeathWrapUpPreview,
+} from '../../utils/deathWrapUp';
+import { DEFAULT_PRACTICE_TIMEZONE, practiceTimeZoneOrDefault } from '../../utils/practiceTimezone';
 import { CLIENT_NAME_PREFIX_OPTIONS, formatClientDisplayName } from '../../utils/clientNamePrefix';
 import { pushRecentRecord } from '../../utils/recentRecordsStore';
 import {
@@ -105,6 +113,7 @@ import {
 import './detail/PimsDetailKit.css';
 import './PimsPatientDetailView.css';
 import './PimsClientDetailView.css';
+import '../../pages/BriefWorkspacePage.css';
 
 const PIMS_CLIENT_DETAIL_PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
 const PIMS_CLIENT_DETAIL_TZ =
@@ -1301,6 +1310,7 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [inactivateWrapUp, setInactivateWrapUp] = useState<DeathWrapUpPreview[] | null>(null);
   const [headerEdit, setHeaderEdit] = useState<HeaderEdit>(null);
   const [commsTick, setCommsTick] = useState(0);
   const [headerBalance, setHeaderBalance] = useState<number | null>(null);
@@ -1553,20 +1563,46 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
 
   async function handleToggleActive() {
     if (isActive) {
-      const ok = await appConfirm({
-        title: 'Deactivate client?',
-        message: `Deactivate ${name}? They stay in Scout with all history and appointments intact, but are hidden from active lists.`,
-        confirmLabel: 'Deactivate',
-        danger: true,
-      });
-      if (!ok) return;
+      setBusy(true);
+      setActionError(null);
+      try {
+        const activePets = patients
+          .filter((p) => p.isActive !== false && p.id != null)
+          .map((p) => {
+            const id = Number(p.id);
+            return {
+              patientId: id,
+              patientName: pickStr(p.name) ?? `Pet #${id}`,
+            };
+          })
+          .filter((p) => Number.isFinite(p.patientId) && p.patientId > 0);
+        if (activePets.length === 0) {
+          const ok = await appConfirm({
+            title: 'Deactivate client?',
+            message: `Deactivate ${name}? They stay in Scout with all history and appointments intact, but are hidden from active lists.`,
+            confirmLabel: 'Deactivate',
+            danger: true,
+          });
+          if (!ok) return;
+          await applyWriteResult(await deactivateClient(clientId));
+          return;
+        }
+        const previews = await previewDeathWrapUpForPatients({
+          patients: activePets,
+          practiceTz: practiceTimeZoneOrDefault(DEFAULT_PRACTICE_TIMEZONE),
+        });
+        setInactivateWrapUp(previews);
+      } catch (err) {
+        setActionError(extractErr(err));
+      } finally {
+        setBusy(false);
+      }
+      return;
     }
     setBusy(true);
     setActionError(null);
     try {
-      await applyWriteResult(
-        isActive ? await deactivateClient(clientId) : await reactivateClient(clientId),
-      );
+      await applyWriteResult(await reactivateClient(clientId));
     } catch (err) {
       setActionError(extractErr(err));
     } finally {
@@ -1961,6 +1997,13 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
               <Plus size={14} aria-hidden />
               Appointment
             </button>
+            <PimsClientMergeButton
+              clientId={clientId}
+              clientName={name}
+              onMerged={() => {
+                void applyWriteResult(undefined);
+              }}
+            />
             <button
               type="button"
               className="pims-detail__btn-secondary"
@@ -2717,6 +2760,30 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
             document.body,
           )
         : null}
+
+      {inactivateWrapUp ? (
+        <DeathWrapUpModal
+          previews={inactivateWrapUp}
+          kind="inactivate"
+          acceptLabel="Accept and inactivate"
+          onClose={() => setInactivateWrapUp(null)}
+          onAccepted={async () => {
+            setBusy(true);
+            setActionError(null);
+            try {
+              for (const preview of inactivateWrapUp) {
+                await deactivatePatient(preview.patientId);
+              }
+              await applyWriteResult(await deactivateClient(clientId));
+              setInactivateWrapUp(null);
+            } catch (err) {
+              setActionError(extractErr(err));
+            } finally {
+              setBusy(false);
+            }
+          }}
+        />
+      ) : null}
     </div>
   );
 }

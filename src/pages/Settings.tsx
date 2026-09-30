@@ -83,6 +83,7 @@ import SettingsPatientStatuses from '../components/settings/SettingsPatientStatu
 import SettingsMemberships from '../components/settings/SettingsMemberships';
 import SettingsMessageTemplates from '../components/settings/SettingsMessageTemplates';
 import FormsAdmin from './FormsAdmin';
+import SettingsLabForms from '../components/settings/SettingsLabForms';
 import WasteAdminPage from './WasteAdminPage';
 import SettingsMailShippingTypes from '../components/settings/SettingsMailShippingTypes';
 import SettingsChatHours from '../components/settings/SettingsChatHours';
@@ -117,6 +118,7 @@ const SETTINGS_TAB_IDS = [
   'memberships',
   'message-templates',
   'forms',
+  'lab-forms',
   'automatic-tasks',
 ] as const;
 type SettingsTabId = (typeof SETTINGS_TAB_IDS)[number];
@@ -158,6 +160,7 @@ const LEGACY_EMPLOYEE_TAB_TO_SECTION: Record<string, EmployeeHubSection> = {
   'employee-schedule': 'schedule',
   'employee-images': 'photo',
   'employee-goals': 'goals',
+  'provider-signatures': 'photo',
 };
 
 const FINANCE_SETTINGS_ITEMS: SettingsMenuItem[] = [
@@ -175,6 +178,7 @@ const COMMUNICATION_SETTINGS_ITEMS: SettingsMenuItem[] = [
 ];
 
 const INVENTORY_SETTINGS_ITEMS: SettingsMenuItem[] = [
+  { id: 'lab-forms', label: 'In-house lab forms' },
   { id: 'inventory-online-store', label: 'Online store' },
   { id: 'inventory-refills', label: 'Refills' },
   { id: 'inventory-mail-shipping', label: 'Mail shipping' },
@@ -3145,8 +3149,8 @@ export default function Settings() {
             <p className="settings-section-description">
               Work that Scout chases on its own — an unfinished chart, an invoice left open, an
               order nobody placed. Each rule decides how long something may sit, who the task goes
-              to, and who else should see it. A task is only ever created once per thing, so a rule
-              cannot nag twice about the same chart.
+              to, and whether it should come back if someone marks it done while the work is still
+              unfinished. Unfiled-call rules stay off that setting so waving a call off does not nag.
             </p>
             <SettingsAutomaticTasks
               practiceId={REMINDERS_PRACTICE_ID}
@@ -3572,6 +3576,23 @@ export default function Settings() {
         {activeTab === 'forms' && (
           <div className="settings-section settings-section--forms">
             <FormsAdmin />
+          </div>
+        )}
+
+        {activeTab === 'lab-forms' && (
+          <div className="settings-section">
+            <SettingsLabForms
+              onMessage={(msg, kind) => {
+                if (kind === 'success') {
+                  setSuccess(msg);
+                  setError(null);
+                  window.setTimeout(() => setSuccess(null), 4000);
+                } else {
+                  setError(msg);
+                  setSuccess(null);
+                }
+              }}
+            />
           </div>
         )}
       </div>

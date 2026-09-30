@@ -1,6 +1,12 @@
 import axios from 'axios';
 import { apiBaseUrl, http } from './http';
 
+/** Public catalog / checkout calls — no staff JWT, so Room Loader links cannot trigger logout. */
+const publicStoreClient = axios.create({
+  baseURL: apiBaseUrl,
+  withCredentials: false,
+});
+
 export function storeApiError(err: unknown): string {
   if (axios.isAxiosError(err)) {
     const data = err.response?.data as { message?: string | string[] } | string | undefined;
@@ -1043,14 +1049,14 @@ export async function publicStoreProducts(
   q?: string,
   category?: string
 ) {
-  const { data } = await http.get<StoreListing[]>(`/public/store/products`, {
+  const { data } = await publicStoreClient.get<StoreListing[]>(`/public/store/products`, {
     params: { practiceId, q, category },
   });
   return data ?? [];
 }
 
 export async function publicStoreProduct(practiceId: number, id: string | number) {
-  const { data } = await http.get<StoreListing>(`/public/store/products/${id}`, {
+  const { data } = await publicStoreClient.get<StoreListing>(`/public/store/products/${id}`, {
     params: { practiceId },
   });
   return data;
@@ -1160,6 +1166,7 @@ export async function publicCheckout(
     couponCode?: string;
     paymentMethodId?: string | null;
     saveCard?: boolean;
+    updateMailingOnFile?: boolean;
     clientId?: number | null;
     patientId?: number | null;
     fulfillmentId?: string | null;

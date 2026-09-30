@@ -23,6 +23,10 @@ import {
   patchCatalogItem,
   setCatalogItemActive,
 } from '../api/catalogItems';
+import {
+  AFTERCARE_ITEM_LABELS,
+  type AftercareItemType,
+} from '../utils/aftercare';
 import QuantityPriceBreaksEditor from '../components/catalog/QuantityPriceBreaksEditor';
 import { appConfirm, appPrompt } from '../utils/appDialog';
 import {
@@ -620,6 +624,9 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
     hideOnInvoice: false,
     excludeFromProduction: false,
     allowPriceChange: false,
+    isAftercare: false,
+    aftercareType: '' as AftercareItemType | '',
+    aftercareDisplayName: '',
     taxLevelValue: 1,
     category: '',
     assignedAbc: '',
@@ -813,6 +820,8 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
   const [onlineStoreImplemented, setOnlineStoreImplemented] = useState(false);
 
   const [toast, setToast] = useState<string | null>(null);
+  const [justSavedKey, setJustSavedKey] = useState<string | null>(null);
+  const justSavedClearRef = useRef<number | null>(null);
 
 
   const [bulkSelectMode, setBulkSelectMode] = useState(false);
@@ -1004,6 +1013,9 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
       hideOnInvoice: Boolean((item as Procedure).hideOnInvoice),
       excludeFromProduction: Boolean((item as Procedure).excludeFromProduction),
       allowPriceChange: Boolean((item as Procedure).allowPriceChange),
+      isAftercare: Boolean((item as Procedure).isAftercare),
+      aftercareType: ((item as Procedure).aftercareType ?? '') as AftercareItemType | '',
+      aftercareDisplayName: (item as Procedure).aftercareDisplayName ?? '',
       taxLevelValue: taxLevelSelectValue(
         (item as InventoryItem | Lab | Procedure).taxLevelValue
       ),
@@ -1863,6 +1875,14 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
         body.hideOnInvoice = coreDraft.hideOnInvoice;
         body.excludeFromProduction = coreDraft.excludeFromProduction;
         body.allowPriceChange = coreDraft.allowPriceChange;
+        if (coreDraft.isAftercare && !coreDraft.aftercareType) {
+          throw new Error('Choose which aftercare plan this item is before saving.');
+        }
+        body.isAftercare = coreDraft.isAftercare;
+        body.aftercareType = coreDraft.isAftercare ? coreDraft.aftercareType : null;
+        body.aftercareDisplayName = coreDraft.isAftercare
+          ? coreDraft.aftercareDisplayName.trim() || null
+          : null;
       }
       Object.assign(body, catalogDiscountBody(coreDraft));
       if (selected.itemType === 'lab' || selected.itemType === 'procedure') {
@@ -1871,10 +1891,33 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
           coreDraft.category.trim() === '' ? null : Number(coreDraft.category);
       }
       await patchCatalogItem(selected.itemType, practiceId, selected.itemId, body);
-      setToast('Catalog fields saved');
+      const savedKey = `${selected.itemType}:${selected.itemId}`;
+      const savedName = coreDraft.name.trim();
+      setSearchResults((rows) =>
+        rows.map((row) => {
+          if (entityIdFromSelection(row.itemType, row) !== selected.itemId) return row;
+          if (row.itemType !== selected.itemType) return row;
+          return { ...row, name: savedName || row.name };
+        }),
+      );
+      setToast('Saved');
       window.setTimeout(() => setToast(null), 3500);
-      setSelected((s) => (s ? { ...s, label: coreDraft.name.trim() } : s));
-      await refreshDetailBundle(selected);
+      setJustSavedKey(savedKey);
+      if (justSavedClearRef.current != null) {
+        window.clearTimeout(justSavedClearRef.current);
+      }
+      justSavedClearRef.current = window.setTimeout(() => setJustSavedKey(null), 4000);
+      if (embed) {
+        setSelected((s) => (s ? { ...s, label: savedName } : s));
+        await refreshDetailBundle(selected);
+      } else {
+        closeItemDetailModal();
+        window.requestAnimationFrame(() => {
+          document
+            .querySelector<HTMLElement>(`[data-catalog-row="${savedKey}"]`)
+            ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        });
+      }
     } catch (e: unknown) {
       setCoreError(e instanceof Error ? e.message : 'Save failed');
     } finally {
@@ -2567,6 +2610,12 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                   return (
                     <tr
                       key={`${itemType}-${itemId}-${i}`}
+                      data-catalog-row={itemId != null ? `${itemType}:${itemId}` : undefined}
+                      className={
+                        itemId != null && justSavedKey === `${itemType}:${itemId}`
+                          ? 'inv-catalog-results__row--just-saved'
+                          : undefined
+                      }
                       onClick={(e) => {
                         const el = e.target as HTMLElement;
                         if (el.closest('button, input, label')) return;
@@ -3038,6 +3087,81 @@ export default function Catalog({ embed }: { embed?: CatalogEmbedProps } = {}) {
                         </small>
                       </span>
                     </label>
+                    {/*
+                      The euthanasia consent form reads this item off the estimate
+                      and asks the family to confirm it, so the plan has to be
+                      named here. Urns, nameplates, and paw prints are not
+                      aftercare — only the cremation or burial charge itself.
+                    */}
+                    <label className="settings-checkbox-item">
+                      <input
+                        type="checkbox"
+                        checked={coreDraft.isAftercare}
+                        onChange={(e) =>
+                          setCoreDraft((d) => ({
+                            ...d,
+                            isAftercare: e.target.checked,
+                            aftercareType: e.target.checked ? d.aftercareType : '',
+                            aftercareDisplayName: e.target.checked ? d.aftercareDisplayName : '',
+                          }))
+                        }
+                      />
+                      <span>
+                        This is an aftercare item
+                        <small style={{ display: 'block', color: '#6b7280' }}>
+                          The charge that decides what happens to the pet. Families confirm it
+                          on the euthanasia consent form.
+                        </small>
+                      </span>
+                    </label>
+                    {coreDraft.isAftercare && (
+                      <div style={{ margin: '4px 0 8px 28px', maxWidth: 420 }}>
+                        <label style={{ display: 'block', marginBottom: 8 }}>
+                          <span style={{ display: 'block', marginBottom: 4 }}>
+                            Which plan is it?
+                          </span>
+                          <select
+                            value={coreDraft.aftercareType}
+                            onChange={(e) =>
+                              setCoreDraft((d) => ({
+                                ...d,
+                                aftercareType: e.target.value as AftercareItemType | '',
+                              }))
+                            }
+                          >
+                            <option value="">Choose a plan…</option>
+                            <option value="private_cremation">
+                              Private cremation (ashes returned)
+                            </option>
+                            <option value="burial_at_sea">
+                              Cremation, no ashes returned (burial at sea)
+                            </option>
+                            <option value="home_burial">Home burial / owner arranges</option>
+                          </select>
+                        </label>
+                        <label style={{ display: 'block' }}>
+                          <span style={{ display: 'block', marginBottom: 4 }}>
+                            What the family reads (optional)
+                          </span>
+                          <input
+                            style={{ width: '100%' }}
+                            maxLength={255}
+                            placeholder={
+                              coreDraft.aftercareType
+                                ? AFTERCARE_ITEM_LABELS[coreDraft.aftercareType]
+                                : 'Leave blank for our standard wording'
+                            }
+                            value={coreDraft.aftercareDisplayName}
+                            onChange={(e) =>
+                              setCoreDraft((d) => ({
+                                ...d,
+                                aftercareDisplayName: e.target.value,
+                              }))
+                            }
+                          />
+                        </label>
+                      </div>
+                    )}
                   </div>
                 )}
                 <button

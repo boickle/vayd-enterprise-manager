@@ -2804,3 +2804,12 @@
 .pims-chart-confirm .brief-btn.danger:hover:not(:disabled) {
   filter: brightness(1.05);
 }
+
+/* In-house lab results, above the record accordions. */
+.pims-patient-detail__labs-card {
+  padding: 14px 16px;
+  margin-bottom: 14px;
+  border: 1px solid #e4efe9;
+  border-radius: 12px;
+  background: #fff;
+}

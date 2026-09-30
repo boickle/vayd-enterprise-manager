@@ -43,9 +43,7 @@ type Props = {
  *
  * Checkout deliberately runs before the doctor has finished the chart, so this is
  * the last moment anyone can say "do you want the recheck on the books now, or
- * should our scheduler call you?" out loud. Whatever is recorded here satisfies the
- * wrap-up's gate; if checkout skips it, the doctor still cannot complete the record
- * without answering.
+ * should our scheduler call you?" out loud. End Visit reads the same saved choice.
  */
 export default function CheckoutFollowUpPrompt({
   appointmentId,

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Check, FileText, Phone, Trash2, UserPlus, Wand2 } from 'lucide-react';
 import { polishSpokenNotes } from '../../api/soapScribe';
-import { createScoutChartNote, finalizeScoutChartNote } from '../../api/scoutChart';
+import { createScoutChartNote, finalizeScoutChartNote, recordScoutChartCommunication } from '../../api/scoutChart';
 import { completeTask, patchTask, removeTask, type TaskDetail } from '../../api/tasks';
 import { fetchClientByIdStaff } from '../../api/clientsStaff';
 import { resolveCall } from '../../api/calls';
@@ -16,6 +16,15 @@ import { tidyQuoTranscript } from './ClientCallPill';
 function linkedId(task: TaskDetail, type: 'patient' | 'client'): number | null {
   const hit = (task.links ?? []).find((l) => l.entityType === type);
   return hit ? hit.entityId : null;
+}
+
+export type JotChartPet = { id: number; name: string };
+
+function filedToLabel(names: string[]): string {
+  if (names.length === 0) return 'the record';
+  if (names.length === 1) return `${names[0]}'s record`;
+  if (names.length === 2) return `${names[0]} and ${names[1]}`;
+  return `${names.slice(0, -1).join(', ')}, and ${names[names.length - 1]}`;
 }
 
 function clientDisplayName(raw: unknown): string | null {
@@ -54,7 +63,10 @@ type Props = {
   employees?: Employee[];
   myEmployeeId?: number | null;
   patientName?: string | null;
+  patients?: JotChartPet[];
   clientName?: string | null;
+  /** Invoice follow-up files to the client unless staff pick a pet. */
+  defaultChartToClient?: boolean;
   onDone: () => void | Promise<void>;
 };
 
@@ -67,15 +79,30 @@ export default function CallbackJotPanel({
   employees = [],
   myEmployeeId = null,
   patientName,
+  patients: patientsProp,
   clientName: clientNameProp,
+  defaultChartToClient = false,
   onDone,
 }: Props) {
   const isCallback = task.kind === 'callback';
   const noun = isCallback ? 'callback' : 'task';
-  const chartHeading = isCallback ? 'Callback' : 'Task';
+  const chartHeading = defaultChartToClient ? 'Invoice' : isCallback ? 'Callback' : 'Task';
   const fromLine = useOutboundCallFromLine();
   const patientId = linkedId(task, 'patient');
   const clientId = linkedId(task, 'client');
+  const pets = useMemo<JotChartPet[]>(() => {
+    if (patientsProp?.length) {
+      const seen = new Set<number>();
+      return patientsProp.filter((p) => {
+        if (!Number.isFinite(p.id) || p.id <= 0 || seen.has(p.id)) return false;
+        seen.add(p.id);
+        return true;
+      });
+    }
+    if (patientId == null) return [];
+    return [{ id: patientId, name: patientName?.trim() || `Patient #${patientId}` }];
+  }, [patientsProp, patientId, patientName]);
+  const petNames = pets.map((p) => p.name).filter(Boolean).join(', ') || patientName;
   const call = useClientCallActivity(clientId);
 
   const [phones, setPhones] = useState<{ label: string; phone: string }[]>([]);
@@ -90,6 +117,7 @@ export default function CallbackJotPanel({
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [doneLabel, setDoneLabel] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [chartKeys, setChartKeys] = useState<string[]>([]);
 
   useEffect(() => {
     if (clientId == null) return;
@@ -112,6 +140,25 @@ export default function CallbackJotPanel({
 
   const assigneeChoices = useMemo(() => staffChoices(employees), [employees]);
 
+  useEffect(() => {
+    const valid = new Set<string>([
+      ...(clientId != null ? ['client'] : []),
+      ...pets.map((p) => `patient:${p.id}`),
+    ]);
+    setChartKeys((cur) => {
+      const kept = cur.filter((key) => valid.has(key));
+      if (kept.length) return kept;
+      if (defaultChartToClient && clientId != null) return ['client'];
+      if (pets[0]) return [`patient:${pets[0].id}`];
+      if (clientId != null) return ['client'];
+      return [];
+    });
+  }, [clientId, pets, defaultChartToClient]);
+
+  const showChartPicker = clientId != null || pets.length > 1;
+  const selectedPets = pets.filter((p) => chartKeys.includes(`patient:${p.id}`));
+  const chartToClient = chartKeys.includes('client') && clientId != null;
+
   const quoText = useMemo(
     () => tidyQuoTranscript(call.call?.transcriptText ?? ''),
     [call.call?.transcriptText],
@@ -128,11 +175,11 @@ export default function CallbackJotPanel({
   const phase = call.phase;
   const calling = Boolean(call.optimistic || phase === 'ringing' || phase === 'active');
   const summarizing = phase === 'transcribing';
-  const canChart = Boolean(text && patientId != null);
+  const canChart = Boolean(text && (chartToClient || selectedPets.length > 0));
 
   const startCall = (number: string) => {
     if (!number.trim() || clientId == null) return;
-    markClientCallStarted(clientId, clientName, patientId);
+    markClientCallStarted(clientId, clientName, selectedPets[0]?.id ?? patientId);
     window.location.href = buildPhoneDialHref(number, { fromLine });
   };
 
@@ -144,7 +191,7 @@ export default function CallbackJotPanel({
       const summary = await polishSpokenNotes({
         transcript: text,
         kind: isCallback ? 'callback' : 'review',
-        patientName,
+        patientName: petNames,
         clientName,
       });
       if (summary) setTranscript(summary);
@@ -156,20 +203,46 @@ export default function CallbackJotPanel({
   };
 
   const fileNote = async () => {
-    if (!text || patientId == null) {
-      throw new Error(`Nothing to chart, or this ${noun} is not linked to a patient.`);
+    if (!text) {
+      throw new Error('Nothing to chart.');
     }
-    const note = await createScoutChartNote({
-      patientId,
-      clientId,
-      body: `${chartHeading} — ${task.title}\n\n${text}`,
-    });
-    await finalizeScoutChartNote(note.id);
+    if (!chartToClient && selectedPets.length === 0) {
+      throw new Error('Pick the client or a pet so this can go on the record.');
+    }
+    const body = `${chartHeading} — ${task.title}\n\n${text}`;
+    let lastNoteId: string | null = null;
+    for (const pet of selectedPets) {
+      const note = await createScoutChartNote({
+        patientId: pet.id,
+        clientId,
+        body,
+      });
+      await finalizeScoutChartNote(note.id);
+      lastNoteId = note.id;
+    }
+    if (chartToClient && clientId != null) {
+      await recordScoutChartCommunication({
+        clientId,
+        patientIds: selectedPets.map((p) => p.id),
+        channel: 'log',
+        body,
+        typeLabel: defaultChartToClient ? 'Invoice follow-up' : `${chartHeading} note`,
+        includeOnMedicalRecord: false,
+      });
+    }
     if (call.call?.callId) {
-      await resolveCall(call.call.callId, { noteId: note.id, filed: true }).catch(() => undefined);
+      await resolveCall(call.call.callId, {
+        ...(lastNoteId ? { noteId: lastNoteId } : {}),
+        filed: true,
+      }).catch(() => undefined);
     }
-    return note.id;
+    return lastNoteId;
   };
+
+  const chartDestinationNames = () => [
+    ...(chartToClient ? [clientName?.trim() || 'the client'] : []),
+    ...selectedPets.map((p) => p.name),
+  ];
 
   const actorName = () => {
     const who = myEmployeeId != null ? employees.find((e) => employeeId(e) === myEmployeeId) : null;
@@ -201,8 +274,8 @@ export default function CallbackJotPanel({
       if (task.status !== 'done') await completeTask(task.id);
       setDoneLabel(
         isCallback
-          ? `Call filed to ${patientName ?? 'the patient'}'s record and the callback is done.`
-          : `Filed to ${patientName ?? 'the patient'}'s record and the task is done.`,
+          ? `Call filed to ${filedToLabel(chartDestinationNames())} and the callback is done.`
+          : `Filed to ${filedToLabel(chartDestinationNames())} and the task is done.`,
       );
       await onDone();
     } catch (e) {
@@ -391,7 +464,9 @@ export default function CallbackJotPanel({
             <FileText size={14} aria-hidden /> Update and chart
           </h3>
           <span className="settings-muted">
-            Write what you did. Chart & complete files it to the record. Staff notes stay on the
+            Write what you did. Chart & complete files it to the
+            {defaultChartToClient ? ' client' : ' record'}
+            {showChartPicker ? ' — pick the client or a pet below' : ''}. Staff notes stay on the
             task only.
           </span>
         </div>
@@ -419,6 +494,51 @@ export default function CallbackJotPanel({
           <Wand2 size={14} /> {polishing ? 'Cleaning up…' : 'Clean up'}
         </button>
       </div>
+
+      {showChartPicker ? (
+        <fieldset className="pims-callback-jot__targets">
+          <legend>File this note to</legend>
+          {clientId != null ? (
+            <label className="pims-callback-jot__target">
+              <input
+                type="checkbox"
+                checked={chartKeys.includes('client')}
+                onChange={(e) => {
+                  setChartKeys((cur) =>
+                    e.target.checked ? [...cur, 'client'] : cur.filter((key) => key !== 'client'),
+                  );
+                }}
+                disabled={Boolean(busy)}
+              />
+              <span>
+                {clientName?.trim() || 'Client'}
+                <em>client</em>
+              </span>
+            </label>
+          ) : null}
+          {pets.map((pet) => {
+            const key = `patient:${pet.id}`;
+            return (
+              <label key={pet.id} className="pims-callback-jot__target">
+                <input
+                  type="checkbox"
+                  checked={chartKeys.includes(key)}
+                  onChange={(e) => {
+                    setChartKeys((cur) =>
+                      e.target.checked ? [...cur, key] : cur.filter((k) => k !== key),
+                    );
+                  }}
+                  disabled={Boolean(busy)}
+                />
+                <span>
+                  {pet.name}
+                  <em>pet</em>
+                </span>
+              </label>
+            );
+          })}
+        </fieldset>
+      ) : null}
 
       <div className="pims-callback-jot__handoff">
         <label className="pims-callback-jot__field">
@@ -493,8 +613,8 @@ export default function CallbackJotPanel({
             className="pims-callback-jot__btn pims-callback-jot__btn--primary"
             disabled={!canChart || Boolean(busy)}
             title={
-              patientId == null
-                ? 'Link a patient so this can go on the chart'
+              !chartToClient && selectedPets.length === 0
+                ? 'Pick the client or a pet so this can go on the record'
                 : !text
                   ? 'Add the conversation first'
                   : `File this and close the ${noun}`
@@ -509,8 +629,8 @@ export default function CallbackJotPanel({
             className="pims-callback-jot__btn"
             disabled={!canChart || !reassignTo || Boolean(busy)}
             title={
-              patientId == null
-                ? 'Link a patient so this can go on the chart'
+              !chartToClient && selectedPets.length === 0
+                ? 'Pick the client or a pet so this can go on the record'
                 : !text
                   ? 'Add the conversation first'
                   : !reassignTo

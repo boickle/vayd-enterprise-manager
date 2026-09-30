@@ -9,6 +9,7 @@ import { fetchPatientByIdStaff, searchPatientsStaff, type PatientSearchRow } fro
 import { formatEmployeeDisplayName } from '../utils/employeeDisplayName';
 import {
   fromDatetimeLocalValue,
+  taskStartIso,
   toDatetimeLocalValue,
   validateTaskScheduleOrder,
 } from '../utils/taskDateTime';
@@ -53,6 +54,8 @@ import {
   mailOrderTaskStatusClass,
   mailOrderTaskStatusLabel,
 } from '../utils/mailOrderTaskStatus';
+import { isInvoiceAutomationTask } from '../utils/invoiceTask';
+import { isSoapAutomationTask } from '../utils/soapTask';
 import { isOrderListAutomationTask, orderListPath } from '../utils/orderListTask';
 import TaskReassignModal from '../components/pims/TaskReassignModal';
 import TaskRemoveModal from '../components/pims/TaskRemoveModal';
@@ -875,8 +878,16 @@ export default function PimsTasksPage() {
             {row.title}
           </Link>
           <div className="pims-task-card__pills">
-            {row.kind === 'callback' || row.kind === 'invoice' ? (
-              <span className="pims-task-card__kind">{taskKindLabel(row.kind)}</span>
+            {row.kind === 'callback' ||
+            isInvoiceAutomationTask(row) ||
+            isSoapAutomationTask(row) ? (
+              <span className="pims-task-card__kind">
+                {isInvoiceAutomationTask(row)
+                  ? taskKindLabel('invoice')
+                  : isSoapAutomationTask(row)
+                    ? taskKindLabel('soap')
+                    : taskKindLabel(row.kind)}
+              </span>
             ) : null}
             {row.status === 'done' ? (
               // Done, given up on, and closed by the system all live in Completed.
@@ -902,9 +913,9 @@ export default function PimsTasksPage() {
             )}
           </div>
         </div>
-        {humanStartLine(row.startAt) ? (
-          <p className="pims-task-card__due pims-task-card__due--start">{humanStartLine(row.startAt)}</p>
-        ) : null}
+        <p className="pims-task-card__due pims-task-card__due--start">
+          {humanStartLine(taskStartIso(row)) ?? 'No start date set'}
+        </p>
         <p className="pims-task-card__due">{humanDueLine(row.dueAt)}</p>
         {isOrderListAutomationTask(row) ? (
           <div className="pims-task-card__linked">

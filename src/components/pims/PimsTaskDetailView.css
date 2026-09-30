@@ -224,11 +224,33 @@
   color: #94a3b8;
 }
 
+.pims-task-detail__subject-pet {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .pims-task-detail__meta {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 10px;
+}
+
+.pims-task-detail__schedule {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  margin: 10px 0 0;
+  font-size: 14px;
+  color: #334155;
+}
+
+.pims-task-detail__schedule strong {
+  font-weight: 800;
+  color: #0f172a;
+  margin-right: 4px;
 }
 
 .pims-task-detail__status {
@@ -577,6 +599,13 @@
   color: #334155;
 }
 
+.pims-fb-task__hint {
+  margin: 12px 0 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #64748b;
+}
+
 .pims-fb-task__actions {
   display: flex;
   flex-wrap: wrap;
@@ -585,6 +614,68 @@
 
 .pims-fb-task__actions a.pims-task-detail__btn {
   text-decoration: none;
+}
+
+.pims-fb-task__notes {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px dashed #bfdbfe;
+}
+
+.pims-fb-task__notes h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.pims-fb-task__log {
+  padding: 10px 12px;
+  background: #fff;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  font-size: 14px;
+  line-height: 1.45;
+  color: #0f172a;
+  white-space: pre-wrap;
+}
+
+.pims-fb-task__note-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pims-fb-task__note-field > span {
+  font-size: 12px;
+  font-weight: 700;
+  color: #475569;
+}
+
+.pims-fb-task__notes .soap-textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  font-size: 14px;
+  font-family: inherit;
+}
+
+.pims-fb-task__chart {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.pims-fb-task__notes .pims-task-detail__btn--primary {
+  align-self: flex-start;
+  min-width: 6.5rem;
 }
 
 .pims-fb-task-note {
@@ -869,6 +960,42 @@
 
 .pims-callback-jot__btn--danger:hover:not(:disabled) {
   background: #fef2f2;
+}
+
+.pims-callback-jot__targets {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #d5dbe4;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pims-callback-jot__targets legend {
+  padding: 0 4px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #475569;
+}
+
+.pims-callback-jot__target {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.pims-callback-jot__target em {
+  margin-left: 6px;
+  font-style: normal;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #64748b;
 }
 
 .pims-callback-jot__handoff {

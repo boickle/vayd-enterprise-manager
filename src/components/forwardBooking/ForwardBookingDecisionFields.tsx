@@ -27,7 +27,7 @@ export const FORWARD_BOOKING_MODE_OPTIONS: {
   {
     value: 'labs_pending',
     label: 'Labs pending',
-    hint: 'Recommended: assign this to the doctor first. Once labs are reviewed and the follow-up timing is determined, the doctor can reassign the forward-booking task to the technician.',
+    hint: 'Recommended: assign this to the doctor first. You can add more than one person to do the work, and watchers who should be notified. Once labs are reviewed, the doctor can reassign the task to the technician.',
   },
   {
     value: 'forward_book_fields',
@@ -80,10 +80,9 @@ type Props = {
  * The follow-up ("forward booking") prompt: five mutually exclusive outcomes with
  * the fields each one requires.
  *
- * Deliberately shared verbatim between End Visit, tech checkout, and the visit
- * wrap-up. All three write the same `appointments.forwardBookingDisposition`, and a
- * question this consequential — it decides whether the patient is ever seen again —
- * should not read differently depending on which screen caught the staff member.
+ * Deliberately shared verbatim between End Visit and checkout. Both write the
+ * same `appointments.forwardBookingDisposition`, so a choice on one screen shows
+ * as already settled on the other.
  *
  * Purely presentational: no saving, no side effects. Whoever renders it owns
  * persistence, because the side effects differ per surface (a queue entry, a labs
@@ -146,22 +145,44 @@ export default function ForwardBookingDecisionFields({
 
               {active && mode === 'labs_pending' ? (
                 <div className="scheduler-forward-booking-mode-panel">
-                  <label className="scheduler-edit-field">
-                    <span>Assign task to *</span>
-                    <select
-                      value={value.labsAssigneeEmployeeId}
-                      onChange={(e) => onChange({ labsAssigneeEmployeeId: e.target.value })}
-                      disabled={disabled || metaLoading}
-                      aria-label="Assign labs pending task to"
-                    >
-                      <option value="">Select staff member…</option>
-                      {employees.map((em) => (
-                        <option key={em.id} value={String(em.id)}>
-                          {formatEmployeeDisplayName(em) || em.email}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                  <StaffMultiPick
+                    label="Who does this *"
+                    hint="The people responsible for reviewing labs and setting follow-up. Pick one or more."
+                    employees={employees}
+                    selectedIds={value.labsAssigneeEmployeeIds ?? []}
+                    disabled={disabled || metaLoading}
+                    ariaLabel="People who do the labs pending task"
+                    onToggle={(id, checked) => {
+                      const current = value.labsAssigneeEmployeeIds ?? [];
+                      const watchers = value.labsWatcherEmployeeIds ?? [];
+                      const next = checked
+                        ? [...current, id]
+                        : current.filter((n) => n !== id);
+                      onChange({
+                        labsAssigneeEmployeeIds: next,
+                        labsWatcherEmployeeIds: watchers.filter((n) => !next.includes(n)),
+                      });
+                    }}
+                  />
+                  <StaffMultiPick
+                    label="Watchers"
+                    hint="Optional. Notified, but they are not the people doing the work."
+                    employees={employees}
+                    selectedIds={value.labsWatcherEmployeeIds ?? []}
+                    disabled={disabled || metaLoading}
+                    ariaLabel="Labs pending task watchers"
+                    onToggle={(id, checked) => {
+                      const assignees = value.labsAssigneeEmployeeIds ?? [];
+                      const current = value.labsWatcherEmployeeIds ?? [];
+                      const next = checked
+                        ? [...current, id]
+                        : current.filter((n) => n !== id);
+                      onChange({
+                        labsWatcherEmployeeIds: next.filter((n) => !assignees.includes(n)),
+                        labsAssigneeEmployeeIds: assignees.filter((n) => !(checked && n === id)),
+                      });
+                    }}
+                  />
                   {multiPetLabsTasks ? (
                     <div className="scheduler-forward-booking-mode-hint" style={{ marginTop: 4 }}>
                       Creates one task per selected pet (e.g. &quot;Forward book [pet name] once
@@ -342,5 +363,48 @@ export default function ForwardBookingDecisionFields({
         })}
       </div>
     </fieldset>
+  );
+}
+
+function StaffMultiPick({
+  label,
+  hint,
+  employees,
+  selectedIds,
+  disabled,
+  ariaLabel,
+  onToggle,
+}: {
+  label: string;
+  hint: string;
+  employees: Employee[];
+  selectedIds: number[];
+  disabled?: boolean;
+  ariaLabel: string;
+  onToggle: (id: number, checked: boolean) => void;
+}) {
+  const selected = new Set(selectedIds);
+  return (
+    <div className="scheduler-edit-field scheduler-forward-booking-staff-pick">
+      <span>{label}</span>
+      <div className="scheduler-forward-booking-staff-list" role="group" aria-label={ariaLabel}>
+        {employees.map((em) => {
+          const id = Number(em.id);
+          if (!Number.isFinite(id) || id <= 0) return null;
+          return (
+            <label key={id} className="scheduler-forward-booking-staff-row">
+              <input
+                type="checkbox"
+                checked={selected.has(id)}
+                disabled={disabled}
+                onChange={(e) => onToggle(id, e.target.checked)}
+              />
+              <span>{formatEmployeeDisplayName(em) || em.email}</span>
+            </label>
+          );
+        })}
+      </div>
+      <span className="settings-muted scheduler-forward-booking-field-hint">{hint}</span>
+    </div>
   );
 }

@@ -1,10 +1,10 @@
 // src/api/visitWrapUp.ts
-// Visit wrap-up: the step after the SOAP where the household's charts are reviewed,
-// forward booking is settled, and the client recap email is sent (or deliberately
-// skipped). Mirrors the backend wrap-up endpoints on the visitWorkflow/scribe modules.
+// Visit wrap-up: the step after the SOAP where the household's charts are reviewed
+// and the client recap email is sent (or deliberately skipped). Follow-up is
+// settled on End Visit and checkout. Mirrors the backend wrap-up endpoints.
 import { http } from './http';
 import type { ForwardBookingDisposition } from './forwardBookingDisposition';
-import type { HouseholdRosterEntry, SoapEncounterStatus } from './visitWorkflow';
+import { getEncounter, updateEncounter, type HouseholdRosterEntry, type SoapEncounterStatus } from './visitWorkflow';
 
 const pid = () => Number(import.meta.env.VITE_PRACTICE_ID) || 1;
 
@@ -209,6 +209,51 @@ export async function generateClientRecap(
     { practiceId: pid(), ...(patientIds?.length ? { patientIds } : {}) }
   );
   return data;
+}
+
+export async function persistClientRecapDraft(
+  encounterId: string,
+  draft: { subject: string; body: string }
+): Promise<void> {
+  const enc = await getEncounter(encounterId);
+  const prev =
+    enc.subjective && typeof enc.subjective === 'object'
+      ? (enc.subjective as Record<string, unknown>)
+      : {};
+  await updateEncounter(encounterId, {
+    subjective: {
+      ...prev,
+      clientEmailSubject: draft.subject.trim() ? draft.subject : null,
+      clientEmailBody: draft.body.trim() ? draft.body : null,
+    },
+  });
+}
+
+const recapPrefetch = new Map<string, Promise<{ subject: string; body: string } | null>>();
+
+/** Start (or reuse) recap generation so wrap-up is not waiting on a cold LLM call. */
+export function prefetchClientRecap(
+  encounterId: string,
+  patientIds?: number[]
+): Promise<{ subject: string; body: string } | null> {
+  const existing = recapPrefetch.get(encounterId);
+  if (existing) return existing;
+  const run = (async () => {
+    try {
+      const data = await getVisitWrapUp(encounterId);
+      if (data.clientEmailDelivery?.status) return data.emailDraft;
+      if (data.emailDraft.subject.trim() || data.emailDraft.body.trim()) return data.emailDraft;
+      const ids = patientIds?.length ? patientIds : data.pets.map((p) => p.patientId);
+      const draft = await generateClientRecap(encounterId, ids);
+      await persistClientRecapDraft(encounterId, draft);
+      return draft;
+    } catch {
+      recapPrefetch.delete(encounterId);
+      return null;
+    }
+  })();
+  recapPrefetch.set(encounterId, run);
+  return run;
 }
 
 /**

@@ -148,10 +148,11 @@ export default function EstimateCardModal({
           </button>
         </div>
         <p className="soap-modal-sub">
-          With the client on the line and their permission, enter the card in
-          Stripe. We place a hold
-          {amount != null ? ` for ${money(amount)}` : ''} — nothing is captured
-          until after the visit.
+          With the client on the line, tell them their card will not be charged
+          until the day of service. Then, with their permission, enter the card
+          in Stripe. We place a hold
+          {amount != null ? ` for ${money(amount)}` : ''} now — nothing is
+          captured until the visit.
         </p>
         <div ref={hostRef} className="estimate-card-element" />
         {!ready && !error ? (

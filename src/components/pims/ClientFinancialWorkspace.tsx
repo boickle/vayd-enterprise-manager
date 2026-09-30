@@ -2089,7 +2089,7 @@ export default function ClientFinancialWorkspace({
           applySystemTemplate(
             'payment_link_sms',
             payLinkMerge(clientName, link.amount, labels, link.url),
-            `Hi ${firstNameFromDisplayName(clientName) || 'there'}, here is a secure link to pay ${money(link.amount)} for ${labels}: ${link.url}`,
+            `Hi ${firstNameFromDisplayName(clientName) || 'there'}, here is a secure link to pay ${money(link.amount)} for ${labels}: ${link.url}\n\nIf you want to see an itemized invoice, go to the portal.`,
           ),
         );
         setPaySmsError(null);
@@ -6455,6 +6455,10 @@ export default function ClientFinancialWorkspace({
           onClose={() => setEstimateEditorId(null)}
           onSaved={() => {
             void refreshEstimates();
+          }}
+          onConverted={(invoiceId) => {
+            setEstimateEditorId(null);
+            void refreshList(invoiceId);
           }}
         />
       ) : null}
