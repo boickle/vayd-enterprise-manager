@@ -172,7 +172,8 @@ export function forwardBookingDispositionIsComplete(
       return (
         disposition.intervalAmount != null &&
         disposition.intervalAmount > 0 &&
-        Boolean(disposition.intervalUnit)
+        Boolean(disposition.intervalUnit) &&
+        Boolean(disposition.bookingNotes?.trim())
       );
     case 'labs_pending': {
       const l = disposition.labsPendingTask;
@@ -219,12 +220,14 @@ export function assertForwardBookingDispositionSaved(
   if (!saved?.mode) {
     throw new Error('The server did not save the forward booking choice. Check that PATCH /forward-booking-disposition is implemented.');
   }
-  if (sent.mode === 'not_appropriate') {
+  if (sent.mode === 'not_appropriate' || sent.mode === 'forward_book_fields') {
     const sentNotes = sent.bookingNotes?.trim();
     const savedNotes = saved.bookingNotes?.trim();
     if (sentNotes && !savedNotes) {
       throw new Error(
-        'The server saved "Not appropriate" but did not store the reason. The API must persist bookingNotes for mode not_appropriate.'
+        sent.mode === 'not_appropriate'
+          ? 'The server saved "Not appropriate" but did not store the reason. The API must persist bookingNotes for mode not_appropriate.'
+          : 'The server saved the forward booking but did not store the note. The API must persist bookingNotes for mode forward_book_fields.'
       );
     }
   }

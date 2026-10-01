@@ -30,6 +30,7 @@ const VsdPaymentsMatchAnalyticsPage = React.lazy(
   () => import('./pages/VsdPaymentsMatchAnalytics')
 );
 const BookingCalendarAnalyticsPage = React.lazy(() => import('./pages/BookingCalendarAnalytics'));
+const ForwardBookingAnalyticsPage = React.lazy(() => import('./pages/ForwardBookingAnalytics'));
 
 export type AnalyticsTabPage = {
   path: string;
@@ -68,6 +69,12 @@ export const ANALYTICS_TAB_PAGES: AnalyticsTabPage[] = [
     role: ['employee', 'admin', 'superadmin'],
   },
   { path: 'cancellations', label: 'Cancellations', element: <CancellationsAnalyticsPage />, role: ['employee', 'admin', 'superadmin'] },
+  {
+    path: 'forward-booking',
+    label: 'Forward Booking',
+    element: <ForwardBookingAnalyticsPage />,
+    role: ['employee', 'admin', 'superadmin'],
+  },
   { path: 'square-reconciliation', label: 'Square Reconciliation', element: <SquareReconciliationPage />, role: ['superadmin'] },
   { path: 'openphone-calls', label: 'OpenPhone Calls', element: <OpenPhoneCallsAnalyticsPage />, role: ['employee', 'admin', 'superadmin'] },
   {

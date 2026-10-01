@@ -896,6 +896,9 @@ export function SchedulerActualVisitTimeModal({
     if (!forwardInterval) {
       throw new Error('Select how far out to forward book (number and days, weeks, or months).');
     }
+    if (!bookingNotes.trim()) {
+      throw new Error('Enter a forward booking note before saving.');
+    }
     const visitsToBook =
       householdVisits.length > 1
         ? householdVisits.filter((visit) => selectedHouseholdPatientIds.has(visit.patientId))
@@ -1219,6 +1222,10 @@ export function SchedulerActualVisitTimeModal({
 
     if (!forwardInterval) {
       setError('Select how far out to forward book (number and days, weeks, or months) before saving.');
+      return false;
+    }
+    if (!bookingNotes.trim()) {
+      setError('Enter a forward booking note before saving.');
       return false;
     }
     return true;
@@ -1965,12 +1972,12 @@ export function SchedulerActualVisitTimeModal({
                               </select>
                             </label>
                             <label className="scheduler-edit-field" style={{ display: 'block', marginTop: 10 }}>
-                              <span>Forward booking note</span>
+                              <span>Forward booking note *</span>
                               <p
                                 className="settings-muted"
                                 style={{ fontSize: 13, margin: '4px 0 8px', fontWeight: 400 }}
                               >
-                                Optional — shown on the forward booking list and prefilled when booking the
+                                Required — shown on the forward booking list and prefilled when booking the
                                 follow-up visit.
                               </p>
                               <textarea
@@ -1982,6 +1989,7 @@ export function SchedulerActualVisitTimeModal({
                                   setBookingNotes(e.target.value);
                                 }}
                                 disabled={forwardBookingFieldsDisabled}
+                                required
                                 placeholder="e.g. Prefers AM slots, same provider"
                                 aria-label="Forward booking note"
                                 style={{
