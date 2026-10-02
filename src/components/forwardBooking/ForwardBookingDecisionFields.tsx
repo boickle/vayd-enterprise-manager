@@ -281,12 +281,12 @@ export default function ForwardBookingDecisionFields({
                     className="scheduler-edit-field"
                     style={{ display: 'block', marginTop: 10 }}
                   >
-                    <span>Forward booking note</span>
+                    <span>Forward booking note *</span>
                     <p
                       className="settings-muted"
                       style={{ fontSize: 13, margin: '4px 0 8px', fontWeight: 400 }}
                     >
-                      Optional — shown on the forward booking list and prefilled when booking the
+                      Required — shown on the forward booking list and prefilled when booking the
                       follow-up visit.
                     </p>
                     <textarea
@@ -295,6 +295,8 @@ export default function ForwardBookingDecisionFields({
                       value={value.bookingNotes}
                       onChange={(e) => onChange({ bookingNotes: e.target.value })}
                       disabled={intervalDisabled}
+                      required
+                      aria-required="true"
                       placeholder="e.g. Prefers AM slots, same provider"
                       aria-label="Forward booking note"
                       style={{

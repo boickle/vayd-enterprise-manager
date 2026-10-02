@@ -419,6 +419,7 @@ import {
   buildForwardBookingWorkspaceContext,
   forwardBookingWorkspaceContextBarLine,
 } from '../utils/forwardBookingRoutingContext';
+import { resolveForwardBookingBookDefaultDescription } from '../utils/forwardBookingBookPrefillDescription';
 import { returnToAppointmentRequestsList } from '../utils/appointmentRequestListReturnTab';
 import {
   writeAppointmentRequestReturnSession,
@@ -7684,7 +7685,9 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       defaultDescription:
         isReschedule && (rescheduleVisitPatches?.length ?? 0) <= 1
           ? rescheduleVisitPatches?.[0]?.description?.trim() || ri?.description?.trim()
-          : undefined,
+          : fbi && !isReschedule
+            ? resolveForwardBookingBookDefaultDescription(fbi)
+            : undefined,
       rescheduleAppointmentId: isReschedule ? Number(rescheduleId) : undefined,
       rescheduleAppointmentIds: isReschedule && rescheduleIds.length > 0 ? rescheduleIds : undefined,
       rescheduleVisitPatches:
