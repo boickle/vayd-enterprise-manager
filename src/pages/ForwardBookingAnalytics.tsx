@@ -213,8 +213,8 @@ function ChartTooltip({
       <Typography variant="body2" sx={{ fontWeight: 600, mb: 0.5 }}>
         {label}
       </Typography>
-      <Typography variant="body2">Appointments: {formatCount(row.total)}</Typography>
-      <Typography variant="body2">Forward booked: {formatCount(row.forwardBooked)}</Typography>
+      <Typography variant="body2">Appropriate appointments: {formatCount(row.total)}</Typography>
+      <Typography variant="body2">Future visit booked: {formatCount(row.forwardBooked)}</Typography>
       <Typography variant="body2">
         Rate: {row.rate == null ? '—' : `${row.rate.toFixed(1)}%`}
       </Typography>
@@ -410,10 +410,13 @@ export default function ForwardBookingAnalytics() {
           Forward Booking
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          Share of appointments each team forward booked. A visit counts as forward booked when End
-          Visit was saved as Forward book, or a forward-booking list entry was created from that
-          visit. Days use the practice timezone. Holds, blocks, cancellations, and visits still in
-          progress today are excluded.
+          Of the appointments each team saw, how many led to another visit on the calendar.
+          Euthanasia visits and End Visit choices of Not appropriate are left out. A visit counts
+          only when a later appointment is really there: the forward-booking list entry was booked,
+          a follow-up was created during the visit (Booked at appointment), a later visit was
+          already on the calendar (Already booked), or a Labs pending visit later produced a
+          booking. Choosing Forward book without a booking yet does not count. Holds, blocks,
+          cancellations, and visits still in progress today are excluded.
         </Typography>
 
         {providersError && (
@@ -509,31 +512,31 @@ export default function ForwardBookingAnalytics() {
             <Grid container spacing={2} sx={{ mb: 3 }}>
               <Grid item xs={12} sm={4}>
                 <KpiCard
-                  title="Appointments"
+                  title="Appropriate appointments"
                   value={formatCount(totals.totalAppointments)}
                   subtitle={scopeLabel}
                 />
               </Grid>
               <Grid item xs={12} sm={4}>
                 <KpiCard
-                  title="Forward booked"
+                  title="Future visit booked"
                   value={formatCount(totals.forwardBooked)}
-                  subtitle="Visits added to the forward booking list"
+                  subtitle="A later visit is on the calendar"
                 />
               </Grid>
               <Grid item xs={12} sm={4}>
                 <KpiCard
-                  title="Percent forward booked"
+                  title="Percent with a future visit"
                   value={formatPercent(totals.forwardBooked, totals.totalAppointments)}
-                  subtitle="Forward booked ÷ appointments"
+                  subtitle="Future visit booked ÷ appropriate appointments"
                 />
               </Grid>
             </Grid>
 
             <Card sx={{ mb: 3 }}>
               <CardHeader
-                title="Forward booking rate"
-                subheader={`${scopeLabel}. Daily percent of appointments that were forward booked, with a linear trend.`}
+                title="Future visits booked"
+                subheader={`${scopeLabel}. Daily percent of appropriate appointments that led to a later visit, with a linear trend.`}
               />
               <CardContent sx={{ height: 360 }}>
                 {hasChartPoints ? (
@@ -552,7 +555,7 @@ export default function ForwardBookingAnalytics() {
                       <Line
                         type="monotone"
                         dataKey="rate"
-                        name="Forward booked"
+                        name="Future visit booked"
                         stroke="#1565c0"
                         dot={false}
                         strokeWidth={2}
@@ -582,7 +585,7 @@ export default function ForwardBookingAnalytics() {
                 subheader={
                   restrictEmployeeAnalytics && selectedProviderId === ALL_PROVIDERS
                     ? 'Practice total above. Named rows are providers assigned to you; everyone else is combined.'
-                    : 'Teams ranked by the share of appointments they forward booked.'
+                    : 'Teams ranked by the share of appropriate appointments that led to a later visit.'
                 }
               />
               <CardContent sx={{ pt: 0 }}>
@@ -594,9 +597,9 @@ export default function ForwardBookingAnalytics() {
                       <TableHead>
                         <TableRow>
                           <TableCell>Primary provider</TableCell>
-                          <TableCell align="right">Appointments</TableCell>
-                          <TableCell align="right">Forward booked</TableCell>
-                          <TableCell align="right">Forward booked %</TableCell>
+                          <TableCell align="right">Appropriate appointments</TableCell>
+                          <TableCell align="right">Future visit booked</TableCell>
+                          <TableCell align="right">Future visit %</TableCell>
                         </TableRow>
                       </TableHead>
                       <TableBody>
