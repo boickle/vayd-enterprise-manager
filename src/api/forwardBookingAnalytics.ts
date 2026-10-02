@@ -1,6 +1,10 @@
 import { http } from './http';
 
-/** One primary provider's forward-booking counts on one practice-local day. */
+/**
+ * One primary provider's counts on one practice-local day.
+ * `totalAppointments` is appropriate seen visits. `forwardBooked` is how many
+ * of those have a real later visit on the calendar.
+ */
 export type ForwardBookingAnalyticsProviderDay = {
   date: string;
   primaryProviderId: number | null;
@@ -21,7 +25,7 @@ export type ForwardBookingAnalyticsResponse = {
 };
 
 /**
- * Forward-booking rate by primary provider (team).
+ * Share of appropriate seen visits that led to a later appointment, by primary provider.
  * GET /analytics/forward-booking?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD
  */
 export async function fetchForwardBookingAnalytics(params: {
