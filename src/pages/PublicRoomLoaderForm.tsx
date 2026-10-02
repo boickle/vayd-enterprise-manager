@@ -8033,7 +8033,9 @@ export default function PublicRoomLoaderForm() {
     }
     if (hasDiscount && dp?.clientDiscounts) {
       const reason =
-        dp.clientDiscounts.clientStatusDiscount?.clientStatusName
+        dp.clientDiscounts.staffItemDiscount?.label
+          ? dp.clientDiscounts.staffItemDiscount.label
+          : dp.clientDiscounts.clientStatusDiscount?.clientStatusName
           ? `${dp.clientDiscounts.clientStatusDiscount.clientStatusName} discount`
           : dp.clientDiscounts.personalDiscount
             ? 'Personal discount'

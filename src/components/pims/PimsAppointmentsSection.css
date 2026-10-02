@@ -1,3 +1,130 @@
+.pims-appts-compact__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.pims-appts-compact__head .pims-emr-story__collapse,
+.pims-appts-compact__head h3 {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #78716c;
+}
+
+.pims-appts-compact__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.pims-appts-compact__action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid #d6d3d1;
+  background: #fff;
+  border-radius: 7px;
+  padding: 3px 8px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: #1c1917;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.pims-appts-compact__action:hover:not(:disabled) {
+  background: #f5f5f4;
+  border-color: #a8a29e;
+}
+
+.pims-appts-compact__action:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.pims-appts-compact__facts {
+  margin: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 14px;
+}
+
+.pims-appts-compact__facts div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-size: 13px;
+}
+
+.pims-appts-compact__facts dt {
+  margin: 0;
+  color: #78716c;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.pims-appts-compact__action--rl {
+  margin-top: 6px;
+  align-self: flex-start;
+}
+
+.pims-appts-compact__facts dd {
+  margin: 0;
+  color: #1c1917;
+  line-height: 1.35;
+}
+
+.pims-appts-compact__visit-link {
+  color: #1d4ed8;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.pims-appts-compact__visit-link:hover {
+  color: #1e40af;
+}
+
+@media (max-width: 520px) {
+  .pims-appts-compact__facts {
+    grid-template-columns: 1fr;
+  }
+}
+
+.pims-appts-compact__toggle {
+  margin-top: 8px;
+  border: none;
+  background: none;
+  padding: 0;
+  color: #1d4ed8;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.pims-appts-compact__all {
+  margin-top: 12px;
+}
+
+.pims-appts-compact__all .pims-appts-section__table-wrap {
+  max-height: min(280px, 40vh);
+}
+
 .pims-appts-section {
   border: 1px solid #e2e8f0;
   border-radius: 12px;

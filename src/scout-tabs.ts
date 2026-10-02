@@ -1,6 +1,13 @@
 // Sub-routes under /schedule (was /scout): Home dashboard, Routing, My Day, My Week, Scheduling Tools, Room Loader.
 
-export type ScoutTabId = 'home' | 'routing' | 'my-day' | 'my-week' | 'scheduling-tools' | 'room-loader';
+export type ScoutTabId =
+  | 'home'
+  | 'routing'
+  | 'my-day'
+  | 'my-week'
+  | 'scheduling-tools'
+  | 'room-loader'
+  | 'soap';
 
 export type ScoutTabConfig = {
   id: ScoutTabId;
@@ -14,13 +21,20 @@ export type ScoutTabConfig = {
 /** Valid `/schedule/:segment` outlets not listed in SCOUT_TABS (e.g. calendar only). */
 export const SCHEDULE_OUTLET_EXTRA_SEGMENTS: string[] = [
   'scheduler',
+  'soap',
+  'jot',
+  'brief',
+  'chat',
+  'catalog',
   'inventory',
+  'mail-orders',
   'tasks',
   'clients',
   'patients',
   'settings',
   'admin',
   'analytics',
+  'deposits',
   'email',
   'appointments',
   'holds',
@@ -34,6 +48,7 @@ export const SCOUT_TABS: ScoutTabConfig[] = [
   { id: 'my-week', path: 'my-week', label: 'My Week', permission: 'canSeeDoctorDay' },
   { id: 'scheduling-tools', path: 'scheduling-tools', label: 'Scheduling Tools' },
   { id: 'room-loader', path: 'room-loader', label: 'Room Loader' },
+  { id: 'soap', path: 'soap', label: 'Visits', permission: 'canSeeDoctorDay' },
 ];
 
 function matchesRole(userRoles: string[]): boolean {
@@ -51,12 +66,16 @@ export function scoutTabPermissionOk(perm: string | undefined, abilities?: strin
 /** Legacy full-page My Week (`/schedule/my-week`) — tab config kept for future use; hidden from nav in favor of Practice calendar (`/schedule/scheduler`). */
 export const SHOW_MY_WEEK_SCOUT_TAB = false;
 
+/** Doctor worklist (`/schedule/soap`) — SOAP encounters open from the chart or calendar instead. */
+export const SHOW_SOAP_SCOUT_TAB = false;
+
 /** Tabs the current user should see in the Schedule hub. */
 export function getVisibleScoutTabs(abilities?: string[], roles?: string[]): ScoutTabConfig[] {
   const userRoles = (roles ?? []).map((r) => String(r).toLowerCase().trim()).filter(Boolean);
   if (!matchesRole(userRoles)) return [];
   return SCOUT_TABS.filter((tab) => {
     if (!SHOW_MY_WEEK_SCOUT_TAB && tab.id === 'my-week') return false;
+    if (!SHOW_SOAP_SCOUT_TAB && tab.id === 'soap') return false;
     return scoutTabPermissionOk(tab.permission, abilities);
   });
 }

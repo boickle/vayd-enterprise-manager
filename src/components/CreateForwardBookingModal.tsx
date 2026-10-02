@@ -20,8 +20,9 @@ import { clientsForPatientSearchRow, primaryClientLabelForPatientRow } from '../
 import { practiceTimeZoneOrDefault } from '../utils/practiceTimezone';
 import '../pages/Scheduler.css';
 import '../pages/Settings.css';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
-const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_ID = currentPracticeId();
 
 /** Select value when staff adds forward booking without a linked source visit. */
 const NO_ASSOCIATED_VISIT = '__no_source_visit__';
@@ -341,7 +342,7 @@ export function CreateForwardBookingModal({
           { amount, unit: forwardUnit },
           practiceId,
           {
-            bookingNotes: bookingNotes.trim() || null,
+            bookingNotes: bookingNotes.trim(),
             ...(Number.isFinite(providerId) && providerId > 0
               ? { primaryProviderId: providerId }
               : {}),
@@ -382,7 +383,7 @@ export function CreateForwardBookingModal({
         { amount, unit: forwardUnit },
         practiceId,
         {
-          bookingNotes: bookingNotes.trim() || null,
+          bookingNotes: bookingNotes.trim(),
           appointmentTypes,
           patientId: selectedPatient.id,
           clientId: Number.isFinite(clientId) ? clientId : undefined,
@@ -584,6 +585,7 @@ export function CreateForwardBookingModal({
               onChange={(e) => setBookingNotes(e.target.value)}
               disabled={busy}
               required
+              aria-required="true"
               placeholder="e.g. Prefers AM slots, same provider"
               style={{ width: '100%', resize: 'vertical', fontFamily: 'inherit', fontSize: 14 }}
             />

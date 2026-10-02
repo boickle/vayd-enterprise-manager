@@ -37,8 +37,9 @@ import {
   readSlotOfferReviewReturnSession,
 } from '../utils/slotOfferReviewReturnSession';
 import './Settings.css';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
-const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_ID = currentPracticeId();
 const TEXTED_OFFERS_TAB_PARAM = 'tab';
 const TEXTED_OFFERS_TAB_KEYS: SlotOfferListTab[] = [
   'active',
@@ -1227,6 +1228,7 @@ export default function TextedOffersPage() {
       {smsTarget ? (
         <ClientSmsComposeModal
           open
+          clientId={smsTarget.clientId}
           clientLabel={smsTarget.clientLabel}
           fromLineLabel={smsTarget.fromLine}
           message={smsMessage}

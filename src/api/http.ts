@@ -4,6 +4,13 @@ import axios, { AxiosError, AxiosHeaders, AxiosRequestHeaders, InternalAxiosRequ
 export const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000';
 const baseURL = apiBaseUrl;
 
+/** The API picks the practice from this host (e.g. acme.scoutpims.com) when there is no token. */
+export const PRACTICE_HOST_HEADER = 'X-Scout-Host';
+
+export function practiceHostHeaders(): Record<string, string> {
+  return typeof window === 'undefined' ? {} : { [PRACTICE_HOST_HEADER]: window.location.host };
+}
+
 // Initialize token from localStorage on module load
 // Support both old token format and new accessToken format for migration
 let token: string | null = (() => {
@@ -302,7 +309,7 @@ async function _performTokenRefresh(shouldLogoutOnFailure: boolean = true): Prom
     const response = await axios.post(
       `${baseURL}/auth/refresh`,
       { refreshToken },
-      { withCredentials: false }
+      { withCredentials: false, headers: practiceHostHeaders() }
     );
     console.log('[Token Refresh] 🔐 Refresh response received:', {
       hasAccessToken: !!response.data?.accessToken,
@@ -523,6 +530,9 @@ http.interceptors.request.use((config) => {
   if (!headers.has('Authorization') && currentToken) {
     headers.set('Authorization', `Bearer ${currentToken}`);
   }
+  for (const [name, value] of Object.entries(practiceHostHeaders())) {
+    if (!headers.has(name)) headers.set(name, value);
+  }
 
   config.headers = headers as AxiosRequestHeaders;
   return config;
@@ -610,4 +620,12 @@ http.interceptors.response.use(
 export function postWithToken<T = any>(path: string, data: any, tokenOverride: string) {
   const headers = new AxiosHeaders({ Authorization: `Bearer ${tokenOverride}` });
   return http.post<T>(path, data, { headers });
+}
+
+export function apiErrorMessage(e: unknown): string {
+  const res = (e as { response?: { data?: { message?: string | string[] } } })?.response;
+  const message = res?.data?.message;
+  if (Array.isArray(message)) return message.join(', ');
+  if (typeof message === 'string' && message.trim()) return message;
+  return e instanceof Error ? e.message : 'Request failed';
 }

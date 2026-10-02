@@ -92,3 +92,15 @@ export async function fetchOpenPhoneCallSummary(params: {
   });
   return data;
 }
+
+export type OpenPhoneWorkspaceLine = {
+  id: string;
+  phone: string;
+  name: string | null;
+};
+
+/** GET /sms/quo-lines — Quo inbox names for every workspace line. */
+export async function fetchOpenPhonePhoneNumbers(): Promise<OpenPhoneWorkspaceLine[]> {
+  const { data } = await http.get<{ numbers?: OpenPhoneWorkspaceLine[] }>('/sms/quo-lines');
+  return Array.isArray(data?.numbers) ? data.numbers : [];
+}

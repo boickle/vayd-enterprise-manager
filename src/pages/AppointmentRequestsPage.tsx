@@ -169,8 +169,9 @@ import {
   writeAppointmentRequestListReturnTab,
 } from '../utils/appointmentRequestListReturnTab';
 import './Settings.css';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
-const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_ID = currentPracticeId();
 
 type BookedApptSummary = AppointmentRequestBookedApptSummary;
 
@@ -2444,7 +2445,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                           Urgent
                         </span>
                       ) : null}
-                      {showScoutLabelChips && clientType !== 'unknown' ? (
+                      {clientType !== 'unknown' ? (
                         <div
                           style={{
                             display: 'inline-block',
@@ -2545,7 +2546,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
                             color: '#92400e',
                           }}
                         >
-                          New client — convert HOLD in scheduler
+                          On hold
                         </div>
                       ) : null}
                     </div>
@@ -2979,6 +2980,7 @@ export default function AppointmentRequestsPage(_props: AppointmentRequestsPageP
       {smsItem ? (
         <ClientSmsComposeModal
           open
+          clientId={requestDataClientId(smsItem.requestData ?? {}) ? Number(requestDataClientId(smsItem.requestData ?? {})) : null}
           clientLabel={clientDisplayNameFromRequestData(smsItem.requestData ?? {})}
           message={smsMessageLoading ? 'Loading message…' : smsMessage}
           onMessageChange={setSmsMessage}

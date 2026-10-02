@@ -42,6 +42,9 @@ export type UnscheduledReminder = {
   notes?: string | null;
   /** When true, reminder may be omitted from fill-day / outreach lists unless explicitly shown. */
   isHidden?: boolean | null;
+  /** Inventory item that created this reminder (catalog sale), when known. */
+  sourceInventoryItemId?: number | null;
+  sourceDefinitionId?: number | null;
   patient?: CareOutreachPatientRef | null;
   employee?: CareOutreachEmployeeRef | null;
   practice?: { id: number; name?: string };
@@ -95,6 +98,24 @@ export type PatchReminderBody = {
   outreachNotes?: string;
   isHidden?: boolean;
 };
+
+export type CreatePatientReminderBody = {
+  patientId: number;
+  description: string;
+  reminderType?: string;
+  dueDate: string;
+  startReminding?: string;
+  stopReminding?: string;
+  sourceCatalogItemType?: 'inventory' | 'procedure' | 'lab' | null;
+  sourceCatalogItemId?: number | null;
+};
+
+export async function createPatientReminder(
+  body: CreatePatientReminderBody,
+): Promise<UnscheduledReminder> {
+  const { data } = await http.post<unknown>('/reminders', body);
+  return unwrapReminderResponse(data);
+}
 
 export async function patchReminder(
   reminderId: number,

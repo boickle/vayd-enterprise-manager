@@ -1,6 +1,11 @@
 // src/api/clientPortal.ts
 import { apiBaseUrl, http } from './http';
 import { pickPracticeMainPhone } from '../utils/practicePhone';
+import {
+  parseDeclinedItems,
+  type DeclinedTreatmentItem,
+} from './declinedTreatments';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
 /** ---------- Types ---------- **/
 export type Vaccination = {
@@ -401,6 +406,16 @@ export async function fetchClientAppointments(): Promise<ClientAppointment[]> {
  *
  * IMPORTANT: we now capture BOTH the external id (kept in `id`) and the REAL DB id in `dbId`.
  */
+export async function fetchClientChronicMeds(
+  patientId: number,
+  practiceId = currentPracticeId()
+) {
+  const { data } = await http.get('/patient-prescriptions/mine', {
+    params: { patientId, practiceId, activeChronicOnly: true },
+  });
+  return Array.isArray(data) ? data : [];
+}
+
 export async function fetchClientPets(): Promise<Pet[]> {
   // 1) Try the first-class endpoint.
   try {
@@ -609,6 +624,15 @@ export async function fetchPracticeInfo(): Promise<PracticeInfo | null> {
   }
 }
 
+export async function fetchPracticeInfoById(practiceId: number): Promise<PracticeInfo | null> {
+  try {
+    const { data } = await http.get(`/practice/info/${practiceId}`);
+    return data || null;
+  } catch {
+    return null;
+  }
+}
+
 /** Main practice SMS/call line — from GET /practice/info (not hardcoded). */
 export async function fetchPracticeMainPhone(practiceId?: number): Promise<string | null> {
   try {
@@ -651,6 +675,13 @@ export async function fetchClientPetsWithWellness(): Promise<Pet[]> {
 }
 
 // api/clientPortal.ts
+export type ClientDeclinedItem = {
+  id: number;
+  label: string;
+  declinedAt: string | null;
+  patientId?: number;
+};
+
 export type ClientReminder = {
   id: number | string;
   clientId?: number | string;
@@ -696,14 +727,26 @@ export function mapClientReminder(r: any): ClientReminder {
 }
 
 // Example fetch using the mapper + sort by due date
-export async function fetchClientReminders(): Promise<ClientReminder[]> {
-  const resp = await http.get('/reminders/client'); // your endpoint
-  const list = Array.isArray(resp.data) ? resp.data.map(mapClientReminder) : [];
-  return list.sort((a, b) => {
+export async function fetchClientReminders(): Promise<{
+  reminders: ClientReminder[];
+  declinedItems: DeclinedTreatmentItem[];
+}> {
+  const resp = await http.get('/reminders/client');
+  const data = resp.data;
+  const rawReminders: unknown[] = Array.isArray(data)
+    ? data
+    : Array.isArray(data?.reminders)
+      ? data.reminders
+      : [];
+  const reminders = rawReminders.map(mapClientReminder).sort((a, b) => {
     const ta = a.dueIso ? Date.parse(a.dueIso) : Number.POSITIVE_INFINITY;
     const tb = b.dueIso ? Date.parse(b.dueIso) : Number.POSITIVE_INFINITY;
     return ta - tb;
   });
+  return {
+    reminders,
+    declinedItems: parseDeclinedItems(data?.declinedItems),
+  };
 }
 
 // Message types

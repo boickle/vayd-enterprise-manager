@@ -1,0 +1,255 @@
+.ppg-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.25rem;
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.ppg-modal {
+  width: min(640px, 100%);
+  max-height: min(88vh, 760px);
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.22);
+  color: #0f172a;
+}
+
+.ppg-modal__head {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: space-between;
+  padding: 1.1rem 1.2rem 0.85rem;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.ppg-modal__eyebrow {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.ppg-modal__title {
+  margin: 0.15rem 0 0;
+  font-size: 1.1rem;
+  font-weight: 650;
+  line-height: 1.3;
+}
+
+.ppg-modal__hint {
+  margin: 0.35rem 0 0;
+  font-size: 0.86rem;
+  color: #475569;
+  line-height: 1.4;
+}
+
+.ppg-icon-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #475569;
+  cursor: pointer;
+}
+
+.ppg-icon-btn:hover {
+  background: #f1f5f9;
+}
+
+.ppg-modal__body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 1rem 1.2rem;
+}
+
+.ppg-error {
+  margin: 0 0 0.75rem;
+  padding: 0.55rem 0.7rem;
+  border-radius: 8px;
+  background: #fef2f2;
+  color: #b91c1c;
+  font-size: 0.88rem;
+}
+
+.ppg-muted {
+  margin: 0;
+  color: #64748b;
+  font-size: 0.9rem;
+}
+
+.ppg-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 2rem 1rem;
+  color: #64748b;
+  text-align: center;
+}
+
+.ppg-empty p {
+  margin: 0;
+  font-size: 0.92rem;
+}
+
+.ppg-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 0.75rem;
+}
+
+.ppg-card {
+  position: relative;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #f8fafc;
+  display: flex;
+  flex-direction: column;
+}
+
+.ppg-card.is-primary {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 1px #3b82f6;
+}
+
+.ppg-card__img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  background: #e2e8f0;
+}
+
+.ppg-card__badge {
+  position: absolute;
+  top: 0.4rem;
+  left: 0.4rem;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  background: #1d4ed8;
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.ppg-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  padding: 0.4rem;
+}
+
+.ppg-card__btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  color: #334155;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.25rem 0.4rem;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.ppg-card__btn:hover:not(:disabled) {
+  background: #f1f5f9;
+}
+
+.ppg-card__btn:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.ppg-card__btn--danger {
+  color: #b91c1c;
+  border-color: #fecaca;
+}
+
+.ppg-modal__foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  padding: 0.85rem 1.2rem 1.1rem;
+  border-top: 1px solid #e2e8f0;
+}
+
+.ppg-file {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.ppg-upload,
+.ppg-done {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border-radius: 8px;
+  font-size: 0.88rem;
+  font-weight: 650;
+  padding: 0.45rem 0.85rem;
+  cursor: pointer;
+}
+
+.ppg-upload {
+  border: 1px solid #1d4ed8;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.ppg-upload:hover:not(:disabled) {
+  background: #dbeafe;
+}
+
+.ppg-upload:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.ppg-done {
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  color: #0f172a;
+}
+
+.ppg-done:hover:not(:disabled) {
+  background: #f8fafc;
+}
+
+.ppg-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  border: 0;
+}

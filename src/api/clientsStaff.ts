@@ -34,3 +34,14 @@ export async function fetchClientByIdStaff(clientId: string | number): Promise<u
   const { data } = await http.get(`/clients/${encodeURIComponent(String(clientId))}`);
   return data;
 }
+
+/** GET /clients/:id/invoices — eVet billing envelope (invoices + balance). */
+export async function fetchClientBillingStaff(
+  clientId: string | number,
+  practiceId: number,
+): Promise<Record<string, unknown>> {
+  const { data } = await http.get(`/clients/${encodeURIComponent(String(clientId))}/invoices`, {
+    params: { practiceId },
+  });
+  return data && typeof data === 'object' ? (data as Record<string, unknown>) : {};
+}

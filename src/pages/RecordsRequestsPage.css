@@ -1,0 +1,285 @@
+.records-page {
+  margin-top: 20px;
+}
+
+.records-page__bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.records-page__filters {
+  display: inline-flex;
+  gap: 4px;
+  background: #f1f5f9;
+  border-radius: 8px;
+  padding: 3px;
+}
+
+.records-page__filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: none;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #475569;
+  cursor: pointer;
+}
+
+.records-page__filter.is-active {
+  background: #fff;
+  color: #0f172a;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+.records-page__filter-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: #e2e8f0;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.records-page__filter.is-active .records-page__filter-count {
+  background: var(--accent-strong, #4fb128);
+  color: #fff;
+}
+
+.records-page__filter-count.is-urgent {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.records-page__filter.is-active .records-page__filter-count.is-urgent {
+  background: #dc2626;
+  color: #fff;
+}
+
+.records-page__search {
+  flex: 1;
+  min-width: 220px;
+  padding: 7px 11px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.records-page__bar .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.records-page__muted {
+  color: #64748b;
+  font-size: 13px;
+}
+
+.records-page__stale,
+.records-page__error,
+.records-page__flash {
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.records-page__stale {
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.records-page__error {
+  background: #fef2f2;
+  color: #991b1b;
+}
+
+.records-page__flash {
+  background: #ecfdf5;
+  color: #065f46;
+}
+
+.records-page__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.records-page__table th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #64748b;
+  padding: 6px 10px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.records-page__table td {
+  padding: 9px 10px;
+  border-bottom: 1px solid #f1f5f9;
+  vertical-align: top;
+}
+
+.records-page__table tbody tr:hover {
+  background: #f8fafc;
+}
+
+.records-page__table tr.is-cancelled,
+.records-page__table tr.is-declined {
+  opacity: 0.6;
+}
+
+/* Visit is three days out or closer and the records still aren't here. */
+.records-page__table tr.is-urgent > td {
+  background: #fef2f2;
+  border-bottom-color: #fecaca;
+}
+
+.records-page__table tr.is-urgent > td:first-child {
+  box-shadow: inset 3px 0 0 #dc2626;
+}
+
+.records-page__nudge-row > td {
+  padding: 0 10px 9px;
+  background: #fef2f2;
+  border-bottom: 1px solid #fecaca;
+}
+
+.records-page__nudge {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+  color: #991b1b;
+}
+
+.records-page__nudge-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid #dc2626;
+  background: #fff;
+  color: #991b1b;
+  border-radius: 5px;
+  padding: 4px 9px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.records-page__nudge-btn:hover:not(:disabled) {
+  background: #dc2626;
+  color: #fff;
+}
+
+.records-page__nudge-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.records-page__nudge-none {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #b45309;
+}
+
+.records-page__lookup-row > td {
+  padding: 10px;
+  background: #f8fafc;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.records-page__table a {
+  color: inherit;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.records-page__table a:hover {
+  text-decoration: underline;
+}
+
+.records-page__sub {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  color: #94a3b8;
+  margin-top: 2px;
+}
+
+.records-page__sub--warn {
+  color: #b45309;
+  font-weight: 600;
+}
+
+.records-page__pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.records-page__pill.is-pending {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.records-page__pill.is-received {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.records-page__pill.is-declined,
+.records-page__pill.is-cancelled {
+  background: #e2e8f0;
+  color: #475569;
+}
+
+.records-page__actions {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.records-page__actions button,
+.records-page__upload {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  border-radius: 5px;
+  padding: 3px 8px;
+  font-size: 12px;
+  cursor: pointer;
+  color: #334155;
+}
+
+.records-page__actions button:hover:not(:disabled),
+.records-page__upload:hover {
+  border-color: var(--accent-strong, #4fb128);
+}
+
+.records-page__actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

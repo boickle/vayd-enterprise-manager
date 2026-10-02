@@ -1,0 +1,326 @@
+/* Floating call dock — deliberately loud, because a live call is the most important thing
+   on the screen. Never a modal: the chart underneath stays scrollable and clickable so you
+   can look things up mid-call. */
+.call-dock-bunch {
+  position: fixed;
+  z-index: 16000;
+  width: 380px;
+  max-width: calc(100vw - 24px);
+}
+
+/* Room for the peeks sticking out past the front card. */
+.call-dock-bunch--stacked {
+  padding: 0 36px 48px 0;
+}
+
+.call-dock {
+  position: relative;
+  width: 100%;
+  background: #fff;
+  border: 2px solid #16a34a;
+  border-radius: 14px;
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.28);
+  overflow: hidden;
+  animation: call-dock-in 160ms ease-out;
+}
+
+.call-dock-peek {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: calc(100% - 28px);
+  min-height: 64px;
+  padding: 10px 12px;
+  border: 2px solid #2563eb;
+  border-radius: 14px;
+  background: #dbeafe;
+  color: #1e3a8a;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.22);
+}
+
+.call-dock-peek:hover {
+  background: #bfdbfe;
+}
+
+.call-dock-peek--live {
+  border-color: #16a34a;
+  background: #bbf7d0;
+  color: #14532d;
+}
+
+.call-dock-peek--live:hover {
+  background: #86efac;
+}
+
+.call-dock-peek--muted {
+  border-color: #a8a29e;
+  background: #e7e5e4;
+  color: #44403c;
+}
+
+.call-dock-peek--muted:hover {
+  background: #d6d3d1;
+}
+
+.call-dock-peek__label {
+  display: block;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.85;
+}
+
+.call-dock-peek__who {
+  display: block;
+  margin-top: 2px;
+  font-size: 14px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@keyframes call-dock-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.98);
+  }
+}
+
+.call-dock--ready {
+  border-color: #2563eb;
+}
+
+.call-dock--muted {
+  border-color: #d6d3d1;
+}
+
+/* Drag handle. The whole strip is grabbable so it is hard to miss. */
+.call-dock__grip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 10px 9px 12px;
+  background: #16a34a;
+  color: #fff;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.call-dock--ready .call-dock__grip {
+  background: #2563eb;
+}
+
+.call-dock--muted .call-dock__grip {
+  background: #78716c;
+}
+
+.call-dock__grip:active {
+  cursor: grabbing;
+}
+
+.call-dock__grip-label {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.call-dock__grip-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+  cursor: pointer;
+  flex: none;
+}
+
+.call-dock__grip-btn:hover {
+  background: rgba(255, 255, 255, 0.32);
+}
+
+.call-dock__body {
+  padding: 14px 16px 16px;
+}
+
+.call-dock__who {
+  margin: 0 0 2px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #78716c;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.call-dock__state {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0 0 4px;
+  font-size: 19px;
+  font-weight: 700;
+  color: #1c1917;
+  line-height: 1.25;
+}
+
+.call-dock__timer {
+  font-variant-numeric: tabular-nums;
+  color: #57534e;
+  font-weight: 600;
+}
+
+.call-dock__note {
+  margin: 6px 0 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: #78716c;
+}
+
+.call-dock__stack-hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: #1d4ed8;
+}
+
+.call-dock__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 13px;
+}
+
+.call-dock__primary {
+  flex: 1 1 auto;
+  min-width: 150px;
+  padding: 9px 14px;
+  border: 0;
+  border-radius: 8px;
+  background: #2563eb;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.call-dock__primary:hover {
+  background: #1d4ed8;
+}
+
+.call-dock__secondary {
+  padding: 9px 12px;
+  border: 1px solid #e7e5e4;
+  border-radius: 8px;
+  background: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  color: #57534e;
+  cursor: pointer;
+}
+
+.call-dock__secondary:hover {
+  background: #f5f5f4;
+}
+
+.call-dock__dismiss {
+  padding: 9px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 600;
+  color: #78716c;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.call-dock__dismiss:hover {
+  color: #44403c;
+  background: #f5f5f4;
+}
+
+/* Pulsing dot for the live states, so a glance tells you it is still going. */
+.call-dock__dot {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: #16a34a;
+  flex: none;
+  animation: call-dock-pulse 1.3s ease-in-out infinite;
+}
+
+.call-dock--ready .call-dock__dot {
+  background: #2563eb;
+  animation: none;
+}
+
+.call-dock--muted .call-dock__dot {
+  background: #a8a29e;
+  animation: none;
+}
+
+@keyframes call-dock-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.35;
+    transform: scale(0.82);
+  }
+}
+
+.call-dock__ellipsis i {
+  display: inline-block;
+  width: 3.5px;
+  height: 3.5px;
+  margin-left: 2.5px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: call-dock-ellipsis 1.2s infinite ease-in-out;
+}
+
+.call-dock__ellipsis i:nth-child(2) {
+  animation-delay: 0.18s;
+}
+
+.call-dock__ellipsis i:nth-child(3) {
+  animation-delay: 0.36s;
+}
+
+@keyframes call-dock-ellipsis {
+  0%,
+  80%,
+  100% {
+    opacity: 0.2;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .call-dock,
+  .call-dock__dot,
+  .call-dock__ellipsis i {
+    animation: none;
+  }
+}

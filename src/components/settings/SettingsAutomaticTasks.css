@@ -1,0 +1,257 @@
+.auto-tasks {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.auto-tasks__empty,
+.auto-tasks__error {
+  padding: 16px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.auto-tasks__error {
+  color: var(--error);
+}
+
+/* --------------------------------------------------------------- toolbar */
+
+.auto-tasks__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.auto-tasks__run {
+  padding: 6px 12px;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.auto-tasks__run:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+
+.auto-tasks__run:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.auto-tasks__toolbar-note {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ------------------------------------------------------------------ rule */
+
+.auto-tasks__rule {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+  overflow: hidden;
+}
+
+.auto-tasks__rule--off {
+  background: var(--bg);
+}
+
+.auto-tasks__rule--off .auto-tasks__name,
+.auto-tasks__rule--off .auto-tasks__summary {
+  opacity: 0.6;
+}
+
+.auto-tasks__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+}
+
+.auto-tasks__head-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.auto-tasks__name {
+  margin: 0 0 3px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.auto-tasks__summary {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.auto-tasks__expand {
+  flex-shrink: 0;
+  padding: 5px 12px;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.auto-tasks__expand:hover {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+
+/* ---------------------------------------------------------------- toggle */
+
+.auto-tasks__toggle {
+  flex-shrink: 0;
+  margin-top: 2px;
+  cursor: pointer;
+}
+
+.auto-tasks__toggle input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.auto-tasks__toggle-track {
+  display: block;
+  position: relative;
+  width: 36px;
+  height: 20px;
+  border-radius: 999px;
+  background: var(--border);
+  transition: background 0.15s ease;
+}
+
+.auto-tasks__toggle-track::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--surface);
+  transition: transform 0.15s ease;
+}
+
+.auto-tasks__toggle input:checked + .auto-tasks__toggle-track {
+  background: var(--accent);
+}
+
+.auto-tasks__toggle input:checked + .auto-tasks__toggle-track::after {
+  transform: translateX(16px);
+}
+
+.auto-tasks__toggle input:focus-visible + .auto-tasks__toggle-track {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 2px;
+}
+
+/* ------------------------------------------------------------------ body */
+
+.auto-tasks__body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 0 16px 16px;
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+
+.auto-tasks__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.auto-tasks__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.auto-tasks__field--wide {
+  grid-column: 1 / -1;
+}
+
+.auto-tasks__field input,
+.auto-tasks__field select,
+.auto-tasks__field textarea {
+  padding: 7px 9px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.auto-tasks__field textarea {
+  resize: vertical;
+}
+
+/* -------------------------------------------------------------- watchers */
+
+.auto-tasks__watchers {
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.auto-tasks__watchers legend {
+  padding: 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.auto-tasks__watchers-note {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.auto-tasks__watcher-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+
+.auto-tasks__watcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+/* ----------------------------------------------------------------- notes */
+
+.auto-tasks__vars,
+.auto-tasks__last-run {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.auto-tasks__vars code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--pill);
+  font-size: 12px;
+}

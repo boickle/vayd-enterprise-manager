@@ -11,7 +11,8 @@ export function appSurfaceFromPath(pathname: string): 'public' | 'staff' {
     path === '/request-reset' ||
     path === '/requestreset' ||
     path === '/reset-password' ||
-    path === '/resetpass'
+    path === '/resetpass' ||
+    path === '/auth/handoff'
   ) {
     return 'public';
   }

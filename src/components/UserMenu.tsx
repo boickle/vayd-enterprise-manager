@@ -2,6 +2,8 @@
 import { useState, useRef, useEffect, type MouseEvent as ReactMouseEvent } from 'react';
 import { useNavigate, NavLink, useLocation } from 'react-router';
 import { useAuth } from '../auth/useAuth';
+import { apiErrorMessage } from '../api/http';
+import { fetchMyPractices, type PracticeSummary } from '../api/practices';
 import { blockRoutingCalendarPreviewNavigation } from '../utils/routingCalendarPreviewGuard';
 import { markSchedulerHandoffPreferRoutingDoctor } from '../utils/schedulerCalendarHandoff';
 import { startFreshNewAppointmentRouting } from '../utils/routingNewAppointment';
@@ -12,10 +14,16 @@ export type UserMenuExtra =
   | { label: string; href: string; external: true; to?: undefined };
 
 export default function UserMenu({ menuExtras = [] }: { menuExtras?: UserMenuExtra[] }) {
-  const { logout, userEmail, role } = useAuth() as any;
+  const { logout, userEmail, role, switchPractice } = useAuth() as any;
   const nav = useNavigate();
   const location = useLocation();
   const [isOpen, setIsOpen] = useState(false);
+  const [practices, setPractices] = useState<{
+    current: string;
+    practices: PracticeSummary[];
+  } | null>(null);
+  const [switchingTo, setSwitchingTo] = useState<string | null>(null);
+  const [switchError, setSwitchError] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
 
@@ -43,6 +51,31 @@ export default function UserMenu({ menuExtras = [] }: { menuExtras?: UserMenuExt
       };
     }
   }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen || practices) return;
+    let on = true;
+    fetchMyPractices()
+      .then((data) => {
+        if (on) setPractices(data);
+      })
+      .catch(() => undefined);
+    return () => {
+      on = false;
+    };
+  }, [isOpen, practices]);
+
+  const handleSwitchPractice = async (practiceKey: string) => {
+    if (blockRoutingCalendarPreviewNavigation()) return;
+    setSwitchError(null);
+    setSwitchingTo(practiceKey);
+    try {
+      await switchPractice(practiceKey);
+    } catch (err) {
+      setSwitchError(apiErrorMessage(err));
+      setSwitchingTo(null);
+    }
+  };
 
   const handleLogout = async () => {
     if (blockRoutingCalendarPreviewNavigation()) return;
@@ -106,6 +139,28 @@ export default function UserMenu({ menuExtras = [] }: { menuExtras?: UserMenuExt
             <span className="user-menu-email">{userEmail || 'Signed in'}</span>
           </div>
           <div className="user-menu-divider"></div>
+
+          {practices && practices.practices.length > 1 && (
+            <>
+              <div className="user-menu-section-label">Practice</div>
+              {practices.practices.map((practice) => {
+                const isCurrent = practice.key === practices.current;
+                return (
+                  <button
+                    key={practice.key}
+                    className={`user-menu-item user-menu-nav-item${isCurrent ? ' is-active' : ''}`}
+                    onClick={() => !isCurrent && handleSwitchPractice(practice.key)}
+                    disabled={isCurrent || switchingTo != null}
+                    aria-current={isCurrent ? 'true' : undefined}
+                  >
+                    {switchingTo === practice.key ? `Switching to ${practice.name}…` : practice.name}
+                  </button>
+                );
+              })}
+              {switchError && <div className="user-menu-section-label danger">{switchError}</div>}
+              <div className="user-menu-divider"></div>
+            </>
+          )}
 
           {menuExtras.length > 0 && (
             <>

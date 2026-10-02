@@ -13,7 +13,7 @@
 .task-reassign-modal {
   background: #fff;
   border-radius: 12px;
-  max-width: 400px;
+  max-width: 440px;
   width: 100%;
   padding: 22px 22px 20px;
   box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
@@ -50,10 +50,17 @@
 }
 
 .task-reassign-modal__task-title {
-  margin: 0 0 14px;
+  margin: 0 0 8px;
   font-size: 14px;
   color: #334155;
   font-weight: 600;
+}
+
+.task-reassign-modal__hint {
+  margin: 0 0 14px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: #64748b;
 }
 
 .task-reassign-modal__error {
@@ -75,12 +82,19 @@
   color: #64748b;
 }
 
-.task-reassign-modal__field select {
+.task-reassign-modal__field select,
+.task-reassign-modal__field input,
+.task-reassign-modal__field textarea {
   padding: 10px 12px;
   border: 1px solid #cbd5e1;
   border-radius: 8px;
   font-size: 14px;
   font-family: inherit;
+}
+
+.task-reassign-modal__field textarea {
+  resize: vertical;
+  min-height: 4.5rem;
 }
 
 .task-reassign-modal__actions {

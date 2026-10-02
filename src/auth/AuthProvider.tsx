@@ -3,6 +3,8 @@ import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { http, setToken } from '../api/http';
 import { setLogoutHandler } from '../api/http';
 import { getCurrentUser } from '../api/users';
+import { practiceHandoffUrl, startPracticeSwitch } from '../api/practices';
+import { applyStaffUiPrefsFromServer, migrateStaffUiPrefsKeys } from '../utils/staffUiPrefs';
 import { trackLogin, trackLogout } from '../utils/analytics';
 import { collectAssignedDoctorIds } from '../utils/analyticsAccess';
 
@@ -21,6 +23,8 @@ export type LoginResult = {
   } | null;
   resetRequired: boolean;
   resetCode?: string | null;
+  /** The browser is leaving for another practice's host to finish signing in. */
+  redirecting?: boolean;
 };
 
 type AuthContextType = {
@@ -44,6 +48,8 @@ type AuthContextType = {
   assignedDoctorIds: string[];
   // ⬅️ now returns a LoginResult instead of void
   login: (email: string, password: string) => Promise<LoginResult>;
+  redeemHandoff: (code: string) => Promise<LoginResult>;
+  switchPractice: (practiceKey: string) => Promise<void>;
   logout: () => Promise<void>;
   logoutAll: () => Promise<void>;
 };
@@ -362,8 +368,40 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       };
     }
 
-    const { data } = await http.post('/auth/login', { email: emailInput, password });
+    let { data } = await http.post('/auth/login', { email: emailInput, password });
+    if (data?.handoff) {
+      const url = practiceHandoffUrl(data.handoff);
+      if (url) {
+        window.location.assign(url);
+        return { resetRequired: false, redirecting: true };
+      }
+      ({ data } = await http.post('/auth/handoff', { code: data.handoff.code }));
+    }
+    return applySession(data, emailInput);
+  }
 
+  /** Redeems a code from login or the practice switcher and stores the session it returns. */
+  async function redeemHandoff(code: string): Promise<LoginResult> {
+    const { data } = await http.post('/auth/handoff', { code });
+    return applySession(data, data?.user?.email ?? '');
+  }
+
+  async function switchPractice(practiceKey: string): Promise<void> {
+    const handoff = await startPracticeSwitch(practiceKey);
+    const url = practiceHandoffUrl(handoff);
+    if (url) {
+      window.location.assign(url);
+      return;
+    }
+    const oldRefreshToken = localStorage.getItem('refreshToken');
+    await redeemHandoff(handoff.code);
+    if (oldRefreshToken) {
+      http.post('/auth/logout', { refreshToken: oldRefreshToken }).catch(() => undefined);
+    }
+    window.location.assign('/');
+  }
+
+  function applySession(data: any, emailInput: string): LoginResult {
     // New response format: { accessToken, refreshToken, user: { ... } }
     // Also support old format for migration: { token, user: { ... } }
     const accessToken: string | null = data?.accessToken ?? data?.token ?? null;
@@ -587,6 +625,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           const fromJwt = extractEmployeeIdFromToken(tokenState);
           if (fromJwt) setEmployeeId(fromJwt);
         }
+        if (data?.id != null) {
+          const idStr = String(data.id);
+          // Prefs are keyed by users.id; earlier toggles may have used the JWT claim.
+          migrateStaffUiPrefsKeys(userId, idStr);
+          applyStaffUiPrefsFromServer(idStr, data.uiPrefs);
+        }
         const collected = collectAssignedDoctorIds((data ?? {}) as Record<string, unknown>);
         if (collected.length > 0) {
           setAssignedDoctorIds(collected);
@@ -624,6 +668,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       employeeId,
       assignedDoctorIds,
       login,
+      redeemHandoff,
+      switchPractice,
       logout,
       logoutAll,
     }),

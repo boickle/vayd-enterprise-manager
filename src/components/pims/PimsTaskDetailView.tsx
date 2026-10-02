@@ -1,16 +1,27 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router';
-import { ArrowLeft, CheckCircle2, Loader2, Pencil } from 'lucide-react';
+import {
+  ArrowLeft,
+  CheckCircle2,
+  ExternalLink,
+  Loader2,
+  Pencil,
+  UserPlus,
+  X,
+} from 'lucide-react';
 import {
   completeTask,
   getTask,
   patchTask,
+  taskKindLabel,
+  taskResolutionLabel,
   type TaskDetail,
   type TaskLinkEntityType,
   TASK_LINK_ENTITY_TYPES,
 } from '../../api/tasks';
+import { respondMailApproval } from '../../api/onlineStore';
 import type { PracticeBranch } from '../../api/branchInventory';
-import type { Employee } from '../../api/appointmentSettings';
+import type { Employee, EmployeeRole } from '../../api/appointmentSettings';
 import { formatEmployeeDisplayName } from '../../utils/employeeDisplayName';
 import {
   formatTaskIso,
@@ -22,12 +33,22 @@ import { priorityApiLabel } from '../../utils/taskPriority';
 import { taskLinkDisplayLabel, useTaskLinkLabels } from '../../utils/taskLinkDisplay';
 import { buildSchedulerFocusAppointmentUrl } from '../../utils/schedulerFocusAppointment';
 import {
-  getForwardBookingPrefillFromTaskLinks,
   taskDescriptionDisplayBody,
 } from '../../utils/forwardBookingCreateLink';
 import { TaskBodyContent } from './TaskBodyContent';
 import { ForwardBookingFromTaskLink } from './ForwardBookingFromTaskLink';
+import ForwardBookingTaskPanel from './ForwardBookingTaskPanel';
+import InvoiceTaskPanel from './InvoiceTaskPanel';
+import OrderListTaskPanel from './OrderListTaskPanel';
+import MailOrderTaskPanel from './MailOrderTaskPanel';
+import CallbackJotPanel from './CallbackJotPanel';
+import { taskPanelKind } from '../../utils/taskPanelKind';
 import TaskReassignModal from './TaskReassignModal';
+import TaskRemoveModal from './TaskRemoveModal';
+import {
+  mailOrderTaskStatusClass,
+  mailOrderTaskStatusLabel,
+} from '../../utils/mailOrderTaskStatus';
 import './PimsTaskDetailView.css';
 
 function isTaskLinkEntityType(s: string): s is TaskLinkEntityType {
@@ -46,6 +67,7 @@ function formatEventType(eventType: string): string {
     link_added: 'Link added',
     link_removed: 'Link removed',
     completed: 'Completed',
+    removed: 'Removed',
     escalation_sent: 'Escalation reminder',
     body_changed: 'Description changed',
     due_changed: 'Due date changed',
@@ -54,6 +76,14 @@ function formatEventType(eventType: string): string {
     title_changed: 'Title changed',
   };
   return known[eventType] ?? eventType.replace(/_/g, ' ');
+}
+
+/** The reason a task was removed, or which record closed it automatically. */
+function resolutionDetail(eventType: string, payload: unknown): string | null {
+  if (eventType !== 'completed' && eventType !== 'removed') return null;
+  if (!payload || typeof payload !== 'object') return null;
+  const note = (payload as Record<string, unknown>).note;
+  return typeof note === 'string' && note.trim() ? note.trim() : null;
 }
 
 function scheduleChangeDetail(eventType: string, payload: unknown): string | null {
@@ -77,11 +107,13 @@ function scheduleChangeDetail(eventType: string, payload: unknown): string | nul
 function linkHref(entityType: string, entityId: number): string | null {
   switch (entityType) {
     case 'patient':
-      return `/pims/patients?patientId=${encodeURIComponent(String(entityId))}`;
+      return `/schedule/patients?patientId=${encodeURIComponent(String(entityId))}`;
     case 'client':
-      return `/pims/clients?clientId=${encodeURIComponent(String(entityId))}`;
+      return `/schedule/clients?clientId=${encodeURIComponent(String(entityId))}`;
     case 'appointment':
       return buildSchedulerFocusAppointmentUrl(entityId);
+    case 'mail_order':
+      return `/schedule/mail-orders?orderId=${encodeURIComponent(String(entityId))}`;
     default:
       return null;
   }
@@ -104,10 +136,19 @@ function employeeLabel(map: Map<number, string>, id: number | null | undefined):
   return map.get(id) ?? `Employee #${id}`;
 }
 
+function queueRoleLabel(role: Pick<EmployeeRole, 'name' | 'roleValue'>): string {
+  const name = (role.name ?? '').trim();
+  if (/receptionist/i.test(name) || String(role.roleValue).toLowerCase() === 'receptionist') {
+    return 'CL';
+  }
+  return name || `Role ${String(role.roleValue)}`;
+}
+
 type Props = {
   taskId: number;
   branches: PracticeBranch[];
   employees: Employee[];
+  roles?: EmployeeRole[];
   myEmployeeId: number | null;
   isPracticeAdmin: boolean;
   onBack: () => void;
@@ -118,6 +159,7 @@ export default function PimsTaskDetailView({
   taskId,
   branches,
   employees,
+  roles = [],
   myEmployeeId,
   isPracticeAdmin,
   onBack,
@@ -129,6 +171,7 @@ export default function PimsTaskDetailView({
   const [actionError, setActionError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [reassignOpen, setReassignOpen] = useState(false);
+  const [removeOpen, setRemoveOpen] = useState(false);
 
   const employeeMap = useMemo(() => {
     const m = new Map<number, string>();
@@ -177,6 +220,9 @@ export default function PimsTaskDetailView({
     return () => window.clearInterval(t);
   }, [task, load]);
 
+  const inQueue = task?.status === 'open' && task.assignedToEmployeeId == null;
+  const canClaim = Boolean(inQueue && myEmployeeId != null && task?.status !== 'done');
+
   const canMutate = useMemo(() => {
     if (!task) return false;
     if (isPracticeAdmin) return true;
@@ -194,14 +240,21 @@ export default function PimsTaskDetailView({
 
   const latestEscalation = task?.events?.[0]?.eventType === 'escalation_sent';
   const linkLabels = useTaskLinkLabels(task?.links);
+  const patientLink = task?.links?.find((l) => l.entityType === 'patient') ?? null;
+  const clientLink = task?.links?.find((l) => l.entityType === 'client') ?? null;
+  const patientName = patientLink ? taskLinkDisplayLabel(patientLink, linkLabels) : null;
+  const clientName = clientLink ? taskLinkDisplayLabel(clientLink, linkLabels) : null;
   const taskDescriptionBody = useMemo(
     () => taskDescriptionDisplayBody(task?.body),
     [task?.body]
   );
-  const forwardBookingPrefill = useMemo(
-    () => getForwardBookingPrefillFromTaskLinks(task?.links),
-    [task?.links]
-  );
+  /** Which tools this task gets. Add a kind, not another condition down here. */
+  const panelKind = useMemo(() => (task ? taskPanelKind(task) : 'todo'), [task]);
+  const showPanels =
+    task != null && task.status !== 'done' && (canMutate || canClaim);
+  /** Chart note / reassign / remove. Panels that own the whole task replace it. */
+  const showJot =
+    showPanels && panelKind !== 'order_list' && panelKind !== 'mail_order';
 
   const eventsChronological = useMemo(() => {
     if (!task?.events?.length) return [];
@@ -209,6 +262,38 @@ export default function PimsTaskDetailView({
       (a, b) => new Date(a.created).getTime() - new Date(b.created).getTime()
     );
   }, [task?.events]);
+
+  const [approvalNote, setApprovalNote] = useState('');
+  const mailOrderId = task?.links?.find((l) => l.entityType === 'mail_order')?.entityId ?? null;
+
+  const handleMailApproval = async (
+    outcome: 'approved' | 'rejected' | 'send_back',
+    lineRefills?: Array<{ lineId: number; refills: number; expiration?: string | null }>,
+    lineScripts?: Array<{ lineId: number; scriptText: string }>,
+    approvalBasis?: 'standard' | 'chart' | 'refills',
+  ) => {
+    if (!task || mailOrderId == null || !canMutate) return;
+    setBusy(true);
+    setActionError(null);
+    try {
+      await respondMailApproval(task.practiceId, mailOrderId, {
+        outcome,
+        notes: approvalNote.trim() || undefined,
+        approvalBasis: outcome === 'approved' ? approvalBasis || 'standard' : undefined,
+        taskId: task.id,
+        lineRefills,
+        lineScripts,
+      });
+      setApprovalNote('');
+      const d = await getTask(task.id);
+      setTask(d);
+      onUpdated();
+    } catch (e: unknown) {
+      setActionError(errMsg(e));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const handleComplete = async () => {
     if (!task || !canMutate) return;
@@ -226,7 +311,7 @@ export default function PimsTaskDetailView({
   };
 
   const handleClaim = async () => {
-    if (!task || myEmployeeId == null || !canMutate) return;
+    if (!task || myEmployeeId == null || !canClaim) return;
     setBusy(true);
     setActionError(null);
     try {
@@ -261,8 +346,7 @@ export default function PimsTaskDetailView({
     );
   }
 
-  const inQueue = task.status === 'open' && task.assignedToEmployeeId == null;
-  const showClaim = canMutate && inQueue && myEmployeeId != null;
+  const showClaim = canClaim;
 
   return (
     <div className="pims-task-detail">
@@ -313,22 +397,40 @@ export default function PimsTaskDetailView({
               {canMutate && task.status !== 'done' && (
                 <button
                   type="button"
+                  className="pims-task-detail__btn pims-task-detail__btn--remove"
+                  title="Remove — this no longer needs doing"
+                  disabled={busy}
+                  onClick={() => {
+                    setActionError(null);
+                    setRemoveOpen(true);
+                  }}
+                >
+                  <X size={18} />
+                  Remove
+                </button>
+              )}
+              {canMutate && task.status !== 'done' && (
+                <button
+                  type="button"
                   className="pims-task-detail__btn pims-task-detail__btn--secondary"
+                  title="Change who owns it, when it starts, or when it is due"
                   disabled={busy}
                   onClick={() => {
                     setActionError(null);
                     setReassignOpen(true);
                   }}
                 >
-                  Reassign
+                  <UserPlus size={18} />
+                  Move
                 </button>
               )}
-              {canMutate && task.status !== 'done' && (
+              {canMutate && task.status !== 'done' && mailOrderId != null && (
                 <button type="button" className="pims-task-detail__btn pims-task-detail__btn--primary" disabled={busy} onClick={() => void handleComplete()}>
                   <CheckCircle2 size={18} />
                   Mark complete
                 </button>
               )}
+
             </>
           )}
         </div>
@@ -346,6 +448,7 @@ export default function PimsTaskDetailView({
           task={task}
           branches={branches}
           employees={employees}
+          roles={roles}
           isPracticeAdmin={isPracticeAdmin}
           busy={busy}
           setBusy={setBusy}
@@ -364,52 +467,222 @@ export default function PimsTaskDetailView({
         <>
       <header className="pims-task-detail__head">
         <h1 className="pims-task-detail__title">{task.title}</h1>
+        {(patientLink || clientLink) && (
+          <p className="pims-task-detail__subject">
+            {patientLink ? (
+              <a
+                className="pims-task-detail__subject-link"
+                href={linkHref('patient', patientLink.entityId) ?? '#'}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                {patientName}
+                <ExternalLink size={14} aria-hidden />
+                <span className="pims-task-detail__subject-hint">Chart</span>
+              </a>
+            ) : null}
+            {patientLink && clientLink ? (
+              <span className="pims-task-detail__subject-sep">·</span>
+            ) : null}
+            {clientLink ? (
+              <a
+                className="pims-task-detail__subject-link"
+                href={linkHref('client', clientLink.entityId) ?? '#'}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                {clientName}
+                <ExternalLink size={14} aria-hidden />
+              </a>
+            ) : null}
+          </p>
+        )}
         <div className="pims-task-detail__meta">
-          <span className={`pims-task-detail__status pims-task-detail__status--${task.status}`}>{task.status}</span>
-          {task.source !== 'manual' && (
+          {task.status === 'done' ? (
+            <span
+              className={`pims-task-detail__status pims-task-detail__status--res-${
+                task.resolution ?? 'completed'
+              }`}
+            >
+              {taskResolutionLabel(task.resolution)}
+            </span>
+          ) : (
+            <span
+              className={`pims-task-detail__status pims-task-detail__status--${
+                mailOrderId != null
+                  ? mailOrderTaskStatusClass(task.status)
+                  : task.status
+              }`}
+            >
+              {mailOrderTaskStatusLabel(task.status, task.links)}
+            </span>
+          )}
+          {(task.kind === 'callback' || task.kind === 'invoice') && (
+            <span className="pims-task-detail__kind">{taskKindLabel(task.kind)}</span>
+          )}
+          {task.source !== 'manual' && mailOrderId == null && (
             <span className="pims-task-detail__pill">
-              {task.source}
-              {task.triggerDefinitionId ? ` · ${task.triggerDefinitionId}` : ''}
+              {panelKind === 'order_list' ? 'Order list' : task.source}
             </span>
           )}
         </div>
+        {task.status === 'done' && task.resolutionNote ? (
+          <p className="pims-task-detail__resolution">
+            {task.resolution === 'removed' ? 'Removed: ' : 'Closed: '}
+            {task.resolutionNote}
+          </p>
+        ) : null}
       </header>
+
+      {panelKind === 'mail_order' && mailOrderId != null ? (
+        <MailOrderTaskPanel
+          practiceId={task.practiceId}
+          mailOrderId={mailOrderId}
+          taskId={task.id}
+          canApprove={canMutate && task.status !== 'done'}
+          busy={busy}
+          approvalNote={approvalNote}
+          onApprovalNoteChange={setApprovalNote}
+          onApprove={(outcome, lineRefills, lineScripts, approvalBasis) =>
+            void handleMailApproval(outcome, lineRefills, lineScripts, approvalBasis)
+          }
+          onPresentationSynced={() => {
+            void getTask(task.id).then(setTask).catch(() => undefined);
+          }}
+        />
+      ) : null}
+
+      {panelKind === 'order_list' && showPanels ? (
+        <OrderListTaskPanel
+          task={task}
+          branchName={
+            task.branchIds?.[0] != null
+              ? branchMap.get(task.branchIds[0]) ?? null
+              : null
+          }
+          canMutate={canMutate}
+          busy={busy}
+          onDone={() => {
+            void getTask(task.id).then(setTask).catch(() => undefined);
+            onUpdated();
+          }}
+        />
+      ) : null}
+
+      {panelKind === 'forward_booking' && showPanels ? (
+        <ForwardBookingTaskPanel
+          task={task}
+          patientName={patientName}
+          canComplete={canMutate}
+          busy={busy}
+          onComplete={() => void handleComplete()}
+        />
+      ) : null}
+
+      {panelKind === 'invoice' && showPanels ? (
+        <InvoiceTaskPanel
+          task={task}
+          clientName={clientName}
+          canComplete={canMutate}
+          busy={busy}
+          onComplete={() => void handleComplete()}
+        />
+      ) : null}
+
+      {/* Callbacks stay jot-first. Invoice and booking keep charting off the main path. */}
+      {showJot ? (
+        panelKind === 'forward_booking' || panelKind === 'invoice' ? (
+          <details className="pims-fb-task-note">
+            <summary>Leave a chart note, reassign, or remove</summary>
+            <CallbackJotPanel
+              task={task}
+              employees={employees}
+              myEmployeeId={myEmployeeId}
+              patientName={patientName}
+              clientName={clientName}
+              onDone={() => {
+                void getTask(task.id).then(setTask).catch(() => undefined);
+                onUpdated();
+              }}
+            />
+          </details>
+        ) : (
+          <CallbackJotPanel
+            task={task}
+            employees={employees}
+            myEmployeeId={myEmployeeId}
+            patientName={patientName}
+            clientName={clientName}
+            onDone={() => {
+              void getTask(task.id).then(setTask).catch(() => undefined);
+              onUpdated();
+            }}
+          />
+        )
+      ) : null}
 
       <section className="pims-task-detail__section">
         <h2 className="pims-task-detail__h2">Details</h2>
         <dl className="pims-task-detail__dl">
+          {mailOrderId == null ? (
           <div>
             <dt>Description</dt>
             <dd>
               {taskDescriptionBody ? <TaskBodyContent body={taskDescriptionBody} /> : null}
-              {forwardBookingPrefill ? (
+              {panelKind === 'forward_booking' &&
+              (task.status === 'done' || !(canMutate || canClaim)) ? (
                 <p className="pims-task-detail__forward-booking-link">
                   <ForwardBookingFromTaskLink links={task.links} taskId={task.id} />
                 </p>
               ) : null}
-              {!taskDescriptionBody && !forwardBookingPrefill ? <>—</> : null}
+              {!taskDescriptionBody &&
+              !(
+                panelKind === 'forward_booking' &&
+                (task.status === 'done' || !(canMutate || canClaim))
+              ) ? (
+                <>—</>
+              ) : null}
             </dd>
           </div>
+          ) : null}
+          {mailOrderId == null ? (
           <div>
             <dt>Start</dt>
             <dd>{formatTaskIso(task.startAt)}</dd>
           </div>
+          ) : null}
           <div>
             <dt>Due</dt>
             <dd>{formatTaskIso(task.dueAt)}</dd>
           </div>
+          {mailOrderId == null ? (
           <div>
             <dt>Branches</dt>
             <dd>
               {task.branchIds?.length
                 ? task.branchIds.map((id) => branchMap.get(id) ?? `#${id}`).join(', ')
-                : '—'}
+                : 'Unassigned'}
             </dd>
           </div>
+          ) : null}
           <div>
             <dt>Assignee</dt>
-            <dd>{employeeLabel(employeeMap, task.assignedToEmployeeId)}</dd>
+            <dd>
+              {task.assignedToEmployeeId != null
+                ? employeeLabel(employeeMap, task.assignedToEmployeeId)
+                : 'Unassigned'}
+            </dd>
           </div>
+          {task.queueRoleId != null && (
+            <div>
+              <dt>For role</dt>
+              <dd>
+                {roles.find((r) => r.id === task.queueRoleId)
+                  ? queueRoleLabel(roles.find((r) => r.id === task.queueRoleId)!)
+                  : `Role #${task.queueRoleId}`}
+              </dd>
+            </div>
+          )}
           <div>
             <dt>Created by</dt>
             <dd>{employeeLabel(employeeMap, task.createdByEmployeeId)}</dd>
@@ -498,10 +771,19 @@ export default function PimsTaskDetailView({
                     {scheduleChangeDetail(ev.eventType, ev.payload)}
                   </div>
                 ) : null}
+                {resolutionDetail(ev.eventType, ev.payload) ? (
+                  <div className="pims-task-detail__timeline-detail">
+                    {resolutionDetail(ev.eventType, ev.payload)}
+                  </div>
+                ) : null}
                 <div className="pims-task-detail__timeline-meta">
                   {formatIso(ev.created)}
-                  {ev.actorEmployeeId != null && (
+                  {/* No employee means nobody did this — say so rather than
+                      leaving a blank where a name would be. */}
+                  {ev.actorEmployeeId != null ? (
                     <> · {employeeLabel(employeeMap, ev.actorEmployeeId)}</>
+                  ) : (
+                    <> · System</>
                   )}
                 </div>
               </div>
@@ -518,8 +800,20 @@ export default function PimsTaskDetailView({
           employees={employees}
           onClose={() => setReassignOpen(false)}
           onSaved={(updated) => {
-            setTask(updated);
+            if (updated) setTask(updated);
             setReassignOpen(false);
+            onUpdated();
+          }}
+        />
+      )}
+
+      {removeOpen && (
+        <TaskRemoveModal
+          task={task}
+          onClose={() => setRemoveOpen(false)}
+          onRemoved={(updated) => {
+            setTask(updated);
+            setRemoveOpen(false);
             onUpdated();
           }}
         />
@@ -542,6 +836,7 @@ type EditProps = {
   task: TaskDetail;
   branches: PracticeBranch[];
   employees: Employee[];
+  roles?: EmployeeRole[];
   isPracticeAdmin: boolean;
   busy: boolean;
   setBusy: (v: boolean) => void;
@@ -554,6 +849,7 @@ function TaskEditForm({
   task,
   branches,
   employees,
+  roles = [],
   isPracticeAdmin,
   busy,
   setBusy,
@@ -573,6 +869,9 @@ function TaskEditForm({
   const [assignee, setAssignee] = useState<string>(
     task.assignedToEmployeeId != null ? String(task.assignedToEmployeeId) : ''
   );
+  const [queueRoleId, setQueueRoleId] = useState(
+    task.queueRoleId != null ? String(task.queueRoleId) : '',
+  );
   const [watchers, setWatchers] = useState<number[]>(() => task.watchers.map((w) => w.employeeId));
   const [linkRows, setLinkRows] = useState<{ entityType: string; entityId: string }[]>(() =>
     task.links.map((l) => ({ entityType: l.entityType, entityId: String(l.entityId) }))
@@ -587,11 +886,6 @@ function TaskEditForm({
       setActionError('Title is required');
       return;
     }
-    if (selectedBranchIds.length === 0) {
-      setActionError('Select at least one branch');
-      return;
-    }
-
     const linksPayload = linkRows
       .map((row) => {
         const id = Number(row.entityId);
@@ -639,6 +933,7 @@ function TaskEditForm({
         dueAt,
         branchIds: selectedBranchIds,
         assignedToEmployeeId: assigneeId,
+        queueRoleId: queueRoleId ? Number(queueRoleId) : null,
         watcherEmployeeIds: [...new Set(watchers)],
         links: linksPayload,
       };
@@ -687,6 +982,15 @@ function TaskEditForm({
         <div className="pims-task-detail__field">
           <span>Branches</span>
           <div className="pims-task-detail__checks">
+            <label className="pims-task-detail__check">
+              <input
+                type="checkbox"
+                checked={activeBranches.every((b) => !branchSel[b.id])}
+                onChange={() => setBranchSel({})}
+                disabled={busy}
+              />
+              Unassigned
+            </label>
             {activeBranches.map((b) => (
               <label key={b.id} className="pims-task-detail__check">
                 <input
@@ -699,18 +1003,27 @@ function TaskEditForm({
               </label>
             ))}
           </div>
-          {!isPracticeAdmin && (
-            <p className="pims-task-detail__field-hint">Non-admins may only choose branches they belong to; the server will reject invalid picks.</p>
-          )}
         </div>
 
         <label className="pims-task-detail__field">
           <span>Assignee</span>
           <select value={assignee} onChange={(e) => setAssignee(e.target.value)} disabled={busy}>
-            <option value="">Queue (unassigned)</option>
+            <option value="">Unassigned</option>
             {employees.map((em) => (
               <option key={em.id} value={String(em.id)}>
                 {formatEmployeeDisplayName(em) || em.email}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="pims-task-detail__field">
+          <span>For role</span>
+          <select value={queueRoleId} onChange={(e) => setQueueRoleId(e.target.value)} disabled={busy}>
+            <option value="">Any role</option>
+            {roles.map((r) => (
+              <option key={r.id} value={String(r.id)}>
+                {queueRoleLabel(r)}
               </option>
             ))}
           </select>

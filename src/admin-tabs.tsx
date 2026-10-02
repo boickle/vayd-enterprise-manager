@@ -1,11 +1,14 @@
 // Admin sub-tabs: path is relative to /admin. Kept in a separate file to avoid circular import (Admin.tsx imports this; app-pages imports Admin).
 import type { JSX } from 'react';
+import { Navigate } from 'react-router';
 import MembershipPromotionsPage from './pages/MembershipPromotions';
 import AppointmentRequestPromotionsPage from './pages/AppointmentRequestPromotions';
 import OpenPhoneCoaching from './pages/OpenPhoneCoaching';
 import SurveyResults from './pages/SurveyResults';
 import AdminUsers from './pages/AdminUsers';
 import RoutingScoreThresholdsPage from './pages/RoutingScoreThresholds';
+import RoomLoaderDeclinesReportPage from './pages/RoomLoaderDeclinesReportPage';
+import PlatformPractices from './pages/PlatformPractices';
 import { getFrontendPaymentProvider } from './config/paymentProvider';
 
 export type AdminTabPage = {
@@ -13,6 +16,10 @@ export type AdminTabPage = {
   label: string;
   element: JSX.Element;
   role?: string | string[];
+  /** When set, this tab is listed under a dropdown with this label (e.g. Inventory). */
+  group?: string;
+  /** Only shown to platform admins, whatever their role in this practice. */
+  platformAdminOnly?: boolean;
 };
 
 export const ADMIN_TAB_PAGES: AdminTabPage[] = [
@@ -51,6 +58,34 @@ export const ADMIN_TAB_PAGES: AdminTabPage[] = [
     label: 'Client Offers & Auto-Book',
     element: <RoutingScoreThresholdsPage />,
     role: ['admin', 'superadmin'],
+  },
+  {
+    path: 'inventory/cost-reviews',
+    label: 'Cost Reviews',
+    group: 'Inventory',
+    element: <Navigate to="/schedule/inventory/cost-reviews" replace />,
+    role: ['admin', 'superadmin'],
+  },
+  {
+    path: 'inventory/expiring',
+    label: 'Expiring',
+    group: 'Inventory',
+    element: <Navigate to="/schedule/inventory/expiring" replace />,
+    role: ['admin', 'superadmin'],
+  },
+  {
+    path: 'reports/room-loader-declines',
+    label: 'Room Loader declines',
+    group: 'Reports',
+    element: <RoomLoaderDeclinesReportPage />,
+    role: ['admin', 'superadmin'],
+  },
+  {
+    path: 'practices',
+    label: 'Practices',
+    element: <PlatformPractices />,
+    role: ['admin', 'superadmin'],
+    platformAdminOnly: true,
   },
 ];
 

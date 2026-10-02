@@ -7,13 +7,14 @@ import {
   patientPimsIdFromRequestPet,
   requestDataAnythingElse,
   requestDataCanText,
+  requestDataClientType,
   requestDataHowSoon,
   requestDataPhone,
   requestDataPreferredDoctor,
   requestDataSelfScheduledSlot,
   requestDataUsesAlternateVisitAddress,
   requestPetChartPatientId,
-  requestPetIsUnlinkedInEvet,
+  requestPetIsNewOnForm,
 } from './appointmentRequestDisplay';
 import { practiceTimeZoneOrDefault } from './practiceTimezone';
 
@@ -111,8 +112,11 @@ function petChartPatientId(pet: PetRecord): string | null {
   return requestPetChartPatientId(pet);
 }
 
-function petIsNewOnRequest(pet: PetRecord): boolean {
-  return requestPetIsUnlinkedInEvet(pet);
+function petIsNewOnRequest(
+  requestData: Record<string, unknown>,
+  pet: PetRecord,
+): boolean {
+  return requestPetIsNewOnForm(requestData, pet);
 }
 
 function handlingSummary(pet: PetRecord): string | null {
@@ -232,7 +236,7 @@ function petRowSummariesFromPetSpecificData(
     if (!raw || typeof raw !== 'object') continue;
     const specific = raw as Record<string, unknown>;
     const pet = records.get(key);
-    const isNew = pet ? petIsNewOnRequest(pet) : true;
+    const isNew = pet ? petIsNewOnRequest(requestData, pet) : true;
     const appointmentType =
       pickStr(specific.needsToday) ??
       pickStr(specific.appointmentTypeName) ??
@@ -246,6 +250,7 @@ function petRowSummariesFromPetSpecificData(
     rows.push({
       key,
       name: names.get(key) ?? pickStr(pet?.name) ?? 'Pet',
+      isNew,
       patientId: pet ? petChartPatientId(pet) : null,
       patientPimsId: pet ? patientPimsIdFromRequestPet(pet) : null,
       appointmentType,
@@ -268,6 +273,7 @@ function petRowSummariesFromPetSpecificData(
 export type AppointmentRequestPetRowSummary = {
   key: string;
   name: string;
+  isNew: boolean;
   patientId: string | null;
   patientPimsId: string | null;
   appointmentType: string | null;
@@ -294,7 +300,7 @@ export function requestDataPetRowSummaries(
 
   const rows: AppointmentRequestPetRowSummary[] = pets.map((pet, index) => {
     const name = pickStr(pet.name) ?? 'Pet';
-    const isNew = petIsNewOnRequest(pet);
+    const isNew = petIsNewOnRequest(requestData, pet);
     const id = petId(pet);
     const specific = petSpecificFor(requestData, pet);
     const appointmentType =
@@ -313,6 +319,7 @@ export function requestDataPetRowSummaries(
     return {
       key: id ?? `pet-${index}-${name}`,
       name,
+      isNew,
       patientId: petChartPatientId(pet),
       patientPimsId: patientPimsIdFromRequestPet(pet),
       appointmentType,
@@ -336,6 +343,7 @@ export function requestDataPetRowSummaries(
     rows.push({
       key: 'pet-info-text',
       name: 'Pet information',
+      isNew: requestDataClientType(requestData) === 'new',
       patientId: null,
       patientPimsId: null,
       appointmentType: pickStr(requestData.appointmentType),
@@ -444,11 +452,15 @@ export function buildAppointmentRequestDetailSections(
 
   const pets: AppointmentRequestPetDetail[] = collectPets(requestData).map((pet) => {
     const name = pickStr(pet.name) ?? 'Pet';
-    const isNew = petIsNewOnRequest(pet);
+    const isNew = petIsNewOnRequest(requestData, pet);
     const species = pickStr(pet.species);
     const facts: AppointmentRequestDetailRow[] = [];
     const notes: AppointmentRequestDetailRow[] = [];
 
+    facts.push({
+      label: 'Patient type',
+      value: isNew ? 'New patient' : 'Existing patient',
+    });
     if (species) facts.push({ label: 'Species', value: species });
     const breed = pickStr(pet.breed);
     if (breed) facts.push({ label: 'Breed', value: breed });

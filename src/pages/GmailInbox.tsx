@@ -28,6 +28,11 @@ import {
   flattenUserLabels,
   GMAIL_MESSAGES_PAGE_SIZE,
   GMAIL_INBOX_POLL_MS,
+  GMAIL_QUOTA_BACKOFF_MS,
+  GMAIL_QUOTA_KEEP_LIST_MESSAGE,
+  isGmailFallbackListRow,
+  isGmailQuotaError,
+  isMostlyFallbackGmailList,
   getMessageUserLabels,
   GMAIL_CATEGORIES_GROUP_ID,
   labelChipStyle,
@@ -366,8 +371,11 @@ export default function GmailInbox() {
   const [resultSizeEstimate, setResultSizeEstimate] = useState<number | null>(null);
   const pageTokensRef = useRef<(string | null)[]>([null]);
   const pageIndexRef = useRef(0);
+  const messagesRef = useRef<GmailMessageSummary[]>([]);
+  const quotaBackoffUntilRef = useRef(0);
   pageTokensRef.current = pageTokens;
   pageIndexRef.current = pageIndex;
+  messagesRef.current = messages;
   const [selectedMessage, setSelectedMessage] = useState<GmailMessageSummary | null>(null);
   const selectedMessageRef = useRef(selectedMessage);
   selectedMessageRef.current = selectedMessage;
@@ -785,27 +793,42 @@ export default function GmailInbox() {
     async (page: number) => {
       if (!activeMailbox) return;
       const pageToken = pageTokensRef.current[page] ?? undefined;
-      const res = await fetchGmailMessages(activeMailbox, {
-        ...messageListParams,
-        pageToken,
-        maxResults: GMAIL_MESSAGES_PAGE_SIZE,
-      });
-      const incoming = mergeGmailMessagesByDate(res.threads ?? [], res.untaggedQueue ?? []);
-      setMessages(incoming);
-      if (typeof res.inboxUnreadCount === 'number') {
-        setNavigationLabels((prev) => patchInboxUnreadCount(prev, res.inboxUnreadCount));
-      }
-      setHasNextPage(!!res.nextPageToken);
-      setResultSizeEstimate(res.resultSizeEstimate ?? null);
+      try {
+        const res = await fetchGmailMessages(activeMailbox, {
+          ...messageListParams,
+          pageToken,
+          maxResults: GMAIL_MESSAGES_PAGE_SIZE,
+        });
+        const incoming = mergeGmailMessagesByDate(res.threads ?? [], res.untaggedQueue ?? []);
+        const haveGoodList = messagesRef.current.some((m) => !isGmailFallbackListRow(m));
+        if (haveGoodList && isMostlyFallbackGmailList(incoming)) {
+          quotaBackoffUntilRef.current = Date.now() + GMAIL_QUOTA_BACKOFF_MS;
+          setError(GMAIL_QUOTA_KEEP_LIST_MESSAGE);
+          return res;
+        }
+        setMessages(incoming);
+        if (typeof res.inboxUnreadCount === 'number') {
+          setNavigationLabels((prev) => patchInboxUnreadCount(prev, res.inboxUnreadCount));
+        }
+        setHasNextPage(!!res.nextPageToken);
+        setResultSizeEstimate(res.resultSizeEstimate ?? null);
 
-      if (res.nextPageToken && pageTokensRef.current.length === page + 1) {
-        const nextTokens = [...pageTokensRef.current, res.nextPageToken];
-        pageTokensRef.current = nextTokens;
-        setPageTokens(nextTokens);
-      }
+        if (res.nextPageToken && pageTokensRef.current.length === page + 1) {
+          const nextTokens = [...pageTokensRef.current, res.nextPageToken];
+          pageTokensRef.current = nextTokens;
+          setPageTokens(nextTokens);
+        }
 
-      setCheckedMessageIds(new Set());
-      return res;
+        setCheckedMessageIds(new Set());
+        return res;
+      } catch (e) {
+        if (isGmailQuotaError(e) && messagesRef.current.length > 0) {
+          quotaBackoffUntilRef.current = Date.now() + GMAIL_QUOTA_BACKOFF_MS;
+          setError(GMAIL_QUOTA_KEEP_LIST_MESSAGE);
+          return;
+        }
+        throw e;
+      }
     },
     [activeMailbox, messageListParams]
   );
@@ -958,6 +981,7 @@ export default function GmailInbox() {
 
     const poll = () => {
       if (document.visibilityState !== 'visible') return;
+      if (Date.now() < quotaBackoffUntilRef.current) return;
       refreshFromGmail();
     };
 

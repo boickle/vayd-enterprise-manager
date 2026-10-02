@@ -17,11 +17,12 @@ import {
 } from '../utils/appointmentRequestDisplay';
 import type { GmailMessageSummary } from '../api/gmail';
 import { extractEmailsFromText, normalizeEmail } from '../utils/gmailEmailExtract';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
 /** How far back to load submissions when building the reverse (thread → submission) index. */
 const LOOKBACK_DAYS = 180;
 
-const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_ID = currentPracticeId();
 
 function normalizeThreadId(id: string | null | undefined): string | null {
   const t = (id ?? '').trim();

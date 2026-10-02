@@ -531,6 +531,44 @@ export function looksLikeEvetPimsId(id: string | null | undefined): boolean {
   return /^\d+$/.test(id.trim());
 }
 
+function requestPetMatchesFormRow(
+  pet: Record<string, unknown>,
+  row: Record<string, unknown>,
+): boolean {
+  if (pet === row) return true;
+  const petId = pickStr(pet.id) ?? pickStr(pet.dbId);
+  const rowId = pickStr(row.id) ?? pickStr(row.dbId);
+  if (petId && rowId && petId === rowId) return true;
+  const petName = pickStr(pet.name);
+  const rowName = pickStr(row.name);
+  return Boolean(petName && rowName && petName.toLowerCase() === rowName.toLowerCase());
+}
+
+/**
+ * NEW vs EXISTING patient on the request form (not whether Scout/eVet has a chart yet).
+ * After auto-book, new pets get a dbId and `new` is cleared — still NEW if they
+ * were submitted as a new-client pet or existing-client new pet.
+ */
+export function requestPetIsNewOnForm(
+  requestData: Record<string, unknown>,
+  pet: Record<string, unknown>,
+): boolean {
+  if (requestDataClientType(requestData) === 'new') return true;
+  if (pet.new === true) return true;
+  const id = pickStr(pet.id);
+  if (id && (isFormGeneratedPetId(id) || /^new[-_]/i.test(id))) return true;
+  for (const key of ['newClientPets', 'existingClientNewPets'] as const) {
+    const arr = requestData[key];
+    if (!Array.isArray(arr)) continue;
+    for (const row of arr) {
+      if (row && typeof row === 'object' && requestPetMatchesFormRow(pet, row as Record<string, unknown>)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 /** Pet on the request form that is not yet linked to an eVet patient record. */
 export function requestPetIsUnlinkedInEvet(pet: Record<string, unknown>): boolean {
   const explicit =

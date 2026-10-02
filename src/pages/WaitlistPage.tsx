@@ -20,6 +20,7 @@ import {
   notifySchedulingToolsNavCountsRefresh,
   SCHEDULING_TOOLS_PAGE_REFRESH_EVENT,
 } from '../hooks/useSchedulingToolsNavCounts';
+import { appPrompt } from '../utils/appDialog';
 import {
   buildRoutingForwardBookingIntentFromEntries,
   buildRoutingForwardBookingIntentFromEntry,
@@ -54,8 +55,9 @@ import { holdReleaseOptsForAppointment } from '../utils/forwardBookingSmsMessage
 import { practiceTimeZoneOrDefault } from '../utils/practiceTimezone';
 import './WaitlistPage.css';
 import './Settings.css';
+import { currentPracticeId } from '../utils/practiceIdFromToken';
 
-const PRACTICE_ID = Number(import.meta.env.VITE_PRACTICE_ID) || 1;
+const PRACTICE_ID = currentPracticeId();
 const PRACTICE_TZ = practiceTimeZoneOrDefault(undefined);
 const NOTES_DEBOUNCE_MS = 750;
 
@@ -420,7 +422,13 @@ export default function WaitlistPage() {
   }
 
   async function removeEntry(entry: WaitlistEntry) {
-    const reason = window.prompt('Remove from waitlist? Optional reason:', '') ?? null;
+    const reason = await appPrompt({
+      title: 'Remove from waitlist?',
+      message: 'Optional reason.',
+      defaultValue: '',
+      confirmLabel: 'Remove',
+      danger: true,
+    });
     if (reason === null) return;
     setRemovingId(entry.id);
     try {
@@ -759,6 +767,7 @@ export default function WaitlistPage() {
 
       <ClientSmsComposeModal
         open={smsEntry != null}
+        clientId={smsEntry?.clientId}
         clientLabel={smsEntry ? waitlistClientDisplayName(smsEntry) : ''}
         message={smsMessage}
         onMessageChange={setSmsMessage}

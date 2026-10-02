@@ -9,6 +9,8 @@ import { formatForwardBookingIntervalLabel } from './forwardBookingFromAppointme
 import { forwardBookingLinkedAppointmentId } from './forwardBookingLinkedVisit';
 import { computeHoldSpotReleaseDeadline, formatHoldSpotReleaseDeadlineShort, type HoldSpotReleaseSmsOpts } from './holdSpotReleaseSmsClause';
 import { resolveForwardBookingIntervalFromEntry } from './forwardBookingFromAppointment';
+import { applySystemTemplateIfCustom } from './messageTemplateCache';
+import { withClinicDefaults } from './messageTemplateFields';
 
 export type { HoldSpotReleaseSmsOpts };
 
@@ -430,7 +432,18 @@ export function buildForwardBookingSmsMessage(
       ? `visits for ${pets}`
       : `${possessivePetLabel(pets)} visit`;
 
-  let message = `Hi ${first}, following up on the request to schedule ${scheduleTarget} in ${timeframe}. Would ${datePart}, between ${windowPhrase} work for you?`;
+  let message = applySystemTemplateIfCustom(
+    'forward_booking_sms',
+    withClinicDefaults({
+      client_first_name: first,
+      pets: scheduleTarget,
+      timeframe,
+      date_label: datePart,
+      window_start: opts?.bookedSlot?.windowStart?.trim() || 'xxxx',
+      window_end: opts?.bookedSlot?.windowEnd?.trim() || 'xxxx',
+    }),
+    `Hi ${first}, following up on the request to schedule ${scheduleTarget} in ${timeframe}. Would ${datePart}, between ${windowPhrase} work for you?`,
+  );
 
   if (opts?.holdRelease) {
     const deadline = computeHoldSpotReleaseDeadline(opts.holdRelease);
