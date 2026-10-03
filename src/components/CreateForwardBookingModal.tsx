@@ -16,6 +16,11 @@ import {
   type ForwardBookingIntervalUnit,
 } from '../utils/forwardBookingFromAppointment';
 import type { CreateForwardBookingPrefill } from '../utils/forwardBookingCreateLink';
+import {
+  createForwardBookingReplacingSourceConflict,
+  findReplaceableForwardBookingForSourceVisit,
+  formatExistingForwardBookingReplaceHint,
+} from '../utils/forwardBookingReplaceExisting';
 import { clientsForPatientSearchRow, primaryClientLabelForPatientRow } from '../utils/pimsPatientSearchRow';
 import { practiceTimeZoneOrDefault } from '../utils/practiceTimezone';
 import '../pages/Scheduler.css';
@@ -117,11 +122,48 @@ export function CreateForwardBookingModal({
   >([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [existingForSource, setExistingForSource] = useState<ForwardBookingEntry | null>(null);
+  const [existingForSourceLoading, setExistingForSourceLoading] = useState(false);
 
   const selectedAppointment = useMemo(
     () => appointments.find((a) => String(a.id) === selectedAppointmentId) ?? null,
     [appointments, selectedAppointmentId]
   );
+
+  const replacingExisting = existingForSource != null;
+  const existingReplaceHint = existingForSource
+    ? formatExistingForwardBookingReplaceHint(existingForSource)
+    : null;
+
+  useEffect(() => {
+    if (
+      !selectedAppointmentId ||
+      selectedAppointmentId === NO_ASSOCIATED_VISIT ||
+      !Number.isFinite(Number(selectedAppointmentId))
+    ) {
+      setExistingForSource(null);
+      setExistingForSourceLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setExistingForSourceLoading(true);
+    void (async () => {
+      try {
+        const existing = await findReplaceableForwardBookingForSourceVisit(
+          Number(selectedAppointmentId),
+          practiceId
+        );
+        if (!cancelled) setExistingForSource(existing);
+      } catch {
+        if (!cancelled) setExistingForSource(null);
+      } finally {
+        if (!cancelled) setExistingForSourceLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedAppointmentId, practiceId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -395,7 +437,8 @@ export function CreateForwardBookingModal({
         setError('This visit cannot create a forward booking (needs client and patient).');
         return;
       }
-      const created = await createForwardBooking({
+      // One active row per source visit — replace pending entry when staff changes interval/notes.
+      const created = await createForwardBookingReplacingSourceConflict({
         ...payload,
         createdVia: 'end_visit',
       });
@@ -426,9 +469,13 @@ export function CreateForwardBookingModal({
         <div className="scheduler-modal-header">
           <div className="scheduler-modal-header-text">
             <p className="scheduler-modal-eyebrow">Forward booking</p>
-            <h2 id="create-forward-booking-title">Add forward booking</h2>
+            <h2 id="create-forward-booking-title">
+              {replacingExisting ? 'Update forward booking' : 'Add forward booking'}
+            </h2>
             <p className="scheduler-modal-subtitle">
-              Choose a source visit (or none) and how far out to schedule the follow-up.
+              {replacingExisting
+                ? 'Change how far out to schedule the follow-up for this source visit.'
+                : 'Choose a source visit (or none) and how far out to schedule the follow-up.'}
             </p>
           </div>
           <button type="button" className="scheduler-modal-close" aria-label="Close" onClick={onClose}>
@@ -438,6 +485,11 @@ export function CreateForwardBookingModal({
 
         <div className="scheduler-modal-body scheduler-modal-body--edit">
           {error ? <p className="scheduler-edit-error">{error}</p> : null}
+          {!error && existingReplaceHint ? (
+            <p className="settings-muted" style={{ margin: '0 0 12px', fontSize: 13 }} role="status">
+              {existingReplaceHint}
+            </p>
+          ) : null}
 
           <label className="scheduler-edit-field" style={{ display: 'block' }}>
             <span>Patient *</span>
@@ -594,8 +646,13 @@ export function CreateForwardBookingModal({
           <button type="button" className="btn secondary" disabled={busy} onClick={onClose}>
             Cancel
           </button>
-          <button type="button" className="btn" disabled={busy} onClick={() => void submit()}>
-            {busy ? 'Saving…' : 'Add to list'}
+          <button
+            type="button"
+            className="btn"
+            disabled={busy || existingForSourceLoading}
+            onClick={() => void submit()}
+          >
+            {busy ? 'Saving…' : replacingExisting ? 'Update on list' : 'Add to list'}
           </button>
         </div>
       </div>

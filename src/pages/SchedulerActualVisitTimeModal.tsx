@@ -77,14 +77,8 @@ import {
   buildForwardBookingCalendarIndexSets,
   householdVisitAlreadyForwardBooked,
 } from '../utils/appointmentVisitTimesBadge';
+import { isActiveForwardBookingExistsError } from '../utils/forwardBookingReplaceExisting';
 import './Scheduler.css';
-
-function isActiveForwardBookingExistsError(e: unknown): boolean {
-  const ax = e as { response?: { data?: { message?: string | string[] } }; message?: string };
-  const m = ax?.response?.data?.message;
-  const text = Array.isArray(m) ? m.join(' ') : typeof m === 'string' ? m : ax?.message ?? '';
-  return /active forward booking already exists/i.test(text);
-}
 
 export type ActualVisitTimeField = 'start' | 'end' | 'both';
 
