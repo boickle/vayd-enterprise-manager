@@ -37,6 +37,21 @@ export type SendSlotOfferPayload = {
   smsBody?: string;
   /** Set true when replacing an existing pending offer for the same client. */
   confirmOverwrite?: boolean;
+  /** Suggested draft shown before CL edits (stored for edit-rate tracking). */
+  smsDraftBody?: string;
+  smsDraftSource?: SlotOfferDraftSource;
+  smsDraftFlags?: string[];
+};
+
+/** model = drafting model; template = server fallback; local = browser fallback. */
+export type SlotOfferDraftSource = 'model' | 'template' | 'local';
+
+export type SlotOfferMessageDraft = {
+  message: string;
+  flags: string[];
+  source: SlotOfferDraftSource;
+  /** SMS segments including the confirmation link. */
+  segments: number | null;
 };
 
 export type SendSlotOfferResponse = {
@@ -293,6 +308,32 @@ export async function removeSlotOffer(offerId: string, practiceId: number): Prom
 export async function sendSlotOffer(payload: SendSlotOfferPayload): Promise<SendSlotOfferResponse> {
   const { data } = await http.post<SendSlotOfferResponse>('/slot-offers/send', payload);
   return data ?? {};
+}
+
+export async function draftSlotOfferMessage(
+  payload: Pick<
+    SendSlotOfferPayload,
+    | 'practiceId'
+    | 'clientId'
+    | 'petIds'
+    | 'doctorId'
+    | 'slotDate'
+    | 'arrivalWindowStart'
+    | 'arrivalWindowEnd'
+  >
+): Promise<SlotOfferMessageDraft> {
+  const { data } = await http.post<Partial<SlotOfferMessageDraft>>(
+    '/slot-offers/draft-message',
+    payload
+  );
+  const message = typeof data?.message === 'string' ? data.message.trim() : '';
+  if (!message) throw new Error('Empty draft');
+  return {
+    message,
+    flags: Array.isArray(data?.flags) ? data.flags.filter((f) => typeof f === 'string') : [],
+    source: data?.source === 'model' ? 'model' : 'template',
+    segments: typeof data?.segments === 'number' ? data.segments : null,
+  };
 }
 
 export function formatSendSlotOfferError(err: unknown): string {
