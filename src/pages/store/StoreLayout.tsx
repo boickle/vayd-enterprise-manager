@@ -1,9 +1,10 @@
-import { useState } from 'react';
-import { Link, Outlet, useNavigate } from 'react-router';
+import { useEffect, useState } from 'react';
+import { Link, Outlet, useLocation, useNavigate } from 'react-router';
 import { useAuth } from '../../auth/useAuth';
-import { storeCartCount } from './storeCartState';
+import { clearStorePortalReturn, storeCartCount, storePortalReturnPath } from './storeCartState';
 import { useAbandonedCartSync } from './useAbandonedCartSync';
 import { useStoreCart } from './useStoreCart';
+import { useStorePortalReturn } from './useStorePortalReturn';
 import StoreMemberPromo from './StoreMemberPromo';
 import './Store.css';
 
@@ -21,6 +22,21 @@ export default function StoreLayout() {
   const clientId =
     auth.userId && Number.isFinite(Number(auth.userId)) ? Number(auth.userId) : null;
   useAbandonedCartSync(auth.clientInfo?.email || auth.userEmail, clientId);
+  const location = useLocation();
+  // The app shell's <main> is the scroll container and keeps its offset across
+  // route changes, so arriving from a long portal page would land mid/bottom.
+  // Reset per store route unless the page is about to scroll to a specific row.
+  useEffect(() => {
+    if ((location.state as { highlightItemId?: unknown } | null)?.highlightItemId != null) return;
+    document.querySelector('main')?.scrollTo({ top: 0 });
+    window.scrollTo({ top: 0 });
+  }, [location.pathname]); // eslint-disable-line react-hooks/exhaustive-deps
+  const portalReturn = useStorePortalReturn();
+  const showPortalReturn = Boolean(auth.token && portalReturn);
+  const petName = portalReturn?.petName?.trim();
+  const portalReturnLabel = petName
+    ? `Back to ${petName}${/s$/i.test(petName) ? "'" : "'s"} portal`
+    : 'Back to my portal';
 
   return (
     <div className="vayd-store">
@@ -92,6 +108,20 @@ export default function StoreLayout() {
         </Link>
       </header>
       <div className="vayd-store__wrap">
+        {showPortalReturn ? (
+          <div className="vayd-store__portal-return" role="note">
+            <Link
+              to={storePortalReturnPath(portalReturn)}
+              className="vayd-store__portal-return-link"
+              onClick={() => clearStorePortalReturn()}
+            >
+              <span aria-hidden>←</span> {portalReturnLabel}
+            </Link>
+            <span className="vayd-store__portal-return-hint">
+              Your cart is saved — pick up where you left off any time.
+            </span>
+          </div>
+        ) : null}
         <StoreMemberPromo />
         <Outlet />
       </div>

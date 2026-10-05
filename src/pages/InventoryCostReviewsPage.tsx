@@ -332,6 +332,28 @@ export default function InventoryCostReviewsPage() {
                     )}
                   </div>
                 </div>
+                {(row.linkedItems?.length ?? 0) > 0 ? (
+                  <div style={{ marginTop: 10 }}>
+                    <div className="settings-muted">
+                      Linked sell prices — updating the catalog also updates these
+                    </div>
+                    <ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>
+                      {row.linkedItems!.map((item) => (
+                        <li key={item.id}>
+                          {item.name}
+                          {item.code ? ` · ${item.code}` : ''}
+                          {` · ${item.unitsPerSale} per sale`}
+                          {' · '}
+                          {money(item.price, 2)} → {money(item.nextPrice, 2)}
+                          <span className="settings-muted">
+                            {' '}
+                            (cost {money(item.cost)} → {money(item.nextCost)})
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
                 {pending ? (
                   editing ? (
                     <div

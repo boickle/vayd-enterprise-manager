@@ -1,14 +1,37 @@
-import type { PatientPrescription, PatientProblem, VisitInvoice } from '../api/visitWorkflow';
+import type {
+  PatientPrescription,
+  PatientProblem,
+  SoapEncounter,
+  VisitInvoice,
+} from '../api/visitWorkflow';
+import { PE_SYSTEMS, peExamFromValue } from '../components/soap/peTemplate';
 import {
   formatPetInactivationLine,
   type HouseholdPetStatusInput,
 } from './householdPetStatus';
+import {
+  buildChartRowsFromMedicalRecord,
+  type ChartRow,
+  type MedicalRecordBundle,
+} from './patientChartFromMedicalRecord';
+import { htmlToPlainText, looksLikeHtmlFragment } from './sanitizeCommunicationHtml';
+
+export type HouseholdPdfExcerpt = {
+  name: string;
+  date: string | null;
+  text: string;
+};
 
 export type HouseholdPetSourceInput = HouseholdPetStatusInput & {
   summaryLine: string;
   alerts: string | null;
   problems: PatientProblem[];
   prescriptions: PatientPrescription[];
+  /** Chart + SOAP + vaccine/reminder rows. Built from the medical record. */
+  medicalRecord?: MedicalRecordBundle | null;
+  encounters?: SoapEncounter[];
+  /** Text pulled from previous-record / outside-clinic PDFs. */
+  pdfExcerpts?: HouseholdPdfExcerpt[];
 };
 
 function money(n: number): string {
@@ -22,9 +45,173 @@ function invoiceDue(inv: VisitInvoice): number {
   return Math.max(0, Number(inv.total || 0) - Number(inv.amountPaid || 0));
 }
 
+function asObj(v: unknown): Record<string, unknown> | null {
+  return v && typeof v === 'object' ? (v as Record<string, unknown>) : null;
+}
+
+function pickStr(v: unknown): string | null {
+  if (v == null) return null;
+  const s = String(v).trim();
+  return s || null;
+}
+
+function asText(value: string): string {
+  return looksLikeHtmlFragment(value) ? htmlToPlainText(value) : value.replace(/<br\s*\/?>/gi, '\n');
+}
+
+function clip(value: string, max: number): string {
+  const t = value.trim();
+  if (t.length <= max) return t;
+  return `${t.slice(0, max).trimEnd()}…`;
+}
+
+function isoDay(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const d = raw.slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : null;
+}
+
+function eventBody(row: ChartRow): string {
+  const detail = asText(row.detailText || '').trim();
+  const fromHtml = row.detailHtml ? htmlToPlainText(row.detailHtml).trim() : '';
+  return [detail, fromHtml].filter(Boolean).join('\n').trim();
+}
+
+function vaccineNameFromLog(o: Record<string, unknown>): string {
+  const inv = asObj(o.inventoryItem);
+  const ti = asObj(o.treatmentItem);
+  const tiInv = ti ? asObj(ti.inventoryItem) : null;
+  return (
+    pickStr(o.vaccineName) ??
+    pickStr(o.name) ??
+    (inv ? pickStr(inv.name) : null) ??
+    (tiInv ? pickStr(tiInv.name) : null) ??
+    'Vaccination'
+  );
+}
+
+function compactSoapLines(enc: SoapEncounter): string[] {
+  const when = isoDay(enc.completedAt ?? enc.updated ?? enc.created) || 'undated';
+  const mode = enc.mode === 'quick' ? 'Quick SOAP' : 'Comprehensive SOAP';
+  const out = [`- ${when} ${mode} (${enc.status})`];
+  const history =
+    enc.subjective && typeof enc.subjective.history === 'string'
+      ? asText(enc.subjective.history).trim()
+      : '';
+  if (history) out.push(`    Hx: ${clip(history, 700)}`);
+  if (enc.objectiveExam && typeof enc.objectiveExam === 'object') {
+    const exam = peExamFromValue(enc.objectiveExam);
+    for (const sys of PE_SYSTEMS) {
+      const finding = exam[sys.key];
+      if (!finding || finding.status !== 'abnormal') continue;
+      const note = finding.note?.trim();
+      out.push(`    PE ${sys.label}: abnormal${note ? ` — ${clip(note, 240)}` : ''}`);
+    }
+  }
+  if (enc.objectiveNotes?.trim()) out.push(`    Obj: ${clip(asText(enc.objectiveNotes), 400)}`);
+  if (enc.assessmentReasoning?.trim()) {
+    out.push(`    A: ${clip(asText(enc.assessmentReasoning), 600)}`);
+  }
+  if (enc.planNotes?.trim()) out.push(`    P: ${clip(asText(enc.planNotes), 600)}`);
+  return out.length > 1 ? out : [`- ${when} ${mode} (${enc.status}) — no body recorded`];
+}
+
+function appendPetChart(lines: string[], pet: HouseholdPetSourceInput): void {
+  const mr = pet.medicalRecord ?? null;
+  const rows = mr ? buildChartRowsFromMedicalRecord(mr) : [];
+
+  const vaxLogs = (mr?.vaccinationLogs ?? [])
+    .map(asObj)
+    .filter((o): o is Record<string, unknown> => o != null);
+  if (vaxLogs.length) {
+    lines.push('Vaccinations (given · next due):');
+    const sorted = [...vaxLogs].sort((a, b) => {
+      const ad = Date.parse(pickStr(a.dateVaccinated) ?? pickStr(a.serviceDate) ?? '') || 0;
+      const bd = Date.parse(pickStr(b.dateVaccinated) ?? pickStr(b.serviceDate) ?? '') || 0;
+      return bd - ad;
+    });
+    for (const o of sorted.slice(0, 40)) {
+      const given = isoDay(pickStr(o.dateVaccinated) ?? pickStr(o.serviceDate)) || 'undated';
+      const next = isoDay(pickStr(o.nextVaccinationDate));
+      lines.push(`- ${vaccineNameFromLog(o)} · given ${given}${next ? ` · next due ${next}` : ''}`);
+    }
+  } else {
+    lines.push('Vaccinations: none listed on the chart');
+  }
+
+  const reminders = rows
+    .filter((r) => r.source === 'reminder')
+    .sort((a, b) => b.sortTime - a.sortTime)
+    .slice(0, 16);
+  if (reminders.length) {
+    lines.push('Reminders / due dates:');
+    for (const r of reminders) {
+      const when = isoDay(r.serviceDateIso) || 'undated';
+      lines.push(`- ${when} ${r.description}`);
+    }
+  }
+
+  const notes = rows
+    .filter((r) => r.source === 'exam' || r.source === 'history' || r.source === 'chartNote')
+    .sort((a, b) => b.sortTime - a.sortTime)
+    .slice(0, 24);
+  if (notes.length) {
+    lines.push('Exams / medical notes (read these for historical findings — they are not always on the problem list):');
+    for (const r of notes) {
+      const when = isoDay(r.serviceDateIso) || 'undated';
+      const body = eventBody(r);
+      lines.push(`- ${when} ${r.typeLabel}: ${r.description}`);
+      if (body) lines.push(`    ${clip(body.replace(/\s+/g, ' '), 900)}`);
+    }
+  }
+
+  const soaps = [...(pet.encounters ?? [])]
+    .sort((a, b) => {
+      const aKey = a.completedAt ?? a.updated ?? a.created;
+      const bKey = b.completedAt ?? b.updated ?? b.created;
+      return bKey.localeCompare(aKey);
+    })
+    .slice(0, 10);
+  if (soaps.length) {
+    lines.push('SOAP notes:');
+    for (const enc of soaps) lines.push(...compactSoapLines(enc));
+  }
+
+  const pdfs = pet.pdfExcerpts?.filter((p) => p.text.trim()) ?? [];
+  const titledDocs = rows
+    .filter((r) => r.source === 'document' && !r.removed)
+    .sort((a, b) => b.sortTime - a.sortTime)
+    .slice(0, 12);
+  const storedDocText = (mr?.chartDocuments ?? [])
+    .map(asObj)
+    .filter((o): o is Record<string, unknown> => Boolean(o && pickStr(o.documentText)))
+    .map((o) => ({
+      name: pickStr(o.name) ?? 'Document',
+      date: isoDay(pickStr(o.serviceDate) ?? pickStr(o.createdAt)),
+      text: pickStr(o.documentText) ?? '',
+    }));
+  if (titledDocs.length || pdfs.length || storedDocText.length) {
+    lines.push('Chart documents:');
+    for (const r of titledDocs) {
+      const when = isoDay(r.serviceDateIso) || 'undated';
+      lines.push(`- ${when} ${r.typeLabel}: ${r.description}`);
+    }
+    for (const doc of storedDocText.slice(0, 4)) {
+      lines.push(`- Stored text from "${doc.name}"${doc.date ? ` (${doc.date})` : ''}:`);
+      lines.push(`    ${clip(doc.text.replace(/\s+/g, ' '), 2000)}`);
+    }
+    for (const pdf of pdfs.slice(0, 4)) {
+      lines.push(
+        `- PDF text from "${pdf.name}"${pdf.date ? ` (${pdf.date})` : ''}:`,
+      );
+      lines.push(`    ${clip(pdf.text.replace(/\s+/g, ' '), 2500)}`);
+    }
+  }
+}
+
 /**
- * Compact household source for client summary/chat — pets in this household only
- * plus account balance and Scout invoices.
+ * Compact household source for client summary/chat — pets in this household,
+ * their chart (exams, SOAPs, vaccines, notes), account balance, and invoices.
  */
 export function buildHouseholdSourceText(opts: {
   clientName: string;
@@ -129,6 +316,8 @@ export function buildHouseholdSourceText(opts: {
     } else {
       lines.push('Active medications: none listed');
     }
+
+    appendPetChart(lines, pet);
   }
 
   return lines.join('\n').slice(0, 180_000);

@@ -21,6 +21,7 @@ import type { TaskLinkInput } from '../api/tasks';
 import {
   buildCreateForwardBookingPayloadFromAppointment,
   FORWARD_BOOKING_UNIT_OPTIONS,
+  type ForwardBookingInterval,
   type ForwardBookingIntervalUnit,
 } from '../utils/forwardBookingFromAppointment';
 import {
@@ -101,6 +102,15 @@ export type ActualVisitTimeField = 'start' | 'end' | 'both';
 /** The five follow-up outcomes; the prompt itself is shared with checkout and the
  * visit wrap-up (see ForwardBookingDecisionFields). */
 export type ForwardBookingMode = ForwardBookingDispositionMode;
+
+function householdVisitAppointmentStartIso(
+  visit: RescheduleSameDayVisit,
+  appt: Appointment,
+  sameCalendarDayAppointments: Appointment[]
+): string {
+  const row = sameCalendarDayAppointments.find((a) => a.id === visit.appointmentId) ?? appt;
+  return row.appointmentStart;
+}
 
 function allHouseholdPatientIds(visits: RescheduleSameDayVisit[]): Set<string> {
   return new Set(visits.map((visit) => visit.patientId));
@@ -477,6 +487,20 @@ export function SchedulerActualVisitTimeModal({
   });
 
   const requiresForwardBooking = !isStartOnly;
+  const canApplyForwardBookingFromChart = requiresForwardBooking && !dispositionLocked;
+  const applyForwardBookingIntervalFromChart = useCallback(
+    (interval: ForwardBookingInterval) => {
+      forwardBookingUserEditedRef.current = true;
+      setForwardBookingMode('forward_book_fields');
+      setForwardAmount(String(interval.amount));
+      setForwardUnit(interval.unit);
+      if (!forwardBookingProviderId.trim()) {
+        const def = defaultForwardBookingProviderId(appt);
+        if (def) setForwardBookingProviderId(def);
+      }
+    },
+    [appt, forwardBookingProviderId]
+  );
   const skipsForwardBookingList =
     forwardBookingMode === 'booked_at_appointment' ||
     forwardBookingMode === 'already_booked' ||
@@ -1543,6 +1567,16 @@ export function SchedulerActualVisitTimeModal({
                             Scheduled {householdVisitScheduledLabel(visit)}
                           </span>
                         }
+                        forwardBookingSourceStartIso={householdVisitAppointmentStartIso(
+                          visit,
+                          appt,
+                          sameCalendarDayAppointments
+                        )}
+                        onApplyForwardBookingInterval={
+                          canApplyForwardBookingFromChart
+                            ? applyForwardBookingIntervalFromChart
+                            : undefined
+                        }
                       />
                     ))}
                   </div>
@@ -1691,6 +1725,16 @@ export function SchedulerActualVisitTimeModal({
                               ) : null}
                             </>
                           }
+                          forwardBookingSourceStartIso={householdVisitAppointmentStartIso(
+                            visit,
+                            appt,
+                            sameCalendarDayAppointments
+                          )}
+                          onApplyForwardBookingInterval={
+                            canApplyForwardBookingFromChart
+                              ? applyForwardBookingIntervalFromChart
+                              : undefined
+                          }
                         />
                       );
                     })}
@@ -1707,6 +1751,12 @@ export function SchedulerActualVisitTimeModal({
                     excludeAppointmentId={appt.id}
                     isAnchor
                     showCheckbox={false}
+                    forwardBookingSourceStartIso={appt.appointmentStart}
+                    onApplyForwardBookingInterval={
+                      canApplyForwardBookingFromChart
+                        ? applyForwardBookingIntervalFromChart
+                        : undefined
+                    }
                   />
                   {forwardBookingPatient.alerts ? (
                     <div

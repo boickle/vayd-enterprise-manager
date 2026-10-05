@@ -204,7 +204,7 @@ export default function InventoryStockRequestsPage({ kind }: Props) {
   const isFill = kind === 'fill';
   const isTransfer = kind === 'transfer';
   const isOrder = kind === 'order';
-  const title = isTransfer || isFill ? 'Transfer list' : 'Order list';
+  const title = isTransfer || isFill ? 'Transfer List' : 'Order List';
   const officeName = branches.find((b) => b.id === branchId)?.name ?? 'Office';
   const orderedQtyByItemLoc = useMemo(() => {
     const map = new Map<string, number>();
@@ -467,6 +467,7 @@ export default function InventoryStockRequestsPage({ kind }: Props) {
 
   return (
     <div className="settings-section">
+      <h1 className="settings-title">{title}</h1>
       <p className="settings-section-description">
         {isTransfer || isFill
           ? 'Prefer Main first (down to 0 — that may put the item on the order list back to max), then other locations over par, then other offices over par. Only pull another location below par if Main is empty. To is short of par; uncovered asks show From as —. Locations at or over par are not destinations.'

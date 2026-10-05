@@ -41,8 +41,29 @@ import {
   saveReceiveShipmentDraft,
 } from '../utils/receiveShipmentDraft';
 import { sellUnitLabel, suggestedReceiveQuantity } from '../utils/vendorPackSize';
-import StockLotPicker from '../components/inventory/StockLotPicker';
+import StockLotPicker, { ExpirationDateField } from '../components/inventory/StockLotPicker';
+import { imagesToInvoicePdf } from '../utils/invoicePagesPdf';
 import './Settings.css';
+
+type InvoicePageDraft = {
+  id: string;
+  file: File;
+  previewUrl: string | null;
+};
+
+function isPdfFile(file: File): boolean {
+  return file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+}
+
+function isImageFile(file: File): boolean {
+  return file.type.startsWith('image/') || /\.(jpe?g|png|webp|heic|heif)$/i.test(file.name);
+}
+
+function revokeInvoicePagePreviews(pages: InvoicePageDraft[]) {
+  for (const page of pages) {
+    if (page.previewUrl) URL.revokeObjectURL(page.previewUrl);
+  }
+}
 
 type DraftLine = InventoryShipmentLine;
 
@@ -160,6 +181,10 @@ export default function ReceiveShipmentPage() {
   const [parsing, setParsing] = useState(false);
   const [invoiceFileName, setInvoiceFileName] = useState<string | null>(null);
   const [invoiceFile, setInvoiceFile] = useState<File | null>(null);
+  const [invoicePages, setInvoicePages] = useState<InvoicePageDraft[]>([]);
+  const [photoSourceOpen, setPhotoSourceOpen] = useState(false);
+  const invoicePagesRef = useRef<InvoicePageDraft[]>([]);
+  invoicePagesRef.current = invoicePages;
   const [invoiceStoredOnShipmentId, setInvoiceStoredOnShipmentId] = useState<number | null>(null);
   const [parsedLines, setParsedLines] = useState<ParsedInvoiceLine[]>([]);
   const [parseMeta, setParseMeta] = useState<{
@@ -169,6 +194,9 @@ export default function ReceiveShipmentPage() {
   } | null>(null);
   const shipmentSectionRef = useRef<HTMLDivElement>(null);
   const receivedSectionRef = useRef<HTMLDivElement>(null);
+  const invoiceCameraInputRef = useRef<HTMLInputElement>(null);
+  const invoiceFileInputRef = useRef<HTMLInputElement>(null);
+  const invoiceLibraryInputRef = useRef<HTMLInputElement>(null);
   const [received, setReceived] = useState<InventoryShipment[]>([]);
   const [receivedOpenId, setReceivedOpenId] = useState<number | null>(null);
   const [receivedLines, setReceivedLines] = useState<InventoryShipmentLine[]>([]);
@@ -234,6 +262,8 @@ export default function ReceiveShipmentPage() {
     }
     return true;
   }
+
+  useEffect(() => () => revokeInvoicePagePreviews(invoicePagesRef.current), []);
 
   useEffect(() => {
     let cancelled = false;
@@ -490,6 +520,10 @@ export default function ReceiveShipmentPage() {
     setInvoiceNumber('');
     setInvoiceFileName(null);
     setInvoiceFile(null);
+    setInvoicePages((prev) => {
+      revokeInvoicePagePreviews(prev);
+      return [];
+    });
     setInvoiceStoredOnShipmentId(null);
     setParseMeta(null);
     setParsedLines([]);
@@ -522,6 +556,10 @@ export default function ReceiveShipmentPage() {
     setParsedLines([]);
     setInvoiceFileName(null);
     setInvoiceFile(null);
+    setInvoicePages((prev) => {
+      revokeInvoicePagePreviews(prev);
+      return [];
+    });
     setInvoiceStoredOnShipmentId(null);
     setParseMeta(null);
     setLineIssues({});
@@ -675,18 +713,78 @@ export default function ReceiveShipmentPage() {
     }
   }
 
-  async function onInvoiceFile(file: File | undefined) {
-    if (!file) return;
+  function addInvoicePages(list: File[]) {
+    if (!list.length || parsing || busy) return;
+    const accepted = list.filter((file) => isPdfFile(file) || isImageFile(file));
+    if (!accepted.length) {
+      setError('Use a PDF or photos (JPEG, PNG, or WebP).');
+      return;
+    }
+    const incomingPdfs = accepted.filter(isPdfFile).length;
+    const existingPdfs = invoicePages.filter((page) => isPdfFile(page.file)).length;
+    const total = invoicePages.length + accepted.length;
+    const pdfs = existingPdfs + incomingPdfs;
+    if (pdfs > 1 || (pdfs > 0 && total > 1)) {
+      setError('Add one PDF, or a photo of each page — not both.');
+      return;
+    }
+    if (accepted.length < list.length) {
+      setError('Skipped a file that was not a PDF or photo.');
+    } else {
+      setError(null);
+    }
+    setInvoicePages((prev) => [
+      ...prev,
+      ...accepted.map((file) => ({
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        file,
+        previewUrl: isImageFile(file) ? URL.createObjectURL(file) : null,
+      })),
+    ]);
+  }
+
+  function removeInvoicePage(id: string) {
+    if (parsing || busy) return;
+    setInvoicePages((prev) => {
+      const page = prev.find((row) => row.id === id);
+      if (page?.previewUrl) URL.revokeObjectURL(page.previewUrl);
+      return prev.filter((row) => row.id !== id);
+    });
+  }
+
+  async function readQueuedInvoice() {
+    if (!invoicePages.length || parsing || busy) return;
+    setError(null);
+    setParsing(true);
+    const pageFiles = invoicePages.map((page) => page.file);
+    // Read every page as its own image; store one combined PDF on the shipment.
+    let storeFile: File;
+    try {
+      storeFile = pageFiles.length === 1 ? pageFiles[0] : await imagesToInvoicePdf(pageFiles);
+    } catch (err: unknown) {
+      setParsing(false);
+      setError(err instanceof Error ? err.message : 'Could not prepare invoice pages');
+      return;
+    }
+    await onInvoiceFile(pageFiles, storeFile);
+  }
+
+  async function onInvoiceFile(parseInput: File | File[] | undefined, storeFile?: File) {
+    const parseFiles = parseInput == null ? [] : Array.isArray(parseInput) ? parseInput : [parseInput];
+    if (!parseFiles.length) return;
+    const file = storeFile ?? parseFiles[0];
     setParsing(true);
     setError(null);
     try {
       const parsed = await parseInventoryInvoice(
         practiceId,
-        file,
+        parseFiles,
         supplierId === '' ? null : Number(supplierId)
       );
       setInvoiceFile(file);
-      setInvoiceFileName(file.name);
+      setInvoiceFileName(
+        parseFiles.length > 1 ? `${parseFiles.length} pages (${file.name})` : file.name
+      );
       setInvoiceStoredOnShipmentId(null);
       setParseMeta({
         supplierName: parsed.supplierName,
@@ -1072,7 +1170,7 @@ export default function ReceiveShipmentPage() {
 
   return (
     <div className="settings-card" style={{ maxWidth: 720, margin: '0 auto', padding: 16 }}>
-      <h2 style={{ marginTop: 0 }}>Receive Shipment</h2>
+      <h1 className="settings-title">Receive Shipment</h1>
       {resumedDraft ? (
         <div
           className="settings-message"
@@ -1123,23 +1221,122 @@ export default function ReceiveShipmentPage() {
       )}
 
       <div className="settings-card" style={{ marginBottom: 16, padding: 12 }}>
-        <label className="settings-label" style={{ marginBottom: 8 }}>
-          Upload invoice
+        <div className="receive-invoice-upload-label" style={{ marginBottom: 8 }}>
+          <span className="settings-label">Upload invoice</span>
           <input
+            ref={invoiceCameraInputRef}
+            className="receive-invoice-camera-input"
+            type="file"
+            accept="image/*"
+            capture="environment"
+            disabled={parsing || busy}
+            onChange={(e) => {
+              const files = Array.from(e.target.files ?? []);
+              e.target.value = '';
+              addInvoicePages(files);
+            }}
+          />
+          <input
+            ref={invoiceLibraryInputRef}
+            className="receive-invoice-camera-input"
+            type="file"
+            multiple
+            accept="image/*"
+            disabled={parsing || busy}
+            onChange={(e) => {
+              const files = Array.from(e.target.files ?? []);
+              e.target.value = '';
+              addInvoicePages(files);
+            }}
+          />
+          <button
+            type="button"
+            className="receive-invoice-take-photo-btn"
+            disabled={parsing || busy}
+            aria-expanded={photoSourceOpen}
+            onClick={() => setPhotoSourceOpen((v) => !v)}
+          >
+            Upload photo
+          </button>
+          {photoSourceOpen ? (
+            <div className="receive-invoice-photo-source" role="group" aria-label="Photo source">
+              <button
+                type="button"
+                disabled={parsing || busy}
+                onClick={() => {
+                  setPhotoSourceOpen(false);
+                  invoiceCameraInputRef.current?.click();
+                }}
+              >
+                Use camera
+              </button>
+              <button
+                type="button"
+                disabled={parsing || busy}
+                onClick={() => {
+                  setPhotoSourceOpen(false);
+                  invoiceLibraryInputRef.current?.click();
+                }}
+              >
+                Choose from photos
+              </button>
+            </div>
+          ) : null}
+          <input
+            ref={invoiceFileInputRef}
             className="settings-input"
             type="file"
+            multiple
             accept="application/pdf,image/jpeg,image/png,image/webp"
             disabled={parsing || busy}
             onChange={(e) => {
-              const file = e.target.files?.[0];
+              const files = Array.from(e.target.files ?? []);
               e.target.value = '';
-              void onInvoiceFile(file);
+              addInvoicePages(files);
             }}
           />
-        </label>
+          {invoicePages.length > 0 ? (
+            <ul className="receive-invoice-pages">
+              {invoicePages.map((page, index) => (
+                <li key={page.id} className="receive-invoice-page">
+                  {page.previewUrl ? (
+                    <img src={page.previewUrl} alt="" />
+                  ) : (
+                    <span className="receive-invoice-page__pdf">PDF</span>
+                  )}
+                  <span className="receive-invoice-page__label">
+                    {isPdfFile(page.file) ? page.file.name : `Page ${index + 1}`}
+                  </span>
+                  <button
+                    type="button"
+                    className="receive-invoice-page__remove"
+                    disabled={parsing || busy}
+                    onClick={() => removeInvoicePage(page.id)}
+                  >
+                    Remove
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          <button
+            type="button"
+            className="btn receive-invoice-go-btn"
+            disabled={parsing || busy || invoicePages.length === 0}
+            onClick={() => void readQueuedInvoice()}
+          >
+            {parsing
+              ? 'Reading…'
+              : invoicePages.length > 1
+                ? `Go (${invoicePages.length} pages)`
+                : 'Go'}
+          </button>
+        </div>
         <p className="settings-muted" style={{ margin: '6px 0 0', fontSize: 13 }}>
-          PDF or photo. We read invoice #, ship-to office, and lines. Match once and we remember
-          that supplier description; ignore syringes and other things you do not track.
+          Add a photo for each page, or choose several images. Pages are read in the order you
+          add them. Tap Go when every page is here. We read invoice #, ship-to office, and lines.
+          Match once and we remember that supplier description; ignore syringes and other things
+          you do not track.
         </p>
         {parsing && (
           <div
@@ -1280,8 +1477,8 @@ export default function ReceiveShipmentPage() {
                         : undefined,
                 }}
               >
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
-                  <div>
+                <div className="receive-line-head">
+                  <div className="receive-line-head__info">
                     <strong>{line.description}</strong>
                     <div className="settings-muted" style={{ fontSize: 13 }}>
                       {[
@@ -1321,10 +1518,10 @@ export default function ReceiveShipmentPage() {
                       </div>
                     )}
                   </div>
-                  <div style={{ display: 'flex', gap: 6, alignItems: 'flex-start' }}>
+                  <div className="receive-line-actions">
                     {isMatched && !rematching && (
                       <span
-                        className="btn secondary"
+                        className="btn secondary receive-line-actions__matched"
                         style={{
                           pointerEvents: 'none',
                           backgroundColor: '#c8e6c9',
@@ -1470,13 +1667,11 @@ export default function ReceiveShipmentPage() {
                     ) : line.requireExpirationOnLots ? (
                       <label className="settings-label">
                         Exp date *
-                        <input
-                          className="settings-input"
-                          type="date"
-                          value={line.expirationDate ?? ''}
-                          style={issue?.field === 'exp' ? { borderColor: '#dc2626' } : undefined}
-                          onChange={(e) => {
-                            const expirationDate = e.target.value;
+                        <ExpirationDateField
+                          value={line.expirationDate}
+                          required
+                          onCommit={(next) => {
+                            const expirationDate = next ?? '';
                             clearLineIssue(index, 'exp');
                             setParsedLines((prev) =>
                               prev.map((row, i) =>
@@ -1484,7 +1679,6 @@ export default function ReceiveShipmentPage() {
                               )
                             );
                           }}
-                          required
                         />
                         {issue?.field === 'exp' ? (
                           <span style={{ display: 'block', marginTop: 4, color: '#dc2626', fontSize: 13 }}>

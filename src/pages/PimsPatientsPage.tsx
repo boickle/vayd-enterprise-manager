@@ -194,9 +194,14 @@ export default function PimsPatientsPage() {
     <div className="pims-clients">
       <div className="pims-clients__head">
         <h1 className="pims-clients__title">Patients</h1>
-        <button type="button" className="pims-clients__add" onClick={() => setAddPatientOpen(true)}>
-          + Add Patient
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+          <Link to="/schedule/patient-snapshots" className="pims-clients__action-link">
+            Pet Snapshots
+          </Link>
+          <button type="button" className="pims-clients__add" onClick={() => setAddPatientOpen(true)}>
+            + Add Patient
+          </button>
+        </div>
       </div>
 
       <div className="pims-clients__toolbar">

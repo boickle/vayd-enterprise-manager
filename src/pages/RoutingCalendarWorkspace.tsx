@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
-import { PanelLeft } from 'lucide-react';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 import Routing from './Routing';
 import Scheduler from './Scheduler';
 import { hasActiveForwardBookingWorkspaceLock } from '../utils/forwardBookingWorkspaceGuard';
@@ -216,7 +216,7 @@ export default function RoutingCalendarWorkspace() {
           aria-label="Show Get Best Route"
           title="Show Get Best Route"
         >
-          <PanelLeft size={18} strokeWidth={1.75} aria-hidden />
+          <ChevronRight size={18} strokeWidth={2} aria-hidden />
           <span className="schedule-routing-workspace__expand-label">Get Best Route</span>
         </button>
       ) : null}
@@ -226,10 +226,7 @@ export default function RoutingCalendarWorkspace() {
         aria-hidden={routingPaneHidden}
       >
         <div className="schedule-routing-workspace__routing-inner">
-          <Routing
-            calendarWorkspaceMode
-            onCollapseWorkspace={() => setRoutingCollapsed(true)}
-          />
+          <Routing calendarWorkspaceMode />
         </div>
       </div>
       <div
@@ -256,7 +253,19 @@ export default function RoutingCalendarWorkspace() {
             persistSplit(routingPct + 2);
           }
         }}
-      />
+      >
+        <button
+          type="button"
+          className="schedule-routing-workspace__collapse"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={() => setRoutingCollapsed(true)}
+          data-schedule-preview-allow
+          title="Minimize Get Best Route"
+          aria-label="Minimize Get Best Route and show the full calendar"
+        >
+          <ChevronLeft size={16} strokeWidth={2.25} aria-hidden />
+        </button>
+      </div>
       <div
         ref={calendarPaneRef}
         className={[

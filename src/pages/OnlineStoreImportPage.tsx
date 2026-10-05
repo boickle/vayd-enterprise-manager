@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, Navigate, useNavigate, useSearchParams } from 'react-router';
 import { useAuth } from '../auth/useAuth';
 import {
@@ -445,6 +445,96 @@ function listingMatchesSearch(listing: StoreAdminListing, query: string): boolea
   return hay.includes(q);
 }
 
+const UNCATEGORIZED_FILTER = '__none__';
+
+function categoryParentName(name: string): string | null {
+  const i = name.indexOf('/');
+  if (i <= 0) return null;
+  return name.slice(0, i).trim() || null;
+}
+
+function categoryChildLabel(name: string, parent: string): string {
+  if (name === parent) return `All ${parent}`;
+  const prefix = name.startsWith(`${parent} /`)
+    ? `${parent} /`
+    : name.startsWith(`${parent}/`)
+      ? `${parent}/`
+      : null;
+  return prefix ? name.slice(prefix.length).trim() : name;
+}
+
+function categoryMatchesFilter(value: string, category: string): boolean {
+  if (value === category) return true;
+  return value.startsWith(`${category} /`) || value.startsWith(`${category}/`);
+}
+
+function listingMatchesCategory(listing: StoreAdminListing, category: string): boolean {
+  if (!category) return true;
+  const value = listing.storeCategory?.trim() || '';
+  if (category === UNCATEGORIZED_FILTER) return !value;
+  return categoryMatchesFilter(value, category);
+}
+
+function itemMatchesCategory(
+  item: Pick<StoreItemRow, 'storeCategory'>,
+  category: string
+): boolean {
+  if (!category) return true;
+  const value = item.storeCategory?.trim() || '';
+  if (category === UNCATEGORIZED_FILTER) return !value;
+  return categoryMatchesFilter(value, category);
+}
+
+type CategoryFilterGroup = {
+  parent: string;
+  parentCount: number;
+  children: Array<{ value: string; label: string; count: number }>;
+};
+
+/** Only categories that actually have store products; the rest would filter to nothing. */
+function buildCategoryFilterGroups(
+  names: string[],
+  countFor: (category: string) => number
+): CategoryFilterGroup[] {
+  const unique = [...new Set(names.map((name) => name.trim()).filter(Boolean))];
+  const childrenByParent = new Map<string, string[]>();
+  const standalone: string[] = [];
+
+  for (const name of unique) {
+    const parent = categoryParentName(name);
+    if (!parent) {
+      standalone.push(name);
+      continue;
+    }
+    const list = childrenByParent.get(parent) ?? [];
+    if (name !== parent) list.push(name);
+    childrenByParent.set(parent, list);
+  }
+
+  const parentNames = new Set(childrenByParent.keys());
+  const groups: CategoryFilterGroup[] = [...parentNames].map((parent) => ({
+    parent,
+    parentCount: countFor(parent),
+    children: [...new Set(childrenByParent.get(parent) ?? [])]
+      .map((value) => ({
+        value,
+        label: categoryChildLabel(value, parent),
+        count: countFor(value),
+      }))
+      .filter((child) => child.count > 0)
+      .sort((a, b) => a.label.localeCompare(b.label)),
+  }));
+
+  for (const name of standalone) {
+    if (parentNames.has(name)) continue;
+    groups.push({ parent: name, parentCount: countFor(name), children: [] });
+  }
+
+  return groups
+    .filter((group) => group.parentCount > 0)
+    .sort((a, b) => a.parent.localeCompare(b.parent));
+}
+
 function variantDisplayName(variant: StoreAdminVariant): string {
   const name = String(variant.name || '').replace(/\s+/g, ' ').trim();
   if (name) return name;
@@ -540,6 +630,7 @@ export default function OnlineStoreImportPage() {
   const [addStoreOpen, setAddStoreOpen] = useState(false);
   const [workspaceListing, setWorkspaceListing] = useState<StoreAdminListing | null>(null);
   const [itemQuery, setItemQuery] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('');
   const [itemPage, setItemPage] = useState(1);
   const [imageTick, setImageTick] = useState(0);
 
@@ -687,6 +778,35 @@ export default function OnlineStoreImportPage() {
     () => (unmatchedOnly ? maps.filter((m) => !matchesOf(m).length) : maps),
     [maps, unmatchedOnly]
   );
+
+  const selectableVisibleMaps = useMemo(
+    () => visibleMaps.filter((m) => matchesOf(m).length),
+    [visibleMaps]
+  );
+
+  const allSelectableVisibleSelected =
+    selectableVisibleMaps.length > 0 &&
+    selectableVisibleMaps.every((m) => selected[m.id]);
+
+  const someSelectableVisibleSelected = selectableVisibleMaps.some((m) => selected[m.id]);
+
+  const importSelectAllRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (importSelectAllRef.current) {
+      importSelectAllRef.current.indeterminate =
+        someSelectableVisibleSelected && !allSelectableVisibleSelected;
+    }
+  }, [someSelectableVisibleSelected, allSelectableVisibleSelected]);
+
+  const toggleSelectAllVisible = () => {
+    setSelected((s) => {
+      const next = { ...s };
+      const select = !allSelectableVisibleSelected;
+      for (const row of selectableVisibleMaps) next[row.id] = select;
+      return next;
+    });
+  };
 
   const removeVariant = async (
     listing: StoreAdminListing,
@@ -845,6 +965,20 @@ export default function OnlineStoreImportPage() {
       ].sort((a, b) => a.localeCompare(b)),
     [listings, managedCategories]
   );
+  const categoryFilterGroups = useMemo(
+    () =>
+      buildCategoryFilterGroups(
+        storeCategories,
+        (category) =>
+          listings.filter((listing) => listingMatchesCategory(listing, category))
+            .length
+      ),
+    [listings, storeCategories]
+  );
+  const uncategorizedCount = useMemo(
+    () => listings.filter((listing) => !listing.storeCategory?.trim()).length,
+    [listings]
+  );
 
   const rememberCategory = (name: string) => {
     const next = name.trim();
@@ -856,8 +990,13 @@ export default function OnlineStoreImportPage() {
   };
 
   const filteredListings = useMemo(
-    () => listings.filter((listing) => listingMatchesSearch(listing, itemQuery)),
-    [itemQuery, listings]
+    () =>
+      listings.filter(
+        (listing) =>
+          listingMatchesCategory(listing, categoryFilter) &&
+          listingMatchesSearch(listing, itemQuery)
+      ),
+    [categoryFilter, itemQuery, listings]
   );
   const itemPageCount = Math.max(1, Math.ceil(filteredListings.length / STORE_ITEMS_PAGE_SIZE));
   const safeItemPage = Math.min(itemPage, itemPageCount);
@@ -870,16 +1009,78 @@ export default function OnlineStoreImportPage() {
     if (itemPage !== safeItemPage) setItemPage(safeItemPage);
   }, [itemPage, safeItemPage]);
 
-  const autoshipOnCount = items.filter((item) => Boolean(item.recommendedFrequency)).length;
-  const allAutoshipOn = items.length > 0 && autoshipOnCount === items.length;
+  const categoryFilterLabel =
+    categoryFilter === UNCATEGORIZED_FILTER
+      ? 'Uncategorized'
+      : categoryFilter || '';
+  const categoryListings = useMemo(
+    () =>
+      categoryFilter
+        ? listings.filter((listing) => listingMatchesCategory(listing, categoryFilter))
+        : listings,
+    [categoryFilter, listings]
+  );
+  const autoshipTargetItems = useMemo(() => {
+    if (!categoryFilter) return items;
+    const fromListings = new Map<number, string | null>();
+    for (const listing of categoryListings) {
+      for (const variant of listing.variants) {
+        if (!variant.inventoryItemId) continue;
+        fromListings.set(variant.inventoryItemId, variant.recommendedFrequency ?? null);
+      }
+    }
+    const byId = new Map(items.map((item) => [item.inventoryItemId, item]));
+    const seen = new Set<number>();
+    const next: StoreItemRow[] = [];
+    for (const [id, frequency] of fromListings) {
+      seen.add(id);
+      const item = byId.get(id);
+      if (item) {
+        next.push(item);
+        continue;
+      }
+      next.push({
+        inventoryItemId: id,
+        name: '',
+        code: null,
+        onlineStorePrice: null,
+        shippable: true,
+        hasImage: false,
+        approvalTag: 'approved',
+        listed: true,
+        recommendedFrequency: frequency,
+        storeCategory: categoryFilterLabel,
+        description: null,
+      });
+    }
+    for (const item of items) {
+      if (seen.has(item.inventoryItemId)) continue;
+      if (!itemMatchesCategory(item, categoryFilter)) continue;
+      next.push(item);
+    }
+    return next;
+  }, [categoryFilter, categoryFilterLabel, categoryListings, items]);
+  const autoshipOnCount = autoshipTargetItems.filter((item) =>
+    Boolean(item.recommendedFrequency)
+  ).length;
+  const allAutoshipOn =
+    autoshipTargetItems.length > 0 && autoshipOnCount === autoshipTargetItems.length;
   const someAutoshipOn = autoshipOnCount > 0 && !allAutoshipOn;
+  const categoryHasProducts = Boolean(categoryFilter && categoryListings.length);
+  const autoshipIsInventoryEmpty = autoshipTargetItems.length === 0;
 
   const toggleAllAutoship = async () => {
+    if (autoshipIsInventoryEmpty) return;
+    const scoped = Boolean(categoryFilter);
+    const scopeLabel = scoped ? categoryFilterLabel : 'all inventory';
     if (allAutoshipOn) {
       const first = await appConfirm({
-        title: 'Turn off autoship for all inventory?',
-        message:
-          'This turns autoship off on every store inventory option, not just the 50 on this page. Clients will no longer see a recurring-order choice at checkout for those items.',
+        title: scoped
+          ? `Turn off autoship for ${scopeLabel}?`
+          : 'Turn off autoship for all inventory?',
+        message: scoped
+          ? `This turns autoship off on every store inventory option in ${scopeLabel}, not just the 50 on this page. Clients will no longer see a recurring-order choice at checkout for those items.`
+          : 'This turns autoship off on every store inventory option, not just the 50 on this page. Clients will no longer see a recurring-order choice at checkout for those items.',
         confirmLabel: 'Continue',
         cancelLabel: 'Cancel',
         danger: true,
@@ -896,9 +1097,12 @@ export default function OnlineStoreImportPage() {
       if (!second) return;
     } else {
       const first = await appConfirm({
-        title: 'Turn on autoship for all inventory?',
-        message:
-          'This turns on monthly autoship for every store inventory option that is currently off — the whole catalog, not just this page. Clients will be offered a recurring order at checkout.',
+        title: scoped
+          ? `Turn on autoship for ${scopeLabel}?`
+          : 'Turn on autoship for all inventory?',
+        message: scoped
+          ? `This turns on monthly autoship for every store inventory option in ${scopeLabel} that is currently off — the whole category, not just this page. Clients will be offered a recurring order at checkout.`
+          : 'This turns on monthly autoship for every store inventory option that is currently off — the whole catalog, not just this page. Clients will be offered a recurring order at checkout.',
         confirmLabel: 'Continue',
         cancelLabel: 'Cancel',
       });
@@ -916,6 +1120,9 @@ export default function OnlineStoreImportPage() {
     setError(null);
     try {
       const next = await bulkPatchOnlineStoreItems(practiceId, {
+        inventoryItemIds: scoped
+          ? autoshipTargetItems.map((item) => item.inventoryItemId)
+          : undefined,
         recommendedFrequency: allAutoshipOn ? null : 'monthly',
         onlyMissing: !allAutoshipOn,
       });
@@ -923,8 +1130,12 @@ export default function OnlineStoreImportPage() {
       await load();
       setFlash(
         allAutoshipOn
-          ? 'Autoship turned off for every store item.'
-          : 'Autoship turned on (monthly) for items that were off.',
+          ? scoped
+            ? `Autoship turned off for ${scopeLabel}.`
+            : 'Autoship turned off for every store item.'
+          : scoped
+            ? `Autoship turned on (monthly) for ${scopeLabel} items that were off.`
+            : 'Autoship turned on (monthly) for items that were off.',
       );
     } catch (err) {
       setError(apiErrorMessage(err));
@@ -1066,7 +1277,16 @@ export default function OnlineStoreImportPage() {
             <table className="inv-catalog-results__table">
               <thead>
                 <tr>
-                  <th />
+                  <th>
+                    <input
+                      ref={importSelectAllRef}
+                      type="checkbox"
+                      aria-label="Select all rows with Scout matches"
+                      disabled={busy || !selectableVisibleMaps.length}
+                      checked={allSelectableVisibleSelected}
+                      onChange={() => toggleSelectAllVisible()}
+                    />
+                  </th>
                   <th>Ecwid</th>
                   <th>SKU</th>
                   <th>Match</th>
@@ -1190,8 +1410,8 @@ export default function OnlineStoreImportPage() {
           <p className="settings-muted">
             Each row is a Scout store product. Add a master product first, then attach
             inventory or procedure options — or create a new inventory item and add it.
-            Highlight and approval live on the product; autoship is per option. Search
-            looks at every store product; the table shows 50 at a time.
+            Highlight and approval live on the product; autoship is per option. Filter
+            by category or search every store product; the table shows 50 at a time.
           </p>
           <div style={{ display: 'flex', gap: 8, margin: '12px 0', flexWrap: 'wrap' }}>
             <button
@@ -1227,20 +1447,38 @@ export default function OnlineStoreImportPage() {
             className={`store-autoship-all${
               allAutoshipOn ? ' is-on' : someAutoshipOn ? ' is-mixed' : ''
             }`}
-            disabled={busy || !items.length}
+            disabled={busy || !autoshipTargetItems.length}
             onClick={() => void toggleAllAutoship()}
           >
             <span className="store-autoship-all__mark" aria-hidden>
               {allAutoshipOn ? '✓' : someAutoshipOn ? '–' : ''}
             </span>
             <span className="store-autoship-all__copy">
-              <strong>Autoship all inventory</strong>
+              <strong>
+                {categoryFilter
+                  ? `Autoship ${categoryFilterLabel}`
+                  : 'Autoship all inventory'}
+              </strong>
               <span>
-                {allAutoshipOn
-                  ? `On for all ${items.length} inventory options. Click to turn off.`
-                  : someAutoshipOn
-                    ? `On for ${autoshipOnCount} of ${items.length} inventory options. Click to turn the rest on.`
-                    : `Off for all ${items.length || ''} inventory options. Click to turn on monthly autoship.`}
+                {autoshipIsInventoryEmpty
+                  ? categoryHasProducts
+                    ? `${categoryListings.length} product${
+                        categoryListings.length === 1 ? '' : 's'
+                      } here, but none have an inventory option — autoship only applies to inventory.`
+                    : `No inventory options${
+                        categoryFilter ? ` in ${categoryFilterLabel}` : ''
+                      }.`
+                  : allAutoshipOn
+                    ? `On for all ${autoshipTargetItems.length} inventory options${
+                        categoryFilter ? ` in ${categoryFilterLabel}` : ''
+                      }. Click to turn off.`
+                    : someAutoshipOn
+                      ? `On for ${autoshipOnCount} of ${autoshipTargetItems.length} inventory options${
+                          categoryFilter ? ` in ${categoryFilterLabel}` : ''
+                        }. Click to turn the rest on.`
+                      : `Off for all ${autoshipTargetItems.length} inventory options${
+                          categoryFilter ? ` in ${categoryFilterLabel}` : ''
+                        }. Click to turn on monthly autoship.`}
               </span>
             </span>
           </button>
@@ -1280,16 +1518,64 @@ export default function OnlineStoreImportPage() {
           ) : null}
           {addStoreOpen ? null : (
           <>
-          <input
-            className="settings-input"
-            style={{ maxWidth: 420, marginBottom: 10 }}
-            placeholder="Search store items, SKUs, or descriptions"
-            value={itemQuery}
-            onChange={(e) => {
-              setItemQuery(e.target.value);
-              setItemPage(1);
+          <div
+            style={{
+              display: 'flex',
+              gap: 8,
+              marginBottom: 10,
+              flexWrap: 'wrap',
+              alignItems: 'center',
             }}
-          />
+          >
+            <input
+              className="settings-input"
+              style={{ maxWidth: 420, flex: '1 1 240px' }}
+              placeholder="Search store items, SKUs, or descriptions"
+              value={itemQuery}
+              onChange={(e) => {
+                setItemQuery(e.target.value);
+                setItemPage(1);
+              }}
+            />
+            <label className="settings-muted" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              Category
+              <select
+                className="settings-input"
+                style={{ minWidth: 220 }}
+                value={categoryFilter}
+                onChange={(e) => {
+                  setCategoryFilter(e.target.value);
+                  setItemPage(1);
+                }}
+                aria-label="Filter store items by category"
+              >
+                <option value="">All categories ({listings.length})</option>
+                {uncategorizedCount ? (
+                  <option value={UNCATEGORIZED_FILTER}>
+                    Uncategorized ({uncategorizedCount})
+                  </option>
+                ) : null}
+                {categoryFilterGroups.map((group) =>
+                  group.children.length ? (
+                    <optgroup key={group.parent} label={group.parent}>
+                      <option value={group.parent}>
+                        All {group.parent} ({group.parentCount})
+                      </option>
+                      {group.children.map((child) => (
+                        <option key={child.value} value={child.value}>
+                          {child.label} ({child.count})
+                        </option>
+                      ))}
+                    </optgroup>
+                  ) : (
+                    <option key={group.parent} value={group.parent}>
+                      {group.parent} ({group.parentCount})
+                    </option>
+                  )
+                )}
+              </select>
+            </label>
+          </div>
           <StoreItemsPager
             page={safeItemPage}
             pageCount={itemPageCount}

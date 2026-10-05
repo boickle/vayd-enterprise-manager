@@ -95,6 +95,8 @@ import {
   ROUTING_CALENDAR_PREVIEW_UPDATED_EVENT,
   ROUTING_FOCUS_RESCHEDULE_SOURCE_EVENT,
   ROUTING_PREVIEW_ETA_WINDOW_WARNINGS_EVENT,
+  ROUTING_PREVIEW_SHOW_RESULTS_EVENT,
+  ROUTING_PREVIEW_STEP_EVENT,
   routingCalendarPreviewOptionKey,
   type RoutingPreviewEtaWindowWarningsDetail,
   writeRoutingCalendarPreview,
@@ -1862,15 +1864,12 @@ function routingShouldStackFormAndResults(paneWidthPx: number, screenWidthPx: nu
 type RoutingProps = {
   /** When true, "Book appointment" updates the embedded calendar via event instead of navigating to `/schedule/scheduler`. */
   calendarWorkspaceMode?: boolean;
-  /** Hide Get Best Route so the practice calendar can use the full width (same look as Home). */
-  onCollapseWorkspace?: () => void;
 };
 
 type RoutingPrefillFlashField = 'doctor' | 'client' | 'address' | 'minutes' | 'apptType' | 'pets';
 
 export default function Routing({
   calendarWorkspaceMode = false,
-  onCollapseWorkspace,
 }: RoutingProps) {
   const { token: authToken, userId: authUserId, doctorId: authDoctorInternalId } = useAuth();
   const bootstrap = useMemo(() => readRoutingUiBootstrap(), []);
@@ -2214,6 +2213,9 @@ export default function Routing({
 
   useEffect(() => {
     if (!calendarWorkspaceMode || !activeCalendarPreviewOptionKey) return;
+    // On a phone the calendar preview covers the page. Scrolling the card into view
+    // yanks the results list up under that overlay.
+    if (window.matchMedia('(max-width: 900px)').matches) return;
     const root = routingPageRootRef.current;
     const el = root?.querySelector(
       `[data-routing-calendar-preview-card="${CSS.escape(activeCalendarPreviewOptionKey)}"]`
@@ -5759,6 +5761,38 @@ export default function Routing({
     };
   }, [displayOptions]);
 
+  const displayOptionsRef = useRef(displayOptions);
+  displayOptionsRef.current = displayOptions;
+  const openMyWeekRef = useRef(openMyWeek);
+  openMyWeekRef.current = openMyWeek;
+  const previewOptionKeyRef = useRef(activeCalendarPreviewOptionKey);
+  previewOptionKeyRef.current = activeCalendarPreviewOptionKey;
+
+  useEffect(() => {
+    const onStep = (ev: Event) => {
+      const direction = (ev as CustomEvent<{ direction?: string }>).detail?.direction;
+      const opts = displayOptionsRef.current;
+      if (!opts.length || (direction !== 'next' && direction !== 'previous')) return;
+      const key = previewOptionKeyRef.current;
+      const idx = key ? opts.findIndex((opt) => routingOptionKey(opt) === key) : -1;
+      const next = direction === 'next' ? idx + 1 : idx - 1;
+      if (next < 0 || next >= opts.length) return;
+      void openMyWeekRef.current(opts[next]);
+    };
+    const onShowResults = () => {
+      document.querySelector('.routing-results-card')?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      });
+    };
+    window.addEventListener(ROUTING_PREVIEW_STEP_EVENT, onStep);
+    window.addEventListener(ROUTING_PREVIEW_SHOW_RESULTS_EVENT, onShowResults);
+    return () => {
+      window.removeEventListener(ROUTING_PREVIEW_STEP_EVENT, onStep);
+      window.removeEventListener(ROUTING_PREVIEW_SHOW_RESULTS_EVENT, onShowResults);
+    };
+  }, []);
+
   /**
    * Leads with the fact that the requested doctor had nothing, before any slot is
    * visible. Without that framing a booker sees a normal-looking list and has no
@@ -5871,18 +5905,6 @@ export default function Routing({
             <span className="routing-forward-booking-mode-badge">Forward booking</span>
           ) : hasActiveAppointmentRequestWorkspace ? (
             <span className="routing-forward-booking-mode-badge">Appointment request</span>
-          ) : null}
-          {calendarWorkspaceMode && onCollapseWorkspace ? (
-            <button
-              type="button"
-              className="routing-route-form-collapse"
-              onClick={onCollapseWorkspace}
-              data-schedule-preview-allow
-              title="Hide Get Best Route and show the full calendar"
-              aria-label="Hide Get Best Route and show the full calendar"
-            >
-              Full calendar
-            </button>
           ) : null}
         </div>
         {hasActiveRescheduleIntent && rescheduleModeSummary ? (

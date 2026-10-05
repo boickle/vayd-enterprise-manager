@@ -79,6 +79,7 @@ import {
 import { listFormInvites, type FormInvite } from '../../api/forms';
 import {
   buildChartRowsFromMedicalRecord,
+  mergeInHouseLabsIntoChart,
   chartRowsFromClientRoomLoaders,
   chartRowsFromMailOrders,
   chartRowsFromScoutNotes,
@@ -120,6 +121,7 @@ import PimsAppointmentsSection from './PimsAppointmentsSection';
 import PimsChartWorkBar, { PimsPatientMergeButton } from './PimsChartWorkBar';
 import PimsChartCaseSummaryCard from './PimsChartCaseSummaryCard';
 import PatientMembershipPanel from './PatientMembershipPanel';
+import PatientPortalProfileCard, { readStaffPortalProfile } from './PatientPortalProfileCard';
 import {
   buildClientFinancialHref,
   writeFinancialPrefill,
@@ -174,7 +176,9 @@ import {
   patientStatusChip as statusChipFromRecord,
 } from '../../utils/patientStatusDisplay';
 import { clientDiscountBadge } from '../../utils/clientDiscountDisplay';
-import LabResultsPanel from '../labs/LabResultsPanel';
+import { listPatientLabResults, type LabResult } from '../../api/inHouseLabs';
+import InvoiceLineLabResults from '../labs/InvoiceLineLabResults';
+import LabResultChip, { labResultsState } from '../labs/LabResultChip';
 import './detail/PimsDetailKit.css';
 import './PimsPatientDetailView.css';
 import { currentPracticeId } from '../../utils/practiceIdFromToken';
@@ -401,7 +405,8 @@ function chartRowHasBody(r: ChartRow): boolean {
       r.detailHtml ||
       (r.filePatientId && r.fileDocumentId) ||
       r.removable ||
-      r.removed,
+      r.removed ||
+      r.labResults?.length,
   );
 }
 
@@ -438,13 +443,67 @@ function ChartDocumentOpenButton({
   );
 }
 
+/**
+ * WAITING / result chip plus a Run lab button on a timeline row that carries
+ * in-house lab forms. The button just opens the row — the form is the body.
+ */
+function ChartLabRowActions({
+  row,
+  open,
+  onToggle,
+}: {
+  row: ChartRow;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  if (!row.labResults?.length) return null;
+  const waiting = labResultsState(row.labResults) === 'waiting';
+  return (
+    <>
+      <LabResultChip results={row.labResults} waitingLabel="WAITING" />
+      {!open ? (
+        <button
+          type="button"
+          className="pims-patient-detail__run-lab"
+          onClick={(event) => {
+            event.stopPropagation();
+            onToggle();
+          }}
+        >
+          {waiting ? 'Run lab' : 'View results'}
+        </button>
+      ) : null}
+    </>
+  );
+}
+
 function ChartRowExpandBody({
   row,
   onRemove,
+  onLabResultSaved,
 }: {
   row: ChartRow;
   onRemove?: (row: ChartRow) => void;
+  /** In-house lab forms are run right here in the timeline. */
+  onLabResultSaved?: (saved: LabResult) => void;
 }) {
+  if (row.labResults?.length) {
+    return (
+      <div
+        className="pims-patient-detail__expand-stack"
+        onClick={(event) => event.stopPropagation()}
+      >
+        {row.detailText?.trim() ? (
+          <div className="pims-patient-detail__expand-text">{row.detailText.trim()}</div>
+        ) : null}
+        <InvoiceLineLabResults
+          results={row.labResults}
+          readOnly={!onLabResultSaved}
+          onSaved={(saved) => onLabResultSaved?.(saved)}
+        />
+      </div>
+    );
+  }
   const fileBtn =
     row.filePatientId && row.fileDocumentId ? (
       <ChartDocumentOpenButton
@@ -1079,6 +1138,8 @@ export default function PimsPatientDetailView({
   const [rxItems, setRxItems] = useState<unknown[]>([]);
   const [problems, setProblems] = useState<PatientProblem[]>([]);
   const [visitCharges, setVisitCharges] = useState<PostedVisitCharge[]>([]);
+  /** In-house lab forms (snap tests etc.), waiting or resulted, shown on the timeline. */
+  const [labResults, setLabResults] = useState<LabResult[]>([]);
   /** Every prescription on this patient — Scout-written (SOAP orders, EMR pins) and eVet. */
   const [prescriptions, setPrescriptions] = useState<PatientPrescription[]>([]);
   const [resolvingProblemId, setResolvingProblemId] = useState<string | null>(null);
@@ -1157,6 +1218,7 @@ export default function PimsPatientDetailView({
         scoutNoteRows,
         mailOrderRows,
         formInviteRows,
+        labResultRows,
       ] = await Promise.all([
           fetchPatientByIdStaff(id),
           fetchPatientMedicalRecordStaff(id).catch((e: unknown) => {
@@ -1193,6 +1255,7 @@ export default function PimsPatientDetailView({
             () => [] as MailOrder[],
           ),
           listFormInvites({ patientId: Number(id) }).catch(() => [] as FormInvite[]),
+          listPatientLabResults(Number(id)).catch(() => [] as LabResult[]),
         ]);
       if (isStale?.()) return;
       if (patientData && typeof patientData === 'object') {
@@ -1211,9 +1274,18 @@ export default function PimsPatientDetailView({
       setScoutNotes(scoutNoteRows);
       setMailOrders(mailOrderRows);
       setFormInvites(formInviteRows);
+      setLabResults(labResultRows);
     },
     [patientId]
   );
+
+  const onChartLabResultSaved = useCallback((saved: LabResult) => {
+    setLabResults((prev) =>
+      prev.some((r) => r.id === saved.id)
+        ? prev.map((r) => (r.id === saved.id ? saved : r))
+        : [...prev, saved]
+    );
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -1232,6 +1304,7 @@ export default function PimsPatientDetailView({
         setScoutNotes([]);
         setMailOrders([]);
         setFormInvites([]);
+        setLabResults([]);
         setEmbeddedRoomLoaderId(null);
         setTreatments([]);
     setPhotoFailed(false);
@@ -1332,8 +1405,11 @@ export default function PimsPatientDetailView({
     const loaders = chartRowsFromClientRoomLoaders(clientRoomLoaders, patientId);
     const notes = chartRowsFromScoutNotes(scoutNotes);
     const mail = chartRowsFromMailOrders(mailOrders, patientId);
-    return [...base, ...loaders, ...notes, ...mail].sort((a, b) => b.sortTime - a.sortTime);
-  }, [medicalRecord, problems, visitCharges, treatments, rxItems, prescriptions, clientRoomLoaders, scoutNotes, mailOrders, formInvites, patientId]);
+    // Snap tests and other in-house forms ride on their charge's row, or stand
+    // alone while the bill is still open, so a WAITING lab shows from the chart.
+    const withLabs = mergeInHouseLabsIntoChart(base, labResults);
+    return [...withLabs, ...loaders, ...notes, ...mail].sort((a, b) => b.sortTime - a.sortTime);
+  }, [medicalRecord, problems, visitCharges, treatments, rxItems, prescriptions, clientRoomLoaders, scoutNotes, mailOrders, formInvites, labResults, patientId]);
 
   /**
    * Unsigned SOAPs. The timeline only carries locked material, so these would otherwise
@@ -1488,7 +1564,10 @@ export default function PimsPatientDetailView({
   const diagnoses = medicalRecord?.diagnoses ?? [];
   const labPairs = medicalRecord?.labOrders ?? [];
   const labChartRows = useMemo(
-    () => chartRows.filter((r) => r.source === 'lab'),
+    () =>
+      chartRows.filter(
+        (r) => r.source === 'lab' || r.source === 'inHouseLab' || Boolean(r.labResults?.length)
+      ),
     [chartRows]
   );
   const wellnessPlans = medicalRecord?.wellnessPlans ?? [];
@@ -1742,6 +1821,14 @@ export default function PimsPatientDetailView({
         ? `?clientId=${encodeURIComponent(cid)}`
         : '';
     navigate(`/schedule/soap/${appointmentId}/${encodeURIComponent(pid)}${qs}`);
+  }
+
+  function openMedicalNoteForVisit(appointmentId: number, pid: string, cid: string | null) {
+    const qs =
+      cid != null && cid !== ''
+        ? `?clientId=${encodeURIComponent(cid)}`
+        : '';
+    navigate(`/schedule/note/${appointmentId}/${encodeURIComponent(pid)}${qs}`);
   }
 
   function startAppointmentForThisPatient() {
@@ -2119,6 +2206,10 @@ export default function PimsPatientDetailView({
             }`}
           >
             <span className="pims-emr-title__name">{pname}</span>
+            {(() => {
+              const nick = readStaffPortalProfile(payload)?.nickname;
+              return nick ? <span className="pims-emr-title__aka">aka “{nick}”</span> : null;
+            })()}
             {membership.isMember ? (
               <span title={membershipLabel}>
                 <Heart
@@ -2460,6 +2551,7 @@ export default function PimsPatientDetailView({
         practiceTz={practiceTz}
         onSummarize={requestSummarize}
         onStartSoap={openSoapForVisit}
+        onOpenMedicalNote={openMedicalNoteForVisit}
         onBookAppointment={canBookAppointment ? startAppointmentForThisPatient : undefined}
         onInvoice={() => openFinancial()}
         onRecordsChanged={(result) => {
@@ -2507,10 +2599,6 @@ export default function PimsPatientDetailView({
             collapsed={!visitsOpen}
             onToggleCollapse={toggleVisitsOpen}
           />
-        </section>
-
-        <section className="pims-emr-story__card" aria-labelledby="pims-emr-labs">
-          <LabResultsPanel patientId={Number(patientId)} />
         </section>
 
         <section className="pims-emr-story__card" aria-labelledby="pims-emr-reminders">
@@ -2711,6 +2799,8 @@ export default function PimsPatientDetailView({
           </section>
         </div>
 
+        <PatientPortalProfileCard profile={readStaffPortalProfile(payload)} petName={pname || 'this pet'} />
+
         {Number.isFinite(Number(patientId)) ? (
           <PatientMembershipPanel
             patientId={Number(patientId)}
@@ -2856,7 +2946,7 @@ export default function PimsPatientDetailView({
                   : `SOAPs (${soapNotes.length})`,
               ],
               ['prescriptions', `Rx (${prescriptionCount})`],
-              ['labs', `Labs (${labPairs.length})`],
+              ['labs', `Labs (${Math.max(labPairs.length, labChartRows.length)})`],
               ['wellness', `Wellness (${wellnessPlanCount})`],
               ['groups', 'By category'],
               ['monitoring', `Anesthesia (${monitoringCount})`],
@@ -2994,6 +3084,7 @@ export default function PimsPatientDetailView({
                                 </span>
                               ) : null}
                               {r.description}
+                              <ChartLabRowActions row={r} open={open} onToggle={() => toggleChartRowExpand(r.id)} />
                             </td>
                             <td className="pims-patient-detail__provider">{r.provider}</td>
                             <td className="pims-patient-detail__when">
@@ -3005,6 +3096,7 @@ export default function PimsPatientDetailView({
                               <td colSpan={5}>
                                 <ChartRowExpandBody
                                   row={r}
+                                  onLabResultSaved={onChartLabResultSaved}
                                   onRemove={(next) => {
                                     setRemoveChartError(null);
                                     setPendingRemoveRow(next);
@@ -3111,6 +3203,7 @@ export default function PimsPatientDetailView({
                                 </span>
                               ) : null}
                               {r.description}
+                              <ChartLabRowActions row={r} open={open} onToggle={() => toggleChartRowExpand(r.id)} />
                             </td>
                             <td
                               className={[
@@ -3696,7 +3789,10 @@ export default function PimsPatientDetailView({
                         <td>
                           <span className="pims-patient-detail__type-inner">{r.typeLabel}</span>
                         </td>
-                        <td>{r.description}</td>
+                        <td>
+                          {r.description}
+                          <ChartLabRowActions row={r} open={open} onToggle={() => toggleChartRowExpand(r.id)} />
+                        </td>
                         <td className="pims-patient-detail__when">
                           {formatChartDateTime(r.serviceDateIso)}
                         </td>
@@ -3704,7 +3800,7 @@ export default function PimsPatientDetailView({
                       open ? (
                         <tr key={`${r.id}-body`} className="pims-patient-detail__expand-row">
                           <td colSpan={4}>
-                            <ChartRowExpandBody row={r} />
+                            <ChartRowExpandBody row={r} onLabResultSaved={onChartLabResultSaved} />
                           </td>
                         </tr>
                       ) : null,

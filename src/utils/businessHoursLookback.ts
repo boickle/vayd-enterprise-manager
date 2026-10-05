@@ -95,6 +95,55 @@ export function cutoffAfterBusinessHoursAgo(args: {
   return cursor.toUTC().toJSDate();
 }
 
+/**
+ * Open hours that elapse between `from` and `to`. Closed days and after-hours
+ * time do not count, so a Friday-evening visit is still minutes old on Monday.
+ * Mirrors the API's `businessHoursBetween` so both ends agree on the window.
+ */
+export function businessHoursElapsed(args: {
+  from: Date;
+  to?: Date;
+  hoursOfOperation?: ChatHoursOfOperation | null;
+  timeZone?: string | null;
+}): number {
+  const zone = practiceTimeZoneOrDefault(args.timeZone);
+  let hours = parseChatHoursOfOperation(args.hoursOfOperation);
+  if (!hasAnyOpenDay(hours)) hours = defaultBusinessHoursOfOperation();
+
+  const from = DateTime.fromJSDate(args.from, { zone });
+  const to = DateTime.fromJSDate(args.to ?? new Date(), { zone });
+  if (!from.isValid || !to.isValid || to <= from) return 0;
+
+  let minutes = 0;
+  // Begin a day early so an overnight shift that opened yesterday still counts.
+  let cursor = from.startOf('day').minus({ days: 1 });
+  const lastDay = to.startOf('day');
+
+  for (let guard = 0; guard < 400 && cursor <= lastDay; guard += 1) {
+    const name = CHAT_DAY_NAMES[cursor.weekday === 7 ? 0 : cursor.weekday];
+    const day = hours[name];
+    if (day?.open && day?.close) {
+      const openMin = parseTimeToMinutes(day.open);
+      const span = openMinutesForDay(hours, name);
+      const openAt = cursor.set({
+        hour: Math.floor(openMin / 60),
+        minute: openMin % 60,
+        second: 0,
+        millisecond: 0,
+      });
+      const closeAt = openAt.plus({ minutes: span });
+      const segmentStart = from > openAt ? from : openAt;
+      const segmentEnd = to < closeAt ? to : closeAt;
+      if (segmentEnd > segmentStart) {
+        minutes += segmentEnd.diff(segmentStart, 'minutes').minutes;
+      }
+    }
+    cursor = cursor.plus({ days: 1 });
+  }
+
+  return minutes / 60;
+}
+
 export function invoiceInLookback(
   paidAt: string | Date | null | undefined,
   cutoff: Date,

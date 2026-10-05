@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router';
+import { Link, useLocation, useNavigate } from 'react-router';
 import { useAuth } from '../../auth/useAuth';
 import {
   publicCheckout,
@@ -41,10 +41,13 @@ import {
   AUTOSHIP_FREQS,
   autoshipCadencePhrase,
   formatAutoshipFrequency,
+  clearStorePortalReturn,
   readStoreCart,
+  storePortalReturnPath,
   writeStoreCart,
   type StoreCartLine,
 } from './storeCartState';
+import { useStorePortalReturn } from './useStorePortalReturn';
 import { expandStoreTagalongs, storeRebatePromoCopy } from '../../utils/storeTagalongs';
 import { storeRecommendedFrequency } from '../../utils/storeReminderFrequency';
 import { applyMemberStoreDiscount, memberDiscountForPets } from '../../utils/storeMemberPrice';
@@ -142,8 +145,17 @@ function formatSavedCard(card: StoreSavedCard) {
   return `${titleCaseBrand(card.brand)} •••• ${last4}${exp}${used}`;
 }
 
+/** Scroll whatever actually scrolls (the app shell's <main>, or the window) to the top. */
+function scrollPageToTop() {
+  const main = document.querySelector('main');
+  if (main) main.scrollTo({ top: 0 });
+  window.scrollTo({ top: 0 });
+}
+
 export default function StoreCartPage() {
   const nav = useNavigate();
+  const location = useLocation();
+  const portalReturn = useStorePortalReturn();
   const auth = useAuth() as {
     token?: string | null;
     userId?: string | null;
@@ -153,6 +165,34 @@ export default function StoreCartPage() {
   const loggedIn = Boolean(auth.token && clientId);
 
   const [lines, setLines] = useState(readStoreCart);
+  // Item the shopper just added from elsewhere (e.g. portal "Reorder"): scroll
+  // to it and flash it briefly so the landing is obvious.
+  const [highlightItemId, setHighlightItemId] = useState<number | null>(() => {
+    const raw = (location.state as { highlightItemId?: unknown } | null)?.highlightItemId;
+    const n = Number(raw);
+    return raw != null && Number.isFinite(n) ? n : null;
+  });
+  const rowRefs = useRef<Record<number, HTMLTableRowElement | null>>({});
+  useEffect(() => {
+    if (highlightItemId == null) {
+      scrollPageToTop();
+      return;
+    }
+    // Consume the navigation state so a refresh doesn't replay the flash.
+    nav(location.pathname + location.search, { replace: true, state: null });
+    const row = rowRefs.current[highlightItemId];
+    if (row) {
+      // Rows can be tall (pet picker, autoship chips), so align the top of the
+      // row rather than its middle; scroll-margin keeps it clear of the header.
+      // Jump, don't animate: the offset we're leaving belongs to the previous page.
+      row.scrollIntoView({ block: 'start' });
+    } else {
+      scrollPageToTop();
+    }
+    const timer = window.setTimeout(() => setHighlightItemId(null), 2600);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const { pets, discounts: memberDiscounts } = useStoreMemberPricing();
   const [coupon, setCoupon] = useState('');
   const [couponOff, setCouponOff] = useState(0);
@@ -440,9 +480,20 @@ export default function StoreCartPage() {
     <div className="vayd-store__cart">
       <div className="vayd-store__cart-head">
         <h1>Cart</h1>
-        <Link className="ghost" to="/store">
-          ← Back to store
-        </Link>
+        <div className="vayd-store__cart-head-links">
+          {auth.token && portalReturn ? (
+            <Link
+              className="ghost"
+              to={storePortalReturnPath(portalReturn)}
+              onClick={() => clearStorePortalReturn()}
+            >
+              ← Back to portal
+            </Link>
+          ) : null}
+          <Link className="ghost" to="/store">
+            {auth.token && portalReturn ? 'Keep shopping' : '← Back to store'}
+          </Link>
+        </div>
       </div>
       {!lines.length ? <p>Your cart is empty.</p> : null}
 
@@ -472,7 +523,16 @@ export default function StoreCartPage() {
               const memberPct = memberDiscountForPets(memberDiscounts, line.patientIds);
               return (
                 <Fragment key={`${line.inventoryItemId}-${i}`}>
-                <tr>
+                <tr
+                  ref={(el) => {
+                    rowRefs.current[line.inventoryItemId] = el;
+                  }}
+                  className={
+                    highlightItemId === line.inventoryItemId
+                      ? 'vayd-store__cart-row vayd-store__cart-row--just-added'
+                      : 'vayd-store__cart-row'
+                  }
+                >
                   <td>
                     <div className="vayd-store__cart-item">
                       {line.hasImage !== false ? (

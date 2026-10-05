@@ -1,8 +1,57 @@
 /**
- * Golden vs Foundations (membership) and senior screen vs early detection (public room loader labs)
- * both use this age for dogs and cats. Change here only so they stay aligned.
+ * Last-resort Golden age, used only when no Golden membership plan has a youngest
+ * age set. Practices edit that age under Settings → Memberships (`minAgeMonths`).
+ * Signup, Room Loader, and post-visit enrollment should call
+ * `goldenMinAgeMonthsFromPlans` first.
  */
 export const MEMBERSHIP_GOLDEN_MIN_AGE_YEARS = 8;
+
+export type PlanAgeSource = {
+  name?: string | null;
+  species?: string | null;
+  minAgeMonths?: number | null;
+};
+
+function isGoldenPlanName(name: string | null | undefined): boolean {
+  return /\bgolden\b/i.test(name || '') && !/puppy|kitten/i.test(name || '');
+}
+
+function speciesFits(planSpecies: string | null | undefined, species: 'dog' | 'cat' | null | undefined): boolean {
+  if (!species) return true;
+  const s = (planSpecies || '').toLowerCase();
+  if (!s || s === 'any') return true;
+  if (species === 'dog') return /dog|canine/.test(s);
+  return /cat|feline/.test(s);
+}
+
+/**
+ * Youngest age (months) at which Golden is offered, from the practice's Golden plans.
+ * Null when every Golden plan has a blank youngest age — callers may then fall back
+ * to `MEMBERSHIP_GOLDEN_MIN_AGE_YEARS`.
+ */
+export function goldenMinAgeMonthsFromPlans(
+  plans: PlanAgeSource[],
+  species?: 'dog' | 'cat' | null
+): number | null {
+  const mins = plans
+    .filter((plan) => isGoldenPlanName(plan.name) && speciesFits(plan.species, species))
+    .map((plan) => plan.minAgeMonths)
+    .filter((months): months is number => months != null && Number.isFinite(months) && months >= 0);
+  if (mins.length === 0) return null;
+  return Math.min(...mins);
+}
+
+/** True when this pet is old enough for Golden, using plan ages when the practice has set them. */
+export function petMeetsGoldenAge(
+  ageYears: number | null | undefined,
+  plans?: PlanAgeSource[] | null,
+  species?: 'dog' | 'cat' | null
+): boolean {
+  if (ageYears == null || !Number.isFinite(ageYears)) return false;
+  const fromPlans = plans?.length ? goldenMinAgeMonthsFromPlans(plans, species) : null;
+  const minMonths = fromPlans ?? MEMBERSHIP_GOLDEN_MIN_AGE_YEARS * 12;
+  return ageYears * 12 >= minMonths;
+}
 
 const MAX_REASONABLE_PARSED_AGE_YEARS = 35;
 

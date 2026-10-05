@@ -457,6 +457,11 @@
   z-index: 24;
 }
 
+/* Hidden on mobile by default; shown at ≤ 900px. Opposite of scheduler-hide-on-mobile. */
+.scheduler-show-on-mobile {
+  display: none !important;
+}
+
 .scheduler-toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -865,6 +870,42 @@ label.scheduler-go-date-heading {
   margin-bottom: 0;
   flex-wrap: nowrap;
   align-items: flex-end;
+  container-type: inline-size;
+  container-name: scheduler-toolbar-row;
+}
+
+/** “🎉 Pet Snapshot Time? 🎉” — playful link to /schedule/patient-snapshots, centered between the toolbar clusters. */
+.scheduler-snapshot-party {
+  flex: 0 0 auto;
+  align-self: center;
+  margin: 0 auto;
+  padding: 6px 14px;
+  border: 1px solid #f6b73c;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #fff9e6 0%, #fff1c7 100%);
+  color: #8a5a00;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  text-decoration: none;
+  white-space: nowrap;
+  box-shadow: 0 1px 0 rgba(246, 183, 60, 0.35);
+  transition: transform 140ms ease, box-shadow 140ms ease, background 140ms ease;
+}
+
+.scheduler-snapshot-party:hover,
+.scheduler-snapshot-party:focus-visible {
+  background: linear-gradient(180deg, #fff4cf 0%, #ffe8a8 100%);
+  box-shadow: 0 3px 10px rgba(246, 183, 60, 0.35);
+  transform: translateY(-1px) rotate(-1deg);
+  outline: none;
+}
+
+/** Hide when the calendar/toolbar itself is narrow (embedded, split panes, small windows). */
+@container scheduler-toolbar-row (max-width: 1000px) {
+  .scheduler-snapshot-party {
+    display: none;
+  }
 }
 
 .scheduler-toolbar-calendar-merge .scheduler-toolbar-cluster--right .scheduler-filters {
@@ -2680,6 +2721,56 @@ label.scheduler-go-date-heading {
   box-shadow:
     0 24px 64px rgba(0, 0, 0, 0.28),
     0 0 0 1px rgba(0, 0, 0, 0.05);
+}
+
+.scheduler-modal--encounter {
+  max-width: 420px;
+  max-height: none;
+}
+
+.scheduler-modal-encounter-visit {
+  margin: 6px 0 0;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.scheduler-modal-encounter-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 18px 20px 22px;
+}
+
+.scheduler-modal-encounter-choice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  width: 100%;
+  padding: 14px 16px;
+  border: 1px solid #dbe3ee;
+  border-radius: 12px;
+  background: #fff;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: #0f172a;
+}
+
+.scheduler-modal-encounter-choice:hover {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+
+.scheduler-modal-encounter-choice-title {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.scheduler-modal-encounter-choice-hint {
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.4;
 }
 
 .scheduler-modal-accent {
@@ -5741,6 +5832,45 @@ label.scheduler-household-pet-row {
   line-height: 1.4;
 }
 
+.scheduler-edit-preview-popover-nav {
+  display: flex;
+  gap: 6px;
+  padding: 8px 12px 0;
+  flex-shrink: 0;
+}
+
+.scheduler-edit-preview-popover-nav .btn {
+  flex: 1 1 0;
+  min-height: 36px;
+  padding: 6px 8px;
+  font-size: 13px;
+}
+
+.routing-preview-results-bar {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  z-index: 2060;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #faf5ff;
+  border: 1px solid #e9d5ff;
+  box-shadow: 0 10px 28px rgba(88, 28, 135, 0.18);
+  color: #581c87;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.routing-preview-results-bar .btn {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 .scheduler-edit-preview-popover--book-action .scheduler-edit-preview-popover-head,
 .scheduler-edit-preview-popover--staff-confirm .scheduler-edit-preview-popover-head,
 .scheduler-edit-preview-popover--book-action .scheduler-edit-preview-popover-actions,
@@ -7256,5 +7386,192 @@ label.scheduler-household-pet-row {
   .scheduler-view-toggle button {
     padding: 6px 10px;
     font-size: 11px;
+  }
+}
+
+/**
+ * Practice calendar mobile chrome only (viewport ≤ 900px).
+ * Desktop toolbar, filters, range controls, and print stay unchanged.
+ */
+@media (max-width: 900px) {
+  .scheduler-hide-on-mobile {
+    display: none !important;
+  }
+
+  /* Show-on-mobile elements become visible */
+  .scheduler-show-on-mobile {
+    display: flex !important;
+  }
+
+  /* GO TO DATE cluster is replaced by Today + calendar icon in the nav row */
+  .scheduler-toolbar-cluster--left {
+    display: none;
+  }
+
+  /* Today button that lives in the leading (left) nav column */
+  .scheduler-range-today-btn {
+    font-size: 13px;
+    font-weight: 500;
+    padding: 6px 12px;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    background: #fff;
+    color: #0f6cf6;
+    cursor: pointer;
+    white-space: nowrap;
+    line-height: 1;
+  }
+
+  .scheduler-range-today-btn:hover {
+    background: #f0f7ff;
+  }
+
+  /* Calendar icon button in the actions (right) column — tap opens date picker */
+  .scheduler-range-calendar-btn {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 34px;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    background: #fff;
+    color: #334155;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  /* Transparent date input overlaid on the icon — tap opens native date picker */
+  .scheduler-range-calendar-btn input[type='date'] {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    width: 100%;
+    height: 100%;
+    cursor: pointer;
+    border: none;
+    background: transparent;
+    padding: 0;
+    margin: 0;
+    -webkit-appearance: none;
+    appearance: none;
+  }
+
+  /* ── Day header: bigger text + tighter layout ── */
+  .scheduler-day-header {
+    padding: 8px 6px 10px;
+  }
+
+  .scheduler-day-header-date {
+    font-size: 14px;
+  }
+
+  .scheduler-day-header-metrics-row {
+    font-size: 12px;
+    gap: 4px 10px;
+  }
+
+  .scheduler-day-header-vsd-per-point {
+    font-size: 12px;
+  }
+
+  .scheduler-day-header-office {
+    font-size: 12px;
+    margin-top: 5px;
+  }
+
+  .scheduler-day-header-actions {
+    gap: 6px;
+    margin-top: 4px;
+  }
+
+  .scheduler-day-header-btn {
+    font-size: 12px;
+    padding: 6px 14px;
+  }
+
+  /* Progress + Override flow side-by-side on mobile */
+  .scheduler-day-header-secondary-actions {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 6px;
+    justify-content: center;
+    margin-top: 4px;
+  }
+
+  /* Remove individual top margin now that the wrapper handles spacing */
+  .scheduler-day-header-secondary-actions .scheduler-day-header-adjust {
+    margin-top: 0;
+  }
+
+  .scheduler-go-date-controls {
+    flex-wrap: nowrap;
+    align-items: center;
+    width: 100%;
+  }
+
+  .scheduler-go-date-controls input[type='date'] {
+    flex: 1 1 auto;
+    width: auto;
+    min-width: 0;
+    max-width: none;
+  }
+
+  .scheduler-go-date-controls .scheduler-nav--today-only {
+    flex-shrink: 0;
+  }
+
+  .scheduler-toolbar-calendar-merge .scheduler-toolbar-cluster--right .scheduler-filters,
+  .scheduler-filters {
+    width: 100%;
+  }
+
+  .scheduler-filters label {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  .scheduler-filters select {
+    width: 100%;
+    max-width: none;
+  }
+
+  /*
+   * Date range row: restore the base 3-column grid so ← date → is genuinely
+   * centered. The leading cell (Routed timeline) is visually hidden via
+   * scheduler-hide-on-mobile but its 1fr column still exists in the grid,
+   * perfectly balancing the 1fr actions column that holds the Day button.
+   *
+   * The earlier (max-width: 900px) block turns this into a flex layout and
+   * applies width/order/margin overrides to the children — we undo all of that
+   * here for the non-embedded practice calendar.
+   */
+  .scheduler-page:not(.scheduler-page--embedded) .scheduler-range-above-grid {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    padding: 8px 10px 10px;
+    gap: 10px;
+  }
+
+  /* Reset flex/order/width overrides set by the earlier 900px block */
+  .scheduler-page:not(.scheduler-page--embedded) .scheduler-range-above-grid-nav {
+    order: unset;
+    flex: unset;
+    width: auto;
+    max-width: none;
+  }
+
+  .scheduler-page:not(.scheduler-page--embedded) .scheduler-range-above-grid-leading {
+    order: unset;
+    flex: unset;
+  }
+
+  .scheduler-page:not(.scheduler-page--embedded) .scheduler-range-above-grid-actions {
+    order: unset;
+    flex: unset;
+    margin-left: 0;
   }
 }

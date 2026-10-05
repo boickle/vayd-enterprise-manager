@@ -117,6 +117,8 @@ export type LabResult = {
   labFormTemplateId: number | null;
   labId: number | null;
   encounterOrderId: number | null;
+  /** Invoice line the lab was charged on — how the invoice, SOAP, and chart find it. */
+  visitInvoiceLineId: string | null;
   status: LabResultStatus;
   templateName: string;
   templateMode: LabFormMode;
@@ -146,6 +148,37 @@ export async function listLabResultsForOrders(encounterOrderIds: number[]): Prom
   return data;
 }
 
+/**
+ * Results for every lab line on a bill. The API opens a pending form for each
+ * lab line that has one, so a snap test can be entered right on the invoice.
+ */
+/** Every form charged on one invoice line, pending and already resulted. */
+export async function listLabResultsForLine(lineId: string): Promise<LabResult[]> {
+  const { data } = await http.get<LabResult[]>(
+    `/in-house-labs/results/for-line/${encodeURIComponent(lineId)}`,
+    { params: { practiceId: pid() } },
+  );
+  return data;
+}
+
+export async function listLabResultsForInvoice(invoiceId: string): Promise<LabResult[]> {
+  const { data } = await http.get<LabResult[]>(
+    `/in-house-labs/results/for-invoice/${encodeURIComponent(invoiceId)}`,
+    { params: { practiceId: pid() } }
+  );
+  return data;
+}
+
+/** Group a bill's results by the invoice line they were charged on. */
+export function groupLabResultsByLine(results: LabResult[]): Record<string, LabResult[]> {
+  const out: Record<string, LabResult[]> = {};
+  for (const r of results) {
+    if (!r.visitInvoiceLineId) continue;
+    (out[r.visitInvoiceLineId] ??= []).push(r);
+  }
+  return out;
+}
+
 /** Everything ordered but not yet run, across the practice or for one patient. */
 export async function listPendingLabResults(patientId?: number): Promise<LabResult[]> {
   const { data } = await http.get<LabResult[]>('/in-house-labs/results/pending', {
@@ -167,6 +200,7 @@ export async function createLabResult(body: {
   medicalRecordId?: number | null;
   labId?: number | null;
   encounterOrderId?: number | null;
+  visitInvoiceLineId?: string | null;
   serviceDate?: string | null;
 }): Promise<LabResult> {
   const { data } = await http.post<LabResult>('/in-house-labs/results', body, {

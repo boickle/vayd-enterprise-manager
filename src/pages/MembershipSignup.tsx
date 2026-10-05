@@ -33,10 +33,12 @@ import { useAuth } from '../auth/useAuth';
 import { trackEvent, trackViewItem, trackAddToCart, trackBeginCheckout } from '../utils/analytics';
 import { resolveMembershipPetKind } from '../utils/membershipSpecies';
 import {
-  MEMBERSHIP_GOLDEN_MIN_AGE_YEARS,
+  petMeetsGoldenAge,
+  type PlanAgeSource,
   computeMembershipAgeYearsForRoomLoaderRow,
   parseAgeStringToYears,
 } from '../utils/membershipAge';
+import { listBundles } from '../api/memberships';
 import { fetchClientChatHoursOfOperation } from '../api/chatHoursOfOperation';
 import {
   buildMembershipAgreementText,
@@ -484,6 +486,7 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
   const [hasUpcomingAppointment, setHasUpcomingAppointment] = useState(false);
   const [agreementAccepted, setAgreementAccepted] = useState(false);
   const [agreementSignature, setAgreementSignature] = useState('');
+  const [membershipAgePlans, setMembershipAgePlans] = useState<PlanAgeSource[]>([]);
   const [planCatalog, setPlanCatalog] = useState<SubscriptionPlanCatalog | null>(null);
   const [planCatalogError, setPlanCatalogError] = useState<string | null>(null);
   const [planCatalogLoading, setPlanCatalogLoading] = useState(true);
@@ -906,10 +909,33 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
     return { kind, ageYears };
   }, [pet]);
 
+  useEffect(() => {
+    let alive = true;
+    listBundles({ kind: 'membership' })
+      .then((rows) => {
+        if (!alive) return;
+        setMembershipAgePlans(
+          rows
+            .filter((row) => row.isActive && !row.isArchived)
+            .map((row) => ({
+              name: row.name,
+              species: row.species,
+              minAgeMonths: row.minAgeMonths,
+            }))
+        );
+      })
+      .catch(() => {
+        if (alive) setMembershipAgePlans([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   const meetsGolden = useMemo(() => {
     if (!petDetails.kind || petDetails.ageYears == null) return false;
-    return petDetails.ageYears >= MEMBERSHIP_GOLDEN_MIN_AGE_YEARS;
-  }, [petDetails]);
+    return petMeetsGoldenAge(petDetails.ageYears, membershipAgePlans, petDetails.kind);
+  }, [petDetails, membershipAgePlans]);
 
   useEffect(() => {
     if (selectedPlanExplicit === 'golden' && !meetsGolden) {
@@ -2145,7 +2171,7 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
                 .filter((plan) => {
                   if (plan.id === 'comfort-care') return false;
                   if (plan.id === 'foundations') return true;
-                  // Golden only for pets who meet the senior threshold (same as room-loader / `MEMBERSHIP_GOLDEN_MIN_AGE_YEARS`).
+                  // Golden only once the pet reaches that plan's youngest age.
                   if (plan.id === 'golden') return meetsGolden;
                   return false;
                 })

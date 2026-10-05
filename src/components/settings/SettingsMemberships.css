@@ -213,6 +213,16 @@
   margin: 10px 0 0;
 }
 
+/* Sits inside a `.settings-label`, so it has to undo the label's bold weight. */
+.memberships-field__hint {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.35;
+  color: var(--muted);
+}
+
 .memberships-flags {
   display: flex;
   gap: 16px;
@@ -246,6 +256,11 @@
   align-items: center;
   gap: 6px;
   white-space: nowrap;
+}
+
+.memberships-groups__expand-all {
+  align-self: center;
+  font-size: 13px;
 }
 
 .memberships-groups__empty {
@@ -285,6 +300,16 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.memberships-or-cluster--collapsed {
+  padding: 0;
+  gap: 0;
+}
+
+.memberships-or-cluster--collapsed .memberships-item__body {
+  border: none;
+  background: transparent;
 }
 
 .memberships-or-cluster__head {
@@ -392,6 +417,92 @@
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface);
+}
+
+.memberships-item__body--collapsed {
+  grid-template-areas: 'ident tools';
+  align-items: center;
+  gap: 8px 12px;
+  padding: 8px 12px;
+}
+
+.memberships-item__toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.memberships-item__toggle svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--muted);
+}
+
+.memberships-item__toggle--open {
+  width: auto;
+  align-items: center;
+}
+
+.memberships-item__toggle--open .memberships-item__name {
+  text-align: left;
+}
+
+.memberships-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.memberships-summary__names {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.memberships-summary__name {
+  font-weight: 600;
+  font-size: 14px;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+/*
+ * Deliberately grey: the green OR pill in the row's tools is a button that adds an
+ * alternative, and these two must not look like the same control.
+ */
+.memberships-summary__or {
+  flex-shrink: 0;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--chip-bg, rgba(0, 0, 0, 0.06));
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.memberships-summary__facts {
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.memberships-summary__dot {
+  margin: 0 5px;
 }
 
 .memberships-item__ident {
@@ -675,6 +786,11 @@
       'ident'
       'controls'
       'tools';
+  }
+
+  .memberships-item__body--collapsed {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: 'ident tools';
   }
 
   .memberships-item__tools {

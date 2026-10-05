@@ -70,6 +70,13 @@ import StockLotPicker from '../inventory/StockLotPicker';
 import LinkedStockInvoiceDetails from '../invoice/LinkedStockInvoiceDetails';
 import InvoiceVaccineDoseEditor from '../pims/InvoiceVaccineDoseEditor';
 import { linkedStockFromLine } from '../../utils/linkedInvoiceStock';
+import {
+  groupLabResultsByLine,
+  listLabResultsForInvoice,
+  type LabResult,
+} from '../../api/inHouseLabs';
+import InvoiceLineLabResults from '../labs/InvoiceLineLabResults';
+import LabResultChip from '../labs/LabResultChip';
 import VisitDoseAndRxSection from './VisitDoseAndRxSection';
 import PlanOrdersSection from './PlanOrdersSection';
 import type { HouseholdRosterEntry } from '../../api/visitWorkflow';
@@ -956,6 +963,8 @@ export default function VisitCheckoutPanel({
   const [stockDrawsByOrderId, setStockDrawsByOrderId] = useState<Record<string, StockDraw>>({});
   const [mailOrders, setMailOrders] = useState<MailOrder[]>([]);
   const [expandedLineId, setExpandedLineId] = useState<string | null>(null);
+  /** In-house lab forms keyed by the invoice line they were charged on. */
+  const [labResultsByLineId, setLabResultsByLineId] = useState<Record<string, LabResult[]>>({});
   const [rxApproveTried, setRxApproveTried] = useState<Record<string, true>>({});
   const [drawerLineId, setDrawerLineId] = useState<string | null>(null);
   const [focusedLineId, setFocusedLineId] = useState<string | null>(null);
@@ -1313,6 +1322,42 @@ export default function VisitCheckoutPanel({
     };
   }, [clinicalEncounterIds.join(','), invoice?.id, clinicalRefreshSignal]);
 
+  // In-house lab forms live on the lab line. The API opens a pending form for
+  // each lab line that has one, so a snap test is entered right here in the SOAP.
+  const labLineKey = (invoice?.lines ?? [])
+    .filter((l) => !l.isDeleted && l.catalogItemType === 'lab')
+    .map((l) => l.id)
+    .join(',');
+  useEffect(() => {
+    if (!invoice?.id || !labLineKey) {
+      setLabResultsByLineId({});
+      return;
+    }
+    let canceled = false;
+    void listLabResultsForInvoice(invoice.id)
+      .then((rows) => {
+        if (!canceled) setLabResultsByLineId(groupLabResultsByLine(rows));
+      })
+      .catch(() => {
+        if (!canceled) setLabResultsByLineId({});
+      });
+    return () => {
+      canceled = true;
+    };
+  }, [invoice?.id, labLineKey, clinicalRefreshSignal]);
+
+  const onLabResultSaved = (saved: LabResult) => {
+    if (!saved.visitInvoiceLineId) return;
+    setLabResultsByLineId((prev) => {
+      const list = prev[saved.visitInvoiceLineId as string] ?? [];
+      const next = list.some((r) => r.id === saved.id)
+        ? list.map((r) => (r.id === saved.id ? saved : r))
+        : [...list, saved];
+      return { ...prev, [saved.visitInvoiceLineId as string]: next };
+    });
+    onClinicalRecorded?.();
+  };
+
   // Stamp the visit provider onto production lines that still lack one (SOAP used to leave these blank).
   useEffect(() => {
     if (!invoice?.id || invoice.status !== 'open' || disabled) return;
@@ -1595,6 +1640,8 @@ export default function VisitCheckoutPanel({
     if (l.trackLots && !mailed && !isVaccineLine && l.inventoryLotBalanceId == null) {
       return 'Pick a lot';
     }
+    // An unrun in-house lab is not a checkout blocker — the client pays and the
+    // snap test is entered when it is read (the end-of-day task chases it).
     return null;
   };
 
@@ -2042,10 +2089,14 @@ export default function VisitCheckoutPanel({
                   Boolean(order) && Boolean(encounterId) && canEditLines && !l.isCovered;
                 const stockDraw = l.orderId ? stockDrawsByOrderId[l.orderId] ?? null : null;
                 const stock = linkedStockFromLine(l, stockDraw);
+                const lineLabResults =
+                  l.catalogItemType === 'lab' ? labResultsByLineId[l.id] ?? null : null;
+                const hasLabForms = Boolean(lineLabResults?.length);
                 const canExpand =
                   needsClinical ||
                   showClientNote ||
                   isVaccineLine ||
+                  hasLabForms ||
                   Boolean(l.trackLots && !stock.linked);
                 const lineExpanded = expandedLineId === l.id;
                 const mailBlockedReason = showRxLabel
@@ -2078,7 +2129,9 @@ export default function VisitCheckoutPanel({
                             ? 'Collapse'
                             : needsClinical
                               ? 'Enter dose / Rx details'
-                              : 'More details'
+                              : hasLabForms
+                                ? 'Run the lab / view results'
+                                : 'More details'
                         }
                         aria-expanded={lineExpanded}
                         onClick={() =>
@@ -2102,6 +2155,7 @@ export default function VisitCheckoutPanel({
                           </span>
                         ) : null}
                         {l.description}
+                        {hasLabForms ? <LabResultChip results={lineLabResults} /> : null}
                         {lineReady ? (
                           <Check className="soap-invoice-line-check" size={14} aria-label="All set" />
                         ) : (
@@ -2508,6 +2562,15 @@ export default function VisitCheckoutPanel({
                               }}
                             />
                           </label>
+                        ) : null}
+                        {hasLabForms ? (
+                          <div className="soap-invoice-line-clinical">
+                            <InvoiceLineLabResults
+                              results={lineLabResults ?? []}
+                              readOnly={disabled}
+                              onSaved={onLabResultSaved}
+                            />
+                          </div>
                         ) : null}
                         {isVaccineLine && !(encounterId && order) ? (
                           <div className="soap-invoice-line-clinical">

@@ -1,14 +1,55 @@
 import { AlertTriangle, Heart, X } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import type { RoutingPatientHoverSummary, RoutingPatientReminderLine } from '../utils/routingPatientHoverData';
+import {
+  forwardBookingIntervalFromSourceToTarget,
+  type ForwardBookingInterval,
+} from '../utils/forwardBookingFromAppointment';
 import { declineReminder, formatDeclinedDate } from '../api/declinedTreatments';
 import { patchReminder } from '../api/careOutreach';
 import { appConfirm, appPrompt } from '../utils/appDialog';
 import './PatientChartSummary.css';
 
+function forwardBookIntervalForTarget(
+  sourceStartIso: string | null | undefined,
+  targetIso: string | null | undefined,
+  practiceTz: string
+): ForwardBookingInterval | null {
+  const source = sourceStartIso?.trim();
+  const target = targetIso?.trim();
+  if (!source || !target) return null;
+  return forwardBookingIntervalFromSourceToTarget(source, target, practiceTz);
+}
+
+function ForwardBookApplyButton({
+  interval,
+  onApply,
+}: {
+  interval: ForwardBookingInterval | null;
+  onApply?: (interval: ForwardBookingInterval) => void;
+}) {
+  if (!interval || !onApply) return null;
+  return (
+    <button
+      type="button"
+      className="patient-chart-summary-refill-exp"
+      onClick={() => onApply(interval)}
+    >
+      Forward book
+    </button>
+  );
+}
+
+function isForwardBookStaffTaskTitle(title: string): boolean {
+  return /forward\s*book/i.test(title);
+}
+
 function ReminderRow({
   reminder,
   onApplyRefillExpiration,
+  forwardBookingSourceStartIso,
+  practiceTz,
+  onApplyForwardBookingInterval,
   onDecline,
   onRemove,
   busy,
@@ -16,11 +57,22 @@ function ReminderRow({
 }: {
   reminder: RoutingPatientReminderLine;
   onApplyRefillExpiration?: (dateInput: string) => void;
+  forwardBookingSourceStartIso?: string | null;
+  practiceTz?: string;
+  onApplyForwardBookingInterval?: (interval: ForwardBookingInterval) => void;
   onDecline?: (reminder: RoutingPatientReminderLine) => void;
   onRemove?: (reminder: RoutingPatientReminderLine) => void;
   busy?: boolean;
   callback?: boolean;
 }) {
+  const forwardInterval =
+    practiceTz && reminder.dueDateInput
+      ? forwardBookIntervalForTarget(
+          forwardBookingSourceStartIso,
+          reminder.dueDateInput,
+          practiceTz
+        )
+      : null;
   return (
     <li className="patient-chart-summary-reminder">
       <span>
@@ -40,6 +92,10 @@ function ReminderRow({
           Refill exp
         </button>
       ) : null}
+      <ForwardBookApplyButton
+        interval={forwardInterval}
+        onApply={onApplyForwardBookingInterval}
+      />
       {!callback && onDecline ? (
         <button
           type="button"
@@ -102,6 +158,11 @@ type Props = {
   className?: string;
   /** Apply a reminder due date to the open prescription's refill expiration. */
   onApplyRefillExpiration?: (dateInput: string) => void;
+  /** Source visit start — required to compute forward-book interval from chart dates. */
+  forwardBookingSourceStartIso?: string | null;
+  practiceTz?: string;
+  /** Fill forward-book amount/unit on the open forward-booking form. */
+  onApplyForwardBookingInterval?: (interval: ForwardBookingInterval) => void;
   /** Reload the summary after a staff decline. */
   onChanged?: () => void;
   allowDecline?: boolean;
@@ -118,6 +179,9 @@ export function PatientChartSummaryPanel({
   showHeader = true,
   className,
   onApplyRefillExpiration,
+  forwardBookingSourceStartIso = null,
+  practiceTz = '',
+  onApplyForwardBookingInterval,
   onChanged,
   allowDecline = true,
 }: Props) {
@@ -225,7 +289,21 @@ export function PatientChartSummaryPanel({
 
           <SummarySection title="Next Appointment">
             {summary.nextAppointmentLine ? (
-              <p className="patient-chart-summary-line">{summary.nextAppointmentLine}</p>
+              <div className="patient-chart-summary-reminder patient-chart-summary-line-row">
+                <span className="patient-chart-summary-line">{summary.nextAppointmentLine}</span>
+                <ForwardBookApplyButton
+                  interval={
+                    practiceTz
+                      ? forwardBookIntervalForTarget(
+                          forwardBookingSourceStartIso,
+                          summary.nextAppointmentStartIso,
+                          practiceTz
+                        )
+                      : null
+                  }
+                  onApply={onApplyForwardBookingInterval}
+                />
+              </div>
             ) : (
               <p className="patient-chart-summary-muted">No future appointment</p>
             )}
@@ -244,26 +322,43 @@ export function PatientChartSummaryPanel({
                     onRemove={allowDecline ? removeRow : undefined}
                   />
                 ))}
-                {(summary.staffTasks ?? []).map((t) => (
-                  <li
-                    key={`task:${t.id}`}
-                    className={`patient-chart-summary-reminder${
-                      t.overdue ? ' patient-chart-summary-reminder--overdue' : ''
-                    }`}
-                  >
-                    <span>
-                      {t.title}
-                      <span className="patient-chart-summary-callback-meta">
-                        {[
-                          t.assigneeName ? `Assigned to ${t.assigneeName}` : 'Unassigned',
-                          t.dueLabel ? `${t.overdue ? 'Past due' : 'Due'} ${t.dueLabel}` : null,
-                        ]
-                          .filter(Boolean)
-                          .join(' · ')}
+                {(summary.staffTasks ?? []).map((t) => {
+                  const taskTargetIso =
+                    t.dueAtIso ??
+                    (isForwardBookStaffTaskTitle(t.title) ? summary.nextAppointmentStartIso : null);
+                  const taskForwardInterval =
+                    practiceTz && onApplyForwardBookingInterval
+                      ? forwardBookIntervalForTarget(
+                          forwardBookingSourceStartIso,
+                          taskTargetIso,
+                          practiceTz
+                        )
+                      : null;
+                  return (
+                    <li
+                      key={`task:${t.id}`}
+                      className={`patient-chart-summary-reminder${
+                        t.overdue ? ' patient-chart-summary-reminder--overdue' : ''
+                      }`}
+                    >
+                      <span>
+                        {t.title}
+                        <span className="patient-chart-summary-callback-meta">
+                          {[
+                            t.assigneeName ? `Assigned to ${t.assigneeName}` : 'Unassigned',
+                            t.dueLabel ? `${t.overdue ? 'Past due' : 'Due'} ${t.dueLabel}` : null,
+                          ]
+                            .filter(Boolean)
+                            .join(' · ')}
+                        </span>
                       </span>
-                    </span>
-                  </li>
-                ))}
+                      <ForwardBookApplyButton
+                        interval={taskForwardInterval}
+                        onApply={onApplyForwardBookingInterval}
+                      />
+                    </li>
+                  );
+                })}
               </ul>
             ) : (
               <p className="patient-chart-summary-muted">None</p>
@@ -278,6 +373,9 @@ export function PatientChartSummaryPanel({
                     key={r.id}
                     reminder={r}
                     onApplyRefillExpiration={onApplyRefillExpiration}
+                    forwardBookingSourceStartIso={forwardBookingSourceStartIso}
+                    practiceTz={practiceTz}
+                    onApplyForwardBookingInterval={onApplyForwardBookingInterval}
                     busy={decliningId === r.id}
                     {...actions}
                   />
@@ -296,6 +394,9 @@ export function PatientChartSummaryPanel({
                     key={r.id}
                     reminder={r}
                     onApplyRefillExpiration={onApplyRefillExpiration}
+                    forwardBookingSourceStartIso={forwardBookingSourceStartIso}
+                    practiceTz={practiceTz}
+                    onApplyForwardBookingInterval={onApplyForwardBookingInterval}
                     busy={decliningId === r.id}
                     {...actions}
                   />

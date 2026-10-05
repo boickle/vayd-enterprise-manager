@@ -23,6 +23,39 @@ if (typeof window !== 'undefined') {
   window.addEventListener('resize', setViewportHeight);
   window.addEventListener('orientationchange', setViewportHeight);
   
+  // iOS Safari pans the (position: fixed) page to reveal a focused field and does not pan
+  // back once the keyboard closes — the header slides under the status bar and fixed
+  // popovers hang off the left edge. Snap back as soon as nothing is being typed into.
+  const isTypingTarget = (el: Element | null) =>
+    el instanceof HTMLElement &&
+    el.matches('input, textarea, select, [contenteditable=""], [contenteditable="true"]');
+  const resetPannedViewport = () => {
+    if (isTypingTarget(document.activeElement)) return;
+    const vv = window.visualViewport;
+    const panned =
+      window.scrollX !== 0 ||
+      window.scrollY !== 0 ||
+      document.documentElement.scrollLeft !== 0 ||
+      document.documentElement.scrollTop !== 0 ||
+      (vv != null && (vv.offsetLeft !== 0 || vv.offsetTop !== 0) && vv.scale === 1);
+    if (!panned) return;
+    window.scrollTo(0, 0);
+    document.documentElement.scrollLeft = 0;
+    document.documentElement.scrollTop = 0;
+  };
+  let resetTimer: number | null = null;
+  const scheduleViewportReset = () => {
+    if (resetTimer != null) window.clearTimeout(resetTimer);
+    resetTimer = window.setTimeout(() => {
+      resetTimer = null;
+      resetPannedViewport();
+    }, 60);
+  };
+  document.addEventListener('focusout', scheduleViewportReset);
+  window.addEventListener('scroll', scheduleViewportReset, { passive: true });
+  window.visualViewport?.addEventListener('resize', scheduleViewportReset);
+  window.visualViewport?.addEventListener('scroll', scheduleViewportReset);
+
   // Prevent zoom on double tap (iOS)
   let lastTouchEnd = 0;
   document.addEventListener('touchend', (event) => {

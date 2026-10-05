@@ -29,6 +29,8 @@ const TRIGGER_DESCRIPTIONS: Record<TaskAutomationTrigger, string> = {
   invoice_open: 'An invoice is still open.',
   order_list_item: 'Items are sitting on an office order list.',
   call_unfiled: 'A transcribed call was never filed to a chart or waved off.',
+  lab_result_missing:
+    'An in-house lab was charged and its results were never entered. The doctor on the visit is added as a watcher.',
 };
 
 const ASSIGNEE_OWNER_LABELS: Record<TaskAutomationTrigger, string> = {
@@ -36,6 +38,7 @@ const ASSIGNEE_OWNER_LABELS: Record<TaskAutomationTrigger, string> = {
   invoice_open: 'Whoever put the first charge on it',
   order_list_item: 'Whoever asked for the item',
   call_unfiled: 'Whoever made the call',
+  lab_result_missing: 'Whoever put the lab on the bill',
 };
 
 function employeeName(e: Employee): string {

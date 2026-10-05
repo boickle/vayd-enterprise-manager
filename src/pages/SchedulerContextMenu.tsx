@@ -27,7 +27,9 @@ export type SchedulerContextMenuAction =
   | { kind: 'edit' }
   | { kind: 'visitTimes' }
   | { kind: 'openJot' }
+  | { kind: 'startEncounter' }
   | { kind: 'openSoap' }
+  | { kind: 'openMedicalNote' }
   | { kind: 'onMyWayText' }
   | { kind: 'remove' }
   | { kind: 'viewChart' }
@@ -115,7 +117,6 @@ export function SchedulerAppointmentContextMenu({
   visitTimesDisabledTitle,
   jotDisabled,
   jotDisabledTitle,
-  soapLocked = false,
   patientChartOnly = false,
 }: Props) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -303,8 +304,8 @@ export function SchedulerAppointmentContextMenu({
           onPick={() => onAction({ kind: 'visitTimes' })}
         />
         <CtxSubRow
-          label={soapLocked ? 'View Locked SOAP' : 'Open Visit (SOAP)'}
-          onPick={() => onAction({ kind: 'openSoap' })}
+          label="Start Encounter"
+          onPick={() => onAction({ kind: 'startEncounter' })}
         />
         <CtxSubRow
           label="Send On My Way Text"
@@ -641,5 +642,77 @@ function CtxParentRow({
           )
         : null}
     </div>
+  );
+}
+
+export type StartEncounterChoice = 'soap' | 'medicalNote';
+
+type StartEncounterModalProps = {
+  patientName: string;
+  visitLabel?: string;
+  soapLocked?: boolean;
+  onPick: (choice: StartEncounterChoice) => void;
+  onClose: () => void;
+};
+
+export function StartEncounterModal({
+  patientName,
+  visitLabel,
+  soapLocked = false,
+  onPick,
+  onClose,
+}: StartEncounterModalProps) {
+  return createPortal(
+    <div
+      className="scheduler-modal-backdrop"
+      role="presentation"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div
+        className="scheduler-modal scheduler-modal--encounter"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="start-encounter-title"
+      >
+        <div className="scheduler-modal-accent" />
+        <div className="scheduler-modal-header">
+          <div className="scheduler-modal-header-text">
+            <p className="scheduler-modal-eyebrow">Start encounter</p>
+            <h2 id="start-encounter-title">{patientName}</h2>
+            {visitLabel ? <p className="scheduler-modal-encounter-visit">{visitLabel}</p> : null}
+          </div>
+          <button type="button" className="scheduler-modal-close" onClick={onClose} aria-label="Close">
+            ×
+          </button>
+        </div>
+        <div className="scheduler-modal-encounter-choices">
+          <button
+            type="button"
+            className="scheduler-modal-encounter-choice"
+            onClick={() => onPick('soap')}
+          >
+            <span className="scheduler-modal-encounter-choice-title">
+              {soapLocked ? 'View locked SOAP' : 'SOAP'}
+            </span>
+            <span className="scheduler-modal-encounter-choice-hint">
+              Doctor exam — history, exam, assessment, and plan.
+            </span>
+          </button>
+          <button
+            type="button"
+            className="scheduler-modal-encounter-choice"
+            onClick={() => onPick('medicalNote')}
+          >
+            <span className="scheduler-modal-encounter-choice-title">Medical note</span>
+            <span className="scheduler-modal-encounter-choice-hint">
+              Tech visit write-up — history, plan, and invoice. Not a SOAP.
+            </span>
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
   );
 }

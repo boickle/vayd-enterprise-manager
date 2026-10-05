@@ -4,7 +4,10 @@ import {
   type InventoryLotBalance,
 } from '../../api/branchInventory';
 import AddInventoryLotModal from './AddInventoryLotModal';
+import { ExpirationDateField, dateInputValue } from './ExpirationDateField';
 import './StockLotPicker.css';
+
+export { ExpirationDateField } from './ExpirationDateField';
 
 export type StockLotPick = {
   lotId: number | null;
@@ -38,12 +41,6 @@ type Props = {
   /** Bump to reload lots (e.g. after editing the inventory item). */
   refreshKey?: number;
 };
-
-function dateInputValue(value: string | null | undefined): string {
-  if (!value) return '';
-  const slice = value.slice(0, 10);
-  return /^\d{4}-\d{2}-\d{2}$/.test(slice) ? slice : '';
-}
 
 function lotLabel(lot: InventoryLotBalance, showLocation: boolean): string {
   const raw = lot.lotNumber?.trim() ?? '';
@@ -280,19 +277,17 @@ export default function StockLotPicker({
           </label>
           <label className="settings-label" style={{ marginBottom: 0 }}>
             Exp date{requireExpiration ? ' *' : ''}
-            <input
-              className="settings-input"
-              type="date"
-              value={dateInputValue(expirationDate)}
+            <ExpirationDateField
+              value={expirationDate}
               disabled={disabled}
-              onChange={(e) =>
+              required={requireExpiration}
+              onCommit={(next) =>
                 onChange({
                   lotId: null,
                   lotNumber,
-                  expirationDate: e.target.value || null,
+                  expirationDate: next,
                 })
               }
-              required={requireExpiration}
             />
           </label>
         </div>

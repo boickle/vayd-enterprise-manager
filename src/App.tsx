@@ -1,6 +1,7 @@
 // src/App.tsx
 import { Route, Routes, useNavigate, Navigate, useLocation, useOutlet, Link, Outlet } from 'react-router';
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useCallback, useState } from 'react';
+import { ChevronDown } from 'lucide-react';
 import LoginPage from './pages/Login';
 import RequestReset from './pages/RequestReset';
 import ResetPass from './pages/ResetPass';
@@ -12,6 +13,7 @@ import UserMenu, { type UserMenuExtra } from './components/UserMenu';
 import NavbarGlobalSearch from './components/NavbarGlobalSearch';
 import NavbarScheduleHorizontalNav from './components/NavbarScheduleHorizontalNav';
 import { getAccessiblePages } from './app-pages';
+import { CATALOG_HOME, INVENTORY_HOME } from './utils/catalogInventoryNav';
 import Admin from './pages/Admin';
 import { getAdminTabPages } from './admin-tabs';
 import { getAnalyticsTabPages } from './analytics-tabs';
@@ -34,11 +36,13 @@ import AppointmentSearchPage from './pages/AppointmentSearchPage';
 import HoldsPage from './pages/HoldsPage';
 import {
   parseAppointmentRequestsHighlightFromSearch,
+  APPOINTMENT_SEARCH_PATH,
 } from './appointments-nav';
 import { HOLDS_PATH, holdsPathWithHighlight } from './holds-nav';
 import ExitSurveyPage from './pages/ExitSurveyPage';
 import RoomLoaderPage from './pages/RoomLoader';
 import SoapEncounterPage from './pages/SoapEncounterPage';
+import MedicalNoteEncounterPage from './pages/MedicalNoteEncounterPage';
 import VisitWrapUpPage from './pages/VisitWrapUpPage';
 import VisitCheckoutPage from './pages/VisitCheckoutPage';
 import BriefWorkspacePage from './pages/BriefWorkspacePage';
@@ -76,6 +80,7 @@ import StoreAutoshipPage from './pages/store/StoreAutoshipPage';
 import StoreCartFloat from './pages/store/StoreCartFloat';
 import PimsClientsPage from './pages/PimsClientsPage';
 import PimsPatientsPage from './pages/PimsPatientsPage';
+import PatientSnapshotsPage from './pages/PatientSnapshotsPage';
 import PimsTasksPage from './pages/PimsTasksPage';
 import Settings from './pages/Settings';
 import PendingLabsPage from './pages/PendingLabsPage';
@@ -97,7 +102,6 @@ import { isPublicClientLinkPath } from './utils/publicClientLinkPaths';
 import { blockRoutingCalendarPreviewNavigation } from './utils/routingCalendarPreviewGuard';
 import { markSchedulerHandoffPreferRoutingDoctor } from './utils/schedulerCalendarHandoff';
 import { startFreshNewAppointmentRouting } from './utils/routingNewAppointment';
-import { scoutTabPermissionOk } from './scout-tabs';
 import { useGmailInboxAccess } from './hooks/useGmailInboxAccess';
 import SmsDeliveryFailureBanner from './components/SmsDeliveryFailureBanner';
 import { listMessageTemplates } from './api/messageTemplates';
@@ -125,6 +129,97 @@ function NavbarScheduleAddAppointment() {
     >
       + Appointment
     </button>
+  );
+}
+
+/**
+ * MobileNav – compact one-row nav shown only on mobile (≤900 px).
+ * Shows: tiny logo | Inventory ▾ | Scheduling ▾ | Tasks ▾
+ * Each item opens a dropdown on tap. Tapping outside closes it.
+ */
+function MobileNav() {
+  const { abilities } = useAuth() as { abilities?: string[] };
+  const navigate = useNavigate();
+  const [open, setOpen] = useState<'inventory' | 'scheduling' | 'tasks' | null>(null);
+  const navRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdown when tapping outside
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: PointerEvent) => {
+      if (navRef.current && !navRef.current.contains(e.target as Node)) {
+        setOpen(null);
+      }
+    };
+    document.addEventListener('pointerdown', handler, true);
+    return () => document.removeEventListener('pointerdown', handler, true);
+  }, [open]);
+
+  const canSeeRouting = !abilities || abilities.includes('canSeeRouting');
+
+  const toggle = useCallback(
+    (menu: 'inventory' | 'scheduling' | 'tasks') => setOpen((prev) => (prev === menu ? null : menu)),
+    []
+  );
+
+  const go = useCallback(
+    (to: string) => {
+      setOpen(null);
+      navigate(to);
+    },
+    [navigate]
+  );
+
+  return (
+    <div className="mobile-nav" ref={navRef} aria-label="Mobile navigation">
+      {/* Tiny logo */}
+      <Link to="/schedule" className="mobile-nav__brand" aria-label="Go to Scout home">
+        <img src="/final_thick_lines_cropped.jpeg" alt="" />
+      </Link>
+
+      {/* Inventory */}
+      <div className={`mobile-nav__menu${open === 'inventory' ? ' mobile-nav__menu--open' : ''}`}>
+        <button type="button" className="mobile-nav__btn" onClick={() => toggle('inventory')} aria-expanded={open === 'inventory'}>
+          Inventory <ChevronDown size={12} strokeWidth={2.5} aria-hidden />
+        </button>
+        {open === 'inventory' && (
+          <div className="mobile-nav__dropdown" role="menu">
+            <button type="button" role="menuitem" onClick={() => go('/schedule/inventory/receive')}>Receive</button>
+            <button type="button" role="menuitem" onClick={() => go('/schedule/inventory/transfer-list')}>Transfer List</button>
+            <button type="button" role="menuitem" onClick={() => go('/schedule/inventory/move')}>Move</button>
+          </div>
+        )}
+      </div>
+
+      {/* Scheduling */}
+      <div className={`mobile-nav__menu${open === 'scheduling' ? ' mobile-nav__menu--open' : ''}`}>
+        <button type="button" className="mobile-nav__btn" onClick={() => toggle('scheduling')} aria-expanded={open === 'scheduling'}>
+          Scheduling <ChevronDown size={12} strokeWidth={2.5} aria-hidden />
+        </button>
+        {open === 'scheduling' && (
+          <div className="mobile-nav__dropdown" role="menu">
+            {canSeeRouting && (
+              <button type="button" role="menuitem" onClick={() => go('/schedule/routing')}>+ Appointment</button>
+            )}
+            <button type="button" role="menuitem" onClick={() => go(APPOINTMENT_SEARCH_PATH)}>Appt Search</button>
+            <button type="button" role="menuitem" onClick={() => go('/schedule/scheduling-tools/forward-booking?new=1')}>+ Forward Book</button>
+          </div>
+        )}
+      </div>
+
+      {/* Tasks */}
+      <div className={`mobile-nav__menu${open === 'tasks' ? ' mobile-nav__menu--open' : ''}`}>
+        <button type="button" className="mobile-nav__btn" onClick={() => toggle('tasks')} aria-expanded={open === 'tasks'}>
+          Tasks <ChevronDown size={12} strokeWidth={2.5} aria-hidden />
+        </button>
+        {open === 'tasks' && (
+          <div className="mobile-nav__dropdown" role="menu">
+            <button type="button" role="menuitem" onClick={() => go('/schedule/tasks')}>My Tasks</button>
+            <button type="button" role="menuitem" onClick={() => go('/schedule/tasks?new=1')}>+ Task</button>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -359,25 +454,26 @@ export default function App() {
     const onSchedule = location.pathname.startsWith('/schedule');
 
     if (onSchedule) {
-      if (scoutTabPermissionOk('canSeeRouting', abilities)) {
-        out.push({ label: '+ Appointment', to: '/schedule/routing' });
-      }
-      out.push({ label: 'New Task', to: '/schedule/tasks?new=1' });
+      out.push({ label: '+ New Patient', to: '/schedule/patients?add=1' });
+      out.push({ label: '+ New Client', to: '/schedule/clients?add=1' });
       out.push({ label: 'Send Room Loader', to: '/schedule/room-loader' });
-      out.push({
-        label: 'Forward Booking',
-        to: '/schedule/scheduling-tools/forward-booking?new=1',
-      });
       if (canAccessGmailInbox) {
         out.push({ label: 'Email', to: '/schedule/email' });
       }
-      out.push({ label: 'New Client', to: '/schedule/clients?add=1' });
+      out.push({ label: 'Catalog', to: CATALOG_HOME });
+      out.push({ label: 'Pharmacy', to: INVENTORY_HOME });
+      out.push({ label: '🎉 Pet Snapshots', to: '/schedule/patient-snapshots' });
+      if (paths.has('/analytics')) out.push({ label: 'Analytics', to: '/schedule/analytics' });
+      out.push({ label: 'Settings', to: '/schedule/settings' });
+      if (roles.some((r) => ['admin', 'superadmin'].includes(String(r).toLowerCase()))) {
+        out.push({ label: 'Admin', to: '/schedule/admin' });
+      }
+    } else {
+      if (paths.has('/analytics')) out.push({ label: 'Analytics', to: '/analytics' });
+      if (paths.has('/tools')) out.push({ label: 'Tools', to: '/tools' });
     }
-
-    if (paths.has('/analytics')) out.push({ label: 'Analytics', to: '/analytics' });
-    if (paths.has('/tools')) out.push({ label: 'Tools', to: '/tools' });
     return out;
-  }, [isClient, pages, location.pathname, canAccessGmailInbox, abilities]);
+  }, [isClient, pages, location.pathname, canAccessGmailInbox, roles]);
 
   // If a client lands on "/" or "/home", redirect to client portal
   useEffect(() => {
@@ -476,6 +572,9 @@ export default function App() {
                 </sup>
               </span>
             </Link>
+
+            {/* Mobile compact nav — shown only at ≤900px on schedule pages */}
+            {token && !isClient && location.pathname.startsWith('/schedule') && <MobileNav />}
 
             {token && !isClient && (
               <div className="navbar__center-block">
@@ -681,6 +780,10 @@ export default function App() {
                       path="soap/:appointmentId/:patientId/checkout"
                       element={<VisitCheckoutPage />}
                     />
+                    <Route
+                      path="note/:appointmentId/:patientId"
+                      element={<MedicalNoteEncounterPage />}
+                    />
                     <Route path="scheduler" element={<Scheduler />} />
                     <Route
                       path="mail-orders"
@@ -761,6 +864,7 @@ export default function App() {
                     />
                     <Route path="clients" element={<PimsClientsPage />} />
                     <Route path="patients" element={<PimsPatientsPage />} />
+                    <Route path="patient-snapshots" element={<PatientSnapshotsPage />} />
                     <Route path="email" element={<GmailInbox />} />
                     <Route path="deposits" element={<BankDepositsPage />} />
                     <Route

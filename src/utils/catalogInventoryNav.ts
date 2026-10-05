@@ -1,7 +1,7 @@
 /** Catalog = what the practice charges for. Pharmacy = stock, store, and mail fulfillment. */
 
 export const CATALOG_HOME = '/schedule/inventory/items';
-export const INVENTORY_HOME = '/schedule/inventory/receive';
+export const INVENTORY_HOME = '/schedule/inventory/par-levels';
 
 const PHARMACY_SEGMENTS = new Set([
   'par-levels',

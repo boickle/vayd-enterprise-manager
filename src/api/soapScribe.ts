@@ -182,6 +182,87 @@ export async function polishSpokenNotes(opts: {
   return typeof data?.summary === 'string' ? data.summary.trim() : '';
 }
 
+export type VisitWriteupPatient = {
+  patientId: number;
+  patientName: string;
+  history: string;
+  plan: string;
+};
+
+export type VisitWriteup = {
+  /** Primary pet's note — same as `patients[0]` on a single-pet visit. */
+  history: string;
+  plan: string;
+  clientEmailSubject: string;
+  clientEmailBody: string;
+  /** One entry per pet sent in `patients`; empty when none was sent. */
+  patients: VisitWriteupPatient[];
+};
+
+/**
+ * Tech-visit write-up: History + Plan + a warm client recap from a room transcript.
+ * Does not require a SOAP encounter — used by the medical-note page. Pass every pet on the
+ * visit to get a separate note for each; the recap email always covers the household.
+ */
+export async function writeVisitWriteup(opts: {
+  transcript: string;
+  patients?: { patientId: number; name: string; species?: string | null }[];
+  patientId?: number | null;
+  clientId?: number | null;
+  appointmentId?: number | null;
+  soapEncounterId?: string | null;
+  patientName?: string | null;
+  clientName?: string | null;
+  staffName?: string | null;
+  visitType?: string | null;
+  asOfDate?: string | null;
+  roomLoaderHistory?: string | null;
+}): Promise<VisitWriteup> {
+  const { data } = await http.post<VisitWriteup>('/scribe/visit-writeup', {
+    practiceId: VISIT_WORKFLOW_PRACTICE_ID,
+    transcript: opts.transcript,
+    ...(opts.patientId != null ? { patientId: opts.patientId } : {}),
+    ...(opts.clientId != null ? { clientId: opts.clientId } : {}),
+    ...(opts.appointmentId != null ? { appointmentId: opts.appointmentId } : {}),
+    ...(opts.soapEncounterId?.trim()
+      ? { soapEncounterId: opts.soapEncounterId.trim() }
+      : {}),
+    ...(opts.patients?.length
+      ? {
+          patients: opts.patients.map((p) => ({
+            patientId: p.patientId,
+            name: p.name,
+            ...(p.species?.trim() ? { species: p.species.trim() } : {}),
+          })),
+        }
+      : {}),
+    ...(opts.patientName?.trim() ? { patientName: opts.patientName.trim() } : {}),
+    ...(opts.clientName?.trim() ? { clientName: opts.clientName.trim() } : {}),
+    ...(opts.staffName?.trim() ? { staffName: opts.staffName.trim() } : {}),
+    ...(opts.visitType?.trim() ? { visitType: opts.visitType.trim() } : {}),
+    ...(opts.asOfDate?.trim() ? { asOfDate: opts.asOfDate.trim() } : {}),
+    ...(opts.roomLoaderHistory?.trim()
+      ? { roomLoaderHistory: opts.roomLoaderHistory.trim() }
+      : {}),
+  });
+  return {
+    history: typeof data?.history === 'string' ? data.history.trim() : '',
+    plan: typeof data?.plan === 'string' ? data.plan.trim() : '',
+    clientEmailSubject:
+      typeof data?.clientEmailSubject === 'string' ? data.clientEmailSubject.trim() : '',
+    clientEmailBody:
+      typeof data?.clientEmailBody === 'string' ? data.clientEmailBody.trim() : '',
+    patients: Array.isArray(data?.patients)
+      ? data.patients.map((p) => ({
+          patientId: Number(p?.patientId),
+          patientName: typeof p?.patientName === 'string' ? p.patientName : '',
+          history: typeof p?.history === 'string' ? p.history.trim() : '',
+          plan: typeof p?.plan === 'string' ? p.plan.trim() : '',
+        }))
+      : [],
+  };
+}
+
 export async function summarizeChartText(opts: {
   mode: 'outside-record' | 'case-history' | 'household';
   sourceText?: string;

@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router';
+import { ArrowRight } from 'lucide-react';
 import { useAuth } from '../auth/AuthProvider';
 import { transferBatch } from '../api/inventoryOps';
+import { apiErrorMessage } from '../api/http';
 import {
   getInventoryBranchStock,
   listInventoryBranchLocations,
@@ -15,6 +17,7 @@ import { loadInventoryItem, useStockItemGroups } from '../hooks/useStockItemGrou
 import StockLotPicker from '../components/inventory/StockLotPicker';
 import { resolvePracticeIdFromToken } from '../utils/practiceIdFromToken';
 import './Settings.css';
+import './MoveItemsPage.css';
 
 type BatchLine = {
   inventoryItemId: number;
@@ -168,6 +171,11 @@ export default function MoveItemsPage() {
     selected?.id ?? (lines.length === 1 ? lines[0].inventoryItemId : null);
   const qohDisplayItemName =
     selected?.name ?? (lines.length === 1 ? lines[0].name : null);
+  // Adding a lot changes which lot a line points at. That also changes the
+  // location total, so the From/To dropdowns need to reload with the line.
+  const stockRefreshKey = lines
+    .map((l) => `${l.inventoryItemId}:${l.lotId ?? ''}`)
+    .join('|');
 
   useEffect(() => {
     if (!qohDisplayItemId || fromBranchId === '') {
@@ -201,7 +209,7 @@ export default function MoveItemsPage() {
     return () => {
       cancelled = true;
     };
-  }, [practiceId, qohDisplayItemId, fromBranchId, toBranchId]);
+  }, [practiceId, qohDisplayItemId, fromBranchId, toBranchId, stockRefreshKey]);
 
   useEffect(() => {
     if (lines.length === 0 || fromBranchId === '' || toBranchId === '') {
@@ -277,8 +285,14 @@ export default function MoveItemsPage() {
       setError('Add at least one item');
       return;
     }
-    if (lines.some((l) => l.trackLots && l.lotId == null)) {
-      setError('Choose the lot for each item that tracks expiration');
+    const missingLot = lines.filter((l) => l.trackLots && l.lotId == null);
+    if (missingLot.length) {
+      const names = missingLot.map((l) => l.name).join(', ');
+      setError(
+        missingLot.length === 1
+          ? `Choose a lot for ${names} before confirming the move.`
+          : `Choose a lot for each of these before confirming the move: ${names}.`
+      );
       return;
     }
     setBusy(true);
@@ -319,7 +333,7 @@ export default function MoveItemsPage() {
       );
       window.setTimeout(() => setToast(null), 6000);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Transfer failed');
+      setError(apiErrorMessage(e));
     } finally {
       setBusy(false);
     }
@@ -327,7 +341,7 @@ export default function MoveItemsPage() {
 
   return (
     <div className="settings-card" style={{ maxWidth: 640, margin: '0 auto', padding: 16 }}>
-      <h2 style={{ marginTop: 0 }}>Move Items</h2>
+      <h1 className="settings-title">Move Items</h1>
       <p className="settings-muted">
         Move within an office or between offices. Your signed-in account and the time are logged
         automatically.
@@ -347,95 +361,6 @@ export default function MoveItemsPage() {
           {error}
         </div>
       )}
-
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-        <label className="settings-label">
-          From office
-          <select
-            className="settings-input"
-            value={fromBranchId}
-            onChange={(e) => setFromBranchId(e.target.value ? Number(e.target.value) : '')}
-          >
-            {branches.map((b) => (
-              <option key={b.id} value={b.id}>
-                {b.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="settings-label">
-          To office
-          <select
-            className="settings-input"
-            value={toBranchId}
-            onChange={(e) => setToBranchId(e.target.value ? Number(e.target.value) : '')}
-          >
-            {branches.map((b) => (
-              <option key={b.id} value={b.id}>
-                {b.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="settings-label">
-          From location
-          <select
-            className="settings-input"
-            value={fromLoc}
-            onChange={(e) => setFromLoc(e.target.value ? Number(e.target.value) : '')}
-          >
-            {fromLocations.map((l) => (
-              <option key={l.id} value={l.id}>
-                {locationOptionLabel(l.name, l.id, fromBranchStock)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="settings-label">
-          To location
-          <select
-            className="settings-input"
-            value={toLoc}
-            onChange={(e) => setToLoc(e.target.value ? Number(e.target.value) : '')}
-          >
-            {toLocations.map((l) => (
-              <option key={l.id} value={l.id}>
-                {locationOptionLabel(l.name, l.id, toBranchStock)}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-
-      {crossOffice && (
-        <p className="settings-muted" style={{ marginTop: 8 }}>
-          Cross-office move: {fromOfficeName} → {toOfficeName}
-        </p>
-      )}
-
-      {qohDisplayItemId && fromLoc !== '' && toLoc !== '' ? (
-        <p className="settings-muted" style={{ marginTop: 8, fontSize: 13 }}>
-          <strong>{qohDisplayItemName}</strong>
-          {' · '}
-          From{' '}
-          <strong>
-            {fromBranchStock[fromLoc] ?? '—'}
-          </strong>{' '}
-          at {fromLocations.find((l) => l.id === fromLoc)?.name ?? 'source'}
-          {' → '}
-          To{' '}
-          <strong>
-            {toBranchStock[toLoc] ?? '—'}
-          </strong>{' '}
-          at {toLocations.find((l) => l.id === toLoc)?.name ?? 'destination'}
-        </p>
-      ) : null}
-
-      {!qohDisplayItemId ? (
-        <p className="settings-muted" style={{ marginTop: 8, fontSize: 13 }}>
-          Search and select an item to see quantity on hand for each location.
-        </p>
-      ) : null}
 
       <label className="settings-label" style={{ marginTop: 12 }}>
         Search stock item
@@ -563,15 +488,115 @@ export default function MoveItemsPage() {
         ))}
       </ul>
 
+      <div className="move-items__route" aria-label="Move from and to">
+        <section className="move-items__panel move-items__panel--from" aria-labelledby="move-from">
+          <h2 className="move-items__panel-title" id="move-from">
+            From
+          </h2>
+          <label className="settings-label">
+            Office
+            <select
+              className="settings-input"
+              value={fromBranchId}
+              onChange={(e) => setFromBranchId(e.target.value ? Number(e.target.value) : '')}
+            >
+              {branches.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="settings-label">
+            Location
+            <select
+              className="settings-input"
+              value={fromLoc}
+              onChange={(e) => setFromLoc(e.target.value ? Number(e.target.value) : '')}
+            >
+              {fromLocations.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {locationOptionLabel(l.name, l.id, fromBranchStock)}
+                </option>
+              ))}
+            </select>
+          </label>
+        </section>
+
+        <div className="move-items__arrow" aria-hidden>
+          <ArrowRight size={32} strokeWidth={2.5} />
+        </div>
+
+        <section className="move-items__panel move-items__panel--to" aria-labelledby="move-to">
+          <h2 className="move-items__panel-title" id="move-to">
+            To
+          </h2>
+          <label className="settings-label">
+            Office
+            <select
+              className="settings-input"
+              value={toBranchId}
+              onChange={(e) => setToBranchId(e.target.value ? Number(e.target.value) : '')}
+            >
+              {branches.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="settings-label">
+            Location
+            <select
+              className="settings-input"
+              value={toLoc}
+              onChange={(e) => setToLoc(e.target.value ? Number(e.target.value) : '')}
+            >
+              {toLocations.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {locationOptionLabel(l.name, l.id, toBranchStock)}
+                </option>
+              ))}
+            </select>
+          </label>
+        </section>
+      </div>
+
+      {crossOffice && (
+        <p className="settings-muted move-items__qoh">
+          Cross-office move: {fromOfficeName} → {toOfficeName}
+        </p>
+      )}
+
+      {qohDisplayItemId && fromLoc !== '' && toLoc !== '' ? (
+        <p className="settings-muted move-items__qoh">
+          <strong>{qohDisplayItemName}</strong>
+          {' · '}
+          From <strong>{fromBranchStock[fromLoc] ?? '—'}</strong> at{' '}
+          {fromLocations.find((l) => l.id === fromLoc)?.name ?? 'source'}
+          {' → '}
+          To <strong>{toBranchStock[toLoc] ?? '—'}</strong> at{' '}
+          {toLocations.find((l) => l.id === toLoc)?.name ?? 'destination'}
+        </p>
+      ) : null}
+
+      {!qohDisplayItemId ? (
+        <p className="settings-muted move-items__qoh">
+          Select an item above to see quantity on hand for each location.
+        </p>
+      ) : null}
+
+      {error ? (
+        <div className="settings-message settings-error-message" style={{ marginTop: 12 }} role="alert">
+          {error}
+        </div>
+      ) : null}
+
       <button
         type="button"
         className="btn primary"
         style={{ width: '100%', minHeight: 48, marginTop: 12 }}
-        disabled={
-          busy ||
-          lines.length === 0 ||
-          lines.some((l) => l.trackLots && l.lotId == null)
-        }
+        disabled={busy || lines.length === 0}
         onClick={() => void submit()}
       >
         {busy ? 'Moving…' : crossOffice ? 'Confirm office move' : 'Confirm move'}

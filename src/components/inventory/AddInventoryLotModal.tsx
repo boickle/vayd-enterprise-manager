@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { ExpirationDateField } from './ExpirationDateField';
 import {
   addInventoryLot,
   listInventoryBranchLocations,
@@ -192,17 +193,15 @@ export default function AddInventoryLotModal({
               autoFocus
             />
           </label>
-          <label className="settings-label">
+          <div className="settings-label">
             Expiration *
-            <input
-              className="settings-input"
-              type="date"
+            <ExpirationDateField
               value={expirationDate}
               disabled={saving}
-              onChange={(e) => setExpirationDate(e.target.value)}
               required
+              onCommit={(iso) => setExpirationDate(iso ?? '')}
             />
-          </label>
+          </div>
           <label className="settings-label">
             Quantity on hand
             <input

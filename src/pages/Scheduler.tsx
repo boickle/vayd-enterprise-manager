@@ -14,7 +14,7 @@ import {
 import { createPortal } from 'react-dom';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import { DateTime } from 'luxon';
-import { AlertTriangle, Cat, Dog, Heart, Printer, X } from 'lucide-react';
+import { AlertTriangle, CalendarDays, Cat, Dog, Heart, Printer, X } from 'lucide-react';
 import {
   appointmentZoneFullName,
   appointmentZoneShortLabel,
@@ -223,6 +223,7 @@ import {
 } from './SchedulerBookModal';
 import {
   SchedulerAppointmentContextMenu,
+  StartEncounterModal,
   type SchedulerContextMenuAction,
 } from './SchedulerContextMenu';
 import {
@@ -289,6 +290,8 @@ import {
   scheduleOptimizeReturnHref,
   waitlistReturnHref,
   ROUTING_CALENDAR_PREVIEW_UPDATED_EVENT,
+  ROUTING_PREVIEW_SHOW_RESULTS_EVENT,
+  ROUTING_PREVIEW_STEP_EVENT,
   ROUTING_FOCUS_RESCHEDULE_SOURCE_EVENT,
   SCHEDULER_ROUTING_PREVIEW_SYNTHETIC_APPT_ID,
   notifyRoutingPreviewEtaWindowWarnings,
@@ -322,6 +325,7 @@ import {
   type EuthanasiaFutureAppointmentRow,
 } from '../utils/euthanasiaFutureAppointments';
 import {
+  blockRoutingCalendarPreviewNavigation,
   EDIT_VISIT_CALENDAR_BLOCKED_MESSAGE,
   EDIT_VISIT_TIME_PREVIEW_BLOCKED_MESSAGE,
   getScheduleCalendarPreviewBlockedMessage,
@@ -3608,6 +3612,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   } | null>(null);
   const [recordsRequestModalAppt, setRecordsRequestModalAppt] = useState<Appointment | null>(null);
   const [actualVisitModal, setActualVisitModal] = useState<Appointment | null>(null);
+  const [startEncounterAppt, setStartEncounterAppt] = useState<Appointment | null>(null);
   const [removeVisitModal, setRemoveVisitModal] = useState<Appointment | null>(null);
   const [waitlistAddPrefill, setWaitlistAddPrefill] = useState<WaitlistAddPrefill | null>(null);
   const [onMyWaySmsAppt, setOnMyWaySmsAppt] = useState<Appointment | null>(null);
@@ -3708,6 +3713,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   const [bookPrefill, setBookPrefill] = useState<SchedulerBookPrefill | null>(null);
   /** Routing → My Week: proposed slot until booked or dismissed. */
   const [routingPreview, setRoutingPreview] = useState<RoutingCalendarPreviewPayloadV1 | null>(null);
+  /** Phone: the slot card is parked so the results list can be tapped. The calendar ghost stays. */
+  const [routingPreviewBrowsingResults, setRoutingPreviewBrowsingResults] = useState(false);
   const [routingPreviewClientContact, setRoutingPreviewClientContact] =
     useState<PreviewPopoverClientContact | null>(null);
   /** Bumped when session reschedule intent changes (scope, clear, new visit). */
@@ -3735,6 +3742,10 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   const hoverRevealTimerRef = useRef<number | null>(null);
   const hoverDismissTimerRef = useRef<number | null>(null);
   const hoverPinnedRef = useRef(false);
+  /** Tracks which appointment the hover card is currently showing (for touch tap-to-open logic). */
+  const touchHoverApptIdRef = useRef<string | number | null>(null);
+  /** Timer for mobile long-press → context menu. */
+  const touchLongPressTimerRef = useRef<number | null>(null);
   const hoverRevealPendingRef = useRef<{
     appt: Appointment;
     el: HTMLElement;
@@ -3767,6 +3778,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     cancelScheduledHoverPopover();
     cancelHoverDismiss();
     hoverPinnedRef.current = false;
+    touchHoverApptIdRef.current = null;
     setHover(null);
     setHoverTooltipLayout(null);
   }, [cancelScheduledHoverPopover, cancelHoverDismiss]);
@@ -3841,6 +3853,75 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     },
     [cancelScheduledHoverPopover, cancelHoverDismiss]
   );
+
+  // ─── Mobile touch: hover-on-tap + long-press-for-context-menu ──────────────
+
+  /** Show the hover popover immediately at the given coordinates (used on touch tap). */
+  const showHoverForTouch = useCallback(
+    (appt: Appointment, x: number, y: number, el: HTMLElement) => {
+      cancelScheduledHoverPopover();
+      cancelHoverDismiss();
+      hoverPinnedRef.current = false;
+      touchHoverApptIdRef.current = appt.id;
+      setHover({ appt, x, y, el });
+    },
+    [cancelScheduledHoverPopover, cancelHoverDismiss]
+  );
+
+  /**
+   * pointerdown on a touch device: start a 550 ms long-press timer.
+   * If the user holds long enough, fire the context menu.
+   */
+  const onApptTouchStart = useCallback(
+    (appt: Appointment, e: React.PointerEvent<HTMLElement>) => {
+      if (e.pointerType !== 'touch') return;
+      if (touchLongPressTimerRef.current != null) clearTimeout(touchLongPressTimerRef.current);
+      const x = e.clientX;
+      const y = e.clientY;
+      touchLongPressTimerRef.current = window.setTimeout(() => {
+        touchLongPressTimerRef.current = null;
+        cancelScheduledHoverPopover();
+        dismissHoverPopover();
+        touchHoverApptIdRef.current = null;
+        setContextMenu({ appt, x, y });
+      }, 550);
+    },
+    [cancelScheduledHoverPopover, dismissHoverPopover]
+  );
+
+  /**
+   * pointerup on a touch device: if the long-press timer is still pending (short tap),
+   * cancel it and either (a) show the hover popover or (b) open the modal if this appt
+   * already has its hover showing.
+   */
+  const onApptTouchEnd = useCallback(
+    (appt: Appointment, e: React.PointerEvent<HTMLElement>) => {
+      if (e.pointerType !== 'touch') return;
+      if (touchLongPressTimerRef.current == null) return; // long-press already fired
+      clearTimeout(touchLongPressTimerRef.current);
+      touchLongPressTimerRef.current = null;
+      if (touchHoverApptIdRef.current != null && String(touchHoverApptIdRef.current) === String(appt.id)) {
+        // Second tap on the same appointment → open the modal
+        touchHoverApptIdRef.current = null;
+        dismissHoverPopover();
+        setModalAppt(appt);
+      } else {
+        // First tap → show hover popover
+        showHoverForTouch(appt, e.clientX, e.clientY, e.currentTarget);
+      }
+    },
+    [dismissHoverPopover, showHoverForTouch]
+  );
+
+  /** Cancel the long-press timer if the touch is cancelled or moves significantly. */
+  const onApptTouchCancel = useCallback(() => {
+    if (touchLongPressTimerRef.current != null) {
+      clearTimeout(touchLongPressTimerRef.current);
+      touchLongPressTimerRef.current = null;
+    }
+  }, []);
+
+  // ───────────────────────────────────────────────────────────────────────────
 
   /** Close Visit Highlights when clicking elsewhere, scrolling, or pressing Escape. */
   useEffect(() => {
@@ -4152,10 +4233,15 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   useEffect(() => {
     const onPreview = () => {
       applyRoutingCalendarPreviewFromStorage();
+      if (!embedInRoutingWorkspace || !window.matchMedia('(max-width: 900px)').matches) return;
+      setRoutingPreviewBrowsingResults(false);
+      document
+        .querySelector('.schedule-routing-workspace__calendar')
+        ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     };
     window.addEventListener(ROUTING_CALENDAR_PREVIEW_UPDATED_EVENT, onPreview);
     return () => window.removeEventListener(ROUTING_CALENDAR_PREVIEW_UPDATED_EVENT, onPreview);
-  }, [applyRoutingCalendarPreviewFromStorage]);
+  }, [applyRoutingCalendarPreviewFromStorage, embedInRoutingWorkspace]);
 
   /** Restore a leftover preview even without `?routingPreview=1` (refresh / stripped query). */
   useEffect(() => {
@@ -4207,6 +4293,18 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
   useEffect(() => {
     if (routingPreview && view === 'month') setView('week');
   }, [routingPreview, view]);
+
+  /** Mobile chrome hides Month — keep the calendar on week/day below 900px. */
+  useEffect(() => {
+    if (embedInRoutingWorkspace || view !== 'month') return;
+    const mq = window.matchMedia('(max-width: 900px)');
+    const leaveMonthOnMobile = () => {
+      if (mq.matches) setView('day');
+    };
+    leaveMonthOnMobile();
+    mq.addEventListener('change', leaveMonthOnMobile);
+    return () => mq.removeEventListener('change', leaveMonthOnMobile);
+  }, [embedInRoutingWorkspace, view]);
 
   /** My Day → Practice calendar: `?fromMyDay=1&date=YYYY-MM-DD&provider=<id>` (provider optional). */
   useEffect(() => {
@@ -7301,6 +7399,28 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
     driveSoftRefreshRef.current = true;
     setDriveRefreshNonce((n) => n + 1);
   }, [applyRescheduleCalendarFocusFromIntent]);
+
+  useEffect(() => {
+    setRoutingPreviewBrowsingResults(false);
+  }, [routingPreview?.listOptionKey, routingPreview?.option?.suggestedStartIso]);
+
+  const stepRoutingPreview = useCallback((direction: 'previous' | 'next') => {
+    window.dispatchEvent(
+      new CustomEvent(ROUTING_PREVIEW_STEP_EVENT, { detail: { direction } })
+    );
+  }, []);
+
+  const showRoutingPreviewResults = useCallback(() => {
+    setRoutingPreviewBrowsingResults(true);
+    window.dispatchEvent(new Event(ROUTING_PREVIEW_SHOW_RESULTS_EVENT));
+  }, []);
+
+  const returnToRoutingPreviewCalendar = useCallback(() => {
+    setRoutingPreviewBrowsingResults(false);
+    document
+      .querySelector('.schedule-routing-workspace__calendar')
+      ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, []);
 
   const dismissRoutingPreview = useCallback(() => {
     const activePreview = routingPreview ?? readRoutingCalendarPreview();
@@ -10751,6 +10871,14 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             navigate(`/schedule/jot?${qs.toString()}`);
             return;
           }
+          case 'startEncounter': {
+            if (!firstPatient) {
+              fail('No patient on this appointment to start an encounter for.');
+              return;
+            }
+            setStartEncounterAppt(appt);
+            return;
+          }
           case 'openSoap': {
             if (!firstPatient) {
               fail('No patient on this appointment to open a SOAP for.');
@@ -10758,6 +10886,15 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
             }
             const clientQs = client?.id != null ? `?clientId=${client.id}` : '';
             navigate(`/schedule/soap/${appt.id}/${firstPatient.id}${clientQs}`);
+            return;
+          }
+          case 'openMedicalNote': {
+            if (!firstPatient) {
+              fail('No patient on this appointment to start a medical note for.');
+              return;
+            }
+            const clientQs = client?.id != null ? `?clientId=${client.id}` : '';
+            navigate(`/schedule/note/${appt.id}/${firstPatient.id}${clientQs}`);
             return;
           }
           case 'onMyWayText': {
@@ -11402,24 +11539,14 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           <div className="scheduler-range-above-grid-container">
           <div className="scheduler-range-above-grid">
             <div className="scheduler-range-above-grid-leading">
-              <label
-                className="scheduler-drive-toggle scheduler-drive-toggle--in-range-row"
-                title={
-                  view === 'month'
-                    ? 'Switch to week or day view for drive times.'
-                    : 'When on, visits use routed arrive/leave times (drive legs and ETAs), like My Week. When off, the grid uses booked appointment start and end times only.'
-                }
+              {/* Mobile: Today button lives here so the date stays centered */}
+              <button
+                type="button"
+                className="scheduler-show-on-mobile scheduler-range-today-btn"
+                onClick={goToday}
               >
-                <span className="scheduler-drive-toggle-row">
-                  <input
-                    type="checkbox"
-                    checked={showByDriveTime}
-                    disabled={view === 'month' || providers.length === 0}
-                    onChange={(e) => setShowByDriveTime(e.target.checked)}
-                  />
-                  <span>Routed timeline</span>
-                </span>
-              </label>
+                Today
+              </button>
             </div>
             <div
               className="scheduler-range-above-grid-nav"
@@ -11484,7 +11611,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
               {!embedInRoutingWorkspace && resolvedPrimaryProviderId.trim() ? (
                 <button
                   type="button"
-                  className="scheduler-optimize-btn"
+                  className="scheduler-optimize-btn scheduler-hide-on-mobile"
                   disabled={scheduleCalendarInteractionLock}
                   title={
                     scheduleCalendarInteractionLock
@@ -11502,7 +11629,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                   Optimize
                 </button>
               ) : null}
-              <div className="scheduler-view-toggle" role="group" aria-label="Calendar view">
+              {/* Desktop: Month / Week / Day toggle (all hidden on mobile) */}
+              <div className="scheduler-view-toggle scheduler-hide-on-mobile" role="group" aria-label="Calendar view">
                 {(['month', 'week', 'day'] as const).map((v) => (
                   <button
                     key={v}
@@ -11523,12 +11651,24 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                         notifyScheduleCalendarLocked();
                         return;
                       }
+                      if (v === 'month' && isSchedulerMobileViewport()) return;
                       setView(v);
                     }}
                   >
                     {v === 'month' ? 'Month' : v === 'week' ? 'Week' : 'Day'}
                   </button>
                 ))}
+              </div>
+              {/* Mobile: calendar icon opens the date picker */}
+              <div className="scheduler-show-on-mobile scheduler-range-calendar-btn" title="Go to date">
+                <CalendarDays size={17} strokeWidth={2} aria-hidden />
+                <input
+                  type="date"
+                  value={anchorDate ?? ''}
+                  onChange={(e) => onPickGoToDate(e.target.value)}
+                  aria-label="Go to date"
+                  tabIndex={-1}
+                />
               </div>
             </div>
           </div>
@@ -11666,6 +11806,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                             <span className="scheduler-day-off-badge" title="No shift scheduled">
                               Off
                             </span>
+                            <div className="scheduler-day-header-secondary-actions">
                             {resolvedPrimaryProviderId.trim() ? (
                               <SchedulerDayHeaderProgressButton
                                 dayLabel={dayDt.toFormat('cccc, MMMM d')}
@@ -11686,6 +11827,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                                 Override
                               </button>
                             ) : null}
+                            </div>
                           </>
                         ) : isWorkingDay ? (
                           <>
@@ -11753,7 +11895,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                                 {scheduleLoaderHref ? (
                                   <a
                                     href={scheduleLoaderHref}
-                                    className="scheduler-day-header-btn"
+                                    className="scheduler-day-header-btn scheduler-hide-on-mobile"
                                     title={`Open Fill for ${key}`}
                                   >
                                     Fill
@@ -11762,7 +11904,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                                 {mapsLinks.length > 0 ? (
                                   <button
                                     type="button"
-                                    className="scheduler-day-header-btn"
+                                    className="scheduler-day-header-btn scheduler-hide-on-mobile"
                                     data-schedule-preview-allow="maps"
                                     title={
                                       mapsLinks.length > 1
@@ -11779,7 +11921,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                                 ) : null}
                                 <button
                                   type="button"
-                                  className="scheduler-day-header-btn scheduler-day-header-btn--icon"
+                                  className="scheduler-day-header-btn scheduler-day-header-btn--icon scheduler-hide-on-mobile"
                                   title={`Download My Day — Visual PDF (${dayDt.toFormat('ccc M/d')})`}
                                   aria-label={`Download My Day PDF for ${key}`}
                                   disabled={practicePdfExportingKey === key}
@@ -11794,6 +11936,26 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                             ) : null}
                             {officeTown ? (
                               <div className="scheduler-day-header-office">Office: {officeTown}</div>
+                            ) : null}
+                            <div className="scheduler-day-header-secondary-actions">
+                            {/* Mobile: Maps joins this row so Maps | Progress | Override are in one line */}
+                            {mapsLinks.length > 0 ? (
+                              <button
+                                type="button"
+                                className="scheduler-day-header-btn scheduler-show-on-mobile"
+                                data-schedule-preview-allow="maps"
+                                title={
+                                  mapsLinks.length > 1
+                                    ? `Open segment 1 of ${mapsLinks.length} in Google Maps`
+                                    : 'Open this day in Google Maps'
+                                }
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openUrlInNewTab(mapsLinks[0]!);
+                                }}
+                              >
+                                Maps
+                              </button>
                             ) : null}
                             {resolvedPrimaryProviderId.trim() ? (
                               <SchedulerDayHeaderProgressButton
@@ -11815,6 +11977,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                                 Override
                               </button>
                             ) : null}
+                            </div>
                           </>
                         ) : (
                           <div className="scheduler-day-header-metrics-placeholder" aria-hidden />
@@ -11913,6 +12076,8 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                           height: SCHEDULER_ALL_DAY_ROW_PX - 2,
                           background: apptColors.fill,
                           color: apptColors.text,
+                          WebkitTouchCallout: 'none' as const,
+                          userSelect: 'none',
                         }}
                         onDoubleClick={(ev) => {
                           ev.stopPropagation();
@@ -11930,6 +12095,9 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                           }
                           setModalAppt(appt);
                         }}
+                        onPointerDown={(ev) => onApptTouchStart(appt, ev)}
+                        onPointerUp={(ev) => onApptTouchEnd(appt, ev)}
+                        onPointerCancel={onApptTouchCancel}
                         onMouseEnter={(ev) => armHoverPopover(appt, ev)}
                         onMouseMove={(ev) => trackHoverPopoverMove(appt, ev)}
                         onMouseLeave={() => endHoverPopoverForAppt(appt.id)}
@@ -12392,10 +12560,14 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                                 background: apptColors.fill,
                                 color: apptColors.text,
                                 zIndex: isStaffItemDragging ? 30 : undefined,
+                                /* Prevent iOS long-press text-selection callout */
+                                WebkitTouchCallout: 'none' as const,
+                                userSelect: 'none',
                               }}
                               role="button"
                               tabIndex={0}
                               onPointerDown={(e) => {
+                                onApptTouchStart(appt, e);
                                 if (e.button !== 0 || !canDragStaffItem) return;
                                 const body = (e.currentTarget as HTMLElement).closest(
                                   '.scheduler-day-body'
@@ -12439,10 +12611,14 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                                   drag.moved || Math.abs(liveStartMin - drag.originStartMin) >= SLOT_MINUTES / 2;
                                 const next = { ...drag, liveStartMin, moved };
                                 staffCalendarDragRef.current = next;
-                                if (moved) staffCalendarDragMovedRef.current = true;
+                                if (moved) {
+                                  staffCalendarDragMovedRef.current = true;
+                                  onApptTouchCancel(); // cancel long-press if dragging
+                                }
                                 setStaffCalendarDrag(next);
                               }}
                               onPointerUp={(e) => {
+                                onApptTouchEnd(appt, e);
                                 const drag = staffCalendarDragRef.current;
                                 if (!drag || String(drag.apptId) !== String(appt.id)) return;
                                 try {
@@ -12457,6 +12633,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                                 }
                               }}
                               onPointerCancel={() => {
+                                onApptTouchCancel();
                                 staffCalendarDragRef.current = null;
                                 setStaffCalendarDrag(null);
                               }}
@@ -12907,7 +13084,7 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
       {!routingPreview && !embeddedRoutingCalendarLocked ? (
       <div className="scheduler-toolbar">
         <div className="scheduler-toolbar-row scheduler-toolbar-row--combined">
-          <div className="scheduler-toolbar-cluster scheduler-toolbar-cluster--left">
+          <div className="scheduler-toolbar-cluster scheduler-toolbar-cluster--left scheduler-hide-on-mobile">
             <div className="scheduler-go-date-cluster">
               <label className="scheduler-go-date-heading" htmlFor="scheduler-anchor-date">
                 Go to date
@@ -12923,16 +13100,32 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                   <button type="button" onClick={goToday}>
                     Today
                   </button>
-                  <button type="button" onClick={() => setWorkZonesMapOpen(true)}>
+                  <button
+                    type="button"
+                    className="scheduler-hide-on-mobile"
+                    onClick={() => setWorkZonesMapOpen(true)}
+                  >
                     Work Zones Map
                   </button>
                 </div>
               </div>
             </div>
           </div>
+          {!embedInRoutingWorkspace ? (
+            <Link
+              to="/schedule/patient-snapshots"
+              className="scheduler-snapshot-party scheduler-hide-on-mobile"
+              title="Browse the pet photos and fun facts owners have shared"
+              onClick={(e) => {
+                if (blockRoutingCalendarPreviewNavigation()) e.preventDefault();
+              }}
+            >
+              🎉 Pet Snapshot Time? 🎉
+            </Link>
+          ) : null}
           <div className="scheduler-toolbar-cluster scheduler-toolbar-cluster--right">
             <div className="scheduler-filters">
-              <label>
+              <label className="scheduler-hide-on-mobile">
                 Appointment type
                 <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
                   <option value="">(Show all)</option>
@@ -13096,8 +13289,21 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           document.body
         )}
 
+      {routingPreview && routingPreviewBrowsingResults && embedInRoutingWorkspace
+        ? createPortal(
+            <div className="routing-preview-results-bar" data-schedule-preview-allow>
+              <span>Calendar preview is still on. Pick another result, or go back to this slot.</span>
+              <button type="button" className="btn" onClick={returnToRoutingPreviewCalendar}>
+                Back to calendar
+              </button>
+            </div>,
+            document.body
+          )
+        : null}
+
       {routingPreview &&
         routingPreviewPopoverPos &&
+        !routingPreviewBrowsingResults &&
         createPortal(
           <div
             className="scheduler-edit-preview-popover-shell"
@@ -13138,6 +13344,33 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
                     : undefined
               }
               onDismiss={dismissRoutingPreview}
+              onPrevious={
+                embedInRoutingWorkspace &&
+                !routingPreviewIsOptimize &&
+                !routingPreviewIsManualBook &&
+                !routingPreviewIsScheduleLoader &&
+                !routingPreviewIsWaitlist
+                  ? () => stepRoutingPreview('previous')
+                  : undefined
+              }
+              onNext={
+                embedInRoutingWorkspace &&
+                !routingPreviewIsOptimize &&
+                !routingPreviewIsManualBook &&
+                !routingPreviewIsScheduleLoader &&
+                !routingPreviewIsWaitlist
+                  ? () => stepRoutingPreview('next')
+                  : undefined
+              }
+              onShowResults={
+                embedInRoutingWorkspace &&
+                !routingPreviewIsOptimize &&
+                !routingPreviewIsManualBook &&
+                !routingPreviewIsScheduleLoader &&
+                !routingPreviewIsWaitlist
+                  ? showRoutingPreviewResults
+                  : undefined
+              }
               onBack={routingPreviewIsOptimize ? returnToOptimizeFromPreview : undefined}
               backLabel={
                 routingPreviewIsOptimize
@@ -13623,6 +13856,32 @@ export default function Scheduler({ embedInRoutingWorkspace = false }: Scheduler
           }}
           smsFromLine={optimizeSmsFromLine}
           smsSource="schedule_optimization"
+        />
+      ) : null}
+
+      {startEncounterAppt ? (
+        <StartEncounterModal
+          patientName={
+            patientsForAppointment(startEncounterAppt)[0]?.name?.trim() ||
+            `Patient #${patientsForAppointment(startEncounterAppt)[0]?.id ?? ''}`
+          }
+          visitLabel={
+            typeof startEncounterAppt.appointmentType === 'string'
+              ? startEncounterAppt.appointmentType
+              : startEncounterAppt.appointmentType?.prettyName ||
+                startEncounterAppt.appointmentType?.name ||
+                undefined
+          }
+          soapLocked={soapLockedAppointmentIds.has(Number(startEncounterAppt.id))}
+          onClose={() => setStartEncounterAppt(null)}
+          onPick={(choice) => {
+            const appt = startEncounterAppt;
+            setStartEncounterAppt(null);
+            void handleAppointmentMenuAction(
+              { kind: choice === 'soap' ? 'openSoap' : 'openMedicalNote' },
+              appt
+            );
+          }}
         />
       ) : null}
 

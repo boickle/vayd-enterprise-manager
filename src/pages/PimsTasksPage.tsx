@@ -50,11 +50,13 @@ import {
   type AssignedTasksTab,
 } from '../utils/taskOwnership';
 import PimsTaskDetailView from '../components/pims/PimsTaskDetailView';
+import { FORWARD_BOOKING_TASK_ADDED_PARAM } from '../utils/forwardBookingCreateLink';
 import {
   mailOrderTaskStatusClass,
   mailOrderTaskStatusLabel,
 } from '../utils/mailOrderTaskStatus';
 import { isInvoiceAutomationTask } from '../utils/invoiceTask';
+import { isLabResultAutomationTask } from '../utils/labResultTask';
 import { isSoapAutomationTask } from '../utils/soapTask';
 import { isOrderListAutomationTask, orderListPath } from '../utils/orderListTask';
 import TaskReassignModal from '../components/pims/TaskReassignModal';
@@ -442,6 +444,18 @@ export default function PimsTasksPage() {
     const next = new URLSearchParams(searchParams);
     next.delete('new');
     next.delete('taskId');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
+
+  /** Task we just returned to from the forward booking modal — shows the "added"
+   * confirmation once, then the flag leaves the URL so a reload is quiet. */
+  const [forwardBookingAddedTaskId, setForwardBookingAddedTaskId] = useState<number | null>(null);
+  useEffect(() => {
+    if (searchParams.get(FORWARD_BOOKING_TASK_ADDED_PARAM) !== '1') return;
+    const id = Number(searchParams.get('taskId'));
+    setForwardBookingAddedTaskId(Number.isFinite(id) && id > 0 ? id : null);
+    const next = new URLSearchParams(searchParams);
+    next.delete(FORWARD_BOOKING_TASK_ADDED_PARAM);
     setSearchParams(next, { replace: true });
   }, [searchParams, setSearchParams]);
 
@@ -845,7 +859,11 @@ export default function PimsTasksPage() {
           roles={roles}
           myEmployeeId={myEmployeeId}
           isPracticeAdmin={isPracticeAdmin}
-          onBack={backFromDetail}
+          forwardBookingJustAdded={forwardBookingAddedTaskId === taskIdNum}
+          onBack={() => {
+            setForwardBookingAddedTaskId(null);
+            backFromDetail();
+          }}
           onUpdated={() => {
             refreshList();
             notifyTasksChanged();
@@ -880,13 +898,16 @@ export default function PimsTasksPage() {
           <div className="pims-task-card__pills">
             {row.kind === 'callback' ||
             isInvoiceAutomationTask(row) ||
-            isSoapAutomationTask(row) ? (
+            isSoapAutomationTask(row) ||
+            isLabResultAutomationTask(row) ? (
               <span className="pims-task-card__kind">
                 {isInvoiceAutomationTask(row)
                   ? taskKindLabel('invoice')
                   : isSoapAutomationTask(row)
                     ? taskKindLabel('soap')
-                    : taskKindLabel(row.kind)}
+                    : isLabResultAutomationTask(row)
+                      ? taskKindLabel('lab_result')
+                      : taskKindLabel(row.kind)}
               </span>
             ) : null}
             {row.status === 'done' ? (

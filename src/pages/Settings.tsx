@@ -77,6 +77,7 @@ import SettingsPracticeLetterhead from '../components/settings/SettingsPracticeL
 import SettingsEuthanasiaConsent from '../components/settings/SettingsEuthanasiaConsent';
 import SettingsOutsideHospitals from '../components/settings/SettingsOutsideHospitals';
 import SettingsAutomaticTasks from '../components/settings/SettingsAutomaticTasks';
+import SettingsRoomLoader from '../components/settings/SettingsRoomLoader';
 import SettingsDepositBankAccounts from '../components/settings/SettingsDepositBankAccounts';
 import SettingsClientStatuses from '../components/settings/SettingsClientStatuses';
 import SettingsPatientStatuses from '../components/settings/SettingsPatientStatuses';
@@ -121,6 +122,7 @@ const SETTINGS_TAB_IDS = [
   'forms',
   'lab-forms',
   'automatic-tasks',
+  'room-loader',
 ] as const;
 type SettingsTabId = (typeof SETTINGS_TAB_IDS)[number];
 
@@ -133,6 +135,7 @@ const PRACTICE_SETTINGS_ITEMS: SettingsMenuItem[] = [
   { id: 'euthanasia-consent', label: 'Euthanasia Consent' },
   { id: 'outside-hospitals', label: 'Outside Hospitals' },
   { id: 'automatic-tasks', label: 'Automatic Tasks' },
+  { id: 'room-loader', label: 'Room Loader' },
 ];
 
 const SCHEDULING_SETTINGS_ITEMS: SettingsMenuItem[] = [
@@ -3154,6 +3157,30 @@ export default function Settings() {
               unfinished. Unfiled-call rules stay off that setting so waving a call off does not nag.
             </p>
             <SettingsAutomaticTasks
+              practiceId={REMINDERS_PRACTICE_ID}
+              onMessage={(msg, kind) => {
+                if (kind === 'success') {
+                  setSuccess(msg);
+                  setError(null);
+                  window.setTimeout(() => setSuccess(null), 4000);
+                } else {
+                  setError(msg);
+                  setSuccess(null);
+                }
+              }}
+            />
+          </div>
+        )}
+
+        {activeTab === 'room-loader' && (
+          <div className="settings-section">
+            <h2 className="settings-section-title">Room Loader</h2>
+            <p className="settings-section-description">
+              What the client sees on the Room Loader form — which labs are offered at which ages,
+              the add-ons shown to everyone, the outdoor and refill questions, and the copy around
+              them. Nothing here is hardcoded in the form, so changes take effect on the next visit.
+            </p>
+            <SettingsRoomLoader
               practiceId={REMINDERS_PRACTICE_ID}
               onMessage={(msg, kind) => {
                 if (kind === 'success') {

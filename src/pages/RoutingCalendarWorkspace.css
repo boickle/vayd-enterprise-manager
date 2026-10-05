@@ -133,6 +133,40 @@
   outline: none;
 }
 
+/* The collapse tab sits on the divider itself, so the grip pill is replaced by it. */
+.schedule-routing-workspace__splitter::after {
+  display: none;
+}
+
+.schedule-routing-workspace__collapse {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 24px;
+  height: 44px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  background: #fff;
+  color: #475569;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.12);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease, box-shadow 0.12s ease;
+}
+
+.schedule-routing-workspace__collapse:hover,
+.schedule-routing-workspace__collapse:focus-visible {
+  background: #0f172a;
+  border-color: #0f172a;
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.25);
+  outline: none;
+}
+
 .schedule-routing-workspace__splitter:focus-visible::before {
   box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.35);
 }
@@ -192,7 +226,9 @@
   }
 
   .schedule-routing-workspace__routing-inner {
+    flex: none;
     height: auto;
+    min-height: auto;
     overflow: visible;
     display: block;
   }

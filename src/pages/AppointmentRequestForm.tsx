@@ -2844,75 +2844,55 @@ export default function AppointmentRequestForm() {
     };
   }, [isLoggedIn, pets]);
 
+  const leavingFormRef = useRef(false);
+
+  const leaveAppointmentForm = useCallback((reason = 'browser_back') => {
+    leavingFormRef.current = true;
+    void sendAbandon(reason, { awaitPutThenPost: true });
+    // Replace, so the form's guard entries can't bounce the user straight back
+    // into the form on the next Back press.
+    window.location.replace('/client-portal');
+  }, [sendAbandon]);
+
   // Warn users when they try to use browser back button
   useEffect(() => {
     // Only show warning if not on intro page and not on success page
     // Works for both new client and existing client flows
-    if (currentPage === 'intro' || currentPage === 'success') {
+    if (currentPage === 'intro' || currentPage === 'success' || leavingFormRef.current) {
       return;
     }
 
-    let isHandlingPopState = false;
-
-    // Add a state to history so we can detect back button
-    // Always push a new state when page changes to ensure we can detect back navigation
-    // Initialize immediately and also set up after a brief delay to catch any navigation
     const currentState = window.history.state;
     if (!currentState?.formPage || currentState.formPage !== currentPage) {
       window.history.pushState({ formPage: currentPage, preventBack: true }, '', window.location.href);
     }
-    
-    // Also set up a delayed check to ensure state is set (handles rapid page changes)
-    const timeoutId = setTimeout(() => {
-      const state = window.history.state;
-      if (!state?.formPage || state.formPage !== currentPage) {
-        window.history.pushState({ formPage: currentPage, preventBack: true }, '', window.location.href);
-      }
-    }, 100);
 
-    const handlePopState = (event: PopStateEvent) => {
-      // Prevent infinite loops
-      if (isHandlingPopState) {
-        return;
-      }
+    const handlePopState = () => {
+      if (leavingFormRef.current) return;
 
-      // Check if this is a back navigation from our form
-      // Show warning for any back navigation when not on intro or success pages
-      const state = event.state;
-      const isFormPage = (currentPage as Page) !== 'intro' && (currentPage as Page) !== 'success';
-      const hasPreventBack = state?.preventBack === true;
-      const isNavigatingAway = !state || state.formPage !== currentPage;
-      
-      if (isFormPage && (hasPreventBack || isNavigatingAway)) {
-        isHandlingPopState = true;
-        
-        // Show warning dialog
-        const message = "You will lose your data if you go back using the browser's back button. Please use the 'Previous' button in the bottom left to go back to the previous page.";
-        window.history.pushState({ formPage: currentPage, preventBack: true }, '', window.location.href);
-        void (async () => {
-          const userWantsToLeave = await appConfirm({
-            title: 'Leave this form?',
-            message,
-            confirmLabel: 'Leave',
-            cancelLabel: 'Stay',
-            danger: true,
-          });
-          if (userWantsToLeave) {
-            await sendAbandon('browser_back', { awaitPutThenPost: true });
-            window.history.back();
-          }
-          isHandlingPopState = false;
-        })();
-      }
+      // The back press already removed one guard entry. Put it back so Stay
+      // keeps the user on the form, then ask.
+      window.history.pushState({ formPage: currentPage, preventBack: true }, '', window.location.href);
+
+      const message = "You will lose your data if you go back using the browser's back button. Please use the 'Previous' button in the bottom left to go back to the previous page.";
+      void (async () => {
+        const userWantsToLeave = await appConfirm({
+          title: 'Leave this form?',
+          message,
+          confirmLabel: 'Leave',
+          cancelLabel: 'Stay',
+          danger: true,
+        });
+        if (userWantsToLeave) leaveAppointmentForm();
+      })();
     };
 
     window.addEventListener('popstate', handlePopState);
 
     return () => {
-      clearTimeout(timeoutId);
       window.removeEventListener('popstate', handlePopState);
     };
-  }, [currentPage, sendAbandon]);
+  }, [currentPage, leaveAppointmentForm]);
 
   // Load veterinarians for new clients (using public veterinarians endpoint)
   // Only fetch when address is valid (has line1, city, state, zip)
@@ -4533,11 +4513,7 @@ export default function AppointmentRequestForm() {
         cancelLabel: 'Stay',
         danger: true,
       });
-      if (userWantsToLeave) {
-        trackGaAbandon('exit_to_portal');
-        await sendAbandon('exit_to_portal', { awaitPutThenPost: true });
-        navigate('/client-portal');
-      }
+      if (userWantsToLeave) leaveAppointmentForm('exit_to_portal');
     })();
   };
 

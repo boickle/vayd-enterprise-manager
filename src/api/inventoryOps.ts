@@ -149,13 +149,16 @@ export type ParsedInvoice = {
   lines: ParsedInvoiceLine[];
 };
 
+/** One PDF, or one photo per page of the same invoice (sent together, read as one). */
 export async function parseInventoryInvoice(
   practiceId: number,
-  file: File,
+  files: File | File[],
   supplierId?: number | null
 ) {
   const form = new FormData();
-  form.append('file', file);
+  const list = Array.isArray(files) ? files : [files];
+  if (list.length === 1) form.append('file', list[0]);
+  else for (const f of list) form.append('files', f);
   const { data } = await http.post<ParsedInvoice>(
     `/practice/${practiceId}/inventory-invoices/parse`,
     form,
@@ -462,6 +465,18 @@ export type InventoryCostReview = {
   resolvedByUserId: number | null;
   resolvedByEmployeeId: number | null;
   created: string;
+  linkedItems?: InventoryCostReviewLinkedItem[];
+};
+
+export type InventoryCostReviewLinkedItem = {
+  id: number;
+  name: string;
+  code: string | null;
+  unitsPerSale: number;
+  cost: number | null;
+  price: number | null;
+  nextCost: number;
+  nextPrice: number | null;
 };
 
 export async function listCostReviews(

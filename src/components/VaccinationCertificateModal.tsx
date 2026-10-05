@@ -10,6 +10,8 @@ type VaccinationCertificateModalProps = {
   pet: Pet;
   vaccinations: Vaccination[];
   onClose: () => void;
+  /** When provided, shows an "Email certificate" action (client portal). */
+  onEmail?: () => void;
 };
 
 function formatDate(iso?: string | null): string {
@@ -85,6 +87,7 @@ export default function VaccinationCertificateModal({
   pet,
   vaccinations,
   onClose,
+  onEmail,
 }: VaccinationCertificateModalProps) {
   const printRef = useRef<HTMLDivElement>(null);
   const tableWrapperRef = useRef<HTMLDivElement>(null);
@@ -1304,6 +1307,37 @@ export default function VaccinationCertificateModal({
             </svg>
             Download PDF
           </button>
+          {onEmail ? (
+            <button
+              type="button"
+              onClick={onEmail}
+              style={{
+                padding: '10px 24px',
+                backgroundColor: '#fff',
+                color: '#0f766e',
+                border: '2px solid #0f766e',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                fontSize: 14,
+                fontWeight: 600,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+              }}
+            >
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                style={{ width: 18, height: 18 }}
+              >
+                <rect x="3" y="5" width="18" height="14" rx="2"></rect>
+                <polyline points="3 7 12 13 21 7"></polyline>
+              </svg>
+              Email Certificate
+            </button>
+          ) : null}
         </div>
       </div>
       </div>

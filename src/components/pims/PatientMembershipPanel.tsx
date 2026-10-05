@@ -63,6 +63,8 @@ import MembershipAgreementWaiver, {
   hasDrawnMembershipSignature,
 } from '../MembershipAgreementWaiver';
 import { fetchChatHoursOfOperation } from '../../api/chatHoursOfOperation';
+import { businessHoursElapsed } from '../../utils/businessHoursLookback';
+import { DEFAULT_PRACTICE_TIMEZONE } from '../../utils/practiceTimezone';
 import {
   buildMembershipAgreementText,
   defaultChatHoursOfOperation,
@@ -376,9 +378,10 @@ export default function PatientMembershipPanel({
     let cancelled = false;
     void (async () => {
       try {
-        const [settings, invoices] = await Promise.all([
+        const [settings, invoices, businessHours] = await Promise.all([
           getPracticeSettings(practiceId),
           listClientVisitInvoices(clientId, { lite: true }),
+          fetchChatHoursOfOperation(practiceId).catch(() => null),
         ]);
         if (cancelled) return;
         const windowHours = membershipPostVisitSignupWindowHours(settings);
@@ -404,7 +407,11 @@ export default function PatientMembershipPanel({
           setPostVisitHoursLeft(null);
           return;
         }
-        const ageHours = (Date.now() - newest) / 3_600_000;
+        const ageHours = businessHoursElapsed({
+          from: new Date(newest),
+          hoursOfOperation: businessHours,
+          timeZone: DEFAULT_PRACTICE_TIMEZONE,
+        });
         setPostVisitHoursLeft(windowHours - ageHours);
       } catch {
         if (!cancelled) {
@@ -1389,13 +1396,6 @@ export default function PatientMembershipPanel({
                         : null,
                     },
                     { label: 'Price', value: money(membership.price) },
-                    {
-                      label: 'Out-of-plan discount',
-                      value:
-                        membership.outOfPlanDiscount != null
-                          ? `${membership.outOfPlanDiscount}% off other services`
-                          : null,
-                    },
                     {
                       label: 'Online store discount',
                       value:

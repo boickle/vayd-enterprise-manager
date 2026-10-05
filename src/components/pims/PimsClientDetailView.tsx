@@ -1494,6 +1494,12 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
     navigate(`/schedule/soap/${appointmentId}/${encodeURIComponent(pid)}${qs}`);
   }
 
+  function openMedicalNoteForPatient(appointmentId: number, pid: string, cid: string | null) {
+    const qs =
+      cid != null && cid !== '' ? `?clientId=${encodeURIComponent(cid)}` : '';
+    navigate(`/schedule/note/${appointmentId}/${encodeURIComponent(pid)}${qs}`);
+  }
+
   function startSoapFromClient() {
     if (soapPetChoices.length === 0) return;
     if (soapPetChoices.length === 1) {
@@ -1685,11 +1691,20 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
         : Number.isFinite(fromFlat) && fromFlat > 0
           ? fromFlat
           : null;
+      const statusNested =
+        p.patientStatus && typeof p.patientStatus === 'object'
+          ? (p.patientStatus as Record<string, unknown>)
+          : null;
       return {
         id,
         name: pickStr(p.name) ?? `Pet #${id}`,
         primaryProviderId,
         isActive: p.isActive !== false,
+        statusName:
+          (statusNested && pickStr(statusNested.name)) ||
+          pickStr(p.patientStatusName) ||
+          pickStr(p.status) ||
+          null,
       };
     })
     .filter((p): p is {
@@ -1697,6 +1712,7 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
       name: string;
       primaryProviderId: number | null;
       isActive: boolean;
+      statusName: string | null;
     } => p != null);
 
   const zoneText = zone ? `Zone ${zone.replace(/^Zone\s+/i, '')}` : null;
@@ -2010,10 +2026,10 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
               className="pims-detail__btn-secondary"
               onClick={startSoapFromClient}
               disabled={soapPetChoices.length === 0}
-              title="Continue an open SOAP, or start one from a visit on the books"
+              title="Continue an open SOAP or medical note, or start one from a visit on the books"
             >
               <Stethoscope size={14} aria-hidden />
-              Start/Continue SOAP
+              Start/Continue encounter
             </button>
             <button
               type="button"
@@ -2549,7 +2565,7 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
               <div className="pims-chart-pick__card">
                 <div className="pims-chart-pick__head">
                   <h3 id="pims-client-soap-pet">
-                    <Stethoscope size={16} aria-hidden /> Start/Continue SOAP
+                    <Stethoscope size={16} aria-hidden /> Start/Continue encounter
                   </h3>
                   <button
                     type="button"
@@ -2561,7 +2577,7 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
                   </button>
                 </div>
                 <p className="pims-chart-pick__empty" style={{ marginBottom: 10 }}>
-                  Which pet is this visit for?
+                  Which pet is this encounter for?
                 </p>
                 <ul className="pims-chart-pick__list">
                   {soapPetChoices.map((p) => {
@@ -2577,7 +2593,7 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
                           }}
                         >
                           <strong>{petName}</strong>
-                          <span>Open SOAPs and visits for this pet</span>
+                          <span>Open SOAP, medical note, and visits for this pet</span>
                         </button>
                       </li>
                     );
@@ -2602,6 +2618,7 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
         clientId={clientId}
         practiceTz={PIMS_CLIENT_DETAIL_TZ}
         onOpenSoap={openSoapForPatient}
+        onOpenMedicalNote={openMedicalNoteForPatient}
         onBookAppointment={canBookAppointment ? startAppointmentForThisClient : undefined}
       />
 

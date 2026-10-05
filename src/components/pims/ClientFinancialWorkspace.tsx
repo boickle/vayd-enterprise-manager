@@ -160,6 +160,13 @@ import { linkedStockFromLine } from '../../utils/linkedInvoiceStock';
 import InvoiceVaccineDoseEditor, {
   loadClinicalForInvoiceLines,
 } from './InvoiceVaccineDoseEditor';
+import {
+  groupLabResultsByLine,
+  listLabResultsForInvoice,
+  type LabResult,
+} from '../../api/inHouseLabs';
+import InvoiceLineLabResults from '../labs/InvoiceLineLabResults';
+import LabResultChip, { labResultsState } from '../labs/LabResultChip';
 import { recordScoutChartCommunication } from '../../api/scoutChart';
 import type { GmailComposeAttachment } from '../../api/gmail';
 import { ClientEmailComposeModal } from '../ClientEmailComposeModal';
@@ -172,6 +179,7 @@ export type FinancialPet = {
   name: string;
   primaryProviderId?: number | null;
   isActive?: boolean;
+  statusName?: string | null;
 };
 
 type LedgerFilter = 'all' | 'open' | 'paid' | 'void' | 'returns';
@@ -785,31 +793,36 @@ function isEmptyOpenInvoice(invoice: VisitInvoice): boolean {
 }
 
 function isFinancialPetActive(pet: FinancialPet): boolean {
-  return pet.isActive !== false;
+  if (pet.isActive === false) return false;
+  const status = (pet.statusName ?? '').toLowerCase();
+  return !/euthan|deceas|died|passed|inactive/.test(status);
 }
 
-/** Active pets first — inactive ones stay available for final / cleanup bills. */
 function sortPetsForCharge(pets: FinancialPet[]): FinancialPet[] {
-  return [...pets].sort((a, b) => {
-    const aActive = isFinancialPetActive(a) ? 0 : 1;
-    const bActive = isFinancialPetActive(b) ? 0 : 1;
-    if (aActive !== bActive) return aActive - bActive;
-    return a.name.localeCompare(b.name);
-  });
+  return [...pets].sort((a, b) => a.name.localeCompare(b.name));
 }
 
 function defaultChargePatientId(
   pets: FinancialPet[],
   preferred?: number | null,
 ): number | null {
-  if (preferred != null && pets.some((p) => p.id === preferred)) return preferred;
-  // Prefer a live pet, but an all-inactive household still needs a charge target
-  // (final invoice after euthanasia, cleanup charges, etc.).
-  return pets.find(isFinancialPetActive)?.id ?? pets[0]?.id ?? null;
+  if (preferred != null) {
+    const hit = pets.find((p) => p.id === preferred);
+    if (hit && isFinancialPetActive(hit)) return preferred;
+  }
+  return pets.find(isFinancialPetActive)?.id ?? null;
 }
 
-function petsForChargeSelect(pets: FinancialPet[]): FinancialPet[] {
-  return sortPetsForCharge(pets);
+/** Active pets unless Use inactive is on. A line already on an inactive pet keeps that pet. */
+function petsForChargeSelect(
+  pets: FinancialPet[],
+  includeInactive: boolean,
+  keepId?: number | null,
+): FinancialPet[] {
+  const rows = includeInactive
+    ? pets
+    : pets.filter((p) => isFinancialPetActive(p) || (keepId != null && p.id === keepId));
+  return sortPetsForCharge(rows);
 }
 
 function emptyDraftInvoice(opts: {
@@ -1119,6 +1132,7 @@ export default function ClientFinancialWorkspace({
   const [linePatientId, setLinePatientId] = useState<number | null>(() =>
     defaultChargePatientId(pets, initialPatientId),
   );
+  const [useInactivePets, setUseInactivePets] = useState(false);
   const [visits, setVisits] = useState<Appointment[]>([]);
   const [tenderMethod, setTenderMethod] = useState<VisitTenderMethod>('cash');
   const [tenderAmount, setTenderAmount] = useState('');
@@ -1143,6 +1157,9 @@ export default function ClientFinancialWorkspace({
   const [rxApproveTried, setRxApproveTried] = useState<Record<string, true>>({});
   const [rxRowOpenIds, setRxRowOpenIds] = useState<Record<string, true>>({});
   const [vaccineByOrderId, setVaccineByOrderId] = useState<Record<string, OrderVaccination>>({});
+  const [vaccineByLineId, setVaccineByLineId] = useState<Record<string, OrderVaccination>>({});
+  /** In-house lab forms keyed by the invoice line they were charged on. */
+  const [labResultsByLineId, setLabResultsByLineId] = useState<Record<string, LabResult[]>>({});
   const [prescriptionByOrderId, setPrescriptionByOrderId] = useState<
     Record<string, OrderPrescription>
   >({});
@@ -1263,17 +1280,18 @@ export default function ClientFinancialWorkspace({
     return [...byId.values()];
   }, [pets, extraPets]);
 
-  const chargePets = useMemo(() => petsForChargeSelect(allPets), [allPets]);
+  const chargePets = useMemo(
+    () => petsForChargeSelect(allPets, useInactivePets, linePatientId),
+    [allPets, useInactivePets, linePatientId],
+  );
 
-  // When pets load (or the preferred pet is missing), pick someone to charge.
   useEffect(() => {
-    if (!allPets.length) {
-      if (linePatientId != null) setLinePatientId(null);
-      return;
+    if (useInactivePets || linePatientId == null) return;
+    const cur = allPets.find((p) => p.id === linePatientId);
+    if (cur && !isFinancialPetActive(cur)) {
+      setLinePatientId(defaultChargePatientId(allPets, initialPatientId));
     }
-    if (linePatientId != null && allPets.some((p) => p.id === linePatientId)) return;
-    setLinePatientId(defaultChargePatientId(allPets, initialPatientId));
-  }, [allPets, linePatientId, initialPatientId]);
+  }, [allPets, linePatientId, useInactivePets, initialPatientId]);
 
   const providerOptions = useMemo(() => {
     const rows = providers.filter((e) => e?.id != null && Number(e.id) > 0);
@@ -1760,6 +1778,7 @@ export default function ClientFinancialWorkspace({
   useEffect(() => {
     if (!selected) {
       setVaccineByOrderId({});
+      setVaccineByLineId({});
       setPrescriptionByOrderId({});
       setStockDrawsByOrderId({});
       return;
@@ -1769,12 +1788,14 @@ export default function ClientFinancialWorkspace({
       .then((result) => {
         if (canceled) return;
         setVaccineByOrderId(result.vaccinations);
+        setVaccineByLineId(result.vaccinationsByLineId);
         setPrescriptionByOrderId(result.prescriptions);
         setStockDrawsByOrderId(result.stockDraws);
       })
       .catch(() => {
         if (!canceled) {
           setVaccineByOrderId({});
+          setVaccineByLineId({});
           setPrescriptionByOrderId({});
           setStockDrawsByOrderId({});
         }
@@ -1783,6 +1804,46 @@ export default function ClientFinancialWorkspace({
       canceled = true;
     };
   }, [vaccineLoadKey]);
+
+  // In-house lab forms live on the lab line itself. The API opens a pending
+  // form for each lab line that has one, so the load doubles as the create.
+  const labLoadKey =
+    selected && !isUnsavedInvoice(selected)
+      ? `${selected.id}:${activeLines(selected)
+          .filter((l) => l.catalogItemType === 'lab')
+          .map((l) => l.id)
+          .join(',')}`
+      : '';
+
+  useEffect(() => {
+    if (!labLoadKey || labLoadKey.endsWith(':')) {
+      setLabResultsByLineId({});
+      return;
+    }
+    const invoiceId = labLoadKey.slice(0, labLoadKey.indexOf(':'));
+    let canceled = false;
+    void listLabResultsForInvoice(invoiceId)
+      .then((rows) => {
+        if (!canceled) setLabResultsByLineId(groupLabResultsByLine(rows));
+      })
+      .catch(() => {
+        if (!canceled) setLabResultsByLineId({});
+      });
+    return () => {
+      canceled = true;
+    };
+  }, [labLoadKey]);
+
+  const onLabResultSaved = useCallback((saved: LabResult) => {
+    if (!saved.visitInvoiceLineId) return;
+    setLabResultsByLineId((prev) => {
+      const list = prev[saved.visitInvoiceLineId as string] ?? [];
+      const next = list.some((r) => r.id === saved.id)
+        ? list.map((r) => (r.id === saved.id ? saved : r))
+        : [...list, saved];
+      return { ...prev, [saved.visitInvoiceLineId as string]: next };
+    });
+  }, []);
 
   // Newly added meds still open so the sig can be written. Vaccines and existing
   // lines stay collapsed, same as the SOAP invoice: expand only when you tap them.
@@ -2413,6 +2474,20 @@ export default function ClientFinancialWorkspace({
       ),
     [visibleLines, shippingIdSet, mailOrderForLine]
   );
+  /**
+   * Rx, vaccine and lot-tracked lines carry Branch/Location in their own panel. The
+   * invoice-level copy only appears when nothing on the invoice has a panel to hold it.
+   */
+  const someLineShowsBranch = useMemo(
+    () =>
+      visibleLines.some(
+        (line) =>
+          !line.tagalongOfLineId &&
+          !mailOrderForLine(line) &&
+          (isVaccineLine(line) || isPrescriptionLine(line) || Boolean(line.trackLots))
+      ),
+    [visibleLines, mailOrderForLine]
+  );
   const invoicePrescribedDate = toDateInput(selected?.created ?? selected?.paidAt) || dateForInput(new Date());
   const recordedRxFor = (line: VisitInvoiceLine): OrderPrescription | null =>
     line.orderId ? prescriptionByOrderId[line.orderId] ?? null : null;
@@ -2593,6 +2668,7 @@ export default function ClientFinancialWorkspace({
         catalogItemType: refill.catalogItemId != null ? 'inventory' : null,
         patientId: linePatientId,
         providerEmployeeId,
+        miscCharge: true,
       });
       setSelected(next);
       await refreshList(next.id);
@@ -2744,6 +2820,7 @@ export default function ClientFinancialWorkspace({
           listUnitPrice: listUnit > priced.unitFinal + 0.009 ? listUnit : null,
           patientId: linePatientId,
           providerEmployeeId,
+          miscCharge: true,
         });
         setSelected(next);
         setQuery('');
@@ -2842,6 +2919,7 @@ export default function ClientFinancialWorkspace({
             bundleSaleId,
             sourceBundleId: resolution.bundleId,
             sourceBundleName: resolution.bundleName,
+            miscCharge: true,
           });
         }
       } catch (err) {
@@ -4433,10 +4511,27 @@ export default function ClientFinancialWorkspace({
                           {chargePets.map((p) => (
                             <option key={p.id} value={p.id}>
                               {p.name}
-                              {p.isActive === false ? ' (inactive)' : ''}
+                              {isFinancialPetActive(p) ? '' : ' (inactive)'}
                             </option>
                           ))}
                         </select>
+                      </label>
+                      <label className="client-fin__use-inactive">
+                        <input
+                          type="checkbox"
+                          checked={useInactivePets}
+                          onChange={(e) => {
+                            const on = e.target.checked;
+                            setUseInactivePets(on);
+                            if (!on && linePatientId != null) {
+                              const cur = allPets.find((p) => p.id === linePatientId);
+                              if (cur && !isFinancialPetActive(cur)) {
+                                setLinePatientId(defaultChargePatientId(allPets, initialPatientId));
+                              }
+                            }
+                          }}
+                        />
+                        Use inactive
                       </label>
                     </div>
                     <div className="client-fin__search client-fin__search--add">
@@ -4636,7 +4731,13 @@ export default function ClientFinancialWorkspace({
                           !showVaxMeta &&
                           !showRxMeta &&
                           !linkedStock.linked;
-                        const showMeta = showRxMeta || showVaxMeta || showLotOnly;
+                        /** An in-house lab with a form: results are entered on the line. */
+                        const lineLabResults =
+                          line.catalogItemType === 'lab' ? labResultsByLineId[line.id] ?? null : null;
+                        const showLabMeta =
+                          Boolean(lineLabResults?.length) && !showVaxMeta && !showRxMeta && !showLotOnly;
+                        const labState = labResultsState(lineLabResults);
+                        const showMeta = showRxMeta || showVaxMeta || showLotOnly || showLabMeta;
                         const attachedShipping = lineGroups.attached.get(line.id) ?? [];
                         const attachedTagalongs = tagalongGroups.attached.get(line.id) ?? [];
                         const dirty = canEdit && showRxMeta && lineSigDirty(line);
@@ -4678,14 +4779,13 @@ export default function ClientFinancialWorkspace({
                           line,
                           shippingIdSet
                         );
-                        const vaccineRecorded =
-                          line.orderId != null
-                            ? Boolean(vaccineByOrderId[line.orderId])
-                            : true;
+                        const recordedVaccine =
+                          (line.orderId ? vaccineByOrderId[line.orderId] : null) ??
+                          vaccineByLineId[line.id] ??
+                          null;
+                        const vaccineRecorded = Boolean(recordedVaccine);
                         const vaccineLotId =
-                          (line.orderId &&
-                            vaccineByOrderId[line.orderId]?.inventoryLotBalanceId) ||
-                          line.inventoryLotBalanceId;
+                          recordedVaccine?.inventoryLotBalanceId || line.inventoryLotBalanceId;
                         const lotReady =
                           showVaxMeta
                             ? Boolean(mailedLineOrder) ||
@@ -4701,7 +4801,10 @@ export default function ClientFinancialWorkspace({
                             ? (noProviderLine || line.providerEmployeeId != null) &&
                               vaccineRecorded &&
                               lotReady
-                            : (noProviderLine || line.providerEmployeeId != null) && lotReady;
+                            : showLabMeta
+                              ? (noProviderLine || line.providerEmployeeId != null) &&
+                                labState !== 'waiting'
+                              : (noProviderLine || line.providerEmployeeId != null) && lotReady;
                         const shippedMail = shippedMailForLine(line);
                         // No branch check here: mail order decides where it fills from,
                         // so requiring one before you can mail is backwards.
@@ -4787,6 +4890,7 @@ export default function ClientFinancialWorkspace({
                                   rxApproved: scriptApproved,
                                   isCovered: line.isCovered,
                                   listUnitPrice: line.listUnitPrice ?? null,
+                                  miscCharge: true,
                                 });
                                 const created = (invoice.lines ?? []).filter(
                                   (row) =>
@@ -4889,6 +4993,7 @@ export default function ClientFinancialWorkspace({
                                     <span className="client-fin__covered-heart" title="Membership covered" aria-label="Membership covered">❤️{' '}</span>
                                   ) : null}
                                   {isMailSplitChild ? 'Mailing' : line.description}
+                                  {showLabMeta ? <LabResultChip results={lineLabResults} /> : null}
                                 </span>
                                 {isMailSplitChild || mailedLineOrder ? (
                                   <span className="client-fin__fulfill-pill client-fin__fulfill-pill--mail">
@@ -4930,6 +5035,11 @@ export default function ClientFinancialWorkspace({
                                 title="This catalog item has Show on Invoice turned off. Staff see the charge; it is left off the invoice the client receives."
                               >
                                 Not shown on client invoice
+                              </div>
+                            ) : null}
+                            {showLabMeta && !rxOpen && labState === 'waiting' ? (
+                              <div className="client-fin__item-by">
+                                Results needed — expand to run the lab
                               </div>
                             ) : null}
                             {showMeta &&
@@ -4998,10 +5108,10 @@ export default function ClientFinancialWorkspace({
                                     Select pet…
                                   </option>
                                 ) : null}
-                                {petsForChargeSelect(allPets).map((p) => (
+                                {petsForChargeSelect(allPets, useInactivePets, line.patientId).map((p) => (
                                   <option key={p.id} value={p.id}>
                                     {p.name}
-                                    {p.isActive === false ? ' (inactive)' : ''}
+                                    {isFinancialPetActive(p) ? '' : ' (inactive)'}
                                   </option>
                                 ))}
                               </select>
@@ -5116,7 +5226,18 @@ export default function ClientFinancialWorkspace({
                           ) : null}
                         </tr>
                         {showMeta && rxOpen ? (
-                          showVaxMeta ? (
+                          showLabMeta ? (
+                          <tr className={`client-fin__line-meta ${lineReady ? 'client-fin__line--ready' : 'client-fin__line--pending'}`}>
+                            <td colSpan={invoiceMetaCols}>
+                              <InvoiceLineLabResults
+                                results={lineLabResults ?? []}
+                                readOnly={invoiceGone || selected?.status === 'void'}
+                                onSaved={onLabResultSaved}
+                              />
+                            </td>
+                            {canRemoveLines ? <td className="client-fin__row-action" /> : null}
+                          </tr>
+                          ) : showVaxMeta ? (
                           <tr className={`client-fin__line-meta ${lineReady ? 'client-fin__line--ready' : 'client-fin__line--pending'}${isMailSplitChild ? ' client-fin__line--mail-split' : ''}`}>
                             <td colSpan={invoiceMetaCols}>
                               {linkedStock.linked && !mailedLineOrder ? (
@@ -5142,14 +5263,17 @@ export default function ClientFinancialWorkspace({
                                 hideLotPicker={linkedStock.linked}
                                 branchId={selected?.inventoryBranchId}
                                 locationId={selected?.inventoryLocationId}
-                                recorded={
-                                  line.orderId ? vaccineByOrderId[line.orderId] ?? null : null
-                                }
+                                recorded={recordedVaccine}
                                 onSaved={(saved) => {
-                                  if (!saved.encounterOrderId) return;
-                                  setVaccineByOrderId((prev) => ({
+                                  if (saved.encounterOrderId) {
+                                    setVaccineByOrderId((prev) => ({
+                                      ...prev,
+                                      [saved.encounterOrderId as string]: saved,
+                                    }));
+                                  }
+                                  setVaccineByLineId((prev) => ({
                                     ...prev,
-                                    [saved.encounterOrderId as string]: saved,
+                                    [saved.visitInvoiceLineId ?? line.id]: saved,
                                   }));
                                   if (saved.inventoryLotBalanceId != null) {
                                     void patchLine(line, {
@@ -5165,6 +5289,21 @@ export default function ClientFinancialWorkspace({
                                   });
                                 }}
                               />
+                              {selected && !invoiceGone && selected.status !== 'void' ? (
+                                <div className="client-fin__rx-fulfill">
+                                  <CheckoutInventoryBranchField
+                                    invoice={selected}
+                                    persist={!isUnsavedInvoice(selected)}
+                                    disabled={busy || selected.status !== 'open'}
+                                    onInvoiceChange={(next) => {
+                                      setSelected(next);
+                                      if (!isUnsavedInvoice(next)) void refreshList(next.id);
+                                    }}
+                                    className="client-fin__fulfill-fields"
+                                    fieldClassName="client-fin__rx-field"
+                                  />
+                                </div>
+                              ) : null}
                             </td>
                             {canRemoveLines ? <td className="client-fin__row-action" /> : null}
                           </tr>
@@ -5485,10 +5624,10 @@ export default function ClientFinancialWorkspace({
                                     Select pet…
                                   </option>
                                 ) : null}
-                                {petsForChargeSelect(allPets).map((p) => (
+                                {petsForChargeSelect(allPets, useInactivePets, ship.patientId).map((p) => (
                                   <option key={p.id} value={p.id}>
                                     {p.name}
-                                    {p.isActive === false ? ' (inactive)' : ''}
+                                    {isFinancialPetActive(p) ? '' : ' (inactive)'}
                                   </option>
                                 ))}
                               </select>
@@ -5968,7 +6107,7 @@ export default function ClientFinancialWorkspace({
               !invoiceGone &&
               selected.status !== 'void' &&
               visibleLines.length > 0 &&
-              !visibleLines.some((row) => isPrescriptionLine(row)) ? (
+              !someLineShowsBranch ? (
                 <div className="client-fin__pay">
                   {!needsLocalFill ? (
                     <p className="client-fin__fulfill-note">

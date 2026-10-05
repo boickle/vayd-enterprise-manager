@@ -1,10 +1,19 @@
-import axios from 'axios';
-import { apiBaseUrl, http } from './http';
+import axios, { AxiosHeaders, type AxiosRequestHeaders } from 'axios';
+import { apiBaseUrl, http, practiceHostHeaders } from './http';
 
 /** Public catalog / checkout calls — no staff JWT, so Room Loader links cannot trigger logout. */
 const publicStoreClient = axios.create({
   baseURL: apiBaseUrl,
   withCredentials: false,
+});
+
+publicStoreClient.interceptors.request.use((config) => {
+  const headers = AxiosHeaders.from(config.headers || {}) as AxiosHeaders;
+  for (const [name, value] of Object.entries(practiceHostHeaders())) {
+    if (!headers.has(name)) headers.set(name, value);
+  }
+  config.headers = headers as AxiosRequestHeaders;
+  return config;
 });
 
 export function storeApiError(err: unknown): string {
@@ -569,7 +578,11 @@ export async function listUnlistedStoreItems(practiceId: number, q?: string) {
 
 export async function bulkPatchOnlineStoreItems(
   practiceId: number,
-  body: { recommendedFrequency?: string | null; onlyMissing?: boolean }
+  body: {
+    inventoryItemIds?: number[];
+    recommendedFrequency?: string | null;
+    onlyMissing?: boolean;
+  }
 ) {
   const { data } = await http.patch<StoreItemRow[]>(
     `/practice/${practiceId}/online-store/items`,
@@ -1044,15 +1057,64 @@ export async function syncStoreCategoriesFromEcwid(practiceId: number) {
   return data;
 }
 
+function asStoreListingArray(data: unknown): StoreListing[] {
+  if (Array.isArray(data)) return data as StoreListing[];
+  if (data && typeof data === 'object') {
+    const rec = data as Record<string, unknown>;
+    for (const key of ['products', 'listings', 'items', 'data', 'results']) {
+      if (Array.isArray(rec[key])) return rec[key] as StoreListing[];
+    }
+  }
+  return [];
+}
+
+function listingSearchHaystack(listing: StoreListing): string {
+  return [
+    listing.name,
+    listing.storeCategory,
+    ...(listing.variants ?? []).flatMap((v) => [v.name, v.code, v.optionLabel, v.strength, v.pack]),
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+}
+
+function listingMatchesQuery(listing: StoreListing, q?: string): boolean {
+  const query = (q ?? '').trim().toLowerCase();
+  if (query.length < 2) return true;
+  const hay = listingSearchHaystack(listing);
+  if (hay.includes(query)) return true;
+  return query.split(/\s+/).some((word) => word.length >= 2 && hay.includes(word));
+}
+
 export async function publicStoreProducts(
   practiceId: number,
   q?: string,
-  category?: string
+  category?: string,
+  token?: string
 ) {
-  const { data } = await publicStoreClient.get<StoreListing[]>(`/public/store/products`, {
-    params: { practiceId, q, category },
+  const params = { practiceId, category, ...(token ? { token } : {}) };
+  const { data } = await publicStoreClient.get<unknown>(`/public/store/products`, {
+    params: { ...params, ...(q?.trim() ? { q } : {}) },
   });
-  return data ?? [];
+  const raw = asStoreListingArray(data);
+  if (!q?.trim()) return raw;
+  const matched = raw.filter((listing) => listingMatchesQuery(listing, q));
+  if (matched.length > 0) return matched;
+  // Some hosts ignore or empty-out `q`. Reload the full public catalog and match locally.
+  if (raw.length === 0) {
+    const { data: allData } = await publicStoreClient.get<unknown>(`/public/store/products`, { params });
+    const all = asStoreListingArray(allData);
+    const fromAll = all.filter((listing) => listingMatchesQuery(listing, q));
+    if (fromAll.length > 0) return fromAll;
+    try {
+      const listed = await listOnlineStoreListings(practiceId);
+      return (listed ?? []).filter((listing) => listing.listed !== false && listingMatchesQuery(listing, q));
+    } catch {
+      return [];
+    }
+  }
+  return matched;
 }
 
 export async function publicStoreProduct(practiceId: number, id: string | number) {
@@ -1236,7 +1298,16 @@ export async function listMyAutoship(practiceId: number) {
 export async function patchMyAutoship(
   practiceId: number,
   id: number,
-  body: { quantity?: number; frequency?: string; paused?: boolean; cancel?: boolean },
+  body: {
+    quantity?: number;
+    frequency?: string;
+    paused?: boolean;
+    /** YYYY-MM-DD — required when pausing. */
+    pausedUntil?: string | null;
+    /** YYYY-MM-DD — move the next shipment to this day. */
+    renewalDate?: string;
+    cancel?: boolean;
+  },
 ) {
   const { data } = await http.patch<StoreAutoship>(`/store/autoship/${id}`, body, {
     params: { practiceId },

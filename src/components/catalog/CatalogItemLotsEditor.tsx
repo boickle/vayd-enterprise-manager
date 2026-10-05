@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { ExpirationDateField } from '../inventory/ExpirationDateField';
 import {
   addInventoryLot,
   listInventoryBranchLocations,
@@ -369,16 +370,15 @@ export default function CatalogItemLotsEditor({
                   onChange={(e) => setSerialNumber(e.target.value)}
                 />
               </label>
-              <label className="settings-label">
+              <div className="settings-label">
                 Expiration (required)
-                <input
-                  className="settings-input"
-                  type="date"
+                <ExpirationDateField
                   value={expirationDate}
-                  onChange={(e) => setExpirationDate(e.target.value)}
+                  disabled={saving}
                   required
+                  onCommit={(iso) => setExpirationDate(iso ?? '')}
                 />
-              </label>
+              </div>
               <label className="settings-label">
                 Quantity on hand
                 <input

@@ -11,6 +11,7 @@ import {
   type StaffCountLocation,
   type StaffCountSession,
 } from '../api/inventoryCounts';
+import { ExpirationDateField } from '../components/inventory/ExpirationDateField';
 import { resolvePracticeIdFromToken } from '../utils/practiceIdFromToken';
 import './Settings.css';
 
@@ -595,15 +596,13 @@ export default function InventoryCountsPage({ kind = 'weekly' }: Props) {
                       </td>
                       <td>
                         {editing && draft && !draft.lockedLot ? (
-                          <input
-                            className="settings-input par-levels-input"
-                            type="date"
+                          <ExpirationDateField
                             value={draft.expirationDate}
                             disabled={busy || savingId === line.id}
                             required={draft.lotNumber.trim() !== UNASSIGNED_LOT}
-                            aria-label={`${line.name ?? 'Item'} expiration`}
-                            onChange={(e) =>
-                              updateCell(line.id, draft.key, { expirationDate: e.target.value })
+                            ariaLabel={`${line.name ?? 'Item'} expiration`}
+                            onCommit={(iso) =>
+                              updateCell(line.id, draft.key, { expirationDate: iso ?? '' })
                             }
                           />
                         ) : (

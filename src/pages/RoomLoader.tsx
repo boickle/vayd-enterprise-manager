@@ -1,7 +1,7 @@
 // src/pages/RoomLoader.tsx
 import { useState, useEffect, useMemo, useRef, useCallback, Fragment } from 'react';
 import { createPortal } from 'react-dom';
-import { useLocation, useNavigate } from 'react-router';
+import { Link, useLocation, useNavigate } from 'react-router';
 import { DateTime } from 'luxon';
 import {
   searchRoomLoaders,
@@ -28,7 +28,7 @@ import { KeyValue } from '../components/KeyValue';
 import { RoomLoaderReconciliationModal } from '../components/RoomLoaderReconciliationModal';
 import { roomLoaderAppointmentsHaveHappened } from '../utils/roomLoaderReconciliation';
 import { notifyRoomLoaderSentStatusChanged } from '../utils/roomLoaderPreApptDisplay';
-import { evetPatientLink, evetClientLink } from '../utils/evet';
+import { clientHref, patientHref } from '../utils/recentRecordsStore';
 import { appAlert } from '../utils/appDialog';
 import {
   inventoryCategoryRequiresSharpsDisposal,
@@ -487,7 +487,7 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
   const [reconcileRoomLoaderId, setReconcileRoomLoaderId] = useState<number | null>(null);
   /** True when Update (save without email) request is in progress. */
   const [updatingToClient, setUpdatingToClient] = useState(false);
-  /** Send-to-client confirmation modal: email vs SMS when re-sending (timesSent >= 1) */
+  /** Send-to-client confirmation modal: email vs SMS, offered on every send including the first. */
   const [confirmSendChannel, setConfirmSendChannel] = useState<'email' | 'sms'>('email');
 
   /** Safe getter: API or saved form may sometimes return non-array values; always return an array for iteration. */
@@ -2451,15 +2451,8 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
   async function handleSendToClient() {
     if (!selectedRoomLoader) return;
 
-    const timesSent = selectedRoomLoader.timesSentToClient ?? 0;
-    const canEmail = !petsWithAppointments.some((item) => isNoEffectiveEmail(item.client?.email));
-    const canSms = petsWithAppointments.some((item) => hasEffectivePhone(item.client?.phone1));
-
-    if (timesSent >= 1) {
-      if (!canEmail && !canSms) return;
-    } else {
-      if (petsWithAppointments.some((item) => isNoEffectiveEmail(item.client?.email))) return;
-    }
+    // Every send (including the first) can go by email or SMS, so only block when neither is reachable.
+    if (!canSendByEmail && !canSendBySms) return;
 
     setSendValidationErrors({});
     setReminderValidationErrorIds(new Set());
@@ -2468,9 +2461,7 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
 
     if (!runSendHardValidation()) return;
     setSendWarningReasons(buildSendWarnings());
-    if (timesSent >= 1) {
-      setConfirmSendChannel(canEmail ? 'email' : 'sms');
-    }
+    setConfirmSendChannel(canSendByEmail ? 'email' : 'sms');
     setConfirmAction('send');
   }
 
@@ -2915,21 +2906,19 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
     [petsWithAppointments]
   );
 
-  const canSendFollowUpEmail = useMemo(
+  const canSendByEmail = useMemo(
     () => !petsWithAppointments.some((item) => isNoEffectiveEmail(item.client?.email)),
     [petsWithAppointments]
   );
-  const canSendFollowUpSms = useMemo(
+  const canSendBySms = useMemo(
     () => petsWithAppointments.some((item) => hasEffectivePhone(item.client?.phone1)),
     [petsWithAppointments]
   );
 
   const sendToClientBlockedNoDestination = useMemo(() => {
     if (!selectedRoomLoader) return true;
-    const ts = selectedRoomLoader.timesSentToClient ?? 0;
-    if (ts >= 1) return !canSendFollowUpEmail && !canSendFollowUpSms;
-    return !canSendFollowUpEmail;
-  }, [selectedRoomLoader, canSendFollowUpEmail, canSendFollowUpSms]);
+    return !canSendByEmail && !canSendBySms;
+  }, [selectedRoomLoader, canSendByEmail, canSendBySms]);
 
   const selectedSameDayClientLink = useMemo(
     () => computeSameDayClientCompletedSiblingLink(selectedRoomLoader, roomLoaders),
@@ -3548,15 +3537,13 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
                 >
                   <h3 style={{ margin: 0, color: '#212529', fontSize: '24px', fontWeight: 700 }}>
                     Pet {petIndex + 1}:{' '}
-                    {displayPatient.pimsId ? (
-                      <a
-                        href={evetPatientLink(displayPatient.pimsId)}
-                        target="_blank"
-                        rel="noreferrer"
+                    {displayPatient.id ? (
+                      <Link
+                        to={patientHref(displayPatient.id)}
                         style={{ color: '#212529', textDecoration: 'underline', cursor: 'pointer' }}
                       >
                         {displayPatient.name || 'Unknown Pet'}
-                      </a>
+                      </Link>
                     ) : (
                       displayPatient.name || 'Unknown Pet'
                     )}
@@ -3630,15 +3617,13 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
                     {client ? (
                       <div>
                         <strong>
-                          {client.pimsId ? (
-                            <a
-                              href={evetClientLink(String(client.pimsId))}
-                              target="_blank"
-                              rel="noreferrer"
+                          {client.id ? (
+                            <Link
+                              to={clientHref(client.id)}
                               style={{ color: '#212529', textDecoration: 'underline', cursor: 'pointer' }}
                             >
                               {client.firstName} {client.lastName}
-                            </a>
+                            </Link>
                           ) : (
                             <span>{client.firstName} {client.lastName}</span>
                           )}
@@ -5349,9 +5334,7 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
                   : formSubmittedByClient
                     ? 'Submitted by client'
                     : sendToClientBlockedNoDestination
-                      ? (selectedRoomLoader.timesSentToClient ?? 0) >= 1
-                        ? 'Send to Client (add email or phone)'
-                        : 'Send to Client (add client email first)'
+                      ? 'Send to Client (add email or phone)'
                       : selectedRoomLoader.sentStatus === 'not_sent'
                         ? 'Send to Client'
                         : 'Re-send to Client'}
@@ -5422,7 +5405,7 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
                   ? 'Are you sure you want to update the form data without sending an email to the client?'
                   : 'Are you sure you want to save this form for later?'}
             </p>
-            {confirmAction === 'send' && selectedRoomLoader && (selectedRoomLoader.timesSentToClient ?? 0) >= 1 && (
+            {confirmAction === 'send' && selectedRoomLoader && (
               <div style={{ marginBottom: '20px' }}>
                 <div style={{ fontSize: '14px', fontWeight: 600, color: '#333', marginBottom: '10px' }}>Send via</div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '12px' }}>
@@ -5431,38 +5414,43 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
                       display: 'flex',
                       alignItems: 'center',
                       gap: '8px',
-                      cursor: canSendFollowUpEmail ? 'pointer' : 'not-allowed',
-                      color: canSendFollowUpEmail ? '#333' : '#999',
+                      cursor: canSendByEmail ? 'pointer' : 'not-allowed',
+                      color: canSendByEmail ? '#333' : '#999',
                     }}
                   >
                     <input
                       type="radio"
                       name="confirmSendChannel"
                       checked={confirmSendChannel === 'email'}
-                      disabled={!canSendFollowUpEmail}
+                      disabled={!canSendByEmail}
                       onChange={() => setConfirmSendChannel('email')}
                     />
-                    Email
+                    Email {!canSendByEmail && '(no email on file)'}
                   </label>
                   <label
                     style={{
                       display: 'flex',
                       alignItems: 'center',
                       gap: '8px',
-                      cursor: canSendFollowUpSms ? 'pointer' : 'not-allowed',
-                      color: canSendFollowUpSms ? '#333' : '#999',
+                      cursor: canSendBySms ? 'pointer' : 'not-allowed',
+                      color: canSendBySms ? '#333' : '#999',
                     }}
                   >
                     <input
                       type="radio"
                       name="confirmSendChannel"
                       checked={confirmSendChannel === 'sms'}
-                      disabled={!canSendFollowUpSms}
+                      disabled={!canSendBySms}
                       onChange={() => setConfirmSendChannel('sms')}
                     />
-                    SMS {!canSendFollowUpSms && '(no phone on file)'}
+                    SMS {!canSendBySms && '(no phone on file)'}
                   </label>
                 </div>
+                {!canSendByEmail && !canSendBySms && (
+                  <div style={{ fontSize: '13px', color: '#b02a37' }}>
+                    This client has no email address and no mobile number on file, so the form cannot be sent.
+                  </div>
+                )}
               </div>
             )}
             <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
@@ -5488,22 +5476,17 @@ export default function RoomLoaderPage({ embedded }: RoomLoaderPageProps = {}) {
                 type="button"
                 onClick={() => {
                   if (confirmAction === 'send') {
-                    const ts = selectedRoomLoader?.timesSentToClient ?? 0;
-                    if (ts >= 1) {
-                      if (confirmSendChannel === 'email' && petsWithAppointments.some((item) => isNoEffectiveEmail(item.client?.email))) {
-                        void appAlert('Add a client email address to send by email, or choose SMS if a phone number is on file.');
-                        return;
-                      }
-                      if (confirmSendChannel === 'sms' && !petsWithAppointments.some((item) => hasEffectivePhone(item.client?.phone1))) {
-                        void appAlert('Add a client phone number to send by SMS, or choose email.');
-                        return;
-                      }
-                      void executeSendToClient(false, {
-                        sendViaSms: confirmSendChannel === 'sms',
-                      });
-                    } else {
-                      executeSendToClient();
+                    if (confirmSendChannel === 'email' && !canSendByEmail) {
+                      void appAlert('Add a client email address to send by email, or choose SMS if a phone number is on file.');
+                      return;
                     }
+                    if (confirmSendChannel === 'sms' && !canSendBySms) {
+                      void appAlert('Add a client phone number to send by SMS, or choose email.');
+                      return;
+                    }
+                    void executeSendToClient(false, {
+                      sendViaSms: confirmSendChannel === 'sms',
+                    });
                   } else if (confirmAction === 'update') {
                     executeSendToClient(true);
                   } else {

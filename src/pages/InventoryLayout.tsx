@@ -131,6 +131,11 @@ export default function InventoryLayout({
   const autoShipsTo = `${basePath}/auto-ships`;
   const pharmacySection = isInventoryOpsNavPath(location.pathname);
   const sectionTitle = pharmacySection ? 'Pharmacy' : 'Catalog';
+  const hidePharmacyChromeOnMobile =
+    pharmacySection &&
+    [`${basePath}/receive`, `${basePath}/move`, `${basePath}/transfer-list`].some(
+      (path) => location.pathname === path || location.pathname.startsWith(`${path}/`),
+    );
   const countItems: NavItem[] = [
     { to: `${basePath}/par-levels`, label: 'Par Levels' },
     { to: `${basePath}/counts`, label: 'Weekly count list' },
@@ -153,8 +158,10 @@ export default function InventoryLayout({
   ];
 
   return (
-    <div className="settings-page">
-      <h1 className="settings-title">{sectionTitle}</h1>
+    <div
+      className={`settings-page${hidePharmacyChromeOnMobile ? ' settings-page--inventory-task' : ''}`}
+    >
+      <h1 className="settings-title settings-title--section">{sectionTitle}</h1>
       <div className="settings-tabs" role="navigation" aria-label={sectionTitle}>
         {pharmacySection ? (
           <>

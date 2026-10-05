@@ -417,6 +417,22 @@ export async function listPatientMemberships(opts?: {
   return Array.isArray(data) ? data : [];
 }
 
+/** Client portal: the logged-in client's own pets' memberships, with benefit usage. */
+export async function listMyPatientMemberships(opts?: {
+  patientId?: number;
+}): Promise<PatientMembership[]> {
+  const { data } = await http.get<PatientMembership[]>(
+    '/memberships/patient-memberships/mine',
+    {
+      params: {
+        practiceId: currentPracticeId(),
+        ...(opts?.patientId ? { patientId: opts.patientId } : {}),
+      },
+    },
+  );
+  return Array.isArray(data) ? data : [];
+}
+
 export async function getPatientMembership(
   id: number,
 ): Promise<PatientMembership> {

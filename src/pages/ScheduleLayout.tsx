@@ -179,13 +179,13 @@ export default function ScheduleLayout() {
       location.pathname.startsWith('/schedule/jot/') ||
       location.pathname === '/schedule/chat' ||
       location.pathname.startsWith('/schedule/chat/') ||
-      // SOAP chart: fill the outlet so chart + invoice scroll independently (not wrap-up/checkout).
-      /^\/schedule\/soap\/[^/]+\/[^/]+$/.test(location.pathname),
+      // SOAP / medical-note chart: fill the outlet so chart + invoice scroll independently.
+      /^\/schedule\/(soap|note)\/[^/]+\/[^/]+$/.test(location.pathname),
     [location.pathname]
   );
 
   const soapChartSplit = useMemo(
-    () => /^\/schedule\/soap\/[^/]+\/[^/]+$/.test(location.pathname),
+    () => /^\/schedule\/(soap|note)\/[^/]+\/[^/]+$/.test(location.pathname),
     [location.pathname]
   );
 

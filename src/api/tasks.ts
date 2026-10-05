@@ -28,6 +28,7 @@ export type TaskKind =
   | 'forward_booking'
   | 'invoice'
   | 'order_list'
+  | 'lab_result'
   | 'soap';
 
 const TASK_KIND_LABELS: Record<TaskKind, string> = {
@@ -35,6 +36,7 @@ const TASK_KIND_LABELS: Record<TaskKind, string> = {
   forward_booking: 'Forward booking',
   invoice: 'Invoice',
   order_list: 'Order list',
+  lab_result: 'Lab results',
   soap: 'SOAP',
 };
 

@@ -522,6 +522,8 @@ export type VaccineDosageType = 'booster' | 'initial';
 export type OrderVaccination = {
   id: number;
   encounterOrderId: string | null;
+  /** Invoice line the dose was recorded on (counter vaccines have no order). */
+  visitInvoiceLineId?: string | null;
   vaccineName: string | null;
   dateVaccinated: string | null;
   nextVaccinationDate: string | null;
@@ -660,32 +662,72 @@ export async function getPrescriptionDefaults(
   return data;
 }
 
+export type SaveVaccinationBody = {
+  vaccineName?: string;
+  dateVaccinated?: string;
+  nextVaccinationDate: string;
+  lotNumber?: string;
+  serialNumber?: string;
+  vaccineExpiration?: string;
+  tagNumber?: string;
+  manufacturer?: string;
+  vaccineType?: string;
+  dosageType?: VaccineDosageType;
+  usdaLicensingMonths?: number;
+  animalControlLicensingMonths?: number;
+  employeeId?: number;
+  inventoryLotBalanceId?: number | null;
+  lotZeroOverrideReason?: string;
+};
+
 export async function saveOrderVaccination(
   encounterId: string,
   orderId: string,
-  body: {
-    vaccineName?: string;
-    dateVaccinated?: string;
-    nextVaccinationDate: string;
-    lotNumber?: string;
-    serialNumber?: string;
-    vaccineExpiration?: string;
-    tagNumber?: string;
-    manufacturer?: string;
-    vaccineType?: string;
-    dosageType?: VaccineDosageType;
-    usdaLicensingMonths?: number;
-    animalControlLicensingMonths?: number;
-    employeeId?: number;
-    inventoryLotBalanceId?: number | null;
-    lotZeroOverrideReason?: string;
-  }
+  body: SaveVaccinationBody
 ): Promise<OrderVaccination> {
   const { data } = await http.put<OrderVaccination>(
     `/soap-encounters/${encodeURIComponent(encounterId)}/orders/${encodeURIComponent(
       orderId
     )}/vaccination`,
     { practiceId: pid(), ...body }
+  );
+  return data;
+}
+
+/** Dose for a vaccine sold straight off an invoice (no SOAP order behind the line). */
+export async function saveInvoiceLineVaccination(
+  invoiceId: string,
+  lineId: string,
+  body: SaveVaccinationBody
+): Promise<OrderVaccination> {
+  const { data } = await http.put<OrderVaccination>(
+    `/visit-invoices/${encodeURIComponent(invoiceId)}/lines/${encodeURIComponent(
+      lineId
+    )}/vaccination`,
+    { practiceId: pid(), ...body }
+  );
+  return data;
+}
+
+export async function getInvoiceLineVaccineDefaults(
+  invoiceId: string,
+  lineId: string,
+  catalogItemId: number
+): Promise<VaccineDefaults> {
+  const { data } = await http.get<VaccineDefaults>(
+    `/visit-invoices/${encodeURIComponent(invoiceId)}/lines/${encodeURIComponent(
+      lineId
+    )}/vaccination-defaults`,
+    { params: { practiceId: pid(), catalogItemId } }
+  );
+  return data;
+}
+
+/** Doses recorded against this invoice's lines, order-linked or not. */
+export async function getInvoiceVaccinations(invoiceId: string): Promise<OrderVaccination[]> {
+  const { data } = await http.get<OrderVaccination[]>(
+    `/visit-invoices/${encodeURIComponent(invoiceId)}/vaccinations`,
+    { params: { practiceId: pid() } }
   );
   return data;
 }
@@ -806,6 +848,8 @@ export async function createPatientPrescription(body: {
 /** Charged visit item published to the patient medical record after finalize. */
 export type PostedVisitCharge = {
   id: string;
+  /** Invoice line the charge was billed on; in-house lab results hang off it. */
+  invoiceLineId?: string | null;
   name: string;
   kind: string;
   qty: number;

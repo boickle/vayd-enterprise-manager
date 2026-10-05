@@ -28,7 +28,7 @@ export const EXCLUDE_PRODUCTION_WHEN_REFILLING_KEY =
  */
 export const MEMBERSHIP_ASSIGN_FEE_TO_PROVIDER_KEY =
   'membership.assignFeeToProvider' as const;
-/** Calendar hours after payment during which post-visit signup re-prices without override. */
+/** Business hours after payment during which post-visit signup re-prices without override. */
 export const MEMBERSHIP_POST_VISIT_SIGNUP_WINDOW_HOURS_KEY =
   'membership.postVisitSignupWindowHours' as const;
 export const MEMBERSHIP_POST_VISIT_SIGNUP_WINDOW_HOURS_DEFAULT = 24;
@@ -160,7 +160,7 @@ export function membershipAssignFeeToProvider(
   return settings?.[MEMBERSHIP_ASSIGN_FEE_TO_PROVIDER_KEY] === 'true';
 }
 
-/** Default 24 calendar hours. */
+/** Default 24 business hours — practice-open time only, per `chat.hoursOfOperation`. */
 export function membershipPostVisitSignupWindowHours(
   settings: Pick<
     ReminderSettings,

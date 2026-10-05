@@ -72,6 +72,13 @@
   margin: 0;
 }
 
+.patient-chart-summary-line-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 10px;
+}
+
 .patient-chart-summary-list {
   margin: 0;
   padding-left: 18px;

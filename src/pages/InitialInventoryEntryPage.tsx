@@ -11,6 +11,7 @@ import {
   type InventoryBranchLocation,
   type PracticeBranch,
 } from '../api/branchInventory';
+import { ExpirationDateField } from '../components/inventory/ExpirationDateField';
 import { appPrompt } from '../utils/appDialog';
 import { resolvePracticeIdFromToken } from '../utils/practiceIdFromToken';
 import './Settings.css';
@@ -472,17 +473,15 @@ export default function InitialInventoryEntryPage() {
                       />
                     </td>
                     <td>
-                      <input
-                        type="date"
-                        className="settings-input"
+                      <ExpirationDateField
                         value={draft.expirationDate}
-                        onChange={(e) =>
+                        ariaLabel={`${item.name} expiration`}
+                        onCommit={(iso) =>
                           setDraft(item.inventoryItemId, {
-                            expirationDate: e.target.value,
+                            expirationDate: iso ?? '',
                             error: null,
                           })
                         }
-                        aria-label={`${item.name} expiration`}
                       />
                     </td>
                     <td>

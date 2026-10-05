@@ -664,6 +664,54 @@
 }
 .vayd-store__cart-head h1 { margin: 0; }
 .vayd-store__cart-head .ghost { text-decoration: none; }
+.vayd-store__cart-head-links { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.vayd-store__cart-head-links a { color: rgb(15, 118, 110); font-weight: 700; white-space: nowrap; }
+.vayd-store__cart-head-links a:hover { text-decoration: underline; }
+
+/* Flash the line a shopper just added (e.g. portal "Reorder") so they can see where it landed. */
+.vayd-store__cart-row { scroll-margin-top: 84px; }
+.vayd-store__cart-row--just-added td {
+  animation: vayd-store-just-added 2.6s ease-out both;
+}
+.vayd-store__cart-row--just-added td:first-child {
+  animation: vayd-store-just-added 2.6s ease-out both, vayd-store-just-added-bar 2.6s ease-out both;
+}
+@keyframes vayd-store-just-added {
+  0%, 20% { background: #fff6dc; }
+  100% { background: transparent; }
+}
+@keyframes vayd-store-just-added-bar {
+  0%, 20% { box-shadow: inset 5px 0 0 #f6b73c; }
+  100% { box-shadow: inset 5px 0 0 rgba(246, 183, 60, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .vayd-store__cart-row--just-added td { animation: none; background: #fff6dc; }
+  .vayd-store__cart-row--just-added td:first-child { box-shadow: inset 5px 0 0 #f6b73c; }
+}
+
+/* "You came from the portal" strip: a clear way back without hunting the header. */
+.vayd-store__portal-return {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 4px 0 14px;
+  padding: 10px 14px;
+  border: 1px solid #cfe9df;
+  border-radius: 12px;
+  background: #eefbf6;
+}
+.vayd-store__portal-return-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: rgb(15, 118, 110);
+  font-weight: 800;
+  text-decoration: none;
+}
+.vayd-store__portal-return-link:hover { text-decoration: underline; }
+.vayd-store__portal-return-hint { font-size: 13px; color: #4b7c6a; }
 .vayd-store__cart-purchase { margin-top: 10px; }
 .vayd-store__cart-purchase .vayd-store__chips { margin-bottom: 8px; }
 .vayd-store__card-copy {

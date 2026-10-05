@@ -167,6 +167,118 @@ export async function searchPatientsStaff(
   return ranked;
 }
 
+export type PortalSnapshotPhoto = {
+  id: number;
+  url: string;
+  isPrimary: boolean;
+  created: string | null;
+};
+
+export type PortalSnapshot = {
+  id: number;
+  name: string;
+  nickname: string | null;
+  favoriteThing: string | null;
+  superpower: string | null;
+  nemesis: string | null;
+  funFact: string | null;
+  keyToMyHeart: string | null;
+  socialMediaConsent: boolean;
+  socialMediaConsentAt: string | null;
+  portalProfileUpdatedAt: string | null;
+  species: string | null;
+  breed: string | null;
+  sex: string | null;
+  dob: string | null;
+  isActive: boolean;
+  hasImage: boolean;
+  filledCount: number;
+  provider: { id: number; name: string } | null;
+  photos: PortalSnapshotPhoto[];
+  loves: { count: number; mine: boolean };
+};
+
+/** Number of owner-answered "about me" questions (nickname + five prompts). */
+export const PORTAL_SNAPSHOT_FACT_TOTAL = 6;
+
+/** Staff browse of pets with portal answers or photos. Inactive pets are never included. */
+export async function fetchPortalSnapshots(opts: {
+  practiceId: number;
+  providerId?: number | null;
+  q?: string;
+  fill?: 'any' | 'photos' | 'started' | 'mostly' | 'complete';
+  consentOnly?: boolean;
+  lovedOnly?: boolean;
+  species?: string;
+  sort?: SnapshotSort;
+  page?: number;
+  pageSize?: number;
+}): Promise<SnapshotPage<PortalSnapshot>> {
+  const { data } = await http.get('/patients/portal-snapshots', {
+    params: {
+      practiceId: opts.practiceId,
+      ...(opts.providerId ? { providerId: opts.providerId } : {}),
+      ...(opts.q?.trim() ? { q: opts.q.trim() } : {}),
+      ...(opts.fill && opts.fill !== 'any' ? { fill: opts.fill } : {}),
+      ...(opts.consentOnly ? { consentOnly: '1' } : {}),
+      ...(opts.lovedOnly ? { lovedOnly: '1' } : {}),
+      ...(opts.species ? { species: opts.species } : {}),
+      ...(opts.sort === 'loves' ? { sort: 'loves' } : {}),
+      page: opts.page ?? 1,
+      ...(opts.pageSize ? { pageSize: opts.pageSize } : {}),
+    },
+  });
+  return normalizeSnapshotPage<PortalSnapshot>(data);
+}
+
+export type SnapshotSort = 'recent' | 'loves';
+
+export type SnapshotPage<T> = {
+  items: T[];
+  total: number;
+  page: number;
+  pageSize: number;
+  pageCount: number;
+  speciesOptions: Array<{ name: string; count: number }>;
+};
+
+export function normalizeSnapshotPage<T extends { loves: { count: number; mine: boolean } }>(
+  data: any,
+): SnapshotPage<T> {
+  const items: T[] = (Array.isArray(data?.items) ? data.items : []).map((row: any) => ({
+    ...row,
+    loves: {
+      count: Number(row?.loves?.count) || 0,
+      mine: row?.loves?.mine === true,
+    },
+  }));
+  return {
+    items,
+    total: Number(data?.total) || items.length,
+    page: Number(data?.page) || 1,
+    pageSize: Number(data?.pageSize) || items.length || 30,
+    pageCount: Math.max(1, Number(data?.pageCount) || 1),
+    speciesOptions: Array.isArray(data?.speciesOptions)
+      ? data.speciesOptions
+          .filter((s: any) => s && s.name)
+          .map((s: any) => ({ name: String(s.name), count: Number(s.count) || 0 }))
+      : [],
+  };
+}
+
+/** Staff: love / un-love a pet's snapshot. */
+export async function togglePatientLove(
+  patientId: number,
+  loved?: boolean,
+): Promise<{ count: number; mine: boolean }> {
+  const { data } = await http.post(
+    `/patients/${patientId}/love`,
+    typeof loved === 'boolean' ? { loved } : {},
+  );
+  const loves = data?.loves ?? data ?? {};
+  return { count: Number(loves.count) || 0, mine: loves.mine === true };
+}
+
 /** GET /patients/:id — full patient for PIMS profile (may include nested client). */
 export async function fetchPatientByIdStaff(patientId: string | number): Promise<unknown> {
   const { data } = await http.get(`/patients/${encodeURIComponent(String(patientId))}`);

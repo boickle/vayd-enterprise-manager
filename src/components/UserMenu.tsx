@@ -200,7 +200,7 @@ export default function UserMenu({ menuExtras = [] }: { menuExtras?: UserMenuExt
           
           {isAdmin && (
             <>
-              <button className="user-menu-item" onClick={handleSettings}>
+              <button className="user-menu-item user-menu-builtin-settings" onClick={handleSettings}>
                 <svg
                   width="20"
                   height="20"

@@ -35,6 +35,7 @@ type Props = {
   practiceTz: string;
   onSummarize: () => void;
   onStartSoap: (appointmentId: number, patientId: string, clientId: string | null) => void;
+  onOpenMedicalNote: (appointmentId: number, patientId: string, clientId: string | null) => void;
   onBookAppointment?: () => void;
   onInvoice: () => void;
   onRecordsChanged?: (result?: OutsideRecordAcceptResult) => void;
@@ -59,6 +60,7 @@ export default function PimsChartWorkBar({
   practiceTz,
   onSummarize,
   onStartSoap,
+  onOpenMedicalNote,
   onBookAppointment,
   onInvoice,
   onRecordsChanged,
@@ -175,7 +177,7 @@ export default function PimsChartWorkBar({
           </button>
           <button type="button" className="brief-btn" onClick={() => setSoapPickOpen(true)}>
             <Stethoscope size={15} aria-hidden />
-            Start/Continue SOAP
+            Start/Continue encounter
           </button>
         </div>
       </div>
@@ -188,6 +190,8 @@ export default function PimsChartWorkBar({
         clientId={clientId}
         practiceTz={practiceTz}
         onOpenSoap={onStartSoap}
+        onOpenMedicalNote={onOpenMedicalNote}
+        onContinueStandaloneNote={() => setNoteOpen(true)}
         onBookAppointment={onBookAppointment}
       />
 

@@ -131,6 +131,13 @@ function formatElapsed(sec: number): string {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
+type ScribeTake = {
+  id: number;
+  durationSec: number;
+  wordCount: number;
+  empty: boolean;
+};
+
 /** True when Process / Re-load would rewrite doctor-visible narrative already on the chart. */
 function chartHasRewritableContent(
   subjective: string,
@@ -385,6 +392,9 @@ export default function ScribePanel({
   const [suggestion, setSuggestion] = useState<ScribeSuggestion | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
+  const [takes, setTakes] = useState<ScribeTake[]>([]);
+  const [activeTake, setActiveTake] = useState<number | null>(null);
+  const [lastStopNote, setLastStopNote] = useState<string | null>(null);
   const [dismissed, setDismissed] = useState<Set<string>>(() => readDismissedKeys(soapEncounterId));
   const [applyingKey, setApplyingKey] = useState<string | null>(null);
   /** Doctor's edits to suggested problem wording, keyed by suggestion key — this text is what
@@ -557,7 +567,16 @@ export default function ScribePanel({
         if (saved) {
           setFinalTranscript((prev) => prev || saved);
           setPasteText((prev) => prev || saved);
-          // Stay collapsed — View / Re-load transcript opens the editor when they need it.
+          setTakes((prev) =>
+            prev.length > 0
+              ? prev
+              : parts.map((part, i) => ({
+                  id: i + 1,
+                  durationSec: 0,
+                  wordCount: part.split(/\s+/).filter(Boolean).length,
+                  empty: false,
+                }))
+          );
         }
 
         const last = (recent.find((s) => s.lastSuggestion)?.lastSuggestion ?? null) as
@@ -768,6 +787,8 @@ export default function ScribePanel({
     setScreenHeld(awake.screenHeld);
     setPasteText((prev) => prev.trim() || finalTranscript.trim() || prev);
     // This take is a new segment. Prior text stays in pasteText and is appended on stop.
+    setLastStopNote(null);
+    setActiveTake(takes.length + 1);
     setFinalTranscript('');
     setSuggestion(null);
     setDismissed(new Set());
@@ -807,7 +828,7 @@ export default function ScribePanel({
       socketRef.current = null;
       setStatus('error');
     }
-  }, [soapEncounterId, teardown, finalTranscript]);
+  }, [soapEncounterId, teardown, finalTranscript, takes.length]);
 
   /**
    * Recording only ever captures a transcript — it never structures/applies anything on its
@@ -828,6 +849,14 @@ export default function ScribePanel({
       socketRef.current = null;
     }
     setInterimText('');
+    const takeNum = activeTake ?? takes.length + 1;
+    const wordCount = segment.split(/\s+/).filter(Boolean).length;
+    const empty = wordCount === 0;
+    setTakes((prev) => [
+      ...prev,
+      { id: takeNum, durationSec: elapsed, wordCount, empty },
+    ]);
+    setActiveTake(null);
     if (segment) {
       setPasteText((prev) => {
         const prior = prev.trim();
@@ -835,12 +864,21 @@ export default function ScribePanel({
         setFinalTranscript(combined);
         return combined;
       });
+      setLastStopNote(
+        takes.length === 0
+          ? `Take 1 saved (${formatElapsed(elapsed)}, ${wordCount} word${wordCount === 1 ? '' : 's'}). Start again to add another take — they combine into one transcript.`
+          : `Take ${takeNum} saved (${formatElapsed(elapsed)}, ${wordCount} word${wordCount === 1 ? '' : 's'}) and added to the combined transcript.`
+      );
       setPasteOpen(true);
       setTranscriptOpen(false);
     } else {
       setFinalTranscript((prev) => prev || pasteText.trim());
+      setLastStopNote(
+        `Take ${takeNum} stopped (${formatElapsed(elapsed)}) — no words captured. The mic may have been muted, or nothing was said. Start again to try another take.`
+      );
+      if (pasteText.trim()) setPasteOpen(true);
     }
-  }, [teardown, finalTranscript, pasteText]);
+  }, [teardown, finalTranscript, pasteText, activeTake, takes.length, elapsed]);
 
   const onRecordClick = async () => {
     if (recording) {
@@ -974,6 +1012,9 @@ export default function ScribePanel({
       setFinalTranscript('');
       setInterimText('');
       setPasteText('');
+      setTakes([]);
+      setActiveTake(null);
+      setLastStopNote(null);
       setTranscriptOpen(false);
       setPasteOpen(false);
     } catch (err) {
@@ -1232,8 +1273,11 @@ export default function ScribePanel({
 
   const hasPriorTranscript = Boolean(pasteText.trim() || finalTranscript.trim());
 
+  const takeLabel = activeTake ?? takes.length + 1;
+  const savedTakeCount = takes.filter((t) => !t.empty).length;
+
   return (
-    <div className="soap-scribe-panel">
+    <div className={`soap-scribe-panel${recording ? ' is-live' : ''}`}>
       <div className="soap-scribe-bar">
         <button
           type="button"
@@ -1243,21 +1287,16 @@ export default function ScribePanel({
         >
           {recording ? <Square size={14} /> : <Mic size={14} />}
           {recording
-            ? `Stop · ${formatElapsed(elapsed)}`
+            ? `Stop take ${takeLabel} · ${formatElapsed(elapsed)}`
             : busy
-              ? 'Working…'
-              : hasPriorTranscript
-                ? 'Continue AI scribe'
+              ? status === 'connecting'
+                ? `Starting take ${takeLabel}…`
+                : 'Stopping…'
+              : savedTakeCount > 0 || hasPriorTranscript
+                ? `Start take ${takes.length + 1}`
                 : 'Start AI scribe'}
         </button>
         {recording && <span className="soap-scribe-live-dot" aria-hidden />}
-        {recording && (
-          <p className="soap-scribe-awake-hint">
-            {screenHeld
-              ? 'Screen will stay on while this records. Locking the phone or closing the lid still stops it.'
-              : 'Keep this screen on — sleep or a locked phone will stop the recording.'}
-          </p>
-        )}
         {!recording && (
           <button
             type="button"
@@ -1277,7 +1316,7 @@ export default function ScribePanel({
             disabled={busy || pasteBusy}
           >
             <ClipboardPaste size={13} />{' '}
-            {finalTranscript.trim() ? 'View / Re-load transcript' : 'Paste transcript'}
+            {hasPriorTranscript ? 'Combined transcript' : 'Paste transcript'}
           </button>
         )}
         {suggestionCount > 0 && (
@@ -1295,16 +1334,72 @@ export default function ScribePanel({
             {logOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
           </button>
         )}
-        {(finalTranscript || interimText || (recording && pasteText.trim())) && (
-          <button
-            type="button"
-            className="soap-scribe-transcript-toggle"
-            onClick={() => setTranscriptOpen((v) => !v)}
-          >
-            Transcript {transcriptOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-          </button>
-        )}
       </div>
+
+      <p
+        className={`soap-scribe-status${recording ? ' is-live' : ''}${lastStopNote && !recording ? ' is-stopped' : ''}`}
+        role="status"
+        aria-live="polite"
+      >
+        {recording
+          ? `Recording take ${takeLabel} · ${formatElapsed(elapsed)}${
+              savedTakeCount > 0 ? ` · ${savedTakeCount} earlier take${savedTakeCount === 1 ? '' : 's'} already saved` : ''
+            }. Tap Stop when you are done — this take is added to the combined transcript.`
+          : busy
+            ? status === 'connecting'
+              ? `Connecting take ${takeLabel}…`
+              : 'Saving this take…'
+            : lastStopNote
+              ? lastStopNote
+              : hasPriorTranscript
+                ? `${savedTakeCount || 1} take${(savedTakeCount || 1) === 1 ? '' : 's'} on this visit. Start another take to add on, or Process the combined transcript.`
+                : 'Each Start is a new take. Stop saves it; Start again adds another. All takes combine into one transcript before Process.'}
+      </p>
+      {recording && (
+        <p className="soap-scribe-awake-hint">
+          {screenHeld
+            ? 'Screen will stay on while this records. Locking the phone or closing the lid still stops it.'
+            : 'Keep this screen on — sleep or a locked phone will stop the recording.'}
+        </p>
+      )}
+
+      {(takes.length > 0 || recording) && (
+        <ol className="soap-scribe-takes" aria-label="Recording takes">
+          {takes.map((take) => (
+            <li
+              key={take.id}
+              className={`soap-scribe-take${take.empty ? ' is-empty' : ''}`}
+            >
+              Take {take.id}
+              {take.durationSec > 0 ? ` · ${formatElapsed(take.durationSec)}` : ''}
+              {take.empty ? ' · no words' : ` · ${take.wordCount} word${take.wordCount === 1 ? '' : 's'}`}
+            </li>
+          ))}
+          {recording && (
+            <li className="soap-scribe-take is-live">
+              Take {takeLabel} · {formatElapsed(elapsed)} · recording
+            </li>
+          )}
+        </ol>
+      )}
+
+      {recording && (
+        <div className="soap-scribe-live">
+          <div className="soap-scribe-live-label">Live words</div>
+          {pasteText.trim() ? (
+            <p className="soap-scribe-live-prior">{pasteText.trim()}</p>
+          ) : null}
+          <p className="soap-scribe-live-text">
+            {finalTranscript.trim() || interimText.trim()
+              ? (
+                  <>
+                    {finalTranscript} <span className="soap-scribe-interim">{interimText}</span>
+                  </>
+                )
+              : 'Listening… speak normally.'}
+          </p>
+        </div>
+      )}
 
       {errorMessage && (
         <div className="soap-scribe-error">
@@ -1315,9 +1410,11 @@ export default function ScribePanel({
       {pasteOpen && !recording && (
         <div className="soap-scribe-paste">
           <p className="soap-scribe-paste-hint">
-            {finalTranscript.trim()
-              ? 'Edit or replace the transcript, then Re-load SOAP to rewrite S/O/A/P from it. This overwrites the current narrative (you’ll be asked to confirm). Pre-visit check-in stays; checkout orders are left alone. Not part of the printed medical record.'
-              : 'Review the transcript below (fix anything the mic misheard), confirm which pet(s) it covers, then Process — nothing is applied until you do. The transcript is saved with the visit but is not part of the printed medical record.'}
+            {savedTakeCount > 1
+              ? `Combined transcript from ${savedTakeCount} takes. Edit if the mic misheard, then Process — nothing is applied until you do. Start another take to add more; it appends here.`
+              : finalTranscript.trim()
+                ? 'This is the saved transcript. Edit if the mic misheard, then Process — nothing is applied until you do. Start another take to add on; it appends here.'
+                : 'Review the transcript below (fix anything the mic misheard), confirm which pet(s) it covers, then Process — nothing is applied until you do. The transcript is saved with the visit but is not part of the printed medical record.'}
           </p>
           {roster.length > 1 && (
             <div className="soap-scribe-roster">

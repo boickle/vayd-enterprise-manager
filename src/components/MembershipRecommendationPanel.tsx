@@ -174,7 +174,11 @@ export default function MembershipRecommendationPanel({
               right = `✔ Covered by ${planShortLabel} Plan`;
               covered = true;
             } else if (a.adjustedPrice < a.originalPrice) {
-              right = `✔ Member pricing (${formatPrice(a.adjustedPrice)})`;
+              const pctOff = Math.round((1 - a.adjustedPrice / a.originalPrice) * 100);
+              right =
+                pctOff > 0
+                  ? `✔ ${pctOff}% off member pricing (${formatPrice(a.adjustedPrice)})`
+                  : `✔ Member pricing (${formatPrice(a.adjustedPrice)})`;
               covered = true;
             } else {
               right = 'Not included in membership';
@@ -354,27 +358,6 @@ export default function MembershipRecommendationPanel({
                 </p>
               </div>
             )}
-            {showSharedOneTeamIntro && (
-              <>
-                <div style={{ marginBottom: '14px' }}>
-                  <h4 style={{ margin: '0 0 10px', fontSize: '15px', fontWeight: 700, color: '#14532d' }}>
-                    Why families choose One-Team membership
-                  </h4>
-                  <ul style={{ margin: 0, paddingLeft: '20px', color: '#1a2f24', fontSize: '14px', lineHeight: 1.5 }}>
-                    <li style={{ marginBottom: '6px' }}>✔ Priority scheduling with a dedicated One-Team who knows {petName} over time</li>
-                    <li style={{ marginBottom: '6px' }}>✔ Priority 7-day support from VAYD staff through the Client Portal</li>
-                    <li style={{ marginBottom: '6px' }}>✔ 50% off exams on additional visits</li>
-                    <li style={{ marginBottom: '6px' }}>✔ Member pricing (10% off) in our online store</li>
-                    <li style={{ marginBottom: '6px' }}>✔ Care designed for long-term health, not just sick visits</li>
-                  </ul>
-                </div>
-                <p style={{ margin: '0 0 6px', fontSize: '15px', fontWeight: 600, color: '#1e4d2d', lineHeight: 1.45 }}>
-                  This is the care we recommend for {petName} each year.
-                  <br />
-                  Membership covers this care and supports ongoing care with {petName}&apos;s dedicated Vet At Your Door One-Team.
-                </p>
-              </>
-            )}
             <p style={{ margin: '0 0 12px', fontSize: '14px', color: '#3d5347', lineHeight: 1.45 }}>{subtext}</p>
 
             {monthlyFee != null && monthlyFee > 0 && (
@@ -480,6 +463,28 @@ export default function MembershipRecommendationPanel({
                 </div>
               ))}
             </div>
+
+            {showSharedOneTeamIntro && (
+              <>
+                <div style={{ marginBottom: '14px', marginTop: '4px' }}>
+                  <h4 style={{ margin: '0 0 10px', fontSize: '15px', fontWeight: 700, color: '#14532d' }}>
+                    Why families choose One-Team membership
+                  </h4>
+                  <ul style={{ margin: 0, paddingLeft: '20px', color: '#1a2f24', fontSize: '14px', lineHeight: 1.5 }}>
+                    <li style={{ marginBottom: '6px' }}>✔ Priority scheduling with a dedicated One-Team who knows {petName} over time</li>
+                    <li style={{ marginBottom: '6px' }}>✔ Priority 7-day support from VAYD staff through the Client Portal</li>
+                    <li style={{ marginBottom: '6px' }}>✔ 50% off exams on additional visits</li>
+                    <li style={{ marginBottom: '6px' }}>✔ Member pricing (10% off) in our online store</li>
+                    <li style={{ marginBottom: '6px' }}>✔ Care designed for long-term health, not just sick visits</li>
+                  </ul>
+                </div>
+                <p style={{ margin: '0 0 14px', fontSize: '15px', fontWeight: 600, color: '#1e4d2d', lineHeight: 1.45 }}>
+                  This is the care we recommend for {petName} each year.
+                  <br />
+                  Membership covers this care and supports ongoing care with {petName}&apos;s dedicated Vet At Your Door One-Team.
+                </p>
+              </>
+            )}
 
             <div
               style={{

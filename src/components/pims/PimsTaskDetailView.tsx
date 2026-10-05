@@ -41,6 +41,7 @@ import { ForwardBookingFromTaskLink } from './ForwardBookingFromTaskLink';
 import ForwardBookingTaskPanel from './ForwardBookingTaskPanel';
 import InvoiceTaskPanel from './InvoiceTaskPanel';
 import SoapTaskPanel from './SoapTaskPanel';
+import LabResultTaskPanel from './LabResultTaskPanel';
 import { getInvoice } from '../../api/visitWorkflow';
 import { invoiceIdFromTask } from '../../utils/invoiceTask';
 import { soapPathFromTaskLinks } from '../../utils/soapTask';
@@ -156,6 +157,8 @@ type Props = {
   roles?: EmployeeRole[];
   myEmployeeId: number | null;
   isPracticeAdmin: boolean;
+  /** Just came back from adding this task's forward booking — show the confirmation. */
+  forwardBookingJustAdded?: boolean;
   onBack: () => void;
   onUpdated: () => void;
 };
@@ -167,6 +170,7 @@ export default function PimsTaskDetailView({
   roles = [],
   myEmployeeId,
   isPracticeAdmin,
+  forwardBookingJustAdded = false,
   onBack,
   onUpdated,
 }: Props) {
@@ -302,7 +306,8 @@ export default function PimsTaskDetailView({
     showPanels &&
     panelKind !== 'order_list' &&
     panelKind !== 'mail_order' &&
-    panelKind !== 'soap';
+    panelKind !== 'soap' &&
+    panelKind !== 'lab_result';
 
   const eventsChronological = useMemo(() => {
     if (!task?.events?.length) return [];
@@ -570,13 +575,18 @@ export default function PimsTaskDetailView({
               {mailOrderTaskStatusLabel(task.status, task.links)}
             </span>
           )}
-          {(task.kind === 'callback' || panelKind === 'invoice' || panelKind === 'soap') && (
+          {(task.kind === 'callback' ||
+            panelKind === 'invoice' ||
+            panelKind === 'soap' ||
+            panelKind === 'lab_result') && (
             <span className="pims-task-detail__kind">
               {panelKind === 'invoice'
                 ? taskKindLabel('invoice')
                 : panelKind === 'soap'
                   ? taskKindLabel('soap')
-                  : taskKindLabel(task.kind)}
+                  : panelKind === 'lab_result'
+                    ? taskKindLabel('lab_result')
+                    : taskKindLabel(task.kind)}
             </span>
           )}
           {task.source !== 'manual' && mailOrderId == null && (
@@ -637,6 +647,34 @@ export default function PimsTaskDetailView({
         />
       ) : null}
 
+      {panelKind === 'forward_booking' && forwardBookingJustAdded ? (
+        <div
+          className={`pims-fb-added${task.status === 'done' ? ' pims-fb-added--done' : ''}`}
+          role="status"
+          aria-live="polite"
+        >
+          <p className="pims-fb-added__row pims-fb-added__row--1">
+            <CheckCircle2 size={20} aria-hidden />
+            <span>
+              <strong>Forward booking added</strong>
+              {patientName ? ` for ${patientName}` : ''}
+            </span>
+          </p>
+          {task.status === 'done' ? (
+            <p className="pims-fb-added__row pims-fb-added__row--2">
+              <CheckCircle2 size={20} aria-hidden />
+              <span>
+                <strong>Marked complete</strong> — this task is off your list.
+              </span>
+            </p>
+          ) : (
+            <p className="pims-fb-added__row pims-fb-added__row--2 pims-fb-added__row--pending">
+              The task could not be closed automatically — use Mark complete below.
+            </p>
+          )}
+        </div>
+      ) : null}
+
       {panelKind === 'forward_booking' && showPanels ? (
         <ForwardBookingTaskPanel
           task={task}
@@ -654,6 +692,18 @@ export default function PimsTaskDetailView({
           canComplete={canMutate}
           busy={busy}
           onComplete={() => void handleComplete()}
+        />
+      ) : null}
+
+      {panelKind === 'lab_result' ? (
+        <LabResultTaskPanel
+          task={task}
+          patientName={patientName}
+          readOnly={!showPanels}
+          onUpdated={() => {
+            void getTask(task.id).then(setTask).catch(() => undefined);
+            onUpdated();
+          }}
         />
       ) : null}
 
@@ -713,7 +763,7 @@ export default function PimsTaskDetailView({
       <section className="pims-task-detail__section">
         <h2 className="pims-task-detail__h2">Details</h2>
         <dl className="pims-task-detail__dl">
-          {mailOrderId == null && panelKind !== 'invoice' ? (
+          {mailOrderId == null && panelKind !== 'invoice' && panelKind !== 'lab_result' ? (
           <div>
             <dt>Description</dt>
             <dd>

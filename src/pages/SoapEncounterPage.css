@@ -323,18 +323,34 @@
   .soap-body {
     grid-template-columns: 1fr;
   }
+  /* Stacked layout: the page scrolls as a whole. `flex: 1 1 0` from the desktop rule
+     collapses this to 0px once the page's height is auto, which hid the chart (and the
+     AI Scribe recorder) entirely on phones. */
   .soap-workspace {
     display: flex;
     flex-direction: column;
-    overflow: auto;
+    flex: none;
+    min-height: 0;
+    height: auto;
+    overflow: visible;
   }
   .soap-workspace .soap-main,
   .soap-workspace .soap-aside {
     flex: none;
     width: auto;
     max-width: none;
-    overflow: visible;
+    height: auto;
+    max-height: none;
+    overflow-x: visible;
+    overflow-y: visible;
     min-width: 0;
+    padding-right: 0;
+    padding-left: 0;
+    scrollbar-gutter: auto;
+  }
+  .soap-workspace .soap-main > .soap-tabs {
+    position: static;
+    box-shadow: none;
   }
   .soap-split-handle {
     display: none;
@@ -2052,6 +2068,85 @@
   padding: 10px 14px;
   margin-bottom: 16px;
 }
+.soap-scribe-panel.is-live {
+  border-color: #fca5a5;
+  background: #fff7f7;
+}
+.soap-scribe-status {
+  margin: 8px 0 0;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: #334155;
+  font-weight: 600;
+}
+.soap-scribe-status.is-live {
+  color: #b91c1c;
+}
+.soap-scribe-status.is-stopped {
+  color: #1e3a8a;
+}
+.soap-scribe-takes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.soap-scribe-take {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  color: #334155;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.soap-scribe-take.is-empty {
+  color: #92400e;
+  border-color: #fcd34d;
+  background: #fffbeb;
+}
+.soap-scribe-take.is-live {
+  color: #b91c1c;
+  border-color: #fca5a5;
+  background: #fef2f2;
+}
+.soap-scribe-live {
+  margin-top: 8px;
+  background: #fff;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  padding: 8px 10px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.soap-scribe-live-label {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #b91c1c;
+  margin-bottom: 4px;
+}
+.soap-scribe-live-prior {
+  margin: 0 0 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px dashed #fecaca;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: #64748b;
+  white-space: pre-wrap;
+}
+.soap-scribe-live-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #0f172a;
+  white-space: pre-wrap;
+}
 .soap-scribe-bar {
   display: flex;
   align-items: center;
@@ -2454,6 +2549,57 @@
   .soap-scribe-chronic-grid,
   .soap-patient-chronic-grid {
     grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 900px) {
+  .soap-page--workspace .soap-header {
+    gap: 8px;
+    margin-bottom: 8px;
+    padding-bottom: 8px;
+  }
+  .soap-page--workspace .soap-pet-tabs {
+    margin-bottom: 8px;
+  }
+  .soap-patient-chronic-grid {
+    gap: 8px;
+  }
+  .soap-scribe-chronic {
+    padding: 8px 10px;
+  }
+  .soap-scribe-chronic-head {
+    margin-bottom: 4px;
+  }
+  /* The cards repeat this; on a phone it pushes the SOAP off the first screen. */
+  .soap-scribe-chronic-empty,
+  .soap-patient-chronic-med-hint {
+    display: none;
+  }
+  .soap-patient-chronic-add {
+    flex-wrap: nowrap;
+    margin-top: 6px;
+  }
+  .soap-patient-chronic-add .soap-input,
+  .soap-patient-chronic-med-input {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+  .soap-patient-chronic-add .soap-btn {
+    flex: 0 0 auto;
+    padding: 6px 8px;
+    white-space: nowrap;
+  }
+  .soap-scribe-panel {
+    margin-bottom: 8px;
+    padding: 8px 10px;
+  }
+  .soap-scribe-record-btn {
+    flex: 1 1 auto;
+    justify-content: center;
+    min-height: 40px;
+    font-size: 14px;
+  }
+  .soap-scribe-status {
+    font-size: 13px;
   }
 }
 .soap-scribe-card {

@@ -114,6 +114,58 @@ export function writeStoreCart(lines: StoreCartLine[]) {
   window.dispatchEvent(new Event(STORE_CART_EVENT));
 }
 
+/* ---------- "came from the client portal" context ----------
+ * Remembered per tab so the store can offer a "Back to portal" link while the
+ * client shops, and so the cart can highlight the item they just reordered. */
+const PORTAL_RETURN_KEY = 'vayd_store_from_portal';
+const PORTAL_RETURN_TTL_MS = 6 * 60 * 60 * 1000;
+export const STORE_PORTAL_RETURN_EVENT = 'vayd-store-portal-return';
+
+export type StorePortalReturn = {
+  petId?: string | null;
+  petName?: string | null;
+  at: number;
+};
+
+export function rememberStorePortalReturn(ctx: Omit<StorePortalReturn, 'at'> = {}) {
+  try {
+    sessionStorage.setItem(PORTAL_RETURN_KEY, JSON.stringify({ ...ctx, at: Date.now() }));
+    window.dispatchEvent(new Event(STORE_PORTAL_RETURN_EVENT));
+  } catch {
+    /* ignore */
+  }
+}
+
+export function readStorePortalReturn(): StorePortalReturn | null {
+  try {
+    const raw = sessionStorage.getItem(PORTAL_RETURN_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as StorePortalReturn;
+    if (!parsed || typeof parsed.at !== 'number' || Date.now() - parsed.at > PORTAL_RETURN_TTL_MS) {
+      sessionStorage.removeItem(PORTAL_RETURN_KEY);
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export function clearStorePortalReturn() {
+  try {
+    sessionStorage.removeItem(PORTAL_RETURN_KEY);
+    window.dispatchEvent(new Event(STORE_PORTAL_RETURN_EVENT));
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Portal URL to return to (re-selects the pet they were viewing). */
+export function storePortalReturnPath(ctx: StorePortalReturn | null): string {
+  if (ctx?.petId) return `/client-portal?pet=${encodeURIComponent(String(ctx.petId))}`;
+  return '/client-portal';
+}
+
 export function storeCartCount(lines: StoreCartLine[] = readStoreCart()): number {
   return lines.reduce((n, l) => n + (Number(l.quantity) || 0), 0);
 }

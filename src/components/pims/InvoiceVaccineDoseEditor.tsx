@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react';
 import {
+  getInvoiceLineVaccineDefaults,
+  getInvoiceVaccinations,
   getOrderClinicalDetails,
   getVaccineDefaults,
+  saveInvoiceLineVaccination,
   saveOrderVaccination,
   VISIT_WORKFLOW_PRACTICE_ID,
   type OrderPrescription,
@@ -12,6 +15,11 @@ import {
 import type { InventoryLotBalance } from '../../api/branchInventory';
 import VaccineLotPicker from '../soap/VaccineLotPicker';
 import './InvoiceVaccineDoseEditor.css';
+
+/** Unsaved counter invoices use a placeholder id; their lines do not exist on the server yet. */
+function isUnsavedInvoiceId(invoiceId: string | null | undefined): boolean {
+  return !invoiceId || invoiceId === 'draft';
+}
 
 function toDateInput(iso: string | null | undefined): string {
   if (!iso) return '';
@@ -102,9 +110,14 @@ export default function InvoiceVaccineDoseEditor({
   }, [recorded, line.inventoryLotBalanceId, line.lotNumber]);
 
   useEffect(() => {
-    if (!encounterId || !orderId || prefilled || recorded || line.catalogItemId == null) return;
+    if (prefilled || recorded || line.catalogItemId == null) return;
+    if (!(encounterId && orderId) && isUnsavedInvoiceId(line.invoiceId)) return;
     let canceled = false;
-    void getVaccineDefaults(encounterId, orderId, line.catalogItemId)
+    const load =
+      encounterId && orderId
+        ? getVaccineDefaults(encounterId, orderId, line.catalogItemId)
+        : getInvoiceLineVaccineDefaults(line.invoiceId, line.id, line.catalogItemId);
+    void load
       .then((defaults) => {
         if (canceled) return;
         if (defaults.nextDueMonths) {
@@ -121,7 +134,7 @@ export default function InvoiceVaccineDoseEditor({
     return () => {
       canceled = true;
     };
-  }, [encounterId, orderId, prefilled, recorded, line.catalogItemId]);
+  }, [encounterId, orderId, prefilled, recorded, line.catalogItemId, line.invoiceId, line.id]);
 
   function applyLot(lot: InventoryLotBalance | null) {
     if (!lot) {
@@ -142,7 +155,8 @@ export default function InvoiceVaccineDoseEditor({
     onLotPicked?.({ lotId: lot.id, lotNumber: lot.lotNumber || null });
   }
 
-  const canSaveDose = Boolean(encounterId && orderId);
+  // Order-linked doses save through the SOAP order; counter vaccines save on the invoice line.
+  const canSaveDose = Boolean((encounterId && orderId) || !isUnsavedInvoiceId(line.invoiceId));
   const stockName = line.stockInventoryItemName?.trim();
   const stockIsLinked =
     Boolean(stockName) &&
@@ -183,8 +197,8 @@ export default function InvoiceVaccineDoseEditor({
   ) : null;
 
   const save = async () => {
-    if (!canSaveDose || !encounterId || !orderId) {
-      setError('This vaccine is not linked to a visit order, so the dose cannot be saved here.');
+    if (!canSaveDose) {
+      setError('Save the invoice before recording the dose.');
       return;
     }
     if (!nextDue) {
@@ -209,7 +223,7 @@ export default function InvoiceVaccineDoseEditor({
     setSaving(true);
     setError(null);
     try {
-      const saved = await saveOrderVaccination(encounterId, orderId, {
+      const body = {
         vaccineName: line.description,
         dateVaccinated,
         nextVaccinationDate: nextDue,
@@ -223,7 +237,11 @@ export default function InvoiceVaccineDoseEditor({
         ...(lotQoh != null && lotQoh <= 0
           ? { lotZeroOverrideReason: zeroOverrideReason.trim() }
           : {}),
-      });
+      };
+      const saved =
+        encounterId && orderId
+          ? await saveOrderVaccination(encounterId, orderId, body)
+          : await saveInvoiceLineVaccination(line.invoiceId, line.id, body);
       onSaved(saved);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not save this dose.');
@@ -231,18 +249,6 @@ export default function InvoiceVaccineDoseEditor({
       setSaving(false);
     }
   };
-
-  if (!canSaveDose) {
-    return (
-      <div className="client-fin__vax-editor">
-        {stockBanner}
-        {lotPicker}
-        <p className="client-fin__fulfill-note">
-          This line is not linked to a SOAP order, so only the inventory lot can be set here.
-        </p>
-      </div>
-    );
-  }
 
   return (
     <div className="client-fin__vax-editor">
@@ -321,11 +327,16 @@ export default function InvoiceVaccineDoseEditor({
   );
 }
 
-/** Load vaccinations, prescriptions and stock draws for encounters on these invoice lines. */
+/**
+ * Load vaccinations, prescriptions and stock draws for these invoice lines. Order-linked
+ * rows come from each encounter; counter vaccines (no order) come from the invoice itself.
+ * `vaccinationsByLineId` covers both, keyed by invoice line.
+ */
 export async function loadClinicalForInvoiceLines(
   lines: VisitInvoiceLine[]
 ): Promise<{
   vaccinations: Record<string, OrderVaccination>;
+  vaccinationsByLineId: Record<string, OrderVaccination>;
   prescriptions: Record<string, OrderPrescription>;
   stockDraws: Record<string, StockDraw>;
 }> {
@@ -333,11 +344,13 @@ export async function loadClinicalForInvoiceLines(
     ...new Set(lines.map((l) => l.encounterId).filter((id): id is string => Boolean(id))),
   ];
   const vaccinations: Record<string, OrderVaccination> = {};
+  const vaccinationsByLineId: Record<string, OrderVaccination> = {};
   const prescriptions: Record<string, OrderPrescription> = {};
   const stockDraws: Record<string, StockDraw> = {};
-  if (!encounterIds.length) return { vaccinations, prescriptions, stockDraws };
-  await Promise.all(
-    encounterIds.map(async (encounterId) => {
+  const invoiceId = lines.find((l) => !isUnsavedInvoiceId(l.invoiceId))?.invoiceId ?? null;
+  const counterVaccineLines = lines.some((l) => !l.orderId);
+  await Promise.all([
+    ...encounterIds.map(async (encounterId) => {
       const details = await getOrderClinicalDetails(encounterId);
       for (const v of details.vaccinations) {
         if (v.encounterOrderId) vaccinations[v.encounterOrderId] = v;
@@ -350,9 +363,18 @@ export async function loadClinicalForInvoiceLines(
       for (const draw of details.stockDraws) {
         stockDraws[draw.orderId] = draw;
       }
-    })
-  );
-  return { vaccinations, prescriptions, stockDraws };
+    }),
+    invoiceId && counterVaccineLines
+      ? getInvoiceVaccinations(invoiceId)
+          .then((rows) => {
+            for (const v of rows) {
+              if (v.visitInvoiceLineId) vaccinationsByLineId[v.visitInvoiceLineId] = v;
+            }
+          })
+          .catch(() => undefined)
+      : Promise.resolve(),
+  ]);
+  return { vaccinations, vaccinationsByLineId, prescriptions, stockDraws };
 }
 
 /** Load vaccinations for every encounter represented on vaccine invoice lines. */

@@ -4,6 +4,7 @@ import type { RoomLoader } from '../api/roomLoader';
 import type { ScoutChartNote } from '../api/scoutChart';
 import type { TreatmentItem, TreatmentWithItems } from '../api/treatments';
 import type { PatientProblem, PostedVisitCharge } from '../api/visitWorkflow';
+import { resultedByLabel, type LabResult } from '../api/inHouseLabs';
 import { buildSubjectiveTextFromRoomLoaderResponse } from './roomLoaderSubjectiveText';
 import { communicationBodyForDisplay } from './clientCommunicationDisplay';
 import { looksLikeHtmlFragment } from './sanitizeCommunicationHtml';
@@ -168,6 +169,13 @@ export type ChartRow = {
   laterReceivedOn?: string | null;
   /** Form / consent emails — driven by communication `statusDetails`. */
   communicationStatusBadge?: 'pending' | 'signed' | 'expired';
+  /**
+   * In-house lab forms for this charge. The row shows a WAITING / result chip
+   * and the forms are run right from the timeline.
+   */
+  labResults?: LabResult[];
+  /** Visit charges: the invoice line billed, so lab forms can find their row. */
+  invoiceLineId?: string;
 };
 
 export type ChartRowSource =
@@ -190,7 +198,8 @@ export type ChartRowSource =
   | 'treatment'
   | 'roomLoader'
   | 'scoutNote'
-  | 'mailOrder';
+  | 'mailOrder'
+  | 'inHouseLab';
 
 export type MedicalRecordBundle = {
   labOrders?: unknown[];
@@ -496,10 +505,85 @@ function visitChargeDetail(c: PostedVisitCharge, hint?: MedicationHint | null): 
   return bits.join('\n');
 }
 
+/**
+ * Put in-house lab forms on the timeline. A form charged on a posted visit line
+ * rides on that charge's row (one line, one chip); anything else — a lab on a
+ * bill that is still open, or a form run without a charge — gets its own Lab row
+ * so a test that is still waiting is visible from the chart, not just the bill.
+ */
+export function mergeInHouseLabsIntoChart(
+  rows: ChartRow[],
+  labResults: LabResult[] | null | undefined,
+): ChartRow[] {
+  if (!labResults?.length) return rows;
+  const live = labResults.filter((r) => (r as { isDeleted?: boolean }).isDeleted !== true);
+  const byLine = new Map<string, LabResult[]>();
+  const unlinked: LabResult[] = [];
+  for (const r of live) {
+    if (r.visitInvoiceLineId) {
+      const list = byLine.get(r.visitInvoiceLineId) ?? [];
+      list.push(r);
+      byLine.set(r.visitInvoiceLineId, list);
+    } else {
+      unlinked.push(r);
+    }
+  }
+
+  const claimed = new Set<string>();
+  const out = rows.map((row) => {
+    if (row.source !== 'visitCharge') return row;
+    const lineId = row.invoiceLineId;
+    const results = lineId ? byLine.get(lineId) : undefined;
+    if (!results?.length || !lineId) return row;
+    claimed.add(lineId);
+    return {
+      ...row,
+      labResults: results,
+      hasResult: results.every((r) => r.status === 'complete'),
+    };
+  });
+
+  const standalone = (key: string, results: LabResult[]): ChartRow => {
+    const first = results[0];
+    const complete = results.filter((r) => r.status === 'complete');
+    const resultedDates = complete
+      .map((r) => r.resultedAt ?? r.serviceDate)
+      .filter((d): d is string => Boolean(d))
+      .sort();
+    const when =
+      complete.length === results.length && resultedDates.length
+        ? resultedDates[resultedDates.length - 1]
+        : first.serviceDate;
+    const by = complete.length ? resultedByLabel(complete[complete.length - 1]) : '';
+    return {
+      id: `inHouseLab:${key}`,
+      source: 'inHouseLab',
+      typeLabel: 'Lab',
+      description:
+        first.lab?.name?.trim() ||
+        (results.length === 1 ? first.templateName : results.map((r) => r.templateName).join(', ')),
+      provider: by || '—',
+      serviceDateIso: when ?? null,
+      sortTime: parseSortTime(when ?? null),
+      detailText: '',
+      labResults: results,
+      hasResult: complete.length === results.length,
+    };
+  };
+
+  for (const [lineId, results] of byLine) {
+    if (claimed.has(lineId)) continue;
+    out.push(standalone(`line:${lineId}`, results));
+  }
+  for (const r of unlinked) out.push(standalone(String(r.id), [r]));
+  return out;
+}
+
 function visitChargeChartRow(c: PostedVisitCharge, hint?: MedicationHint | null): ChartRow {
   return {
     id: `visitCharge:${c.id}`,
     source: 'visitCharge',
+    invoiceLineId: c.invoiceLineId ?? undefined,
     typeLabel: visitChargeTypeLabel(c),
     description: c.name,
     provider: '—',

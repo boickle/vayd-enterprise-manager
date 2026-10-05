@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ChevronDown,
   ChevronRight,
@@ -241,6 +241,113 @@ function speciesLabel(species: string | null | undefined): string {
 function money(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(Number(value))) return '—';
   return `$${Number(value).toFixed(2)}`;
+}
+
+function typePhrase(item: ItemDraft): string {
+  return ITEM_TYPE_LABELS[item.itemType].toLowerCase();
+}
+
+function itemLead(item: ItemDraft): string {
+  const name = item.name.trim();
+  if (/\b(inventory|product|lab|service|procedure)\b/i.test(name)) return name;
+  return `${name} ${typePhrase(item)}`;
+}
+
+function allowancePhrase(qty: string): string {
+  if (isUnlimitedDraft(qty)) return 'Unlimited';
+  return `Limited to ${allowanceFromDraft(qty, 1)}`;
+}
+
+function memberPaysPhrase(item: ItemDraft): string {
+  if (item.coverage === 'copay') {
+    const amt = numOrNull(item.copayPrice);
+    return amt != null ? `member copay ${money(amt)}` : 'member copay';
+  }
+  if (item.coverage === 'percent_off') {
+    const pct = numOrNull(item.percentOff);
+    return pct != null ? `${pct}% off catalog` : 'percent off catalog';
+  }
+  return 'member no charge';
+}
+
+function productionPhrase(item: ItemDraft): string {
+  if (item.productionBasis === 'custom') {
+    const amt = numOrNull(item.productionOverride);
+    return amt != null ? `doc production ${money(amt)}` : 'doc production custom';
+  }
+  if (item.productionBasis === 'membership_price') {
+    return 'doc production based on membership price';
+  }
+  return 'doc production based on full item price';
+}
+
+function uniquePhrases(values: string[]): string {
+  const seen: string[] = [];
+  for (const value of values) {
+    if (!seen.includes(value)) seen.push(value);
+  }
+  return seen.join(' / ');
+}
+
+/** Collapsed-row content: the catalog names, then the settings that matter at a glance. */
+type BenefitSummary = { names: string[]; facts: string[] };
+
+function itemSummary(item: ItemDraft): BenefitSummary {
+  return {
+    names: [itemLead(item)],
+    facts: [
+      allowancePhrase(item.quantity),
+      memberPaysPhrase(item),
+      productionPhrase(item),
+    ],
+  };
+}
+
+function orClusterSummary(group: GroupDraft): BenefitSummary {
+  return {
+    names: group.items.map(itemLead),
+    facts: [
+      allowancePhrase(group.allowedQuantity),
+      uniquePhrases(group.items.map(memberPaysPhrase)),
+      uniquePhrases(group.items.map(productionPhrase)),
+    ],
+  };
+}
+
+/** Flat text for the toggle's accessible name, since the visual row is styled spans. */
+function summaryLabel(summary: BenefitSummary): string {
+  return [summary.names.join(' or '), ...summary.facts].join(', ');
+}
+
+function BenefitSummaryText({ summary }: { summary: BenefitSummary }) {
+  return (
+    <span className="memberships-summary">
+      <span className="memberships-summary__names">
+        {summary.names.map((name, i) => (
+          <Fragment key={`${name}-${i}`}>
+            {i > 0 ? (
+              <span className="memberships-summary__or" aria-hidden>
+                or
+              </span>
+            ) : null}
+            <strong className="memberships-summary__name">{name}</strong>
+          </Fragment>
+        ))}
+      </span>
+      <span className="settings-muted memberships-summary__facts">
+        {summary.facts.map((fact, i) => (
+          <Fragment key={`${fact}-${i}`}>
+            {i > 0 ? (
+              <span className="memberships-summary__dot" aria-hidden>
+                ·
+              </span>
+            ) : null}
+            {fact}
+          </Fragment>
+        ))}
+      </span>
+    </span>
+  );
 }
 
 function emptyPlanDraft(): PlanDraft {
@@ -849,6 +956,8 @@ export default function SettingsMemberships({ onMessage }: Props) {
   const [groups, setGroups] = useState<GroupDraft[]>([]);
   const [baselineSnaps, setBaselineSnaps] = useState<BenefitSnap[]>([]);
   const [pickerGroupKey, setPickerGroupKey] = useState<string | null>(null);
+  const [expandedBenefitKeys, setExpandedBenefitKeys] = useState<Set<string>>(() => new Set());
+  const [expandAllBenefits, setExpandAllBenefits] = useState(false);
 
   useEffect(() => {
     setGroups((cur) => {
@@ -856,6 +965,42 @@ export default function SettingsMemberships({ onMessage }: Props) {
       return next === cur ? cur : next;
     });
   }, [groups]);
+
+  useEffect(() => {
+    setExpandedBenefitKeys(new Set());
+    setExpandAllBenefits(false);
+  }, [selection?.mode === 'plan' ? selection.id : selection?.mode ?? 'none']);
+
+  function isBenefitExpanded(key: string): boolean {
+    return expandAllBenefits || expandedBenefitKeys.has(key);
+  }
+
+  function expandBenefit(key: string) {
+    setExpandedBenefitKeys((cur) => {
+      if (cur.has(key)) return cur;
+      const next = new Set(cur);
+      next.add(key);
+      return next;
+    });
+  }
+
+  function toggleBenefitExpanded(key: string) {
+    if (expandAllBenefits) {
+      const all = new Set(
+        groups.filter((group) => group.items.length > 0).map((group) => group.key),
+      );
+      all.delete(key);
+      setExpandAllBenefits(false);
+      setExpandedBenefitKeys(all);
+      return;
+    }
+    setExpandedBenefitKeys((cur) => {
+      const next = new Set(cur);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
 
   const [removeDropped, setRemoveDropped] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -1044,6 +1189,8 @@ export default function SettingsMemberships({ onMessage }: Props) {
     setPickerGroupKey(null);
     setRemoveDropped(false);
     setAuditOpen(false);
+    setExpandedBenefitKeys(new Set());
+    setExpandAllBenefits(false);
   }
 
   function setField<K extends keyof PlanDraft>(key: K, value: PlanDraft[K]) {
@@ -1150,7 +1297,10 @@ export default function SettingsMemberships({ onMessage }: Props) {
       }
       return [...cleaned.slice(0, idx), ...replacement, ...cleaned.slice(idx + 1)];
     });
-    setPickerGroupKey(group.items.length <= 1 || group.selectionMode === 'choice' ? group.key : choiceKey);
+    const nextKeyToExpand =
+      group.items.length <= 1 || group.selectionMode === 'choice' ? group.key : choiceKey;
+    setPickerGroupKey(nextKeyToExpand);
+    expandBenefit(nextKeyToExpand);
   }
 
   async function removeGroup(group: GroupDraft) {
@@ -1242,6 +1392,7 @@ export default function SettingsMemberships({ onMessage }: Props) {
         }),
       );
       setPickerGroupKey(null);
+      expandBenefit(groupKey);
     })();
   }
 
@@ -1467,6 +1618,8 @@ export default function SettingsMemberships({ onMessage }: Props) {
       showAddOr: boolean;
       moveWholeGroup: boolean;
       groupIndex: number;
+      expanded: boolean;
+      onToggle: () => void;
     },
   ) {
     const isChoice = group.selectionMode === 'choice';
@@ -1474,6 +1627,58 @@ export default function SettingsMemberships({ onMessage }: Props) {
     const downDisabled = opts.moveWholeGroup
       ? opts.groupIndex === groups.length - 1
       : itemIndex === group.items.length - 1;
+    const collapsed = !opts.expanded;
+
+    const tools = (
+      <div className="memberships-item__tools">
+            {opts.showAddOr ? (
+              <button
+                type="button"
+                className="memberships-item__or-btn"
+                onClick={() => {
+                  expandBenefit(group.key);
+                  addOr(group, item.key);
+                }}
+              >
+                OR
+              </button>
+            ) : null}
+        <button
+          type="button"
+          className="btn-link"
+          aria-label={opts.moveWholeGroup ? 'Move line up' : 'Move option up'}
+          disabled={upDisabled}
+          onClick={() =>
+            opts.moveWholeGroup
+              ? moveGroup(opts.groupIndex, -1)
+              : moveItem(group.key, itemIndex, -1)
+          }
+        >
+          <ChevronUp size={15} aria-hidden />
+        </button>
+        <button
+          type="button"
+          className="btn-link"
+          aria-label={opts.moveWholeGroup ? 'Move line down' : 'Move option down'}
+          disabled={downDisabled}
+          onClick={() =>
+            opts.moveWholeGroup
+              ? moveGroup(opts.groupIndex, 1)
+              : moveItem(group.key, itemIndex, 1)
+          }
+        >
+          <ChevronDown size={15} aria-hidden />
+        </button>
+        <button
+          type="button"
+          className="btn-link"
+          aria-label={`Remove ${item.name}`}
+          onClick={() => removeItem(group.key, item.key)}
+        >
+          <X size={15} aria-hidden />
+        </button>
+      </div>
+    );
 
     return (
       <li key={item.key} className="memberships-item">
@@ -1482,9 +1687,36 @@ export default function SettingsMemberships({ onMessage }: Props) {
             or
           </span>
         ) : null}
+        {collapsed ? (
+          <div className="memberships-item__body memberships-item__body--collapsed">
+            <button
+              type="button"
+              className="memberships-item__toggle"
+              aria-expanded={false}
+              aria-label={summaryLabel(itemSummary(item))}
+              onClick={opts.onToggle}
+            >
+              <ChevronRight size={16} aria-hidden />
+              <BenefitSummaryText summary={itemSummary(item)} />
+            </button>
+            {tools}
+          </div>
+        ) : (
         <div className="memberships-item__body">
           <div className="memberships-item__ident">
-            <span className="memberships-item__name">{item.name}</span>
+            {isChoice ? (
+              <span className="memberships-item__name">{item.name}</span>
+            ) : (
+              <button
+                type="button"
+                className="memberships-item__toggle memberships-item__toggle--open"
+                aria-expanded
+                onClick={opts.onToggle}
+              >
+                <ChevronDown size={16} aria-hidden />
+                <span className="memberships-item__name">{item.name}</span>
+              </button>
+            )}
             <span className="settings-muted memberships-item__meta">
               {ITEM_TYPE_LABELS[item.itemType]}
               {item.code ? ` · ${item.code}` : ''}
@@ -1623,58 +1855,19 @@ export default function SettingsMemberships({ onMessage }: Props) {
             ) : null}
           </div>
 
-          <div className="memberships-item__tools">
-            {opts.showAddOr ? (
-              <button
-                type="button"
-                className="memberships-item__or-btn"
-                onClick={() => addOr(group, item.key)}
-              >
-                OR
-              </button>
-            ) : null}
-            <button
-              type="button"
-              className="btn-link"
-              aria-label={opts.moveWholeGroup ? 'Move line up' : 'Move option up'}
-              disabled={upDisabled}
-              onClick={() =>
-                opts.moveWholeGroup
-                  ? moveGroup(opts.groupIndex, -1)
-                  : moveItem(group.key, itemIndex, -1)
-              }
-            >
-              <ChevronUp size={15} aria-hidden />
-            </button>
-            <button
-              type="button"
-              className="btn-link"
-              aria-label={opts.moveWholeGroup ? 'Move line down' : 'Move option down'}
-              disabled={downDisabled}
-              onClick={() =>
-                opts.moveWholeGroup
-                  ? moveGroup(opts.groupIndex, 1)
-                  : moveItem(group.key, itemIndex, 1)
-              }
-            >
-              <ChevronDown size={15} aria-hidden />
-            </button>
-            <button
-              type="button"
-              className="btn-link"
-              aria-label={`Remove ${item.name}`}
-              onClick={() => removeItem(group.key, item.key)}
-            >
-              <X size={15} aria-hidden />
-            </button>
-          </div>
+          {tools}
         </div>
+        )}
       </li>
     );
   }
 
   const isNew = selection?.mode === 'new';
   const editing = isNew || detail != null;
+  const filledBenefitGroups = groups.filter((group) => group.items.length > 0);
+  const allBenefitsExpanded =
+    filledBenefitGroups.length > 0 &&
+    (expandAllBenefits || filledBenefitGroups.every((group) => expandedBenefitKeys.has(group.key)));
 
   return (
     <div className="settings-section memberships">
@@ -1745,15 +1938,17 @@ export default function SettingsMemberships({ onMessage }: Props) {
         <h3 className="settings-card-title">Post-visit membership signup</h3>
         <p className="settings-muted" style={{ marginBottom: 12, fontSize: 13 }}>
           How long after a visit (or store) payment a care lead can re-price that bill under a
-          new membership without an override. The financial workspace lists invoices from the
-          last 48 business hours, with Load more for older ones. Outside this window, staff must
-          confirm an override — it is written to the membership audit.
+          new membership without an override. Counted in business hours, so only time the
+          practice is open counts — a Friday-evening payment still has its full window on Monday
+          morning. The financial workspace lists invoices from the last 48 business hours, with
+          Load more for older ones. Outside this window, staff must confirm an override — it is
+          written to the membership audit.
         </p>
         {feeSettingLoading ? (
           <p className="settings-muted">Loading…</p>
         ) : (
           <label className="settings-field" style={{ maxWidth: 280 }}>
-            <span className="settings-label">Signup window (calendar hours)</span>
+            <span className="settings-label">Signup window (business hours)</span>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <input
                 className="settings-input"
@@ -1988,7 +2183,7 @@ export default function SettingsMemberships({ onMessage }: Props) {
                     </label>
                   ) : null}
                   <label className="settings-label">
-                    Renewal (months)
+                    Coverage length (months)
                     <input
                       className="settings-input"
                       type="number"
@@ -1997,6 +2192,11 @@ export default function SettingsMemberships({ onMessage }: Props) {
                       value={planDraft.renewalMonths}
                       onChange={(e) => setField('renewalMonths', e.target.value)}
                     />
+                    <span className="memberships-field__hint">
+                      How long benefits last from a member's start date. This is not the billing
+                      cadence — leave it at 12 on monthly plans, or they lose coverage after one
+                      payment.
+                    </span>
                   </label>
                   <label className="settings-label">
                     Sort order
@@ -2106,6 +2306,11 @@ export default function SettingsMemberships({ onMessage }: Props) {
                       value={planDraft.termMonths}
                       onChange={(e) => setField('termMonths', e.target.value)}
                     />
+                    <span className="memberships-field__hint">
+                      When the membership comes up for renewal, and when the notice email goes out
+                      14 days before it with the plan chosen below. Monthly plans still use a
+                      12-month membership year.
+                    </span>
                   </label>
                   <label className="settings-label memberships-fields__wide">
                     On renewal, move to
@@ -2191,6 +2396,22 @@ export default function SettingsMemberships({ onMessage }: Props) {
                     </p>
                   </div>
                   <div className="memberships-groups__add">
+                    {filledBenefitGroups.length > 0 ? (
+                      <button
+                        type="button"
+                        className="btn-link memberships-groups__expand-all"
+                        onClick={() => {
+                          if (allBenefitsExpanded) {
+                            setExpandAllBenefits(false);
+                            setExpandedBenefitKeys(new Set());
+                          } else {
+                            setExpandAllBenefits(true);
+                          }
+                        }}
+                      >
+                        {allBenefitsExpanded ? 'Collapse all' : 'Expand all'}
+                      </button>
+                    ) : null}
                     <button type="button" className="btn secondary" onClick={addLine}>
                       <Plus size={13} aria-hidden /> Add a benefit
                     </button>
@@ -2212,6 +2433,8 @@ export default function SettingsMemberships({ onMessage }: Props) {
                         ? 'any'
                         : String(allowanceFromDraft(group.allowedQuantity, 1));
                       const tooFewAlternatives = isChoice && group.items.length < 2;
+                      const expanded =
+                        isBenefitExpanded(group.key) || picking || tooFewAlternatives;
 
                       if (group.items.length === 0) {
                         return (
@@ -2236,6 +2459,8 @@ export default function SettingsMemberships({ onMessage }: Props) {
                                 showAddOr: !picking,
                                 moveWholeGroup: true,
                                 groupIndex,
+                                expanded,
+                                onToggle: () => toggleBenefitExpanded(group.key),
                               })}
                             </ul>
                             {picking ? (
@@ -2248,9 +2473,64 @@ export default function SettingsMemberships({ onMessage }: Props) {
                         );
                       }
 
+                      if (!expanded) {
+                        return (
+                          <section key={group.key} className="memberships-or-cluster memberships-or-cluster--collapsed">
+                            <div className="memberships-item__body memberships-item__body--collapsed">
+                              <button
+                                type="button"
+                                className="memberships-item__toggle"
+                                aria-expanded={false}
+                                aria-label={summaryLabel(orClusterSummary(group))}
+                                onClick={() => toggleBenefitExpanded(group.key)}
+                              >
+                                <ChevronRight size={16} aria-hidden />
+                                <BenefitSummaryText summary={orClusterSummary(group)} />
+                              </button>
+                              <div className="memberships-item__tools">
+                                <button
+                                  type="button"
+                                  className="btn-link"
+                                  aria-label="Move this set up"
+                                  disabled={groupIndex === 0}
+                                  onClick={() => moveGroup(groupIndex, -1)}
+                                >
+                                  <ChevronUp size={15} aria-hidden />
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn-link"
+                                  aria-label="Move this set down"
+                                  disabled={groupIndex === groups.length - 1}
+                                  onClick={() => moveGroup(groupIndex, 1)}
+                                >
+                                  <ChevronDown size={15} aria-hidden />
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn-link"
+                                  aria-label="Remove this either / or set"
+                                  onClick={() => void removeGroup(group)}
+                                >
+                                  <X size={15} aria-hidden />
+                                </button>
+                              </div>
+                            </div>
+                          </section>
+                        );
+                      }
+
                       return (
                         <section key={group.key} className="memberships-or-cluster">
                           <header className="memberships-or-cluster__head">
+                            <button
+                              type="button"
+                              className="memberships-item__toggle memberships-item__toggle--open"
+                              aria-expanded
+                              onClick={() => toggleBenefitExpanded(group.key)}
+                            >
+                              <ChevronDown size={16} aria-hidden />
+                            </button>
                             <span className="memberships-or-cluster__badge">
                               <Shuffle size={12} aria-hidden /> Member picks {allowance}
                             </span>
@@ -2337,6 +2617,8 @@ export default function SettingsMemberships({ onMessage }: Props) {
                                 showAddOr: false,
                                 moveWholeGroup: false,
                                 groupIndex,
+                                expanded: true,
+                                onToggle: () => toggleBenefitExpanded(group.key),
                               }),
                             )}
                           </ul>
@@ -2373,9 +2655,10 @@ export default function SettingsMemberships({ onMessage }: Props) {
                     <p className="settings-muted memberships-apply__hint">
                       {detail.activeMemberCount} patient
                       {detail.activeMemberCount === 1 ? ' is' : 's are'} already on this plan.
-                      Saving does not change what they get. Apply only pushes benefits you
-                      changed since opening this plan — not the rest of the list, and not
-                      price, species, age, or other restrictions.
+                      Saving on its own does not change what they get. The button below saves
+                      the plan and pushes the benefits you changed since opening it — not the
+                      rest of the list, and not price, species, age, or other restrictions.
+                      Allowances members have already drawn on are never reduced.
                     </p>
                     <label className="settings-checkbox-item memberships-apply__danger">
                       <input
@@ -2398,7 +2681,7 @@ export default function SettingsMemberships({ onMessage }: Props) {
                       disabled={saving}
                       onClick={() => void applyBenefitsToExisting()}
                     >
-                      Apply benefits to existing members
+                      Apply benefits to existing members &amp; save plan
                     </button>
                   </div>
                 ) : null}

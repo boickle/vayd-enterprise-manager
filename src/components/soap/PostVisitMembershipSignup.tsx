@@ -27,6 +27,7 @@ import { normalizeInvoicesFromClient, type NormalizedInvoice } from '../../utils
 import { apiErrorMessage } from '../../api/http';
 import { fetchChatHoursOfOperation } from '../../api/chatHoursOfOperation';
 import {
+  businessHoursElapsed,
   cutoffAfterBusinessHoursAgo,
   invoiceInLookback,
 } from '../../utils/businessHoursLookback';
@@ -36,7 +37,7 @@ import {
   defaultChatHoursOfOperation,
   type ChatHoursOfOperation,
 } from '../../utils/chatHours';
-import { MEMBERSHIP_GOLDEN_MIN_AGE_YEARS } from '../../utils/membershipAge';
+import { petMeetsGoldenAge } from '../../utils/membershipAge';
 import { resolveMembershipPetKind } from '../../utils/membershipSpecies';
 import { fetchPatientByIdStaff } from '../../api/patients';
 import PostVisitCardEntry from './PostVisitCardEntry';
@@ -127,10 +128,9 @@ function planAllowedForPet(
 ): boolean {
   const family = planFamily(plan);
   const meetsGolden =
-    kind != null &&
-    ageYears != null &&
-    Number.isFinite(ageYears) &&
-    ageYears >= MEMBERSHIP_GOLDEN_MIN_AGE_YEARS;
+    plan.minAgeMonths != null && ageYears != null && Number.isFinite(ageYears)
+      ? ageYears * 12 >= plan.minAgeMonths
+      : petMeetsGoldenAge(ageYears, null, kind);
   const shouldShowStarter =
     ageYears != null &&
     Number.isFinite(ageYears) &&
@@ -168,10 +168,9 @@ function isRecommendedPlan(
   if (planIsPlus(plan)) return false;
   const family = planFamily(plan);
   const meetsGolden =
-    kind != null &&
-    ageYears != null &&
-    Number.isFinite(ageYears) &&
-    ageYears >= MEMBERSHIP_GOLDEN_MIN_AGE_YEARS;
+    plan.minAgeMonths != null && ageYears != null && Number.isFinite(ageYears)
+      ? ageYears * 12 >= plan.minAgeMonths
+      : petMeetsGoldenAge(ageYears, null, kind);
   if (meetsGolden) return family === 'golden';
   return family === 'foundations';
 }
@@ -212,12 +211,12 @@ function substitutionPayload(
     );
 }
 
+/** `hours` is practice-open time, so it cannot be restated as calendar days. */
 function describeAge(hours: number | null | undefined): string | null {
   if (hours == null || !Number.isFinite(hours)) return null;
-  if (hours < 1) return 'less than an hour ago';
-  if (hours < 24) return `${Math.round(hours)} hours ago`;
-  const days = Math.floor(hours / 24);
-  return `${days} day${days === 1 ? '' : 's'} ago`;
+  if (hours < 1) return 'less than a business hour ago';
+  const rounded = Math.round(hours);
+  return `${rounded} business hour${rounded === 1 ? '' : 's'} ago`;
 }
 
 function invoiceStamp(inv: VisitInvoice): string | null {
@@ -436,9 +435,10 @@ export default function PostVisitMembershipSignup({
     let cancelled = false;
     void (async () => {
       try {
-        const [rows, settings] = await Promise.all([
+        const [rows, settings, hours] = await Promise.all([
           listPatientMemberships({ patientId: enrollPatientId }),
           getPracticeSettings(VISIT_WORKFLOW_PRACTICE_ID).catch(() => null),
+          fetchChatHoursOfOperation(currentPracticeId()).catch(() => null),
         ]);
         if (cancelled) return;
         const windowHours = membershipPostVisitSignupWindowHours(settings);
@@ -446,8 +446,15 @@ export default function PostVisitMembershipSignup({
           if (row.status !== 'active') return false;
           if (!row.stripeSubscriptionId?.startsWith('sub_')) return false;
           if (!row.startDate) return false;
-          const ageHours = (Date.now() - Date.parse(row.startDate)) / 3_600_000;
-          return ageHours >= -1 && ageHours <= windowHours + 1;
+          const startedMs = Date.parse(row.startDate);
+          if (!Number.isFinite(startedMs)) return false;
+          if (startedMs - Date.now() > 3_600_000) return false;
+          const ageHours = businessHoursElapsed({
+            from: new Date(startedMs),
+            hoursOfOperation: hours,
+            timeZone: DEFAULT_PRACTICE_TIMEZONE,
+          });
+          return ageHours <= windowHours + 1;
         });
         if (!paid) {
           setOwnerPaidPlan(null);
@@ -1205,7 +1212,7 @@ export default function PostVisitMembershipSignup({
                       <p className="pvms-muted pvms-agenote">
                         Oldest selected invoice was billed {visitAge}
                         {preview.windowHours != null
-                          ? ` (window ${preview.windowHours}h)`
+                          ? ` (limit ${preview.windowHours})`
                           : ''}
                         .
                       </p>

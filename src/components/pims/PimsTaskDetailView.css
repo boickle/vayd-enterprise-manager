@@ -599,6 +599,97 @@
   color: #334155;
 }
 
+/* Confirmation after returning from the forward booking modal: the entry was
+   added, then the task ticks itself off. Rows animate in one after the other. */
+.pims-fb-added {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 20px;
+  padding: 14px 16px;
+  border: 1px solid #bfdbfe;
+  border-radius: 10px;
+  background: #f8fbff;
+  animation: pims-fb-added-in 0.35s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.pims-fb-added--done {
+  border-color: #86efac;
+  background: #f0fdf4;
+}
+
+.pims-fb-added__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.4;
+  color: #0f172a;
+  animation: pims-fb-added-row 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.pims-fb-added__row svg {
+  flex: none;
+  color: #15803d;
+  animation: pims-fb-added-check 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+.pims-fb-added__row--1,
+.pims-fb-added__row--1 svg {
+  animation-delay: 0.1s;
+}
+
+.pims-fb-added__row--2,
+.pims-fb-added__row--2 svg {
+  animation-delay: 0.65s;
+}
+
+.pims-fb-added__row--pending {
+  color: #b45309;
+}
+
+@keyframes pims-fb-added-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes pims-fb-added-row {
+  from {
+    opacity: 0;
+    transform: translateX(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes pims-fb-added-check {
+  from {
+    transform: scale(0.4);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pims-fb-added,
+  .pims-fb-added__row,
+  .pims-fb-added__row svg {
+    animation: none;
+  }
+}
+
 .pims-fb-task__hint {
   margin: 12px 0 0;
   font-size: 13px;

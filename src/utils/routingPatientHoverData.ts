@@ -94,6 +94,8 @@ export type RoutingPatientStaffTaskLine = {
   assigneeName: string | null;
   dueMs: number | null;
   dueLabel: string | null;
+  /** ISO due timestamp when the task has a due date. */
+  dueAtIso: string | null;
   overdue: boolean;
 };
 
@@ -209,6 +211,7 @@ export type RoutingPatientHoverSummary = {
   primaryProviderName: string | null;
   lastAppointmentLine: string | null;
   nextAppointmentLine: string | null;
+  nextAppointmentStartIso: string | null;
   activeReminders: RoutingPatientReminderLine[];
   overdueReminders: RoutingPatientReminderLine[];
   /** eVet Callback + ToDo reminder rows. */
@@ -456,6 +459,7 @@ export async function loadRoutingPatientHoverSummary(
         dueLabel: t.dueAt
           ? DateTime.fromISO(t.dueAt, { zone: practiceTz }).toFormat('M/d/yyyy')
           : null,
+        dueAtIso: t.dueAt?.trim() || null,
         overdue: Number.isFinite(dueMs) && dueMs < asOfMs,
       };
     });
@@ -468,6 +472,7 @@ export async function loadRoutingPatientHoverSummary(
     nextAppointmentLine: future
       ? formatVisitHighlightsNextAppointmentLine(future, practiceTz, providerLabelFromAppointment(future))
       : null,
+    nextAppointmentStartIso: future?.appointmentStart?.trim() || null,
     activeReminders: active,
     overdueReminders: overdue,
     callbackReminders: callbacks,

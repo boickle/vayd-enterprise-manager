@@ -58,3 +58,7 @@ Thumbs.db
 
 # --- Storybook (optional) ---
 storybook-static/
+
+# --- Local catalog exports & doc render scratch ---
+/catalog_*.csv
+docs/.preview/

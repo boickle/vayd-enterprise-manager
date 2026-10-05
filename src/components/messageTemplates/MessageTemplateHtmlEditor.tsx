@@ -13,6 +13,11 @@ type Props = {
   disabled?: boolean;
   placeholder?: string;
   editorHandleRef?: Ref<HtmlEditorHandle | null>;
+  /**
+   * When false, paste/drop of image files is blocked. Room Loader copy is stored
+   * as JSON; a pasted screenshot is enough to lock the settings page.
+   */
+  allowInlineImages?: boolean;
 };
 
 function assignHandle(ref: Ref<HtmlEditorHandle | null> | undefined, handle: HtmlEditorHandle | null) {
@@ -27,14 +32,19 @@ export default function MessageTemplateHtmlEditor({
   disabled,
   placeholder = 'Write the email. Click a parameter to nest it.',
   editorHandleRef,
+  allowInlineImages = true,
 }: Props) {
   const rootRef = useRef<HTMLDivElement>(null);
+  const applyingRef = useRef(false);
 
   useEffect(() => {
     const el = rootRef.current;
     if (!el) return;
     const next = value || '';
-    if (el.innerHTML !== next) el.innerHTML = next;
+    if (el.innerHTML === next) return;
+    applyingRef.current = true;
+    el.innerHTML = next;
+    applyingRef.current = false;
   }, [value]);
 
   useEffect(() => {
@@ -106,7 +116,30 @@ export default function MessageTemplateHtmlEditor({
         data-placeholder={placeholder}
         suppressContentEditableWarning
         onInput={() => {
+          if (applyingRef.current) return;
           onChange(rootRef.current?.innerHTML ?? '');
+        }}
+        onPaste={(e) => {
+          if (allowInlineImages) return;
+          const items = e.clipboardData?.items;
+          if (!items) return;
+          for (const item of items) {
+            if (item.type.startsWith('image/')) {
+              e.preventDefault();
+              return;
+            }
+          }
+        }}
+        onDrop={(e) => {
+          if (allowInlineImages) return;
+          const files = e.dataTransfer?.files;
+          if (!files) return;
+          for (const file of files) {
+            if (file.type.startsWith('image/')) {
+              e.preventDefault();
+              return;
+            }
+          }
         }}
       />
     </div>

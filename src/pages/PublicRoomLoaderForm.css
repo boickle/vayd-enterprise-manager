@@ -90,53 +90,6 @@
   border-top: 2px solid #e0e0e0;
 }
 
-/* Flea/tick disclosure — align with search field (no extra horizontal inset); color matches “Additional items” title (#084298) */
-.public-room-loader .public-room-loader-parasite-prevention-details {
-  margin-top: 14px;
-  padding: 14px 0 0;
-  border-top: 1px solid #dee2e6;
-  box-sizing: border-box;
-  width: 100%;
-}
-
-.public-room-loader .public-room-loader-parasite-prevention-details > summary {
-  cursor: pointer;
-  font-size: 15px;
-  font-weight: 600;
-  color: #084298;
-  list-style: none;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 2px 0;
-  user-select: none;
-}
-
-.public-room-loader .public-room-loader-parasite-prevention-details > summary::-webkit-details-marker {
-  display: none;
-}
-
-.public-room-loader .public-room-loader-parasite-prevention-details > summary::marker {
-  content: '';
-}
-
-/* Larger chevron (collapsed → right, open → down) — clearer than small text glyphs */
-.public-room-loader .public-room-loader-parasite-prevention-details > summary::before {
-  content: '';
-  flex-shrink: 0;
-  width: 0;
-  height: 0;
-  border-style: solid;
-  border-width: 8px 0 8px 12px;
-  border-color: transparent transparent transparent #084298;
-  transform-origin: 35% 50%;
-  transition: transform 0.18s ease;
-}
-
-.public-room-loader .public-room-loader-parasite-prevention-details[open] > summary::before {
-  transform: rotate(90deg);
-}
-
 /* Summary: gentle pulse on “Expand to see how membership could change your bill” (collapsed only) */
 .public-room-loader-membership-explainer-trigger--throb {
   animation: publicRoomLoaderMembershipExplainerThrob 2.35s ease-in-out infinite;

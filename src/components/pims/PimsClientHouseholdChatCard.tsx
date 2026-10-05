@@ -13,14 +13,19 @@ import {
   type AssistantChatSearchHit,
   type CaseHistoryChatTurn,
 } from '../../api/soapScribe';
+import { fetchPatientMedicalRecordStaff } from '../../api/patients';
 import {
   listClientVisitInvoices,
+  listEncounters,
   listPatientPrescriptions,
   listProblems,
   type PatientPrescription,
   type PatientProblem,
+  type SoapEncounter,
   type VisitInvoice,
 } from '../../api/visitWorkflow';
+import type { MedicalRecordBundle } from '../../utils/patientChartFromMedicalRecord';
+import { extractHouseholdPdfExcerpts } from '../../utils/householdChartPdfs';
 import { appConfirm } from '../../utils/appDialog';
 import { toggleWithoutScrollJump } from '../../utils/toggleWithoutScrollJump';
 import {
@@ -35,6 +40,7 @@ const STARTERS = [
   'Summarize each pet and the account balance.',
   'Any open invoices or balance due?',
   'Which pets have active chronic problems or meds?',
+  'What vaccines are current, and when were they last given?',
   'Did I ask about hyperthyroid on another pet in my chats?',
 ];
 
@@ -93,7 +99,7 @@ function hitHref(hit: AssistantChatSearchHit): string | null {
 }
 
 /**
- * Client-page household summary + chat (pets in this household + balance/invoices).
+ * Client-page household summary + chat (pets, chart, vaccines, PDFs, invoices).
  * Chat is private to the signed-in user; search covers that user's chats only.
  */
 export default function PimsClientHouseholdChatCard({
@@ -189,6 +195,19 @@ export default function PimsClientHouseholdChatCard({
           problems = probs;
           prescriptions = rxs;
         }
+        let medicalRecord: MedicalRecordBundle | null = null;
+        let encounters: SoapEncounter[] = [];
+        let pdfExcerpts: Awaited<ReturnType<typeof extractHouseholdPdfExcerpts>> = [];
+        if (Number.isFinite(pid) && pid > 0) {
+          const [mr, soaps] = await Promise.all([
+            fetchPatientMedicalRecordStaff(pid).catch(() => null),
+            listEncounters({ patientId: pid }).catch(() => [] as SoapEncounter[]),
+          ]);
+          medicalRecord = mr;
+          encounters = soaps;
+          // A few previous-record PDFs per pet — not every certificate or check-in.
+          pdfExcerpts = await extractHouseholdPdfExcerpts(pid, mr, 2);
+        }
         return {
           id: pet.id,
           name: pet.name,
@@ -200,6 +219,9 @@ export default function PimsClientHouseholdChatCard({
           inactivatedByName: pet.inactivatedByName ?? null,
           problems,
           prescriptions,
+          medicalRecord,
+          encounters,
+          pdfExcerpts,
         };
       }),
     );
@@ -350,7 +372,7 @@ export default function PimsClientHouseholdChatCard({
           Household summary
         </h3>
         <p className="pims-emr-case-prep__chat-hint">
-          Pets on this client only, plus balance and invoices.
+          Pets, chart (exams, SOAPs, vaccines, previous-record PDFs), invoices, and ledger.
         </p>
 
         {busy ? (
@@ -418,7 +440,8 @@ export default function PimsClientHouseholdChatCard({
             Ask about this household
           </h3>
           <p className="pims-emr-case-prep__chat-hint">
-            Private to your login. Pets, invoices, and ledger for this client only.
+            Private to your login. Pets, chart (exams, SOAPs, vaccines, previous-record PDFs),
+            invoices, and ledger for this client only.
           </p>
         </div>
 
@@ -529,7 +552,7 @@ export default function PimsClientHouseholdChatCard({
             rows={2}
             value={question}
             disabled={chatBusy}
-            placeholder="Ask about pets, invoices, balance, or ledger…"
+            placeholder="Ask about pets, exams, vaccines, invoices, or ledger…"
             onChange={(e) => setQuestion(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {

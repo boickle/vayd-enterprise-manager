@@ -2,6 +2,7 @@ import type { TaskKind } from '../api/tasks';
 import { isForwardBookingTask } from './forwardBookingCreateLink';
 import { isInvoiceAutomationTask } from './invoiceTask';
 import { isOrderListAutomationTask } from './orderListTask';
+import { isLabResultAutomationTask } from './labResultTask';
 import { isSoapAutomationTask } from './soapTask';
 
 /**
@@ -19,6 +20,7 @@ export type TaskPanelKind =
   | 'forward_booking'
   | 'invoice'
   | 'soap'
+  | 'lab_result'
   | 'callback'
   | 'todo';
 
@@ -37,6 +39,7 @@ const KIND_PANELS: Partial<Record<TaskKind, TaskPanelKind>> = {
   order_list: 'order_list',
   invoice: 'invoice',
   soap: 'soap',
+  lab_result: 'lab_result',
 };
 
 export function taskPanelKind(task: PanelKindInput): TaskPanelKind {
@@ -51,6 +54,7 @@ export function taskPanelKind(task: PanelKindInput): TaskPanelKind {
   if (declared) return declared;
   if (task.kind) return 'todo';
 
+  if (isLabResultAutomationTask(task)) return 'lab_result';
   if (isSoapAutomationTask(task)) return 'soap';
   if (isOrderListAutomationTask(task)) return 'order_list';
   if (isForwardBookingTask(task)) return 'forward_booking';
