@@ -18,6 +18,10 @@ type Props = {
   primarySendLabel?: string;
   /** Shown under the title — e.g. the Quo line this thread uses. */
   fromLineLabel?: string | null;
+  /** Items the sender should double-check before sending. */
+  reviewNotes?: string[];
+  /** Small note under the message box (e.g. how the draft was produced). */
+  messageHint?: string | null;
 };
 
 export function ClientSmsComposeModal({
@@ -35,6 +39,8 @@ export function ClientSmsComposeModal({
   showProductionOverride = true,
   primarySendLabel = 'Send message',
   fromLineLabel,
+  reviewNotes,
+  messageHint,
 }: Props) {
   const allowOverride = showProductionOverride && smsAllowsProductionOverride();
 
@@ -117,6 +123,29 @@ export function ClientSmsComposeModal({
           </p>
         ) : null}
 
+        {reviewNotes && reviewNotes.length > 0 ? (
+          <div
+            role="note"
+            style={{
+              margin: '0 0 12px',
+              padding: '10px 12px',
+              background: '#fffbeb',
+              border: '1px solid #fcd34d',
+              borderRadius: 8,
+              fontSize: 13,
+              lineHeight: 1.45,
+              color: '#78350f',
+            }}
+          >
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>Check before sending</div>
+            <ul style={{ margin: 0, paddingLeft: 18 }}>
+              {reviewNotes.map((note) => (
+                <li key={note}>{note}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+
         <label style={{ display: 'block', marginBottom: 16 }}>
           <span style={{ display: 'block', marginBottom: 8, fontSize: 14, fontWeight: 600 }}>Message</span>
           <textarea
@@ -140,6 +169,11 @@ export function ClientSmsComposeModal({
             }}
             placeholder="Enter your message…"
           />
+          {messageHint ? (
+            <span style={{ display: 'block', marginTop: 6, fontSize: 12, color: '#6b7280' }}>
+              {messageHint}
+            </span>
+          ) : null}
         </label>
 
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, justifyContent: 'flex-end' }}>
