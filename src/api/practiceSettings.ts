@@ -32,6 +32,20 @@ export const MEMBERSHIP_ASSIGN_FEE_TO_PROVIDER_KEY =
 export const MEMBERSHIP_POST_VISIT_SIGNUP_WINDOW_HOURS_KEY =
   'membership.postVisitSignupWindowHours' as const;
 export const MEMBERSHIP_POST_VISIT_SIGNUP_WINDOW_HOURS_DEFAULT = 24;
+/**
+ * Whether anyone may type a discount onto a line. Off by default: the intended
+ * path is to assign the client a discount type (SENIOR10 and the like), which
+ * then applies itself and is reportable. Vet At Your Door leaves this off; the
+ * switch exists for practices that work differently.
+ */
+export const DISCOUNT_ALLOW_MANUAL_KEY = 'discounts.allowManual' as const;
+/**
+ * Largest manual discount percent allowed, for practices that turn manual
+ * discounts on. Empty or `0` means no cap. Only consulted when manual
+ * discounts are allowed; the role permission is still required either way.
+ */
+export const DISCOUNT_MANUAL_CAP_PERCENT_KEY =
+  'discounts.manualCapPercent' as const;
 
 export type ReminderSettings = {
   'reminders.enableEmail'?: string;
@@ -80,6 +94,10 @@ export type ReminderSettings = {
    * without an audited override. Unset = 24.
    */
   'membership.postVisitSignupWindowHours'?: string;
+  /** `'true'` / `'false'`; unset = No. Manual line discounts are opt-in. */
+  'discounts.allowManual'?: string;
+  /** Percent, as a string. Unset or `'0'` = no cap. */
+  'discounts.manualCapPercent'?: string;
   /**
    * Practice daily appointment bookings goals by day of week (JSON string).
    * Shape: { "0": 37, "1": 37, ... } where 0=Sunday … 6=Saturday.

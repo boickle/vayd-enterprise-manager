@@ -89,7 +89,7 @@ const FLAG_HELP: Record<string, string> = {
   excludeProductionWhenRefilling:
     'Overrides the practice default for excluding provider VSD when this item is refilled. Inherit uses Settings → Inventory.',
   allowPriceChange:
-    'Staff may change the unit price of this line on the SOAP / at checkout.',
+    'This item’s unit price may be changed on the SOAP / at checkout. Who may change it is still decided by role — the item flag only says the item allows it.',
   changePatientSex: 'Charging this item updates the patient’s sex (e.g. after spay/neuter).',
   requiresDoctorApproval:
     'Fills and mail orders stay in the queue until a doctor approves. Applies everywhere, not only the online store.',

@@ -70,9 +70,31 @@
   gap: 12px;
 }
 .soap-header-main h1 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4em;
   font-size: 20px;
   margin: 0;
   line-height: 1.1;
+}
+.soap-header-client-sep {
+  color: #94a3b8;
+  font-weight: 500;
+}
+.soap-header-client {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #64748b;
+  text-decoration: none;
+}
+a.soap-header-client:hover {
+  color: #2563eb;
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 .soap-header-patient {
   display: flex;

@@ -17,6 +17,7 @@ import {
 import BriefRecordReview from './BriefRecordReview';
 import BriefCaseHistoryPanel from './BriefCaseHistoryPanel';
 import BriefMergePanel from './BriefMergePanel';
+import { useCan } from '../../permissions/PermissionContext';
 import '../../pages/BriefWorkspacePage.css';
 
 export type BriefPatientTab = 'info' | 'sessions' | 'calls' | 'review' | 'history' | 'merge';
@@ -67,6 +68,8 @@ export default function BriefPatientPanel({
   clientId: clientIdProp,
   onRecordsChanged,
 }: Props) {
+  const canMerge = useCan('patient.merge');
+  const visibleTabs = canMerge ? TABS : TABS.filter((t) => t.id !== 'merge');
   const [record, setRecord] = useState<Record<string, unknown> | null>(null);
   const [sessions, setSessions] = useState<BriefSession[]>([]);
   const [encounters, setEncounters] = useState<SoapEncounter[]>([]);
@@ -134,7 +137,7 @@ export default function BriefPatientPanel({
 
       {!embedded ? (
         <div className="brief-pills" role="tablist" aria-label="Patient Jot sections">
-          {TABS.map((t) => (
+          {visibleTabs.map((t) => (
             <button
               key={t.id}
               type="button"
@@ -259,7 +262,7 @@ export default function BriefPatientPanel({
         />
       ) : null}
 
-      {tab === 'merge' ? (
+      {tab === 'merge' && canMerge ? (
         <BriefMergePanel keepPatientId={patientId} keepPatientName={name} />
       ) : null}
     </div>

@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router';
 import App from './App';
 import './styles.css';
 import { AuthProvider } from './auth/AuthProvider';
+import { PermissionProvider } from './permissions/PermissionContext';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import AppDialogProvider from './components/AppDialogProvider';
 import { ensureGtagReady, initGA } from './utils/analytics';
@@ -97,11 +98,13 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <BrowserRouter>
       <AuthProvider>
-        <ErrorBoundary>
-          <AppDialogProvider>
-            <App />
-          </AppDialogProvider>
-        </ErrorBoundary>
+        <PermissionProvider>
+          <ErrorBoundary>
+            <AppDialogProvider>
+              <App />
+            </AppDialogProvider>
+          </ErrorBoundary>
+        </PermissionProvider>
       </AuthProvider>
     </BrowserRouter>
   </React.StrictMode>

@@ -87,6 +87,9 @@ const PRACTICE_TZ =
 import { fetchCatalogPricingForOrder, getCatalogLinePrice } from '../../utils/catalogItemPricing';
 import DirectionsLimitHint, { directionsMaxLength } from './DirectionsLimitHint';
 import { BookPatientChartButton } from '../BookPatientChartButton';
+import { useCan } from '../../permissions/PermissionContext';
+import { PermissionGate } from '../../permissions/PermissionGate';
+import { ReasonPrompt } from '../../permissions/ReasonPrompt';
 import '../pims/ClientFinancialWorkspace.css';
 import {
   addCalendarYear,
@@ -1434,24 +1437,16 @@ export default function VisitCheckoutPanel({
     }
   };
 
-  const voidInv = () =>
+  /** The reason is typed by the person voiding, not filled in for them. */
+  const voidInv = (reason: string) =>
     run('void', async () => {
       if (!invoice) return;
-      const ok = await appConfirm({
-        title: 'Void invoice?',
-        message:
-          'Void this whole invoice? Every charge comes off the bill and no payment can be taken until it is reopened. Nothing has been collected yet.',
-        confirmLabel: 'Void',
-        danger: true,
-      });
-      if (!ok) return;
       if (activeCheckoutId) {
         await cancelTerminalCheckout(activeCheckoutId).catch(() => undefined);
         setActiveCheckoutId(null);
       }
-      onInvoiceChange(
-        await voidInvoice(invoice.id, { reason: 'Voided from visit checkout' }),
-      );
+      onInvoiceChange(await voidInvoice(invoice.id, { reason }));
+      setVoidPromptOpen(false);
       setNote('Invoice voided. Reopen it to take payment.');
     });
 
@@ -1570,6 +1565,9 @@ export default function VisitCheckoutPanel({
     invoice?.status !== 'open' ||
     (invoice.inventoryBranchId != null && invoice.inventoryLocationId != null);
   const canEditLines = Boolean(encounterId) && !isPaid && !isVoid && status === 'open';
+  const canChangePrice = useCan('invoice.price.change');
+  const canReopen = useCan('invoice.reopen');
+  const [voidPromptOpen, setVoidPromptOpen] = useState(false);
   const payDisabled =
     disabled || busy != null || !branchReady || Boolean(paymentBlockedReason);
 
@@ -2061,7 +2059,10 @@ export default function VisitCheckoutPanel({
                     ? orders.find((o) => o.id === l.orderId) ?? null
                     : null;
                 const showClientNote = order?.catalogFlags?.hasClientNotes === true;
-                const allowPrice = order?.catalogFlags?.allowPriceChange === true;
+                // Two keys: the item has to permit repricing *and* the person has
+                // to be allowed to reprice. Either one alone is not enough.
+                const allowPrice =
+                  order?.catalogFlags?.allowPriceChange === true && canChangePrice;
                 const recorded = l.orderId ? prescriptionsByOrderId[l.orderId] ?? null : null;
                 const showRxLabel = Boolean(rxLabel) && isCheckoutRxLine(l, order);
                 const instructions =
@@ -2935,17 +2936,19 @@ export default function VisitCheckoutPanel({
               </>
             )}
             {!isPaid && !isVoid && status !== 'open' && (
-              <button
-                type="button"
-                className="soap-btn ghost danger"
-                disabled={disabled || busy != null}
-                title="Cancel this entire bill. Nothing has been collected yet."
-                onClick={voidInv}
-              >
-                Void invoice
-              </button>
+              <PermissionGate permission="invoice.void">
+                <button
+                  type="button"
+                  className="soap-btn ghost danger"
+                  disabled={disabled || busy != null}
+                  title="Cancel this entire bill. Nothing has been collected yet."
+                  onClick={() => setVoidPromptOpen(true)}
+                >
+                  Void invoice
+                </button>
+              </PermissionGate>
             )}
-            {isVoid && (
+            {isVoid && canReopen && (
               <button
                 type="button"
                 className="soap-btn"
@@ -2979,6 +2982,23 @@ export default function VisitCheckoutPanel({
           </p>
         </div>
       ) : null}
+
+      <ReasonPrompt
+        open={voidPromptOpen}
+        title="Void this invoice?"
+        note="Every charge comes off the bill and no payment can be taken until it is reopened. Nothing has been collected yet."
+        presets={[
+          'Entered on the wrong patient',
+          'Duplicate invoice',
+          'Visit did not happen',
+          'Rebuilding the bill',
+        ]}
+        confirmLabel="Void invoice"
+        busy={busy === 'void'}
+        error={error}
+        onConfirm={(reason) => voidInv(reason)}
+        onCancel={() => setVoidPromptOpen(false)}
+      />
     </div>
   );
 }

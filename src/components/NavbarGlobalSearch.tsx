@@ -70,7 +70,7 @@ export default function NavbarGlobalSearch() {
       } finally {
         if (seq.current === id) setLoading(false);
       }
-    }, 320);
+    }, 180);
     return () => window.clearTimeout(timer);
   }, [q, practiceId]);
 

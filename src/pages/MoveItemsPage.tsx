@@ -16,6 +16,8 @@ import { searchItems, type SearchResultItem } from '../api/quantityPriceBreaks';
 import { loadInventoryItem, useStockItemGroups } from '../hooks/useStockItemGroups';
 import StockLotPicker from '../components/inventory/StockLotPicker';
 import { resolvePracticeIdFromToken } from '../utils/practiceIdFromToken';
+import { useCan } from '../permissions/PermissionContext';
+import { PermissionDenied } from '../permissions/PermissionGate';
 import './Settings.css';
 import './MoveItemsPage.css';
 
@@ -51,6 +53,9 @@ export default function MoveItemsPage() {
   const { token } = useAuth() as { token: string | null };
   const practiceId = useMemo(() => resolvePracticeIdFromToken(token), [token]);
   const [searchParams] = useSearchParams();
+  // Inventory and practice managers transfer across every office and location;
+  // the page itself imposes no branch restriction, so the permission is the gate.
+  const canTransfer = useCan('inventory.transfer');
   const [branches, setBranches] = useState<PracticeBranch[]>([]);
   const [fromBranchId, setFromBranchId] = useState<number | ''>('');
   const [toBranchId, setToBranchId] = useState<number | ''>('');
@@ -337,6 +342,10 @@ export default function MoveItemsPage() {
     } finally {
       setBusy(false);
     }
+  }
+
+  if (!canTransfer) {
+    return <PermissionDenied what="Moving inventory" who="an inventory or practice manager" />;
   }
 
   return (

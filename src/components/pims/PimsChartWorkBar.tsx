@@ -24,6 +24,7 @@ import ChartPrintDocumentModal from './ChartPrintDocumentModal';
 import BriefMergePanel from '../brief/BriefMergePanel';
 import BriefClientMergePanel from '../brief/BriefClientMergePanel';
 import BriefRecordReview from '../brief/BriefRecordReview';
+import { useCan } from '../../permissions/PermissionContext';
 import type { OutsideRecordAcceptResult } from '../../utils/briefRecordStore';
 
 type Props = {
@@ -491,6 +492,10 @@ export function PimsPatientMergeButton({
   patientName: string;
 }) {
   const [open, setOpen] = useState(false);
+  // A merge cannot be undone, so the control is absent rather than greyed out
+  // for people who will never have it.
+  const canMerge = useCan('patient.merge');
+  if (!canMerge) return null;
   return (
     <>
       <button type="button" className="pims-detail__btn-secondary" onClick={() => setOpen(true)}>
@@ -539,6 +544,8 @@ export function PimsClientMergeButton({
   onMerged?: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const canMerge = useCan('client.merge');
+  if (!canMerge) return null;
   return (
     <>
       <button type="button" className="pims-detail__btn-secondary" onClick={() => setOpen(true)}>

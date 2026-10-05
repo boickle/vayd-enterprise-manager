@@ -1028,6 +1028,40 @@ export async function voidVisitTender(
   return data;
 }
 
+/**
+ * Correct how a posted payment was recorded — method, payment type, check
+ * number. The amount is not editable; void and re-take for that.
+ */
+export async function editVisitTender(
+  invoiceId: string,
+  tenderId: string,
+  body: {
+    method?: VisitTenderMethod;
+    paymentTypeName?: string | null;
+    checkNumber?: string | null;
+    reason: string;
+  }
+): Promise<VisitInvoice> {
+  const { data } = await http.patch<VisitInvoice>(
+    `/visit-invoices/${encodeURIComponent(invoiceId)}/tenders/${encodeURIComponent(tenderId)}`,
+    { practiceId: pid(), ...body }
+  );
+  return data;
+}
+
+/** Re-credit a line on a finalized or paid invoice to a different provider. */
+export async function changeInvoiceLineProvider(
+  invoiceId: string,
+  lineId: string,
+  body: { providerEmployeeId: number; reason: string }
+): Promise<VisitInvoice> {
+  const { data } = await http.patch<VisitInvoice>(
+    `/visit-invoices/${encodeURIComponent(invoiceId)}/lines/${encodeURIComponent(lineId)}/provider`,
+    { practiceId: pid(), ...body }
+  );
+  return data;
+}
+
 export async function refundVisitTender(
   invoiceId: string,
   tenderId: string,

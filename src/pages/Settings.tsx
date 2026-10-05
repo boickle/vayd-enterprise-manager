@@ -69,6 +69,7 @@ import SettingsEmployeeDirectory, {
 } from '../components/settings/SettingsEmployeeDirectory';
 import SettingsAppointmentTypes from '../components/settings/SettingsAppointmentTypes';
 import SettingsScoutRoles from '../components/settings/SettingsScoutRoles';
+import SettingsPermissionAudit from '../components/settings/SettingsPermissionAudit';
 import SettingsClSeatAssignment from '../components/settings/SettingsClSeatAssignment';
 import SettingsGmailMailboxPermissions from '../components/settings/SettingsGmailMailboxPermissions';
 import SettingsBranchesLocations from '../components/settings/SettingsBranchesLocations';
@@ -110,6 +111,7 @@ const SETTINGS_TAB_IDS = [
   'employee-goals',
   'employee-directory',
   'roles',
+  'permission-audit',
   'cl-seat-assignment',
   'gmail-mailboxes',
   'chat-hours',
@@ -146,6 +148,7 @@ const SCHEDULING_SETTINGS_ITEMS: SettingsMenuItem[] = [
 const EMPLOYEE_SETTINGS_ITEMS: SettingsMenuItem[] = [
   { id: 'employee-directory', label: 'Staff' },
   { id: 'roles', label: 'Roles' },
+  { id: 'permission-audit', label: 'Permission Audit Log' },
   { id: 'cl-seat-assignment', label: 'CL Seat Assignment' },
 ];
 
@@ -156,6 +159,7 @@ const EMPLOYEE_HUB_SECTIONS: EmployeeHubSection[] = [
   'zones',
   'goals',
   'photo',
+  'access',
 ];
 
 const LEGACY_EMPLOYEE_TAB_TO_SECTION: Record<string, EmployeeHubSection> = {
@@ -3193,6 +3197,18 @@ export default function Settings() {
                 }
               }}
             />
+          </div>
+        )}
+
+        {activeTab === 'permission-audit' && (
+          <div className="settings-section">
+            <h2 className="settings-section-title">Permission Audit Log</h2>
+            <p className="settings-section-description">
+              Every use of a controlled permission — voids, refunds, price changes, reopened
+              invoices, post-close corrections — and every change to roles, grants, and licences,
+              with who did it and the reason they gave.
+            </p>
+            <SettingsPermissionAudit practiceId={practiceId} />
           </div>
         )}
 

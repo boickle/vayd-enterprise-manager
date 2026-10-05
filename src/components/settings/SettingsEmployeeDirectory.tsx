@@ -35,6 +35,7 @@ import {
   isEmployeeRoleNameGroupSelected,
 } from '../../utils/employeeRoleDisplay';
 import SignaturePad from '../SignaturePad';
+import SettingsEmployeeAccess from './SettingsEmployeeAccess';
 import { currentPracticeId } from '../../utils/practiceIdFromToken';
 
 const DEFAULT_PRACTICE_ID = currentPracticeId();
@@ -129,7 +130,8 @@ export type EmployeeHubSection =
   | 'types'
   | 'zones'
   | 'goals'
-  | 'photo';
+  | 'photo'
+  | 'access';
 
 const HUB_SECTIONS: { id: EmployeeHubSection; label: string }[] = [
   { id: 'profile', label: 'Profile' },
@@ -137,6 +139,7 @@ const HUB_SECTIONS: { id: EmployeeHubSection; label: string }[] = [
   { id: 'types', label: 'Appointment types' },
   { id: 'goals', label: 'Goals' },
   { id: 'photo', label: 'Photo & signature' },
+  { id: 'access', label: 'Access' },
 ];
 
 type Props = {
@@ -1092,6 +1095,17 @@ export default function SettingsEmployeeDirectory({
                       </p>
                       {signatureEditor}
                     </div>
+                  ) : null}
+                  {section === 'access' && editingId != null ? (
+                    <SettingsEmployeeAccess
+                      employeeId={editingId}
+                      employeeName={
+                        rows
+                          .filter((e) => e.id === editingId)
+                          .map((e) => employeeDisplayName(e))[0]
+                      }
+                      onMessage={onMessage}
+                    />
                   ) : null}
                 </>
               )}

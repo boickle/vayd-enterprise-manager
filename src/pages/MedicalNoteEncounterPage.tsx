@@ -10,6 +10,7 @@ import {
   Receipt,
   Sparkles,
   Square,
+  User,
 } from 'lucide-react';
 import './SoapEncounterPage.css';
 import './MedicalNoteEncounterPage.css';
@@ -574,6 +575,28 @@ export default function MedicalNoteEncounterPage() {
               >
                 {patientName || `Patient #${patientId}`}
               </Link>
+              {clientName.trim() ? (
+                <>
+                  <span className="soap-header-client-sep" aria-hidden>
+                    ·
+                  </span>
+                  {clientId != null ? (
+                    <Link
+                      className="soap-header-client"
+                      to={`/schedule/clients?clientId=${encodeURIComponent(String(clientId))}`}
+                      title="Open client record"
+                    >
+                      <User size={14} aria-hidden />
+                      {clientName.trim()}
+                    </Link>
+                  ) : (
+                    <span className="soap-header-client">
+                      <User size={14} aria-hidden />
+                      {clientName.trim()}
+                    </span>
+                  )}
+                </>
+              ) : null}
             </h1>
             <span className="soap-header-sub">
               {examDayLabel(appointmentStart)}

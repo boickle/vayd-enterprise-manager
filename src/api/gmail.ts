@@ -120,6 +120,9 @@ export const GMAIL_MESSAGES_PAGE_SIZE = 50;
 /** While the inbox is open, refetch from Gmail API on this interval (fallback if WebSocket/push lag). */
 export const GMAIL_INBOX_POLL_MS = 30_000;
 
+/** Timer / window-focus refreshes are skipped when the inbox refreshed this recently. */
+export const GMAIL_INBOX_MIN_REFRESH_MS = 20_000;
+
 /** Pause polling after Google returns 429 / quota so we do not keep flipping the list. */
 export const GMAIL_QUOTA_BACKOFF_MS = 90_000;
 
@@ -315,6 +318,9 @@ function gmailErrorMessage(err: unknown): string {
     if (data?.code === 'GMAIL_ACCESS_DENIED') {
       return data.message ?? 'You do not have access to the practice inbox.';
     }
+    if (data?.message && /requested entity was not found/i.test(String(data.message))) {
+      return 'That email is no longer in this inbox — it may have been deleted or moved. Refresh to update the list.';
+    }
     if (data?.message) return String(data.message);
   }
   if (err instanceof Error) return err.message;
@@ -322,6 +328,127 @@ function gmailErrorMessage(err: unknown): string {
 }
 
 export { gmailErrorMessage };
+
+export type GmailRecordPatient = {
+  id: number;
+  name: string;
+  species: string | null;
+  isActive: boolean;
+  status: string | null;
+};
+
+export type GmailRecordClientMatch = {
+  clientId: number;
+  name: string;
+  email: string | null;
+  /** Thread address that matched; null when staff searched for the client. */
+  matchedEmail: string | null;
+  /** The client's main and second email, lowercased. */
+  emails: string[];
+  patients: GmailRecordPatient[];
+};
+
+export type GmailRecordMessage = {
+  id: string;
+  from: string;
+  to: string;
+  date: string;
+  subject: string;
+  snippet: string;
+  /** Non-practice addresses on From/To/Cc; empty for staff-only emails. */
+  participants: string[];
+  /** Clients whose chart entry for this thread already includes this email. */
+  savedClientIds: number[];
+};
+
+/** The one chart entry this thread has on a client. */
+export type GmailRecordSavedEntry = {
+  clientId: number;
+  clientName: string;
+  messageIds: string[];
+  patients: { id: number; name: string; onMedicalRecord: boolean }[];
+  clientLevel: boolean;
+  lastUpdated: string;
+};
+
+export type GmailRecordContext = {
+  messages: GmailRecordMessage[];
+  participantEmails: string[];
+  matches: GmailRecordClientMatch[];
+  saved: GmailRecordSavedEntry[];
+};
+
+export type GmailRecordSaveResult = {
+  addedEmails: number;
+  addedPatients: number;
+  totalEmails: number;
+};
+
+const clientMatchCache = new Map<string, Promise<GmailRecordClientMatch[]>>();
+
+/** POST /gmail/client-matches — clients (with pets) whose email is one of `emails`. */
+export function fetchGmailClientMatches(
+  practiceId: number,
+  emails: string[],
+): Promise<GmailRecordClientMatch[]> {
+  const unique = [...new Set(emails.map((e) => e.trim().toLowerCase()).filter(Boolean))].sort();
+  if (!unique.length) return Promise.resolve([]);
+  const key = `${practiceId}:${unique.join(',')}`;
+  const cached = clientMatchCache.get(key);
+  if (cached) return cached;
+  const promise = http
+    .post<GmailRecordClientMatch[]>('/gmail/client-matches', { practiceId, emails: unique })
+    .then(({ data }) => (Array.isArray(data) ? data : []))
+    .catch((e) => {
+      clientMatchCache.delete(key);
+      throw e;
+    });
+  clientMatchCache.set(key, promise);
+  return promise;
+}
+
+/** Forget cached matches, e.g. after a client's email is edited. */
+export function clearGmailClientMatchCache(): void {
+  clientMatchCache.clear();
+}
+
+/** GET /gmail/threads/:threadId/record — thread messages plus clients matched by email. */
+export async function fetchGmailRecordContext(opts: {
+  mailbox: string;
+  threadId: string;
+  practiceId: number;
+  clientId?: number | null;
+}): Promise<GmailRecordContext> {
+  const { data } = await http.get<GmailRecordContext>(
+    `/gmail/threads/${encodeURIComponent(opts.threadId)}/record`,
+    {
+      params: {
+        mailbox: opts.mailbox,
+        practiceId: opts.practiceId,
+        ...(opts.clientId ? { clientId: opts.clientId } : {}),
+      },
+    },
+  );
+  return data;
+}
+
+/** POST /gmail/threads/:threadId/record — save chosen messages to a client and its patients. */
+export async function saveGmailThreadToRecord(opts: {
+  mailbox: string;
+  threadId: string;
+  practiceId: number;
+  messageIds: string[];
+  clientId: number;
+  patientIds: number[];
+  includeOnMedicalRecord: boolean;
+}): Promise<GmailRecordSaveResult> {
+  const { threadId, ...body } = opts;
+  const { data } = await http.post<GmailRecordSaveResult>(
+    `/gmail/threads/${encodeURIComponent(threadId)}/record`,
+    body,
+  );
+  return data;
+}
 
 export async function fetchGmailAccess(): Promise<boolean> {
   const { data } = await http.get<{ allowed: boolean }>('/gmail/access');

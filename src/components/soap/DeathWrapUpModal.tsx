@@ -67,7 +67,7 @@ function PetActions({
             {preview.memberships.map((row) => (
               <li key={row.membershipId}>
                 <strong>{row.planName}</strong>
-                <span>{membershipCancelMoneyLabel(row, kind)}</span>
+                <span>{membershipCancelMoneyLabel(row, kind, preview)}</span>
               </li>
             ))}
           </ul>

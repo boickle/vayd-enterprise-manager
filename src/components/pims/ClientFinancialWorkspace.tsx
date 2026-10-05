@@ -34,9 +34,16 @@ import {
   type VisitEstimate,
 } from '../../api/visitEstimates';
 import EstimateEditorModal from '../estimates/EstimateEditorModal';
+import { useCan } from '../../permissions/PermissionContext';
+import {
+  LineProviderChangeDialog,
+  PostedPaymentEditDialog,
+} from './PostCloseCorrections';
 import {
   addCounterInvoiceLine,
   addVisitTender,
+  changeInvoiceLineProvider,
+  editVisitTender,
   deleteOrder,
   adoptEvetInvoice,
   createClientPayLink,
@@ -1324,6 +1331,34 @@ export default function ClientFinancialWorkspace({
     const staff = staffById.get(id);
     return shortProviderName(staffName(staff, id), staff?.firstName, staff?.lastName);
   };
+
+  const mayVoidInvoice = useCan('invoice.void');
+  const mayReopenInvoice = useCan('invoice.reopen');
+  const canVoidPayment = useCan('payment.void');
+  const canRefundPayment = useCan('payment.refund');
+  const canChangeProviderAfterClose = useCan('invoice.line.provider.change');
+  const canEditPostedPayment = useCan('payment.posted.edit');
+  const [providerChangeLine, setProviderChangeLine] = useState<VisitInvoiceLine | null>(null);
+  const [paymentEditTender, setPaymentEditTender] = useState<VisitInvoiceTender | null>(null);
+  const [correctionBusy, setCorrectionBusy] = useState(false);
+  const [correctionError, setCorrectionError] = useState<string | null>(null);
+
+  async function applyCorrection(run: () => Promise<VisitInvoice>, done: string) {
+    setCorrectionBusy(true);
+    setCorrectionError(null);
+    try {
+      const next = await run();
+      setSelected(next);
+      await refreshList(next.id);
+      setProviderChangeLine(null);
+      setPaymentEditTender(null);
+      setNote(done);
+    } catch (e: unknown) {
+      setCorrectionError(apiErr(e));
+    } finally {
+      setCorrectionBusy(false);
+    }
+  }
 
   const petName = (id: number | null | undefined, fallbackName?: string | null) => {
     if (fallbackName && !isPlaceholderPetName(fallbackName)) return fallbackName;
@@ -2626,6 +2661,7 @@ export default function ClientFinancialWorkspace({
     };
   }, [clientId]);
   const canUnlock =
+    mayReopenInvoice &&
     selected &&
     !invoiceGone &&
     !isSoapInvoice &&
@@ -2639,7 +2675,12 @@ export default function ClientFinancialWorkspace({
     liveTenders.length === 0 &&
     Number(selected.amountPaid) <= 0.005;
   const canVoidInvoice =
-    selected && !invoiceGone && selected.status !== 'void' && !isSoapInvoice && !canDiscard;
+    mayVoidInvoice &&
+    selected &&
+    !invoiceGone &&
+    selected.status !== 'void' &&
+    !isSoapInvoice &&
+    !canDiscard;
 
   async function applyPrefill(invoice: VisitInvoice, refill: FinancialRefillPrefill) {
     const already = activeLines(invoice).some(
@@ -5153,10 +5194,27 @@ export default function ClientFinancialWorkspace({
                                   </option>
                                 ) : null}
                               </select>
-                            ) : line.providerEmployeeId != null ? (
-                              providerIdLabel(line.providerEmployeeId)
                             ) : (
-                              ''
+                              <>
+                                {line.providerEmployeeId != null
+                                  ? providerIdLabel(line.providerEmployeeId)
+                                  : ''}
+                                {canChangeProviderAfterClose &&
+                                (selected.status === 'finalized' || selected.status === 'paid') ? (
+                                  <button
+                                    type="button"
+                                    className="btn-link client-fin__no-print"
+                                    style={{ marginLeft: 6, fontSize: 12 }}
+                                    disabled={busy}
+                                    onClick={() => {
+                                      setCorrectionError(null);
+                                      setProviderChangeLine(line);
+                                    }}
+                                  >
+                                    Change
+                                  </button>
+                                ) : null}
+                              </>
                             )}
                           </td>
                           <td className="client-fin__col-qty client-fin__num">
@@ -5872,18 +5930,20 @@ export default function ClientFinancialWorkspace({
                             ? `Refunded ${money(Number(t.refundedAmount))} after post-visit sign-up`
                             : null,
                         onVoid:
-                          selected.status !== 'void' && !tenderCanStripeRefund(t)
+                          canVoidPayment && selected.status !== 'void' && !tenderCanStripeRefund(t)
                             ? () => {
                                 void voidPayment(t.id);
                               }
                             : undefined,
                         onRefund:
-                          selected.status !== 'void' && tenderCanStripeRefund(t)
+                          canRefundPayment && selected.status !== 'void' && tenderCanStripeRefund(t)
                             ? () => {
                                 openRefund(t.id);
                               }
                             : undefined,
                       };
+                      const canEditThisPayment =
+                        canEditPostedPayment && selected.status !== 'void';
                       const showRefundPanel = refundDraft?.tenderId === t.id;
                       const peerTotal = (refundDraft?.peers ?? []).reduce(
                         (s, p) => s + p.refundable,
@@ -5908,6 +5968,19 @@ export default function ClientFinancialWorkspace({
                                 onClick={face.onRefund}
                               >
                                 Refund
+                              </button>
+                            ) : null}
+                            {canEditThisPayment ? (
+                              <button
+                                type="button"
+                                className="client-fin__btn-ghost client-fin__no-print"
+                                disabled={busy}
+                                onClick={() => {
+                                  setCorrectionError(null);
+                                  setPaymentEditTender(t);
+                                }}
+                              >
+                                Edit
                               </button>
                             ) : null}
                             {face.onVoid ? (
@@ -6601,6 +6674,52 @@ export default function ClientFinancialWorkspace({
           }}
         />
       ) : null}
+      <LineProviderChangeDialog
+        open={providerChangeLine != null}
+        lineDescription={providerChangeLine?.description ?? ''}
+        currentProviderId={providerChangeLine?.providerEmployeeId ?? null}
+        providers={providerOptions.map((emp) => ({
+          id: Number(emp.id),
+          label: providerChoiceLabel(emp),
+        }))}
+        busy={correctionBusy}
+        error={correctionError}
+        onCancel={() => setProviderChangeLine(null)}
+        onConfirm={(providerEmployeeId, reason) => {
+          const line = providerChangeLine;
+          if (!selected || !line) return;
+          void applyCorrection(
+            () =>
+              changeInvoiceLineProvider(selected.id, line.id, { providerEmployeeId, reason }),
+            `Provider changed on ${line.description}.`,
+          );
+        }}
+      />
+      <PostedPaymentEditDialog
+        open={paymentEditTender != null}
+        amountLabel={money(Number(paymentEditTender?.amount) || 0)}
+        current={{
+          method: paymentEditTender?.method ?? 'other',
+          paymentTypeName: paymentEditTender?.paymentTypeName ?? null,
+          checkNumber: paymentEditTender?.checkNumber ?? null,
+        }}
+        stripeProcessed={Boolean(paymentEditTender?.stripePaymentIntentId?.trim())}
+        choices={paymentTypes.map((r) => ({
+          name: r.name,
+          method: tenderMethodFromOption(r.optionType, r.name),
+        }))}
+        busy={correctionBusy}
+        error={correctionError}
+        onCancel={() => setPaymentEditTender(null)}
+        onConfirm={(next) => {
+          const tender = paymentEditTender;
+          if (!selected || !tender) return;
+          void applyCorrection(
+            () => editVisitTender(selected.id, tender.id, next),
+            'Payment updated.',
+          );
+        }}
+      />
     </div>
   );
 }

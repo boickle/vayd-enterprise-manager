@@ -29,6 +29,7 @@ export async function searchPatients(params?: {
   practiceId?: string | number;
   activeOnly?: boolean;
   clientId?: string | number;
+  limit?: number;
 }) {
   return http.get('/patients/search', { params });
 }
@@ -73,6 +74,7 @@ async function fetchPatientsSearchByName(
       ...(opts?.clientId != null ? { clientId: String(opts.clientId) } : {}),
       ...(opts?.practiceId != null ? { practiceId: opts.practiceId } : {}),
       activeOnly,
+      limit: 40,
     },
   });
   const raw = extractPatientListFromSearchResponse(data);
@@ -83,7 +85,7 @@ async function fetchPatientsForClients(
   clients: ClientSearchRow[],
   petNameHint: string | null,
   opts?: PatientSearchFetchOpts,
-  maxClients = 8
+  maxClients = 3
 ): Promise<PatientSearchRow[]> {
   const slice = clients.slice(0, maxClients);
   if (slice.length === 0) return [];
@@ -103,7 +105,7 @@ async function fetchPatientsViaClientNameSearch(
   tokens: string[],
   petNameHint: string | null,
   opts?: PatientSearchFetchOpts,
-  maxClients = 8
+  maxClients = 3
 ): Promise<PatientSearchRow[]> {
   const includeInactive = opts?.activeOnly === false;
   const clients = await searchClientsStaff(clientQuery, { includeInactive });

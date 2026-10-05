@@ -12,6 +12,7 @@ import {
   Receipt,
   SlidersHorizontal,
   Mic,
+  User,
   Users,
 } from 'lucide-react';
 import './SoapEncounterPage.css';
@@ -1559,6 +1560,9 @@ export default function SoapEncounterPage() {
   );
 
   const clientQuery = clientIdParam ? `?clientId=${encodeURIComponent(clientIdParam)}` : '';
+  const headerClientId =
+    encounter?.clientId ??
+    (clientIdParam && Number.isFinite(Number(clientIdParam)) ? Number(clientIdParam) : null);
 
   useEffect(() => {
     if (!encounter?.id) return;
@@ -1700,6 +1704,28 @@ export default function SoapEncounterPage() {
               >
                 {patientName || `Patient #${patientId}`}
               </Link>
+              {clientName.trim() ? (
+                <>
+                  <span className="soap-header-client-sep" aria-hidden>
+                    ·
+                  </span>
+                  {headerClientId != null ? (
+                    <Link
+                      className="soap-header-client"
+                      to={`/schedule/clients?clientId=${encodeURIComponent(String(headerClientId))}`}
+                      title="Open client record"
+                    >
+                      <User size={14} aria-hidden />
+                      {clientName.trim()}
+                    </Link>
+                  ) : (
+                    <span className="soap-header-client">
+                      <User size={14} aria-hidden />
+                      {clientName.trim()}
+                    </span>
+                  )}
+                </>
+              ) : null}
             </h1>
             {signalment.length > 0 && (
               <span

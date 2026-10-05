@@ -15,7 +15,9 @@ import {
   patchStoreSubscription,
   type StoreStaffSubscription,
 } from '../api/onlineStore';
-import { VISIT_WORKFLOW_PRACTICE_ID } from '../api/visitWorkflow';
+import { getEstimateForAppointment } from '../api/visitEstimates';
+import { VISIT_WORKFLOW_PRACTICE_ID, getInvoiceByAppointment } from '../api/visitWorkflow';
+import { membershipCancelLineDescription } from './membershipCancelEstimateLine';
 import {
   cancelEuthanasiaFutureAppointments,
   findFutureAppointmentsForPatients,
@@ -35,6 +37,10 @@ export type DeathWrapUpPreview = {
   autoships: StoreStaffSubscription[];
   reminders: UnscheduledReminder[];
   futureAppointments: EuthanasiaFutureAppointmentRow[];
+  /** Memberships whose cancel charge or credit is already a line on this visit's estimate or invoice. */
+  moneyOnVisitMembershipIds: number[];
+  /** True when the visit's estimate or invoice could not be loaded, so we can't tell. */
+  visitMoneyCheckFailed: boolean;
 };
 
 export type DeathWrapUpAcceptResult = {
@@ -88,18 +94,35 @@ export function deathWrapUpHouseholdHasWork(
   return Boolean(previews?.some((preview) => deathWrapUpHasWork(preview)));
 }
 
+export function membershipCancelMoneyOnVisit(
+  wrapUp: DeathWrapUpPreview,
+  membershipId: number,
+  kind: DeathWrapUpKind = 'invoice'
+): boolean {
+  return kind === 'invoice' || wrapUp.moneyOnVisitMembershipIds.includes(membershipId);
+}
+
 export function membershipCancelMoneyLabel(
   preview: MembershipCancelPreview,
   kind: DeathWrapUpKind = 'invoice',
+  wrapUp?: DeathWrapUpPreview
 ): string {
-  if (kind === 'invoice') {
+  const onVisit = wrapUp
+    ? membershipCancelMoneyOnVisit(wrapUp, preview.membershipId, kind)
+    : kind === 'invoice';
+  const hasMoney = preview.chargeAmount > 0.009 || preview.refundAmount > 0.009;
+  if (onVisit) {
+    const where = kind === 'invoice' ? 'this invoice' : "this visit's estimate";
     if (preview.chargeAmount > 0.009) {
-      return `${money(preview.chargeAmount)} already on this invoice (amount owed)`;
+      return `${money(preview.chargeAmount)} already on ${where} (amount owed)`;
     }
     if (preview.refundAmount > 0.009) {
-      return `${money(preview.refundAmount)} already on this invoice (credit)`;
+      return `${money(preview.refundAmount)} already on ${where} (credit)`;
     }
     return 'No extra charge or credit';
+  }
+  if (hasMoney && wrapUp?.visitMoneyCheckFailed) {
+    return "Couldn't check this visit's estimate. Close and try again before accepting";
   }
   if (preview.chargeAmount > 0.009) {
     return `Will charge ${money(preview.chargeAmount)} on cancel`;
@@ -147,6 +170,11 @@ async function previewOnePatient(
     }
   }
 
+  const visitMoney =
+    membershipPreviews.length > 0 && excludeAppointmentIds.length > 0
+      ? await membershipCancelLinesOnVisit(excludeAppointmentIds[0], patientId)
+      : { descriptions: new Set<string>(), failed: false };
+
   return {
     patientId,
     patientName,
@@ -158,7 +186,48 @@ async function previewOnePatient(
       (row) => Number(row.patient?.id ?? 0) === Number(patientId) || !row.patient,
     ),
     futureAppointments,
+    moneyOnVisitMembershipIds: membershipPreviews
+      .filter((row) => visitMoney.descriptions.has(membershipCancelLineDescription(row.planName)))
+      .map((row) => row.membershipId),
+    visitMoneyCheckFailed: visitMoney.failed,
   };
+}
+
+/**
+ * Descriptions of "Membership cancellation — …" lines for this pet on the visit's live
+ * estimate or its non-void invoice. Estimate lines are copied to the invoice and captured
+ * with the authorization, so cancelling with money as well would bill the owner twice.
+ */
+async function membershipCancelLinesOnVisit(
+  appointmentId: number,
+  patientId: number
+): Promise<{ descriptions: Set<string>; failed: boolean }> {
+  const descriptions = new Set<string>();
+  const forPet = (
+    linePatientId: number | null | undefined,
+    docPatientId: number | null | undefined
+  ) => Number(linePatientId ?? docPatientId ?? patientId) === Number(patientId);
+  try {
+    const [estimate, invoice] = await Promise.all([
+      getEstimateForAppointment(appointmentId),
+      getInvoiceByAppointment(appointmentId),
+    ]);
+    for (const line of estimate?.lines ?? []) {
+      if (forPet(line.patientId, estimate?.patientId)) descriptions.add(line.description.trim());
+    }
+    if (invoice && invoice.status !== 'void') {
+      const returned = new Set(
+        (invoice.lines ?? []).map((line) => line.returnOfLineId).filter(Boolean)
+      );
+      for (const line of invoice.lines ?? []) {
+        if (line.returnOfLineId || returned.has(line.id)) continue;
+        if (forPet(line.patientId, invoice.patientId)) descriptions.add(line.description.trim());
+      }
+    }
+    return { descriptions, failed: false };
+  } catch {
+    return { descriptions, failed: true };
+  }
 }
 
 export async function previewDeathWrapUp(args: {
@@ -223,14 +292,22 @@ export async function acceptDeathWrapUp(
   args?: { practiceId?: number; kind?: DeathWrapUpKind },
 ): Promise<DeathWrapUpAcceptResult> {
   const practiceId = args?.practiceId ?? VISIT_WORKFLOW_PRACTICE_ID;
-  const skipMoney = (args?.kind ?? 'invoice') === 'invoice';
-  const reason = skipMoney ? DEATH_WRAP_UP_REASON : INACTIVATE_WRAP_UP_REASON;
+  const kind = args?.kind ?? 'invoice';
+  const reason = kind === 'invoice' ? DEATH_WRAP_UP_REASON : INACTIVATE_WRAP_UP_REASON;
   const errors: string[] = [];
   let membershipsCanceled = 0;
   let autoshipsCanceled = 0;
   let remindersCanceled = 0;
 
   for (const membership of preview.memberships) {
+    const skipMoney = membershipCancelMoneyOnVisit(preview, membership.membershipId, kind);
+    const hasMoney = membership.chargeAmount > 0.009 || membership.refundAmount > 0.009;
+    if (!skipMoney && hasMoney && preview.visitMoneyCheckFailed) {
+      errors.push(
+        `Could not check whether ${membership.planName} is already on this visit's estimate, so it was not cancelled. Try again.`
+      );
+      continue;
+    }
     try {
       await cancelMembership(membership.membershipId, reason, {
         chargeAmount: membership.chargeAmount,

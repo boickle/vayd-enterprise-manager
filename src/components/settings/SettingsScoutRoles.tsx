@@ -18,6 +18,8 @@ import {
   type PracticeBranch,
 } from '../../api/branchInventory';
 import { appointmentTypeIsArchived } from '../../utils/appointmentTypeSettings';
+import { ROLE_LABELS } from '../../api/permissions';
+import RolePermissionsEditor from './RolePermissionsEditor';
 
 function extractErr(err: unknown): string {
   const e = err as { response?: { data?: { message?: string } }; message?: string };
@@ -79,6 +81,8 @@ export default function SettingsScoutRoles({
     () => roles.find((r) => r.id === selectedRoleId) ?? null,
     [roles, selectedRoleId]
   );
+
+  const isBuiltInRole = Boolean(selectedRole?.slug && selectedRole.slug in ROLE_LABELS);
 
   const activeEmployees = useMemo(
     () =>
@@ -451,6 +455,12 @@ export default function SettingsScoutRoles({
                       value={editSlug}
                       onChange={(e) => setEditSlug(e.target.value)}
                       placeholder="auto from name"
+                      readOnly={isBuiltInRole}
+                      title={
+                        isBuiltInRole
+                          ? 'Built-in roles keep their slug — permissions are attached to it.'
+                          : undefined
+                      }
                     />
                   </label>
                 </div>
@@ -564,6 +574,13 @@ export default function SettingsScoutRoles({
                   )}
                 </div>
               </div>
+
+              <RolePermissionsEditor
+                key={selectedRole.id}
+                practiceId={practiceId}
+                role={selectedRole}
+                onMessage={onMessage}
+              />
 
               <div className="settings-card">
                 <button
