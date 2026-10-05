@@ -76,16 +76,24 @@ fi
 # Build
 # ============================
 if [[ "$SKIP_BUILD" != "true" ]]; then
+  env_file=".env.production.local"
+  if [[ "${BUILD_MODE:-}" == "qa" ]]; then
+    env_file=".env.qa.local"
+  fi
   if [[ -n "${VITE_API_BASE_URL:-}" ]]; then
     say "API URL for this build: $VITE_API_BASE_URL"
-  elif [[ -f .env.production.local ]]; then
-    say "API URL for this build comes from .env.production.local"
+  elif [[ -f "$env_file" ]]; then
+    say "API URL for this build comes from $env_file"
   else
-    die "Set VITE_API_BASE_URL or add .env.production.local before building"
+    die "Set VITE_API_BASE_URL or add $env_file before building"
   fi
   say "Installing deps & building..."
   npm ci --prefer-offline || npm install
-  npm run build
+  if [[ -n "${BUILD_MODE:-}" ]]; then
+    npm run build -- --mode "$BUILD_MODE"
+  else
+    npm run build
+  fi
 fi
 [[ -d "$BUILD_DIR" ]] || die "Build dir not found: $BUILD_DIR"
 
