@@ -1303,6 +1303,7 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
         const meta: Record<string, any> = {
           petId: pet.id,
           petName: pet.name ?? '',
+          ...(petDetails.kind ? { petSpecies: petDetails.kind } : {}),
           agreementSignature: agreementSignature.trim(),
           billingPreference: billingKey,
           addOns,
