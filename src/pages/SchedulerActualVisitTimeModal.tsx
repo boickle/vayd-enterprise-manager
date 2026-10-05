@@ -905,6 +905,9 @@ export function SchedulerActualVisitTimeModal({
     if (!forwardInterval) {
       throw new Error('Select how far out to forward book (number and days, weeks, or months).');
     }
+    if (!bookingNotes.trim()) {
+      throw new Error('Enter a forward booking note before saving.');
+    }
     const visitsToBook =
       householdVisits.length > 1
         ? householdVisits.filter((visit) => selectedHouseholdPatientIds.has(visit.patientId))
@@ -1258,6 +1261,10 @@ export function SchedulerActualVisitTimeModal({
       setError(
         'Select how far out to forward book (number and days, weeks, or months) before saving.'
       );
+      return false;
+    }
+    if (!bookingNotes.trim()) {
+      setError('Enter a forward booking note before saving.');
       return false;
     }
     return true;
