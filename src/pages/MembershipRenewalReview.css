@@ -127,3 +127,126 @@
   opacity: 0.55;
   cursor: not-allowed;
 }
+
+.renewal-review__move {
+  margin: 18px 0;
+  padding: 18px;
+  border: 1px solid #d5e4db;
+  border-radius: 14px;
+  background: #f7fbf8;
+  display: grid;
+  gap: 14px;
+}
+
+.renewal-review__move label {
+  display: grid;
+  gap: 6px;
+  font-weight: 600;
+}
+
+.renewal-review__move input:not([type='radio']) {
+  padding: 10px 12px;
+  border: 1px solid #c9d8cf;
+  border-radius: 8px;
+  font: inherit;
+}
+
+.renewal-review__plans {
+  border: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.renewal-review__plans legend {
+  font-weight: 650;
+  margin-bottom: 6px;
+}
+
+.renewal-review__move .renewal-review__plan {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: start;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #d5e4db;
+  border-radius: 10px;
+  background: #fff;
+  font-weight: 400;
+  cursor: pointer;
+}
+
+.renewal-review__plan.is-selected {
+  border-color: #4fb128;
+  box-shadow: 0 0 0 1px #4fb128;
+}
+
+.renewal-review__plan-summary {
+  display: block;
+  font-size: 14px;
+}
+
+.renewal-review__plan-price {
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.renewal-review__badge {
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #e3f4da;
+  color: #2f6b1a;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.renewal-review__interval {
+  display: flex;
+  gap: 8px;
+}
+
+.renewal-review__interval button {
+  flex: 1;
+  padding: 10px;
+  border: 1px solid #c9d8cf;
+  border-radius: 8px;
+  background: #fff;
+  font: inherit;
+  cursor: pointer;
+}
+
+.renewal-review__interval button.is-selected {
+  border-color: #4fb128;
+  background: #e3f4da;
+  font-weight: 650;
+}
+
+.renewal-review__interval button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.renewal-review__card-input {
+  padding: 12px;
+  border: 1px solid #c9d8cf;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.renewal-review__primary {
+  padding: 12px 18px;
+  border: none;
+  border-radius: 8px;
+  background: #4fb128;
+  color: #fff;
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.renewal-review__primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
