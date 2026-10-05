@@ -3,8 +3,10 @@ import { useSearchParams } from 'react-router';
 import {
   fetchMembershipRenewalPreview,
   requestMembershipRenewalCancel,
+  type MembershipRenewalCardResult,
   type MembershipRenewalPreview,
 } from '../api/memberships';
+import MembershipRenewalCard from './MembershipRenewalCard';
 import './MembershipRenewalReview.css';
 
 function money(value: number | null): string {
@@ -50,6 +52,7 @@ export default function MembershipRenewalReview() {
   const [submitting, setSubmitting] = useState(false);
   const [cancelError, setCancelError] = useState<string | null>(null);
   const [canceled, setCanceled] = useState(false);
+  const [cardSaved, setCardSaved] = useState<MembershipRenewalCardResult | null>(null);
 
   useEffect(() => {
     if (!token) {
@@ -117,50 +120,88 @@ export default function MembershipRenewalReview() {
       {loading ? <p className="renewal-review__muted">Loading your membership…</p> : null}
       {loadError ? <p className="renewal-review__error">{loadError}</p> : null}
 
-      {preview && !canceled ? (
+      {preview && cardSaved ? (
+        <>
+          <h1>You&apos;re all set</h1>
+          <p>
+            Thank you! {preview.petName}&apos;s membership continues on{' '}
+            <strong>{cardSaved.planName}</strong>
+            {money(cardSaved.price)
+              ? ` at ${money(cardSaved.price)} per ${
+                  cardSaved.billingInterval === 'annual' ? 'year' : 'month'
+                }`
+              : ''}
+            . Your first charge on the new system is on{' '}
+            <strong>{formatDay(cardSaved.firstChargeDate)}</strong>.
+          </p>
+          <p className="renewal-review__muted">
+            We&apos;ll stop your old billing so you are not charged twice. You will get a receipt
+            after each charge.
+          </p>
+        </>
+      ) : null}
+
+      {preview && !canceled && !cardSaved ? (
         <>
           <h1>Review {preview.petName}&apos;s membership</h1>
           <p>
             Hi {preview.clientFirstName || 'there'}. This membership year ends on{' '}
-            <strong>{formatDay(preview.termEnd)}</strong>. Unless you cancel, it renews
-            automatically.
+            <strong>{formatDay(preview.termEnd)}</strong>.
+            {preview.needsCard ? '' : ' Unless you cancel, it renews automatically.'}
           </p>
 
-          <section className="renewal-review__card">
-            <dl>
-              <div>
-                <dt>Current plan</dt>
-                <dd>{preview.currentPlanName}</dd>
-              </div>
-              <div>
-                <dt>Renews as</dt>
-                <dd>{preview.nextPlanName}</dd>
-              </div>
-              {priceLine ? (
+          {preview.needsCard ? (
+            <MembershipRenewalCard
+              token={token}
+              preview={preview}
+              money={money}
+              formatDay={formatDay}
+              extractErr={extractErr}
+              onSaved={setCardSaved}
+            />
+          ) : (
+            <section className="renewal-review__card">
+              <dl>
                 <div>
-                  <dt>Price at renewal</dt>
-                  <dd>{priceLine}</dd>
+                  <dt>Current plan</dt>
+                  <dd>{preview.currentPlanName}</dd>
                 </div>
-              ) : null}
-            </dl>
-            {preview.reason === 'aged_out' ? (
-              <p className="renewal-review__muted">
-                {preview.petName} will be old enough for {preview.nextPlanName}, so we will move
-                them to that plan at the new price.
-              </p>
-            ) : preview.reason === 'successor' ? (
-              <p className="renewal-review__muted">
-                At renewal {preview.petName} moves from {preview.currentPlanName} to{' '}
-                {preview.nextPlanName}.
-              </p>
-            ) : (
-              <p className="renewal-review__muted">
-                {preview.petName} stays on {preview.nextPlanName}.
-              </p>
-            )}
-          </section>
+                <div>
+                  <dt>Renews as</dt>
+                  <dd>{preview.nextPlanName}</dd>
+                </div>
+                {priceLine ? (
+                  <div>
+                    <dt>Price at renewal</dt>
+                    <dd>{priceLine}</dd>
+                  </div>
+                ) : null}
+              </dl>
+              {preview.reason === 'aged_out' ? (
+                <p className="renewal-review__muted">
+                  {preview.petName} will be old enough for {preview.nextPlanName}, so we will move
+                  them to that plan at the new price.
+                </p>
+              ) : preview.reason === 'chosen' ? (
+                <p className="renewal-review__muted">
+                  You chose {preview.nextPlanName} for next year. It starts at renewal.
+                </p>
+              ) : preview.reason === 'successor' ? (
+                <p className="renewal-review__muted">
+                  At renewal {preview.petName} moves from {preview.currentPlanName} to{' '}
+                  {preview.nextPlanName}.
+                </p>
+              ) : (
+                <p className="renewal-review__muted">
+                  {preview.petName} stays on {preview.nextPlanName}.
+                </p>
+              )}
+            </section>
+          )}
 
-          <p className="renewal-review__stay">You do not need to do anything to stay a member.</p>
+          {preview.needsCard ? null : (
+            <p className="renewal-review__stay">You do not need to do anything to stay a member.</p>
+          )}
 
           {!wantCancel ? (
             <button
@@ -174,9 +215,9 @@ export default function MembershipRenewalReview() {
             <form className="renewal-review__cancel" onSubmit={(e) => void onCancel(e)}>
               <h2>Cancel at the end of this year</h2>
               <p>
-                Coverage continues through {formatDay(preview.termEnd)}. After that, {preview.petName}{' '}
-                loses included exams, labs, and member pricing. This cannot be undone from this
-                page.
+                Coverage continues through {formatDay(preview.termEnd)}. After that,{' '}
+                {preview.petName} loses included exams, labs, and member pricing. This cannot be
+                undone from this page.
               </p>
               <label>
                 Type {preview.petName}&apos;s name

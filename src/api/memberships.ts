@@ -27,10 +27,7 @@ export type ItemCoverage = 'included' | 'copay' | 'percent_off';
  * - `membership_price` — what the member is charged for the line
  * - `custom` — fixed amount in `productionOverride`
  */
-export type ItemProductionBasis =
-  | 'full_price'
-  | 'membership_price'
-  | 'custom';
+export type ItemProductionBasis = 'full_price' | 'membership_price' | 'custom';
 
 /** Sentinel for unlimited allowance — every matching visit gets member pricing. */
 export const UNLIMITED_ALLOWANCE = -1;
@@ -260,10 +257,9 @@ export async function listBundles(opts?: {
 }
 
 export async function getBundle(id: number): Promise<Bundle> {
-  const { data } = await http.get<Bundle>(
-    `/memberships/bundles/${encodeURIComponent(id)}`,
-    { params: { practiceId: currentPracticeId() } },
-  );
+  const { data } = await http.get<Bundle>(`/memberships/bundles/${encodeURIComponent(id)}`, {
+    params: { practiceId: currentPracticeId() },
+  });
   return data;
 }
 
@@ -299,14 +295,14 @@ export type BundleSaleGroupSelection = {
  */
 export async function resolveBundleForSale(
   id: number,
-  selections: BundleSaleGroupSelection[] = [],
+  selections: BundleSaleGroupSelection[] = []
 ): Promise<BundleSaleResolution> {
   const { data } = await http.post<BundleSaleResolution>(
     `/memberships/bundles/${encodeURIComponent(id)}/resolve-for-sale`,
     {
       practiceId: currentPracticeId(),
       selections,
-    },
+    }
   );
   return data;
 }
@@ -314,7 +310,7 @@ export async function resolveBundleForSale(
 export async function createBundle(
   kind: BundleKind,
   fields: BundleFields & { name: string },
-  groups?: BundleGroupInput[],
+  groups?: BundleGroupInput[]
 ): Promise<Bundle> {
   const { data } = await http.post<Bundle>('/memberships/bundles', {
     practiceId: currentPracticeId(),
@@ -335,7 +331,7 @@ export async function updateBundle(
     removeBenefitsDroppedFromPlan?: boolean;
     /** `future` = new enrollments and renewals; `current` = also update live Stripe subscriptions. */
     priceApplyTo?: 'future' | 'current';
-  },
+  }
 ): Promise<Bundle & { propagation?: PropagationResult }> {
   const { data } = await http.patch<Bundle & { propagation?: PropagationResult }>(
     `/memberships/bundles/${encodeURIComponent(id)}`,
@@ -343,14 +339,10 @@ export async function updateBundle(
       practiceId: currentPracticeId(),
       ...fields,
       ...(opts?.groups ? { groups: opts.groups } : {}),
-      ...(opts?.applyToExistingMemberships
-        ? { applyToExistingMemberships: true }
-        : {}),
-      ...(opts?.removeBenefitsDroppedFromPlan
-        ? { removeBenefitsDroppedFromPlan: true }
-        : {}),
+      ...(opts?.applyToExistingMemberships ? { applyToExistingMemberships: true } : {}),
+      ...(opts?.removeBenefitsDroppedFromPlan ? { removeBenefitsDroppedFromPlan: true } : {}),
       ...(opts?.priceApplyTo ? { priceApplyTo: opts.priceApplyTo } : {}),
-    },
+    }
   );
   return data;
 }
@@ -362,20 +354,18 @@ export async function applyBundleToExistingMemberships(
     removeBenefitsDroppedFromPlan?: boolean;
     packageItemIds?: number[];
     removePackageItemIds?: number[];
-  },
+  }
 ): Promise<PropagationResult> {
   const { data } = await http.post<PropagationResult>(
     `/memberships/bundles/${encodeURIComponent(id)}/apply-to-existing`,
     {
       practiceId: currentPracticeId(),
-      ...(opts?.removeBenefitsDroppedFromPlan
-        ? { removeBenefitsDroppedFromPlan: true }
-        : {}),
+      ...(opts?.removeBenefitsDroppedFromPlan ? { removeBenefitsDroppedFromPlan: true } : {}),
       ...(opts?.packageItemIds?.length ? { packageItemIds: opts.packageItemIds } : {}),
       ...(opts?.removePackageItemIds?.length
         ? { removePackageItemIds: opts.removePackageItemIds }
         : {}),
-    },
+    }
   );
   return data;
 }
@@ -386,12 +376,10 @@ export async function archiveBundle(id: number): Promise<void> {
   });
 }
 
-export async function getBundleAudit(
-  id: number,
-): Promise<MembershipAuditEntry[]> {
+export async function getBundleAudit(id: number): Promise<MembershipAuditEntry[]> {
   const { data } = await http.get<MembershipAuditEntry[]>(
     `/memberships/bundles/${encodeURIComponent(id)}/audit`,
-    { params: { practiceId: currentPracticeId() } },
+    { params: { practiceId: currentPracticeId() } }
   );
   return Array.isArray(data) ? data : [];
 }
@@ -403,17 +391,14 @@ export async function listPatientMemberships(opts?: {
   clientId?: number;
   includeInactive?: boolean;
 }): Promise<PatientMembership[]> {
-  const { data } = await http.get<PatientMembership[]>(
-    '/memberships/patient-memberships',
-    {
-      params: {
-        practiceId: currentPracticeId(),
-        ...(opts?.patientId ? { patientId: opts.patientId } : {}),
-        ...(opts?.clientId ? { clientId: opts.clientId } : {}),
-        ...(opts?.includeInactive ? { includeInactive: true } : {}),
-      },
+  const { data } = await http.get<PatientMembership[]>('/memberships/patient-memberships', {
+    params: {
+      practiceId: currentPracticeId(),
+      ...(opts?.patientId ? { patientId: opts.patientId } : {}),
+      ...(opts?.clientId ? { clientId: opts.clientId } : {}),
+      ...(opts?.includeInactive ? { includeInactive: true } : {}),
     },
-  );
+  });
   return Array.isArray(data) ? data : [];
 }
 
@@ -421,34 +406,27 @@ export async function listPatientMemberships(opts?: {
 export async function listMyPatientMemberships(opts?: {
   patientId?: number;
 }): Promise<PatientMembership[]> {
-  const { data } = await http.get<PatientMembership[]>(
-    '/memberships/patient-memberships/mine',
-    {
-      params: {
-        practiceId: currentPracticeId(),
-        ...(opts?.patientId ? { patientId: opts.patientId } : {}),
-      },
+  const { data } = await http.get<PatientMembership[]>('/memberships/patient-memberships/mine', {
+    params: {
+      practiceId: currentPracticeId(),
+      ...(opts?.patientId ? { patientId: opts.patientId } : {}),
     },
-  );
+  });
   return Array.isArray(data) ? data : [];
 }
 
-export async function getPatientMembership(
-  id: number,
-): Promise<PatientMembership> {
+export async function getPatientMembership(id: number): Promise<PatientMembership> {
   const { data } = await http.get<PatientMembership>(
     `/memberships/patient-memberships/${encodeURIComponent(id)}`,
-    { params: { practiceId: currentPracticeId() } },
+    { params: { practiceId: currentPracticeId() } }
   );
   return data;
 }
 
-export async function getPatientMembershipAudit(
-  id: number,
-): Promise<MembershipAuditEntry[]> {
+export async function getPatientMembershipAudit(id: number): Promise<MembershipAuditEntry[]> {
   const { data } = await http.get<MembershipAuditEntry[]>(
     `/memberships/patient-memberships/${encodeURIComponent(id)}/audit`,
-    { params: { practiceId: currentPracticeId() } },
+    { params: { practiceId: currentPracticeId() } }
   );
   return Array.isArray(data) ? data : [];
 }
@@ -468,10 +446,10 @@ export async function createPatientMembership(input: {
   agreementSignedAt?: string;
   agreementText?: string;
 }): Promise<PatientMembership> {
-  const { data } = await http.post<PatientMembership>(
-    '/memberships/patient-memberships',
-    { practiceId: currentPracticeId(), ...input },
-  );
+  const { data } = await http.post<PatientMembership>('/memberships/patient-memberships', {
+    practiceId: currentPracticeId(),
+    ...input,
+  });
   return data;
 }
 
@@ -487,11 +465,11 @@ export async function addMembershipItem(
     percentOff?: number | null;
     groupId?: number | null;
     note?: string | null;
-  },
+  }
 ): Promise<PatientMembership> {
   const { data } = await http.post<PatientMembership>(
     `/memberships/patient-memberships/${encodeURIComponent(membershipId)}/items`,
-    { practiceId: currentPracticeId(), ...input },
+    { practiceId: currentPracticeId(), ...input }
   );
   return data;
 }
@@ -505,11 +483,11 @@ export async function updateMembershipItem(
     price?: number | null;
     percentOff?: number | null;
     note?: string | null;
-  },
+  }
 ): Promise<PatientMembership> {
   const { data } = await http.patch<PatientMembership>(
     `/memberships/patient-memberships/${encodeURIComponent(membershipId)}/items/${encodeURIComponent(itemId)}`,
-    { practiceId: currentPracticeId(), ...input },
+    { practiceId: currentPracticeId(), ...input }
   );
   return data;
 }
@@ -517,7 +495,7 @@ export async function updateMembershipItem(
 export async function removeMembershipItem(
   membershipId: number,
   itemId: number,
-  reason?: string,
+  reason?: string
 ): Promise<void> {
   await http.delete(
     `/memberships/patient-memberships/${encodeURIComponent(membershipId)}/items/${encodeURIComponent(itemId)}`,
@@ -526,7 +504,7 @@ export async function removeMembershipItem(
         practiceId: currentPracticeId(),
         ...(reason?.trim() ? { reason: reason.trim() } : {}),
       },
-    },
+    }
   );
 }
 
@@ -539,11 +517,11 @@ export async function changeMembershipPlan(
     carryOverUsage?: boolean;
     keepCustomItems?: boolean;
     reason?: string | null;
-  },
+  }
 ): Promise<PatientMembership> {
   const { data } = await http.post<PatientMembership>(
     `/memberships/patient-memberships/${encodeURIComponent(membershipId)}/change-plan`,
-    { practiceId: currentPracticeId(), ...input },
+    { practiceId: currentPracticeId(), ...input }
   );
   return data;
 }
@@ -588,11 +566,11 @@ export type MembershipCancelResult = {
 };
 
 export async function previewMembershipCancel(
-  membershipId: number,
+  membershipId: number
 ): Promise<MembershipCancelPreview> {
   const { data } = await http.get<MembershipCancelPreview>(
     `/memberships/patient-memberships/${encodeURIComponent(membershipId)}/cancel-preview`,
-    { params: { practiceId: currentPracticeId() } },
+    { params: { practiceId: currentPracticeId() } }
   );
   return data;
 }
@@ -600,21 +578,17 @@ export async function previewMembershipCancel(
 export async function cancelMembership(
   membershipId: number,
   reason: string,
-  confirm?: { chargeAmount?: number; refundAmount?: number; skipMoney?: boolean },
+  confirm?: { chargeAmount?: number; refundAmount?: number; skipMoney?: boolean }
 ): Promise<MembershipCancelResult> {
   const { data } = await http.post<MembershipCancelResult>(
     `/memberships/patient-memberships/${encodeURIComponent(membershipId)}/cancel`,
     {
       practiceId: currentPracticeId(),
       reason,
-      ...(confirm?.chargeAmount != null
-        ? { confirmChargeAmount: confirm.chargeAmount }
-        : {}),
-      ...(confirm?.refundAmount != null
-        ? { confirmRefundAmount: confirm.refundAmount }
-        : {}),
+      ...(confirm?.chargeAmount != null ? { confirmChargeAmount: confirm.chargeAmount } : {}),
+      ...(confirm?.refundAmount != null ? { confirmRefundAmount: confirm.refundAmount } : {}),
       ...(confirm?.skipMoney ? { skipMoney: true } : {}),
-    },
+    }
   );
   return data;
 }
@@ -756,7 +730,7 @@ export async function previewPostVisitSignup(input: {
 }): Promise<PostVisitSignupPreview> {
   const { data } = await http.post<PostVisitSignupPreview>(
     '/memberships/post-visit-signup/preview',
-    { practiceId: currentPracticeId(), ...input },
+    { practiceId: currentPracticeId(), ...input }
   );
   return data;
 }
@@ -791,7 +765,7 @@ export async function executePostVisitSignup(input: {
 }): Promise<PostVisitSignupResult> {
   const { data } = await http.post<PostVisitSignupResult>(
     '/memberships/post-visit-signup/execute',
-    { practiceId: currentPracticeId(), ...input },
+    { practiceId: currentPracticeId(), ...input }
   );
   return data;
 }
@@ -804,9 +778,32 @@ export type MembershipRenewalPreview = {
   billingInterval: MembershipBillingInterval | null;
   nextPrice: number | null;
   termEnd: string;
-  reason: 'aged_out' | 'successor' | 'same';
+  reason: 'aged_out' | 'successor' | 'same' | 'chosen';
   alreadyCanceling: boolean;
   cancelPhrase: string;
+  /** Still billed through the old (Square) system: ask for a card and plan. */
+  needsCard: boolean;
+  planOptions: MembershipRenewalPlanOption[];
+  recommendedPackageId: number;
+};
+
+export type MembershipRenewalPlanOption = {
+  packageId: number;
+  name: string;
+  summary: string | null;
+  monthlyPrice: number | null;
+  annualPrice: number | null;
+  monthlyAvailable: boolean;
+  annualAvailable: boolean;
+  recommended: boolean;
+};
+
+export type MembershipRenewalCardResult = {
+  ok: true;
+  planName: string;
+  billingInterval: MembershipBillingInterval;
+  price: number | null;
+  firstChargeDate: string;
 };
 
 /** No JWT — the review token is in the query string. */
@@ -816,23 +813,39 @@ const publicMembershipClient = axios.create({
 });
 
 export async function fetchMembershipRenewalPreview(
-  token: string,
+  token: string
 ): Promise<MembershipRenewalPreview> {
   const { data } = await publicMembershipClient.get<MembershipRenewalPreview>(
     '/public/membership-renewal',
-    { params: { token } },
+    { params: { token } }
   );
   return data;
 }
 
 export async function requestMembershipRenewalCancel(
   token: string,
-  body: { petName: string; phrase: string; reason: string; acknowledge: boolean },
+  body: { petName: string; phrase: string; reason: string; acknowledge: boolean }
 ): Promise<{ ok: true; termEnd: string }> {
   const { data } = await publicMembershipClient.post<{ ok: true; termEnd: string }>(
     '/public/membership-renewal/cancel',
     body,
-    { params: { token } },
+    { params: { token } }
+  );
+  return data;
+}
+
+export async function saveMembershipRenewalCard(
+  token: string,
+  body: {
+    packageId: number;
+    billingInterval: MembershipBillingInterval;
+    paymentMethodId: string;
+  }
+): Promise<MembershipRenewalCardResult> {
+  const { data } = await publicMembershipClient.post<MembershipRenewalCardResult>(
+    '/public/membership-renewal/payment-card',
+    body,
+    { params: { token } }
   );
   return data;
 }
