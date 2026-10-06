@@ -30,6 +30,7 @@ import {
   listBundles,
   listPatientMemberships,
   removeMembershipItem,
+  resumeMembershipBenefits,
   updateMembershipItem,
   type Bundle,
   type ItemCoverage,
@@ -273,6 +274,7 @@ export default function PatientMembershipPanel({
   const canEditBenefits = useCan('membership.benefit.override');
   const canCancel = useCan('membership.cancel');
   const canPostVisitSignup = useCan('membership.post_visit.rerate');
+  const canResumeBenefits = useCan('membership.benefits.resume');
   const practiceId = practiceIdProp ?? resolvePracticeIdFromToken(getToken());
   const [open, setOpen] = useState(() => readStaffPatientLayout(userId).membership);
 
@@ -618,6 +620,28 @@ export default function PatientMembershipPanel({
       setEditDraft(null);
     } catch (e) {
       setFormError(apiErrorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function resumeBenefits() {
+    if (!membership) return;
+    const note = await appPrompt({
+      title: 'Resume membership benefits',
+      message:
+        'Member pricing and covered services will work again for this pet. How was the dispute settled? The note is stored on the audit trail.',
+      placeholder: 'e.g. owner withdrew the dispute',
+      confirmLabel: 'Resume benefits',
+    });
+    if (note == null) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await resumeMembershipBenefits(membership.id, note.trim() || null);
+      await load();
+    } catch (e) {
+      setError(apiErrorMessage(e));
     } finally {
       setBusy(false);
     }
@@ -1330,6 +1354,9 @@ export default function PatientMembershipPanel({
                       <PimsBadge tone={membership.status === 'active' ? 'ok' : 'danger'}>
                         {membership.status === 'active' ? 'Active' : 'Inactive'}
                       </PimsBadge>
+                      {membership.benefitsPaused ? (
+                        <PimsBadge tone="danger">Benefits paused</PimsBadge>
+                      ) : null}
                       {customCount > 0 ? (
                         <PimsBadge tone="info">{customCount} added for this pet</PimsBadge>
                       ) : null}
@@ -1400,6 +1427,26 @@ export default function PatientMembershipPanel({
                     ) : null}
                   </div>
                 </div>
+                {membership.benefitsPaused ? (
+                  <div className="pmp-paused" role="status">
+                    <p>
+                      <strong>Benefits paused since {shortDate(membership.benefitsPaused.since)}.</strong>{' '}
+                      {membership.benefitsPaused.reason ?? 'Card dispute'}. Charge this pet at regular
+                      prices; covered services are blocked until the dispute is resolved. Scout resumes
+                      benefits on its own if the practice wins.
+                    </p>
+                    {canResumeBenefits ? (
+                      <button
+                        type="button"
+                        className="pims-detail__btn-secondary"
+                        disabled={busy}
+                        onClick={() => void resumeBenefits()}
+                      >
+                        Resume benefits
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
                 <FactGrid
                   columns={3}
                   rows={[

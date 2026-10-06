@@ -227,6 +227,8 @@ export type PatientMembership = {
   notes: string | null;
   createdByEmployeeId: number | null;
   isScoutManaged: boolean;
+  /** Set while a card dispute is open: no member pricing or covered services. */
+  benefitsPaused: { since: string; reason: string | null } | null;
   groups: MembershipGroup[];
 };
 
@@ -524,6 +526,17 @@ export async function changeMembershipPlan(
   const { data } = await http.post<PatientMembership>(
     `/memberships/patient-memberships/${encodeURIComponent(membershipId)}/change-plan`,
     { practiceId: currentPracticeId(), ...input }
+  );
+  return data;
+}
+
+export async function resumeMembershipBenefits(
+  membershipId: number,
+  note?: string | null
+): Promise<PatientMembership> {
+  const { data } = await http.post<PatientMembership>(
+    `/memberships/patient-memberships/${encodeURIComponent(membershipId)}/resume-benefits`,
+    { practiceId: currentPracticeId(), note: note || undefined }
   );
   return data;
 }

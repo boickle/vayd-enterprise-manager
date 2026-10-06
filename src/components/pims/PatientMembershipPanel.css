@@ -761,6 +761,23 @@
   color: var(--error);
 }
 
+.pmp-paused {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 10px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--error);
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--error);
+}
+
+.pmp-paused p {
+  flex: 1;
+  margin: 0;
+}
+
 /* ---------- Audit ---------- */
 
 .pmp-audit {
