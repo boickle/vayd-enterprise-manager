@@ -33,6 +33,8 @@ import {
   filterCompletedAppointmentRequestPets,
   isAbandonedAppointmentRequestPetStub,
 } from '../utils/appointmentRequestPetCompleteness';
+import { parseAgeStringToYears } from '../utils/membershipAge';
+import PetAgeInput from '../components/PetAgeInput';
 import { appointmentTypeIsCalmingPremed, findCalmingPremedAppointmentType, sortAppointmentTypesForPicker } from '../utils/appointmentTypeSettings';
 import { DEFAULT_PRACTICE_TIMEZONE } from '../utils/practiceTimezone';
 import { formatAutobookDateTimePreferenceDisplay } from '../utils/appointmentRequestDisplay';
@@ -192,6 +194,15 @@ function isManualSchedulingHowSoon(howSoon?: string): boolean {
   if (!howSoon) return false;
   // Emergent and free-text "Other" stay with Client Liaison; urgent + not sure can self-book.
   return EMERGENT_HOW_SOON_VALUES.has(howSoon) || howSoon === 'Other';
+}
+
+/** Membership plans are offered by age, so the answer must be one Scout can read. */
+function petAgeError(age: string | undefined): string | null {
+  if (!age?.trim()) return 'Approximate age or birthday is required';
+  if (parseAgeStringToYears(age) == null) {
+    return 'Enter a number and pick days, weeks, months or years, or enter the birthday';
+  }
+  return null;
 }
 
 function isOtherHowSoon(howSoon?: string): boolean {
@@ -3957,9 +3968,8 @@ export default function AppointmentRequestForm() {
           if (!pet.sex?.trim()) {
             newErrors[`newClientPet.${pet.id}.sex`] = 'Sex is required';
           }
-          if (!pet.age?.trim()) {
-            newErrors[`newClientPet.${pet.id}.age`] = 'Approximate age or birthday is required';
-          }
+          const ageError = petAgeError(pet.age);
+          if (ageError) newErrors[`newClientPet.${pet.id}.age`] = ageError;
           if (!hasHandlingNeedsAnswer(pet)) {
             newErrors[`newClientPet.${pet.id}.handlingNeeds`] = 'Please select at least one option';
           }
@@ -4061,9 +4071,8 @@ export default function AppointmentRequestForm() {
         if (!pet.sex?.trim()) {
           newErrors[`existingClientNewPet.${pet.id}.sex`] = 'Sex is required';
         }
-        if (!pet.age?.trim()) {
-          newErrors[`existingClientNewPet.${pet.id}.age`] = 'Approximate age or birthday is required';
-        }
+        const ageError = petAgeError(pet.age);
+        if (ageError) newErrors[`existingClientNewPet.${pet.id}.age`] = ageError;
         if (!hasHandlingNeedsAnswer(pet)) {
           newErrors[`existingClientNewPet.${pet.id}.handlingNeeds`] = 'Please select at least one option';
         }
@@ -6328,19 +6337,12 @@ export default function AppointmentRequestForm() {
                           <label style={{ display: 'block', marginBottom: newClientLabelMb, fontWeight: 600, color: '#111827', fontSize: '14px' }}>
                             Age <span style={{ color: '#ef4444' }}>*</span>
                           </label>
-                          <input
-                            type="text"
+                          <PetAgeInput
                             value={pet.age || ''}
-                            onChange={(e) => updateNewClientPet(pet.id, 'age', e.target.value)}
-                            placeholder="e.g. 5 years, or DOB if you know it"
-                            title="e.g. 5 years, or DOB if you know it"
-                            style={{
-                              width: '100%',
-                              padding: newClientInputPadding,
-                              border: `1px solid ${errors[`newClientPet.${pet.id}.age`] ? '#ef4444' : '#d1d5db'}`,
-                              borderRadius: newClientInputRadius,
-                              fontSize: '14px',
-                            }}
+                            onChange={(age) => updateNewClientPet(pet.id, 'age', age)}
+                            hasError={!!errors[`newClientPet.${pet.id}.age`]}
+                            padding={newClientInputPadding}
+                            borderRadius={newClientInputRadius}
                           />
                           {errors[`newClientPet.${pet.id}.age`] && (
                             <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>{errors[`newClientPet.${pet.id}.age`]}</div>
@@ -6602,20 +6604,12 @@ export default function AppointmentRequestForm() {
                           </div>
                           <div>
                             <label style={{ display: 'block', marginBottom: '4px', fontSize: '11px', color: '#6b7280', fontWeight: 500 }}>
-                              Age/DOB <span style={{ color: '#ef4444' }}>*</span>
+                              Age <span style={{ color: '#ef4444' }}>*</span>
                             </label>
-                            <input
-                              type="text"
+                            <PetAgeInput
                               value={pet.age || ''}
-                              onChange={(e) => updateNewClientPet(pet.id, 'age', e.target.value)}
-                              placeholder="e.g., 5 years"
-                              style={{
-                                padding: '8px',
-                                border: `1px solid ${errors[`newClientPet.${pet.id}.age`] ? '#ef4444' : '#d1d5db'}`,
-                                borderRadius: '6px',
-                                fontSize: '14px',
-                                width: '100%',
-                              }}
+                              onChange={(age) => updateNewClientPet(pet.id, 'age', age)}
+                              hasError={!!errors[`newClientPet.${pet.id}.age`]}
                             />
                             {errors[`newClientPet.${pet.id}.age`] && (
                               <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
@@ -7898,19 +7892,12 @@ export default function AppointmentRequestForm() {
                             >
                               Age <span style={{ color: '#ef4444' }}>*</span>
                             </label>
-                            <input
-                              type="text"
+                            <PetAgeInput
                               value={pet.age || ''}
-                              onChange={(e) => updateExistingClientNewPet(pet.id, 'age', e.target.value)}
-                              placeholder="e.g. 5 years, or DOB if you know it"
-                              title="e.g. 5 years, or DOB if you know it"
-                              style={{
-                                width: '100%',
-                                padding: ecInputPadding,
-                                border: `1px solid ${errors[`existingClientNewPet.${pet.id}.age`] ? '#ef4444' : '#d1d5db'}`,
-                                borderRadius: ecInputRadius,
-                                fontSize: '14px',
-                              }}
+                              onChange={(age) => updateExistingClientNewPet(pet.id, 'age', age)}
+                              hasError={!!errors[`existingClientNewPet.${pet.id}.age`]}
+                              padding={ecInputPadding}
+                              borderRadius={ecInputRadius}
                             />
                             {errors[`existingClientNewPet.${pet.id}.age`] && (
                               <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>
