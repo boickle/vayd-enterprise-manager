@@ -1,6 +1,7 @@
 // src/auth/useAuth.tsx
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { http, setToken } from '../api/http';
+import { leaveImpersonation, readImpersonation } from './impersonationSession';
 import { setLogoutHandler } from '../api/http';
 import { getCurrentUser } from '../api/users';
 import { practiceHandoffUrl, startPracticeSwitch } from '../api/practices';
@@ -524,6 +525,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   async function logout() {
+    if (readImpersonation()) {
+      await http.post('/auth/impersonation/stop', {}).catch(() => undefined);
+      leaveImpersonation();
+      return;
+    }
     // Track logout before clearing state
     trackLogout();
     
@@ -559,6 +565,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   async function logoutAll() {
+    if (readImpersonation()) {
+      await http.post('/auth/impersonation/stop', {}).catch(() => undefined);
+      leaveImpersonation();
+      return;
+    }
     // Track logout before clearing state
     trackLogout();
     

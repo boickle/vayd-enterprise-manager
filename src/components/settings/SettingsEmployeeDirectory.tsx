@@ -36,6 +36,7 @@ import {
 } from '../../utils/employeeRoleDisplay';
 import SignaturePad from '../SignaturePad';
 import SettingsEmployeeAccess from './SettingsEmployeeAccess';
+import ViewAsButton from '../ViewAsButton';
 import { currentPracticeId } from '../../utils/practiceIdFromToken';
 
 const DEFAULT_PRACTICE_ID = currentPracticeId();
@@ -1079,6 +1080,12 @@ export default function SettingsEmployeeDirectory({
                             Reactivate
                           </button>
                         )}
+                        {rows.find((r) => r.id === editingId) ? (
+                          <ViewAsButton
+                            employeeId={editingId}
+                            name={formatEmployeeDisplayName(rows.find((r) => r.id === editingId)!)}
+                          />
+                        ) : null}
                       </>
                     ) : null}
                   </div>

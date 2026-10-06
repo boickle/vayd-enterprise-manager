@@ -1,5 +1,6 @@
 // src/api/http.ts
 import axios, { AxiosError, AxiosHeaders, AxiosRequestHeaders, InternalAxiosRequestConfig } from 'axios';
+import { leaveImpersonation, readImpersonation } from '../auth/impersonationSession';
 
 export const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000';
 const baseURL = apiBaseUrl;
@@ -152,6 +153,11 @@ function clearAutoLogout() {
 }
 
 async function attemptTokenRefresh(): Promise<boolean> {
+  // View-as tokens can't be refreshed; expiry returns the superadmin to their own sign-in.
+  if (readImpersonation()) {
+    leaveImpersonation();
+    return false;
+  }
   console.log('[Token Refresh] 🔄 attemptTokenRefresh() called', new Error().stack?.split('\n')[2]?.trim());
   
   // Check if a refresh is already in progress - if so, wait for it instead of starting a new one
@@ -266,6 +272,10 @@ export function setLogoutHandler(fn: () => void) {
   logoutHandler = fn;
 }
 export function forceLogout() {
+  if (readImpersonation()) {
+    leaveImpersonation();
+    return;
+  }
   const stack = new Error().stack;
   const caller = stack?.split('\n')[2]?.trim() || 'unknown';
   const fullStack = stack?.split('\n').slice(0, 10).join('\n') || 'no stack';
@@ -391,6 +401,10 @@ async function _performTokenRefresh(shouldLogoutOnFailure: boolean = true): Prom
 
 // Refresh access token with deduplication - in-tab (single promise) and cross-tab (localStorage lock).
 async function refreshAccessToken(shouldLogoutOnFailure: boolean = true): Promise<string | null> {
+  if (readImpersonation()) {
+    leaveImpersonation();
+    return null;
+  }
   const caller = new Error().stack?.split('\n')[2]?.trim() || 'unknown';
   console.log(`[Token Refresh] 🔄 refreshAccessToken() called from: ${caller}, shouldLogoutOnFailure: ${shouldLogoutOnFailure}`);
   console.log(`[Token Refresh] 🔄 Current state: refreshPromise=${!!refreshPromise}`);

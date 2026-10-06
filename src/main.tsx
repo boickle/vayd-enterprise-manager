@@ -5,6 +5,7 @@ import App from './App';
 import './styles.css';
 import { AuthProvider } from './auth/AuthProvider';
 import { PermissionProvider } from './permissions/PermissionContext';
+import ImpersonationBanner from './components/ImpersonationBanner';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import AppDialogProvider from './components/AppDialogProvider';
 import { ensureGtagReady, initGA } from './utils/analytics';
@@ -101,6 +102,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <PermissionProvider>
           <ErrorBoundary>
             <AppDialogProvider>
+              <ImpersonationBanner />
               <App />
             </AppDialogProvider>
           </ErrorBoundary>

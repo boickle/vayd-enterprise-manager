@@ -70,6 +70,7 @@ import {
   useClientReach,
 } from './ClientReachHub';
 import { useAuth } from '../../auth/useAuth';
+import ViewAsButton from '../ViewAsButton';
 import { markClientCallStarted } from '../../hooks/useClientCallActivity';
 import { useOutboundCallFromLine } from '../../hooks/useOutboundCallFromLine';
 import {
@@ -2049,6 +2050,11 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
               <KeyRound size={14} aria-hidden />
               {resetBusy ? 'Sending…' : 'Send Reset Password'}
             </button>
+            <ViewAsButton
+              clientId={Number(clientId)}
+              name={[nameValues.firstName, nameValues.lastName].filter(Boolean).join(' ') || 'this client'}
+              className="pims-detail__btn-secondary"
+            />
             <button
               type="button"
               className="pims-detail__btn-danger"

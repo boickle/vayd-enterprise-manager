@@ -95,6 +95,9 @@ function csvCell(value: string): string {
 
 type Props = { practiceId: number };
 
+/** Logged actions that aren't role permissions, so they are not in the catalog. */
+const NON_CATALOG_ACTIONS = [{ key: 'auth.impersonate', label: 'Viewed Scout as someone else' }];
+
 export default function SettingsPermissionAudit({ practiceId }: Props) {
   const canView = useCan('audit.log.view');
 
@@ -146,7 +149,10 @@ export default function SettingsPermissionAudit({ practiceId }: Props) {
   useEffect(load, [load]);
 
   const labelByKey = useMemo(
-    () => new Map(catalog.map((entry) => [entry.key, entry.label])),
+    () =>
+      new Map(
+        [...catalog, ...NON_CATALOG_ACTIONS].map((entry) => [entry.key, entry.label])
+      ),
     [catalog]
   );
   const labelOf = useCallback((key: string) => labelByKey.get(key) ?? key, [labelByKey]);
@@ -164,6 +170,7 @@ export default function SettingsPermissionAudit({ practiceId }: Props) {
             entry.key === 'invoice.reopen' ||
             entry.key === 'payment.refund'
         )
+        .concat(NON_CATALOG_ACTIONS as typeof catalog)
         .sort((a, b) => a.label.localeCompare(b.label)),
     [catalog]
   );
