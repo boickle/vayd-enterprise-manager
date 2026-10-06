@@ -8,8 +8,6 @@ import {
   type MembershipCheckoutDiscount,
   type MembershipTransactionPayload,
   type MembershipPaymentRequestOrigin,
-  upgradeMembership,
-  type MembershipUpgradeRequest,
   resolveMembershipDiscountByCode,
 } from '../api/payments';
 import { useAuth } from '../auth/useAuth';
@@ -108,27 +106,6 @@ type PaymentNavigationState = {
   returnUrl?: string;
   fromAppointmentFlow?: boolean;
   returnUrlAnotherBase?: string;
-  // Upgrade-specific fields
-  isUpgrade?: boolean;
-  patientId?: number | string;
-  selectedUpgrades?: Array<{
-    planId: string;
-    planName: string;
-    pricingOption: 'monthly' | 'annual';
-    price: number;
-  }>;
-  proratedCalculation?: {
-    refundAmount: number;
-    chargeAmount: number;
-    refundDescription: string;
-    chargeDescription: string;
-    nextBillingDate: string;
-    upgradeDate: string;
-  };
-  currentMembership?: {
-    id: number;
-    [key: string]: any;
-  };
   /** True when client is signing up a 2nd+ pet this session (eligible for $75 credit). */
   multiPetCreditEligible?: boolean;
   /** Email saved with the public form payload (room loader, etc.); used before showing the payment email field. */
@@ -176,7 +153,7 @@ export type MembershipPaymentModalProps = {
   onSuccess?: () => void;
   onBack?: () => void;
   onSignUpAnother?: (signedUpPetId: string) => void;
-  /** Called once when payment/upgrade succeeds (before user taps Done). Use to refetch server data (e.g. room loader pricing). */
+  /** Called once when payment succeeds (before user taps Done). Use to refetch server data (e.g. room loader pricing). */
   onEnrollmentSucceeded?: (petId?: string) => void;
 };
 
@@ -401,7 +378,7 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
   const hasKnownSubscriptionEmail = Boolean(prefilledCustomerEmail || authEmailTrim);
   const showSubscriptionEmailField =
     !!state &&
-    (state.intent === PaymentIntent.SUBSCRIPTION || state.isUpgrade) &&
+    state.intent === PaymentIntent.SUBSCRIPTION &&
     !hasKnownSubscriptionEmail;
 
   const [cardholderName, setCardholderName] = useState('');
@@ -428,7 +405,6 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
     if (
       paymentProvider === 'stripe' &&
       !state.membershipDiscount &&
-      !state.isUpgrade &&
       trimmedPromoCode &&
       (!appliedCodeDiscount ||
         appliedCodeDiscount.code?.trim().toUpperCase() !== trimmedPromoCode.toUpperCase())
@@ -448,14 +424,14 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
         '';
 
       if (
-        (state.intent === PaymentIntent.SUBSCRIPTION || state.isUpgrade) &&
+        state.intent === PaymentIntent.SUBSCRIPTION &&
         (!emailForSquare || !isValidEmail(emailForSquare))
       ) {
         setProcessing(false);
         setError(
           paymentProvider === 'stripe'
             ? 'A valid email address is required for billing and receipts.'
-            : 'A valid email address is required (Square needs it on your customer profile for subscriptions and upgrades).'
+            : 'A valid email address is required (Square needs it on your customer profile for subscriptions).'
         );
         return;
       }
@@ -464,53 +440,6 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
         const tokenResult = await card!.tokenize();
         if (tokenResult.status !== 'OK') {
           throw new Error(tokenResult.errors?.[0]?.message || 'Unable to tokenize card.');
-        }
-
-        // Handle upgrade flow
-        if (state.isUpgrade && state.patientId && state.selectedUpgrades) {
-          const upgradeRequest: MembershipUpgradeRequest = {
-            patientId: state.patientId,
-            newPlansSelected: state.selectedUpgrades,
-            sourceId: tokenResult.token,
-            customerEmail: emailForSquare || userEmail || '',
-            proratedRefundAmount: state.proratedCalculation?.refundAmount,
-            proratedChargeAmount: state.proratedCalculation?.chargeAmount,
-            upgradeDate: state.proratedCalculation?.upgradeDate,
-            nextBillingDate: state.proratedCalculation?.nextBillingDate,
-            currentMembershipId: state.currentMembership?.id,
-          };
-
-          const upgradeResponse = await upgradeMembership(upgradeRequest);
-
-          if (!upgradeResponse.success) {
-            throw new Error(upgradeResponse.message || 'Upgrade was not successful.');
-          }
-
-          const upgradeTransactionId = `upgrade-${Date.now()}-${state.patientId}`;
-          const upgradeItems =
-            state.selectedUpgrades?.map((upgrade) => ({
-              item_id: upgrade.planId,
-              item_name: upgrade.planName,
-              price: upgrade.price,
-              quantity: 1,
-            })) || [];
-
-          trackPurchase(
-            upgradeTransactionId,
-            state.amountCents / 100,
-            state.currency,
-            upgradeItems,
-            {
-              pet_id: state.petId,
-              pet_name: state.petName,
-              is_upgrade: true,
-              upgrade_type: 'membership_upgrade',
-            }
-          );
-
-          setEnrollmentComplete(true);
-          onEnrollmentSucceeded?.(state.petId);
-          return;
         }
 
         const idempotencyKey =
@@ -609,7 +538,6 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
           billing_preference: state.billingPreference,
           addons: state.addOns || [],
           has_addons: (state.addOns?.length || 0) > 0,
-          is_upgrade: state.isUpgrade || false,
         });
 
         setEnrollmentComplete(true);
@@ -767,7 +695,6 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
         billing_preference: state.billingPreference,
         addons: state.addOns || [],
         has_addons: (state.addOns?.length || 0) > 0,
-        is_upgrade: state.isUpgrade || false,
       });
 
       setEnrollmentComplete(true);
@@ -835,46 +762,11 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
     return null;
   }
 
-  if (state.isUpgrade && paymentProvider === 'stripe') {
-    return (
-      <div className="cp-wrap" style={{ maxWidth: 720, margin: '32px auto', padding: '0 16px' }}>
-        <button
-          type="button"
-          onClick={() => {
-            if (fromModal && props?.onBack) props.onBack();
-            else navigate(-1);
-          }}
-          style={{
-            background: 'transparent',
-            border: 'none',
-            color: '#4FB128',
-            cursor: 'pointer',
-            fontSize: 14,
-            fontWeight: 600,
-            marginBottom: 16,
-            padding: 0,
-          }}
-        >
-          ← Back
-        </button>
-        <div className="cp-card" style={{ padding: 24, borderLeft: '4px solid #b45309' }}>
-          <h1 className="cp-title" style={{ margin: '0 0 12px' }}>Membership upgrade</h1>
-          <p className="cp-muted" style={{ lineHeight: 1.6, margin: 0 }}>
-            Upgrading a membership still uses Square on the server. To complete an upgrade, set{' '}
-            <code style={{ fontSize: 13 }}>VITE_PAYMENT_PROVIDER</code> to <code style={{ fontSize: 13 }}>square</code>{' '}
-            (or unset it), restart the app, and try again. New enrollments can use Stripe when that variable is set to{' '}
-            <code style={{ fontSize: 13 }}>stripe</code>.
-          </p>
-        </div>
-      </div>
-    );
-  }
-
   const onSuccess = props?.onSuccess;
   const onBack = props?.onBack;
   const onSignUpAnother = props?.onSignUpAnother;
 
-  if (enrollmentComplete && (paymentResponse?.success || state.isUpgrade)) {
+  if (enrollmentComplete && paymentResponse?.success) {
     const providerPaymentId =
       paymentResponse?.providerPaymentId ??
       paymentResponse?.providerResponse?.payment?.id ??
@@ -885,15 +777,12 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
       <div className="cp-wrap" style={{ maxWidth: 720, margin: '32px auto', padding: '0 16px' }}>
         <div className="cp-card" style={{ padding: 24, borderLeft: '4px solid var(--brand, #0f766e)' }}>
           <h1 className="cp-title" style={{ margin: '0 0 12px' }}>
-            {state.isUpgrade ? 'Upgrade Successful' : 'Payment Successful'}
+            Payment Successful
           </h1>
           <p className="cp-muted" style={{ marginBottom: 20 }}>
-            {state.isUpgrade 
-              ? `${state.petName}'s membership has been successfully upgraded. A confirmation email will arrive shortly.`
-              : `${state.petName} is now enrolled in the ${state.planName || 'membership'} membership. A confirmation email will arrive shortly. Please note that it may take up to 24-48 business hours for ${state.petName}'s membership to be fully active in our system.`
-            }
+            {`${state.petName} is now enrolled in the ${state.planName || 'membership'} membership. A confirmation email will arrive shortly. Please note that it may take up to 24-48 business hours for ${state.petName}'s membership to be fully active in our system.`}
           </p>
-          {!state.isUpgrade && state.multiPetCreditEligible && (
+          {state.multiPetCreditEligible && (
             <p style={{ marginBottom: 20, padding: '12px 16px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, color: '#166534', fontSize: 15, lineHeight: 1.5 }}>
               You will be receiving a $75 credit in your VAYD account to be used at any visit of your choosing — this won&apos;t expire.
             </p>
@@ -1157,13 +1046,10 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
           ← Back
         </button>
         <h1 className="cp-title" style={{ margin: '12px 0 4px' }}>
-          {state.isUpgrade ? 'Complete Membership Upgrade' : 'Complete Membership Payment'}
+          Complete Membership Payment
         </h1>
         <p className="cp-muted">
-          {state.isUpgrade 
-            ? `Securely submit your payment to complete ${state.petName}'s membership upgrade.`
-            : `Securely submit your payment to finish enrolling ${state.petName}.`
-          }
+          {`Securely submit your payment to finish enrolling ${state.petName}.`}
         </p>
       </div>
 
@@ -1186,37 +1072,9 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
       <section className="cp-section">
         <div className="cp-card" style={{ padding: 20 }}>
           <h3 style={{ marginTop: 0, marginBottom: 12 }}>
-            {state.isUpgrade ? 'Upgrade Summary' : 'Summary'}
+            Summary
           </h3>
-          {state.isUpgrade && state.selectedUpgrades ? (
-            <>
-              <div style={{ marginBottom: 16 }}>
-                <strong>Pet:</strong> {state.petName}
-              </div>
-              <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: 8 }}>
-                {state.selectedUpgrades.map((upgrade, idx) => (
-                  <li
-                    key={idx}
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      fontSize: 14,
-                      borderBottom: '1px solid rgba(0,0,0,0.06)',
-                      paddingBottom: 6,
-                    }}
-                  >
-                    <span>{upgrade.planName} ({upgrade.pricingOption === 'monthly' ? 'Monthly' : 'Annual'})</span>
-                    <span className="cp-muted">
-                      {formatMoney(upgrade.price * 100, state.currency)}
-                      {upgrade.pricingOption === 'monthly' ? '/mo' : '/year'}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </>
-          ) : (
-            <>
+          <>
               {state.planName && (
                 <div style={{ marginBottom: 16 }}>
                   <strong>Plan:</strong> {state.planName}
@@ -1285,8 +1143,7 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
                   </li>
                 )}
               </ul>
-            </>
-          )}
+          </>
 
           {/* Total Due Today */}
           <div
@@ -1460,7 +1317,7 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
                 <div key={formResetKey}>
                   <div id="card-container" style={{ border: '1px solid rgba(0,0,0,0.08)', borderRadius: 8, padding: 12 }} />
                 </div>
-                {paymentProvider === 'stripe' && !state.membershipDiscount && !state.isUpgrade && (
+                {paymentProvider === 'stripe' && !state.membershipDiscount && (
                   <div style={{ marginTop: 4 }}>
                     {appliedCodeDiscount ? (
                       <div
@@ -1635,7 +1492,7 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
                         : 'pointer',
                   }}
                 >
-                  {processing ? 'Processing…' : state.isUpgrade ? 'Complete Upgrade' : 'Pay & Enroll'}
+                  {processing ? 'Processing…' : 'Pay & Enroll'}
                 </button>
               </>
             )}

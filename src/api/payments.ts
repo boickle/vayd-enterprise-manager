@@ -649,35 +649,6 @@ export async function fetchFormattedSubscriptionPlans(): Promise<FormattedSubscr
   return normalizeFormattedSubscriptionPlansResponse(data);
 }
 
-export interface MembershipUpgradeRequest {
-  patientId: number | string;
-  newPlansSelected: Array<{
-    planId: string;
-    planName: string;
-    pricingOption: 'monthly' | 'annual';
-    price: number;
-  }>;
-  sourceId: string;
-  customerEmail: string;
-  // Prorated calculation fields
-  proratedRefundAmount?: number; // in dollars
-  proratedChargeAmount?: number; // in dollars
-  upgradeDate?: string; // ISO date string
-  nextBillingDate?: string; // ISO date string
-  currentMembershipId?: number; // ID of the membership being upgraded
-}
-
-export interface MembershipUpgradeResponse {
-  success: boolean;
-  message?: string;
-  [key: string]: any;
-}
-
-export async function upgradeMembership(payload: MembershipUpgradeRequest): Promise<MembershipUpgradeResponse> {
-  const { data } = await http.post('/payment-processing/membership/upgrade', payload);
-  return data;
-}
-
 // =========================
 // Payments Reconciliation (Square)
 // =========================
