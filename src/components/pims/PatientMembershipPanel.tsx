@@ -269,6 +269,10 @@ export default function PatientMembershipPanel({
   const navigate = useNavigate();
   const { userId } = useAuth() as { userId?: string | null };
   const canChangePlan = useCan('membership.plan.change');
+  const canEnroll = useCan('membership.enroll');
+  const canEditBenefits = useCan('membership.benefit.override');
+  const canCancel = useCan('membership.cancel');
+  const canPostVisitSignup = useCan('membership.post_visit.rerate');
   const practiceId = practiceIdProp ?? resolvePracticeIdFromToken(getToken());
   const [open, setOpen] = useState(() => readStaffPatientLayout(userId).membership);
 
@@ -1022,7 +1026,7 @@ export default function PatientMembershipPanel({
             </p>
           ) : null}
         </div>
-        {!benefit.isRemoved ? (
+        {!benefit.isRemoved && canEditBenefits ? (
           <div className="pmp-benefit__actions">
             <button
               type="button"
@@ -1173,22 +1177,24 @@ export default function PatientMembershipPanel({
                 </p>
               )}
               <div className="pmp-empty__actions">
-                <button
-                  type="button"
-                  className="pims-detail__btn-primary"
-                  disabled={busy}
-                  onClick={() => {
-                    setFormError(null);
-                    setAgreementAccepted(false);
-                    setAgreementSignature('');
-                    setAgreementSignatureDrawing('');
-                    setMode(mode === 'enrol' ? 'none' : 'enrol');
-                  }}
-                >
-                  <UserPlus size={14} aria-hidden />
-                  Enroll in a plan
-                </button>
-                {clientId ? (
+                {canEnroll ? (
+                  <button
+                    type="button"
+                    className="pims-detail__btn-primary"
+                    disabled={busy}
+                    onClick={() => {
+                      setFormError(null);
+                      setAgreementAccepted(false);
+                      setAgreementSignature('');
+                      setAgreementSignatureDrawing('');
+                      setMode(mode === 'enrol' ? 'none' : 'enrol');
+                    }}
+                  >
+                    <UserPlus size={14} aria-hidden />
+                    Enroll in a plan
+                  </button>
+                ) : null}
+                {clientId && canPostVisitSignup ? (
                   <button
                     type="button"
                     className="pims-detail__btn-secondary pmp-signup-btn"
@@ -1330,7 +1336,7 @@ export default function PatientMembershipPanel({
                     </div>
                   </div>
                   <div className="pmp-summary__actions">
-                    {ownerPaidRecently && clientId ? (
+                    {ownerPaidRecently && clientId && canPostVisitSignup ? (
                       <button
                         type="button"
                         className="pims-detail__btn-ghost"
@@ -1367,27 +1373,31 @@ export default function PatientMembershipPanel({
                         Change plan
                       </button>
                     ) : null}
-                    <button
-                      type="button"
-                      className="pims-detail__btn-secondary"
-                      disabled={busy || membership.status !== 'active'}
-                      onClick={() => {
-                        setFormError(null);
-                        setMode(mode === 'add' ? 'none' : 'add');
-                      }}
-                    >
-                      <Plus size={14} aria-hidden />
-                      Add benefit
-                    </button>
-                    <button
-                      type="button"
-                      className="pims-detail__btn-danger"
-                      disabled={busy || membership.status !== 'active'}
-                      onClick={() => void openCancel()}
-                    >
-                      <X size={14} aria-hidden />
-                      Cancel
-                    </button>
+                    {canEditBenefits ? (
+                      <button
+                        type="button"
+                        className="pims-detail__btn-secondary"
+                        disabled={busy || membership.status !== 'active'}
+                        onClick={() => {
+                          setFormError(null);
+                          setMode(mode === 'add' ? 'none' : 'add');
+                        }}
+                      >
+                        <Plus size={14} aria-hidden />
+                        Add benefit
+                      </button>
+                    ) : null}
+                    {canCancel ? (
+                      <button
+                        type="button"
+                        className="pims-detail__btn-danger"
+                        disabled={busy || membership.status !== 'active'}
+                        onClick={() => void openCancel()}
+                      >
+                        <X size={14} aria-hidden />
+                        Cancel
+                      </button>
+                    ) : null}
                   </div>
                 </div>
                 <FactGrid

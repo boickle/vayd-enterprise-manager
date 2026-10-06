@@ -47,6 +47,7 @@ import {
 } from '../../api/practiceSettings';
 import { resolvePracticeIdFromToken } from '../../utils/practiceIdFromToken';
 import { appAlert, appConfirm } from '../../utils/appDialog';
+import { useCan } from '../../permissions/PermissionContext';
 import './SettingsMemberships.css';
 
 /** Matches how the memberships client resolves it, so search and writes agree. */
@@ -945,6 +946,9 @@ type Props = {
 type Selection = { mode: 'new' } | { mode: 'plan'; id: number } | null;
 
 export default function SettingsMemberships({ onMessage }: Props) {
+  const canManagePlans = useCan('membership.plan.manage');
+  const canArchivePlans = useCan('membership.plan.archive');
+  const canApplyToMembers = useCan('membership.plan.apply_existing');
   const [plans, setPlans] = useState<Bundle[]>([]);
   const [listLoading, setListLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
@@ -1983,13 +1987,15 @@ export default function SettingsMemberships({ onMessage }: Props) {
         <div className="settings-card memberships-rail">
           <div className="memberships-rail__head">
             <h3 className="settings-card-title memberships-rail__title">Plans</h3>
-            <button
-              type="button"
-              className="btn primary memberships-rail__new"
-              onClick={startNewPlan}
-            >
-              <Plus size={14} aria-hidden /> New plan
-            </button>
+            {canManagePlans ? (
+              <button
+                type="button"
+                className="btn primary memberships-rail__new"
+                onClick={startNewPlan}
+              >
+                <Plus size={14} aria-hidden /> New plan
+              </button>
+            ) : null}
           </div>
 
           <input
@@ -2104,26 +2110,25 @@ export default function SettingsMemberships({ onMessage }: Props) {
                       </p>
                     ) : null}
                   </div>
-                  {detail ? (
-                    detail.isArchived ? (
-                      <button
-                        type="button"
-                        className="btn secondary"
-                        disabled={saving}
-                        onClick={() => void restore()}
-                      >
-                        Restore plan
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        className="btn secondary"
-                        disabled={saving}
-                        onClick={() => void archive()}
-                      >
-                        <Trash2 size={13} aria-hidden /> Archive
-                      </button>
-                    )
+                  {detail?.isArchived && canManagePlans ? (
+                    <button
+                      type="button"
+                      className="btn secondary"
+                      disabled={saving}
+                      onClick={() => void restore()}
+                    >
+                      Restore plan
+                    </button>
+                  ) : null}
+                  {detail && !detail.isArchived && canArchivePlans ? (
+                    <button
+                      type="button"
+                      className="btn secondary"
+                      disabled={saving}
+                      onClick={() => void archive()}
+                    >
+                      <Trash2 size={13} aria-hidden /> Archive
+                    </button>
                   ) : null}
                 </div>
 
@@ -2687,7 +2692,7 @@ export default function SettingsMemberships({ onMessage }: Props) {
                   </div>
                 )}
 
-                {detail && !isNew && detail.activeMemberCount > 0 ? (
+                {canApplyToMembers && detail && !isNew && detail.activeMemberCount > 0 ? (
                   <div className="memberships-apply">
                     <p className="settings-muted memberships-apply__hint">
                       {detail.activeMemberCount} patient
@@ -2726,9 +2731,16 @@ export default function SettingsMemberships({ onMessage }: Props) {
 
               <div className="settings-card">
                 <div className="settings-action-bar memberships-actions">
+                  {!canManagePlans ? (
+                    <p className="settings-muted">
+                      Your role can view plans but not change them. Ask a practice admin or
+                      manager.
+                    </p>
+                  ) : null}
                   <button
                     type="button"
                     className="btn primary"
+                    hidden={!canManagePlans}
                     disabled={saving || !planDraft.name.trim()}
                     onClick={() => void save()}
                   >

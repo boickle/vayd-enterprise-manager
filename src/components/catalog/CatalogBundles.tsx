@@ -30,6 +30,7 @@ import BundleGroupEditor, {
   emptyBundleGroup,
   type BundleGroupDraft,
 } from './BundleGroupEditor';
+import { useCan } from '../../permissions/PermissionContext';
 import './CatalogBundles.css';
 
 /**
@@ -97,9 +98,8 @@ function itemCount(bundle: Bundle): number {
 }
 
 function choiceCount(bundle: Bundle): number {
-  return bundle.groups.filter(
-    (g) => g.selectionMode === 'choice' || g.selectionMode === 'any',
-  ).length;
+  return bundle.groups.filter((g) => g.selectionMode === 'choice' || g.selectionMode === 'any')
+    .length;
 }
 
 type Props = {
@@ -117,6 +117,7 @@ export default function CatalogBundles({
   onFocusBundleConsumed,
   initialQuery = '',
 }: Props) {
+  const canManage = useCan('catalog.bundle.manage');
   const [bundles, setBundles] = useState<Bundle[]>([]);
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
@@ -305,7 +306,7 @@ export default function CatalogBundles({
           </button>
           <h3 className="cbn__title">{title}</h3>
           <div className="cbn__editor-actions">
-            {editing ? (
+            {editing && canManage ? (
               <button
                 type="button"
                 className="cbn-btn cbn-btn--danger"
@@ -319,6 +320,7 @@ export default function CatalogBundles({
             <button
               type="button"
               className="cbn-btn cbn-btn--primary"
+              hidden={!canManage}
               disabled={saving}
               onClick={() => void save()}
             >
@@ -400,8 +402,8 @@ export default function CatalogBundles({
         <section className="cbn-card">
           <h4 className="cbn-card__title">What’s in the bundle</h4>
           <p className="cbn-card__hint">
-            “{draft.name.trim() || 'This bundle'}” is the sellable package name. The lines below
-            are the catalog items it expands to.
+            “{draft.name.trim() || 'This bundle'}” is the sellable package name. The lines below are
+            the catalog items it expands to.
           </p>
           <BundleGroupEditor
             practiceId={practiceId}
@@ -459,6 +461,7 @@ export default function CatalogBundles({
           <button
             type="button"
             className="cbn-btn cbn-btn--primary"
+            hidden={!canManage}
             disabled={saving}
             onClick={() => void save()}
           >
@@ -506,10 +509,12 @@ export default function CatalogBundles({
           />
           Show archived
         </label>
-        <button type="button" className="cbn-btn cbn-btn--primary" onClick={startCreate}>
-          <Plus size={14} aria-hidden />
-          New bundle
-        </button>
+        {canManage ? (
+          <button type="button" className="cbn-btn cbn-btn--primary" onClick={startCreate}>
+            <Plus size={14} aria-hidden />
+            New bundle
+          </button>
+        ) : null}
       </div>
 
       {listError ? (
@@ -596,7 +601,7 @@ export default function CatalogBundles({
                       >
                         Edit
                       </button>
-                      {!bundle.isArchived ? (
+                      {!bundle.isArchived && canManage ? (
                         <button
                           type="button"
                           className="cbn-btn cbn-btn--quiet"

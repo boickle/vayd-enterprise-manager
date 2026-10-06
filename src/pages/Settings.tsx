@@ -83,6 +83,7 @@ import SettingsDepositBankAccounts from '../components/settings/SettingsDepositB
 import SettingsClientStatuses from '../components/settings/SettingsClientStatuses';
 import SettingsPatientStatuses from '../components/settings/SettingsPatientStatuses';
 import SettingsMemberships from '../components/settings/SettingsMemberships';
+import { useCan } from '../permissions/PermissionContext';
 import SettingsMessageTemplates from '../components/settings/SettingsMessageTemplates';
 import FormsAdmin from './FormsAdmin';
 import SettingsLabForms from '../components/settings/SettingsLabForms';
@@ -504,6 +505,7 @@ export default function Settings() {
   // Normalize roles
   const roles = Array.isArray(role) ? role : role ? [String(role)] : [];
   const isAdmin = roles.some((r) => ['admin', 'superadmin'].includes(String(r).toLowerCase()));
+  const canManageMembershipPlans = useCan('membership.plan.manage');
 
   // Sort employees: providers first, then by name
   const sortedEmployees = useMemo(() => {
@@ -1336,6 +1338,34 @@ export default function Settings() {
       setUploadingEmployeeId(null);
     }
   };
+
+  if (!isAdmin && canManageMembershipPlans) {
+    return (
+      <div className="container">
+        <div className="settings-page">
+          <h1 className="settings-title">Settings: Memberships</h1>
+          {error && (
+            <div className="settings-message settings-error-message">
+              {error}
+              <button onClick={() => setError(null)} className="settings-close">×</button>
+            </div>
+          )}
+          {success && (
+            <div className="settings-message settings-success-message">
+              {success}
+              <button onClick={() => setSuccess(null)} className="settings-close">×</button>
+            </div>
+          )}
+          <SettingsMemberships
+            onMessage={(msg, kind) => {
+              if (kind === 'error') setError(msg);
+              else setSuccess(msg);
+            }}
+          />
+        </div>
+      </div>
+    );
+  }
 
   if (!isAdmin) {
     return (

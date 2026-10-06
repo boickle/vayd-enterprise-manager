@@ -17,6 +17,7 @@ import {
   isCatalogNavPath,
   isInventoryOpsNavPath,
 } from '../utils/catalogInventoryNav';
+import { useCan } from '../permissions/PermissionContext';
 import '../pages/ScheduleLayout.css';
 
 const SHOW_NAV_CATALOG = true;
@@ -325,6 +326,7 @@ export default function NavbarScheduleHorizontalNav() {
     () => roles.includes('admin') || roles.includes('superadmin'),
     [roles]
   );
+  const canManageMembershipPlans = useCan('membership.plan.manage');
 
   const itemKeys = useMemo((): SchedNavItemKey[] => {
     const keys: SchedNavItemKey[] = [];
@@ -333,8 +335,9 @@ export default function NavbarScheduleHorizontalNav() {
     if (SHOW_NAV_CATALOG) keys.push('catalog', 'inventory');
     keys.push('tasks', 'snapshots');
     if (showAdminTab) keys.push('settings', 'admin');
+    else if (canManageMembershipPlans) keys.push('settings');
     return keys;
-  }, [homeTab, showAdminTab]);
+  }, [homeTab, showAdminTab, canManageMembershipPlans]);
 
   const settingsMenuRef = useRef<HTMLDetailsElement>(null);
   const schedulingToolsMenuRef = useRef<HTMLDetailsElement>(null);
@@ -617,7 +620,18 @@ export default function NavbarScheduleHorizontalNav() {
               Settings
             </summary>
             <div className="schedule-app__settings-dropdown" role="menu" aria-label="Practice settings">
-              <SettingsSubmenuLinks onNavigate={closeSettingsMenu} settingsTabFromLocation={settingsTabFromLocation} />
+              {showAdminTab ? (
+                <SettingsSubmenuLinks onNavigate={closeSettingsMenu} settingsTabFromLocation={settingsTabFromLocation} />
+              ) : (
+                <Link
+                  to="/schedule/settings"
+                  className="schedule-app__settings-link"
+                  role="menuitem"
+                  onClick={closeSettingsMenu}
+                >
+                  Memberships
+                </Link>
+              )}
             </div>
           </details>
         );

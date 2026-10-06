@@ -50,6 +50,7 @@ import {
 } from '../../api/practiceSettings';
 import './PostVisitMembershipSignup.css';
 import { currentPracticeId } from '../../utils/practiceIdFromToken';
+import { useCan } from '../../permissions/PermissionContext';
 
 const PICKER_BAND_BUSINESS_HOURS = 48;
 
@@ -340,6 +341,7 @@ export default function PostVisitMembershipSignup({
   const [running, setRunning] = useState(false);
   const [skipRefund, setSkipRefund] = useState(false);
   const [note, setNote] = useState('');
+  const canOverrideWindow = useCan('membership.window.override');
   const [overrideWindow, setOverrideWindow] = useState(false);
   const [overrideReason, setOverrideReason] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -1218,7 +1220,13 @@ export default function PostVisitMembershipSignup({
                       </p>
                     )}
 
-                    {preview.outsideWindow ? (
+                    {preview.outsideWindow && !canOverrideWindow ? (
+                      <p className="pvms-muted">
+                        This visit is outside the post-visit window. Ask a manager or lead client
+                        liaison to override it.
+                      </p>
+                    ) : null}
+                    {preview.outsideWindow && canOverrideWindow ? (
                       <div className="pvms-override">
                         <label className="pvms-check">
                           <input
