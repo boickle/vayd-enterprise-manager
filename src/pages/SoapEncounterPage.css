@@ -1660,6 +1660,11 @@ a.soap-header-client:hover {
   flex-shrink: 0;
 }
 /* Says what the red alert is actually waiting on, so the line is never a mystery. */
+.soap-invoice-line-entered {
+  color: #6b7280;
+  font-size: 12px;
+  font-weight: 400;
+}
 .soap-invoice-line-todo {
   margin-left: 4px;
   color: #dc2626;

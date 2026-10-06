@@ -2426,6 +2426,9 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
           clientPhone={phone1}
           clientDoNotSms={doNotSms}
           initialInvoiceId={invoiceParam && invoiceParam !== 'new' ? invoiceParam : null}
+          initialReturnLineIds={[searchParams.get('returnLine'), searchParams.get('returnShipping')].filter(
+            (id): id is string => Boolean(id)
+          )}
           openNew={invoiceParam === 'new'}
           initialPatientId={patientParam ? Number(patientParam) : null}
           initialAppointmentId={appointmentParam ? Number(appointmentParam) : null}

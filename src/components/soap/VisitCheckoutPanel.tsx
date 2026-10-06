@@ -8,6 +8,7 @@ import {
   ChevronRight,
   CreditCard,
   Pencil,
+  Phone,
   Receipt,
   RotateCcw,
   Smartphone,
@@ -18,6 +19,7 @@ import {
   VISIT_WORKFLOW_PRACTICE_ID,
   addCounterInvoiceLine,
   addVisitTender,
+  formatInvoiceLineEntered,
   cancelTerminalCheckout,
   authorizeSavedCard,
   captureAuthorization,
@@ -52,6 +54,7 @@ import {
   offRecordDeclineNote,
 } from '../../api/declinedTreatments';
 import TerminalReaderPicker from './TerminalReaderPicker';
+import VirtualTerminalModal from './VirtualTerminalModal';
 import EstimateSettlePanel from '../estimates/EstimateSettlePanel';
 import CheckoutInventoryBranchField from './CheckoutInventoryBranchField';
 import SendRxLabelButton, { type SendRxLabelSource } from './SendRxLabelButton';
@@ -386,6 +389,7 @@ function CheckoutInvoiceRxFields({
   };
   const highlight = (field: CheckoutRxMissingField) =>
     Boolean(approveTried && missingFields.includes(field));
+  const canApprove = useCan('rx.invoice.approve');
   const needsSigSave =
     !disabled &&
     (instructions.trim() !== (line.instructions ?? '').trim() ||
@@ -486,7 +490,13 @@ function CheckoutInvoiceRxFields({
               Entered by {line.instructionsEnteredByName}
             </span>
           ) : null}
-          {!disabled && !scriptApproved ? (
+          {!disabled && !scriptApproved && (mailed || !canApprove) ? (
+            <span className="client-fin__entered client-fin__needs-approver">
+              {mailed
+                ? 'The doctor approves this from the mail queue'
+                : 'A doctor or technician must approve — or switch to Mail order'}
+            </span>
+          ) : !disabled && !scriptApproved ? (
             <button
               type="button"
               className="client-fin__btn client-fin__btn-approve"
@@ -616,9 +626,14 @@ function CheckoutInvoiceRxFields({
               }}
             />
           </div>
-        ) : line.trackLots && mailed ? (
-          <p className="client-fin__fulfill-note">Lot chosen when filled</p>
+        ) : mailed ? (
+          <p className="client-fin__fulfill-note">
+            Mail order: the mail team picks the lot and fill location, and the doctor sets refills
+            when approving.
+          </p>
         ) : null}
+        {mailed ? null : (
+        <>
         <label className={`client-fin__rx-field client-fin__refill${highlight('refillCount') ? ' is-missing' : ''}`}>
           <span>
             # refills *
@@ -753,6 +768,8 @@ function CheckoutInvoiceRxFields({
             ) : null}
           </div>
         ) : null}
+        </>
+        )}
       </div>
     </div>
   );
@@ -1568,6 +1585,7 @@ export default function VisitCheckoutPanel({
   const canChangePrice = useCan('invoice.price.change');
   const canReopen = useCan('invoice.reopen');
   const [voidPromptOpen, setVoidPromptOpen] = useState(false);
+  const [phoneCardOpen, setPhoneCardOpen] = useState(false);
   const payDisabled =
     disabled || busy != null || !branchReady || Boolean(paymentBlockedReason);
 
@@ -1624,7 +1642,7 @@ export default function VisitCheckoutPanel({
 
     if (l.orderId && vaccineOrderIds.has(l.orderId)) {
       if (!vaccinationsByOrderId[l.orderId]) return 'Record the dose given';
-    } else if (showRxLabel) {
+    } else if (showRxLabel && !mailed) {
       if (!String(instructions).trim()) return 'Enter the directions (sig)';
       if (!l.rxApprovedAt) return 'Approve the sig';
       if (recorded?.acuity !== 'acute' && recorded?.acuity !== 'chronic') {
@@ -2100,19 +2118,15 @@ export default function VisitCheckoutPanel({
                   hasLabForms ||
                   Boolean(l.trackLots && !stock.linked);
                 const lineExpanded = expandedLineId === l.id;
-                const mailBlockedReason = showRxLabel
-                  ? effectiveProviderId == null
-                    ? 'Provider is required'
-                    : !String(instructions).trim()
-                      ? 'Enter the script first'
-                      : !scriptApproved
-                        ? 'Approve the script first'
-                        : invoice.inventoryBranchId == null
-                          ? 'Select a branch'
-                          : invoice.inventoryLocationId == null
-                            ? 'Select a fill location'
-                            : null
-                  : null;
+                // Mailing never waits on the script: staff taking an order over the
+                // phone can queue it, and the doctor approves from the mail queue.
+                const mailApprovalReason = !showRxLabel
+                  ? null
+                  : !String(instructions).trim()
+                    ? 'No script entered yet'
+                    : !scriptApproved
+                      ? 'Script not approved yet'
+                      : null;
                 return (
                   <Fragment key={l.id}>
                   <div
@@ -2170,6 +2184,11 @@ export default function VisitCheckoutPanel({
                           </>
                         )}
                       </span>
+                      {formatInvoiceLineEntered(l.created) ? (
+                        <span className="soap-invoice-line-entered">
+                          Added {formatInvoiceLineEntered(l.created)}
+                        </span>
+                      ) : null}
                     </span>
                     {needsProvider ? (
                       canEditLines ? (
@@ -2511,7 +2530,26 @@ export default function VisitCheckoutPanel({
                             patientName={rxLabel?.patientName}
                             paymentStatus={invoiceMailPaymentStatus(invoice)}
                             doctorEmployeeId={effectiveProviderId}
-                            blockedReason={mailBlockedReason}
+                            approvalReason={mailApprovalReason}
+                            onQueueChange={(mailedLine, queued) => {
+                              void (async () => {
+                                setMailOrders(await listMailOrders(VISIT_WORKFLOW_PRACTICE_ID));
+                                // Mail order picks the lot when it fills; one chosen here would be stale.
+                                if (
+                                  queued &&
+                                  (mailedLine.inventoryLotBalanceId != null || mailedLine.lotNumber)
+                                ) {
+                                  onInvoiceChange(
+                                    await updateCounterInvoiceLine(invoice.id, mailedLine.id, {
+                                      inventoryLotBalanceId: null,
+                                      lotNumber: null,
+                                    })
+                                  );
+                                }
+                              })().catch((e) =>
+                                setError(e instanceof Error ? e.message : 'Could not refresh the mail queue')
+                              );
+                            }}
                             disabled={disabled || busy != null}
                             onError={setError}
                             onChargeShipping={async (result) => {
@@ -2917,6 +2955,21 @@ export default function VisitCheckoutPanel({
                 </button>
                 <button
                   type="button"
+                  className="soap-btn"
+                  disabled={payDisabled}
+                  title={
+                    paymentBlockedReason
+                      ? paymentBlockedReason
+                      : !branchReady
+                        ? 'Choose the branch and location inventory is drawn from'
+                        : 'Virtual terminal — key in a card the owner reads out over the phone'
+                  }
+                  onClick={() => setPhoneCardOpen(true)}
+                >
+                  <Phone size={14} /> Card over phone
+                </button>
+                <button
+                  type="button"
                   className="soap-btn ghost"
                   disabled={payDisabled}
                   title={!branchReady ? 'Choose the branch and location inventory is drawn from' : ''}
@@ -2999,6 +3052,22 @@ export default function VisitCheckoutPanel({
         onConfirm={(reason) => voidInv(reason)}
         onCancel={() => setVoidPromptOpen(false)}
       />
+      {phoneCardOpen && invoice ? (
+        <VirtualTerminalModal
+          invoiceId={invoice.id}
+          amountDue={Math.max(
+            0,
+            (Number(invoice.total) || 0) - (Number(invoice.amountPaid) || 0),
+          )}
+          declinedBefore={Boolean(cardDeclinedAt)}
+          onCancel={() => setPhoneCardOpen(false)}
+          onPaid={(next) => {
+            setPhoneCardOpen(false);
+            onInvoiceChange(next);
+            setNote('Card charged over the phone — invoice marked paid.');
+          }}
+        />
+      ) : null}
     </div>
   );
 }

@@ -239,6 +239,8 @@ export type MailOrder = {
   shippingPaymentStatus?: 'paid' | 'awaiting_payment';
   /** Staff waived payment before fill/ship; order is not done until paid. */
   sendWithoutPayment?: boolean;
+  /** Taken before payment; the mail order team collects once the doctor approves. */
+  payAfterApproval?: boolean;
   processStatus?: MailProcessStatus;
   approvalStatus?:
     | 'needs_doctor_approval'
@@ -271,6 +273,14 @@ export type MailOrder = {
   clientContactedAt?: string | null;
   clientContactKind?: 'email' | 'sms' | 'none' | null;
   clientQuestionPendingAt?: string | null;
+  cancelRequestedAt?: string | null;
+  cancelRequestedByName?: string | null;
+  cancelRequestReason?: MailCancelReason | null;
+  cancelRequestNote?: string | null;
+  cancelResolution?: MailCancelResolution | null;
+  cancelResolvedAt?: string | null;
+  cancelResolvedByName?: string | null;
+  cancelResolutionNote?: string | null;
   firstCheckerName?: string | null;
   secondCheckerName?: string | null;
   doctorEmployeeId?: number | null;
@@ -638,6 +648,7 @@ export async function createStaffMailOrder(
     paymentStatus?: MailOrder['paymentStatus'];
     shippingPaymentStatus?: MailOrder['shippingPaymentStatus'];
     sendWithoutPayment?: boolean;
+    payAfterApproval?: boolean;
     doctorEmployeeId?: number | null;
     createdByEmployeeId?: number | null;
     shippingChargeName?: string | null;
@@ -672,6 +683,73 @@ export async function patchMailOrder(
     `/practice/${practiceId}/mail-orders/${id}`,
     body
   );
+  return data;
+}
+
+export type MailCancelReason = 'client_changed_mind' | 'wrong_item_or_qty' | 'duplicate' | 'other';
+export type MailCancelResolution = 'cancelled' | 'cancelled_refund' | 'already_shipped' | 'kept';
+
+export const MAIL_CANCEL_REASON_LABELS: Record<MailCancelReason, string> = {
+  client_changed_mind: 'Client changed their mind',
+  wrong_item_or_qty: 'Wrong item or quantity',
+  duplicate: 'Duplicate order',
+  other: 'Other',
+};
+
+/**
+ * The mail team has started (moved it, filled, bought a label, contacted the
+ * client). Staff then request a cancellation rather than pulling it back.
+ */
+export function mailOrderWorkedOn(order: MailOrder): boolean {
+  return (
+    (order.processStatus || 'queued') !== 'queued' ||
+    Boolean(order.filledAt) ||
+    order.fillerEmployeeId != null ||
+    Boolean(order.labelUrl) ||
+    Boolean(order.clientContactedAt) ||
+    ['packed', 'shipped', 'picked_up'].includes(order.status)
+  );
+}
+
+export function mailCancelPending(order: MailOrder): boolean {
+  return Boolean(order.cancelRequestedAt) && !order.cancelResolvedAt;
+}
+
+/** Take an invoice line back off the queue; refused once the mail team starts or payment is taken. */
+export async function withdrawMailOrder(practiceId: number, id: number) {
+  const { data } = await http.post<MailOrder>(
+    `/practice/${practiceId}/mail-orders/${id}/withdraw`,
+    {}
+  );
+  return data;
+}
+
+export async function requestMailOrderCancellation(
+  practiceId: number,
+  id: number,
+  body: { reason: MailCancelReason; note?: string | null }
+) {
+  const { data } = await http.post<MailOrder>(
+    `/practice/${practiceId}/mail-orders/${id}/cancel-request`,
+    body
+  );
+  return data;
+}
+
+export async function resolveMailOrderCancellation(
+  practiceId: number,
+  id: number,
+  body: { resolution: MailCancelResolution; note?: string | null }
+) {
+  const { data } = await http.post<{
+    order: MailOrder;
+    refund: {
+      invoiceId: string;
+      clientId: number | null;
+      lineId: string;
+      shippingLineId: string | null;
+    } | null;
+  }>(`/practice/${practiceId}/mail-orders/${id}/cancel-resolve`, body);
   return data;
 }
 

@@ -106,6 +106,11 @@ export type VisitInvoiceLine = {
   patientId?: number | null;
   providerEmployeeId?: number | null;
   enteredByEmployeeId?: number | null;
+  /** When the charge was added to the invoice. */
+  created?: string | null;
+  /** Filled as a refill of this prescription; sig and refills are locked. */
+  refillOfPrescriptionId?: number | null;
+  writtenPrescriptionId?: number | null;
   enteredByName?: string | null;
   returnOfLineId?: string | null;
   description: string;
@@ -906,6 +911,9 @@ export type CounterInvoiceLineInput = {
   patientId?: number | null;
   providerEmployeeId?: number | null;
   rxApproved?: boolean;
+  /** `YYYY-MM-DD`; saved on the pet's prescription when a counter-line script is approved. */
+  refillExpiration?: string | null;
+  acuity?: PrescriptionAcuity;
   miscCharge?: boolean;
   bundleSaleId?: string | null;
   sourceBundleId?: number | null;
@@ -1321,6 +1329,109 @@ export async function chargeSavedCard(invoiceId: string): Promise<VisitInvoice> 
   const { data } = await http.post<VisitInvoice>(
     `/visit-payments/${encodeURIComponent(invoiceId)}/charge-saved-card`,
     { practiceId: pid() }
+  );
+  return data;
+}
+
+export type InvoiceLineRefillOption = {
+  prescriptionId: number;
+  rxNumber: number | null;
+  name: string;
+  instructions: string | null;
+  refillsLeft: number;
+  refillThrough: string | null;
+  prescribedOn: string | null;
+  prescriberEmployeeId: number | null;
+  prescriberName: string | null;
+  eligible: boolean;
+  usedOnThisLine: boolean;
+  reason: string | null;
+  patientId: number | null;
+  patientName: string | null;
+  inventoryItemId: number | null;
+  quantity: number | null;
+};
+
+/** Refillable prescriptions on every pet in the invoice's household. */
+export async function listInvoiceRefillOptions(
+  invoiceId: string
+): Promise<InvoiceLineRefillOption[]> {
+  const { data } = await http.get<InvoiceLineRefillOption[]>(
+    `/visit-invoices/${encodeURIComponent(invoiceId)}/refill-options`,
+    { params: { practiceId: pid() } }
+  );
+  return data;
+}
+
+/** Adds the prescription's item as a locked refill line (no provider) and takes one refill off. */
+export async function addInvoiceRefillLine(
+  invoiceId: string,
+  prescriptionId: number,
+  opts?: { newScript?: boolean }
+): Promise<VisitInvoice> {
+  const { data } = await http.post<VisitInvoice>(
+    `/visit-invoices/${encodeURIComponent(invoiceId)}/refill-lines`,
+    { practiceId: pid(), prescriptionId, newScript: opts?.newScript === true }
+  );
+  return data;
+}
+
+export async function listInvoiceLineRefillOptions(
+  invoiceId: string,
+  lineId: string,
+): Promise<InvoiceLineRefillOption[]> {
+  const { data } = await http.get<InvoiceLineRefillOption[]>(
+    `/visit-invoices/${encodeURIComponent(invoiceId)}/lines/${encodeURIComponent(lineId)}/refill-options`,
+    { params: { practiceId: pid() } }
+  );
+  return data;
+}
+
+export async function applyInvoiceLineRefill(
+  invoiceId: string,
+  lineId: string,
+  prescriptionId: number,
+): Promise<VisitInvoice> {
+  const { data } = await http.post<VisitInvoice>(
+    `/visit-invoices/${encodeURIComponent(invoiceId)}/lines/${encodeURIComponent(lineId)}/use-refill`,
+    { practiceId: pid(), prescriptionId }
+  );
+  return data;
+}
+
+export async function releaseInvoiceLineRefill(
+  invoiceId: string,
+  lineId: string,
+): Promise<VisitInvoice> {
+  const { data } = await http.post<VisitInvoice>(
+    `/visit-invoices/${encodeURIComponent(invoiceId)}/lines/${encodeURIComponent(lineId)}/release-refill`,
+    { practiceId: pid() }
+  );
+  return data;
+}
+
+/** "Oct 6, 2026, 1:37 PM" — when a charge was entered on the invoice. */
+export function formatInvoiceLineEntered(created: string | null | undefined): string | null {
+  if (!created) return null;
+  const at = new Date(created);
+  if (Number.isNaN(at.getTime())) return null;
+  return at.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+/** Virtual terminal: charge a card keyed in while the owner reads it out. */
+export async function chargeKeyedCard(
+  invoiceId: string,
+  body: { paymentMethodId: string; saveCard?: boolean },
+): Promise<VisitInvoice> {
+  const { data } = await http.post<VisitInvoice>(
+    `/visit-payments/${encodeURIComponent(invoiceId)}/charge-keyed-card`,
+    { practiceId: pid(), ...body }
   );
   return data;
 }

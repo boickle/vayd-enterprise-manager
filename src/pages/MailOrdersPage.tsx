@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../auth/useAuth';
-import { Link, useSearchParams } from 'react-router';
+import { Link, useNavigate, useSearchParams } from 'react-router';
 import {
   addMailApprovalNote,
   buyMailLabel,
@@ -8,6 +8,10 @@ import {
   fetchMailRates,
   listMailOrders,
   refundMailLabel,
+  resolveMailOrderCancellation,
+  mailCancelPending,
+  MAIL_CANCEL_REASON_LABELS,
+  type MailCancelResolution,
   type MailParcelType,
   type MailRateQuote,
   patchMailOrder,
@@ -99,6 +103,7 @@ type MailOrdersScrollState = {
 
 type QueueFilter =
   | 'open'
+  | 'cancel_requests'
   | MailPharmacyStage
   | 'ready'
   | 'all';
@@ -132,7 +137,9 @@ function matchesMailSearch(order: MailOrder, query: string): boolean {
 function matchesQueueFilter(order: MailOrder, filter: QueueFilter): boolean {
   const stage = pharmacyStageOf(order);
   if (filter === 'all') return true;
-  if (filter === 'open') return stage !== 'done' && stage !== 'rejected';
+  // A cancellation request stays in front of the team until they decide, even on a finished order.
+  if (filter === 'cancel_requests') return mailCancelPending(order);
+  if (filter === 'open') return mailCancelPending(order) || (stage !== 'done' && stage !== 'rejected');
   if (filter === 'ready') return stage === 'ship' || stage === 'ready_for_pickup';
   return stage === filter;
 }
@@ -482,11 +489,16 @@ export default function MailOrdersPage() {
 
   const visible = useMemo(() => {
     const q = search.trim();
-    return rows.filter((row) => {
+    const matched = rows.filter((row) => {
       if (q) return matchesMailSearch(row, q);
       return matchesQueueFilter(row, filter);
     });
+    return [
+      ...matched.filter((row) => mailCancelPending(row)),
+      ...matched.filter((row) => !mailCancelPending(row)),
+    ];
   }, [rows, filter, search]);
+  const cancelRequestCount = useMemo(() => rows.filter(mailCancelPending).length, [rows]);
 
   const applyFilter = (next: QueueFilter) => {
     setFilter(next);
@@ -563,6 +575,7 @@ export default function MailOrdersPage() {
         {(
           [
             ['open', 'Open'],
+            ['cancel_requests', `Cancel requests${cancelRequestCount ? ` (${cancelRequestCount})` : ''}`],
             ['needs_approval', 'Needs approval'],
             ['pending_client', 'Pending client'],
             ['needs_payment', 'Needs payment'],
@@ -602,7 +615,10 @@ export default function MailOrdersPage() {
           const pets = petNames(row);
           const ship = autoshipLabel(row);
           return (
-            <article key={row.id} className={`mail-queue__card${open ? ' is-open' : ''}`}>
+            <article
+              key={row.id}
+              className={`mail-queue__card${open ? ' is-open' : ''}${mailCancelPending(row) ? ' is-cancel-requested' : ''}`}
+            >
               <div
                 className="mail-queue__synopsis"
                 role="button"
@@ -670,12 +686,18 @@ export default function MailOrdersPage() {
                     : '—'}
                 </div>
                 <div className="mail-queue__badges">
+                  {mailCancelPending(row) ? (
+                    <span className="mail-queue__badge-cancel">Cancellation requested</span>
+                  ) : null}
                   <span className={badgeClass(stageBadgeKind(stage))}>{STAGE_LABEL[stage]}</span>
                   <span className={badgeClass(row.paymentStatus === 'paid' ? 'go' : 'wait')}>
                     {payLabel(row.paymentStatus)}
                   </span>
                   {row.sendWithoutPayment && row.paymentStatus !== 'paid' ? (
                     <span className={badgeClass('warn')}>Send without payment</span>
+                  ) : null}
+                  {row.payAfterApproval && row.paymentStatus !== 'paid' ? (
+                    <span className={badgeClass('warn')}>Collect payment after approval</span>
                   ) : null}
                   <span className={badgeClass('plain')}>{fulfillmentLabel(row)}</span>
                   {ship ? <span className={badgeClass('wait')}>{ship}</span> : null}
@@ -739,6 +761,128 @@ export default function MailOrdersPage() {
         />
       )}
     </div>
+  );
+}
+
+const CANCEL_OUTCOME_LABEL: Record<MailCancelResolution, string> = {
+  cancelled: 'resolved: cancelled',
+  cancelled_refund: 'resolved: cancelled and refunded',
+  already_shipped: 'resolved: already shipped, client follow-up',
+  kept: 'resolved: order kept',
+};
+
+/**
+ * The mail team decides what a cancellation request means for this order.
+ * Only outcomes that fit its state are offered.
+ */
+function MailCancelDecision({
+  order,
+  paid,
+  practiceId,
+  onResolved,
+}: {
+  order: MailOrder;
+  paid: boolean;
+  practiceId: number;
+  onResolved: (order: MailOrder) => void;
+}) {
+  const navigate = useNavigate();
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState<MailCancelResolution | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const shipped =
+    order.status === 'shipped' || order.status === 'picked_up' || order.processStatus === 'shipped';
+
+  const resolve = async (resolution: MailCancelResolution) => {
+    setBusy(resolution);
+    setError(null);
+    try {
+      const result = await resolveMailOrderCancellation(practiceId, order.id, {
+        resolution,
+        note: note.trim() || null,
+      });
+      onResolved(result.order);
+      if (result.refund?.clientId) {
+        const params = new URLSearchParams({
+          clientId: String(result.refund.clientId),
+          tab: 'financial',
+          invoice: result.refund.invoiceId,
+          returnLine: result.refund.lineId,
+        });
+        if (result.refund.shippingLineId) {
+          params.set('returnShipping', result.refund.shippingLineId);
+        }
+        navigate(`/schedule/clients?${params.toString()}`);
+      }
+    } catch (e) {
+      setError(apiErrorMessage(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const reason = order.cancelRequestReason
+    ? MAIL_CANCEL_REASON_LABELS[order.cancelRequestReason]
+    : 'No reason given';
+
+  return (
+    <section className="mail-queue__cancel-decision" aria-label="Cancellation request">
+      <h4>Cancellation requested</h4>
+      <p>
+        <strong>{order.cancelRequestedByName || 'Staff'}</strong>
+        {order.cancelRequestedAt ? ` · ${formatOrderedAt(order.cancelRequestedAt)}` : ''} ·{' '}
+        {reason}
+      </p>
+      {order.cancelRequestNote ? (
+        <p className="mail-queue__cancel-note">“{order.cancelRequestNote}”</p>
+      ) : null}
+      <label className="mail-queue__cancel-field">
+        <span>Note (optional, saved with your decision)</span>
+        <textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} />
+      </label>
+      {error ? <p className="mail-queue__cancel-error">{error}</p> : null}
+      <div className="mail-queue__cancel-actions">
+        {shipped ? (
+          <button
+            type="button"
+            className="btn primary"
+            disabled={busy != null}
+            title="Keeps the order and creates a task to call the client about a return"
+            onClick={() => void resolve('already_shipped')}
+          >
+            {busy === 'already_shipped' ? 'Saving…' : 'Already shipped — follow up with client'}
+          </button>
+        ) : paid ? (
+          <button
+            type="button"
+            className="btn primary"
+            disabled={busy != null}
+            title="Cancels the order, puts back any stock already pulled, then opens the refund"
+            onClick={() => void resolve('cancelled_refund')}
+          >
+            {busy === 'cancelled_refund' ? 'Cancelling…' : 'Cancel and refund'}
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="btn primary"
+            disabled={busy != null}
+            title="Cancels the order, puts back any stock already pulled, and removes it from the invoice"
+            onClick={() => void resolve('cancelled')}
+          >
+            {busy === 'cancelled' ? 'Cancelling…' : 'Cancel order'}
+          </button>
+        )}
+        <button
+          type="button"
+          className="btn secondary"
+          disabled={busy != null}
+          onClick={() => void resolve('kept')}
+        >
+          {busy === 'kept' ? 'Saving…' : 'Keep the order'}
+        </button>
+      </div>
+    </section>
   );
 }
 
@@ -1102,6 +1246,20 @@ function OrderDetail({
 
   return (
     <div className="mail-queue__detail" onClick={(e) => e.stopPropagation()}>
+      {mailCancelPending(open) ? (
+        <MailCancelDecision
+          order={open}
+          paid={orderPaid}
+          practiceId={practiceId}
+          onResolved={onOrderUpdated}
+        />
+      ) : open.cancelResolution ? (
+        <p className="mail-queue__sent" role="status" style={{ marginBottom: 12 }}>
+          Cancellation request {CANCEL_OUTCOME_LABEL[open.cancelResolution]}
+          {open.cancelResolvedByName ? ` by ${open.cancelResolvedByName}` : ''}
+          {open.cancelResolutionNote ? ` — ${open.cancelResolutionNote}` : ''}
+        </p>
+      ) : null}
       {autoshipNote ? (
         <div className="settings-message" style={{ margin: '0 0 12px' }}>
           <span>{autoshipNote}</span>
@@ -1113,6 +1271,13 @@ function OrderDetail({
       {open.sendWithoutPayment && !orderPaid ? (
         <p className="mail-queue__sent" role="status" style={{ marginBottom: 12 }}>
           Send without payment — pharmacy may proceed; not done until the owner pays.
+        </p>
+      ) : null}
+      {open.payAfterApproval && !orderPaid ? (
+        <p className="mail-queue__sent" role="status" style={{ marginBottom: 12 }}>
+          Not paid yet — taken before payment so the doctor could approve first. Once approved,
+          use <strong>Text to pay</strong> or <strong>Email invoice</strong> on the payment step
+          before filling.
         </p>
       ) : null}
       <div className="mail-queue__steps">

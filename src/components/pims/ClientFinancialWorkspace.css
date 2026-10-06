@@ -508,6 +508,13 @@
   color: #94a3b8;
 }
 
+.client-fin__item-entered {
+  margin-top: 2px;
+  font-size: 12px;
+  font-weight: 400;
+  color: #6b7280;
+}
+
 .client-fin__col-item .client-fin__btn {
   margin-top: 6px;
 }
@@ -738,6 +745,10 @@
   letter-spacing: 0.02em;
   text-transform: none;
   color: #94a3b8;
+}
+
+.client-fin__entered.client-fin__needs-approver {
+  color: #b45309;
 }
 
 .client-fin__sig textarea {

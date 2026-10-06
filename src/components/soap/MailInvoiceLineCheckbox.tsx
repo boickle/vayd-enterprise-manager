@@ -1,12 +1,125 @@
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
+  MAIL_CANCEL_REASON_LABELS,
   createStaffMailOrder,
   listMailOrders,
-  patchMailOrder,
+  mailCancelPending,
+  mailOrderWorkedOn,
+  requestMailOrderCancellation,
+  withdrawMailOrder,
+  type MailCancelReason,
   type MailOrder,
 } from '../../api/onlineStore';
 import { VISIT_WORKFLOW_PRACTICE_ID, type VisitInvoiceLine } from '../../api/visitWorkflow';
 import MailOrderPrompt, { type MailOrderPromptResult } from './MailOrderPrompt';
+import './MailInvoiceLineCheckbox.css';
+
+/** Where the order is, in words staff can read back to the client. */
+export function mailStageLabel(order: MailOrder): string {
+  if (order.status === 'picked_up') return 'Picked up';
+  if (order.status === 'shipped' || order.processStatus === 'shipped') return 'Shipped';
+  if (order.status === 'ready_for_pickup') return 'Ready for pickup';
+  if (
+    order.status === 'awaiting_doctor_approval' ||
+    order.approvalStatus === 'needs_doctor_approval' ||
+    order.approvalStatus === 'approval_pending'
+  ) {
+    return 'Waiting on doctor';
+  }
+  switch (order.processStatus) {
+    case 'filled':
+      return 'Filled';
+    case 'first_check':
+    case 'second_check':
+      return 'Being checked';
+    case 'packaged':
+      return 'Packed';
+    case 'rtg':
+      return 'Ready to ship';
+    default:
+      return 'In mail queue';
+  }
+}
+
+function resolvedCancelForLine(
+  rows: MailOrder[],
+  invoiceId: string,
+  lineId: string
+): MailOrder | null {
+  const token = invoiceMailNote(invoiceId);
+  const lineToken = invoiceLineMailNote(lineId);
+  return (
+    rows.find(
+      (o) =>
+        o.status === 'cancelled' &&
+        Boolean(o.cancelResolution) &&
+        (o.notes || '').includes(token) &&
+        (o.notes || '').includes(lineToken)
+    ) ?? null
+  );
+}
+
+function MailCancelRequestModal({
+  itemName,
+  onClose,
+  onSubmit,
+}: {
+  itemName: string;
+  onClose: () => void;
+  onSubmit: (reason: MailCancelReason, note: string) => Promise<void>;
+}) {
+  const [reason, setReason] = useState<MailCancelReason | null>(null);
+  const [note, setNote] = useState('');
+  const [saving, setSaving] = useState(false);
+  return createPortal(
+    <div className="mail-cancel-backdrop" role="dialog" aria-modal="true">
+      <div className="mail-cancel">
+        <h3>Request cancellation</h3>
+        <p className="mail-cancel__hint">
+          The mail team has already started on <strong>{itemName}</strong>. They’ll decide whether
+          to cancel, refund, or follow up if it already shipped.
+        </p>
+        <fieldset className="mail-cancel__reasons">
+          <legend>Reason</legend>
+          {(Object.keys(MAIL_CANCEL_REASON_LABELS) as MailCancelReason[]).map((key) => (
+            <label key={key} className="mail-cancel__reason">
+              <input
+                type="radio"
+                name="mail-cancel-reason"
+                checked={reason === key}
+                onChange={() => setReason(key)}
+              />
+              <span>{MAIL_CANCEL_REASON_LABELS[key]}</span>
+            </label>
+          ))}
+        </fieldset>
+        <label className="mail-cancel__note">
+          <span>Note for the mail team (optional)</span>
+          <textarea rows={3} value={note} onChange={(e) => setNote(e.target.value)} />
+        </label>
+        <div className="mail-cancel__actions">
+          <button type="button" className="btn secondary" onClick={onClose} disabled={saving}>
+            Back
+          </button>
+          <button
+            type="button"
+            className="btn primary"
+            disabled={!reason || saving || (reason === 'other' && !note.trim())}
+            onClick={() => {
+              if (!reason) return;
+              setSaving(true);
+              void onSubmit(reason, note.trim()).finally(() => setSaving(false));
+            }}
+          >
+            {saving ? 'Sending…' : 'Send request'}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
 
 export function invoiceMailNote(invoiceId: string) {
   return `invoice:${invoiceId}`;
@@ -86,7 +199,7 @@ export async function cancelMailOrdersForInvoiceLines(
       throw new Error(shippedMailMessage(match));
     }
     seen.add(match.id);
-    await patchMailOrder(VISIT_WORKFLOW_PRACTICE_ID, match.id, { status: 'cancelled' });
+    await withdrawMailOrder(VISIT_WORKFLOW_PRACTICE_ID, match.id);
     const shippingId = shippingLineFromNotes(match.notes);
     if (shippingId) shippingIds.add(shippingId);
   }
@@ -126,6 +239,8 @@ type Props = {
   paymentStatus?: 'paid' | 'awaiting_payment';
   doctorEmployeeId?: number | null;
   blockedReason?: string | null;
+  /** Set when the script isn't approved yet; the mail order then waits on the doctor. */
+  approvalReason?: string | null;
   disabled?: boolean;
   onError?: (message: string) => void;
   onChargeShipping?: (
@@ -137,6 +252,8 @@ type Props = {
     | void
   >;
   onRemoveShipping?: (shippingLineId: string) => Promise<void>;
+  /** The line was added to or taken off the mail queue. */
+  onQueueChange?: (mailedLine: VisitInvoiceLine, queued: boolean) => void;
 };
 
 export default function MailInvoiceLineCheckbox({
@@ -149,17 +266,18 @@ export default function MailInvoiceLineCheckbox({
   paymentStatus = 'awaiting_payment',
   doctorEmployeeId,
   blockedReason,
+  approvalReason,
   disabled,
   onError,
   onChargeShipping,
   onRemoveShipping,
+  onQueueChange,
 }: Props) {
-  const [on, setOn] = useState(false);
-  const [orderId, setOrderId] = useState<number | null>(null);
-  const [shippingLineId, setShippingLineId] = useState<string | null>(null);
-  const [shipped, setShipped] = useState(false);
+  const [order, setOrder] = useState<MailOrder | null>(null);
+  const [closedOrder, setClosedOrder] = useState<MailOrder | null>(null);
   const [busy, setBusy] = useState(false);
   const [ask, setAsk] = useState(false);
+  const [askCancel, setAskCancel] = useState(false);
 
   useEffect(() => {
     if (!isInventoryLine(line) || line.catalogItemId == null) return;
@@ -167,13 +285,11 @@ export default function MailInvoiceLineCheckbox({
     void listMailOrders(VISIT_WORKFLOW_PRACTICE_ID)
       .then((rows) => {
         const match = matchingMailOrder(rows, invoiceId, itemId, line.id);
-        setOn(match != null);
-        setOrderId(match?.id ?? null);
-        setShippingLineId(shippingLineFromNotes(match?.notes));
-        setShipped(match ? isMailOrderShipped(match) : false);
+        setOrder(match);
+        setClosedOrder(match ? null : resolvedCancelForLine(rows, invoiceId, line.id));
       })
       .catch(() => {
-        /* keep unchecked if the queue cannot be read */
+        /* stay on dispense if the queue cannot be read */
       });
   }, [invoiceId, line.id, line.catalogItemId, line.catalogItemType]);
 
@@ -181,67 +297,144 @@ export default function MailInvoiceLineCheckbox({
   // Vaccines are given in clinic — never offer mail-order.
   if (line.catalogIsVaccine === true) return null;
 
-  const locked = on && shipped;
+  const on = order != null;
+  const shipped = order ? isMailOrderShipped(order) : false;
+  const pending = order ? mailCancelPending(order) : false;
   const blocked = Boolean(blockedReason) && !on;
   const canAdd = !on && Boolean(clientId) && line.catalogItemId != null && !blocked;
-  const canRemove = on && !shipped && orderId != null;
+  const canWithdraw =
+    on && !shipped && !pending && !mailOrderWorkedOn(order) && paymentStatus !== 'paid';
+  const off = disabled || busy;
+
+  const fail = (err: unknown, fallback: string) => {
+    const msg =
+      (err as { response?: { data?: { message?: string } } })?.response?.data?.message ||
+      (err instanceof Error ? err.message : '') ||
+      fallback;
+    onError?.(msg);
+  };
+
+  const withdraw = () => {
+    if (!order) return;
+    setBusy(true);
+    const removeShippingId = shippingLineFromNotes(order.notes);
+    void withdrawMailOrder(VISIT_WORKFLOW_PRACTICE_ID, order.id)
+      .then(async () => {
+        if (removeShippingId && onRemoveShipping) await onRemoveShipping(removeShippingId);
+        setOrder(null);
+        onQueueChange?.(line, false);
+      })
+      .catch((err) => fail(err, 'Could not take this off the mail queue'))
+      .finally(() => setBusy(false));
+  };
 
   return (
     <>
-      <label
-        className={`mail-line-check${on || ask ? ' mail-line-check--on' : ''}${locked || blocked ? ' mail-line-check--locked' : ''}`}
-        onClick={(e) => e.stopPropagation()}
-        title={
-          locked
-            ? 'Already shipped or picked up — cannot remove from the mail queue'
-            : blocked
-              ? blockedReason ?? undefined
-              : on
-                ? 'Uncheck to remove from the mail queue'
+      <div className="mail-mode" onClick={(e) => e.stopPropagation()}>
+        <div className="mail-mode__toggle" role="group" aria-label="How this item is filled">
+          <button
+            type="button"
+            className={!on && !ask ? 'is-on' : ''}
+            aria-pressed={!on && !ask}
+            disabled={off || (on && !canWithdraw)}
+            title={
+              on && !canWithdraw
+                ? pending
+                  ? 'Cancellation requested — waiting on the mail team'
+                  : 'The mail team has started on this. Request a cancellation instead.'
                 : undefined
-        }
-      >
-        <input
-          type="checkbox"
-          checked={on || ask}
-          disabled={disabled || busy || locked || blocked || (!on && !clientId)}
-          onChange={(e) => {
-            if (e.target.checked) {
-              if (!canAdd) return;
-              setAsk(true);
-              return;
             }
-            if (!canRemove || orderId == null) return;
-            setBusy(true);
-            const removeShippingId = shippingLineId;
-            void patchMailOrder(VISIT_WORKFLOW_PRACTICE_ID, orderId, {
-              status: 'cancelled',
-            })
-              .then(async () => {
-                if (removeShippingId && onRemoveShipping) {
-                  await onRemoveShipping(removeShippingId);
-                }
-                setOn(false);
-                setOrderId(null);
-                setShippingLineId(null);
-                setShipped(false);
-              })
-              .catch((err) =>
-                onError?.(
-                  err instanceof Error ? err.message : 'Could not remove from mail orders'
-                )
-              )
-              .finally(() => setBusy(false));
+            onClick={() => {
+              if (on && canWithdraw) withdraw();
+            }}
+          >
+            Dispense at visit
+          </button>
+          <button
+            type="button"
+            className={on || ask ? 'is-on' : ''}
+            aria-pressed={on || ask}
+            disabled={off || (!on && (!canAdd || !clientId))}
+            title={blocked ? blockedReason ?? undefined : undefined}
+            onClick={() => {
+              if (!on && canAdd) setAsk(true);
+            }}
+          >
+            Mail order
+            {on && Number(line.qty) > 1 ? ` (${Number(line.qty)})` : ''}
+          </button>
+        </div>
+        {order ? (
+          <div className={`mail-mode__status${pending ? ' is-cancel-pending' : ''}`}>
+            <span className="mail-mode__stage">{mailStageLabel(order)}</span>
+            {pending ? (
+              <span>
+                Cancellation requested
+                {order.cancelRequestedByName ? ` by ${order.cancelRequestedByName}` : ''} — waiting
+                on the mail team
+              </span>
+            ) : order.cancelResolution === 'already_shipped' ? (
+              <span>
+                Couldn’t cancel — already shipped
+                {order.cancelResolvedByName ? ` (${order.cancelResolvedByName})` : ''}
+              </span>
+            ) : order.cancelResolution === 'kept' ? (
+              <span>
+                Mail team kept the order
+                {order.cancelResolvedByName ? ` (${order.cancelResolvedByName})` : ''}
+              </span>
+            ) : null}
+            {!pending && !canWithdraw && order.status !== 'picked_up' ? (
+              <button
+                type="button"
+                className="mail-mode__link"
+                disabled={off}
+                onClick={() => setAskCancel(true)}
+              >
+                Request cancellation
+              </button>
+            ) : null}
+          </div>
+        ) : closedOrder ? (
+          <div className="mail-mode__status">
+            <span className="mail-mode__stage">Mail order cancelled</span>
+            <span>
+              {closedOrder.cancelResolution === 'cancelled_refund' ? 'Refund issued' : 'Cancelled'}
+              {closedOrder.cancelResolvedByName ? ` by ${closedOrder.cancelResolvedByName}` : ''}
+            </span>
+          </div>
+        ) : null}
+      </div>
+      {askCancel && order ? (
+        <MailCancelRequestModal
+          itemName={line.description}
+          onClose={() => setAskCancel(false)}
+          onSubmit={async (reason, note) => {
+            try {
+              const next = await requestMailOrderCancellation(
+                VISIT_WORKFLOW_PRACTICE_ID,
+                order.id,
+                { reason, note }
+              );
+              setOrder(next);
+              setAskCancel(false);
+            } catch (err) {
+              fail(err, 'Could not send the cancellation request');
+            }
           }}
         />
-        {on ? '✓ On mail queue' : 'Mail to client'}
-        {on && Number(line.qty) > 1 ? ` (${Number(line.qty)})` : ''}
-      </label>
+      ) : null}
       {ask ? (
         <MailOrderPrompt
           practiceId={VISIT_WORKFLOW_PRACTICE_ID}
           itemName={line.description}
           maxQty={Number(line.qty) || 1}
+          paid={paymentStatus === 'paid'}
+          approvalNote={
+            approvalReason
+              ? `${approvalReason} — the doctor will be asked to approve it from the mail queue before anything is filled.`
+              : null
+          }
           onCancel={() => setAsk(false)}
           onConfirm={(result) => {
             if (!clientId || line.catalogItemId == null) return;
@@ -276,6 +469,7 @@ export default function MailInvoiceLineCheckbox({
                 shippingPaymentStatus:
                   result.shipping > 0 ? paymentStatus : result.shippingPaymentStatus,
                 sendWithoutPayment: result.sendWithoutPayment,
+                payAfterApproval: result.payAfterApproval,
                 shippingChargeName: result.shippingChargeName,
                 shipping: result.shipping,
                 doctorEmployeeId:
@@ -285,14 +479,14 @@ export default function MailInvoiceLineCheckbox({
                     inventoryItemId: mailedLine.catalogItemId ?? line.catalogItemId,
                     name: mailedLine.description,
                     quantity: result.mailQty || Number(mailedLine.qty) || 1,
+                    needsApproval: Boolean(approvalReason) || undefined,
                   },
                 ],
               });
-              setOn(mailedLine.id === line.id);
-              setOrderId(mailedLine.id === line.id ? created.id : null);
-              setShippingLineId(mailedLine.id === line.id ? addedShippingId : null);
-              setShipped(mailedLine.id === line.id ? isMailOrderShipped(created) : false);
+              setOrder(mailedLine.id === line.id ? created : null);
+              setClosedOrder(null);
               setAsk(false);
+              onQueueChange?.(mailedLine, true);
             })()
               .catch((e) =>
                 onError?.(e instanceof Error ? e.message : 'Could not send to mail orders')

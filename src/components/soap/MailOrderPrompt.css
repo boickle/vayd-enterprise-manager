@@ -65,21 +65,60 @@
   font-weight: 400;
 }
 
-.mail-order-prompt__check {
+.mail-order-prompt__plans {
+  margin: 12px 0 4px;
+  padding: 0;
+  border: 0;
+}
+
+.mail-order-prompt__plans legend {
+  margin-bottom: 6px;
+  padding: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+}
+
+.mail-order-prompt label.mail-order-prompt__check {
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  margin: 12px 0 4px;
+  margin: 0 0 6px;
   padding: 10px 12px;
   border: 1px solid #e5e7eb;
   border-radius: 8px;
   background: #f9fafb;
   font-weight: 600;
+  cursor: pointer;
 }
 
-.mail-order-prompt__check input {
-  margin-top: 2px;
-  flex-shrink: 0;
+.mail-order-prompt label.mail-order-prompt__check.is-on {
+  border-color: var(--accent, #10b981);
+  background: #ecfdf5;
+}
+
+.mail-order-prompt label.mail-order-prompt__check input {
+  width: 16px;
+  min-width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+  padding: 0;
+  flex: 0 0 16px;
+}
+
+.mail-order-prompt label.mail-order-prompt__check > span {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.mail-order-prompt__notice {
+  margin: 4px 0 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  color: #92400e;
+  font-size: 13px;
 }
 
 .mail-order-prompt__check .mail-order-prompt__hint {

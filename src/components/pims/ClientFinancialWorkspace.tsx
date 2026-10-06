@@ -49,6 +49,7 @@ import {
   createClientPayLink,
   cancelTerminalCheckout,
   chargeSavedCard,
+  formatInvoiceLineEntered,
   getInvoiceCardOnFile,
   discardVisitInvoice,
   ensureCounterInvoice,
@@ -72,6 +73,7 @@ import {
   VISIT_WORKFLOW_PRACTICE_ID,
   type VisitInvoice,
   type VisitInvoiceLine,
+  type CounterInvoiceLineInput,
   type VisitInvoiceTender,
   type InvoiceCardOnFile,
   type VisitTenderMethod,
@@ -86,6 +88,8 @@ import {
   pricingItemFromSearchAndCheck,
 } from '../../utils/catalogItemPricing';
 import TerminalReaderPicker from '../soap/TerminalReaderPicker';
+import VirtualTerminalModal from '../soap/VirtualTerminalModal';
+import { InvoiceRefillsButton, RefillCheckButton, RefillSummary } from './InvoiceRefillPanel';
 import DirectionsLimitHint, { directionsMaxLength } from '../soap/DirectionsLimitHint';
 import { BookPatientChartButton } from '../BookPatientChartButton';
 import {
@@ -234,6 +238,8 @@ type Props = {
   clientPhone?: string | null;
   clientDoNotSms?: boolean;
   initialInvoiceId?: string | null;
+  /** Mail cancellation refund: open Return items with these lines pre-filled. */
+  initialReturnLineIds?: string[];
   openNew?: boolean;
   initialPatientId?: number | null;
   initialAppointmentId?: number | null;
@@ -275,6 +281,19 @@ function toRxDatePayload(value: string | null | undefined): string | undefined {
   const day = value.trim().slice(0, 10);
   if (/^\d{4}-\d{2}-\d{2}$/.test(day)) return `${day}T12:00:00`;
   return value.trim();
+}
+
+/** Counter lines save refill-through and acuity onto the pet's prescription when approved. */
+function counterRxExtras(
+  line: VisitInvoiceLine,
+  d: { refillCount: string; refillExpiration: string; acuity: string }
+): Pick<CounterInvoiceLineInput, 'refillExpiration' | 'acuity'> {
+  if (line.orderId) return {};
+  const refills = parsedRefillCount(d.refillCount) ?? 0;
+  return {
+    refillExpiration: refills > 0 ? d.refillExpiration.trim().slice(0, 10) || null : null,
+    ...(d.acuity === 'acute' || d.acuity === 'chronic' ? { acuity: d.acuity } : {}),
+  };
 }
 
 function refillCountIsZero(raw: string): boolean {
@@ -1111,6 +1130,7 @@ export default function ClientFinancialWorkspace({
   clientPhone,
   clientDoNotSms,
   initialInvoiceId,
+  initialReturnLineIds,
   openNew = false,
   initialPatientId,
   initialAppointmentId,
@@ -1200,6 +1220,9 @@ export default function ClientFinancialWorkspace({
   const [paymentTypes, setPaymentTypes] = useState<PracticePaymentType[]>([]);
   const [tenderPaymentType, setTenderPaymentType] = useState('');
   const [useSavedCard, setUseSavedCard] = useState(false);
+  /** Virtual terminal: key in a card the owner reads out over the phone. */
+  const [payByPhone, setPayByPhone] = useState(false);
+  const [phoneCardOpen, setPhoneCardOpen] = useState(false);
   const [cardOnFile, setCardOnFile] = useState<InvoiceCardOnFile | null>(null);
   const [discountTypeNames, setDiscountTypeNames] = useState<Set<string>>(new Set());
   const appliedPrefill = useRef(false);
@@ -1338,6 +1361,7 @@ export default function ClientFinancialWorkspace({
   const canRefundPayment = useCan('payment.refund');
   const canChangeProviderAfterClose = useCan('invoice.line.provider.change');
   const canEditPostedPayment = useCan('payment.posted.edit');
+  const canApproveRx = useCan('rx.invoice.approve');
   const [providerChangeLine, setProviderChangeLine] = useState<VisitInvoiceLine | null>(null);
   const [paymentEditTender, setPaymentEditTender] = useState<VisitInvoiceTender | null>(null);
   const [correctionBusy, setCorrectionBusy] = useState(false);
@@ -1596,6 +1620,7 @@ export default function ClientFinancialWorkspace({
   }, [selected?.id]);
 
   useEffect(() => {
+    setPayByPhone(false);
     if (cardOnFile) {
       setUseSavedCard(true);
       setTenderPaymentType('');
@@ -2547,7 +2572,8 @@ export default function ClientFinancialWorkspace({
     return d.instructions.trim() !== savedDirections(line);
   };
   const lineNeedsSigSave = (line: VisitInvoiceLine): boolean =>
-    lineSigDirty(line) || !line.instructionsEnteredByEmployeeId;
+    line.refillOfPrescriptionId == null &&
+    (lineSigDirty(line) || !line.instructionsEnteredByEmployeeId);
   const previewSubtotal = displayLines
     .filter((l) => !l.isCovered)
     .reduce((sum, l) => sum + (Number(l.amount) || 0), 0);
@@ -2575,6 +2601,8 @@ export default function ClientFinancialWorkspace({
       visibleLines.some((line) => {
         if (line.tagalongOfLineId) return false;
         if (!isPrescriptionLine(line)) return false;
+        // The doctor approves mail-queue lines from the mail queue.
+        if (mailOrderForLine(line)) return false;
         return !(Boolean(line.rxApprovedAt) && !lineSigDirty(line) && !sigNeedsReapprove[line.id]);
       }),
   );
@@ -2614,6 +2642,24 @@ export default function ClientFinancialWorkspace({
     (selected.status === 'paid' || selected.status === 'finalized') &&
     !lines.some((l) => l.returnOfLineId);
   const isSoapInvoice = lines.some((l) => l.orderId);
+  const returnPrefillKey = (initialReturnLineIds ?? []).join(',');
+  const [returnPrefilledFor, setReturnPrefilledFor] = useState<string | null>(null);
+  useEffect(() => {
+    if (!returnPrefillKey || !selected || !canReturn) return;
+    const key = `${selected.id}:${returnPrefillKey}`;
+    if (returnPrefilledFor === key) return;
+    const wanted = new Set(returnPrefillKey.split(','));
+    const qty: Record<string, string> = {};
+    for (const line of lines) {
+      if (wanted.has(line.id)) qty[line.id] = String(Number(line.qty) || 1);
+    }
+    if (!Object.keys(qty).length) return;
+    setReturnPrefilledFor(key);
+    setReturning(true);
+    setRefundDraft(null);
+    setReturnQty(qty);
+    setNote('Mail order cancelled — confirm the return to refund the client.');
+  }, [returnPrefillKey, selected, canReturn, lines, returnPrefilledFor]);
   const invoiceMetaCols = invoiceBaseCols + (returning && canReturn ? 1 : 0);
   const canRemoveLines = Boolean(
     selected &&
@@ -3087,7 +3133,7 @@ export default function ClientFinancialWorkspace({
    * Refill / acuity edits persist here and must not reopen Save sig.
    */
   async function persistRxExtras(line: VisitInvoiceLine, patch?: Partial<SigDraft>) {
-    if (!selected) return;
+    if (!selected || line.refillOfPrescriptionId != null) return;
     const d = { ...draftOf(line), ...patch };
     const refillCount = parsedRefillCount(d.refillCount);
     try {
@@ -3095,13 +3141,57 @@ export default function ClientFinancialWorkspace({
       if (refillCount != null && refillCount !== line.refillCount) {
         const next = await updateCounterInvoiceLine(selected.id, line.id, { refillCount });
         setSelected(next);
+      } else if (line.writtenPrescriptionId != null && line.rxApprovedAt) {
+        const next = await updateCounterInvoiceLine(
+          selected.id,
+          line.id,
+          counterRxExtras(line, d)
+        );
+        setSelected(next);
       }
     } catch (e: unknown) {
       setError(apiErr(e));
     }
   }
 
+  /**
+   * Mailed lines are filled (and their lot picked) by the mail order team, so the
+   * lot picker goes away and any lot already chosen here comes off the line.
+   */
+  async function reloadMailOrders(mailedLine: VisitInvoiceLine, queued: boolean) {
+    const invoiceId = selected?.id;
+    try {
+      setMailOrders(await listMailOrders(VISIT_WORKFLOW_PRACTICE_ID));
+      if (invoiceId && queued && (mailedLine.inventoryLotBalanceId != null || mailedLine.lotNumber)) {
+        const next = await updateCounterInvoiceLine(invoiceId, mailedLine.id, {
+          inventoryLotBalanceId: null,
+          lotNumber: null,
+        });
+        setSelected(next);
+      }
+    } catch (e: unknown) {
+      setError(apiErr(e));
+    }
+  }
+
+  function afterRefillChange(line: VisitInvoiceLine, next: VisitInvoice) {
+    const dropLine = <T,>(prev: Record<string, T>) => {
+      if (!(line.id in prev)) return prev;
+      const copy = { ...prev };
+      delete copy[line.id];
+      return copy;
+    };
+    setSigDrafts(dropLine);
+    setSigNeedsReapprove(dropLine);
+    setRxApproveTried(dropLine);
+    setError(null);
+    setSelected(next);
+    void refreshList(next.id);
+  }
+
   async function persistRxDetails(line: VisitInvoiceLine, d: SigDraft) {
+    // A refill reuses the original prescription; it never writes a new one.
+    if (line.refillOfPrescriptionId != null) return;
     if (!line.encounterId || !line.orderId) return;
     const refillCount = parsedRefillCount(d.refillCount);
     if (refillCount == null || (d.acuity !== 'acute' && d.acuity !== 'chronic')) return;
@@ -3149,6 +3239,7 @@ export default function ClientFinancialWorkspace({
         instructions: d.instructions.trim(),
         refillCount,
         rxApproved: true,
+        ...counterRxExtras(line, d),
       });
       setSigDrafts((prev) => ({ ...prev, [line.id]: d }));
       setSigNeedsReapprove((prev) => {
@@ -4455,6 +4546,18 @@ export default function ClientFinancialWorkspace({
                       Back
                     </button>
                   ) : null}
+                  {canEdit && !isSoapInvoice && !returning ? (
+                    <InvoiceRefillsButton
+                      disabled={busy}
+                      ensureInvoiceId={async () => (await persistDraftIfNeeded())?.id ?? null}
+                      onApplied={(next) => {
+                        setError(null);
+                        setSelected(next);
+                        void refreshList(next.id);
+                      }}
+                      onError={setError}
+                    />
+                  ) : null}
                   {hasSigsToSave ? (
                     <button
                       type="button"
@@ -4795,14 +4898,20 @@ export default function ClientFinancialWorkspace({
                         const isMailSplitChild = Boolean(mailedLineOrder && fulfillSibling);
                         /** In-clinic half when the rest of this charge is on the mail queue. */
                         const isClinicSplitParent = Boolean(!mailedLineOrder && fulfillSibling);
-                        const approveMissing = showRxMeta
-                          ? approveScriptMissing(
-                              line,
-                              draft,
-                              selected,
-                              Boolean(mailedLineOrder)
-                            )
-                          : null;
+                        /** Filled from an existing prescription: approved, sig and refills locked. */
+                        const isRefillFill = showRxMeta && line.refillOfPrescriptionId != null;
+                        const approveMissing = !showRxMeta
+                          ? null
+                          : isRefillFill
+                            ? line.trackLots && !mailedLineOrder && line.inventoryLotBalanceId == null
+                              ? 'Choose a lot'
+                              : null
+                            : approveScriptMissing(
+                                line,
+                                draft,
+                                selected,
+                                Boolean(mailedLineOrder)
+                              );
                         const rxOpen = Boolean(rxRowOpenIds[line.id]);
                         const toggleRxRow = () => {
                           setRxRowOpenIds((prev) => {
@@ -4849,11 +4958,10 @@ export default function ClientFinancialWorkspace({
                         const shippedMail = shippedMailForLine(line);
                         // No branch check here: mail order decides where it fills from,
                         // so requiring one before you can mail is backwards.
-                        const mailBlockedReason = !showRxMeta
-                          ? null
-                          : !scriptApproved
-                            ? approveMissing || 'Approve the script first'
-                            : null;
+                        // Mailing never waits on the script: staff taking an order over
+                        // the phone can queue it, and the doctor approves from the mail queue.
+                        const mailApprovalReason =
+                          showRxMeta && !scriptApproved ? 'Script not approved yet' : null;
                         const rxPrintButton = (
                           <>
                             <SendRxLabelButton
@@ -4890,7 +4998,10 @@ export default function ClientFinancialWorkspace({
                             patientName={petName(line.patientId, line.patientName)}
                             paymentStatus={invoiceMailPaymentStatus(selected)}
                             doctorEmployeeId={line.providerEmployeeId ?? null}
-                            blockedReason={mailBlockedReason}
+                            approvalReason={mailApprovalReason}
+                            onQueueChange={(mailedLine, queued) =>
+                              void reloadMailOrders(mailedLine, queued)
+                            }
                             disabled={busy || invoiceGone}
                             onError={(message) => setError(message)}
                             onChargeShipping={async (result) => {
@@ -4974,7 +5085,7 @@ export default function ClientFinancialWorkspace({
                             }}
                           />
                         ) : null;
-                        const missingFields = showRxMeta && rxApproveTried[line.id]
+                        const missingFields = showRxMeta && !isRefillFill && rxApproveTried[line.id]
                           ? approveScriptMissingFields(
                               line,
                               draft,
@@ -4984,7 +5095,15 @@ export default function ClientFinancialWorkspace({
                           : [];
                         const rxMissing = (field: RxMissingField) => missingFields.includes(field);
                         const approveButton =
-                          showRxMeta && canEdit && !scriptApproved ? (
+                          showRxMeta && canEdit && !scriptApproved && mailedLineOrder ? (
+                            <span className="client-fin__entered client-fin__needs-approver">
+                              The doctor approves this from the mail queue
+                            </span>
+                          ) : showRxMeta && canEdit && !scriptApproved && !canApproveRx ? (
+                            <span className="client-fin__entered client-fin__needs-approver">
+                              A doctor or technician must approve — or switch to Mail order
+                            </span>
+                          ) : showRxMeta && canEdit && !scriptApproved ? (
                             <button
                               type="button"
                               className="client-fin__btn client-fin__btn-approve"
@@ -5067,6 +5186,11 @@ export default function ClientFinancialWorkspace({
                                 ) : null}
                               </div>
                             )}
+                            {formatInvoiceLineEntered(line.created) ? (
+                              <div className="client-fin__item-entered">
+                                Added {formatInvoiceLineEntered(line.created)}
+                              </div>
+                            ) : null}
                             {isMailSplitChild ? (
                               <div className="client-fin__item-by">{line.description}</div>
                             ) : null}
@@ -5369,10 +5493,20 @@ export default function ClientFinancialWorkspace({
                           <>
                           <tr className={`client-fin__line-meta ${lineReady ? 'client-fin__line--ready' : 'client-fin__line--pending'}${isMailSplitChild ? ' client-fin__line--mail-split' : ''}`}>
                             <td colSpan={showPetColumn ? 3 : 2}>
-                              {canEdit ? (
+                              {canEdit && !isRefillFill ? (
                                 <label className={`client-fin__sig${rxMissing('instructions') ? ' is-missing' : ''}`}>
                                   <span className="client-fin__sig-label">
                                     Directions (sig)
+                                    {!scriptApproved && selected && line.patientId != null ? (
+                                      <RefillCheckButton
+                                        invoiceId={selected.id}
+                                        lineId={line.id}
+                                        itemName={line.description}
+                                        disabled={busy}
+                                        onApplied={(next) => afterRefillChange(line, next)}
+                                        onError={setError}
+                                      />
+                                    ) : null}
                                     {needsSigSave ? (
                                       <button
                                         type="button"
@@ -5452,9 +5586,23 @@ export default function ClientFinancialWorkspace({
                                       }}
                                     />
                                   </div>
-                                ) : line.trackLots && mailedLineOrder ? (
-                                  <p className="client-fin__fulfill-note">Lot chosen when filled</p>
+                                ) : mailedLineOrder ? (
+                                  <p className="client-fin__fulfill-note">
+                                    Mail order: the mail team picks the lot and fill location, and
+                                    the doctor sets refills when approving.
+                                  </p>
                                 ) : null}
+                                {mailedLineOrder ? null : isRefillFill && selected ? (
+                                  <RefillSummary
+                                    invoiceId={selected.id}
+                                    lineId={line.id}
+                                    canEdit={canEdit}
+                                    disabled={busy}
+                                    onReleased={(next) => afterRefillChange(line, next)}
+                                    onError={setError}
+                                  />
+                                ) : (
+                                <>
                                 <label className={`client-fin__rx-field client-fin__refill${rxMissing('refillCount') ? ' is-missing' : ''}`}>
                                   <span>
                                     # refills *
@@ -5556,6 +5704,9 @@ export default function ClientFinancialWorkspace({
                                     <option value="chronic">Chronic</option>
                                   </select>
                                 </label>
+                                </>
+                                )}
+                                {mailedLineOrder ? null : (
                                 <label className={`client-fin__rx-field${rxMissing('discardAfter') ? ' is-missing' : ''}`}>
                                   <span>Discard after *</span>
                                   <input
@@ -5574,19 +5725,16 @@ export default function ClientFinancialWorkspace({
                                     onBlur={() => void persistRxExtras(line)}
                                   />
                                 </label>
+                                )}
                               </div>
                             </td>
                             {canRemoveLines ? <td className="client-fin__row-action" /> : null}
                           </tr>
+                          {mailedLineOrder ? null : (
                           <tr className={`client-fin__line-fulfill ${lineReady ? 'client-fin__line--ready' : 'client-fin__line--pending'}`}>
                             <td colSpan={invoiceMetaCols}>
                               <div className="client-fin__rx-fulfill">
-                                {mailedLineOrder ? (
-                                  <p className="client-fin__fulfill-note">
-                                    Mail order chooses the branch and fill location when
-                                    it packs this order.
-                                  </p>
-                                ) : selected && !invoiceGone && selected.status !== 'void' ? (
+                                {selected && !invoiceGone && selected.status !== 'void' ? (
                                   <CheckoutInventoryBranchField
                                     invoice={selected}
                                     persist={!isUnsavedInvoice(selected)}
@@ -5605,6 +5753,7 @@ export default function ClientFinancialWorkspace({
                             </td>
                             {canRemoveLines ? <td className="client-fin__row-action" /> : null}
                           </tr>
+                          )}
                           </>
                           )
                         ) : null}
@@ -6209,7 +6358,9 @@ export default function ClientFinancialWorkspace({
               remaining > 0.009 &&
               rxBlocksPay ? (
                 <p className="client-fin__err">
-                  Approve each prescription before taking payment.
+                  {canApproveRx
+                    ? 'Approve each prescription before taking payment, or send it to the mail queue.'
+                    : 'A doctor or technician must approve each prescription before payment — or send it to the mail queue for the doctor to approve.'}
                 </p>
               ) : null}
 
@@ -6220,14 +6371,24 @@ export default function ClientFinancialWorkspace({
                       Method
                       <select
                         value={
-                          useSavedCard
-                            ? 'saved'
-                            : tenderPaymentType
-                              ? `type:${tenderPaymentType}`
-                              : tenderMethod
+                          payByPhone
+                            ? 'phone'
+                            : useSavedCard
+                              ? 'saved'
+                              : tenderPaymentType
+                                ? `type:${tenderPaymentType}`
+                                : tenderMethod
                         }
                         onChange={(e) => {
                           const v = e.target.value;
+                          if (v === 'phone' || /virtual\s*terminal/i.test(v)) {
+                            setPayByPhone(true);
+                            setUseSavedCard(false);
+                            setTenderPaymentType('');
+                            setTenderMethod('card');
+                            return;
+                          }
+                          setPayByPhone(false);
                           if (v === 'saved') {
                             setUseSavedCard(true);
                             setTenderPaymentType('');
@@ -6257,6 +6418,7 @@ export default function ClientFinancialWorkspace({
                         {cardOnFile ? (
                           <option value="saved">Card on file · {formatCardOnFile(cardOnFile)}</option>
                         ) : null}
+                        <option value="phone">Card over the phone (virtual terminal)</option>
                         {paymentTypes.map((r) => (
                           <option key={r.id} value={`type:${r.name}`}>
                             {r.name}
@@ -6273,7 +6435,12 @@ export default function ClientFinancialWorkspace({
                         ) : null}
                       </select>
                     </label>
-                    {!useSavedCard && !(selectedPayType && isCreditPaymentType(selectedPayType)) ? (
+                    {payByPhone ? (
+                      <p className="client-fin__muted" style={{ gridColumn: '1 / -1', margin: 0 }}>
+                        Key in the card the owner reads out. Charges {money(remaining)}.
+                      </p>
+                    ) : null}
+                    {!payByPhone && !useSavedCard && !(selectedPayType && isCreditPaymentType(selectedPayType)) ? (
                     <label className="client-fin__field">
                       Amount
                       <input
@@ -6325,7 +6492,17 @@ export default function ClientFinancialWorkspace({
                     ) : null}
                   </div>
                   <div className="client-fin__actions">
-                    {useSavedCard ? (
+                    {payByPhone ? (
+                      <button
+                        type="button"
+                        className="client-fin__btn"
+                        disabled={busy || rxBlocksPay}
+                        title={rxBlocksPay ? 'Approve each prescription before taking payment' : undefined}
+                        onClick={() => setPhoneCardOpen(true)}
+                      >
+                        Enter card · {money(remaining)}
+                      </button>
+                    ) : useSavedCard ? (
                       <button
                         type="button"
                         className="client-fin__btn"
@@ -6356,7 +6533,23 @@ export default function ClientFinancialWorkspace({
                           Send remaining to terminal
                         </button>
                       )
-                    ) : (
+                    ) : null}
+                    {!payByPhone &&
+                    !useSavedCard &&
+                    selectedPayType &&
+                    isCreditPaymentType(selectedPayType) &&
+                    !terminalJob &&
+                    !readerReady ? (
+                      <button
+                        type="button"
+                        className="client-fin__btn-ghost"
+                        disabled={busy || rxBlocksPay}
+                        onClick={() => setPhoneCardOpen(true)}
+                      >
+                        Key in card instead
+                      </button>
+                    ) : null}
+                    {payByPhone || useSavedCard || (selectedPayType && isCreditPaymentType(selectedPayType)) ? null : (
                       <button type="button" className="client-fin__btn" disabled={busy} onClick={() => void takeTender()}>
                         Record {methodLabel(tenderMethod, tenderPaymentType)}
                       </button>
@@ -6695,6 +6888,20 @@ export default function ClientFinancialWorkspace({
           );
         }}
       />
+      {phoneCardOpen && selected ? (
+        <VirtualTerminalModal
+          invoiceId={selected.id}
+          amountDue={remaining}
+          ownerName={clientName}
+          onCancel={() => setPhoneCardOpen(false)}
+          onPaid={(next) => {
+            setPhoneCardOpen(false);
+            setSelected(next);
+            void refreshList(next.id);
+            setNote('Card charged over the phone.');
+          }}
+        />
+      ) : null}
       <PostedPaymentEditDialog
         open={paymentEditTender != null}
         amountLabel={money(Number(paymentEditTender?.amount) || 0)}

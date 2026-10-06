@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { getPracticeSettings } from '../../api/practiceSettings';
 import {
   MAIL_SHIPPING_TYPES_KEY,
@@ -18,12 +19,37 @@ export type MailOrderPromptResult = {
   type: MailShippingType;
   mailQty: number;
   sendWithoutPayment: boolean;
+  payAfterApproval: boolean;
 };
+
+type PaymentPlan = 'now' | 'after_approval' | 'without_payment';
+
+const PAYMENT_PLANS: Array<{ id: PaymentPlan; label: string; hint: string }> = [
+  {
+    id: 'now',
+    label: 'Take payment now',
+    hint: 'Collect on this invoice as usual — card on file, reader, or a card read out over the phone.',
+  },
+  {
+    id: 'after_approval',
+    label: 'Doctor approves first, then collect payment',
+    hint: 'Nothing is charged yet. Once the doctor approves, the mail order team texts or emails the owner a pay link before filling.',
+  },
+  {
+    id: 'without_payment',
+    label: 'Send without payment',
+    hint: 'Pharmacy can fill and ship now. The order stays open until the owner pays. Staff only — not printed on the invoice.',
+  },
+];
 
 type Props = {
   practiceId: number;
   itemName: string;
   maxQty?: number;
+  /** Invoice already paid — there is no payment to arrange. */
+  paid?: boolean;
+  /** Why the doctor still has to approve (e.g. script not approved yet). */
+  approvalNote?: string | null;
   onCancel: () => void;
   onConfirm: (result: MailOrderPromptResult) => void;
 };
@@ -32,6 +58,8 @@ export default function MailOrderPrompt({
   practiceId,
   itemName,
   maxQty = 1,
+  paid = false,
+  approvalNote,
   onCancel,
   onConfirm,
 }: Props) {
@@ -39,7 +67,7 @@ export default function MailOrderPrompt({
   const [types, setTypes] = useState<MailShippingType[]>([]);
   const [typeId, setTypeId] = useState('');
   const [mailQty, setMailQty] = useState(String(qtyCap));
-  const [sendWithoutPayment, setSendWithoutPayment] = useState(false);
+  const [plan, setPlan] = useState<PaymentPlan>('now');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -66,7 +94,7 @@ export default function MailOrderPrompt({
       : qtyCap;
   const keepQty = Math.round((qtyCap - qty) * 1000) / 1000;
 
-  return (
+  return createPortal(
     <div className="mail-order-prompt-backdrop" role="dialog" aria-modal="true">
       <div className="mail-order-prompt">
         <h3>Send to mail queue</h3>
@@ -118,20 +146,33 @@ export default function MailOrderPrompt({
                   }.`
                 : ''}
             </p>
-            <label className="mail-order-prompt__check">
-              <input
-                type="checkbox"
-                checked={sendWithoutPayment}
-                onChange={(e) => setSendWithoutPayment(e.target.checked)}
-              />
-              <span>
-                Send without payment
-                <span className="mail-order-prompt__hint">
-                  Pharmacy can fill and ship now. The order stays open until the owner pays.
-                  Staff only — not printed on the invoice.
-                </span>
-              </span>
-            </label>
+            {approvalNote ? (
+              <p className="mail-order-prompt__notice" role="status">
+                {approvalNote}
+              </p>
+            ) : null}
+            {paid ? null : (
+              <fieldset className="mail-order-prompt__plans">
+                <legend>Payment</legend>
+                {PAYMENT_PLANS.map((option) => (
+                  <label
+                    key={option.id}
+                    className={`mail-order-prompt__check${plan === option.id ? ' is-on' : ''}`}
+                  >
+                    <input
+                      type="radio"
+                      name="mail-order-payment-plan"
+                      checked={plan === option.id}
+                      onChange={() => setPlan(option.id)}
+                    />
+                    <span>
+                      {option.label}
+                      <span className="mail-order-prompt__hint">{option.hint}</span>
+                    </span>
+                  </label>
+                ))}
+              </fieldset>
+            )}
           </>
         )}
         <div className="mail-order-prompt__actions">
@@ -148,7 +189,8 @@ export default function MailOrderPrompt({
                 shipping: mailShippingAmountForType(selected),
                 type: selected,
                 mailQty: qty,
-                sendWithoutPayment,
+                sendWithoutPayment: !paid && plan === 'without_payment',
+                payAfterApproval: !paid && plan === 'after_approval',
               });
             }}
           >
@@ -159,6 +201,7 @@ export default function MailOrderPrompt({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

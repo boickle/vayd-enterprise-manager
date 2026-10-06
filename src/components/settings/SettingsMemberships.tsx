@@ -1024,6 +1024,11 @@ export default function SettingsMemberships({ onMessage }: Props) {
 
   const [removeDropped, setRemoveDropped] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setSaveError(null);
+  }, [selection]);
 
   const [auditOpen, setAuditOpen] = useState(false);
   const [audit, setAudit] = useState<MembershipAuditEntry[]>([]);
@@ -1447,6 +1452,11 @@ export default function SettingsMemberships({ onMessage }: Props) {
     });
   }
 
+  function failSave(message: string) {
+    setSaveError(message);
+    onMessage?.(message, 'error');
+  }
+
   async function save() {
     const problem = validate(
       planDraft,
@@ -1455,9 +1465,10 @@ export default function SettingsMemberships({ onMessage }: Props) {
       plans,
     );
     if (problem) {
-      onMessage?.(problem, 'error');
+      failSave(problem);
       return;
     }
+    setSaveError(null);
     const fields = planFieldsFrom(planDraft);
     const groupInputs = groupInputsFrom(groups);
 
@@ -1469,7 +1480,7 @@ export default function SettingsMemberships({ onMessage }: Props) {
         absorbSaved(created);
         onMessage?.(`Created ${created.name}.`, 'success');
       } catch (e) {
-        onMessage?.(extractErr(e), 'error');
+        failSave(extractErr(e));
       } finally {
         setSaving(false);
       }
@@ -1487,7 +1498,7 @@ export default function SettingsMemberships({ onMessage }: Props) {
       onMessage?.(`Saved ${saved.name}.`, 'success');
       if (auditOpen) void loadAudit(saved.id);
     } catch (e) {
-      onMessage?.(extractErr(e), 'error');
+      failSave(extractErr(e));
     } finally {
       setSaving(false);
     }
@@ -1502,9 +1513,10 @@ export default function SettingsMemberships({ onMessage }: Props) {
     }
     const problem = validate(planDraft, groups, detail.id, plans);
     if (problem) {
-      onMessage?.(problem, 'error');
+      failSave(problem);
       return;
     }
+    setSaveError(null);
     const pending = diffBenefits(baselineSnaps, snapsFromGroups(groups));
     const removals = removeDropped ? pending.removed : [];
     if (pending.added.length === 0 && pending.updated.length === 0 && removals.length === 0) {
@@ -1563,7 +1575,7 @@ export default function SettingsMemberships({ onMessage }: Props) {
       );
       if (auditOpen) void loadAudit(saved.id);
     } catch (e) {
-      onMessage?.(extractErr(e), 'error');
+      failSave(extractErr(e));
     } finally {
       setSaving(false);
     }
@@ -2790,6 +2802,7 @@ export default function SettingsMemberships({ onMessage }: Props) {
                         setSelection(null);
                         return;
                       }
+                      setSaveError(null);
                       if (detail) {
                         setPlanDraft(planDraftFrom(detail));
                         setGroups(groupDraftsFrom(detail));
@@ -2800,6 +2813,11 @@ export default function SettingsMemberships({ onMessage }: Props) {
                     {isNew ? 'Cancel' : 'Discard changes'}
                   </button>
                 </div>
+                {saveError ? (
+                  <p className="settings-message settings-error-message" role="alert">
+                    Not saved: {saveError}
+                  </p>
+                ) : null}
               </div>
 
               {detail ? (
