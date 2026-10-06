@@ -778,6 +778,11 @@
   margin: 0;
 }
 
+.pmp-owner-change {
+  border-color: var(--warning);
+  color: inherit;
+}
+
 /* ---------- Audit ---------- */
 
 .pmp-audit {

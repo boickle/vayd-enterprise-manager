@@ -29,6 +29,7 @@ import {
   getPatientMembershipAudit,
   listBundles,
   listPatientMemberships,
+  markMembershipOwnerChangeHandled,
   removeMembershipItem,
   resumeMembershipBenefits,
   updateMembershipItem,
@@ -39,6 +40,8 @@ import {
   type MembershipBillingInterval,
   type MembershipGroup,
   type MembershipCancelPreview,
+  type MembershipOwnerChange,
+  type MembershipOwnerRef,
   type PatientMembership,
 } from '../../api/memberships';
 import {
@@ -94,6 +97,18 @@ function shortDate(iso: string | null): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso.slice(0, 10);
   return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+function ownerNames(owners: MembershipOwnerRef[]): string {
+  return owners.length ? owners.map((o) => o.name).join(', ') : 'no owner';
+}
+
+function ownerChangePayerNote(change: MembershipOwnerChange): string {
+  if (!change.payer) return '';
+  if (change.current.some((o) => o.id === change.payer!.id)) {
+    return `${change.payer.name} pays for it. `;
+  }
+  return `${change.payer.name} still pays for it and gets renewal notices, but is no longer linked to this pet. `;
 }
 
 function dateTime(iso: string | null): string {
@@ -275,6 +290,7 @@ export default function PatientMembershipPanel({
   const canCancel = useCan('membership.cancel');
   const canPostVisitSignup = useCan('membership.post_visit.rerate');
   const canResumeBenefits = useCan('membership.benefits.resume');
+  const canHandleOwnerChange = useCan('membership.owner_change.handle');
   const practiceId = practiceIdProp ?? resolvePracticeIdFromToken(getToken());
   const [open, setOpen] = useState(() => readStaffPatientLayout(userId).membership);
 
@@ -639,6 +655,28 @@ export default function PatientMembershipPanel({
     setError(null);
     try {
       await resumeMembershipBenefits(membership.id, note.trim() || null);
+      await load();
+    } catch (e) {
+      setError(apiErrorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function markOwnerChangeHandled() {
+    if (!membership) return;
+    const note = await appPrompt({
+      title: 'Owner change handled',
+      message:
+        'Scout did not cancel or move this membership. What did you decide with the owners? The note is stored on the audit trail.',
+      placeholder: 'e.g. new owner added their card; old owner refunded',
+      confirmLabel: 'Mark handled',
+    });
+    if (note == null) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await markMembershipOwnerChangeHandled(membership.id, note.trim() || null);
       await load();
     } catch (e) {
       setError(apiErrorMessage(e));
@@ -1357,6 +1395,9 @@ export default function PatientMembershipPanel({
                       {membership.benefitsPaused ? (
                         <PimsBadge tone="danger">Benefits paused</PimsBadge>
                       ) : null}
+                      {membership.ownerChange ? (
+                        <PimsBadge tone="warn">Owner changed</PimsBadge>
+                      ) : null}
                       {customCount > 0 ? (
                         <PimsBadge tone="info">{customCount} added for this pet</PimsBadge>
                       ) : null}
@@ -1443,6 +1484,27 @@ export default function PatientMembershipPanel({
                         onClick={() => void resumeBenefits()}
                       >
                         Resume benefits
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+                {membership.ownerChange ? (
+                  <div className="pmp-paused pmp-owner-change" role="status">
+                    <p>
+                      <strong>Owner changed {shortDate(membership.ownerChange.since)}.</strong>{' '}
+                      Before: {ownerNames(membership.ownerChange.previous)}. Now:{' '}
+                      {ownerNames(membership.ownerChange.current)}.{' '}
+                      {ownerChangePayerNote(membership.ownerChange)}Scout hasn't cancelled the
+                      membership or changed billing; decide with the owners, then mark it handled.
+                    </p>
+                    {canHandleOwnerChange ? (
+                      <button
+                        type="button"
+                        className="pims-detail__btn-secondary"
+                        disabled={busy}
+                        onClick={() => void markOwnerChangeHandled()}
+                      >
+                        Mark handled
                       </button>
                     ) : null}
                   </div>

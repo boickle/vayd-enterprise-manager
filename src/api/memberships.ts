@@ -229,7 +229,20 @@ export type PatientMembership = {
   isScoutManaged: boolean;
   /** Set while a card dispute is open: no member pricing or covered services. */
   benefitsPaused: { since: string; reason: string | null } | null;
+  /** Set when the pet changed owners while this membership was active, until staff mark it handled. */
+  ownerChange: MembershipOwnerChange | null;
   groups: MembershipGroup[];
+};
+
+export type MembershipOwnerRef = { id: number; name: string };
+
+export type MembershipOwnerChange = {
+  since: string;
+  /** Owners before the first change staff haven't handled yet. */
+  previous: MembershipOwnerRef[];
+  current: MembershipOwnerRef[];
+  /** Stripe customer on the membership, else whoever made the latest membership payment. */
+  payer: MembershipOwnerRef | null;
 };
 
 export type MembershipAuditEntry = {
@@ -536,6 +549,17 @@ export async function resumeMembershipBenefits(
 ): Promise<PatientMembership> {
   const { data } = await http.post<PatientMembership>(
     `/memberships/patient-memberships/${encodeURIComponent(membershipId)}/resume-benefits`,
+    { practiceId: currentPracticeId(), note: note || undefined }
+  );
+  return data;
+}
+
+export async function markMembershipOwnerChangeHandled(
+  membershipId: number,
+  note?: string | null
+): Promise<PatientMembership> {
+  const { data } = await http.post<PatientMembership>(
+    `/memberships/patient-memberships/${encodeURIComponent(membershipId)}/owner-change/handled`,
     { practiceId: currentPracticeId(), note: note || undefined }
   );
   return data;
