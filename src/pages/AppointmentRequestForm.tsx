@@ -119,6 +119,7 @@ import {
   type PublicAppointmentRequestPromotion,
 } from '../api/appointmentRequestPromotions';
 import { upsertServiceAreaInterest } from '../api/serviceAreaInterest';
+import { savingsBullets, useMembershipSavings } from '../api/membershipSavings';
 
 /** Set to true to show doctor selection. Code preserved for potential re-enable. */
 const SHOW_DOCTOR_SELECTION = false;
@@ -720,6 +721,7 @@ function createEmptyNewClientPetEntry(petId?: string) {
 
 export default function AppointmentRequestForm() {
   const navigate = useNavigate();
+  const membershipSavings = useMembershipSavings();
   const { token, userEmail, userId } = useAuth() as any;
   const isLoggedIn = !!token;
   
@@ -9280,8 +9282,12 @@ export default function AppointmentRequestForm() {
                 <li>Comprehensive Wellness care, including travel fees</li>
                 <li>Vaccines and recommended screening labs</li>
                 <li>Priority 7-day support from VAYD staff</li>
-                <li>50% off exams on additional visits</li>
-                <li>Member pricing (10% off) in our online store</li>
+                {savingsBullets(
+                  membershipSavings?.examPercentOff ?? null,
+                  membershipSavings?.storePercentOff ?? null,
+                ).map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
               </ul>
               <p style={{ fontSize: '15px', fontWeight: 700, color: '#374151', lineHeight: 1.6, marginBottom: '16px' }}>
                 If you&apos;d like ongoing care with Vet At Your Door, you can explore and join One-Team Membership below.

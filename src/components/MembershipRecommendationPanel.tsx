@@ -4,6 +4,7 @@ import {
   computeFoundationsSeniorScreenFalseCoverageVisitDelta,
   seniorScreenLineNameFalseFoundationsFullCoverage,
 } from '../utils/membershipFoundationsSimulate';
+import { savingsBullets, savingsForPlan, useMembershipSavings } from '../api/membershipSavings';
 
 export type RoomLoaderPlanForDisplay = { planId: string; planName: string; tagLine: string };
 export type RoomLoaderPlansForPetForDisplay = {
@@ -124,6 +125,7 @@ export default function MembershipRecommendationPanel({
   patientHasMembershipFlag,
   todayVisitTotalAlignedWithSummary,
 }: Props) {
+  const membershipSavings = useMembershipSavings();
   return (
     <div id="membership-bill-explainer-panel" role="region" aria-labelledby="membership-bill-explainer-trigger" style={PANEL_STYLE}>
       {membershipPanelLoading && Object.keys(membershipPanelByPatientId).length === 0 && (
@@ -389,11 +391,11 @@ export default function MembershipRecommendationPanel({
                 <div style={{ fontSize: '14px', color: '#5a6b6c', fontWeight: 500, marginBottom: '10px' }}>
                   12-month membership
                 </div>
-                <div style={{ fontSize: '14px', fontWeight: 600, color: '#166534', lineHeight: 1.45 }}>
-                  {`Save ${
-                    annualPaymentSavePercent != null && annualPaymentSavePercent > 0 ? annualPaymentSavePercent : 10
-                  }% with annual payment`}
-                </div>
+                {annualPaymentSavePercent != null && annualPaymentSavePercent > 0 ? (
+                  <div style={{ fontSize: '14px', fontWeight: 600, color: '#166534', lineHeight: 1.45 }}>
+                    {`Save ${annualPaymentSavePercent}% with annual payment`}
+                  </div>
+                ) : null}
               </div>
             )}
 
@@ -469,8 +471,12 @@ export default function MembershipRecommendationPanel({
                   <ul style={{ margin: 0, paddingLeft: '20px', color: '#1a2f24', fontSize: '14px', lineHeight: 1.5 }}>
                     <li style={{ marginBottom: '6px' }}>✔ Priority scheduling with a dedicated One-Team who knows {petName} over time</li>
                     <li style={{ marginBottom: '6px' }}>✔ Priority 7-day support from VAYD staff through the Client Portal</li>
-                    <li style={{ marginBottom: '6px' }}>✔ 50% off exams on additional visits</li>
-                    <li style={{ marginBottom: '6px' }}>✔ Member pricing (10% off) in our online store</li>
+                    {(() => {
+                      const s = savingsForPlan(membershipSavings, planDisplayName);
+                      return savingsBullets(s.exam, s.store);
+                    })().map((line) => (
+                      <li key={line} style={{ marginBottom: '6px' }}>✔ {line}</li>
+                    ))}
                     <li style={{ marginBottom: '6px' }}>✔ Care designed for long-term health, not just sick visits</li>
                   </ul>
                 </div>

@@ -50,6 +50,12 @@ import {
   formatSupportAvailabilityIntro,
   type ChatHoursOfOperation,
 } from '../utils/chatHours';
+import {
+  formatPercentRange,
+  savingsBullets,
+  savingsForPlan,
+  useMembershipSavings,
+} from '../api/membershipSavings';
 
  type MembershipPlan = {
   id: string;
@@ -73,8 +79,6 @@ const MEMBERSHIP_SHARED_BENEFITS = [
   'A dedicated "One-Team" that gets to know your pet over time',
   'Priority scheduling with your One-Team',
   '7-day support from VAYD staff',
-  '50% off exams on additional visits',
-  'Member pricing (10% off) in our online store',
 ];
 
 function signupFamily(name: string | null | undefined): 'golden' | 'foundations' | null {
@@ -391,6 +395,7 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const { userId: authUserId, userEmail: authUserEmail } = useAuth() as any;
+  const membershipSavings = useMembershipSavings();
   const state = location.state as (AppointmentFlowState & { petId?: string }) | undefined;
 
   const fromModal = props?.fromModal === true;
@@ -1972,10 +1977,14 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
                   <span aria-hidden="true">✓</span>
                   <span>One predictable monthly payment — or pay annually and save 10%</span>
                 </li>
-                <li className="cp-muted" style={{ display: 'flex', gap: 8, lineHeight: 1.5 }}>
-                  <span aria-hidden="true">✓</span>
-                  <span>50% off exams on additional visits — so cost never makes you wait to call us</span>
-                </li>
+                {formatPercentRange(membershipSavings?.examPercentOff) ? (
+                  <li className="cp-muted" style={{ display: 'flex', gap: 8, lineHeight: 1.5 }}>
+                    <span aria-hidden="true">✓</span>
+                    <span>
+                      {formatPercentRange(membershipSavings?.examPercentOff)} off exams on additional visits — so cost never makes you wait to call us
+                    </span>
+                  </li>
+                ) : null}
               </ul>
             </div>
           </section>
@@ -2196,7 +2205,13 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
                       <div className="cp-card-includes">
                         <strong style={{ fontSize: 14, display: 'block', marginBottom: 8 }}>Includes:</strong>
                         <ul>
-                          {plan.includes.map((item, idx) => (
+                          {[
+                            ...plan.includes,
+                            ...(() => {
+                              const s = savingsForPlan(membershipSavings, plan.name);
+                              return savingsBullets(s.exam, s.store);
+                            })(),
+                          ].map((item, idx) => (
                             <li key={idx} style={{ marginBottom: 4 }}>
                               <span role="img" aria-label="star" style={{ marginRight: 6 }}>
                                 ⭐

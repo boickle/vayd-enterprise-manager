@@ -6,9 +6,6 @@
  * and the pet that could still get it.
  */
 
-/** Advertised rate when no pet on the account has a plan to read a real percent from. */
-export const ADVERTISED_MEMBER_STORE_PERCENT = 10;
-
 export type StoreMemberPromoPet = {
   id: number;
   name: string;
@@ -19,6 +16,8 @@ export type StoreMemberPromoInput = {
   pets: StoreMemberPromoPet[];
   /** patientId → percent off, from the member-discounts endpoint. */
   discounts: Record<number, number>;
+  /** Practice's plan store percents; with none set, there is no sign-up pitch. */
+  advertised: { min: number; max: number } | null;
 };
 
 export type StoreMemberPromo = {
@@ -49,14 +48,20 @@ export function buildStoreMemberPromo(input: StoreMemberPromoInput): StoreMember
   const memberPets = pets.filter((p) => (input.discounts[p.id] ?? 0) > 0);
   const nonMemberPets = pets.filter((p) => !((input.discounts[p.id] ?? 0) > 0));
   const bestPercent = Math.max(0, ...pets.map((p) => input.discounts[p.id] ?? 0));
-  const percent = bestPercent > 0 ? bestPercent : ADVERTISED_MEMBER_STORE_PERCENT;
+  const advertised = input.advertised;
+  const percent = bestPercent > 0 ? bestPercent : advertised?.max ?? 0;
+  if (percent <= 0) return null;
   const pct = formatMemberPercent(percent);
+  const pitch =
+    bestPercent > 0 || !advertised || advertised.min === advertised.max
+      ? `${pct}%`
+      : `up to ${pct}%`;
 
   if (!input.loggedIn || pets.length === 0) {
     return {
       kind: 'join',
       percent,
-      headline: `Members save ${pct}% on the online store`,
+      headline: `Members save ${pitch} on the online store`,
       body: 'Membership also covers routine care, exams, and more. Check your client portal for what is included.',
       showPortalLink: true,
     };
@@ -66,7 +71,7 @@ export function buildStoreMemberPromo(input: StoreMemberPromoInput): StoreMember
     return {
       kind: 'join',
       percent,
-      headline: `Members save ${pct}% on the online store`,
+      headline: `Members save ${pitch} on the online store`,
       body: `${joinNames(nonMemberPets.map((p) => p.name))} ${
         nonMemberPets.length === 1 ? 'is not' : 'are not'
       } on a membership yet. Members also get routine care covered — check your client portal for what is included.`,

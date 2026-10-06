@@ -103,6 +103,7 @@ import {
 import './roomLoader/RoomLoaderSections.css';
 import './roomLoader/MembershipPitch.css';
 import './PublicRoomLoaderForm.css';
+import { formatPercentRange, useMembershipSavings } from '../api/membershipSavings';
 
 /** Plan/context stand-ins so a pet the payload has not described yet simply offers nothing. */
 const emptyPetPlan: ResolvedPetPlan = {
@@ -215,8 +216,6 @@ const MEMBERSHIP_SHARED_BENEFITS = [
   'A dedicated "One-Team" that gets to know your pet over time',
   'Priority scheduling with your One-Team',
   '7-day support from VAYD staff',
-  '50% off exams on additional visits',
-  'Member pricing (10% off) in our online store',
 ];
 
 /** Plan card content for room-loader info popover (same as MembershipSignup). Key by base plan id (e.g. foundations, golden). */
@@ -1530,6 +1529,7 @@ function migrateSavedRoomLoaderCurrentPage(oldPage: number, patientCount: number
 export default function PublicRoomLoaderForm() {
   const [searchParams] = useSearchParams();
   const token = searchParams.get('token');
+  const membershipSavings = useMembershipSavings();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<any>(null);
@@ -3507,7 +3507,16 @@ export default function PublicRoomLoaderForm() {
             Want to spread out the cost of care while getting even more support and benefits?
           </p>
           <p style={{ margin: '0 0 12px', fontSize: '14px', color: '#555', lineHeight: 1.4, textAlign: 'left' }}>
-            Memberships allow you to turn wellness care into easy monthly payments while giving you priority scheduling with your dedicated One Team and priority 7-day support from VAYD staff. Members also save 50% on additional exams and get member pricing in our online store. You can explore membership options in your Client Portal. To apply membership benefits to this visit, enrollment should be completed before your appointment.
+            Memberships allow you to turn wellness care into easy monthly payments while giving you priority scheduling with your dedicated One Team and priority 7-day support from VAYD staff.{' '}
+            {(() => {
+              const exam = formatPercentRange(membershipSavings?.examPercentOff);
+              const store = formatPercentRange(membershipSavings?.storePercentOff);
+              if (exam && store) return `Members also save ${exam} on additional exams and ${store} in our online store. `;
+              if (exam) return `Members also save ${exam} on additional exams. `;
+              if (store) return `Members also save ${store} in our online store. `;
+              return '';
+            })()}
+            You can explore membership options in your Client Portal. To apply membership benefits to this visit, enrollment should be completed before your appointment.
           </p>
           <div className="public-room-loader-thank-you-actions" style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', justifyContent: 'center', alignItems: 'center' }}>
             {token && (

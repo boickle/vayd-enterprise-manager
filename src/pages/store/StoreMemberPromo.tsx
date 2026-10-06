@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router';
 import { buildStoreMemberPromo } from '../../utils/storeMemberPromo';
+import { useMembershipSavings } from '../../api/membershipSavings';
 import { petDbId, useStoreMemberPricing } from './useStoreMemberPricing';
 
 /** Dismissal is per sign-up pitch, so members still see their applied-discount note. */
@@ -16,6 +17,7 @@ function readDismissed(): boolean {
 
 export default function StoreMemberPromo() {
   const { loggedIn, loading, pets, discounts } = useStoreMemberPricing();
+  const savings = useMembershipSavings();
   const [dismissed, setDismissed] = useState(readDismissed);
 
   const promo = useMemo(
@@ -26,8 +28,9 @@ export default function StoreMemberPromo() {
           .map((pet) => ({ id: petDbId(pet) ?? NaN, name: pet.name || '' }))
           .filter((pet) => Number.isFinite(pet.id)),
         discounts,
+        advertised: savings?.storePercentOff ?? null,
       }),
-    [discounts, loggedIn, pets]
+    [discounts, loggedIn, pets, savings]
   );
 
   // A household that joins later should get the reassurance line even after dismissing.

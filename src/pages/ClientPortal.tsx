@@ -75,6 +75,7 @@ import {
   relativeDay,
   type PetWithWellness,
 } from './clientPortal/portalShared';
+import { savingsBullets, useMembershipSavings } from '../api/membershipSavings';
 
 const STORE_PRACTICE_ID = currentPracticeId();
 
@@ -87,6 +88,7 @@ function greetingWord(): string {
 
 export default function ClientPortal() {
   const { userEmail, userId, logout, clientInfo, token } = useAuth() as any;
+  const membershipSavings = useMembershipSavings();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -877,8 +879,12 @@ export default function ClientPortal() {
                   <>
                     <ul className="pp-perks">
                       <li>Annual wellness exam, vaccines & labs included</li>
-                      <li>50% off exam fees on every other visit</li>
-                      <li>10% member pricing in our online store</li>
+                      {savingsBullets(
+                        membershipSavings?.examPercentOff ?? null,
+                        membershipSavings?.storePercentOff ?? null,
+                      ).map((line) => (
+                        <li key={line}>{line}</li>
+                      ))}
                       <li>After-hours chat & priority scheduling with your One-Team</li>
                       <li>Spread the cost of care — monthly or annual</li>
                     </ul>
