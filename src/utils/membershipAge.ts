@@ -1,11 +1,3 @@
-/**
- * Last-resort Golden age, used only when no Golden membership plan has a youngest
- * age set. Practices edit that age under Settings → Memberships (`minAgeMonths`).
- * Signup, Room Loader, and post-visit enrollment should call
- * `goldenMinAgeMonthsFromPlans` first.
- */
-export const MEMBERSHIP_GOLDEN_MIN_AGE_YEARS = 8;
-
 export type PlanAgeSource = {
   name?: string | null;
   species?: string | null;
@@ -26,8 +18,7 @@ function speciesFits(planSpecies: string | null | undefined, species: 'dog' | 'c
 
 /**
  * Youngest age (months) at which Golden is offered, from the practice's Golden plans.
- * Null when every Golden plan has a blank youngest age — callers may then fall back
- * to `MEMBERSHIP_GOLDEN_MIN_AGE_YEARS`.
+ * Null when every Golden plan has a blank youngest age (Golden is then offered at any age).
  */
 export function goldenMinAgeMonthsFromPlans(
   plans: PlanAgeSource[],
@@ -41,30 +32,24 @@ export function goldenMinAgeMonthsFromPlans(
   return Math.min(...mins);
 }
 
-/** True when this pet is old enough for Golden, using plan ages when the practice has set them. */
-export function petMeetsGoldenAge(
-  ageYears: number | null | undefined,
-  plans?: PlanAgeSource[] | null,
-  species?: 'dog' | 'cat' | null
-): boolean {
-  if (ageYears == null || !Number.isFinite(ageYears)) return false;
-  const fromPlans = plans?.length ? goldenMinAgeMonthsFromPlans(plans, species) : null;
-  const minMonths = fromPlans ?? MEMBERSHIP_GOLDEN_MIN_AGE_YEARS * 12;
-  return ageYears * 12 >= minMonths;
-}
-
 export type RecommendablePlan = PlanAgeSource & {
   maxAgeMonths?: number | null;
   sortOrder?: number | null;
 };
 
-/** Same rule as renewal: from the youngest age (inclusive) through the oldest age in whole months. */
+/**
+ * Same rule as renewal: from the youngest age (inclusive) through the oldest age in whole months.
+ * A plan with no ages fits every pet; with the pet's age unknown, only such plans fit.
+ */
 export function planFitsPet(
   plan: RecommendablePlan,
-  ageMonths: number,
+  ageMonths: number | null | undefined,
   species?: 'dog' | 'cat' | null
 ): boolean {
   if (!speciesFits(plan.species, species)) return false;
+  if (ageMonths == null || !Number.isFinite(ageMonths)) {
+    return plan.minAgeMonths == null && plan.maxAgeMonths == null;
+  }
   if (plan.minAgeMonths != null && ageMonths < plan.minAgeMonths) return false;
   if (plan.maxAgeMonths != null && Math.floor(ageMonths) > plan.maxAgeMonths) return false;
   return true;
@@ -87,6 +72,54 @@ export function pickRecommendedPlan<T extends RecommendablePlan>(plans: T[]): T 
   return sorted[0] ?? null;
 }
 
+/** The signup card a practice plan belongs to, matched by name. */
+export function membershipPlanFamily(
+  name: string | null | undefined
+): 'golden' | 'foundations' | null {
+  if (/comfort/i.test(name || '')) return null;
+  if (/\bgolden\b/i.test(name || '')) return 'golden';
+  if (/foundation/i.test(name || '')) return 'foundations';
+  return null;
+}
+
+/**
+ * Which of the Foundations and Golden cards to offer a pet, and which to recommend.
+ * Plans whose age range fits the pet decide; with no fitting plan (e.g. the plan
+ * list did not load) only Foundations is offered.
+ */
+export function membershipCardChoice(
+  plans: RecommendablePlan[],
+  ageYears: number | null | undefined,
+  species: 'dog' | 'cat' | null
+): { foundations: boolean; golden: boolean; recommended: 'golden' | 'foundations' } {
+  const ageMonths = ageYears == null ? null : ageYears * 12;
+  const fitting = plans.filter(
+    (plan) => membershipPlanFamily(plan.name) && planFitsPet(plan, ageMonths, species)
+  );
+  const families = fitting.length
+    ? new Set(fitting.map((plan) => membershipPlanFamily(plan.name)))
+    : null;
+  const golden = families ? families.has('golden') : false;
+  const foundations = families ? families.has('foundations') : true;
+  const best = pickRecommendedPlan(fitting);
+  const recommended =
+    (best && membershipPlanFamily(best.name)) || (golden ? 'golden' : 'foundations');
+  return { foundations, golden, recommended };
+}
+
+/** True when the pet's age fits one of the practice's Puppy / Kitten plans. */
+export function starterPlanFitsPet(
+  plans: RecommendablePlan[],
+  ageYears: number | null | undefined,
+  species: 'dog' | 'cat' | null
+): boolean {
+  if (!species) return false;
+  const ageMonths = ageYears == null ? null : ageYears * 12;
+  return plans.some(
+    (plan) => /puppy|kitten/i.test(plan.name || '') && planFitsPet(plan, ageMonths, species)
+  );
+}
+
 const MAX_REASONABLE_PARSED_AGE_YEARS = 35;
 
 /**
@@ -107,16 +140,30 @@ export function parseAgeStringToYears(ageStr: string | null | undefined): number
     return null;
   }
 
-  const monthsMatch = s.match(/^(\d+)\s*mo(?:nth)?s?$/);
+  const monthsMatch = s.match(/^(\d+)\s*mo(?:nth)?s?(?:\s+old)?$/);
   if (monthsMatch) return Math.max(0, parseInt(monthsMatch[1], 10) / 12);
+
+  const weeksMatch = s.match(/^(\d+)\s*w(?:ee)?ks?(?:\s+old)?$/);
+  if (weeksMatch) return Math.max(0, parseInt(weeksMatch[1], 10) / 52);
+
+  const daysMatch = s.match(/^(\d+)\s*d(?:ay)?s?(?:\s+old)?$/);
+  if (daysMatch) return Math.max(0, parseInt(daysMatch[1], 10) / 365.25);
+
+  const fractionMatch = s.match(/^(\d+)\s+(\d)\/(\d)\s*(?:y(?:ear)?s?|yr?s?)?(?:\s+old)?$/);
+  if (fractionMatch && Number(fractionMatch[3]) > 0) {
+    return parseInt(fractionMatch[1], 10) + Number(fractionMatch[2]) / Number(fractionMatch[3]);
+  }
 
   const yearMonthMatch = s.match(/^(\d+)\s*y(?:ear)?s?\s*(?:and|\d*)\s*(\d+)\s*mo(?:nth)?s?$/);
   if (yearMonthMatch) {
     return Math.max(0, parseInt(yearMonthMatch[1], 10) + parseInt(yearMonthMatch[2], 10) / 12);
   }
 
-  const asDate = new Date(trimmed);
-  if (!Number.isNaN(asDate.getTime())) {
+  const looksLikeDate =
+    /\d{1,4}[/.-]\d{1,2}[/.-]\d{1,4}/.test(s) ||
+    /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b/.test(s);
+  const asDate = looksLikeDate ? new Date(trimmed) : new Date(NaN);
+  if (!Number.isNaN(asDate.getTime()) && asDate.getTime() <= Date.now()) {
     const diff = Date.now() - asDate.getTime();
     return Math.max(0, diff / (1000 * 60 * 60 * 24 * 365.25));
   }

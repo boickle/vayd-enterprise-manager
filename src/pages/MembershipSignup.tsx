@@ -1,5 +1,5 @@
 // src/pages/MembershipSignup.tsx
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useLocation, useSearchParams } from 'react-router';
 import {
   fetchClientPets,
@@ -34,7 +34,8 @@ import { trackEvent, trackViewItem, trackAddToCart, trackBeginCheckout } from '.
 import { resolveMembershipPetKind } from '../utils/membershipSpecies';
 import {
   goldenMinAgeMonthsFromPlans,
-  petMeetsGoldenAge,
+  starterPlanFitsPet,
+  membershipPlanFamily,
   pickRecommendedPlan,
   planFitsPet,
   type RecommendablePlan,
@@ -81,11 +82,10 @@ const MEMBERSHIP_SHARED_BENEFITS = [
   '7-day support from VAYD staff',
 ];
 
-function signupFamily(name: string | null | undefined): 'golden' | 'foundations' | null {
-  if (/comfort/i.test(name || '')) return null;
-  if (/\bgolden\b/i.test(name || '')) return 'golden';
-  if (/foundation/i.test(name || '')) return 'foundations';
-  return null;
+const signupFamily = membershipPlanFamily;
+
+function isStarterPlanName(name: string | null | undefined): boolean {
+  return /puppy|kitten|\bstarter\b/i.test(name || '');
 }
 
 const MEMBERSHIP_PLANS: MembershipPlan[] = [
@@ -125,9 +125,7 @@ const MEMBERSHIP_PLANS: MembershipPlan[] = [
       'FeLV/FIV/heartworm test (cats)',
       'Pancreatitis screening (cats)',
       '"4dx" Heartworm/Tick test (dogs)',
-      'A team that gets to know your pet over time',
-      'Priority scheduling with your One-Team',
-      '7-day support from VAYD staff',
+      ...MEMBERSHIP_SHARED_BENEFITS,
     ],
   },
   {
@@ -175,7 +173,7 @@ function fmtDate(iso?: string) {
 
 function formatIncludesText(text: string): string {
   // Preserve special terms (case-insensitive matching) - order matters, longer terms first
-  const specialTerms = ['Client Portal', 'VAYD', 'CBC', 'FeLV', 'FIV'];
+  const specialTerms = ['Client Portal', 'One-Team', 'VAYD', 'CBC', 'FeLV', 'FIV'];
   
   // Replace special terms with placeholders first (longest first to avoid partial matches)
   // Use a unique marker that won't be split
@@ -446,7 +444,13 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
   const [agreementAccepted, setAgreementAccepted] = useState(false);
   const [agreementSignature, setAgreementSignature] = useState('');
   const [membershipAgePlans, setMembershipAgePlans] = useState<
-    Array<RecommendablePlan & { marketingSummary: string | null }>
+    Array<
+      RecommendablePlan & {
+        marketingSummary: string | null;
+        cardTagLine: string | null;
+        cardBullets: string[] | null;
+      }
+    >
   >([]);
   const [planCatalog, setPlanCatalog] = useState<SubscriptionPlanCatalog | null>(null);
   const [planCatalogError, setPlanCatalogError] = useState<string | null>(null);
@@ -884,6 +888,8 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
               maxAgeMonths: row.maxAgeMonths,
               sortOrder: row.sortOrder,
               marketingSummary: row.marketingSummary,
+              cardTagLine: row.cardTagLine,
+              cardBullets: row.cardBullets,
             }))
         );
       })
@@ -895,15 +901,9 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
     };
   }, []);
 
-  const goldenByAge = useMemo(() => {
-    if (!petDetails.kind || petDetails.ageYears == null) return false;
-    return petMeetsGoldenAge(petDetails.ageYears, membershipAgePlans, petDetails.kind);
-  }, [petDetails, membershipAgePlans]);
-
   // Signup cards are Foundations and Golden; each practice plan maps to one by name.
   const fittingPlans = useMemo(() => {
-    if (petDetails.ageYears == null) return [];
-    const ageMonths = petDetails.ageYears * 12;
+    const ageMonths = petDetails.ageYears == null ? null : petDetails.ageYears * 12;
     return membershipAgePlans
       .map((plan) => ({ plan, family: signupFamily(plan.name) }))
       .filter(({ plan, family }) => family && planFitsPet(plan, ageMonths, petDetails.kind));
@@ -916,11 +916,10 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
   const offeredFamilies = fittingPlans.length
     ? new Set(fittingPlans.map(({ family }) => family))
     : null;
-  const meetsGolden = offeredFamilies ? offeredFamilies.has('golden') : goldenByAge;
+  const meetsGolden = offeredFamilies ? offeredFamilies.has('golden') : false;
   const foundationsOffered = offeredFamilies ? offeredFamilies.has('foundations') : true;
-  const goldenAgeYears = Math.round(
-    (goldenMinAgeMonthsFromPlans(membershipAgePlans, petDetails.kind) ?? 96) / 12,
-  );
+  const goldenMinAgeMonths = goldenMinAgeMonthsFromPlans(membershipAgePlans, petDetails.kind);
+  const goldenAgeYears = goldenMinAgeMonths == null ? null : Math.round(goldenMinAgeMonths / 12);
 
   useEffect(() => {
     if (selectedPlanExplicit === 'golden' && !meetsGolden) {
@@ -936,6 +935,50 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
     (meetsGolden ? 'golden' : 'foundations');
   const isNewPatient = !hasPastAppointment;
 
+  // Card wording comes from the practice plan behind each card; the fixed text is only a fallback.
+  const cardPlanFor = useCallback(
+    (family: 'foundations' | 'golden', starter: boolean) => {
+      const matches = (plan: (typeof membershipAgePlans)[number]) =>
+        signupFamily(plan.name) === family && isStarterPlanName(plan.name) === starter;
+      return (
+        fittingPlans.find(({ plan }) => matches(plan))?.plan ??
+        membershipAgePlans.find(
+          (plan) =>
+            matches(plan) &&
+            planFitsPet({ ...plan, minAgeMonths: null, maxAgeMonths: null }, null, petDetails.kind),
+        ) ??
+        null
+      );
+    },
+    [fittingPlans, membershipAgePlans, petDetails.kind],
+  );
+  const cardWording = useCallback(
+    (card: MembershipPlan) => {
+      const family = card.id === 'golden' ? 'golden' : 'foundations';
+      const plan = cardPlanFor(family, false);
+      return {
+        tagLine: plan?.cardTagLine?.trim() || card.tagLine,
+        includes: plan?.cardBullets?.length ? plan.cardBullets : card.includes,
+      };
+    },
+    [cardPlanFor],
+  );
+  /** Puppy / Kitten add-on lines: the starter plan's bullets that its base plan doesn't already list. */
+  const starterAddonIncludes = useCallback(
+    (family: 'foundations' | 'golden') => {
+      const starter = cardPlanFor(family, true);
+      const base = cardPlanFor(family, false);
+      const baseLines = new Set((base?.cardBullets ?? []).map((line) => line.trim().toLowerCase()));
+      const extras = (starter?.cardBullets ?? []).filter(
+        (line) => !baseLines.has(line.trim().toLowerCase()),
+      );
+      return extras.length
+        ? extras
+        : MEMBERSHIP_PLANS.find((p) => p.id === 'starter-addon')?.includes ?? [];
+    },
+    [cardPlanFor],
+  );
+
   // Get the primary plan name that should be selected
   const primaryPlanName = recommendedPlanId === 'golden' ? 'Golden' : 'Foundations';
 
@@ -946,23 +989,8 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
       return () => clearTimeout(timer);
     }
   }, [toast]);
-  // Oldest age on the practice's Puppy / Kitten plans; 18 months if none is set.
-  const starterMaxAgeMonths = useMemo(() => {
-    const maxes = membershipAgePlans
-      .filter(
-        (plan) =>
-          /puppy|kitten/i.test(plan.name || '') &&
-          plan.maxAgeMonths != null &&
-          planFitsPet({ ...plan, minAgeMonths: null, maxAgeMonths: null }, 0, petDetails.kind),
-      )
-      .map((plan) => plan.maxAgeMonths as number);
-    return maxes.length ? Math.max(...maxes) : 18;
-  }, [membershipAgePlans, petDetails.kind]);
   const shouldAskStarter =
-    isNewPatient &&
-    petDetails.ageYears != null &&
-    Math.floor(petDetails.ageYears * 12) <= starterMaxAgeMonths &&
-    !!petDetails.kind;
+    isNewPatient && starterPlanFitsPet(membershipAgePlans, petDetails.ageYears, petDetails.kind);
   const showPreVisitNote = hasUpcomingAppointment && !hasPastAppointment;
 
   const recommendationCopy = useMemo(() => {
@@ -2057,8 +2085,13 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
               ) : (
                 <>
               It includes one annual wellness visit and an early detection lab panel, ideal for a healthy young{' '}
-              {petDetails.kind === 'dog' ? 'dog' : petDetails.kind === 'cat' ? 'cat' : 'pet'}. As {pet.name} reaches age {goldenAgeYears},
-              we'll recommend moving to Golden, which adds a second annual visit and more comprehensive senior screening.
+              {petDetails.kind === 'dog' ? 'dog' : petDetails.kind === 'cat' ? 'cat' : 'pet'}.
+              {goldenAgeYears != null && (
+                <>
+                  {' '}As {pet.name} reaches age {goldenAgeYears}, we'll recommend moving to Golden, which adds a
+                  second annual visit and more comprehensive senior screening.
+                </>
+              )}
                 </>
               )}
             </p>
@@ -2167,7 +2200,7 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
                     <div className="cp-card-upper">
                       <div className="cp-card-head">
                         <h3>{plan.name}</h3>
-                        <div className="cp-card-sub">{plan.tagLine}</div>
+                        <div className="cp-card-sub">{cardWording(plan).tagLine}</div>
                       </div>
 
                       {tiers.length > 0 && (
@@ -2206,7 +2239,7 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
                         <strong style={{ fontSize: 14, display: 'block', marginBottom: 8 }}>Includes:</strong>
                         <ul>
                           {[
-                            ...plan.includes,
+                            ...cardWording(plan).includes,
                             ...(() => {
                               const s = savingsForPlan(membershipSavings, plan.name);
                               return savingsBullets(s.exam, s.store);
@@ -2307,7 +2340,7 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
                         <div className="cp-card-includes">
                           <strong style={{ fontSize: 14, display: 'block', marginBottom: 8 }}>Includes:</strong>
                           <ul>
-                            {MEMBERSHIP_PLANS.find(p => p.id === 'starter-addon')?.includes.map((item, idx) => (
+                            {starterAddonIncludes(plan.id === 'golden' ? 'golden' : 'foundations').map((item, idx) => (
                               <li key={idx} className="cp-muted" style={{ marginBottom: 4 }}>
                                 <span role="img" aria-label="star" style={{ marginRight: 6 }}>
                                   ⭐

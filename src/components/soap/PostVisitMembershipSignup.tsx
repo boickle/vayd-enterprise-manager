@@ -37,7 +37,7 @@ import {
   defaultChatHoursOfOperation,
   type ChatHoursOfOperation,
 } from '../../utils/chatHours';
-import { petMeetsGoldenAge } from '../../utils/membershipAge';
+import { pickRecommendedPlan, planFitsPet } from '../../utils/membershipAge';
 import { resolveMembershipPetKind } from '../../utils/membershipSpecies';
 import { fetchPatientByIdStaff } from '../../api/patients';
 import PostVisitCardEntry from './PostVisitCardEntry';
@@ -119,35 +119,13 @@ function planIsPlus(plan: Bundle): boolean {
 }
 
 /**
- * Same eligibility as MembershipSignup / room loader `getPlanIdsForPet`:
- * Foundations always; Golden only when age ≥ threshold; starter when young.
+ * Same plan-age rule as MembershipSignup and the room loader: a plan is offered
+ * when the pet's age is inside its range, and a plan with no ages set is offered
+ * to every pet. With the age unknown, only plans with no ages set are offered.
  */
-function planAllowedForPet(
-  plan: Bundle,
-  kind: 'dog' | 'cat' | null,
-  ageYears: number | null | undefined,
-): boolean {
-  const family = planFamily(plan);
-  const meetsGolden =
-    plan.minAgeMonths != null && ageYears != null && Number.isFinite(ageYears)
-      ? ageYears * 12 >= plan.minAgeMonths
-      : petMeetsGoldenAge(ageYears, null, kind);
-  const shouldShowStarter =
-    ageYears != null &&
-    Number.isFinite(ageYears) &&
-    ageYears <= 1.5 &&
-    (kind === 'dog' || kind === 'cat');
-
-  if (family === 'comfort-care') return false;
-  if (family === 'starter') return shouldShowStarter;
-  if (family === 'golden') return meetsGolden;
-  if (family === 'foundations') return true;
-  if (ageYears != null && Number.isFinite(ageYears)) {
-    const ageMonths = ageYears * 12;
-    if (plan.minAgeMonths != null && ageMonths < plan.minAgeMonths) return false;
-    if (plan.maxAgeMonths != null && ageMonths > plan.maxAgeMonths) return false;
-  }
-  return true;
+function planAllowedForPet(plan: Bundle, ageYears: number | null | undefined): boolean {
+  if (planFamily(plan) === 'comfort-care') return false;
+  return planFitsPet(plan, ageYears == null ? null : ageYears * 12, null);
 }
 
 function planMatchesSpecies(plan: Bundle, kind: 'dog' | 'cat' | null): boolean {
@@ -160,21 +138,6 @@ function planMatchesSpecies(plan: Bundle, kind: 'dog' | 'cat' | null): boolean {
   return planKind === kind;
 }
 
-/** Portal: recommend Golden when senior; otherwise Foundations (not Plus). */
-function isRecommendedPlan(
-  plan: Bundle,
-  kind: 'dog' | 'cat' | null,
-  ageYears: number | null | undefined,
-): boolean {
-  if (planIsPlus(plan)) return false;
-  const family = planFamily(plan);
-  const meetsGolden =
-    plan.minAgeMonths != null && ageYears != null && Number.isFinite(ageYears)
-      ? ageYears * 12 >= plan.minAgeMonths
-      : petMeetsGoldenAge(ageYears, null, kind);
-  if (meetsGolden) return family === 'golden';
-  return family === 'foundations';
-}
 
 function ageYearsFromPatientPayload(payload: unknown): number | null {
   if (payload == null || typeof payload !== 'object') return null;
@@ -825,23 +788,38 @@ export default function PostVisitMembershipSignup({
   );
   const ageYears = resolvedAgeYears ?? patientAgeYears ?? null;
 
-  const visiblePlans = useMemo(() => {
-    const filtered = plans.filter((plan) => {
-      if (billingIntervalForPlan(plan) !== billingInterval) return false;
-      if (!planMatchesSpecies(plan, petKind)) return false;
-      if (!planAllowedForPet(plan, petKind, ageYears)) return false;
-      return listedPriceForPlan(plan) != null;
-    });
-    return filtered.sort((a, b) => {
-      const ar = isRecommendedPlan(a, petKind, ageYears) ? 0 : 1;
-      const br = isRecommendedPlan(b, petKind, ageYears) ? 0 : 1;
-      if (ar !== br) return ar - br;
-      const ap = planIsPlus(a) ? 1 : 0;
-      const bp = planIsPlus(b) ? 1 : 0;
-      if (ap !== bp) return ap - bp;
-      return (a.name || '').localeCompare(b.name || '');
-    });
-  }, [ageYears, billingInterval, petKind, plans]);
+  const allowedPlans = useMemo(
+    () =>
+      plans.filter(
+        (plan) =>
+          billingIntervalForPlan(plan) === billingInterval &&
+          planMatchesSpecies(plan, petKind) &&
+          planAllowedForPet(plan, ageYears) &&
+          listedPriceForPlan(plan) != null,
+      ),
+    [ageYears, billingInterval, petKind, plans],
+  );
+
+  /** Narrowest fitting age range wins, as on the signup page; Plus plans are never the pick. */
+  const recommendedPlanId = useMemo(
+    () =>
+      pickRecommendedPlan(allowedPlans.filter((plan) => !planIsPlus(plan)))?.id ?? null,
+    [allowedPlans],
+  );
+
+  const visiblePlans = useMemo(
+    () =>
+      [...allowedPlans].sort((a, b) => {
+        const ar = a.id === recommendedPlanId ? 0 : 1;
+        const br = b.id === recommendedPlanId ? 0 : 1;
+        if (ar !== br) return ar - br;
+        const ap = planIsPlus(a) ? 1 : 0;
+        const bp = planIsPlus(b) ? 1 : 0;
+        if (ap !== bp) return ap - bp;
+        return (a.name || '').localeCompare(b.name || '');
+      }),
+    [allowedPlans, recommendedPlanId],
+  );
 
   const selectedPlan = useMemo(
     () => plans.find((p) => p.id === packageId) ?? null,
@@ -857,9 +835,8 @@ export default function PostVisitMembershipSignup({
   // Prefer auto-selecting the recommended plan once plans + pet details are ready.
   useEffect(() => {
     if (packageId != null || plansLoading) return;
-    const rec = visiblePlans.find((p) => isRecommendedPlan(p, petKind, ageYears));
-    if (rec) setPackageId(rec.id);
-  }, [ageYears, packageId, petKind, plansLoading, visiblePlans]);
+    if (recommendedPlanId != null) setPackageId(recommendedPlanId);
+  }, [packageId, plansLoading, recommendedPlanId]);
 
   const assignableBenefits = useMemo(() => {
     if (!selectedPlan) return [];
@@ -1133,7 +1110,7 @@ export default function PostVisitMembershipSignup({
                   <div className="pvms-plans">
                     {visiblePlans.map((plan) => {
                       const price = listedPriceForPlan(plan);
-                      const recommended = isRecommendedPlan(plan, petKind, ageYears);
+                      const recommended = plan.id === recommendedPlanId;
                       return (
                         <button
                           key={plan.id}

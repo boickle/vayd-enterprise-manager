@@ -78,6 +78,10 @@ export type Bundle = {
   code: string | null;
   description: string | null;
   marketingSummary: string | null;
+  /** Line under the plan name on the signup card. */
+  cardTagLine: string | null;
+  /** "Includes" bullets on the signup card; savings lines come from the discounts. */
+  cardBullets: string[] | null;
   species: string | null;
   tier: string | null;
   minAgeMonths: number | null;
@@ -139,6 +143,8 @@ export type BundleFields = {
   code?: string | null;
   description?: string | null;
   marketingSummary?: string | null;
+  cardTagLine?: string | null;
+  cardBullets?: string[] | null;
   species?: string | null;
   tier?: string | null;
   minAgeMonths?: number | null;

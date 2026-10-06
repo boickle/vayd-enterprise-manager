@@ -13,8 +13,8 @@ export type RoomLoaderPlansForPetForDisplay = {
   plans: RoomLoaderPlanForDisplay[];
   /** Resolved dog/cat for catalog Stripe names and optional simulate hint (mirrors client portal). */
   membershipSpeciesKind?: 'dog' | 'cat' | null;
-  /** Golden tier eligibility (same threshold as MembershipSignup / `MEMBERSHIP_GOLDEN_MIN_AGE_YEARS`). */
-  meetsGolden: boolean;
+  /** Card to recommend, by the same plan-age rule as MembershipSignup (`membershipCardChoice`). */
+  recommendedPlanBase: 'golden' | 'foundations';
 };
 
 type Props = {
@@ -61,7 +61,7 @@ type Props = {
   normalizePlanBaseId: (id: string) => string;
   getRecommendedWellnessPlanFromList: (
     plans: RoomLoaderPlanForDisplay[],
-    meetsGolden: boolean
+    recommendedPlanBase: 'golden' | 'foundations'
   ) => RoomLoaderPlanForDisplay | null;
   filterLineItemsForPatientSimulate: <T extends { patientId?: number; category?: string }>(
     items: T[],
@@ -132,7 +132,7 @@ export default function MembershipRecommendationPanel({
         <p style={{ margin: 0, fontSize: '14px', color: '#3d5347' }}>Loading your membership estimate…</p>
       )}
       {pets.map((petPlans, petIndex) => {
-        const rec = getRecommendedWellnessPlanFromList(petPlans.plans, petPlans.meetsGolden);
+        const rec = getRecommendedWellnessPlanFromList(petPlans.plans, petPlans.recommendedPlanBase);
         if (!rec) return null;
         const petName = petPlans.patientName || 'your pet';
         const showSharedOneTeamIntro = pets.length === 1 || petIndex === 0;

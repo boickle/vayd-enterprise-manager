@@ -40,7 +40,11 @@ import {
 } from '../utils/membershipSpecies';
 import {
   computeMembershipAgeYearsForRoomLoaderRow,
-  petMeetsGoldenAge,
+  membershipCardChoice,
+  membershipPlanFamily,
+  planFitsPet,
+  starterPlanFitsPet,
+  type RecommendablePlan,
 } from '../utils/membershipAge';
 import { trackEvent } from '../utils/analytics';
 import { computeFoundationsSeniorScreenFalseCoverageVisitDelta } from '../utils/membershipFoundationsSimulate';
@@ -212,57 +216,30 @@ function getAppointmentPatientForRoomLoaderPet(
   return getAppointmentForRoomLoaderPet(appointments, patientRow, fallbackIndex)?.patient;
 }
 
-const MEMBERSHIP_SHARED_BENEFITS = [
-  'A dedicated "One-Team" that gets to know your pet over time',
-  'Priority scheduling with your One-Team',
-  '7-day support from VAYD staff',
-];
-
-/** Plan card content for room-loader info popover (same as MembershipSignup). Key by base plan id (e.g. foundations, golden). */
-const MEMBERSHIP_PLAN_CARD_DETAILS: Record<string, { name: string; tagLine: string; includes: string[] }> = {
-  foundations: {
-    name: 'Foundations',
-    tagLine: 'Annual Membership Plan',
-    includes: [
-      'One comprehensive wellness exam & trip fee',
-      'Annual vaccinations recommended for age and lifestyle',
-      'Annual "basic" lab panel (CBC, abbreviated chemistry)',
-      'Annual fecal test',
-      'Heartworm/Tick test (dogs)',
-      'FIV/FeLV/heartworm test (cats)',
-      ...MEMBERSHIP_SHARED_BENEFITS,
-    ],
-  },
-  golden: {
-    name: 'Golden',
-    tagLine: 'Annual Membership Plan',
-    includes: [
-      'Two comprehensive wellness exams & trip fees',
-      'Annual vaccinations recommended for age and lifestyle',
-      'Annual "advanced" lab panel (CBC, chemistry, thyroid, urinalysis)',
-      'Annual fecal test',
-      'FeLV/FIV/heartworm test (cats)',
-      'Pancreatitis screening (cats)',
-      '"4dx" Heartworm/Tick test (dogs)',
-      'A team that gets to know your pet over time',
-      'Priority scheduling with your One-Team',
-      '7-day support from VAYD staff',
-    ],
-  },
-  'starter-addon': {
-    name: 'Puppy / Kitten Add-on',
-    tagLine: 'For Puppies & Kittens',
-    includes: [
-      'Two additional exams (one doctor, one technician) and trip fees to complete the vaccine series.',
-      'All boosters for full protection.',
-      'Microchip scan & placement if needed.',
-    ],
-  },
+const MEMBERSHIP_CARD_FALLBACK: Record<string, { name: string; tagLine: string }> = {
+  foundations: { name: 'Foundations', tagLine: 'Annual Membership Plan' },
+  golden: { name: 'Golden', tagLine: 'Annual Membership Plan' },
+  'starter-addon': { name: 'Puppy / Kitten Add-on', tagLine: 'For Puppies & Kittens' },
 };
 
-function getMembershipPlanCardDetails(planId: string): { name: string; tagLine: string; includes: string[] } | null {
+type RoomLoaderAgePlan = RecommendablePlan & { cardTagLine?: string | null };
+
+/** Card name and tagline for a room-loader plan id; the tagline comes from the practice plan when set. */
+function getMembershipPlanCardDetails(
+  planId: string,
+  agePlans: RoomLoaderAgePlan[] | null | undefined,
+  kind: 'dog' | 'cat' | null
+): { name: string; tagLine: string } | null {
   const baseId = (planId || '').replace(/-cat|-dog$/i, '');
-  return MEMBERSHIP_PLAN_CARD_DETAILS[baseId] ?? MEMBERSHIP_PLAN_CARD_DETAILS[planId] ?? null;
+  const fallback = MEMBERSHIP_CARD_FALLBACK[baseId] ?? MEMBERSHIP_CARD_FALLBACK[planId] ?? null;
+  if (!fallback || baseId === 'starter-addon') return fallback;
+  const plan = (agePlans ?? []).find(
+    (p) =>
+      membershipPlanFamily(p.name) === baseId &&
+      !/puppy|kitten|\bstarter\b/i.test(p.name || '') &&
+      planFitsPet({ ...p, minAgeMonths: null, maxAgeMonths: null }, null, kind)
+  );
+  return { ...fallback, tagLine: plan?.cardTagLine?.trim() || fallback.tagLine };
 }
 
 /** All plan IDs used in membership flow (base + add-ons). Filter per pet using same logic as MembershipSignup. */
@@ -278,18 +255,19 @@ function getPetDetailsForMembership(
   return { kind, ageYears };
 }
 
-/** Which plan IDs to show for a pet (same logic as Client Portal: Golden only when age meets threshold, Starter for puppy/kitten). */
+/** Plan cards to show a pet and the one to recommend: same plan-age rule as MembershipSignup. */
 function getPlanIdsForPet(
   petDetails: { kind: 'dog' | 'cat' | null; ageYears: number | null },
-  goldenPlans?: { name?: string | null; minAgeMonths?: number | null; species?: string | null }[] | null
-): string[] {
+  agePlans?: RecommendablePlan[] | null
+): { planIds: string[]; recommendedPlanBase: 'golden' | 'foundations' } {
   const { kind, ageYears } = petDetails;
-  const meetsGolden = kind != null && petMeetsGoldenAge(ageYears, goldenPlans, kind);
-  const shouldShowStarter = ageYears != null && ageYears <= 1.5 && (kind === 'dog' || kind === 'cat');
-  const planIds: string[] = ['foundations'];
-  if (meetsGolden) planIds.push('golden');
+  const choice = membershipCardChoice(agePlans ?? [], ageYears, kind);
+  const shouldShowStarter = starterPlanFitsPet(agePlans ?? [], ageYears, kind);
+  const planIds: string[] = [];
+  if (choice.foundations) planIds.push('foundations');
+  if (choice.golden) planIds.push('golden');
   if (shouldShowStarter) planIds.push('starter-addon');
-  return planIds;
+  return { planIds, recommendedPlanBase: choice.recommended };
 }
 
 function normalizePlanBaseId(planId: string): string {
@@ -298,24 +276,16 @@ function normalizePlanBaseId(planId: string): string {
 
 const MEMBERSHIP_ADDON_PLAN_BASE_IDS = new Set(['starter-addon']);
 
-/**
- * Primary wellness plan for recommendation copy (excludes add-ons).
- * Matches MembershipSignup: recommend Golden only when `meetsGolden`; otherwise Foundations (not "first Golden in list").
- */
+/** Primary wellness plan for recommendation copy (excludes add-ons). */
 function getRecommendedWellnessPlanFromList(
   plans: RoomLoaderPlanForDisplay[],
-  meetsGolden: boolean
+  recommendedPlanBase: 'golden' | 'foundations'
 ): RoomLoaderPlanForDisplay | null {
   const wellness = plans.filter((p) => !MEMBERSHIP_ADDON_PLAN_BASE_IDS.has(normalizePlanBaseId(p.planId)));
   if (wellness.length === 0) return null;
-  const withBase = wellness.map((p) => ({ p, base: normalizePlanBaseId(p.planId) }));
-  if (meetsGolden) {
-    const golden = withBase.find((x) => x.base === 'golden');
-    if (golden) return golden.p;
-  }
-  const foundations = withBase.find((x) => x.base === 'foundations');
-  if (foundations) return foundations.p;
-  return wellness[0];
+  return (
+    wellness.find((p) => normalizePlanBaseId(p.planId) === recommendedPlanBase) ?? wellness[0]
+  );
 }
 
 /**
@@ -358,7 +328,7 @@ function estimatedDueTodayWithMembershipForUpsellPets(
 
     const monthlyExtended = membershipPanelByPatientId[petPlans.patientId]?.monthlyExtended;
     const adjustments = monthlyExtended?.lineItemAdjustments ?? monthly?.lineItemAdjustments ?? [];
-    const rec = getRecommendedWellnessPlanFromList(petPlans.plans, petPlans.meetsGolden);
+    const rec = getRecommendedWellnessPlanFromList(petPlans.plans, petPlans.recommendedPlanBase);
     const planBase = rec ? normalizePlanBaseId(rec.planId) : '';
     let foundationsSeniorFalseVisitDelta = 0;
     if (membershipFooterOpts && planBase) {
@@ -1768,7 +1738,7 @@ export default function PublicRoomLoaderForm() {
     return map;
   }, [formattedSubscriptionPlans, subscriptionPlanCatalog]);
 
-  // Build plans per pet using same logic as Client Portal: Golden only for 9+, Plus always, Puppy/Kitten when age <= 1.5
+  // Plan cards per pet: same plan-age rule as MembershipSignup, including the Puppy/Kitten add-on
   const availablePlansForPetsForDisplay = useMemo((): RoomLoaderPlansForPetForDisplay[] => {
     if (!data?.patients?.length) return [];
     return data.patients.map((p: any, idx: number) => {
@@ -1778,11 +1748,16 @@ export default function PublicRoomLoaderForm() {
       const patientName = p.patientName ?? p.patient?.name ?? p.name ?? 'Pet';
       const apptPatient = getAppointmentPatientForRoomLoaderPet(data?.appointments, p, idx);
       const petDetails = getPetDetailsForMembership(p, apptPatient);
-      const goldenPlans = data?.membershipAges?.plans ?? null;
-      const meetsGolden = petDetails.kind != null && petMeetsGoldenAge(petDetails.ageYears, goldenPlans, petDetails.kind);
-      const planIds = getPlanIdsForPet(petDetails, goldenPlans);
+      const { planIds, recommendedPlanBase } = getPlanIdsForPet(
+        petDetails,
+        data?.membershipAges?.plans ?? null
+      );
       const plans: RoomLoaderPlanForDisplay[] = planIds.map((planId) => {
-        const details = getMembershipPlanCardDetails(planId);
+        const details = getMembershipPlanCardDetails(
+          planId,
+          data?.membershipAges?.plans ?? null,
+          petDetails.kind
+        );
         const speciesResolved = resolveSubscriptionPlanDisplayNameForSpecies(
           formattedSubscriptionPlans,
           subscriptionPlanCatalog,
@@ -1800,7 +1775,7 @@ export default function PublicRoomLoaderForm() {
         patientName,
         plans,
         membershipSpeciesKind: petDetails.kind,
-        meetsGolden,
+        recommendedPlanBase,
       };
     }).filter((x: RoomLoaderPlansForPetForDisplay | null): x is RoomLoaderPlansForPetForDisplay => x != null);
   }, [data?.patients, data?.appointments, formattedSubscriptionPlans, subscriptionPlanCatalog]);
@@ -2110,7 +2085,7 @@ export default function PublicRoomLoaderForm() {
             data?.appointments?.[0]?.client?.id;
           const next: Record<number, MembershipPanelSimulateEntry> = {};
           for (const petPlans of availablePlansForPetsForDisplay) {
-            const rec = getRecommendedWellnessPlanFromList(petPlans.plans, petPlans.meetsGolden);
+            const rec = getRecommendedWellnessPlanFromList(petPlans.plans, petPlans.recommendedPlanBase);
             if (!rec) continue;
             const filtered = filterLineItemsForPatientSimulate(summaryLineItems, petPlans.patientId, firstPid).filter(
               (li) => (li as { category?: string }).category !== 'store'

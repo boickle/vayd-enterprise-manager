@@ -119,6 +119,9 @@ type PlanDraft = {
   code: string;
   description: string;
   marketingSummary: string;
+  cardTagLine: string;
+  /** One bullet per line. */
+  cardBullets: string;
   species: string;
   minAgeYears: string;
   maxAgeYears: string;
@@ -357,6 +360,8 @@ function emptyPlanDraft(): PlanDraft {
     code: '',
     description: '',
     marketingSummary: '',
+    cardTagLine: '',
+    cardBullets: '',
     species: '',
     minAgeYears: '',
     maxAgeYears: '',
@@ -379,6 +384,8 @@ function planDraftFrom(bundle: Bundle): PlanDraft {
     code: text(bundle.code),
     description: text(bundle.description),
     marketingSummary: text(bundle.marketingSummary),
+    cardTagLine: text(bundle.cardTagLine),
+    cardBullets: (bundle.cardBullets ?? []).join('\n'),
     species: text(bundle.species),
     minAgeYears: monthsToYearsText(bundle.minAgeMonths),
     maxAgeYears: monthsToYearsText(bundle.maxAgeMonths),
@@ -491,6 +498,11 @@ function planFieldsFrom(draft: PlanDraft): BundleFields & { name: string } {
     code: draft.code.trim() || null,
     description: draft.description.trim() || null,
     marketingSummary: draft.marketingSummary.trim() || null,
+    cardTagLine: draft.cardTagLine.trim() || null,
+    cardBullets: draft.cardBullets
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean),
     species: draft.species.trim() || null,
     tier: null,
     minAgeMonths: yearsToMonths(draft.minAgeYears),
@@ -2240,6 +2252,29 @@ export default function SettingsMemberships({ onMessage }: Props) {
                       placeholder="What the client sees on the portal."
                       onChange={(e) => setField('marketingSummary', e.target.value)}
                     />
+                  </label>
+                  <label className="settings-label memberships-fields__wide">
+                    Signup card tagline
+                    <input
+                      className="settings-input"
+                      value={planDraft.cardTagLine}
+                      maxLength={120}
+                      placeholder="Annual Membership Plan"
+                      onChange={(e) => setField('cardTagLine', e.target.value)}
+                    />
+                  </label>
+                  <label className="settings-label memberships-fields__wide">
+                    Signup card bullets
+                    <textarea
+                      className="settings-input"
+                      rows={8}
+                      value={planDraft.cardBullets}
+                      placeholder="One bullet per line, as listed under Includes on the signup card."
+                      onChange={(e) => setField('cardBullets', e.target.value)}
+                    />
+                    <span className="settings-muted" style={{ fontSize: 12 }}>
+                      One per line. The exam and online store discount lines are added from the discounts on this plan.
+                    </span>
                   </label>
                   <label className="settings-label">
                     Portal slug
