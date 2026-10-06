@@ -53,6 +53,40 @@ export function petMeetsGoldenAge(
   return ageYears * 12 >= minMonths;
 }
 
+export type RecommendablePlan = PlanAgeSource & {
+  maxAgeMonths?: number | null;
+  sortOrder?: number | null;
+};
+
+/** Same rule as renewal: from the youngest age (inclusive) through the oldest age in whole months. */
+export function planFitsPet(
+  plan: RecommendablePlan,
+  ageMonths: number,
+  species?: 'dog' | 'cat' | null
+): boolean {
+  if (!speciesFits(plan.species, species)) return false;
+  if (plan.minAgeMonths != null && ageMonths < plan.minAgeMonths) return false;
+  if (plan.maxAgeMonths != null && Math.floor(ageMonths) > plan.maxAgeMonths) return false;
+  return true;
+}
+
+/**
+ * The plan to badge "Recommended" among plans that fit: the narrowest age range wins
+ * (Puppy 0–1 over Foundations; Golden 8+ over Foundations with no ages), then the
+ * lowest sort order.
+ */
+export function pickRecommendedPlan<T extends RecommendablePlan>(plans: T[]): T | null {
+  const width = (p: T) =>
+    p.maxAgeMonths == null ? Number.POSITIVE_INFINITY : p.maxAgeMonths - (p.minAgeMonths ?? 0);
+  const sorted = [...plans].sort(
+    (a, b) =>
+      width(a) - width(b) ||
+      (b.minAgeMonths ?? 0) - (a.minAgeMonths ?? 0) ||
+      (a.sortOrder ?? 0) - (b.sortOrder ?? 0)
+  );
+  return sorted[0] ?? null;
+}
+
 const MAX_REASONABLE_PARSED_AGE_YEARS = 35;
 
 /**

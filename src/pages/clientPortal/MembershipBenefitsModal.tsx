@@ -67,12 +67,10 @@ export default function MembershipBenefitsModal({
   pet,
   membership,
   onClose,
-  onUpgrade,
 }: {
   pet: PetWithWellness;
   membership: MembershipView;
   onClose: () => void;
-  onUpgrade?: () => void;
 }) {
   const [rows, setRows] = useState<PatientMembership[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -153,11 +151,6 @@ export default function MembershipBenefitsModal({
           <button type="button" className="pp-btn pp-btn--ghost" onClick={onClose}>
             Close
           </button>
-          {onUpgrade ? (
-            <button type="button" className="pp-btn pp-btn--primary" onClick={onUpgrade}>
-              Upgrade my plan <Icon name="arrow" />
-            </button>
-          ) : null}
         </>
       }
     >

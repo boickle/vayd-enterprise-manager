@@ -33,8 +33,11 @@ import { useAuth } from '../auth/useAuth';
 import { trackEvent, trackViewItem, trackAddToCart, trackBeginCheckout } from '../utils/analytics';
 import { resolveMembershipPetKind } from '../utils/membershipSpecies';
 import {
+  goldenMinAgeMonthsFromPlans,
   petMeetsGoldenAge,
-  type PlanAgeSource,
+  pickRecommendedPlan,
+  planFitsPet,
+  type RecommendablePlan,
   computeMembershipAgeYearsForRoomLoaderRow,
   parseAgeStringToYears,
 } from '../utils/membershipAge';
@@ -73,6 +76,13 @@ const MEMBERSHIP_SHARED_BENEFITS = [
   '50% off exams on additional visits',
   'Member pricing (10% off) in our online store',
 ];
+
+function signupFamily(name: string | null | undefined): 'golden' | 'foundations' | null {
+  if (/comfort/i.test(name || '')) return null;
+  if (/\bgolden\b/i.test(name || '')) return 'golden';
+  if (/foundation/i.test(name || '')) return 'foundations';
+  return null;
+}
 
 const MEMBERSHIP_PLANS: MembershipPlan[] = [
   {
@@ -486,7 +496,9 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
   const [hasUpcomingAppointment, setHasUpcomingAppointment] = useState(false);
   const [agreementAccepted, setAgreementAccepted] = useState(false);
   const [agreementSignature, setAgreementSignature] = useState('');
-  const [membershipAgePlans, setMembershipAgePlans] = useState<PlanAgeSource[]>([]);
+  const [membershipAgePlans, setMembershipAgePlans] = useState<
+    Array<RecommendablePlan & { marketingSummary: string | null }>
+  >([]);
   const [planCatalog, setPlanCatalog] = useState<SubscriptionPlanCatalog | null>(null);
   const [planCatalogError, setPlanCatalogError] = useState<string | null>(null);
   const [planCatalogLoading, setPlanCatalogLoading] = useState(true);
@@ -921,6 +933,9 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
               name: row.name,
               species: row.species,
               minAgeMonths: row.minAgeMonths,
+              maxAgeMonths: row.maxAgeMonths,
+              sortOrder: row.sortOrder,
+              marketingSummary: row.marketingSummary,
             }))
         );
       })
@@ -932,10 +947,32 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
     };
   }, []);
 
-  const meetsGolden = useMemo(() => {
+  const goldenByAge = useMemo(() => {
     if (!petDetails.kind || petDetails.ageYears == null) return false;
     return petMeetsGoldenAge(petDetails.ageYears, membershipAgePlans, petDetails.kind);
   }, [petDetails, membershipAgePlans]);
+
+  // Signup cards are Foundations and Golden; each practice plan maps to one by name.
+  const fittingPlans = useMemo(() => {
+    if (petDetails.ageYears == null) return [];
+    const ageMonths = petDetails.ageYears * 12;
+    return membershipAgePlans
+      .map((plan) => ({ plan, family: signupFamily(plan.name) }))
+      .filter(({ plan, family }) => family && planFitsPet(plan, ageMonths, petDetails.kind));
+  }, [petDetails, membershipAgePlans]);
+
+  const recommendedBundle = useMemo(
+    () => pickRecommendedPlan(fittingPlans.map(({ plan }) => plan)),
+    [fittingPlans],
+  );
+  const offeredFamilies = fittingPlans.length
+    ? new Set(fittingPlans.map(({ family }) => family))
+    : null;
+  const meetsGolden = offeredFamilies ? offeredFamilies.has('golden') : goldenByAge;
+  const foundationsOffered = offeredFamilies ? offeredFamilies.has('foundations') : true;
+  const goldenAgeYears = Math.round(
+    (goldenMinAgeMonthsFromPlans(membershipAgePlans, petDetails.kind) ?? 96) / 12,
+  );
 
   useEffect(() => {
     if (selectedPlanExplicit === 'golden' && !meetsGolden) {
@@ -946,20 +983,19 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
 
   const combinedError = error ?? planCatalogError;
 
-  const recommendedPlanId = meetsGolden ? 'golden' : null;
+  const recommendedPlanId: 'golden' | 'foundations' =
+    (recommendedBundle && signupFamily(recommendedBundle.name)) ||
+    (meetsGolden ? 'golden' : 'foundations');
   const isNewPatient = !hasPastAppointment;
 
   // Get the primary plan name that should be selected
   const primaryPlanName = useMemo(() => {
     if (comfortAnswer === 'yes') return 'Comfort Care';
-    if (comfortAnswer === 'no' && meetsGolden) {
-      // User is eligible for Golden (recommended) or Foundations
-      return 'Golden'; // Recommend Golden since they meet the criteria
-    }
+    if (comfortAnswer === 'no' && recommendedPlanId === 'golden') return 'Golden';
     if (comfortAnswer === 'no') return 'Foundations';
     // If comfortAnswer is null, default to Foundations
     return 'Foundations';
-  }, [comfortAnswer, meetsGolden]);
+  }, [comfortAnswer, recommendedPlanId]);
 
   // Auto-dismiss toast after 4 seconds
   useEffect(() => {
@@ -968,12 +1004,27 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
       return () => clearTimeout(timer);
     }
   }, [toast]);
+  // Oldest age on the practice's Puppy / Kitten plans; 18 months if none is set.
+  const starterMaxAgeMonths = useMemo(() => {
+    const maxes = membershipAgePlans
+      .filter(
+        (plan) =>
+          /puppy|kitten/i.test(plan.name || '') &&
+          plan.maxAgeMonths != null &&
+          planFitsPet({ ...plan, minAgeMonths: null, maxAgeMonths: null }, 0, petDetails.kind),
+      )
+      .map((plan) => plan.maxAgeMonths as number);
+    return maxes.length ? Math.max(...maxes) : 18;
+  }, [membershipAgePlans, petDetails.kind]);
   const shouldAskStarter =
-    isNewPatient && petDetails.ageYears != null && petDetails.ageYears <= 1.5 && !!petDetails.kind;
+    isNewPatient &&
+    petDetails.ageYears != null &&
+    Math.floor(petDetails.ageYears * 12) <= starterMaxAgeMonths &&
+    !!petDetails.kind;
   const showPreVisitNote = hasUpcomingAppointment && !hasPastAppointment;
 
   const recommendationCopy = useMemo(() => {
-    if (!pet || !meetsGolden) return null;
+    if (!pet || recommendedPlanId !== 'golden') return null;
     const name = pet.name || 'your pet';
     return (
       <div
@@ -989,11 +1040,12 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
           We recommend the Golden Plan for {name}.
         </strong>
         <p className="cp-muted" style={{ margin: 0 }}>
-          It's designed for senior pets and includes two wellness visits per year plus advanced lab work, comprehensive bloodwork, thyroid, and urinalysis, so age-related changes get caught early. If you'd prefer something lighter, Foundations covers one visit with an abbreviated lab panel.
+          {recommendedBundle?.marketingSummary?.trim() ||
+            `It's designed for senior pets and includes two wellness visits per year plus advanced lab work, comprehensive bloodwork, thyroid, and urinalysis, so age-related changes get caught early. If you'd prefer something lighter, Foundations covers one visit with an abbreviated lab panel.`}
         </p>
       </div>
     );
-  }, [pet, meetsGolden, brandSoft]);
+  }, [pet, recommendedPlanId, recommendedBundle, brandSoft]);
 
   useEffect(() => {
     if (comfortAnswer === 'yes') {
@@ -2077,9 +2129,9 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
           </div>
         )}
 
-        {comfortAnswer === 'no' && meetsGolden && recommendationCopy}
+        {comfortAnswer === 'no' && recommendationCopy}
 
-        {comfortAnswer === 'no' && !meetsGolden && pet && (
+        {comfortAnswer === 'no' && recommendedPlanId === 'foundations' && pet && (
           <div
             className="cp-card"
             style={{
@@ -2093,9 +2145,15 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
               We recommend the Foundations Membership Plan for {pet.name}.
             </strong>
             <p className="cp-muted" style={{ margin: 0 }}>
+              {recommendedBundle?.marketingSummary?.trim() ? (
+                recommendedBundle.marketingSummary
+              ) : (
+                <>
               It includes one annual wellness visit and an early detection lab panel, ideal for a healthy young{' '}
-              {petDetails.kind === 'dog' ? 'dog' : petDetails.kind === 'cat' ? 'cat' : 'pet'}. As {pet.name} reaches age 8,
+              {petDetails.kind === 'dog' ? 'dog' : petDetails.kind === 'cat' ? 'cat' : 'pet'}. As {pet.name} reaches age {goldenAgeYears},
               we'll recommend moving to Golden, which adds a second annual visit and more comprehensive senior screening.
+                </>
+              )}
             </p>
           </div>
         )}
@@ -2171,28 +2229,21 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
               const filteredPlans = plans
                 .filter((plan) => {
                   if (plan.id === 'comfort-care') return false;
-                  if (plan.id === 'foundations') return true;
+                  if (plan.id === 'foundations') return foundationsOffered;
                   // Golden only once the pet reaches that plan's youngest age.
                   if (plan.id === 'golden') return meetsGolden;
                   return false;
                 })
-                .sort((a, b) => {
-                  if (meetsGolden) {
-                    if (a.id === 'golden') return -1;
-                    if (b.id === 'golden') return 1;
-                    if (a.id === 'foundations') return 1;
-                    if (b.id === 'foundations') return -1;
-                  }
-                  return 0;
-                });
+                .sort(
+                  (a, b) =>
+                    Number(b.id === recommendedPlanId) - Number(a.id === recommendedPlanId),
+                );
 
               const shouldShowStarterAddon = starterAnswer === 'no';
               
               return filteredPlans.flatMap((plan, index) => {
                 const planElements = [];
-                const isRecommended = 
-                  plan.id === recommendedPlanId || 
-                  (!meetsGolden && plan.id === 'foundations');
+                const isRecommended = plan.id === recommendedPlanId;
                 const tiers = (() => {
                   if (!petDetails.kind) return plan.pricing;
                   const filtered = plan.pricing.filter((tier) => !tier.species || tier.species === petDetails.kind);
@@ -2238,7 +2289,7 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
                     </div>
 
                     <div className="cp-card-body">
-                      {plan.id === 'foundations' && meetsGolden && (
+                      {plan.id === 'foundations' && recommendedPlanId === 'golden' && (
                         <div
                           className="cp-muted"
                           style={{ fontSize: 13, borderTop: '1px solid rgba(15,118,110,0.12)', paddingTop: 12 }}

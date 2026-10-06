@@ -7,6 +7,8 @@ import {
   type MembershipRenewalPreview,
 } from '../api/memberships';
 import MembershipRenewalCard from './MembershipRenewalCard';
+import MembershipRenewalPlanChoice from './MembershipRenewalPlanChoice';
+import RenewalComparison from './RenewalComparison';
 import './MembershipRenewalReview.css';
 
 function money(value: number | null): string {
@@ -53,6 +55,8 @@ export default function MembershipRenewalReview() {
   const [cancelError, setCancelError] = useState<string | null>(null);
   const [canceled, setCanceled] = useState(false);
   const [cardSaved, setCardSaved] = useState<MembershipRenewalCardResult | null>(null);
+  const [choosingPlan, setChoosingPlan] = useState(false);
+  const [choiceSaved, setChoiceSaved] = useState(false);
 
   useEffect(() => {
     if (!token) {
@@ -79,6 +83,14 @@ export default function MembershipRenewalReview() {
       cancelled = true;
     };
   }, [token]);
+
+  const comparison = useMemo(() => {
+    const c = preview?.comparison;
+    if (!c || !preview) return null;
+    return preview.nextPlanName === c.toPlanName || preview.nextPlanName === c.fromPlanName
+      ? c
+      : null;
+  }, [preview]);
 
   const priceLine = useMemo(() => {
     if (!preview) return '';
@@ -150,6 +162,25 @@ export default function MembershipRenewalReview() {
             {preview.needsCard ? '' : ' Unless you cancel, it renews automatically.'}
           </p>
 
+          {comparison ? (
+            <RenewalComparison
+              comparison={comparison}
+              petName={preview.petName}
+              termEnd={preview.termEnd}
+              nextPlanName={preview.nextPlanName}
+              money={money}
+              formatDay={formatDay}
+              onStay={
+                preview.needsCard || choosingPlan
+                  ? undefined
+                  : () => {
+                      setChoiceSaved(false);
+                      setChoosingPlan(true);
+                    }
+              }
+            />
+          ) : null}
+
           {preview.needsCard ? (
             <MembershipRenewalCard
               token={token}
@@ -177,7 +208,7 @@ export default function MembershipRenewalReview() {
                   </div>
                 ) : null}
               </dl>
-              {preview.reason === 'aged_out' ? (
+              {comparison ? null : preview.reason === 'aged_out' ? (
                 <p className="renewal-review__muted">
                   {preview.petName} will be old enough for {preview.nextPlanName}, so we will move
                   them to that plan at the new price.
@@ -199,7 +230,44 @@ export default function MembershipRenewalReview() {
             </section>
           )}
 
-          {preview.needsCard ? null : (
+          {!preview.needsCard && choosingPlan ? (
+            <MembershipRenewalPlanChoice
+              token={token}
+              preview={preview}
+              money={money}
+              formatDay={formatDay}
+              extractErr={extractErr}
+              onClose={() => setChoosingPlan(false)}
+              onSaved={() => {
+                void fetchMembershipRenewalPreview(token).then((data) => {
+                  setPreview(data);
+                  setChoosingPlan(false);
+                  setChoiceSaved(true);
+                });
+              }}
+            />
+          ) : null}
+
+          {!preview.needsCard && !choosingPlan && preview.planOptions.length > 1 ? (
+            <button
+              type="button"
+              className="renewal-review__change-plan"
+              onClick={() => {
+                setChoiceSaved(false);
+                setChoosingPlan(true);
+              }}
+            >
+              Choose a different plan for next year
+            </button>
+          ) : null}
+
+          {choiceSaved ? (
+            <p className="renewal-review__stay">
+              Saved. {preview.nextPlanName} starts on {formatDay(preview.termEnd)}.
+            </p>
+          ) : null}
+
+          {preview.needsCard || choosingPlan || choiceSaved ? null : (
             <p className="renewal-review__stay">You do not need to do anything to stay a member.</p>
           )}
 

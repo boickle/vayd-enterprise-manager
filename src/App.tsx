@@ -23,7 +23,6 @@ import CreateClientUser from './pages/CreateClientUser';
 import ClientPortal from './pages/ClientPortal';
 import MembershipSignup from './pages/MembershipSignup';
 import MembershipPayment from './pages/MembershipPayment';
-import MembershipUpgrade from './pages/MembershipUpgrade';
 import MembershipRenewalReview from './pages/MembershipRenewalReview';
 import AppointmentRequestForm from './pages/AppointmentRequestForm';
 import PublicRoomLoaderForm from './pages/PublicRoomLoaderForm';
@@ -650,14 +649,6 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <MembershipPayment />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/client-portal/membership-upgrade"
-            element={
-              <ProtectedRoute>
-                <MembershipUpgrade />
               </ProtectedRoute>
             }
           />

@@ -4,10 +4,10 @@ import {
   saveMembershipRenewalCard,
   type MembershipBillingInterval,
   type MembershipRenewalCardResult,
-  type MembershipRenewalPlanOption,
   type MembershipRenewalPreview,
 } from '../api/memberships';
 import { loadStripePublishableKey } from '../api/practicePublicConfig';
+import RenewalPlanPicker, { intervalAvailable } from './RenewalPlanPicker';
 
 type Props = {
   token: string;
@@ -17,10 +17,6 @@ type Props = {
   extractErr: (error: unknown) => string;
   onSaved: (result: MembershipRenewalCardResult) => void;
 };
-
-function available(option: MembershipRenewalPlanOption, interval: MembershipBillingInterval) {
-  return interval === 'annual' ? option.annualAvailable : option.monthlyAvailable;
-}
 
 /** Legacy Square members: pick next year's plan and save a card in Stripe. */
 export default function MembershipRenewalCard({
@@ -50,9 +46,9 @@ export default function MembershipRenewalCard({
   );
 
   useEffect(() => {
-    if (!selected || available(selected, interval)) return;
+    if (!selected || intervalAvailable(selected, interval)) return;
     const other: MembershipBillingInterval = interval === 'annual' ? 'monthly' : 'annual';
-    if (available(selected, other)) setBillingInterval(other);
+    if (intervalAvailable(selected, other)) setBillingInterval(other);
   }, [selected, interval]);
 
   useEffect(() => {
@@ -95,7 +91,8 @@ export default function MembershipRenewalCard({
 
   const price =
     selected == null ? null : interval === 'annual' ? selected.annualPrice : selected.monthlyPrice;
-  const canSubmit = cardReady && !submitting && selected != null && available(selected, interval);
+  const canSubmit =
+    cardReady && !submitting && selected != null && intervalAvailable(selected, interval);
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
@@ -135,62 +132,14 @@ export default function MembershipRenewalCard({
         twice.
       </p>
 
-      <fieldset className="renewal-review__plans">
-        <legend>Plan for next year</legend>
-        {options.map((option) => {
-          const optionPrice = interval === 'annual' ? option.annualPrice : option.monthlyPrice;
-          const offered = option.monthlyAvailable || option.annualAvailable;
-          return (
-            <label
-              key={option.packageId}
-              className={`renewal-review__plan${
-                option.packageId === selected?.packageId ? ' is-selected' : ''
-              }`}
-            >
-              <input
-                type="radio"
-                name="renewal-plan"
-                value={option.packageId}
-                checked={option.packageId === selected?.packageId}
-                disabled={!offered}
-                onChange={() => setPackageId(option.packageId)}
-              />
-              <span>
-                <strong>{option.name}</strong>
-                {option.recommended ? (
-                  <span className="renewal-review__badge">Recommended</span>
-                ) : null}
-                {option.summary ? (
-                  <span className="renewal-review__muted renewal-review__plan-summary">
-                    {option.summary}
-                  </span>
-                ) : null}
-              </span>
-              <span className="renewal-review__plan-price">
-                {available(option, interval) && money(optionPrice)
-                  ? `${money(optionPrice)} / ${interval === 'annual' ? 'year' : 'month'}`
-                  : '—'}
-              </span>
-            </label>
-          );
-        })}
-      </fieldset>
-
-      <div className="renewal-review__interval" role="radiogroup" aria-label="Billing">
-        {(['monthly', 'annual'] as const).map((value) => (
-          <button
-            key={value}
-            type="button"
-            role="radio"
-            aria-checked={interval === value}
-            className={interval === value ? 'is-selected' : ''}
-            disabled={!selected || !available(selected, value)}
-            onClick={() => setBillingInterval(value)}
-          >
-            {value === 'annual' ? 'Pay yearly' : 'Pay monthly'}
-          </button>
-        ))}
-      </div>
+      <RenewalPlanPicker
+        options={options}
+        selected={selected}
+        interval={interval}
+        onSelect={setPackageId}
+        onInterval={setBillingInterval}
+        money={money}
+      />
 
       <label>
         Name on card

@@ -56,7 +56,8 @@ import { resolvePracticeIdFromToken } from '../../utils/practiceIdFromToken';
 import {
   buildClientFinancialHref,
 } from '../../utils/clientFinancial';
-import { appConfirm, appPrompt } from '../../utils/appDialog';
+import { appAlert, appConfirm, appPrompt } from '../../utils/appDialog';
+import { useCan } from '../../permissions/PermissionContext';
 import CatalogItemPicker, { type PickedCatalogItem } from '../catalog/CatalogItemPicker';
 import PostVisitMembershipSignup from '../soap/PostVisitMembershipSignup';
 import MembershipAgreementWaiver, {
@@ -267,6 +268,7 @@ export default function PatientMembershipPanel({
 }: Props) {
   const navigate = useNavigate();
   const { userId } = useAuth() as { userId?: string | null };
+  const canChangePlan = useCan('membership.plan.change');
   const practiceId = practiceIdProp ?? resolvePracticeIdFromToken(getToken());
   const [open, setOpen] = useState(() => readStaffPatientLayout(userId).membership);
 
@@ -649,7 +651,8 @@ export default function PatientMembershipPanel({
       keepCustomItems
         ? `• Staff-added benefits are kept: the ${customCount} benefit${customCount === 1 ? '' : 's'} added to this pet specifically stay on the membership.`
         : '• Staff-added benefits are dropped: anything added to this pet specifically will be removed.',
-      `• Billing moves to ${plan.name} at ${interval === 'annual' ? 'the annual rate' : 'the monthly rate'}. No Stripe dashboard work is needed.`,
+      `• Billing: if they pay through Stripe, it moves to ${plan.name} at ${interval === 'annual' ? 'the annual rate' : 'the monthly rate'} now, and the difference for the rest of this billing period is charged or credited to their card. If they still pay through Square, you'll need to change it in Square by hand.`,
+      '• Use this to fix a wrong plan. Owners choose a different plan at renewal, not mid-year.',
     ];
     const ok = await appConfirm({
       title: `Move to ${plan.name}?`,
@@ -671,6 +674,9 @@ export default function PatientMembershipPanel({
       await refreshAudit(next.id);
       setChangeReason('');
       closePanels();
+      if (next.billingNote) {
+        await appAlert({ title: 'Plan changed', message: next.billingNote });
+      }
     } catch (e) {
       setFormError(apiErrorMessage(e));
     } finally {
@@ -1347,18 +1353,20 @@ export default function PatientMembershipPanel({
                             : ` · ${Math.max(0, Math.ceil(postVisitHoursLeft))}h left`}
                       </button>
                     ) : null}
-                    <button
-                      type="button"
-                      className="pmp-btn-change"
-                      disabled={busy || membership.status !== 'active'}
-                      onClick={() => {
-                        setFormError(null);
-                        setMode(mode === 'change' ? 'none' : 'change');
-                      }}
-                    >
-                      <ArrowLeftRight size={15} aria-hidden />
-                      Change plan
-                    </button>
+                    {canChangePlan ? (
+                      <button
+                        type="button"
+                        className="pmp-btn-change"
+                        disabled={busy || membership.status !== 'active'}
+                        onClick={() => {
+                          setFormError(null);
+                          setMode(mode === 'change' ? 'none' : 'change');
+                        }}
+                      >
+                        <ArrowLeftRight size={15} aria-hidden />
+                        Change plan
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       className="pims-detail__btn-secondary"

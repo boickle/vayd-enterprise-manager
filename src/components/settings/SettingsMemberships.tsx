@@ -561,6 +561,7 @@ function validate(
   draft: PlanDraft,
   groups: GroupDraft[],
   currentPlanId?: number,
+  plans: Array<{ id: number; name: string; minAgeMonths?: number | null }> = [],
 ): string | null {
   if (!draft.name.trim()) return 'Give the plan a name.';
 
@@ -577,7 +578,10 @@ function validate(
     }
   }
   if (ageLimitSuccessorId != null && !draft.maxAgeYears.trim()) {
-    return 'Set an oldest age when choosing a plan for members who age out.';
+    const next = plans.find((plan) => plan.id === ageLimitSuccessorId);
+    if (next && next.minAgeMonths == null) {
+      return `Set an oldest age on this plan, or a youngest age on ${next.name}, so we know when members age out.`;
+    }
   }
 
   for (const group of groups) {
@@ -1432,6 +1436,7 @@ export default function SettingsMemberships({ onMessage }: Props) {
       planDraft,
       groups,
       selection?.mode === 'plan' ? selection.id : undefined,
+      plans,
     );
     if (problem) {
       onMessage?.(problem, 'error');
@@ -1479,7 +1484,7 @@ export default function SettingsMemberships({ onMessage }: Props) {
       onMessage?.('No current members on this plan to update.', 'error');
       return;
     }
-    const problem = validate(planDraft, groups, detail.id);
+    const problem = validate(planDraft, groups, detail.id, plans);
     if (problem) {
       onMessage?.(problem, 'error');
       return;
@@ -2207,6 +2212,10 @@ export default function SettingsMemberships({ onMessage }: Props) {
                       value={planDraft.sortOrder}
                       onChange={(e) => setField('sortOrder', e.target.value)}
                     />
+                    <span className="memberships-field__hint">
+                      Lower numbers list first. When two plans fit a pet equally well, the lower
+                      number is the one marked Recommended.
+                    </span>
                   </label>
                   <label className="settings-label memberships-fields__wide">
                     Staff description
@@ -2256,7 +2265,9 @@ export default function SettingsMemberships({ onMessage }: Props) {
                   <p className="settings-muted">
                     Who may enroll on this plan, the length of a membership year, and where they
                     move at renewal or when they age out. Owners are emailed 14 days before the
-                    year ends.
+                    year ends. When several plans fit a pet at signup, the one with the narrowest
+                    age range is marked Recommended (Puppy over Foundations, Golden over a
+                    Foundations plan with no ages).
                   </p>
                 </div>
                 <div className="memberships-fields">
@@ -2283,6 +2294,11 @@ export default function SettingsMemberships({ onMessage }: Props) {
                       value={planDraft.minAgeYears}
                       onChange={(e) => setField('minAgeYears', e.target.value)}
                     />
+                    <span className="settings-muted memberships-restrictions__hint">
+                      {planDraft.minAgeYears.trim()
+                        ? `Offered from the day the pet turns ${planDraft.minAgeYears}.`
+                        : 'Blank = no youngest age.'}
+                    </span>
                   </label>
                   <label className="settings-label">
                     Oldest age (years)
@@ -2291,10 +2307,15 @@ export default function SettingsMemberships({ onMessage }: Props) {
                       type="number"
                       min={0}
                       step={1}
-                      placeholder="e.g. 8 for Foundations"
+                      placeholder="Blank = any age"
                       value={planDraft.maxAgeYears}
                       onChange={(e) => setField('maxAgeYears', e.target.value)}
                     />
+                    <span className="settings-muted memberships-restrictions__hint">
+                      {planDraft.maxAgeYears.trim()
+                        ? `Offered until the pet is ${planDraft.maxAgeYears} years and 1 month old. A ${planDraft.maxAgeYears}-year-old who is 1 month or more past their birthday is too old.`
+                        : 'Blank = no oldest age. Offered at any age.'}
+                    </span>
                   </label>
                   <label className="settings-label">
                     Membership year (months)
@@ -2335,7 +2356,7 @@ export default function SettingsMemberships({ onMessage }: Props) {
                     </select>
                   </label>
                   <label className="settings-label memberships-fields__wide">
-                    When age limit is reached, move to
+                    When they age out, recommend
                     <select
                       className="settings-select"
                       value={planDraft.ageLimitSuccessorPackageId}
@@ -2366,15 +2387,31 @@ export default function SettingsMemberships({ onMessage }: Props) {
                     .
                   </p>
                 ) : null}
-                {planDraft.maxAgeYears.trim() && planDraft.ageLimitSuccessorPackageId.trim() ? (
-                  <p className="settings-muted memberships-restrictions__hint">
-                    Members older than {planDraft.maxAgeYears} years move to{' '}
-                    {renewalSuccessorOptions.find(
-                      (plan) => String(plan.id) === planDraft.ageLimitSuccessorPackageId,
-                    )?.name ?? detail?.ageLimitSuccessorPackageName ?? 'the selected plan'}{' '}
-                    instead.
-                  </p>
-                ) : null}
+                {planDraft.ageLimitSuccessorPackageId.trim()
+                  ? (() => {
+                      const next = renewalSuccessorOptions.find(
+                        (plan) => String(plan.id) === planDraft.ageLimitSuccessorPackageId,
+                      );
+                      const nextName =
+                        next?.name ?? detail?.ageLimitSuccessorPackageName ?? 'the selected plan';
+                      const nextMin = next?.minAgeMonths;
+                      const triggers = [
+                        planDraft.maxAgeYears.trim()
+                          ? `are past this plan's oldest age (${planDraft.maxAgeYears})`
+                          : null,
+                        nextMin != null
+                          ? `turn ${Math.round(nextMin / 12)} (${nextName}'s youngest age)`
+                          : null,
+                      ].filter(Boolean);
+                      return (
+                        <p className="settings-muted memberships-restrictions__hint">
+                          {triggers.length
+                            ? `At renewal we recommend ${nextName} once members ${triggers.join(' or ')}. If we don't hear from them, they move to ${nextName}. They can still choose any plan whose age range fits them, including this one if it has no oldest age.`
+                            : `Set an oldest age here, or a youngest age on ${nextName}, so we know when members age out.`}
+                        </p>
+                      );
+                    })()
+                  : null}
               </div>
 
               <div className="settings-card">

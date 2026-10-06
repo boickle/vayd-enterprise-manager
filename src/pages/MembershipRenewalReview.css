@@ -250,3 +250,26 @@
   opacity: 0.6;
   cursor: not-allowed;
 }
+
+.renewal-review__change-plan {
+  display: block;
+  margin: 4px 0 16px;
+  padding: 10px 16px;
+  border: 1px solid #4fb128;
+  border-radius: 8px;
+  background: #fff;
+  color: #2f6b1a;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.renewal-review__comparison h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1.15rem;
+}
+
+.renewal-review__comparison ul {
+  margin: 0 0 0.75rem;
+  padding-left: 1.25rem;
+}

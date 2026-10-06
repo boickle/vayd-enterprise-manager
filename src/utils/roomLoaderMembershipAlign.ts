@@ -141,7 +141,20 @@ export function plansFromBundles(
       ),
     });
   }
-  return out;
+  return out.map((plan) => withGoldenHandoff(plan, out));
+}
+
+/**
+ * Foundations with no oldest age ends where Golden begins (its age-out plan), so
+ * early-detection rules still get checked against an upper age.
+ */
+function withGoldenHandoff(plan: MembershipAlignPlan, plans: MembershipAlignPlan[]): MembershipAlignPlan {
+  if (familyFromName(plan.name) !== 'foundations' || /puppy|kitten/i.test(plan.name)) return plan;
+  if (plan.maxAgeMonths != null) return plan;
+  const hints = speciesHintsFromText(plan.species || plan.name);
+  const species = hints.length === 1 ? (hints[0] as 'dog' | 'cat') : null;
+  const goldenMin = goldenMinAgeMonthsFromPlans(plans, species);
+  return goldenMin == null ? plan : { ...plan, maxAgeMonths: goldenMin };
 }
 
 export function coveringFamiliesForItem(

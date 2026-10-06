@@ -207,6 +207,8 @@ export type MembershipGroup = {
 };
 
 export type PatientMembership = {
+  /** Set after a staff plan change: what happened to billing. */
+  billingNote?: string;
   id: number;
   practiceId: number;
   patientId: number;
@@ -508,7 +510,7 @@ export async function removeMembershipItem(
   );
 }
 
-/** Foundations -> Foundations Puppy/Kitten in one call, no Stripe dashboard. */
+/** Staff fix for a wrong plan; Stripe billing follows (Square is changed by hand). */
 export async function changeMembershipPlan(
   membershipId: number,
   input: {
@@ -785,7 +787,38 @@ export type MembershipRenewalPreview = {
   needsCard: boolean;
   planOptions: MembershipRenewalPlanOption[];
   recommendedPackageId: number;
+  /** What renews: the owner's choice if any, else the recommended plan. */
+  nextPackageId: number;
+  /** Set when the plan changes at renewal (for example Foundations to Golden). */
+  comparison: MembershipRenewalComparison | null;
 };
+
+export type MembershipRenewalComparison = {
+  fromPlanName: string;
+  toPlanName: string;
+  billingInterval: MembershipBillingInterval;
+  fromPrice: number | null;
+  toPrice: number | null;
+  priceDifference: number | null;
+  added: string[];
+  why: string | null;
+  canStay: boolean;
+};
+
+export type UpcomingMembershipRenewal = MembershipRenewalPreview & {
+  wellnessPlanId: number;
+  patientId: number | null;
+  reviewToken: string;
+};
+
+/** Client portal: the logged-in client's pets whose membership renews soon. */
+export async function listMyUpcomingRenewals(): Promise<UpcomingMembershipRenewal[]> {
+  const { data } = await http.get<UpcomingMembershipRenewal[]>(
+    '/memberships/patient-memberships/mine/upcoming-renewals',
+    { params: { practiceId: currentPracticeId() } },
+  );
+  return data;
+}
 
 export type MembershipRenewalPlanOption = {
   packageId: number;
@@ -846,6 +879,23 @@ export async function saveMembershipRenewalCard(
     '/public/membership-renewal/payment-card',
     body,
     { params: { token } }
+  );
+  return data;
+}
+
+export async function chooseMembershipRenewalPlan(
+  token: string,
+  body: { packageId: number; billingInterval: MembershipBillingInterval },
+): Promise<{
+  ok: true;
+  planName: string;
+  billingInterval: MembershipBillingInterval;
+  price: number | null;
+}> {
+  const { data } = await publicMembershipClient.post(
+    '/public/membership-renewal/plan-choice',
+    body,
+    { params: { token } },
   );
   return data;
 }

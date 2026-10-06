@@ -2357,3 +2357,34 @@
     display: none !important;
   }
 }
+
+/* ---------- membership renewal banner ---------- */
+.pp-renewal-banners {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+.pp-renewal-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: var(--pp-sun-soft);
+  border: 1px solid var(--pp-sun);
+  color: var(--pp-ink);
+}
+.pp-renewal-banner__text {
+  flex: 1 1 260px;
+  font-weight: 600;
+}
+.pp-renewal-banner__close {
+  border: 0;
+  background: transparent;
+  color: var(--pp-muted);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+}

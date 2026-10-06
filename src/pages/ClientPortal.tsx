@@ -47,6 +47,7 @@ import ReferralModal from './clientPortal/ReferralModal';
 import PreferencesModal from './clientPortal/PreferencesModal';
 import AutoshipManageModal from './clientPortal/AutoshipManageModal';
 import RememberedPetsCard from './clientPortal/RememberedPetsCard';
+import RenewalBanner from './clientPortal/RenewalBanner';
 import MembershipBenefitsModal, { membershipPerkLines } from './clientPortal/MembershipBenefitsModal';
 import { PortalModal } from './clientPortal/PortalPrimitives';
 import {
@@ -492,48 +493,6 @@ export default function ClientPortal() {
     navigate('/client-portal/membership-signup', { state: { petId: pet.id } });
   }
 
-  function handleUpgradeMembership(pet: PetWithWellness) {
-    if (!pet.id || !pet.dbId) return;
-    navigate('/client-portal/membership-upgrade', {
-      state: { petId: pet.id, patientId: pet.dbId, petName: pet.name, currentPlanName: pet.membershipPlanName, petSpecies: pet.species },
-    });
-  }
-
-  /** Puppy/Kitten ↔ Foundations upgrade eligibility (PLUS add-on upgrades are retired). */
-  function canUpgradeMembership(pet: PetWithWellness): boolean {
-    const status = (pet.membershipStatus || '').toLowerCase();
-    if (status === 'pending' || status === 'processing') return false;
-    const allPlans = pet.wellnessPlans || [];
-    const activePlans = allPlans.filter((plan) => planIsActive(plan));
-    const hasMembership = pet.membershipPlanName != null;
-    if (hasMembership && activePlans.length === 0) return false;
-
-    const planName = (pet.membershipPlanName || '').toLowerCase();
-    const planHas = (needle: string) =>
-      planName.includes(needle) ||
-      allPlans.some((pl) => (pl.packageName || '').toLowerCase().includes(needle) || (pl.name || '').toLowerCase().includes(needle));
-    const hasPuppyKitten = planHas('puppy') || planHas('kitten');
-    const hasFoundations = planHas('foundation');
-
-    const eligibleForPuppyKittenSwap = (): boolean => {
-      let lessThanOneYear = false;
-      if (pet.dob) {
-        const oneYearAgo = new Date();
-        oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
-        lessThanOneYear = new Date(pet.dob) > oneYearAgo;
-      }
-      const yesterday = new Date();
-      yesterday.setDate(yesterday.getDate() - 1);
-      yesterday.setHours(23, 59, 59, 999);
-      const hasPast = appts.some((apt) => apptMatchesPet(apt, pet) && apt.startIso && new Date(apt.startIso) <= yesterday);
-      return lessThanOneYear && !hasPast;
-    };
-
-    if (hasPuppyKitten) return eligibleForPuppyKittenSwap();
-    if (hasFoundations && !hasPuppyKitten) return eligibleForPuppyKittenSwap();
-    return false;
-  }
-
   /** Remember we're sending them to the store from here so the store can offer "Back to portal". */
   function rememberPortalForStore(pet: PetWithWellness | null | undefined = selectedPet) {
     rememberStorePortalReturn({ petId: pet?.dbId ?? null, petName: pet?.name ?? null });
@@ -731,6 +690,8 @@ export default function ClientPortal() {
 
         {error ? <div className="pp-error">{error}</div> : null}
 
+        {!loading ? <RenewalBanner /> : null}
+
         {loading ? (
           <div style={{ display: 'grid', gap: 18 }}>
             <div className="pp-skeleton" style={{ height: 90 }} />
@@ -894,11 +855,6 @@ export default function ClientPortal() {
                       <button type="button" className="pp-btn pp-btn--soft" onClick={() => setBenefitsPet(selectedPet)}>
                         <Icon name="check" /> What&apos;s included & what&apos;s left
                       </button>
-                      {canUpgradeMembership(selectedPet) ? (
-                        <button type="button" className="pp-btn pp-btn--ghost" onClick={() => handleUpgradeMembership(selectedPet)}>
-                          Upgrade my plan
-                        </button>
-                      ) : null}
                     </div>
                   </>
                 ) : membership.state === 'processing' || membership.state === 'pending' ? (
@@ -1465,15 +1421,6 @@ export default function ClientPortal() {
           pet={benefitsPet}
           membership={computeMembershipView(benefitsPet)}
           onClose={() => setBenefitsPet(null)}
-          onUpgrade={
-            canUpgradeMembership(benefitsPet)
-              ? () => {
-                  const pet = benefitsPet;
-                  setBenefitsPet(null);
-                  handleUpgradeMembership(pet);
-                }
-              : undefined
-          }
         />
       ) : null}
 
