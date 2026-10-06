@@ -109,7 +109,6 @@ export type StripeSubscriptionPlanCatalogResponse = {
 const CATALOG_PLAN_SLUG_KEYS = [
   'foundations',
   'golden',
-  'comfort-care',
   'plus-addon',
   'starter-addon',
 ] as const;
@@ -145,15 +144,6 @@ function stripeFlatCatalogItemsToSubscriptionPlanCatalog(rows: unknown[]): Subsc
     planId: productId,
     planVariationId: priceId,
   });
-
-  const setComfort = (cadence: 'monthly' | 'annual', combo: 'base' | 'plus', productId: string, priceId: string) => {
-    const key = 'comfort-care';
-    if (!out[key]) out[key] = {} as SubscriptionPlanSpecies;
-    const plan = out[key]!;
-    const general = ((plan as Record<string, unknown>).general ??= {}) as Record<string, SubscriptionPlanCombination>;
-    const cad = (general[cadence] ??= {}) as SubscriptionPlanCombination;
-    (cad as Record<string, SubscriptionPlanEntry>)[combo] = entry(productId, priceId);
-  };
 
   const setSpecies = (
     planKey: 'foundations' | 'golden',
@@ -205,11 +195,8 @@ function stripeFlatCatalogItemsToSubscriptionPlanCatalog(rows: unknown[]): Subsc
       continue;
     }
 
-    if (nameRaw.includes('comfort care')) {
-      const isPlus = nameRaw.includes('comfort care plus');
-      setComfort(cadence, isPlus ? 'plus' : 'base', productId, priceId);
-      continue;
-    }
+    // Comfort Care is discontinued; skip old prices so they don't land under Foundations.
+    if (nameRaw.includes('comfort care')) continue;
 
     const planKey: 'foundations' | 'golden' = nameRaw.includes('golden') ? 'golden' : 'foundations';
 

@@ -296,10 +296,6 @@ export default function MembershipRecommendationPanel({
               We recommend the <strong>{planDisplayName}</strong> Membership Plan for {petName}. It covers the core wellness care we recommend each year and supports ongoing care with{' '}
               {petName}&apos;s dedicated Vet At Your Door One-Team.
             </>
-          ) : planBase === 'comfort-care' ? (
-            <>
-              We recommend the <strong>{planDisplayName}</strong> Membership Plan for {petName}. Membership makes it simple to get ongoing care with {petName}&apos;s dedicated Vet At Your Door One-Team.
-            </>
           ) : (
             <>
               We recommend the <strong>{planDisplayName}</strong> Membership Plan for {petName}.

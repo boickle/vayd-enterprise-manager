@@ -248,18 +248,6 @@ const MEMBERSHIP_PLAN_CARD_DETAILS: Record<string, { name: string; tagLine: stri
       'A team that gets to know your pet over time',
       'Priority scheduling with your One-Team',
       '7-day support from VAYD staff',
-      '50% off exams on additional visits',
-      'Member pricing (10% off) in our online store',
-    ],
-  },
-  'comfort-care': {
-    name: 'Comfort Care',
-    tagLine: 'Month-to-Month',
-    includes: [
-      'One Comprehensive Exam & Trip Fee per month',
-      'One office-hours tele-health consult via phone or video',
-      'Priority 7-day support from VAYD staff',
-      '15% off total euthanasia and after-care cost',
     ],
   },
   'starter-addon': {
@@ -279,7 +267,7 @@ function getMembershipPlanCardDetails(planId: string): { name: string; tagLine: 
 }
 
 /** All plan IDs used in membership flow (base + add-ons). Filter per pet using same logic as MembershipSignup. */
-const ALL_MEMBERSHIP_PLAN_IDS = ['foundations', 'golden', 'comfort-care', 'starter-addon'] as const;
+const ALL_MEMBERSHIP_PLAN_IDS = ['foundations', 'golden', 'starter-addon'] as const;
 
 /** Pet details for membership plan filtering (same logic as MembershipSignup: kind + ageYears). */
 function getPetDetailsForMembership(
@@ -301,7 +289,6 @@ function getPlanIdsForPet(
   const shouldShowStarter = ageYears != null && ageYears <= 1.5 && (kind === 'dog' || kind === 'cat');
   const planIds: string[] = ['foundations'];
   if (meetsGolden) planIds.push('golden');
-  planIds.push('comfort-care');
   if (shouldShowStarter) planIds.push('starter-addon');
   return planIds;
 }
@@ -329,8 +316,6 @@ function getRecommendedWellnessPlanFromList(
   }
   const foundations = withBase.find((x) => x.base === 'foundations');
   if (foundations) return foundations.p;
-  const comfort = withBase.find((x) => x.base === 'comfort-care');
-  if (comfort) return comfort.p;
   return wellness[0];
 }
 
@@ -461,14 +446,6 @@ function getCatalogStripePlanIdForRoomLoader(
   if (!catalog || !planKey || typeof catalog !== 'object') return null;
   const planNode = (catalog as Record<string, unknown>)[planKey] as Record<string, unknown> | undefined;
   if (!planNode || typeof planNode !== 'object') return null;
-
-  if (planKey === 'comfort-care') {
-    const generalNode = (planNode as { general?: unknown }).general ?? planNode;
-    const g = generalNode as Record<string, unknown>;
-    const cadenceNode = g[cadence] as Record<string, unknown> | undefined;
-    const entry = extractCatalogComboEntry(cadenceNode, 'base');
-    return entry?.planId ?? null;
-  }
 
   if (species && planNode[species] && typeof planNode[species] === 'object') {
     const speciesNode = planNode[species] as Record<string, unknown>;

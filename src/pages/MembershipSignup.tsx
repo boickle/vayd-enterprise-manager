@@ -124,20 +124,6 @@ const MEMBERSHIP_PLANS: MembershipPlan[] = [
       'A team that gets to know your pet over time',
       'Priority scheduling with your One-Team',
       '7-day support from VAYD staff',
-      '50% off exams on additional visits',
-      'Member pricing (10% off) in our online store',
-    ],
-  },
-  {
-    id: 'comfort-care',
-    name: 'Comfort Care',
-    tagLine: 'Month-to-Month',
-    pricing: [{ monthly: 289 }],
-    includes: [
-      'One Comprehensive Exam & Trip Fee per month',
-      'One office-hours tele-health consult via phone or video',
-      'Priority 7-day support from VAYD staff',
-      '15% off total euthanasia and after-care cost',
     ],
   },
   {
@@ -299,18 +285,6 @@ function catalogHasCadence(
   const planNode = catalog[planKey];
   if (!planNode) return false;
   const nodes: any[] = [];
-  
-  // Comfort-care has a "general" wrapper in the catalog structure
-  if (planKey === 'comfort-care') {
-    const generalNode = (planNode as any)['general'] || planNode;
-    if (generalNode && generalNode[cadence]) {
-      nodes.push(generalNode[cadence]);
-    }
-    return nodes.some(
-      (node) => node && Object.values(node as Record<string, any>).some(Boolean),
-    );
-  }
-  
   if (species && (planNode as any)[species]) {
     const speciesNode = (planNode as any)[species];
     if (speciesNode && speciesNode[cadence]) nodes.push(speciesNode[cadence]);
@@ -329,7 +303,6 @@ function lookupCatalogEntry(
   species: 'cat' | 'dog' | null,
   cadence: BillingCadence,
   combination: PlanCombination,
-  comfortPlus: boolean,
 ): PlanEntry | undefined {
   if (!catalog) {
     console.error('Catalog lookup: catalog is null');
@@ -360,34 +333,6 @@ function lookupCatalogEntry(
     }
     return undefined;
   };
-
-  if (planKey === 'comfort-care') {
-    // Comfort-care has a "general" wrapper in the catalog structure
-    const generalNode = (planNode as any)['general'] || planNode;
-    const cadenceNode = generalNode[cadence];
-    if (!cadenceNode) {
-      console.error('Comfort-care lookup: cadence node not found', {
-        planKey,
-        cadence,
-        planNode,
-        generalNode,
-        availableCadences: generalNode ? Object.keys(generalNode) : [],
-      });
-      return undefined;
-    }
-    const combo = comfortPlus ? 'plus' : 'base';
-    const entry = extractEntry(cadenceNode, combo as PlanCombination);
-    if (!entry) {
-      console.error('Comfort-care lookup: entry not found', {
-        planKey,
-        cadence,
-        combo,
-        cadenceNode,
-        availableCombos: cadenceNode ? Object.keys(cadenceNode) : [],
-      });
-    }
-    return entry;
-  }
 
   if (species && (planNode as any)[species]) {
     const speciesNode = (planNode as any)[species];
@@ -488,7 +433,6 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
   const [selectedPlanExplicit, setSelectedPlanExplicit] = useState<string | null>(null);
   const [starterAnswer, setStarterAnswer] = useState<'yes' | 'no' | null>(null);
   const [starterExplicit, setStarterExplicit] = useState(false);
-  const [comfortAnswer, setComfortAnswer] = useState<'yes' | 'no' | null>('no');
   const [billingPreference, setBillingPreference] = useState<'monthly' | 'annual'>('annual');
   const [appointmentsLoaded, setAppointmentsLoaded] = useState(false);
   const [hasAnyAppointments, setHasAnyAppointments] = useState(false);
@@ -608,7 +552,6 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
         species,
         cadence,
         combination,
-        false,
       );
 
       if (!catalogEntry?.planId || !catalogEntry?.planVariationId) return null;
@@ -989,13 +932,7 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
   const isNewPatient = !hasPastAppointment;
 
   // Get the primary plan name that should be selected
-  const primaryPlanName = useMemo(() => {
-    if (comfortAnswer === 'yes') return 'Comfort Care';
-    if (comfortAnswer === 'no' && recommendedPlanId === 'golden') return 'Golden';
-    if (comfortAnswer === 'no') return 'Foundations';
-    // If comfortAnswer is null, default to Foundations
-    return 'Foundations';
-  }, [comfortAnswer, recommendedPlanId]);
+  const primaryPlanName = recommendedPlanId === 'golden' ? 'Golden' : 'Foundations';
 
   // Auto-dismiss toast after 4 seconds
   useEffect(() => {
@@ -1048,26 +985,6 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
   }, [pet, recommendedPlanId, recommendedBundle, brandSoft]);
 
   useEffect(() => {
-    if (comfortAnswer === 'yes') {
-      setSelectedPlanExplicit(null);
-      setSelectedPlanId('comfort-care');
-      setBillingPreference('monthly');
-    }
-    if (comfortAnswer === 'no') {
-      setSelectedPlanExplicit(null);
-      setSelectedPlanId(null);
-      setBillingPreference('annual');
-    }
-    if (comfortAnswer == null) {
-      setSelectedPlanExplicit(null);
-      setSelectedPlanId(null);
-      setBillingPreference('annual');
-    }
-    setAgreementAccepted(false);
-    setAgreementSignature('');
-  }, [comfortAnswer]);
-
-  useEffect(() => {
     if (!shouldAskStarter) {
       setStarterAnswer(null);
       setStarterExplicit(false);
@@ -1077,7 +994,7 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
   }, [shouldAskStarter]);
 
   useEffect(() => {
-    if (!selectedPlanExplicit || selectedPlanExplicit === 'comfort-care') {
+    if (!selectedPlanExplicit) {
       setBillingPreference('monthly');
     } else {
       setBillingPreference('annual');
@@ -1095,17 +1012,16 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
       if (petDetails.kind) matched = tiers.find((tier) => tier.species === petDetails.kind);
       if (!matched && tiers.length) matched = tiers[0];
       if (matched) {
-        const isComfort = selectedPlanExplicit === 'comfort-care';
         items.push({
           label: plan.name,
           monthly: matched.monthly ?? null,
-          annual: isComfort ? null : matched.annual ?? null,
+          annual: matched.annual ?? null,
         });
       }
     }
 
     if (starterExplicit) {
-      items.push({ label: 'Puppy / Kitten Add-on', monthly: 29, annual: selectedPlanExplicit === 'comfort-care' ? null : 309 });
+      items.push({ label: 'Puppy / Kitten Add-on', monthly: 29, annual: 309 });
     }
 
     if (!items.length) return null;
@@ -1155,7 +1071,7 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
     const originalAmountCents =
       originalAmountBase != null ? Math.round(originalAmountBase * 100) : undefined;
     const addOns: string[] = [];
-    const includeStarter = starterExplicit && selectedPlanExplicit !== 'comfort-care';
+    const includeStarter = starterExplicit;
     if (includeStarter) addOns.push('starter-addon');
 
     if (!planCatalog) {
@@ -1164,13 +1080,7 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
     }
 
     const speciesKey =
-      selectedPlanExplicit === 'comfort-care'
-        ? null
-        : petDetails.kind === 'dog'
-          ? 'dog'
-          : petDetails.kind === 'cat'
-            ? 'cat'
-            : null;
+      petDetails.kind === 'dog' ? 'dog' : petDetails.kind === 'cat' ? 'cat' : null;
 
     const hasAnnualOption = catalogHasCadence(
       planCatalog,
@@ -1189,7 +1099,6 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
       speciesKey,
       billingKey,
       combination,
-      false,
     );
 
     const subscriptionPlanId = catalogEntry?.planId;
@@ -1203,13 +1112,12 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
         billingKey,
         combination,
         catalogEntry,
-        comfortCareNode: selectedPlanExplicit === 'comfort-care' ? planCatalog?.['comfort-care'] : undefined,
         planSlice:
           selectedPlanExplicit && planCatalog?.[selectedPlanExplicit]
             ? planCatalog[selectedPlanExplicit]
             : undefined,
       });
-      if (selectedPlanExplicit !== 'comfort-care' && !speciesKey) {
+      if (!speciesKey) {
         setError(
           'We could not tell if this pet is a dog or cat from the information we have. Please contact support or try again after your pet’s species is updated in our records.',
         );
@@ -1223,14 +1131,8 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
       chosenPlan?.pricing?.find((tier) => (petDetails.kind ? tier.species === petDetails.kind : false)) ??
       chosenPlan?.pricing?.[0];
 
-    const baseMonthlyPrice =
-      selectedPlanExplicit === 'comfort-care'
-        ? chosenPlan?.pricing?.[0]?.monthly ?? null
-        : matchedTier?.monthly ?? null;
-    const baseAnnualPrice =
-      selectedPlanExplicit === 'comfort-care'
-        ? null
-        : matchedTier?.annual ?? null;
+    const baseMonthlyPrice = matchedTier?.monthly ?? null;
+    const baseAnnualPrice = matchedTier?.annual ?? null;
 
     const planPrice =
       billingKey === 'annual' && baseAnnualPrice != null ? baseAnnualPrice : baseMonthlyPrice;
@@ -1253,7 +1155,6 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
             null,
             billingKey,
             'base',
-            false,
           );
           if (catalogEntry?.planId && catalogEntry?.planVariationId) {
             const apiPlan = formattedPlans.find((p) => p.planId === catalogEntry.planId);
@@ -1288,9 +1189,7 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
           const config = ADD_ON_PRICING[slug];
           if (!config) return null;
           price =
-            billingKey === 'annual' &&
-            config.annual != null &&
-            selectedPlanExplicit !== 'comfort-care'
+            billingKey === 'annual' && config.annual != null
               ? config.annual
               : config.monthly;
         }
@@ -1382,7 +1281,6 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
     if (chosenPlan?.apiPlanId) enrollmentPayload.planId = chosenPlan.apiPlanId;
     else if (chosenPlan) enrollmentPayload.planId = chosenPlan.id;
     if (addOns.length) enrollmentPayload.addOns = addOns;
-    if (selectedPlanExplicit === 'comfort-care') enrollmentPayload.comfortCare = true;
 
     const note = `Membership for ${pet.name} - ${chosenPlan?.name ?? selectedPlanExplicit} (${effectiveBillingPreference})`;
 
@@ -1490,7 +1388,7 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
         plan_name: basePlanName,
         addons: addOns,
         has_addons: addOns.length > 0,
-        plan_category: selectedPlanExplicit === 'comfort-care' ? 'comfort-care' : selectedPlanExplicit === 'golden' ? 'golden' : 'foundations',
+        plan_category: selectedPlanExplicit === 'golden' ? 'golden' : 'foundations',
       }
     );
 
@@ -2129,9 +2027,9 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
           </div>
         )}
 
-        {comfortAnswer === 'no' && recommendationCopy}
+        {recommendationCopy}
 
-        {comfortAnswer === 'no' && recommendedPlanId === 'foundations' && pet && (
+        {recommendedPlanId === 'foundations' && pet && (
           <div
             className="cp-card"
             style={{
@@ -2198,10 +2096,7 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
         )}
 
         {(() => {
-          // Show membership options only if:
-          // - comfortAnswer is answered, AND
-          // - if shouldAskStarter is true, then starterAnswer must also be answered
-          //   (unless comfortAnswer is 'yes', in which case the starter question is hidden)
+          // Show membership options once the Puppy / Kitten question (if asked) is answered.
           const canShowPlans = !shouldAskStarter || starterAnswer != null;
           
           if (!canShowPlans) {
@@ -2228,7 +2123,6 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
             {(() => {
               const filteredPlans = plans
                 .filter((plan) => {
-                  if (plan.id === 'comfort-care') return false;
                   if (plan.id === 'foundations') return foundationsOffered;
                   // Golden only once the pet reaches that plan's youngest age.
                   if (plan.id === 'golden') return meetsGolden;
@@ -2348,7 +2242,7 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
                                   pet_species: petDetails.kind,
                                   billing_preference: billingPreference,
                                   is_addon: false,
-                                  plan_category: plan.id === 'comfort-care' ? 'comfort-care' : plan.id === 'golden' ? 'golden' : 'foundations',
+                                  plan_category: plan.id === 'golden' ? 'golden' : 'foundations',
                                 }
                               );
                             } else if (!next && prev) {
@@ -2538,7 +2432,7 @@ export default function MembershipSignup(props?: MembershipSignupModalProps) {
                       displayCostSummary.totalMonthly * 12 - displayCostSummary.totalAnnual,
                     )} a year by paying annually.`
                   : 'Pay annually to unlock a 10% discount on every membership item.'
-                : 'Comfort Care is billed month-to-month for ongoing support.'}
+                : 'Billed monthly.'}
             </p>
 
             <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: 8 }}>
