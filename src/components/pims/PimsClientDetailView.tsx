@@ -1597,6 +1597,7 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
         }
         const previews = await previewDeathWrapUpForPatients({
           patients: activePets,
+          clientId: Number(clientId),
           practiceTz: practiceTimeZoneOrDefault(DEFAULT_PRACTICE_TIMEZONE),
         });
         setInactivateWrapUp(previews);

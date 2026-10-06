@@ -1952,6 +1952,7 @@ export default function PimsPatientDetailView({
         const preview = await previewDeathWrapUp({
           patientId: Number(patientId),
           patientName: pname,
+          clientId: client?.id != null ? Number(client.id) : null,
           practiceTz,
         });
         setInactivateWrapUp([preview]);

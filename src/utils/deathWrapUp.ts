@@ -15,8 +15,12 @@ import {
   patchStoreSubscription,
   type StoreStaffSubscription,
 } from '../api/onlineStore';
-import { getEstimateForAppointment } from '../api/visitEstimates';
-import { VISIT_WORKFLOW_PRACTICE_ID, getInvoiceByAppointment } from '../api/visitWorkflow';
+import { getEstimateForAppointment, listClientEstimates } from '../api/visitEstimates';
+import {
+  VISIT_WORKFLOW_PRACTICE_ID,
+  getInvoiceByAppointment,
+  listClientVisitInvoices,
+} from '../api/visitWorkflow';
 import { membershipCancelLineDescription } from './membershipCancelEstimateLine';
 import {
   cancelEuthanasiaFutureAppointments,
@@ -37,9 +41,12 @@ export type DeathWrapUpPreview = {
   autoships: StoreStaffSubscription[];
   reminders: UnscheduledReminder[];
   futureAppointments: EuthanasiaFutureAppointmentRow[];
-  /** Memberships whose cancel charge or credit is already a line on this visit's estimate or invoice. */
+  /**
+   * Memberships whose cancel charge or credit is already a line on this visit's estimate or
+   * invoice, or (from the chart, with no visit) on one of the owner's open estimates or bills.
+   */
   moneyOnVisitMembershipIds: number[];
-  /** True when the visit's estimate or invoice could not be loaded, so we can't tell. */
+  /** True when those estimates or invoices could not be loaded, so we can't tell. */
   visitMoneyCheckFailed: boolean;
 };
 
@@ -112,7 +119,7 @@ export function membershipCancelMoneyLabel(
     : kind === 'invoice';
   const hasMoney = preview.chargeAmount > 0.009 || preview.refundAmount > 0.009;
   if (onVisit) {
-    const where = kind === 'invoice' ? 'this invoice' : "this visit's estimate";
+    const where = kind === 'invoice' ? 'this invoice' : 'an open estimate or bill';
     if (preview.chargeAmount > 0.009) {
       return `${money(preview.chargeAmount)} already on ${where} (amount owed)`;
     }
@@ -122,7 +129,7 @@ export function membershipCancelMoneyLabel(
     return 'No extra charge or credit';
   }
   if (hasMoney && wrapUp?.visitMoneyCheckFailed) {
-    return "Couldn't check this visit's estimate. Close and try again before accepting";
+    return "Couldn't check the open estimates and bills. Close and try again before accepting";
   }
   if (preview.chargeAmount > 0.009) {
     return `Will charge ${money(preview.chargeAmount)} on cancel`;
@@ -138,6 +145,8 @@ async function previewOnePatient(
     patientId: number;
     patientName?: string | null;
     appointmentId?: number | null;
+    /** Owner to search for open estimates and bills when there is no visit (chart inactivate). */
+    clientId?: number | null;
     practiceId: number;
     practiceTz: string;
     subscriptions: StoreStaffSubscription[];
@@ -170,10 +179,18 @@ async function previewOnePatient(
     }
   }
 
+  const clientId =
+    args.clientId != null && Number.isFinite(args.clientId) && args.clientId > 0
+      ? args.clientId
+      : null;
   const visitMoney =
-    membershipPreviews.length > 0 && excludeAppointmentIds.length > 0
-      ? await membershipCancelLinesOnVisit(excludeAppointmentIds[0], patientId)
-      : { descriptions: new Set<string>(), failed: false };
+    membershipPreviews.length === 0
+      ? { descriptions: new Set<string>(), failed: false }
+      : excludeAppointmentIds.length > 0
+        ? await membershipCancelLinesOnVisit(excludeAppointmentIds[0], patientId)
+        : clientId != null
+          ? await membershipCancelLinesOnOpenDocs(clientId, patientId)
+          : { descriptions: new Set<string>(), failed: false };
 
   return {
     patientId,
@@ -230,10 +247,51 @@ async function membershipCancelLinesOnVisit(
   }
 }
 
+/**
+ * Same check for the chart, where there is no visit: the owner's live estimates and unpaid
+ * bills. A euthanasia estimate made before the chart inactivation already holds the cancel money.
+ */
+async function membershipCancelLinesOnOpenDocs(
+  clientId: number,
+  patientId: number
+): Promise<{ descriptions: Set<string>; failed: boolean }> {
+  const descriptions = new Set<string>();
+  const forPet = (
+    linePatientId: number | null | undefined,
+    docPatientId: number | null | undefined
+  ) => Number(linePatientId ?? docPatientId ?? patientId) === Number(patientId);
+  try {
+    const [estimates, invoices] = await Promise.all([
+      listClientEstimates(clientId),
+      listClientVisitInvoices(clientId),
+    ]);
+    for (const estimate of estimates) {
+      if (estimate.status === 'converted') continue;
+      for (const line of estimate.lines ?? []) {
+        if (forPet(line.patientId, estimate.patientId)) descriptions.add(line.description.trim());
+      }
+    }
+    for (const invoice of invoices) {
+      if (invoice.status !== 'open' && invoice.status !== 'finalized') continue;
+      const returned = new Set(
+        (invoice.lines ?? []).map((line) => line.returnOfLineId).filter(Boolean)
+      );
+      for (const line of invoice.lines ?? []) {
+        if (line.returnOfLineId || returned.has(line.id)) continue;
+        if (forPet(line.patientId, invoice.patientId)) descriptions.add(line.description.trim());
+      }
+    }
+    return { descriptions, failed: false };
+  } catch {
+    return { descriptions, failed: true };
+  }
+}
+
 export async function previewDeathWrapUp(args: {
   patientId: number;
   patientName?: string | null;
   appointmentId?: number | null;
+  clientId?: number | null;
   practiceId?: number;
   practiceTz?: string;
 }): Promise<DeathWrapUpPreview> {
@@ -245,6 +303,7 @@ export async function previewDeathWrapUp(args: {
     patientId: args.patientId,
     patientName: args.patientName,
     appointmentId: args.appointmentId,
+    clientId: args.clientId,
     practiceId,
     practiceTz: args.practiceTz ?? 'America/New_York',
     subscriptions,
@@ -254,6 +313,7 @@ export async function previewDeathWrapUp(args: {
 export async function previewDeathWrapUpForPatients(args: {
   patients: readonly { patientId: number; patientName?: string | null }[];
   appointmentId?: number | null;
+  clientId?: number | null;
   practiceId?: number;
   practiceTz?: string;
 }): Promise<DeathWrapUpPreview[]> {
@@ -278,6 +338,7 @@ export async function previewDeathWrapUpForPatients(args: {
         patientId: patient.patientId,
         patientName: patient.patientName,
         appointmentId: args.appointmentId,
+        clientId: args.clientId,
         practiceId,
         practiceTz,
         subscriptions,
@@ -304,7 +365,7 @@ export async function acceptDeathWrapUp(
     const hasMoney = membership.chargeAmount > 0.009 || membership.refundAmount > 0.009;
     if (!skipMoney && hasMoney && preview.visitMoneyCheckFailed) {
       errors.push(
-        `Could not check whether ${membership.planName} is already on this visit's estimate, so it was not cancelled. Try again.`
+        `Could not check whether ${membership.planName} is already on an open estimate or bill, so it was not cancelled. Try again.`
       );
       continue;
     }
