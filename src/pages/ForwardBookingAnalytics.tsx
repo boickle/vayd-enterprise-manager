@@ -26,7 +26,7 @@ import {
 } from '@mui/material';
 import ChevronLeft from '@mui/icons-material/ChevronLeft';
 import ChevronRight from '@mui/icons-material/ChevronRight';
-import { LocalizationProvider } from '@mui/x-date-pickers';
+import { DatePicker, LocalizationProvider } from '@mui/x-date-pickers';
 import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
 import dayjs, { Dayjs } from 'dayjs';
 import {
@@ -256,6 +256,7 @@ export default function ForwardBookingAnalytics() {
   const shiftRange = (direction: -1 | 1) => {
     const days = end.diff(start, 'day') + 1;
     const shift = days * direction;
+    setPreset('');
     setRange((r) => ({
       from: r.from.add(shift, 'day'),
       to: r.to.add(shift, 'day'),
@@ -416,7 +417,7 @@ export default function ForwardBookingAnalytics() {
           a follow-up was created during the visit (Booked at appointment), a later visit was
           already on the calendar (Already booked), or a Labs pending visit later produced a
           booking. Choosing Forward book without a booking yet does not count. Holds, blocks,
-          cancellations, and visits still in progress today are excluded.
+          and cancellations are excluded, as are appointments the team never finished.
         </Typography>
 
         {providersError && (
@@ -455,11 +456,14 @@ export default function ForwardBookingAnalytics() {
           <CardContent sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
             <IconButton
               aria-label={isSingleDay ? 'Previous day' : 'Previous period'}
-              onClick={() =>
-                isSingleDay
-                  ? setRange((r) => ({ from: r.from.subtract(1, 'day'), to: r.from.subtract(1, 'day') }))
-                  : shiftRange(-1)
-              }
+              onClick={() => {
+                if (isSingleDay) {
+                  setPreset('');
+                  setRange((r) => ({ from: r.from.subtract(1, 'day'), to: r.from.subtract(1, 'day') }));
+                } else {
+                  shiftRange(-1);
+                }
+              }}
               size="small"
             >
               <ChevronLeft />
@@ -469,15 +473,46 @@ export default function ForwardBookingAnalytics() {
             </Typography>
             <IconButton
               aria-label={isSingleDay ? 'Next day' : 'Next period'}
-              onClick={() =>
-                isSingleDay
-                  ? setRange((r) => ({ from: r.from.add(1, 'day'), to: r.from.add(1, 'day') }))
-                  : shiftRange(1)
-              }
+              onClick={() => {
+                if (isSingleDay) {
+                  setPreset('');
+                  setRange((r) => ({ from: r.from.add(1, 'day'), to: r.from.add(1, 'day') }));
+                } else {
+                  shiftRange(1);
+                }
+              }}
               size="small"
             >
               <ChevronRight />
             </IconButton>
+            <DatePicker
+              label="From"
+              value={range.from}
+              onChange={(v) => {
+                if (!v?.isValid()) return;
+                setPreset('');
+                setRange((r) => {
+                  const from = v.startOf('day');
+                  const to = r.to.startOf('day');
+                  return from.isAfter(to) ? { from, to: from } : { from, to };
+                });
+              }}
+              slotProps={{ textField: { size: 'small' } }}
+            />
+            <DatePicker
+              label="To"
+              value={range.to}
+              onChange={(v) => {
+                if (!v?.isValid()) return;
+                setPreset('');
+                setRange((r) => {
+                  const to = v.startOf('day');
+                  const from = r.from.startOf('day');
+                  return to.isBefore(from) ? { from: to, to } : { from, to };
+                });
+              }}
+              slotProps={{ textField: { size: 'small' } }}
+            />
 
             <FormControl size="small" sx={{ minWidth: 220, ml: { xs: 0, sm: 2 } }}>
               <InputLabel id="forward-booking-provider-label">Primary provider</InputLabel>
