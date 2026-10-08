@@ -32,7 +32,11 @@ import {
   reactivateClient,
   type ScoutClientWrite,
 } from '../../api/clientsMutations';
-import { deactivatePatient } from '../../api/patients';
+import { deactivatePatient, fetchPatientByIdStaff } from '../../api/patients';
+import {
+  keptPetsSentence,
+  splitPetsForClientDeactivation,
+} from '../../utils/clientDeactivationPets';
 import { sendClientPortalAccess } from '../../api/users';
 import { recordScoutChartCommunication } from '../../api/scoutChart';
 import { buildPhoneDialHref } from '../../utils/quoContact';
@@ -1313,6 +1317,7 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [inactivateWrapUp, setInactivateWrapUp] = useState<DeathWrapUpPreview[] | null>(null);
+  const [inactivateKeptNote, setInactivateKeptNote] = useState('');
   const [headerEdit, setHeaderEdit] = useState<HeaderEdit>(null);
   const [commsTick, setCommsTick] = useState(0);
   const [headerBalance, setHeaderBalance] = useState<number | null>(null);
@@ -1584,10 +1589,24 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
             };
           })
           .filter((p) => Number.isFinite(p.patientId) && p.patientId > 0);
-        if (activePets.length === 0) {
+        const details = new Map<number, unknown>();
+        await Promise.all(
+          activePets.map(async (pet) => {
+            details.set(pet.patientId, await fetchPatientByIdStaff(pet.patientId));
+          }),
+        );
+        const { inactivate, keep } = splitPetsForClientDeactivation(
+          activePets,
+          details,
+          Number(clientId),
+        );
+        const keptNote = keptPetsSentence(keep);
+        if (inactivate.length === 0) {
           const ok = await appConfirm({
             title: 'Deactivate client?',
-            message: `Deactivate ${name}? They stay in Scout with all history and appointments intact, but are hidden from active lists.`,
+            message: `Deactivate ${name}? They stay in Scout with all history and appointments intact, but are hidden from active lists.${
+              keptNote ? ` ${keptNote}` : ''
+            }`,
             confirmLabel: 'Deactivate',
             danger: true,
           });
@@ -1596,10 +1615,11 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
           return;
         }
         const previews = await previewDeathWrapUpForPatients({
-          patients: activePets,
+          patients: inactivate,
           clientId: Number(clientId),
           practiceTz: practiceTimeZoneOrDefault(DEFAULT_PRACTICE_TIMEZONE),
         });
+        setInactivateKeptNote(keptNote);
         setInactivateWrapUp(previews);
       } catch (err) {
         setActionError(extractErr(err));
@@ -2793,6 +2813,11 @@ export default function PimsClientDetailView({ clientId, onBack }: Props) {
         <DeathWrapUpModal
           previews={inactivateWrapUp}
           kind="inactivate"
+          lead={`Inactivating ${name} will also inactivate ${inactivateWrapUp
+            .map((p) => p.patientName)
+            .join(', ')}. Accept will cancel the items below for every pet listed, then inactivate them.${
+            inactivateKeptNote ? ` ${inactivateKeptNote}` : ''
+          }`}
           acceptLabel="Accept and inactivate"
           onClose={() => setInactivateWrapUp(null)}
           onAccepted={async () => {
