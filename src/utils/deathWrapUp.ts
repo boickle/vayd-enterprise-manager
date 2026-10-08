@@ -194,7 +194,7 @@ async function previewOnePatient(
     ]);
 
   const membershipPreviews: MembershipCancelPreview[] = [];
-  for (const membership of memberships.filter((row) => row.status === 'active')) {
+  for (const membership of memberships.filter((row) => row.status !== 'inactive')) {
     try {
       membershipPreviews.push(await previewMembershipCancel(membership.id));
     } catch {

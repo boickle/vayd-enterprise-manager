@@ -222,7 +222,10 @@ export type PatientMembership = {
   packageId: number;
   planName: string;
   planTier: string | null;
-  status: 'active' | 'inactive';
+  /** 'expired': never cancelled, but past its end date (e.g. a held renewal). */
+  status: 'active' | 'inactive' | 'expired';
+  /** Set on enrolment only: species or age mismatches staff should check. */
+  warnings?: string[];
   startDate: string | null;
   expirationDate: string | null;
   billingInterval: string | null;

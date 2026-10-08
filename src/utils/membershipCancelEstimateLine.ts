@@ -65,7 +65,7 @@ export async function syncMembershipCancelLinesOnEstimate(
   }
 
   const memberships = (await listPatientMemberships({ patientId })).filter(
-    (row) => row.status === 'active',
+    (row) => row.status !== 'inactive',
   );
   const previews: MembershipCancelPreview[] = [];
   for (const membership of memberships) {

@@ -96,7 +96,15 @@ function shortDate(iso: string | null): string {
   if (!iso) return '—';
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso.slice(0, 10);
-  return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+  // Exactly UTC midnight is a calendar date with no time; showing it in local time would move it a day back.
+  const dateOnly =
+    d.getUTCHours() === 0 && d.getUTCMinutes() === 0 && d.getUTCSeconds() === 0 && d.getUTCMilliseconds() === 0;
+  return d.toLocaleDateString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    ...(dateOnly ? { timeZone: 'UTC' } : {}),
+  });
 }
 
 function ownerNames(owners: MembershipOwnerRef[]): string {
@@ -356,7 +364,11 @@ export default function PatientMembershipPanel({
     setError(null);
     try {
       const rows = await listPatientMemberships({ patientId });
-      const current = rows.find((r) => r.status === 'active') ?? rows[0] ?? null;
+      const current =
+        rows.find((r) => r.status === 'active') ??
+        rows.find((r) => r.status === 'expired') ??
+        rows[0] ??
+        null;
       if (!current) {
         setMembership(null);
         setAudit([]);
@@ -368,7 +380,7 @@ export default function PatientMembershipPanel({
       ]);
       setMembership(full);
       setAudit(log);
-      if (full.status !== 'active') {
+      if (full.status === 'inactive') {
         setInactiveDetailsOpen(false);
       }
     } catch (e) {
@@ -791,6 +803,12 @@ export default function PatientMembershipPanel({
       setMembership(created);
       await refreshAudit(created.id);
       closePanels();
+      if (created.warnings?.length) {
+        await appAlert({
+          title: `Enrolled in ${plan.name} — please check`,
+          message: created.warnings.join('\n\n'),
+        });
+      }
 
       if (clientId != null && Number(clientId) > 0) {
         try {
@@ -1192,9 +1210,13 @@ export default function PatientMembershipPanel({
   const headerBadge = membership ? (
     <>
       <span className="pmp-head-plan">{membership.planName}</span>
-      {membership.status !== 'active' ? (
+      {membership.status === 'inactive' ? (
         <span className="pmp-head-inactive" aria-label="Membership inactive">
           Inactive
+        </span>
+      ) : membership.status === 'expired' ? (
+        <span className="pmp-head-inactive" aria-label="Membership expired">
+          Expired
         </span>
       ) : null}
     </>
@@ -1359,7 +1381,7 @@ export default function PatientMembershipPanel({
 
           {membership ? (
             <>
-              {membership.status !== 'active' ? (
+              {membership.status === 'inactive' ? (
                 <button
                   type="button"
                   className="pmp-inactive-details-toggle"
@@ -1375,11 +1397,11 @@ export default function PatientMembershipPanel({
                 </button>
               ) : null}
 
-              {membership.status === 'active' || inactiveDetailsOpen ? (
+              {membership.status !== 'inactive' || inactiveDetailsOpen ? (
               <>
               <div
                 className={`pmp-summary${
-                  membership.status !== 'active' ? ' pmp-summary--inactive' : ''
+                  membership.status === 'inactive' ? ' pmp-summary--inactive' : ''
                 }`}
               >
                 <div className="pmp-summary__head">
@@ -1389,8 +1411,20 @@ export default function PatientMembershipPanel({
                       {membership.planTier ? (
                         <PimsBadge tone="muted">{membership.planTier}</PimsBadge>
                       ) : null}
-                      <PimsBadge tone={membership.status === 'active' ? 'ok' : 'danger'}>
-                        {membership.status === 'active' ? 'Active' : 'Inactive'}
+                      <PimsBadge
+                        tone={
+                          membership.status === 'active'
+                            ? 'ok'
+                            : membership.status === 'expired'
+                              ? 'warn'
+                              : 'danger'
+                        }
+                      >
+                        {membership.status === 'active'
+                          ? 'Active'
+                          : membership.status === 'expired'
+                            ? 'Expired'
+                            : 'Inactive'}
                       </PimsBadge>
                       {membership.benefitsPaused ? (
                         <PimsBadge tone="danger">Benefits paused</PimsBadge>
@@ -1459,7 +1493,7 @@ export default function PatientMembershipPanel({
                       <button
                         type="button"
                         className="pims-detail__btn-danger"
-                        disabled={busy || membership.status !== 'active'}
+                        disabled={busy || membership.status === 'inactive'}
                         onClick={() => void openCancel()}
                       >
                         <X size={14} aria-hidden />
