@@ -390,6 +390,7 @@ export interface PaymentResponse {
   success: boolean;
   providerResponse: Record<string, any>;
   providerPaymentId?: string;
+  providerSubscriptionId?: string;
   status?: string;
 }
 
@@ -480,6 +481,15 @@ export async function fetchPaymentsLeaderboards(params?: {
 export async function createPayment(payload: PaymentRequest): Promise<PaymentResponse> {
   const path = `${paymentProcessingApiBasePath()}/payments`;
   const { data } = await http.post(path, payload);
+  return data;
+}
+
+/** After the bank approves the card, ask Scout to record the membership. */
+export async function confirmMembershipPayment(body: {
+  idempotencyKey: string;
+  subscriptionId: string;
+}): Promise<PaymentResponse> {
+  const { data } = await http.post(`${paymentProcessingApiBasePath()}/payments/confirm`, body);
   return data;
 }
 

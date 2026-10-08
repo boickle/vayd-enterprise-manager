@@ -3,6 +3,7 @@ import { loadStripe, type Stripe, type StripeCardElement } from '@stripe/stripe-
 import { useLocation, useNavigate } from 'react-router';
 import {
   createPayment,
+  confirmMembershipPayment,
   type PaymentResponse,
   PaymentIntent,
   type MembershipCheckoutDiscount,
@@ -51,12 +52,21 @@ const squareScriptUrl =
 
 const paymentProvider = getFrontendPaymentProvider();
 
+function secretFrom(value: unknown): string | null {
+  if (!value || typeof value !== 'object') return null;
+  const secret = (value as { client_secret?: unknown }).client_secret;
+  return typeof secret === 'string' ? secret : null;
+}
+
 function extractPaymentIntentClientSecret(providerResponse: Record<string, unknown> | undefined): string | null {
   if (!providerResponse || typeof providerResponse !== 'object') return null;
-  if (typeof providerResponse.client_secret === 'string') return providerResponse.client_secret;
-  const pi = providerResponse.payment_intent;
-  if (pi && typeof pi === 'object' && typeof (pi as { client_secret?: string }).client_secret === 'string') {
-    return (pi as { client_secret: string }).client_secret;
+  const direct = secretFrom(providerResponse);
+  if (direct) return direct;
+  const onIntent = secretFrom(providerResponse.payment_intent);
+  if (onIntent) return onIntent;
+  const invoice = providerResponse.latest_invoice;
+  if (invoice && typeof invoice === 'object') {
+    return secretFrom((invoice as { payment_intent?: unknown }).payment_intent);
   }
   return null;
 }
@@ -643,23 +653,22 @@ export default function MembershipPayment(props?: MembershipPaymentModalProps) {
           : {}),
       });
 
-      if (!payment.success && payment.status === 'requires_action' && stripeRef.current) {
+      if (!payment.success && stripeRef.current) {
         const secret = extractPaymentIntentClientSecret(payment.providerResponse);
-        if (secret) {
+        const waitingOnBank =
+          payment.status === 'requires_action' || payment.status === 'incomplete';
+        if (waitingOnBank && secret && payment.providerSubscriptionId) {
           const { error: confirmErr, paymentIntent } = await stripeRef.current.confirmCardPayment(secret);
           if (confirmErr) {
-            throw new Error(confirmErr.message || 'Authentication failed.');
+            throw new Error(confirmErr.message || 'Your bank did not approve the card.');
           }
-          payment = {
-            ...payment,
-            success: paymentIntent?.status === 'succeeded',
-            status: paymentIntent?.status,
-            providerPaymentId: paymentIntent?.id ?? payment.providerPaymentId,
-            providerResponse: {
-              ...payment.providerResponse,
-              paymentIntent,
-            },
-          };
+          if (paymentIntent?.status !== 'succeeded') {
+            throw new Error('Your bank did not approve the card.');
+          }
+          payment = await confirmMembershipPayment({
+            idempotencyKey,
+            subscriptionId: payment.providerSubscriptionId,
+          });
         }
       }
 
